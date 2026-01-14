@@ -15,6 +15,7 @@
 | 退出程序 | ✅ 完成 | 按 q 退出 |
 | **主题系统** | ✅ 完成 | 8 个预设主题 + Auto 模式 |
 | **New Task** | ✅ 完成 | 创建 worktree + tmux session |
+| **真实数据接入** | ✅ 完成 | 从 Task 元数据加载，替换 Mock 数据 |
 
 ### 主题系统详情
 
@@ -69,15 +70,23 @@
 3. 创建 tmux session
 4. Grove 退出后自动 attach 到 session
 
-### Mock 数据 (待接入真实数据)
+### 真实数据接入
+
+**数据源**: Task 元数据为主 (`~/.grove/projects/{project}/tasks.toml`)
 
 | 数据 | 来源 | 说明 |
 |------|------|------|
-| 项目路径 | Mock | 硬编码 `~/code/my-app` |
-| Worktree 列表 | Mock | `src/model/mock.rs` 生成的测试数据 |
-| 状态检测 | Mock | Live/Idle 状态未接入 tmux 检测 |
-| Commits behind | Mock | 未接入 git 计算 |
-| 文件变更统计 | Mock | 未接入 git diff |
+| 项目路径 | git | `git rev-parse --show-toplevel` |
+| Worktree 列表 | Task | 从 `tasks.toml` 加载 |
+| 状态检测 | tmux | `tmux has-session` 检测 Live/Idle |
+| Broken 状态 | 文件系统 | worktree 目录不存在时显示 |
+| Commits behind | git | `git rev-list --count` |
+| 文件变更统计 | git | `git diff --numstat` |
+
+**状态说明:**
+- `Live` (●): tmux session 运行中
+- `Idle` (○): worktree 存在，无 tmux session
+- `Broken` (✗): Task 存在但 worktree 被删除
 
 ### 待开发功能 (显示 Toast 占位)
 
@@ -107,7 +116,8 @@ src/
 ├── model/
 │   ├── mod.rs
 │   ├── worktree.rs            # Worktree, WorktreeStatus, ProjectTab
-│   └── mock.rs                # Mock 数据生成
+│   ├── loader.rs              # 从 Task 加载真实数据
+│   └── mock.rs                # Mock 数据生成 (已弃用)
 ├── theme/
 │   ├── mod.rs                 # Theme 枚举 + ThemeColors 结构
 │   ├── colors.rs              # 各主题颜色定义

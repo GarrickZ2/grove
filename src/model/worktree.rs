@@ -9,6 +9,8 @@ pub enum WorktreeStatus {
     Merged,
     /// ⚠ conflict: 存在合并冲突
     Conflict,
+    /// ✗ broken: Task 存在但 worktree 被删除
+    Broken,
     /// ✗ error: 异常状态
     Error,
 }
@@ -21,13 +23,26 @@ impl WorktreeStatus {
             WorktreeStatus::Live => "●",
             WorktreeStatus::Merged => "✓",
             WorktreeStatus::Conflict => "⚠",
+            WorktreeStatus::Broken => "✗",
             WorktreeStatus::Error => "✗",
+        }
+    }
+
+    /// 返回状态文字标签
+    pub fn label(&self) -> &'static str {
+        match self {
+            WorktreeStatus::Idle => "Idle",
+            WorktreeStatus::Live => "Live",
+            WorktreeStatus::Merged => "Merged",
+            WorktreeStatus::Conflict => "Conflict",
+            WorktreeStatus::Broken => "Broken",
+            WorktreeStatus::Error => "Error",
         }
     }
 }
 
 /// 文件变更统计
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct FileChanges {
     pub additions: u32,
     pub deletions: u32,

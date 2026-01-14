@@ -75,3 +75,106 @@ pub fn is_git_repo(path: &str) -> bool {
         .map(|o| o.status.success())
         .unwrap_or(false)
 }
+
+/// 计算 branch 相对于 target 新增的 commit 数
+/// 执行: git rev-list --count {target}..{branch}
+pub fn commits_behind(worktree_path: &str, branch: &str, target: &str) -> Result<u32, String> {
+    let output = Command::new("git")
+        .current_dir(worktree_path)
+        .args(["rev-list", "--count", &format!("{}..{}", target, branch)])
+        .output()
+        .map_err(|e| format!("Failed to execute git: {}", e))?;
+
+    if output.status.success() {
+        let count_str = String::from_utf8_lossy(&output.stdout);
+        count_str
+            .trim()
+            .parse::<u32>()
+            .map_err(|e| format!("Failed to parse count: {}", e))
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        Err(format!("git rev-list failed: {}", stderr.trim()))
+    }
+}
+
+/// 获取文件变更统计 (相对于 target)
+/// 执行: git diff --numstat {target}
+/// 返回: (additions, deletions)
+pub fn file_changes(worktree_path: &str, target: &str) -> Result<(u32, u32), String> {
+    let output = Command::new("git")
+        .current_dir(worktree_path)
+        .args(["diff", "--numstat", target])
+        .output()
+        .map_err(|e| format!("Failed to execute git: {}", e))?;
+
+    if output.status.success() {
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let mut additions = 0u32;
+        let mut deletions = 0u32;
+
+        for line in stdout.lines() {
+            let parts: Vec<&str> = line.split('\t').collect();
+            if parts.len() >= 2 {
+                // 处理二进制文件 (显示为 "-")
+                if let Ok(add) = parts[0].parse::<u32>() {
+                    additions += add;
+                }
+                if let Ok(del) = parts[1].parse::<u32>() {
+                    deletions += del;
+                }
+            }
+        }
+
+        Ok((additions, deletions))
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        Err(format!("git diff failed: {}", stderr.trim()))
+    }
+}
+
+/// 获取默认分支 (main/master)
+/// 尝试顺序: origin/HEAD -> main -> master
+pub fn default_branch(repo_path: &str) -> Result<String, String> {
+    // 尝试从 origin/HEAD 获取
+    let output = Command::new("git")
+        .current_dir(repo_path)
+        .args(["symbolic-ref", "refs/remotes/origin/HEAD"])
+        .output();
+
+    if let Ok(output) = output {
+        if output.status.success() {
+            let ref_str = String::from_utf8_lossy(&output.stdout);
+            // refs/remotes/origin/main -> main
+            if let Some(branch) = ref_str.trim().strip_prefix("refs/remotes/origin/") {
+                return Ok(branch.to_string());
+            }
+        }
+    }
+
+    // fallback: 检查 main 是否存在
+    let output = Command::new("git")
+        .current_dir(repo_path)
+        .args(["rev-parse", "--verify", "main"])
+        .output();
+
+    if let Ok(output) = output {
+        if output.status.success() {
+            return Ok("main".to_string());
+        }
+    }
+
+    // fallback: 检查 master 是否存在
+    let output = Command::new("git")
+        .current_dir(repo_path)
+        .args(["rev-parse", "--verify", "master"])
+        .output();
+
+    if let Ok(output) = output {
+        if output.status.success() {
+            return Ok("master".to_string());
+        }
+    }
+
+    // 最终 fallback
+    Ok("main".to_string())
+}

@@ -5,7 +5,7 @@ use chrono::Utc;
 use ratatui::widgets::ListState;
 
 use crate::git;
-use crate::model::{mock, ProjectTab, Worktree};
+use crate::model::{loader, ProjectTab, Worktree};
 use crate::storage::{self, tasks::{self, Task, TaskStatus}};
 use crate::theme::{detect_system_theme, get_theme_colors, Theme, ThemeColors};
 use crate::tmux;
@@ -45,8 +45,9 @@ pub struct ProjectState {
 }
 
 impl ProjectState {
-    pub fn new() -> Self {
-        let (current, other, archived) = mock::generate_mock_worktrees();
+    pub fn new(project_path: &str) -> Self {
+        // 从 Task 元数据加载真实数据
+        let (current, other, archived) = loader::load_worktrees(project_path);
 
         let mut current_state = ListState::default();
         if !current.is_empty() {
@@ -63,13 +64,26 @@ impl ProjectState {
             archived_state.select(Some(0));
         }
 
+        // 获取项目名称
+        let project_name = Path::new(project_path)
+            .file_name()
+            .map(|s| s.to_string_lossy().to_string())
+            .unwrap_or_else(|| "unknown".to_string());
+
         Self {
             current_tab: ProjectTab::Current,
             list_states: [current_state, other_state, archived_state],
             worktrees: [current, other, archived],
-            project_path: "~/code/my-app".to_string(),
-            project_name: "my-app".to_string(),
+            project_path: project_path.to_string(),
+            project_name,
         }
+    }
+
+    /// 刷新数据
+    pub fn refresh(&mut self) {
+        let (current, other, archived) = loader::load_worktrees(&self.project_path);
+        self.worktrees = [current, other, archived];
+        self.ensure_selection();
     }
 
     /// 获取当前 Tab 的 worktree 列表
@@ -141,7 +155,8 @@ impl ProjectState {
 
 impl Default for ProjectState {
     fn default() -> Self {
-        Self::new()
+        let project_path = git::repo_root(".").unwrap_or_else(|_| ".".to_string());
+        Self::new(&project_path)
     }
 }
 
@@ -179,13 +194,16 @@ impl App {
         let last_system_dark = detect_system_theme();
         let colors = get_theme_colors(theme);
 
+        // 获取项目路径
+        let project_path = git::repo_root(".").unwrap_or_else(|_| ".".to_string());
+
         // 尝试获取当前分支
-        let target_branch = git::current_branch(".")
+        let target_branch = git::current_branch(&project_path)
             .unwrap_or_else(|_| "main".to_string());
 
         Self {
             should_quit: false,
-            project: ProjectState::new(),
+            project: ProjectState::new(&project_path),
             toast: None,
             theme,
             colors,

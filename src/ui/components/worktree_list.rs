@@ -21,6 +21,7 @@ pub fn render(
         Cell::from(""),     // 选择指示器
         Cell::from(""),     // 状态图标
         Cell::from("TASK"),
+        Cell::from("STATUS"),
         Cell::from("BRANCH"),
         Cell::from("↓"),    // commits behind
         Cell::from("FILES"),
@@ -43,6 +44,7 @@ pub fn render(
                 WorktreeStatus::Idle => Style::default().fg(colors.status_idle),
                 WorktreeStatus::Merged => Style::default().fg(colors.status_merged),
                 WorktreeStatus::Conflict => Style::default().fg(colors.status_conflict),
+                WorktreeStatus::Broken => Style::default().fg(colors.status_error),
                 WorktreeStatus::Error => Style::default().fg(colors.status_error),
             };
 
@@ -63,6 +65,7 @@ pub fn render(
                 Cell::from(selector).style(Style::default().fg(colors.highlight)),
                 Cell::from(wt.status.icon()).style(icon_style),
                 Cell::from(wt.task_name.clone()),
+                Cell::from(wt.status.label()).style(icon_style),
                 Cell::from(wt.branch.clone()).style(Style::default().fg(colors.muted)),
                 Cell::from(commits),
                 Cell::from(wt.file_changes.display()),
@@ -75,6 +78,7 @@ pub fn render(
         Constraint::Length(2),  // 选择器
         Constraint::Length(2),  // 状态图标
         Constraint::Fill(2),    // TASK (flex)
+        Constraint::Length(8),  // STATUS
         Constraint::Fill(2),    // BRANCH (flex)
         Constraint::Length(4),  // commits behind
         Constraint::Length(10), // FILES
