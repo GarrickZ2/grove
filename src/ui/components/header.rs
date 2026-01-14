@@ -1,6 +1,6 @@
 use ratatui::{
-    layout::Rect,
-    style::{Modifier, Style},
+    layout::{Constraint, Layout, Rect},
+    style::Style,
     text::{Line, Span},
     widgets::{Block, Borders, Paragraph},
     Frame,
@@ -8,8 +8,43 @@ use ratatui::{
 
 use crate::theme::Colors;
 
-/// 渲染顶部标题栏
+use super::logo;
+
+/// Header 总高度：1 (上边距) + 6 (Logo) + 1 (下边距) + 1 (项目信息) = 9
+pub const HEADER_HEIGHT: u16 = 9;
+
+/// 渲染顶部区域（Logo + 项目信息）
 pub fn render(frame: &mut Frame, area: Rect, project_path: &str, worktree_count: usize) {
+    // 外框
+    let block = Block::default()
+        .borders(Borders::TOP | Borders::LEFT | Borders::RIGHT)
+        .border_style(Style::default().fg(Colors::BORDER));
+
+    let inner_area = block.inner(area);
+    frame.render_widget(block, area);
+
+    // 内部垂直布局
+    let [top_padding, logo_area, bottom_padding, info_area] = Layout::vertical([
+        Constraint::Length(1),              // 上边距
+        Constraint::Length(logo::LOGO_HEIGHT), // Logo
+        Constraint::Length(1),              // 下边距
+        Constraint::Length(1),              // 项目信息
+    ])
+    .areas(inner_area);
+
+    // 渲染 Logo
+    logo::render(frame, logo_area);
+
+    // 渲染项目信息行
+    render_project_info(frame, info_area, project_path, worktree_count);
+
+    // 填充空白区域（防止残留）
+    let empty = Paragraph::new("");
+    frame.render_widget(empty.clone(), top_padding);
+    frame.render_widget(empty, bottom_padding);
+}
+
+fn render_project_info(frame: &mut Frame, area: Rect, project_path: &str, worktree_count: usize) {
     let left = Span::styled(
         format!(" {}", project_path),
         Style::default().fg(Colors::TEXT),
@@ -22,22 +57,12 @@ pub fn render(frame: &mut Frame, area: Rect, project_path: &str, worktree_count:
 
     // 计算中间填充空格
     let total_width = area.width as usize;
-    let used_width = left.width() + right.width() + 4; // 边框占用
+    let used_width = left.width() + right.width();
     let padding_len = total_width.saturating_sub(used_width);
     let padding = " ".repeat(padding_len);
 
     let line = Line::from(vec![left, Span::raw(padding), right]);
 
-    let block = Block::default()
-        .borders(Borders::TOP | Borders::LEFT | Borders::RIGHT)
-        .border_style(Style::default().fg(Colors::BORDER))
-        .title(" Grove ")
-        .title_style(
-            Style::default()
-                .fg(Colors::HIGHLIGHT)
-                .add_modifier(Modifier::BOLD),
-        );
-
-    let paragraph = Paragraph::new(line).block(block);
+    let paragraph = Paragraph::new(line);
     frame.render_widget(paragraph, area);
 }

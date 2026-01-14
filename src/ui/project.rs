@@ -11,10 +11,10 @@ pub fn render(frame: &mut Frame, app: &App) {
     // 垂直布局
     let [header_area, tabs_area, list_area, footer_area] =
         ratatui::layout::Layout::vertical([
-            Constraint::Length(2),  // Header
-            Constraint::Length(2),  // Tabs (包含底边框)
-            Constraint::Fill(1),    // Worktree List / Empty State
-            Constraint::Length(3),  // Footer
+            Constraint::Length(header::HEADER_HEIGHT), // Header (Logo + 项目信息)
+            Constraint::Length(2),                     // Tabs (包含底边框)
+            Constraint::Fill(1),                       // Worktree List / Empty State
+            Constraint::Length(3),                     // Footer
         ])
         .areas(area);
 
