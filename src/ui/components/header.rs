@@ -6,7 +6,7 @@ use ratatui::{
     Frame,
 };
 
-use crate::theme::Colors;
+use crate::theme::ThemeColors;
 
 use super::logo;
 
@@ -14,11 +14,17 @@ use super::logo;
 pub const HEADER_HEIGHT: u16 = 9;
 
 /// 渲染顶部区域（Logo + 项目信息）
-pub fn render(frame: &mut Frame, area: Rect, project_path: &str, worktree_count: usize) {
+pub fn render(
+    frame: &mut Frame,
+    area: Rect,
+    project_path: &str,
+    worktree_count: usize,
+    colors: &ThemeColors,
+) {
     // 外框
     let block = Block::default()
         .borders(Borders::TOP | Borders::LEFT | Borders::RIGHT)
-        .border_style(Style::default().fg(Colors::BORDER));
+        .border_style(Style::default().fg(colors.border));
 
     let inner_area = block.inner(area);
     frame.render_widget(block, area);
@@ -33,10 +39,10 @@ pub fn render(frame: &mut Frame, area: Rect, project_path: &str, worktree_count:
     .areas(inner_area);
 
     // 渲染 Logo
-    logo::render(frame, logo_area);
+    logo::render(frame, logo_area, colors);
 
     // 渲染项目信息行
-    render_project_info(frame, info_area, project_path, worktree_count);
+    render_project_info(frame, info_area, project_path, worktree_count, colors);
 
     // 填充空白区域（防止残留）
     let empty = Paragraph::new("");
@@ -44,15 +50,21 @@ pub fn render(frame: &mut Frame, area: Rect, project_path: &str, worktree_count:
     frame.render_widget(empty, bottom_padding);
 }
 
-fn render_project_info(frame: &mut Frame, area: Rect, project_path: &str, worktree_count: usize) {
+fn render_project_info(
+    frame: &mut Frame,
+    area: Rect,
+    project_path: &str,
+    worktree_count: usize,
+    colors: &ThemeColors,
+) {
     let left = Span::styled(
         format!(" {}", project_path),
-        Style::default().fg(Colors::TEXT),
+        Style::default().fg(colors.text),
     );
 
     let right = Span::styled(
         format!("{} worktrees ", worktree_count),
-        Style::default().fg(Colors::MUTED),
+        Style::default().fg(colors.muted),
     );
 
     // 计算中间填充空格

@@ -7,13 +7,13 @@ use ratatui::{
 };
 
 use crate::model::ProjectTab;
-use crate::theme::Colors;
+use crate::theme::ThemeColors;
 
 /// 渲染空状态（只有提示文字，Logo 已移到顶部 Header）
-pub fn render(frame: &mut Frame, area: Rect, current_tab: ProjectTab) {
+pub fn render(frame: &mut Frame, area: Rect, current_tab: ProjectTab, colors: &ThemeColors) {
     let block = Block::default()
         .borders(Borders::LEFT | Borders::RIGHT)
-        .border_style(Style::default().fg(Colors::BORDER));
+        .border_style(Style::default().fg(colors.border));
 
     let inner_area = block.inner(area);
     frame.render_widget(block, area);
@@ -22,17 +22,17 @@ pub fn render(frame: &mut Frame, area: Rect, current_tab: ProjectTab) {
 
     let lines = vec![
         Line::from(""),
-        Line::from(Span::styled(message, Style::default().fg(Colors::MUTED))),
+        Line::from(Span::styled(message, Style::default().fg(colors.muted))),
         Line::from(""),
         Line::from(vec![
-            Span::styled("Press ", Style::default().fg(Colors::TEXT)),
+            Span::styled("Press ", Style::default().fg(colors.text)),
             Span::styled(
                 " n ",
                 Style::default()
-                    .fg(Colors::HIGHLIGHT)
+                    .fg(colors.highlight)
                     .add_modifier(Modifier::BOLD),
             ),
-            Span::styled(hint, Style::default().fg(Colors::TEXT)),
+            Span::styled(hint, Style::default().fg(colors.text)),
         ]),
     ];
 

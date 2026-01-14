@@ -6,7 +6,7 @@ use ratatui::{
     Frame,
 };
 
-use crate::theme::Colors;
+use crate::theme::ThemeColors;
 
 /// ASCII Art Logo - 6 行高
 const LOGO: &[&str] = &[
@@ -22,10 +22,10 @@ const LOGO: &[&str] = &[
 pub const LOGO_HEIGHT: u16 = 6;
 
 /// 渲染居中的 Logo
-pub fn render(frame: &mut Frame, area: Rect) {
+pub fn render(frame: &mut Frame, area: Rect, colors: &ThemeColors) {
     let logo_lines: Vec<Line> = LOGO
         .iter()
-        .map(|line| Line::from(Span::styled(*line, Style::default().fg(Colors::LOGO))))
+        .map(|line| Line::from(Span::styled(*line, Style::default().fg(colors.logo))))
         .collect();
 
     let logo_widget = Paragraph::new(logo_lines).alignment(Alignment::Center);

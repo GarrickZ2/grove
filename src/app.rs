@@ -3,6 +3,7 @@ use std::time::{Duration, Instant};
 use ratatui::widgets::ListState;
 
 use crate::model::{mock, ProjectTab, Worktree};
+use crate::theme::{detect_system_theme, get_theme_colors, Theme, ThemeColors};
 
 /// Toast 消息
 #[derive(Debug, Clone)]
@@ -147,15 +148,91 @@ pub struct App {
     pub project: ProjectState,
     /// Toast 提示
     pub toast: Option<Toast>,
+    /// 当前主题
+    pub theme: Theme,
+    /// 当前颜色方案
+    pub colors: ThemeColors,
+    /// 是否显示主题选择器
+    pub show_theme_selector: bool,
+    /// 主题选择器当前选中索引
+    pub theme_selector_index: usize,
+    /// 上次检测到的系统主题（用于 Auto 模式检测变化）
+    last_system_dark: bool,
 }
 
 impl App {
     pub fn new() -> Self {
+        let theme = Theme::Auto;
+        let last_system_dark = detect_system_theme();
+        let colors = get_theme_colors(theme);
         Self {
             should_quit: false,
             project: ProjectState::new(),
             toast: None,
+            theme,
+            colors,
+            show_theme_selector: false,
+            theme_selector_index: 0,
+            last_system_dark,
         }
+    }
+
+    /// 打开主题选择器
+    pub fn open_theme_selector(&mut self) {
+        // 找到当前主题在列表中的索引
+        let themes = Theme::all();
+        self.theme_selector_index = themes
+            .iter()
+            .position(|t| *t == self.theme)
+            .unwrap_or(0);
+        self.show_theme_selector = true;
+    }
+
+    /// 关闭主题选择器
+    pub fn close_theme_selector(&mut self) {
+        self.show_theme_selector = false;
+    }
+
+    /// 主题选择器 - 选择上一个
+    pub fn theme_selector_prev(&mut self) {
+        let len = Theme::all().len();
+        self.theme_selector_index = if self.theme_selector_index == 0 {
+            len - 1
+        } else {
+            self.theme_selector_index - 1
+        };
+        // 实时预览
+        self.apply_theme_at_index(self.theme_selector_index);
+    }
+
+    /// 主题选择器 - 选择下一个
+    pub fn theme_selector_next(&mut self) {
+        let len = Theme::all().len();
+        self.theme_selector_index = (self.theme_selector_index + 1) % len;
+        // 实时预览
+        self.apply_theme_at_index(self.theme_selector_index);
+    }
+
+    /// 主题选择器 - 确认选择
+    pub fn theme_selector_confirm(&mut self) {
+        self.apply_theme_at_index(self.theme_selector_index);
+        self.show_theme_selector = false;
+        self.show_toast(format!("Theme: {}", self.theme.label()));
+    }
+
+    /// 应用指定索引的主题
+    fn apply_theme_at_index(&mut self, index: usize) {
+        if let Some(theme) = Theme::all().get(index) {
+            self.theme = *theme;
+            self.colors = get_theme_colors(*theme);
+        }
+    }
+
+    /// 切换到下一个主题（快捷方式）
+    pub fn cycle_theme(&mut self) {
+        self.theme = self.theme.next();
+        self.colors = get_theme_colors(self.theme);
+        self.show_toast(format!("Theme: {}", self.theme.label()));
     }
 
     /// 显示 Toast 消息
@@ -169,6 +246,20 @@ impl App {
             if toast.is_expired() {
                 self.toast = None;
             }
+        }
+    }
+
+    /// 检查系统主题变化（用于 Auto 模式）
+    pub fn check_system_theme(&mut self) {
+        // 只在 Auto 模式下检查
+        if self.theme != Theme::Auto {
+            return;
+        }
+
+        let current_dark = detect_system_theme();
+        if current_dark != self.last_system_dark {
+            self.last_system_dark = current_dark;
+            self.colors = get_theme_colors(Theme::Auto);
         }
     }
 

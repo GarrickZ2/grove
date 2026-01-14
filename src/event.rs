@@ -11,6 +11,9 @@ pub fn handle_events(app: &mut App) -> io::Result<bool> {
     // 更新 Toast 状态
     app.update_toast();
 
+    // 检查系统主题变化（用于 Auto 模式）
+    app.check_system_theme();
+
     // 轮询事件（100ms 超时）
     if event::poll(Duration::from_millis(100))? {
         if let Event::Key(key) = event::read()? {
@@ -26,6 +29,12 @@ pub fn handle_events(app: &mut App) -> io::Result<bool> {
 }
 
 fn handle_key(app: &mut App, key: KeyEvent) {
+    // 如果主题选择器打开，优先处理选择器事件
+    if app.show_theme_selector {
+        handle_theme_selector_key(app, key);
+        return;
+    }
+
     match key.code {
         // 退出
         KeyCode::Char('q') => app.quit(),
@@ -78,14 +87,41 @@ fn handle_key(app: &mut App, key: KeyEvent) {
             }
         }
 
-        // 功能按键 - Theme
-        KeyCode::Char('T') => {
-            app.show_toast("Theme 选择 - 功能开发中");
+        // 功能按键 - Theme 选择器
+        KeyCode::Char('T') | KeyCode::Char('t') => {
+            app.open_theme_selector();
         }
 
         // 功能按键 - 返回
         KeyCode::Esc => {
             app.show_toast("返回 Workspace - 功能开发中");
+        }
+
+        _ => {}
+    }
+}
+
+/// 处理主题选择器的键盘事件
+fn handle_theme_selector_key(app: &mut App, key: KeyEvent) {
+    match key.code {
+        // 导航 - 上移
+        KeyCode::Char('k') | KeyCode::Up => {
+            app.theme_selector_prev();
+        }
+
+        // 导航 - 下移
+        KeyCode::Char('j') | KeyCode::Down => {
+            app.theme_selector_next();
+        }
+
+        // 确认选择
+        KeyCode::Enter => {
+            app.theme_selector_confirm();
+        }
+
+        // 取消
+        KeyCode::Esc | KeyCode::Char('q') => {
+            app.close_theme_selector();
         }
 
         _ => {}

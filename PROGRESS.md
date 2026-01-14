@@ -13,6 +13,26 @@
 | 空状态显示 | ✅ 完成 | ASCII Art Logo + 提示文字 |
 | Toast 提示 | ✅ 完成 | 2 秒自动消失 |
 | 退出程序 | ✅ 完成 | 按 q 退出 |
+| **主题系统** | ✅ 完成 | 8 个预设主题 + Auto 模式 |
+
+### 主题系统详情
+
+| 主题 | 说明 |
+|------|------|
+| Auto | 跟随 macOS 系统 dark/light 设置，实时响应变化 |
+| Dark | 深色主题（亮绿色调） |
+| Light | 浅色主题 |
+| Dracula | 紫/粉色调深色 |
+| Nord | 冷蓝色调 |
+| Gruvbox | 暖黄色调 |
+| Tokyo Night | 蓝紫色调深色 |
+| Catppuccin | 柔和粉色调 |
+
+**功能特点:**
+- 按 `t` 打开主题选择器弹窗
+- j/k 上下导航，实时预览效果
+- Enter 确认，Esc 取消
+- Auto 模式每 100ms 检测系统主题变化
 
 ### Mock 数据 (待接入真实数据)
 
@@ -33,7 +53,6 @@
 | `a` | Archive worktree | ⏳ 待开发 |
 | `x` | Clean worktree | ⏳ 待开发 |
 | `r` | Rebase to (修改 target branch) | ⏳ 待开发 |
-| `T` | Theme 主题选择 | ⏳ 待开发 |
 | `Esc` | 返回 Workspace 层级 | ⏳ 待开发 |
 
 ### 文件结构
@@ -48,18 +67,22 @@ src/
 │   ├── worktree.rs            # Worktree, WorktreeStatus, ProjectTab
 │   └── mock.rs                # Mock 数据生成
 ├── theme/
-│   └── mod.rs                 # 颜色常量定义
+│   ├── mod.rs                 # Theme 枚举 + ThemeColors 结构
+│   ├── colors.rs              # 各主题颜色定义
+│   └── detect.rs              # macOS 系统主题检测
 └── ui/
     ├── mod.rs
     ├── project.rs             # Project 页面主渲染
     └── components/
         ├── mod.rs
-        ├── header.rs          # 顶部: 项目路径 + worktree 数量
-        ├── tabs.rs            # Tab 栏
+        ├── header.rs          # 顶部: Logo + 项目路径 + worktree 数量
+        ├── logo.rs            # ASCII Art GROVE Logo
+        ├── tabs.rs            # Tab 栏（高亮背景块样式）
         ├── worktree_list.rs   # Worktree 表格列表
-        ├── empty_state.rs     # 空状态 (ASCII Logo)
+        ├── empty_state.rs     # 空状态提示
         ├── footer.rs          # 底部快捷键提示
-        └── toast.rs           # Toast 弹窗
+        ├── toast.rs           # Toast 弹窗
+        └── theme_selector.rs  # 主题选择器弹窗
 ```
 
 ---
@@ -79,5 +102,4 @@ src/
 
 ### Phase 3 - 完善
 - [ ] Workspace 层级
-- [ ] 主题系统
 - [ ] 配置文件 (~/.grove/)

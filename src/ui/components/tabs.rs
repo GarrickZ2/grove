@@ -1,16 +1,16 @@
 use ratatui::{
     layout::Rect,
-    style::{Color, Modifier, Style},
+    style::{Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Paragraph},
     Frame,
 };
 
 use crate::model::ProjectTab;
-use crate::theme::Colors;
+use crate::theme::ThemeColors;
 
 /// 渲染 Tab 栏
-pub fn render(frame: &mut Frame, area: Rect, current_tab: ProjectTab) {
+pub fn render(frame: &mut Frame, area: Rect, current_tab: ProjectTab, colors: &ThemeColors) {
     let tabs = [ProjectTab::Current, ProjectTab::Other, ProjectTab::Archived];
 
     let mut spans = Vec::new();
@@ -24,15 +24,15 @@ pub fn render(frame: &mut Frame, area: Rect, current_tab: ProjectTab) {
             spans.push(Span::styled(
                 format!("  {}  ", label),
                 Style::default()
-                    .fg(Color::Black)
-                    .bg(Colors::HIGHLIGHT)
+                    .fg(colors.tab_active_fg)
+                    .bg(colors.tab_active_bg)
                     .add_modifier(Modifier::BOLD),
             ));
         } else {
             // 未选中的 Tab: 普通显示
             spans.push(Span::styled(
                 format!("  {}  ", label),
-                Style::default().fg(Colors::MUTED),
+                Style::default().fg(colors.muted),
             ));
         }
 
@@ -45,7 +45,7 @@ pub fn render(frame: &mut Frame, area: Rect, current_tab: ProjectTab) {
 
     let block = Block::default()
         .borders(Borders::LEFT | Borders::RIGHT | Borders::BOTTOM)
-        .border_style(Style::default().fg(Colors::BORDER));
+        .border_style(Style::default().fg(colors.border));
 
     let paragraph = Paragraph::new(line).block(block);
     frame.render_widget(paragraph, area);

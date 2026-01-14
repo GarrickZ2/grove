@@ -7,10 +7,16 @@ use ratatui::{
 };
 
 use crate::model::ProjectTab;
-use crate::theme::Colors;
+use crate::theme::ThemeColors;
 
 /// 渲染底部快捷键提示栏
-pub fn render(frame: &mut Frame, area: Rect, current_tab: ProjectTab, has_items: bool) {
+pub fn render(
+    frame: &mut Frame,
+    area: Rect,
+    current_tab: ProjectTab,
+    has_items: bool,
+    colors: &ThemeColors,
+) {
     let shortcuts = get_shortcuts(current_tab, has_items);
 
     let mut spans = Vec::new();
@@ -20,12 +26,12 @@ pub fn render(frame: &mut Frame, area: Rect, current_tab: ProjectTab, has_items:
         spans.push(Span::styled(
             *key,
             Style::default()
-                .fg(Colors::HIGHLIGHT)
+                .fg(colors.highlight)
                 .add_modifier(Modifier::BOLD),
         ));
         spans.push(Span::styled(
             format!(" {}", desc),
-            Style::default().fg(Colors::MUTED),
+            Style::default().fg(colors.muted),
         ));
 
         if i < shortcuts.len() - 1 {
@@ -37,7 +43,7 @@ pub fn render(frame: &mut Frame, area: Rect, current_tab: ProjectTab, has_items:
 
     let block = Block::default()
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(Colors::BORDER));
+        .border_style(Style::default().fg(colors.border));
 
     let paragraph = Paragraph::new(line).block(block);
     frame.render_widget(paragraph, area);
@@ -51,11 +57,17 @@ fn get_shortcuts(current_tab: ProjectTab, has_items: bool) -> Vec<(&'static str,
                     ("Enter", "recover"),
                     ("x", "clean"),
                     ("Tab", "switch"),
+                    ("t", "theme"),
                     ("Esc", "back"),
                     ("q", "quit"),
                 ]
             } else {
-                vec![("Tab", "switch"), ("Esc", "back"), ("q", "quit")]
+                vec![
+                    ("Tab", "switch"),
+                    ("t", "theme"),
+                    ("Esc", "back"),
+                    ("q", "quit"),
+                ]
             }
         }
         _ => {
@@ -66,10 +78,17 @@ fn get_shortcuts(current_tab: ProjectTab, has_items: bool) -> Vec<(&'static str,
                     ("x", "clean"),
                     ("r", "rebase"),
                     ("Tab", "switch"),
+                    ("t", "theme"),
                     ("q", "quit"),
                 ]
             } else {
-                vec![("n", "new"), ("Tab", "switch"), ("Esc", "back"), ("q", "quit")]
+                vec![
+                    ("n", "new"),
+                    ("Tab", "switch"),
+                    ("t", "theme"),
+                    ("Esc", "back"),
+                    ("q", "quit"),
+                ]
             }
         }
     }

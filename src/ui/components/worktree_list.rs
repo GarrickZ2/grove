@@ -1,12 +1,12 @@
 use ratatui::{
     layout::{Constraint, Rect},
-    style::{Color, Modifier, Style},
+    style::{Modifier, Style},
     widgets::{Block, Borders, Cell, Row, Table, TableState},
     Frame,
 };
 
 use crate::model::{Worktree, WorktreeStatus};
-use crate::theme::Colors;
+use crate::theme::ThemeColors;
 
 /// 渲染 Worktree 列表
 pub fn render(
@@ -14,6 +14,7 @@ pub fn render(
     area: Rect,
     worktrees: &[Worktree],
     selected_index: Option<usize>,
+    colors: &ThemeColors,
 ) {
     // 表头
     let header = Row::new(vec![
@@ -24,7 +25,7 @@ pub fn render(
         Cell::from("↓"),    // commits behind
         Cell::from("FILES"),
     ])
-    .style(Style::default().fg(Colors::MUTED))
+    .style(Style::default().fg(colors.muted))
     .height(1)
     .bottom_margin(1);
 
@@ -38,11 +39,11 @@ pub fn render(
 
             // 状态图标样式
             let icon_style = match wt.status {
-                WorktreeStatus::Live => Style::default().fg(Colors::STATUS_LIVE),
-                WorktreeStatus::Idle => Style::default().fg(Colors::STATUS_IDLE),
-                WorktreeStatus::Merged => Style::default().fg(Colors::STATUS_MERGED),
-                WorktreeStatus::Conflict => Style::default().fg(Colors::STATUS_CONFLICT),
-                WorktreeStatus::Error => Style::default().fg(Colors::STATUS_ERROR),
+                WorktreeStatus::Live => Style::default().fg(colors.status_live),
+                WorktreeStatus::Idle => Style::default().fg(colors.status_idle),
+                WorktreeStatus::Merged => Style::default().fg(colors.status_merged),
+                WorktreeStatus::Conflict => Style::default().fg(colors.status_conflict),
+                WorktreeStatus::Error => Style::default().fg(colors.status_error),
             };
 
             let commits = wt
@@ -52,17 +53,17 @@ pub fn render(
 
             let row_style = if is_selected {
                 Style::default()
-                    .fg(Colors::TEXT)
+                    .fg(colors.text)
                     .add_modifier(Modifier::BOLD)
             } else {
-                Style::default().fg(Colors::TEXT)
+                Style::default().fg(colors.text)
             };
 
             Row::new(vec![
-                Cell::from(selector).style(Style::default().fg(Colors::HIGHLIGHT)),
+                Cell::from(selector).style(Style::default().fg(colors.highlight)),
                 Cell::from(wt.status.icon()).style(icon_style),
                 Cell::from(wt.task_name.clone()),
-                Cell::from(wt.branch.clone()).style(Style::default().fg(Colors::MUTED)),
+                Cell::from(wt.branch.clone()).style(Style::default().fg(colors.muted)),
                 Cell::from(commits),
                 Cell::from(wt.file_changes.display()),
             ])
@@ -84,11 +85,11 @@ pub fn render(
         .block(
             Block::default()
                 .borders(Borders::LEFT | Borders::RIGHT)
-                .border_style(Style::default().fg(Colors::BORDER)),
+                .border_style(Style::default().fg(colors.border)),
         )
         .row_highlight_style(
             Style::default()
-                .bg(Color::from_u32(0x303030))
+                .bg(colors.bg_secondary)
                 .add_modifier(Modifier::BOLD),
         );
 
