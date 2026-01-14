@@ -7,7 +7,7 @@ use ratatui::{
 
 use crate::app::App;
 
-use super::components::{empty_state, footer, header, tabs, theme_selector, toast, worktree_list};
+use super::components::{empty_state, footer, header, new_task_dialog, tabs, theme_selector, toast, worktree_list};
 
 /// 渲染 Project 页面
 pub fn render(frame: &mut Frame, app: &App) {
@@ -69,5 +69,10 @@ pub fn render(frame: &mut Frame, app: &App) {
     // 渲染主题选择器（如果打开）
     if app.show_theme_selector {
         theme_selector::render(frame, app.theme_selector_index, colors);
+    }
+
+    // 渲染 New Task 弹窗（如果打开）
+    if app.show_new_task_dialog {
+        new_task_dialog::render(frame, &app.new_task_input, &app.target_branch, colors);
     }
 }

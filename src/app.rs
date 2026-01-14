@@ -1,9 +1,14 @@
+use std::path::Path;
 use std::time::{Duration, Instant};
 
+use chrono::Utc;
 use ratatui::widgets::ListState;
 
+use crate::git;
 use crate::model::{mock, ProjectTab, Worktree};
+use crate::storage::{self, tasks::{self, Task, TaskStatus}};
 use crate::theme::{detect_system_theme, get_theme_colors, Theme, ThemeColors};
+use crate::tmux;
 
 /// Toast 消息
 #[derive(Debug, Clone)]
@@ -158,6 +163,14 @@ pub struct App {
     pub theme_selector_index: usize,
     /// 上次检测到的系统主题（用于 Auto 模式检测变化）
     last_system_dark: bool,
+    /// 是否显示 New Task 弹窗
+    pub show_new_task_dialog: bool,
+    /// New Task 输入内容
+    pub new_task_input: String,
+    /// 当前目标分支 (用于显示 "from {branch}")
+    pub target_branch: String,
+    /// 待 attach 的 tmux session (退出后执行)
+    pub pending_tmux_attach: Option<String>,
 }
 
 impl App {
@@ -165,6 +178,11 @@ impl App {
         let theme = Theme::Auto;
         let last_system_dark = detect_system_theme();
         let colors = get_theme_colors(theme);
+
+        // 尝试获取当前分支
+        let target_branch = git::current_branch(".")
+            .unwrap_or_else(|_| "main".to_string());
+
         Self {
             should_quit: false,
             project: ProjectState::new(),
@@ -174,6 +192,10 @@ impl App {
             show_theme_selector: false,
             theme_selector_index: 0,
             last_system_dark,
+            show_new_task_dialog: false,
+            new_task_input: String::new(),
+            target_branch,
+            pending_tmux_attach: None,
         }
     }
 
@@ -233,6 +255,116 @@ impl App {
         self.theme = self.theme.next();
         self.colors = get_theme_colors(self.theme);
         self.show_toast(format!("Theme: {}", self.theme.label()));
+    }
+
+    // ========== New Task Dialog ==========
+
+    /// 打开 New Task 弹窗
+    pub fn open_new_task_dialog(&mut self) {
+        // 刷新目标分支
+        if let Ok(branch) = git::current_branch(".") {
+            self.target_branch = branch;
+        }
+        self.new_task_input.clear();
+        self.show_new_task_dialog = true;
+    }
+
+    /// 关闭 New Task 弹窗
+    pub fn close_new_task_dialog(&mut self) {
+        self.show_new_task_dialog = false;
+        self.new_task_input.clear();
+    }
+
+    /// New Task 输入字符
+    pub fn new_task_input_char(&mut self, c: char) {
+        self.new_task_input.push(c);
+    }
+
+    /// New Task 删除字符
+    pub fn new_task_delete_char(&mut self) {
+        self.new_task_input.pop();
+    }
+
+    /// 创建新任务
+    pub fn create_new_task(&mut self) {
+        let name = self.new_task_input.trim().to_string();
+        if name.is_empty() {
+            self.show_toast("Task name cannot be empty");
+            return;
+        }
+
+        // 1. 获取项目信息
+        let repo_root = match git::repo_root(".") {
+            Ok(root) => root,
+            Err(e) => {
+                self.show_toast(format!("Not a git repo: {}", e));
+                self.close_new_task_dialog();
+                return;
+            }
+        };
+
+        let project_name = Path::new(&repo_root)
+            .file_name()
+            .map(|s| s.to_string_lossy().to_string())
+            .unwrap_or_else(|| "unknown".to_string());
+
+        // 2. 生成标识符
+        let slug = tasks::to_slug(&name);
+        let branch = tasks::generate_branch_name(&name);
+
+        // 3. 计算路径
+        let worktree_path = match storage::ensure_worktree_dir(&project_name) {
+            Ok(dir) => dir.join(&slug),
+            Err(e) => {
+                self.show_toast(format!("Failed to create dir: {}", e));
+                self.close_new_task_dialog();
+                return;
+            }
+        };
+
+        // 4. 创建 git worktree
+        if let Err(e) = git::create_worktree(
+            &repo_root,
+            &branch,
+            &worktree_path,
+            &self.target_branch,
+        ) {
+            self.show_toast(format!("Git error: {}", e));
+            self.close_new_task_dialog();
+            return;
+        }
+
+        // 5. 保存 task 元数据
+        let task = Task {
+            id: slug.clone(),
+            name: name.clone(),
+            branch: branch.clone(),
+            target: self.target_branch.clone(),
+            worktree_path: worktree_path.to_string_lossy().to_string(),
+            created_at: Utc::now(),
+            status: TaskStatus::Active,
+        };
+
+        if let Err(e) = tasks::add_task(&project_name, task) {
+            // 只是警告，worktree 已创建
+            eprintln!("Warning: Failed to save task: {}", e);
+        }
+
+        // 6. 创建 tmux session
+        let session = tmux::session_name(&project_name, &slug);
+        if let Err(e) = tmux::create_session(&session, worktree_path.to_str().unwrap_or(".")) {
+            self.show_toast(format!("tmux error: {}", e));
+            self.close_new_task_dialog();
+            return;
+        }
+
+        // 7. 关闭弹窗，设置待 attach 的 session
+        self.close_new_task_dialog();
+        self.show_toast(format!("Created: {}", name));
+
+        // 8. 标记需要 attach（主循环退出后执行）
+        self.pending_tmux_attach = Some(session);
+        self.should_quit = true;
     }
 
     /// 显示 Toast 消息

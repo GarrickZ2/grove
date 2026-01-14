@@ -1,7 +1,10 @@
 mod app;
 mod event;
+mod git;
 mod model;
+mod storage;
 mod theme;
+mod tmux;
 mod ui;
 
 use std::io;
@@ -22,6 +25,12 @@ fn main() -> io::Result<()> {
 
     // 恢复终端
     ratatui::restore();
+
+    // 如果有待 attach 的 tmux session，在 TUI 退出后执行
+    if let Some(session) = app.pending_tmux_attach.take() {
+        // 忽略 attach 错误，因为 TUI 已经退出
+        let _ = tmux::attach_session(&session);
+    }
 
     result
 }

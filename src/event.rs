@@ -29,6 +29,12 @@ pub fn handle_events(app: &mut App) -> io::Result<bool> {
 }
 
 fn handle_key(app: &mut App, key: KeyEvent) {
+    // 如果 New Task 弹窗打开，优先处理
+    if app.show_new_task_dialog {
+        handle_new_task_dialog_key(app, key);
+        return;
+    }
+
     // 如果主题选择器打开，优先处理选择器事件
     if app.show_theme_selector {
         handle_theme_selector_key(app, key);
@@ -56,7 +62,7 @@ fn handle_key(app: &mut App, key: KeyEvent) {
 
         // 功能按键 - New Task
         KeyCode::Char('n') => {
-            app.show_toast("New Task - 功能开发中");
+            app.open_new_task_dialog();
         }
 
         // 功能按键 - Enter
@@ -122,6 +128,33 @@ fn handle_theme_selector_key(app: &mut App, key: KeyEvent) {
         // 取消
         KeyCode::Esc | KeyCode::Char('q') => {
             app.close_theme_selector();
+        }
+
+        _ => {}
+    }
+}
+
+/// 处理 New Task 弹窗的键盘事件
+fn handle_new_task_dialog_key(app: &mut App, key: KeyEvent) {
+    match key.code {
+        // 确认创建
+        KeyCode::Enter => {
+            app.create_new_task();
+        }
+
+        // 取消
+        KeyCode::Esc => {
+            app.close_new_task_dialog();
+        }
+
+        // 删除字符
+        KeyCode::Backspace => {
+            app.new_task_delete_char();
+        }
+
+        // 输入字符
+        KeyCode::Char(c) => {
+            app.new_task_input_char(c);
         }
 
         _ => {}

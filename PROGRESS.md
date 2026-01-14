@@ -14,6 +14,7 @@
 | Toast 提示 | ✅ 完成 | 2 秒自动消失 |
 | 退出程序 | ✅ 完成 | 按 q 退出 |
 | **主题系统** | ✅ 完成 | 8 个预设主题 + Auto 模式 |
+| **New Task** | ✅ 完成 | 创建 worktree + tmux session |
 
 ### 主题系统详情
 
@@ -34,6 +35,40 @@
 - Enter 确认，Esc 取消
 - Auto 模式每 100ms 检测系统主题变化
 
+### New Task 功能详情
+
+**功能特点:**
+- 按 `n` 打开 New Task 弹窗
+- 输入任务名称，实时预览生成的 branch 名
+- Enter 确认创建，Esc 取消
+
+**Branch 命名规则:**
+| 输入格式 | 生成的 branch |
+|----------|---------------|
+| `fix: header bug` | `fix/header-bug` |
+| `feat: oauth` / `feature: oauth` | `feature/oauth` |
+| `dev: experiment` | `dev/experiment` |
+| `#123 bug fix` | `issue-123/bug-fix` |
+| `issue #456 payment` | `issue-456/payment` |
+| `Add new feature` | `grove/add-new-feature` (默认) |
+
+**存储结构:**
+```
+~/.grove/
+├── projects/
+│   └── {project}/
+│       └── tasks.toml      # 任务元数据
+└── worktrees/
+    └── {project}/
+        └── {task-slug}/    # git worktree 目录
+```
+
+**创建流程:**
+1. 创建 git worktree (`git worktree add -b {branch} {path} {base}`)
+2. 保存任务元数据到 `tasks.toml`
+3. 创建 tmux session
+4. Grove 退出后自动 attach 到 session
+
 ### Mock 数据 (待接入真实数据)
 
 | 数据 | 来源 | 说明 |
@@ -48,7 +83,7 @@
 
 | 按键 | 功能 | 状态 |
 |------|------|------|
-| `n` | New Task - 创建新 worktree | ⏳ 待开发 |
+| `n` | New Task - 创建新 worktree | ✅ 完成 |
 | `Enter` | 进入 Worktree / Recover | ⏳ 待开发 |
 | `a` | Archive worktree | ⏳ 待开发 |
 | `x` | Clean worktree | ⏳ 待开发 |
@@ -62,6 +97,13 @@ src/
 ├── main.rs                    # 应用入口
 ├── app.rs                     # 应用状态管理
 ├── event.rs                   # 键盘事件处理
+├── git/
+│   └── mod.rs                 # Git worktree 操作 (Shell)
+├── storage/
+│   ├── mod.rs                 # 目录管理 (~/.grove/)
+│   └── tasks.rs               # Task TOML 读写 + branch 命名
+├── tmux/
+│   └── mod.rs                 # tmux session 管理
 ├── model/
 │   ├── mod.rs
 │   ├── worktree.rs            # Worktree, WorktreeStatus, ProjectTab
@@ -82,7 +124,8 @@ src/
         ├── empty_state.rs     # 空状态提示
         ├── footer.rs          # 底部快捷键提示
         ├── toast.rs           # Toast 弹窗
-        └── theme_selector.rs  # 主题选择器弹窗
+        ├── theme_selector.rs  # 主题选择器弹窗
+        └── new_task_dialog.rs # New Task 弹窗
 ```
 
 ---
@@ -95,11 +138,12 @@ src/
 - [ ] 检测 tmux session 状态 (Live/Idle)
 
 ### Phase 2 - Git 操作
-- [ ] New Task 创建 worktree
+- [x] New Task 创建 worktree
+- [ ] Enter 进入 worktree (attach tmux session)
 - [ ] Worktree 详情页面
 - [ ] Diff 视图
 - [ ] Commit / Sync / Merge 操作
 
 ### Phase 3 - 完善
 - [ ] Workspace 层级
-- [ ] 配置文件 (~/.grove/)
+- [ ] 配置文件持久化
