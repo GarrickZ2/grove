@@ -1,6 +1,6 @@
 use ratatui::{
     layout::Rect,
-    style::{Modifier, Style},
+    style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Paragraph},
     Frame,
@@ -14,31 +14,30 @@ pub fn render(frame: &mut Frame, area: Rect, current_tab: ProjectTab) {
     let tabs = [ProjectTab::Current, ProjectTab::Other, ProjectTab::Archived];
 
     let mut spans = Vec::new();
-    spans.push(Span::raw("  "));
+    spans.push(Span::raw("   "));
 
     for (i, tab) in tabs.iter().enumerate() {
         let label = tab.label();
 
         if *tab == current_tab {
-            // 选中的 Tab: 带圆点和高亮
+            // 选中的 Tab: 背景高亮块
             spans.push(Span::styled(
-                "● ",
-                Style::default().fg(Colors::HIGHLIGHT),
-            ));
-            spans.push(Span::styled(
-                label,
+                format!("  {}  ", label),
                 Style::default()
-                    .fg(Colors::HIGHLIGHT)
+                    .fg(Color::Black)
+                    .bg(Colors::HIGHLIGHT)
                     .add_modifier(Modifier::BOLD),
             ));
         } else {
-            // 未选中的 Tab
-            spans.push(Span::raw("  ")); // 对齐用的空格
-            spans.push(Span::styled(label, Style::default().fg(Colors::MUTED)));
+            // 未选中的 Tab: 普通显示
+            spans.push(Span::styled(
+                format!("  {}  ", label),
+                Style::default().fg(Colors::MUTED),
+            ));
         }
 
         if i < tabs.len() - 1 {
-            spans.push(Span::raw("   "));
+            spans.push(Span::raw("  "));
         }
     }
 
