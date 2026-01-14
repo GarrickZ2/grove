@@ -184,7 +184,7 @@ pub struct App {
     pub new_task_input: String,
     /// 当前目标分支 (用于显示 "from {branch}")
     pub target_branch: String,
-    /// 待 attach 的 tmux session (退出后执行)
+    /// 待 attach 的 tmux session (暂停 TUI 后执行，完成后恢复 TUI)
     pub pending_tmux_attach: Option<String>,
 }
 
@@ -380,9 +380,8 @@ impl App {
         self.close_new_task_dialog();
         self.show_toast(format!("Created: {}", name));
 
-        // 8. 标记需要 attach（主循环退出后执行）
+        // 8. 标记需要 attach（主循环会暂停 TUI，attach 完成后恢复）
         self.pending_tmux_attach = Some(session);
-        self.should_quit = true;
     }
 
     /// 进入当前选中的 worktree (attach tmux session)
@@ -412,9 +411,8 @@ impl App {
             }
         }
 
-        // 5. 设置 pending attach 并退出
+        // 5. 设置 pending attach（主循环会暂停 TUI，attach 完成后恢复）
         self.pending_tmux_attach = Some(session);
-        self.should_quit = true;
     }
 
     /// 显示 Toast 消息

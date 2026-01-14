@@ -26,17 +26,26 @@ fn main() -> io::Result<()> {
     // 恢复终端
     ratatui::restore();
 
-    // 如果有待 attach 的 tmux session，在 TUI 退出后执行
-    if let Some(session) = app.pending_tmux_attach.take() {
-        // 忽略 attach 错误，因为 TUI 已经退出
-        let _ = tmux::attach_session(&session);
-    }
-
     result
 }
 
 fn run(terminal: &mut DefaultTerminal, app: &mut App) -> io::Result<()> {
     loop {
+        // 检查是否有待 attach 的 tmux session
+        if let Some(session) = app.pending_tmux_attach.take() {
+            // 暂停 TUI
+            ratatui::restore();
+
+            // attach 到 tmux session（阻塞，直到用户 detach）
+            let _ = tmux::attach_session(&session);
+
+            // 恢复 TUI
+            *terminal = ratatui::init();
+
+            // 刷新数据（用户可能在 tmux 中做了改动）
+            app.project.refresh();
+        }
+
         // 渲染界面
         terminal.draw(|frame| {
             ui::project::render(frame, app);
