@@ -5,7 +5,7 @@ use chrono::Utc;
 use ratatui::widgets::ListState;
 
 use crate::git;
-use crate::model::{loader, ProjectTab, Worktree};
+use crate::model::{loader, ProjectTab, Worktree, WorktreeStatus};
 use crate::storage::{self, tasks::{self, Task, TaskStatus}};
 use crate::theme::{detect_system_theme, get_theme_colors, Theme, ThemeColors};
 use crate::tmux;
@@ -385,6 +385,38 @@ impl App {
         self.should_quit = true;
     }
 
+    /// 进入当前选中的 worktree (attach tmux session)
+    pub fn enter_worktree(&mut self) {
+        // 1. 获取当前选中的 worktree
+        let selected = self.project.current_list_state().selected();
+        let Some(index) = selected else { return };
+
+        let worktrees = self.project.current_worktrees();
+        let Some(wt) = worktrees.get(index) else { return };
+
+        // 2. 检查状态 - Broken 不能进入
+        if wt.status == WorktreeStatus::Broken {
+            self.show_toast("Worktree broken - please fix or delete");
+            return;
+        }
+
+        // 3. 获取 session 名称
+        let slug = slug_from_path(&wt.path);
+        let session = tmux::session_name(&self.project.project_name, &slug);
+
+        // 4. 如果 session 不存在，创建它
+        if !tmux::session_exists(&session) {
+            if let Err(e) = tmux::create_session(&session, &wt.path) {
+                self.show_toast(format!("tmux error: {}", e));
+                return;
+            }
+        }
+
+        // 5. 设置 pending attach 并退出
+        self.pending_tmux_attach = Some(session);
+        self.should_quit = true;
+    }
+
     /// 显示 Toast 消息
     pub fn show_toast(&mut self, message: impl Into<String>) {
         self.toast = Some(Toast::new(message, Duration::from_secs(2)));
@@ -423,4 +455,13 @@ impl Default for App {
     fn default() -> Self {
         Self::new()
     }
+}
+
+/// 从 worktree 路径提取 task slug
+/// ~/.grove/worktrees/project/oauth-login -> oauth-login
+fn slug_from_path(path: &str) -> String {
+    Path::new(path)
+        .file_name()
+        .map(|s| s.to_string_lossy().to_string())
+        .unwrap_or_default()
 }

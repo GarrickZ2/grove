@@ -70,7 +70,7 @@ fn handle_key(app: &mut App, key: KeyEvent) {
             if app.project.current_tab == ProjectTab::Archived {
                 app.show_toast("Recover - 功能开发中");
             } else {
-                app.show_toast("Enter Worktree - 功能开发中");
+                app.enter_worktree();
             }
         }
 
