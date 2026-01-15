@@ -5,7 +5,7 @@ use chrono::Utc;
 use ratatui::widgets::ListState;
 
 use crate::git;
-use crate::model::{loader, ProjectTab, Worktree, WorktreeStatus};
+use crate::model::{loader, ProjectTab, Worktree, WorktreeStatus, WorkspaceState};
 use crate::ui::components::branch_selector::BranchSelectorData;
 use crate::ui::components::confirm_dialog::ConfirmType;
 use crate::ui::components::input_confirm_dialog::InputConfirmData;
@@ -297,8 +297,21 @@ impl Default for ProjectState {
     }
 }
 
+/// 应用模式
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AppMode {
+    /// Workspace 层级 - 项目列表
+    Workspace,
+    /// Project 层级 - 任务列表
+    Project,
+}
+
 /// 全局应用状态
 pub struct App {
+    /// 当前模式
+    pub mode: AppMode,
+    /// Workspace 状态
+    pub workspace: WorkspaceState,
     /// 是否应该退出
     pub should_quit: bool,
     /// Project 页面状态
@@ -364,16 +377,35 @@ impl App {
         let last_system_dark = detect_system_theme();
         let colors = get_theme_colors(theme);
 
-        // 获取项目路径
-        let project_path = git::repo_root(".").unwrap_or_else(|_| ".".to_string());
+        // 判断是否在 git 仓库中
+        let is_in_git_repo = git::is_git_repo(".");
 
-        // 尝试获取当前分支
-        let target_branch = git::current_branch(&project_path)
-            .unwrap_or_else(|_| "main".to_string());
+        let (mode, project, workspace, target_branch) = if is_in_git_repo {
+            // 在 git 仓库中 -> Project 模式
+            let project_path = git::repo_root(".").unwrap_or_else(|_| ".".to_string());
+            let target_branch = git::current_branch(&project_path)
+                .unwrap_or_else(|_| "main".to_string());
+            (
+                AppMode::Project,
+                ProjectState::new(&project_path),
+                WorkspaceState::default(),
+                target_branch,
+            )
+        } else {
+            // 非 git 仓库 -> Workspace 模式
+            (
+                AppMode::Workspace,
+                ProjectState::default(),
+                WorkspaceState::new(),
+                "main".to_string(),
+            )
+        };
 
         Self {
+            mode,
+            workspace,
             should_quit: false,
-            project: ProjectState::new(&project_path),
+            project,
             toast: None,
             theme,
             colors,
@@ -391,6 +423,20 @@ impl App {
             show_help: false,
             merge_dialog: None,
         }
+    }
+
+    /// 从 Workspace 进入 Project
+    pub fn enter_project(&mut self, project_path: &str) {
+        self.project = ProjectState::new(project_path);
+        self.target_branch = git::current_branch(project_path)
+            .unwrap_or_else(|_| "main".to_string());
+        self.mode = AppMode::Project;
+    }
+
+    /// 从 Project 返回 Workspace
+    pub fn back_to_workspace(&mut self) {
+        self.workspace.reload_projects();
+        self.mode = AppMode::Workspace;
     }
 
     /// 打开主题选择器

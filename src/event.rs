@@ -3,7 +3,7 @@ use std::time::Duration;
 
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind};
 
-use crate::app::App;
+use crate::app::{App, AppMode};
 use crate::model::ProjectTab;
 
 /// 处理事件，返回 true 表示应该继续运行
@@ -73,6 +73,114 @@ fn handle_key(app: &mut App, key: KeyEvent) {
         return;
     }
 
+    // 根据模式分发事件
+    match app.mode {
+        AppMode::Workspace => handle_workspace_key(app, key),
+        AppMode::Project => handle_project_key(app, key),
+    }
+}
+
+/// 处理 Workspace 模式的键盘事件
+fn handle_workspace_key(app: &mut App, key: KeyEvent) {
+    // 搜索模式
+    if app.workspace.search_mode {
+        handle_workspace_search_key(app, key);
+        return;
+    }
+
+    match key.code {
+        // 退出
+        KeyCode::Char('q') => app.quit(),
+
+        // 导航 - 下移
+        KeyCode::Char('j') | KeyCode::Down => {
+            app.workspace.select_next();
+        }
+
+        // 导航 - 上移
+        KeyCode::Char('k') | KeyCode::Up => {
+            app.workspace.select_previous();
+        }
+
+        // Tab - 展开/折叠详情
+        KeyCode::Tab => {
+            app.workspace.toggle_expand();
+        }
+
+        // Enter - 进入项目
+        KeyCode::Enter => {
+            if let Some(project) = app.workspace.selected_project() {
+                let path = project.path.clone();
+                app.enter_project(&path);
+            }
+        }
+
+        // 功能按键 - 添加项目
+        KeyCode::Char('a') => {
+            app.show_toast("Add project - 功能开发中");
+        }
+
+        // 功能按键 - 删除项目
+        KeyCode::Char('x') => {
+            app.show_toast("Delete project - 功能开发中");
+        }
+
+        // 功能按键 - 搜索
+        KeyCode::Char('/') => {
+            app.workspace.enter_search_mode();
+        }
+
+        // 功能按键 - Theme 选择器
+        KeyCode::Char('T') | KeyCode::Char('t') => {
+            app.open_theme_selector();
+        }
+
+        // 功能按键 - 帮助
+        KeyCode::Char('?') => {
+            app.show_help = true;
+        }
+
+        _ => {}
+    }
+}
+
+/// 处理 Workspace 搜索模式的键盘事件
+fn handle_workspace_search_key(app: &mut App, key: KeyEvent) {
+    match key.code {
+        // 退出搜索
+        KeyCode::Enter => {
+            app.workspace.exit_search_mode();
+        }
+
+        // 取消搜索
+        KeyCode::Esc => {
+            app.workspace.clear_search();
+        }
+
+        // 导航
+        KeyCode::Down => {
+            app.workspace.select_next();
+        }
+        KeyCode::Up => {
+            app.workspace.select_previous();
+        }
+
+        // 删除字符
+        KeyCode::Backspace => {
+            app.workspace.search_pop();
+        }
+
+        // 输入字符
+        KeyCode::Char(c) => {
+            app.workspace.search_push(c);
+        }
+
+        _ => {}
+    }
+}
+
+/// 处理 Project 模式的键盘事件
+fn handle_project_key(app: &mut App, key: KeyEvent) {
     // 搜索模式
     if app.project.search_mode {
         handle_search_mode_key(app, key);
@@ -160,9 +268,9 @@ fn handle_key(app: &mut App, key: KeyEvent) {
             app.show_help = true;
         }
 
-        // 功能按键 - 返回
+        // 功能按键 - 返回 Workspace
         KeyCode::Esc => {
-            app.show_toast("返回 Workspace - 功能开发中");
+            app.back_to_workspace();
         }
 
         _ => {}

@@ -369,3 +369,101 @@ pub fn commit(repo_path: &str, message: &str) -> Result<(), String> {
         Err(format!("git commit failed: {}", stderr.trim()))
     }
 }
+
+/// 获取相对于 origin 的 commits ahead 数量
+/// 执行: git rev-list --count origin/{branch}..HEAD
+pub fn commits_ahead_of_origin(repo_path: &str) -> Result<Option<u32>, String> {
+    // 先获取当前分支
+    let branch = current_branch(repo_path)?;
+
+    // 检查 origin/{branch} 是否存在
+    let check = Command::new("git")
+        .current_dir(repo_path)
+        .args(["rev-parse", "--verify", &format!("origin/{}", branch)])
+        .output();
+
+    if check.map(|o| !o.status.success()).unwrap_or(true) {
+        // origin 分支不存在，返回 None
+        return Ok(None);
+    }
+
+    let output = Command::new("git")
+        .current_dir(repo_path)
+        .args(["rev-list", "--count", &format!("origin/{}..HEAD", branch)])
+        .output()
+        .map_err(|e| format!("Failed to execute git: {}", e))?;
+
+    if output.status.success() {
+        let count_str = String::from_utf8_lossy(&output.stdout);
+        count_str
+            .trim()
+            .parse::<u32>()
+            .map(Some)
+            .map_err(|e| format!("Failed to parse count: {}", e))
+    } else {
+        Ok(None)
+    }
+}
+
+/// 获取最近提交的相对时间
+/// 执行: git log -1 --format=%cr
+pub fn last_commit_time(repo_path: &str) -> Result<String, String> {
+    let output = Command::new("git")
+        .current_dir(repo_path)
+        .args(["log", "-1", "--format=%cr"])
+        .output()
+        .map_err(|e| format!("Failed to execute git: {}", e))?;
+
+    if output.status.success() {
+        let time = String::from_utf8_lossy(&output.stdout);
+        Ok(time.trim().to_string())
+    } else {
+        Ok("unknown".to_string())
+    }
+}
+
+/// 获取相对于 origin 的文件变更统计
+/// 执行: git diff --numstat origin/{branch}
+pub fn changes_from_origin(repo_path: &str) -> Result<(u32, u32), String> {
+    // 先获取当前分支
+    let branch = current_branch(repo_path)?;
+
+    // 检查 origin/{branch} 是否存在
+    let check = Command::new("git")
+        .current_dir(repo_path)
+        .args(["rev-parse", "--verify", &format!("origin/{}", branch)])
+        .output();
+
+    if check.map(|o| !o.status.success()).unwrap_or(true) {
+        // origin 分支不存在，返回 0
+        return Ok((0, 0));
+    }
+
+    let output = Command::new("git")
+        .current_dir(repo_path)
+        .args(["diff", "--numstat", &format!("origin/{}", branch)])
+        .output()
+        .map_err(|e| format!("Failed to execute git: {}", e))?;
+
+    if output.status.success() {
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let mut additions = 0u32;
+        let mut deletions = 0u32;
+
+        for line in stdout.lines() {
+            let parts: Vec<&str> = line.split('\t').collect();
+            if parts.len() >= 2 {
+                if let Ok(add) = parts[0].parse::<u32>() {
+                    additions += add;
+                }
+                if let Ok(del) = parts[1].parse::<u32>() {
+                    deletions += del;
+                }
+            }
+        }
+
+        Ok((additions, deletions))
+    } else {
+        Ok((0, 0))
+    }
+}

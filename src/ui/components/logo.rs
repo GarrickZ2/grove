@@ -23,12 +23,24 @@ pub const LOGO_HEIGHT: u16 = 6;
 
 /// 渲染居中的 Logo
 pub fn render(frame: &mut Frame, area: Rect, colors: &ThemeColors) {
-    let logo_lines: Vec<Line> = LOGO
-        .iter()
-        .map(|line| Line::from(Span::styled(*line, Style::default().fg(colors.logo))))
-        .collect();
+    render_with_padding(frame, area, colors, 0);
+}
 
-    let logo_widget = Paragraph::new(logo_lines).alignment(Alignment::Center);
+/// 渲染居中的 Logo（带顶部间距）
+pub fn render_with_padding(frame: &mut Frame, area: Rect, colors: &ThemeColors, top_padding: u16) {
+    let mut lines: Vec<Line> = Vec::new();
+
+    // 顶部空行
+    for _ in 0..top_padding {
+        lines.push(Line::from(""));
+    }
+
+    // Logo 行
+    for line in LOGO {
+        lines.push(Line::from(Span::styled(*line, Style::default().fg(colors.logo))));
+    }
+
+    let logo_widget = Paragraph::new(lines).alignment(Alignment::Center);
 
     frame.render_widget(logo_widget, area);
 }

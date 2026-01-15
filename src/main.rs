@@ -11,7 +11,7 @@ use std::io;
 
 use ratatui::DefaultTerminal;
 
-use app::App;
+use app::{App, AppMode};
 
 fn main() -> io::Result<()> {
     // 初始化终端
@@ -48,7 +48,10 @@ fn run(terminal: &mut DefaultTerminal, app: &mut App) -> io::Result<()> {
 
         // 渲染界面
         terminal.draw(|frame| {
-            ui::project::render(frame, app);
+            match app.mode {
+                AppMode::Workspace => ui::workspace::render(frame, app),
+                AppMode::Project => ui::project::render(frame, app),
+            }
         })?;
 
         // 处理事件

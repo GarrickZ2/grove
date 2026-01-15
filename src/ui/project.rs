@@ -7,7 +7,7 @@ use ratatui::{
 
 use crate::app::App;
 
-use super::components::{branch_selector, confirm_dialog, empty_state, footer, header, help_panel, input_confirm_dialog, merge_dialog, new_task_dialog, search_bar, tabs, theme_selector, toast, worktree_list};
+use super::components::{branch_selector, confirm_dialog, empty_state, footer, header, help_panel, input_confirm_dialog, merge_dialog, new_task_dialog, project_info, search_bar, tabs, theme_selector, toast, worktree_list};
 
 /// 渲染 Project 页面
 pub fn render(frame: &mut Frame, app: &App) {
@@ -23,27 +23,29 @@ pub fn render(frame: &mut Frame, app: &App) {
     let show_search = app.project.search_mode || !app.project.search_query.is_empty();
 
     // 根据搜索状态决定布局
-    let (header_area, tabs_area, search_area, list_area, footer_area) = if show_search {
-        let [header_area, tabs_area, search_area, list_area, footer_area] =
+    let (header_area, project_info_area, tabs_area, search_area, list_area, footer_area) = if show_search {
+        let [header_area, project_info_area, tabs_area, search_area, list_area, footer_area] =
             ratatui::layout::Layout::vertical([
                 Constraint::Length(header::HEADER_HEIGHT),
+                Constraint::Length(project_info::PROJECT_INFO_HEIGHT),
                 Constraint::Length(2),
                 Constraint::Length(1),  // 搜索框
                 Constraint::Fill(1),
                 Constraint::Length(3),
             ])
             .areas(area);
-        (header_area, tabs_area, Some(search_area), list_area, footer_area)
+        (header_area, project_info_area, tabs_area, Some(search_area), list_area, footer_area)
     } else {
-        let [header_area, tabs_area, list_area, footer_area] =
+        let [header_area, project_info_area, tabs_area, list_area, footer_area] =
             ratatui::layout::Layout::vertical([
                 Constraint::Length(header::HEADER_HEIGHT),
+                Constraint::Length(project_info::PROJECT_INFO_HEIGHT),
                 Constraint::Length(2),
                 Constraint::Fill(1),
                 Constraint::Length(3),
             ])
             .areas(area);
-        (header_area, tabs_area, None, list_area, footer_area)
+        (header_area, project_info_area, tabs_area, None, list_area, footer_area)
     };
 
     // 渲染 Header
@@ -54,6 +56,24 @@ pub fn render(frame: &mut Frame, app: &App) {
         app.project.active_task_count(),
         colors,
     );
+
+    // 获取并渲染 Project Info
+    let project_info_data = {
+        let repo_path = &app.project.project_path;
+        let branch = crate::git::current_branch(repo_path).unwrap_or_else(|_| "unknown".to_string());
+        let commits_ahead = crate::git::commits_ahead_of_origin(repo_path).unwrap_or(None);
+        let (additions, deletions) = crate::git::changes_from_origin(repo_path).unwrap_or((0, 0));
+        let last_commit = crate::git::last_commit_time(repo_path).unwrap_or_else(|_| "unknown".to_string());
+
+        project_info::ProjectInfoData {
+            branch,
+            commits_ahead,
+            additions,
+            deletions,
+            last_commit,
+        }
+    };
+    project_info::render(frame, project_info_area, &project_info_data, colors);
 
     // 渲染 Tabs
     tabs::render(frame, tabs_area, app.project.current_tab, colors);

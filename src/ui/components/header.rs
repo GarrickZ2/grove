@@ -10,7 +10,7 @@ use crate::theme::ThemeColors;
 
 use super::logo;
 
-/// Header 总高度：1 (上边距) + 6 (Logo) + 1 (下边距) + 1 (项目信息) = 9
+/// Header 总高度：1 (边框) + 6 (Logo) + 1 (下边距) + 1 (项目信息) = 9
 pub const HEADER_HEIGHT: u16 = 9;
 
 /// 渲染顶部区域（Logo + 项目信息）
@@ -30,8 +30,7 @@ pub fn render(
     frame.render_widget(block, area);
 
     // 内部垂直布局
-    let [top_padding, logo_area, bottom_padding, info_area] = Layout::vertical([
-        Constraint::Length(1),              // 上边距
+    let [logo_area, bottom_padding, info_area] = Layout::vertical([
         Constraint::Length(logo::LOGO_HEIGHT), // Logo
         Constraint::Length(1),              // 下边距
         Constraint::Length(1),              // 项目信息
@@ -46,7 +45,6 @@ pub fn render(
 
     // 填充空白区域（防止残留）
     let empty = Paragraph::new("");
-    frame.render_widget(empty.clone(), top_padding);
     frame.render_widget(empty, bottom_padding);
 }
 

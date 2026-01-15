@@ -1,5 +1,6 @@
 pub mod config;
 pub mod tasks;
+pub mod workspace;
 
 use std::io;
 use std::path::PathBuf;
