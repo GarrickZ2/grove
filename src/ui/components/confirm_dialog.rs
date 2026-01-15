@@ -19,6 +19,16 @@ pub enum ConfirmType {
     CleanMerged { task_name: String, branch: String },
     /// 弱确认 - Recover 归档的任务
     Recover { task_name: String, branch: String },
+    /// Sync - worktree 有未提交代码
+    SyncUncommittedWorktree { task_name: String },
+    /// Sync - target 有未提交代码
+    SyncUncommittedTarget { task_name: String, target: String },
+    /// Merge - worktree 有未提交代码
+    MergeUncommittedWorktree { task_name: String },
+    /// Merge - target 有未提交代码
+    MergeUncommittedTarget { task_name: String, target: String },
+    /// Merge 成功后询问是否 Archive
+    MergeSuccess { task_name: String },
 }
 
 impl ConfirmType {
@@ -27,6 +37,11 @@ impl ConfirmType {
             ConfirmType::ArchiveUnmerged { .. } => " Archive ",
             ConfirmType::CleanMerged { .. } => " Clean ",
             ConfirmType::Recover { .. } => " Recover ",
+            ConfirmType::SyncUncommittedWorktree { .. } => " Sync ",
+            ConfirmType::SyncUncommittedTarget { .. } => " Sync ",
+            ConfirmType::MergeUncommittedWorktree { .. } => " Merge ",
+            ConfirmType::MergeUncommittedTarget { .. } => " Merge ",
+            ConfirmType::MergeSuccess { .. } => " Success ",
         }
     }
 
@@ -60,6 +75,55 @@ impl ConfirmType {
                     Line::from("This will:"),
                     Line::from("• Recreate worktree"),
                     Line::from("• Start tmux session"),
+                ]
+            }
+            ConfirmType::SyncUncommittedWorktree { task_name } => {
+                vec![
+                    Line::from(format!("Task: {}", task_name)),
+                    Line::from(""),
+                    Line::from("Worktree has uncommitted changes."),
+                    Line::from("They will NOT be synced."),
+                    Line::from(""),
+                    Line::from("Continue anyway?"),
+                ]
+            }
+            ConfirmType::SyncUncommittedTarget { task_name, target } => {
+                vec![
+                    Line::from(format!("Task: {}", task_name)),
+                    Line::from(""),
+                    Line::from(format!("Target '{}' has uncommitted", target)),
+                    Line::from("changes."),
+                    Line::from(""),
+                    Line::from("Continue anyway?"),
+                ]
+            }
+            ConfirmType::MergeUncommittedWorktree { task_name } => {
+                vec![
+                    Line::from(format!("Task: {}", task_name)),
+                    Line::from(""),
+                    Line::from("Worktree has uncommitted changes."),
+                    Line::from("They will NOT be merged."),
+                    Line::from(""),
+                    Line::from("Continue anyway?"),
+                ]
+            }
+            ConfirmType::MergeUncommittedTarget { task_name, target } => {
+                vec![
+                    Line::from(format!("Task: {}", task_name)),
+                    Line::from(""),
+                    Line::from(format!("Target '{}' has uncommitted", target)),
+                    Line::from("changes."),
+                    Line::from(""),
+                    Line::from("Continue anyway?"),
+                ]
+            }
+            ConfirmType::MergeSuccess { task_name } => {
+                vec![
+                    Line::from("Merged successfully!"),
+                    Line::from(""),
+                    Line::from(format!("Task: {}", task_name)),
+                    Line::from(""),
+                    Line::from("Archive this task?"),
                 ]
             }
         }

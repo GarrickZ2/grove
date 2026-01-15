@@ -283,3 +283,89 @@ pub fn is_merged(repo_path: &str, branch: &str, target: &str) -> Result<bool, St
     // exit code 0 = is ancestor (merged), non-zero = not merged
     Ok(output.status.success())
 }
+
+/// 检查是否有未提交的改动
+/// 执行: git status --porcelain
+pub fn has_uncommitted_changes(path: &str) -> Result<bool, String> {
+    let output = Command::new("git")
+        .current_dir(path)
+        .args(["status", "--porcelain"])
+        .output()
+        .map_err(|e| format!("Failed to execute git: {}", e))?;
+
+    if output.status.success() {
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        Ok(!stdout.trim().is_empty())
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        Err(format!("git status failed: {}", stderr.trim()))
+    }
+}
+
+/// 执行 rebase
+/// 执行: git rebase {target}
+pub fn rebase(worktree_path: &str, target: &str) -> Result<(), String> {
+    let output = Command::new("git")
+        .current_dir(worktree_path)
+        .args(["rebase", target])
+        .output()
+        .map_err(|e| format!("Failed to execute git: {}", e))?;
+
+    if output.status.success() {
+        Ok(())
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        Err(format!("git rebase failed: {}", stderr.trim()))
+    }
+}
+
+/// 执行 squash merge
+/// 执行: git merge --squash {branch}
+pub fn merge_squash(repo_path: &str, branch: &str) -> Result<(), String> {
+    let output = Command::new("git")
+        .current_dir(repo_path)
+        .args(["merge", "--squash", branch])
+        .output()
+        .map_err(|e| format!("Failed to execute git: {}", e))?;
+
+    if output.status.success() {
+        Ok(())
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        Err(format!("git merge --squash failed: {}", stderr.trim()))
+    }
+}
+
+/// 执行 merge commit（保留历史）
+/// 执行: git merge --no-ff {branch} -m {message}
+pub fn merge_no_ff(repo_path: &str, branch: &str, message: &str) -> Result<(), String> {
+    let output = Command::new("git")
+        .current_dir(repo_path)
+        .args(["merge", "--no-ff", branch, "-m", message])
+        .output()
+        .map_err(|e| format!("Failed to execute git: {}", e))?;
+
+    if output.status.success() {
+        Ok(())
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        Err(format!("git merge --no-ff failed: {}", stderr.trim()))
+    }
+}
+
+/// 提交（用于 squash merge 后）
+/// 执行: git commit -m {message}
+pub fn commit(repo_path: &str, message: &str) -> Result<(), String> {
+    let output = Command::new("git")
+        .current_dir(repo_path)
+        .args(["commit", "-m", message])
+        .output()
+        .map_err(|e| format!("Failed to execute git: {}", e))?;
+
+    if output.status.success() {
+        Ok(())
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        Err(format!("git commit failed: {}", stderr.trim()))
+    }
+}

@@ -13,7 +13,7 @@ use crate::theme::ThemeColors;
 /// 帮助面板宽度
 const PANEL_WIDTH: u16 = 38;
 /// 帮助面板高度
-const PANEL_HEIGHT: u16 = 24;
+const PANEL_HEIGHT: u16 = 26;
 
 /// 渲染帮助面板
 pub fn render(frame: &mut Frame, colors: &ThemeColors) {
@@ -57,10 +57,11 @@ fn build_help_lines(colors: &ThemeColors) -> Vec<Line<'static>> {
     // Actions 分组
     lines.push(section_header("Actions", colors));
     lines.push(key_line("n", "New task", colors));
+    lines.push(key_line("s", "Sync from target", colors));
+    lines.push(key_line("m", "Merge to target", colors));
     lines.push(key_line("a", "Archive task", colors));
     lines.push(key_line("x", "Clean (delete)", colors));
-    lines.push(key_line("r", "Rebase to", colors));
-    lines.push(key_line("R", "Recover archived", colors));
+    lines.push(key_line("r", "Rebase to / Recover", colors));
     lines.push(Line::from(""));
 
     // Search 分组

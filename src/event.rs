@@ -37,6 +37,12 @@ fn handle_key(app: &mut App, key: KeyEvent) {
         return;
     }
 
+    // Merge 选择弹窗
+    if app.merge_dialog.is_some() {
+        handle_merge_dialog_key(app, key);
+        return;
+    }
+
     // 分支选择器
     if app.branch_selector.is_some() {
         handle_branch_selector_key(app, key);
@@ -122,6 +128,20 @@ fn handle_key(app: &mut App, key: KeyEvent) {
                 app.start_recover();
             } else {
                 app.open_branch_selector();
+            }
+        }
+
+        // 功能按键 - Sync
+        KeyCode::Char('s') => {
+            if app.project.current_tab != ProjectTab::Archived {
+                app.start_sync();
+            }
+        }
+
+        // 功能按键 - Merge
+        KeyCode::Char('m') => {
+            if app.project.current_tab != ProjectTab::Archived {
+                app.start_merge();
             }
         }
 
@@ -328,6 +348,28 @@ fn handle_help_key(app: &mut App, key: KeyEvent) {
         KeyCode::Char('?') | KeyCode::Esc | KeyCode::Char('q') => {
             app.show_help = false;
         }
+        _ => {}
+    }
+}
+
+/// 处理 Merge 选择弹窗的键盘事件
+fn handle_merge_dialog_key(app: &mut App, key: KeyEvent) {
+    match key.code {
+        // 切换选项
+        KeyCode::Char('j') | KeyCode::Char('k') | KeyCode::Up | KeyCode::Down => {
+            app.merge_dialog_toggle();
+        }
+
+        // 确认
+        KeyCode::Enter => {
+            app.merge_dialog_confirm();
+        }
+
+        // 取消
+        KeyCode::Esc | KeyCode::Char('q') => {
+            app.merge_dialog_cancel();
+        }
+
         _ => {}
     }
 }

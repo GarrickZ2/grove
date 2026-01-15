@@ -9,6 +9,7 @@ use crate::model::{loader, ProjectTab, Worktree, WorktreeStatus};
 use crate::ui::components::branch_selector::BranchSelectorData;
 use crate::ui::components::confirm_dialog::ConfirmType;
 use crate::ui::components::input_confirm_dialog::InputConfirmData;
+use crate::ui::components::merge_dialog::{MergeDialogData, MergeMethod};
 use crate::storage::{self, tasks::{self, Task, TaskStatus}};
 use crate::theme::{detect_system_theme, get_theme_colors, Theme, ThemeColors};
 use crate::tmux;
@@ -332,6 +333,8 @@ pub struct App {
     pending_action: Option<PendingAction>,
     /// 是否显示帮助面板
     pub show_help: bool,
+    /// Merge 方式选择弹窗
+    pub merge_dialog: Option<MergeDialogData>,
 }
 
 /// 待执行的操作
@@ -345,6 +348,12 @@ pub enum PendingAction {
     RebaseTo { task_id: String },
     /// Recover 归档任务
     Recover { task_id: String },
+    /// Sync - 从 target 同步到当前分支
+    Sync { task_id: String, check_target: bool },
+    /// Merge - 将当前分支合并到 target
+    Merge { task_id: String, check_target: bool },
+    /// Merge 成功后询问是否 Archive
+    MergeArchive { task_id: String },
 }
 
 impl App {
@@ -380,6 +389,7 @@ impl App {
             branch_selector: None,
             pending_action: None,
             show_help: false,
+            merge_dialog: None,
         }
     }
 
@@ -772,6 +782,21 @@ impl App {
                 PendingAction::Clean { task_id, is_archived } => self.do_clean(&task_id, is_archived),
                 PendingAction::RebaseTo { .. } => {} // RebaseTo 不使用确认弹窗
                 PendingAction::Recover { task_id } => self.recover_worktree(&task_id),
+                PendingAction::Sync { task_id, check_target } => {
+                    if check_target {
+                        self.check_sync_target(&task_id);
+                    } else {
+                        self.do_sync(&task_id);
+                    }
+                }
+                PendingAction::Merge { task_id, check_target } => {
+                    if check_target {
+                        self.check_merge_target(&task_id);
+                    } else {
+                        self.open_merge_dialog(&task_id);
+                    }
+                }
+                PendingAction::MergeArchive { task_id } => self.do_archive(&task_id),
             }
         }
     }
@@ -974,6 +999,243 @@ impl App {
     pub fn branch_selector_cancel(&mut self) {
         self.branch_selector = None;
         self.pending_action = None;
+    }
+
+    // ========== Sync 功能 ==========
+
+    /// 开始 Sync 流程
+    pub fn start_sync(&mut self) {
+        // 获取当前选中的 worktree
+        let selected = self.project.current_list_state().selected();
+        let Some(index) = selected else { return };
+
+        let worktrees = self.project.current_worktrees();
+        let Some(wt) = worktrees.get(index) else { return };
+
+        // Archived/Broken 状态不能 sync
+        if wt.archived || wt.status == WorktreeStatus::Broken {
+            self.show_toast("Cannot sync archived or broken task");
+            return;
+        }
+
+        let task_id = wt.id.clone();
+        let task_name = wt.task_name.clone();
+        let worktree_path = wt.path.clone();
+
+        // 检查 worktree 是否有未提交的代码
+        match git::has_uncommitted_changes(&worktree_path) {
+            Ok(true) => {
+                self.pending_action = Some(PendingAction::Sync { task_id, check_target: true });
+                self.confirm_dialog = Some(ConfirmType::SyncUncommittedWorktree { task_name });
+            }
+            Ok(false) => {
+                self.check_sync_target(&task_id);
+            }
+            Err(e) => {
+                self.show_toast(format!("Git error: {}", e));
+            }
+        }
+    }
+
+    /// 检查 Sync 的 target 是否有未提交代码
+    fn check_sync_target(&mut self, task_id: &str) {
+        // 获取 task 信息
+        let task = match tasks::get_task(&self.project.project_name, task_id) {
+            Ok(Some(t)) => t,
+            _ => {
+                self.show_toast("Task not found");
+                return;
+            }
+        };
+
+        // 检查 target branch（主仓库）是否有未提交的代码
+        match git::has_uncommitted_changes(&self.project.project_path) {
+            Ok(true) => {
+                self.pending_action = Some(PendingAction::Sync { task_id: task_id.to_string(), check_target: false });
+                self.confirm_dialog = Some(ConfirmType::SyncUncommittedTarget {
+                    task_name: task.name.clone(),
+                    target: task.target.clone(),
+                });
+            }
+            Ok(false) => {
+                self.do_sync(task_id);
+            }
+            Err(e) => {
+                self.show_toast(format!("Git error: {}", e));
+            }
+        }
+    }
+
+    /// 执行 Sync
+    fn do_sync(&mut self, task_id: &str) {
+        // 获取 task 信息
+        let task = match tasks::get_task(&self.project.project_name, task_id) {
+            Ok(Some(t)) => t,
+            _ => {
+                self.show_toast("Task not found");
+                return;
+            }
+        };
+
+        // 执行 rebase
+        match git::rebase(&task.worktree_path, &task.target) {
+            Ok(()) => {
+                self.project.refresh();
+                self.show_toast(format!("Synced with {}", task.target));
+            }
+            Err(e) => {
+                if e.contains("conflict") || e.contains("CONFLICT") {
+                    self.show_toast("Conflict - resolve in worktree");
+                } else {
+                    self.show_toast(format!("Sync failed: {}", e));
+                }
+            }
+        }
+    }
+
+    // ========== Merge 功能 ==========
+
+    /// 开始 Merge 流程
+    pub fn start_merge(&mut self) {
+        // 获取当前选中的 worktree
+        let selected = self.project.current_list_state().selected();
+        let Some(index) = selected else { return };
+
+        let worktrees = self.project.current_worktrees();
+        let Some(wt) = worktrees.get(index) else { return };
+
+        // Archived/Broken 状态不能 merge
+        if wt.archived || wt.status == WorktreeStatus::Broken {
+            self.show_toast("Cannot merge archived or broken task");
+            return;
+        }
+
+        let task_id = wt.id.clone();
+        let task_name = wt.task_name.clone();
+        let worktree_path = wt.path.clone();
+
+        // 检查 worktree 是否有未提交的代码
+        match git::has_uncommitted_changes(&worktree_path) {
+            Ok(true) => {
+                self.pending_action = Some(PendingAction::Merge { task_id, check_target: true });
+                self.confirm_dialog = Some(ConfirmType::MergeUncommittedWorktree { task_name });
+            }
+            Ok(false) => {
+                self.check_merge_target(&task_id);
+            }
+            Err(e) => {
+                self.show_toast(format!("Git error: {}", e));
+            }
+        }
+    }
+
+    /// 检查 Merge 的 target 是否有未提交代码
+    fn check_merge_target(&mut self, task_id: &str) {
+        // 获取 task 信息
+        let task = match tasks::get_task(&self.project.project_name, task_id) {
+            Ok(Some(t)) => t,
+            _ => {
+                self.show_toast("Task not found");
+                return;
+            }
+        };
+
+        // 检查 target branch（主仓库）是否有未提交的代码
+        match git::has_uncommitted_changes(&self.project.project_path) {
+            Ok(true) => {
+                self.pending_action = Some(PendingAction::Merge { task_id: task_id.to_string(), check_target: false });
+                self.confirm_dialog = Some(ConfirmType::MergeUncommittedTarget {
+                    task_name: task.name.clone(),
+                    target: task.target.clone(),
+                });
+            }
+            Ok(false) => {
+                self.open_merge_dialog(task_id);
+            }
+            Err(e) => {
+                self.show_toast(format!("Git error: {}", e));
+            }
+        }
+    }
+
+    /// 打开 Merge 方式选择弹窗
+    fn open_merge_dialog(&mut self, task_id: &str) {
+        // 获取 task 信息
+        let task = match tasks::get_task(&self.project.project_name, task_id) {
+            Ok(Some(t)) => t,
+            _ => {
+                self.show_toast("Task not found");
+                return;
+            }
+        };
+
+        self.merge_dialog = Some(MergeDialogData::new(
+            task_id.to_string(),
+            task.name,
+            task.branch,
+            task.target,
+        ));
+    }
+
+    /// Merge 弹窗 - 切换选项
+    pub fn merge_dialog_toggle(&mut self) {
+        if let Some(ref mut data) = self.merge_dialog {
+            data.toggle();
+        }
+    }
+
+    /// Merge 弹窗 - 确认
+    pub fn merge_dialog_confirm(&mut self) {
+        let dialog_data = self.merge_dialog.take();
+        let Some(data) = dialog_data else { return };
+
+        self.do_merge(&data.task_id, data.selected);
+    }
+
+    /// Merge 弹窗 - 取消
+    pub fn merge_dialog_cancel(&mut self) {
+        self.merge_dialog = None;
+    }
+
+    /// 执行 Merge
+    fn do_merge(&mut self, task_id: &str, method: MergeMethod) {
+        // 获取 task 信息
+        let task = match tasks::get_task(&self.project.project_name, task_id) {
+            Ok(Some(t)) => t,
+            _ => {
+                self.show_toast("Task not found");
+                return;
+            }
+        };
+
+        let result = match method {
+            MergeMethod::Squash => {
+                // Squash merge + commit
+                git::merge_squash(&self.project.project_path, &task.branch)
+                    .and_then(|()| git::commit(&self.project.project_path, &task.name))
+            }
+            MergeMethod::MergeCommit => {
+                // Merge commit
+                let message = format!("Merge: {}", task.name);
+                git::merge_no_ff(&self.project.project_path, &task.branch, &message)
+            }
+        };
+
+        match result {
+            Ok(()) => {
+                // 成功，显示询问是否 Archive 的弹窗
+                self.pending_action = Some(PendingAction::MergeArchive { task_id: task_id.to_string() });
+                self.confirm_dialog = Some(ConfirmType::MergeSuccess { task_name: task.name });
+                self.project.refresh();
+            }
+            Err(e) => {
+                if e.contains("conflict") || e.contains("CONFLICT") {
+                    self.show_toast("Merge conflict - resolve manually");
+                } else {
+                    self.show_toast(format!("Merge failed: {}", e));
+                }
+            }
+        }
     }
 }
 

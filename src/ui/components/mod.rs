@@ -6,6 +6,7 @@ pub mod header;
 pub mod help_panel;
 pub mod input_confirm_dialog;
 pub mod logo;
+pub mod merge_dialog;
 pub mod new_task_dialog;
 pub mod search_bar;
 pub mod tabs;
