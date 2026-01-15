@@ -63,7 +63,7 @@ fn render_project_info(
     );
 
     let right = Span::styled(
-        format!("{} worktrees ", worktree_count),
+        format!("{} tasks ", worktree_count),
         Style::default().fg(colors.muted),
     );
 

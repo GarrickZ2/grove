@@ -1,3 +1,5 @@
+use chrono::{DateTime, Utc};
+
 /// Worktree 的运行状态
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WorktreeStatus {
@@ -13,6 +15,8 @@ pub enum WorktreeStatus {
     Broken,
     /// ✗ error: 异常状态
     Error,
+    /// 📦 archived: 已归档
+    Archived,
 }
 
 impl WorktreeStatus {
@@ -25,6 +29,7 @@ impl WorktreeStatus {
             WorktreeStatus::Conflict => "⚠",
             WorktreeStatus::Broken => "✗",
             WorktreeStatus::Error => "✗",
+            WorktreeStatus::Archived => "📦",
         }
     }
 
@@ -37,6 +42,7 @@ impl WorktreeStatus {
             WorktreeStatus::Conflict => "Conflict",
             WorktreeStatus::Broken => "Broken",
             WorktreeStatus::Error => "Error",
+            WorktreeStatus::Archived => "Archived",
         }
     }
 }
@@ -70,10 +76,14 @@ impl FileChanges {
 /// 单个 Worktree 的完整信息
 #[derive(Debug, Clone)]
 pub struct Worktree {
+    /// 任务 ID (slug)
+    pub id: String,
     /// 任务名称（显示用）
     pub task_name: String,
     /// 分支名称
     pub branch: String,
+    /// 目标分支
+    pub target: String,
     /// 当前状态
     pub status: WorktreeStatus,
     /// 落后 target branch 的 commit 数（None 表示无需显示）
@@ -84,6 +94,61 @@ pub struct Worktree {
     pub archived: bool,
     /// Worktree 路径
     pub path: String,
+    /// 创建时间
+    pub created_at: DateTime<Utc>,
+    /// 更新时间
+    pub updated_at: DateTime<Utc>,
+}
+
+/// 格式化相对时间
+pub fn format_relative_time(dt: DateTime<Utc>) -> String {
+    let now = Utc::now();
+    let duration = now.signed_duration_since(dt);
+
+    let seconds = duration.num_seconds();
+    if seconds < 0 {
+        return "just now".to_string();
+    }
+
+    let minutes = duration.num_minutes();
+    let hours = duration.num_hours();
+    let days = duration.num_days();
+
+    if seconds < 60 {
+        "just now".to_string()
+    } else if minutes < 60 {
+        if minutes == 1 {
+            "1 min ago".to_string()
+        } else {
+            format!("{} mins ago", minutes)
+        }
+    } else if hours < 24 {
+        if hours == 1 {
+            "1 hour ago".to_string()
+        } else {
+            format!("{} hours ago", hours)
+        }
+    } else if days < 30 {
+        if days == 1 {
+            "1 day ago".to_string()
+        } else {
+            format!("{} days ago", days)
+        }
+    } else if days < 365 {
+        let months = days / 30;
+        if months == 1 {
+            "1 month ago".to_string()
+        } else {
+            format!("{} months ago", months)
+        }
+    } else {
+        let years = days / 365;
+        if years == 1 {
+            "1 year ago".to_string()
+        } else {
+            format!("{} years ago", years)
+        }
+    }
 }
 
 /// Project 层级的 Tab 类型

@@ -60,3 +60,24 @@ pub fn is_available() -> bool {
         .map(|o| o.status.success())
         .unwrap_or(false)
 }
+
+/// 关闭 tmux session
+/// 执行: tmux kill-session -t {name}
+pub fn kill_session(name: &str) -> Result<(), String> {
+    let output = Command::new("tmux")
+        .args(["kill-session", "-t", name])
+        .output()
+        .map_err(|e| format!("Failed to execute tmux: {}", e))?;
+
+    if output.status.success() {
+        Ok(())
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        // session 不存在也不算错误
+        if stderr.contains("no server running") || stderr.contains("session not found") {
+            Ok(())
+        } else {
+            Err(format!("tmux kill-session failed: {}", stderr.trim()))
+        }
+    }
+}

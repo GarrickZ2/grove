@@ -1,6 +1,9 @@
+pub mod branch_selector;
+pub mod confirm_dialog;
 pub mod empty_state;
 pub mod footer;
 pub mod header;
+pub mod input_confirm_dialog;
 pub mod logo;
 pub mod new_task_dialog;
 pub mod tabs;

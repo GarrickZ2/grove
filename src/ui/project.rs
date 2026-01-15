@@ -7,7 +7,7 @@ use ratatui::{
 
 use crate::app::App;
 
-use super::components::{empty_state, footer, header, new_task_dialog, tabs, theme_selector, toast, worktree_list};
+use super::components::{branch_selector, confirm_dialog, empty_state, footer, header, input_confirm_dialog, new_task_dialog, tabs, theme_selector, toast, worktree_list};
 
 /// 渲染 Project 页面
 pub fn render(frame: &mut Frame, app: &App) {
@@ -74,5 +74,20 @@ pub fn render(frame: &mut Frame, app: &App) {
     // 渲染 New Task 弹窗（如果打开）
     if app.show_new_task_dialog {
         new_task_dialog::render(frame, &app.new_task_input, &app.target_branch, colors);
+    }
+
+    // 渲染确认弹窗（弱确认）
+    if let Some(ref confirm_type) = app.confirm_dialog {
+        confirm_dialog::render(frame, confirm_type, colors);
+    }
+
+    // 渲染输入确认弹窗（强确认）
+    if let Some(ref data) = app.input_confirm_dialog {
+        input_confirm_dialog::render(frame, data, colors);
+    }
+
+    // 渲染分支选择器
+    if let Some(ref data) = app.branch_selector {
+        branch_selector::render(frame, data, colors);
     }
 }

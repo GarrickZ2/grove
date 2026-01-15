@@ -6,6 +6,9 @@ use ratatui::widgets::ListState;
 
 use crate::git;
 use crate::model::{loader, ProjectTab, Worktree, WorktreeStatus};
+use crate::ui::components::branch_selector::BranchSelectorData;
+use crate::ui::components::confirm_dialog::ConfirmType;
+use crate::ui::components::input_confirm_dialog::InputConfirmData;
 use crate::storage::{self, tasks::{self, Task, TaskStatus}};
 use crate::theme::{detect_system_theme, get_theme_colors, Theme, ThemeColors};
 use crate::tmux;
@@ -81,7 +84,8 @@ impl ProjectState {
 
     /// 刷新数据
     pub fn refresh(&mut self) {
-        let (current, other, archived) = loader::load_worktrees(&self.project_path);
+        let (current, other, _) = loader::load_worktrees(&self.project_path);
+        let archived = loader::load_archived_worktrees(&self.project_path);
         self.worktrees = [current, other, archived];
         self.ensure_selection();
     }
@@ -109,7 +113,16 @@ impl ProjectState {
     /// 切换到下一个 Tab
     pub fn next_tab(&mut self) {
         self.current_tab = self.current_tab.next();
+        // 懒加载 Archived tab
+        if self.current_tab == ProjectTab::Archived && self.worktrees[2].is_empty() {
+            self.load_archived();
+        }
         self.ensure_selection();
+    }
+
+    /// 懒加载归档任务
+    fn load_archived(&mut self) {
+        self.worktrees[2] = loader::load_archived_worktrees(&self.project_path);
     }
 
     /// 确保当前 Tab 有选中项
@@ -186,6 +199,27 @@ pub struct App {
     pub target_branch: String,
     /// 待 attach 的 tmux session (暂停 TUI 后执行，完成后恢复 TUI)
     pub pending_tmux_attach: Option<String>,
+    /// 确认弹窗（弱确认）
+    pub confirm_dialog: Option<ConfirmType>,
+    /// 输入确认弹窗（强确认）
+    pub input_confirm_dialog: Option<InputConfirmData>,
+    /// 分支选择器（Rebase To）
+    pub branch_selector: Option<BranchSelectorData>,
+    /// 待执行的操作（确认后执行）
+    pending_action: Option<PendingAction>,
+}
+
+/// 待执行的操作
+#[derive(Debug, Clone)]
+pub enum PendingAction {
+    /// Archive 任务
+    Archive { task_id: String },
+    /// Clean 任务
+    Clean { task_id: String, is_archived: bool },
+    /// Rebase To (修改 target)
+    RebaseTo { task_id: String },
+    /// Recover 归档任务
+    Recover { task_id: String },
 }
 
 impl App {
@@ -214,6 +248,10 @@ impl App {
             new_task_input: String::new(),
             target_branch,
             pending_tmux_attach: None,
+            confirm_dialog: None,
+            input_confirm_dialog: None,
+            branch_selector: None,
+            pending_action: None,
         }
     }
 
@@ -353,13 +391,15 @@ impl App {
         }
 
         // 5. 保存 task 元数据
+        let now = Utc::now();
         let task = Task {
             id: slug.clone(),
             name: name.clone(),
             branch: branch.clone(),
             target: self.target_branch.clone(),
             worktree_path: worktree_path.to_string_lossy().to_string(),
-            created_at: Utc::now(),
+            created_at: now,
+            updated_at: now,
             status: TaskStatus::Active,
         };
 
@@ -446,6 +486,353 @@ impl App {
     /// 退出应用
     pub fn quit(&mut self) {
         self.should_quit = true;
+    }
+
+    // ========== Archive 功能 ==========
+
+    /// 开始归档流程
+    pub fn start_archive(&mut self) {
+        // 获取当前选中的 worktree
+        let selected = self.project.current_list_state().selected();
+        let Some(index) = selected else { return };
+
+        let worktrees = self.project.current_worktrees();
+        let Some(wt) = worktrees.get(index) else { return };
+
+        // Broken 状态不能 archive，应该 clean
+        if wt.status == WorktreeStatus::Broken {
+            self.show_toast("Broken worktree - use Clean instead");
+            return;
+        }
+
+        let task_id = wt.id.clone();
+        let task_name = wt.task_name.clone();
+        let branch = wt.branch.clone();
+        let target = wt.target.clone();
+
+        // 检查是否已 merge
+        let is_merged = git::is_merged(&self.project.project_path, &branch, &target)
+            .unwrap_or(false);
+
+        if is_merged {
+            // 已 merge，直接归档
+            self.do_archive(&task_id);
+        } else {
+            // 未 merge，显示确认弹窗
+            self.pending_action = Some(PendingAction::Archive { task_id });
+            self.confirm_dialog = Some(ConfirmType::ArchiveUnmerged { task_name, branch });
+        }
+    }
+
+    /// 执行归档
+    fn do_archive(&mut self, task_id: &str) {
+        // 1. 关闭 tmux session
+        let session = tmux::session_name(&self.project.project_name, task_id);
+        let _ = tmux::kill_session(&session);
+
+        // 2. 获取 worktree 路径并删除
+        if let Ok(Some(task)) = tasks::get_task(&self.project.project_name, task_id) {
+            if Path::new(&task.worktree_path).exists() {
+                let _ = git::remove_worktree(&self.project.project_path, &task.worktree_path);
+            }
+        }
+
+        // 3. 移动到 archived.toml
+        if let Err(e) = tasks::archive_task(&self.project.project_name, task_id) {
+            self.show_toast(format!("Archive failed: {}", e));
+            return;
+        }
+
+        // 4. 刷新数据
+        self.project.refresh();
+        self.show_toast("Task archived");
+    }
+
+    // ========== Clean 功能 ==========
+
+    /// 开始清理流程
+    pub fn start_clean(&mut self) {
+        // 获取当前选中的 worktree
+        let selected = self.project.current_list_state().selected();
+        let Some(index) = selected else { return };
+
+        let worktrees = self.project.current_worktrees();
+        let Some(wt) = worktrees.get(index) else { return };
+
+        let task_id = wt.id.clone();
+        let task_name = wt.task_name.clone();
+        let branch = wt.branch.clone();
+        let target = wt.target.clone();
+        let is_archived = wt.archived;
+
+        // 检查是否已 merge
+        let is_merged = git::is_merged(&self.project.project_path, &branch, &target)
+            .unwrap_or(false);
+
+        self.pending_action = Some(PendingAction::Clean { task_id, is_archived });
+
+        if is_merged {
+            // 已 merge，弱提示
+            self.confirm_dialog = Some(ConfirmType::CleanMerged { task_name, branch });
+        } else {
+            // 未 merge，强确认（需要输入 delete）
+            self.input_confirm_dialog = Some(InputConfirmData::new(task_name, branch));
+        }
+    }
+
+    /// 执行清理
+    fn do_clean(&mut self, task_id: &str, is_archived: bool) {
+        // 1. 关闭 tmux session
+        let session = tmux::session_name(&self.project.project_name, task_id);
+        let _ = tmux::kill_session(&session);
+
+        // 2. 获取 task 信息
+        let task = if is_archived {
+            tasks::get_archived_task(&self.project.project_name, task_id).ok().flatten()
+        } else {
+            tasks::get_task(&self.project.project_name, task_id).ok().flatten()
+        };
+
+        if let Some(task) = task {
+            // 3. 删除 worktree (如果存在)
+            if Path::new(&task.worktree_path).exists() {
+                let _ = git::remove_worktree(&self.project.project_path, &task.worktree_path);
+            }
+
+            // 4. 删除 branch
+            let _ = git::delete_branch(&self.project.project_path, &task.branch);
+        }
+
+        // 5. 删除 task 记录
+        let result = if is_archived {
+            tasks::remove_archived_task(&self.project.project_name, task_id)
+        } else {
+            tasks::remove_task(&self.project.project_name, task_id)
+        };
+
+        if let Err(e) = result {
+            self.show_toast(format!("Clean failed: {}", e));
+            return;
+        }
+
+        // 6. 刷新数据
+        self.project.refresh();
+        self.show_toast("Task cleaned");
+    }
+
+    // ========== 弹窗操作 ==========
+
+    /// 确认弱确认弹窗
+    pub fn confirm_dialog_yes(&mut self) {
+        if let Some(action) = self.pending_action.take() {
+            self.confirm_dialog = None;
+            match action {
+                PendingAction::Archive { task_id } => self.do_archive(&task_id),
+                PendingAction::Clean { task_id, is_archived } => self.do_clean(&task_id, is_archived),
+                PendingAction::RebaseTo { .. } => {} // RebaseTo 不使用确认弹窗
+                PendingAction::Recover { task_id } => self.recover_worktree(&task_id),
+            }
+        }
+    }
+
+    /// 取消弱确认弹窗
+    pub fn confirm_dialog_cancel(&mut self) {
+        self.confirm_dialog = None;
+        self.pending_action = None;
+    }
+
+    /// 输入确认弹窗 - 输入字符
+    pub fn input_confirm_char(&mut self, c: char) {
+        if let Some(ref mut data) = self.input_confirm_dialog {
+            data.input.push(c);
+        }
+    }
+
+    /// 输入确认弹窗 - 删除字符
+    pub fn input_confirm_backspace(&mut self) {
+        if let Some(ref mut data) = self.input_confirm_dialog {
+            data.input.pop();
+        }
+    }
+
+    /// 输入确认弹窗 - 确认
+    pub fn input_confirm_submit(&mut self) {
+        let confirmed = self.input_confirm_dialog
+            .as_ref()
+            .map(|d| d.is_confirmed())
+            .unwrap_or(false);
+
+        if confirmed {
+            if let Some(action) = self.pending_action.take() {
+                self.input_confirm_dialog = None;
+                if let PendingAction::Clean { task_id, is_archived } = action {
+                    self.do_clean(&task_id, is_archived);
+                }
+            }
+        } else {
+            self.show_toast("Type 'delete' to confirm");
+        }
+    }
+
+    /// 输入确认弹窗 - 取消
+    pub fn input_confirm_cancel(&mut self) {
+        self.input_confirm_dialog = None;
+        self.pending_action = None;
+    }
+
+    // ========== Recover 功能 ==========
+
+    /// 开始恢复流程（显示弱确认弹窗）
+    pub fn start_recover(&mut self) {
+        // 获取当前选中的 archived worktree
+        let selected = self.project.current_list_state().selected();
+        let Some(index) = selected else { return };
+
+        let worktrees = self.project.current_worktrees();
+        let Some(wt) = worktrees.get(index) else { return };
+
+        let task_id = wt.id.clone();
+        let task_name = wt.task_name.clone();
+        let branch = wt.branch.clone();
+
+        // 显示确认弹窗
+        self.pending_action = Some(PendingAction::Recover { task_id });
+        self.confirm_dialog = Some(ConfirmType::Recover { task_name, branch });
+    }
+
+    /// 恢复归档的任务
+    fn recover_worktree(&mut self, task_id: &str) {
+        // 获取 task 信息
+        let task = match tasks::get_archived_task(&self.project.project_name, task_id) {
+            Ok(Some(t)) => t,
+            _ => {
+                self.show_toast("Task not found");
+                return;
+            }
+        };
+
+        // 检查 branch 是否还存在
+        if !git::branch_exists(&self.project.project_path, &task.branch) {
+            self.show_toast("Branch deleted - cannot recover");
+            return;
+        }
+
+        // 重新创建 worktree
+        let worktree_path = Path::new(&task.worktree_path);
+        if let Err(e) = git::create_worktree_from_branch(
+            &self.project.project_path,
+            &task.branch,
+            worktree_path,
+        ) {
+            self.show_toast(format!("Git error: {}", e));
+            return;
+        }
+
+        // 移回 tasks.toml
+        if let Err(e) = tasks::recover_task(&self.project.project_name, task_id) {
+            self.show_toast(format!("Recover failed: {}", e));
+            return;
+        }
+
+        // 创建 tmux session
+        let session = tmux::session_name(&self.project.project_name, task_id);
+        if let Err(e) = tmux::create_session(&session, task.worktree_path.as_str()) {
+            self.show_toast(format!("tmux error: {}", e));
+            return;
+        }
+
+        // 刷新数据并进入
+        self.project.refresh();
+        self.show_toast("Task recovered");
+        self.pending_tmux_attach = Some(session);
+    }
+
+    // ========== Rebase To 功能 ==========
+
+    /// 打开分支选择器
+    pub fn open_branch_selector(&mut self) {
+        // 获取当前选中的 worktree
+        let selected = self.project.current_list_state().selected();
+        let Some(index) = selected else { return };
+
+        let worktrees = self.project.current_worktrees();
+        let Some(wt) = worktrees.get(index) else { return };
+
+        let task_id = wt.id.clone();
+        let task_name = wt.task_name.clone();
+        let current_target = wt.target.clone();
+
+        // 获取所有分支
+        let branches = match git::list_branches(&self.project.project_path) {
+            Ok(b) => b,
+            Err(e) => {
+                self.show_toast(format!("Failed to list branches: {}", e));
+                return;
+            }
+        };
+
+        // 存储待操作的 task_id
+        self.pending_action = Some(PendingAction::RebaseTo { task_id });
+
+        // 打开选择器
+        self.branch_selector = Some(BranchSelectorData::new(branches, task_name, current_target));
+    }
+
+    /// 分支选择器 - 向上
+    pub fn branch_selector_prev(&mut self) {
+        if let Some(ref mut data) = self.branch_selector {
+            data.select_prev();
+        }
+    }
+
+    /// 分支选择器 - 向下
+    pub fn branch_selector_next(&mut self) {
+        if let Some(ref mut data) = self.branch_selector {
+            data.select_next();
+        }
+    }
+
+    /// 分支选择器 - 输入字符
+    pub fn branch_selector_char(&mut self, c: char) {
+        if let Some(ref mut data) = self.branch_selector {
+            data.input_char(c);
+        }
+    }
+
+    /// 分支选择器 - 删除字符
+    pub fn branch_selector_backspace(&mut self) {
+        if let Some(ref mut data) = self.branch_selector {
+            data.delete_char();
+        }
+    }
+
+    /// 分支选择器 - 确认
+    pub fn branch_selector_confirm(&mut self) {
+        let new_target = self
+            .branch_selector
+            .as_ref()
+            .and_then(|d| d.selected_branch())
+            .map(|s| s.to_string());
+
+        if let (Some(new_target), Some(PendingAction::RebaseTo { task_id })) =
+            (new_target, self.pending_action.take())
+        {
+            // 更新 task target
+            if let Err(e) = tasks::update_task_target(&self.project.project_name, &task_id, &new_target) {
+                self.show_toast(format!("Failed to update target: {}", e));
+            } else {
+                self.project.refresh();
+                self.show_toast(format!("Target changed to {}", new_target));
+            }
+        }
+
+        self.branch_selector = None;
+    }
+
+    /// 分支选择器 - 取消
+    pub fn branch_selector_cancel(&mut self) {
+        self.branch_selector = None;
+        self.pending_action = None;
     }
 }
 

@@ -5,7 +5,7 @@ use ratatui::{
     Frame,
 };
 
-use crate::model::{Worktree, WorktreeStatus};
+use crate::model::{format_relative_time, Worktree, WorktreeStatus};
 use crate::theme::ThemeColors;
 
 /// 渲染 Worktree 列表
@@ -25,6 +25,7 @@ pub fn render(
         Cell::from("BRANCH"),
         Cell::from("↓"),    // commits behind
         Cell::from("FILES"),
+        Cell::from("UPDATED"),
     ])
     .style(Style::default().fg(colors.muted))
     .height(1)
@@ -46,6 +47,7 @@ pub fn render(
                 WorktreeStatus::Conflict => Style::default().fg(colors.status_conflict),
                 WorktreeStatus::Broken => Style::default().fg(colors.status_error),
                 WorktreeStatus::Error => Style::default().fg(colors.status_error),
+                WorktreeStatus::Archived => Style::default().fg(colors.muted),
             };
 
             let commits = wt
@@ -61,6 +63,8 @@ pub fn render(
                 Style::default().fg(colors.text)
             };
 
+            let updated = format_relative_time(wt.updated_at);
+
             Row::new(vec![
                 Cell::from(selector).style(Style::default().fg(colors.highlight)),
                 Cell::from(wt.status.icon()).style(icon_style),
@@ -69,6 +73,7 @@ pub fn render(
                 Cell::from(wt.branch.clone()).style(Style::default().fg(colors.muted)),
                 Cell::from(commits),
                 Cell::from(wt.file_changes.display()),
+                Cell::from(updated).style(Style::default().fg(colors.muted)),
             ])
             .style(row_style)
         })
@@ -82,6 +87,7 @@ pub fn render(
         Constraint::Fill(2),    // BRANCH (flex)
         Constraint::Length(4),  // commits behind
         Constraint::Length(10), // FILES
+        Constraint::Length(14), // UPDATED
     ];
 
     let table = Table::new(rows, widths)

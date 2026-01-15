@@ -29,13 +29,33 @@ pub fn handle_events(app: &mut App) -> io::Result<bool> {
 }
 
 fn handle_key(app: &mut App, key: KeyEvent) {
-    // 如果 New Task 弹窗打开，优先处理
+    // 优先处理弹窗事件
+
+    // 分支选择器
+    if app.branch_selector.is_some() {
+        handle_branch_selector_key(app, key);
+        return;
+    }
+
+    // 输入确认弹窗（强确认）
+    if app.input_confirm_dialog.is_some() {
+        handle_input_confirm_key(app, key);
+        return;
+    }
+
+    // 确认弹窗（弱确认）
+    if app.confirm_dialog.is_some() {
+        handle_confirm_dialog_key(app, key);
+        return;
+    }
+
+    // New Task 弹窗
     if app.show_new_task_dialog {
         handle_new_task_dialog_key(app, key);
         return;
     }
 
-    // 如果主题选择器打开，优先处理选择器事件
+    // 主题选择器
     if app.show_theme_selector {
         handle_theme_selector_key(app, key);
         return;
@@ -65,11 +85,9 @@ fn handle_key(app: &mut App, key: KeyEvent) {
             app.open_new_task_dialog();
         }
 
-        // 功能按键 - Enter
+        // 功能按键 - Enter (进入 worktree)
         KeyCode::Enter => {
-            if app.project.current_tab == ProjectTab::Archived {
-                app.show_toast("Recover - 功能开发中");
-            } else {
+            if app.project.current_tab != ProjectTab::Archived {
                 app.enter_worktree();
             }
         }
@@ -77,19 +95,21 @@ fn handle_key(app: &mut App, key: KeyEvent) {
         // 功能按键 - Archive
         KeyCode::Char('a') => {
             if app.project.current_tab != ProjectTab::Archived {
-                app.show_toast("Archive - 功能开发中");
+                app.start_archive();
             }
         }
 
         // 功能按键 - Clean
         KeyCode::Char('x') => {
-            app.show_toast("Clean - 功能开发中");
+            app.start_clean();
         }
 
-        // 功能按键 - Rebase to
+        // 功能按键 - Rebase to / Recover
         KeyCode::Char('r') => {
-            if app.project.current_tab != ProjectTab::Archived {
-                app.show_toast("Rebase to - 功能开发中");
+            if app.project.current_tab == ProjectTab::Archived {
+                app.start_recover();
+            } else {
+                app.open_branch_selector();
             }
         }
 
@@ -101,6 +121,87 @@ fn handle_key(app: &mut App, key: KeyEvent) {
         // 功能按键 - 返回
         KeyCode::Esc => {
             app.show_toast("返回 Workspace - 功能开发中");
+        }
+
+        _ => {}
+    }
+}
+
+/// 处理分支选择器
+fn handle_branch_selector_key(app: &mut App, key: KeyEvent) {
+    match key.code {
+        // 导航 - 上移
+        KeyCode::Char('k') | KeyCode::Up => {
+            app.branch_selector_prev();
+        }
+
+        // 导航 - 下移
+        KeyCode::Char('j') | KeyCode::Down => {
+            app.branch_selector_next();
+        }
+
+        // 确认选择
+        KeyCode::Enter => {
+            app.branch_selector_confirm();
+        }
+
+        // 取消
+        KeyCode::Esc => {
+            app.branch_selector_cancel();
+        }
+
+        // 删除字符
+        KeyCode::Backspace => {
+            app.branch_selector_backspace();
+        }
+
+        // 输入字符（搜索）
+        KeyCode::Char(c) => {
+            app.branch_selector_char(c);
+        }
+
+        _ => {}
+    }
+}
+
+/// 处理确认弹窗（弱确认）
+fn handle_confirm_dialog_key(app: &mut App, key: KeyEvent) {
+    match key.code {
+        // 确认
+        KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Enter => {
+            app.confirm_dialog_yes();
+        }
+
+        // 取消
+        KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
+            app.confirm_dialog_cancel();
+        }
+
+        _ => {}
+    }
+}
+
+/// 处理输入确认弹窗（强确认）
+fn handle_input_confirm_key(app: &mut App, key: KeyEvent) {
+    match key.code {
+        // 确认
+        KeyCode::Enter => {
+            app.input_confirm_submit();
+        }
+
+        // 取消
+        KeyCode::Esc => {
+            app.input_confirm_cancel();
+        }
+
+        // 删除字符
+        KeyCode::Backspace => {
+            app.input_confirm_backspace();
+        }
+
+        // 输入字符
+        KeyCode::Char(c) => {
+            app.input_confirm_char(c);
         }
 
         _ => {}

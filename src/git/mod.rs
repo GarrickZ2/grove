@@ -178,3 +178,108 @@ pub fn default_branch(repo_path: &str) -> Result<String, String> {
     // 最终 fallback
     Ok("main".to_string())
 }
+
+/// 删除 worktree（保留 branch）
+/// 执行: git worktree remove {path} --force
+pub fn remove_worktree(repo_path: &str, worktree_path: &str) -> Result<(), String> {
+    let output = Command::new("git")
+        .current_dir(repo_path)
+        .args(["worktree", "remove", worktree_path, "--force"])
+        .output()
+        .map_err(|e| format!("Failed to execute git: {}", e))?;
+
+    if output.status.success() {
+        Ok(())
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        Err(format!("git worktree remove failed: {}", stderr.trim()))
+    }
+}
+
+/// 从现有分支创建 worktree（不创建新分支）
+/// 执行: git worktree add {path} {branch}
+pub fn create_worktree_from_branch(
+    repo_path: &str,
+    branch: &str,
+    worktree_path: &Path,
+) -> Result<(), String> {
+    let output = Command::new("git")
+        .current_dir(repo_path)
+        .args([
+            "worktree",
+            "add",
+            worktree_path.to_str().unwrap_or_default(),
+            branch,
+        ])
+        .output()
+        .map_err(|e| format!("Failed to execute git: {}", e))?;
+
+    if output.status.success() {
+        Ok(())
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        Err(format!("git worktree add failed: {}", stderr.trim()))
+    }
+}
+
+/// 删除分支
+/// 执行: git branch -D {branch}
+pub fn delete_branch(repo_path: &str, branch: &str) -> Result<(), String> {
+    let output = Command::new("git")
+        .current_dir(repo_path)
+        .args(["branch", "-D", branch])
+        .output()
+        .map_err(|e| format!("Failed to execute git: {}", e))?;
+
+    if output.status.success() {
+        Ok(())
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        Err(format!("git branch -D failed: {}", stderr.trim()))
+    }
+}
+
+/// 检查分支是否存在
+pub fn branch_exists(repo_path: &str, branch: &str) -> bool {
+    Command::new("git")
+        .current_dir(repo_path)
+        .args(["rev-parse", "--verify", branch])
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+}
+
+/// 列出所有本地分支
+pub fn list_branches(repo_path: &str) -> Result<Vec<String>, String> {
+    let output = Command::new("git")
+        .current_dir(repo_path)
+        .args(["branch", "--format=%(refname:short)"])
+        .output()
+        .map_err(|e| format!("Failed to execute git: {}", e))?;
+
+    if output.status.success() {
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let branches: Vec<String> = stdout
+            .lines()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
+        Ok(branches)
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        Err(format!("git branch failed: {}", stderr.trim()))
+    }
+}
+
+/// 检查分支是否已合并到 target
+/// 使用 git merge-base --is-ancestor 检查
+pub fn is_merged(repo_path: &str, branch: &str, target: &str) -> Result<bool, String> {
+    let output = Command::new("git")
+        .current_dir(repo_path)
+        .args(["merge-base", "--is-ancestor", branch, target])
+        .output()
+        .map_err(|e| format!("Failed to execute git: {}", e))?;
+
+    // exit code 0 = is ancestor (merged), non-zero = not merged
+    Ok(output.status.success())
+}

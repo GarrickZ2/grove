@@ -21,37 +21,70 @@ pub fn load_worktrees(project_path: &str) -> (Vec<Worktree>, Vec<Worktree>, Vec<
         return (Vec::new(), Vec::new(), Vec::new());
     }
 
-    // 2. 加载 tasks.toml (主数据源)
-    let tasks = tasks::load_tasks(&project_name).unwrap_or_default();
+    // 2. 加载 tasks.toml (活跃任务)
+    let active_tasks = tasks::load_tasks(&project_name).unwrap_or_default();
 
     // 3. 获取默认分支
     let default_branch = git::default_branch(project_path).unwrap_or_else(|_| "main".to_string());
 
-    // 4. 转换每个 Task 为 Worktree 并分类
+    // 4. 转换活跃任务
     let mut current = Vec::new();
     let mut other = Vec::new();
-    let mut archived = Vec::new();
 
-    for task in tasks {
-        let worktree = task_to_worktree(&task, &project_name, &default_branch);
+    for task in active_tasks {
+        let worktree = task_to_worktree(&task, &project_name);
 
-        match task.status {
-            TaskStatus::Archived => archived.push(worktree),
-            TaskStatus::Active => {
-                if task.target == default_branch {
-                    current.push(worktree);
-                } else {
-                    other.push(worktree);
-                }
-            }
+        if task.target == default_branch {
+            current.push(worktree);
+        } else {
+            other.push(worktree);
         }
     }
+
+    // 5. 懒加载归档任务（仅当需要时）
+    let archived = Vec::new(); // 初始为空，切换到 Archived Tab 时再加载
 
     (current, other, archived)
 }
 
+/// 加载归档任务（懒加载）
+pub fn load_archived_worktrees(project_path: &str) -> Vec<Worktree> {
+    let project_name = Path::new(project_path)
+        .file_name()
+        .map(|s| s.to_string_lossy().to_string())
+        .unwrap_or_default();
+
+    if project_name.is_empty() {
+        return Vec::new();
+    }
+
+    let archived_tasks = tasks::load_archived_tasks(&project_name).unwrap_or_default();
+
+    archived_tasks
+        .into_iter()
+        .map(archived_task_to_worktree)
+        .collect()
+}
+
+/// 将 Archived Task 转换为 UI Worktree (直接标记为 Archived 状态)
+fn archived_task_to_worktree(task: Task) -> Worktree {
+    Worktree {
+        id: task.id,
+        task_name: task.name,
+        branch: task.branch,
+        target: task.target,
+        status: WorktreeStatus::Archived,
+        commits_behind: None,
+        file_changes: FileChanges::default(),
+        archived: true,
+        path: task.worktree_path,
+        created_at: task.created_at,
+        updated_at: task.updated_at,
+    }
+}
+
 /// 将 Task 转换为 UI Worktree
-fn task_to_worktree(task: &Task, project: &str, _default_branch: &str) -> Worktree {
+fn task_to_worktree(task: &Task, project: &str) -> Worktree {
     let path = &task.worktree_path;
 
     // 检查 worktree 是否存在
@@ -82,12 +115,16 @@ fn task_to_worktree(task: &Task, project: &str, _default_branch: &str) -> Worktr
     };
 
     Worktree {
+        id: task.id.clone(),
         task_name: task.name.clone(),
         branch: task.branch.clone(),
+        target: task.target.clone(),
         status,
         commits_behind,
         file_changes,
         archived: task.status == TaskStatus::Archived,
         path: path.clone(),
+        created_at: task.created_at,
+        updated_at: task.updated_at,
     }
 }

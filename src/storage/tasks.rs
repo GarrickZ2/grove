@@ -29,8 +29,15 @@ pub struct Task {
     pub worktree_path: String,
     /// 创建时间
     pub created_at: DateTime<Utc>,
+    /// 更新时间
+    #[serde(default = "default_updated_at")]
+    pub updated_at: DateTime<Utc>,
     /// 任务状态
     pub status: TaskStatus,
+}
+
+fn default_updated_at() -> DateTime<Utc> {
+    Utc::now()
 }
 
 /// 任务列表容器 (用于 TOML 序列化)
@@ -81,6 +88,121 @@ pub fn add_task(project: &str, task: Task) -> io::Result<()> {
     let mut tasks = load_tasks(project)?;
     tasks.push(task);
     save_tasks(project, &tasks)
+}
+
+// ========== Archived Tasks (分离存储) ==========
+
+/// 获取 archived.toml 文件路径
+fn archived_file_path(project: &str) -> io::Result<PathBuf> {
+    let dir = ensure_project_dir(project)?;
+    Ok(dir.join("archived.toml"))
+}
+
+/// 加载归档任务列表
+pub fn load_archived_tasks(project: &str) -> io::Result<Vec<Task>> {
+    let path = archived_file_path(project)?;
+
+    if !path.exists() {
+        return Ok(Vec::new());
+    }
+
+    let content = std::fs::read_to_string(&path)?;
+    let tasks_file: TasksFile = toml::from_str(&content)
+        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+
+    Ok(tasks_file.tasks)
+}
+
+/// 保存归档任务列表
+pub fn save_archived_tasks(project: &str, tasks: &[Task]) -> io::Result<()> {
+    let path = archived_file_path(project)?;
+
+    let tasks_file = TasksFile {
+        tasks: tasks.to_vec(),
+    };
+
+    let content = toml::to_string_pretty(&tasks_file)
+        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+
+    std::fs::write(&path, content)?;
+    Ok(())
+}
+
+/// 归档任务 (tasks.toml → archived.toml)
+pub fn archive_task(project: &str, task_id: &str) -> io::Result<()> {
+    let mut tasks = load_tasks(project)?;
+    let mut archived = load_archived_tasks(project)?;
+
+    // 找到并移除任务
+    if let Some(pos) = tasks.iter().position(|t| t.id == task_id) {
+        let mut task = tasks.remove(pos);
+        task.status = TaskStatus::Archived;
+        task.updated_at = Utc::now();
+        archived.push(task);
+
+        save_tasks(project, &tasks)?;
+        save_archived_tasks(project, &archived)?;
+    }
+
+    Ok(())
+}
+
+/// 恢复任务 (archived.toml → tasks.toml)
+pub fn recover_task(project: &str, task_id: &str) -> io::Result<()> {
+    let mut tasks = load_tasks(project)?;
+    let mut archived = load_archived_tasks(project)?;
+
+    // 找到并移除归档任务
+    if let Some(pos) = archived.iter().position(|t| t.id == task_id) {
+        let mut task = archived.remove(pos);
+        task.status = TaskStatus::Active;
+        task.updated_at = Utc::now();
+        tasks.push(task);
+
+        save_tasks(project, &tasks)?;
+        save_archived_tasks(project, &archived)?;
+    }
+
+    Ok(())
+}
+
+/// 删除活跃任务
+pub fn remove_task(project: &str, task_id: &str) -> io::Result<()> {
+    let mut tasks = load_tasks(project)?;
+    tasks.retain(|t| t.id != task_id);
+    save_tasks(project, &tasks)
+}
+
+/// 删除归档任务
+pub fn remove_archived_task(project: &str, task_id: &str) -> io::Result<()> {
+    let mut archived = load_archived_tasks(project)?;
+    archived.retain(|t| t.id != task_id);
+    save_archived_tasks(project, &archived)
+}
+
+/// 更新任务的 target branch
+pub fn update_task_target(project: &str, task_id: &str, new_target: &str) -> io::Result<()> {
+    let mut tasks = load_tasks(project)?;
+
+    if let Some(task) = tasks.iter_mut().find(|t| t.id == task_id) {
+        task.target = new_target.to_string();
+        task.updated_at = Utc::now();
+        save_tasks(project, &tasks)?;
+    }
+
+    Ok(())
+}
+
+/// 根据 task_id 获取任务（从 tasks.toml）
+pub fn get_task(project: &str, task_id: &str) -> io::Result<Option<Task>> {
+    let tasks = load_tasks(project)?;
+    Ok(tasks.into_iter().find(|t| t.id == task_id))
+}
+
+/// 根据 task_id 获取归档任务
+pub fn get_archived_task(project: &str, task_id: &str) -> io::Result<Option<Task>> {
+    let archived = load_archived_tasks(project)?;
+    Ok(archived.into_iter().find(|t| t.id == task_id))
 }
 
 /// 生成 slug (用于任务 ID 和目录名)
