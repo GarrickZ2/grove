@@ -175,9 +175,9 @@ impl ProjectTab {
     /// Tab 显示名称
     pub fn label(&self) -> &'static str {
         match self {
-            ProjectTab::Current => "Current",
-            ProjectTab::Other => "Other",
-            ProjectTab::Archived => "Archived",
+            ProjectTab::Current => "Current Branch",
+            ProjectTab::Other => "Other Branch",
+            ProjectTab::Archived => "Archived Tasks",
         }
     }
 

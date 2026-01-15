@@ -6,6 +6,7 @@ use ratatui::widgets::ListState;
 
 use crate::git;
 use crate::model::{loader, ProjectTab, Worktree, WorktreeStatus, WorkspaceState};
+use crate::ui::components::action_palette::{ActionPaletteData, ActionType};
 use crate::ui::components::add_project_dialog::AddProjectData;
 use crate::ui::components::branch_selector::BranchSelectorData;
 use crate::ui::components::confirm_dialog::ConfirmType;
@@ -343,6 +344,8 @@ pub struct App {
     pub add_project_dialog: Option<AddProjectData>,
     /// Delete Project 弹窗
     pub delete_project_dialog: Option<DeleteProjectData>,
+    /// Action Palette
+    pub action_palette: Option<ActionPaletteData>,
 }
 
 /// 待执行的操作
@@ -428,6 +431,7 @@ impl App {
             merge_dialog: None,
             add_project_dialog: None,
             delete_project_dialog: None,
+            action_palette: None,
         }
     }
 
@@ -1441,6 +1445,83 @@ impl App {
             "removed"
         };
         self.show_toast(format!("{} {}", data.project_name, mode_text));
+    }
+
+    // ========== Action Palette 功能 ==========
+
+    /// 打开 Action Palette
+    pub fn open_action_palette(&mut self) {
+        // 检查是否有选中的任务
+        if self.project.current_list_state().selected().is_none() {
+            return;
+        }
+
+        // 根据当前 Tab 决定可用 actions
+        let actions = match self.project.current_tab {
+            ProjectTab::Archived => vec![ActionType::Clean, ActionType::Recover],
+            _ => vec![
+                ActionType::Archive,
+                ActionType::Clean,
+                ActionType::RebaseTo,
+                ActionType::Sync,
+                ActionType::Merge,
+            ],
+        };
+
+        self.action_palette = Some(ActionPaletteData::new(actions));
+    }
+
+    /// Action Palette - 向上移动
+    pub fn action_palette_prev(&mut self) {
+        if let Some(ref mut palette) = self.action_palette {
+            palette.select_prev();
+        }
+    }
+
+    /// Action Palette - 向下移动
+    pub fn action_palette_next(&mut self) {
+        if let Some(ref mut palette) = self.action_palette {
+            palette.select_next();
+        }
+    }
+
+    /// Action Palette - 输入字符
+    pub fn action_palette_char(&mut self, c: char) {
+        if let Some(ref mut palette) = self.action_palette {
+            palette.push_char(c);
+        }
+    }
+
+    /// Action Palette - 删除字符
+    pub fn action_palette_backspace(&mut self) {
+        if let Some(ref mut palette) = self.action_palette {
+            palette.pop_char();
+        }
+    }
+
+    /// Action Palette - 确认执行
+    pub fn action_palette_confirm(&mut self) {
+        let action = self.action_palette
+            .as_ref()
+            .and_then(|p| p.selected_action());
+
+        self.action_palette = None;
+
+        if let Some(action) = action {
+            match action {
+                ActionType::Archive => self.start_archive(),
+                ActionType::Clean => self.start_clean(),
+                ActionType::RebaseTo => self.open_branch_selector(),
+                ActionType::Sync => self.start_sync(),
+                ActionType::Merge => self.start_merge(),
+                ActionType::Recover => self.start_recover(),
+            }
+        }
+    }
+
+    /// Action Palette - 取消
+    pub fn action_palette_cancel(&mut self) {
+        self.action_palette = None;
     }
 }
 

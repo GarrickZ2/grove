@@ -85,6 +85,12 @@ fn handle_key(app: &mut App, key: KeyEvent) {
         return;
     }
 
+    // Action Palette
+    if app.action_palette.is_some() {
+        handle_action_palette_key(app, key);
+        return;
+    }
+
     // 根据模式分发事件
     match app.mode {
         AppMode::Workspace => handle_workspace_key(app, key),
@@ -220,6 +226,17 @@ fn handle_project_key(app: &mut App, key: KeyEvent) {
             app.project.next_tab();
         }
 
+        // 数字快捷键切换 Tab
+        KeyCode::Char('1') => {
+            app.project.current_tab = ProjectTab::Current;
+        }
+        KeyCode::Char('2') => {
+            app.project.current_tab = ProjectTab::Other;
+        }
+        KeyCode::Char('3') => {
+            app.project.current_tab = ProjectTab::Archived;
+        }
+
         // 功能按键 - New Task
         KeyCode::Char('n') => {
             app.open_new_task_dialog();
@@ -232,38 +249,17 @@ fn handle_project_key(app: &mut App, key: KeyEvent) {
             }
         }
 
-        // 功能按键 - Archive
-        KeyCode::Char('a') => {
-            if app.project.current_tab != ProjectTab::Archived {
-                app.start_archive();
-            }
-        }
-
-        // 功能按键 - Clean
-        KeyCode::Char('x') => {
-            app.start_clean();
-        }
-
-        // 功能按键 - Rebase to / Recover
+        // 功能按键 - Recover (仅 Archived Tab)
         KeyCode::Char('r') => {
             if app.project.current_tab == ProjectTab::Archived {
                 app.start_recover();
-            } else {
-                app.open_branch_selector();
             }
         }
 
-        // 功能按键 - Sync
-        KeyCode::Char('s') => {
-            if app.project.current_tab != ProjectTab::Archived {
-                app.start_sync();
-            }
-        }
-
-        // 功能按键 - Merge
-        KeyCode::Char('m') => {
-            if app.project.current_tab != ProjectTab::Archived {
-                app.start_merge();
+        // 功能按键 - Clean (仅 Archived Tab)
+        KeyCode::Char('x') => {
+            if app.project.current_tab == ProjectTab::Archived {
+                app.start_clean();
             }
         }
 
@@ -285,6 +281,50 @@ fn handle_project_key(app: &mut App, key: KeyEvent) {
         // 功能按键 - 返回 Workspace
         KeyCode::Esc => {
             app.back_to_workspace();
+        }
+
+        // 功能按键 - Action Palette (非 Archived Tab)
+        KeyCode::Char(' ') => {
+            if app.project.current_tab != ProjectTab::Archived {
+                app.open_action_palette();
+            }
+        }
+
+        _ => {}
+    }
+}
+
+/// 处理 Action Palette 的键盘事件
+fn handle_action_palette_key(app: &mut App, key: KeyEvent) {
+    match key.code {
+        // 导航 - 上移
+        KeyCode::Char('k') | KeyCode::Up => {
+            app.action_palette_prev();
+        }
+
+        // 导航 - 下移
+        KeyCode::Char('j') | KeyCode::Down => {
+            app.action_palette_next();
+        }
+
+        // 确认
+        KeyCode::Enter => {
+            app.action_palette_confirm();
+        }
+
+        // 取消
+        KeyCode::Esc => {
+            app.action_palette_cancel();
+        }
+
+        // 删除字符
+        KeyCode::Backspace => {
+            app.action_palette_backspace();
+        }
+
+        // 输入字符（非 j/k）
+        KeyCode::Char(c) if c != 'j' && c != 'k' => {
+            app.action_palette_char(c);
         }
 
         _ => {}

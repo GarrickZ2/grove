@@ -51,17 +51,20 @@ fn build_help_lines(colors: &ThemeColors) -> Vec<Line<'static>> {
     lines.push(key_line("j / ↓", "Move down", colors));
     lines.push(key_line("k / ↑", "Move up", colors));
     lines.push(key_line("Tab", "Switch tab", colors));
+    lines.push(key_line("1 / 2 / 3", "Jump to tab", colors));
     lines.push(key_line("Enter", "Enter worktree", colors));
     lines.push(Line::from(""));
 
     // Actions 分组
     lines.push(section_header("Actions", colors));
     lines.push(key_line("n", "New task", colors));
-    lines.push(key_line("s", "Sync from target", colors));
-    lines.push(key_line("m", "Merge to target", colors));
-    lines.push(key_line("a", "Archive task", colors));
+    lines.push(key_line("Space", "Action palette", colors));
+    lines.push(Line::from(""));
+
+    // Archived Tasks 分组
+    lines.push(section_header("Archived Tasks", colors));
+    lines.push(key_line("r", "Recover", colors));
     lines.push(key_line("x", "Clean (delete)", colors));
-    lines.push(key_line("r", "Rebase to / Recover", colors));
     lines.push(Line::from(""));
 
     // Search 分组
