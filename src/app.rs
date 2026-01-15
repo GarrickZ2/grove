@@ -330,6 +330,8 @@ pub struct App {
     pub branch_selector: Option<BranchSelectorData>,
     /// 待执行的操作（确认后执行）
     pending_action: Option<PendingAction>,
+    /// 是否显示帮助面板
+    pub show_help: bool,
 }
 
 /// 待执行的操作
@@ -347,7 +349,9 @@ pub enum PendingAction {
 
 impl App {
     pub fn new() -> Self {
-        let theme = Theme::Auto;
+        // 加载配置
+        let config = storage::config::load_config();
+        let theme = Theme::from_name(&config.theme.name);
         let last_system_dark = detect_system_theme();
         let colors = get_theme_colors(theme);
 
@@ -375,6 +379,7 @@ impl App {
             input_confirm_dialog: None,
             branch_selector: None,
             pending_action: None,
+            show_help: false,
         }
     }
 
@@ -419,6 +424,19 @@ impl App {
         self.apply_theme_at_index(self.theme_selector_index);
         self.show_theme_selector = false;
         self.show_toast(format!("Theme: {}", self.theme.label()));
+        // 保存主题配置
+        self.save_theme_config();
+    }
+
+    /// 保存主题配置到文件
+    fn save_theme_config(&self) {
+        use storage::config::{Config, ThemeConfig, save_config};
+        let config = Config {
+            theme: ThemeConfig {
+                name: self.theme.label().to_string(),
+            },
+        };
+        let _ = save_config(&config);
     }
 
     /// 应用指定索引的主题

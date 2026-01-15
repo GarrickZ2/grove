@@ -62,6 +62,21 @@ impl Theme {
             Theme::Catppuccin,
         ]
     }
+
+    /// 从名称创建主题（用于配置加载）
+    pub fn from_name(name: &str) -> Self {
+        match name {
+            "Auto" => Theme::Auto,
+            "Dark" => Theme::Dark,
+            "Light" => Theme::Light,
+            "Dracula" => Theme::Dracula,
+            "Nord" => Theme::Nord,
+            "Gruvbox" => Theme::Gruvbox,
+            "Tokyo Night" => Theme::TokyoNight,
+            "Catppuccin" => Theme::Catppuccin,
+            _ => Theme::Auto, // 默认 Auto
+        }
+    }
 }
 
 /// 主题颜色方案

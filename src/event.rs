@@ -31,6 +31,12 @@ pub fn handle_events(app: &mut App) -> io::Result<bool> {
 fn handle_key(app: &mut App, key: KeyEvent) {
     // 优先处理弹窗事件
 
+    // 帮助面板
+    if app.show_help {
+        handle_help_key(app, key);
+        return;
+    }
+
     // 分支选择器
     if app.branch_selector.is_some() {
         handle_branch_selector_key(app, key);
@@ -127,6 +133,11 @@ fn handle_key(app: &mut App, key: KeyEvent) {
         // 功能按键 - 搜索
         KeyCode::Char('/') => {
             app.project.enter_search_mode();
+        }
+
+        // 功能按键 - 帮助
+        KeyCode::Char('?') => {
+            app.show_help = true;
         }
 
         // 功能按键 - 返回
@@ -306,6 +317,17 @@ fn handle_search_mode_key(app: &mut App, key: KeyEvent) {
             app.project.search_input_char(c);
         }
 
+        _ => {}
+    }
+}
+
+/// 处理帮助面板的键盘事件
+fn handle_help_key(app: &mut App, key: KeyEvent) {
+    match key.code {
+        // 关闭帮助面板
+        KeyCode::Char('?') | KeyCode::Esc | KeyCode::Char('q') => {
+            app.show_help = false;
+        }
         _ => {}
     }
 }

@@ -7,7 +7,7 @@ use ratatui::{
 
 use crate::app::App;
 
-use super::components::{branch_selector, confirm_dialog, empty_state, footer, header, input_confirm_dialog, new_task_dialog, search_bar, tabs, theme_selector, toast, worktree_list};
+use super::components::{branch_selector, confirm_dialog, empty_state, footer, header, help_panel, input_confirm_dialog, new_task_dialog, search_bar, tabs, theme_selector, toast, worktree_list};
 
 /// 渲染 Project 页面
 pub fn render(frame: &mut Frame, app: &App) {
@@ -111,5 +111,10 @@ pub fn render(frame: &mut Frame, app: &App) {
     // 渲染分支选择器
     if let Some(ref data) = app.branch_selector {
         branch_selector::render(frame, data, colors);
+    }
+
+    // 渲染帮助面板
+    if app.show_help {
+        help_panel::render(frame, colors);
     }
 }

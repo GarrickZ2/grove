@@ -1,3 +1,4 @@
+pub mod config;
 pub mod tasks;
 
 use std::io;
