@@ -27,7 +27,6 @@ pub struct ProjectInfo {
 /// 任务摘要（用于详情面板）
 #[derive(Debug, Clone)]
 pub struct TaskSummary {
-    pub id: String,
     pub name: String,
     pub status: WorktreeStatus,
     pub additions: u32,
@@ -151,13 +150,6 @@ impl WorkspaceState {
             .and_then(|&i| self.projects.get(i))
     }
 
-    /// 获取当前选中项目的原始索引
-    pub fn selected_project_index(&self) -> Option<usize> {
-        self.list_state
-            .selected()
-            .and_then(|i| self.filtered_indices.get(i).copied())
-    }
-
     /// 向下移动选择
     pub fn select_next(&mut self) {
         if self.filtered_indices.is_empty() {
@@ -257,55 +249,6 @@ impl WorkspaceState {
         }
     }
 
-    /// 添加项目
-    pub fn add_project(&mut self, path: &str) -> Result<(), String> {
-        // 检查路径是否存在
-        if !std::path::Path::new(path).exists() {
-            return Err("Path does not exist".to_string());
-        }
-
-        // 检查是否是 git 仓库
-        if !crate::git::is_git_repo(path) {
-            return Err("Not a git repository".to_string());
-        }
-
-        // 获取项目名（从路径提取）
-        let name = std::path::Path::new(path)
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("unknown")
-            .to_string();
-
-        // 添加到存储
-        storage::add_project(&name, path)
-            .map_err(|e| e.to_string())?;
-
-        // 重新加载
-        self.reload_projects();
-        Ok(())
-    }
-
-    /// 删除当前选中的项目
-    pub fn remove_selected_project(&mut self) -> Result<(), String> {
-        if let Some(project) = self.selected_project() {
-            let path = project.path.clone();
-            storage::remove_project(&path)
-                .map_err(|e| e.to_string())?;
-            self.reload_projects();
-            Ok(())
-        } else {
-            Err("No project selected".to_string())
-        }
-    }
-}
-
-/// 从路径提取项目名（用于显示）
-fn extract_project_name(path: &str) -> String {
-    std::path::Path::new(path)
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or("unknown")
-        .to_string()
 }
 
 /// 计算任务数量
@@ -357,7 +300,6 @@ fn load_project_detail(project: &ProjectInfo) -> ProjectDetail {
                 .unwrap_or((0, 0));
 
             TaskSummary {
-                id: t.id,
                 name: t.name,
                 status,
                 additions,
@@ -371,7 +313,6 @@ fn load_project_detail(project: &ProjectInfo) -> ProjectDetail {
         .unwrap_or_default()
         .into_iter()
         .map(|t| TaskSummary {
-            id: t.id,
             name: t.name,
             status: WorktreeStatus::Merged,
             additions: 0,

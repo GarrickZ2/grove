@@ -46,8 +46,6 @@ pub struct ProjectState {
     pub worktrees: [Vec<Worktree>; 3],
     /// 项目路径
     pub project_path: String,
-    /// 项目名称（用于显示）
-    pub project_name: String,
     /// 项目 key（路径的 hash，用于存储）
     pub project_key: String,
     /// 是否处于搜索模式
@@ -81,12 +79,6 @@ impl ProjectState {
             archived_state.select(Some(0));
         }
 
-        // 获取项目名称（用于显示）
-        let project_name = Path::new(project_path)
-            .file_name()
-            .map(|s| s.to_string_lossy().to_string())
-            .unwrap_or_else(|| "unknown".to_string());
-
         // 初始化过滤索引（全部显示）
         let current_indices: Vec<usize> = (0..current.len()).collect();
         let other_indices: Vec<usize> = (0..other.len()).collect();
@@ -97,7 +89,6 @@ impl ProjectState {
             list_states: [current_state, other_state, archived_state],
             worktrees: [current, other, archived],
             project_path: project_path.to_string(),
-            project_name,
             project_key,
             search_mode: false,
             search_query: String::new(),
@@ -287,14 +278,6 @@ impl ProjectState {
             .iter()
             .filter_map(|&i| self.worktrees[tab_idx].get(i))
             .collect()
-    }
-
-    /// 获取过滤后的真实 worktree（用于操作）
-    pub fn get_filtered_worktree(&self, filtered_idx: usize) -> Option<&Worktree> {
-        let tab_idx = self.current_tab.index();
-        self.filtered_indices[tab_idx]
-            .get(filtered_idx)
-            .and_then(|&real_idx| self.worktrees[tab_idx].get(real_idx))
     }
 }
 
@@ -532,13 +515,6 @@ impl App {
             self.theme = *theme;
             self.colors = get_theme_colors(*theme);
         }
-    }
-
-    /// 切换到下一个主题（快捷方式）
-    pub fn cycle_theme(&mut self) {
-        self.theme = self.theme.next();
-        self.colors = get_theme_colors(self.theme);
-        self.show_toast(format!("Theme: {}", self.theme.label()));
     }
 
     // ========== New Task Dialog ==========

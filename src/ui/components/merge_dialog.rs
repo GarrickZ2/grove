@@ -32,6 +32,7 @@ impl MergeMethod {
 pub struct MergeDialogData {
     pub task_id: String,
     pub task_name: String,
+    #[allow(dead_code)] // 预留用于显示
     pub branch: String,
     pub target: String,
     pub selected: MergeMethod,

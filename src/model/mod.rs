@@ -4,4 +4,4 @@ pub mod worktree;
 pub mod workspace;
 
 pub use worktree::{format_relative_time, FileChanges, ProjectTab, Worktree, WorktreeStatus};
-pub use workspace::{ProjectDetail, ProjectInfo, TaskSummary, WorkspaceState};
+pub use workspace::{ProjectDetail, ProjectInfo, WorkspaceState};

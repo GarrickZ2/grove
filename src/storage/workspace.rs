@@ -181,7 +181,3 @@ pub fn upsert_project(name: &str, path: &str) -> io::Result<()> {
     save_project_metadata(&hash, &project)
 }
 
-/// 根据项目路径获取项目的 hash（用于 tasks.rs 等其他模块）
-pub fn get_project_hash(path: &str) -> String {
-    project_hash(path)
-}

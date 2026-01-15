@@ -2,6 +2,7 @@ use chrono::{DateTime, Utc};
 
 /// Worktree 的运行状态
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)] // Conflict/Error 是预留状态
 pub enum WorktreeStatus {
     /// ○ idle: worktree 存在，无 session
     Idle,
@@ -95,6 +96,7 @@ pub struct Worktree {
     /// Worktree 路径
     pub path: String,
     /// 创建时间
+    #[allow(dead_code)] // 预留字段
     pub created_at: DateTime<Utc>,
     /// 更新时间
     pub updated_at: DateTime<Utc>,

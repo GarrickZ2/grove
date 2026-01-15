@@ -52,15 +52,6 @@ pub fn session_exists(name: &str) -> bool {
         .unwrap_or(false)
 }
 
-/// 检查 tmux 是否可用
-pub fn is_available() -> bool {
-    Command::new("tmux")
-        .arg("-V")
-        .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false)
-}
-
 /// 关闭 session
 /// 执行: tmux kill-session -t {name}
 pub fn kill_session(name: &str) -> Result<(), String> {

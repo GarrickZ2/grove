@@ -35,20 +35,6 @@ impl Theme {
         }
     }
 
-    /// 切换到下一个主题
-    pub fn next(&self) -> Self {
-        match self {
-            Theme::Auto => Theme::Dark,
-            Theme::Dark => Theme::Light,
-            Theme::Light => Theme::Dracula,
-            Theme::Dracula => Theme::Nord,
-            Theme::Nord => Theme::Gruvbox,
-            Theme::Gruvbox => Theme::TokyoNight,
-            Theme::TokyoNight => Theme::Catppuccin,
-            Theme::Catppuccin => Theme::Auto,
-        }
-    }
-
     /// 所有主题列表
     pub fn all() -> &'static [Theme] {
         &[
