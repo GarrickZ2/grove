@@ -1,3 +1,4 @@
+pub mod add_project_dialog;
 pub mod branch_selector;
 pub mod confirm_dialog;
 pub mod empty_state;

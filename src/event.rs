@@ -73,6 +73,12 @@ fn handle_key(app: &mut App, key: KeyEvent) {
         return;
     }
 
+    // Add Project 弹窗
+    if app.add_project_dialog.is_some() {
+        handle_add_project_dialog_key(app, key);
+        return;
+    }
+
     // 根据模式分发事件
     match app.mode {
         AppMode::Workspace => handle_workspace_key(app, key),
@@ -117,7 +123,7 @@ fn handle_workspace_key(app: &mut App, key: KeyEvent) {
 
         // 功能按键 - 添加项目
         KeyCode::Char('a') => {
-            app.show_toast("Add project - 功能开发中");
+            app.open_add_project_dialog();
         }
 
         // 功能按键 - 删除项目
@@ -476,6 +482,33 @@ fn handle_merge_dialog_key(app: &mut App, key: KeyEvent) {
         // 取消
         KeyCode::Esc | KeyCode::Char('q') => {
             app.merge_dialog_cancel();
+        }
+
+        _ => {}
+    }
+}
+
+/// 处理 Add Project 弹窗的键盘事件
+fn handle_add_project_dialog_key(app: &mut App, key: KeyEvent) {
+    match key.code {
+        // 确认添加
+        KeyCode::Enter => {
+            app.add_project_confirm();
+        }
+
+        // 取消
+        KeyCode::Esc => {
+            app.close_add_project_dialog();
+        }
+
+        // 删除字符
+        KeyCode::Backspace => {
+            app.add_project_delete_char();
+        }
+
+        // 输入字符
+        KeyCode::Char(c) => {
+            app.add_project_input_char(c);
         }
 
         _ => {}

@@ -6,6 +6,7 @@ use ratatui::widgets::ListState;
 
 use crate::git;
 use crate::model::{loader, ProjectTab, Worktree, WorktreeStatus, WorkspaceState};
+use crate::ui::components::add_project_dialog::AddProjectData;
 use crate::ui::components::branch_selector::BranchSelectorData;
 use crate::ui::components::confirm_dialog::ConfirmType;
 use crate::ui::components::input_confirm_dialog::InputConfirmData;
@@ -354,6 +355,8 @@ pub struct App {
     pub show_help: bool,
     /// Merge 方式选择弹窗
     pub merge_dialog: Option<MergeDialogData>,
+    /// Add Project 弹窗
+    pub add_project_dialog: Option<AddProjectData>,
 }
 
 /// 待执行的操作
@@ -428,6 +431,7 @@ impl App {
             pending_action: None,
             show_help: false,
             merge_dialog: None,
+            add_project_dialog: None,
         }
     }
 
@@ -1285,6 +1289,91 @@ impl App {
                 }
             }
         }
+    }
+
+    // ========== Add Project 功能 ==========
+
+    /// 打开 Add Project 弹窗
+    pub fn open_add_project_dialog(&mut self) {
+        self.add_project_dialog = Some(AddProjectData::new());
+    }
+
+    /// 关闭 Add Project 弹窗
+    pub fn close_add_project_dialog(&mut self) {
+        self.add_project_dialog = None;
+    }
+
+    /// Add Project - 输入字符
+    pub fn add_project_input_char(&mut self, c: char) {
+        if let Some(ref mut data) = self.add_project_dialog {
+            data.input_char(c);
+        }
+    }
+
+    /// Add Project - 删除字符
+    pub fn add_project_delete_char(&mut self) {
+        if let Some(ref mut data) = self.add_project_dialog {
+            data.delete_char();
+        }
+    }
+
+    /// Add Project - 确认添加
+    pub fn add_project_confirm(&mut self) {
+        let path = match &self.add_project_dialog {
+            Some(data) => data.expanded_path(),
+            None => return,
+        };
+
+        if path.is_empty() {
+            if let Some(ref mut data) = self.add_project_dialog {
+                data.set_error("Path cannot be empty");
+            }
+            return;
+        }
+
+        // 验证路径是否存在
+        if !Path::new(&path).exists() {
+            if let Some(ref mut data) = self.add_project_dialog {
+                data.set_error("Path does not exist");
+            }
+            return;
+        }
+
+        // 验证是否是 git 仓库
+        if !git::is_git_repo(&path) {
+            if let Some(ref mut data) = self.add_project_dialog {
+                data.set_error("Not a git repository");
+            }
+            return;
+        }
+
+        // 验证是否已注册
+        if storage::workspace::is_project_registered(&path).unwrap_or(false) {
+            if let Some(ref mut data) = self.add_project_dialog {
+                data.set_error("Project already registered");
+            }
+            return;
+        }
+
+        // 提取项目名
+        let name = Path::new(&path)
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("unknown")
+            .to_string();
+
+        // 添加项目
+        if let Err(e) = storage::workspace::add_project(&name, &path) {
+            if let Some(ref mut data) = self.add_project_dialog {
+                data.set_error(format!("Failed to add: {}", e));
+            }
+            return;
+        }
+
+        // 成功，关闭弹窗并刷新
+        self.close_add_project_dialog();
+        self.workspace.reload_projects();
+        self.show_toast(format!("Added: {}", name));
     }
 }
 
