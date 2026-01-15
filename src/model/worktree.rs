@@ -3,9 +3,9 @@ use chrono::{DateTime, Utc};
 /// Worktree 的运行状态
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WorktreeStatus {
-    /// ○ idle: worktree 存在，无 tmux session
+    /// ○ idle: worktree 存在，无 session
     Idle,
-    /// ● live: worktree 存在，tmux session 运行中
+    /// ● live: worktree 存在，session 运行中
     Live,
     /// ✓ merged: 已合并到 target branch
     Merged,

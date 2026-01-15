@@ -4,7 +4,7 @@
 use chrono::{DateTime, Utc};
 use ratatui::widgets::ListState;
 
-use crate::storage::workspace as storage;
+use crate::storage::workspace::{self as storage, project_hash};
 use crate::storage::tasks;
 
 use super::worktree::WorktreeStatus;
@@ -93,9 +93,9 @@ impl WorkspaceState {
         self.projects = registered
             .into_iter()
             .map(|p| {
-                // 计算任务数
-                let project_name = extract_project_name(&p.path);
-                let (task_count, live_count) = count_tasks(&project_name);
+                // 计算任务数（使用项目路径的 hash 作为存储 key）
+                let hash = project_hash(&p.path);
+                let (task_count, live_count) = count_tasks(&hash);
 
                 ProjectInfo {
                     name: p.name,
@@ -299,7 +299,7 @@ impl WorkspaceState {
     }
 }
 
-/// 从路径提取项目名
+/// 从路径提取项目名（用于显示）
 fn extract_project_name(path: &str) -> String {
     std::path::Path::new(path)
         .file_name()
@@ -309,15 +309,20 @@ fn extract_project_name(path: &str) -> String {
 }
 
 /// 计算任务数量
-fn count_tasks(project_name: &str) -> (usize, usize) {
-    let active_tasks = tasks::load_tasks(project_name).unwrap_or_default();
+/// project_key: 项目路径的 hash，用于加载任务数据
+fn count_tasks(project_key: &str) -> (usize, usize) {
+    let active_tasks = tasks::load_tasks(project_key).unwrap_or_default();
     let task_count = active_tasks.len();
 
-    // 计算 live 数量（检查 tmux session）
+    // 计算 live 数量（检查 session 是否运行）
+    // 注意：session 名称使用的是任务的 worktree 路径来提取项目名
     let live_count = active_tasks
         .iter()
         .filter(|t| {
-            let session_name = format!("grove-{}-{}", project_name, t.id);
+            // 从 worktree_path 提取项目名用于 session 命名
+            // worktree_path 通常是 ~/.grove/worktrees/<hash>/<task-id>
+            // 我们直接使用 project_key 和 task_id 组合
+            let session_name = format!("grove-{}-{}", project_key, t.id);
             crate::tmux::session_exists(&session_name)
         })
         .count();
@@ -327,7 +332,7 @@ fn count_tasks(project_name: &str) -> (usize, usize) {
 
 /// 加载项目详情
 fn load_project_detail(project: &ProjectInfo) -> ProjectDetail {
-    let project_name = extract_project_name(&project.path);
+    let project_key = project_hash(&project.path);
 
     // 获取当前分支
     let branch = crate::git::current_branch(&project.path).unwrap_or_else(|_| "unknown".to_string());
@@ -336,11 +341,11 @@ fn load_project_detail(project: &ProjectInfo) -> ProjectDetail {
     let added_at = super::worktree::format_relative_time(project.added_at);
 
     // 加载活跃任务
-    let active_tasks = tasks::load_tasks(&project_name)
+    let active_tasks = tasks::load_tasks(&project_key)
         .unwrap_or_default()
         .into_iter()
         .map(|t| {
-            let session_name = format!("grove-{}-{}", project_name, t.id);
+            let session_name = format!("grove-{}-{}", project_key, t.id);
             let status = if crate::tmux::session_exists(&session_name) {
                 WorktreeStatus::Live
             } else {
@@ -362,7 +367,7 @@ fn load_project_detail(project: &ProjectInfo) -> ProjectDetail {
         .collect();
 
     // 加载归档任务
-    let archived_tasks = tasks::load_archived_tasks(&project_name)
+    let archived_tasks = tasks::load_archived_tasks(&project_key)
         .unwrap_or_default()
         .into_iter()
         .map(|t| TaskSummary {

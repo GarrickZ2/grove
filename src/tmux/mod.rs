@@ -1,18 +1,18 @@
 use std::process::Command;
 
-/// 生成 tmux session 名称
+/// 生成 session 名称
 /// 格式: grove-{project}-{task_slug}
 pub fn session_name(project: &str, task_slug: &str) -> String {
     format!("grove-{}-{}", project, task_slug)
 }
 
-/// 创建 tmux session (后台)
+/// 创建 session (后台)
 /// 执行: tmux new-session -d -s {name} -c {path}
 pub fn create_session(name: &str, working_dir: &str) -> Result<(), String> {
     let output = Command::new("tmux")
         .args(["new-session", "-d", "-s", name, "-c", working_dir])
         .output()
-        .map_err(|e| format!("Failed to execute tmux: {}", e))?;
+        .map_err(|e| format!("Session create failed: {}", e))?;
 
     if output.status.success() {
         Ok(())
@@ -22,24 +22,24 @@ pub fn create_session(name: &str, working_dir: &str) -> Result<(), String> {
         if stderr.contains("duplicate session") {
             Ok(())
         } else {
-            Err(format!("tmux new-session failed: {}", stderr.trim()))
+            Err(format!("Session create failed: {}", stderr.trim()))
         }
     }
 }
 
-/// attach 到 tmux session (阻塞)
+/// attach 到 session (阻塞)
 /// 执行: tmux attach-session -t {name}
 /// 注意: 这个函数应该在 TUI 退出后调用
 pub fn attach_session(name: &str) -> Result<(), String> {
     let status = Command::new("tmux")
         .args(["attach-session", "-t", name])
         .status()
-        .map_err(|e| format!("Failed to execute tmux: {}", e))?;
+        .map_err(|e| format!("Session attach failed: {}", e))?;
 
     if status.success() {
         Ok(())
     } else {
-        Err("tmux attach-session failed".to_string())
+        Err("Session attach failed".to_string())
     }
 }
 
@@ -61,13 +61,13 @@ pub fn is_available() -> bool {
         .unwrap_or(false)
 }
 
-/// 关闭 tmux session
+/// 关闭 session
 /// 执行: tmux kill-session -t {name}
 pub fn kill_session(name: &str) -> Result<(), String> {
     let output = Command::new("tmux")
         .args(["kill-session", "-t", name])
         .output()
-        .map_err(|e| format!("Failed to execute tmux: {}", e))?;
+        .map_err(|e| format!("Session close failed: {}", e))?;
 
     if output.status.success() {
         Ok(())
@@ -77,7 +77,7 @@ pub fn kill_session(name: &str) -> Result<(), String> {
         if stderr.contains("no server running") || stderr.contains("session not found") {
             Ok(())
         } else {
-            Err(format!("tmux kill-session failed: {}", stderr.trim()))
+            Err(format!("Session close failed: {}", stderr.trim()))
         }
     }
 }

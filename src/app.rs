@@ -10,7 +10,7 @@ use crate::ui::components::branch_selector::BranchSelectorData;
 use crate::ui::components::confirm_dialog::ConfirmType;
 use crate::ui::components::input_confirm_dialog::InputConfirmData;
 use crate::ui::components::merge_dialog::{MergeDialogData, MergeMethod};
-use crate::storage::{self, tasks::{self, Task, TaskStatus}};
+use crate::storage::{self, tasks::{self, Task, TaskStatus}, workspace::project_hash};
 use crate::theme::{detect_system_theme, get_theme_colors, Theme, ThemeColors};
 use crate::tmux;
 
@@ -44,8 +44,10 @@ pub struct ProjectState {
     pub worktrees: [Vec<Worktree>; 3],
     /// 项目路径
     pub project_path: String,
-    /// 项目名称
+    /// 项目名称（用于显示）
     pub project_name: String,
+    /// 项目 key（路径的 hash，用于存储）
+    pub project_key: String,
     /// 是否处于搜索模式
     pub search_mode: bool,
     /// 搜索输入
@@ -56,6 +58,9 @@ pub struct ProjectState {
 
 impl ProjectState {
     pub fn new(project_path: &str) -> Self {
+        // 计算项目 key (路径的 hash)
+        let project_key = project_hash(project_path);
+
         // 从 Task 元数据加载真实数据
         let (current, other, archived) = loader::load_worktrees(project_path);
 
@@ -74,7 +79,7 @@ impl ProjectState {
             archived_state.select(Some(0));
         }
 
-        // 获取项目名称
+        // 获取项目名称（用于显示）
         let project_name = Path::new(project_path)
             .file_name()
             .map(|s| s.to_string_lossy().to_string())
@@ -91,6 +96,7 @@ impl ProjectState {
             worktrees: [current, other, archived],
             project_path: project_path.to_string(),
             project_name,
+            project_key,
             search_mode: false,
             search_query: String::new(),
             filtered_indices: [current_indices, other_indices, archived_indices],
@@ -334,7 +340,7 @@ pub struct App {
     pub new_task_input: String,
     /// 当前目标分支 (用于显示 "from {branch}")
     pub target_branch: String,
-    /// 待 attach 的 tmux session (暂停 TUI 后执行，完成后恢复 TUI)
+    /// 待 attach 的 session (暂停 TUI 后执行，完成后恢复 TUI)
     pub pending_tmux_attach: Option<String>,
     /// 确认弹窗（弱确认）
     pub confirm_dialog: Option<ConfirmType>,
@@ -556,17 +562,14 @@ impl App {
             }
         };
 
-        let project_name = Path::new(&repo_root)
-            .file_name()
-            .map(|s| s.to_string_lossy().to_string())
-            .unwrap_or_else(|| "unknown".to_string());
+        let project_key = project_hash(&repo_root);
 
         // 2. 生成标识符
         let slug = tasks::to_slug(&name);
         let branch = tasks::generate_branch_name(&name);
 
-        // 3. 计算路径
-        let worktree_path = match storage::ensure_worktree_dir(&project_name) {
+        // 3. 计算路径（使用 project_key 作为目录名）
+        let worktree_path = match storage::ensure_worktree_dir(&project_key) {
             Ok(dir) => dir.join(&slug),
             Err(e) => {
                 self.show_toast(format!("Failed to create dir: {}", e));
@@ -600,15 +603,15 @@ impl App {
             status: TaskStatus::Active,
         };
 
-        if let Err(e) = tasks::add_task(&project_name, task) {
+        if let Err(e) = tasks::add_task(&project_key, task) {
             // 只是警告，worktree 已创建
             eprintln!("Warning: Failed to save task: {}", e);
         }
 
-        // 6. 创建 tmux session
-        let session = tmux::session_name(&project_name, &slug);
+        // 6. 创建 session（使用 project_key 保持一致）
+        let session = tmux::session_name(&project_key, &slug);
         if let Err(e) = tmux::create_session(&session, worktree_path.to_str().unwrap_or(".")) {
-            self.show_toast(format!("tmux error: {}", e));
+            self.show_toast(format!("Session error: {}", e));
             self.close_new_task_dialog();
             return;
         }
@@ -621,7 +624,7 @@ impl App {
         self.pending_tmux_attach = Some(session);
     }
 
-    /// 进入当前选中的 worktree (attach tmux session)
+    /// 进入当前选中的 worktree (attach session)
     pub fn enter_worktree(&mut self) {
         // 1. 获取当前选中的 worktree
         let selected = self.project.current_list_state().selected();
@@ -636,14 +639,14 @@ impl App {
             return;
         }
 
-        // 3. 获取 session 名称
+        // 3. 获取 session 名称（使用 project_key）
         let slug = slug_from_path(&wt.path);
-        let session = tmux::session_name(&self.project.project_name, &slug);
+        let session = tmux::session_name(&self.project.project_key, &slug);
 
         // 4. 如果 session 不存在，创建它
         if !tmux::session_exists(&session) {
             if let Err(e) = tmux::create_session(&session, &wt.path) {
-                self.show_toast(format!("tmux error: {}", e));
+                self.show_toast(format!("Session error: {}", e));
                 return;
             }
         }
@@ -723,19 +726,19 @@ impl App {
 
     /// 执行归档
     fn do_archive(&mut self, task_id: &str) {
-        // 1. 关闭 tmux session
-        let session = tmux::session_name(&self.project.project_name, task_id);
+        // 1. 关闭 session
+        let session = tmux::session_name(&self.project.project_key, task_id);
         let _ = tmux::kill_session(&session);
 
         // 2. 获取 worktree 路径并删除
-        if let Ok(Some(task)) = tasks::get_task(&self.project.project_name, task_id) {
+        if let Ok(Some(task)) = tasks::get_task(&self.project.project_key, task_id) {
             if Path::new(&task.worktree_path).exists() {
                 let _ = git::remove_worktree(&self.project.project_path, &task.worktree_path);
             }
         }
 
         // 3. 移动到 archived.toml
-        if let Err(e) = tasks::archive_task(&self.project.project_name, task_id) {
+        if let Err(e) = tasks::archive_task(&self.project.project_key, task_id) {
             self.show_toast(format!("Archive failed: {}", e));
             return;
         }
@@ -779,15 +782,15 @@ impl App {
 
     /// 执行清理
     fn do_clean(&mut self, task_id: &str, is_archived: bool) {
-        // 1. 关闭 tmux session
-        let session = tmux::session_name(&self.project.project_name, task_id);
+        // 1. 关闭 session
+        let session = tmux::session_name(&self.project.project_key, task_id);
         let _ = tmux::kill_session(&session);
 
         // 2. 获取 task 信息
         let task = if is_archived {
-            tasks::get_archived_task(&self.project.project_name, task_id).ok().flatten()
+            tasks::get_archived_task(&self.project.project_key, task_id).ok().flatten()
         } else {
-            tasks::get_task(&self.project.project_name, task_id).ok().flatten()
+            tasks::get_task(&self.project.project_key, task_id).ok().flatten()
         };
 
         if let Some(task) = task {
@@ -802,9 +805,9 @@ impl App {
 
         // 5. 删除 task 记录
         let result = if is_archived {
-            tasks::remove_archived_task(&self.project.project_name, task_id)
+            tasks::remove_archived_task(&self.project.project_key, task_id)
         } else {
-            tasks::remove_task(&self.project.project_name, task_id)
+            tasks::remove_task(&self.project.project_key, task_id)
         };
 
         if let Err(e) = result {
@@ -915,7 +918,7 @@ impl App {
     /// 恢复归档的任务
     fn recover_worktree(&mut self, task_id: &str) {
         // 获取 task 信息
-        let task = match tasks::get_archived_task(&self.project.project_name, task_id) {
+        let task = match tasks::get_archived_task(&self.project.project_key, task_id) {
             Ok(Some(t)) => t,
             _ => {
                 self.show_toast("Task not found");
@@ -941,15 +944,15 @@ impl App {
         }
 
         // 移回 tasks.toml
-        if let Err(e) = tasks::recover_task(&self.project.project_name, task_id) {
+        if let Err(e) = tasks::recover_task(&self.project.project_key, task_id) {
             self.show_toast(format!("Recover failed: {}", e));
             return;
         }
 
-        // 创建 tmux session
-        let session = tmux::session_name(&self.project.project_name, task_id);
+        // 创建 session
+        let session = tmux::session_name(&self.project.project_key, task_id);
         if let Err(e) = tmux::create_session(&session, task.worktree_path.as_str()) {
-            self.show_toast(format!("tmux error: {}", e));
+            self.show_toast(format!("Session error: {}", e));
             return;
         }
 
@@ -1030,7 +1033,7 @@ impl App {
             (new_target, self.pending_action.take())
         {
             // 更新 task target
-            if let Err(e) = tasks::update_task_target(&self.project.project_name, &task_id, &new_target) {
+            if let Err(e) = tasks::update_task_target(&self.project.project_key, &task_id, &new_target) {
                 self.show_toast(format!("Failed to update target: {}", e));
             } else {
                 self.project.refresh();
@@ -1086,7 +1089,7 @@ impl App {
     /// 检查 Sync 的 target 是否有未提交代码
     fn check_sync_target(&mut self, task_id: &str) {
         // 获取 task 信息
-        let task = match tasks::get_task(&self.project.project_name, task_id) {
+        let task = match tasks::get_task(&self.project.project_key, task_id) {
             Ok(Some(t)) => t,
             _ => {
                 self.show_toast("Task not found");
@@ -1115,7 +1118,7 @@ impl App {
     /// 执行 Sync
     fn do_sync(&mut self, task_id: &str) {
         // 获取 task 信息
-        let task = match tasks::get_task(&self.project.project_name, task_id) {
+        let task = match tasks::get_task(&self.project.project_key, task_id) {
             Ok(Some(t)) => t,
             _ => {
                 self.show_toast("Task not found");
@@ -1178,7 +1181,7 @@ impl App {
     /// 检查 Merge 的 target 是否有未提交代码
     fn check_merge_target(&mut self, task_id: &str) {
         // 获取 task 信息
-        let task = match tasks::get_task(&self.project.project_name, task_id) {
+        let task = match tasks::get_task(&self.project.project_key, task_id) {
             Ok(Some(t)) => t,
             _ => {
                 self.show_toast("Task not found");
@@ -1207,7 +1210,7 @@ impl App {
     /// 打开 Merge 方式选择弹窗
     fn open_merge_dialog(&mut self, task_id: &str) {
         // 获取 task 信息
-        let task = match tasks::get_task(&self.project.project_name, task_id) {
+        let task = match tasks::get_task(&self.project.project_key, task_id) {
             Ok(Some(t)) => t,
             _ => {
                 self.show_toast("Task not found");
@@ -1246,7 +1249,7 @@ impl App {
     /// 执行 Merge
     fn do_merge(&mut self, task_id: &str, method: MergeMethod) {
         // 获取 task 信息
-        let task = match tasks::get_task(&self.project.project_name, task_id) {
+        let task = match tasks::get_task(&self.project.project_key, task_id) {
             Ok(Some(t)) => t,
             _ => {
                 self.show_toast("Task not found");

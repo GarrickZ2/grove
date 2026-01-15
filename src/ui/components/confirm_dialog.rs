@@ -74,7 +74,7 @@ impl ConfirmType {
                     Line::from(""),
                     Line::from("This will:"),
                     Line::from("• Recreate worktree"),
-                    Line::from("• Start tmux session"),
+                    Line::from("• Start session"),
                 ]
             }
             ConfirmType::SyncUncommittedWorktree { task_name } => {

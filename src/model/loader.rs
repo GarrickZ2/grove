@@ -4,6 +4,7 @@ use std::path::Path;
 
 use crate::git;
 use crate::storage::tasks::{self, Task, TaskStatus};
+use crate::storage::workspace::project_hash;
 use crate::tmux;
 
 use super::{FileChanges, Worktree, WorktreeStatus};
@@ -11,18 +12,11 @@ use super::{FileChanges, Worktree, WorktreeStatus};
 /// 从 Task 元数据加载 worktree 列表
 /// 返回: (current, other, archived)
 pub fn load_worktrees(project_path: &str) -> (Vec<Worktree>, Vec<Worktree>, Vec<Worktree>) {
-    // 1. 获取项目名
-    let project_name = Path::new(project_path)
-        .file_name()
-        .map(|s| s.to_string_lossy().to_string())
-        .unwrap_or_default();
-
-    if project_name.is_empty() {
-        return (Vec::new(), Vec::new(), Vec::new());
-    }
+    // 1. 获取项目 key（路径的 hash）
+    let project_key = project_hash(project_path);
 
     // 2. 加载 tasks.toml (活跃任务)
-    let active_tasks = tasks::load_tasks(&project_name).unwrap_or_default();
+    let active_tasks = tasks::load_tasks(&project_key).unwrap_or_default();
 
     // 3. 获取默认分支
     let default_branch = git::default_branch(project_path).unwrap_or_else(|_| "main".to_string());
@@ -32,7 +26,7 @@ pub fn load_worktrees(project_path: &str) -> (Vec<Worktree>, Vec<Worktree>, Vec<
     let mut other = Vec::new();
 
     for task in active_tasks {
-        let worktree = task_to_worktree(&task, &project_name);
+        let worktree = task_to_worktree(&task, &project_key);
 
         if task.target == default_branch {
             current.push(worktree);
@@ -49,16 +43,9 @@ pub fn load_worktrees(project_path: &str) -> (Vec<Worktree>, Vec<Worktree>, Vec<
 
 /// 加载归档任务（懒加载）
 pub fn load_archived_worktrees(project_path: &str) -> Vec<Worktree> {
-    let project_name = Path::new(project_path)
-        .file_name()
-        .map(|s| s.to_string_lossy().to_string())
-        .unwrap_or_default();
+    let project_key = project_hash(project_path);
 
-    if project_name.is_empty() {
-        return Vec::new();
-    }
-
-    let archived_tasks = tasks::load_archived_tasks(&project_name).unwrap_or_default();
+    let archived_tasks = tasks::load_archived_tasks(&project_key).unwrap_or_default();
 
     archived_tasks
         .into_iter()
@@ -94,7 +81,7 @@ fn task_to_worktree(task: &Task, project: &str) -> Worktree {
     let status = if !exists {
         WorktreeStatus::Broken // worktree 被删除
     } else {
-        // 检查 tmux session
+        // 检查 session 是否运行
         let session = tmux::session_name(project, &task.id);
         if tmux::session_exists(&session) {
             WorktreeStatus::Live

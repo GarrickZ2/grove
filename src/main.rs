@@ -31,18 +31,18 @@ fn main() -> io::Result<()> {
 
 fn run(terminal: &mut DefaultTerminal, app: &mut App) -> io::Result<()> {
     loop {
-        // 检查是否有待 attach 的 tmux session
+        // 检查是否有待 attach 的 session
         if let Some(session) = app.pending_tmux_attach.take() {
             // 暂停 TUI
             ratatui::restore();
 
-            // attach 到 tmux session（阻塞，直到用户 detach）
+            // attach 到 session（阻塞，直到用户 detach）
             let _ = tmux::attach_session(&session);
 
             // 恢复 TUI
             *terminal = ratatui::init();
 
-            // 刷新数据（用户可能在 tmux 中做了改动）
+            // 刷新数据（用户可能在 session 中做了改动）
             app.project.refresh();
         }
 
