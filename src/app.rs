@@ -105,9 +105,9 @@ impl ProjectState {
         &self.list_states[self.current_tab.index()]
     }
 
-    /// 总 worktree 数量
-    pub fn total_worktrees(&self) -> usize {
-        self.worktrees.iter().map(|w| w.len()).sum()
+    /// 活跃任务数量（Current + Other，不包含 Archived）
+    pub fn active_task_count(&self) -> usize {
+        self.worktrees[0].len() + self.worktrees[1].len()
     }
 
     /// 切换到下一个 Tab

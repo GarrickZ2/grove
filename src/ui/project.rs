@@ -34,7 +34,7 @@ pub fn render(frame: &mut Frame, app: &App) {
         frame,
         header_area,
         &app.project.project_path,
-        app.project.total_worktrees(),
+        app.project.active_task_count(),
         colors,
     );
 

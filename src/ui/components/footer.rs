@@ -54,7 +54,7 @@ fn get_shortcuts(current_tab: ProjectTab, has_items: bool) -> Vec<(&'static str,
         ProjectTab::Archived => {
             if has_items {
                 vec![
-                    ("Enter", "recover"),
+                    ("r", "recover"),
                     ("x", "clean"),
                     ("Tab", "switch"),
                     ("t", "theme"),

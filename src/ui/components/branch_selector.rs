@@ -103,7 +103,7 @@ pub fn render(frame: &mut Frame, data: &BranchSelectorData, colors: &ThemeColors
     // 计算弹窗尺寸
     let popup_width = 50u16;
     let max_visible = 8usize;
-    let visible_count = data.filtered_indices.len().min(max_visible);
+    let visible_count = data.filtered_indices.len().min(max_visible).max(1); // 至少1行显示空状态
     let popup_height = (visible_count as u16) + 8; // 标题 + 信息 + 搜索框 + 列表 + 提示
 
     // 居中显示
