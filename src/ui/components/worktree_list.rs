@@ -12,7 +12,7 @@ use crate::theme::ThemeColors;
 pub fn render(
     frame: &mut Frame,
     area: Rect,
-    worktrees: &[Worktree],
+    worktrees: &[&Worktree],
     selected_index: Option<usize>,
     colors: &ThemeColors,
 ) {

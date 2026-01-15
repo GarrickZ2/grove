@@ -45,6 +45,12 @@ pub struct ProjectState {
     pub project_path: String,
     /// 项目名称
     pub project_name: String,
+    /// 是否处于搜索模式
+    pub search_mode: bool,
+    /// 搜索输入
+    pub search_query: String,
+    /// 每个 Tab 的过滤索引 [Current, Other, Archived]
+    filtered_indices: [Vec<usize>; 3],
 }
 
 impl ProjectState {
@@ -73,12 +79,20 @@ impl ProjectState {
             .map(|s| s.to_string_lossy().to_string())
             .unwrap_or_else(|| "unknown".to_string());
 
+        // 初始化过滤索引（全部显示）
+        let current_indices: Vec<usize> = (0..current.len()).collect();
+        let other_indices: Vec<usize> = (0..other.len()).collect();
+        let archived_indices: Vec<usize> = (0..archived.len()).collect();
+
         Self {
             current_tab: ProjectTab::Current,
             list_states: [current_state, other_state, archived_state],
             worktrees: [current, other, archived],
             project_path: project_path.to_string(),
             project_name,
+            search_mode: false,
+            search_query: String::new(),
+            filtered_indices: [current_indices, other_indices, archived_indices],
         }
     }
 
@@ -87,6 +101,12 @@ impl ProjectState {
         let (current, other, _) = loader::load_worktrees(&self.project_path);
         let archived = loader::load_archived_worktrees(&self.project_path);
         self.worktrees = [current, other, archived];
+
+        // 清空搜索状态并重置过滤索引
+        self.search_mode = false;
+        self.search_query.clear();
+        self.reset_filter();
+
         self.ensure_selection();
     }
 
@@ -137,7 +157,7 @@ impl ProjectState {
 
     /// 选中下一项
     pub fn select_next(&mut self) {
-        let list_len = self.current_worktrees().len();
+        let list_len = self.filtered_len();
         if list_len == 0 {
             return;
         }
@@ -150,7 +170,7 @@ impl ProjectState {
 
     /// 选中上一项
     pub fn select_previous(&mut self) {
-        let list_len = self.current_worktrees().len();
+        let list_len = self.filtered_len();
         if list_len == 0 {
             return;
         }
@@ -163,6 +183,109 @@ impl ProjectState {
             current - 1
         };
         state.select(Some(prev));
+    }
+
+    // ========== 搜索功能 ==========
+
+    /// 重置过滤索引（显示全部）
+    fn reset_filter(&mut self) {
+        for (i, worktrees) in self.worktrees.iter().enumerate() {
+            self.filtered_indices[i] = (0..worktrees.len()).collect();
+        }
+    }
+
+    /// 更新过滤索引
+    fn update_filter(&mut self) {
+        let query_lower = self.search_query.to_lowercase();
+
+        for (tab_idx, worktrees) in self.worktrees.iter().enumerate() {
+            if query_lower.is_empty() {
+                self.filtered_indices[tab_idx] = (0..worktrees.len()).collect();
+            } else {
+                self.filtered_indices[tab_idx] = worktrees
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, wt)| {
+                        wt.task_name.to_lowercase().contains(&query_lower)
+                            || wt.branch.to_lowercase().contains(&query_lower)
+                    })
+                    .map(|(i, _)| i)
+                    .collect();
+            }
+        }
+
+        // 确保选中项在过滤范围内
+        self.ensure_filter_selection();
+    }
+
+    /// 确保选中项在过滤范围内
+    fn ensure_filter_selection(&mut self) {
+        let filtered_len = self.filtered_len();
+        let state = self.current_list_state_mut();
+
+        if filtered_len == 0 {
+            state.select(None);
+        } else if let Some(selected) = state.selected() {
+            if selected >= filtered_len {
+                state.select(Some(0));
+            }
+        } else {
+            state.select(Some(0));
+        }
+    }
+
+    /// 获取当前 Tab 过滤后的列表长度
+    fn filtered_len(&self) -> usize {
+        self.filtered_indices[self.current_tab.index()].len()
+    }
+
+    /// 进入搜索模式
+    pub fn enter_search_mode(&mut self) {
+        self.search_mode = true;
+        self.search_query.clear();
+        self.reset_filter();
+    }
+
+    /// 退出搜索模式（保留过滤）
+    pub fn exit_search_mode(&mut self) {
+        self.search_mode = false;
+    }
+
+    /// 取消搜索（清空并退出）
+    pub fn cancel_search(&mut self) {
+        self.search_mode = false;
+        self.search_query.clear();
+        self.reset_filter();
+        self.ensure_selection();
+    }
+
+    /// 搜索输入字符
+    pub fn search_input_char(&mut self, c: char) {
+        self.search_query.push(c);
+        self.update_filter();
+    }
+
+    /// 搜索删除字符
+    pub fn search_delete_char(&mut self) {
+        self.search_query.pop();
+        self.update_filter();
+    }
+
+    /// 获取当前 Tab 过滤后的 worktrees
+    pub fn filtered_worktrees(&self) -> Vec<&Worktree> {
+        let tab_idx = self.current_tab.index();
+        self.filtered_indices[tab_idx]
+            .iter()
+            .filter_map(|&i| self.worktrees[tab_idx].get(i))
+            .collect()
+    }
+
+    /// 获取过滤后的真实 worktree（用于操作）
+    pub fn get_filtered_worktree(&self, filtered_idx: usize) -> Option<&Worktree> {
+        let tab_idx = self.current_tab.index();
+        self.filtered_indices[tab_idx]
+            .get(filtered_idx)
+            .and_then(|&real_idx| self.worktrees[tab_idx].get(real_idx))
     }
 }
 

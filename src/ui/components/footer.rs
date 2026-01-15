@@ -56,9 +56,9 @@ fn get_shortcuts(current_tab: ProjectTab, has_items: bool) -> Vec<(&'static str,
                 vec![
                     ("r", "recover"),
                     ("x", "clean"),
+                    ("/", "search"),
                     ("Tab", "switch"),
                     ("t", "theme"),
-                    ("Esc", "back"),
                     ("q", "quit"),
                 ]
             } else {
@@ -77,8 +77,8 @@ fn get_shortcuts(current_tab: ProjectTab, has_items: bool) -> Vec<(&'static str,
                     ("a", "arch"),
                     ("x", "clean"),
                     ("r", "rebase"),
+                    ("/", "search"),
                     ("Tab", "switch"),
-                    ("t", "theme"),
                     ("q", "quit"),
                 ]
             } else {

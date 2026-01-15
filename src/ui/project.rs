@@ -7,7 +7,7 @@ use ratatui::{
 
 use crate::app::App;
 
-use super::components::{branch_selector, confirm_dialog, empty_state, footer, header, input_confirm_dialog, new_task_dialog, tabs, theme_selector, toast, worktree_list};
+use super::components::{branch_selector, confirm_dialog, empty_state, footer, header, input_confirm_dialog, new_task_dialog, search_bar, tabs, theme_selector, toast, worktree_list};
 
 /// 渲染 Project 页面
 pub fn render(frame: &mut Frame, app: &App) {
@@ -19,15 +19,29 @@ pub fn render(frame: &mut Frame, app: &App) {
         .style(Style::default().bg(colors.bg))
         .render(area, frame.buffer_mut());
 
-    // 垂直布局
-    let [header_area, tabs_area, list_area, footer_area] =
-        ratatui::layout::Layout::vertical([
-            Constraint::Length(header::HEADER_HEIGHT), // Header (Logo + 项目信息)
-            Constraint::Length(2),                     // Tabs (包含底边框)
-            Constraint::Fill(1),                       // Worktree List / Empty State
-            Constraint::Length(3),                     // Footer
-        ])
-        .areas(area);
+    // 根据搜索模式决定布局
+    let (header_area, tabs_area, search_area, list_area, footer_area) = if app.project.search_mode {
+        let [header_area, tabs_area, search_area, list_area, footer_area] =
+            ratatui::layout::Layout::vertical([
+                Constraint::Length(header::HEADER_HEIGHT),
+                Constraint::Length(2),
+                Constraint::Length(1),  // 搜索框
+                Constraint::Fill(1),
+                Constraint::Length(3),
+            ])
+            .areas(area);
+        (header_area, tabs_area, Some(search_area), list_area, footer_area)
+    } else {
+        let [header_area, tabs_area, list_area, footer_area] =
+            ratatui::layout::Layout::vertical([
+                Constraint::Length(header::HEADER_HEIGHT),
+                Constraint::Length(2),
+                Constraint::Fill(1),
+                Constraint::Length(3),
+            ])
+            .areas(area);
+        (header_area, tabs_area, None, list_area, footer_area)
+    };
 
     // 渲染 Header
     header::render(
@@ -41,13 +55,18 @@ pub fn render(frame: &mut Frame, app: &App) {
     // 渲染 Tabs
     tabs::render(frame, tabs_area, app.project.current_tab, colors);
 
-    // 渲染列表或空状态
-    let worktrees = app.project.current_worktrees();
+    // 渲染搜索框（如果在搜索模式）
+    if let Some(search_area) = search_area {
+        search_bar::render(frame, search_area, &app.project.search_query, colors);
+    }
+
+    // 渲染列表或空状态（使用过滤后的数据）
+    let worktrees = app.project.filtered_worktrees();
     if worktrees.is_empty() {
         empty_state::render(frame, list_area, app.project.current_tab, colors);
     } else {
         let selected = app.project.current_list_state().selected();
-        worktree_list::render(frame, list_area, worktrees, selected, colors);
+        worktree_list::render(frame, list_area, &worktrees, selected, colors);
     }
 
     // 渲染 Footer

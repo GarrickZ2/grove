@@ -61,6 +61,12 @@ fn handle_key(app: &mut App, key: KeyEvent) {
         return;
     }
 
+    // 搜索模式
+    if app.project.search_mode {
+        handle_search_mode_key(app, key);
+        return;
+    }
+
     match key.code {
         // 退出
         KeyCode::Char('q') => app.quit(),
@@ -116,6 +122,11 @@ fn handle_key(app: &mut App, key: KeyEvent) {
         // 功能按键 - Theme 选择器
         KeyCode::Char('T') | KeyCode::Char('t') => {
             app.open_theme_selector();
+        }
+
+        // 功能按键 - 搜索
+        KeyCode::Char('/') => {
+            app.project.enter_search_mode();
         }
 
         // 功能按键 - 返回
@@ -256,6 +267,43 @@ fn handle_new_task_dialog_key(app: &mut App, key: KeyEvent) {
         // 输入字符
         KeyCode::Char(c) => {
             app.new_task_input_char(c);
+        }
+
+        _ => {}
+    }
+}
+
+/// 处理搜索模式的键盘事件
+fn handle_search_mode_key(app: &mut App, key: KeyEvent) {
+    match key.code {
+        // 确认搜索（保留过滤）
+        KeyCode::Enter => {
+            app.project.exit_search_mode();
+        }
+
+        // 取消搜索（清空过滤）
+        KeyCode::Esc => {
+            app.project.cancel_search();
+        }
+
+        // 导航 - 下移
+        KeyCode::Char('j') | KeyCode::Down => {
+            app.project.select_next();
+        }
+
+        // 导航 - 上移
+        KeyCode::Char('k') | KeyCode::Up => {
+            app.project.select_previous();
+        }
+
+        // 删除字符
+        KeyCode::Backspace => {
+            app.project.search_delete_char();
+        }
+
+        // 输入字符
+        KeyCode::Char(c) => {
+            app.project.search_input_char(c);
         }
 
         _ => {}

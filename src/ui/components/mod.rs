@@ -6,6 +6,7 @@ pub mod header;
 pub mod input_confirm_dialog;
 pub mod logo;
 pub mod new_task_dialog;
+pub mod search_bar;
 pub mod tabs;
 pub mod theme_selector;
 pub mod toast;
