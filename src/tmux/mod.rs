@@ -6,11 +6,57 @@ pub fn session_name(project: &str, task_slug: &str) -> String {
     format!("grove-{}-{}", project, task_slug)
 }
 
+/// Session 环境变量
+#[derive(Debug, Clone, Default)]
+pub struct SessionEnv {
+    /// Task ID (slug)
+    pub task_id: String,
+    /// Task 名称 (人类可读)
+    pub task_name: String,
+    /// 当前分支
+    pub branch: String,
+    /// 目标分支
+    pub target: String,
+    /// Worktree 路径
+    pub worktree: String,
+    /// 项目名称
+    pub project_name: String,
+    /// 主仓库路径
+    pub project_path: String,
+}
+
 /// 创建 session (后台)
-/// 执行: tmux new-session -d -s {name} -c {path}
-pub fn create_session(name: &str, working_dir: &str) -> Result<(), String> {
+/// 执行: tmux new-session -d -s {name} -c {path} -e VAR=value ...
+pub fn create_session(name: &str, working_dir: &str, env: Option<&SessionEnv>) -> Result<(), String> {
+    let mut args = vec![
+        "new-session".to_string(),
+        "-d".to_string(),
+        "-s".to_string(),
+        name.to_string(),
+        "-c".to_string(),
+        working_dir.to_string(),
+    ];
+
+    // 注入环境变量 (tmux 3.0+)
+    if let Some(env) = env {
+        args.push("-e".to_string());
+        args.push(format!("GROVE_TASK_ID={}", env.task_id));
+        args.push("-e".to_string());
+        args.push(format!("GROVE_TASK_NAME={}", env.task_name));
+        args.push("-e".to_string());
+        args.push(format!("GROVE_BRANCH={}", env.branch));
+        args.push("-e".to_string());
+        args.push(format!("GROVE_TARGET={}", env.target));
+        args.push("-e".to_string());
+        args.push(format!("GROVE_WORKTREE={}", env.worktree));
+        args.push("-e".to_string());
+        args.push(format!("GROVE_PROJECT_NAME={}", env.project_name));
+        args.push("-e".to_string());
+        args.push(format!("GROVE_PROJECT={}", env.project_path));
+    }
+
     let output = Command::new("tmux")
-        .args(["new-session", "-d", "-s", name, "-c", working_dir])
+        .args(&args)
         .output()
         .map_err(|e| format!("Session create failed: {}", e))?;
 

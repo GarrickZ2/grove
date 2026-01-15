@@ -467,3 +467,60 @@ pub fn changes_from_origin(repo_path: &str) -> Result<(u32, u32), String> {
         Ok((0, 0))
     }
 }
+
+/// 检查 worktree 是否 clean（无未提交的改动）
+pub fn is_worktree_clean(path: &str) -> Result<bool, String> {
+    has_uncommitted_changes(path).map(|has_changes| !has_changes)
+}
+
+/// 切换分支
+/// 执行: git checkout {branch}
+pub fn checkout_branch(worktree_path: &str, branch: &str) -> Result<(), String> {
+    let output = Command::new("git")
+        .current_dir(worktree_path)
+        .args(["checkout", branch])
+        .output()
+        .map_err(|e| format!("Failed to execute git: {}", e))?;
+
+    if output.status.success() {
+        Ok(())
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        Err(format!("git checkout failed: {}", stderr.trim()))
+    }
+}
+
+/// 添加所有文件并提交
+/// 执行: git add -A && git commit -m {message}
+pub fn add_and_commit(worktree_path: &str, message: &str) -> Result<(), String> {
+    // 先 add
+    let add_output = Command::new("git")
+        .current_dir(worktree_path)
+        .args(["add", "-A"])
+        .output()
+        .map_err(|e| format!("Failed to execute git add: {}", e))?;
+
+    if !add_output.status.success() {
+        let stderr = String::from_utf8_lossy(&add_output.stderr);
+        return Err(format!("git add failed: {}", stderr.trim()));
+    }
+
+    // 检查是否有东西要提交
+    if !has_uncommitted_changes(worktree_path).unwrap_or(false) {
+        return Err("Nothing to commit".to_string());
+    }
+
+    // 再 commit
+    let commit_output = Command::new("git")
+        .current_dir(worktree_path)
+        .args(["commit", "-m", message])
+        .output()
+        .map_err(|e| format!("Failed to execute git commit: {}", e))?;
+
+    if commit_output.status.success() {
+        Ok(())
+    } else {
+        let stderr = String::from_utf8_lossy(&commit_output.stderr);
+        Err(format!("git commit failed: {}", stderr.trim()))
+    }
+}

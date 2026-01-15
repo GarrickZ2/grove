@@ -8,6 +8,7 @@ use crate::git;
 use crate::model::{loader, ProjectTab, Worktree, WorktreeStatus, WorkspaceState};
 use crate::ui::components::action_palette::{ActionPaletteData, ActionType};
 use crate::ui::components::add_project_dialog::AddProjectData;
+use crate::ui::components::commit_dialog::CommitDialogData;
 use crate::ui::components::branch_selector::BranchSelectorData;
 use crate::ui::components::confirm_dialog::ConfirmType;
 use crate::ui::components::delete_project_dialog::{DeleteProjectData, DeleteMode};
@@ -346,6 +347,8 @@ pub struct App {
     pub delete_project_dialog: Option<DeleteProjectData>,
     /// Action Palette
     pub action_palette: Option<ActionPaletteData>,
+    /// Commit 弹窗
+    pub commit_dialog: Option<CommitDialogData>,
 }
 
 /// 待执行的操作
@@ -432,6 +435,7 @@ impl App {
             add_project_dialog: None,
             delete_project_dialog: None,
             action_palette: None,
+            commit_dialog: None,
         }
     }
 
@@ -615,7 +619,21 @@ impl App {
 
         // 6. 创建 session（使用 project_key 保持一致）
         let session = tmux::session_name(&project_key, &slug);
-        if let Err(e) = tmux::create_session(&session, worktree_path.to_str().unwrap_or(".")) {
+        let project_name = Path::new(&repo_root)
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("unknown")
+            .to_string();
+        let session_env = tmux::SessionEnv {
+            task_id: slug.clone(),
+            task_name: name.clone(),
+            branch: branch.clone(),
+            target: self.target_branch.clone(),
+            worktree: worktree_path.to_string_lossy().to_string(),
+            project_name,
+            project_path: repo_root.clone(),
+        };
+        if let Err(e) = tmux::create_session(&session, worktree_path.to_str().unwrap_or("."), Some(&session_env)) {
             self.show_toast(format!("Session error: {}", e));
             self.close_new_task_dialog();
             return;
@@ -650,7 +668,21 @@ impl App {
 
         // 4. 如果 session 不存在，创建它
         if !tmux::session_exists(&session) {
-            if let Err(e) = tmux::create_session(&session, &wt.path) {
+            let project_name = Path::new(&self.project.project_path)
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("unknown")
+                .to_string();
+            let session_env = tmux::SessionEnv {
+                task_id: wt.id.clone(),
+                task_name: wt.task_name.clone(),
+                branch: wt.branch.clone(),
+                target: wt.target.clone(),
+                worktree: wt.path.clone(),
+                project_name,
+                project_path: self.project.project_path.clone(),
+            };
+            if let Err(e) = tmux::create_session(&session, &wt.path, Some(&session_env)) {
                 self.show_toast(format!("Session error: {}", e));
                 return;
             }
@@ -956,7 +988,21 @@ impl App {
 
         // 创建 session
         let session = tmux::session_name(&self.project.project_key, task_id);
-        if let Err(e) = tmux::create_session(&session, task.worktree_path.as_str()) {
+        let project_name = Path::new(&self.project.project_path)
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("unknown")
+            .to_string();
+        let session_env = tmux::SessionEnv {
+            task_id: task.id.clone(),
+            task_name: task.name.clone(),
+            branch: task.branch.clone(),
+            target: task.target.clone(),
+            worktree: task.worktree_path.clone(),
+            project_name,
+            project_path: self.project.project_path.clone(),
+        };
+        if let Err(e) = tmux::create_session(&session, task.worktree_path.as_str(), Some(&session_env)) {
             self.show_toast(format!("Session error: {}", e));
             return;
         }
@@ -1459,7 +1505,17 @@ impl App {
         // 根据当前 Tab 决定可用 actions
         let actions = match self.project.current_tab {
             ProjectTab::Archived => vec![ActionType::Clean, ActionType::Recover],
-            _ => vec![
+            ProjectTab::Current => vec![
+                ActionType::Commit,
+                ActionType::Archive,
+                ActionType::Clean,
+                ActionType::RebaseTo,
+                ActionType::Sync,
+                ActionType::Merge,
+            ],
+            ProjectTab::Other => vec![
+                ActionType::CheckoutTarget,
+                ActionType::Commit,
                 ActionType::Archive,
                 ActionType::Clean,
                 ActionType::RebaseTo,
@@ -1515,6 +1571,8 @@ impl App {
                 ActionType::Sync => self.start_sync(),
                 ActionType::Merge => self.start_merge(),
                 ActionType::Recover => self.start_recover(),
+                ActionType::CheckoutTarget => self.start_checkout_target(),
+                ActionType::Commit => self.open_commit_dialog(),
             }
         }
     }
@@ -1522,6 +1580,109 @@ impl App {
     /// Action Palette - 取消
     pub fn action_palette_cancel(&mut self) {
         self.action_palette = None;
+    }
+
+    // ========== Commit Dialog 功能 ==========
+
+    /// 打开 Commit 弹窗
+    pub fn open_commit_dialog(&mut self) {
+        // 获取当前选中的 worktree
+        let worktrees = self.project.filtered_worktrees();
+        let selected_idx = self.project.current_list_state().selected();
+
+        if let Some(idx) = selected_idx {
+            if let Some(worktree) = worktrees.get(idx) {
+                self.commit_dialog = Some(CommitDialogData::new(
+                    worktree.task_name.clone(),
+                    worktree.path.clone(),
+                ));
+            }
+        }
+    }
+
+    /// Commit Dialog - 输入字符
+    pub fn commit_dialog_char(&mut self, c: char) {
+        if let Some(ref mut dialog) = self.commit_dialog {
+            dialog.message.push(c);
+        }
+    }
+
+    /// Commit Dialog - 删除字符
+    pub fn commit_dialog_backspace(&mut self) {
+        if let Some(ref mut dialog) = self.commit_dialog {
+            dialog.message.pop();
+        }
+    }
+
+    /// Commit Dialog - 取消
+    pub fn commit_dialog_cancel(&mut self) {
+        self.commit_dialog = None;
+    }
+
+    /// Commit Dialog - 确认提交
+    pub fn commit_dialog_confirm(&mut self) {
+        let dialog = self.commit_dialog.take();
+
+        if let Some(dialog) = dialog {
+            if dialog.message.trim().is_empty() {
+                self.show_toast("Commit message cannot be empty");
+                return;
+            }
+
+            // 执行 git add -A && git commit
+            let result = git::add_and_commit(&dialog.worktree_path, &dialog.message);
+
+            match result {
+                Ok(_) => {
+                    self.show_toast("Committed successfully");
+                    // 刷新 worktree 列表
+                    self.project.refresh();
+                }
+                Err(e) => {
+                    self.show_toast(format!("Commit failed: {}", e));
+                }
+            }
+        }
+    }
+
+    // ========== Checkout Target 功能 ==========
+
+    /// 执行 Checkout Target
+    pub fn start_checkout_target(&mut self) {
+        // 获取当前选中的 worktree
+        let worktrees = self.project.filtered_worktrees();
+        let selected_idx = self.project.current_list_state().selected();
+
+        if let Some(idx) = selected_idx {
+            if let Some(worktree) = worktrees.get(idx) {
+                let worktree_path = worktree.path.clone();
+                let target_branch = worktree.target.clone();
+
+                // 检查是否 clean
+                match git::is_worktree_clean(&worktree_path) {
+                    Ok(true) => {
+                        // clean，执行 checkout
+                        match git::checkout_branch(&worktree_path, &target_branch) {
+                            Ok(_) => {
+                                self.show_toast(format!("Switched to {}", target_branch));
+                                // 刷新 worktree 列表
+                                self.project.refresh();
+                            }
+                            Err(e) => {
+                                self.show_toast(format!("Checkout failed: {}", e));
+                            }
+                        }
+                    }
+                    Ok(false) => {
+                        // 不 clean，显示警告
+                        self.show_toast("Cannot checkout: uncommitted changes");
+                    }
+                    Err(e) => {
+                        self.show_toast(format!("Error checking status: {}", e));
+                    }
+                }
+            }
+        }
     }
 }
 

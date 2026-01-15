@@ -91,6 +91,12 @@ fn handle_key(app: &mut App, key: KeyEvent) {
         return;
     }
 
+    // Commit Dialog
+    if app.commit_dialog.is_some() {
+        handle_commit_dialog_key(app, key);
+        return;
+    }
+
     // 根据模式分发事件
     match app.mode {
         AppMode::Workspace => handle_workspace_key(app, key),
@@ -579,6 +585,33 @@ fn handle_delete_project_dialog_key(app: &mut App, key: KeyEvent) {
         // 取消
         KeyCode::Esc | KeyCode::Char('q') => {
             app.close_delete_project_dialog();
+        }
+
+        _ => {}
+    }
+}
+
+/// 处理 Commit Dialog 的键盘事件
+fn handle_commit_dialog_key(app: &mut App, key: KeyEvent) {
+    match key.code {
+        // 确认提交
+        KeyCode::Enter => {
+            app.commit_dialog_confirm();
+        }
+
+        // 取消
+        KeyCode::Esc => {
+            app.commit_dialog_cancel();
+        }
+
+        // 删除字符
+        KeyCode::Backspace => {
+            app.commit_dialog_backspace();
+        }
+
+        // 输入字符
+        KeyCode::Char(c) => {
+            app.commit_dialog_char(c);
         }
 
         _ => {}
