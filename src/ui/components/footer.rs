@@ -78,7 +78,7 @@ fn get_shortcuts(current_tab: ProjectTab, has_items: bool) -> Vec<(&'static str,
                     ("x", "clean"),
                     ("r", "rebase"),
                     ("/", "search"),
-                    ("Tab", "switch"),
+                    ("t", "theme"),
                     ("q", "quit"),
                 ]
             } else {

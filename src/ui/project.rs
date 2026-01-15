@@ -19,8 +19,11 @@ pub fn render(frame: &mut Frame, app: &App) {
         .style(Style::default().bg(colors.bg))
         .render(area, frame.buffer_mut());
 
-    // 根据搜索模式决定布局
-    let (header_area, tabs_area, search_area, list_area, footer_area) = if app.project.search_mode {
+    // 是否显示搜索框：正在输入或有搜索内容
+    let show_search = app.project.search_mode || !app.project.search_query.is_empty();
+
+    // 根据搜索状态决定布局
+    let (header_area, tabs_area, search_area, list_area, footer_area) = if show_search {
         let [header_area, tabs_area, search_area, list_area, footer_area] =
             ratatui::layout::Layout::vertical([
                 Constraint::Length(header::HEADER_HEIGHT),
@@ -55,9 +58,9 @@ pub fn render(frame: &mut Frame, app: &App) {
     // 渲染 Tabs
     tabs::render(frame, tabs_area, app.project.current_tab, colors);
 
-    // 渲染搜索框（如果在搜索模式）
+    // 渲染搜索框（如果有搜索内容或正在输入）
     if let Some(search_area) = search_area {
-        search_bar::render(frame, search_area, &app.project.search_query, colors);
+        search_bar::render(frame, search_area, &app.project.search_query, app.project.search_mode, colors);
     }
 
     // 渲染列表或空状态（使用过滤后的数据）

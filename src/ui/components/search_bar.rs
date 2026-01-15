@@ -11,12 +11,19 @@ use ratatui::{
 use crate::theme::ThemeColors;
 
 /// 渲染搜索框
-pub fn render(frame: &mut Frame, area: Rect, query: &str, colors: &ThemeColors) {
-    let line = Line::from(vec![
+/// is_editing: 是否正在输入（显示光标）
+pub fn render(frame: &mut Frame, area: Rect, query: &str, is_editing: bool, colors: &ThemeColors) {
+    let mut spans = vec![
         Span::styled(" /", Style::default().fg(colors.highlight)),
         Span::styled(query, Style::default().fg(colors.text)),
-        Span::styled("█", Style::default().fg(colors.highlight).add_modifier(Modifier::SLOW_BLINK)),
-    ]);
+    ];
+
+    // 只在输入模式显示闪烁光标
+    if is_editing {
+        spans.push(Span::styled("█", Style::default().fg(colors.highlight).add_modifier(Modifier::SLOW_BLINK)));
+    }
+
+    let line = Line::from(spans);
 
     let paragraph = Paragraph::new(line)
         .style(Style::default().bg(colors.bg_secondary));

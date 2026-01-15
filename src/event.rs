@@ -276,7 +276,7 @@ fn handle_new_task_dialog_key(app: &mut App, key: KeyEvent) {
 /// 处理搜索模式的键盘事件
 fn handle_search_mode_key(app: &mut App, key: KeyEvent) {
     match key.code {
-        // 确认搜索（保留过滤）
+        // 退出搜索输入模式（保留过滤结果）
         KeyCode::Enter => {
             app.project.exit_search_mode();
         }
