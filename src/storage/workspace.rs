@@ -156,6 +156,31 @@ pub fn is_project_registered(path: &str) -> io::Result<bool> {
     Ok(project_toml.exists())
 }
 
+/// Upsert 项目元数据
+/// - 如果不存在：创建新记录
+/// - 如果存在：更新 name（保留原 added_at）
+pub fn upsert_project(name: &str, path: &str) -> io::Result<()> {
+    let hash = project_hash(path);
+
+    let project = if let Some(existing) = load_project_metadata(&hash)? {
+        // 存在 → 更新 name，保留 added_at
+        RegisteredProject {
+            name: name.to_string(),
+            path: path.to_string(),
+            added_at: existing.added_at,
+        }
+    } else {
+        // 不存在 → 新建
+        RegisteredProject {
+            name: name.to_string(),
+            path: path.to_string(),
+            added_at: Utc::now(),
+        }
+    };
+
+    save_project_metadata(&hash, &project)
+}
+
 /// 根据项目路径获取项目的 hash（用于 tasks.rs 等其他模块）
 pub fn get_project_hash(path: &str) -> String {
     project_hash(path)

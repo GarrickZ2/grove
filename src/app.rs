@@ -397,6 +397,15 @@ impl App {
             let project_path = git::repo_root(".").unwrap_or_else(|_| ".".to_string());
             let target_branch = git::current_branch(&project_path)
                 .unwrap_or_else(|_| "main".to_string());
+
+            // 自动注册/更新项目 metadata
+            let project_name = Path::new(&project_path)
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("unknown")
+                .to_string();
+            let _ = storage::workspace::upsert_project(&project_name, &project_path);
+
             (
                 AppMode::Project,
                 ProjectState::new(&project_path),
@@ -441,6 +450,14 @@ impl App {
 
     /// 从 Workspace 进入 Project
     pub fn enter_project(&mut self, project_path: &str) {
+        // 更新项目 metadata（刷新 name）
+        let project_name = Path::new(project_path)
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("unknown")
+            .to_string();
+        let _ = storage::workspace::upsert_project(&project_name, project_path);
+
         self.project = ProjectState::new(project_path);
         self.target_branch = git::current_branch(project_path)
             .unwrap_or_else(|_| "main".to_string());
