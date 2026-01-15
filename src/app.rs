@@ -9,6 +9,7 @@ use crate::model::{loader, ProjectTab, Worktree, WorktreeStatus, WorkspaceState}
 use crate::ui::components::add_project_dialog::AddProjectData;
 use crate::ui::components::branch_selector::BranchSelectorData;
 use crate::ui::components::confirm_dialog::ConfirmType;
+use crate::ui::components::delete_project_dialog::{DeleteProjectData, DeleteMode};
 use crate::ui::components::input_confirm_dialog::InputConfirmData;
 use crate::ui::components::merge_dialog::{MergeDialogData, MergeMethod};
 use crate::storage::{self, tasks::{self, Task, TaskStatus}, workspace::project_hash};
@@ -357,6 +358,8 @@ pub struct App {
     pub merge_dialog: Option<MergeDialogData>,
     /// Add Project 弹窗
     pub add_project_dialog: Option<AddProjectData>,
+    /// Delete Project 弹窗
+    pub delete_project_dialog: Option<DeleteProjectData>,
 }
 
 /// 待执行的操作
@@ -432,6 +435,7 @@ impl App {
             show_help: false,
             merge_dialog: None,
             add_project_dialog: None,
+            delete_project_dialog: None,
         }
     }
 
@@ -1374,6 +1378,76 @@ impl App {
         self.close_add_project_dialog();
         self.workspace.reload_projects();
         self.show_toast(format!("Added: {}", name));
+    }
+
+    // ========== Delete Project 功能 ==========
+
+    /// 打开 Delete Project 弹窗
+    pub fn open_delete_project_dialog(&mut self) {
+        if let Some(project) = self.workspace.selected_project() {
+            self.delete_project_dialog = Some(DeleteProjectData::new(
+                project.name.clone(),
+                project.path.clone(),
+                project.task_count,
+            ));
+        }
+    }
+
+    /// 关闭 Delete Project 弹窗
+    pub fn close_delete_project_dialog(&mut self) {
+        self.delete_project_dialog = None;
+    }
+
+    /// Delete Project - 切换选项
+    pub fn delete_project_toggle(&mut self) {
+        if let Some(ref mut data) = self.delete_project_dialog {
+            data.toggle();
+        }
+    }
+
+    /// Delete Project - 确认删除
+    pub fn delete_project_confirm(&mut self) {
+        let dialog_data = self.delete_project_dialog.take();
+        let Some(data) = dialog_data else { return };
+
+        let project_key = project_hash(&data.project_path);
+
+        // 1. 加载所有任务
+        let active_tasks = tasks::load_tasks(&project_key).unwrap_or_default();
+        let archived_tasks = tasks::load_archived_tasks(&project_key).unwrap_or_default();
+
+        // 2. 清理所有任务
+        for task in active_tasks.iter().chain(archived_tasks.iter()) {
+            // 关闭 session
+            let session = tmux::session_name(&project_key, &task.id);
+            let _ = tmux::kill_session(&session);
+
+            // 删除 worktree (如果存在)
+            if Path::new(&task.worktree_path).exists() {
+                let _ = git::remove_worktree(&data.project_path, &task.worktree_path);
+            }
+
+            // Full clean 模式：删除 branch
+            if data.selected == DeleteMode::FullClean {
+                let _ = git::delete_branch(&data.project_path, &task.branch);
+            }
+        }
+
+        // 3. 删除项目注册（这会删除整个 ~/.grove/projects/<hash>/ 目录）
+        if let Err(e) = storage::workspace::remove_project(&data.project_path) {
+            self.show_toast(format!("Remove failed: {}", e));
+            return;
+        }
+
+        // 4. 刷新项目列表
+        self.workspace.reload_projects();
+
+        let mode_text = if data.selected == DeleteMode::FullClean {
+            "fully cleaned"
+        } else {
+            "removed"
+        };
+        self.show_toast(format!("{} {}", data.project_name, mode_text));
     }
 }
 

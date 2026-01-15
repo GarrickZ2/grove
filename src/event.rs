@@ -79,6 +79,12 @@ fn handle_key(app: &mut App, key: KeyEvent) {
         return;
     }
 
+    // Delete Project 弹窗
+    if app.delete_project_dialog.is_some() {
+        handle_delete_project_dialog_key(app, key);
+        return;
+    }
+
     // 根据模式分发事件
     match app.mode {
         AppMode::Workspace => handle_workspace_key(app, key),
@@ -128,7 +134,9 @@ fn handle_workspace_key(app: &mut App, key: KeyEvent) {
 
         // 功能按键 - 删除项目
         KeyCode::Char('x') => {
-            app.show_toast("Delete project - 功能开发中");
+            if app.workspace.selected_project().is_some() {
+                app.open_delete_project_dialog();
+            }
         }
 
         // 功能按键 - 搜索
@@ -509,6 +517,28 @@ fn handle_add_project_dialog_key(app: &mut App, key: KeyEvent) {
         // 输入字符
         KeyCode::Char(c) => {
             app.add_project_input_char(c);
+        }
+
+        _ => {}
+    }
+}
+
+/// 处理 Delete Project 弹窗的键盘事件
+fn handle_delete_project_dialog_key(app: &mut App, key: KeyEvent) {
+    match key.code {
+        // 切换选项
+        KeyCode::Char('j') | KeyCode::Char('k') | KeyCode::Up | KeyCode::Down => {
+            app.delete_project_toggle();
+        }
+
+        // 确认
+        KeyCode::Enter => {
+            app.delete_project_confirm();
+        }
+
+        // 取消
+        KeyCode::Esc | KeyCode::Char('q') => {
+            app.close_delete_project_dialog();
         }
 
         _ => {}
