@@ -7,7 +7,7 @@ use ratatui::{
 
 use crate::app::App;
 
-use super::components::{action_palette, branch_selector, commit_dialog, confirm_dialog, empty_state, footer, header, help_panel, input_confirm_dialog, merge_dialog, new_task_dialog, project_info, search_bar, tabs, theme_selector, toast, worktree_list};
+use super::components::{action_palette, branch_selector, commit_dialog, confirm_dialog, empty_state, footer, header, help_panel, hook_panel, input_confirm_dialog, merge_dialog, new_task_dialog, project_info, search_bar, tabs, theme_selector, toast, worktree_list};
 
 /// 渲染 Project 页面
 pub fn render(frame: &mut Frame, app: &App) {
@@ -89,7 +89,7 @@ pub fn render(frame: &mut Frame, app: &App) {
         empty_state::render(frame, list_area, app.project.current_tab, colors);
     } else {
         let selected = app.project.current_list_state().selected();
-        worktree_list::render(frame, list_area, &worktrees, selected, colors);
+        worktree_list::render(frame, list_area, &worktrees, selected, colors, &app.notifications);
     }
 
     // 渲染 Footer
@@ -146,6 +146,11 @@ pub fn render(frame: &mut Frame, app: &App) {
     // 渲染 Commit Dialog
     if let Some(ref data) = app.commit_dialog {
         commit_dialog::render(frame, data, colors);
+    }
+
+    // 渲染 Hook 配置面板
+    if let Some(ref data) = app.hook_panel {
+        hook_panel::render(frame, data, colors);
     }
 
     // 渲染帮助面板

@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use ratatui::{
     layout::{Constraint, Rect},
     style::{Modifier, Style},
@@ -5,6 +7,7 @@ use ratatui::{
     Frame,
 };
 
+use crate::hooks::NotificationLevel;
 use crate::model::{format_relative_time, Worktree, WorktreeStatus};
 use crate::theme::ThemeColors;
 
@@ -15,11 +18,13 @@ pub fn render(
     worktrees: &[&Worktree],
     selected_index: Option<usize>,
     colors: &ThemeColors,
+    notifications: &HashMap<String, NotificationLevel>,
 ) {
     // 表头
     let header = Row::new(vec![
         Cell::from(""),     // 选择指示器
         Cell::from(""),     // 状态图标
+        Cell::from(""),     // 通知标记
         Cell::from("TASK"),
         Cell::from("STATUS"),
         Cell::from("BRANCH"),
@@ -65,9 +70,18 @@ pub fn render(
 
             let updated = format_relative_time(wt.updated_at);
 
+            // 获取通知标记
+            let (notif_marker, notif_style) = match notifications.get(&wt.id) {
+                Some(NotificationLevel::Notice) => ("[i]", Style::default().fg(colors.info)),
+                Some(NotificationLevel::Warn) => ("[!]", Style::default().fg(colors.warning)),
+                Some(NotificationLevel::Critical) => ("[!!]", Style::default().fg(colors.error)),
+                None => ("", Style::default()),
+            };
+
             Row::new(vec![
                 Cell::from(selector).style(Style::default().fg(colors.highlight)),
                 Cell::from(wt.status.icon()).style(icon_style),
+                Cell::from(notif_marker).style(notif_style),
                 Cell::from(wt.task_name.clone()),
                 Cell::from(wt.status.label()).style(icon_style),
                 Cell::from(wt.branch.clone()).style(Style::default().fg(colors.muted)),
@@ -82,6 +96,7 @@ pub fn render(
     let widths = [
         Constraint::Length(2),  // 选择器
         Constraint::Length(2),  // 状态图标
+        Constraint::Length(4),  // 通知标记
         Constraint::Fill(2),    // TASK (flex)
         Constraint::Length(8),  // STATUS
         Constraint::Fill(2),    // BRANCH (flex)

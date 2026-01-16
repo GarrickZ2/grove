@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::path::Path;
 use std::time::{Duration, Instant};
 
@@ -5,13 +6,15 @@ use chrono::Utc;
 use ratatui::widgets::ListState;
 
 use crate::git;
-use crate::model::{loader, ProjectTab, Worktree, WorktreeStatus, WorkspaceState};
+use crate::hooks::{self, HooksFile, NotificationLevel};
+use crate::model::{loader, ProjectInfo, ProjectTab, Worktree, WorktreeStatus, WorkspaceState};
 use crate::ui::components::action_palette::{ActionPaletteData, ActionType};
 use crate::ui::components::add_project_dialog::AddProjectData;
 use crate::ui::components::commit_dialog::CommitDialogData;
 use crate::ui::components::branch_selector::BranchSelectorData;
 use crate::ui::components::confirm_dialog::ConfirmType;
 use crate::ui::components::delete_project_dialog::{DeleteProjectData, DeleteMode};
+use crate::ui::components::hook_panel::{HookConfigData, HookConfigStep};
 use crate::ui::components::input_confirm_dialog::InputConfirmData;
 use crate::ui::components::merge_dialog::{MergeDialogData, MergeMethod};
 use crate::storage::{self, tasks::{self, Task, TaskStatus}, workspace::project_hash};
@@ -349,6 +352,12 @@ pub struct App {
     pub action_palette: Option<ActionPaletteData>,
     /// Commit 弹窗
     pub commit_dialog: Option<CommitDialogData>,
+    /// Hook 通知数据 (task_id -> level) - 当前项目
+    pub notifications: HashMap<String, NotificationLevel>,
+    /// Workspace 级别的通知数据 (project_name -> task_id -> level)
+    pub workspace_notifications: HashMap<String, HashMap<String, NotificationLevel>>,
+    /// Hook 配置面板
+    pub hook_panel: Option<HookConfigData>,
 }
 
 /// 待执行的操作
@@ -381,7 +390,7 @@ impl App {
         // 判断是否在 git 仓库中
         let is_in_git_repo = git::is_git_repo(".");
 
-        let (mode, project, workspace, target_branch) = if is_in_git_repo {
+        let (mode, project, workspace, target_branch, notifications, workspace_notifications) = if is_in_git_repo {
             // 在 git 仓库中 -> Project 模式
             let project_path = git::repo_root(".").unwrap_or_else(|_| ".".to_string());
             let target_branch = git::current_branch(&project_path)
@@ -395,19 +404,28 @@ impl App {
                 .to_string();
             let _ = storage::workspace::upsert_project(&project_name, &project_path);
 
+            // 加载 hook 通知数据（自动清理不存在的 task）
+            let hooks_file = hooks::load_hooks_with_cleanup(&project_path, &project_name);
+
             (
                 AppMode::Project,
                 ProjectState::new(&project_path),
                 WorkspaceState::default(),
                 target_branch,
+                hooks_file.tasks,
+                HashMap::new(),
             )
         } else {
             // 非 git 仓库 -> Workspace 模式
+            let workspace = WorkspaceState::new();
+            let workspace_notifications = load_all_project_notifications(&workspace.projects);
             (
                 AppMode::Workspace,
                 ProjectState::default(),
-                WorkspaceState::new(),
+                workspace,
                 "main".to_string(),
+                HashMap::new(),
+                workspace_notifications,
             )
         };
 
@@ -436,6 +454,9 @@ impl App {
             delete_project_dialog: None,
             action_palette: None,
             commit_dialog: None,
+            notifications,
+            workspace_notifications,
+            hook_panel: None,
         }
     }
 
@@ -453,11 +474,16 @@ impl App {
         self.target_branch = git::current_branch(project_path)
             .unwrap_or_else(|_| "main".to_string());
         self.mode = AppMode::Project;
+
+        // 加载 hook 通知数据（自动清理不存在的 task）
+        let hooks_file = hooks::load_hooks_with_cleanup(project_path, &project_name);
+        self.notifications = hooks_file.tasks;
     }
 
     /// 从 Project 返回 Workspace
     pub fn back_to_workspace(&mut self) {
         self.workspace.reload_projects();
+        self.workspace_notifications = load_all_project_notifications(&self.workspace.projects);
         self.mode = AppMode::Workspace;
     }
 
@@ -688,7 +714,16 @@ impl App {
             }
         }
 
-        // 5. 设置 pending attach（主循环会暂停 TUI，attach 完成后恢复）
+        // 5. 清除该任务的通知标记
+        let task_id = &wt.id;
+        if self.notifications.remove(task_id).is_some() {
+            // 保存到文件
+            let project_name = hooks::project_name_from_path(&self.project.project_path);
+            let hooks_file = HooksFile { tasks: self.notifications.clone() };
+            let _ = hooks::save_hooks(&project_name, &hooks_file);
+        }
+
+        // 6. 设置 pending attach（主循环会暂停 TUI，attach 完成后恢复）
         self.pending_tmux_attach = Some(session);
     }
 
@@ -1684,6 +1719,73 @@ impl App {
             }
         }
     }
+
+    // ========== Hook Panel 功能 ==========
+
+    /// 打开 Hook 配置面板
+    pub fn open_hook_panel(&mut self) {
+        self.hook_panel = Some(HookConfigData::new());
+    }
+
+    /// Hook Panel - 上移选择
+    pub fn hook_panel_prev(&mut self) {
+        if let Some(ref mut panel) = self.hook_panel {
+            panel.select_prev();
+        }
+    }
+
+    /// Hook Panel - 下移选择
+    pub fn hook_panel_next(&mut self) {
+        if let Some(ref mut panel) = self.hook_panel {
+            panel.select_next();
+        }
+    }
+
+    /// Hook Panel - 确认
+    pub fn hook_panel_confirm(&mut self) {
+        if let Some(ref mut panel) = self.hook_panel {
+            if panel.step == HookConfigStep::ShowResult {
+                // 已经显示结果，关闭面板
+                self.hook_panel = None;
+            } else {
+                panel.confirm();
+
+                // 如果进入结果页，复制到剪贴板
+                if panel.step == HookConfigStep::ShowResult {
+                    if let Ok(mut clipboard) = arboard::Clipboard::new() {
+                        let _ = clipboard.set_text(&panel.generated_command);
+                    }
+                }
+            }
+        }
+    }
+
+    /// Hook Panel - 返回/取消
+    pub fn hook_panel_back(&mut self) {
+        if let Some(ref mut panel) = self.hook_panel {
+            if panel.step == HookConfigStep::SelectLevel {
+                // 第一步按 Esc 取消
+                self.hook_panel = None;
+            } else if panel.step == HookConfigStep::ShowResult {
+                // 结果页按 Esc 关闭
+                self.hook_panel = None;
+            } else {
+                panel.back();
+            }
+        }
+    }
+
+    /// Hook Panel - 重新复制命令
+    pub fn hook_panel_copy(&mut self) {
+        if let Some(ref panel) = self.hook_panel {
+            if panel.step == HookConfigStep::ShowResult {
+                if let Ok(mut clipboard) = arboard::Clipboard::new() {
+                    let _ = clipboard.set_text(&panel.generated_command);
+                    self.show_toast("Copied to clipboard");
+                }
+            }
+        }
+    }
 }
 
 impl Default for App {
@@ -1699,4 +1801,21 @@ fn slug_from_path(path: &str) -> String {
         .file_name()
         .map(|s| s.to_string_lossy().to_string())
         .unwrap_or_default()
+}
+
+/// 加载所有项目的通知数据（自动清理不存在的 task）
+fn load_all_project_notifications(projects: &[ProjectInfo]) -> HashMap<String, HashMap<String, NotificationLevel>> {
+    let mut result = HashMap::new();
+    for project in projects {
+        let project_name = Path::new(&project.path)
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("unknown")
+            .to_string();
+        let hooks_file = hooks::load_hooks_with_cleanup(&project.path, &project_name);
+        if !hooks_file.tasks.is_empty() {
+            result.insert(project_name, hooks_file.tasks);
+        }
+    }
+    result
 }

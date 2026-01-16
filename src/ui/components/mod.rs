@@ -8,6 +8,7 @@ pub mod empty_state;
 pub mod footer;
 pub mod header;
 pub mod help_panel;
+pub mod hook_panel;
 pub mod input_confirm_dialog;
 pub mod logo;
 pub mod merge_dialog;

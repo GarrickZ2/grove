@@ -27,6 +27,7 @@ pub struct ProjectInfo {
 /// 任务摘要（用于详情面板）
 #[derive(Debug, Clone)]
 pub struct TaskSummary {
+    pub id: String,
     pub name: String,
     pub status: WorktreeStatus,
     pub additions: u32,
@@ -300,6 +301,7 @@ fn load_project_detail(project: &ProjectInfo) -> ProjectDetail {
                 .unwrap_or((0, 0));
 
             TaskSummary {
+                id: t.id,
                 name: t.name,
                 status,
                 additions,
@@ -313,6 +315,7 @@ fn load_project_detail(project: &ProjectInfo) -> ProjectDetail {
         .unwrap_or_default()
         .into_iter()
         .map(|t| TaskSummary {
+            id: t.id,
             name: t.name,
             status: WorktreeStatus::Merged,
             additions: 0,

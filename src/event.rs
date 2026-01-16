@@ -97,6 +97,12 @@ fn handle_key(app: &mut App, key: KeyEvent) {
         return;
     }
 
+    // Hook Panel
+    if app.hook_panel.is_some() {
+        handle_hook_panel_key(app, key);
+        return;
+    }
+
     // 根据模式分发事件
     match app.mode {
         AppMode::Workspace => handle_workspace_key(app, key),
@@ -294,6 +300,11 @@ fn handle_project_key(app: &mut App, key: KeyEvent) {
             if app.project.current_tab != ProjectTab::Archived {
                 app.open_action_palette();
             }
+        }
+
+        // 功能按键 - Hook 配置面板
+        KeyCode::Char('h') => {
+            app.open_hook_panel();
         }
 
         _ => {}
@@ -612,6 +623,58 @@ fn handle_commit_dialog_key(app: &mut App, key: KeyEvent) {
         // 输入字符
         KeyCode::Char(c) => {
             app.commit_dialog_char(c);
+        }
+
+        _ => {}
+    }
+}
+
+/// 处理 Hook 配置面板的键盘事件
+fn handle_hook_panel_key(app: &mut App, key: KeyEvent) {
+    use crate::ui::components::hook_panel::HookConfigStep;
+
+    let is_result_step = app
+        .hook_panel
+        .as_ref()
+        .map(|p| p.step == HookConfigStep::ShowResult)
+        .unwrap_or(false);
+
+    match key.code {
+        // 导航 - 上移
+        KeyCode::Char('k') | KeyCode::Up => {
+            if !is_result_step {
+                app.hook_panel_prev();
+            }
+        }
+
+        // 导航 - 下移
+        KeyCode::Char('j') | KeyCode::Down => {
+            if !is_result_step {
+                app.hook_panel_next();
+            }
+        }
+
+        // 确认/关闭
+        KeyCode::Enter => {
+            if is_result_step {
+                // 结果页面，关闭面板
+                app.hook_panel = None;
+            } else {
+                // 其他步骤，进入下一步
+                app.hook_panel_confirm();
+            }
+        }
+
+        // 返回/取消
+        KeyCode::Esc => {
+            app.hook_panel_back();
+        }
+
+        // 复制命令（仅结果页面）
+        KeyCode::Char('c') => {
+            if is_result_step {
+                app.hook_panel_copy();
+            }
         }
 
         _ => {}

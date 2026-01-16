@@ -21,6 +21,9 @@ pub fn dark_colors() -> ThemeColors {
         status_error: Color::Rgb(255, 85, 85),   // 红色
         tab_active_fg: Color::Black,
         tab_active_bg: Color::Rgb(0, 255, 136),
+        info: Color::Rgb(100, 181, 246),       // 蓝色
+        warning: Color::Rgb(255, 213, 79),     // 黄色
+        error: Color::Rgb(255, 85, 85),        // 红色
     }
 }
 
@@ -41,6 +44,9 @@ pub fn light_colors() -> ThemeColors {
         status_error: Color::Rgb(200, 50, 50),
         tab_active_fg: Color::White,
         tab_active_bg: Color::Rgb(0, 128, 68),
+        info: Color::Rgb(33, 150, 243),        // 蓝色
+        warning: Color::Rgb(255, 152, 0),      // 橙黄色
+        error: Color::Rgb(200, 50, 50),        // 红色
     }
 }
 
@@ -61,6 +67,9 @@ pub fn dracula_colors() -> ThemeColors {
         status_error: Color::Rgb(255, 85, 85),    // 红色
         tab_active_fg: Color::Rgb(40, 42, 54),    // 背景色
         tab_active_bg: Color::Rgb(255, 121, 198), // 粉色
+        info: Color::Rgb(139, 233, 253),       // cyan
+        warning: Color::Rgb(241, 250, 140),    // yellow
+        error: Color::Rgb(255, 85, 85),        // red
     }
 }
 
@@ -81,6 +90,9 @@ pub fn nord_colors() -> ThemeColors {
         status_error: Color::Rgb(191, 97, 106),   // aurora red
         tab_active_fg: Color::Rgb(46, 52, 64),    // polar night dark
         tab_active_bg: Color::Rgb(136, 192, 208), // frost
+        info: Color::Rgb(136, 192, 208),       // frost (蓝色)
+        warning: Color::Rgb(235, 203, 139),    // aurora yellow
+        error: Color::Rgb(191, 97, 106),       // aurora red
     }
 }
 
@@ -101,6 +113,9 @@ pub fn gruvbox_colors() -> ThemeColors {
         status_error: Color::Rgb(251, 73, 52),    // red
         tab_active_fg: Color::Rgb(40, 40, 40),    // bg0_h
         tab_active_bg: Color::Rgb(250, 189, 47),  // yellow
+        info: Color::Rgb(131, 165, 152),       // aqua/blue
+        warning: Color::Rgb(250, 189, 47),     // yellow
+        error: Color::Rgb(251, 73, 52),        // red
     }
 }
 
@@ -121,6 +136,9 @@ pub fn tokyo_night_colors() -> ThemeColors {
         status_error: Color::Rgb(247, 118, 142),  // red
         tab_active_fg: Color::Rgb(26, 27, 38),    // bg_dark
         tab_active_bg: Color::Rgb(125, 207, 255), // cyan
+        info: Color::Rgb(125, 207, 255),       // cyan
+        warning: Color::Rgb(224, 175, 104),    // orange
+        error: Color::Rgb(247, 118, 142),      // red
     }
 }
 
@@ -141,5 +159,8 @@ pub fn catppuccin_colors() -> ThemeColors {
         status_error: Color::Rgb(243, 139, 168),  // red
         tab_active_fg: Color::Rgb(30, 30, 46),    // base
         tab_active_bg: Color::Rgb(245, 194, 231), // pink
+        info: Color::Rgb(137, 180, 250),       // blue
+        warning: Color::Rgb(249, 226, 175),    // yellow
+        error: Color::Rgb(243, 139, 168),      // red
     }
 }

@@ -10,3 +10,5 @@ serde = { version = "1.0", features = ["derive"] }
 toml = "0.8"
 dirs = "5"
 chrono = { version = "0.4", features = ["serde"] }
+clap = { version = "4", features = ["derive"] }
+arboard = "3"

@@ -96,6 +96,12 @@ pub struct ThemeColors {
     pub tab_active_fg: Color,
     /// Tab 选中背景色
     pub tab_active_bg: Color,
+    /// 信息色 (蓝色) - 用于 notice 通知
+    pub info: Color,
+    /// 警告色 (黄色) - 用于 warn 通知
+    pub warning: Color,
+    /// 错误色 (红色) - 用于 critical 通知
+    pub error: Color,
 }
 
 /// 获取指定主题的颜色方案

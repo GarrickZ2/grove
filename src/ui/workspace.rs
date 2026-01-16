@@ -112,7 +112,7 @@ fn render_collapsed(frame: &mut Frame, app: &App, show_search: bool) {
         workspace_empty::render(frame, content_area, colors);
     } else {
         let selected = app.workspace.list_state.selected();
-        workspace_list::render(frame, content_area, &projects, selected, colors);
+        workspace_list::render(frame, content_area, &projects, selected, colors, &app.workspace_notifications);
     }
 
     // 渲染 Footer
@@ -172,12 +172,17 @@ fn render_expanded(frame: &mut Frame, app: &App, show_search: bool) {
         workspace_empty::render(frame, left_area, colors);
     } else {
         let selected = app.workspace.list_state.selected();
-        workspace_list::render(frame, left_area, &projects, selected, colors);
+        workspace_list::render(frame, left_area, &projects, selected, colors, &app.workspace_notifications);
     }
 
     // 右侧：详情面板
     if let Some(ref detail) = app.workspace.detail {
-        workspace_detail::render(frame, right_area, detail, colors);
+        // 获取该项目的通知数据
+        let empty_notifications = std::collections::HashMap::new();
+        let project_notifications = app.workspace_notifications
+            .get(&detail.name)
+            .unwrap_or(&empty_notifications);
+        workspace_detail::render(frame, right_area, detail, colors, project_notifications);
     }
 
     // 渲染 Footer

@@ -1,6 +1,8 @@
 mod app;
+mod cli;
 mod event;
 mod git;
+mod hooks;
 mod model;
 mod storage;
 mod theme;
@@ -9,11 +11,27 @@ mod ui;
 
 use std::io;
 
+use clap::Parser;
 use ratatui::DefaultTerminal;
 
 use app::{App, AppMode};
+use cli::{Cli, Commands};
 
 fn main() -> io::Result<()> {
+    // 解析命令行参数
+    let cli = Cli::parse();
+
+    // 如果有子命令，执行 CLI 逻辑
+    if let Some(command) = cli.command {
+        match command {
+            Commands::Hooks { level } => {
+                cli::hooks::execute(level);
+            }
+        }
+        return Ok(());
+    }
+
+    // 否则启动 TUI
     // 初始化终端
     let mut terminal = ratatui::init();
 

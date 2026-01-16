@@ -1,5 +1,7 @@
 //! Workspace 项目列表组件（居中样式）
 
+use std::collections::HashMap;
+
 use ratatui::{
     layout::{Alignment, Constraint, Layout, Rect},
     style::{Modifier, Style},
@@ -8,6 +10,7 @@ use ratatui::{
     Frame,
 };
 
+use crate::hooks::NotificationLevel;
 use crate::model::ProjectInfo;
 use crate::theme::ThemeColors;
 
@@ -18,6 +21,7 @@ pub fn render(
     projects: &[&ProjectInfo],
     selected: Option<usize>,
     colors: &ThemeColors,
+    workspace_notifications: &HashMap<String, HashMap<String, NotificationLevel>>,
 ) {
     if projects.is_empty() {
         return;
@@ -55,11 +59,25 @@ pub fn render(
             format!("{} tasks", project.task_count)
         };
 
+        // 计算该项目的最高通知级别
+        let max_level = workspace_notifications
+            .get(&project.name)
+            .and_then(|tasks| tasks.values().max());
+
+        let (notif_marker, notif_style) = match max_level {
+            Some(NotificationLevel::Critical) => ("[!!]", Style::default().fg(colors.error)),
+            Some(NotificationLevel::Warn) => ("[!]", Style::default().fg(colors.warning)),
+            Some(NotificationLevel::Notice) => ("[i]", Style::default().fg(colors.info)),
+            None => ("    ", Style::default()),
+        };
+
         let line = Line::from(vec![
             Span::styled(
                 format!(" {}  ", cursor),
                 Style::default().fg(if is_selected { colors.highlight } else { colors.text }),
             ),
+            Span::styled(notif_marker, notif_style),
+            Span::styled(" ", Style::default()),
             Span::styled(
                 format!("{:<20}", truncate(&project.name, 20)),
                 Style::default()
