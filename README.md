@@ -62,7 +62,7 @@ Press `h` in Grove to generate hook commands for your agent configuration.
 
 ```bash
 # macOS / Linux
-curl -sSL https://raw.githubusercontent.com/USER/grove/main/install.sh | sh
+curl -sSL https://raw.githubusercontent.com/GarrickZ2/grove/main/install.sh | sh
 ```
 
 ### From crates.io
@@ -74,7 +74,7 @@ cargo install grove-rs
 ### From Source
 
 ```bash
-git clone https://github.com/USER/grove.git
+git clone https://github.com/GarrickZ2/grove.git
 cd grove
 cargo install --path .
 ```

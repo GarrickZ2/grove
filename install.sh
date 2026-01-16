@@ -1,10 +1,10 @@
 #!/bin/sh
 # Grove installer script
-# Usage: curl -sSL https://raw.githubusercontent.com/USER/grove/main/install.sh | sh
+# Usage: curl -sSL https://raw.githubusercontent.com/GarrickZ2/grove/main/install.sh | sh
 
 set -e
 
-REPO="USER/grove"
+REPO="GarrickZ2/grove"
 INSTALL_DIR="${INSTALL_DIR:-/usr/local/bin}"
 BINARY_NAME="grove"
 
