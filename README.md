@@ -1,73 +1,62 @@
-<div align="center">
+# Grove
 
-# 🌲 Grove
+**Git Worktree + tmux Manager for Parallel Development**
 
-**Parallel AI Coding, Finally Organized.**
+[![Rust](https://img.shields.io/badge/rust-1.75+-orange.svg)](https://www.rust-lang.org/)
+[![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Platform](https://img.shields.io/badge/platform-macOS-lightgrey.svg)](https://www.apple.com/macos/)
 
-[![Rust](https://img.shields.io/badge/rust-1.75+-orange.svg?style=flat-square)](https://www.rust-lang.org/)
-[![License](https://img.shields.io/badge/license-MIT-blue.svg?style=flat-square)](LICENSE)
-[![Platform](https://img.shields.io/badge/platform-macOS-lightgrey.svg?style=flat-square)](https://www.apple.com/macos/)
+Grove is a TUI application that manages Git worktrees and tmux sessions, designed for developers who work on multiple tasks in parallel — especially useful when working with AI coding assistants.
 
-[Features](#-features) · [Installation](#-installation) · [Quick Start](#-quick-start) · [Themes](#-themes) · [Roadmap](#-roadmap)
+## Why Grove?
 
-</div>
+When using AI assistants (Claude Code, Cursor, Aider, etc.) for coding, you often need to:
+- Work on multiple features/bugs simultaneously
+- Keep each task isolated in its own branch
+- Switch between tasks without losing context
 
----
+Traditional Git workflow requires constant `stash`, `checkout`, and context switching. Grove eliminates this by giving each task its own:
+- **Git Worktree** — isolated working directory with its own branch
+- **tmux Session** — preserved terminal state and environment
 
-<!-- TODO: Replace with actual demo GIF -->
-<p align="center">
-  <img src="./docs/images/demo.gif" alt="Grove Demo" width="700">
-</p>
+## Features
 
----
+### Core Workflow
+- **Parallel Workspaces**: Each task runs in its own Git worktree
+- **Session Management**: Dedicated tmux session per task with preserved state
+- **Visual Dashboard**: See all tasks at a glance with status indicators
+- **One-Key Operations**: Create, switch, sync, merge, archive tasks
 
-## The Problem
+### Git Operations
+- **Sync**: Rebase from target branch (typically main/master)
+- **Merge**: Squash or merge commit back to target
+- **Archive**: Keep completed tasks for reference
+- **Clean**: Remove worktrees and branches
 
-You're using **Claude Code**, **Cursor**, or **Aider** to work on multiple tasks. But Git wasn't designed for this:
+### Agent Integration (Hooks)
+Grove can receive notifications from AI agents running in tmux sessions:
 
+```bash
+# Agent calls this to notify Grove
+grove hooks notice              # Blue [i] marker
+grove hooks warn                # Yellow [!] marker
+grove hooks critical            # Red [!!] marker
+
+# Options
+--sound <none|Glass|Purr|Sosumi|Basso>
+--banner / --no-banner          # macOS system notification
 ```
-😫 The Old Way
 
-1. Working on feature-A...
-2. "Hey, can you also fix bug-B?"
-3. git stash
-4. git checkout -b fix/bug-B
-5. Work on bug-B...
-6. "Actually, let's go back to feature-A"
-7. git stash
-8. git checkout feature-A
-9. git stash pop
-10. Wait, which stash was which? 🤯
-```
+Press `h` in Grove to generate hook commands for your agent configuration.
 
-**Grove fixes this.** Each task gets its own isolated workspace. Switch instantly. Never stash again.
+### Themes
+8 built-in themes with auto system detection:
+- Auto (follows macOS appearance)
+- Dark / Light
+- Dracula / Nord / Gruvbox
+- Tokyo Night / Catppuccin
 
----
-
-## ✨ Features
-
-### 🔀 Parallel Workspaces
-Every task runs in its own **Git Worktree** — completely isolated branches that coexist simultaneously.
-
-### 🖥️ Session Management
-Each workspace has a dedicated **tmux session**. Jump in, work, jump out. Your terminal state is preserved.
-
-### 👁️ Visual Overview
-See all your tasks at a glance — which ones are active, which are idle, which are ready to merge.
-
-### ⚡ One-Key Operations
-- `n` → Create new task (worktree + branch + session)
-- `Enter` → Jump into task
-- `s` → Sync from main branch
-- `m` → Merge back
-- `a` → Archive when done
-
-### 🎨 8 Themes
-Auto-detect system theme, or choose from Dark, Light, Dracula, Nord, Gruvbox, Tokyo Night, Catppuccin.
-
----
-
-## 📦 Installation
+## Installation
 
 ### From Source
 
@@ -79,124 +68,151 @@ cargo install --path .
 
 ### Requirements
 
-- **Git** 2.20+ (for worktree support)
-- **tmux** 3.0+ (for session management)
-- **macOS** 12+ (for system theme detection)
+- **Git** 2.20+ (worktree support)
+- **tmux** 3.0+ (session management)
+- **macOS** 12+ (system theme detection, notifications)
 
----
+## Usage
 
-## 🚀 Quick Start
-
-### 1. Navigate to your project
+### Start Grove
 
 ```bash
+# In a git repository - opens Project view
 cd ~/code/my-project
+grove
+
+# Outside git repository - opens Workspace view (multi-project)
 grove
 ```
 
-### 2. Create a new task
-
-Press `n`, type your task name:
+### Project View
 
 ```
-Task: Add OAuth login
-  → feature/add-oauth-login from main
+┌─ ~/code/my-project ─────────────────── 3 tasks ─┐
+│ main · 2 ahead · +15 -3 · 2 hours ago           │
+├─────────────────────────────────────────────────┤
+│ [Current]  Other  Archived                      │
+├─────────────────────────────────────────────────┤
+│  ❯ ● [!!] oauth-login       live    main  +52  │
+│    ○ [i]  fix-header        idle    main  +3   │
+│    ✓      refactor-auth     merged  main       │
+├─────────────────────────────────────────────────┤
+│ [n]ew [Space]actions [Enter]open [?]help       │
+└─────────────────────────────────────────────────┘
+
+● = tmux session running
+○ = idle (session exists but detached)
+✓ = merged
+[!!] [!] [i] = agent notifications
 ```
 
-Grove automatically:
-- Creates a new worktree
-- Creates a branch with a smart name
-- Starts a tmux session
-- Drops you into the workspace
-
-### 3. Work in parallel
+### Workspace View
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│ ~/code/my-project                          3 worktrees  │
-├─────────────────────────────────────────────────────────┤
-│ [Current]  Other  Archived                              │
-├─────────────────────────────────────────────────────────┤
-│                                                         │
-│  ❯ ●  Add OAuth login       feature/oauth      +52 -12  │  ← You are here
-│    ○  Fix header bug        fix/header         +3  -1   │
-│    ✓  Refactor auth         refactor/auth      merged   │
-│                                                         │
-├─────────────────────────────────────────────────────────┤
-│ [n]ew  [Enter]open  [s]ync  [m]erge  [a]rchive  [?]help │
-└─────────────────────────────────────────────────────────┘
-
-● = tmux session running    ○ = idle    ✓ = merged
+┌─────────────────────────────────────────────────┐
+│              ─── Your Projects ───              │
+│                                                 │
+│  ❯ [!!] my-project          3 tasks   ●        │
+│    [i]  another-project     1 task    ○        │
+│         side-project        0 tasks            │
+├─────────────────────────────────────────────────┤
+│ [a]dd [x]remove [Enter]open [Tab]expand [?]help│
+└─────────────────────────────────────────────────┘
 ```
 
-### 4. Switch tasks instantly
+## Keyboard Shortcuts
 
-Press `j`/`k` to navigate, `Enter` to jump in. **No stashing. No checkout. No context loss.**
-
----
-
-## 🎨 Themes
-
-Press `t` anywhere to switch themes.
-
-| Theme | Style |
-|-------|-------|
-| **Auto** | Follows your system (macOS) |
-| **Dark** | Default dark theme |
-| **Light** | Clean light theme |
-| **Dracula** | Purple-tinted dark |
-| **Nord** | Cool, muted blues |
-| **Gruvbox** | Warm, retro feel |
-| **Tokyo Night** | Modern purple-blue |
-| **Catppuccin** | Soft pastel colors |
-
-<!-- TODO: Add theme screenshot grid -->
-
----
-
-## ⌨️ Keyboard Shortcuts
-
+### Navigation
 | Key | Action |
 |-----|--------|
-| `j` / `k` | Navigate up/down |
-| `Enter` | Open task (attach tmux session) |
-| `n` | New task |
-| `s` | Sync from target branch |
-| `m` | Merge to target branch |
-| `a` | Archive task |
-| `x` | Clean (delete) task |
-| `r` | Rebase to different target |
-| `t` | Change theme |
+| `j` / `↓` | Move down |
+| `k` / `↑` | Move up |
+| `Tab` | Switch tabs / Expand details |
+| `1` `2` `3` | Jump to tab |
 | `/` | Search |
-| `?` | Help |
+| `Esc` | Back / Cancel |
 | `q` | Quit |
-| `ESC` | Back / Exit |
 
----
+### Task Operations (Project View)
+| Key | Action |
+|-----|--------|
+| `n` | New task |
+| `Enter` | Open task (attach tmux) |
+| `Space` | Action palette |
+| `h` | Hook config panel |
+| `t` | Theme selector |
+| `?` | Help |
 
-## 🗺️ Roadmap
+### Action Palette
+| Action | Description |
+|--------|-------------|
+| Commit | Stage all and commit |
+| Sync | Rebase from target branch |
+| Merge | Merge to target branch |
+| Archive | Mark as done (keep branch) |
+| Clean | Delete worktree and branch |
+| Rebase To | Change target branch |
+| Checkout Target | Switch to target branch |
 
-- [x] Multi-project workspace
-- [x] Git worktree management
-- [x] tmux session integration
-- [x] Sync & Merge operations
-- [x] 8 color themes
-- [ ] Code diff viewer
-- [ ] Homebrew formula
-- [ ] Linux support
+### Workspace Operations
+| Key | Action |
+|-----|--------|
+| `a` | Add project |
+| `x` | Remove project |
+| `Enter` | Enter project |
+| `Tab` | Toggle detail panel |
 
----
+## Data Storage
 
-## 📄 License
+Grove stores data in `~/.grove/`:
 
-MIT © 2025
+```
+~/.grove/
+├── config.toml              # Global settings (theme, etc.)
+├── workspace.toml           # Registered projects
+├── worktrees/               # Git worktrees location
+│   └── {project-hash}/
+│       └── {task-id}/
+└── projects/
+    └── {project-name}/
+        ├── tasks.toml       # Active tasks
+        ├── archived.toml    # Archived tasks
+        └── hooks.toml       # Notification state
+```
 
----
+## Agent Hook Configuration
 
-<div align="center">
+### Claude Code
 
-**Built for developers who let AI do the heavy lifting.**
+Add to your Claude Code hooks configuration:
 
-🌲
+```json
+{
+  "hooks": {
+    "post-tool-use": [
+      {
+        "matcher": "Task",
+        "command": "grove hooks notice"
+      }
+    ]
+  }
+}
+```
 
-</div>
+### Environment Variables
+
+Grove sets these in tmux sessions for agent use:
+
+| Variable | Description |
+|----------|-------------|
+| `GROVE_PROJECT` | Project path |
+| `GROVE_PROJECT_NAME` | Project name |
+| `GROVE_TASK_ID` | Task ID (slug) |
+| `GROVE_TASK_NAME` | Task display name |
+| `GROVE_BRANCH` | Task branch |
+| `GROVE_TARGET` | Target branch |
+| `GROVE_WORKTREE` | Worktree path |
+
+## License
+
+MIT
