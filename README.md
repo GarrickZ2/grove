@@ -28,7 +28,7 @@ You're using Claude Code, Cursor, or Gemini CLI. You start on feature A, then ne
 ### Quick Install
 
 ```bash
-curl -sSL https://raw.githubusercontent.com/GarrickZ2/grove/main/install.sh | sh
+curl -sSL https://raw.githubusercontent.com/GarrickZ2/grove/master/install.sh | sh
 ```
 
 ### From crates.io
