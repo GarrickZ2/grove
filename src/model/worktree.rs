@@ -62,19 +62,6 @@ impl FileChanges {
             deletions,
         }
     }
-
-    pub fn is_clean(&self) -> bool {
-        self.additions == 0 && self.deletions == 0
-    }
-
-    /// 格式化显示，如 "+5 -2" 或 "clean"
-    pub fn display(&self) -> String {
-        if self.is_clean() {
-            "clean".to_string()
-        } else {
-            format!("+{} -{}", self.additions, self.deletions)
-        }
-    }
 }
 
 /// 单个 Worktree 的完整信息

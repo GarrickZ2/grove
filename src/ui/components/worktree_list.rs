@@ -90,7 +90,17 @@ pub fn render(
                     ratatui::text::Span::styled(&wt.target, Style::default().fg(colors.text)),
                 ])),
                 Cell::from(commits),
-                Cell::from(wt.file_changes.display()),
+                Cell::from(ratatui::text::Line::from(vec![
+                    ratatui::text::Span::styled(
+                        format!("+{}", wt.file_changes.additions),
+                        Style::default().fg(colors.status_live),
+                    ),
+                    ratatui::text::Span::raw(" "),
+                    ratatui::text::Span::styled(
+                        format!("-{}", wt.file_changes.deletions),
+                        Style::default().fg(colors.status_error),
+                    ),
+                ])),
                 Cell::from(updated).style(Style::default().fg(colors.muted)),
             ])
             .style(row_style)

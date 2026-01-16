@@ -30,13 +30,17 @@ pub struct RegisteredProject {
 }
 
 /// 根据项目路径生成唯一的目录名（hash）
+/// 使用 FNV-1a 算法，确保相同路径始终生成相同 hash
 pub fn project_hash(path: &str) -> String {
-    use std::collections::hash_map::DefaultHasher;
-    use std::hash::{Hash, Hasher};
+    const FNV_OFFSET_BASIS: u64 = 0xcbf29ce484222325;
+    const FNV_PRIME: u64 = 0x100000001b3;
 
-    let mut hasher = DefaultHasher::new();
-    path.hash(&mut hasher);
-    format!("{:016x}", hasher.finish())
+    let mut hash = FNV_OFFSET_BASIS;
+    for byte in path.as_bytes() {
+        hash ^= *byte as u64;
+        hash = hash.wrapping_mul(FNV_PRIME);
+    }
+    format!("{:016x}", hash)
 }
 
 /// 获取项目的 project.toml 路径

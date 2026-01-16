@@ -1,45 +1,45 @@
-# Grove - Claude Code 项目指南
+# Grove - Project Guide
 
-## 项目概述
+## Overview
 
-Grove 是一个 Rust TUI 应用，用于管理 Git Worktree + tmux session，专为 AI Coding Agent 并发任务场景设计。
+Grove is a Rust TUI application for managing Git Worktrees + tmux sessions, designed for parallel AI coding agent workflows.
 
-## 技术栈
+## Tech Stack
 
-- **语言**: Rust 2021 Edition
-- **TUI 框架**: ratatui 0.29
-- **终端后端**: crossterm 0.28
-- **配置**: toml + serde
-- **时间**: chrono
+- **Language**: Rust 2021 Edition
+- **TUI Framework**: ratatui 0.29
+- **Terminal Backend**: crossterm 0.28
+- **Config**: toml + serde
+- **Time**: chrono
 
-## 项目结构
+## Project Structure
 
 ```
 src/
-├── main.rs              # 入口，终端初始化
-├── app.rs               # App 状态管理，核心逻辑
-├── event.rs             # 键盘事件处理
+├── main.rs              # Entry point, terminal initialization
+├── app.rs               # App state management, core logic
+├── event.rs             # Keyboard event handling
 ├── git/
-│   └── mod.rs           # Git 命令封装
+│   └── mod.rs           # Git command wrappers
 ├── tmux/
-│   └── mod.rs           # tmux session 管理
+│   └── mod.rs           # tmux session management
 ├── storage/
 │   ├── mod.rs
-│   ├── config.rs        # 全局配置读写
-│   ├── tasks.rs         # 任务数据持久化
-│   └── workspace.rs     # 项目注册管理
+│   ├── config.rs        # Global config read/write
+│   ├── tasks.rs         # Task data persistence
+│   └── workspace.rs     # Project registration
 ├── model/
 │   ├── mod.rs
-│   ├── worktree.rs      # Worktree/Task 数据结构
-│   ├── workspace.rs     # Workspace 状态
-│   └── loader.rs        # 数据加载逻辑
+│   ├── worktree.rs      # Worktree/Task data structures
+│   ├── workspace.rs     # Workspace state
+│   └── loader.rs        # Data loading logic
 ├── theme/
-│   └── mod.rs           # 8 种主题定义
+│   └── mod.rs           # 8 theme definitions
 └── ui/
     ├── mod.rs
-    ├── workspace.rs     # Workspace 视图
-    ├── project.rs       # Project 视图
-    └── components/      # 可复用 UI 组件
+    ├── workspace.rs     # Workspace view
+    ├── project.rs       # Project view
+    └── components/      # Reusable UI components
         ├── worktree_list.rs
         ├── workspace_list.rs
         ├── header.rs
@@ -58,78 +58,71 @@ src/
         └── ...
 ```
 
-## 核心概念
+## Core Concepts
 
-### 层级结构
+### Hierarchy
 
 ```
-Workspace (多项目)
-└── Project (单个 git repo)
+Workspace (multiple projects)
+└── Project (single git repo)
     └── Task (worktree + tmux session)
 ```
 
-### 入口逻辑
+### Entry Logic
 
-- 非 git 目录运行 `grove` → Workspace 视图
-- git 目录运行 `grove` → Project 视图
+- Run `grove` outside git repo → Workspace view
+- Run `grove` inside git repo → Project view
 
-### 任务状态
+### Task States
 
-- `Live (●)` — tmux session 运行中
-- `Idle (○)` — 无活跃 session
-- `Merged (✓)` — 已合并到 target
+- `Live (●)` — tmux session running
+- `Idle (○)` — no active session
+- `Merged (✓)` — merged to target branch
 
-## 常用命令
+## Commands
 
 ```bash
-# 构建
-cargo build
-
-# 运行
-cargo run
-
-# 检查
-cargo check
-
-# Release 构建
-cargo build --release
+cargo build            # Build
+cargo run              # Run
+cargo check            # Check
+cargo build --release  # Release build
 ```
 
-## 数据存储
+## Data Storage
 
-所有数据存储在 `~/.grove/`：
+All data stored in `~/.grove/`:
 
 ```
 ~/.grove/
-├── config.toml           # 主题配置
+├── config.toml           # Theme config
 └── projects/
-    └── <path-hash>/      # 项目路径的 hash
-        ├── project.toml  # 项目元数据
-        ├── tasks.toml    # 活跃任务
-        └── archived.toml # 归档任务
+    └── <path-hash>/      # Hash of project path
+        ├── project.toml  # Project metadata
+        ├── tasks.toml    # Active tasks
+        └── archived.toml # Archived tasks
 ```
 
-## 开发注意事项
+## Development Guidelines
 
-### UI 组件模式
+### UI Component Pattern
 
-所有 UI 组件遵循相同模式：
+All UI components follow the same pattern:
 
 ```rust
 pub fn render(frame: &mut Frame, area: Rect, data: &Data, colors: &ThemeColors) {
-    // 使用 ratatui widgets 渲染
+    // Render using ratatui widgets
 }
 ```
 
-### 事件处理
+### Event Handling
 
-事件处理在 `event.rs`，按优先级分发：
-1. 弹窗事件（help、dialog 等）
-2. 模式事件（Workspace / Project）
+Events are handled in `event.rs`, dispatched by priority:
+1. Popup events (help, dialogs, etc.)
+2. Mode events (Workspace / Project)
 
-### 颜色使用
+### Color Usage
 
-始终使用 `ThemeColors` 结构体的字段，不要硬编码颜色：
+Always use `ThemeColors` struct fields, never hardcode colors:
 
 ```rust
 // Good
@@ -139,16 +132,16 @@ Style::default().fg(colors.highlight)
 Style::default().fg(Color::Yellow)
 ```
 
-### Git 操作
+### Git Operations
 
-所有 git 操作通过 `src/git/mod.rs` 封装，使用 `std::process::Command` 调用 git CLI。
+All git operations are wrapped in `src/git/mod.rs`, using `std::process::Command` to call git CLI.
 
-### tmux 操作
+### tmux Operations
 
-所有 tmux 操作通过 `src/tmux/mod.rs` 封装。
+All tmux operations are wrapped in `src/tmux/mod.rs`.
 
-## 待实现功能
+## TODO
 
-- [ ] Diff 视图 (Code Review)
-- [ ] Ctrl-C 退出支持
+- [ ] Diff view (Code Review)
+- [ ] Ctrl-C exit support
 - [ ] Homebrew formula

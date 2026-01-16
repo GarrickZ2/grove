@@ -410,7 +410,7 @@ impl App {
                 let _ = storage::workspace::upsert_project(&project_name, &project_path);
 
                 // 加载 hook 通知数据（自动清理不存在的 task）
-                let hooks_file = hooks::load_hooks_with_cleanup(&project_path, &project_name);
+                let hooks_file = hooks::load_hooks_with_cleanup(&project_path);
 
                 (
                     AppMode::Project,
@@ -481,7 +481,7 @@ impl App {
         self.mode = AppMode::Project;
 
         // 加载 hook 通知数据（自动清理不存在的 task）
-        let hooks_file = hooks::load_hooks_with_cleanup(project_path, &project_name);
+        let hooks_file = hooks::load_hooks_with_cleanup(project_path);
         self.notifications = hooks_file.tasks;
     }
 
@@ -723,11 +723,10 @@ impl App {
         let task_id = &wt.id;
         if self.notifications.remove(task_id).is_some() {
             // 保存到文件
-            let project_name = hooks::project_name_from_path(&self.project.project_path);
             let hooks_file = HooksFile {
                 tasks: self.notifications.clone(),
             };
-            let _ = hooks::save_hooks(&project_name, &hooks_file);
+            let _ = hooks::save_hooks(&self.project.project_key, &hooks_file);
         }
 
         // 6. 设置 pending attach（主循环会暂停 TUI，attach 完成后恢复）
@@ -765,6 +764,25 @@ impl App {
     /// 退出应用
     pub fn quit(&mut self) {
         self.should_quit = true;
+    }
+
+    /// 刷新数据（根据当前模式）
+    pub fn refresh(&mut self) {
+        match self.mode {
+            AppMode::Project => {
+                self.project.refresh();
+                // 重新加载通知
+                let hooks_file =
+                    hooks::load_hooks_with_cleanup(&self.project.project_path);
+                self.notifications = hooks_file.tasks;
+            }
+            AppMode::Workspace => {
+                self.workspace.refresh();
+                // 重新加载所有项目的通知
+                self.workspace_notifications =
+                    load_all_project_notifications(&self.workspace.projects);
+            }
+        }
     }
 
     // ========== Archive 功能 ==========
@@ -1875,7 +1893,7 @@ fn load_all_project_notifications(
             .and_then(|n| n.to_str())
             .unwrap_or("unknown")
             .to_string();
-        let hooks_file = hooks::load_hooks_with_cleanup(&project.path, &project_name);
+        let hooks_file = hooks::load_hooks_with_cleanup(&project.path);
         if !hooks_file.tasks.is_empty() {
             result.insert(project_name, hooks_file.tasks);
         }

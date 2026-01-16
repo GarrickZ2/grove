@@ -121,24 +121,31 @@ fn task_line(
         None => ("    ", Style::default()),
     };
 
-    let changes = if additions > 0 || deletions > 0 {
-        format!("+{} -{}", additions, deletions)
+    let changes: Vec<Span> = if additions > 0 || deletions > 0 {
+        vec![
+            Span::styled(format!("+{}", additions), Style::default().fg(colors.status_live)),
+            Span::raw(" "),
+            Span::styled(format!("-{}", deletions), Style::default().fg(colors.status_error)),
+        ]
     } else {
-        "clean".to_string()
+        vec![Span::styled("clean", Style::default().fg(colors.muted))]
     };
 
-    Line::from(vec![
+    let mut spans = vec![
         Span::raw("  "),
         status_icon,
         Span::raw(" "),
         Span::styled(notif_marker, notif_style),
         Span::raw(" "),
         Span::styled(
-            format!("{:<16}", truncate(name, 16)),
+            format!("{:<32}", truncate(name, 32)),
             Style::default().fg(colors.text),
         ),
-        Span::styled(changes, Style::default().fg(colors.muted)),
-    ])
+        Span::raw(" "),
+    ];
+    spans.extend(changes);
+
+    Line::from(spans)
 }
 
 /// 归档任务行

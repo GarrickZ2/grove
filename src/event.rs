@@ -172,6 +172,11 @@ fn handle_workspace_key(app: &mut App, key: KeyEvent) {
             app.show_help = true;
         }
 
+        // 功能按键 - 刷新
+        KeyCode::Char('r') | KeyCode::Char('R') => {
+            app.refresh();
+        }
+
         _ => {}
     }
 }
@@ -261,10 +266,12 @@ fn handle_project_key(app: &mut App, key: KeyEvent) {
             }
         }
 
-        // 功能按键 - Recover (仅 Archived Tab)
-        KeyCode::Char('r') => {
+        // 功能按键 - Recover (仅 Archived Tab) / Refresh (其他 Tab)
+        KeyCode::Char('r') | KeyCode::Char('R') => {
             if app.project.current_tab == ProjectTab::Archived {
                 app.start_recover();
+            } else {
+                app.refresh();
             }
         }
 

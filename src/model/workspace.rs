@@ -234,6 +234,14 @@ impl WorkspaceState {
             self.list_state.select(Some(0));
         }
     }
+
+    /// 刷新数据（重新加载项目列表和详情）
+    pub fn refresh(&mut self) {
+        self.reload_projects();
+        if self.expanded {
+            self.update_detail();
+        }
+    }
 }
 
 /// 计算任务数量

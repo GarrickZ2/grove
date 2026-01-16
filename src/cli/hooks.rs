@@ -91,6 +91,24 @@ impl HookLevel {
 
 /// 执行 hook 命令
 pub fn execute(level: HookLevel) {
+    // 先检查所有必要的环境变量
+    let project_path = match env::var("GROVE_PROJECT") {
+        Ok(p) => p,
+        Err(_) => return, // 缺少环境变量，静默退出
+    };
+    let task_id = match env::var("GROVE_TASK_ID") {
+        Ok(t) => t,
+        Err(_) => return,
+    };
+    let task_name = match env::var("GROVE_TASK_NAME") {
+        Ok(n) => n,
+        Err(_) => return,
+    };
+    let project_name = match env::var("GROVE_PROJECT_NAME") {
+        Ok(n) => n,
+        Err(_) => return,
+    };
+
     // 播放声音
     let sound = level.sound();
     if sound.to_lowercase() != "none" {
@@ -99,14 +117,13 @@ pub fn execute(level: HookLevel) {
 
     // 发送系统通知横幅
     if level.should_banner() {
-        let task_name = env::var("GROVE_TASK_NAME").ok();
         let title = format!("Grove - {}", level.level_name());
-        let message = task_name.as_deref().unwrap_or("Task notification");
-        send_banner(&title, message);
+        let message = format!("[{}] {}", project_name, task_name);
+        send_banner(&title, &message);
     }
 
-    // 更新 hooks.toml（静默忽略错误）
-    update_hooks_file(level.level());
+    // 更新 hooks.toml
+    update_hooks_file(&project_path, &task_id, level.level());
 }
 
 /// 播放提示音
@@ -126,23 +143,12 @@ fn send_banner(title: &str, message: &str) {
 }
 
 /// 更新 hooks.toml 文件
-fn update_hooks_file(level: NotificationLevel) {
-    // 读取环境变量
-    let project_path = match env::var("GROVE_PROJECT") {
-        Ok(p) => p,
-        Err(_) => return, // 静默忽略
-    };
+fn update_hooks_file(project_path: &str, task_id: &str, level: NotificationLevel) {
+    use crate::storage::workspace::project_hash;
 
-    let task_id = match env::var("GROVE_TASK_ID") {
-        Ok(t) => t,
-        Err(_) => return, // 静默忽略
-    };
+    let project_key = project_hash(project_path);
 
-    // 提取项目名称
-    let project_name = hooks::project_name_from_path(&project_path);
-
-    // 加载、更新、保存
-    let mut hooks_file = hooks::load_hooks(&project_name);
-    hooks_file.update(&task_id, level);
-    let _ = hooks::save_hooks(&project_name, &hooks_file); // 静默忽略错误
+    let mut hooks_file = hooks::load_hooks(&project_key);
+    hooks_file.update(task_id, level);
+    let _ = hooks::save_hooks(&project_key, &hooks_file);
 }

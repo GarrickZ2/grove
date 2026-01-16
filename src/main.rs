@@ -10,12 +10,16 @@ mod tmux;
 mod ui;
 
 use std::io;
+use std::time::Instant;
 
 use clap::Parser;
 use ratatui::DefaultTerminal;
 
 use app::{App, AppMode};
 use cli::{Cli, Commands};
+
+/// Auto-refresh interval in seconds
+const AUTO_REFRESH_INTERVAL_SECS: u64 = 5;
 
 fn main() -> io::Result<()> {
     // 解析命令行参数
@@ -48,6 +52,8 @@ fn main() -> io::Result<()> {
 }
 
 fn run(terminal: &mut DefaultTerminal, app: &mut App) -> io::Result<()> {
+    let mut last_refresh = Instant::now();
+
     loop {
         // 检查是否有待 attach 的 session
         if let Some(session) = app.pending_tmux_attach.take() {
@@ -61,7 +67,14 @@ fn run(terminal: &mut DefaultTerminal, app: &mut App) -> io::Result<()> {
             *terminal = ratatui::init();
 
             // 刷新数据（用户可能在 session 中做了改动）
-            app.project.refresh();
+            app.refresh();
+            last_refresh = Instant::now();
+        }
+
+        // 定时自动刷新（每 5 秒）
+        if last_refresh.elapsed().as_secs() >= AUTO_REFRESH_INTERVAL_SECS {
+            app.refresh();
+            last_refresh = Instant::now();
         }
 
         // 渲染界面

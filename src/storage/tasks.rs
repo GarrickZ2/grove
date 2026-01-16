@@ -217,97 +217,38 @@ pub fn to_slug(text: &str) -> String {
         .join("-")
 }
 
-/// 解析任务名称，提取前缀和正文
-/// "Fix: header bug" → (Some("fix"), "header bug")
-/// "Add feature"     → (None, "Add feature")
-fn parse_task_name(name: &str) -> (Option<&str>, &str) {
-    // 检查是否以 #123 或 issue #123 开头
-    let trimmed = name.trim();
-
-    // 处理 "#123 xxx" 格式
-    if trimmed.starts_with('#') {
-        if let Some(space_idx) = trimmed.find(' ') {
-            return (Some(&trimmed[..space_idx]), trimmed[space_idx..].trim());
-        }
-        return (Some(trimmed), "");
-    }
-
-    // 处理 "issue #123 xxx" 或 "issue#123 xxx" 格式
-    let lower = trimmed.to_lowercase();
-    if lower.starts_with("issue") {
-        let rest = &trimmed[5..].trim_start();
-        if rest.starts_with('#')
-            || rest
-                .chars()
-                .next()
-                .map(|c| c.is_ascii_digit())
-                .unwrap_or(false)
-        {
-            // 找到 issue 号后的空格
-            if let Some(space_idx) = rest.find(' ') {
-                let issue_part =
-                    &trimmed[..5 + (rest.len() - rest.trim_start().len()) + space_idx + 1];
-                return (Some(issue_part.trim()), rest[space_idx..].trim());
-            }
-            return (Some(trimmed), "");
-        }
-    }
-
-    // 处理 "prefix: body" 格式
-    if let Some(colon_idx) = trimmed.find(':') {
-        let prefix = trimmed[..colon_idx].trim().to_lowercase();
-        let body = trimmed[colon_idx + 1..].trim();
-
-        match prefix.as_str() {
-            "fix" | "feat" | "feature" | "dev" => {
-                return (Some(&trimmed[..colon_idx]), body);
-            }
-            _ => {}
-        }
-    }
-
-    (None, trimmed)
-}
-
-/// 从 issue 前缀中提取 issue 号
-fn extract_issue_number(prefix: &str) -> String {
-    prefix.chars().filter(|c| c.is_ascii_digit()).collect()
-}
-
 /// 生成分支名
+/// - 如果 task_name 包含 `/`，使用第一个 `/` 前面的作为前缀
+/// - 否则使用默认前缀 `grove/`
+/// - 所有非法字符由 to_slug() 处理（转为 -，合并连续 -）
 pub fn generate_branch_name(task_name: &str) -> String {
-    let (prefix, body) = parse_task_name(task_name);
-    let slug = if body.is_empty() {
-        to_slug(task_name)
-    } else {
-        to_slug(body)
-    };
+    if let Some(slash_idx) = task_name.find('/') {
+        // 用户提供了前缀 - 只取第一个 / 前面的
+        let prefix = &task_name[..slash_idx];
+        let body = &task_name[slash_idx + 1..];
+        let prefix_slug = to_slug(prefix);
+        let body_slug = to_slug(body); // 后续的 / 也会被转成 -
 
-    match prefix {
-        Some(p) => {
-            let p_lower = p.to_lowercase();
-            if p_lower == "fix" || p_lower.starts_with("fix") && p.contains(':') {
-                format!("fix/{}", slug)
-            } else if p_lower == "feat"
-                || p_lower == "feature"
-                || p_lower.starts_with("feat") && p.contains(':')
-                || p_lower.starts_with("feature") && p.contains(':')
-            {
-                format!("feature/{}", slug)
-            } else if p_lower == "dev" || p_lower.starts_with("dev") && p.contains(':') {
-                format!("dev/{}", slug)
-            } else if p.starts_with('#') || p_lower.starts_with("issue") {
-                let num = extract_issue_number(p);
-                if num.is_empty() {
-                    format!("grove/{}", slug)
-                } else {
-                    format!("issue-{}/{}", num, slug)
-                }
+        if prefix_slug.is_empty() {
+            // 前缀为空（比如 "/xxx"）→ 使用默认 grove/
+            if body_slug.is_empty() {
+                "grove/task".to_string()
             } else {
-                format!("grove/{}", slug)
+                format!("grove/{}", body_slug)
             }
+        } else if body_slug.is_empty() {
+            format!("{}/task", prefix_slug)
+        } else {
+            format!("{}/{}", prefix_slug, body_slug)
         }
-        None => format!("grove/{}", slug),
+    } else {
+        // 没有 / → 默认使用 grove/ 前缀
+        let slug = to_slug(task_name);
+        if slug.is_empty() {
+            "grove/task".to_string()
+        } else {
+            format!("grove/{}", slug)
+        }
     }
 }
 
@@ -324,19 +265,34 @@ mod tests {
 
     #[test]
     fn test_generate_branch_name() {
-        assert_eq!(generate_branch_name("Fix: header bug"), "fix/header-bug");
-        assert_eq!(generate_branch_name("fix: header bug"), "fix/header-bug");
-        assert_eq!(generate_branch_name("feat: oauth"), "feature/oauth");
-        assert_eq!(generate_branch_name("feature: oauth"), "feature/oauth");
-        assert_eq!(generate_branch_name("dev: experiment"), "dev/experiment");
-        assert_eq!(generate_branch_name("#123 bug fix"), "issue-123/bug-fix");
+        // 用户提供前缀
+        assert_eq!(generate_branch_name("fix/header bug"), "fix/header-bug");
         assert_eq!(
-            generate_branch_name("issue #456 payment"),
-            "issue-456/payment"
+            generate_branch_name("feature/oauth login"),
+            "feature/oauth-login"
         );
+        assert_eq!(generate_branch_name("hotfix/urgent"), "hotfix/urgent");
+        assert_eq!(
+            generate_branch_name("fix data / add enum"),
+            "fix-data/add-enum"
+        );
+
+        // 默认 grove/ 前缀
         assert_eq!(
             generate_branch_name("Add new feature"),
             "grove/add-new-feature"
         );
+        assert_eq!(
+            generate_branch_name("Fix: header bug"),
+            "grove/fix-header-bug"
+        );
+        assert_eq!(generate_branch_name("#123 bug fix"), "grove/123-bug-fix");
+
+        // 边缘情况
+        assert_eq!(generate_branch_name("fix/feat/xxx"), "fix/feat-xxx");
+        assert_eq!(generate_branch_name("/xxx"), "grove/xxx");
+        assert_eq!(generate_branch_name("add - - enum"), "grove/add-enum");
+        assert_eq!(generate_branch_name("fix/"), "fix/task");
+        assert_eq!(generate_branch_name("   "), "grove/task");
     }
 }
