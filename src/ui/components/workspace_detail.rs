@@ -123,9 +123,15 @@ fn task_line(
 
     let changes: Vec<Span> = if additions > 0 || deletions > 0 {
         vec![
-            Span::styled(format!("+{}", additions), Style::default().fg(colors.status_live)),
+            Span::styled(
+                format!("+{}", additions),
+                Style::default().fg(colors.status_live),
+            ),
             Span::raw(" "),
-            Span::styled(format!("-{}", deletions), Style::default().fg(colors.status_error)),
+            Span::styled(
+                format!("-{}", deletions),
+                Style::default().fg(colors.status_error),
+            ),
         ]
     } else {
         vec![Span::styled("clean", Style::default().fg(colors.muted))]

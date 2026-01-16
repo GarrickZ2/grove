@@ -772,8 +772,7 @@ impl App {
             AppMode::Project => {
                 self.project.refresh();
                 // 重新加载通知
-                let hooks_file =
-                    hooks::load_hooks_with_cleanup(&self.project.project_path);
+                let hooks_file = hooks::load_hooks_with_cleanup(&self.project.project_path);
                 self.notifications = hooks_file.tasks;
             }
             AppMode::Workspace => {
