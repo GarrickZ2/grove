@@ -134,12 +134,20 @@ fn play_sound(sound: &str) {
 
 /// 发送 macOS 通知横幅
 fn send_banner(title: &str, message: &str) {
-    let script = format!(
-        r#"display notification "{}" with title "{}""#,
-        message.replace('\"', "\\\""),
-        title.replace('\"', "\\\"")
-    );
-    Command::new("osascript").args(["-e", &script]).spawn().ok();
+    // 优先使用 terminal-notifier（点击后不会打开脚本编辑器）
+    let result = Command::new("terminal-notifier")
+        .args(["-title", title, "-message", message])
+        .spawn();
+
+    if result.is_err() {
+        // fallback 到 osascript
+        let script = format!(
+            r#"display notification "{}" with title "{}""#,
+            message.replace('"', "\\\""),
+            title.replace('"', "\\\"")
+        );
+        Command::new("osascript").args(["-e", &script]).spawn().ok();
+    }
 }
 
 /// 更新 hooks.toml 文件

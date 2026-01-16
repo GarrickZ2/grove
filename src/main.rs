@@ -1,4 +1,5 @@
 mod app;
+mod check;
 mod cli;
 mod event;
 mod git;
@@ -36,6 +37,17 @@ fn main() -> io::Result<()> {
     }
 
     // 否则启动 TUI
+    // 环境检查
+    let result = check::check_environment();
+    if !result.ok {
+        eprintln!("Grove requires the following dependencies:\n");
+        for err in &result.errors {
+            eprintln!("  ✗ {}", err);
+        }
+        eprintln!("\nPlease install the missing dependencies and try again.");
+        std::process::exit(1);
+    }
+
     // 初始化终端
     let mut terminal = ratatui::init();
 
