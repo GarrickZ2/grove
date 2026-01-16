@@ -22,13 +22,13 @@ pub fn render(
 ) {
     // 表头
     let header = Row::new(vec![
-        Cell::from(""),     // 选择指示器
-        Cell::from(""),     // 状态图标
-        Cell::from(""),     // 通知标记
+        Cell::from(""), // 选择指示器
+        Cell::from(""), // 状态图标
+        Cell::from(""), // 通知标记
         Cell::from("TASK"),
         Cell::from("STATUS"),
         Cell::from("BRANCH"),
-        Cell::from("↓"),    // commits behind
+        Cell::from("↓"), // commits behind
         Cell::from("FILES"),
         Cell::from("UPDATED"),
     ])

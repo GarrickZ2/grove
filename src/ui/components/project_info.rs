@@ -35,11 +35,9 @@ pub fn render(frame: &mut Frame, area: Rect, data: &ProjectInfoData, colors: &Th
     frame.render_widget(block, area);
 
     // 左右两列布局
-    let [left_area, right_area] = Layout::horizontal([
-        Constraint::Percentage(50),
-        Constraint::Percentage(50),
-    ])
-    .areas(inner_area);
+    let [left_area, right_area] =
+        Layout::horizontal([Constraint::Percentage(50), Constraint::Percentage(50)])
+            .areas(inner_area);
 
     // 左侧内容
     let left_content = build_left_content(data, colors);
@@ -60,7 +58,9 @@ fn build_left_content(data: &ProjectInfoData, colors: &ThemeColors) -> Vec<Line<
             Span::styled("  Branch: ", Style::default().fg(colors.muted)),
             Span::styled(
                 data.branch.clone(),
-                Style::default().fg(colors.highlight).add_modifier(Modifier::BOLD),
+                Style::default()
+                    .fg(colors.highlight)
+                    .add_modifier(Modifier::BOLD),
             ),
         ]),
         // 第二行：文件变更统计
@@ -96,7 +96,10 @@ fn build_right_content(data: &ProjectInfoData, colors: &ThemeColors) -> Vec<Line
     };
 
     vec![
-        Line::from(Span::styled(commits_text, Style::default().fg(commits_color))),
+        Line::from(Span::styled(
+            commits_text,
+            Style::default().fg(commits_color),
+        )),
         // 第二行：最近提交时间
         Line::from(vec![
             Span::styled("Last commit: ", Style::default().fg(colors.muted)),

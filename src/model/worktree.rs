@@ -57,7 +57,10 @@ pub struct FileChanges {
 
 impl FileChanges {
     pub fn new(additions: u32, deletions: u32) -> Self {
-        Self { additions, deletions }
+        Self {
+            additions,
+            deletions,
+        }
     }
 
     pub fn is_clean(&self) -> bool {

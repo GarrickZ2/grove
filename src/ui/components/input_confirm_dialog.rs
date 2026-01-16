@@ -81,7 +81,9 @@ pub fn render(frame: &mut Frame, data: &InputConfirmData, colors: &ThemeColors) 
         Line::from(""),
         Line::from(Span::styled(
             "⚠ Branch has NOT been merged!",
-            Style::default().fg(colors.status_error).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(colors.status_error)
+                .add_modifier(Modifier::BOLD),
         )),
         Line::from(Span::styled(
             "Type 'delete' to confirm:",
@@ -108,7 +110,12 @@ pub fn render(frame: &mut Frame, data: &InputConfirmData, colors: &ThemeColors) 
 
     let input_text = Paragraph::new(Line::from(vec![
         Span::styled(&data.input, input_style),
-        Span::styled("_", Style::default().fg(colors.highlight).add_modifier(Modifier::SLOW_BLINK)),
+        Span::styled(
+            "_",
+            Style::default()
+                .fg(colors.highlight)
+                .add_modifier(Modifier::SLOW_BLINK),
+        ),
     ]))
     .alignment(Alignment::Center);
     frame.render_widget(input_text, input_inner);

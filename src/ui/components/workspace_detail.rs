@@ -40,7 +40,15 @@ pub fn render(
         lines.push(section_header("Active Tasks", colors));
         for task in &detail.active_tasks {
             let notification = notifications.get(&task.id).copied();
-            lines.push(task_line(&task.id, task.name.as_str(), task.status, task.additions, task.deletions, notification, colors));
+            lines.push(task_line(
+                &task.id,
+                task.name.as_str(),
+                task.status,
+                task.additions,
+                task.deletions,
+                notification,
+                colors,
+            ));
         }
         lines.push(Line::from(""));
     }
@@ -61,7 +69,11 @@ pub fn render(
 
     let block = Block::default()
         .title(format!(" {} ", detail.name))
-        .title_style(Style::default().fg(colors.highlight).add_modifier(Modifier::BOLD))
+        .title_style(
+            Style::default()
+                .fg(colors.highlight)
+                .add_modifier(Modifier::BOLD),
+        )
         .borders(Borders::ALL)
         .border_style(Style::default().fg(colors.border))
         .style(Style::default().bg(colors.bg));

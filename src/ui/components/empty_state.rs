@@ -52,9 +52,7 @@ pub fn render(frame: &mut Frame, area: Rect, current_tab: ProjectTab, colors: &T
 
 fn get_hint_text(current_tab: ProjectTab) -> (&'static str, &'static str) {
     match current_tab {
-        ProjectTab::Current | ProjectTab::Other => {
-            ("No worktrees yet", "to create a new task")
-        }
+        ProjectTab::Current | ProjectTab::Other => ("No worktrees yet", "to create a new task"),
         ProjectTab::Archived => ("No archived worktrees", "to create a new task"),
     }
 }

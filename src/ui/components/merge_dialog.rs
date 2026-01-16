@@ -65,7 +65,12 @@ pub fn render(frame: &mut Frame, data: &MergeDialogData, colors: &ThemeColors) {
     // 居中计算
     let x = area.width.saturating_sub(DIALOG_WIDTH) / 2;
     let y = area.height.saturating_sub(DIALOG_HEIGHT) / 2;
-    let dialog_area = Rect::new(x, y, DIALOG_WIDTH.min(area.width), DIALOG_HEIGHT.min(area.height));
+    let dialog_area = Rect::new(
+        x,
+        y,
+        DIALOG_WIDTH.min(area.width),
+        DIALOG_HEIGHT.min(area.height),
+    );
 
     // 清除背景
     frame.render_widget(Clear, dialog_area);
@@ -74,7 +79,11 @@ pub fn render(frame: &mut Frame, data: &MergeDialogData, colors: &ThemeColors) {
     let block = Block::default()
         .title(" Merge ")
         .title_alignment(Alignment::Center)
-        .title_style(Style::default().fg(colors.highlight).add_modifier(Modifier::BOLD))
+        .title_style(
+            Style::default()
+                .fg(colors.highlight)
+                .add_modifier(Modifier::BOLD),
+        )
         .borders(Borders::ALL)
         .border_style(Style::default().fg(colors.border))
         .style(Style::default().bg(colors.bg));
@@ -96,7 +105,12 @@ pub fn render(frame: &mut Frame, data: &MergeDialogData, colors: &ThemeColors) {
     let info = Paragraph::new(vec![
         Line::from(vec![
             Span::styled("Merge ", Style::default().fg(colors.text)),
-            Span::styled(&data.task_name, Style::default().fg(colors.highlight).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                &data.task_name,
+                Style::default()
+                    .fg(colors.highlight)
+                    .add_modifier(Modifier::BOLD),
+            ),
         ]),
         Line::from(vec![
             Span::styled("into ", Style::default().fg(colors.text)),
@@ -140,7 +154,14 @@ fn render_option(label: &str, desc: &str, selected: bool, colors: &ThemeColors) 
 
     Line::from(vec![
         Span::styled(format!(" {} ", bullet), style),
-        Span::styled(label.to_string(), style.add_modifier(if selected { Modifier::BOLD } else { Modifier::empty() })),
+        Span::styled(
+            label.to_string(),
+            style.add_modifier(if selected {
+                Modifier::BOLD
+            } else {
+                Modifier::empty()
+            }),
+        ),
         Span::styled(format!(" ({})", desc), Style::default().fg(colors.muted)),
     ])
 }

@@ -1,7 +1,7 @@
 pub mod loader;
 pub mod mock;
-pub mod worktree;
 pub mod workspace;
+pub mod worktree;
 
-pub use worktree::{format_relative_time, FileChanges, ProjectTab, Worktree, WorktreeStatus};
 pub use workspace::{ProjectDetail, ProjectInfo, WorkspaceState};
+pub use worktree::{format_relative_time, FileChanges, ProjectTab, Worktree, WorktreeStatus};

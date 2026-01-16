@@ -1,7 +1,7 @@
 pub mod action_palette;
 pub mod add_project_dialog;
-pub mod commit_dialog;
 pub mod branch_selector;
+pub mod commit_dialog;
 pub mod confirm_dialog;
 pub mod delete_project_dialog;
 pub mod empty_state;
@@ -18,8 +18,8 @@ pub mod search_bar;
 pub mod tabs;
 pub mod theme_selector;
 pub mod toast;
-pub mod worktree_list;
 pub mod workspace_detail;
 pub mod workspace_empty;
 pub mod workspace_footer;
 pub mod workspace_list;
+pub mod worktree_list;

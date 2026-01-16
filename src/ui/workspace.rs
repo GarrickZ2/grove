@@ -10,9 +10,8 @@ use ratatui::{
 use crate::app::App;
 
 use super::components::{
-    add_project_dialog, delete_project_dialog, help_panel, logo, search_bar,
-    theme_selector, toast, workspace_detail, workspace_empty, workspace_footer,
-    workspace_list,
+    add_project_dialog, delete_project_dialog, help_panel, logo, search_bar, theme_selector, toast,
+    workspace_detail, workspace_empty, workspace_footer, workspace_list,
 };
 
 /// 渲染 Workspace 页面
@@ -75,18 +74,18 @@ fn render_collapsed(frame: &mut Frame, app: &App, show_search: bool) {
     // 布局
     let (logo_area, search_area, content_area, footer_area) = if show_search {
         let [logo_area, search_area, content_area, footer_area] = Layout::vertical([
-            Constraint::Length(9),  // Logo
-            Constraint::Length(1),  // 搜索框
-            Constraint::Fill(1),    // 内容
-            Constraint::Length(3),  // Footer
+            Constraint::Length(9), // Logo
+            Constraint::Length(1), // 搜索框
+            Constraint::Fill(1),   // 内容
+            Constraint::Length(3), // Footer
         ])
         .areas(area);
         (logo_area, Some(search_area), content_area, footer_area)
     } else {
         let [logo_area, content_area, footer_area] = Layout::vertical([
-            Constraint::Length(9),  // Logo
-            Constraint::Fill(1),    // 内容
-            Constraint::Length(3),  // Footer
+            Constraint::Length(9), // Logo
+            Constraint::Fill(1),   // 内容
+            Constraint::Length(3), // Footer
         ])
         .areas(area);
         (logo_area, None, content_area, footer_area)
@@ -112,7 +111,14 @@ fn render_collapsed(frame: &mut Frame, app: &App, show_search: bool) {
         workspace_empty::render(frame, content_area, colors);
     } else {
         let selected = app.workspace.list_state.selected();
-        workspace_list::render(frame, content_area, &projects, selected, colors, &app.workspace_notifications);
+        workspace_list::render(
+            frame,
+            content_area,
+            &projects,
+            selected,
+            colors,
+            &app.workspace_notifications,
+        );
     }
 
     // 渲染 Footer
@@ -128,18 +134,18 @@ fn render_expanded(frame: &mut Frame, app: &App, show_search: bool) {
     // 上下布局
     let (logo_area, search_area, main_area, footer_area) = if show_search {
         let [logo_area, search_area, main_area, footer_area] = Layout::vertical([
-            Constraint::Length(9),  // Logo
-            Constraint::Length(1),  // 搜索框
-            Constraint::Fill(1),    // 主内容
-            Constraint::Length(3),  // Footer
+            Constraint::Length(9), // Logo
+            Constraint::Length(1), // 搜索框
+            Constraint::Fill(1),   // 主内容
+            Constraint::Length(3), // Footer
         ])
         .areas(area);
         (logo_area, Some(search_area), main_area, footer_area)
     } else {
         let [logo_area, main_area, footer_area] = Layout::vertical([
-            Constraint::Length(9),  // Logo
-            Constraint::Fill(1),    // 主内容
-            Constraint::Length(3),  // Footer
+            Constraint::Length(9), // Logo
+            Constraint::Fill(1),   // 主内容
+            Constraint::Length(3), // Footer
         ])
         .areas(area);
         (logo_area, None, main_area, footer_area)
@@ -160,11 +166,9 @@ fn render_expanded(frame: &mut Frame, app: &App, show_search: bool) {
     }
 
     // 左右分栏
-    let [left_area, right_area] = Layout::horizontal([
-        Constraint::Percentage(35),
-        Constraint::Percentage(65),
-    ])
-    .areas(main_area);
+    let [left_area, right_area] =
+        Layout::horizontal([Constraint::Percentage(35), Constraint::Percentage(65)])
+            .areas(main_area);
 
     // 左侧：项目列表
     let projects = app.workspace.filtered_projects();
@@ -172,14 +176,22 @@ fn render_expanded(frame: &mut Frame, app: &App, show_search: bool) {
         workspace_empty::render(frame, left_area, colors);
     } else {
         let selected = app.workspace.list_state.selected();
-        workspace_list::render(frame, left_area, &projects, selected, colors, &app.workspace_notifications);
+        workspace_list::render(
+            frame,
+            left_area,
+            &projects,
+            selected,
+            colors,
+            &app.workspace_notifications,
+        );
     }
 
     // 右侧：详情面板
     if let Some(ref detail) = app.workspace.detail {
         // 获取该项目的通知数据
         let empty_notifications = std::collections::HashMap::new();
-        let project_notifications = app.workspace_notifications
+        let project_notifications = app
+            .workspace_notifications
             .get(&detail.name)
             .unwrap_or(&empty_notifications);
         workspace_detail::render(frame, right_area, detail, colors, project_notifications);

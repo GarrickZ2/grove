@@ -32,8 +32,8 @@ pub fn render(
     // 内部垂直布局
     let [logo_area, bottom_padding, info_area] = Layout::vertical([
         Constraint::Length(logo::LOGO_HEIGHT), // Logo
-        Constraint::Length(1),              // 下边距
-        Constraint::Length(1),              // 项目信息
+        Constraint::Length(1),                 // 下边距
+        Constraint::Length(1),                 // 项目信息
     ])
     .areas(inner_area);
 

@@ -62,8 +62,8 @@ pub fn load_tasks(project: &str) -> io::Result<Vec<Task>> {
     }
 
     let content = std::fs::read_to_string(&path)?;
-    let tasks_file: TasksFile = toml::from_str(&content)
-        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+    let tasks_file: TasksFile =
+        toml::from_str(&content).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
 
     Ok(tasks_file.tasks)
 }
@@ -107,8 +107,8 @@ pub fn load_archived_tasks(project: &str) -> io::Result<Vec<Task>> {
     }
 
     let content = std::fs::read_to_string(&path)?;
-    let tasks_file: TasksFile = toml::from_str(&content)
-        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+    let tasks_file: TasksFile =
+        toml::from_str(&content).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
 
     Ok(tasks_file.tasks)
 }
@@ -236,10 +236,17 @@ fn parse_task_name(name: &str) -> (Option<&str>, &str) {
     let lower = trimmed.to_lowercase();
     if lower.starts_with("issue") {
         let rest = &trimmed[5..].trim_start();
-        if rest.starts_with('#') || rest.chars().next().map(|c| c.is_ascii_digit()).unwrap_or(false) {
+        if rest.starts_with('#')
+            || rest
+                .chars()
+                .next()
+                .map(|c| c.is_ascii_digit())
+                .unwrap_or(false)
+        {
             // 找到 issue 号后的空格
             if let Some(space_idx) = rest.find(' ') {
-                let issue_part = &trimmed[..5 + (rest.len() - rest.trim_start().len()) + space_idx + 1];
+                let issue_part =
+                    &trimmed[..5 + (rest.len() - rest.trim_start().len()) + space_idx + 1];
                 return (Some(issue_part.trim()), rest[space_idx..].trim());
             }
             return (Some(trimmed), "");
@@ -264,10 +271,7 @@ fn parse_task_name(name: &str) -> (Option<&str>, &str) {
 
 /// 从 issue 前缀中提取 issue 号
 fn extract_issue_number(prefix: &str) -> String {
-    prefix
-        .chars()
-        .filter(|c| c.is_ascii_digit())
-        .collect()
+    prefix.chars().filter(|c| c.is_ascii_digit()).collect()
 }
 
 /// 生成分支名
@@ -284,7 +288,8 @@ pub fn generate_branch_name(task_name: &str) -> String {
             let p_lower = p.to_lowercase();
             if p_lower == "fix" || p_lower.starts_with("fix") && p.contains(':') {
                 format!("fix/{}", slug)
-            } else if p_lower == "feat" || p_lower == "feature"
+            } else if p_lower == "feat"
+                || p_lower == "feature"
                 || p_lower.starts_with("feat") && p.contains(':')
                 || p_lower.starts_with("feature") && p.contains(':')
             {
@@ -325,7 +330,13 @@ mod tests {
         assert_eq!(generate_branch_name("feature: oauth"), "feature/oauth");
         assert_eq!(generate_branch_name("dev: experiment"), "dev/experiment");
         assert_eq!(generate_branch_name("#123 bug fix"), "issue-123/bug-fix");
-        assert_eq!(generate_branch_name("issue #456 payment"), "issue-456/payment");
-        assert_eq!(generate_branch_name("Add new feature"), "grove/add-new-feature");
+        assert_eq!(
+            generate_branch_name("issue #456 payment"),
+            "issue-456/payment"
+        );
+        assert_eq!(
+            generate_branch_name("Add new feature"),
+            "grove/add-new-feature"
+        );
     }
 }

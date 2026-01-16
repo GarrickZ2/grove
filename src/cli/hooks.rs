@@ -59,7 +59,9 @@ impl HookLevel {
     /// 是否显示系统通知横幅
     fn should_banner(&self) -> bool {
         match self {
-            HookLevel::Notice { banner, no_banner, .. } => {
+            HookLevel::Notice {
+                banner, no_banner, ..
+            } => {
                 if *no_banner {
                     false
                 } else if *banner {
@@ -68,7 +70,9 @@ impl HookLevel {
                     false // notice 默认不显示
                 }
             }
-            HookLevel::Warn { banner, no_banner, .. } => {
+            HookLevel::Warn {
+                banner, no_banner, ..
+            } => {
                 if *no_banner {
                     false
                 } else if *banner {
@@ -77,7 +81,9 @@ impl HookLevel {
                     true // warn 默认显示
                 }
             }
-            HookLevel::Critical { banner, no_banner, .. } => {
+            HookLevel::Critical {
+                banner, no_banner, ..
+            } => {
                 if *no_banner {
                     false
                 } else if *banner {
@@ -132,10 +138,7 @@ fn send_banner(title: &str, message: &str) {
         message.replace('\"', "\\\""),
         title.replace('\"', "\\\"")
     );
-    Command::new("osascript")
-        .args(["-e", &script])
-        .spawn()
-        .ok();
+    Command::new("osascript").args(["-e", &script]).spawn().ok();
 }
 
 /// 更新 hooks.toml 文件

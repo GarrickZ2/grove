@@ -156,8 +156,8 @@ impl HookConfigData {
                 self.step = HookConfigStep::SelectSound;
                 // 根据级别设置默认声音索引
                 self.selected_index = match self.level {
-                    HookLevel::Notice => 1,  // Glass
-                    HookLevel::Warn => 2,    // Purr
+                    HookLevel::Notice => 1,   // Glass
+                    HookLevel::Warn => 2,     // Purr
                     HookLevel::Critical => 3, // Sosumi
                 };
             }
@@ -166,7 +166,7 @@ impl HookConfigData {
                 self.step = HookConfigStep::SelectBanner;
                 // 根据级别设置默认 banner
                 self.selected_index = match self.level {
-                    HookLevel::Notice => 1,  // No
+                    HookLevel::Notice => 1,                     // No
                     HookLevel::Warn | HookLevel::Critical => 0, // Yes
                 };
             }
@@ -243,7 +243,11 @@ pub fn render(frame: &mut Frame, data: &HookConfigData, colors: &ThemeColors) {
     let block = Block::default()
         .title(" Hook Config ")
         .title_alignment(Alignment::Center)
-        .title_style(Style::default().fg(colors.highlight).add_modifier(Modifier::BOLD))
+        .title_style(
+            Style::default()
+                .fg(colors.highlight)
+                .add_modifier(Modifier::BOLD),
+        )
         .borders(Borders::ALL)
         .border_style(Style::default().fg(colors.border))
         .style(Style::default().bg(colors.bg));
@@ -265,17 +269,32 @@ pub fn render(frame: &mut Frame, data: &HookConfigData, colors: &ThemeColors) {
         HookConfigStep::SelectLevel => {
             render_step_header(frame, header_area, "1/3", "Notification Level", colors);
             render_level_options(frame, content_area, data.selected_index, colors);
-            render_hint(frame, hint_area, "↑↓ select   Enter next   Esc cancel", colors);
+            render_hint(
+                frame,
+                hint_area,
+                "↑↓ select   Enter next   Esc cancel",
+                colors,
+            );
         }
         HookConfigStep::SelectSound => {
             render_step_header(frame, header_area, "2/3", "Sound", colors);
             render_sound_options(frame, content_area, data.selected_index, colors);
-            render_hint(frame, hint_area, "↑↓ select   Enter next   Esc back", colors);
+            render_hint(
+                frame,
+                hint_area,
+                "↑↓ select   Enter next   Esc back",
+                colors,
+            );
         }
         HookConfigStep::SelectBanner => {
             render_step_header(frame, header_area, "3/3", "System Notification", colors);
             render_banner_options(frame, content_area, data.selected_index, colors);
-            render_hint(frame, hint_area, "↑↓ select   Enter done   Esc back", colors);
+            render_hint(
+                frame,
+                hint_area,
+                "↑↓ select   Enter done   Esc back",
+                colors,
+            );
         }
         HookConfigStep::ShowResult => {
             render_result(frame, inner_area, &data.generated_command, colors);
@@ -283,10 +302,21 @@ pub fn render(frame: &mut Frame, data: &HookConfigData, colors: &ThemeColors) {
     }
 }
 
-fn render_step_header(frame: &mut Frame, area: Rect, step: &str, title: &str, colors: &ThemeColors) {
+fn render_step_header(
+    frame: &mut Frame,
+    area: Rect,
+    step: &str,
+    title: &str,
+    colors: &ThemeColors,
+) {
     let header = Paragraph::new(Line::from(vec![
         Span::styled(format!("  {}  ", step), Style::default().fg(colors.muted)),
-        Span::styled(title, Style::default().fg(colors.text).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            title,
+            Style::default()
+                .fg(colors.text)
+                .add_modifier(Modifier::BOLD),
+        ),
     ]));
     frame.render_widget(header, area);
 }
@@ -297,7 +327,9 @@ fn render_level_options(frame: &mut Frame, area: Rect, selected: usize, colors: 
         let is_selected = i == selected;
         let prefix = if is_selected { "  ❯ " } else { "    " };
         let name_style = if is_selected {
-            Style::default().fg(colors.highlight).add_modifier(Modifier::BOLD)
+            Style::default()
+                .fg(colors.highlight)
+                .add_modifier(Modifier::BOLD)
         } else {
             Style::default().fg(colors.text)
         };
@@ -317,7 +349,9 @@ fn render_sound_options(frame: &mut Frame, area: Rect, selected: usize, colors: 
         let is_selected = i == selected;
         let prefix = if is_selected { "  ❯ " } else { "    " };
         let name_style = if is_selected {
-            Style::default().fg(colors.highlight).add_modifier(Modifier::BOLD)
+            Style::default()
+                .fg(colors.highlight)
+                .add_modifier(Modifier::BOLD)
         } else {
             Style::default().fg(colors.text)
         };
@@ -342,7 +376,9 @@ fn render_banner_options(frame: &mut Frame, area: Rect, selected: usize, colors:
         let is_selected = i == selected;
         let prefix = if is_selected { "  ❯ " } else { "    " };
         let name_style = if is_selected {
-            Style::default().fg(colors.highlight).add_modifier(Modifier::BOLD)
+            Style::default()
+                .fg(colors.highlight)
+                .add_modifier(Modifier::BOLD)
         } else {
             Style::default().fg(colors.text)
         };
@@ -364,7 +400,7 @@ fn render_result(frame: &mut Frame, area: Rect, command: &str, colors: &ThemeCol
             Constraint::Length(1),
             Constraint::Length(1),
             Constraint::Length(1),
-            Constraint::Length(3),  // 边框 2 行 + 内容 1 行
+            Constraint::Length(3), // 边框 2 行 + 内容 1 行
             Constraint::Min(1),
             Constraint::Length(1),
         ])
@@ -373,7 +409,12 @@ fn render_result(frame: &mut Frame, area: Rect, command: &str, colors: &ThemeCol
     // 标题
     let title = Paragraph::new(Line::from(vec![
         Span::styled("  ✓ ", Style::default().fg(colors.status_live)),
-        Span::styled("Copied to clipboard!", Style::default().fg(colors.text).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            "Copied to clipboard!",
+            Style::default()
+                .fg(colors.text)
+                .add_modifier(Modifier::BOLD),
+        ),
     ]));
     frame.render_widget(title, title_area);
 

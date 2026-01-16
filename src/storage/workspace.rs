@@ -56,8 +56,8 @@ fn load_project_metadata(project_hash: &str) -> io::Result<Option<RegisteredProj
     }
 
     let content = std::fs::read_to_string(&path)?;
-    let project: RegisteredProject = toml::from_str(&content)
-        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+    let project: RegisteredProject =
+        toml::from_str(&content).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
 
     Ok(Some(project))
 }
@@ -180,4 +180,3 @@ pub fn upsert_project(name: &str, path: &str) -> io::Result<()> {
 
     save_project_metadata(&hash, &project)
 }
-

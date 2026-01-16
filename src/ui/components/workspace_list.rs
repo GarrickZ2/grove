@@ -74,15 +74,27 @@ pub fn render(
         let line = Line::from(vec![
             Span::styled(
                 format!(" {}  ", cursor),
-                Style::default().fg(if is_selected { colors.highlight } else { colors.text }),
+                Style::default().fg(if is_selected {
+                    colors.highlight
+                } else {
+                    colors.text
+                }),
             ),
             Span::styled(notif_marker, notif_style),
             Span::styled(" ", Style::default()),
             Span::styled(
                 format!("{:<20}", truncate(&project.name, 20)),
                 Style::default()
-                    .fg(if is_selected { colors.highlight } else { colors.text })
-                    .add_modifier(if is_selected { Modifier::BOLD } else { Modifier::empty() }),
+                    .fg(if is_selected {
+                        colors.highlight
+                    } else {
+                        colors.text
+                    })
+                    .add_modifier(if is_selected {
+                        Modifier::BOLD
+                    } else {
+                        Modifier::empty()
+                    }),
             ),
             Span::styled(
                 format!("{:>10}   ", task_text),

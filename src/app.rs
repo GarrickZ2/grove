@@ -7,19 +7,23 @@ use ratatui::widgets::ListState;
 
 use crate::git;
 use crate::hooks::{self, HooksFile, NotificationLevel};
-use crate::model::{loader, ProjectInfo, ProjectTab, Worktree, WorktreeStatus, WorkspaceState};
+use crate::model::{loader, ProjectInfo, ProjectTab, WorkspaceState, Worktree, WorktreeStatus};
+use crate::storage::{
+    self,
+    tasks::{self, Task, TaskStatus},
+    workspace::project_hash,
+};
+use crate::theme::{detect_system_theme, get_theme_colors, Theme, ThemeColors};
+use crate::tmux;
 use crate::ui::components::action_palette::{ActionPaletteData, ActionType};
 use crate::ui::components::add_project_dialog::AddProjectData;
-use crate::ui::components::commit_dialog::CommitDialogData;
 use crate::ui::components::branch_selector::BranchSelectorData;
+use crate::ui::components::commit_dialog::CommitDialogData;
 use crate::ui::components::confirm_dialog::ConfirmType;
-use crate::ui::components::delete_project_dialog::{DeleteProjectData, DeleteMode};
+use crate::ui::components::delete_project_dialog::{DeleteMode, DeleteProjectData};
 use crate::ui::components::hook_panel::{HookConfigData, HookConfigStep};
 use crate::ui::components::input_confirm_dialog::InputConfirmData;
 use crate::ui::components::merge_dialog::{MergeDialogData, MergeMethod};
-use crate::storage::{self, tasks::{self, Task, TaskStatus}, workspace::project_hash};
-use crate::theme::{detect_system_theme, get_theme_colors, Theme, ThemeColors};
-use crate::tmux;
 
 /// Toast 消息
 #[derive(Debug, Clone)]
@@ -390,44 +394,45 @@ impl App {
         // 判断是否在 git 仓库中
         let is_in_git_repo = git::is_git_repo(".");
 
-        let (mode, project, workspace, target_branch, notifications, workspace_notifications) = if is_in_git_repo {
-            // 在 git 仓库中 -> Project 模式
-            let project_path = git::repo_root(".").unwrap_or_else(|_| ".".to_string());
-            let target_branch = git::current_branch(&project_path)
-                .unwrap_or_else(|_| "main".to_string());
+        let (mode, project, workspace, target_branch, notifications, workspace_notifications) =
+            if is_in_git_repo {
+                // 在 git 仓库中 -> Project 模式
+                let project_path = git::repo_root(".").unwrap_or_else(|_| ".".to_string());
+                let target_branch =
+                    git::current_branch(&project_path).unwrap_or_else(|_| "main".to_string());
 
-            // 自动注册/更新项目 metadata
-            let project_name = Path::new(&project_path)
-                .file_name()
-                .and_then(|n| n.to_str())
-                .unwrap_or("unknown")
-                .to_string();
-            let _ = storage::workspace::upsert_project(&project_name, &project_path);
+                // 自动注册/更新项目 metadata
+                let project_name = Path::new(&project_path)
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("unknown")
+                    .to_string();
+                let _ = storage::workspace::upsert_project(&project_name, &project_path);
 
-            // 加载 hook 通知数据（自动清理不存在的 task）
-            let hooks_file = hooks::load_hooks_with_cleanup(&project_path, &project_name);
+                // 加载 hook 通知数据（自动清理不存在的 task）
+                let hooks_file = hooks::load_hooks_with_cleanup(&project_path, &project_name);
 
-            (
-                AppMode::Project,
-                ProjectState::new(&project_path),
-                WorkspaceState::default(),
-                target_branch,
-                hooks_file.tasks,
-                HashMap::new(),
-            )
-        } else {
-            // 非 git 仓库 -> Workspace 模式
-            let workspace = WorkspaceState::new();
-            let workspace_notifications = load_all_project_notifications(&workspace.projects);
-            (
-                AppMode::Workspace,
-                ProjectState::default(),
-                workspace,
-                "main".to_string(),
-                HashMap::new(),
-                workspace_notifications,
-            )
-        };
+                (
+                    AppMode::Project,
+                    ProjectState::new(&project_path),
+                    WorkspaceState::default(),
+                    target_branch,
+                    hooks_file.tasks,
+                    HashMap::new(),
+                )
+            } else {
+                // 非 git 仓库 -> Workspace 模式
+                let workspace = WorkspaceState::new();
+                let workspace_notifications = load_all_project_notifications(&workspace.projects);
+                (
+                    AppMode::Workspace,
+                    ProjectState::default(),
+                    workspace,
+                    "main".to_string(),
+                    HashMap::new(),
+                    workspace_notifications,
+                )
+            };
 
         Self {
             mode,
@@ -471,8 +476,8 @@ impl App {
         let _ = storage::workspace::upsert_project(&project_name, project_path);
 
         self.project = ProjectState::new(project_path);
-        self.target_branch = git::current_branch(project_path)
-            .unwrap_or_else(|_| "main".to_string());
+        self.target_branch =
+            git::current_branch(project_path).unwrap_or_else(|_| "main".to_string());
         self.mode = AppMode::Project;
 
         // 加载 hook 通知数据（自动清理不存在的 task）
@@ -491,10 +496,7 @@ impl App {
     pub fn open_theme_selector(&mut self) {
         // 找到当前主题在列表中的索引
         let themes = Theme::all();
-        self.theme_selector_index = themes
-            .iter()
-            .position(|t| *t == self.theme)
-            .unwrap_or(0);
+        self.theme_selector_index = themes.iter().position(|t| *t == self.theme).unwrap_or(0);
         self.show_theme_selector = true;
     }
 
@@ -534,7 +536,7 @@ impl App {
 
     /// 保存主题配置到文件
     fn save_theme_config(&self) {
-        use storage::config::{Config, ThemeConfig, save_config};
+        use storage::config::{save_config, Config, ThemeConfig};
         let config = Config {
             theme: ThemeConfig {
                 name: self.theme.label().to_string(),
@@ -614,12 +616,9 @@ impl App {
         };
 
         // 4. 创建 git worktree
-        if let Err(e) = git::create_worktree(
-            &repo_root,
-            &branch,
-            &worktree_path,
-            &self.target_branch,
-        ) {
+        if let Err(e) =
+            git::create_worktree(&repo_root, &branch, &worktree_path, &self.target_branch)
+        {
             self.show_toast(format!("Git error: {}", e));
             self.close_new_task_dialog();
             return;
@@ -659,7 +658,11 @@ impl App {
             project_name,
             project_path: repo_root.clone(),
         };
-        if let Err(e) = tmux::create_session(&session, worktree_path.to_str().unwrap_or("."), Some(&session_env)) {
+        if let Err(e) = tmux::create_session(
+            &session,
+            worktree_path.to_str().unwrap_or("."),
+            Some(&session_env),
+        ) {
             self.show_toast(format!("Session error: {}", e));
             self.close_new_task_dialog();
             return;
@@ -680,7 +683,9 @@ impl App {
         let Some(index) = selected else { return };
 
         let worktrees = self.project.current_worktrees();
-        let Some(wt) = worktrees.get(index) else { return };
+        let Some(wt) = worktrees.get(index) else {
+            return;
+        };
 
         // 2. 检查状态 - Broken 不能进入
         if wt.status == WorktreeStatus::Broken {
@@ -719,7 +724,9 @@ impl App {
         if self.notifications.remove(task_id).is_some() {
             // 保存到文件
             let project_name = hooks::project_name_from_path(&self.project.project_path);
-            let hooks_file = HooksFile { tasks: self.notifications.clone() };
+            let hooks_file = HooksFile {
+                tasks: self.notifications.clone(),
+            };
             let _ = hooks::save_hooks(&project_name, &hooks_file);
         }
 
@@ -769,7 +776,9 @@ impl App {
         let Some(index) = selected else { return };
 
         let worktrees = self.project.current_worktrees();
-        let Some(wt) = worktrees.get(index) else { return };
+        let Some(wt) = worktrees.get(index) else {
+            return;
+        };
 
         // Broken 状态不能 archive，应该 clean
         if wt.status == WorktreeStatus::Broken {
@@ -783,8 +792,8 @@ impl App {
         let target = wt.target.clone();
 
         // 检查是否已 merge
-        let is_merged = git::is_merged(&self.project.project_path, &branch, &target)
-            .unwrap_or(false);
+        let is_merged =
+            git::is_merged(&self.project.project_path, &branch, &target).unwrap_or(false);
 
         if is_merged {
             // 已 merge，直接归档
@@ -829,7 +838,9 @@ impl App {
         let Some(index) = selected else { return };
 
         let worktrees = self.project.current_worktrees();
-        let Some(wt) = worktrees.get(index) else { return };
+        let Some(wt) = worktrees.get(index) else {
+            return;
+        };
 
         let task_id = wt.id.clone();
         let task_name = wt.task_name.clone();
@@ -838,10 +849,13 @@ impl App {
         let is_archived = wt.archived;
 
         // 检查是否已 merge
-        let is_merged = git::is_merged(&self.project.project_path, &branch, &target)
-            .unwrap_or(false);
+        let is_merged =
+            git::is_merged(&self.project.project_path, &branch, &target).unwrap_or(false);
 
-        self.pending_action = Some(PendingAction::Clean { task_id, is_archived });
+        self.pending_action = Some(PendingAction::Clean {
+            task_id,
+            is_archived,
+        });
 
         if is_merged {
             // 已 merge，弱提示
@@ -860,9 +874,13 @@ impl App {
 
         // 2. 获取 task 信息
         let task = if is_archived {
-            tasks::get_archived_task(&self.project.project_key, task_id).ok().flatten()
+            tasks::get_archived_task(&self.project.project_key, task_id)
+                .ok()
+                .flatten()
         } else {
-            tasks::get_task(&self.project.project_key, task_id).ok().flatten()
+            tasks::get_task(&self.project.project_key, task_id)
+                .ok()
+                .flatten()
         };
 
         if let Some(task) = task {
@@ -900,17 +918,26 @@ impl App {
             self.confirm_dialog = None;
             match action {
                 PendingAction::Archive { task_id } => self.do_archive(&task_id),
-                PendingAction::Clean { task_id, is_archived } => self.do_clean(&task_id, is_archived),
+                PendingAction::Clean {
+                    task_id,
+                    is_archived,
+                } => self.do_clean(&task_id, is_archived),
                 PendingAction::RebaseTo { .. } => {} // RebaseTo 不使用确认弹窗
                 PendingAction::Recover { task_id } => self.recover_worktree(&task_id),
-                PendingAction::Sync { task_id, check_target } => {
+                PendingAction::Sync {
+                    task_id,
+                    check_target,
+                } => {
                     if check_target {
                         self.check_sync_target(&task_id);
                     } else {
                         self.do_sync(&task_id);
                     }
                 }
-                PendingAction::Merge { task_id, check_target } => {
+                PendingAction::Merge {
+                    task_id,
+                    check_target,
+                } => {
                     if check_target {
                         self.check_merge_target(&task_id);
                     } else {
@@ -944,7 +971,8 @@ impl App {
 
     /// 输入确认弹窗 - 确认
     pub fn input_confirm_submit(&mut self) {
-        let confirmed = self.input_confirm_dialog
+        let confirmed = self
+            .input_confirm_dialog
             .as_ref()
             .map(|d| d.is_confirmed())
             .unwrap_or(false);
@@ -952,7 +980,11 @@ impl App {
         if confirmed {
             if let Some(action) = self.pending_action.take() {
                 self.input_confirm_dialog = None;
-                if let PendingAction::Clean { task_id, is_archived } = action {
+                if let PendingAction::Clean {
+                    task_id,
+                    is_archived,
+                } = action
+                {
                     self.do_clean(&task_id, is_archived);
                 }
             }
@@ -976,7 +1008,9 @@ impl App {
         let Some(index) = selected else { return };
 
         let worktrees = self.project.current_worktrees();
-        let Some(wt) = worktrees.get(index) else { return };
+        let Some(wt) = worktrees.get(index) else {
+            return;
+        };
 
         let task_id = wt.id.clone();
         let task_name = wt.task_name.clone();
@@ -1037,7 +1071,9 @@ impl App {
             project_name,
             project_path: self.project.project_path.clone(),
         };
-        if let Err(e) = tmux::create_session(&session, task.worktree_path.as_str(), Some(&session_env)) {
+        if let Err(e) =
+            tmux::create_session(&session, task.worktree_path.as_str(), Some(&session_env))
+        {
             self.show_toast(format!("Session error: {}", e));
             return;
         }
@@ -1057,7 +1093,9 @@ impl App {
         let Some(index) = selected else { return };
 
         let worktrees = self.project.current_worktrees();
-        let Some(wt) = worktrees.get(index) else { return };
+        let Some(wt) = worktrees.get(index) else {
+            return;
+        };
 
         let task_id = wt.id.clone();
         let task_name = wt.task_name.clone();
@@ -1119,7 +1157,9 @@ impl App {
             (new_target, self.pending_action.take())
         {
             // 更新 task target
-            if let Err(e) = tasks::update_task_target(&self.project.project_key, &task_id, &new_target) {
+            if let Err(e) =
+                tasks::update_task_target(&self.project.project_key, &task_id, &new_target)
+            {
                 self.show_toast(format!("Failed to update target: {}", e));
             } else {
                 self.project.refresh();
@@ -1145,7 +1185,9 @@ impl App {
         let Some(index) = selected else { return };
 
         let worktrees = self.project.current_worktrees();
-        let Some(wt) = worktrees.get(index) else { return };
+        let Some(wt) = worktrees.get(index) else {
+            return;
+        };
 
         // Archived/Broken 状态不能 sync
         if wt.archived || wt.status == WorktreeStatus::Broken {
@@ -1160,7 +1202,10 @@ impl App {
         // 检查 worktree 是否有未提交的代码
         match git::has_uncommitted_changes(&worktree_path) {
             Ok(true) => {
-                self.pending_action = Some(PendingAction::Sync { task_id, check_target: true });
+                self.pending_action = Some(PendingAction::Sync {
+                    task_id,
+                    check_target: true,
+                });
                 self.confirm_dialog = Some(ConfirmType::SyncUncommittedWorktree { task_name });
             }
             Ok(false) => {
@@ -1186,7 +1231,10 @@ impl App {
         // 检查 target branch（主仓库）是否有未提交的代码
         match git::has_uncommitted_changes(&self.project.project_path) {
             Ok(true) => {
-                self.pending_action = Some(PendingAction::Sync { task_id: task_id.to_string(), check_target: false });
+                self.pending_action = Some(PendingAction::Sync {
+                    task_id: task_id.to_string(),
+                    check_target: false,
+                });
                 self.confirm_dialog = Some(ConfirmType::SyncUncommittedTarget {
                     task_name: task.name.clone(),
                     target: task.target.clone(),
@@ -1237,7 +1285,9 @@ impl App {
         let Some(index) = selected else { return };
 
         let worktrees = self.project.current_worktrees();
-        let Some(wt) = worktrees.get(index) else { return };
+        let Some(wt) = worktrees.get(index) else {
+            return;
+        };
 
         // Archived/Broken 状态不能 merge
         if wt.archived || wt.status == WorktreeStatus::Broken {
@@ -1252,7 +1302,10 @@ impl App {
         // 检查 worktree 是否有未提交的代码
         match git::has_uncommitted_changes(&worktree_path) {
             Ok(true) => {
-                self.pending_action = Some(PendingAction::Merge { task_id, check_target: true });
+                self.pending_action = Some(PendingAction::Merge {
+                    task_id,
+                    check_target: true,
+                });
                 self.confirm_dialog = Some(ConfirmType::MergeUncommittedWorktree { task_name });
             }
             Ok(false) => {
@@ -1278,7 +1331,10 @@ impl App {
         // 检查 target branch（主仓库）是否有未提交的代码
         match git::has_uncommitted_changes(&self.project.project_path) {
             Ok(true) => {
-                self.pending_action = Some(PendingAction::Merge { task_id: task_id.to_string(), check_target: false });
+                self.pending_action = Some(PendingAction::Merge {
+                    task_id: task_id.to_string(),
+                    check_target: false,
+                });
                 self.confirm_dialog = Some(ConfirmType::MergeUncommittedTarget {
                     task_name: task.name.clone(),
                     target: task.target.clone(),
@@ -1359,8 +1415,12 @@ impl App {
         match result {
             Ok(()) => {
                 // 成功，显示询问是否 Archive 的弹窗
-                self.pending_action = Some(PendingAction::MergeArchive { task_id: task_id.to_string() });
-                self.confirm_dialog = Some(ConfirmType::MergeSuccess { task_name: task.name });
+                self.pending_action = Some(PendingAction::MergeArchive {
+                    task_id: task_id.to_string(),
+                });
+                self.confirm_dialog = Some(ConfirmType::MergeSuccess {
+                    task_name: task.name,
+                });
                 self.project.refresh();
             }
             Err(e) => {
@@ -1592,7 +1652,8 @@ impl App {
 
     /// Action Palette - 确认执行
     pub fn action_palette_confirm(&mut self) {
-        let action = self.action_palette
+        let action = self
+            .action_palette
             .as_ref()
             .and_then(|p| p.selected_action());
 
@@ -1804,7 +1865,9 @@ fn slug_from_path(path: &str) -> String {
 }
 
 /// 加载所有项目的通知数据（自动清理不存在的 task）
-fn load_all_project_notifications(projects: &[ProjectInfo]) -> HashMap<String, HashMap<String, NotificationLevel>> {
+fn load_all_project_notifications(
+    projects: &[ProjectInfo],
+) -> HashMap<String, HashMap<String, NotificationLevel>> {
     let mut result = HashMap::new();
     for project in projects {
         let project_name = Path::new(&project.path)

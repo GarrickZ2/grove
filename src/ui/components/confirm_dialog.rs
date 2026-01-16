@@ -160,11 +160,8 @@ pub fn render(frame: &mut Frame, confirm_type: &ConfirmType, colors: &ThemeColor
     frame.render_widget(block, popup_area);
 
     // 内部布局
-    let [content_area, hint_area] = Layout::vertical([
-        Constraint::Min(1),
-        Constraint::Length(1),
-    ])
-    .areas(inner_area);
+    let [content_area, hint_area] =
+        Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).areas(inner_area);
 
     // 渲染消息内容
     let styled_lines: Vec<Line> = message_lines
@@ -182,11 +179,21 @@ pub fn render(frame: &mut Frame, confirm_type: &ConfirmType, colors: &ThemeColor
 
     // 渲染底部提示
     let hint = Paragraph::new(Line::from(vec![
-        Span::styled("Y", Style::default().fg(colors.highlight).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            "Y",
+            Style::default()
+                .fg(colors.highlight)
+                .add_modifier(Modifier::BOLD),
+        ),
         Span::styled("/", Style::default().fg(colors.muted)),
         Span::styled("Enter", Style::default().fg(colors.highlight)),
         Span::styled(" confirm  ", Style::default().fg(colors.muted)),
-        Span::styled("N", Style::default().fg(colors.highlight).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            "N",
+            Style::default()
+                .fg(colors.highlight)
+                .add_modifier(Modifier::BOLD),
+        ),
         Span::styled("/", Style::default().fg(colors.muted)),
         Span::styled("Esc", Style::default().fg(colors.highlight)),
         Span::styled(" cancel", Style::default().fg(colors.muted)),

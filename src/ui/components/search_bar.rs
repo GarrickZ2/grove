@@ -20,13 +20,17 @@ pub fn render(frame: &mut Frame, area: Rect, query: &str, is_editing: bool, colo
 
     // 只在输入模式显示闪烁光标
     if is_editing {
-        spans.push(Span::styled("█", Style::default().fg(colors.highlight).add_modifier(Modifier::SLOW_BLINK)));
+        spans.push(Span::styled(
+            "█",
+            Style::default()
+                .fg(colors.highlight)
+                .add_modifier(Modifier::SLOW_BLINK),
+        ));
     }
 
     let line = Line::from(spans);
 
-    let paragraph = Paragraph::new(line)
-        .style(Style::default().bg(colors.bg_secondary));
+    let paragraph = Paragraph::new(line).style(Style::default().bg(colors.bg_secondary));
 
     frame.render_widget(paragraph, area);
 }

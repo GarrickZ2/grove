@@ -160,7 +160,12 @@ pub fn render(frame: &mut Frame, data: &BranchSelectorData, colors: &ThemeColors
 
     let search_text = Paragraph::new(Line::from(vec![
         Span::styled(&data.search, Style::default().fg(colors.text)),
-        Span::styled("_", Style::default().fg(colors.highlight).add_modifier(Modifier::SLOW_BLINK)),
+        Span::styled(
+            "_",
+            Style::default()
+                .fg(colors.highlight)
+                .add_modifier(Modifier::SLOW_BLINK),
+        ),
     ]));
     frame.render_widget(search_text, search_inner);
 

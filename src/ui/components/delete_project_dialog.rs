@@ -68,7 +68,12 @@ pub fn render(frame: &mut Frame, data: &DeleteProjectData, colors: &ThemeColors)
     // 居中计算
     let x = area.width.saturating_sub(DIALOG_WIDTH) / 2;
     let y = area.height.saturating_sub(DIALOG_HEIGHT) / 2;
-    let dialog_area = Rect::new(x, y, DIALOG_WIDTH.min(area.width), DIALOG_HEIGHT.min(area.height));
+    let dialog_area = Rect::new(
+        x,
+        y,
+        DIALOG_WIDTH.min(area.width),
+        DIALOG_HEIGHT.min(area.height),
+    );
 
     // 清除背景
     frame.render_widget(Clear, dialog_area);
@@ -77,7 +82,11 @@ pub fn render(frame: &mut Frame, data: &DeleteProjectData, colors: &ThemeColors)
     let block = Block::default()
         .title(" Remove Project ")
         .title_alignment(Alignment::Center)
-        .title_style(Style::default().fg(colors.status_error).add_modifier(Modifier::BOLD))
+        .title_style(
+            Style::default()
+                .fg(colors.status_error)
+                .add_modifier(Modifier::BOLD),
+        )
         .borders(Borders::ALL)
         .border_style(Style::default().fg(colors.border))
         .style(Style::default().bg(colors.bg));
@@ -105,7 +114,12 @@ pub fn render(frame: &mut Frame, data: &DeleteProjectData, colors: &ThemeColors)
     let info = Paragraph::new(vec![
         Line::from(vec![
             Span::styled("Remove ", Style::default().fg(colors.text)),
-            Span::styled(&data.project_name, Style::default().fg(colors.highlight).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                &data.project_name,
+                Style::default()
+                    .fg(colors.highlight)
+                    .add_modifier(Modifier::BOLD),
+            ),
             Span::styled(task_info, Style::default().fg(colors.muted)),
             Span::styled("?", Style::default().fg(colors.text)),
         ]),
@@ -121,8 +135,18 @@ pub fn render(frame: &mut Frame, data: &DeleteProjectData, colors: &ThemeColors)
     // 渲染选项
     let clean_selected = data.selected == DeleteMode::CleanOnly;
     let options = Paragraph::new(vec![
-        render_option("Clean only", "remove worktrees + sessions", clean_selected, colors),
-        render_option("Full clean", "also delete branches", !clean_selected, colors),
+        render_option(
+            "Clean only",
+            "remove worktrees + sessions",
+            clean_selected,
+            colors,
+        ),
+        render_option(
+            "Full clean",
+            "also delete branches",
+            !clean_selected,
+            colors,
+        ),
     ])
     .alignment(Alignment::Center);
     frame.render_widget(options, options_area);
@@ -151,7 +175,14 @@ fn render_option(label: &str, desc: &str, selected: bool, colors: &ThemeColors) 
 
     Line::from(vec![
         Span::styled(format!(" {} ", bullet), style),
-        Span::styled(label.to_string(), style.add_modifier(if selected { Modifier::BOLD } else { Modifier::empty() })),
+        Span::styled(
+            label.to_string(),
+            style.add_modifier(if selected {
+                Modifier::BOLD
+            } else {
+                Modifier::empty()
+            }),
+        ),
         Span::styled(format!(" ({})", desc), Style::default().fg(colors.muted)),
     ])
 }

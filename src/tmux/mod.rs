@@ -27,7 +27,11 @@ pub struct SessionEnv {
 
 /// 创建 session (后台)
 /// 执行: tmux new-session -d -s {name} -c {path} -e VAR=value ...
-pub fn create_session(name: &str, working_dir: &str, env: Option<&SessionEnv>) -> Result<(), String> {
+pub fn create_session(
+    name: &str,
+    working_dir: &str,
+    env: Option<&SessionEnv>,
+) -> Result<(), String> {
     let mut args = vec![
         "new-session".to_string(),
         "-d".to_string(),

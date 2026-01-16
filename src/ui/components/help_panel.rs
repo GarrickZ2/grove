@@ -22,7 +22,12 @@ pub fn render(frame: &mut Frame, colors: &ThemeColors) {
     // 居中计算
     let x = area.width.saturating_sub(PANEL_WIDTH) / 2;
     let y = area.height.saturating_sub(PANEL_HEIGHT) / 2;
-    let panel_area = Rect::new(x, y, PANEL_WIDTH.min(area.width), PANEL_HEIGHT.min(area.height));
+    let panel_area = Rect::new(
+        x,
+        y,
+        PANEL_WIDTH.min(area.width),
+        PANEL_HEIGHT.min(area.height),
+    );
 
     // 清除背景
     frame.render_widget(Clear, panel_area);
@@ -32,7 +37,11 @@ pub fn render(frame: &mut Frame, colors: &ThemeColors) {
 
     let block = Block::default()
         .title(" Help ")
-        .title_style(Style::default().fg(colors.highlight).add_modifier(Modifier::BOLD))
+        .title_style(
+            Style::default()
+                .fg(colors.highlight)
+                .add_modifier(Modifier::BOLD),
+        )
         .borders(Borders::ALL)
         .border_style(Style::default().fg(colors.border))
         .style(Style::default().bg(colors.bg));
@@ -103,7 +112,12 @@ fn section_header(title: &'static str, colors: &ThemeColors) -> Line<'static> {
 /// 快捷键行
 fn key_line(key: &'static str, desc: &'static str, colors: &ThemeColors) -> Line<'static> {
     Line::from(vec![
-        Span::styled(format!("  {:10}", key), Style::default().fg(colors.text).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            format!("  {:10}", key),
+            Style::default()
+                .fg(colors.text)
+                .add_modifier(Modifier::BOLD),
+        ),
         Span::styled(desc, Style::default().fg(colors.muted)),
     ])
 }

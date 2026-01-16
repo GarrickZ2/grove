@@ -12,12 +12,7 @@ use crate::storage::tasks::generate_branch_name;
 use crate::theme::ThemeColors;
 
 /// 渲染 New Task 弹窗
-pub fn render(
-    frame: &mut Frame,
-    input: &str,
-    target_branch: &str,
-    colors: &ThemeColors,
-) {
+pub fn render(frame: &mut Frame, input: &str, target_branch: &str, colors: &ThemeColors) {
     let area = frame.area();
 
     // 计算弹窗尺寸

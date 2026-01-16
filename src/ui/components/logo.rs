@@ -37,7 +37,10 @@ pub fn render_with_padding(frame: &mut Frame, area: Rect, colors: &ThemeColors, 
 
     // Logo 行
     for line in LOGO {
-        lines.push(Line::from(Span::styled(*line, Style::default().fg(colors.logo))));
+        lines.push(Line::from(Span::styled(
+            *line,
+            Style::default().fg(colors.logo),
+        )));
     }
 
     let logo_widget = Paragraph::new(lines).alignment(Alignment::Center);

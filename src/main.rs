@@ -65,11 +65,9 @@ fn run(terminal: &mut DefaultTerminal, app: &mut App) -> io::Result<()> {
         }
 
         // 渲染界面
-        terminal.draw(|frame| {
-            match app.mode {
-                AppMode::Workspace => ui::workspace::render(frame, app),
-                AppMode::Project => ui::project::render(frame, app),
-            }
+        terminal.draw(|frame| match app.mode {
+            AppMode::Workspace => ui::workspace::render(frame, app),
+            AppMode::Project => ui::project::render(frame, app),
         })?;
 
         // 处理事件

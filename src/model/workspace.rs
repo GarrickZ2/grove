@@ -4,8 +4,8 @@
 use chrono::{DateTime, Utc};
 use ratatui::widgets::ListState;
 
-use crate::storage::workspace::{self as storage, project_hash};
 use crate::storage::tasks;
+use crate::storage::workspace::{self as storage, project_hash};
 
 use super::worktree::WorktreeStatus;
 
@@ -127,8 +127,7 @@ impl WorkspaceState {
                 .iter()
                 .enumerate()
                 .filter(|(_, p)| {
-                    p.name.to_lowercase().contains(&query)
-                        || p.path.to_lowercase().contains(&query)
+                    p.name.to_lowercase().contains(&query) || p.path.to_lowercase().contains(&query)
                 })
                 .map(|(i, _)| i)
                 .collect();
@@ -249,7 +248,6 @@ impl WorkspaceState {
             self.list_state.select(Some(0));
         }
     }
-
 }
 
 /// 计算任务数量
@@ -279,7 +277,8 @@ fn load_project_detail(project: &ProjectInfo) -> ProjectDetail {
     let project_key = project_hash(&project.path);
 
     // 获取当前分支
-    let branch = crate::git::current_branch(&project.path).unwrap_or_else(|_| "unknown".to_string());
+    let branch =
+        crate::git::current_branch(&project.path).unwrap_or_else(|_| "unknown".to_string());
 
     // 格式化添加时间
     let added_at = super::worktree::format_relative_time(project.added_at);
@@ -297,8 +296,8 @@ fn load_project_detail(project: &ProjectInfo) -> ProjectDetail {
             };
 
             // 获取变更统计
-            let (additions, deletions) = crate::git::file_changes(&t.worktree_path, &t.target)
-                .unwrap_or((0, 0));
+            let (additions, deletions) =
+                crate::git::file_changes(&t.worktree_path, &t.target).unwrap_or((0, 0));
 
             TaskSummary {
                 id: t.id,

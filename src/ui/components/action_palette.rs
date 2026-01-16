@@ -165,7 +165,11 @@ pub fn render(frame: &mut Frame, data: &ActionPaletteData, colors: &ThemeColors)
     let block = Block::default()
         .title(" Actions ")
         .title_alignment(Alignment::Center)
-        .title_style(Style::default().fg(colors.highlight).add_modifier(Modifier::BOLD))
+        .title_style(
+            Style::default()
+                .fg(colors.highlight)
+                .add_modifier(Modifier::BOLD),
+        )
         .borders(Borders::ALL)
         .border_style(Style::default().fg(colors.border))
         .style(Style::default().bg(colors.bg));

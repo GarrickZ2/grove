@@ -16,7 +16,6 @@ pub enum NotificationLevel {
     Critical = 2,
 }
 
-
 /// Hooks 文件结构
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct HooksFile {
