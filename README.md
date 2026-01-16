@@ -58,10 +58,23 @@ Press `h` in Grove to generate hook commands for your agent configuration.
 
 ## Installation
 
+### Quick Install (Recommended)
+
+```bash
+# macOS / Linux
+curl -sSL https://raw.githubusercontent.com/USER/grove/main/install.sh | sh
+```
+
+### From crates.io
+
+```bash
+cargo install grove-rs
+```
+
 ### From Source
 
 ```bash
-git clone https://github.com/user/grove.git
+git clone https://github.com/USER/grove.git
 cd grove
 cargo install --path .
 ```
@@ -71,6 +84,7 @@ cargo install --path .
 - **Git** 2.20+ (worktree support)
 - **tmux** 3.0+ (session management)
 - **macOS** 12+ (system theme detection, notifications)
+- **Linux** support available (notifications require desktop environment)
 
 ## Usage
 
