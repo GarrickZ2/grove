@@ -84,7 +84,11 @@ pub fn render(
                 Cell::from(notif_marker).style(notif_style),
                 Cell::from(wt.task_name.clone()),
                 Cell::from(wt.status.label()).style(icon_style),
-                Cell::from(wt.branch.clone()).style(Style::default().fg(colors.muted)),
+                Cell::from(ratatui::text::Line::from(vec![
+                    ratatui::text::Span::styled(&wt.branch, Style::default().fg(colors.muted)),
+                    ratatui::text::Span::styled(" → ", Style::default().fg(colors.muted)),
+                    ratatui::text::Span::styled(&wt.target, Style::default().fg(colors.text)),
+                ])),
                 Cell::from(commits),
                 Cell::from(wt.file_changes.display()),
                 Cell::from(updated).style(Style::default().fg(colors.muted)),

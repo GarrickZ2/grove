@@ -1,8 +1,8 @@
 [package]
 name = "grove-rs"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
-description = "Git Worktree + tmux Manager for Parallel Development"
+description = "A Kanban-style TUI for parallel AI coding. Manage Git worktrees as tasks, run multiple agents in isolated tmux sessions, get notified via hooks."
 license = "MIT"
 repository = "https://github.com/GarrickZ2/grove"
 homepage = "https://github.com/GarrickZ2/grove"

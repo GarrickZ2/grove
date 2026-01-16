@@ -132,53 +132,6 @@ pub fn file_changes(worktree_path: &str, target: &str) -> Result<(u32, u32), Str
     }
 }
 
-/// 获取默认分支 (main/master)
-/// 尝试顺序: origin/HEAD -> main -> master
-pub fn default_branch(repo_path: &str) -> Result<String, String> {
-    // 尝试从 origin/HEAD 获取
-    let output = Command::new("git")
-        .current_dir(repo_path)
-        .args(["symbolic-ref", "refs/remotes/origin/HEAD"])
-        .output();
-
-    if let Ok(output) = output {
-        if output.status.success() {
-            let ref_str = String::from_utf8_lossy(&output.stdout);
-            // refs/remotes/origin/main -> main
-            if let Some(branch) = ref_str.trim().strip_prefix("refs/remotes/origin/") {
-                return Ok(branch.to_string());
-            }
-        }
-    }
-
-    // fallback: 检查 main 是否存在
-    let output = Command::new("git")
-        .current_dir(repo_path)
-        .args(["rev-parse", "--verify", "main"])
-        .output();
-
-    if let Ok(output) = output {
-        if output.status.success() {
-            return Ok("main".to_string());
-        }
-    }
-
-    // fallback: 检查 master 是否存在
-    let output = Command::new("git")
-        .current_dir(repo_path)
-        .args(["rev-parse", "--verify", "master"])
-        .output();
-
-    if let Ok(output) = output {
-        if output.status.success() {
-            return Ok("master".to_string());
-        }
-    }
-
-    // 最终 fallback
-    Ok("main".to_string())
-}
-
 /// 删除 worktree（保留 branch）
 /// 执行: git worktree remove {path} --force
 pub fn remove_worktree(repo_path: &str, worktree_path: &str) -> Result<(), String> {

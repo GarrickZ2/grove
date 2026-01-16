@@ -18,8 +18,8 @@ pub fn load_worktrees(project_path: &str) -> (Vec<Worktree>, Vec<Worktree>, Vec<
     // 2. 加载 tasks.toml (活跃任务)
     let active_tasks = tasks::load_tasks(&project_key).unwrap_or_default();
 
-    // 3. 获取默认分支
-    let default_branch = git::default_branch(project_path).unwrap_or_else(|_| "main".to_string());
+    // 3. 获取当前分支
+    let current_branch = git::current_branch(project_path).unwrap_or_else(|_| "main".to_string());
 
     // 4. 转换活跃任务
     let mut current = Vec::new();
@@ -28,7 +28,7 @@ pub fn load_worktrees(project_path: &str) -> (Vec<Worktree>, Vec<Worktree>, Vec<
     for task in active_tasks {
         let worktree = task_to_worktree(&task, &project_key);
 
-        if task.target == default_branch {
+        if task.target == current_branch {
             current.push(worktree);
         } else {
             other.push(worktree);
