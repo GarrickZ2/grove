@@ -22,18 +22,16 @@ pub fn render(
     colors: &ThemeColors,
     notifications: &HashMap<String, NotificationLevel>,
 ) {
-    let mut lines = Vec::new();
-
-    // 空行
-    lines.push(Line::from(""));
-
-    // 基本信息
-    lines.push(info_line("Path", &shorten_path(&detail.path), colors));
-    lines.push(info_line("Branch", &detail.branch, colors));
-    lines.push(info_line("Added", &detail.added_at, colors));
-
-    // 空行分隔
-    lines.push(Line::from(""));
+    let mut lines = vec![
+        // 空行
+        Line::from(""),
+        // 基本信息
+        info_line("Path", &shorten_path(&detail.path), colors),
+        info_line("Branch", &detail.branch, colors),
+        info_line("Added", &detail.added_at, colors),
+        // 空行分隔
+        Line::from(""),
+    ];
 
     // Active Tasks
     if !detail.active_tasks.is_empty() {
@@ -157,8 +155,8 @@ fn archived_task_line(name: &str, colors: &ThemeColors) -> Line<'static> {
 fn shorten_path(path: &str) -> String {
     if let Some(home) = dirs::home_dir() {
         if let Some(home_str) = home.to_str() {
-            if path.starts_with(home_str) {
-                return format!("~{}", &path[home_str.len()..]);
+            if let Some(stripped) = path.strip_prefix(home_str) {
+                return format!("~{}", stripped);
             }
         }
     }

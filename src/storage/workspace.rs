@@ -115,7 +115,7 @@ pub fn add_project(name: &str, path: &str) -> io::Result<()> {
     let hash = project_hash(path);
 
     // 检查是否已存在
-    if let Some(_) = load_project_metadata(&hash)? {
+    if load_project_metadata(&hash)?.is_some() {
         return Err(io::Error::new(
             io::ErrorKind::AlreadyExists,
             "Project already registered",

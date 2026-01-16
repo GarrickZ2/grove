@@ -64,33 +64,17 @@ impl HookLevel {
             } => {
                 if *no_banner {
                     false
-                } else if *banner {
-                    true
                 } else {
-                    false // notice 默认不显示
+                    *banner // notice 默认不显示
                 }
             }
-            HookLevel::Warn {
-                banner, no_banner, ..
-            } => {
-                if *no_banner {
-                    false
-                } else if *banner {
-                    true
-                } else {
-                    true // warn 默认显示
-                }
+            HookLevel::Warn { no_banner, .. } => {
+                // warn 默认显示
+                !*no_banner
             }
-            HookLevel::Critical {
-                banner, no_banner, ..
-            } => {
-                if *no_banner {
-                    false
-                } else if *banner {
-                    true
-                } else {
-                    true // critical 默认显示
-                }
+            HookLevel::Critical { no_banner, .. } => {
+                // critical 默认显示
+                !*no_banner
             }
         }
     }

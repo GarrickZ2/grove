@@ -46,7 +46,7 @@ pub struct ProjectDetail {
 }
 
 /// Workspace 状态
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct WorkspaceState {
     /// 项目列表
     pub projects: Vec<ProjectInfo>,
@@ -62,20 +62,6 @@ pub struct WorkspaceState {
     pub search_query: String,
     /// 过滤后的索引
     pub filtered_indices: Vec<usize>,
-}
-
-impl Default for WorkspaceState {
-    fn default() -> Self {
-        Self {
-            projects: Vec::new(),
-            list_state: ListState::default(),
-            expanded: false,
-            detail: None,
-            search_mode: false,
-            search_query: String::new(),
-            filtered_indices: Vec::new(),
-        }
-    }
 }
 
 impl WorkspaceState {
@@ -204,7 +190,7 @@ impl WorkspaceState {
             return;
         }
 
-        self.detail = self.selected_project().map(|p| load_project_detail(p));
+        self.detail = self.selected_project().map(load_project_detail);
     }
 
     /// 进入搜索模式

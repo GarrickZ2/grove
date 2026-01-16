@@ -53,50 +53,43 @@ pub fn render(frame: &mut Frame, colors: &ThemeColors) {
 
 /// 构建帮助内容行
 fn build_help_lines(colors: &ThemeColors) -> Vec<Line<'static>> {
-    let mut lines = Vec::new();
-
-    // Navigation 分组
-    lines.push(section_header("Navigation", colors));
-    lines.push(key_line("j / ↓", "Move down", colors));
-    lines.push(key_line("k / ↑", "Move up", colors));
-    lines.push(key_line("Tab", "Switch tab", colors));
-    lines.push(key_line("1 / 2 / 3", "Jump to tab", colors));
-    lines.push(key_line("Enter", "Enter worktree", colors));
-    lines.push(Line::from(""));
-
-    // Actions 分组
-    lines.push(section_header("Actions", colors));
-    lines.push(key_line("n", "New task", colors));
-    lines.push(key_line("Space", "Action palette", colors));
-    lines.push(Line::from(""));
-
-    // Archived Tasks 分组
-    lines.push(section_header("Archived Tasks", colors));
-    lines.push(key_line("r", "Recover", colors));
-    lines.push(key_line("x", "Clean (delete)", colors));
-    lines.push(Line::from(""));
-
-    // Search 分组
-    lines.push(section_header("Search", colors));
-    lines.push(key_line("/", "Start search", colors));
-    lines.push(key_line("Enter", "Confirm search", colors));
-    lines.push(key_line("Esc", "Clear search", colors));
-    lines.push(Line::from(""));
-
-    // Other 分组
-    lines.push(section_header("Other", colors));
-    lines.push(key_line("t", "Theme selector", colors));
-    lines.push(key_line("?", "This help", colors));
-    lines.push(key_line("q", "Quit", colors));
-    lines.push(Line::from(""));
-
-    // 底部提示
-    lines.push(Line::from(Span::styled(
-        "      Press ? or Esc to close",
-        Style::default().fg(colors.muted),
-    )));
-
-    lines
+    vec![
+        // Navigation 分组
+        section_header("Navigation", colors),
+        key_line("j / ↓", "Move down", colors),
+        key_line("k / ↑", "Move up", colors),
+        key_line("Tab", "Switch tab", colors),
+        key_line("1 / 2 / 3", "Jump to tab", colors),
+        key_line("Enter", "Enter worktree", colors),
+        Line::from(""),
+        // Actions 分组
+        section_header("Actions", colors),
+        key_line("n", "New task", colors),
+        key_line("Space", "Action palette", colors),
+        Line::from(""),
+        // Archived Tasks 分组
+        section_header("Archived Tasks", colors),
+        key_line("r", "Recover", colors),
+        key_line("x", "Clean (delete)", colors),
+        Line::from(""),
+        // Search 分组
+        section_header("Search", colors),
+        key_line("/", "Start search", colors),
+        key_line("Enter", "Confirm search", colors),
+        key_line("Esc", "Clear search", colors),
+        Line::from(""),
+        // Other 分组
+        section_header("Other", colors),
+        key_line("t", "Theme selector", colors),
+        key_line("?", "This help", colors),
+        key_line("q", "Quit", colors),
+        Line::from(""),
+        // 底部提示
+        Line::from(Span::styled(
+            "      Press ? or Esc to close",
+            Style::default().fg(colors.muted),
+        )),
+    ]
 }
 
 /// 分组标题
