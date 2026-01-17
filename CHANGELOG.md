@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.3] - 2025-01-16
+
+### Added
+
+- Version display in help panel with update status indicator
+- Update checking via GitHub API (24-hour cache)
+- Installation method detection (Cargo/Homebrew/GitHub Release)
+- Reset action for Current/Other tabs (rebuild branch & worktree from target)
+
+### Changed
+
+- Removed Merge action from Other tab (requires checkout to target first)
+- Linux builds now use musl for better compatibility on older systems
+
+### Fixed
+
+- GLIBC compatibility issue on Debian/older Linux distributions
+
 ## [0.1.2] - 2025-01-16
 
 ### Added
