@@ -12,12 +12,23 @@ use super::grove_dir;
 pub struct Config {
     #[serde(default)]
     pub theme: ThemeConfig,
+    #[serde(default)]
+    pub update: UpdateConfig,
 }
 
 /// 主题配置
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ThemeConfig {
     pub name: String,
+}
+
+/// 更新检查配置
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct UpdateConfig {
+    /// Last update check time (RFC 3339 format)
+    pub last_check: Option<String>,
+    /// Cached latest version
+    pub latest_version: Option<String>,
 }
 
 impl Default for ThemeConfig {

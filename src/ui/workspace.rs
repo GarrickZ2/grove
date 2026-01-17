@@ -52,7 +52,7 @@ pub fn render(frame: &mut Frame, app: &App) {
 
     // 渲染帮助面板
     if app.show_help {
-        help_panel::render(frame, colors);
+        help_panel::render(frame, colors, app.update_info.as_ref());
     }
 
     // 渲染 Add Project 弹窗

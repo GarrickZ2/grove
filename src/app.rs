@@ -24,6 +24,7 @@ use crate::ui::components::delete_project_dialog::{DeleteMode, DeleteProjectData
 use crate::ui::components::hook_panel::{HookConfigData, HookConfigStep};
 use crate::ui::components::input_confirm_dialog::InputConfirmData;
 use crate::ui::components::merge_dialog::{MergeDialogData, MergeMethod};
+use crate::update::UpdateInfo;
 
 /// Toast 消息
 #[derive(Debug, Clone)]
@@ -362,6 +363,8 @@ pub struct App {
     pub workspace_notifications: HashMap<String, HashMap<String, NotificationLevel>>,
     /// Hook 配置面板
     pub hook_panel: Option<HookConfigData>,
+    /// Update info (version check result)
+    pub update_info: Option<UpdateInfo>,
 }
 
 /// 待执行的操作
@@ -381,6 +384,8 @@ pub enum PendingAction {
     Merge { task_id: String, check_target: bool },
     /// Merge 成功后询问是否 Archive
     MergeArchive { task_id: String },
+    /// Reset - 重置任务
+    Reset { task_id: String },
 }
 
 impl App {
@@ -390,6 +395,25 @@ impl App {
         let theme = Theme::from_name(&config.theme.name);
         let last_system_dark = detect_system_theme();
         let colors = get_theme_colors(theme);
+
+        // 检查更新
+        let update_info = crate::update::check_for_updates(
+            config.update.latest_version.as_deref(),
+            config.update.last_check.as_deref(),
+        );
+
+        // 如果进行了新的检查，保存结果到配置
+        if crate::update::should_check(config.update.last_check.as_deref()) {
+            if let Some(ref check_time) = update_info.check_time {
+                let mut new_config = config.clone();
+                new_config.update.last_check = Some(check_time.to_rfc3339());
+                new_config.update.latest_version = update_info.latest_version.clone();
+                let _ = storage::config::save_config(&new_config);
+            }
+        }
+
+        // 检查是否有更新，用于后续显示 Toast
+        let has_update = update_info.has_update();
 
         // 判断是否在 git 仓库中
         let is_in_git_repo = git::is_git_repo(".");
@@ -434,12 +458,24 @@ impl App {
                 )
             };
 
+        // 构建初始 Toast（如果有更新）
+        let initial_toast = if has_update {
+            update_info.latest_version.as_ref().map(|v| {
+                Toast::new(
+                    format!("New version available: {} (press ? for details)", v),
+                    Duration::from_secs(5),
+                )
+            })
+        } else {
+            None
+        };
+
         Self {
             mode,
             workspace,
             should_quit: false,
             project,
-            toast: None,
+            toast: initial_toast,
             theme,
             colors,
             show_theme_selector: false,
@@ -462,6 +498,7 @@ impl App {
             notifications,
             workspace_notifications,
             hook_panel: None,
+            update_info: Some(update_info),
         }
     }
 
@@ -536,11 +573,10 @@ impl App {
 
     /// 保存主题配置到文件
     fn save_theme_config(&self) {
-        use storage::config::{save_config, Config, ThemeConfig};
-        let config = Config {
-            theme: ThemeConfig {
-                name: self.theme.label().to_string(),
-            },
+        use storage::config::{load_config, save_config, ThemeConfig};
+        let mut config = load_config();
+        config.theme = ThemeConfig {
+            name: self.theme.label().to_string(),
         };
         let _ = save_config(&config);
     }
@@ -927,6 +963,114 @@ impl App {
         self.show_toast("Task cleaned");
     }
 
+    // ========== Reset 功能 ==========
+
+    /// 开始 Reset 流程
+    pub fn start_reset(&mut self) {
+        // 获取当前选中的 worktree
+        let selected = self.project.current_list_state().selected();
+        let Some(index) = selected else { return };
+
+        let worktrees = self.project.current_worktrees();
+        let Some(wt) = worktrees.get(index) else {
+            return;
+        };
+
+        // Archived/Broken 状态不能 reset
+        if wt.archived || wt.status == WorktreeStatus::Broken {
+            self.show_toast("Cannot reset archived or broken task");
+            return;
+        }
+
+        let task_id = wt.id.clone();
+        let task_name = wt.task_name.clone();
+        let branch = wt.branch.clone();
+        let target = wt.target.clone();
+
+        // 显示确认弹窗
+        self.pending_action = Some(PendingAction::Reset { task_id });
+        self.confirm_dialog = Some(ConfirmType::Reset {
+            task_name,
+            branch,
+            target,
+        });
+    }
+
+    /// 执行 Reset
+    fn do_reset(&mut self, task_id: &str) {
+        // 1. 获取 task 信息
+        let task = match tasks::get_task(&self.project.project_key, task_id) {
+            Ok(Some(t)) => t,
+            _ => {
+                self.show_toast("Task not found");
+                return;
+            }
+        };
+
+        // 2. Kill tmux session
+        let session = tmux::session_name(&self.project.project_key, task_id);
+        let _ = tmux::kill_session(&session);
+
+        // 3. Remove worktree (如果存在)
+        if Path::new(&task.worktree_path).exists() {
+            if let Err(e) = git::remove_worktree(&self.project.project_path, &task.worktree_path) {
+                self.show_toast(format!("Failed to remove worktree: {}", e));
+                return;
+            }
+        }
+
+        // 4. Delete branch
+        if let Err(e) = git::delete_branch(&self.project.project_path, &task.branch) {
+            self.show_toast(format!("Failed to delete branch: {}", e));
+            return;
+        }
+
+        // 5. 重新创建 branch 和 worktree (从 target)
+        let worktree_path = Path::new(&task.worktree_path);
+        if let Err(e) = git::create_worktree(
+            &self.project.project_path,
+            &task.branch,
+            worktree_path,
+            &task.target,
+        ) {
+            self.show_toast(format!("Failed to recreate worktree: {}", e));
+            return;
+        }
+
+        // 6. 更新 task metadata (updated_at)
+        if let Err(e) = tasks::touch_task(&self.project.project_key, task_id) {
+            // 只是警告，不中断流程
+            eprintln!("Warning: Failed to update task: {}", e);
+        }
+
+        // 7. 创建新的 tmux session
+        let project_name = Path::new(&self.project.project_path)
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("unknown")
+            .to_string();
+        let session_env = tmux::SessionEnv {
+            task_id: task.id.clone(),
+            task_name: task.name.clone(),
+            branch: task.branch.clone(),
+            target: task.target.clone(),
+            worktree: task.worktree_path.clone(),
+            project_name,
+            project_path: self.project.project_path.clone(),
+        };
+        if let Err(e) = tmux::create_session(&session, &task.worktree_path, Some(&session_env)) {
+            self.show_toast(format!("Failed to create session: {}", e));
+            return;
+        }
+
+        // 8. 刷新数据
+        self.project.refresh();
+        self.show_toast("Task reset");
+
+        // 9. 自动进入 session
+        self.pending_tmux_attach = Some(session);
+    }
+
     // ========== 弹窗操作 ==========
 
     /// 确认弱确认弹窗
@@ -962,6 +1106,7 @@ impl App {
                     }
                 }
                 PendingAction::MergeArchive { task_id } => self.do_archive(&task_id),
+                PendingAction::Reset { task_id } => self.do_reset(&task_id),
             }
         }
     }
@@ -1624,6 +1769,7 @@ impl App {
                 ActionType::RebaseTo,
                 ActionType::Sync,
                 ActionType::Merge,
+                ActionType::Reset,
             ],
             ProjectTab::Other => vec![
                 ActionType::CheckoutTarget,
@@ -1632,7 +1778,7 @@ impl App {
                 ActionType::Clean,
                 ActionType::RebaseTo,
                 ActionType::Sync,
-                ActionType::Merge,
+                ActionType::Reset,
             ],
         };
 
@@ -1686,6 +1832,7 @@ impl App {
                 ActionType::Recover => self.start_recover(),
                 ActionType::CheckoutTarget => self.start_checkout_target(),
                 ActionType::Commit => self.open_commit_dialog(),
+                ActionType::Reset => self.start_reset(),
             }
         }
     }

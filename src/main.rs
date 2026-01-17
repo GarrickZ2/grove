@@ -9,6 +9,7 @@ mod storage;
 mod theme;
 mod tmux;
 mod ui;
+mod update;
 
 use std::io;
 use std::time::Instant;

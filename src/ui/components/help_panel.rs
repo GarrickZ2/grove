@@ -9,14 +9,15 @@ use ratatui::{
 };
 
 use crate::theme::ThemeColors;
+use crate::update::UpdateInfo;
 
 /// 帮助面板宽度
 const PANEL_WIDTH: u16 = 38;
-/// 帮助面板高度
-const PANEL_HEIGHT: u16 = 26;
+/// 帮助面板高度（增加版本信息区域）
+const PANEL_HEIGHT: u16 = 30;
 
 /// 渲染帮助面板
-pub fn render(frame: &mut Frame, colors: &ThemeColors) {
+pub fn render(frame: &mut Frame, colors: &ThemeColors, update_info: Option<&UpdateInfo>) {
     let area = frame.area();
 
     // 居中计算
@@ -33,7 +34,7 @@ pub fn render(frame: &mut Frame, colors: &ThemeColors) {
     frame.render_widget(Clear, panel_area);
 
     // 构建帮助内容
-    let lines = build_help_lines(colors);
+    let lines = build_help_lines(colors, update_info);
 
     let block = Block::default()
         .title(" Help ")
@@ -52,8 +53,8 @@ pub fn render(frame: &mut Frame, colors: &ThemeColors) {
 }
 
 /// 构建帮助内容行
-fn build_help_lines(colors: &ThemeColors) -> Vec<Line<'static>> {
-    vec![
+fn build_help_lines(colors: &ThemeColors, update_info: Option<&UpdateInfo>) -> Vec<Line<'static>> {
+    let mut lines = vec![
         // Navigation 分组
         section_header("Navigation", colors),
         key_line("j / ↓", "Move down", colors),
@@ -83,13 +84,56 @@ fn build_help_lines(colors: &ThemeColors) -> Vec<Line<'static>> {
         key_line("t", "Theme selector", colors),
         key_line("?", "This help", colors),
         key_line("q", "Quit", colors),
-        Line::from(""),
-        // 底部提示
-        Line::from(Span::styled(
-            "      Press ? or Esc to close",
-            Style::default().fg(colors.muted),
-        )),
-    ]
+    ];
+
+    // 添加版本信息区域
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        "  ────────────────────────────────",
+        Style::default().fg(colors.muted),
+    )));
+
+    if let Some(info) = update_info {
+        // 显示当前版本
+        lines.push(Line::from(Span::styled(
+            format!("  Grove v{}", info.current_version),
+            Style::default().fg(colors.text),
+        )));
+
+        // 显示更新状态
+        if info.has_update() {
+            if let Some(latest) = &info.latest_version {
+                lines.push(Line::from(Span::styled(
+                    format!("  Update: {}", latest),
+                    Style::default().fg(colors.highlight),
+                )));
+                lines.push(Line::from(Span::styled(
+                    format!("  {}", info.update_command()),
+                    Style::default().fg(colors.muted),
+                )));
+            }
+        } else {
+            lines.push(Line::from(Span::styled(
+                "  Up to date",
+                Style::default().fg(colors.status_merged),
+            )));
+        }
+    } else {
+        // 没有更新信息时只显示版本
+        lines.push(Line::from(Span::styled(
+            format!("  Grove v{}", env!("CARGO_PKG_VERSION")),
+            Style::default().fg(colors.text),
+        )));
+    }
+
+    lines.push(Line::from(""));
+    // 底部提示
+    lines.push(Line::from(Span::styled(
+        "      Press ? or Esc to close",
+        Style::default().fg(colors.muted),
+    )));
+
+    lines
 }
 
 /// 分组标题

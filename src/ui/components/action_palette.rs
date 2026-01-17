@@ -21,6 +21,7 @@ pub enum ActionType {
     Recover,
     CheckoutTarget,
     Commit,
+    Reset,
 }
 
 impl ActionType {
@@ -35,6 +36,7 @@ impl ActionType {
             ActionType::Recover => "Recover",
             ActionType::CheckoutTarget => "Checkout",
             ActionType::Commit => "Commit",
+            ActionType::Reset => "Reset",
         }
     }
 
@@ -49,6 +51,7 @@ impl ActionType {
             ActionType::Recover => "Restore worktree from archive",
             ActionType::CheckoutTarget => "Switch to target branch",
             ActionType::Commit => "Add all and commit changes",
+            ActionType::Reset => "Rebuild branch and worktree",
         }
     }
 }

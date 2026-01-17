@@ -29,6 +29,12 @@ pub enum ConfirmType {
     MergeUncommittedTarget { task_name: String, target: String },
     /// Merge 成功后询问是否 Archive
     MergeSuccess { task_name: String },
+    /// Reset - 重置任务
+    Reset {
+        task_name: String,
+        branch: String,
+        target: String,
+    },
 }
 
 impl ConfirmType {
@@ -42,6 +48,7 @@ impl ConfirmType {
             ConfirmType::MergeUncommittedWorktree { .. } => " Merge ",
             ConfirmType::MergeUncommittedTarget { .. } => " Merge ",
             ConfirmType::MergeSuccess { .. } => " Success ",
+            ConfirmType::Reset { .. } => " Reset ",
         }
     }
 
@@ -124,6 +131,23 @@ impl ConfirmType {
                     Line::from(format!("Task: {}", task_name)),
                     Line::from(""),
                     Line::from("Archive this task?"),
+                ]
+            }
+            ConfirmType::Reset {
+                task_name,
+                branch,
+                target,
+            } => {
+                vec![
+                    Line::from(format!("Reset \"{}\"?", task_name)),
+                    Line::from(""),
+                    Line::from("This will:"),
+                    Line::from("  - Kill tmux session"),
+                    Line::from(format!("  - Delete branch \"{}\"", branch)),
+                    Line::from(format!("  - Recreate from \"{}\"", target)),
+                    Line::from("  - Recreate worktree"),
+                    Line::from(""),
+                    Line::from("All changes will be lost!"),
                 ]
             }
         }

@@ -193,6 +193,18 @@ pub fn update_task_target(project: &str, task_id: &str, new_target: &str) -> io:
     Ok(())
 }
 
+/// 更新 task 的 updated_at 时间戳
+pub fn touch_task(project: &str, task_id: &str) -> io::Result<()> {
+    let mut tasks = load_tasks(project)?;
+
+    if let Some(task) = tasks.iter_mut().find(|t| t.id == task_id) {
+        task.updated_at = Utc::now();
+        save_tasks(project, &tasks)?;
+    }
+
+    Ok(())
+}
+
 /// 根据 task_id 获取任务（从 tasks.toml）
 pub fn get_task(project: &str, task_id: &str) -> io::Result<Option<Task>> {
     let tasks = load_tasks(project)?;

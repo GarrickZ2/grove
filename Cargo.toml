@@ -23,6 +23,8 @@ dirs = "5"
 chrono = { version = "0.4", features = ["serde"] }
 clap = { version = "4", features = ["derive"] }
 arboard = "3"
+ureq = { version = "2.9", features = ["json"] }
+semver = "1.0"
 
 # Config for 'cargo dist'
 [workspace.metadata.dist]
@@ -34,8 +36,8 @@ cargo-dist-version = "0.27.0"
 targets = [
     "aarch64-apple-darwin",
     "x86_64-apple-darwin",
-    "x86_64-unknown-linux-gnu",
-    "aarch64-unknown-linux-gnu",
+    "x86_64-unknown-linux-musl",
+    "aarch64-unknown-linux-musl",
 ]
 # Which actions to run on pull requests
 pr-run-mode = "skip"

@@ -18,7 +18,7 @@ detect_platform() {
             OS="apple-darwin"
             ;;
         linux)
-            OS="unknown-linux-gnu"
+            OS="unknown-linux-musl"
             ;;
         *)
             echo "Error: Unsupported OS: $OS"

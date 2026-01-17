@@ -76,7 +76,7 @@ jobs:
           gh release upload ${{ needs.create-release.outputs.tag }} \
             target/x86_64-apple-darwin/release/grove-${{ needs.create-release.outputs.tag }}-x86_64-apple-darwin.tar.gz
 
-  # Build for Linux (x86_64)
+  # Build for Linux (x86_64) - using musl for maximum compatibility
   build-linux-x64:
     needs: create-release
     runs-on: ubuntu-latest
@@ -84,20 +84,24 @@ jobs:
       - uses: actions/checkout@v4
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-musl
+      - name: Install musl tools
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
       - name: Build
-        run: cargo build --release
+        run: cargo build --release --target x86_64-unknown-linux-musl
       - name: Package
         run: |
-          cd target/release
-          tar -czf grove-${{ needs.create-release.outputs.tag }}-x86_64-unknown-linux-gnu.tar.gz grove
+          cd target/x86_64-unknown-linux-musl/release
+          tar -czf grove-${{ needs.create-release.outputs.tag }}-x86_64-unknown-linux-musl.tar.gz grove
       - name: Upload
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           gh release upload ${{ needs.create-release.outputs.tag }} \
-            target/release/grove-${{ needs.create-release.outputs.tag }}-x86_64-unknown-linux-gnu.tar.gz
+            target/x86_64-unknown-linux-musl/release/grove-${{ needs.create-release.outputs.tag }}-x86_64-unknown-linux-musl.tar.gz
 
-  # Build for Linux (ARM64)
+  # Build for Linux (ARM64) - using musl for maximum compatibility
   build-linux-arm:
     needs: create-release
     runs-on: ubuntu-latest
@@ -106,25 +110,30 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: aarch64-unknown-linux-gnu
+          targets: aarch64-unknown-linux-musl
       - name: Install cross-compilation tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y gcc-aarch64-linux-gnu
+          sudo apt-get install -y musl-tools clang llvm
+          # Download and extract musl cross-compiler for aarch64
+          wget -q https://musl.cc/aarch64-linux-musl-cross.tgz
+          tar -xzf aarch64-linux-musl-cross.tgz
+          echo "$PWD/aarch64-linux-musl-cross/bin" >> $GITHUB_PATH
       - name: Build
         env:
-          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
-        run: cargo build --release --target aarch64-unknown-linux-gnu
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER: aarch64-linux-musl-gcc
+          CC_aarch64_unknown_linux_musl: aarch64-linux-musl-gcc
+        run: cargo build --release --target aarch64-unknown-linux-musl
       - name: Package
         run: |
-          cd target/aarch64-unknown-linux-gnu/release
-          tar -czf grove-${{ needs.create-release.outputs.tag }}-aarch64-unknown-linux-gnu.tar.gz grove
+          cd target/aarch64-unknown-linux-musl/release
+          tar -czf grove-${{ needs.create-release.outputs.tag }}-aarch64-unknown-linux-musl.tar.gz grove
       - name: Upload
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           gh release upload ${{ needs.create-release.outputs.tag }} \
-            target/aarch64-unknown-linux-gnu/release/grove-${{ needs.create-release.outputs.tag }}-aarch64-unknown-linux-gnu.tar.gz
+            target/aarch64-unknown-linux-musl/release/grove-${{ needs.create-release.outputs.tag }}-aarch64-unknown-linux-musl.tar.gz
 
   # Publish the release
   publish-release:
