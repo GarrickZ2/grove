@@ -19,7 +19,6 @@ pub enum ActionType {
     Sync,
     Merge,
     Recover,
-    CheckoutTarget,
     Commit,
     Reset,
 }
@@ -34,7 +33,6 @@ impl ActionType {
             ActionType::Sync => "Sync",
             ActionType::Merge => "Merge",
             ActionType::Recover => "Recover",
-            ActionType::CheckoutTarget => "Checkout",
             ActionType::Commit => "Commit",
             ActionType::Reset => "Reset",
         }
@@ -49,7 +47,6 @@ impl ActionType {
             ActionType::Sync => "Sync from target branch",
             ActionType::Merge => "Merge to target branch",
             ActionType::Recover => "Restore worktree from archive",
-            ActionType::CheckoutTarget => "Switch to target branch",
             ActionType::Commit => "Add all and commit changes",
             ActionType::Reset => "Rebuild branch and worktree",
         }

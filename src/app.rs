@@ -108,6 +108,7 @@ impl ProjectState {
 
     /// 刷新数据
     pub fn refresh(&mut self) {
+        git::cache::clear_all();
         let (current, other, _) = loader::load_worktrees(&self.project_path);
         let archived = loader::load_archived_worktrees(&self.project_path);
         self.worktrees = [current, other, archived];
@@ -386,6 +387,8 @@ pub enum PendingAction {
     MergeArchive { task_id: String },
     /// Reset - 重置任务
     Reset { task_id: String },
+    /// Checkout - 在主仓库 checkout 到选择的分支
+    Checkout,
 }
 
 impl App {
@@ -594,7 +597,7 @@ impl App {
     /// 打开 New Task 弹窗
     pub fn open_new_task_dialog(&mut self) {
         // 刷新目标分支
-        if let Ok(branch) = git::current_branch(".") {
+        if let Ok(branch) = git::current_branch(&self.project.project_path) {
             self.target_branch = branch;
         }
         self.new_task_input.clear();
@@ -626,14 +629,7 @@ impl App {
         }
 
         // 1. 获取项目信息
-        let repo_root = match git::repo_root(".") {
-            Ok(root) => root,
-            Err(e) => {
-                self.show_toast(format!("Not a git repo: {}", e));
-                self.close_new_task_dialog();
-                return;
-            }
-        };
+        let repo_root = self.project.project_path.clone();
 
         let project_key = project_hash(&repo_root);
 
@@ -704,8 +700,9 @@ impl App {
             return;
         }
 
-        // 7. 关闭弹窗，设置待 attach 的 session
+        // 7. 关闭弹窗，刷新数据
         self.close_new_task_dialog();
+        self.project.refresh();
         self.show_toast(format!("Created: {}", name));
 
         // 8. 标记需要 attach（主循环会暂停 TUI，attach 完成后恢复）
@@ -877,7 +874,11 @@ impl App {
             return;
         }
 
-        // 4. 刷新数据
+        // 4. 删除 hook 通知
+        hooks::remove_task_hook(&self.project.project_key, task_id);
+        self.notifications.remove(task_id);
+
+        // 5. 刷新数据
         self.project.refresh();
         self.show_toast("Task archived");
     }
@@ -958,7 +959,11 @@ impl App {
             return;
         }
 
-        // 6. 刷新数据
+        // 6. 删除 hook 通知
+        hooks::remove_task_hook(&self.project.project_key, task_id);
+        self.notifications.remove(task_id);
+
+        // 7. 刷新数据
         self.project.refresh();
         self.show_toast("Task cleaned");
     }
@@ -1084,6 +1089,7 @@ impl App {
                     is_archived,
                 } => self.do_clean(&task_id, is_archived),
                 PendingAction::RebaseTo { .. } => {} // RebaseTo 不使用确认弹窗
+                PendingAction::Checkout => {}        // Checkout 不使用确认弹窗
                 PendingAction::Recover { task_id } => self.recover_worktree(&task_id),
                 PendingAction::Sync {
                     task_id,
@@ -1246,6 +1252,30 @@ impl App {
         self.pending_tmux_attach = Some(session);
     }
 
+    // ========== Checkout 功能 ==========
+
+    /// 打开 Checkout 分支选择器（在主仓库执行 checkout）
+    pub fn open_checkout_selector(&mut self) {
+        // 获取所有分支
+        let branches = match git::list_branches(&self.project.project_path) {
+            Ok(b) => b,
+            Err(e) => {
+                self.show_toast(format!("Failed to list branches: {}", e));
+                return;
+            }
+        };
+
+        // 获取当前分支
+        let current_branch = git::current_branch(&self.project.project_path)
+            .unwrap_or_else(|_| "unknown".to_string());
+
+        // 设置 pending action
+        self.pending_action = Some(PendingAction::Checkout);
+
+        // 打开选择器
+        self.branch_selector = Some(BranchSelectorData::new_checkout(branches, current_branch));
+    }
+
     // ========== Rebase To 功能 ==========
 
     /// 打开分支选择器
@@ -1309,24 +1339,57 @@ impl App {
 
     /// 分支选择器 - 确认
     pub fn branch_selector_confirm(&mut self) {
-        let new_target = self
+        let selected_branch = self
             .branch_selector
             .as_ref()
             .and_then(|d| d.selected_branch())
             .map(|s| s.to_string());
 
-        if let (Some(new_target), Some(PendingAction::RebaseTo { task_id })) =
-            (new_target, self.pending_action.take())
-        {
-            // 更新 task target
-            if let Err(e) =
-                tasks::update_task_target(&self.project.project_key, &task_id, &new_target)
-            {
-                self.show_toast(format!("Failed to update target: {}", e));
-            } else {
-                self.project.refresh();
-                self.show_toast(format!("Target changed to {}", new_target));
+        let Some(branch) = selected_branch else {
+            self.branch_selector = None;
+            return;
+        };
+
+        match self.pending_action.take() {
+            Some(PendingAction::RebaseTo { task_id }) => {
+                // 更新 task target
+                if let Err(e) =
+                    tasks::update_task_target(&self.project.project_key, &task_id, &branch)
+                {
+                    self.show_toast(format!("Failed to update target: {}", e));
+                } else {
+                    self.project.refresh();
+                    self.show_toast(format!("Target changed to {}", branch));
+                }
             }
+            Some(PendingAction::Checkout) => {
+                // 在主仓库执行 checkout
+                match git::has_uncommitted_changes(&self.project.project_path) {
+                    Ok(true) => {
+                        self.show_toast("Cannot checkout: uncommitted changes".to_string());
+                    }
+                    Ok(false) => {
+                        match git::checkout_branch(&self.project.project_path, &branch) {
+                            Ok(_) => {
+                                // 使缓存失效
+                                git::cache::invalidate_prefix(&format!(
+                                    "branch:{}",
+                                    self.project.project_path
+                                ));
+                                self.project.refresh();
+                                self.show_toast(format!("Switched to {}", branch));
+                            }
+                            Err(e) => {
+                                self.show_toast(format!("Checkout failed: {}", e));
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        self.show_toast(format!("Error: {}", e));
+                    }
+                }
+            }
+            _ => {}
         }
 
         self.branch_selector = None;
@@ -1586,11 +1649,8 @@ impl App {
                 self.project.refresh();
             }
             Err(e) => {
-                if e.contains("conflict") || e.contains("CONFLICT") {
-                    self.show_toast("Merge conflict - resolve manually");
-                } else {
-                    self.show_toast(format!("Merge failed: {}", e));
-                }
+                // 错误信息已在 git 层格式化好
+                self.show_toast(e);
             }
         }
     }
@@ -1772,7 +1832,6 @@ impl App {
                 ActionType::Reset,
             ],
             ProjectTab::Other => vec![
-                ActionType::CheckoutTarget,
                 ActionType::Commit,
                 ActionType::Archive,
                 ActionType::Clean,
@@ -1830,7 +1889,6 @@ impl App {
                 ActionType::Sync => self.start_sync(),
                 ActionType::Merge => self.start_merge(),
                 ActionType::Recover => self.start_recover(),
-                ActionType::CheckoutTarget => self.start_checkout_target(),
                 ActionType::Commit => self.open_commit_dialog(),
                 ActionType::Reset => self.start_reset(),
             }
@@ -1904,47 +1962,6 @@ impl App {
             }
         }
     }
-
-    // ========== Checkout Target 功能 ==========
-
-    /// 执行 Checkout Target
-    pub fn start_checkout_target(&mut self) {
-        // 获取当前选中的 worktree
-        let worktrees = self.project.filtered_worktrees();
-        let selected_idx = self.project.current_list_state().selected();
-
-        if let Some(idx) = selected_idx {
-            if let Some(worktree) = worktrees.get(idx) {
-                let worktree_path = worktree.path.clone();
-                let target_branch = worktree.target.clone();
-
-                // 检查是否 clean
-                match git::is_worktree_clean(&worktree_path) {
-                    Ok(true) => {
-                        // clean，执行 checkout
-                        match git::checkout_branch(&worktree_path, &target_branch) {
-                            Ok(_) => {
-                                self.show_toast(format!("Switched to {}", target_branch));
-                                // 刷新 worktree 列表
-                                self.project.refresh();
-                            }
-                            Err(e) => {
-                                self.show_toast(format!("Checkout failed: {}", e));
-                            }
-                        }
-                    }
-                    Ok(false) => {
-                        // 不 clean，显示警告
-                        self.show_toast("Cannot checkout: uncommitted changes");
-                    }
-                    Err(e) => {
-                        self.show_toast(format!("Error checking status: {}", e));
-                    }
-                }
-            }
-        }
-    }
-
     // ========== Hook Panel 功能 ==========
 
     /// 打开 Hook 配置面板

@@ -21,12 +21,16 @@ pub fn load_worktrees(project_path: &str) -> (Vec<Worktree>, Vec<Worktree>, Vec<
     // 3. 获取当前分支
     let current_branch = git::current_branch(project_path).unwrap_or_else(|_| "main".to_string());
 
-    // 4. 转换活跃任务
+    // 4. 检查主仓库是否有正在 merge 的 commit（冲突状态）
+    let merging_commit = git::merging_commit(project_path);
+
+    // 5. 转换活跃任务
     let mut current = Vec::new();
     let mut other = Vec::new();
 
     for task in active_tasks {
-        let worktree = task_to_worktree(&task, &project_key);
+        let worktree =
+            task_to_worktree(&task, &project_key, project_path, merging_commit.as_deref());
 
         if task.target == current_branch {
             current.push(worktree);
@@ -71,22 +75,46 @@ fn archived_task_to_worktree(task: Task) -> Worktree {
 }
 
 /// 将 Task 转换为 UI Worktree
-fn task_to_worktree(task: &Task, project: &str) -> Worktree {
+/// merging_commit: 主仓库正在 merge 的 commit hash（如果有冲突的话）
+fn task_to_worktree(
+    task: &Task,
+    project: &str,
+    project_path: &str,
+    merging_commit: Option<&str>,
+) -> Worktree {
     let path = &task.worktree_path;
 
     // 检查 worktree 是否存在
     let exists = Path::new(path).exists();
 
+    // 检查是否是这个 task 导致的 merge 冲突
+    let is_merging_this_task = merging_commit
+        .map(|commit| git::branch_head_equals(project_path, &task.branch, commit))
+        .unwrap_or(false);
+
     // 确定状态
     let status = if !exists {
         WorktreeStatus::Broken // worktree 被删除
+    } else if is_merging_this_task {
+        // 主仓库正在 merge 这个 task 的分支，且有冲突
+        WorktreeStatus::Conflict
+    } else if git::has_conflicts(path) {
+        // worktree 内部有冲突（如 rebase 冲突）
+        WorktreeStatus::Conflict
     } else {
-        // 检查 session 是否运行
-        let session = tmux::session_name(project, &task.id);
-        if tmux::session_exists(&session) {
-            WorktreeStatus::Live
+        // 检查是否已合并到 target
+        let is_merged = git::is_merged(project_path, &task.branch, &task.target).unwrap_or(false);
+
+        if is_merged {
+            WorktreeStatus::Merged
         } else {
-            WorktreeStatus::Idle
+            // 再检查 session 是否运行
+            let session = tmux::session_name(project, &task.id);
+            if tmux::session_exists(&session) {
+                WorktreeStatus::Live
+            } else {
+                WorktreeStatus::Idle
+            }
         }
     };
 

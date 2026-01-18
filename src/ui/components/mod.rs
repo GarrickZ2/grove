@@ -4,6 +4,7 @@ pub mod branch_selector;
 pub mod commit_dialog;
 pub mod confirm_dialog;
 pub mod delete_project_dialog;
+pub mod dialog_utils;
 pub mod empty_state;
 pub mod footer;
 pub mod header;

@@ -1,6 +1,6 @@
 [package]
 name = "grove-rs"
-version = "0.1.3"
+version = "0.1.4"
 edition = "2021"
 description = "A Kanban-style TUI for parallel AI coding. Manage Git worktrees as tasks, run multiple agents in isolated tmux sessions, get notified via hooks."
 license = "MIT"
@@ -25,6 +25,7 @@ clap = { version = "4", features = ["derive"] }
 arboard = "3"
 ureq = { version = "2.9", features = ["json"] }
 semver = "1.0"
+once_cell = "1.19"
 
 # Config for 'cargo dist'
 [workspace.metadata.dist]

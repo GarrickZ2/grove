@@ -1,13 +1,14 @@
 //! Delete Project 选择弹窗
 
 use ratatui::{
-    layout::{Alignment, Constraint, Layout, Rect},
+    layout::{Alignment, Constraint, Layout},
     style::{Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Clear, Paragraph},
+    widgets::Paragraph,
     Frame,
 };
 
+use super::dialog_utils::{center_dialog, render_dialog_frame, render_hint, render_option};
 use crate::theme::ThemeColors;
 
 /// 删除模式
@@ -63,36 +64,14 @@ const DIALOG_HEIGHT: u16 = 13;
 
 /// 渲染 Delete Project 弹窗
 pub fn render(frame: &mut Frame, data: &DeleteProjectData, colors: &ThemeColors) {
-    let area = frame.area();
-
-    // 居中计算
-    let x = area.width.saturating_sub(DIALOG_WIDTH) / 2;
-    let y = area.height.saturating_sub(DIALOG_HEIGHT) / 2;
-    let dialog_area = Rect::new(
-        x,
-        y,
-        DIALOG_WIDTH.min(area.width),
-        DIALOG_HEIGHT.min(area.height),
+    let dialog_area = center_dialog(frame.area(), DIALOG_WIDTH, DIALOG_HEIGHT);
+    let inner_area = render_dialog_frame(
+        frame,
+        dialog_area,
+        " Remove Project ",
+        colors.status_error,
+        colors,
     );
-
-    // 清除背景
-    frame.render_widget(Clear, dialog_area);
-
-    // 外框
-    let block = Block::default()
-        .title(" Remove Project ")
-        .title_alignment(Alignment::Center)
-        .title_style(
-            Style::default()
-                .fg(colors.status_error)
-                .add_modifier(Modifier::BOLD),
-        )
-        .borders(Borders::ALL)
-        .border_style(Style::default().fg(colors.border))
-        .style(Style::default().bg(colors.bg));
-
-    let inner_area = block.inner(dialog_area);
-    frame.render_widget(block, dialog_area);
 
     // 内部布局
     let [info_area, _spacer1, options_area, _spacer2, hint_area] = Layout::vertical([
@@ -152,37 +131,10 @@ pub fn render(frame: &mut Frame, data: &DeleteProjectData, colors: &ThemeColors)
     frame.render_widget(options, options_area);
 
     // 渲染底部提示
-    let hint = Paragraph::new(Line::from(vec![
-        Span::styled("j/k", Style::default().fg(colors.highlight)),
-        Span::styled(" switch  ", Style::default().fg(colors.muted)),
-        Span::styled("Enter", Style::default().fg(colors.highlight)),
-        Span::styled(" confirm  ", Style::default().fg(colors.muted)),
-        Span::styled("Esc", Style::default().fg(colors.highlight)),
-        Span::styled(" cancel", Style::default().fg(colors.muted)),
-    ]))
-    .alignment(Alignment::Center);
-    frame.render_widget(hint, hint_area);
-}
-
-/// 渲染选项行
-fn render_option(label: &str, desc: &str, selected: bool, colors: &ThemeColors) -> Line<'static> {
-    let bullet = if selected { "●" } else { "○" };
-    let style = if selected {
-        Style::default().fg(colors.highlight)
-    } else {
-        Style::default().fg(colors.muted)
-    };
-
-    Line::from(vec![
-        Span::styled(format!(" {} ", bullet), style),
-        Span::styled(
-            label.to_string(),
-            style.add_modifier(if selected {
-                Modifier::BOLD
-            } else {
-                Modifier::empty()
-            }),
-        ),
-        Span::styled(format!(" ({})", desc), Style::default().fg(colors.muted)),
-    ])
+    render_hint(
+        frame,
+        hint_area,
+        &[("j/k", "switch"), ("Enter", "confirm"), ("Esc", "cancel")],
+        colors,
+    );
 }

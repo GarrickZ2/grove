@@ -476,13 +476,14 @@ dependencies = [
 
 [[package]]
 name = "grove-rs"
-version = "0.1.2"
+version = "0.1.4"
 dependencies = [
  "arboard",
  "chrono",
  "clap",
  "crossterm",
  "dirs",
+ "once_cell",
  "ratatui",
  "semver",
  "serde",

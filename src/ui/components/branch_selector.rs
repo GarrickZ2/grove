@@ -10,6 +10,16 @@ use ratatui::{
 
 use crate::theme::ThemeColors;
 
+/// 分支选择器模式
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum BranchSelectorMode {
+    #[default]
+    /// 修改 task 的 target branch
+    RebaseTo,
+    /// 在主仓库 checkout
+    Checkout,
+}
+
 /// 分支选择器数据
 #[derive(Debug, Clone)]
 pub struct BranchSelectorData {
@@ -21,13 +31,16 @@ pub struct BranchSelectorData {
     pub filtered_indices: Vec<usize>,
     /// 当前选中索引（在 filtered_indices 中的位置）
     pub selected_index: usize,
-    /// 当前任务名称
+    /// 当前任务名称（RebaseTo 模式）或空（Checkout 模式）
     pub task_name: String,
-    /// 当前 target
+    /// 当前 target（RebaseTo 模式）或当前分支（Checkout 模式）
     pub current_target: String,
+    /// 选择器模式
+    pub mode: BranchSelectorMode,
 }
 
 impl BranchSelectorData {
+    /// 创建 RebaseTo 模式的分支选择器
     pub fn new(branches: Vec<String>, task_name: String, current_target: String) -> Self {
         let filtered_indices: Vec<usize> = (0..branches.len()).collect();
         Self {
@@ -37,6 +50,21 @@ impl BranchSelectorData {
             selected_index: 0,
             task_name,
             current_target,
+            mode: BranchSelectorMode::RebaseTo,
+        }
+    }
+
+    /// 创建 Checkout 模式的分支选择器
+    pub fn new_checkout(branches: Vec<String>, current_branch: String) -> Self {
+        let filtered_indices: Vec<usize> = (0..branches.len()).collect();
+        Self {
+            branches,
+            search: String::new(),
+            filtered_indices,
+            selected_index: 0,
+            task_name: String::new(),
+            current_target: current_branch,
+            mode: BranchSelectorMode::Checkout,
         }
     }
 
@@ -115,9 +143,13 @@ pub fn render(frame: &mut Frame, data: &BranchSelectorData, colors: &ThemeColors
     // 清除背景
     frame.render_widget(Clear, popup_area);
 
-    // 外框
+    // 外框（根据模式显示不同标题）
+    let title = match data.mode {
+        BranchSelectorMode::RebaseTo => " Rebase To ",
+        BranchSelectorMode::Checkout => " Checkout ",
+    };
     let block = Block::default()
-        .title(" Rebase To ")
+        .title(title)
         .title_alignment(Alignment::Center)
         .borders(Borders::ALL)
         .border_style(Style::default().fg(colors.highlight))
@@ -135,17 +167,29 @@ pub fn render(frame: &mut Frame, data: &BranchSelectorData, colors: &ThemeColors
     ])
     .areas(inner_area);
 
-    // 渲染任务信息
-    let info_lines = vec![
-        Line::from(vec![
-            Span::styled("Task: ", Style::default().fg(colors.muted)),
-            Span::styled(&data.task_name, Style::default().fg(colors.text)),
-        ]),
-        Line::from(vec![
-            Span::styled("Current: ", Style::default().fg(colors.muted)),
-            Span::styled(&data.current_target, Style::default().fg(colors.highlight)),
-        ]),
-    ];
+    // 渲染信息（根据模式显示不同内容）
+    let info_lines = match data.mode {
+        BranchSelectorMode::RebaseTo => vec![
+            Line::from(vec![
+                Span::styled("Task: ", Style::default().fg(colors.muted)),
+                Span::styled(&data.task_name, Style::default().fg(colors.text)),
+            ]),
+            Line::from(vec![
+                Span::styled("Current: ", Style::default().fg(colors.muted)),
+                Span::styled(&data.current_target, Style::default().fg(colors.highlight)),
+            ]),
+        ],
+        BranchSelectorMode::Checkout => vec![
+            Line::from(vec![
+                Span::styled("Current branch: ", Style::default().fg(colors.muted)),
+                Span::styled(&data.current_target, Style::default().fg(colors.highlight)),
+            ]),
+            Line::from(Span::styled(
+                "Select branch to checkout",
+                Style::default().fg(colors.muted),
+            )),
+        ],
+    };
     let info = Paragraph::new(info_lines).alignment(Alignment::Center);
     frame.render_widget(info, info_area);
 

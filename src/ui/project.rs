@@ -76,15 +76,32 @@ pub fn render(frame: &mut Frame, app: &App) {
         colors,
     );
 
-    // 获取并渲染 Project Info
+    // 获取并渲染 Project Info (使用缓存避免每帧都执行 git 命令)
     let project_info_data = {
+        use crate::git::cache;
         let repo_path = &app.project.project_path;
+        const CACHE_TTL: u64 = 2; // 2 秒缓存
+
         let branch =
-            crate::git::current_branch(repo_path).unwrap_or_else(|_| "unknown".to_string());
-        let commits_ahead = crate::git::commits_ahead_of_origin(repo_path).unwrap_or(None);
-        let (additions, deletions) = crate::git::changes_from_origin(repo_path).unwrap_or((0, 0));
+            cache::get_string_or_compute(&format!("branch:{}", repo_path), CACHE_TTL, || {
+                crate::git::current_branch(repo_path).unwrap_or_else(|_| "unknown".to_string())
+            });
+
+        let commits_ahead = cache::get_option_u32_or_compute(
+            &format!("commits_ahead:{}", repo_path),
+            CACHE_TTL,
+            || crate::git::commits_ahead_of_origin(repo_path).unwrap_or(None),
+        );
+
+        let (additions, deletions) =
+            cache::get_tuple_u32_or_compute(&format!("changes:{}", repo_path), CACHE_TTL, || {
+                crate::git::changes_from_origin(repo_path).unwrap_or((0, 0))
+            });
+
         let last_commit =
-            crate::git::last_commit_time(repo_path).unwrap_or_else(|_| "unknown".to_string());
+            cache::get_string_or_compute(&format!("last_commit:{}", repo_path), CACHE_TTL, || {
+                crate::git::last_commit_time(repo_path).unwrap_or_else(|_| "unknown".to_string())
+            });
 
         project_info::ProjectInfoData {
             branch,

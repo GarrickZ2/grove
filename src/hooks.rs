@@ -57,6 +57,15 @@ pub fn save_hooks(project_key: &str, hooks: &HooksFile) -> Result<(), String> {
     fs::write(&hooks_path, content).map_err(|e| e.to_string())
 }
 
+/// 删除指定 task 的 hook 通知
+pub fn remove_task_hook(project_key: &str, task_id: &str) {
+    let mut hooks = load_hooks(project_key);
+    if hooks.tasks.remove(task_id).is_some() {
+        // 静默保存，忽略错误
+        let _ = save_hooks(project_key, &hooks);
+    }
+}
+
 /// 加载 hooks 并自动清理不存在的 task
 /// project_path: 项目的完整路径
 pub fn load_hooks_with_cleanup(project_path: &str) -> HooksFile {

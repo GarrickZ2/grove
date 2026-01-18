@@ -6,6 +6,7 @@ use clap::{Parser, Subcommand};
 
 #[derive(Parser)]
 #[command(name = "grove")]
+#[command(version)]
 #[command(about = "Git Worktree + tmux manager")]
 pub struct Cli {
     #[command(subcommand)]

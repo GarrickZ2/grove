@@ -309,6 +309,11 @@ fn handle_project_key(app: &mut App, key: KeyEvent) {
             }
         }
 
+        // 功能按键 - Checkout (在主仓库切换分支)
+        KeyCode::Char('c') => {
+            app.open_checkout_selector();
+        }
+
         // 功能按键 - Hook 配置面板
         KeyCode::Char('h') => {
             app.open_hook_panel();
