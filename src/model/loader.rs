@@ -102,8 +102,13 @@ fn task_to_worktree(
         // worktree 内部有冲突（如 rebase 冲突）
         WorktreeStatus::Conflict
     } else {
-        // 检查是否已合并到 target
-        let is_merged = git::is_merged(project_path, &task.branch, &task.target).unwrap_or(false);
+        // 先计算 commits ahead (branch 相对于 target 的新 commit 数)
+        let commits_ahead = git::commits_behind(path, &task.branch, &task.target).unwrap_or(0);
+
+        // 只有当有新 commit 且已合并时才算 Merged
+        // 避免刚创建的任务（branch 和 target 同一个 commit）被误判为 Merged
+        let is_merged = commits_ahead > 0
+            && git::is_merged(project_path, &task.branch, &task.target).unwrap_or(false);
 
         if is_merged {
             WorktreeStatus::Merged
@@ -120,6 +125,7 @@ fn task_to_worktree(
 
     // 获取 commits_behind 和 file_changes (仅当 worktree 存在时)
     let (commits_behind, file_changes) = if exists {
+        // commits_behind 已在上面计算过，这里重新获取以保持 Option 类型
         let behind = git::commits_behind(path, &task.branch, &task.target).ok();
         let changes = git::file_changes(path, &task.target)
             .map(|(a, d)| FileChanges::new(a, d))
