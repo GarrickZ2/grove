@@ -86,14 +86,13 @@ fn run(terminal: &mut DefaultTerminal, app: &mut App) -> io::Result<()> {
             print!("\x1b[1A\x1b[2K\r");
             let _ = io::stdout().flush();
 
-            // 清除该任务的 hook 通知（用户已阅）
-            app.clear_task_hook_by_session(&session);
-
             // 恢复 TUI
             *terminal = ratatui::init();
 
             // 刷新数据（用户可能在 session 中做了改动）
             app.refresh();
+            // 刷新后再清除 hook 通知，避免 refresh 覆盖清除结果
+            app.clear_task_hook_by_session(&session);
             last_refresh = Instant::now();
         }
 
@@ -122,6 +121,9 @@ fn run(terminal: &mut DefaultTerminal, app: &mut App) -> io::Result<()> {
             }
             last_refresh = Instant::now();
         }
+
+        // 检查后台操作结果
+        app.poll_bg_result();
 
         // 渲染界面
         terminal.draw(|frame| match app.mode {

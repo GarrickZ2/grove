@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::path::Path;
+use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
 use chrono::Utc;
@@ -566,6 +567,10 @@ pub struct App {
     pub hook_panel: Option<HookConfigData>,
     /// Update info (version check result)
     pub update_info: Option<UpdateInfo>,
+    /// 后台操作结果通道
+    pub bg_result_rx: Option<mpsc::Receiver<BgResult>>,
+    /// Loading 消息（后台操作进行中时显示）
+    pub loading_message: Option<String>,
 }
 
 /// 待执行的操作
@@ -589,6 +594,12 @@ pub enum PendingAction {
     Reset { task_id: String },
     /// Checkout - 在主仓库 checkout 到选择的分支
     Checkout,
+}
+
+/// 后台操作结果
+pub enum BgResult {
+    MergeOk { task_id: String, task_name: String },
+    MergeErr(String),
 }
 
 impl App {
@@ -702,6 +713,8 @@ impl App {
             workspace_notifications,
             hook_panel: None,
             update_info: Some(update_info),
+            bg_result_rx: None,
+            loading_message: None,
         }
     }
 
@@ -1829,7 +1842,7 @@ impl App {
         self.merge_dialog = None;
     }
 
-    /// 执行 Merge
+    /// 执行 Merge（后台线程）
     fn do_merge(&mut self, task_id: &str, method: MergeMethod) {
         // 获取 task 信息
         let task = match tasks::get_task(&self.project.project_key, task_id) {
@@ -1840,33 +1853,58 @@ impl App {
             }
         };
 
-        let result = match method {
-            MergeMethod::Squash => {
-                // Squash merge + commit
-                git::merge_squash(&self.project.project_path, &task.branch)
-                    .and_then(|()| git::commit(&self.project.project_path, &task.name))
-            }
-            MergeMethod::MergeCommit => {
-                // Merge commit
-                let message = format!("Merge: {}", task.name);
-                git::merge_no_ff(&self.project.project_path, &task.branch, &message)
-            }
-        };
+        // 设置 loading 状态
+        self.loading_message = Some("Merging...".to_string());
 
-        match result {
-            Ok(()) => {
-                // 成功，显示询问是否 Archive 的弹窗
-                self.pending_action = Some(PendingAction::MergeArchive {
-                    task_id: task_id.to_string(),
-                });
-                self.confirm_dialog = Some(ConfirmType::MergeSuccess {
-                    task_name: task.name,
-                });
-                self.project.refresh();
-            }
-            Err(e) => {
-                // 错误信息已在 git 层格式化好
-                self.show_toast(e);
+        // 准备后台线程需要的数据
+        let repo_path = self.project.project_path.clone();
+        let branch = task.branch.clone();
+        let task_name = task.name.clone();
+        let task_id = task_id.to_string();
+
+        let (tx, rx) = mpsc::channel();
+        self.bg_result_rx = Some(rx);
+
+        std::thread::spawn(move || {
+            let result = match method {
+                MergeMethod::Squash => {
+                    // Squash merge + commit; rollback on commit failure
+                    git::merge_squash(&repo_path, &branch).and_then(|()| {
+                        git::commit(&repo_path, &task_name).inspect_err(|_| {
+                            let _ = git::reset_merge(&repo_path);
+                        })
+                    })
+                }
+                MergeMethod::MergeCommit => {
+                    let message = format!("Merge: {}", task_name);
+                    git::merge_no_ff(&repo_path, &branch, &message)
+                }
+            };
+
+            let bg_result = match result {
+                Ok(()) => BgResult::MergeOk { task_id, task_name },
+                Err(e) => BgResult::MergeErr(e),
+            };
+            let _ = tx.send(bg_result);
+        });
+    }
+
+    /// 处理后台操作结果（主循环调用）
+    pub fn poll_bg_result(&mut self) {
+        let result = self.bg_result_rx.as_ref().and_then(|rx| rx.try_recv().ok());
+        if let Some(result) = result {
+            self.bg_result_rx = None;
+            self.loading_message = None;
+
+            match result {
+                BgResult::MergeOk { task_id, task_name } => {
+                    self.project.refresh();
+                    self.pending_action = Some(PendingAction::MergeArchive { task_id });
+                    self.confirm_dialog = Some(ConfirmType::MergeSuccess { task_name });
+                }
+                BgResult::MergeErr(e) => {
+                    self.show_toast(e);
+                }
             }
         }
     }

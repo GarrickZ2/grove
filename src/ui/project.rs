@@ -185,8 +185,10 @@ pub fn render(frame: &mut Frame, app: &App) {
         colors,
     );
 
-    // 渲染 Toast（如果有）
-    if let Some(ref t) = app.toast {
+    // 渲染 Toast（优先显示 loading 消息）
+    if let Some(ref msg) = app.loading_message {
+        toast::render_loading(frame, msg, colors);
+    } else if let Some(ref t) = app.toast {
         if !t.is_expired() {
             toast::render(frame, &t.message, colors);
         }

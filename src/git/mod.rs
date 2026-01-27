@@ -1,5 +1,5 @@
 use std::path::Path;
-use std::process::Command;
+use std::process::{Command, Stdio};
 
 pub mod cache;
 
@@ -12,6 +12,7 @@ fn git_cmd(path: &str, args: &[&str]) -> Result<String, String> {
     let output = Command::new("git")
         .current_dir(path)
         .args(args)
+        .stdin(Stdio::null())
         .output()
         .map_err(|e| format!("Failed to execute git: {}", e))?;
 
@@ -37,6 +38,7 @@ fn git_cmd_check(path: &str, args: &[&str]) -> bool {
     Command::new("git")
         .current_dir(path)
         .args(args)
+        .stdin(Stdio::null())
         .output()
         .map(|o| o.status.success())
         .unwrap_or(false)
@@ -226,6 +228,7 @@ pub fn merge_squash(repo_path: &str, branch: &str) -> Result<(), String> {
     let output = Command::new("git")
         .current_dir(repo_path)
         .args(["merge", "--squash", branch])
+        .stdin(Stdio::null())
         .output()
         .map_err(|e| format!("Failed to execute git: {}", e))?;
 
@@ -244,6 +247,7 @@ pub fn merge_no_ff(repo_path: &str, branch: &str, message: &str) -> Result<(), S
     let output = Command::new("git")
         .current_dir(repo_path)
         .args(["merge", "--no-ff", branch, "-m", message])
+        .stdin(Stdio::null())
         .output()
         .map_err(|e| format!("Failed to execute git: {}", e))?;
 
@@ -281,6 +285,13 @@ fn format_merge_error(stdout: &str, stderr: &str) -> String {
     } else {
         "Merge failed".to_string()
     }
+}
+
+/// 回滚 merge 状态（用于 squash merge 后 commit 失败时回滚）
+/// 执行: git reset --merge
+/// 比 reset --hard 更安全：只回退 merge 引入的变更，保留之前已有的未提交改动
+pub fn reset_merge(repo_path: &str) -> Result<(), String> {
+    git_cmd_unit(repo_path, &["reset", "--merge"])
 }
 
 /// 提交（用于 squash merge 后）
