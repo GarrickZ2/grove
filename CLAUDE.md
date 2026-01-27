@@ -132,6 +132,21 @@ Style::default().fg(colors.highlight)
 Style::default().fg(Color::Yellow)
 ```
 
+### Pre-commit Checks
+
+A pre-commit hook is provided in `.githooks/pre-commit`. It runs the following checks before each commit:
+
+1. **`cargo fmt --all -- --check`** — code must be formatted
+2. **`cargo clippy -- -D warnings`** — no clippy warnings allowed
+3. **`cargo test`** — all tests must pass
+4. **Version bump** — `Cargo.toml` version must differ from `master` (skipped when committing on master itself)
+
+Activate the hook with:
+
+```bash
+git config core.hooksPath .githooks
+```
+
 ### Git Operations
 
 All git operations are wrapped in `src/git/mod.rs`, using `std::process::Command` to call git CLI.

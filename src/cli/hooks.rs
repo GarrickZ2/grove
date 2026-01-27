@@ -122,7 +122,7 @@ pub fn execute(level: HookLevel) {
         send_banner(&title, &message);
     }
 
-    // 更新 hooks.toml
+    // 无条件记录到 hooks 文件（当用户 detach 回到 Grove 时会被清除）
     update_hooks_file(&project_path, &task_id, level.level());
 }
 

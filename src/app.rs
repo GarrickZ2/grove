@@ -766,6 +766,25 @@ impl App {
         self.pending_tmux_attach = Some(session);
     }
 
+    /// 清除指定任务的 hook 通知（根据 session 名称提取 task_id）
+    /// session 格式: grove-{project_key}-{task_id}
+    pub fn clear_task_hook_by_session(&mut self, session: &str) {
+        // 从 session 名称提取 task_id
+        // 格式: grove-{project_key}-{task_id}
+        // 需要跳过 "grove-{project_key}-" 前缀
+        let prefix = format!("grove-{}-", self.project.project_key);
+        if let Some(task_id) = session.strip_prefix(&prefix) {
+            // 清除内存中的通知
+            if self.notifications.remove(task_id).is_some() {
+                // 保存到文件
+                let hooks_file = HooksFile {
+                    tasks: self.notifications.clone(),
+                };
+                let _ = hooks::save_hooks(&self.project.project_key, &hooks_file);
+            }
+        }
+    }
+
     /// 显示 Toast 消息
     pub fn show_toast(&mut self, message: impl Into<String>) {
         self.toast = Some(Toast::new(message, Duration::from_secs(2)));

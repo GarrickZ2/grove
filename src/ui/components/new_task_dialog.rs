@@ -8,7 +8,7 @@ use ratatui::{
     Frame,
 };
 
-use crate::storage::tasks::generate_branch_name;
+use crate::storage::tasks::preview_branch_name;
 use crate::theme::ThemeColors;
 
 /// 渲染 New Task 弹窗
@@ -65,7 +65,7 @@ pub fn render(frame: &mut Frame, input: &str, target_branch: &str, colors: &Them
             Style::default().fg(colors.muted),
         ))
     } else {
-        let branch = generate_branch_name(input);
+        let branch = preview_branch_name(input);
         Line::from(vec![
             Span::styled("  → ", Style::default().fg(colors.status_live)),
             Span::styled(

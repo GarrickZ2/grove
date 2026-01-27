@@ -11,7 +11,7 @@ mod tmux;
 mod ui;
 mod update;
 
-use std::io;
+use std::io::{self, Write};
 use std::time::Instant;
 
 use clap::Parser;
@@ -75,6 +75,16 @@ fn run(terminal: &mut DefaultTerminal, app: &mut App) -> io::Result<()> {
 
             // attach 到 session（阻塞，直到用户 detach）
             let _ = tmux::attach_session(&session);
+
+            // 清除 tmux detach 消息（只清除一行）
+            // \x1b[1A - 光标上移一行
+            // \x1b[2K - 清除当前行
+            // \r     - 光标移到行首
+            print!("\x1b[1A\x1b[2K\r");
+            let _ = io::stdout().flush();
+
+            // 清除该任务的 hook 通知（用户已阅）
+            app.clear_task_hook_by_session(&session);
 
             // 恢复 TUI
             *terminal = ratatui::init();

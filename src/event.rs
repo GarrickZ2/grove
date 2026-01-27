@@ -14,8 +14,8 @@ pub fn handle_events(app: &mut App) -> io::Result<bool> {
     // 检查系统主题变化（用于 Auto 模式）
     app.check_system_theme();
 
-    // 轮询事件（100ms 超时）
-    if event::poll(Duration::from_millis(100))? {
+    // 轮询事件（16ms 超时 ≈ 60fps，减少输入延迟）
+    if event::poll(Duration::from_millis(16))? {
         if let Event::Key(key) = event::read()? {
             // 只处理按下事件
             if key.kind != KeyEventKind::Press {
