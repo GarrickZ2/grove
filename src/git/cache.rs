@@ -93,7 +93,6 @@ where
 }
 
 /// 使指定前缀的缓存失效
-#[allow(dead_code)]
 pub fn invalidate_prefix(prefix: &str) {
     {
         let mut cache = STRING_CACHE.lock().unwrap();
@@ -110,7 +109,6 @@ pub fn invalidate_prefix(prefix: &str) {
 }
 
 /// 清除所有缓存
-#[allow(dead_code)]
 pub fn clear_all() {
     STRING_CACHE.lock().unwrap().clear();
     OPTION_U32_CACHE.lock().unwrap().clear();

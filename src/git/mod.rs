@@ -337,6 +337,111 @@ pub fn checkout_branch(worktree_path: &str, branch: &str) -> Result<(), String> 
 
 /// 添加所有文件并提交
 /// 执行: git add -A && git commit -m {message}
+/// Commit log entry
+#[derive(Debug, Clone)]
+pub struct LogEntry {
+    pub time_ago: String,
+    pub message: String,
+}
+
+/// 获取最近的 commit 日志
+/// 执行: git log --oneline --format="%cr\t%s" -n {count} {target}..HEAD
+pub fn recent_log(
+    worktree_path: &str,
+    target: &str,
+    count: usize,
+) -> Result<Vec<LogEntry>, String> {
+    let range = format!("{}..HEAD", target);
+    let n = format!("-{}", count);
+    let output = git_cmd(worktree_path, &["log", "--format=%cr\t%s", &n, &range])?;
+    Ok(output
+        .lines()
+        .filter(|l| !l.is_empty())
+        .map(|line| {
+            let parts: Vec<&str> = line.splitn(2, '\t').collect();
+            if parts.len() == 2 {
+                LogEntry {
+                    time_ago: parts[0].to_string(),
+                    message: parts[1].to_string(),
+                }
+            } else {
+                LogEntry {
+                    time_ago: String::new(),
+                    message: line.to_string(),
+                }
+            }
+        })
+        .collect())
+}
+
+/// 变更文件条目
+#[derive(Debug, Clone)]
+pub struct DiffStatEntry {
+    pub status: char,
+    pub path: String,
+    pub additions: u32,
+    pub deletions: u32,
+}
+
+/// 获取相对于 target 的变更文件列表（带统计）
+/// 执行: git diff --numstat --diff-filter=ACDMRT {target}
+pub fn diff_stat(worktree_path: &str, target: &str) -> Result<Vec<DiffStatEntry>, String> {
+    // 先获取 numstat（additions/deletions）
+    let numstat = git_cmd(worktree_path, &["diff", "--numstat", target])?;
+    // 再获取 name-status（状态字母）
+    let name_status = git_cmd(worktree_path, &["diff", "--name-status", target])?;
+
+    let status_map: std::collections::HashMap<&str, char> = name_status
+        .lines()
+        .filter_map(|line| {
+            let parts: Vec<&str> = line.split('\t').collect();
+            if parts.len() >= 2 {
+                Some((parts[1], parts[0].chars().next().unwrap_or('M')))
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    Ok(numstat
+        .lines()
+        .filter(|l| !l.is_empty())
+        .map(|line| {
+            let parts: Vec<&str> = line.split('\t').collect();
+            if parts.len() >= 3 {
+                let path = parts[2].to_string();
+                let status = status_map.get(path.as_str()).copied().unwrap_or('M');
+                DiffStatEntry {
+                    status,
+                    path,
+                    additions: parts[0].parse().unwrap_or(0),
+                    deletions: parts[1].parse().unwrap_or(0),
+                }
+            } else {
+                DiffStatEntry {
+                    status: '?',
+                    path: line.to_string(),
+                    additions: 0,
+                    deletions: 0,
+                }
+            }
+        })
+        .collect())
+}
+
+/// 获取未提交文件数量
+/// 执行: git status --porcelain
+pub fn uncommitted_count(path: &str) -> Result<usize, String> {
+    git_cmd(path, &["status", "--porcelain"])
+        .map(|output| output.lines().filter(|l| !l.trim().is_empty()).count())
+}
+
+/// 获取 stash 数量
+pub fn stash_count(path: &str) -> Result<usize, String> {
+    git_cmd(path, &["stash", "list"])
+        .map(|output| output.lines().filter(|l| !l.trim().is_empty()).count())
+}
+
 pub fn add_and_commit(worktree_path: &str, message: &str) -> Result<(), String> {
     // 先 add
     git_cmd_unit(worktree_path, &["add", "-A"])?;

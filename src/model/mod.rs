@@ -1,5 +1,4 @@
 pub mod loader;
-pub mod mock;
 pub mod workspace;
 pub mod worktree;
 

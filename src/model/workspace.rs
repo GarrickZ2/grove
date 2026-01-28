@@ -6,6 +6,7 @@ use ratatui::widgets::ListState;
 
 use crate::storage::tasks;
 use crate::storage::workspace::{self as storage, project_hash};
+use crate::tmux;
 
 use super::worktree::WorktreeStatus;
 
@@ -258,8 +259,8 @@ fn count_tasks(project_key: &str) -> (usize, usize) {
             // 从 worktree_path 提取项目名用于 session 命名
             // worktree_path 通常是 ~/.grove/worktrees/<hash>/<task-id>
             // 我们直接使用 project_key 和 task_id 组合
-            let session_name = format!("grove-{}-{}", project_key, t.id);
-            crate::tmux::session_exists(&session_name)
+            let session = tmux::session_name(project_key, &t.id);
+            tmux::session_exists(&session)
         })
         .count();
 
@@ -282,8 +283,8 @@ fn load_project_detail(project: &ProjectInfo) -> ProjectDetail {
         .unwrap_or_default()
         .into_iter()
         .map(|t| {
-            let session_name = format!("grove-{}-{}", project_key, t.id);
-            let status = if crate::tmux::session_exists(&session_name) {
+            let session = tmux::session_name(&project_key, &t.id);
+            let status = if tmux::session_exists(&session) {
                 WorktreeStatus::Live
             } else {
                 WorktreeStatus::Idle
