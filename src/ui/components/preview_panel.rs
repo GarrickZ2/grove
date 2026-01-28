@@ -413,12 +413,12 @@ fn render_ai_not_init(frame: &mut Frame, area: Rect, colors: &ThemeColors) {
 
     let lines = vec![
         Line::from(Span::styled(
-            "AI integration not enabled.",
+            "AI integration not available for this task.",
             Style::default().fg(colors.muted),
         )),
         Line::from(""),
         Line::from(Span::styled(
-            "Create a new task to auto-setup.",
+            "New tasks will be set up automatically.",
             Style::default().fg(colors.muted),
         )),
     ];
