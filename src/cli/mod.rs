@@ -1,6 +1,8 @@
 //! CLI 模块
 
+pub mod agent;
 pub mod hooks;
+pub mod init;
 
 use clap::{Parser, Subcommand};
 
@@ -19,5 +21,10 @@ pub enum Commands {
     Hooks {
         #[command(subcommand)]
         level: hooks::HookLevel,
+    },
+    /// AI agent commands (status, summary, todo, notes)
+    Agent {
+        #[command(subcommand)]
+        command: agent::AgentCommands,
     },
 }

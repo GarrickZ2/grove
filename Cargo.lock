@@ -487,6 +487,7 @@ dependencies = [
  "ratatui",
  "semver",
  "serde",
+ "serde_json",
  "toml",
  "ureq",
 ]
