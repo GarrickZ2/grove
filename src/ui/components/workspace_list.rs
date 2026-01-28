@@ -14,6 +14,8 @@ use crate::hooks::NotificationLevel;
 use crate::model::ProjectInfo;
 use crate::theme::ThemeColors;
 
+use super::truncate;
+
 /// 渲染居中项目列表
 pub fn render(
     frame: &mut Frame,
@@ -120,13 +122,4 @@ pub fn render(
 
     let paragraph = Paragraph::new(lines).alignment(Alignment::Center);
     frame.render_widget(paragraph, content_area);
-}
-
-/// 截断字符串
-fn truncate(s: &str, max_len: usize) -> String {
-    if s.chars().count() <= max_len {
-        s.to_string()
-    } else {
-        format!("{}…", s.chars().take(max_len - 1).collect::<String>())
-    }
 }

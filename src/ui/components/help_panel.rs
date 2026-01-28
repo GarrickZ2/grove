@@ -14,7 +14,7 @@ use crate::update::UpdateInfo;
 /// 帮助面板宽度
 const PANEL_WIDTH: u16 = 38;
 /// 帮助面板高度（增加版本信息区域）
-const PANEL_HEIGHT: u16 = 30;
+const PANEL_HEIGHT: u16 = 39;
 
 /// 渲染帮助面板
 pub fn render(frame: &mut Frame, colors: &ThemeColors, update_info: Option<&UpdateInfo>) {
@@ -59,9 +59,18 @@ fn build_help_lines(colors: &ThemeColors, update_info: Option<&UpdateInfo>) -> V
         section_header("Navigation", colors),
         key_line("j / ↓", "Move down", colors),
         key_line("k / ↑", "Move up", colors),
-        key_line("Tab", "Switch tab", colors),
-        key_line("1 / 2 / 3", "Jump to tab", colors),
+        key_line("Tab", "Toggle info panel", colors),
+        key_line("← / →", "Switch tab", colors),
+        key_line("1 / 2 / 3", "Tab / sub-tab", colors),
         key_line("Enter", "Enter worktree", colors),
+        Line::from(""),
+        // Info Panel 分组
+        section_header("Info Panel", colors),
+        key_line("1", "Git tab", colors),
+        key_line("2", "AI tab", colors),
+        key_line("3", "Notes tab", colors),
+        key_line("j / k", "Scroll notes", colors),
+        key_line("i", "Edit notes ($EDITOR)", colors),
         Line::from(""),
         // Actions 分组
         section_header("Actions", colors),

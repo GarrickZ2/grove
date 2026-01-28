@@ -1,12 +1,14 @@
 use ratatui::{
     layout::{Alignment, Rect},
-    style::{Color, Modifier, Style},
+    style::{Modifier, Style},
     widgets::{Block, Borders, Clear, Paragraph},
     Frame,
 };
 
+use crate::theme::ThemeColors;
+
 /// 在屏幕底部居中显示 Toast 消息
-pub fn render(frame: &mut Frame, message: &str) {
+pub fn render(frame: &mut Frame, message: &str, colors: &ThemeColors) {
     let area = frame.area();
 
     // 计算 Toast 尺寸和位置
@@ -24,15 +26,15 @@ pub fn render(frame: &mut Frame, message: &str) {
     let toast = Paragraph::new(message)
         .style(
             Style::default()
-                .fg(Color::White)
+                .fg(colors.text)
                 .add_modifier(Modifier::BOLD),
         )
         .alignment(Alignment::Center)
         .block(
             Block::default()
                 .borders(Borders::ALL)
-                .border_style(Style::default().fg(Color::Yellow))
-                .style(Style::default().bg(Color::DarkGray)),
+                .border_style(Style::default().fg(colors.highlight))
+                .style(Style::default().bg(colors.bg)),
         );
 
     frame.render_widget(toast, toast_area);

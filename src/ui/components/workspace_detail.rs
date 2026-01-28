@@ -14,6 +14,8 @@ use crate::hooks::NotificationLevel;
 use crate::model::{ProjectDetail, WorktreeStatus};
 use crate::theme::ThemeColors;
 
+use super::truncate;
+
 /// 渲染项目详情面板
 pub fn render(
     frame: &mut Frame,
@@ -174,13 +176,4 @@ fn shorten_path(path: &str) -> String {
         }
     }
     path.to_string()
-}
-
-/// 截断字符串
-fn truncate(s: &str, max_len: usize) -> String {
-    if s.chars().count() <= max_len {
-        s.to_string()
-    } else {
-        format!("{}…", s.chars().take(max_len - 1).collect::<String>())
-    }
 }

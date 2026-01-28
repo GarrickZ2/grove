@@ -41,7 +41,7 @@ pub fn render(frame: &mut Frame, app: &App) {
     // 渲染 Toast
     if let Some(ref t) = app.toast {
         if !t.is_expired() {
-            toast::render(frame, &t.message);
+            toast::render(frame, &t.message, colors);
         }
     }
 
