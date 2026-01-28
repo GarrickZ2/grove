@@ -3,7 +3,7 @@ use std::time::Duration;
 
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind};
 
-use crate::app::{App, AppMode};
+use crate::app::{App, AppMode, PreviewSubTab};
 use crate::model::ProjectTab;
 
 /// 处理事件，返回 true 表示应该继续运行
@@ -228,30 +228,72 @@ fn handle_project_key(app: &mut App, key: KeyEvent) {
         // 退出
         KeyCode::Char('q') => app.quit(),
 
-        // 导航 - 下移
-        KeyCode::Char('j') | KeyCode::Down => {
-            app.project.select_next();
+        // j/k - 面板打开时滚动内容，关闭时切换任务
+        KeyCode::Char('j') => {
+            if app.project.preview_visible {
+                match app.project.preview_sub_tab {
+                    PreviewSubTab::Notes => app.project.scroll_notes_down(),
+                    PreviewSubTab::Ai => app.project.scroll_ai_summary_down(),
+                    PreviewSubTab::Git => app.project.scroll_git_down(),
+                }
+            } else {
+                app.project.select_next();
+            }
+        }
+        KeyCode::Char('k') => {
+            if app.project.preview_visible {
+                match app.project.preview_sub_tab {
+                    PreviewSubTab::Notes => app.project.scroll_notes_up(),
+                    PreviewSubTab::Ai => app.project.scroll_ai_summary_up(),
+                    PreviewSubTab::Git => app.project.scroll_git_up(),
+                }
+            } else {
+                app.project.select_previous();
+            }
         }
 
-        // 导航 - 上移
-        KeyCode::Char('k') | KeyCode::Up => {
-            app.project.select_previous();
-        }
+        // Up/Down - 始终切换任务
+        KeyCode::Down => app.project.select_next(),
+        KeyCode::Up => app.project.select_previous(),
 
-        // Tab 切换
+        // Tab - 切换预览面板
         KeyCode::Tab => {
-            app.project.next_tab();
+            app.project.toggle_preview();
         }
 
-        // 数字快捷键切换 Tab
+        // 左右方向键始终切换主 Tab（Current/Other/Archived）
+        KeyCode::Left => app.project.prev_tab(),
+        KeyCode::Right => app.project.next_tab(),
+
+        // 数字快捷键：面板打开时切换 sub-tab，关闭时切换主 tab
         KeyCode::Char('1') => {
-            app.project.current_tab = ProjectTab::Current;
+            if app.project.preview_visible {
+                app.project.preview_sub_tab = PreviewSubTab::Git;
+            } else {
+                app.project.current_tab = ProjectTab::Current;
+            }
         }
         KeyCode::Char('2') => {
-            app.project.current_tab = ProjectTab::Other;
+            if app.project.preview_visible {
+                app.project.preview_sub_tab = PreviewSubTab::Ai;
+            } else {
+                app.project.current_tab = ProjectTab::Other;
+            }
         }
         KeyCode::Char('3') => {
-            app.project.current_tab = ProjectTab::Archived;
+            if app.project.preview_visible {
+                app.project.preview_sub_tab = PreviewSubTab::Notes;
+            } else {
+                app.project.current_tab = ProjectTab::Archived;
+            }
+        }
+
+        // Notes 编辑：打开外部编辑器
+        KeyCode::Char('i')
+            if app.project.preview_visible
+                && app.project.preview_sub_tab == PreviewSubTab::Notes =>
+        {
+            app.project.request_notes_edit();
         }
 
         // 功能按键 - New Task
@@ -259,7 +301,7 @@ fn handle_project_key(app: &mut App, key: KeyEvent) {
             app.open_new_task_dialog();
         }
 
-        // 功能按键 - Enter (进入 worktree)
+        // 功能按键 - Enter
         KeyCode::Enter => {
             if app.project.current_tab != ProjectTab::Archived {
                 app.enter_worktree();

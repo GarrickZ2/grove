@@ -9,8 +9,8 @@ use crate::app::App;
 
 use super::components::{
     action_palette, branch_selector, commit_dialog, confirm_dialog, empty_state, footer, header,
-    help_panel, hook_panel, input_confirm_dialog, merge_dialog, new_task_dialog, project_info,
-    search_bar, tabs, theme_selector, toast, worktree_list,
+    help_panel, hook_panel, input_confirm_dialog, merge_dialog, new_task_dialog, preview_panel,
+    project_info, search_bar, tabs, theme_selector, toast, worktree_list,
 };
 
 /// 渲染 Project 页面
@@ -129,7 +129,40 @@ pub fn render(frame: &mut Frame, app: &App) {
 
     // 渲染列表或空状态（使用过滤后的数据）
     let worktrees = app.project.filtered_worktrees();
-    if worktrees.is_empty() {
+    if app.project.preview_visible {
+        // 分割布局：左侧列表 + 右侧预览
+        let [left_area, right_area] = ratatui::layout::Layout::horizontal([
+            Constraint::Percentage(50),
+            Constraint::Percentage(50),
+        ])
+        .areas(list_area);
+
+        if worktrees.is_empty() {
+            empty_state::render(frame, left_area, app.project.current_tab, colors);
+        } else {
+            let selected = app.project.current_list_state().selected();
+            worktree_list::render(
+                frame,
+                left_area,
+                &worktrees,
+                selected,
+                colors,
+                &app.notifications,
+            );
+        }
+
+        preview_panel::render(
+            frame,
+            right_area,
+            app.project.selected_worktree(),
+            app.project.preview_sub_tab,
+            &app.project.panel_data,
+            app.project.notes_scroll,
+            app.project.ai_summary_scroll,
+            app.project.git_scroll,
+            colors,
+        );
+    } else if worktrees.is_empty() {
         empty_state::render(frame, list_area, app.project.current_tab, colors);
     } else {
         let selected = app.project.current_list_state().selected();
@@ -155,7 +188,7 @@ pub fn render(frame: &mut Frame, app: &App) {
     // 渲染 Toast（如果有）
     if let Some(ref t) = app.toast {
         if !t.is_expired() {
-            toast::render(frame, &t.message);
+            toast::render(frame, &t.message, colors);
         }
     }
 

@@ -9,7 +9,7 @@ use crate::git;
 use crate::hooks::{self, HooksFile, NotificationLevel};
 use crate::model::{loader, ProjectInfo, ProjectTab, WorkspaceState, Worktree, WorktreeStatus};
 use crate::storage::{
-    self,
+    self, ai_data, notes,
     tasks::{self, Task, TaskStatus},
     workspace::project_hash,
 };
@@ -46,6 +46,45 @@ impl Toast {
     }
 }
 
+/// 预览面板 sub-tab
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PreviewSubTab {
+    Git,
+    Ai,
+    Notes,
+}
+
+/// 面板数据缓存
+#[derive(Debug, Default)]
+pub struct PanelData {
+    /// Git tab: branch name
+    pub git_branch: String,
+    /// Git tab: target branch name
+    pub git_target: String,
+    /// Git tab: recent commits
+    pub git_log: Vec<git::LogEntry>,
+    /// Git tab: changed files
+    pub git_diff: Vec<git::DiffStatEntry>,
+    /// Git tab: uncommitted file count
+    pub git_uncommitted: usize,
+    /// Git tab: stash count
+    pub git_stash_count: usize,
+    /// Git tab: has merge conflicts
+    pub git_has_conflicts: bool,
+    /// AI tab: summary
+    pub ai_summary: String,
+    /// AI tab: TODO data
+    pub ai_todo: ai_data::TodoData,
+    /// AI tab: whether grove init has been run
+    pub ai_initialized: bool,
+    /// AI tab: TODO 是否处于活跃状态（60 秒内有更新且有未完成项）
+    pub ai_todo_active: bool,
+    /// Notes tab: content
+    pub notes_content: String,
+    /// 上次加载的 task id
+    pub last_task_id: Option<String>,
+}
+
 /// Project 页面状态
 pub struct ProjectState {
     /// 当前选中的 Tab
@@ -64,6 +103,20 @@ pub struct ProjectState {
     pub search_query: String,
     /// 每个 Tab 的过滤索引 [Current, Other, Archived]
     filtered_indices: [Vec<usize>; 3],
+    /// 预览面板是否可见
+    pub preview_visible: bool,
+    /// 当前 sub-tab
+    pub preview_sub_tab: PreviewSubTab,
+    /// 面板数据缓存
+    pub panel_data: PanelData,
+    /// Notes 滚动偏移
+    pub notes_scroll: u16,
+    /// AI Summary 滚动偏移
+    pub ai_summary_scroll: u16,
+    /// Git tab 滚动偏移
+    pub git_scroll: u16,
+    /// 待打开外部编辑器的 notes 文件路径
+    pub pending_notes_edit: Option<String>,
 }
 
 impl ProjectState {
@@ -103,6 +156,13 @@ impl ProjectState {
             search_mode: false,
             search_query: String::new(),
             filtered_indices: [current_indices, other_indices, archived_indices],
+            preview_visible: false,
+            preview_sub_tab: PreviewSubTab::Git,
+            panel_data: PanelData::default(),
+            notes_scroll: 0,
+            ai_summary_scroll: 0,
+            git_scroll: 0,
+            pending_notes_edit: None,
         }
     }
 
@@ -151,6 +211,140 @@ impl ProjectState {
         self.ensure_selection();
     }
 
+    /// 切换到上一个 Tab
+    pub fn prev_tab(&mut self) {
+        self.current_tab = match self.current_tab {
+            ProjectTab::Current => ProjectTab::Archived,
+            ProjectTab::Other => ProjectTab::Current,
+            ProjectTab::Archived => ProjectTab::Other,
+        };
+        // 懒加载 Archived tab
+        if self.current_tab == ProjectTab::Archived && self.worktrees[2].is_empty() {
+            self.load_archived();
+        }
+        self.ensure_selection();
+    }
+
+    /// 切换预览面板显示/隐藏
+    pub fn toggle_preview(&mut self) {
+        self.preview_visible = !self.preview_visible;
+        if self.preview_visible {
+            self.refresh_panel_data();
+        }
+    }
+
+    /// 刷新面板数据
+    pub fn refresh_panel_data(&mut self) {
+        let Some(wt) = self.selected_worktree_cloned() else {
+            return;
+        };
+
+        // 检查是否切换了 task，以及是否首次打开面板
+        let first_open = self.panel_data.last_task_id.is_none();
+        let changed = self.panel_data.last_task_id.as_deref() != Some(&wt.id);
+        if changed {
+            self.panel_data.last_task_id = Some(wt.id.clone());
+            self.notes_scroll = 0;
+            self.ai_summary_scroll = 0;
+            self.git_scroll = 0;
+        }
+
+        // Git data
+        self.panel_data.git_branch = git::current_branch(&wt.path).unwrap_or_default();
+        self.panel_data.git_target = wt.target.clone();
+        self.panel_data.git_log = git::recent_log(&wt.path, &wt.target, 10).unwrap_or_default();
+        self.panel_data.git_diff = git::diff_stat(&wt.path, &wt.target).unwrap_or_default();
+        self.panel_data.git_uncommitted = git::uncommitted_count(&wt.path).unwrap_or(0);
+        self.panel_data.git_stash_count = git::stash_count(&wt.path).unwrap_or(0);
+        self.panel_data.git_has_conflicts = git::has_conflicts(&wt.path);
+
+        // AI data
+        self.panel_data.ai_initialized = std::path::Path::new(&wt.path).join("GROVE.md").exists();
+        self.panel_data.ai_summary =
+            ai_data::load_summary(&self.project_key, &wt.id).unwrap_or_default();
+        self.panel_data.ai_todo = ai_data::load_todo(&self.project_key, &wt.id).unwrap_or_default();
+        let recently_updated = ai_data::todo_modified_secs_ago(&self.project_key, &wt.id)
+            .map(|secs| secs < 60)
+            .unwrap_or(false);
+        self.panel_data.ai_todo_active =
+            recently_updated && !self.panel_data.ai_todo.todo.is_empty();
+
+        // Notes data
+        self.panel_data.notes_content =
+            notes::load_notes(&self.project_key, &wt.id).unwrap_or_default();
+
+        // 智能默认 sub-tab：仅首次打开面板时设置，切换任务时保持用户选择
+        if changed && first_open {
+            let has_ai =
+                !self.panel_data.ai_summary.is_empty() || !self.panel_data.ai_todo.is_empty();
+            self.preview_sub_tab = if has_ai {
+                PreviewSubTab::Ai
+            } else {
+                PreviewSubTab::Git
+            };
+        }
+    }
+
+    /// 请求打开外部编辑器编辑 notes
+    pub fn request_notes_edit(&mut self) {
+        let Some(wt) = self.selected_worktree_cloned() else {
+            return;
+        };
+        // 确保 notes 文件存在
+        let _ = notes::save_notes_if_not_exists(&self.project_key, &wt.id);
+        if let Ok(path) = notes::notes_file_path(&self.project_key, &wt.id) {
+            self.pending_notes_edit = Some(path);
+        }
+    }
+
+    /// 向下滚动 notes
+    pub fn scroll_notes_down(&mut self) {
+        let line_count = self.panel_data.notes_content.lines().count() as u16;
+        if self.notes_scroll < line_count.saturating_sub(1) {
+            self.notes_scroll += 1;
+        }
+    }
+
+    /// 向上滚动 notes
+    pub fn scroll_notes_up(&mut self) {
+        self.notes_scroll = self.notes_scroll.saturating_sub(1);
+    }
+
+    /// 向下滚动 AI summary
+    pub fn scroll_ai_summary_down(&mut self) {
+        let line_count = self.panel_data.ai_summary.lines().count() as u16;
+        if self.ai_summary_scroll < line_count.saturating_sub(1) {
+            self.ai_summary_scroll += 1;
+        }
+    }
+
+    /// 向上滚动 AI summary
+    pub fn scroll_ai_summary_up(&mut self) {
+        self.ai_summary_scroll = self.ai_summary_scroll.saturating_sub(1);
+    }
+
+    /// 向下滚动 Git tab
+    pub fn scroll_git_down(&mut self) {
+        self.git_scroll += 1;
+    }
+
+    /// 向上滚动 Git tab
+    pub fn scroll_git_up(&mut self) {
+        self.git_scroll = self.git_scroll.saturating_sub(1);
+    }
+
+    /// Clone 选中的 worktree（避免借用冲突）
+    fn selected_worktree_cloned(&self) -> Option<Worktree> {
+        self.selected_worktree().cloned()
+    }
+
+    /// 获取当前选中的 worktree
+    pub fn selected_worktree(&self) -> Option<&Worktree> {
+        let filtered = self.filtered_worktrees();
+        let index = self.current_list_state().selected()?;
+        filtered.into_iter().nth(index)
+    }
+
     /// 懒加载归档任务
     fn load_archived(&mut self) {
         self.worktrees[2] = loader::load_archived_worktrees(&self.project_path);
@@ -177,6 +371,9 @@ impl ProjectState {
         let current = state.selected().unwrap_or(0);
         let next = (current + 1) % list_len;
         state.select(Some(next));
+        if self.preview_visible {
+            self.refresh_panel_data();
+        }
     }
 
     /// 选中上一项
@@ -194,6 +391,9 @@ impl ProjectState {
             current - 1
         };
         state.select(Some(prev));
+        if self.preview_visible {
+            self.refresh_panel_data();
+        }
     }
 
     // ========== 搜索功能 ==========
@@ -656,6 +856,9 @@ impl App {
             return;
         }
 
+        // 4.5. 自动设置 AI 集成（GROVE.md + CLAUDE.md/AGENTS.md）
+        crate::cli::init::setup_worktree(worktree_path.to_str().unwrap_or("."));
+
         // 5. 保存 task 元数据
         let now = Utc::now();
         let task = Task {
@@ -676,20 +879,13 @@ impl App {
 
         // 6. 创建 session（使用 project_key 保持一致）
         let session = tmux::session_name(&project_key, &slug);
-        let project_name = Path::new(&repo_root)
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("unknown")
-            .to_string();
-        let session_env = tmux::SessionEnv {
-            task_id: slug.clone(),
-            task_name: name.clone(),
-            branch: branch.clone(),
-            target: self.target_branch.clone(),
-            worktree: worktree_path.to_string_lossy().to_string(),
-            project_name,
-            project_path: repo_root.clone(),
-        };
+        let session_env = self.build_session_env(
+            &slug,
+            &name,
+            &branch,
+            &self.target_branch.clone(),
+            &worktree_path.to_string_lossy(),
+        );
         if let Err(e) = tmux::create_session(
             &session,
             worktree_path.to_str().unwrap_or("."),
@@ -732,20 +928,8 @@ impl App {
 
         // 4. 如果 session 不存在，创建它
         if !tmux::session_exists(&session) {
-            let project_name = Path::new(&self.project.project_path)
-                .file_name()
-                .and_then(|n| n.to_str())
-                .unwrap_or("unknown")
-                .to_string();
-            let session_env = tmux::SessionEnv {
-                task_id: wt.id.clone(),
-                task_name: wt.task_name.clone(),
-                branch: wt.branch.clone(),
-                target: wt.target.clone(),
-                worktree: wt.path.clone(),
-                project_name,
-                project_path: self.project.project_path.clone(),
-            };
+            let session_env =
+                self.build_session_env(&wt.id, &wt.task_name, &wt.branch, &wt.target, &wt.path);
             if let Err(e) = tmux::create_session(&session, &wt.path, Some(&session_env)) {
                 self.show_toast(format!("Session error: {}", e));
                 return;
@@ -753,14 +937,7 @@ impl App {
         }
 
         // 5. 清除该任务的通知标记
-        let task_id = &wt.id;
-        if self.notifications.remove(task_id).is_some() {
-            // 保存到文件
-            let hooks_file = HooksFile {
-                tasks: self.notifications.clone(),
-            };
-            let _ = hooks::save_hooks(&self.project.project_key, &hooks_file);
-        }
+        self.remove_notification(&wt.id.clone());
 
         // 6. 设置 pending attach（主循环会暂停 TUI，attach 完成后恢复）
         self.pending_tmux_attach = Some(session);
@@ -774,14 +951,42 @@ impl App {
         // 需要跳过 "grove-{project_key}-" 前缀
         let prefix = format!("grove-{}-", self.project.project_key);
         if let Some(task_id) = session.strip_prefix(&prefix) {
-            // 清除内存中的通知
-            if self.notifications.remove(task_id).is_some() {
-                // 保存到文件
-                let hooks_file = HooksFile {
-                    tasks: self.notifications.clone(),
-                };
-                let _ = hooks::save_hooks(&self.project.project_key, &hooks_file);
-            }
+            self.remove_notification(task_id);
+        }
+    }
+
+    /// 清除指定任务的通知标记并保存到文件
+    fn remove_notification(&mut self, task_id: &str) {
+        if self.notifications.remove(task_id).is_some() {
+            let hooks_file = HooksFile {
+                tasks: self.notifications.clone(),
+            };
+            let _ = hooks::save_hooks(&self.project.project_key, &hooks_file);
+        }
+    }
+
+    /// 构建 tmux SessionEnv
+    fn build_session_env(
+        &self,
+        task_id: &str,
+        task_name: &str,
+        branch: &str,
+        target: &str,
+        worktree: &str,
+    ) -> tmux::SessionEnv {
+        let project_name = Path::new(&self.project.project_path)
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("unknown")
+            .to_string();
+        tmux::SessionEnv {
+            task_id: task_id.to_string(),
+            task_name: task_name.to_string(),
+            branch: branch.to_string(),
+            target: target.to_string(),
+            worktree: worktree.to_string(),
+            project_name,
+            project_path: self.project.project_path.clone(),
         }
     }
 
@@ -895,7 +1100,7 @@ impl App {
 
         // 4. 删除 hook 通知
         hooks::remove_task_hook(&self.project.project_key, task_id);
-        self.notifications.remove(task_id);
+        self.remove_notification(task_id);
 
         // 5. 刷新数据
         self.project.refresh();
@@ -980,7 +1185,7 @@ impl App {
 
         // 6. 删除 hook 通知
         hooks::remove_task_hook(&self.project.project_key, task_id);
-        self.notifications.remove(task_id);
+        self.remove_notification(task_id);
 
         // 7. 刷新数据
         self.project.refresh();
@@ -1061,6 +1266,9 @@ impl App {
             return;
         }
 
+        // 5.5. 自动设置 AI 集成
+        crate::cli::init::setup_worktree(worktree_path.to_str().unwrap_or("."));
+
         // 6. 更新 task metadata (updated_at)
         if let Err(e) = tasks::touch_task(&self.project.project_key, task_id) {
             // 只是警告，不中断流程
@@ -1068,20 +1276,13 @@ impl App {
         }
 
         // 7. 创建新的 tmux session
-        let project_name = Path::new(&self.project.project_path)
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("unknown")
-            .to_string();
-        let session_env = tmux::SessionEnv {
-            task_id: task.id.clone(),
-            task_name: task.name.clone(),
-            branch: task.branch.clone(),
-            target: task.target.clone(),
-            worktree: task.worktree_path.clone(),
-            project_name,
-            project_path: self.project.project_path.clone(),
-        };
+        let session_env = self.build_session_env(
+            &task.id,
+            &task.name,
+            &task.branch,
+            &task.target,
+            &task.worktree_path,
+        );
         if let Err(e) = tmux::create_session(&session, &task.worktree_path, Some(&session_env)) {
             self.show_toast(format!("Failed to create session: {}", e));
             return;
@@ -1236,6 +1437,9 @@ impl App {
             return;
         }
 
+        // 自动设置 AI 集成
+        crate::cli::init::setup_worktree(worktree_path.to_str().unwrap_or("."));
+
         // 移回 tasks.toml
         if let Err(e) = tasks::recover_task(&self.project.project_key, task_id) {
             self.show_toast(format!("Recover failed: {}", e));
@@ -1244,20 +1448,13 @@ impl App {
 
         // 创建 session
         let session = tmux::session_name(&self.project.project_key, task_id);
-        let project_name = Path::new(&self.project.project_path)
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("unknown")
-            .to_string();
-        let session_env = tmux::SessionEnv {
-            task_id: task.id.clone(),
-            task_name: task.name.clone(),
-            branch: task.branch.clone(),
-            target: task.target.clone(),
-            worktree: task.worktree_path.clone(),
-            project_name,
-            project_path: self.project.project_path.clone(),
-        };
+        let session_env = self.build_session_env(
+            &task.id,
+            &task.name,
+            &task.branch,
+            &task.target,
+            &task.worktree_path,
+        );
         if let Err(e) =
             tmux::create_session(&session, task.worktree_path.as_str(), Some(&session_env))
         {
