@@ -33,6 +33,9 @@ fn main() -> io::Result<()> {
             Commands::Hooks { level } => {
                 cli::hooks::execute(level);
             }
+            Commands::Agent { command } => {
+                cli::agent::execute(command);
+            }
         }
         return Ok(());
     }
@@ -94,9 +97,29 @@ fn run(terminal: &mut DefaultTerminal, app: &mut App) -> io::Result<()> {
             last_refresh = Instant::now();
         }
 
+        // 检查是否有待打开的外部编辑器
+        if let Some(file_path) = app.project.pending_notes_edit.take() {
+            // 暂停 TUI
+            ratatui::restore();
+
+            // 打开外部编辑器
+            let editor = std::env::var("EDITOR").unwrap_or_else(|_| "vim".to_string());
+            let _ = std::process::Command::new(&editor).arg(&file_path).status();
+
+            // 恢复 TUI
+            *terminal = ratatui::init();
+
+            // 重新加载 notes 内容
+            app.project.refresh_panel_data();
+        }
+
         // 定时自动刷新（每 5 秒）
         if last_refresh.elapsed().as_secs() >= AUTO_REFRESH_INTERVAL_SECS {
             app.refresh();
+            // 同时刷新面板数据
+            if app.mode == AppMode::Project && app.project.preview_visible {
+                app.project.refresh_panel_data();
+            }
             last_refresh = Instant::now();
         }
 
