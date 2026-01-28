@@ -59,10 +59,7 @@ fn load_project_metadata(project_hash: &str) -> io::Result<Option<RegisteredProj
         return Ok(None);
     }
 
-    let content = std::fs::read_to_string(&path)?;
-    let project: RegisteredProject =
-        toml::from_str(&content).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
-
+    let project: RegisteredProject = super::load_toml(&path)?;
     Ok(Some(project))
 }
 
@@ -70,12 +67,7 @@ fn load_project_metadata(project_hash: &str) -> io::Result<Option<RegisteredProj
 fn save_project_metadata(project_hash: &str, project: &RegisteredProject) -> io::Result<()> {
     ensure_project_dir(project_hash)?;
     let path = project_file_path(project_hash);
-
-    let content = toml::to_string_pretty(project)
-        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
-
-    std::fs::write(&path, content)?;
-    Ok(())
+    super::save_toml(&path, project)
 }
 
 /// 加载所有注册的项目列表

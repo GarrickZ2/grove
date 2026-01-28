@@ -61,10 +61,7 @@ pub fn load_tasks(project: &str) -> io::Result<Vec<Task>> {
         return Ok(Vec::new());
     }
 
-    let content = std::fs::read_to_string(&path)?;
-    let tasks_file: TasksFile =
-        toml::from_str(&content).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
-
+    let tasks_file: TasksFile = super::load_toml(&path)?;
     Ok(tasks_file.tasks)
 }
 
@@ -76,11 +73,7 @@ pub fn save_tasks(project: &str, tasks: &[Task]) -> io::Result<()> {
         tasks: tasks.to_vec(),
     };
 
-    let content = toml::to_string_pretty(&tasks_file)
-        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
-
-    std::fs::write(&path, content)?;
-    Ok(())
+    super::save_toml(&path, &tasks_file)
 }
 
 /// 添加单个任务
@@ -106,10 +99,7 @@ pub fn load_archived_tasks(project: &str) -> io::Result<Vec<Task>> {
         return Ok(Vec::new());
     }
 
-    let content = std::fs::read_to_string(&path)?;
-    let tasks_file: TasksFile =
-        toml::from_str(&content).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
-
+    let tasks_file: TasksFile = super::load_toml(&path)?;
     Ok(tasks_file.tasks)
 }
 
@@ -121,11 +111,7 @@ pub fn save_archived_tasks(project: &str, tasks: &[Task]) -> io::Result<()> {
         tasks: tasks.to_vec(),
     };
 
-    let content = toml::to_string_pretty(&tasks_file)
-        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
-
-    std::fs::write(&path, content)?;
-    Ok(())
+    super::save_toml(&path, &tasks_file)
 }
 
 /// 归档任务 (tasks.toml → archived.toml)
