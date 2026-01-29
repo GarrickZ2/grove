@@ -124,17 +124,22 @@ fn handle_workspace_key(app: &mut App, key: KeyEvent) {
 
         // 导航 - 下移
         KeyCode::Char('j') | KeyCode::Down => {
-            app.workspace.select_next();
+            app.workspace.select_down();
         }
 
         // 导航 - 上移
         KeyCode::Char('k') | KeyCode::Up => {
-            app.workspace.select_previous();
+            app.workspace.select_up();
         }
 
-        // Tab - 展开/折叠详情
-        KeyCode::Tab => {
-            app.workspace.toggle_expand();
+        // 导航 - 左移
+        KeyCode::Char('h') | KeyCode::Left => {
+            app.workspace.select_left();
+        }
+
+        // 导航 - 右移
+        KeyCode::Char('l') | KeyCode::Right => {
+            app.workspace.select_right();
         }
 
         // Enter - 进入项目

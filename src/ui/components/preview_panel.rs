@@ -138,7 +138,13 @@ fn render_sub_tab_bar(frame: &mut Frame, area: Rect, active: PreviewSubTab, colo
     frame.render_widget(Paragraph::new(Line::from(left_spans)), area);
 }
 
-fn render_git_tab(frame: &mut Frame, area: Rect, data: &PanelData, scroll: u16, colors: &ThemeColors) {
+fn render_git_tab(
+    frame: &mut Frame,
+    area: Rect,
+    data: &PanelData,
+    scroll: u16,
+    colors: &ThemeColors,
+) {
     let mut lines: Vec<Line> = Vec::new();
 
     // Branch → Target

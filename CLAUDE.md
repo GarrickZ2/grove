@@ -19,6 +19,11 @@ src/
 ├── main.rs              # Entry point, terminal initialization
 ├── app.rs               # App state management, core logic
 ├── event.rs             # Keyboard event handling
+├── cli/
+│   ├── mod.rs           # CLI subcommand definitions
+│   ├── agent.rs         # `grove agent` commands (status/summary/todo/notes)
+│   ├── hooks.rs         # `grove hooks` notification commands
+│   └── init.rs          # Worktree AI integration setup (GROVE.md injection)
 ├── git/
 │   └── mod.rs           # Git command wrappers
 ├── tmux/
@@ -27,21 +32,26 @@ src/
 │   ├── mod.rs
 │   ├── config.rs        # Global config read/write
 │   ├── tasks.rs         # Task data persistence
-│   └── workspace.rs     # Project registration
+│   ├── workspace.rs     # Project registration
+│   ├── ai_data.rs       # AI summary & TODO persistence
+│   └── notes.rs         # Task notes persistence
 ├── model/
 │   ├── mod.rs
 │   ├── worktree.rs      # Worktree/Task data structures
-│   ├── workspace.rs     # Workspace state
+│   ├── workspace.rs     # Workspace state (grid navigation, filtering)
 │   └── loader.rs        # Data loading logic
 ├── theme/
-│   └── mod.rs           # 8 theme definitions
+│   ├── mod.rs           # Theme enum, ThemeColors struct
+│   ├── colors.rs        # 8 theme color definitions (including accent palettes)
+│   └── detect.rs        # System dark/light mode detection
 └── ui/
     ├── mod.rs
     ├── workspace.rs     # Workspace view
     ├── project.rs       # Project view
     └── components/      # Reusable UI components
+        ├── workspace_list.rs  # Card grid with gradient color blocks
         ├── worktree_list.rs
-        ├── workspace_list.rs
+        ├── preview_panel.rs   # Side panel (Git/AI/Notes tabs)
         ├── header.rs
         ├── footer.rs
         ├── tabs.rs
@@ -99,7 +109,13 @@ All data stored in `~/.grove/`:
     └── <path-hash>/      # Hash of project path
         ├── project.toml  # Project metadata
         ├── tasks.toml    # Active tasks
-        └── archived.toml # Archived tasks
+        ├── archived.toml # Archived tasks
+        ├── ai/
+        │   └── <task-id>/
+        │       ├── summary.md   # AI agent summary
+        │       └── todo.json    # AI agent TODO list
+        └── notes/
+            └── <task-id>.md     # User-provided task notes
 ```
 
 ## Development Guidelines
@@ -132,6 +148,8 @@ Style::default().fg(colors.highlight)
 Style::default().fg(Color::Yellow)
 ```
 
+Each theme defines an `accent_palette: [Color; 10]` for workspace card gradient blocks. Use `colors.accent_palette` instead of hardcoded color arrays.
+
 ### Pre-commit Checks
 
 A pre-commit hook is provided in `.githooks/pre-commit`. It runs the following checks before each commit:
@@ -154,6 +172,21 @@ All git operations are wrapped in `src/git/mod.rs`, using `std::process::Command
 ### tmux Operations
 
 All tmux operations are wrapped in `src/tmux/mod.rs`.
+
+## CLI Subcommands
+
+Grove has two CLI subcommand groups (defined in `src/cli/`):
+
+- `grove hooks <level>` — send notification hooks (notice/warn/critical)
+- `grove agent <command>` — AI agent workflow commands (status/summary/todo/notes)
+
+### AI Integration Flow
+
+When a task is created (`create_new_task` in `app.rs`):
+1. Git worktree is created
+2. `cli::init::setup_worktree()` generates `GROVE.md` and injects into `CLAUDE.md`/`AGENTS.md`
+3. tmux session is created with `GROVE_*` environment variables
+4. Agent reads `GROVE.md` instructions and uses `grove agent` CLI to track progress
 
 ## TODO
 

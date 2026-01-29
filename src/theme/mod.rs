@@ -102,6 +102,11 @@ pub struct ThemeColors {
     pub warning: Color,
     /// 错误色 (红色) - 用于 critical 通知
     pub error: Color,
+    /// 卡片背景色调色板（8 色，用于 examples 等扩展场景）
+    #[allow(dead_code)]
+    pub card_backgrounds: [Color; 8],
+    /// 项目卡片渐变方块调色板（10 色，相邻两色做渐变）
+    pub accent_palette: [Color; 10],
 }
 
 /// 获取指定主题的颜色方案

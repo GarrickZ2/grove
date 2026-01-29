@@ -11,14 +11,8 @@ use ratatui::{
 use crate::theme::ThemeColors;
 
 /// 渲染 Workspace Footer
-pub fn render(
-    frame: &mut Frame,
-    area: Rect,
-    has_items: bool,
-    expanded: bool,
-    colors: &ThemeColors,
-) {
-    let shortcuts = get_shortcuts(has_items, expanded);
+pub fn render(frame: &mut Frame, area: Rect, has_items: bool, colors: &ThemeColors) {
+    let shortcuts = get_shortcuts(has_items);
 
     let mut spans = Vec::new();
     spans.push(Span::raw("  "));
@@ -50,12 +44,11 @@ pub fn render(
     frame.render_widget(paragraph, area);
 }
 
-fn get_shortcuts(has_items: bool, expanded: bool) -> Vec<(&'static str, &'static str)> {
+fn get_shortcuts(has_items: bool) -> Vec<(&'static str, &'static str)> {
     if has_items {
-        let expand_text = if expanded { "collapse" } else { "expand" };
         vec![
             ("Enter", "open"),
-            ("Tab", expand_text),
+            ("←→↑↓", "navigate"),
             ("a", "add"),
             ("x", "delete"),
             ("/", "search"),

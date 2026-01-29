@@ -64,6 +64,10 @@ fn main() -> io::Result<()> {
     // 恢复终端
     ratatui::restore();
 
+    // 清除终端 tab 标题（恢复默认）
+    print!("\x1b]0;\x07");
+    let _ = io::stdout().flush();
+
     result
 }
 

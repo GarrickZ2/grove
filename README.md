@@ -40,17 +40,21 @@ Grove gives each task its own **isolated universe**:
 
 ## Features
 
-🎯 **Task Dashboard** — See all tasks at a glance with live status
+**Task Dashboard** — See all tasks at a glance with live status
 
-🔀 **True Isolation** — Each task = own branch + worktree + terminal
+**True Isolation** — Each task = own branch + worktree + terminal
 
-💾 **Session Persistence** — Close Grove, reopen tomorrow, everything's still there
+**Session Persistence** — Close Grove, reopen tomorrow, everything's still there
 
-⚡ **One-Key Actions** — Create, switch, sync, merge, archive with single keystrokes
+**One-Key Actions** — Create, switch, sync, merge, archive with single keystrokes
 
-🔔 **Agent Hooks** — Get notified when AI finishes (sound + system notification)
+**Agent Hooks** — Get notified when AI finishes (sound + system notification)
 
-🎨 **8 Themes** — Dracula, Nord, Gruvbox, Tokyo Night, Catppuccin, and more
+**AI Agent Integration** — Built-in workflow for AI coding agents (Claude Code, Cursor, etc.)
+
+**Preview Panel** — Side panel with Git info, AI summaries, and notes per task
+
+**8 Themes** — Dracula, Nord, Gruvbox, Tokyo Night, Catppuccin, and more
 
 ---
 
@@ -97,6 +101,35 @@ grove hooks critical  # Something's wrong
 ```
 
 Press `h` in Grove to configure sound and notification settings.
+
+## AI Agent Integration
+
+Grove automatically sets up each task for AI coding agents. When a task is created:
+
+1. **GROVE.md** is generated in the worktree with workflow instructions
+2. **CLAUDE.md / AGENTS.md** are injected with a mandatory integration block
+3. Environment variables (`GROVE_TASK_ID`, `GROVE_PROJECT`, etc.) are set in the tmux session
+
+Agents can use the CLI to track progress:
+
+```bash
+grove agent status                              # Check task context
+grove agent notes                               # Read user-provided notes
+grove agent summary                             # Read current summary
+grove agent summary "Implemented feature X..."  # Update summary
+grove agent todo                                # Read TODO list
+grove agent todo --todo "task A" --done "task B" # Update TODOs
+```
+
+## Preview Panel
+
+Press `Tab` to toggle the side panel showing details for the selected task:
+
+- **Git** — recent commits, diff stats, uncommitted changes
+- **AI Summary** — cumulative work summary written by agents
+- **Notes** — user-provided context and requirements (editable with `e`)
+
+Use `j/k` to scroll panel content, `Left/Right` to switch sub-tabs.
 
 ---
 

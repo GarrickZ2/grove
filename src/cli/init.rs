@@ -112,7 +112,15 @@ const GROVE_INJECT_END: &str = "<!-- grove:end -->";
 
 fn grove_inject_block() -> String {
     format!(
-        "{}\nRun `grove agent status` to check if you are in a Grove-managed task.\nIf active, follow the instructions in GROVE.md.\n{}",
+        r#"{}
+IMPORTANT — Grove Task Integration
+
+At the START of every new session, you MUST run `grove agent status` as your first action.
+
+- If the output contains a task_id: you are in a Grove-managed task.
+  Read and follow ALL instructions in GROVE.md for the entire session.
+- Otherwise: ignore GROVE.md and any Grove-related context entirely.
+{}"#,
         GROVE_INJECT_START, GROVE_INJECT_END
     )
 }

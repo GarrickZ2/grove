@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::io::Write;
 use std::path::Path;
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
@@ -45,6 +46,12 @@ impl Toast {
     pub fn is_expired(&self) -> bool {
         Instant::now() >= self.expires_at
     }
+}
+
+/// 设置终端 tab 标题
+fn set_terminal_title(title: &str) {
+    let _ = write!(std::io::stdout(), "\x1b]0;{}\x07", title);
+    let _ = std::io::stdout().flush();
 }
 
 /// 预览面板 sub-tab
@@ -157,7 +164,7 @@ impl ProjectState {
             search_mode: false,
             search_query: String::new(),
             filtered_indices: [current_indices, other_indices, archived_indices],
-            preview_visible: false,
+            preview_visible: true,
             preview_sub_tab: PreviewSubTab::Git,
             panel_data: PanelData::default(),
             notes_scroll: 0,
@@ -684,6 +691,18 @@ impl App {
             None
         };
 
+        // 设置终端 tab 标题
+        match mode {
+            AppMode::Project => {
+                let name = Path::new(&project.project_path)
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("Project");
+                set_terminal_title(&format!("{} (grove)", name));
+            }
+            AppMode::Workspace => set_terminal_title("Grove"),
+        }
+
         Self {
             mode,
             workspace,
@@ -733,6 +752,8 @@ impl App {
             git::current_branch(project_path).unwrap_or_else(|_| "main".to_string());
         self.mode = AppMode::Project;
 
+        set_terminal_title(&format!("{} (grove)", project_name));
+
         // 加载 hook 通知数据（自动清理不存在的 task）
         let hooks_file = hooks::load_hooks_with_cleanup(project_path);
         self.notifications = hooks_file.tasks;
@@ -743,6 +764,7 @@ impl App {
         self.workspace.reload_projects();
         self.workspace_notifications = load_all_project_notifications(&self.workspace.projects);
         self.mode = AppMode::Workspace;
+        set_terminal_title("Grove");
     }
 
     /// 打开主题选择器

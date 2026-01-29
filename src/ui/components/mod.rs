@@ -29,7 +29,6 @@ pub mod search_bar;
 pub mod tabs;
 pub mod theme_selector;
 pub mod toast;
-pub mod workspace_detail;
 pub mod workspace_empty;
 pub mod workspace_footer;
 pub mod workspace_list;

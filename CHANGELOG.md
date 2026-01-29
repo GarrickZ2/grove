@@ -5,6 +5,52 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0] - 2026-01-28
+
+### Added
+
+- **AI Agent Integration** — `grove agent` CLI subcommand for AI-managed task workflows
+  - `grove agent status` — check if running inside a Grove-managed task
+  - `grove agent summary` — read/write cumulative task summaries
+  - `grove agent todo` — read/write TODO lists with done tracking
+  - `grove agent notes` — read user-provided task notes
+- **Grove Init for Worktrees** — automatic AI integration setup on task creation
+  - Generates `GROVE.md` workflow guide in each worktree
+  - Injects mandatory integration block into `CLAUDE.md` / `AGENTS.md`
+  - Excludes `GROVE.md` from git tracking via `.git/info/exclude`
+- **AI Data & Notes Storage** — persistent storage for agent summaries, TODOs, and notes
+  - Stored under `~/.grove/projects/<hash>/ai/<task_id>/`
+  - Notes stored under `~/.grove/projects/<hash>/notes/<task_id>.md`
+- **Preview Panel** — side panel showing task details (Git info, AI summary, notes)
+  - Scrollable content with `j/k` keys
+  - Sub-tabs: Git, AI Summary, Notes
+  - External notes editor support (`$EDITOR`)
+  - Auto-refresh on periodic data reload
+  - Now opens by default
+- **Workspace Card Grid** — redesigned workspace project list
+  - Card-style grid layout with gradient color blocks
+  - Theme-aware accent color palette (10 colors per theme)
+  - Smart path compression for long paths
+  - Grid navigation with arrow keys, scrolling support
+- **Terminal Tab Title** — sets terminal tab name based on context
+  - Workspace mode: "Grove"
+  - Project mode: "{project_name} (grove)"
+  - Restores default on exit
+- **Theme Color Palettes** — per-theme accent palettes for workspace cards
+  - Each of the 8 themes defines a unique 10-color gradient palette
+  - Card backgrounds palette added to ThemeColors
+
+### Changed
+
+- Stronger CLAUDE.md/AGENTS.md injection — mandatory first-step instruction replaces conditional check
+- Preview panel opens by default when entering Project view
+- Git helpers: added `recent_log`, `diff_stat`, `uncommitted_count`, `stash_count`
+- Fixed merged status detection: use `commits_behind` instead of `commits_ahead`
+- Improved AI tab message for legacy tasks without integration
+- Footer shortcuts updated for panel navigation
+- Theme-aware toast rendering (uses ThemeColors instead of hardcoded colors)
+- Extracted shared `truncate()` helper to `components/mod.rs`
+
 ## [0.1.6] - 2025-01-27
 
 ### Changed
