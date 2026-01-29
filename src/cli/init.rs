@@ -34,17 +34,33 @@ grove agent todo          # Current TODO items
 
 Notes are static context — only re-read if the user explicitly asks you to.
 
-If TODO is empty, analyze the user's request and create initial items.
-
-### 2. After Completing Each Task
-
-After finishing a user's request, **immediately update TODO**:
+If TODO is empty, analyze the user's request, create initial items, and **immediately send to Grove**:
 
 ```bash
-grove agent todo --todo "remaining 1" "remaining 2" --done "just finished"
+grove agent todo --todo "task 1" "task 2" "task 3"
 ```
 
-This is a **full replace** — include ALL items (remaining + done).
+### 2. TODO Tracking (REQUIRED)
+
+**Every time** you complete a task item, **immediately update Grove** — do NOT batch updates:
+
+```bash
+# After finishing "task 1":
+grove agent todo --todo "task 2" "task 3" --done "task 1"
+
+# After finishing "task 2":
+grove agent todo --todo "task 3" --done "task 1" "task 2"
+```
+
+This is a **full replace** — you must include ALL items (remaining in `--todo`, completed in `--done`) every time.
+
+If you discover new work items during implementation, add them immediately:
+
+```bash
+grove agent todo --todo "task 3" "new task found" --done "task 1" "task 2"
+```
+
+**IMPORTANT:** If you use your own built-in task/todo tools (e.g. TodoWrite, TaskCreate, TaskUpdate, or similar), you MUST also sync the same state to Grove via `grove agent todo`. Your internal tools are invisible to Grove — always mirror your task list to Grove so the user can track progress from the Grove TUI.
 
 ### 3. After Milestone / Conversation End
 
@@ -101,7 +117,9 @@ A **cumulative record** of all work on this task. Structure:
 | When | Action |
 |------|--------|
 | Conversation start | Read `notes`, `summary`, `todo` (once) |
-| After each task | Update `todo` |
+| TODO is empty | Create initial items and send `todo` immediately |
+| After each task item | Update `todo` immediately (don't batch) |
+| Discover new work | Add to `todo` immediately |
 | After milestone | Update `summary` |
 | Hit a blocker | Record in `summary` Blockers section |
 | Conversation end | Update `todo` and `summary` |
@@ -126,7 +144,7 @@ At the START of every new session, you MUST run `grove agent status` as your fir
 }
 
 /// 创建 worktree 后自动设置 AI 集成
-/// 在 worktree 目录生成 GROVE.md + 注入 CLAUDE.md/AGENTS.md + exclude GROVE.md
+/// 在 worktree 目录生成 GROVE.md + 注入 CLAUDE.md/AGENTS.md/GEMINI.md + exclude GROVE.md
 pub fn setup_worktree(worktree_path: &str) {
     let root = Path::new(worktree_path);
 
@@ -137,24 +155,30 @@ pub fn setup_worktree(worktree_path: &str) {
         return;
     }
 
-    // 2. 注入 CLAUDE.md / AGENTS.md
+    // 2. 注入 CLAUDE.md / AGENTS.md / GEMINI.md
     let claude_md = root.join("CLAUDE.md");
     let agents_md = root.join("AGENTS.md");
+    let gemini_md = root.join("GEMINI.md");
 
     let claude_exists = claude_md.exists();
     let agents_exists = agents_md.exists();
+    let gemini_exists = gemini_md.exists();
 
-    if claude_exists || agents_exists {
+    if claude_exists || agents_exists || gemini_exists {
         if claude_exists {
             inject_to_file(&claude_md);
         }
         if agents_exists {
             inject_to_file(&agents_md);
         }
+        if gemini_exists {
+            inject_to_file(&gemini_md);
+        }
     } else {
         let block = grove_inject_block();
         let _ = fs::write(&claude_md, &block);
         let _ = fs::write(&agents_md, &block);
+        let _ = fs::write(&gemini_md, &block);
     }
 
     // 3. 将 GROVE.md 加入 .git/info/exclude

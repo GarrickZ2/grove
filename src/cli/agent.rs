@@ -51,16 +51,16 @@ fn get_task_context() -> Option<(String, String)> {
 
 fn cmd_status() {
     match get_task_context() {
-        Some((task_id, project_path)) => {
+        Some((task_id, _project_path)) => {
             let task_name = env::var("GROVE_TASK_NAME").unwrap_or_default();
             let branch = env::var("GROVE_BRANCH").unwrap_or_default();
             let target = env::var("GROVE_TARGET").unwrap_or_default();
             let project_name = env::var("GROVE_PROJECT_NAME").unwrap_or_default();
 
-            // Check if GROVE.md exists
-            let grove_md_exists = std::path::Path::new(&project_path)
-                .join("GROVE.md")
-                .exists();
+            // Check if GROVE.md exists in the current worktree directory
+            let grove_md_exists = env::current_dir()
+                .map(|cwd| cwd.join("GROVE.md").exists())
+                .unwrap_or(false);
 
             println!("task_id={}", task_id);
             println!("task_name={}", task_name);
