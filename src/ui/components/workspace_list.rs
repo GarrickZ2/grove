@@ -15,6 +15,7 @@ use crate::hooks::NotificationLevel;
 use crate::model::workspace::WorkspaceState;
 use crate::model::ProjectInfo;
 use crate::theme::ThemeColors;
+use crate::ui::click_areas::ClickAreas;
 
 use super::truncate;
 
@@ -119,6 +120,7 @@ pub fn render(
     workspace: &mut WorkspaceState,
     colors: &ThemeColors,
     workspace_notifications: &HashMap<String, HashMap<String, NotificationLevel>>,
+    click_areas: &mut ClickAreas,
 ) {
     let project_count = workspace.filtered_indices.len();
     if project_count == 0 {
@@ -181,6 +183,7 @@ pub fn render(
             let card_x = offset_x + (col as u16) * (card_width + GAP_X);
 
             let card_area = Rect::new(card_x, card_y, card_width, CARD_HEIGHT);
+            click_areas.workspace_cards.push((card_area, idx));
             render_card(
                 frame,
                 card_area,

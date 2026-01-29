@@ -97,6 +97,7 @@ fn render_grid(frame: &mut Frame, app: &mut App, show_search: bool) {
     }
 
     // 渲染内容（卡片网格或空状态）
+    app.click_areas.workspace_content_area = Some(content_area);
     let projects = app.workspace.filtered_projects();
     if projects.is_empty() {
         workspace_empty::render(frame, content_area, colors);
@@ -107,6 +108,7 @@ fn render_grid(frame: &mut Frame, app: &mut App, show_search: bool) {
             &mut app.workspace,
             colors,
             &app.workspace_notifications,
+            &mut app.click_areas,
         );
     }
 

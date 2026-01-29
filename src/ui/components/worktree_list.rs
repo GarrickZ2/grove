@@ -10,8 +10,10 @@ use ratatui::{
 use crate::hooks::NotificationLevel;
 use crate::model::{format_relative_time, Worktree, WorktreeStatus};
 use crate::theme::ThemeColors;
+use crate::ui::click_areas::ClickAreas;
 
 /// 渲染 Worktree 列表
+#[allow(clippy::too_many_arguments)]
 pub fn render(
     frame: &mut Frame,
     area: Rect,
@@ -19,6 +21,7 @@ pub fn render(
     selected_index: Option<usize>,
     colors: &ThemeColors,
     notifications: &HashMap<String, NotificationLevel>,
+    click_areas: &mut ClickAreas,
 ) {
     // 表头
     let header = Row::new(vec![
@@ -131,6 +134,16 @@ pub fn render(
                 .bg(colors.bg_secondary)
                 .add_modifier(Modifier::BOLD),
         );
+
+    // 记录行点击区域（header 占 2 行：1 行内容 + 1 行 bottom_margin）
+    let header_height = 2u16;
+    for i in 0..worktrees.len() {
+        let row_y = area.y + header_height + i as u16;
+        if row_y < area.y + area.height {
+            let row_rect = Rect::new(area.x, row_y, area.width, 1);
+            click_areas.worktree_rows.push((row_rect, i));
+        }
+    }
 
     // 渲染表格（使用 TableState）
     let mut table_state = TableState::default();

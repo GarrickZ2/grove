@@ -15,6 +15,8 @@ use std::io::{self, Write};
 use std::time::Instant;
 
 use clap::Parser;
+use crossterm::event::{DisableMouseCapture, EnableMouseCapture};
+use crossterm::execute;
 use ratatui::DefaultTerminal;
 
 use app::{App, AppMode};
@@ -54,6 +56,7 @@ fn main() -> io::Result<()> {
 
     // 初始化终端
     let mut terminal = ratatui::init();
+    execute!(io::stdout(), EnableMouseCapture)?;
 
     // 创建应用
     let mut app = App::new();
@@ -62,6 +65,7 @@ fn main() -> io::Result<()> {
     let result = run(&mut terminal, &mut app);
 
     // 恢复终端
+    execute!(io::stdout(), DisableMouseCapture)?;
     ratatui::restore();
 
     // 清除终端 tab 标题（恢复默认）
@@ -78,6 +82,7 @@ fn run(terminal: &mut DefaultTerminal, app: &mut App) -> io::Result<()> {
         // 检查是否有待 attach 的 session
         if let Some(session) = app.pending_tmux_attach.take() {
             // 暂停 TUI
+            execute!(io::stdout(), DisableMouseCapture)?;
             ratatui::restore();
 
             // attach 到 session（阻塞，直到用户 detach）
@@ -92,6 +97,7 @@ fn run(terminal: &mut DefaultTerminal, app: &mut App) -> io::Result<()> {
 
             // 恢复 TUI
             *terminal = ratatui::init();
+            execute!(io::stdout(), EnableMouseCapture)?;
 
             // 刷新数据（用户可能在 session 中做了改动）
             app.refresh();
@@ -103,6 +109,7 @@ fn run(terminal: &mut DefaultTerminal, app: &mut App) -> io::Result<()> {
         // 检查是否有待打开的外部编辑器
         if let Some(file_path) = app.project.pending_notes_edit.take() {
             // 暂停 TUI
+            execute!(io::stdout(), DisableMouseCapture)?;
             ratatui::restore();
 
             // 打开外部编辑器
@@ -111,6 +118,7 @@ fn run(terminal: &mut DefaultTerminal, app: &mut App) -> io::Result<()> {
 
             // 恢复 TUI
             *terminal = ratatui::init();
+            execute!(io::stdout(), EnableMouseCapture)?;
 
             // 重新加载 notes 内容
             app.project.refresh_panel_data();
@@ -130,6 +138,7 @@ fn run(terminal: &mut DefaultTerminal, app: &mut App) -> io::Result<()> {
         app.poll_bg_result();
 
         // 渲染界面
+        app.click_areas.reset();
         terminal.draw(|frame| match app.mode {
             AppMode::Workspace => ui::workspace::render(frame, app),
             AppMode::Project => ui::project::render(frame, app),

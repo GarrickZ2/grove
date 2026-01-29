@@ -1,10 +1,14 @@
 use std::io;
 use std::time::Duration;
 
-use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind};
+use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, MouseButton, MouseEventKind};
 
 use crate::app::{App, AppMode, PreviewSubTab};
 use crate::model::ProjectTab;
+use crate::ui::click_areas::contains;
+
+/// 每帧最多处理的事件数（防止事件风暴阻塞渲染）
+const MAX_EVENTS_PER_FRAME: usize = 64;
 
 /// 处理事件，返回 true 表示应该继续运行
 pub fn handle_events(app: &mut App) -> io::Result<bool> {
@@ -14,14 +18,94 @@ pub fn handle_events(app: &mut App) -> io::Result<bool> {
     // 检查系统主题变化（用于 Auto 模式）
     app.check_system_theme();
 
-    // 轮询事件（16ms 超时 ≈ 60fps，减少输入延迟）
-    if event::poll(Duration::from_millis(16))? {
-        if let Event::Key(key) = event::read()? {
-            // 只处理按下事件
-            if key.kind != KeyEventKind::Press {
-                return Ok(true);
+    // 首次等待事件（16ms 超时 ≈ 60fps）
+    if !event::poll(Duration::from_millis(16))? {
+        return Ok(!app.should_quit);
+    }
+
+    // 批量排空事件队列：合并连续滚轮，保留最后一次按键
+    let mut last_key: Option<KeyEvent> = None;
+    let mut scroll_v: i32 = 0; // 竖向滚轮（正=下，负=上）
+    let mut scroll_h: i32 = 0; // 横向滚轮（正=右，负=左）
+    let mut last_scroll_col: u16 = 0;
+    let mut last_scroll_row: u16 = 0;
+    let mut other_events: Vec<crossterm::event::MouseEvent> = Vec::new();
+
+    for _ in 0..MAX_EVENTS_PER_FRAME {
+        // 第一次已经 poll 过了；后续用 0ms poll 排空剩余事件
+        match event::read()? {
+            Event::Key(key) => {
+                if key.kind == KeyEventKind::Press {
+                    // 按键不合并：逐个处理以保证操作顺序
+                    if let Some(prev_key) = last_key.take() {
+                        handle_key(app, prev_key);
+                    }
+                    last_key = Some(key);
+                }
             }
-            handle_key(app, key);
+            Event::Mouse(mouse) => {
+                match mouse.kind {
+                    MouseEventKind::ScrollDown => {
+                        scroll_v += 1;
+                        last_scroll_col = mouse.column;
+                        last_scroll_row = mouse.row;
+                    }
+                    MouseEventKind::ScrollUp => {
+                        scroll_v -= 1;
+                        last_scroll_col = mouse.column;
+                        last_scroll_row = mouse.row;
+                    }
+                    MouseEventKind::ScrollRight => {
+                        scroll_h += 1;
+                    }
+                    MouseEventKind::ScrollLeft => {
+                        scroll_h -= 1;
+                    }
+                    _ => {
+                        other_events.push(mouse);
+                    }
+                }
+            }
+            _ => {}
+        }
+
+        // 检查队列中是否还有事件（0ms = 不等待）
+        if !event::poll(Duration::ZERO)? {
+            break;
+        }
+    }
+
+    // 处理最后一个按键
+    if let Some(key) = last_key {
+        handle_key(app, key);
+    }
+
+    // 处理非滚轮鼠标事件（点击等）
+    for mouse in other_events {
+        handle_mouse(app, mouse);
+    }
+
+    // 合并竖向滚轮
+    let v_capped = scroll_v.clamp(-5, 5);
+    if v_capped > 0 {
+        for _ in 0..v_capped {
+            handle_scroll_down(app, last_scroll_col, last_scroll_row);
+        }
+    } else if v_capped < 0 {
+        for _ in 0..(-v_capped) {
+            handle_scroll_up(app, last_scroll_col, last_scroll_row);
+        }
+    }
+
+    // 合并横向滚轮（含 Shift+竖向滚轮 模拟）
+    let h_capped = scroll_h.clamp(-3, 3);
+    if h_capped > 0 {
+        for _ in 0..h_capped {
+            handle_scroll_right(app);
+        }
+    } else if h_capped < 0 {
+        for _ in 0..(-h_capped) {
+            handle_scroll_left(app);
         }
     }
 
@@ -737,5 +821,226 @@ fn handle_hook_panel_key(app: &mut App, key: KeyEvent) {
         }
 
         _ => {}
+    }
+}
+
+// ─── 鼠标事件处理 ───
+
+fn handle_mouse(app: &mut App, mouse: crossterm::event::MouseEvent) {
+    let col = mouse.column;
+    let row = mouse.row;
+
+    match mouse.kind {
+        MouseEventKind::Down(MouseButton::Left) => {
+            handle_left_click(app, col, row);
+        }
+        MouseEventKind::ScrollDown => {
+            handle_scroll_down(app, col, row);
+        }
+        MouseEventKind::ScrollUp => {
+            handle_scroll_up(app, col, row);
+        }
+        MouseEventKind::ScrollRight => {
+            handle_scroll_right(app);
+        }
+        MouseEventKind::ScrollLeft => {
+            handle_scroll_left(app);
+        }
+        _ => {}
+    }
+}
+
+fn has_active_popup(app: &App) -> bool {
+    app.show_help
+        || app.merge_dialog.is_some()
+        || app.branch_selector.is_some()
+        || app.input_confirm_dialog.is_some()
+        || app.confirm_dialog.is_some()
+        || app.show_new_task_dialog
+        || app.show_theme_selector
+        || app.add_project_dialog.is_some()
+        || app.delete_project_dialog.is_some()
+        || app.action_palette.is_some()
+        || app.commit_dialog.is_some()
+        || app.hook_panel.is_some()
+}
+
+fn handle_left_click(app: &mut App, col: u16, row: u16) {
+    let is_double = app.is_double_click(col, row);
+    app.record_click(col, row);
+
+    // 弹窗优先：有弹窗时消费点击（帮助面板点击关闭）
+    if app.show_help {
+        app.show_help = false;
+        return;
+    }
+    if has_active_popup(app) {
+        return;
+    }
+
+    match app.mode {
+        AppMode::Workspace => handle_workspace_click(app, col, row, is_double),
+        AppMode::Project => handle_project_click(app, col, row, is_double),
+    }
+}
+
+fn handle_workspace_click(app: &mut App, col: u16, row: u16, is_double: bool) {
+    // 检查卡片点击
+    let clicked = app
+        .click_areas
+        .workspace_cards
+        .iter()
+        .find(|(rect, _)| contains(rect, col, row))
+        .map(|(_, idx)| *idx);
+
+    if let Some(idx) = clicked {
+        app.workspace.selected_index = Some(idx);
+        if is_double {
+            if let Some(project) = app.workspace.selected_project() {
+                let path = project.path.clone();
+                app.enter_project(&path);
+            }
+        }
+    }
+}
+
+fn handle_project_click(app: &mut App, col: u16, row: u16, is_double: bool) {
+    // 检查 header 区域（点击返回 Workspace）
+    if let Some(area) = app.click_areas.project_header_area {
+        if contains(&area, col, row) {
+            app.back_to_workspace();
+            return;
+        }
+    }
+
+    // 检查 project tabs
+    let clicked_tab = app
+        .click_areas
+        .project_tabs
+        .iter()
+        .find(|(rect, _)| contains(rect, col, row))
+        .map(|(_, tab)| *tab);
+
+    if let Some(tab) = clicked_tab {
+        app.project.switch_to_tab(tab);
+        return;
+    }
+
+    // 检查 preview sub-tabs
+    let clicked_sub = app
+        .click_areas
+        .preview_sub_tabs
+        .iter()
+        .find(|(rect, _)| contains(rect, col, row))
+        .map(|(_, sub)| *sub);
+
+    if let Some(sub_tab) = clicked_sub {
+        app.project.preview_sub_tab = sub_tab;
+        return;
+    }
+
+    // 检查 worktree 行
+    let clicked_row = app
+        .click_areas
+        .worktree_rows
+        .iter()
+        .find(|(rect, _)| contains(rect, col, row))
+        .map(|(_, idx)| *idx);
+
+    if let Some(idx) = clicked_row {
+        app.project.current_list_state_mut().select(Some(idx));
+        if app.project.preview_visible {
+            app.project.refresh_panel_data();
+        }
+        if is_double && app.project.current_tab != ProjectTab::Archived {
+            app.enter_worktree();
+        }
+    }
+}
+
+fn handle_scroll_down(app: &mut App, col: u16, row: u16) {
+    if has_active_popup(app) {
+        return;
+    }
+
+    match app.mode {
+        AppMode::Workspace => {
+            if let Some(area) = app.click_areas.workspace_content_area {
+                if contains(&area, col, row) {
+                    app.workspace.select_down();
+                }
+            }
+        }
+        AppMode::Project => {
+            // 优先检查 preview 区域
+            if let Some(area) = app.click_areas.preview_content_area {
+                if contains(&area, col, row) {
+                    match app.project.preview_sub_tab {
+                        PreviewSubTab::Notes => app.project.scroll_notes_down(),
+                        PreviewSubTab::Ai => app.project.scroll_ai_summary_down(),
+                        PreviewSubTab::Git => app.project.scroll_git_down(),
+                    }
+                    return;
+                }
+            }
+            if let Some(area) = app.click_areas.worktree_list_area {
+                if contains(&area, col, row) {
+                    app.project.select_next();
+                }
+            }
+        }
+    }
+}
+
+fn handle_scroll_up(app: &mut App, col: u16, row: u16) {
+    if has_active_popup(app) {
+        return;
+    }
+
+    match app.mode {
+        AppMode::Workspace => {
+            if let Some(area) = app.click_areas.workspace_content_area {
+                if contains(&area, col, row) {
+                    app.workspace.select_up();
+                }
+            }
+        }
+        AppMode::Project => {
+            if let Some(area) = app.click_areas.preview_content_area {
+                if contains(&area, col, row) {
+                    match app.project.preview_sub_tab {
+                        PreviewSubTab::Notes => app.project.scroll_notes_up(),
+                        PreviewSubTab::Ai => app.project.scroll_ai_summary_up(),
+                        PreviewSubTab::Git => app.project.scroll_git_up(),
+                    }
+                    return;
+                }
+            }
+            if let Some(area) = app.click_areas.worktree_list_area {
+                if contains(&area, col, row) {
+                    app.project.select_previous();
+                }
+            }
+        }
+    }
+}
+
+fn handle_scroll_right(app: &mut App) {
+    if has_active_popup(app) {
+        return;
+    }
+    match app.mode {
+        AppMode::Workspace => app.workspace.select_right(),
+        AppMode::Project => app.project.next_tab(),
+    }
+}
+
+fn handle_scroll_left(app: &mut App) {
+    if has_active_popup(app) {
+        return;
+    }
+    match app.mode {
+        AppMode::Workspace => app.workspace.select_left(),
+        AppMode::Project => app.project.prev_tab(),
     }
 }

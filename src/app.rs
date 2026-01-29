@@ -26,6 +26,7 @@ use crate::ui::components::delete_project_dialog::{DeleteMode, DeleteProjectData
 use crate::ui::components::hook_panel::{HookConfigData, HookConfigStep};
 use crate::ui::components::input_confirm_dialog::InputConfirmData;
 use crate::ui::components::merge_dialog::{MergeDialogData, MergeMethod};
+use crate::ui::click_areas::ClickAreas;
 use crate::update::UpdateInfo;
 
 /// Toast 消息
@@ -228,6 +229,15 @@ impl ProjectState {
         };
         // 懒加载 Archived tab
         if self.current_tab == ProjectTab::Archived && self.worktrees[2].is_empty() {
+            self.load_archived();
+        }
+        self.ensure_selection();
+    }
+
+    /// 切换到指定 Tab（鼠标点击用）
+    pub fn switch_to_tab(&mut self, tab: ProjectTab) {
+        self.current_tab = tab;
+        if tab == ProjectTab::Archived && self.worktrees[2].is_empty() {
             self.load_archived();
         }
         self.ensure_selection();
@@ -578,6 +588,12 @@ pub struct App {
     pub bg_result_rx: Option<mpsc::Receiver<BgResult>>,
     /// Loading 消息（后台操作进行中时显示）
     pub loading_message: Option<String>,
+    /// 可点击区域缓存（每帧渲染时填充）
+    pub click_areas: ClickAreas,
+    /// 上次点击时间（双击检测）
+    pub last_click_time: Instant,
+    /// 上次点击位置（双击检测）
+    pub last_click_pos: (u16, u16),
 }
 
 /// 待执行的操作
@@ -734,7 +750,22 @@ impl App {
             update_info: Some(update_info),
             bg_result_rx: None,
             loading_message: None,
+            click_areas: ClickAreas::default(),
+            last_click_time: Instant::now() - Duration::from_secs(10),
+            last_click_pos: (0, 0),
         }
+    }
+
+    /// 检测是否为双击（400ms 内同位置）
+    pub fn is_double_click(&self, col: u16, row: u16) -> bool {
+        self.last_click_time.elapsed() < Duration::from_millis(400)
+            && self.last_click_pos == (col, row)
+    }
+
+    /// 记录点击位置和时间
+    pub fn record_click(&mut self, col: u16, row: u16) {
+        self.last_click_time = Instant::now();
+        self.last_click_pos = (col, row);
     }
 
     /// 从 Workspace 进入 Project

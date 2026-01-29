@@ -14,7 +14,7 @@ use super::components::{
 };
 
 /// 渲染 Project 页面
-pub fn render(frame: &mut Frame, app: &App) {
+pub fn render(frame: &mut Frame, app: &mut App) {
     let area = frame.area();
     let colors = &app.colors;
 
@@ -67,7 +67,8 @@ pub fn render(frame: &mut Frame, app: &App) {
             )
         };
 
-    // 渲染 Header
+    // 渲染 Header（点击可返回 Workspace）
+    app.click_areas.project_header_area = Some(header_area);
     header::render(
         frame,
         header_area,
@@ -114,7 +115,13 @@ pub fn render(frame: &mut Frame, app: &App) {
     project_info::render(frame, project_info_area, &project_info_data, colors);
 
     // 渲染 Tabs
-    tabs::render(frame, tabs_area, app.project.current_tab, colors);
+    tabs::render(
+        frame,
+        tabs_area,
+        app.project.current_tab,
+        colors,
+        &mut app.click_areas,
+    );
 
     // 渲染搜索框（如果有搜索内容或正在输入）
     if let Some(search_area) = search_area {
@@ -137,6 +144,9 @@ pub fn render(frame: &mut Frame, app: &App) {
         ])
         .areas(list_area);
 
+        app.click_areas.worktree_list_area = Some(left_area);
+        app.click_areas.preview_content_area = Some(right_area);
+
         if worktrees.is_empty() {
             empty_state::render(frame, left_area, app.project.current_tab, colors);
         } else {
@@ -148,6 +158,7 @@ pub fn render(frame: &mut Frame, app: &App) {
                 selected,
                 colors,
                 &app.notifications,
+                &mut app.click_areas,
             );
         }
 
@@ -161,10 +172,12 @@ pub fn render(frame: &mut Frame, app: &App) {
             app.project.ai_summary_scroll,
             app.project.git_scroll,
             colors,
+            &mut app.click_areas,
         );
     } else if worktrees.is_empty() {
         empty_state::render(frame, list_area, app.project.current_tab, colors);
     } else {
+        app.click_areas.worktree_list_area = Some(list_area);
         let selected = app.project.current_list_state().selected();
         worktree_list::render(
             frame,
@@ -173,6 +186,7 @@ pub fn render(frame: &mut Frame, app: &App) {
             selected,
             colors,
             &app.notifications,
+            &mut app.click_areas,
         );
     }
 

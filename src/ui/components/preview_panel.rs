@@ -9,6 +9,7 @@ use ratatui::{
 use crate::app::{PanelData, PreviewSubTab};
 use crate::model::{Worktree, WorktreeStatus};
 use crate::theme::ThemeColors;
+use crate::ui::click_areas::ClickAreas;
 
 const SPINNER_FRAMES: &[char] = &['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
 
@@ -24,6 +25,7 @@ pub fn render(
     ai_summary_scroll: u16,
     git_scroll: u16,
     colors: &ThemeColors,
+    click_areas: &mut ClickAreas,
 ) {
     let (title, border_color) = if let Some(wt) = worktree {
         let icon = wt.status.icon();
@@ -69,7 +71,7 @@ pub fn render(
     .areas(inner);
 
     // Render sub-tab bar
-    render_sub_tab_bar(frame, tab_bar_area, sub_tab, colors);
+    render_sub_tab_bar(frame, tab_bar_area, sub_tab, colors, click_areas);
 
     // Render separator
     let sep_text = "─".repeat(sep_area.width as usize);
@@ -93,7 +95,13 @@ pub fn render(
     }
 }
 
-fn render_sub_tab_bar(frame: &mut Frame, area: Rect, active: PreviewSubTab, colors: &ThemeColors) {
+fn render_sub_tab_bar(
+    frame: &mut Frame,
+    area: Rect,
+    active: PreviewSubTab,
+    colors: &ThemeColors,
+    click_areas: &mut ClickAreas,
+) {
     let tabs = [
         (PreviewSubTab::Git, "1:Git"),
         (PreviewSubTab::Ai, "2:AI"),
@@ -119,6 +127,18 @@ fn render_sub_tab_bar(frame: &mut Frame, area: Rect, active: PreviewSubTab, colo
         }
         if i < tabs.len() - 1 {
             left_spans.push(Span::styled("  ", Style::default().fg(colors.muted)));
+        }
+    }
+
+    // 记录子 tab 点击区域
+    let mut x_offset = area.x + 1; // leading " "
+    for (i, (tab, label)) in tabs.iter().enumerate() {
+        let tab_width = (label.len() + 2) as u16; // "[label]" or " label "
+        let tab_rect = Rect::new(x_offset, area.y, tab_width, 1);
+        click_areas.preview_sub_tabs.push((tab_rect, *tab));
+        x_offset += tab_width;
+        if i < tabs.len() - 1 {
+            x_offset += 2; // separator "  "
         }
     }
 
