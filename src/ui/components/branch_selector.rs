@@ -9,6 +9,7 @@ use ratatui::{
 };
 
 use crate::theme::ThemeColors;
+use crate::ui::click_areas::{ClickAreas, DialogAction};
 
 /// 分支选择器模式
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -125,7 +126,12 @@ impl BranchSelectorData {
 }
 
 /// 渲染分支选择器
-pub fn render(frame: &mut Frame, data: &BranchSelectorData, colors: &ThemeColors) {
+pub fn render(
+    frame: &mut Frame,
+    data: &BranchSelectorData,
+    colors: &ThemeColors,
+    click_areas: &mut ClickAreas,
+) {
     let area = frame.area();
 
     // 计算弹窗尺寸
@@ -269,4 +275,33 @@ pub fn render(frame: &mut Frame, data: &BranchSelectorData, colors: &ThemeColors
     .alignment(Alignment::Center);
 
     frame.render_widget(hint, hint_area);
+
+    // 注册点击区域
+    click_areas.dialog_area = Some(popup_area);
+    let visible_items: Vec<usize> = data
+        .filtered_indices
+        .iter()
+        .enumerate()
+        .skip(visible_start)
+        .take(max_visible)
+        .map(|(i, _)| i)
+        .collect();
+    for (display_idx, &filter_idx) in visible_items.iter().enumerate() {
+        let row_rect = Rect::new(
+            list_area.x,
+            list_area.y + display_idx as u16,
+            list_area.width,
+            1,
+        );
+        click_areas.dialog_items.push((row_rect, filter_idx));
+    }
+    let half = hint_area.width / 2;
+    click_areas.dialog_buttons.push((
+        Rect::new(hint_area.x, hint_area.y, half, 1),
+        DialogAction::Confirm,
+    ));
+    click_areas.dialog_buttons.push((
+        Rect::new(hint_area.x + half, hint_area.y, hint_area.width - half, 1),
+        DialogAction::Cancel,
+    ));
 }

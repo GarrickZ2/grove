@@ -9,6 +9,7 @@ use ratatui::{
 };
 
 use crate::theme::ThemeColors;
+use crate::ui::click_areas::{ClickAreas, DialogAction};
 
 /// 确认弹窗类型
 #[derive(Debug, Clone)]
@@ -35,6 +36,8 @@ pub enum ConfirmType {
         branch: String,
         target: String,
     },
+    /// Exit - 退出 tmux session
+    ExitSession { session_name: String },
 }
 
 impl ConfirmType {
@@ -49,6 +52,7 @@ impl ConfirmType {
             ConfirmType::MergeUncommittedTarget { .. } => " Merge ",
             ConfirmType::MergeSuccess { .. } => " Success ",
             ConfirmType::Reset { .. } => " Reset ",
+            ConfirmType::ExitSession { .. } => " Exit ",
         }
     }
 
@@ -150,12 +154,27 @@ impl ConfirmType {
                     Line::from("All changes will be lost!"),
                 ]
             }
+            ConfirmType::ExitSession { session_name } => {
+                vec![
+                    Line::from("Exit this tmux session?"),
+                    Line::from(""),
+                    Line::from(format!("Session: {}", session_name)),
+                    Line::from(""),
+                    Line::from("This will close all panes"),
+                    Line::from("in the current session."),
+                ]
+            }
         }
     }
 }
 
 /// 渲染确认弹窗
-pub fn render(frame: &mut Frame, confirm_type: &ConfirmType, colors: &ThemeColors) {
+pub fn render(
+    frame: &mut Frame,
+    confirm_type: &ConfirmType,
+    colors: &ThemeColors,
+    click_areas: &mut ClickAreas,
+) {
     let area = frame.area();
 
     // 计算弹窗尺寸
@@ -225,4 +244,16 @@ pub fn render(frame: &mut Frame, confirm_type: &ConfirmType, colors: &ThemeColor
     .alignment(Alignment::Center);
 
     frame.render_widget(hint, hint_area);
+
+    // 注册点击区域
+    click_areas.dialog_area = Some(popup_area);
+    let half = hint_area.width / 2;
+    click_areas.dialog_buttons.push((
+        Rect::new(hint_area.x, hint_area.y, half, 1),
+        DialogAction::Confirm,
+    ));
+    click_areas.dialog_buttons.push((
+        Rect::new(hint_area.x + half, hint_area.y, hint_area.width - half, 1),
+        DialogAction::Cancel,
+    ));
 }

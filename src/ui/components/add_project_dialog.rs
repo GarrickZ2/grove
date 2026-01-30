@@ -9,6 +9,7 @@ use ratatui::{
 };
 
 use crate::theme::ThemeColors;
+use crate::ui::click_areas::{ClickAreas, DialogAction};
 
 /// Add Project 弹窗数据
 #[derive(Debug, Clone)]
@@ -63,7 +64,12 @@ impl Default for AddProjectData {
 }
 
 /// 渲染 Add Project 弹窗
-pub fn render(frame: &mut Frame, data: &AddProjectData, colors: &ThemeColors) {
+pub fn render(
+    frame: &mut Frame,
+    data: &AddProjectData,
+    colors: &ThemeColors,
+    click_areas: &mut ClickAreas,
+) {
     let area = frame.area();
 
     // 计算弹窗尺寸
@@ -91,8 +97,9 @@ pub fn render(frame: &mut Frame, data: &AddProjectData, colors: &ThemeColors) {
     frame.render_widget(block, popup_area);
 
     // 内部布局
+    let hint_area;
     if data.error.is_some() {
-        let [_, input_area, _, error_area, _, hint_area] = Layout::vertical([
+        let [_, input_area, _, error_area, _, ha] = Layout::vertical([
             Constraint::Length(1), // 顶部空行
             Constraint::Length(1), // 输入行
             Constraint::Length(1), // 空行
@@ -101,12 +108,13 @@ pub fn render(frame: &mut Frame, data: &AddProjectData, colors: &ThemeColors) {
             Constraint::Length(1), // 提示行
         ])
         .areas(inner_area);
+        hint_area = ha;
 
         render_input(frame, input_area, data, colors);
         render_error(frame, error_area, data, colors);
         render_hint(frame, hint_area, colors);
     } else {
-        let [_, input_area, _, _, hint_area] = Layout::vertical([
+        let [_, input_area, _, _, ha] = Layout::vertical([
             Constraint::Length(1), // 顶部空行
             Constraint::Length(1), // 输入行
             Constraint::Length(1), // 空行
@@ -114,10 +122,23 @@ pub fn render(frame: &mut Frame, data: &AddProjectData, colors: &ThemeColors) {
             Constraint::Length(1), // 提示行
         ])
         .areas(inner_area);
+        hint_area = ha;
 
         render_input(frame, input_area, data, colors);
         render_hint(frame, hint_area, colors);
     }
+
+    // 注册点击区域
+    click_areas.dialog_area = Some(popup_area);
+    let half = hint_area.width / 2;
+    click_areas.dialog_buttons.push((
+        Rect::new(hint_area.x, hint_area.y, half, 1),
+        DialogAction::Confirm,
+    ));
+    click_areas.dialog_buttons.push((
+        Rect::new(hint_area.x + half, hint_area.y, hint_area.width - half, 1),
+        DialogAction::Cancel,
+    ));
 }
 
 fn render_input(frame: &mut Frame, area: Rect, data: &AddProjectData, colors: &ThemeColors) {

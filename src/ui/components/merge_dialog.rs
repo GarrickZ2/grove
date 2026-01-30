@@ -1,7 +1,7 @@
 //! Merge 方式选择弹窗
 
 use ratatui::{
-    layout::{Alignment, Constraint, Layout},
+    layout::{Alignment, Constraint, Layout, Rect},
     style::{Modifier, Style},
     text::{Line, Span},
     widgets::Paragraph,
@@ -10,6 +10,7 @@ use ratatui::{
 
 use super::dialog_utils::{center_dialog, render_dialog_frame, render_hint, render_option};
 use crate::theme::ThemeColors;
+use crate::ui::click_areas::{ClickAreas, DialogAction};
 
 /// Merge 方式
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -60,7 +61,12 @@ const DIALOG_WIDTH: u16 = 42;
 const DIALOG_HEIGHT: u16 = 12;
 
 /// 渲染 Merge 弹窗
-pub fn render(frame: &mut Frame, data: &MergeDialogData, colors: &ThemeColors) {
+pub fn render(
+    frame: &mut Frame,
+    data: &MergeDialogData,
+    colors: &ThemeColors,
+    click_areas: &mut ClickAreas,
+) {
     let dialog_area = center_dialog(frame.area(), DIALOG_WIDTH, DIALOG_HEIGHT);
     let inner_area = render_dialog_frame(frame, dialog_area, " Merge ", colors.highlight, colors);
 
@@ -110,4 +116,25 @@ pub fn render(frame: &mut Frame, data: &MergeDialogData, colors: &ThemeColors) {
         &[("j/k", "switch"), ("Enter", "confirm"), ("Esc", "cancel")],
         colors,
     );
+
+    // 注册点击区域
+    click_areas.dialog_area = Some(dialog_area);
+    // 选项行（每个选项 1 行）
+    click_areas
+        .dialog_items
+        .push((Rect::new(options_area.x, options_area.y, options_area.width, 1), 0));
+    click_areas.dialog_items.push((
+        Rect::new(options_area.x, options_area.y + 1, options_area.width, 1),
+        1,
+    ));
+    // 按钮
+    let half = hint_area.width / 2;
+    click_areas.dialog_buttons.push((
+        Rect::new(hint_area.x, hint_area.y, half, 1),
+        DialogAction::Confirm,
+    ));
+    click_areas.dialog_buttons.push((
+        Rect::new(hint_area.x + half, hint_area.y, hint_area.width - half, 1),
+        DialogAction::Cancel,
+    ));
 }

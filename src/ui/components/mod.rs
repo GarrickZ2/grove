@@ -11,6 +11,7 @@ pub mod action_palette;
 pub mod add_project_dialog;
 pub mod branch_selector;
 pub mod commit_dialog;
+pub mod config_panel;
 pub mod confirm_dialog;
 pub mod delete_project_dialog;
 pub mod dialog_utils;

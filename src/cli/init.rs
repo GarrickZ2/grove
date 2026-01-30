@@ -144,8 +144,8 @@ At the START of every new session, you MUST run `grove agent status` as your fir
 }
 
 /// 创建 worktree 后自动设置 AI 集成
-/// 在 worktree 目录生成 GROVE.md + 注入 CLAUDE.md/AGENTS.md/GEMINI.md + exclude GROVE.md
-pub fn setup_worktree(worktree_path: &str) {
+/// 在 worktree 目录生成 GROVE.md + 注入配置中指定的上下文文档 + exclude GROVE.md
+pub fn setup_worktree(worktree_path: &str, context_docs: &[String]) {
     let root = Path::new(worktree_path);
 
     // 1. 生成 GROVE.md
@@ -155,30 +155,44 @@ pub fn setup_worktree(worktree_path: &str) {
         return;
     }
 
-    // 2. 注入 CLAUDE.md / AGENTS.md / GEMINI.md
-    let claude_md = root.join("CLAUDE.md");
-    let agents_md = root.join("AGENTS.md");
-    let gemini_md = root.join("GEMINI.md");
+    // 2. 按配置注入上下文文档
+    if context_docs.is_empty() {
+        // 无配置时保持老行为：检测已有文件或创建三个默认
+        let claude_md = root.join("CLAUDE.md");
+        let agents_md = root.join("AGENTS.md");
+        let gemini_md = root.join("GEMINI.md");
 
-    let claude_exists = claude_md.exists();
-    let agents_exists = agents_md.exists();
-    let gemini_exists = gemini_md.exists();
+        let claude_exists = claude_md.exists();
+        let agents_exists = agents_md.exists();
+        let gemini_exists = gemini_md.exists();
 
-    if claude_exists || agents_exists || gemini_exists {
-        if claude_exists {
-            inject_to_file(&claude_md);
-        }
-        if agents_exists {
-            inject_to_file(&agents_md);
-        }
-        if gemini_exists {
-            inject_to_file(&gemini_md);
+        if claude_exists || agents_exists || gemini_exists {
+            if claude_exists {
+                inject_to_file(&claude_md);
+            }
+            if agents_exists {
+                inject_to_file(&agents_md);
+            }
+            if gemini_exists {
+                inject_to_file(&gemini_md);
+            }
+        } else {
+            let block = grove_inject_block();
+            let _ = fs::write(&claude_md, &block);
+            let _ = fs::write(&agents_md, &block);
+            let _ = fs::write(&gemini_md, &block);
         }
     } else {
-        let block = grove_inject_block();
-        let _ = fs::write(&claude_md, &block);
-        let _ = fs::write(&agents_md, &block);
-        let _ = fs::write(&gemini_md, &block);
+        for doc_name in context_docs {
+            let doc_path = root.join(doc_name);
+            if doc_path.exists() {
+                inject_to_file(&doc_path);
+            } else {
+                // 文件不存在则创建
+                let block = grove_inject_block();
+                let _ = fs::write(&doc_path, &block);
+            }
+        }
     }
 
     // 3. 将 GROVE.md 加入 .git/info/exclude

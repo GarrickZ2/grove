@@ -158,7 +158,7 @@ fn render_sub_tab_bar(
     frame.render_widget(Paragraph::new(Line::from(left_spans)), area);
 }
 
-fn render_git_tab(
+pub fn render_git_tab(
     frame: &mut Frame,
     area: Rect,
     data: &PanelData,
@@ -293,7 +293,7 @@ fn render_git_tab(
     frame.render_widget(paragraph, area);
 }
 
-fn render_ai_tab(
+pub fn render_ai_tab(
     frame: &mut Frame,
     area: Rect,
     data: &PanelData,
@@ -453,7 +453,7 @@ fn render_ai_not_init(frame: &mut Frame, area: Rect, colors: &ThemeColors) {
     frame.render_widget(paragraph, center);
 }
 
-fn render_notes_tab(
+pub fn render_notes_tab(
     frame: &mut Frame,
     area: Rect,
     data: &PanelData,

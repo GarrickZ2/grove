@@ -8,8 +8,8 @@ use ratatui::{
 use crate::app::App;
 
 use super::components::{
-    action_palette, branch_selector, commit_dialog, confirm_dialog, empty_state, footer, header,
-    help_panel, hook_panel, input_confirm_dialog, merge_dialog, new_task_dialog, preview_panel,
+    action_palette, branch_selector, commit_dialog, config_panel, confirm_dialog, empty_state,
+    footer, header, help_panel, input_confirm_dialog, merge_dialog, new_task_dialog, preview_panel,
     project_info, search_bar, tabs, theme_selector, toast, worktree_list,
 };
 
@@ -210,47 +210,54 @@ pub fn render(frame: &mut Frame, app: &mut App) {
 
     // 渲染主题选择器（如果打开）
     if app.show_theme_selector {
-        theme_selector::render(frame, app.theme_selector_index, colors);
+        theme_selector::render(frame, app.theme_selector_index, colors, &mut app.click_areas);
     }
 
     // 渲染 New Task 弹窗（如果打开）
     if app.show_new_task_dialog {
-        new_task_dialog::render(frame, &app.new_task_input, &app.target_branch, colors);
+        new_task_dialog::render(
+            frame,
+            &app.new_task_input,
+            &app.target_branch,
+            colors,
+            &mut app.click_areas,
+        );
     }
 
     // 渲染确认弹窗（弱确认）
     if let Some(ref confirm_type) = app.confirm_dialog {
-        confirm_dialog::render(frame, confirm_type, colors);
+        confirm_dialog::render(frame, confirm_type, colors, &mut app.click_areas);
     }
 
     // 渲染输入确认弹窗（强确认）
     if let Some(ref data) = app.input_confirm_dialog {
-        input_confirm_dialog::render(frame, data, colors);
+        input_confirm_dialog::render(frame, data, colors, &mut app.click_areas);
     }
 
     // 渲染分支选择器
     if let Some(ref data) = app.branch_selector {
-        branch_selector::render(frame, data, colors);
+        branch_selector::render(frame, data, colors, &mut app.click_areas);
     }
 
     // 渲染 Merge 选择弹窗
     if let Some(ref data) = app.merge_dialog {
-        merge_dialog::render(frame, data, colors);
+        merge_dialog::render(frame, data, colors, &mut app.click_areas);
     }
 
     // 渲染 Action Palette
     if let Some(ref data) = app.action_palette {
-        action_palette::render(frame, data, colors);
+        action_palette::render(frame, data, colors, &mut app.click_areas);
     }
 
     // 渲染 Commit Dialog
     if let Some(ref data) = app.commit_dialog {
-        commit_dialog::render(frame, data, colors);
+        commit_dialog::render(frame, data, colors, &mut app.click_areas);
     }
 
-    // 渲染 Hook 配置面板
-    if let Some(ref data) = app.hook_panel {
-        hook_panel::render(frame, data, colors);
+    // 渲染 Config 配置面板
+    if let Some(ref data) = app.config_panel {
+        let config = crate::storage::config::load_config();
+        config_panel::render(frame, data, &config.layout, colors, &mut app.click_areas);
     }
 
     // 渲染帮助面板

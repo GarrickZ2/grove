@@ -106,7 +106,25 @@ fn run(terminal: &mut DefaultTerminal, app: &mut App) -> io::Result<()> {
             last_refresh = Instant::now();
         }
 
-        // 检查是否有待打开的外部编辑器
+        // 检查是否有待打开的外部编辑器（Monitor 模式）
+        if let Some(file_path) = app.monitor.pending_notes_edit.take() {
+            // 暂停 TUI
+            execute!(io::stdout(), DisableMouseCapture)?;
+            ratatui::restore();
+
+            // 打开外部编辑器
+            let editor = std::env::var("EDITOR").unwrap_or_else(|_| "vim".to_string());
+            let _ = std::process::Command::new(&editor).arg(&file_path).status();
+
+            // 恢复 TUI
+            *terminal = ratatui::init();
+            execute!(io::stdout(), EnableMouseCapture)?;
+
+            // 重新加载 notes 内容
+            app.monitor.refresh_panel_data();
+        }
+
+        // 检查是否有待打开的外部编辑器（Project 模式）
         if let Some(file_path) = app.project.pending_notes_edit.take() {
             // 暂停 TUI
             execute!(io::stdout(), DisableMouseCapture)?;
@@ -131,6 +149,10 @@ fn run(terminal: &mut DefaultTerminal, app: &mut App) -> io::Result<()> {
             if app.mode == AppMode::Project && app.project.preview_visible {
                 app.project.refresh_panel_data();
             }
+            // Monitor 模式自动刷新
+            if app.mode == AppMode::Monitor {
+                app.monitor.refresh_panel_data();
+            }
             last_refresh = Instant::now();
         }
 
@@ -142,6 +164,7 @@ fn run(terminal: &mut DefaultTerminal, app: &mut App) -> io::Result<()> {
         terminal.draw(|frame| match app.mode {
             AppMode::Workspace => ui::workspace::render(frame, app),
             AppMode::Project => ui::project::render(frame, app),
+            AppMode::Monitor => ui::monitor::render(frame, app),
         })?;
 
         // 处理事件

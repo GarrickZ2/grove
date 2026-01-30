@@ -9,6 +9,7 @@ use ratatui::{
 };
 
 use crate::theme::ThemeColors;
+use crate::ui::click_areas::{ClickAreas, DialogAction};
 
 /// 输入确认弹窗数据
 #[derive(Debug, Clone)]
@@ -33,7 +34,12 @@ impl InputConfirmData {
 }
 
 /// 渲染输入确认弹窗
-pub fn render(frame: &mut Frame, data: &InputConfirmData, colors: &ThemeColors) {
+pub fn render(
+    frame: &mut Frame,
+    data: &InputConfirmData,
+    colors: &ThemeColors,
+    click_areas: &mut ClickAreas,
+) {
     let area = frame.area();
 
     // 计算弹窗尺寸
@@ -130,4 +136,16 @@ pub fn render(frame: &mut Frame, data: &InputConfirmData, colors: &ThemeColors) 
     .alignment(Alignment::Center);
 
     frame.render_widget(hint, hint_area);
+
+    // 注册点击区域
+    click_areas.dialog_area = Some(popup_area);
+    let half = hint_area.width / 2;
+    click_areas.dialog_buttons.push((
+        Rect::new(hint_area.x, hint_area.y, half, 1),
+        DialogAction::Confirm,
+    ));
+    click_areas.dialog_buttons.push((
+        Rect::new(hint_area.x + half, hint_area.y, hint_area.width - half, 1),
+        DialogAction::Cancel,
+    ));
 }

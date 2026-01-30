@@ -9,6 +9,7 @@ use ratatui::{
 };
 
 use crate::theme::ThemeColors;
+use crate::ui::click_areas::{ClickAreas, DialogAction};
 
 /// 配置步骤
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -223,7 +224,12 @@ const DIALOG_WIDTH: u16 = 45;
 const DIALOG_HEIGHT: u16 = 14;
 
 /// 渲染 Hook 配置面板
-pub fn render(frame: &mut Frame, data: &HookConfigData, colors: &ThemeColors) {
+pub fn render(
+    frame: &mut Frame,
+    data: &HookConfigData,
+    colors: &ThemeColors,
+    click_areas: &mut ClickAreas,
+) {
     let area = frame.area();
 
     // 居中计算
@@ -300,6 +306,29 @@ pub fn render(frame: &mut Frame, data: &HookConfigData, colors: &ThemeColors) {
             render_result(frame, inner_area, &data.generated_command, colors);
         }
     }
+
+    // 注册点击区域
+    click_areas.dialog_area = Some(dialog_area);
+    // 注册选项行（content_area 内的每一行对应一个选项）
+    let option_count = data.current_options_count();
+    for i in 0..option_count {
+        let row_rect = Rect::new(
+            content_area.x,
+            content_area.y + i as u16,
+            content_area.width,
+            1,
+        );
+        click_areas.dialog_items.push((row_rect, i));
+    }
+    let half = hint_area.width / 2;
+    click_areas.dialog_buttons.push((
+        Rect::new(hint_area.x, hint_area.y, half, 1),
+        DialogAction::Confirm,
+    ));
+    click_areas.dialog_buttons.push((
+        Rect::new(hint_area.x + half, hint_area.y, hint_area.width - half, 1),
+        DialogAction::Cancel,
+    ));
 }
 
 fn render_step_header(

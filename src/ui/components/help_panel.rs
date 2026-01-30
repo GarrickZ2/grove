@@ -14,7 +14,7 @@ use crate::update::UpdateInfo;
 /// 帮助面板宽度
 const PANEL_WIDTH: u16 = 38;
 /// 帮助面板高度（增加版本信息区域）
-const PANEL_HEIGHT: u16 = 39;
+const PANEL_HEIGHT: u16 = 40;
 
 /// 渲染帮助面板
 pub fn render(frame: &mut Frame, colors: &ThemeColors, update_info: Option<&UpdateInfo>) {
@@ -90,6 +90,7 @@ fn build_help_lines(colors: &ThemeColors, update_info: Option<&UpdateInfo>) -> V
         Line::from(""),
         // Other 分组
         section_header("Other", colors),
+        key_line("c", "Config panel", colors),
         key_line("t", "Theme selector", colors),
         key_line("?", "This help", colors),
         key_line("q", "Quit", colors),

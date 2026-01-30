@@ -9,9 +9,15 @@ use ratatui::{
 };
 
 use crate::theme::{Theme, ThemeColors};
+use crate::ui::click_areas::{ClickAreas, DialogAction};
 
 /// 渲染主题选择器弹窗
-pub fn render(frame: &mut Frame, selected_index: usize, colors: &ThemeColors) {
+pub fn render(
+    frame: &mut Frame,
+    selected_index: usize,
+    colors: &ThemeColors,
+    click_areas: &mut ClickAreas,
+) {
     let area = frame.area();
     let themes = Theme::all();
 
@@ -83,4 +89,20 @@ pub fn render(frame: &mut Frame, selected_index: usize, colors: &ThemeColors) {
     .alignment(Alignment::Center);
 
     frame.render_widget(hint, hint_area);
+
+    // 注册点击区域
+    click_areas.dialog_area = Some(popup_area);
+    for (i, _) in themes.iter().enumerate() {
+        let row_rect = Rect::new(list_area.x, list_area.y + i as u16, list_area.width, 1);
+        click_areas.dialog_items.push((row_rect, i));
+    }
+    let half = hint_area.width / 2;
+    click_areas.dialog_buttons.push((
+        Rect::new(hint_area.x, hint_area.y, half, 1),
+        DialogAction::Confirm,
+    ));
+    click_areas.dialog_buttons.push((
+        Rect::new(hint_area.x + half, hint_area.y, hint_area.width - half, 1),
+        DialogAction::Cancel,
+    ));
 }

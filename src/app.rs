@@ -17,16 +17,18 @@ use crate::storage::{
 };
 use crate::theme::{detect_system_theme, get_theme_colors, Theme, ThemeColors};
 use crate::tmux;
+use crate::tmux::layout::TaskLayout;
+use crate::ui::click_areas::ClickAreas;
 use crate::ui::components::action_palette::{ActionPaletteData, ActionType};
 use crate::ui::components::add_project_dialog::AddProjectData;
 use crate::ui::components::branch_selector::BranchSelectorData;
 use crate::ui::components::commit_dialog::CommitDialogData;
+use crate::ui::components::config_panel::{ConfigPanelData, ConfigStep};
 use crate::ui::components::confirm_dialog::ConfirmType;
 use crate::ui::components::delete_project_dialog::{DeleteMode, DeleteProjectData};
-use crate::ui::components::hook_panel::{HookConfigData, HookConfigStep};
+use crate::ui::components::hook_panel::HookConfigStep;
 use crate::ui::components::input_confirm_dialog::InputConfirmData;
 use crate::ui::components::merge_dialog::{MergeDialogData, MergeMethod};
-use crate::ui::click_areas::ClickAreas;
 use crate::update::UpdateInfo;
 
 /// Toast 消息
@@ -524,6 +526,300 @@ pub enum AppMode {
     Workspace,
     /// Project 层级 - 任务列表
     Project,
+    /// Monitor 模式 - task 监控面板（在 tmux pane 内运行）
+    Monitor,
+}
+
+/// Monitor 焦点区域
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MonitorFocus {
+    /// 左侧操作栏
+    Sidebar,
+    /// 右侧信息面板
+    Content,
+}
+
+/// Monitor 操作列表
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MonitorAction {
+    Commit,
+    Sync,
+    Merge,
+    Archive,
+    Clean,
+    Notes,
+    Leave,
+    Exit,
+}
+
+impl MonitorAction {
+    /// 分组（带标签，UI 中组间加 section header）
+    pub fn groups() -> &'static [(&'static str, &'static [MonitorAction])] {
+        &[
+            (
+                "Git",
+                &[
+                    MonitorAction::Commit,
+                    MonitorAction::Sync,
+                    MonitorAction::Merge,
+                ],
+            ),
+            (
+                "Task",
+                &[MonitorAction::Archive, MonitorAction::Clean],
+            ),
+            ("Edit", &[MonitorAction::Notes]),
+            (
+                "Session",
+                &[MonitorAction::Leave, MonitorAction::Exit],
+            ),
+        ]
+    }
+
+    /// 扁平列表
+    pub fn all() -> Vec<MonitorAction> {
+        Self::groups()
+            .iter()
+            .flat_map(|(_, actions)| actions.iter().copied())
+            .collect()
+    }
+
+    pub fn label(&self) -> &'static str {
+        match self {
+            MonitorAction::Commit => "Commit",
+            MonitorAction::Sync => "Sync",
+            MonitorAction::Merge => "Merge",
+            MonitorAction::Archive => "Archive",
+            MonitorAction::Clean => "Clean",
+            MonitorAction::Notes => "Notes",
+            MonitorAction::Leave => "Leave",
+            MonitorAction::Exit => "Exit",
+        }
+    }
+}
+
+/// Monitor 模式状态
+#[allow(dead_code)]
+pub struct MonitorState {
+    /// 当前焦点
+    pub focus: MonitorFocus,
+    /// Sidebar 是否折叠
+    pub sidebar_collapsed: bool,
+    /// 右侧信息 tab
+    pub content_tab: PreviewSubTab,
+    /// 面板数据缓存
+    pub panel_data: PanelData,
+    /// Git tab 滚动偏移
+    pub git_scroll: u16,
+    /// AI summary 滚动偏移
+    pub ai_summary_scroll: u16,
+    /// Notes 滚动偏移
+    pub notes_scroll: u16,
+    /// Sidebar 选中操作索引
+    pub action_selected: usize,
+    /// GROVE_TASK_ID
+    pub task_id: String,
+    /// GROVE_TASK_NAME
+    pub task_name: String,
+    /// GROVE_BRANCH
+    pub branch: String,
+    /// GROVE_TARGET
+    pub target: String,
+    /// GROVE_WORKTREE
+    pub worktree_path: String,
+    /// GROVE_PROJECT_NAME
+    pub project_name: String,
+    /// GROVE_PROJECT
+    pub project_path: String,
+    /// project storage key
+    pub project_key: String,
+    /// 待打开外部编辑器的 notes 文件路径
+    pub pending_notes_edit: Option<String>,
+}
+
+impl Default for MonitorState {
+    fn default() -> Self {
+        Self {
+            focus: MonitorFocus::Sidebar,
+            sidebar_collapsed: false,
+            content_tab: PreviewSubTab::Git,
+            panel_data: PanelData::default(),
+            git_scroll: 0,
+            ai_summary_scroll: 0,
+            notes_scroll: 0,
+            action_selected: 0,
+            task_id: String::new(),
+            task_name: String::new(),
+            branch: String::new(),
+            target: String::new(),
+            worktree_path: String::new(),
+            project_name: String::new(),
+            project_path: String::new(),
+            project_key: String::new(),
+            pending_notes_edit: None,
+        }
+    }
+}
+
+impl MonitorState {
+    /// 从环境变量初始化
+    pub fn from_env() -> Self {
+        let task_id = std::env::var("GROVE_TASK_ID").unwrap_or_default();
+        let task_name = std::env::var("GROVE_TASK_NAME").unwrap_or_default();
+        let branch = std::env::var("GROVE_BRANCH").unwrap_or_default();
+        let target = std::env::var("GROVE_TARGET").unwrap_or_default();
+        let worktree_path = std::env::var("GROVE_WORKTREE").unwrap_or_default();
+        let project_name = std::env::var("GROVE_PROJECT_NAME").unwrap_or_default();
+        let project_path = std::env::var("GROVE_PROJECT").unwrap_or_default();
+        let project_key = if project_path.is_empty() {
+            String::new()
+        } else {
+            project_hash(&project_path)
+        };
+
+        let mut state = Self {
+            focus: MonitorFocus::Sidebar,
+            sidebar_collapsed: false,
+            content_tab: PreviewSubTab::Git,
+            panel_data: PanelData::default(),
+            git_scroll: 0,
+            ai_summary_scroll: 0,
+            notes_scroll: 0,
+            action_selected: 0,
+            task_id,
+            task_name,
+            branch,
+            target,
+            worktree_path,
+            project_name,
+            project_path,
+            project_key,
+            pending_notes_edit: None,
+        };
+
+        // 加载初始数据
+        state.refresh_panel_data();
+        state
+    }
+
+    /// 刷新面板数据
+    pub fn refresh_panel_data(&mut self) {
+        if self.worktree_path.is_empty() {
+            return;
+        }
+
+        // Git 数据
+        self.panel_data.git_branch = git::current_branch(&self.worktree_path).unwrap_or_default();
+        self.panel_data.git_target = self.target.clone();
+        self.panel_data.git_log =
+            git::recent_log(&self.worktree_path, &self.target, 10).unwrap_or_default();
+        self.panel_data.git_diff =
+            git::diff_stat(&self.worktree_path, &self.target).unwrap_or_default();
+        self.panel_data.git_uncommitted = git::uncommitted_count(&self.worktree_path).unwrap_or(0);
+        self.panel_data.git_stash_count = git::stash_count(&self.worktree_path).unwrap_or(0);
+        self.panel_data.git_has_conflicts = git::has_conflicts(&self.worktree_path);
+
+        // AI 数据
+        self.panel_data.ai_initialized = std::path::Path::new(&self.worktree_path)
+            .join("GROVE.md")
+            .exists();
+        self.panel_data.ai_summary =
+            ai_data::load_summary(&self.project_key, &self.task_id).unwrap_or_default();
+        self.panel_data.ai_todo =
+            ai_data::load_todo(&self.project_key, &self.task_id).unwrap_or_default();
+        let recently_updated = ai_data::todo_modified_secs_ago(&self.project_key, &self.task_id)
+            .map(|secs| secs < 60)
+            .unwrap_or(false);
+        self.panel_data.ai_todo_active =
+            recently_updated && !self.panel_data.ai_todo.todo.is_empty();
+
+        // Notes 数据
+        self.panel_data.notes_content =
+            notes::load_notes(&self.project_key, &self.task_id).unwrap_or_default();
+    }
+
+    /// Tab 键：展开/折叠 sidebar
+    pub fn toggle_sidebar(&mut self) {
+        self.sidebar_collapsed = !self.sidebar_collapsed;
+        if self.sidebar_collapsed {
+            self.focus = MonitorFocus::Content;
+        } else {
+            self.focus = MonitorFocus::Sidebar;
+        }
+    }
+
+    /// h/l 切换焦点（如果 sidebar 折叠则先展开）
+    pub fn toggle_focus(&mut self) {
+        if self.sidebar_collapsed {
+            self.sidebar_collapsed = false;
+            self.focus = MonitorFocus::Sidebar;
+        } else {
+            self.focus = match self.focus {
+                MonitorFocus::Sidebar => MonitorFocus::Content,
+                MonitorFocus::Content => MonitorFocus::Sidebar,
+            };
+        }
+    }
+
+    /// 选中下一个操作
+    pub fn action_next(&mut self) {
+        let count = MonitorAction::all().len();
+        self.action_selected = (self.action_selected + 1) % count;
+    }
+
+    /// 选中上一个操作
+    pub fn action_prev(&mut self) {
+        let count = MonitorAction::all().len();
+        if self.action_selected == 0 {
+            self.action_selected = count - 1;
+        } else {
+            self.action_selected -= 1;
+        }
+    }
+
+    /// 向下滚动当前 tab
+    pub fn scroll_down(&mut self) {
+        match self.content_tab {
+            PreviewSubTab::Notes => {
+                let line_count = self.panel_data.notes_content.lines().count() as u16;
+                if self.notes_scroll < line_count.saturating_sub(1) {
+                    self.notes_scroll += 1;
+                }
+            }
+            PreviewSubTab::Ai => {
+                let line_count = self.panel_data.ai_summary.lines().count() as u16;
+                if self.ai_summary_scroll < line_count.saturating_sub(1) {
+                    self.ai_summary_scroll += 1;
+                }
+            }
+            PreviewSubTab::Git => {
+                self.git_scroll += 1;
+            }
+        }
+    }
+
+    /// 向上滚动当前 tab
+    pub fn scroll_up(&mut self) {
+        match self.content_tab {
+            PreviewSubTab::Notes => {
+                self.notes_scroll = self.notes_scroll.saturating_sub(1);
+            }
+            PreviewSubTab::Ai => {
+                self.ai_summary_scroll = self.ai_summary_scroll.saturating_sub(1);
+            }
+            PreviewSubTab::Git => {
+                self.git_scroll = self.git_scroll.saturating_sub(1);
+            }
+        }
+    }
+
+    /// 请求打开外部编辑器编辑 notes
+    pub fn request_notes_edit(&mut self) {
+        let _ = notes::save_notes_if_not_exists(&self.project_key, &self.task_id);
+        if let Ok(path) = notes::notes_file_path(&self.project_key, &self.task_id) {
+            self.pending_notes_edit = Some(path);
+        }
+    }
 }
 
 /// 全局应用状态
@@ -580,8 +876,12 @@ pub struct App {
     pub notifications: HashMap<String, NotificationLevel>,
     /// Workspace 级别的通知数据 (project_name -> task_id -> level)
     pub workspace_notifications: HashMap<String, HashMap<String, NotificationLevel>>,
-    /// Hook 配置面板
-    pub hook_panel: Option<HookConfigData>,
+    /// Config 配置面板
+    pub config_panel: Option<ConfigPanelData>,
+    /// 当前布局预设
+    pub task_layout: TaskLayout,
+    /// Agent 启动命令
+    pub agent_command: String,
     /// Update info (version check result)
     pub update_info: Option<UpdateInfo>,
     /// 后台操作结果通道
@@ -594,6 +894,8 @@ pub struct App {
     pub last_click_time: Instant,
     /// 上次点击位置（双击检测）
     pub last_click_pos: (u16, u16),
+    /// Monitor 模式状态
+    pub monitor: MonitorState,
 }
 
 /// 待执行的操作
@@ -617,6 +919,8 @@ pub enum PendingAction {
     Reset { task_id: String },
     /// Checkout - 在主仓库 checkout 到选择的分支
     Checkout,
+    /// Exit - 退出 tmux session
+    ExitSession,
 }
 
 /// 后台操作结果
@@ -652,11 +956,30 @@ impl App {
         // 检查是否有更新，用于后续显示 Toast
         let has_update = update_info.has_update();
 
+        // 判断是否在 Monitor 模式（GROVE_TASK_ID 存在）
+        let is_monitor = std::env::var("GROVE_TASK_ID").is_ok();
+
         // 判断是否在 git 仓库中
         let is_in_git_repo = git::is_git_repo(".");
 
         let (mode, project, workspace, target_branch, notifications, workspace_notifications) =
-            if is_in_git_repo {
+            if is_monitor {
+                // Monitor 模式 - 从环境变量读取
+                let project_path = std::env::var("GROVE_PROJECT").unwrap_or_default();
+                let target = std::env::var("GROVE_TARGET").unwrap_or_else(|_| "main".to_string());
+                (
+                    AppMode::Monitor,
+                    if !project_path.is_empty() {
+                        ProjectState::new(&project_path)
+                    } else {
+                        ProjectState::default()
+                    },
+                    WorkspaceState::default(),
+                    target,
+                    HashMap::new(),
+                    HashMap::new(),
+                )
+            } else if is_in_git_repo {
                 // 在 git 仓库中 -> Project 模式
                 let project_path = git::repo_root(".").unwrap_or_else(|_| ".".to_string());
                 let target_branch =
@@ -707,8 +1030,23 @@ impl App {
             None
         };
 
+        // 初始化 Monitor 状态
+        let monitor = if is_monitor {
+            MonitorState::from_env()
+        } else {
+            MonitorState::default()
+        };
+
         // 设置终端 tab 标题
         match mode {
+            AppMode::Monitor => {
+                let task_name = &monitor.task_name;
+                if task_name.is_empty() {
+                    set_terminal_title("Grove Monitor");
+                } else {
+                    set_terminal_title(&format!("{} (monitor)", task_name));
+                }
+            }
             AppMode::Project => {
                 let name = Path::new(&project.project_path)
                     .file_name()
@@ -746,13 +1084,17 @@ impl App {
             commit_dialog: None,
             notifications,
             workspace_notifications,
-            hook_panel: None,
+            config_panel: None,
+            task_layout: TaskLayout::from_name(&config.layout.default)
+                .unwrap_or(TaskLayout::Single),
+            agent_command: config.layout.agent_command.clone().unwrap_or_default(),
             update_info: Some(update_info),
             bg_result_rx: None,
             loading_message: None,
             click_areas: ClickAreas::default(),
             last_click_time: Instant::now() - Duration::from_secs(10),
             last_click_pos: (0, 0),
+            monitor,
         }
     }
 
@@ -923,7 +1265,13 @@ impl App {
         }
 
         // 4.5. 自动设置 AI 集成（GROVE.md + CLAUDE.md/AGENTS.md）
-        crate::cli::init::setup_worktree(worktree_path.to_str().unwrap_or("."));
+        {
+            let cfg = storage::config::load_config();
+            crate::cli::init::setup_worktree(
+                worktree_path.to_str().unwrap_or("."),
+                &cfg.layout.context_docs,
+            );
+        }
 
         // 5. 保存 task 元数据
         let now = Utc::now();
@@ -962,12 +1310,24 @@ impl App {
             return;
         }
 
-        // 7. 关闭弹窗，刷新数据
+        // 7. 应用布局（如果不是 Single）
+        if self.task_layout != TaskLayout::Single {
+            if let Err(e) = tmux::layout::apply_layout(
+                &session,
+                worktree_path.to_str().unwrap_or("."),
+                &self.task_layout,
+                &self.agent_command,
+            ) {
+                self.show_toast(format!("Layout: {}", e));
+            }
+        }
+
+        // 8. 关闭弹窗，刷新数据
         self.close_new_task_dialog();
         self.project.refresh();
         self.show_toast(format!("Created: {}", name));
 
-        // 8. 标记需要 attach（主循环会暂停 TUI，attach 完成后恢复）
+        // 9. 标记需要 attach（主循环会暂停 TUI，attach 完成后恢复）
         self.pending_tmux_attach = Some(session);
     }
 
@@ -988,22 +1348,39 @@ impl App {
             return;
         }
 
-        // 3. 获取 session 名称（使用 project_key）
-        let slug = slug_from_path(&wt.path);
+        // 3. Clone 需要的数据，避免后续借用冲突
+        let wt_id = wt.id.clone();
+        let wt_task_name = wt.task_name.clone();
+        let wt_branch = wt.branch.clone();
+        let wt_target = wt.target.clone();
+        let wt_path = wt.path.clone();
+        let slug = slug_from_path(&wt_path);
         let session = tmux::session_name(&self.project.project_key, &slug);
 
         // 4. 如果 session 不存在，创建它
         if !tmux::session_exists(&session) {
             let session_env =
-                self.build_session_env(&wt.id, &wt.task_name, &wt.branch, &wt.target, &wt.path);
-            if let Err(e) = tmux::create_session(&session, &wt.path, Some(&session_env)) {
+                self.build_session_env(&wt_id, &wt_task_name, &wt_branch, &wt_target, &wt_path);
+            if let Err(e) = tmux::create_session(&session, &wt_path, Some(&session_env)) {
                 self.show_toast(format!("Session error: {}", e));
                 return;
+            }
+
+            // 应用布局
+            if self.task_layout != TaskLayout::Single {
+                if let Err(e) = tmux::layout::apply_layout(
+                    &session,
+                    &wt_path,
+                    &self.task_layout,
+                    &self.agent_command,
+                ) {
+                    self.show_toast(format!("Layout: {}", e));
+                }
             }
         }
 
         // 5. 清除该任务的通知标记
-        self.remove_notification(&wt.id.clone());
+        self.remove_notification(&wt_id);
 
         // 6. 设置 pending attach（主循环会暂停 TUI，attach 完成后恢复）
         self.pending_tmux_attach = Some(session);
@@ -1103,6 +1480,9 @@ impl App {
                 // 重新加载所有项目的通知
                 self.workspace_notifications =
                     load_all_project_notifications(&self.workspace.projects);
+            }
+            AppMode::Monitor => {
+                self.monitor.refresh_panel_data();
             }
         }
     }
@@ -1333,7 +1713,13 @@ impl App {
         }
 
         // 5.5. 自动设置 AI 集成
-        crate::cli::init::setup_worktree(worktree_path.to_str().unwrap_or("."));
+        {
+            let cfg = storage::config::load_config();
+            crate::cli::init::setup_worktree(
+                worktree_path.to_str().unwrap_or("."),
+                &cfg.layout.context_docs,
+            );
+        }
 
         // 6. 更新 task metadata (updated_at)
         if let Err(e) = tasks::touch_task(&self.project.project_key, task_id) {
@@ -1399,6 +1785,9 @@ impl App {
                 }
                 PendingAction::MergeArchive { task_id } => self.do_archive(&task_id),
                 PendingAction::Reset { task_id } => self.do_reset(&task_id),
+                PendingAction::ExitSession => {
+                    self.should_quit = true;
+                }
             }
         }
     }
@@ -1504,7 +1893,13 @@ impl App {
         }
 
         // 自动设置 AI 集成
-        crate::cli::init::setup_worktree(worktree_path.to_str().unwrap_or("."));
+        {
+            let cfg = storage::config::load_config();
+            crate::cli::init::setup_worktree(
+                worktree_path.to_str().unwrap_or("."),
+                &cfg.layout.context_docs,
+            );
+        }
 
         // 移回 tasks.toml
         if let Err(e) = tasks::recover_task(&self.project.project_key, task_id) {
@@ -2269,70 +2664,358 @@ impl App {
             }
         }
     }
-    // ========== Hook Panel 功能 ==========
+    // ========== Config Panel 功能 ==========
 
-    /// 打开 Hook 配置面板
-    pub fn open_hook_panel(&mut self) {
-        self.hook_panel = Some(HookConfigData::new());
+    /// 打开 Config 配置面板
+    pub fn open_config_panel(&mut self) {
+        let config = storage::config::load_config();
+        self.config_panel = Some(ConfigPanelData::new(&config.layout));
     }
 
-    /// Hook Panel - 上移选择
-    pub fn hook_panel_prev(&mut self) {
-        if let Some(ref mut panel) = self.hook_panel {
-            panel.select_prev();
+    /// Config Panel - 上移选择
+    pub fn config_panel_prev(&mut self) {
+        if let Some(ref mut panel) = self.config_panel {
+            match panel.step {
+                ConfigStep::Main => {
+                    if panel.main_selected == 0 {
+                        panel.main_selected = 2;
+                    } else {
+                        panel.main_selected -= 1;
+                    }
+                }
+                ConfigStep::AgentMenu => {
+                    if panel.agent_menu_selected == 0 {
+                        panel.agent_menu_selected = 1;
+                    } else {
+                        panel.agent_menu_selected -= 1;
+                    }
+                }
+                ConfigStep::SelectLayout => {
+                    let count = TaskLayout::all().len();
+                    if panel.layout_selected == 0 {
+                        panel.layout_selected = count - 1;
+                    } else {
+                        panel.layout_selected -= 1;
+                    }
+                }
+                ConfigStep::HookWizard => {
+                    panel.hook_data.select_prev();
+                }
+                ConfigStep::SelectContextDocs => {}
+                ConfigStep::EditAgentCommand => {}
+            }
         }
     }
 
-    /// Hook Panel - 下移选择
-    pub fn hook_panel_next(&mut self) {
-        if let Some(ref mut panel) = self.hook_panel {
-            panel.select_next();
+    /// Config Panel - 下移选择
+    pub fn config_panel_next(&mut self) {
+        if let Some(ref mut panel) = self.config_panel {
+            match panel.step {
+                ConfigStep::Main => {
+                    panel.main_selected = (panel.main_selected + 1) % 3;
+                }
+                ConfigStep::AgentMenu => {
+                    panel.agent_menu_selected = (panel.agent_menu_selected + 1) % 2;
+                }
+                ConfigStep::SelectLayout => {
+                    let count = TaskLayout::all().len();
+                    panel.layout_selected = (panel.layout_selected + 1) % count;
+                }
+                ConfigStep::HookWizard => {
+                    panel.hook_data.select_next();
+                }
+                ConfigStep::EditAgentCommand | ConfigStep::SelectContextDocs => {}
+            }
         }
     }
 
-    /// Hook Panel - 确认
-    pub fn hook_panel_confirm(&mut self) {
-        if let Some(ref mut panel) = self.hook_panel {
-            if panel.step == HookConfigStep::ShowResult {
-                // 已经显示结果，关闭面板
-                self.hook_panel = None;
-            } else {
-                panel.confirm();
-
-                // 如果进入结果页，复制到剪贴板
-                if panel.step == HookConfigStep::ShowResult {
-                    if let Ok(mut clipboard) = arboard::Clipboard::new() {
-                        let _ = clipboard.set_text(&panel.generated_command);
+    /// Config Panel - 确认
+    pub fn config_panel_confirm(&mut self) {
+        let step = self.config_panel.as_ref().map(|p| p.step.clone());
+        match step {
+            Some(ConfigStep::Main) => {
+                if let Some(ref mut panel) = self.config_panel {
+                    match panel.main_selected {
+                        0 => panel.step = ConfigStep::AgentMenu,
+                        1 => panel.step = ConfigStep::SelectLayout,
+                        2 => {
+                            panel.step = ConfigStep::HookWizard;
+                            panel.hook_data =
+                                crate::ui::components::hook_panel::HookConfigData::new();
+                        }
+                        _ => {}
                     }
                 }
             }
-        }
-    }
-
-    /// Hook Panel - 返回/取消
-    pub fn hook_panel_back(&mut self) {
-        if let Some(ref mut panel) = self.hook_panel {
-            if panel.step == HookConfigStep::SelectLevel {
-                // 第一步按 Esc 取消
-                self.hook_panel = None;
-            } else if panel.step == HookConfigStep::ShowResult {
-                // 结果页按 Esc 关闭
-                self.hook_panel = None;
-            } else {
-                panel.back();
+            Some(ConfigStep::AgentMenu) => {
+                if let Some(ref mut panel) = self.config_panel {
+                    match panel.agent_menu_selected {
+                        0 => panel.step = ConfigStep::EditAgentCommand,
+                        1 => panel.step = ConfigStep::SelectContextDocs,
+                        _ => {}
+                    }
+                }
             }
+            Some(ConfigStep::EditAgentCommand) => {
+                self.config_save_agent_command();
+            }
+            Some(ConfigStep::SelectLayout) => {
+                self.config_save_layout();
+            }
+            Some(ConfigStep::HookWizard) => {
+                let is_result = self
+                    .config_panel
+                    .as_ref()
+                    .map(|p| p.hook_data.step == HookConfigStep::ShowResult)
+                    .unwrap_or(false);
+
+                if is_result {
+                    // 结果页面，返回主菜单
+                    if let Some(ref mut panel) = self.config_panel {
+                        panel.step = ConfigStep::Main;
+                    }
+                } else if let Some(ref mut panel) = self.config_panel {
+                    panel.hook_data.confirm();
+
+                    // 如果进入结果页，复制到剪贴板
+                    if panel.hook_data.step == HookConfigStep::ShowResult {
+                        if let Ok(mut clipboard) = arboard::Clipboard::new() {
+                            let _ = clipboard.set_text(&panel.hook_data.generated_command);
+                        }
+                    }
+                }
+            }
+            Some(ConfigStep::SelectContextDocs) => {
+                self.config_save_context_docs();
+            }
+            None => {}
         }
     }
 
-    /// Hook Panel - 重新复制命令
-    pub fn hook_panel_copy(&mut self) {
-        if let Some(ref panel) = self.hook_panel {
-            if panel.step == HookConfigStep::ShowResult {
+    /// Config Panel - 返回/取消
+    pub fn config_panel_back(&mut self) {
+        let step = self.config_panel.as_ref().map(|p| p.step.clone());
+        match step {
+            Some(ConfigStep::Main) => {
+                self.config_panel = None;
+            }
+            Some(ConfigStep::AgentMenu) | Some(ConfigStep::SelectLayout) => {
+                if let Some(ref mut panel) = self.config_panel {
+                    panel.step = ConfigStep::Main;
+                }
+            }
+            Some(ConfigStep::EditAgentCommand) | Some(ConfigStep::SelectContextDocs) => {
+                // 返回 Agent 子菜单
+                if let Some(ref mut panel) = self.config_panel {
+                    panel.step = ConfigStep::AgentMenu;
+                }
+            }
+            Some(ConfigStep::HookWizard) => {
+                let hook_step = self.config_panel.as_ref().map(|p| p.hook_data.step);
+
+                match hook_step {
+                    Some(HookConfigStep::SelectLevel) | Some(HookConfigStep::ShowResult) => {
+                        // 返回 config 主菜单
+                        if let Some(ref mut panel) = self.config_panel {
+                            panel.step = ConfigStep::Main;
+                        }
+                    }
+                    _ => {
+                        if let Some(ref mut panel) = self.config_panel {
+                            panel.hook_data.back();
+                        }
+                    }
+                }
+            }
+            None => {}
+        }
+    }
+
+    /// Config Panel - agent 命令输入字符
+    pub fn config_agent_input_char(&mut self, c: char) {
+        if let Some(ref mut panel) = self.config_panel {
+            panel.agent_input.push(c);
+            panel.agent_cursor = panel.agent_input.len();
+        }
+    }
+
+    /// Config Panel - agent 命令删除字符
+    pub fn config_agent_delete_char(&mut self) {
+        if let Some(ref mut panel) = self.config_panel {
+            panel.agent_input.pop();
+            panel.agent_cursor = panel.agent_input.len();
+        }
+    }
+
+    /// Config Panel - Hook 复制命令
+    pub fn config_hook_copy(&mut self) {
+        if let Some(ref panel) = self.config_panel {
+            if panel.step == ConfigStep::HookWizard
+                && panel.hook_data.step == HookConfigStep::ShowResult
+            {
                 if let Ok(mut clipboard) = arboard::Clipboard::new() {
-                    let _ = clipboard.set_text(&panel.generated_command);
+                    let _ = clipboard.set_text(&panel.hook_data.generated_command);
                     self.show_toast("Copied to clipboard");
                 }
             }
+        }
+    }
+
+    /// 保存 agent 命令到 config
+    fn config_save_agent_command(&mut self) {
+        let cmd = self
+            .config_panel
+            .as_ref()
+            .map(|p| p.agent_input.trim().to_string())
+            .unwrap_or_default();
+
+        // 更新内存状态
+        self.agent_command = cmd.clone();
+
+        // 保存到文件
+        let mut config = storage::config::load_config();
+        config.layout.agent_command = if cmd.is_empty() { None } else { Some(cmd) };
+        let _ = storage::config::save_config(&config);
+
+        // 返回 Agent 子菜单
+        if let Some(ref mut panel) = self.config_panel {
+            panel.step = ConfigStep::AgentMenu;
+        }
+        self.show_toast("Agent command saved");
+    }
+
+    /// 保存布局到 config
+    fn config_save_layout(&mut self) {
+        let layout = self
+            .config_panel
+            .as_ref()
+            .and_then(|p| TaskLayout::all().get(p.layout_selected).copied())
+            .unwrap_or(TaskLayout::Single);
+
+        // 更新内存状态
+        self.task_layout = layout;
+
+        // 保存到文件
+        let mut config = storage::config::load_config();
+        config.layout.default = layout.name().to_string();
+        let _ = storage::config::save_config(&config);
+
+        // 返回主菜单
+        if let Some(ref mut panel) = self.config_panel {
+            panel.step = ConfigStep::Main;
+        }
+        self.show_toast(format!("Layout: {}", layout.label()));
+    }
+
+    /// 保存 context docs 到 config
+    pub fn config_save_context_docs(&mut self) {
+        let docs = if let Some(ref panel) = self.config_panel {
+            let mut docs: Vec<String> = Vec::new();
+            let presets = ["CLAUDE.md", "AGENTS.md", "GEMINI.md"];
+            for (i, name) in presets.iter().enumerate() {
+                if panel.context_docs_selected[i] {
+                    docs.push(name.to_string());
+                }
+            }
+            if panel.context_docs_custom_enabled && !panel.context_docs_custom_name.is_empty() {
+                docs.push(panel.context_docs_custom_name.clone());
+            }
+            docs
+        } else {
+            return;
+        };
+
+        // 保存到文件
+        let mut config = storage::config::load_config();
+        config.layout.context_docs = docs;
+        let _ = storage::config::save_config(&config);
+
+        // 返回 Agent 子菜单
+        if let Some(ref mut panel) = self.config_panel {
+            panel.step = ConfigStep::AgentMenu;
+        }
+        self.show_toast("Context docs saved");
+    }
+
+    // ========== Monitor 操作 ==========
+
+    /// Monitor - 执行选中的操作
+    pub fn monitor_execute_action(&mut self) {
+        let all = MonitorAction::all();
+        let action = all[self.monitor.action_selected];
+        match action {
+            MonitorAction::Commit => {
+                let worktree_path = self.monitor.worktree_path.clone();
+                let task_name = self.monitor.task_name.clone();
+                if worktree_path.is_empty() {
+                    self.show_toast("No worktree path");
+                    return;
+                }
+                self.commit_dialog = Some(CommitDialogData::new(task_name, worktree_path));
+            }
+            MonitorAction::Sync => {
+                self.monitor_sync();
+            }
+            MonitorAction::Merge => {
+                let task_id = self.monitor.task_id.clone();
+                let task_name = self.monitor.task_name.clone();
+                let branch = self.monitor.branch.clone();
+                let target = self.monitor.target.clone();
+                self.merge_dialog = Some(MergeDialogData::new(task_id, task_name, branch, target));
+            }
+            MonitorAction::Archive => {
+                let task_name = self.monitor.task_name.clone();
+                let branch = self.monitor.branch.clone();
+                self.confirm_dialog = Some(ConfirmType::ArchiveUnmerged { task_name, branch });
+            }
+            MonitorAction::Clean => {
+                let task_name = self.monitor.task_name.clone();
+                let branch = self.monitor.branch.clone();
+                // Clean 始终强确认
+                self.input_confirm_dialog = Some(InputConfirmData::new(task_name, branch));
+                self.pending_action = Some(PendingAction::Clean {
+                    task_id: self.monitor.task_id.clone(),
+                    is_archived: false,
+                });
+            }
+            MonitorAction::Notes => {
+                self.monitor.request_notes_edit();
+            }
+            MonitorAction::Leave => {
+                // tmux detach-client — 脱离整个 tmux session
+                let _ = std::process::Command::new("tmux")
+                    .args(["detach-client"])
+                    .status();
+            }
+            MonitorAction::Exit => {
+                let session_name = tmux::session_name(
+                    &self.monitor.project_key,
+                    &self.monitor.task_id,
+                );
+                self.confirm_dialog = Some(
+                    crate::ui::components::confirm_dialog::ConfirmType::ExitSession {
+                        session_name,
+                    },
+                );
+                self.pending_action = Some(PendingAction::ExitSession);
+            }
+        }
+    }
+
+    /// Monitor - Sync：从 target rebase
+    fn monitor_sync(&mut self) {
+        let worktree_path = self.monitor.worktree_path.clone();
+        let target = self.monitor.target.clone();
+        if worktree_path.is_empty() || target.is_empty() {
+            self.show_toast("Missing worktree or target");
+            return;
+        }
+        match git::rebase(&worktree_path, &target) {
+            Ok(()) => {
+                self.show_toast("Synced from target");
+                self.monitor.refresh_panel_data();
+            }
+            Err(e) => self.show_toast(format!("Sync failed: {}", e)),
         }
     }
 }

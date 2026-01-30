@@ -9,6 +9,7 @@ use ratatui::{
 };
 
 use crate::theme::ThemeColors;
+use crate::ui::click_areas::{ClickAreas, DialogAction};
 
 /// Action 类型
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -145,7 +146,12 @@ const DIALOG_WIDTH: u16 = 50;
 const DIALOG_HEIGHT: u16 = 12;
 
 /// 渲染 Action Palette
-pub fn render(frame: &mut Frame, data: &ActionPaletteData, colors: &ThemeColors) {
+pub fn render(
+    frame: &mut Frame,
+    data: &ActionPaletteData,
+    colors: &ThemeColors,
+    click_areas: &mut ClickAreas,
+) {
     let area = frame.area();
 
     // 居中计算
@@ -241,4 +247,25 @@ pub fn render(frame: &mut Frame, data: &ActionPaletteData, colors: &ThemeColors)
     ]))
     .alignment(Alignment::Center);
     frame.render_widget(hint, hint_area);
+
+    // 注册点击区域
+    click_areas.dialog_area = Some(dialog_area);
+    for (display_idx, _) in data.filtered_indices.iter().enumerate() {
+        let row_rect = Rect::new(
+            list_area.x,
+            list_area.y + display_idx as u16,
+            list_area.width,
+            1,
+        );
+        click_areas.dialog_items.push((row_rect, display_idx));
+    }
+    let half = hint_area.width / 2;
+    click_areas.dialog_buttons.push((
+        Rect::new(hint_area.x, hint_area.y, half, 1),
+        DialogAction::Confirm,
+    ));
+    click_areas.dialog_buttons.push((
+        Rect::new(hint_area.x + half, hint_area.y, hint_area.width - half, 1),
+        DialogAction::Cancel,
+    ));
 }

@@ -3,9 +3,9 @@ use std::time::Duration;
 
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, MouseButton, MouseEventKind};
 
-use crate::app::{App, AppMode, PreviewSubTab};
+use crate::app::{App, AppMode, MonitorFocus, PreviewSubTab};
 use crate::model::ProjectTab;
-use crate::ui::click_areas::contains;
+use crate::ui::click_areas::{contains, DialogAction};
 
 /// 每帧最多处理的事件数（防止事件风暴阻塞渲染）
 const MAX_EVENTS_PER_FRAME: usize = 64;
@@ -43,29 +43,27 @@ pub fn handle_events(app: &mut App) -> io::Result<bool> {
                     last_key = Some(key);
                 }
             }
-            Event::Mouse(mouse) => {
-                match mouse.kind {
-                    MouseEventKind::ScrollDown => {
-                        scroll_v += 1;
-                        last_scroll_col = mouse.column;
-                        last_scroll_row = mouse.row;
-                    }
-                    MouseEventKind::ScrollUp => {
-                        scroll_v -= 1;
-                        last_scroll_col = mouse.column;
-                        last_scroll_row = mouse.row;
-                    }
-                    MouseEventKind::ScrollRight => {
-                        scroll_h += 1;
-                    }
-                    MouseEventKind::ScrollLeft => {
-                        scroll_h -= 1;
-                    }
-                    _ => {
-                        other_events.push(mouse);
-                    }
+            Event::Mouse(mouse) => match mouse.kind {
+                MouseEventKind::ScrollDown => {
+                    scroll_v += 1;
+                    last_scroll_col = mouse.column;
+                    last_scroll_row = mouse.row;
                 }
-            }
+                MouseEventKind::ScrollUp => {
+                    scroll_v -= 1;
+                    last_scroll_col = mouse.column;
+                    last_scroll_row = mouse.row;
+                }
+                MouseEventKind::ScrollRight => {
+                    scroll_h += 1;
+                }
+                MouseEventKind::ScrollLeft => {
+                    scroll_h -= 1;
+                }
+                _ => {
+                    other_events.push(mouse);
+                }
+            },
             _ => {}
         }
 
@@ -181,9 +179,9 @@ fn handle_key(app: &mut App, key: KeyEvent) {
         return;
     }
 
-    // Hook Panel
-    if app.hook_panel.is_some() {
-        handle_hook_panel_key(app, key);
+    // Config Panel
+    if app.config_panel.is_some() {
+        handle_config_panel_key(app, key);
         return;
     }
 
@@ -191,6 +189,7 @@ fn handle_key(app: &mut App, key: KeyEvent) {
     match app.mode {
         AppMode::Workspace => handle_workspace_key(app, key),
         AppMode::Project => handle_project_key(app, key),
+        AppMode::Monitor => handle_monitor_key(app, key),
     }
 }
 
@@ -264,6 +263,11 @@ fn handle_workspace_key(app: &mut App, key: KeyEvent) {
         // 功能按键 - 刷新
         KeyCode::Char('r') | KeyCode::Char('R') => {
             app.refresh();
+        }
+
+        // 功能按键 - Config 配置面板
+        KeyCode::Char('c') => {
+            app.open_config_panel();
         }
 
         _ => {}
@@ -441,13 +445,13 @@ fn handle_project_key(app: &mut App, key: KeyEvent) {
         }
 
         // 功能按键 - Checkout (在主仓库切换分支)
-        KeyCode::Char('c') => {
+        KeyCode::Char('C') => {
             app.open_checkout_selector();
         }
 
-        // 功能按键 - Hook 配置面板
-        KeyCode::Char('h') => {
-            app.open_hook_panel();
+        // 功能按键 - Config 配置面板
+        KeyCode::Char('c') => {
+            app.open_config_panel();
         }
 
         _ => {}
@@ -772,53 +776,193 @@ fn handle_commit_dialog_key(app: &mut App, key: KeyEvent) {
     }
 }
 
-/// 处理 Hook 配置面板的键盘事件
-fn handle_hook_panel_key(app: &mut App, key: KeyEvent) {
+/// 处理 Config 配置面板的键盘事件
+fn handle_config_panel_key(app: &mut App, key: KeyEvent) {
+    use crate::ui::components::config_panel::ConfigStep;
     use crate::ui::components::hook_panel::HookConfigStep;
 
-    let is_result_step = app
-        .hook_panel
-        .as_ref()
-        .map(|p| p.step == HookConfigStep::ShowResult)
-        .unwrap_or(false);
+    let step = app.config_panel.as_ref().map(|p| p.step.clone());
+    let Some(step) = step else { return };
 
+    match step {
+        ConfigStep::Main => match key.code {
+            KeyCode::Char('k') | KeyCode::Up => app.config_panel_prev(),
+            KeyCode::Char('j') | KeyCode::Down => app.config_panel_next(),
+            KeyCode::Enter => app.config_panel_confirm(),
+            KeyCode::Esc => app.config_panel_back(),
+            _ => {}
+        },
+        ConfigStep::AgentMenu => match key.code {
+            KeyCode::Char('k') | KeyCode::Up => app.config_panel_prev(),
+            KeyCode::Char('j') | KeyCode::Down => app.config_panel_next(),
+            KeyCode::Enter => app.config_panel_confirm(),
+            KeyCode::Esc => app.config_panel_back(),
+            _ => {}
+        },
+        ConfigStep::EditAgentCommand => match key.code {
+            KeyCode::Enter => app.config_panel_confirm(),
+            KeyCode::Esc => app.config_panel_back(),
+            KeyCode::Backspace => app.config_agent_delete_char(),
+            KeyCode::Char(c) => app.config_agent_input_char(c),
+            _ => {}
+        },
+        ConfigStep::SelectLayout => match key.code {
+            KeyCode::Char('k') | KeyCode::Up => app.config_panel_prev(),
+            KeyCode::Char('j') | KeyCode::Down => app.config_panel_next(),
+            KeyCode::Enter => app.config_panel_confirm(),
+            KeyCode::Esc => app.config_panel_back(),
+            _ => {}
+        },
+        ConfigStep::SelectContextDocs => {
+            if let Some(ref mut panel) = app.config_panel {
+                if panel.context_docs_editing_custom {
+                    // 编辑 custom 名称模式
+                    match key.code {
+                        KeyCode::Enter => {
+                            // 确认输入
+                            panel.context_docs_editing_custom = false;
+                            if !panel.context_docs_custom_name.is_empty() {
+                                panel.context_docs_custom_enabled = true;
+                            }
+                        }
+                        KeyCode::Esc => {
+                            // 取消编辑
+                            panel.context_docs_editing_custom = false;
+                        }
+                        KeyCode::Backspace => {
+                            panel.context_docs_custom_name.pop();
+                        }
+                        KeyCode::Char(c) => {
+                            panel.context_docs_custom_name.push(c);
+                        }
+                        _ => {}
+                    }
+                } else {
+                    // 正常多选模式
+                    match key.code {
+                        KeyCode::Char('k') | KeyCode::Up => {
+                            if panel.context_docs_cursor == 0 {
+                                panel.context_docs_cursor = 3;
+                            } else {
+                                panel.context_docs_cursor -= 1;
+                            }
+                        }
+                        KeyCode::Char('j') | KeyCode::Down => {
+                            panel.context_docs_cursor = (panel.context_docs_cursor + 1) % 4;
+                        }
+                        KeyCode::Char(' ') => {
+                            let idx = panel.context_docs_cursor;
+                            if idx < 3 {
+                                // 预设项 toggle
+                                panel.context_docs_selected[idx] =
+                                    !panel.context_docs_selected[idx];
+                            } else {
+                                // Custom 项
+                                if panel.context_docs_custom_enabled
+                                    && !panel.context_docs_custom_name.is_empty()
+                                {
+                                    // 已有 custom: toggle enabled
+                                    panel.context_docs_custom_enabled =
+                                        !panel.context_docs_custom_enabled;
+                                } else {
+                                    // 无 custom 名称: 进入编辑模式
+                                    panel.context_docs_editing_custom = true;
+                                    panel.context_docs_custom_name.clear();
+                                }
+                            }
+                        }
+                        KeyCode::Enter => {
+                            app.config_save_context_docs();
+                        }
+                        KeyCode::Esc => {
+                            panel.step = ConfigStep::AgentMenu;
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+        ConfigStep::HookWizard => {
+            let is_result = app
+                .config_panel
+                .as_ref()
+                .map(|p| p.hook_data.step == HookConfigStep::ShowResult)
+                .unwrap_or(false);
+
+            match key.code {
+                KeyCode::Char('k') | KeyCode::Up => {
+                    if !is_result {
+                        app.config_panel_prev();
+                    }
+                }
+                KeyCode::Char('j') | KeyCode::Down => {
+                    if !is_result {
+                        app.config_panel_next();
+                    }
+                }
+                KeyCode::Enter => app.config_panel_confirm(),
+                KeyCode::Esc => app.config_panel_back(),
+                KeyCode::Char('c') => {
+                    if is_result {
+                        app.config_hook_copy();
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+}
+
+/// 处理 Monitor 模式的键盘事件
+fn handle_monitor_key(app: &mut App, key: KeyEvent) {
     match key.code {
-        // 导航 - 上移
-        KeyCode::Char('k') | KeyCode::Up => {
-            if !is_result_step {
-                app.hook_panel_prev();
-            }
+        // Tab: 展开/折叠 sidebar
+        KeyCode::Tab => app.monitor.toggle_sidebar(),
+
+        // h/l/←/→: 切换焦点（折叠时先展开）
+        KeyCode::Char('h') | KeyCode::Char('l') | KeyCode::Left | KeyCode::Right => {
+            app.monitor.toggle_focus()
         }
 
-        // 导航 - 下移
-        KeyCode::Char('j') | KeyCode::Down => {
-            if !is_result_step {
-                app.hook_panel_next();
-            }
+        // 数字键切换 content tab
+        KeyCode::Char('1') => app.monitor.content_tab = PreviewSubTab::Git,
+        KeyCode::Char('2') => app.monitor.content_tab = PreviewSubTab::Ai,
+        KeyCode::Char('3') => app.monitor.content_tab = PreviewSubTab::Notes,
+
+        // j/k/↑/↓ 行为取决于焦点
+        KeyCode::Char('j') | KeyCode::Down => match app.monitor.focus {
+            MonitorFocus::Sidebar => app.monitor.action_next(),
+            MonitorFocus::Content => app.monitor.scroll_down(),
+        },
+        KeyCode::Char('k') | KeyCode::Up => match app.monitor.focus {
+            MonitorFocus::Sidebar => app.monitor.action_prev(),
+            MonitorFocus::Content => app.monitor.scroll_up(),
+        },
+
+        // 操作执行（Sidebar 焦点时）
+        KeyCode::Enter if app.monitor.focus == MonitorFocus::Sidebar => {
+            app.monitor_execute_action();
         }
 
-        // 确认/关闭
-        KeyCode::Enter => {
-            if is_result_step {
-                // 结果页面，关闭面板
-                app.hook_panel = None;
-            } else {
-                // 其他步骤，进入下一步
-                app.hook_panel_confirm();
-            }
+        // Notes 编辑（Content 焦点 + Notes tab）
+        KeyCode::Char('i')
+            if app.monitor.focus == MonitorFocus::Content
+                && app.monitor.content_tab == PreviewSubTab::Notes =>
+        {
+            app.monitor.request_notes_edit();
         }
 
-        // 返回/取消
-        KeyCode::Esc => {
-            app.hook_panel_back();
-        }
+        // 刷新
+        KeyCode::Char('r') | KeyCode::Char('R') => app.monitor.refresh_panel_data(),
 
-        // 复制命令（仅结果页面）
-        KeyCode::Char('c') => {
-            if is_result_step {
-                app.hook_panel_copy();
-            }
-        }
+        // 主题
+        KeyCode::Char('T') | KeyCode::Char('t') => app.open_theme_selector(),
+
+        // 帮助
+        KeyCode::Char('?') => app.show_help = !app.show_help,
+
+        // 退出
+        KeyCode::Char('q') => app.quit(),
 
         _ => {}
     }
@@ -862,7 +1006,7 @@ fn has_active_popup(app: &App) -> bool {
         || app.delete_project_dialog.is_some()
         || app.action_palette.is_some()
         || app.commit_dialog.is_some()
-        || app.hook_panel.is_some()
+        || app.config_panel.is_some()
 }
 
 fn handle_left_click(app: &mut App, col: u16, row: u16) {
@@ -875,12 +1019,14 @@ fn handle_left_click(app: &mut App, col: u16, row: u16) {
         return;
     }
     if has_active_popup(app) {
+        handle_popup_click(app, col, row);
         return;
     }
 
     match app.mode {
         AppMode::Workspace => handle_workspace_click(app, col, row, is_double),
         AppMode::Project => handle_project_click(app, col, row, is_double),
+        AppMode::Monitor => handle_monitor_click(app, col, row),
     }
 }
 
@@ -958,12 +1104,77 @@ fn handle_project_click(app: &mut App, col: u16, row: u16, is_double: bool) {
     }
 }
 
+fn handle_monitor_click(app: &mut App, col: u16, row: u16) {
+    use crate::app::MonitorFocus;
+
+    // 检查 action 按钮点击
+    let clicked_action = app
+        .click_areas
+        .monitor_actions
+        .iter()
+        .find(|(rect, _)| contains(rect, col, row))
+        .map(|(_, idx)| *idx);
+
+    if let Some(idx) = clicked_action {
+        app.monitor.focus = MonitorFocus::Sidebar;
+        app.monitor.action_selected = idx;
+        app.monitor_execute_action();
+        return;
+    }
+
+    // 检查 tab bar 点击
+    let clicked_tab = app
+        .click_areas
+        .monitor_tabs
+        .iter()
+        .find(|(rect, _)| contains(rect, col, row))
+        .map(|(_, tab)| *tab);
+
+    if let Some(tab) = clicked_tab {
+        app.monitor.focus = MonitorFocus::Content;
+        app.monitor.content_tab = tab;
+        return;
+    }
+
+    // 点击 sidebar 区域
+    if let Some(area) = app.click_areas.monitor_sidebar_area {
+        if contains(&area, col, row) {
+            if app.monitor.sidebar_collapsed {
+                // 折叠时点击展开
+                app.monitor.toggle_sidebar();
+            } else {
+                app.monitor.focus = MonitorFocus::Sidebar;
+            }
+            return;
+        }
+    }
+
+    // 点击 content 区域 → 切换焦点到 content
+    if let Some(area) = app.click_areas.monitor_content_area {
+        if contains(&area, col, row) {
+            app.monitor.focus = MonitorFocus::Content;
+        }
+    }
+}
+
 fn handle_scroll_down(app: &mut App, col: u16, row: u16) {
     if has_active_popup(app) {
+        if app.show_theme_selector {
+            app.theme_selector_next();
+        } else if app.action_palette.is_some() {
+            app.action_palette_next();
+        } else if app.branch_selector.is_some() {
+            app.branch_selector_next();
+        } else if app.config_panel.is_some() {
+            app.config_panel_next();
+        }
         return;
     }
 
     match app.mode {
+        AppMode::Monitor => {
+            app.monitor.scroll_down();
+        }
         AppMode::Workspace => {
             if let Some(area) = app.click_areas.workspace_content_area {
                 if contains(&area, col, row) {
@@ -994,10 +1205,22 @@ fn handle_scroll_down(app: &mut App, col: u16, row: u16) {
 
 fn handle_scroll_up(app: &mut App, col: u16, row: u16) {
     if has_active_popup(app) {
+        if app.show_theme_selector {
+            app.theme_selector_prev();
+        } else if app.action_palette.is_some() {
+            app.action_palette_prev();
+        } else if app.branch_selector.is_some() {
+            app.branch_selector_prev();
+        } else if app.config_panel.is_some() {
+            app.config_panel_prev();
+        }
         return;
     }
 
     match app.mode {
+        AppMode::Monitor => {
+            app.monitor.scroll_up();
+        }
         AppMode::Workspace => {
             if let Some(area) = app.click_areas.workspace_content_area {
                 if contains(&area, col, row) {
@@ -1032,6 +1255,7 @@ fn handle_scroll_right(app: &mut App) {
     match app.mode {
         AppMode::Workspace => app.workspace.select_right(),
         AppMode::Project => app.project.next_tab(),
+        AppMode::Monitor => {}
     }
 }
 
@@ -1042,5 +1266,155 @@ fn handle_scroll_left(app: &mut App) {
     match app.mode {
         AppMode::Workspace => app.workspace.select_left(),
         AppMode::Project => app.project.prev_tab(),
+        AppMode::Monitor => {}
+    }
+}
+
+// ─── 弹窗鼠标点击处理 ───
+
+fn handle_popup_click(app: &mut App, col: u16, row: u16) {
+    // 1. 检查是否在弹窗外 → 不处理（消费事件）
+    if let Some(dialog_rect) = app.click_areas.dialog_area {
+        if !contains(&dialog_rect, col, row) {
+            return;
+        }
+    }
+
+    // 2. 检查按钮点击
+    let clicked_btn = app
+        .click_areas
+        .dialog_buttons
+        .iter()
+        .find(|(r, _)| contains(r, col, row))
+        .map(|(_, a)| *a);
+    if let Some(action) = clicked_btn {
+        match action {
+            DialogAction::Confirm => popup_confirm(app),
+            DialogAction::Cancel => popup_cancel(app),
+        }
+        return;
+    }
+
+    // 3. 检查列表/选项项点击
+    let clicked_item = app
+        .click_areas
+        .dialog_items
+        .iter()
+        .find(|(r, _)| contains(r, col, row))
+        .map(|(_, idx)| *idx);
+    if let Some(idx) = clicked_item {
+        popup_select_item(app, idx);
+    }
+}
+
+fn popup_confirm(app: &mut App) {
+    if app.confirm_dialog.is_some() {
+        app.confirm_dialog_yes();
+    } else if app.merge_dialog.is_some() {
+        app.merge_dialog_confirm();
+    } else if app.input_confirm_dialog.is_some() {
+        app.input_confirm_submit();
+    } else if app.show_new_task_dialog {
+        app.create_new_task();
+    } else if app.add_project_dialog.is_some() {
+        app.add_project_confirm();
+    } else if app.delete_project_dialog.is_some() {
+        app.delete_project_confirm();
+    } else if app.show_theme_selector {
+        app.theme_selector_confirm();
+    } else if app.action_palette.is_some() {
+        app.action_palette_confirm();
+    } else if app.branch_selector.is_some() {
+        app.branch_selector_confirm();
+    } else if app.commit_dialog.is_some() {
+        app.commit_dialog_confirm();
+    } else if app.config_panel.is_some() {
+        app.config_panel_confirm();
+    }
+}
+
+fn popup_cancel(app: &mut App) {
+    if app.confirm_dialog.is_some() {
+        app.confirm_dialog_cancel();
+    } else if app.merge_dialog.is_some() {
+        app.merge_dialog_cancel();
+    } else if app.input_confirm_dialog.is_some() {
+        app.input_confirm_cancel();
+    } else if app.show_new_task_dialog {
+        app.close_new_task_dialog();
+    } else if app.add_project_dialog.is_some() {
+        app.close_add_project_dialog();
+    } else if app.delete_project_dialog.is_some() {
+        app.close_delete_project_dialog();
+    } else if app.show_theme_selector {
+        app.close_theme_selector();
+    } else if app.action_palette.is_some() {
+        app.action_palette_cancel();
+    } else if app.branch_selector.is_some() {
+        app.branch_selector_cancel();
+    } else if app.commit_dialog.is_some() {
+        app.commit_dialog_cancel();
+    } else if app.config_panel.is_some() {
+        app.config_panel_back();
+    }
+}
+
+fn popup_select_item(app: &mut App, idx: usize) {
+    use crate::ui::components::config_panel::ConfigStep;
+    use crate::ui::components::delete_project_dialog::DeleteMode;
+    use crate::ui::components::merge_dialog::MergeMethod;
+
+    // Merge dialog: 设置选中的合并方式
+    if let Some(ref mut d) = app.merge_dialog {
+        d.selected = if idx == 0 {
+            MergeMethod::Squash
+        } else {
+            MergeMethod::MergeCommit
+        };
+    }
+    // Delete project dialog: 设置删除模式
+    else if let Some(ref mut d) = app.delete_project_dialog {
+        d.selected = if idx == 0 {
+            DeleteMode::CleanOnly
+        } else {
+            DeleteMode::FullClean
+        };
+    }
+    // Theme selector: 设置选中索引
+    else if app.show_theme_selector {
+        app.theme_selector_index = idx;
+    }
+    // Action palette: 设置选中索引
+    else if let Some(ref mut d) = app.action_palette {
+        d.selected_index = idx;
+    }
+    // Branch selector: 设置选中索引
+    else if let Some(ref mut d) = app.branch_selector {
+        d.selected_index = idx;
+    }
+    // Config panel: 根据当前 step 设置对应光标
+    else if let Some(ref mut d) = app.config_panel {
+        match d.step {
+            ConfigStep::Main => d.main_selected = idx,
+            ConfigStep::AgentMenu => d.agent_menu_selected = idx,
+            ConfigStep::SelectLayout => d.layout_selected = idx,
+            ConfigStep::SelectContextDocs => {
+                // 点击 = toggle（等同于 Space 键）
+                if idx < 3 {
+                    d.context_docs_cursor = idx;
+                    d.context_docs_selected[idx] = !d.context_docs_selected[idx];
+                } else if idx == 3 {
+                    d.context_docs_cursor = 3;
+                    if d.context_docs_custom_enabled && !d.context_docs_custom_name.is_empty() {
+                        d.context_docs_custom_enabled = !d.context_docs_custom_enabled;
+                    } else {
+                        d.context_docs_editing_custom = true;
+                        d.context_docs_custom_name.clear();
+                    }
+                }
+            }
+            ConfigStep::HookWizard => d.hook_data.selected_index = idx,
+            _ => {}
+        }
     }
 }

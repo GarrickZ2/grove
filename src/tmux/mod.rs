@@ -1,3 +1,5 @@
+pub mod layout;
+
 use std::process::Command;
 
 /// 生成 session 名称

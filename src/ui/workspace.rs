@@ -10,8 +10,8 @@ use ratatui::{
 use crate::app::App;
 
 use super::components::{
-    add_project_dialog, delete_project_dialog, help_panel, logo, search_bar, theme_selector, toast,
-    workspace_empty, workspace_footer, workspace_list,
+    add_project_dialog, config_panel, delete_project_dialog, help_panel, logo, search_bar,
+    theme_selector, toast, workspace_empty, workspace_footer, workspace_list,
 };
 
 /// 渲染 Workspace 页面
@@ -38,7 +38,7 @@ pub fn render(frame: &mut Frame, app: &mut App) {
 
     // 渲染主题选择器
     if app.show_theme_selector {
-        theme_selector::render(frame, app.theme_selector_index, &app.colors);
+        theme_selector::render(frame, app.theme_selector_index, &app.colors, &mut app.click_areas);
     }
 
     // 渲染帮助面板
@@ -48,12 +48,18 @@ pub fn render(frame: &mut Frame, app: &mut App) {
 
     // 渲染 Add Project 弹窗
     if let Some(ref data) = app.add_project_dialog {
-        add_project_dialog::render(frame, data, &app.colors);
+        add_project_dialog::render(frame, data, &app.colors, &mut app.click_areas);
     }
 
     // 渲染 Delete Project 弹窗
     if let Some(ref data) = app.delete_project_dialog {
-        delete_project_dialog::render(frame, data, &app.colors);
+        delete_project_dialog::render(frame, data, &app.colors, &mut app.click_areas);
+    }
+
+    // 渲染 Config 配置面板
+    if let Some(ref data) = app.config_panel {
+        let config = crate::storage::config::load_config();
+        config_panel::render(frame, data, &config.layout, &app.colors, &mut app.click_areas);
     }
 }
 

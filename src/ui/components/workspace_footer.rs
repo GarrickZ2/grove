@@ -52,10 +52,11 @@ fn get_shortcuts(has_items: bool) -> Vec<(&'static str, &'static str)> {
             ("a", "add"),
             ("x", "delete"),
             ("/", "search"),
+            ("c", "config"),
             ("t", "theme"),
             ("q", "quit"),
         ]
     } else {
-        vec![("a", "add"), ("t", "theme"), ("q", "quit")]
+        vec![("a", "add"), ("c", "config"), ("t", "theme"), ("q", "quit")]
     }
 }
