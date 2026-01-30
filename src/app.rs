@@ -17,7 +17,9 @@ use crate::storage::{
 };
 use crate::theme::{detect_system_theme, get_theme_colors, Theme, ThemeColors};
 use crate::tmux;
-use crate::tmux::layout::TaskLayout;
+use crate::tmux::layout::{
+    self as layout_mod, CustomLayout, LayoutNode, PaneRole, SplitDirection, TaskLayout,
+};
 use crate::ui::click_areas::ClickAreas;
 use crate::ui::components::action_palette::{ActionPaletteData, ActionType};
 use crate::ui::components::add_project_dialog::AddProjectData;
@@ -375,7 +377,13 @@ impl ProjectState {
         let list_len = self.current_worktrees().len();
         let state = self.current_list_state_mut();
 
-        if list_len > 0 && state.selected().is_none() {
+        if list_len == 0 {
+            state.select(None);
+        } else if let Some(selected) = state.selected() {
+            if selected >= list_len {
+                state.select(Some(list_len - 1));
+            }
+        } else {
             state.select(Some(0));
         }
     }
@@ -564,15 +572,9 @@ impl MonitorAction {
                     MonitorAction::Merge,
                 ],
             ),
-            (
-                "Task",
-                &[MonitorAction::Archive, MonitorAction::Clean],
-            ),
+            ("Task", &[MonitorAction::Archive, MonitorAction::Clean]),
             ("Edit", &[MonitorAction::Notes]),
-            (
-                "Session",
-                &[MonitorAction::Leave, MonitorAction::Exit],
-            ),
+            ("Session", &[MonitorAction::Leave, MonitorAction::Exit]),
         ]
     }
 
@@ -882,6 +884,8 @@ pub struct App {
     pub task_layout: TaskLayout,
     /// Agent 启动命令
     pub agent_command: String,
+    /// 自定义布局（当 task_layout == Custom 时使用）
+    pub custom_layout: Option<CustomLayout>,
     /// Update info (version check result)
     pub update_info: Option<UpdateInfo>,
     /// 后台操作结果通道
@@ -1088,6 +1092,12 @@ impl App {
             task_layout: TaskLayout::from_name(&config.layout.default)
                 .unwrap_or(TaskLayout::Single),
             agent_command: config.layout.agent_command.clone().unwrap_or_default(),
+            custom_layout: config
+                .layout
+                .custom
+                .as_ref()
+                .and_then(|c| serde_json::from_str::<LayoutNode>(&c.tree).ok())
+                .map(|root| CustomLayout { root }),
             update_info: Some(update_info),
             bg_result_rx: None,
             loading_message: None,
@@ -1317,6 +1327,7 @@ impl App {
                 worktree_path.to_str().unwrap_or("."),
                 &self.task_layout,
                 &self.agent_command,
+                self.custom_layout.as_ref(),
             ) {
                 self.show_toast(format!("Layout: {}", e));
             }
@@ -1373,6 +1384,7 @@ impl App {
                     &wt_path,
                     &self.task_layout,
                     &self.agent_command,
+                    self.custom_layout.as_ref(),
                 ) {
                     self.show_toast(format!("Layout: {}", e));
                 }
@@ -2691,18 +2703,28 @@ impl App {
                     }
                 }
                 ConfigStep::SelectLayout => {
-                    let count = TaskLayout::all().len();
+                    // 5 presets + 1 custom = 6 items
+                    let count = TaskLayout::all().len() + 1;
                     if panel.layout_selected == 0 {
                         panel.layout_selected = count - 1;
                     } else {
                         panel.layout_selected -= 1;
                     }
                 }
+                ConfigStep::CustomChoose => {
+                    // 6 logical items: 0=SplitH, 1=SplitV, 2=Agent, 3=Grove, 4=Shell, 5=Custom
+                    if panel.custom_choose_selected == 0 {
+                        panel.custom_choose_selected = 5;
+                    } else {
+                        panel.custom_choose_selected -= 1;
+                    }
+                }
                 ConfigStep::HookWizard => {
                     panel.hook_data.select_prev();
                 }
-                ConfigStep::SelectContextDocs => {}
-                ConfigStep::EditAgentCommand => {}
+                ConfigStep::SelectContextDocs
+                | ConfigStep::EditAgentCommand
+                | ConfigStep::CustomPaneCommand => {}
             }
         }
     }
@@ -2718,13 +2740,18 @@ impl App {
                     panel.agent_menu_selected = (panel.agent_menu_selected + 1) % 2;
                 }
                 ConfigStep::SelectLayout => {
-                    let count = TaskLayout::all().len();
+                    let count = TaskLayout::all().len() + 1;
                     panel.layout_selected = (panel.layout_selected + 1) % count;
+                }
+                ConfigStep::CustomChoose => {
+                    panel.custom_choose_selected = (panel.custom_choose_selected + 1) % 6;
                 }
                 ConfigStep::HookWizard => {
                     panel.hook_data.select_next();
                 }
-                ConfigStep::EditAgentCommand | ConfigStep::SelectContextDocs => {}
+                ConfigStep::EditAgentCommand
+                | ConfigStep::SelectContextDocs
+                | ConfigStep::CustomPaneCommand => {}
             }
         }
     }
@@ -2760,7 +2787,30 @@ impl App {
                 self.config_save_agent_command();
             }
             Some(ConfigStep::SelectLayout) => {
-                self.config_save_layout();
+                // Check if Custom... is selected
+                let is_custom = self
+                    .config_panel
+                    .as_ref()
+                    .map(|p| p.layout_selected == TaskLayout::all().len())
+                    .unwrap_or(false);
+
+                if is_custom {
+                    // Enter custom layout builder
+                    if let Some(ref mut panel) = self.config_panel {
+                        panel.step = ConfigStep::CustomChoose;
+                        panel.custom_build_path = Vec::new();
+                        panel.custom_build_root = None;
+                        panel.custom_choose_selected = 3; // default to Agent
+                    }
+                } else {
+                    self.config_save_layout();
+                }
+            }
+            Some(ConfigStep::CustomChoose) => {
+                self.config_custom_choose_confirm();
+            }
+            Some(ConfigStep::CustomPaneCommand) => {
+                self.config_custom_pane_command_confirm();
             }
             Some(ConfigStep::HookWizard) => {
                 let is_result = self
@@ -2808,6 +2858,33 @@ impl App {
                 // 返回 Agent 子菜单
                 if let Some(ref mut panel) = self.config_panel {
                     panel.step = ConfigStep::AgentMenu;
+                }
+            }
+            Some(ConfigStep::CustomChoose) => {
+                if let Some(ref mut panel) = self.config_panel {
+                    if panel.custom_build_path.is_empty() {
+                        // 回到 layout 选择
+                        panel.step = ConfigStep::SelectLayout;
+                        panel.custom_build_root = None;
+                    } else {
+                        // 回退到上一层：撤销当前路径上的节点，恢复为 Placeholder
+                        panel.custom_build_path.pop();
+                        // 将当前路径位置的节点重置为 Placeholder
+                        if let Some(ref mut root) = panel.custom_build_root {
+                            layout_mod::set_node_at_path(
+                                root,
+                                &panel.custom_build_path,
+                                LayoutNode::Placeholder,
+                            );
+                        }
+                    }
+                }
+            }
+            Some(ConfigStep::CustomPaneCommand) => {
+                if let Some(ref mut panel) = self.config_panel {
+                    panel.step = ConfigStep::CustomChoose;
+                    panel.custom_cmd_input.clear();
+                    panel.custom_cmd_cursor = 0;
                 }
             }
             Some(ConfigStep::HookWizard) => {
@@ -2889,11 +2966,13 @@ impl App {
         let layout = self
             .config_panel
             .as_ref()
-            .and_then(|p| TaskLayout::all().get(p.layout_selected).copied())
+            .and_then(|p| TaskLayout::all().get(p.layout_selected).cloned())
             .unwrap_or(TaskLayout::Single);
 
+        let label = layout.label().to_string();
+
         // 更新内存状态
-        self.task_layout = layout;
+        self.task_layout = layout.clone();
 
         // 保存到文件
         let mut config = storage::config::load_config();
@@ -2904,7 +2983,177 @@ impl App {
         if let Some(ref mut panel) = self.config_panel {
             panel.step = ConfigStep::Main;
         }
-        self.show_toast(format!("Layout: {}", layout.label()));
+        self.show_toast(format!("Layout: {}", label));
+    }
+
+    /// Custom Choose 确认选择
+    fn config_custom_choose_confirm(&mut self) {
+        let (selected, can_split) = {
+            let panel = match self.config_panel.as_ref() {
+                Some(p) => p,
+                None => return,
+            };
+            let current_panes = panel
+                .custom_build_root
+                .as_ref()
+                .map(|r| r.pane_count())
+                .unwrap_or(1);
+            let can_split = current_panes < crate::ui::components::config_panel::CUSTOM_MAX_PANES;
+            (panel.custom_choose_selected, can_split)
+        };
+
+        match selected {
+            // 0 = Split Horizontal, 1 = Split Vertical
+            0 | 1 => {
+                if !can_split {
+                    return;
+                }
+                let dir = if selected == 0 {
+                    SplitDirection::Horizontal
+                } else {
+                    SplitDirection::Vertical
+                };
+                let node = LayoutNode::Split {
+                    dir,
+                    ratio: 50,
+                    first: Box::new(LayoutNode::Placeholder),
+                    second: Box::new(LayoutNode::Placeholder),
+                };
+
+                if let Some(ref mut panel) = self.config_panel {
+                    let path = panel.custom_build_path.clone();
+                    if panel.custom_build_root.is_none() {
+                        panel.custom_build_root = Some(node);
+                    } else if let Some(ref mut root) = panel.custom_build_root {
+                        layout_mod::set_node_at_path(root, &path, node);
+                    }
+                    // 自动推进到 first child
+                    self.config_custom_advance();
+                }
+            }
+            // 2 = Agent, 3 = Grove, 4 = Shell
+            2..=4 => {
+                let role = match selected {
+                    2 => PaneRole::Agent,
+                    3 => PaneRole::Grove,
+                    4 => PaneRole::Shell,
+                    _ => unreachable!(),
+                };
+                let node = LayoutNode::Pane { pane: role };
+                self.config_custom_set_leaf(node);
+            }
+            // 5 = Custom command
+            5 => {
+                if let Some(ref mut panel) = self.config_panel {
+                    panel.step = ConfigStep::CustomPaneCommand;
+                    panel.custom_cmd_input.clear();
+                    panel.custom_cmd_cursor = 0;
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Custom Pane Command 确认
+    fn config_custom_pane_command_confirm(&mut self) {
+        let cmd = self
+            .config_panel
+            .as_ref()
+            .map(|p| p.custom_cmd_input.trim().to_string())
+            .unwrap_or_default();
+
+        if cmd.is_empty() {
+            return;
+        }
+
+        let node = LayoutNode::Pane {
+            pane: PaneRole::Custom(cmd),
+        };
+
+        if let Some(ref mut panel) = self.config_panel {
+            panel.step = ConfigStep::CustomChoose;
+        }
+
+        self.config_custom_set_leaf(node);
+    }
+
+    /// 设置叶子节点并推进
+    fn config_custom_set_leaf(&mut self, node: LayoutNode) {
+        if let Some(ref mut panel) = self.config_panel {
+            let path = panel.custom_build_path.clone();
+            if panel.custom_build_root.is_none() {
+                // Root is a single pane
+                panel.custom_build_root = Some(node);
+            } else if let Some(ref mut root) = panel.custom_build_root {
+                layout_mod::set_node_at_path(root, &path, node);
+            }
+        }
+        self.config_custom_advance();
+    }
+
+    /// 推进到下一个待配置节点，如果全部完成则保存
+    fn config_custom_advance(&mut self) {
+        let next = self
+            .config_panel
+            .as_ref()
+            .and_then(|p| p.custom_build_root.as_ref())
+            .and_then(layout_mod::next_incomplete_path);
+
+        if let Some(path) = next {
+            if let Some(ref mut panel) = self.config_panel {
+                panel.custom_build_path = path;
+                panel.custom_choose_selected = 3; // default to Agent
+                panel.step = ConfigStep::CustomChoose;
+            }
+        } else {
+            // 全部配置完毕 → 保存
+            self.config_save_custom_layout();
+        }
+    }
+
+    /// 保存自定义布局
+    fn config_save_custom_layout(&mut self) {
+        let root = self
+            .config_panel
+            .as_ref()
+            .and_then(|p| p.custom_build_root.clone());
+
+        let Some(root) = root else {
+            return;
+        };
+
+        // 更新内存状态
+        self.task_layout = TaskLayout::Custom;
+        self.custom_layout = Some(CustomLayout { root: root.clone() });
+
+        // 保存到文件
+        let mut config = storage::config::load_config();
+        config.layout.default = "custom".to_string();
+        let tree_json = serde_json::to_string(&root).unwrap_or_default();
+        config.layout.custom = Some(storage::config::CustomLayoutConfig { tree: tree_json });
+        let _ = storage::config::save_config(&config);
+
+        // 返回主菜单
+        if let Some(ref mut panel) = self.config_panel {
+            panel.step = ConfigStep::Main;
+        }
+        self.show_toast("Layout: Custom");
+    }
+
+    /// Custom layout 命令输入字符
+    pub fn config_custom_cmd_input_char(&mut self, c: char) {
+        if let Some(ref mut panel) = self.config_panel {
+            panel.custom_cmd_input.push(c);
+            panel.custom_cmd_cursor = panel.custom_cmd_input.len();
+        }
+    }
+
+    /// Custom layout 命令删除字符
+    pub fn config_custom_cmd_delete_char(&mut self) {
+        if let Some(ref mut panel) = self.config_panel {
+            panel.custom_cmd_input.pop();
+            panel.custom_cmd_cursor = panel.custom_cmd_input.len();
+        }
     }
 
     /// 保存 context docs 到 config
@@ -2988,10 +3237,8 @@ impl App {
                     .status();
             }
             MonitorAction::Exit => {
-                let session_name = tmux::session_name(
-                    &self.monitor.project_key,
-                    &self.monitor.task_id,
-                );
+                let session_name =
+                    tmux::session_name(&self.monitor.project_key, &self.monitor.task_id);
                 self.confirm_dialog = Some(
                     crate::ui::components::confirm_dialog::ConfirmType::ExitSession {
                         session_name,

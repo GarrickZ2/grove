@@ -130,7 +130,12 @@ pub fn render(frame: &mut Frame, app: &mut App) {
 
     // 渲染覆盖弹窗
     if app.show_theme_selector {
-        theme_selector::render(frame, app.theme_selector_index, colors, &mut app.click_areas);
+        theme_selector::render(
+            frame,
+            app.theme_selector_index,
+            colors,
+            &mut app.click_areas,
+        );
     }
     if let Some(ref confirm_type) = app.confirm_dialog {
         confirm_dialog::render(frame, confirm_type, colors, &mut app.click_areas);
@@ -290,10 +295,7 @@ fn render_sidebar(
                 frame.render_widget(
                     Paragraph::new(Line::from(vec![
                         Span::styled("[", Style::default().fg(colors.muted)),
-                        Span::styled(
-                            format!(" {} ", padded),
-                            Style::default().fg(colors.text),
-                        ),
+                        Span::styled(format!(" {} ", padded), Style::default().fg(colors.text)),
                         Span::styled("]", Style::default().fg(colors.muted)),
                     ]))
                     .alignment(Alignment::Center),

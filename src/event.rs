@@ -882,6 +882,20 @@ fn handle_config_panel_key(app: &mut App, key: KeyEvent) {
                 }
             }
         }
+        ConfigStep::CustomChoose => match key.code {
+            KeyCode::Char('k') | KeyCode::Up => app.config_panel_prev(),
+            KeyCode::Char('j') | KeyCode::Down => app.config_panel_next(),
+            KeyCode::Enter => app.config_panel_confirm(),
+            KeyCode::Esc => app.config_panel_back(),
+            _ => {}
+        },
+        ConfigStep::CustomPaneCommand => match key.code {
+            KeyCode::Enter => app.config_panel_confirm(),
+            KeyCode::Esc => app.config_panel_back(),
+            KeyCode::Backspace => app.config_custom_cmd_delete_char(),
+            KeyCode::Char(c) => app.config_custom_cmd_input_char(c),
+            _ => {}
+        },
         ConfigStep::HookWizard => {
             let is_result = app
                 .config_panel

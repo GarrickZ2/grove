@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.1] - 2026-01-30
+
+### Added
+
+- **Custom Layout Builder** — recursive wizard for building arbitrary tmux pane layouts
+  - Binary tree model: Split (H/V) as internal nodes, Pane (Agent/Grove/Shell/Custom) as leaves
+  - Up to 8 panes per layout, split options auto-disable at capacity
+  - Esc to backtrack through the build path, auto-advance on leaf assignment
+  - Custom command input for arbitrary pane commands
+  - Persisted as JSON tree in `config.toml` under `[layout.custom]`
+
+### Fixed
+
+- **Selection index out-of-bounds after task clean** — after cleaning a task, all actions (archive, clean, sync, merge, etc.) would stop working until restart. Fixed by clamping the list selection index in `ensure_selection()`
+
 ## [0.2.0] - 2026-01-28
 
 ### Added

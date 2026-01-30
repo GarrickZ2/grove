@@ -146,9 +146,10 @@ pub fn render(
 
     // 注册点击区域
     click_areas.dialog_area = Some(dialog_area);
-    click_areas
-        .dialog_items
-        .push((Rect::new(options_area.x, options_area.y, options_area.width, 1), 0));
+    click_areas.dialog_items.push((
+        Rect::new(options_area.x, options_area.y, options_area.width, 1),
+        0,
+    ));
     click_areas.dialog_items.push((
         Rect::new(options_area.x, options_area.y + 1, options_area.width, 1),
         1,

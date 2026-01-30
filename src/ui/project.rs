@@ -210,7 +210,12 @@ pub fn render(frame: &mut Frame, app: &mut App) {
 
     // 渲染主题选择器（如果打开）
     if app.show_theme_selector {
-        theme_selector::render(frame, app.theme_selector_index, colors, &mut app.click_areas);
+        theme_selector::render(
+            frame,
+            app.theme_selector_index,
+            colors,
+            &mut app.click_areas,
+        );
     }
 
     // 渲染 New Task 弹窗（如果打开）

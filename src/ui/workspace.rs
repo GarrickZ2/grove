@@ -38,7 +38,12 @@ pub fn render(frame: &mut Frame, app: &mut App) {
 
     // 渲染主题选择器
     if app.show_theme_selector {
-        theme_selector::render(frame, app.theme_selector_index, &app.colors, &mut app.click_areas);
+        theme_selector::render(
+            frame,
+            app.theme_selector_index,
+            &app.colors,
+            &mut app.click_areas,
+        );
     }
 
     // 渲染帮助面板
@@ -59,7 +64,13 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     // 渲染 Config 配置面板
     if let Some(ref data) = app.config_panel {
         let config = crate::storage::config::load_config();
-        config_panel::render(frame, data, &config.layout, &app.colors, &mut app.click_areas);
+        config_panel::render(
+            frame,
+            data,
+            &config.layout,
+            &app.colors,
+            &mut app.click_areas,
+        );
     }
 }
 

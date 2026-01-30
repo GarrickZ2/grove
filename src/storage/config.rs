@@ -18,10 +18,17 @@ pub struct Config {
     pub layout: LayoutConfig,
 }
 
+/// 自定义布局配置
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct CustomLayoutConfig {
+    /// JSON-encoded LayoutNode tree
+    pub tree: String,
+}
+
 /// 布局配置
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LayoutConfig {
-    /// 预设名: "single"/"agent"/"agent-shell"/"agent-monitor"
+    /// 预设名: "single"/"agent"/"agent-shell"/"agent-monitor"/"custom"
     #[serde(default = "default_layout_name")]
     pub default: String,
     /// agent 启动命令（如 "claude", "claude --yolo"）
@@ -30,6 +37,9 @@ pub struct LayoutConfig {
     /// 要注入 grove 集成的上下文文档列表
     #[serde(default = "default_context_docs")]
     pub context_docs: Vec<String>,
+    /// 自定义布局配置
+    #[serde(default)]
+    pub custom: Option<CustomLayoutConfig>,
 }
 
 fn default_layout_name() -> String {
@@ -46,6 +56,7 @@ impl Default for LayoutConfig {
             default: default_layout_name(),
             agent_command: None,
             context_docs: default_context_docs(),
+            custom: None,
         }
     }
 }

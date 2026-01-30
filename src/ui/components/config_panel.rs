@@ -10,7 +10,7 @@ use ratatui::{
 
 use crate::storage::config::LayoutConfig;
 use crate::theme::ThemeColors;
-use crate::tmux::layout::TaskLayout;
+use crate::tmux::layout::{LayoutNode, PathSegment, SplitDirection, TaskLayout};
 use crate::ui::click_areas::{ClickAreas, DialogAction};
 
 use super::hook_panel::HookConfigData;
@@ -33,6 +33,10 @@ pub enum ConfigStep {
     SelectContextDocs,
     /// Hook 配置向导（复用现有逻辑）
     HookWizard,
+    /// Custom Layout: 递归选择节点类型
+    CustomChoose,
+    /// Custom Layout: 输入自定义命令
+    CustomPaneCommand,
 }
 
 /// Config 面板数据
@@ -61,6 +65,16 @@ pub struct ConfigPanelData {
     pub context_docs_cursor: usize,
     /// Context docs: 是否正在编辑 custom 名称
     pub context_docs_editing_custom: bool,
+    /// Custom layout: 当前在树中的路径
+    pub custom_build_path: Vec<PathSegment>,
+    /// Custom layout: 正在构建的树
+    pub custom_build_root: Option<LayoutNode>,
+    /// Custom layout: 选择列表光标 (0=SplitH, 1=SplitV, 2=separator, 3=Agent, 4=Grove, 5=Shell, 6=Custom)
+    pub custom_choose_selected: usize,
+    /// Custom layout: 自定义命令输入
+    pub custom_cmd_input: String,
+    /// Custom layout: 自定义命令光标
+    pub custom_cmd_cursor: usize,
 }
 
 impl ConfigPanelData {
@@ -87,6 +101,13 @@ impl ConfigPanelData {
             }
         }
 
+        // If layout is "custom", select index 5 (the Custom... option)
+        let layout_selected = if config.default == "custom" {
+            TaskLayout::all().len() // index after all presets
+        } else {
+            layout_selected
+        };
+
         Self {
             step: ConfigStep::Main,
             main_selected: 0,
@@ -100,6 +121,11 @@ impl ConfigPanelData {
             context_docs_custom_name: custom_name,
             context_docs_cursor: 0,
             context_docs_editing_custom: false,
+            custom_build_path: Vec::new(),
+            custom_build_root: None,
+            custom_choose_selected: 3, // default to Agent
+            custom_cmd_input: String::new(),
+            custom_cmd_cursor: 0,
         }
     }
 
@@ -121,7 +147,7 @@ const DIALOG_WIDTH: u16 = 50;
 const DIALOG_HEIGHT_MAIN: u16 = 10;
 const DIALOG_HEIGHT_AGENT_MENU: u16 = 10;
 const DIALOG_HEIGHT_AGENT_CMD: u16 = 11;
-const DIALOG_HEIGHT_LAYOUT: u16 = 13;
+const DIALOG_HEIGHT_LAYOUT: u16 = 15;
 const DIALOG_HEIGHT_CONTEXT: u16 = 14;
 
 /// 渲染 Config 面板
@@ -140,6 +166,10 @@ pub fn render(
         ConfigStep::SelectContextDocs => render_context_docs(frame, data, colors, click_areas),
         ConfigStep::HookWizard => {
             super::hook_panel::render(frame, &data.hook_data, colors, click_areas);
+        }
+        ConfigStep::CustomChoose => render_custom_choose(frame, data, colors, click_areas),
+        ConfigStep::CustomPaneCommand => {
+            render_custom_pane_command(frame, data, colors, click_areas)
         }
     }
 }
@@ -192,7 +222,7 @@ fn render_main(
         .unwrap_or("(not set)");
     let layout_value = TaskLayout::from_name(&config.default)
         .map(|l| l.label())
-        .unwrap_or("single");
+        .unwrap_or("Single");
 
     let items: Vec<(&str, &str)> = vec![
         ("Coding Agent", agent_value),
@@ -323,7 +353,10 @@ fn render_agent_menu(
             Span::styled(format!("{:<16}", label), name_style),
         ];
         if !value.is_empty() {
-            spans.push(Span::styled(value.as_str(), Style::default().fg(colors.muted)));
+            spans.push(Span::styled(
+                value.as_str(),
+                Style::default().fg(colors.muted),
+            ));
         }
         lines.push(Line::from(spans));
     }
@@ -487,6 +520,8 @@ fn render_layout_selector(
         "Grove (40%) + Agent (60%)",
     ];
 
+    let total_items = layouts.len() + 2; // +1 separator + 1 custom
+
     let mut lines: Vec<Line> = Vec::new();
     for (i, layout) in layouts.iter().enumerate() {
         let is_selected = i == data.layout_selected;
@@ -507,6 +542,33 @@ fn render_layout_selector(
         ]));
     }
 
+    // Separator line
+    lines.push(Line::from(Span::styled(
+        "    ─────────────────────────────────────────",
+        Style::default().fg(colors.border),
+    )));
+
+    // Custom... option (index = layouts.len(), visual row = layouts.len() + 1)
+    let custom_idx = layouts.len();
+    let is_custom_selected = data.layout_selected == custom_idx;
+    let prefix = if is_custom_selected {
+        "  \u{276f} "
+    } else {
+        "    "
+    };
+    let name_style = if is_custom_selected {
+        Style::default()
+            .fg(colors.highlight)
+            .add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(colors.text)
+    };
+    lines.push(Line::from(vec![
+        Span::styled(prefix, name_style),
+        Span::styled(format!("{:<18}", "Custom..."), name_style),
+        Span::styled("Build your own layout", Style::default().fg(colors.muted)),
+    ]));
+
     let list = Paragraph::new(lines);
     frame.render_widget(list, content_area);
 
@@ -519,7 +581,7 @@ fn render_layout_selector(
 
     // 注册点击区域
     click_areas.dialog_area = Some(dialog_area);
-    for i in 0..layouts.len() {
+    for i in 0..total_items {
         let row_rect = Rect::new(
             content_area.x,
             content_area.y + i as u16,
@@ -674,6 +736,272 @@ fn render_context_docs(
         );
         click_areas.dialog_items.push((row_rect, i));
     }
+    let half = hint_area.width / 2;
+    click_areas.dialog_buttons.push((
+        Rect::new(hint_area.x, hint_area.y, half, 1),
+        DialogAction::Confirm,
+    ));
+    click_areas.dialog_buttons.push((
+        Rect::new(hint_area.x + half, hint_area.y, hint_area.width - half, 1),
+        DialogAction::Cancel,
+    ));
+}
+
+/// Custom Choose 最大 pane 数
+pub const CUSTOM_MAX_PANES: usize = 8;
+
+/// 生成 title 路径描述
+fn custom_title_from_path(path: &[PathSegment], root: &Option<LayoutNode>) -> String {
+    if path.is_empty() {
+        return "Custom Layout".to_string();
+    }
+
+    let mut parts: Vec<&str> = Vec::new();
+    let mut current = root.as_ref();
+
+    for (i, seg) in path.iter().enumerate() {
+        // 获取当前 Split 的方向来决定子节点名称
+        let dir = if let Some(LayoutNode::Split { dir, .. }) = current {
+            Some(*dir)
+        } else {
+            None
+        };
+
+        let label = match (seg, dir) {
+            (PathSegment::First, Some(SplitDirection::Horizontal)) => "Left",
+            (PathSegment::Second, Some(SplitDirection::Horizontal)) => "Right",
+            (PathSegment::First, Some(SplitDirection::Vertical)) => "Top",
+            (PathSegment::Second, Some(SplitDirection::Vertical)) => "Bottom",
+            (PathSegment::First, None) => "First",
+            (PathSegment::Second, None) => "Second",
+        };
+        parts.push(label);
+
+        // 向下遍历
+        if let Some(LayoutNode::Split { first, second, .. }) = current {
+            current = match seg {
+                PathSegment::First => Some(first.as_ref()),
+                PathSegment::Second => Some(second.as_ref()),
+            };
+        } else {
+            break;
+        }
+
+        // 最后一段追加 "Pane"
+        if i == path.len() - 1 {
+            // 由 parts 最后一个元素决定
+        }
+    }
+
+    format!("{} Pane", parts.join(" \u{2192} "))
+}
+
+/// 渲染 Custom Choose 页面
+fn render_custom_choose(
+    frame: &mut Frame,
+    data: &ConfigPanelData,
+    colors: &ThemeColors,
+    click_areas: &mut ClickAreas,
+) {
+    let area = frame.area();
+    let height: u16 = 17;
+
+    let x = area.width.saturating_sub(DIALOG_WIDTH) / 2;
+    let y = area.height.saturating_sub(height) / 2;
+    let dialog_area = Rect::new(x, y, DIALOG_WIDTH.min(area.width), height.min(area.height));
+
+    frame.render_widget(Clear, dialog_area);
+
+    let title = custom_title_from_path(&data.custom_build_path, &data.custom_build_root);
+    let block = Block::default()
+        .title(format!(" {} ", title))
+        .title_alignment(Alignment::Center)
+        .title_style(
+            Style::default()
+                .fg(colors.highlight)
+                .add_modifier(Modifier::BOLD),
+        )
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(colors.border))
+        .style(Style::default().bg(colors.bg));
+
+    let inner_area = block.inner(dialog_area);
+    frame.render_widget(block, dialog_area);
+
+    let [_spacer1, label_area, _spacer2, content_area, _spacer3, pane_count_area, hint_area] =
+        Layout::vertical([
+            Constraint::Length(1),
+            Constraint::Length(1),
+            Constraint::Length(1),
+            Constraint::Length(7), // 2 splits + separator + 4 leaves
+            Constraint::Min(0),
+            Constraint::Length(1),
+            Constraint::Length(1),
+        ])
+        .areas(inner_area);
+
+    frame.render_widget(
+        Paragraph::new(Line::from(Span::styled(
+            "  Choose pane type:",
+            Style::default().fg(colors.text),
+        ))),
+        label_area,
+    );
+
+    // 计算当前 pane 数
+    let current_panes = data
+        .custom_build_root
+        .as_ref()
+        .map(|r| r.pane_count())
+        .unwrap_or(1);
+    // split 可选：split 会将 1 个 placeholder 变为 2（+1 pane），需要剩余容量 >= 2
+    let can_split = current_panes < CUSTOM_MAX_PANES;
+
+    // 选项列表：0=SplitH, 1=SplitV, 2=separator, 3=Agent, 4=Grove, 5=Shell, 6=Custom
+    let items: [(&str, bool); 7] = [
+        ("Split Horizontal \u{2500}", can_split),
+        ("Split Vertical   \u{2502}", can_split),
+        ("\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}", false), // separator
+        ("Agent", true),
+        ("Grove (monitor)", true),
+        ("Shell", true),
+        ("Custom command...", true),
+    ];
+
+    let mut lines: Vec<Line> = Vec::new();
+    for (i, (label, enabled)) in items.iter().enumerate() {
+        if i == 2 {
+            // separator line
+            lines.push(Line::from(Span::styled(
+                format!("    {}", label),
+                Style::default().fg(colors.border),
+            )));
+            continue;
+        }
+
+        let logical = if i < 2 { i } else { i - 1 }; // map visual to logical
+        let is_selected = data.custom_choose_selected == logical;
+        let prefix = if is_selected { "  \u{276f} " } else { "    " };
+
+        let style = if !enabled {
+            Style::default().fg(colors.muted)
+        } else if is_selected {
+            Style::default()
+                .fg(colors.highlight)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(colors.text)
+        };
+
+        lines.push(Line::from(Span::styled(
+            format!("{}{}", prefix, label),
+            style,
+        )));
+    }
+
+    frame.render_widget(Paragraph::new(lines), content_area);
+
+    // Pane count
+    frame.render_widget(
+        Paragraph::new(Line::from(Span::styled(
+            format!("  Panes: {}/{}", current_panes, CUSTOM_MAX_PANES),
+            Style::default().fg(colors.muted),
+        ))),
+        pane_count_area,
+    );
+
+    render_hint(
+        frame,
+        hint_area,
+        "\u{2191}\u{2193} select   Enter \u{25b8}   Esc \u{25c2}",
+        colors,
+    );
+
+    // 注册点击区域
+    click_areas.dialog_area = Some(dialog_area);
+    for i in 0..items.len() {
+        if i == 2 {
+            continue;
+        }
+        let row_rect = Rect::new(
+            content_area.x,
+            content_area.y + i as u16,
+            content_area.width,
+            1,
+        );
+        let logical = if i < 2 { i } else { i - 1 };
+        click_areas.dialog_items.push((row_rect, logical));
+    }
+}
+
+/// 渲染 Custom Pane Command 输入页面
+fn render_custom_pane_command(
+    frame: &mut Frame,
+    data: &ConfigPanelData,
+    colors: &ThemeColors,
+    click_areas: &mut ClickAreas,
+) {
+    let area = frame.area();
+    let height: u16 = 11;
+
+    let x = area.width.saturating_sub(DIALOG_WIDTH) / 2;
+    let y = area.height.saturating_sub(height) / 2;
+    let dialog_area = Rect::new(x, y, DIALOG_WIDTH.min(area.width), height.min(area.height));
+
+    frame.render_widget(Clear, dialog_area);
+
+    let block = Block::default()
+        .title(" Custom Command ")
+        .title_alignment(Alignment::Center)
+        .title_style(
+            Style::default()
+                .fg(colors.highlight)
+                .add_modifier(Modifier::BOLD),
+        )
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(colors.border))
+        .style(Style::default().bg(colors.bg));
+
+    let inner_area = block.inner(dialog_area);
+    frame.render_widget(block, dialog_area);
+
+    let [_spacer1, label_area, _spacer2, input_area, _spacer3, hint_area] = Layout::vertical([
+        Constraint::Length(1),
+        Constraint::Length(1),
+        Constraint::Length(1),
+        Constraint::Length(3),
+        Constraint::Min(1),
+        Constraint::Length(1),
+    ])
+    .areas(inner_area);
+
+    let label = Paragraph::new(Line::from(Span::styled(
+        "  Command to run in this pane:",
+        Style::default().fg(colors.text),
+    )));
+    frame.render_widget(label, label_area);
+
+    let display_text = if data.custom_cmd_input.is_empty() {
+        "\u{2588}".to_string()
+    } else {
+        format!("{}\u{2588}", data.custom_cmd_input)
+    };
+
+    let input = Paragraph::new(Line::from(Span::styled(
+        format!(" {} ", display_text),
+        Style::default().fg(colors.highlight),
+    )))
+    .block(
+        Block::default()
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(colors.border)),
+    );
+    frame.render_widget(input, input_area);
+
+    render_hint(frame, hint_area, "Enter confirm   Esc back", colors);
+
+    // 注册点击区域
+    click_areas.dialog_area = Some(dialog_area);
     let half = hint_area.width / 2;
     click_areas.dialog_buttons.push((
         Rect::new(hint_area.x, hint_area.y, half, 1),
