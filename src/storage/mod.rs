@@ -1,5 +1,6 @@
 pub mod ai_data;
 pub mod config;
+pub mod diff_comments;
 pub mod notes;
 pub mod tasks;
 pub mod workspace;

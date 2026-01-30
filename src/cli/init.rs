@@ -15,6 +15,7 @@ grove agent summary                               # Read current summary
 grove agent summary "Your complete summary"       # Overwrite summary (full replace)
 grove agent todo                                  # Read current TODO list
 grove agent todo --todo "a" "b" --done "c"        # Replace full TODO list
+grove agent diff                                  # Read code review comments
 ```
 
 ---
@@ -123,6 +124,19 @@ A **cumulative record** of all work on this task. Structure:
 | After milestone | Update `summary` |
 | Hit a blocker | Record in `summary` Blockers section |
 | Conversation end | Update `todo` and `summary` |
+| After code review | Read `diff` for reviewer comments |
+
+---
+
+## Code Review Integration
+
+Grove integrates with difit for interactive code reviews. When a review session produces comments, they are automatically saved.
+
+```bash
+grove agent diff    # Read code review comments from last difit session
+```
+
+Read these comments to understand reviewer feedback and address issues in your implementation.
 "#;
 
 const GROVE_INJECT_START: &str = "<!-- grove:start -->";

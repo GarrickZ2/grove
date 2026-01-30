@@ -3,7 +3,7 @@ use std::env;
 use clap::Subcommand;
 
 use crate::storage::workspace::project_hash;
-use crate::storage::{ai_data, notes};
+use crate::storage::{ai_data, diff_comments, notes};
 
 #[derive(Subcommand)]
 pub enum AgentCommands {
@@ -25,6 +25,8 @@ pub enum AgentCommands {
     },
     /// Read user-written notes
     Notes,
+    /// Read code review comments from difit session
+    Diff,
 }
 
 /// Execute `grove agent <subcommand>`
@@ -37,6 +39,7 @@ pub fn execute(cmd: AgentCommands) {
             done_items,
         } => cmd_todo(todo_items, done_items),
         AgentCommands::Notes => cmd_notes(),
+        AgentCommands::Diff => cmd_diff(),
     }
 }
 
@@ -153,6 +156,29 @@ fn cmd_notes() {
         Ok(s) => print!("{}", s),
         Err(e) => {
             eprintln!("Error reading notes: {}", e);
+            std::process::exit(1);
+        }
+    }
+}
+
+fn cmd_diff() {
+    let Some((task_id, project_path)) = get_task_context() else {
+        eprintln!("Error: not in a Grove task (GROVE_TASK_ID / GROVE_PROJECT not set)");
+        std::process::exit(1);
+    };
+
+    let project_key = project_hash(&project_path);
+
+    match diff_comments::load_diff_comments(&project_key, &task_id) {
+        Ok(s) => {
+            if s.is_empty() {
+                println!("No code review comments yet.");
+            } else {
+                print!("{}", s);
+            }
+        }
+        Err(e) => {
+            eprintln!("Error reading diff comments: {}", e);
             std::process::exit(1);
         }
     }

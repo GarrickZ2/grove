@@ -8,8 +8,21 @@ use ratatui::{
     Frame,
 };
 
+use ratatui::style::Color;
+
 use crate::theme::ThemeColors;
 use crate::ui::click_areas::{ClickAreas, DialogAction};
+
+/// Action 分组
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ActionGroup {
+    /// 编辑类操作（安全）
+    Edit,
+    /// 分支操作（普通）
+    Branch,
+    /// 会话/生命周期操作（危险）
+    Session,
+}
 
 /// Action 类型
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -21,6 +34,7 @@ pub enum ActionType {
     Merge,
     Recover,
     Commit,
+    Review,
     Reset,
 }
 
@@ -35,6 +49,7 @@ impl ActionType {
             ActionType::Merge => "Merge",
             ActionType::Recover => "Recover",
             ActionType::Commit => "Commit",
+            ActionType::Review => "Review",
             ActionType::Reset => "Reset",
         }
     }
@@ -49,7 +64,29 @@ impl ActionType {
             ActionType::Merge => "Merge to target branch",
             ActionType::Recover => "Restore worktree from archive",
             ActionType::Commit => "Add all and commit changes",
+            ActionType::Review => "Code review with difit",
             ActionType::Reset => "Rebuild branch and worktree",
+        }
+    }
+
+    /// Action 所属分组
+    pub fn group(&self) -> ActionGroup {
+        match self {
+            ActionType::Commit | ActionType::Review => ActionGroup::Edit,
+            ActionType::RebaseTo | ActionType::Sync | ActionType::Merge => ActionGroup::Branch,
+            ActionType::Archive
+            | ActionType::Clean
+            | ActionType::Recover
+            | ActionType::Reset => ActionGroup::Session,
+        }
+    }
+
+    /// 选中时的高亮颜色
+    fn selected_color(&self, colors: &ThemeColors) -> Color {
+        match self.group() {
+            ActionGroup::Edit => colors.highlight,
+            ActionGroup::Branch => colors.info,
+            ActionGroup::Session => colors.error,
         }
     }
 }
@@ -65,6 +102,10 @@ pub struct ActionPaletteData {
     pub filtered_indices: Vec<usize>,
     /// 当前选中索引
     pub selected_index: usize,
+    /// 滚动偏移（渲染时用于列表窗口定位）
+    pub scroll_offset: usize,
+    /// 可见行数（渲染时写入，供滚动计算使用）
+    pub visible_rows: usize,
 }
 
 impl ActionPaletteData {
@@ -75,6 +116,8 @@ impl ActionPaletteData {
             search: String::new(),
             filtered_indices,
             selected_index: 0,
+            scroll_offset: 0,
+            visible_rows: 0,
         }
     }
 
@@ -92,9 +135,10 @@ impl ActionPaletteData {
             .map(|(i, _)| i)
             .collect();
 
-        // 重置选中位置
+        // 重置选中位置和滚动
         if self.selected_index >= self.filtered_indices.len() {
             self.selected_index = 0;
+            self.scroll_offset = 0;
         }
     }
 
@@ -114,6 +158,7 @@ impl ActionPaletteData {
             } else {
                 self.selected_index -= 1;
             }
+            self.ensure_visible();
         }
     }
 
@@ -125,6 +170,19 @@ impl ActionPaletteData {
             } else {
                 self.selected_index += 1;
             }
+            self.ensure_visible();
+        }
+    }
+
+    /// 确保选中项在可见窗口内
+    fn ensure_visible(&mut self) {
+        if self.visible_rows == 0 {
+            return;
+        }
+        if self.selected_index < self.scroll_offset {
+            self.scroll_offset = self.selected_index;
+        } else if self.selected_index >= self.scroll_offset + self.visible_rows {
+            self.scroll_offset = self.selected_index - self.visible_rows + 1;
         }
     }
 
@@ -141,27 +199,49 @@ impl ActionPaletteData {
     }
 }
 
-/// 弹窗尺寸
+/// 弹窗宽度
 const DIALOG_WIDTH: u16 = 50;
-const DIALOG_HEIGHT: u16 = 12;
+/// 边框 + 搜索框 + 间隔 + 提示 = 固定开销
+const DIALOG_CHROME: u16 = 2 + 1 + 1 + 1; // borders(2) + search(1) + spacer(1) + hint(1)
 
 /// 渲染 Action Palette
 pub fn render(
     frame: &mut Frame,
-    data: &ActionPaletteData,
+    data: &mut ActionPaletteData,
     colors: &ThemeColors,
     click_areas: &mut ClickAreas,
 ) {
     let area = frame.area();
 
+    // 动态高度：适配 action 数量 + 分组间距
+    let item_count = data.filtered_indices.len().max(1) as u16;
+    // 无搜索时计算分组间空行数
+    let group_gaps = if data.search.is_empty() {
+        let mut gaps = 0u16;
+        let mut last_grp: Option<ActionGroup> = None;
+        for &idx in &data.filtered_indices {
+            let grp = data.actions[idx].group();
+            if last_grp.is_some() && last_grp != Some(grp) {
+                gaps += 1; // 分组间空行
+            }
+            last_grp = Some(grp);
+        }
+        gaps
+    } else {
+        0
+    };
+    let ideal_height = DIALOG_CHROME + item_count + group_gaps;
+    let max_height = area.height.saturating_sub(4);
+    let dialog_height = ideal_height.clamp(DIALOG_CHROME + 1, max_height);
+
     // 居中计算
     let x = area.width.saturating_sub(DIALOG_WIDTH) / 2;
-    let y = area.height.saturating_sub(DIALOG_HEIGHT) / 2;
+    let y = area.height.saturating_sub(dialog_height) / 2;
     let dialog_area = Rect::new(
         x,
         y,
         DIALOG_WIDTH.min(area.width),
-        DIALOG_HEIGHT.min(area.height),
+        dialog_height.min(area.height),
     );
 
     // 清除背景
@@ -200,28 +280,69 @@ pub fn render(
     ]));
     frame.render_widget(search, search_area);
 
-    // 渲染 action 列表
-    let mut lines: Vec<Line> = Vec::new();
+    // 更新可见行数（供 ensure_visible 使用）
+    let visible_rows = list_area.height as usize;
+    data.visible_rows = visible_rows;
+    data.ensure_visible();
+    let scroll_offset = data.scroll_offset;
+
+    // 构建显示行：包含分组标题和 action 项
+    // display_rows: (Option<display_idx>, Line) — None 表示分组标题行
+    let mut display_rows: Vec<(Option<usize>, Line)> = Vec::new();
+    let mut last_group: Option<ActionGroup> = None;
+    let no_search = data.search.is_empty();
+
     for (display_idx, &real_idx) in data.filtered_indices.iter().enumerate() {
         if let Some(action) = data.actions.get(real_idx) {
-            let is_selected = display_idx == data.selected_index;
-            let prefix = if is_selected { "❯ " } else { "  " };
+            // 无搜索时才显示分组标题
+            if no_search {
+                let group = action.group();
+                if last_group != Some(group) {
+                    // 非首组加空行
+                    if last_group.is_some() {
+                        display_rows.push((None, Line::from("")));
+                    }
+                    last_group = Some(group);
+                }
+            }
 
-            let name_style = if is_selected {
-                Style::default()
-                    .fg(colors.highlight)
-                    .add_modifier(Modifier::BOLD)
+            display_rows.push((Some(display_idx), render_action_line(action, false, colors)));
+        }
+    }
+
+    // 计算滚动：找到选中项在 display_rows 中的位置
+    let selected_row_pos = display_rows
+        .iter()
+        .position(|(idx, _)| *idx == Some(data.selected_index))
+        .unwrap_or(0);
+
+    // 调整滚动偏移确保选中行可见
+    let total_rows = display_rows.len();
+    let mut row_offset = scroll_offset;
+    if selected_row_pos < row_offset {
+        row_offset = selected_row_pos;
+    } else if selected_row_pos >= row_offset + visible_rows {
+        row_offset = selected_row_pos.saturating_sub(visible_rows - 1);
+    }
+    // 不要滚过头
+    if total_rows > visible_rows && row_offset > total_rows - visible_rows {
+        row_offset = total_rows - visible_rows;
+    }
+
+    // 渲染可见行，同时为选中项应用高亮
+    let mut lines: Vec<Line> = Vec::new();
+    for (idx_opt, line) in display_rows.iter().skip(row_offset).take(visible_rows) {
+        if let Some(display_idx) = idx_opt {
+            if *display_idx == data.selected_index {
+                // 重新渲染选中行
+                let real_idx = data.filtered_indices[*display_idx];
+                let action = &data.actions[real_idx];
+                lines.push(render_action_line(action, true, colors));
             } else {
-                Style::default().fg(colors.text)
-            };
-
-            let desc_style = Style::default().fg(colors.muted);
-
-            lines.push(Line::from(vec![
-                Span::styled(prefix, name_style),
-                Span::styled(format!("{:<12}", action.name()), name_style),
-                Span::styled(action.description(), desc_style),
-            ]));
+                lines.push(line.clone());
+            }
+        } else {
+            lines.push(line.clone());
         }
     }
 
@@ -248,16 +369,23 @@ pub fn render(
     .alignment(Alignment::Center);
     frame.render_widget(hint, hint_area);
 
-    // 注册点击区域
+    // 注册点击区域（只注册可见的 action 行，跳过分组标题）
     click_areas.dialog_area = Some(dialog_area);
-    for (display_idx, _) in data.filtered_indices.iter().enumerate() {
-        let row_rect = Rect::new(
-            list_area.x,
-            list_area.y + display_idx as u16,
-            list_area.width,
-            1,
-        );
-        click_areas.dialog_items.push((row_rect, display_idx));
+    for (visible_idx, (idx_opt, _)) in display_rows
+        .iter()
+        .skip(row_offset)
+        .take(visible_rows)
+        .enumerate()
+    {
+        if let Some(display_idx) = idx_opt {
+            let row_rect = Rect::new(
+                list_area.x,
+                list_area.y + visible_idx as u16,
+                list_area.width,
+                1,
+            );
+            click_areas.dialog_items.push((row_rect, *display_idx));
+        }
     }
     let half = hint_area.width / 2;
     click_areas.dialog_buttons.push((
@@ -268,4 +396,27 @@ pub fn render(
         Rect::new(hint_area.x + half, hint_area.y, hint_area.width - half, 1),
         DialogAction::Cancel,
     ));
+}
+
+/// 渲染单个 action 行
+fn render_action_line<'a>(
+    action: &ActionType,
+    selected: bool,
+    colors: &ThemeColors,
+) -> Line<'a> {
+    let prefix = if selected { "❯ " } else { "  " };
+
+    let accent = action.selected_color(colors);
+    let name_style = if selected {
+        Style::default().fg(accent).add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(colors.text)
+    };
+    let desc_style = Style::default().fg(colors.muted);
+
+    Line::from(vec![
+        Span::styled(prefix.to_string(), name_style),
+        Span::styled(format!("{:<12}", action.name()), name_style),
+        Span::styled(action.description().to_string(), desc_style),
+    ])
 }

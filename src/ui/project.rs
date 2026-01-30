@@ -162,6 +162,12 @@ pub fn render(frame: &mut Frame, app: &mut App) {
             );
         }
 
+        let reviewing = app
+            .reviewing_task_id
+            .as_ref()
+            .zip(app.project.selected_worktree())
+            .is_some_and(|(rid, wt)| rid == &wt.id);
+
         preview_panel::render(
             frame,
             right_area,
@@ -171,6 +177,8 @@ pub fn render(frame: &mut Frame, app: &mut App) {
             app.project.notes_scroll,
             app.project.ai_summary_scroll,
             app.project.git_scroll,
+            app.project.diff_scroll,
+            reviewing,
             colors,
             &mut app.click_areas,
         );
@@ -250,7 +258,7 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     }
 
     // 渲染 Action Palette
-    if let Some(ref data) = app.action_palette {
+    if let Some(ref mut data) = app.action_palette {
         action_palette::render(frame, data, colors, &mut app.click_areas);
     }
 

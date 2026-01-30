@@ -11,7 +11,7 @@ use crate::git;
 use crate::hooks::{self, HooksFile, NotificationLevel};
 use crate::model::{loader, ProjectInfo, ProjectTab, WorkspaceState, Worktree, WorktreeStatus};
 use crate::storage::{
-    self, ai_data, notes,
+    self, ai_data, diff_comments, notes,
     tasks::{self, Task, TaskStatus},
     workspace::project_hash,
 };
@@ -65,6 +65,7 @@ pub enum PreviewSubTab {
     Git,
     Ai,
     Notes,
+    Diff,
 }
 
 /// 面板数据缓存
@@ -94,6 +95,10 @@ pub struct PanelData {
     pub ai_todo_active: bool,
     /// Notes tab: content
     pub notes_content: String,
+    /// Diff tab: review comments
+    pub diff_comments: String,
+    /// Diff tab: comment count
+    pub diff_comments_count: usize,
     /// 上次加载的 task id
     pub last_task_id: Option<String>,
 }
@@ -128,6 +133,8 @@ pub struct ProjectState {
     pub ai_summary_scroll: u16,
     /// Git tab 滚动偏移
     pub git_scroll: u16,
+    /// Diff tab 滚动偏移
+    pub diff_scroll: u16,
     /// 待打开外部编辑器的 notes 文件路径
     pub pending_notes_edit: Option<String>,
 }
@@ -175,6 +182,7 @@ impl ProjectState {
             notes_scroll: 0,
             ai_summary_scroll: 0,
             git_scroll: 0,
+            diff_scroll: 0,
             pending_notes_edit: None,
         }
     }
@@ -269,6 +277,7 @@ impl ProjectState {
             self.notes_scroll = 0;
             self.ai_summary_scroll = 0;
             self.git_scroll = 0;
+            self.diff_scroll = 0;
         }
 
         // Git data
@@ -294,6 +303,16 @@ impl ProjectState {
         // Notes data
         self.panel_data.notes_content =
             notes::load_notes(&self.project_key, &wt.id).unwrap_or_default();
+
+        // Diff comments data
+        let diff_comments =
+            diff_comments::load_diff_comments(&self.project_key, &wt.id).unwrap_or_default();
+        self.panel_data.diff_comments_count = diff_comments
+            .lines()
+            .filter(|line| line.trim() == "=====")
+            .count()
+            .saturating_add(if diff_comments.is_empty() { 0 } else { 1 });
+        self.panel_data.diff_comments = diff_comments;
 
         // 智能默认 sub-tab：仅首次打开面板时设置，切换任务时保持用户选择
         if changed && first_open {
@@ -353,6 +372,19 @@ impl ProjectState {
     /// 向上滚动 Git tab
     pub fn scroll_git_up(&mut self) {
         self.git_scroll = self.git_scroll.saturating_sub(1);
+    }
+
+    /// 向下滚动 Diff tab
+    pub fn scroll_diff_down(&mut self) {
+        let line_count = self.panel_data.diff_comments.lines().count() as u16;
+        if self.diff_scroll < line_count.saturating_sub(1) {
+            self.diff_scroll += 1;
+        }
+    }
+
+    /// 向上滚动 Diff tab
+    pub fn scroll_diff_up(&mut self) {
+        self.diff_scroll = self.diff_scroll.saturating_sub(1);
     }
 
     /// Clone 选中的 worktree（避免借用冲突）
@@ -556,6 +588,7 @@ pub enum MonitorAction {
     Archive,
     Clean,
     Notes,
+    Review,
     Leave,
     Exit,
 }
@@ -573,7 +606,7 @@ impl MonitorAction {
                 ],
             ),
             ("Task", &[MonitorAction::Archive, MonitorAction::Clean]),
-            ("Edit", &[MonitorAction::Notes]),
+            ("Edit", &[MonitorAction::Notes, MonitorAction::Review]),
             ("Session", &[MonitorAction::Leave, MonitorAction::Exit]),
         ]
     }
@@ -594,10 +627,12 @@ impl MonitorAction {
             MonitorAction::Archive => "Archive",
             MonitorAction::Clean => "Clean",
             MonitorAction::Notes => "Notes",
+            MonitorAction::Review => "Review",
             MonitorAction::Leave => "Leave",
             MonitorAction::Exit => "Exit",
         }
     }
+
 }
 
 /// Monitor 模式状态
@@ -617,6 +652,8 @@ pub struct MonitorState {
     pub ai_summary_scroll: u16,
     /// Notes 滚动偏移
     pub notes_scroll: u16,
+    /// Diff tab 滚动偏移
+    pub diff_scroll: u16,
     /// Sidebar 选中操作索引
     pub action_selected: usize,
     /// GROVE_TASK_ID
@@ -649,6 +686,7 @@ impl Default for MonitorState {
             git_scroll: 0,
             ai_summary_scroll: 0,
             notes_scroll: 0,
+            diff_scroll: 0,
             action_selected: 0,
             task_id: String::new(),
             task_name: String::new(),
@@ -687,6 +725,7 @@ impl MonitorState {
             git_scroll: 0,
             ai_summary_scroll: 0,
             notes_scroll: 0,
+            diff_scroll: 0,
             action_selected: 0,
             task_id,
             task_name,
@@ -738,6 +777,16 @@ impl MonitorState {
         // Notes 数据
         self.panel_data.notes_content =
             notes::load_notes(&self.project_key, &self.task_id).unwrap_or_default();
+
+        // Diff comments 数据
+        let diff_comments =
+            diff_comments::load_diff_comments(&self.project_key, &self.task_id).unwrap_or_default();
+        self.panel_data.diff_comments_count = diff_comments
+            .lines()
+            .filter(|line| line.trim() == "=====")
+            .count()
+            .saturating_add(if diff_comments.is_empty() { 0 } else { 1 });
+        self.panel_data.diff_comments = diff_comments;
     }
 
     /// Tab 键：展开/折叠 sidebar
@@ -797,6 +846,12 @@ impl MonitorState {
             PreviewSubTab::Git => {
                 self.git_scroll += 1;
             }
+            PreviewSubTab::Diff => {
+                let line_count = self.panel_data.diff_comments.lines().count() as u16;
+                if self.diff_scroll < line_count.saturating_sub(1) {
+                    self.diff_scroll += 1;
+                }
+            }
         }
     }
 
@@ -812,6 +867,9 @@ impl MonitorState {
             PreviewSubTab::Git => {
                 self.git_scroll = self.git_scroll.saturating_sub(1);
             }
+            PreviewSubTab::Diff => {
+                self.diff_scroll = self.diff_scroll.saturating_sub(1);
+            }
         }
     }
 
@@ -823,6 +881,7 @@ impl MonitorState {
         }
     }
 }
+
 
 /// 全局应用状态
 pub struct App {
@@ -900,6 +959,8 @@ pub struct App {
     pub last_click_pos: (u16, u16),
     /// Monitor 模式状态
     pub monitor: MonitorState,
+    /// 正在 review 中的 task id
+    pub reviewing_task_id: Option<String>,
 }
 
 /// 待执行的操作
@@ -931,6 +992,13 @@ pub enum PendingAction {
 pub enum BgResult {
     MergeOk { task_id: String, task_name: String },
     MergeErr(String),
+    DifitOk {
+        project_key: String,
+        task_id: String,
+        comments: String,
+        count: usize,
+    },
+    DifitErr(String),
 }
 
 impl App {
@@ -1105,6 +1173,7 @@ impl App {
             last_click_time: Instant::now() - Duration::from_secs(10),
             last_click_pos: (0, 0),
             monitor,
+            reviewing_task_id: None,
         }
     }
 
@@ -1340,6 +1409,114 @@ impl App {
 
         // 9. 标记需要 attach（主循环会暂停 TUI，attach 完成后恢复）
         self.pending_tmux_attach = Some(session);
+    }
+
+    /// 启动 difit 查看当前 Project 模式选中 task 的 diff（后台执行）
+    pub fn launch_difit_project(&mut self) {
+        if self.reviewing_task_id.is_some() {
+            self.show_toast("A review is already in progress");
+            return;
+        }
+        if self.bg_result_rx.is_some() {
+            self.show_toast("A background operation is in progress");
+            return;
+        }
+
+        let selected = self.project.current_list_state().selected();
+        let Some(index) = selected else { return };
+
+        let worktrees = self.project.current_worktrees();
+        let Some(wt) = worktrees.get(index) else {
+            return;
+        };
+
+        if !std::path::Path::new(&wt.path).exists() {
+            self.show_toast("Worktree path not found");
+            return;
+        }
+
+        let availability = crate::difit::check_available();
+        if matches!(availability, crate::difit::DifitAvailability::NotAvailable) {
+            self.show_toast("difit not available — install via: npm i -g difit");
+            return;
+        }
+
+        let worktree_path = wt.path.clone();
+        let target_branch = wt.target.clone();
+        let project_key = self.project.project_key.clone();
+        let task_id = wt.id.clone();
+
+        self.reviewing_task_id = Some(task_id.clone());
+
+        let (tx, rx) = std::sync::mpsc::channel();
+        self.bg_result_rx = Some(rx);
+
+        std::thread::spawn(move || {
+            match crate::difit::execute(&worktree_path, &target_branch, &availability) {
+                Ok(output) => {
+                    let (comments, count) = crate::difit::parse_comments(&output);
+                    let _ = tx.send(BgResult::DifitOk {
+                        project_key,
+                        task_id,
+                        comments,
+                        count,
+                    });
+                }
+                Err(e) => {
+                    let _ = tx.send(BgResult::DifitErr(e.to_string()));
+                }
+            }
+        });
+    }
+
+    /// 启动 difit 查看当前 Monitor 模式的 diff（后台执行）
+    pub fn launch_difit_monitor(&mut self) {
+        if self.reviewing_task_id.is_some() {
+            self.show_toast("A review is already in progress");
+            return;
+        }
+        if self.bg_result_rx.is_some() {
+            self.show_toast("A background operation is in progress");
+            return;
+        }
+
+        if self.monitor.worktree_path.is_empty() {
+            self.show_toast("No worktree path");
+            return;
+        }
+
+        let availability = crate::difit::check_available();
+        if matches!(availability, crate::difit::DifitAvailability::NotAvailable) {
+            self.show_toast("difit not available — install via: npm i -g difit");
+            return;
+        }
+
+        let worktree_path = self.monitor.worktree_path.clone();
+        let target_branch = self.monitor.target.clone();
+        let project_key = self.monitor.project_key.clone();
+        let task_id = self.monitor.task_id.clone();
+
+        self.reviewing_task_id = Some(task_id.clone());
+
+        let (tx, rx) = std::sync::mpsc::channel();
+        self.bg_result_rx = Some(rx);
+
+        std::thread::spawn(move || {
+            match crate::difit::execute(&worktree_path, &target_branch, &availability) {
+                Ok(output) => {
+                    let (comments, count) = crate::difit::parse_comments(&output);
+                    let _ = tx.send(BgResult::DifitOk {
+                        project_key,
+                        task_id,
+                        comments,
+                        count,
+                    });
+                }
+                Err(e) => {
+                    let _ = tx.send(BgResult::DifitErr(e.to_string()));
+                }
+            }
+        });
     }
 
     /// 进入当前选中的 worktree (attach session)
@@ -2365,6 +2542,40 @@ impl App {
                 BgResult::MergeErr(e) => {
                     self.show_toast(e);
                 }
+                BgResult::DifitOk {
+                    project_key,
+                    task_id,
+                    comments,
+                    count,
+                } => {
+                    self.reviewing_task_id = None;
+                    // 无论是否有 comments 都覆盖保存（清空旧数据）
+                    let _ = crate::storage::diff_comments::save_diff_comments(
+                        &project_key,
+                        &task_id,
+                        &comments,
+                    );
+                    if self.mode == AppMode::Project {
+                        self.project.refresh_panel_data();
+                        self.project.preview_sub_tab = PreviewSubTab::Diff;
+                        if !self.project.preview_visible {
+                            self.project.preview_visible = true;
+                        }
+                    }
+                    if self.mode == AppMode::Monitor {
+                        self.monitor.refresh_panel_data();
+                        self.monitor.content_tab = PreviewSubTab::Diff;
+                    }
+                    if count > 0 {
+                        self.show_toast(format!("Saved {} review comments", count));
+                    } else {
+                        self.show_toast("Review completed (no comments)");
+                    }
+                }
+                BgResult::DifitErr(e) => {
+                    self.reviewing_task_id = None;
+                    self.show_toast(format!("difit error: {}", e));
+                }
             }
         }
     }
@@ -2537,20 +2748,28 @@ impl App {
         let actions = match self.project.current_tab {
             ProjectTab::Archived => vec![ActionType::Clean, ActionType::Recover],
             ProjectTab::Current => vec![
+                // Edit
                 ActionType::Commit,
-                ActionType::Archive,
-                ActionType::Clean,
+                ActionType::Review,
+                // Branch
                 ActionType::RebaseTo,
                 ActionType::Sync,
                 ActionType::Merge,
+                // Session
+                ActionType::Archive,
+                ActionType::Clean,
                 ActionType::Reset,
             ],
             ProjectTab::Other => vec![
+                // Edit
                 ActionType::Commit,
-                ActionType::Archive,
-                ActionType::Clean,
+                ActionType::Review,
+                // Branch
                 ActionType::RebaseTo,
                 ActionType::Sync,
+                // Session
+                ActionType::Archive,
+                ActionType::Clean,
                 ActionType::Reset,
             ],
         };
@@ -2604,6 +2823,7 @@ impl App {
                 ActionType::Merge => self.start_merge(),
                 ActionType::Recover => self.start_recover(),
                 ActionType::Commit => self.open_commit_dialog(),
+                ActionType::Review => self.launch_difit_project(),
                 ActionType::Reset => self.start_reset(),
             }
         }
@@ -3229,6 +3449,9 @@ impl App {
             }
             MonitorAction::Notes => {
                 self.monitor.request_notes_edit();
+            }
+            MonitorAction::Review => {
+                self.launch_difit_monitor();
             }
             MonitorAction::Leave => {
                 // tmux detach-client — 脱离整个 tmux session

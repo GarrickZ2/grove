@@ -14,7 +14,7 @@ use crate::update::UpdateInfo;
 /// 帮助面板宽度
 const PANEL_WIDTH: u16 = 38;
 /// 帮助面板高度（增加版本信息区域）
-const PANEL_HEIGHT: u16 = 40;
+const PANEL_HEIGHT: u16 = 42;
 
 /// 渲染帮助面板
 pub fn render(frame: &mut Frame, colors: &ThemeColors, update_info: Option<&UpdateInfo>) {
@@ -69,8 +69,10 @@ fn build_help_lines(colors: &ThemeColors, update_info: Option<&UpdateInfo>) -> V
         key_line("1", "Git tab", colors),
         key_line("2", "AI tab", colors),
         key_line("3", "Notes tab", colors),
-        key_line("j / k", "Scroll notes", colors),
+        key_line("4", "Diff tab", colors),
+        key_line("j / k", "Scroll content", colors),
         key_line("i", "Edit notes ($EDITOR)", colors),
+        key_line("d", "Code review (difit)", colors),
         Line::from(""),
         // Actions 分组
         section_header("Actions", colors),

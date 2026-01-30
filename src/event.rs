@@ -328,6 +328,7 @@ fn handle_project_key(app: &mut App, key: KeyEvent) {
                     PreviewSubTab::Notes => app.project.scroll_notes_down(),
                     PreviewSubTab::Ai => app.project.scroll_ai_summary_down(),
                     PreviewSubTab::Git => app.project.scroll_git_down(),
+                    PreviewSubTab::Diff => app.project.scroll_diff_down(),
                 }
             } else {
                 app.project.select_next();
@@ -339,6 +340,7 @@ fn handle_project_key(app: &mut App, key: KeyEvent) {
                     PreviewSubTab::Notes => app.project.scroll_notes_up(),
                     PreviewSubTab::Ai => app.project.scroll_ai_summary_up(),
                     PreviewSubTab::Git => app.project.scroll_git_up(),
+                    PreviewSubTab::Diff => app.project.scroll_diff_up(),
                 }
             } else {
                 app.project.select_previous();
@@ -381,12 +383,23 @@ fn handle_project_key(app: &mut App, key: KeyEvent) {
             }
         }
 
+        KeyCode::Char('4') => {
+            if app.project.preview_visible {
+                app.project.preview_sub_tab = PreviewSubTab::Diff;
+            }
+        }
+
         // Notes 编辑：打开外部编辑器
         KeyCode::Char('i')
             if app.project.preview_visible
                 && app.project.preview_sub_tab == PreviewSubTab::Notes =>
         {
             app.project.request_notes_edit();
+        }
+
+        // difit diff 查看
+        KeyCode::Char('d') | KeyCode::Char('D') => {
+            app.launch_difit_project();
         }
 
         // 功能按键 - New Task
@@ -942,6 +955,7 @@ fn handle_monitor_key(app: &mut App, key: KeyEvent) {
         KeyCode::Char('1') => app.monitor.content_tab = PreviewSubTab::Git,
         KeyCode::Char('2') => app.monitor.content_tab = PreviewSubTab::Ai,
         KeyCode::Char('3') => app.monitor.content_tab = PreviewSubTab::Notes,
+        KeyCode::Char('4') => app.monitor.content_tab = PreviewSubTab::Diff,
 
         // j/k/↑/↓ 行为取决于焦点
         KeyCode::Char('j') | KeyCode::Down => match app.monitor.focus {
@@ -965,6 +979,9 @@ fn handle_monitor_key(app: &mut App, key: KeyEvent) {
         {
             app.monitor.request_notes_edit();
         }
+
+        // difit diff 查看
+        KeyCode::Char('d') | KeyCode::Char('D') => app.launch_difit_monitor(),
 
         // 刷新
         KeyCode::Char('r') | KeyCode::Char('R') => app.monitor.refresh_panel_data(),
@@ -1204,6 +1221,7 @@ fn handle_scroll_down(app: &mut App, col: u16, row: u16) {
                         PreviewSubTab::Notes => app.project.scroll_notes_down(),
                         PreviewSubTab::Ai => app.project.scroll_ai_summary_down(),
                         PreviewSubTab::Git => app.project.scroll_git_down(),
+                        PreviewSubTab::Diff => app.project.scroll_diff_down(),
                     }
                     return;
                 }
@@ -1249,6 +1267,7 @@ fn handle_scroll_up(app: &mut App, col: u16, row: u16) {
                         PreviewSubTab::Notes => app.project.scroll_notes_up(),
                         PreviewSubTab::Ai => app.project.scroll_ai_summary_up(),
                         PreviewSubTab::Git => app.project.scroll_git_up(),
+                        PreviewSubTab::Diff => app.project.scroll_diff_up(),
                     }
                     return;
                 }

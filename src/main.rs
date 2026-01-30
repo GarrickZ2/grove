@@ -1,6 +1,7 @@
 mod app;
 mod check;
 mod cli;
+mod difit;
 mod event;
 mod git;
 mod hooks;
@@ -141,6 +142,7 @@ fn run(terminal: &mut DefaultTerminal, app: &mut App) -> io::Result<()> {
             // 重新加载 notes 内容
             app.project.refresh_panel_data();
         }
+
 
         // 定时自动刷新（每 5 秒）
         if last_refresh.elapsed().as_secs() >= AUTO_REFRESH_INTERVAL_SECS {

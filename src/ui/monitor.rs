@@ -115,6 +115,20 @@ pub fn render(frame: &mut Frame, app: &mut App) {
             app.monitor.notes_scroll,
             colors,
         ),
+        PreviewSubTab::Diff => {
+            let reviewing = app
+                .reviewing_task_id
+                .as_deref()
+                == Some(&app.monitor.task_id);
+            preview_panel::render_diff_tab(
+                frame,
+                main_area,
+                &app.monitor.panel_data,
+                app.monitor.diff_scroll,
+                reviewing,
+                colors,
+            )
+        }
     }
 
     render_monitor_footer(frame, footer_area, &app.monitor, colors);
@@ -180,6 +194,23 @@ fn render_sidebar_collapsed(frame: &mut Frame, area: Rect, colors: &ThemeColors)
     }
 }
 
+/// sidebar 虚拟行
+enum SidebarRow {
+    /// Logo 标题
+    Logo,
+    /// 空行
+    Blank,
+    /// 分组标题
+    SectionHeader {
+        label: &'static str,
+    },
+    /// Action 按钮
+    Action {
+        flat_idx: usize,
+        group_label: &'static str,
+    },
+}
+
 /// 渲染展开状态的左侧 sidebar（操作栏）
 fn render_sidebar(
     frame: &mut Frame,
@@ -202,114 +233,149 @@ fn render_sidebar(
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
-    let mut y = inner.y;
+    let btn_width = inner.width.min(16);
+    let btn_x = inner.x + (inner.width.saturating_sub(btn_width)) / 2;
 
-    // Logo 标题
-    if y < inner.y + inner.height {
-        let row = Rect::new(inner.x, y, inner.width, 1);
-        frame.render_widget(
-            Paragraph::new(Line::from(Span::styled(
-                MINI_LOGO,
-                Style::default()
-                    .fg(colors.logo)
-                    .add_modifier(Modifier::BOLD),
-            )))
-            .alignment(Alignment::Center),
-            row,
-        );
-        y += 1;
+    // 构建虚拟行列表
+    let groups = MonitorAction::groups();
+    let mut rows: Vec<SidebarRow> = Vec::new();
+    rows.push(SidebarRow::Logo);
+    rows.push(SidebarRow::Blank);
+
+    let mut flat_idx: usize = 0;
+    for (gi, (section_label, group)) in groups.iter().enumerate() {
+        rows.push(SidebarRow::SectionHeader {
+            label: section_label,
+        });
+        for _action in *group {
+            rows.push(SidebarRow::Action {
+                flat_idx,
+                group_label: section_label,
+            });
+            flat_idx += 1;
+        }
+        if gi < groups.len() - 1 {
+            rows.push(SidebarRow::Blank);
+        }
     }
 
-    // 空行
-    y += 1;
+    // 找到选中 action 在虚拟行中的位置
+    let visible = inner.height as usize;
+    let selected_row_pos = rows
+        .iter()
+        .position(|r| matches!(r, SidebarRow::Action { flat_idx: fi, .. } if *fi == monitor.action_selected))
+        .unwrap_or(0);
 
-    // 按 group 渲染 actions，每组带 section header
-    let groups = MonitorAction::groups();
-    let mut flat_idx: usize = 0;
-    let btn_width = inner.width.min(16); // button 最大宽度
-    let btn_x = inner.x + (inner.width.saturating_sub(btn_width)) / 2; // 居中
+    // 计算滚动偏移，保证选中行可见
+    let scroll_offset = if selected_row_pos >= visible {
+        selected_row_pos - visible + 1
+    } else {
+        0
+    };
+    // 如果选中在偏移之前（wrap 上去的情况）
+    let scroll_offset = if selected_row_pos < scroll_offset {
+        selected_row_pos
+    } else {
+        scroll_offset
+    };
 
-    for (gi, (section_label, group)) in groups.iter().enumerate() {
-        if y >= inner.y + inner.height {
-            break;
-        }
+    let all_actions = MonitorAction::all();
 
-        // Section header: "── Git ──" 风格
-        let label_len = section_label.len();
-        let deco_total = btn_width as usize - label_len - 2; // 减去 " label " 两边空格
-        let deco_left = deco_total / 2;
-        let deco_right = deco_total - deco_left;
-        let left_line = "\u{2500}".repeat(deco_left);
-        let right_line = "\u{2500}".repeat(deco_right);
-
-        let header_row = Rect::new(btn_x, y, btn_width, 1);
-        frame.render_widget(
-            Paragraph::new(Line::from(vec![
-                Span::styled(&left_line, Style::default().fg(colors.border)),
-                Span::styled(
-                    format!(" {} ", section_label),
-                    Style::default()
-                        .fg(colors.muted)
-                        .add_modifier(Modifier::BOLD),
-                ),
-                Span::styled(&right_line, Style::default().fg(colors.border)),
-            ]))
-            .alignment(Alignment::Center),
-            header_row,
-        );
+    // 渲染可见窗口
+    let mut y = inner.y;
+    for row in rows.iter().skip(scroll_offset).take(visible) {
+        let row_y = y;
         y += 1;
 
-        for action in *group {
-            if y >= inner.y + inner.height {
-                break;
-            }
-            let is_selected =
-                flat_idx == monitor.action_selected && monitor.focus == MonitorFocus::Sidebar;
-
-            let label = action.label();
-            // 居中 pad: "[ Commit  ]"
-            let inner_w = btn_width.saturating_sub(4) as usize; // 去掉 "[ " 和 " ]"
-            let padded = format!("{:^w$}", label, w = inner_w);
-            let btn_text = format!("[ {} ]", padded);
-
-            let row_area = Rect::new(btn_x, y, btn_width, 1);
-
-            // 记录可点击区域
-            click_areas.monitor_actions.push((row_area, flat_idx));
-
-            if is_selected {
-                // 选中：高亮背景 + 前景文字
+        match row {
+            SidebarRow::Logo => {
+                let row_area = Rect::new(inner.x, row_y, inner.width, 1);
                 frame.render_widget(
                     Paragraph::new(Line::from(Span::styled(
-                        btn_text,
+                        MINI_LOGO,
                         Style::default()
-                            .fg(colors.bg)
-                            .bg(colors.highlight)
+                            .fg(colors.logo)
                             .add_modifier(Modifier::BOLD),
                     )))
                     .alignment(Alignment::Center),
                     row_area,
                 );
-            } else {
-                // 未选中：方括号边框 + 普通文字
+            }
+            SidebarRow::Blank => {}
+            SidebarRow::SectionHeader { label } => {
+                let label_len = label.len();
+                let deco_total = btn_width as usize - label_len - 2;
+                let deco_left = deco_total / 2;
+                let deco_right = deco_total - deco_left;
+                let left_line = "\u{2500}".repeat(deco_left);
+                let right_line = "\u{2500}".repeat(deco_right);
+
+                let header_area = Rect::new(btn_x, row_y, btn_width, 1);
                 frame.render_widget(
                     Paragraph::new(Line::from(vec![
-                        Span::styled("[", Style::default().fg(colors.muted)),
-                        Span::styled(format!(" {} ", padded), Style::default().fg(colors.text)),
-                        Span::styled("]", Style::default().fg(colors.muted)),
+                        Span::styled(&left_line, Style::default().fg(colors.border)),
+                        Span::styled(
+                            format!(" {} ", label),
+                            Style::default()
+                                .fg(colors.muted)
+                                .add_modifier(Modifier::BOLD),
+                        ),
+                        Span::styled(&right_line, Style::default().fg(colors.border)),
                     ]))
                     .alignment(Alignment::Center),
-                    row_area,
+                    header_area,
                 );
             }
+            SidebarRow::Action {
+                flat_idx: fi,
+                group_label,
+            } => {
+                let is_selected =
+                    *fi == monitor.action_selected && monitor.focus == MonitorFocus::Sidebar;
+                let action = &all_actions[*fi];
 
-            y += 1;
-            flat_idx += 1;
-        }
+                let group_color = match *group_label {
+                    "Session" => colors.error,
+                    "Task" => colors.warning,
+                    "Edit" => colors.info,
+                    _ => colors.highlight,
+                };
 
-        // 组间额外空行（最后一组不加）
-        if gi < groups.len() - 1 {
-            y += 1;
+                let label = action.label();
+                let inner_w = btn_width.saturating_sub(4) as usize;
+                let padded = format!("{:^w$}", label, w = inner_w);
+                let btn_text = format!("[ {} ]", padded);
+
+                let btn_area = Rect::new(btn_x, row_y, btn_width, 1);
+                click_areas.monitor_actions.push((btn_area, *fi));
+
+                if is_selected {
+                    frame.render_widget(
+                        Paragraph::new(Line::from(Span::styled(
+                            btn_text,
+                            Style::default()
+                                .fg(colors.bg)
+                                .bg(group_color)
+                                .add_modifier(Modifier::BOLD),
+                        )))
+                        .alignment(Alignment::Center),
+                        btn_area,
+                    );
+                } else {
+                    frame.render_widget(
+                        Paragraph::new(Line::from(vec![
+                            Span::styled("[", Style::default().fg(colors.muted)),
+                            Span::styled(
+                                format!(" {} ", padded),
+                                Style::default().fg(colors.text),
+                            ),
+                            Span::styled("]", Style::default().fg(colors.muted)),
+                        ]))
+                        .alignment(Alignment::Center),
+                        btn_area,
+                    );
+                }
+            }
         }
     }
 }
@@ -374,6 +440,7 @@ fn render_tab_bar(
         (PreviewSubTab::Git, "1:Git"),
         (PreviewSubTab::Ai, "2:AI"),
         (PreviewSubTab::Notes, "3:Notes"),
+        (PreviewSubTab::Diff, "4:Diff"),
     ];
 
     let mut spans = Vec::new();

@@ -24,6 +24,8 @@ pub fn render(
     notes_scroll: u16,
     ai_summary_scroll: u16,
     git_scroll: u16,
+    diff_scroll: u16,
+    reviewing: bool,
     colors: &ThemeColors,
     click_areas: &mut ClickAreas,
 ) {
@@ -92,6 +94,9 @@ pub fn render(
         PreviewSubTab::Notes => {
             render_notes_tab(frame, content_area, panel_data, notes_scroll, colors)
         }
+        PreviewSubTab::Diff => {
+            render_diff_tab(frame, content_area, panel_data, diff_scroll, reviewing, colors)
+        }
     }
 }
 
@@ -106,6 +111,7 @@ fn render_sub_tab_bar(
         (PreviewSubTab::Git, "1:Git"),
         (PreviewSubTab::Ai, "2:AI"),
         (PreviewSubTab::Notes, "3:Notes"),
+        (PreviewSubTab::Diff, "4:Diff"),
     ];
 
     let mut left_spans = Vec::new();
@@ -508,6 +514,133 @@ pub fn render_notes_tab(
         .alignment(Alignment::Right),
         hint_area,
     );
+}
+
+pub fn render_diff_tab(
+    frame: &mut Frame,
+    area: Rect,
+    data: &PanelData,
+    scroll: u16,
+    reviewing: bool,
+    colors: &ThemeColors,
+) {
+    if reviewing {
+        let [_, center, _] = Layout::vertical([
+            Constraint::Percentage(35),
+            Constraint::Length(3),
+            Constraint::Percentage(35),
+        ])
+        .areas(area);
+
+        let frame_idx = (std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .subsec_millis()
+            / 100) as usize
+            % SPINNER_FRAMES.len();
+
+        let lines = vec![
+            Line::from(vec![
+                Span::styled(
+                    format!("{} ", SPINNER_FRAMES[frame_idx]),
+                    Style::default().fg(colors.highlight),
+                ),
+                Span::styled(
+                    "Reviewing in difit...",
+                    Style::default()
+                        .fg(colors.highlight)
+                        .add_modifier(Modifier::BOLD),
+                ),
+            ]),
+            Line::from(""),
+            Line::from(Span::styled(
+                "Complete the review in your browser to see comments here.",
+                Style::default().fg(colors.muted),
+            )),
+        ];
+        frame.render_widget(Paragraph::new(lines).alignment(Alignment::Center), center);
+        return;
+    }
+
+    if data.diff_comments.is_empty() {
+        let [_, center, _] = Layout::vertical([
+            Constraint::Percentage(30),
+            Constraint::Length(4),
+            Constraint::Percentage(30),
+        ])
+        .areas(area);
+
+        let lines = vec![
+            Line::from(Span::styled(
+                "No review comments yet.",
+                Style::default().fg(colors.muted),
+            )),
+            Line::from(""),
+            Line::from(Span::styled(
+                "Press d to start a code review with difit.",
+                Style::default().fg(colors.muted),
+            )),
+        ];
+        frame.render_widget(Paragraph::new(lines).alignment(Alignment::Center), center);
+        return;
+    }
+
+    let mut lines: Vec<Line> = Vec::new();
+
+    // Header
+    lines.push(Line::from(vec![
+        Span::styled(
+            " Code Review Comments",
+            Style::default()
+                .fg(colors.highlight)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(
+            if data.diff_comments_count > 0 {
+                format!("  ({} comments)", data.diff_comments_count)
+            } else {
+                String::new()
+            },
+            Style::default().fg(colors.muted),
+        ),
+    ]));
+    lines.push(Line::from(""));
+
+    // Parse and render comments
+    for line in data.diff_comments.lines() {
+        let trimmed = line.trim();
+
+        if trimmed == "=====" {
+            // Comment separator
+            lines.push(Line::from(""));
+            lines.push(Line::from(Span::styled(
+                " ─────────────────────────",
+                Style::default().fg(colors.border),
+            )));
+            lines.push(Line::from(""));
+        } else if trimmed.contains(":L") && !trimmed.contains(' ') {
+            // File:Line marker (e.g., "file.go:L54" or "file.go:L42-L48")
+            lines.push(Line::from(Span::styled(
+                format!(" {}", trimmed),
+                Style::default()
+                    .fg(colors.highlight)
+                    .add_modifier(Modifier::BOLD),
+            )));
+        } else if !trimmed.is_empty() {
+            // Comment text
+            lines.push(Line::from(Span::styled(
+                format!("   {}", trimmed),
+                Style::default().fg(colors.text),
+            )));
+        } else {
+            lines.push(Line::from(""));
+        }
+    }
+
+    let paragraph = Paragraph::new(lines)
+        .wrap(Wrap { trim: false })
+        .scroll((scroll, 0));
+    frame.render_widget(paragraph, area);
 }
 
 fn render_no_selection(frame: &mut Frame, area: Rect, colors: &ThemeColors) {
