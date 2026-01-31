@@ -15,6 +15,13 @@ pub fn check_environment() -> CheckResult {
         errors.push("git is not installed. Please install git first.".to_string());
     }
 
+    // 检查 npx
+    if !check_npx() {
+        errors.push(
+            "npx is not installed. Please install Node.js (which includes npx) first.".to_string(),
+        );
+    }
+
     // 检查 tmux
     match check_tmux() {
         TmuxCheck::NotInstalled => {
@@ -33,6 +40,14 @@ pub fn check_environment() -> CheckResult {
         ok: errors.is_empty(),
         errors,
     }
+}
+
+fn check_npx() -> bool {
+    Command::new("npx")
+        .arg("--version")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
 }
 
 fn check_git() -> bool {

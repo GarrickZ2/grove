@@ -117,12 +117,18 @@ pub fn render(frame: &mut Frame, app: &mut App) {
         ),
         PreviewSubTab::Diff => {
             let reviewing = app.reviewing_task_id.as_deref() == Some(&app.monitor.task_id);
+            let reviewing_url = if reviewing {
+                app.reviewing_url.as_deref()
+            } else {
+                None
+            };
             preview_panel::render_diff_tab(
                 frame,
                 main_area,
                 &app.monitor.panel_data,
                 app.monitor.diff_scroll,
                 reviewing,
+                reviewing_url,
                 colors,
             )
         }

@@ -959,6 +959,10 @@ pub struct App {
     pub monitor: MonitorState,
     /// 正在 review 中的 task id
     pub reviewing_task_id: Option<String>,
+    /// 正在 review 的 difit server URL
+    pub reviewing_url: Option<String>,
+    /// URL 更新通道（后台线程检测到 URL 后发送）
+    pub url_rx: Option<mpsc::Receiver<String>>,
 }
 
 /// 待执行的操作
@@ -998,6 +1002,7 @@ pub enum BgResult {
         task_id: String,
         comments: String,
         count: usize,
+        no_diff: bool,
     },
     DifitErr(String),
 }
@@ -1130,7 +1135,7 @@ impl App {
             AppMode::Workspace => set_terminal_title("Grove"),
         }
 
-        Self {
+        let mut app = Self {
             mode,
             workspace,
             should_quit: false,
@@ -1175,7 +1180,14 @@ impl App {
             last_click_pos: (0, 0),
             monitor,
             reviewing_task_id: None,
-        }
+            reviewing_url: None,
+            url_rx: None,
+        };
+
+        // 恢复已有的 difit review session
+        app.recover_difit_session();
+
+        app
     }
 
     /// 检测是否为双击（400ms 内同位置）
@@ -1210,6 +1222,9 @@ impl App {
         // 加载 hook 通知数据（自动清理不存在的 task）
         let hooks_file = hooks::load_hooks_with_cleanup(project_path);
         self.notifications = hooks_file.tasks;
+
+        // 恢复已有的 difit review session
+        self.recover_difit_session();
     }
 
     /// 从 Project 返回 Workspace
@@ -1447,21 +1462,71 @@ impl App {
         let project_key = self.project.project_key.clone();
         let task_id = wt.id.clone();
 
+        // 检查是否已有正在运行的 session
+        if let Some(session) = storage::difit_session::load_session(&project_key) {
+            if storage::difit_session::is_process_alive(session.pid) {
+                self.reviewing_task_id = Some(session.task_id.clone());
+                self.reviewing_url = session.url.clone();
+                self.reattach_difit_monitor_thread(&session);
+                self.project.preview_sub_tab = PreviewSubTab::Diff;
+                if !self.project.preview_visible {
+                    self.project.preview_visible = true;
+                }
+                let url_hint = session
+                    .url
+                    .as_deref()
+                    .map(|u| format!(" at {}", u))
+                    .unwrap_or_default();
+                self.show_toast(format!("Reconnected to running review{}", url_hint));
+                return;
+            }
+            storage::difit_session::remove_session(&project_key);
+        }
+
         self.reviewing_task_id = Some(task_id.clone());
 
+        // 启动时立即切换到 Diff tab
+        self.project.preview_sub_tab = PreviewSubTab::Diff;
+        if !self.project.preview_visible {
+            self.project.preview_visible = true;
+        }
+
         let (tx, rx) = std::sync::mpsc::channel();
+        let (url_tx, url_rx) = std::sync::mpsc::channel();
         self.bg_result_rx = Some(rx);
+        self.url_rx = Some(url_rx);
 
         std::thread::spawn(move || {
-            match crate::difit::execute(&worktree_path, &target_branch, &availability) {
-                Ok(output) => {
-                    let (comments, count) = crate::difit::parse_comments(&output);
-                    let _ = tx.send(BgResult::DifitOk {
-                        project_key,
-                        task_id,
-                        comments,
-                        count,
-                    });
+            match crate::difit::spawn_difit(&worktree_path, &target_branch, &availability) {
+                Ok(mut handle) => {
+                    // 持久化 session
+                    let session = storage::difit_session::DifitSession {
+                        pid: handle.child_pid,
+                        task_id: task_id.clone(),
+                        project_key: project_key.clone(),
+                        url: None,
+                        temp_file: handle.temp_file_path.clone(),
+                    };
+                    let _ = storage::difit_session::save_session(&project_key, &session);
+
+                    match crate::difit::wait_for_completion(&mut handle, Some(url_tx)) {
+                        Ok(output) => {
+                            storage::difit_session::remove_session(&project_key);
+                            let no_diff = output.contains("No differences found");
+                            let (comments, count) = crate::difit::parse_comments(&output);
+                            let _ = tx.send(BgResult::DifitOk {
+                                project_key,
+                                task_id,
+                                comments,
+                                count,
+                                no_diff,
+                            });
+                        }
+                        Err(e) => {
+                            storage::difit_session::remove_session(&project_key);
+                            let _ = tx.send(BgResult::DifitErr(e.to_string()));
+                        }
+                    }
                 }
                 Err(e) => {
                     let _ = tx.send(BgResult::DifitErr(e.to_string()));
@@ -1497,26 +1562,142 @@ impl App {
         let project_key = self.monitor.project_key.clone();
         let task_id = self.monitor.task_id.clone();
 
+        // 检查是否已有正在运行的 session
+        if let Some(session) = storage::difit_session::load_session(&project_key) {
+            if storage::difit_session::is_process_alive(session.pid) {
+                self.reviewing_task_id = Some(session.task_id.clone());
+                self.reviewing_url = session.url.clone();
+                self.reattach_difit_monitor_thread(&session);
+                self.monitor.content_tab = PreviewSubTab::Diff;
+                let url_hint = session
+                    .url
+                    .as_deref()
+                    .map(|u| format!(" at {}", u))
+                    .unwrap_or_default();
+                self.show_toast(format!("Reconnected to running review{}", url_hint));
+                return;
+            }
+            storage::difit_session::remove_session(&project_key);
+        }
+
         self.reviewing_task_id = Some(task_id.clone());
 
+        // 启动时立即切换到 Diff tab
+        self.monitor.content_tab = PreviewSubTab::Diff;
+
         let (tx, rx) = std::sync::mpsc::channel();
+        let (url_tx, url_rx) = std::sync::mpsc::channel();
         self.bg_result_rx = Some(rx);
+        self.url_rx = Some(url_rx);
 
         std::thread::spawn(move || {
-            match crate::difit::execute(&worktree_path, &target_branch, &availability) {
-                Ok(output) => {
-                    let (comments, count) = crate::difit::parse_comments(&output);
-                    let _ = tx.send(BgResult::DifitOk {
-                        project_key,
-                        task_id,
-                        comments,
-                        count,
-                    });
+            match crate::difit::spawn_difit(&worktree_path, &target_branch, &availability) {
+                Ok(mut handle) => {
+                    let session = storage::difit_session::DifitSession {
+                        pid: handle.child_pid,
+                        task_id: task_id.clone(),
+                        project_key: project_key.clone(),
+                        url: None,
+                        temp_file: handle.temp_file_path.clone(),
+                    };
+                    let _ = storage::difit_session::save_session(&project_key, &session);
+
+                    match crate::difit::wait_for_completion(&mut handle, Some(url_tx)) {
+                        Ok(output) => {
+                            storage::difit_session::remove_session(&project_key);
+                            let no_diff = output.contains("No differences found");
+                            let (comments, count) = crate::difit::parse_comments(&output);
+                            let _ = tx.send(BgResult::DifitOk {
+                                project_key,
+                                task_id,
+                                comments,
+                                count,
+                                no_diff,
+                            });
+                        }
+                        Err(e) => {
+                            storage::difit_session::remove_session(&project_key);
+                            let _ = tx.send(BgResult::DifitErr(e.to_string()));
+                        }
+                    }
                 }
                 Err(e) => {
                     let _ = tx.send(BgResult::DifitErr(e.to_string()));
                 }
             }
+        });
+    }
+
+    /// 恢复已有的 difit review session（启动时或进入项目时调用）
+    fn recover_difit_session(&mut self) {
+        let project_key = if self.mode == AppMode::Monitor {
+            &self.monitor.project_key
+        } else {
+            &self.project.project_key
+        };
+        if project_key.is_empty() {
+            return;
+        }
+
+        let Some(session) = storage::difit_session::load_session(project_key) else {
+            return;
+        };
+
+        if storage::difit_session::is_process_alive(session.pid) {
+            self.reviewing_task_id = Some(session.task_id.clone());
+            self.reviewing_url = session.url.clone();
+            self.reattach_difit_monitor_thread(&session);
+        } else {
+            // 进程已死，清理 orphan session
+            storage::difit_session::remove_session(project_key);
+        }
+    }
+
+    /// 重新建立对已运行 difit 进程的监听线程
+    fn reattach_difit_monitor_thread(&mut self, session: &storage::difit_session::DifitSession) {
+        let pid = session.pid;
+        let temp_file = session.temp_file.clone();
+        let project_key = session.project_key.clone();
+        let task_id = session.task_id.clone();
+
+        let (tx, rx) = std::sync::mpsc::channel();
+        let (url_tx, url_rx) = std::sync::mpsc::channel();
+        self.bg_result_rx = Some(rx);
+        self.url_rx = Some(url_rx);
+
+        std::thread::spawn(move || {
+            let mut url_sent = false;
+            loop {
+                if !storage::difit_session::is_process_alive(pid) {
+                    break;
+                }
+
+                if !url_sent {
+                    if let Ok(content) = std::fs::read_to_string(&temp_file) {
+                        if let Some(url) = crate::difit::parse_url(&content) {
+                            let _ = url_tx.send(url);
+                            url_sent = true;
+                        }
+                    }
+                }
+
+                std::thread::sleep(std::time::Duration::from_millis(500));
+            }
+
+            // 进程退出 — 读取输出
+            let output = std::fs::read_to_string(&temp_file).unwrap_or_default();
+            let _ = std::fs::remove_file(&temp_file);
+            storage::difit_session::remove_session(&project_key);
+
+            let no_diff = output.contains("No differences found");
+            let (comments, count) = crate::difit::parse_comments(&output);
+            let _ = tx.send(BgResult::DifitOk {
+                project_key,
+                task_id,
+                comments,
+                count,
+                no_diff,
+            });
         });
     }
 
@@ -1976,6 +2157,9 @@ impl App {
                 PendingAction::MergeArchive { task_id } => self.do_archive(&task_id),
                 PendingAction::Reset { task_id } => self.do_reset(&task_id),
                 PendingAction::ExitSession => {
+                    let session =
+                        tmux::session_name(&self.monitor.project_key, &self.monitor.task_id);
+                    let _ = tmux::kill_session(&session);
                     self.should_quit = true;
                 }
             }
@@ -2529,6 +2713,23 @@ impl App {
 
     /// 处理后台操作结果（主循环调用）
     pub fn poll_bg_result(&mut self) {
+        // 轮询 URL 更新
+        if let Some(ref url_rx) = self.url_rx {
+            if let Ok(url) = url_rx.try_recv() {
+                self.reviewing_url = Some(url.clone());
+                // 更新 session 文件写入 URL
+                let project_key = if self.mode == AppMode::Monitor {
+                    self.monitor.project_key.clone()
+                } else {
+                    self.project.project_key.clone()
+                };
+                if let Some(mut session) = storage::difit_session::load_session(&project_key) {
+                    session.url = Some(url);
+                    let _ = storage::difit_session::save_session(&project_key, &session);
+                }
+            }
+        }
+
         let result = self.bg_result_rx.as_ref().and_then(|rx| rx.try_recv().ok());
         if let Some(result) = result {
             self.bg_result_rx = None;
@@ -2548,33 +2749,37 @@ impl App {
                     task_id,
                     comments,
                     count,
+                    no_diff,
                 } => {
                     self.reviewing_task_id = None;
-                    // 无论是否有 comments 都覆盖保存（清空旧数据）
-                    let _ = crate::storage::diff_comments::save_diff_comments(
-                        &project_key,
-                        &task_id,
-                        &comments,
-                    );
-                    if self.mode == AppMode::Project {
-                        self.project.refresh_panel_data();
-                        self.project.preview_sub_tab = PreviewSubTab::Diff;
-                        if !self.project.preview_visible {
-                            self.project.preview_visible = true;
-                        }
-                    }
-                    if self.mode == AppMode::Monitor {
-                        self.monitor.refresh_panel_data();
-                        self.monitor.content_tab = PreviewSubTab::Diff;
-                    }
-                    if count > 0 {
-                        self.show_toast(format!("Saved {} review comments", count));
+                    self.reviewing_url = None;
+                    self.url_rx = None;
+                    if no_diff {
+                        self.show_toast("No differences found");
                     } else {
-                        self.show_toast("Review completed (no comments)");
+                        // 无论是否有 comments 都覆盖保存（清空旧数据）
+                        let _ = crate::storage::diff_comments::save_diff_comments(
+                            &project_key,
+                            &task_id,
+                            &comments,
+                        );
+                        if self.mode == AppMode::Project {
+                            self.project.refresh_panel_data();
+                        }
+                        if self.mode == AppMode::Monitor {
+                            self.monitor.refresh_panel_data();
+                        }
+                        if count > 0 {
+                            self.show_toast(format!("Saved {} review comments", count));
+                        } else {
+                            self.show_toast("Review completed (no comments)");
+                        }
                     }
                 }
                 BgResult::DifitErr(e) => {
                     self.reviewing_task_id = None;
+                    self.reviewing_url = None;
+                    self.url_rx = None;
                     self.show_toast(format!("difit error: {}", e));
                 }
             }

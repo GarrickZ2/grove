@@ -26,6 +26,7 @@ pub fn render(
     git_scroll: u16,
     diff_scroll: u16,
     reviewing: bool,
+    reviewing_url: Option<&str>,
     colors: &ThemeColors,
     click_areas: &mut ClickAreas,
 ) {
@@ -100,6 +101,7 @@ pub fn render(
             panel_data,
             diff_scroll,
             reviewing,
+            reviewing_url,
             colors,
         ),
     }
@@ -527,12 +529,14 @@ pub fn render_diff_tab(
     data: &PanelData,
     scroll: u16,
     reviewing: bool,
+    reviewing_url: Option<&str>,
     colors: &ThemeColors,
 ) {
     if reviewing {
+        let center_height = if reviewing_url.is_some() { 5 } else { 3 };
         let [_, center, _] = Layout::vertical([
             Constraint::Percentage(35),
-            Constraint::Length(3),
+            Constraint::Length(center_height),
             Constraint::Percentage(35),
         ])
         .areas(area);
@@ -544,7 +548,7 @@ pub fn render_diff_tab(
             / 100) as usize
             % SPINNER_FRAMES.len();
 
-        let lines = vec![
+        let mut lines = vec![
             Line::from(vec![
                 Span::styled(
                     format!("{} ", SPINNER_FRAMES[frame_idx]),
@@ -558,11 +562,21 @@ pub fn render_diff_tab(
                 ),
             ]),
             Line::from(""),
-            Line::from(Span::styled(
-                "Complete the review in your browser to see comments here.",
-                Style::default().fg(colors.muted),
-            )),
         ];
+
+        if let Some(url) = reviewing_url {
+            lines.push(Line::from(Span::styled(
+                url,
+                Style::default().fg(colors.highlight),
+            )));
+            lines.push(Line::from(""));
+        }
+
+        lines.push(Line::from(Span::styled(
+            "Complete the review in your browser to see comments here.",
+            Style::default().fg(colors.muted),
+        )));
+
         frame.render_widget(Paragraph::new(lines).alignment(Alignment::Center), center);
         return;
     }

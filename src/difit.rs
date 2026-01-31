@@ -1,4 +1,5 @@
 use std::process::Command;
+use std::sync::mpsc::Sender;
 
 /// difit 可用性状态
 pub enum DifitAvailability {
@@ -10,9 +11,8 @@ pub enum DifitAvailability {
     NotAvailable,
 }
 
-/// 检测 difit 是否可用
+/// 检测 difit 是否可用（优先全局，其次 npx）
 pub fn check_available() -> DifitAvailability {
-    // 优先检测全局 difit
     if Command::new("difit")
         .arg("--version")
         .stdout(std::process::Stdio::null())
@@ -23,7 +23,6 @@ pub fn check_available() -> DifitAvailability {
         return DifitAvailability::Global;
     }
 
-    // 其次检测 npx
     if Command::new("npx")
         .arg("--version")
         .stdout(std::process::Stdio::null())
@@ -37,15 +36,20 @@ pub fn check_available() -> DifitAvailability {
     DifitAvailability::NotAvailable
 }
 
-/// 执行 difit 并返回捕获的输出
-///
-/// 后台运行模式：将输出重定向到临时文件（无终端交互），
-/// 进程结束后从临时文件读取输出以解析 review comments。
-pub fn execute(
+/// spawn 后的句柄，持有子进程和临时文件路径
+pub struct DifitHandle {
+    pub child_pid: u32,
+    pub temp_file_path: String,
+    child: std::process::Child,
+    temp_path: std::path::PathBuf,
+}
+
+/// 启动 difit 子进程，立即返回句柄
+pub fn spawn_difit(
     worktree_path: &str,
     target_branch: &str,
     availability: &DifitAvailability,
-) -> std::io::Result<String> {
+) -> std::io::Result<DifitHandle> {
     let temp_path = std::env::temp_dir().join(format!("grove_difit_{}.txt", std::process::id()));
     let temp_str = temp_path.to_string_lossy().to_string();
 
@@ -60,22 +64,82 @@ pub fn execute(
         }
     };
 
-    // 后台执行：重定向到文件，不用 tee（tee 会写终端，污染 TUI）
-    // 不 null stdin，让 difit 能正常检测终端状态
     let shell_cmd = format!("{} > {} 2>&1", difit_cmd, temp_str);
 
-    let _ = Command::new("sh")
+    let child = Command::new("sh")
         .args(["-c", &shell_cmd])
         .current_dir(worktree_path)
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
-        .status();
+        .spawn()?;
 
-    // 读取捕获的输出
-    let output = std::fs::read_to_string(&temp_path).unwrap_or_default();
-    let _ = std::fs::remove_file(&temp_path);
+    let child_pid = child.id();
+
+    Ok(DifitHandle {
+        child_pid,
+        temp_file_path: temp_str,
+        child,
+        temp_path,
+    })
+}
+
+/// 等待 difit 进程完成，轮询输出文件。
+///
+/// 检测到 URL 时通过 `url_tx` 发送（仅发送一次）。
+/// 检测到 "No differences found" 时主动终止进程。
+/// 返回捕获的完整输出。
+pub fn wait_for_completion(
+    handle: &mut DifitHandle,
+    url_tx: Option<Sender<String>>,
+) -> std::io::Result<String> {
+    let mut url_sent = false;
+
+    loop {
+        if let Some(_status) = handle.child.try_wait()? {
+            break;
+        }
+
+        if let Ok(content) = std::fs::read_to_string(&handle.temp_path) {
+            // 检测 URL
+            if !url_sent {
+                if let Some(url) = parse_url(&content) {
+                    if let Some(ref tx) = url_tx {
+                        let _ = tx.send(url);
+                    }
+                    url_sent = true;
+                }
+            }
+
+            // 检测 no-diff
+            if content.contains("No differences found") {
+                let _ = handle.child.kill();
+                let _ = handle.child.wait();
+                break;
+            }
+        }
+
+        std::thread::sleep(std::time::Duration::from_millis(500));
+    }
+
+    let output = std::fs::read_to_string(&handle.temp_path).unwrap_or_default();
+    let _ = std::fs::remove_file(&handle.temp_path);
 
     Ok(output)
+}
+
+/// 从 difit 输出中解析 server URL
+///
+/// 匹配形如 `http://localhost:4968` 的 URL
+pub fn parse_url(output: &str) -> Option<String> {
+    for line in output.lines() {
+        if let Some(pos) = line.find("http://localhost:") {
+            return Some(line[pos..].trim().to_string());
+        }
+        if let Some(pos) = line.find("http://127.0.0.1:") {
+            return Some(line[pos..].trim().to_string());
+        }
+    }
+    None
 }
 
 /// 从 difit stdout 中解析 review comments

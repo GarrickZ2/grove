@@ -168,6 +168,12 @@ pub fn render(frame: &mut Frame, app: &mut App) {
             .zip(app.project.selected_worktree())
             .is_some_and(|(rid, wt)| rid == &wt.id);
 
+        let reviewing_url = if reviewing {
+            app.reviewing_url.as_deref()
+        } else {
+            None
+        };
+
         preview_panel::render(
             frame,
             right_area,
@@ -179,6 +185,7 @@ pub fn render(frame: &mut Frame, app: &mut App) {
             app.project.git_scroll,
             app.project.diff_scroll,
             reviewing,
+            reviewing_url,
             colors,
             &mut app.click_areas,
         );
