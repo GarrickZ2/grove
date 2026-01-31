@@ -143,7 +143,6 @@ fn run(terminal: &mut DefaultTerminal, app: &mut App) -> io::Result<()> {
             app.project.refresh_panel_data();
         }
 
-
         // 定时自动刷新（每 5 秒）
         if last_refresh.elapsed().as_secs() >= AUTO_REFRESH_INTERVAL_SECS {
             app.refresh();

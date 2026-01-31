@@ -116,10 +116,7 @@ pub fn render(frame: &mut Frame, app: &mut App) {
             colors,
         ),
         PreviewSubTab::Diff => {
-            let reviewing = app
-                .reviewing_task_id
-                .as_deref()
-                == Some(&app.monitor.task_id);
+            let reviewing = app.reviewing_task_id.as_deref() == Some(&app.monitor.task_id);
             preview_panel::render_diff_tab(
                 frame,
                 main_area,
@@ -201,9 +198,7 @@ enum SidebarRow {
     /// 空行
     Blank,
     /// 分组标题
-    SectionHeader {
-        label: &'static str,
-    },
+    SectionHeader { label: &'static str },
     /// Action 按钮
     Action {
         flat_idx: usize,
@@ -365,10 +360,7 @@ fn render_sidebar(
                     frame.render_widget(
                         Paragraph::new(Line::from(vec![
                             Span::styled("[", Style::default().fg(colors.muted)),
-                            Span::styled(
-                                format!(" {} ", padded),
-                                Style::default().fg(colors.text),
-                            ),
+                            Span::styled(format!(" {} ", padded), Style::default().fg(colors.text)),
                             Span::styled("]", Style::default().fg(colors.muted)),
                         ]))
                         .alignment(Alignment::Center),

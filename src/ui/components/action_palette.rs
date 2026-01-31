@@ -74,10 +74,9 @@ impl ActionType {
         match self {
             ActionType::Commit | ActionType::Review => ActionGroup::Edit,
             ActionType::RebaseTo | ActionType::Sync | ActionType::Merge => ActionGroup::Branch,
-            ActionType::Archive
-            | ActionType::Clean
-            | ActionType::Recover
-            | ActionType::Reset => ActionGroup::Session,
+            ActionType::Archive | ActionType::Clean | ActionType::Recover | ActionType::Reset => {
+                ActionGroup::Session
+            }
         }
     }
 
@@ -399,11 +398,7 @@ pub fn render(
 }
 
 /// 渲染单个 action 行
-fn render_action_line<'a>(
-    action: &ActionType,
-    selected: bool,
-    colors: &ThemeColors,
-) -> Line<'a> {
+fn render_action_line<'a>(action: &ActionType, selected: bool, colors: &ThemeColors) -> Line<'a> {
     let prefix = if selected { "❯ " } else { "  " };
 
     let accent = action.selected_color(colors);

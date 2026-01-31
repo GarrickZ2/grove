@@ -94,9 +94,14 @@ pub fn render(
         PreviewSubTab::Notes => {
             render_notes_tab(frame, content_area, panel_data, notes_scroll, colors)
         }
-        PreviewSubTab::Diff => {
-            render_diff_tab(frame, content_area, panel_data, diff_scroll, reviewing, colors)
-        }
+        PreviewSubTab::Diff => render_diff_tab(
+            frame,
+            content_area,
+            panel_data,
+            diff_scroll,
+            reviewing,
+            colors,
+        ),
     }
 }
 

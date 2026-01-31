@@ -632,7 +632,6 @@ impl MonitorAction {
             MonitorAction::Exit => "Exit",
         }
     }
-
 }
 
 /// Monitor 模式状态
@@ -882,7 +881,6 @@ impl MonitorState {
     }
 }
 
-
 /// 全局应用状态
 pub struct App {
     /// 当前模式
@@ -990,7 +988,10 @@ pub enum PendingAction {
 
 /// 后台操作结果
 pub enum BgResult {
-    MergeOk { task_id: String, task_name: String },
+    MergeOk {
+        task_id: String,
+        task_name: String,
+    },
     MergeErr(String),
     DifitOk {
         project_key: String,

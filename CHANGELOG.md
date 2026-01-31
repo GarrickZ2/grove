@@ -5,6 +5,34 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.2] - 2026-01-30
+
+### Added
+
+- **Diff Tab** — 4th sub-tab in preview panel for code review comments
+  - Displays parsed review comments from difit sessions
+  - Scrollable content with file location highlighting
+- **Background difit execution** — `d` key launches difit in background thread
+  - TUI stays responsive during review (no suspend/resume)
+  - Diff tab shows spinner banner ("Reviewing in difit...") while active
+  - Auto-saves comments and switches to Diff tab on completion
+  - Prevents duplicate launches with toast notification
+- **Review action in Monitor sidebar** — GROVE ACTIONS → Edit group
+- **Review action in Action Palette** — available via Space in Project mode
+- **Action group colors** — Monitor sidebar actions color-coded by group
+  - Git: green, Edit: blue, Task: yellow, Session: red
+- **Action Palette grouping** — actions separated by group with empty lines
+  - Group-specific highlight colors when selected
+- **Dynamic Action Palette height** — adapts to action count and screen size
+- **Scrollable Action Palette** — selection-following scroll on small screens
+- **Scrollable Monitor sidebar** — virtual-row scroll for GROVE ACTIONS
+
+### Fixed
+
+- **Custom layout pane assignment bug** — nested splits assigned commands to wrong panes. `list_pane_ids().last()` assumed creation order, but tmux returns layout order. Fixed by diffing pane sets before/after split
+- **difit output always empty** — `Stdio::null()` on stdin caused difit to exit immediately; removed stdin null to let difit run normally
+- **Stale diff comments after re-review** — always overwrite saved comments file, even when review produces no comments
+
 ## [0.2.1] - 2026-01-30
 
 ### Added

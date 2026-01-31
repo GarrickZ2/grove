@@ -377,6 +377,10 @@ fn apply_node(
             first,
             second,
         } => {
+            // split 前记录已有 pane，用于 split 后找到新创建的 pane
+            let before: std::collections::HashSet<String> =
+                list_pane_ids(session)?.into_iter().collect();
+
             // split target pane: second 是新创建的 pane
             let second_pct = 100u8.saturating_sub(*ratio);
             match dir {
@@ -388,9 +392,12 @@ fn apply_node(
                 }
             }
 
-            // split 后，target_pane 仍是 first，新 pane 是最后一个
-            let panes = list_pane_ids(session)?;
-            let new_pane = panes.last().ok_or("split failed: no new pane")?.clone();
+            // split 后，通过差集找到新创建的 pane
+            let after = list_pane_ids(session)?;
+            let new_pane = after
+                .into_iter()
+                .find(|p| !before.contains(p))
+                .ok_or("split failed: no new pane found")?;
 
             // 递归处理两个子节点
             apply_node(
