@@ -54,8 +54,8 @@ pub fn spawn_difit(
     let temp_str = temp_path.to_string_lossy().to_string();
 
     let difit_cmd = match availability {
-        DifitAvailability::Global => format!("difit . {}", target_branch),
-        DifitAvailability::Npx => format!("npx -y difit . {}", target_branch),
+        DifitAvailability::Global => format!("difit . {} --include-untracked", target_branch),
+        DifitAvailability::Npx => format!("npx -y difit . {} --include-untracked", target_branch),
         DifitAvailability::NotAvailable => {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::NotFound,
