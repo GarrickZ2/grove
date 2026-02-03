@@ -325,11 +325,10 @@ fn handle_project_key(app: &mut App, key: KeyEvent) {
         KeyCode::Char('j') => {
             if app.project.preview_visible {
                 match app.project.preview_sub_tab {
-                    PreviewSubTab::Notes => app.project.scroll_notes_down(),
-                    PreviewSubTab::Ai => app.project.scroll_ai_summary_down(),
-                    PreviewSubTab::Git => app.project.scroll_git_down(),
-                    PreviewSubTab::Diff => app.project.scroll_diff_down(),
                     PreviewSubTab::Stats => app.project.scroll_stats_down(),
+                    PreviewSubTab::Git => app.project.scroll_git_down(),
+                    PreviewSubTab::Notes => app.project.scroll_notes_down(),
+                    PreviewSubTab::Diff => app.project.scroll_diff_down(),
                 }
             } else {
                 app.project.select_next();
@@ -338,11 +337,10 @@ fn handle_project_key(app: &mut App, key: KeyEvent) {
         KeyCode::Char('k') => {
             if app.project.preview_visible {
                 match app.project.preview_sub_tab {
-                    PreviewSubTab::Notes => app.project.scroll_notes_up(),
-                    PreviewSubTab::Ai => app.project.scroll_ai_summary_up(),
-                    PreviewSubTab::Git => app.project.scroll_git_up(),
-                    PreviewSubTab::Diff => app.project.scroll_diff_up(),
                     PreviewSubTab::Stats => app.project.scroll_stats_up(),
+                    PreviewSubTab::Git => app.project.scroll_git_up(),
+                    PreviewSubTab::Notes => app.project.scroll_notes_up(),
+                    PreviewSubTab::Diff => app.project.scroll_diff_up(),
                 }
             } else {
                 app.project.select_previous();
@@ -363,16 +361,17 @@ fn handle_project_key(app: &mut App, key: KeyEvent) {
         KeyCode::Right => app.project.next_tab(),
 
         // 数字快捷键：面板打开时切换 sub-tab，关闭时切换主 tab
+        // Tab 顺序: 1:Stats, 2:Git, 3:Notes, 4:Review
         KeyCode::Char('1') => {
             if app.project.preview_visible {
-                app.project.preview_sub_tab = PreviewSubTab::Git;
+                app.project.preview_sub_tab = PreviewSubTab::Stats;
             } else {
                 app.project.current_tab = ProjectTab::Current;
             }
         }
         KeyCode::Char('2') => {
             if app.project.preview_visible {
-                app.project.preview_sub_tab = PreviewSubTab::Ai;
+                app.project.preview_sub_tab = PreviewSubTab::Git;
             } else {
                 app.project.current_tab = ProjectTab::Other;
             }
@@ -384,15 +383,9 @@ fn handle_project_key(app: &mut App, key: KeyEvent) {
                 app.project.current_tab = ProjectTab::Archived;
             }
         }
-
         KeyCode::Char('4') => {
             if app.project.preview_visible {
                 app.project.preview_sub_tab = PreviewSubTab::Diff;
-            }
-        }
-        KeyCode::Char('5') => {
-            if app.project.preview_visible {
-                app.project.preview_sub_tab = PreviewSubTab::Stats;
             }
         }
 
@@ -812,13 +805,6 @@ fn handle_config_panel_key(app: &mut App, key: KeyEvent) {
             KeyCode::Esc => app.config_panel_back(),
             _ => {}
         },
-        ConfigStep::AgentMenu => match key.code {
-            KeyCode::Char('k') | KeyCode::Up => app.config_panel_prev(),
-            KeyCode::Char('j') | KeyCode::Down => app.config_panel_next(),
-            KeyCode::Enter => app.config_panel_confirm(),
-            KeyCode::Esc => app.config_panel_back(),
-            _ => {}
-        },
         ConfigStep::EditAgentCommand => match key.code {
             KeyCode::Enter => app.config_panel_confirm(),
             KeyCode::Esc => app.config_panel_back(),
@@ -833,75 +819,6 @@ fn handle_config_panel_key(app: &mut App, key: KeyEvent) {
             KeyCode::Esc => app.config_panel_back(),
             _ => {}
         },
-        ConfigStep::SelectContextDocs => {
-            if let Some(ref mut panel) = app.config_panel {
-                if panel.context_docs_editing_custom {
-                    // 编辑 custom 名称模式
-                    match key.code {
-                        KeyCode::Enter => {
-                            // 确认输入
-                            panel.context_docs_editing_custom = false;
-                            if !panel.context_docs_custom_name.is_empty() {
-                                panel.context_docs_custom_enabled = true;
-                            }
-                        }
-                        KeyCode::Esc => {
-                            // 取消编辑
-                            panel.context_docs_editing_custom = false;
-                        }
-                        KeyCode::Backspace => {
-                            panel.context_docs_custom_name.pop();
-                        }
-                        KeyCode::Char(c) => {
-                            panel.context_docs_custom_name.push(c);
-                        }
-                        _ => {}
-                    }
-                } else {
-                    // 正常多选模式
-                    match key.code {
-                        KeyCode::Char('k') | KeyCode::Up => {
-                            if panel.context_docs_cursor == 0 {
-                                panel.context_docs_cursor = 3;
-                            } else {
-                                panel.context_docs_cursor -= 1;
-                            }
-                        }
-                        KeyCode::Char('j') | KeyCode::Down => {
-                            panel.context_docs_cursor = (panel.context_docs_cursor + 1) % 4;
-                        }
-                        KeyCode::Char(' ') => {
-                            let idx = panel.context_docs_cursor;
-                            if idx < 3 {
-                                // 预设项 toggle
-                                panel.context_docs_selected[idx] =
-                                    !panel.context_docs_selected[idx];
-                            } else {
-                                // Custom 项
-                                if panel.context_docs_custom_enabled
-                                    && !panel.context_docs_custom_name.is_empty()
-                                {
-                                    // 已有 custom: toggle enabled
-                                    panel.context_docs_custom_enabled =
-                                        !panel.context_docs_custom_enabled;
-                                } else {
-                                    // 无 custom 名称: 进入编辑模式
-                                    panel.context_docs_editing_custom = true;
-                                    panel.context_docs_custom_name.clear();
-                                }
-                            }
-                        }
-                        KeyCode::Enter => {
-                            app.config_save_context_docs();
-                        }
-                        KeyCode::Esc => {
-                            panel.step = ConfigStep::AgentMenu;
-                        }
-                        _ => {}
-                    }
-                }
-            }
-        }
         ConfigStep::CustomChoose => match key.code {
             KeyCode::Char('k') | KeyCode::Up => app.config_panel_prev(),
             KeyCode::Char('j') | KeyCode::Down => app.config_panel_next(),
@@ -914,6 +831,10 @@ fn handle_config_panel_key(app: &mut App, key: KeyEvent) {
             KeyCode::Esc => app.config_panel_back(),
             KeyCode::Backspace => app.config_custom_cmd_delete_char(),
             KeyCode::Char(c) => app.config_custom_cmd_input_char(c),
+            _ => {}
+        },
+        ConfigStep::McpConfig => match key.code {
+            KeyCode::Enter | KeyCode::Esc => app.config_panel_back(),
             _ => {}
         },
         ConfigStep::HookWizard => {
@@ -958,12 +879,11 @@ fn handle_monitor_key(app: &mut App, key: KeyEvent) {
             app.monitor.toggle_focus()
         }
 
-        // 数字键切换 content tab
-        KeyCode::Char('1') => app.monitor.content_tab = PreviewSubTab::Git,
-        KeyCode::Char('2') => app.monitor.content_tab = PreviewSubTab::Ai,
+        // 数字键切换 content tab (1:Stats, 2:Git, 3:Notes, 4:Review)
+        KeyCode::Char('1') => app.monitor.content_tab = PreviewSubTab::Stats,
+        KeyCode::Char('2') => app.monitor.content_tab = PreviewSubTab::Git,
         KeyCode::Char('3') => app.monitor.content_tab = PreviewSubTab::Notes,
         KeyCode::Char('4') => app.monitor.content_tab = PreviewSubTab::Diff,
-        KeyCode::Char('5') => app.monitor.content_tab = PreviewSubTab::Stats,
 
         // j/k/↑/↓ 行为取决于焦点
         KeyCode::Char('j') | KeyCode::Down => match app.monitor.focus {
@@ -1226,11 +1146,10 @@ fn handle_scroll_down(app: &mut App, col: u16, row: u16) {
             if let Some(area) = app.click_areas.preview_content_area {
                 if contains(&area, col, row) {
                     match app.project.preview_sub_tab {
-                        PreviewSubTab::Notes => app.project.scroll_notes_down(),
-                        PreviewSubTab::Ai => app.project.scroll_ai_summary_down(),
-                        PreviewSubTab::Git => app.project.scroll_git_down(),
-                        PreviewSubTab::Diff => app.project.scroll_diff_down(),
                         PreviewSubTab::Stats => app.project.scroll_stats_down(),
+                        PreviewSubTab::Git => app.project.scroll_git_down(),
+                        PreviewSubTab::Notes => app.project.scroll_notes_down(),
+                        PreviewSubTab::Diff => app.project.scroll_diff_down(),
                     }
                     return;
                 }
@@ -1273,11 +1192,10 @@ fn handle_scroll_up(app: &mut App, col: u16, row: u16) {
             if let Some(area) = app.click_areas.preview_content_area {
                 if contains(&area, col, row) {
                     match app.project.preview_sub_tab {
-                        PreviewSubTab::Notes => app.project.scroll_notes_up(),
-                        PreviewSubTab::Ai => app.project.scroll_ai_summary_up(),
-                        PreviewSubTab::Git => app.project.scroll_git_up(),
-                        PreviewSubTab::Diff => app.project.scroll_diff_up(),
                         PreviewSubTab::Stats => app.project.scroll_stats_up(),
+                        PreviewSubTab::Git => app.project.scroll_git_up(),
+                        PreviewSubTab::Notes => app.project.scroll_notes_up(),
+                        PreviewSubTab::Diff => app.project.scroll_diff_up(),
                     }
                     return;
                 }
@@ -1439,23 +1357,7 @@ fn popup_select_item(app: &mut App, idx: usize) {
     else if let Some(ref mut d) = app.config_panel {
         match d.step {
             ConfigStep::Main => d.main_selected = idx,
-            ConfigStep::AgentMenu => d.agent_menu_selected = idx,
             ConfigStep::SelectLayout => d.layout_selected = idx,
-            ConfigStep::SelectContextDocs => {
-                // 点击 = toggle（等同于 Space 键）
-                if idx < 3 {
-                    d.context_docs_cursor = idx;
-                    d.context_docs_selected[idx] = !d.context_docs_selected[idx];
-                } else if idx == 3 {
-                    d.context_docs_cursor = 3;
-                    if d.context_docs_custom_enabled && !d.context_docs_custom_name.is_empty() {
-                        d.context_docs_custom_enabled = !d.context_docs_custom_enabled;
-                    } else {
-                        d.context_docs_editing_custom = true;
-                        d.context_docs_custom_name.clear();
-                    }
-                }
-            }
             ConfigStep::HookWizard => d.hook_data.selected_index = idx,
             _ => {}
         }

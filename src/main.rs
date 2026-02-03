@@ -14,6 +14,7 @@ mod update;
 mod watcher;
 
 use std::io::{self, Write};
+use std::panic;
 use std::time::Instant;
 
 use clap::Parser;
@@ -28,6 +29,15 @@ use cli::{Cli, Commands};
 const AUTO_REFRESH_INTERVAL_SECS: u64 = 5;
 
 fn main() -> io::Result<()> {
+    // Set up panic hook to restore terminal state on panic
+    let original_hook = panic::take_hook();
+    panic::set_hook(Box::new(move |panic_info| {
+        // Restore terminal state
+        let _ = execute!(io::stdout(), DisableMouseCapture);
+        ratatui::restore();
+        // Call the original panic hook
+        original_hook(panic_info);
+    }));
     // 解析命令行参数
     let cli = Cli::parse();
 
@@ -37,8 +47,16 @@ fn main() -> io::Result<()> {
             Commands::Hooks { level } => {
                 cli::hooks::execute(level);
             }
-            Commands::Agent { command } => {
-                cli::agent::execute(command);
+            Commands::Mcp => {
+                // MCP server requires tokio runtime
+                tokio::runtime::Runtime::new()
+                    .expect("Failed to create tokio runtime")
+                    .block_on(async {
+                        if let Err(e) = cli::mcp::run_mcp_server().await {
+                            eprintln!("MCP server error: {}", e);
+                            std::process::exit(1);
+                        }
+                    });
             }
         }
         return Ok(());

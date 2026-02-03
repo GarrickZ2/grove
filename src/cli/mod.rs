@@ -1,8 +1,7 @@
 //! CLI 模块
 
-pub mod agent;
 pub mod hooks;
-pub mod init;
+pub mod mcp;
 
 use clap::{Parser, Subcommand};
 
@@ -22,9 +21,6 @@ pub enum Commands {
         #[command(subcommand)]
         level: hooks::HookLevel,
     },
-    /// AI agent commands (status, summary, todo, notes)
-    Agent {
-        #[command(subcommand)]
-        command: agent::AgentCommands,
-    },
+    /// Start MCP server (stdio transport) for AI integration
+    Mcp,
 }

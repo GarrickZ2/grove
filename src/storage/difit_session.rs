@@ -23,6 +23,9 @@ pub struct DifitSession {
     pub url: Option<String>,
     /// Path to the temp output file
     pub temp_file: String,
+    /// PID of the Grove process monitoring this session
+    #[serde(default)]
+    pub monitor_pid: Option<u32>,
 }
 
 fn sessions_dir(project_key: &str) -> io::Result<PathBuf> {
@@ -92,4 +95,23 @@ pub fn is_process_alive(pid: u32) -> bool {
         .status()
         .map(|s| s.success())
         .unwrap_or(false)
+}
+
+impl DifitSession {
+    /// Check if the difit process is still running
+    pub fn is_difit_alive(&self) -> bool {
+        is_process_alive(self.pid)
+    }
+
+    /// Check if there's a live Grove process monitoring this session
+    pub fn is_being_monitored(&self) -> bool {
+        self.monitor_pid
+            .map(is_process_alive)
+            .unwrap_or(false)
+    }
+
+    /// Check if this session needs reattach (difit alive but no monitor)
+    pub fn needs_reattach(&self) -> bool {
+        self.is_difit_alive() && !self.is_being_monitored()
+    }
 }

@@ -187,7 +187,6 @@ pub fn render(frame: &mut Frame, app: &mut App) {
             app.project.preview_sub_tab,
             &app.project.panel_data,
             app.project.notes_scroll,
-            app.project.ai_summary_scroll,
             app.project.git_scroll,
             app.project.diff_scroll,
             app.project.stats_scroll,

@@ -5,6 +5,43 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.1] - 2026-02-03
+
+### Added
+
+- **MCP Server** — Model Context Protocol server for AI agent integration (`grove mcp`)
+  - `grove_status` — check if running inside a Grove task, get task context
+  - `grove_read_notes` — read user-written task notes
+  - `grove_read_review` — read code review comments with IDs and status
+  - `grove_reply_review` — batch reply to review comments with resolved/not_resolved status
+  - `grove_complete_task` — complete task in one operation (commit → rebase → merge)
+- **Review Comments System** — enhanced code review workflow
+  - Comments parsed from difit's `diff_comments.md` output
+  - AI replies stored separately in `replies.json` (preserves original comments)
+  - Status tracking: open, resolved, not_resolved
+  - Location-based reply matching for comment persistence across re-reviews
+- **difit Session Monitor PID** — tracks which Grove process is monitoring each difit session
+  - Prevents duplicate monitoring threads on TUI refresh
+  - Enables reliable session recovery after Grove restart
+
+### Changed
+
+- **Simplified difit monitoring** — refactored to share code between Project/Monitor modes
+  - Extracted `spawn_difit_thread` for code reuse
+  - `DifitSession` now has `is_difit_alive()`, `is_being_monitored()`, `needs_reattach()` helpers
+- **Streamlined config panel** — removed redundant code paths
+- **Streamlined preview panel** — simplified rendering logic
+
+### Removed
+
+- **`grove agent` CLI** — replaced by MCP server tools
+  - `grove agent status/summary/todo/notes` removed
+  - AI agents should use MCP tools instead
+- **`grove init` worktree setup** — GROVE.md injection removed
+  - AI integration now handled via MCP environment variables
+- **AI data storage** — `ai_data.rs` (summary/TODO) removed, replaced by MCP workflow
+- **Legacy diff_comments.rs** — merged into `comments.rs` with enhanced functionality
+
 ## [0.3.0] - 2026-02-03
 
 ### Added

@@ -16,6 +16,14 @@ pub struct Config {
     pub update: UpdateConfig,
     #[serde(default)]
     pub layout: LayoutConfig,
+    #[serde(default)]
+    pub mcp: McpConfig,
+}
+
+/// MCP Server 配置（预留扩展）
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct McpConfig {
+    // 预留字段，目前仅用于显示配置说明
 }
 
 /// 自定义布局配置
@@ -34,9 +42,6 @@ pub struct LayoutConfig {
     /// agent 启动命令（如 "claude", "claude --yolo"）
     #[serde(default)]
     pub agent_command: Option<String>,
-    /// 要注入 grove 集成的上下文文档列表
-    #[serde(default = "default_context_docs")]
-    pub context_docs: Vec<String>,
     /// 自定义布局配置
     #[serde(default)]
     pub custom: Option<CustomLayoutConfig>,
@@ -46,16 +51,11 @@ fn default_layout_name() -> String {
     "single".to_string()
 }
 
-fn default_context_docs() -> Vec<String> {
-    vec!["AGENTS.md".to_string()]
-}
-
 impl Default for LayoutConfig {
     fn default() -> Self {
         Self {
             default: default_layout_name(),
             agent_command: None,
-            context_docs: default_context_docs(),
             custom: None,
         }
     }
