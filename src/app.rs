@@ -32,6 +32,7 @@ use crate::ui::components::hook_panel::HookConfigStep;
 use crate::ui::components::input_confirm_dialog::InputConfirmData;
 use crate::ui::components::merge_dialog::{MergeDialogData, MergeMethod};
 use crate::update::UpdateInfo;
+use crate::watcher::FileWatcher;
 
 /// Toast 消息
 #[derive(Debug, Clone)]
@@ -66,6 +67,7 @@ pub enum PreviewSubTab {
     Ai,
     Notes,
     Diff,
+    Stats,
 }
 
 /// 面板数据缓存
@@ -135,6 +137,8 @@ pub struct ProjectState {
     pub git_scroll: u16,
     /// Diff tab 滚动偏移
     pub diff_scroll: u16,
+    /// Stats tab 滚动偏移
+    pub stats_scroll: u16,
     /// 待打开外部编辑器的 notes 文件路径
     pub pending_notes_edit: Option<String>,
 }
@@ -183,6 +187,7 @@ impl ProjectState {
             ai_summary_scroll: 0,
             git_scroll: 0,
             diff_scroll: 0,
+            stats_scroll: 0,
             pending_notes_edit: None,
         }
     }
@@ -278,6 +283,7 @@ impl ProjectState {
             self.ai_summary_scroll = 0;
             self.git_scroll = 0;
             self.diff_scroll = 0;
+            self.stats_scroll = 0;
         }
 
         // Git data
@@ -385,6 +391,15 @@ impl ProjectState {
     /// 向上滚动 Diff tab
     pub fn scroll_diff_up(&mut self) {
         self.diff_scroll = self.diff_scroll.saturating_sub(1);
+    }
+
+    pub fn scroll_stats_down(&mut self) {
+        // Stats tab has no line count limit for now
+        self.stats_scroll += 1;
+    }
+
+    pub fn scroll_stats_up(&mut self) {
+        self.stats_scroll = self.stats_scroll.saturating_sub(1);
     }
 
     /// Clone 选中的 worktree（避免借用冲突）
@@ -653,6 +668,8 @@ pub struct MonitorState {
     pub notes_scroll: u16,
     /// Diff tab 滚动偏移
     pub diff_scroll: u16,
+    /// Stats tab 滚动偏移
+    pub stats_scroll: u16,
     /// Sidebar 选中操作索引
     pub action_selected: usize,
     /// GROVE_TASK_ID
@@ -686,6 +703,7 @@ impl Default for MonitorState {
             ai_summary_scroll: 0,
             notes_scroll: 0,
             diff_scroll: 0,
+            stats_scroll: 0,
             action_selected: 0,
             task_id: String::new(),
             task_name: String::new(),
@@ -725,6 +743,7 @@ impl MonitorState {
             ai_summary_scroll: 0,
             notes_scroll: 0,
             diff_scroll: 0,
+            stats_scroll: 0,
             action_selected: 0,
             task_id,
             task_name,
@@ -851,6 +870,9 @@ impl MonitorState {
                     self.diff_scroll += 1;
                 }
             }
+            PreviewSubTab::Stats => {
+                self.stats_scroll += 1;
+            }
         }
     }
 
@@ -868,6 +890,9 @@ impl MonitorState {
             }
             PreviewSubTab::Diff => {
                 self.diff_scroll = self.diff_scroll.saturating_sub(1);
+            }
+            PreviewSubTab::Stats => {
+                self.stats_scroll = self.stats_scroll.saturating_sub(1);
             }
         }
     }
@@ -965,6 +990,8 @@ pub struct App {
     /// 所有 difit 线程共享的 URL 更新 channel: (task_id, url)
     pub difit_url_tx: mpsc::Sender<(String, String)>,
     pub difit_url_rx: mpsc::Receiver<(String, String)>,
+    /// File system watcher for tracking task activity
+    pub file_watcher: Option<FileWatcher>,
 }
 
 /// 待执行的操作
@@ -1192,12 +1219,53 @@ impl App {
             difit_result_rx,
             difit_url_tx,
             difit_url_rx,
+            file_watcher: None,
         };
 
         // 恢复已有的 difit review sessions
         app.recover_difit_sessions();
 
+        // Start file watcher
+        match app.mode {
+            AppMode::Project => app.start_file_watcher_project(),
+            AppMode::Monitor => app.start_file_watcher_monitor(),
+            AppMode::Workspace => {}
+        }
+
         app
+    }
+
+    /// Start file watcher for Project mode (watches all live tasks)
+    fn start_file_watcher_project(&mut self) {
+        let project_key = project_hash(&self.project.project_path);
+        let mut watcher = FileWatcher::new(&project_key);
+        watcher.start();
+
+        // Watch all live tasks (Current and Other tabs)
+        for tab_idx in 0..2 {
+            for wt in &self.project.worktrees[tab_idx] {
+                if wt.status == WorktreeStatus::Live {
+                    watcher.watch(&wt.id, Path::new(&wt.path));
+                }
+            }
+        }
+
+        self.file_watcher = Some(watcher);
+    }
+
+    /// Load file watcher data for Monitor mode (read-only, no active watching)
+    /// Project mode grove handles the actual file monitoring
+    fn start_file_watcher_monitor(&mut self) {
+        if self.monitor.project_key.is_empty() || self.monitor.task_id.is_empty() {
+            return;
+        }
+
+        // Only create watcher to load history, don't start the background thread
+        let watcher = FileWatcher::new(&self.monitor.project_key);
+        // Load existing history without starting file monitoring
+        watcher.load_history_only(&self.monitor.task_id, Path::new(&self.monitor.worktree_path));
+
+        self.file_watcher = Some(watcher);
     }
 
     /// 检测是否为双击（400ms 内同位置）
@@ -1428,12 +1496,17 @@ impl App {
             }
         }
 
-        // 8. 关闭弹窗，刷新数据
+        // 8. 添加到 FileWatcher 监控
+        if let Some(ref watcher) = self.file_watcher {
+            watcher.watch(&slug, &worktree_path);
+        }
+
+        // 9. 关闭弹窗，刷新数据
         self.close_new_task_dialog();
         self.project.refresh();
         self.show_toast(format!("Created: {}", name));
 
-        // 9. 标记需要 attach（主循环会暂停 TUI，attach 完成后恢复）
+        // 10. 标记需要 attach（主循环会暂停 TUI，attach 完成后恢复）
         self.pending_tmux_attach = Some(session);
     }
 
@@ -1516,8 +1589,7 @@ impl App {
                         url: None,
                         temp_file: handle.temp_file_path.clone(),
                     };
-                    let _ =
-                        storage::difit_session::save_session(&project_key, &task_id, &session);
+                    let _ = storage::difit_session::save_session(&project_key, &task_id, &session);
 
                     let on_url: Box<dyn FnOnce(String) + Send> = {
                         let url_tx = url_tx;
@@ -1623,8 +1695,7 @@ impl App {
                         url: None,
                         temp_file: handle.temp_file_path.clone(),
                     };
-                    let _ =
-                        storage::difit_session::save_session(&project_key, &task_id, &session);
+                    let _ = storage::difit_session::save_session(&project_key, &task_id, &session);
 
                     let on_url: Box<dyn FnOnce(String) + Send> = {
                         let url_tx = url_tx;
@@ -1888,6 +1959,10 @@ impl App {
             }
             AppMode::Monitor => {
                 self.monitor.refresh_panel_data();
+                // Reload stats data from disk
+                if let Some(watcher) = &self.file_watcher {
+                    watcher.reload_history(&self.monitor.task_id);
+                }
             }
         }
     }
@@ -2774,15 +2849,15 @@ impl App {
     pub fn poll_bg_result(&mut self) {
         // 1. 轮询 difit URL 更新（共享 channel）
         while let Ok((task_id, url)) = self.difit_url_rx.try_recv() {
-            self.reviewing_tasks.insert(task_id.clone(), Some(url.clone()));
+            self.reviewing_tasks
+                .insert(task_id.clone(), Some(url.clone()));
             // 更新 session 文件写入 URL
             let project_key = if self.mode == AppMode::Monitor {
                 self.monitor.project_key.clone()
             } else {
                 self.project.project_key.clone()
             };
-            if let Some(mut session) =
-                storage::difit_session::load_session(&project_key, &task_id)
+            if let Some(mut session) = storage::difit_session::load_session(&project_key, &task_id)
             {
                 session.url = Some(url);
                 let _ = storage::difit_session::save_session(&project_key, &task_id, &session);
@@ -3719,15 +3794,14 @@ impl App {
                 let branch = self.monitor.branch.clone();
                 let target = self.monitor.target.clone();
 
-                let is_merged = git::is_merged(&self.monitor.project_path, &branch, &target)
-                    .unwrap_or(false);
+                let is_merged =
+                    git::is_merged(&self.monitor.project_path, &branch, &target).unwrap_or(false);
 
                 if is_merged {
                     self.do_archive(&task_id);
                 } else {
                     self.pending_action = Some(PendingAction::Archive { task_id });
-                    self.confirm_dialog =
-                        Some(ConfirmType::ArchiveUnmerged { task_name, branch });
+                    self.confirm_dialog = Some(ConfirmType::ArchiveUnmerged { task_name, branch });
                 }
             }
             MonitorAction::Clean => {
@@ -3777,6 +3851,10 @@ impl App {
             Ok(()) => {
                 self.show_toast("Synced from target");
                 self.monitor.refresh_panel_data();
+                // Reload stats data from disk
+                if let Some(watcher) = &self.file_watcher {
+                    watcher.reload_history(&self.monitor.task_id);
+                }
             }
             Err(e) => self.show_toast(format!("Sync failed: {}", e)),
         }

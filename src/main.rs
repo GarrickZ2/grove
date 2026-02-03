@@ -11,6 +11,7 @@ mod theme;
 mod tmux;
 mod ui;
 mod update;
+mod watcher;
 
 use std::io::{self, Write};
 use std::time::Instant;

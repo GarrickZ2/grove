@@ -329,6 +329,7 @@ fn handle_project_key(app: &mut App, key: KeyEvent) {
                     PreviewSubTab::Ai => app.project.scroll_ai_summary_down(),
                     PreviewSubTab::Git => app.project.scroll_git_down(),
                     PreviewSubTab::Diff => app.project.scroll_diff_down(),
+                    PreviewSubTab::Stats => app.project.scroll_stats_down(),
                 }
             } else {
                 app.project.select_next();
@@ -341,6 +342,7 @@ fn handle_project_key(app: &mut App, key: KeyEvent) {
                     PreviewSubTab::Ai => app.project.scroll_ai_summary_up(),
                     PreviewSubTab::Git => app.project.scroll_git_up(),
                     PreviewSubTab::Diff => app.project.scroll_diff_up(),
+                    PreviewSubTab::Stats => app.project.scroll_stats_up(),
                 }
             } else {
                 app.project.select_previous();
@@ -386,6 +388,11 @@ fn handle_project_key(app: &mut App, key: KeyEvent) {
         KeyCode::Char('4') => {
             if app.project.preview_visible {
                 app.project.preview_sub_tab = PreviewSubTab::Diff;
+            }
+        }
+        KeyCode::Char('5') => {
+            if app.project.preview_visible {
+                app.project.preview_sub_tab = PreviewSubTab::Stats;
             }
         }
 
@@ -956,6 +963,7 @@ fn handle_monitor_key(app: &mut App, key: KeyEvent) {
         KeyCode::Char('2') => app.monitor.content_tab = PreviewSubTab::Ai,
         KeyCode::Char('3') => app.monitor.content_tab = PreviewSubTab::Notes,
         KeyCode::Char('4') => app.monitor.content_tab = PreviewSubTab::Diff,
+        KeyCode::Char('5') => app.monitor.content_tab = PreviewSubTab::Stats,
 
         // j/k/↑/↓ 行为取决于焦点
         KeyCode::Char('j') | KeyCode::Down => match app.monitor.focus {
@@ -1222,6 +1230,7 @@ fn handle_scroll_down(app: &mut App, col: u16, row: u16) {
                         PreviewSubTab::Ai => app.project.scroll_ai_summary_down(),
                         PreviewSubTab::Git => app.project.scroll_git_down(),
                         PreviewSubTab::Diff => app.project.scroll_diff_down(),
+                        PreviewSubTab::Stats => app.project.scroll_stats_down(),
                     }
                     return;
                 }
@@ -1268,6 +1277,7 @@ fn handle_scroll_up(app: &mut App, col: u16, row: u16) {
                         PreviewSubTab::Ai => app.project.scroll_ai_summary_up(),
                         PreviewSubTab::Git => app.project.scroll_git_up(),
                         PreviewSubTab::Diff => app.project.scroll_diff_up(),
+                        PreviewSubTab::Stats => app.project.scroll_stats_up(),
                     }
                     return;
                 }

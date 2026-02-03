@@ -131,6 +131,19 @@ pub fn render(frame: &mut Frame, app: &mut App) {
                 colors,
             )
         }
+        PreviewSubTab::Stats => {
+            let stats_history = app
+                .file_watcher
+                .as_ref()
+                .and_then(|fw| fw.get_history(&app.monitor.task_id));
+            preview_panel::render_stats_tab(
+                frame,
+                main_area,
+                stats_history.as_ref(),
+                app.monitor.stats_scroll,
+                colors,
+            );
+        }
     }
 
     render_monitor_footer(frame, footer_area, &app.monitor, colors);
@@ -437,7 +450,8 @@ fn render_tab_bar(
         (PreviewSubTab::Git, "1:Git"),
         (PreviewSubTab::Ai, "2:AI"),
         (PreviewSubTab::Notes, "3:Notes"),
-        (PreviewSubTab::Diff, "4:Diff"),
+        (PreviewSubTab::Diff, "4:Review"),
+        (PreviewSubTab::Stats, "5:Stats"),
     ];
 
     let mut spans = Vec::new();

@@ -5,6 +5,31 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2026-02-03
+
+### Added
+
+- **Stats Tab** — 5th sub-tab in preview panel for task activity monitoring
+  - File edit heatmap showing top 10 edited files with color gradient
+  - Activity timeline with 1-minute granularity, color-coded by intensity
+  - Summary section with total edits, files touched, last activity time
+- **File Watcher** — background file system monitoring for worktree directories
+  - Tracks only git-tracked files (via `git ls-files`) to filter noise
+  - Captures direct edits, atomic writes (rename pattern), and AI tool modifications
+  - Debounce logic (2 seconds) to deduplicate rapid events
+  - Batch processing (100ms batches) for performance optimization
+- **Activity Persistence** — edit history stored to disk
+  - JSONL format at `~/.grove/projects/<hash>/activity/<task_id>/edits.jsonl`
+  - Auto-flush every 30 seconds or every 10 events
+  - Memory-limited to 1000 events (older events preserved on disk)
+- **Monitor Stats Support** — Stats tab available in Monitor mode
+  - Read-only mode loads history from disk without active file watching
+  - Refreshable with `r` key to see latest activity
+
+### Changed
+
+- **Diff tab renamed to Review** — better reflects its code review purpose
+
 ## [0.2.3] - 2026-02-01
 
 ### Fixed

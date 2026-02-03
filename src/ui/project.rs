@@ -173,6 +173,13 @@ pub fn render(frame: &mut Frame, app: &mut App) {
             .and_then(|wt| app.reviewing_tasks.get(&wt.id))
             .and_then(|u| u.as_deref());
 
+        // Get stats history for the selected task
+        let stats_history = app.project.selected_worktree().and_then(|wt| {
+            app.file_watcher
+                .as_ref()
+                .and_then(|fw| fw.get_history(&wt.id))
+        });
+
         preview_panel::render(
             frame,
             right_area,
@@ -183,8 +190,10 @@ pub fn render(frame: &mut Frame, app: &mut App) {
             app.project.ai_summary_scroll,
             app.project.git_scroll,
             app.project.diff_scroll,
+            app.project.stats_scroll,
             reviewing,
             reviewing_url,
+            stats_history.as_ref(),
             colors,
             &mut app.click_areas,
         );
