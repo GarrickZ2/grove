@@ -8,6 +8,7 @@ use ratatui::{
 
 use crate::app::{PanelData, PreviewSubTab};
 use crate::model::{Worktree, WorktreeStatus};
+use crate::storage::comments::CommentStatus;
 use crate::theme::ThemeColors;
 use crate::ui::click_areas::ClickAreas;
 use crate::watcher::TaskEditHistory;
@@ -23,7 +24,6 @@ pub fn render(
     sub_tab: PreviewSubTab,
     panel_data: &PanelData,
     notes_scroll: u16,
-    ai_summary_scroll: u16,
     git_scroll: u16,
     diff_scroll: u16,
     stats_scroll: u16,
@@ -89,17 +89,14 @@ pub fn render(
         sep_area,
     );
 
-    // Render content
+    // Render content (Tab order: Stats, Git, Notes, Review)
     match sub_tab {
-        PreviewSubTab::Git => render_git_tab(frame, content_area, panel_data, git_scroll, colors),
-        PreviewSubTab::Ai => {
-            render_ai_tab(frame, content_area, panel_data, ai_summary_scroll, colors)
-        }
-        PreviewSubTab::Notes => {
-            render_notes_tab(frame, content_area, panel_data, notes_scroll, colors)
-        }
         PreviewSubTab::Stats => {
             render_stats_tab(frame, content_area, stats_history, stats_scroll, colors)
+        }
+        PreviewSubTab::Git => render_git_tab(frame, content_area, panel_data, git_scroll, colors),
+        PreviewSubTab::Notes => {
+            render_notes_tab(frame, content_area, panel_data, notes_scroll, colors)
         }
         PreviewSubTab::Diff => render_diff_tab(
             frame,
@@ -121,11 +118,10 @@ fn render_sub_tab_bar(
     click_areas: &mut ClickAreas,
 ) {
     let tabs = [
-        (PreviewSubTab::Git, "1:Git"),
-        (PreviewSubTab::Ai, "2:AI"),
+        (PreviewSubTab::Stats, "1:Stats"),
+        (PreviewSubTab::Git, "2:Git"),
         (PreviewSubTab::Notes, "3:Notes"),
         (PreviewSubTab::Diff, "4:Review"),
-        (PreviewSubTab::Stats, "5:Stats"),
     ];
 
     let mut left_spans = Vec::new();
@@ -315,166 +311,6 @@ pub fn render_git_tab(
     frame.render_widget(paragraph, area);
 }
 
-pub fn render_ai_tab(
-    frame: &mut Frame,
-    area: Rect,
-    data: &PanelData,
-    summary_scroll: u16,
-    colors: &ThemeColors,
-) {
-    if !data.ai_initialized {
-        render_ai_not_init(frame, area, colors);
-        return;
-    }
-
-    // Calculate TODO height: 1 header + items, capped at 40% of area, min 3
-    let todo_item_count = data.ai_todo.todo.len() + data.ai_todo.done.len();
-    let todo_content_height = if data.ai_todo.is_empty() {
-        2 // header + "No items yet"
-    } else {
-        1 + todo_item_count // header + items
-    };
-    let max_todo = (area.height as usize * 40 / 100).max(3);
-    let todo_height = todo_content_height.min(max_todo).max(3) as u16;
-
-    let [summary_area, sep_area, todo_area] = Layout::vertical([
-        Constraint::Fill(1),
-        Constraint::Length(1),
-        Constraint::Length(todo_height),
-    ])
-    .areas(area);
-
-    render_ai_summary(frame, summary_area, data, summary_scroll, colors);
-
-    // Separator line
-    let sep_text = "─".repeat(sep_area.width as usize);
-    frame.render_widget(
-        Paragraph::new(Line::from(Span::styled(
-            sep_text,
-            Style::default().fg(colors.border),
-        ))),
-        sep_area,
-    );
-
-    render_ai_todo(frame, todo_area, data, colors);
-}
-
-fn render_ai_summary(
-    frame: &mut Frame,
-    area: Rect,
-    data: &PanelData,
-    scroll: u16,
-    colors: &ThemeColors,
-) {
-    let mut lines: Vec<Line> = Vec::new();
-
-    lines.push(Line::from(Span::styled(
-        " Summary",
-        Style::default()
-            .fg(colors.highlight)
-            .add_modifier(Modifier::BOLD),
-    )));
-
-    if data.ai_summary.is_empty() {
-        lines.push(Line::from(Span::styled(
-            "   No summary yet",
-            Style::default().fg(colors.muted),
-        )));
-    } else {
-        for line in data.ai_summary.lines() {
-            lines.push(Line::from(Span::styled(
-                format!(" {}", line),
-                Style::default().fg(colors.text),
-            )));
-        }
-    }
-
-    let paragraph = Paragraph::new(lines)
-        .wrap(Wrap { trim: false })
-        .scroll((scroll, 0));
-    frame.render_widget(paragraph, area);
-}
-
-fn render_ai_todo(frame: &mut Frame, area: Rect, data: &PanelData, colors: &ThemeColors) {
-    let mut lines: Vec<Line> = Vec::new();
-
-    // TODO header with optional spinner
-    if data.ai_todo_active {
-        let frame_idx = (std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .subsec_millis()
-            / 100) as usize
-            % SPINNER_FRAMES.len();
-        lines.push(Line::from(vec![
-            Span::styled(
-                " TODO ",
-                Style::default()
-                    .fg(colors.highlight)
-                    .add_modifier(Modifier::BOLD),
-            ),
-            Span::styled(
-                SPINNER_FRAMES[frame_idx].to_string(),
-                Style::default().fg(colors.highlight),
-            ),
-        ]));
-    } else {
-        lines.push(Line::from(Span::styled(
-            " TODO",
-            Style::default()
-                .fg(colors.highlight)
-                .add_modifier(Modifier::BOLD),
-        )));
-    }
-
-    if data.ai_todo.is_empty() {
-        lines.push(Line::from(Span::styled(
-            "   No items yet",
-            Style::default().fg(colors.muted),
-        )));
-    } else {
-        for item in &data.ai_todo.todo {
-            lines.push(Line::from(vec![
-                Span::styled(" □ ", Style::default().fg(colors.text)),
-                Span::styled(item, Style::default().fg(colors.text)),
-            ]));
-        }
-        for item in &data.ai_todo.done {
-            lines.push(Line::from(vec![
-                Span::styled(" ✓ ", Style::default().fg(colors.status_merged)),
-                Span::styled(item, Style::default().fg(colors.muted)),
-            ]));
-        }
-    }
-
-    let paragraph = Paragraph::new(lines).wrap(Wrap { trim: false });
-    frame.render_widget(paragraph, area);
-}
-
-fn render_ai_not_init(frame: &mut Frame, area: Rect, colors: &ThemeColors) {
-    let [_, center, _] = Layout::vertical([
-        Constraint::Percentage(30),
-        Constraint::Length(5),
-        Constraint::Percentage(30),
-    ])
-    .areas(area);
-
-    let lines = vec![
-        Line::from(Span::styled(
-            "AI integration not available for this task.",
-            Style::default().fg(colors.muted),
-        )),
-        Line::from(""),
-        Line::from(Span::styled(
-            "New tasks will be set up automatically.",
-            Style::default().fg(colors.muted),
-        )),
-    ];
-
-    let paragraph = Paragraph::new(lines).alignment(Alignment::Center);
-    frame.render_widget(paragraph, center);
-}
-
 pub fn render_notes_tab(
     frame: &mut Frame,
     area: Rect,
@@ -590,7 +426,7 @@ pub fn render_diff_tab(
         return;
     }
 
-    if data.diff_comments.is_empty() {
+    if data.review_comments.is_empty() {
         let [_, center, _] = Layout::vertical([
             Constraint::Percentage(30),
             Constraint::Length(4),
@@ -615,54 +451,117 @@ pub fn render_diff_tab(
 
     let mut lines: Vec<Line> = Vec::new();
 
-    // Header
+    // Header with counts
+    let (open, resolved, not_resolved) = data.review_comments.count_by_status();
     lines.push(Line::from(vec![
         Span::styled(
-            " Code Review Comments",
+            " Review Comments",
             Style::default()
                 .fg(colors.highlight)
                 .add_modifier(Modifier::BOLD),
         ),
         Span::styled(
-            if data.diff_comments_count > 0 {
-                format!("  ({} comments)", data.diff_comments_count)
-            } else {
-                String::new()
-            },
+            format!("  ({} open, {} resolved, {} not resolved)", open, resolved, not_resolved),
             Style::default().fg(colors.muted),
         ),
     ]));
     lines.push(Line::from(""));
 
-    // Parse and render comments
-    for line in data.diff_comments.lines() {
-        let trimmed = line.trim();
-
-        if trimmed == "=====" {
-            // Comment separator
-            lines.push(Line::from(""));
-            lines.push(Line::from(Span::styled(
-                " ─────────────────────────",
-                Style::default().fg(colors.border),
-            )));
-            lines.push(Line::from(""));
-        } else if trimmed.contains(":L") && !trimmed.contains(' ') {
-            // File:Line marker (e.g., "file.go:L54" or "file.go:L42-L48")
-            lines.push(Line::from(Span::styled(
-                format!(" {}", trimmed),
-                Style::default()
-                    .fg(colors.highlight)
-                    .add_modifier(Modifier::BOLD),
-            )));
-        } else if !trimmed.is_empty() {
-            // Comment text
-            lines.push(Line::from(Span::styled(
-                format!("   {}", trimmed),
-                Style::default().fg(colors.text),
-            )));
-        } else {
-            lines.push(Line::from(""));
+    // Render each comment
+    for comment in &data.review_comments.comments {
+        // Comment header with ID and status
+        match comment.status {
+            CommentStatus::Open => {
+                lines.push(Line::from(vec![
+                    Span::styled(
+                        format!(" [#{}] ", comment.id),
+                        Style::default()
+                            .fg(colors.highlight)
+                            .add_modifier(Modifier::BOLD),
+                    ),
+                    Span::styled(
+                        &comment.location,
+                        Style::default().fg(colors.highlight),
+                    ),
+                ]));
+            }
+            CommentStatus::Resolved => {
+                lines.push(Line::from(vec![
+                    Span::styled(
+                        format!(" [#{}] ", comment.id),
+                        Style::default()
+                            .fg(colors.status_merged)
+                            .add_modifier(Modifier::BOLD),
+                    ),
+                    Span::styled(
+                        "✓ RESOLVED ",
+                        Style::default()
+                            .fg(colors.status_merged)
+                            .add_modifier(Modifier::BOLD),
+                    ),
+                    Span::styled(
+                        format!("~~{}~~", &comment.location),
+                        Style::default().fg(colors.muted),
+                    ),
+                ]));
+            }
+            CommentStatus::NotResolved => {
+                lines.push(Line::from(vec![
+                    Span::styled(
+                        format!(" [#{}] ", comment.id),
+                        Style::default()
+                            .fg(Color::Yellow)
+                            .add_modifier(Modifier::BOLD),
+                    ),
+                    Span::styled(
+                        "NOT RESOLVED ",
+                        Style::default()
+                            .fg(Color::Yellow)
+                            .add_modifier(Modifier::BOLD),
+                    ),
+                    Span::styled(
+                        &comment.location,
+                        Style::default().fg(colors.highlight),
+                    ),
+                ]));
+            }
         }
+
+        // Comment content
+        let content_style = if comment.status == CommentStatus::Resolved {
+            Style::default().fg(colors.muted)
+        } else {
+            Style::default().fg(colors.text)
+        };
+
+        for content_line in comment.content.lines() {
+            let display_text = if comment.status == CommentStatus::Resolved {
+                format!(" │ ~~{}~~", content_line)
+            } else {
+                format!(" │ {}", content_line)
+            };
+            lines.push(Line::from(Span::styled(display_text, content_style)));
+        }
+
+        // Reply (if any)
+        if let Some(reply) = &comment.reply {
+            let reply_style = Style::default().fg(colors.status_merged);
+            for (i, reply_line) in reply.lines().enumerate() {
+                let prefix = if i == 0 { " └─ AI: " } else { "        " };
+                lines.push(Line::from(Span::styled(
+                    format!("{}{}", prefix, reply_line),
+                    reply_style,
+                )));
+            }
+        } else if comment.status == CommentStatus::Open {
+            lines.push(Line::from(Span::styled(
+                " └─ (no reply)",
+                Style::default().fg(colors.muted),
+            )));
+        }
+
+        // Separator between comments
+        lines.push(Line::from(""));
     }
 
     let paragraph = Paragraph::new(lines)

@@ -222,6 +222,37 @@ pub fn rebase(worktree_path: &str, target: &str) -> Result<(), String> {
     git_cmd_unit(worktree_path, &["rebase", target])
 }
 
+/// Fetch origin 分支
+/// 执行: git fetch origin {branch}
+pub fn fetch_origin(repo_path: &str, branch: &str) -> Result<(), String> {
+    git_cmd_unit(repo_path, &["fetch", "origin", branch])
+}
+
+/// 中止 rebase
+/// 执行: git rebase --abort
+pub fn abort_rebase(repo_path: &str) -> Result<(), String> {
+    git_cmd_unit(repo_path, &["rebase", "--abort"])
+}
+
+/// 获取冲突文件列表
+/// 执行: git diff --name-only --diff-filter=U
+pub fn get_conflict_files(repo_path: &str) -> Result<Vec<String>, String> {
+    let output = git_cmd(repo_path, &["diff", "--name-only", "--diff-filter=U"])?;
+    Ok(output.lines().map(|s| s.to_string()).collect())
+}
+
+/// 切换分支
+/// 执行: git checkout {branch}
+pub fn checkout(repo_path: &str, branch: &str) -> Result<(), String> {
+    git_cmd_unit(repo_path, &["checkout", branch])
+}
+
+/// 获取最新 commit hash (短格式)
+/// 执行: git rev-parse --short HEAD
+pub fn get_head_short(repo_path: &str) -> Result<String, String> {
+    git_cmd(repo_path, &["rev-parse", "--short", "HEAD"]).map(|s| s.trim().to_string())
+}
+
 /// 执行 squash merge
 /// 执行: git merge --squash {branch}
 pub fn merge_squash(repo_path: &str, branch: &str) -> Result<(), String> {

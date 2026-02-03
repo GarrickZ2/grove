@@ -11,7 +11,7 @@ use crate::git;
 use crate::hooks::{self, HooksFile, NotificationLevel};
 use crate::model::{loader, ProjectInfo, ProjectTab, WorkspaceState, Worktree, WorktreeStatus};
 use crate::storage::{
-    self, ai_data, diff_comments, notes,
+    self, comments, notes,
     tasks::{self, Task, TaskStatus},
     workspace::project_hash,
 };
@@ -63,11 +63,10 @@ fn set_terminal_title(title: &str) {
 /// 预览面板 sub-tab
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PreviewSubTab {
+    Stats,
     Git,
-    Ai,
     Notes,
     Diff,
-    Stats,
 }
 
 /// 面板数据缓存
@@ -87,20 +86,10 @@ pub struct PanelData {
     pub git_stash_count: usize,
     /// Git tab: has merge conflicts
     pub git_has_conflicts: bool,
-    /// AI tab: summary
-    pub ai_summary: String,
-    /// AI tab: TODO data
-    pub ai_todo: ai_data::TodoData,
-    /// AI tab: whether grove init has been run
-    pub ai_initialized: bool,
-    /// AI tab: TODO 是否处于活跃状态（60 秒内有更新且有未完成项）
-    pub ai_todo_active: bool,
     /// Notes tab: content
     pub notes_content: String,
-    /// Diff tab: review comments
-    pub diff_comments: String,
-    /// Diff tab: comment count
-    pub diff_comments_count: usize,
+    /// Review tab: structured comments
+    pub review_comments: comments::CommentsData,
     /// 上次加载的 task id
     pub last_task_id: Option<String>,
 }
@@ -131,8 +120,6 @@ pub struct ProjectState {
     pub panel_data: PanelData,
     /// Notes 滚动偏移
     pub notes_scroll: u16,
-    /// AI Summary 滚动偏移
-    pub ai_summary_scroll: u16,
     /// Git tab 滚动偏移
     pub git_scroll: u16,
     /// Diff tab 滚动偏移
@@ -181,10 +168,9 @@ impl ProjectState {
             search_query: String::new(),
             filtered_indices: [current_indices, other_indices, archived_indices],
             preview_visible: true,
-            preview_sub_tab: PreviewSubTab::Git,
+            preview_sub_tab: PreviewSubTab::Stats,
             panel_data: PanelData::default(),
             notes_scroll: 0,
-            ai_summary_scroll: 0,
             git_scroll: 0,
             diff_scroll: 0,
             stats_scroll: 0,
@@ -280,7 +266,6 @@ impl ProjectState {
         if changed {
             self.panel_data.last_task_id = Some(wt.id.clone());
             self.notes_scroll = 0;
-            self.ai_summary_scroll = 0;
             self.git_scroll = 0;
             self.diff_scroll = 0;
             self.stats_scroll = 0;
@@ -295,40 +280,17 @@ impl ProjectState {
         self.panel_data.git_stash_count = git::stash_count(&wt.path).unwrap_or(0);
         self.panel_data.git_has_conflicts = git::has_conflicts(&wt.path);
 
-        // AI data
-        self.panel_data.ai_initialized = std::path::Path::new(&wt.path).join("GROVE.md").exists();
-        self.panel_data.ai_summary =
-            ai_data::load_summary(&self.project_key, &wt.id).unwrap_or_default();
-        self.panel_data.ai_todo = ai_data::load_todo(&self.project_key, &wt.id).unwrap_or_default();
-        let recently_updated = ai_data::todo_modified_secs_ago(&self.project_key, &wt.id)
-            .map(|secs| secs < 60)
-            .unwrap_or(false);
-        self.panel_data.ai_todo_active =
-            recently_updated && !self.panel_data.ai_todo.todo.is_empty();
-
         // Notes data
         self.panel_data.notes_content =
             notes::load_notes(&self.project_key, &wt.id).unwrap_or_default();
 
-        // Diff comments data
-        let diff_comments =
-            diff_comments::load_diff_comments(&self.project_key, &wt.id).unwrap_or_default();
-        self.panel_data.diff_comments_count = diff_comments
-            .lines()
-            .filter(|line| line.trim() == "=====")
-            .count()
-            .saturating_add(if diff_comments.is_empty() { 0 } else { 1 });
-        self.panel_data.diff_comments = diff_comments;
+        // Review comments data
+        self.panel_data.review_comments =
+            comments::load_comments(&self.project_key, &wt.id).unwrap_or_default();
 
         // 智能默认 sub-tab：仅首次打开面板时设置，切换任务时保持用户选择
         if changed && first_open {
-            let has_ai =
-                !self.panel_data.ai_summary.is_empty() || !self.panel_data.ai_todo.is_empty();
-            self.preview_sub_tab = if has_ai {
-                PreviewSubTab::Ai
-            } else {
-                PreviewSubTab::Git
-            };
+            self.preview_sub_tab = PreviewSubTab::Stats;
         }
     }
 
@@ -357,18 +319,6 @@ impl ProjectState {
         self.notes_scroll = self.notes_scroll.saturating_sub(1);
     }
 
-    /// 向下滚动 AI summary
-    pub fn scroll_ai_summary_down(&mut self) {
-        let line_count = self.panel_data.ai_summary.lines().count() as u16;
-        if self.ai_summary_scroll < line_count.saturating_sub(1) {
-            self.ai_summary_scroll += 1;
-        }
-    }
-
-    /// 向上滚动 AI summary
-    pub fn scroll_ai_summary_up(&mut self) {
-        self.ai_summary_scroll = self.ai_summary_scroll.saturating_sub(1);
-    }
 
     /// 向下滚动 Git tab
     pub fn scroll_git_down(&mut self) {
@@ -380,10 +330,10 @@ impl ProjectState {
         self.git_scroll = self.git_scroll.saturating_sub(1);
     }
 
-    /// 向下滚动 Diff tab
+    /// 向下滚动 Review tab
     pub fn scroll_diff_down(&mut self) {
-        let line_count = self.panel_data.diff_comments.lines().count() as u16;
-        if self.diff_scroll < line_count.saturating_sub(1) {
+        let comment_count = self.panel_data.review_comments.comments.len() as u16;
+        if self.diff_scroll < comment_count.saturating_sub(1) {
             self.diff_scroll += 1;
         }
     }
@@ -662,8 +612,6 @@ pub struct MonitorState {
     pub panel_data: PanelData,
     /// Git tab 滚动偏移
     pub git_scroll: u16,
-    /// AI summary 滚动偏移
-    pub ai_summary_scroll: u16,
     /// Notes 滚动偏移
     pub notes_scroll: u16,
     /// Diff tab 滚动偏移
@@ -697,10 +645,9 @@ impl Default for MonitorState {
         Self {
             focus: MonitorFocus::Sidebar,
             sidebar_collapsed: false,
-            content_tab: PreviewSubTab::Git,
+            content_tab: PreviewSubTab::Stats,
             panel_data: PanelData::default(),
             git_scroll: 0,
-            ai_summary_scroll: 0,
             notes_scroll: 0,
             diff_scroll: 0,
             stats_scroll: 0,
@@ -737,10 +684,9 @@ impl MonitorState {
         let mut state = Self {
             focus: MonitorFocus::Sidebar,
             sidebar_collapsed: false,
-            content_tab: PreviewSubTab::Git,
+            content_tab: PreviewSubTab::Stats,
             panel_data: PanelData::default(),
             git_scroll: 0,
-            ai_summary_scroll: 0,
             notes_scroll: 0,
             diff_scroll: 0,
             stats_scroll: 0,
@@ -778,33 +724,13 @@ impl MonitorState {
         self.panel_data.git_stash_count = git::stash_count(&self.worktree_path).unwrap_or(0);
         self.panel_data.git_has_conflicts = git::has_conflicts(&self.worktree_path);
 
-        // AI 数据
-        self.panel_data.ai_initialized = std::path::Path::new(&self.worktree_path)
-            .join("GROVE.md")
-            .exists();
-        self.panel_data.ai_summary =
-            ai_data::load_summary(&self.project_key, &self.task_id).unwrap_or_default();
-        self.panel_data.ai_todo =
-            ai_data::load_todo(&self.project_key, &self.task_id).unwrap_or_default();
-        let recently_updated = ai_data::todo_modified_secs_ago(&self.project_key, &self.task_id)
-            .map(|secs| secs < 60)
-            .unwrap_or(false);
-        self.panel_data.ai_todo_active =
-            recently_updated && !self.panel_data.ai_todo.todo.is_empty();
-
         // Notes 数据
         self.panel_data.notes_content =
             notes::load_notes(&self.project_key, &self.task_id).unwrap_or_default();
 
-        // Diff comments 数据
-        let diff_comments =
-            diff_comments::load_diff_comments(&self.project_key, &self.task_id).unwrap_or_default();
-        self.panel_data.diff_comments_count = diff_comments
-            .lines()
-            .filter(|line| line.trim() == "=====")
-            .count()
-            .saturating_add(if diff_comments.is_empty() { 0 } else { 1 });
-        self.panel_data.diff_comments = diff_comments;
+        // Review comments 数据
+        self.panel_data.review_comments =
+            comments::load_comments(&self.project_key, &self.task_id).unwrap_or_default();
     }
 
     /// Tab 键：展开/折叠 sidebar
@@ -849,29 +775,24 @@ impl MonitorState {
     /// 向下滚动当前 tab
     pub fn scroll_down(&mut self) {
         match self.content_tab {
+            PreviewSubTab::Stats => {
+                self.stats_scroll += 1;
+            }
+            PreviewSubTab::Git => {
+                self.git_scroll += 1;
+            }
             PreviewSubTab::Notes => {
                 let line_count = self.panel_data.notes_content.lines().count() as u16;
                 if self.notes_scroll < line_count.saturating_sub(1) {
                     self.notes_scroll += 1;
                 }
             }
-            PreviewSubTab::Ai => {
-                let line_count = self.panel_data.ai_summary.lines().count() as u16;
-                if self.ai_summary_scroll < line_count.saturating_sub(1) {
-                    self.ai_summary_scroll += 1;
-                }
-            }
-            PreviewSubTab::Git => {
-                self.git_scroll += 1;
-            }
             PreviewSubTab::Diff => {
-                let line_count = self.panel_data.diff_comments.lines().count() as u16;
-                if self.diff_scroll < line_count.saturating_sub(1) {
+                // Review tab: count comment items for scroll limit
+                let comment_count = self.panel_data.review_comments.comments.len() as u16;
+                if self.diff_scroll < comment_count.saturating_sub(1) {
                     self.diff_scroll += 1;
                 }
-            }
-            PreviewSubTab::Stats => {
-                self.stats_scroll += 1;
             }
         }
     }
@@ -879,20 +800,17 @@ impl MonitorState {
     /// 向上滚动当前 tab
     pub fn scroll_up(&mut self) {
         match self.content_tab {
-            PreviewSubTab::Notes => {
-                self.notes_scroll = self.notes_scroll.saturating_sub(1);
-            }
-            PreviewSubTab::Ai => {
-                self.ai_summary_scroll = self.ai_summary_scroll.saturating_sub(1);
+            PreviewSubTab::Stats => {
+                self.stats_scroll = self.stats_scroll.saturating_sub(1);
             }
             PreviewSubTab::Git => {
                 self.git_scroll = self.git_scroll.saturating_sub(1);
             }
+            PreviewSubTab::Notes => {
+                self.notes_scroll = self.notes_scroll.saturating_sub(1);
+            }
             PreviewSubTab::Diff => {
                 self.diff_scroll = self.diff_scroll.saturating_sub(1);
-            }
-            PreviewSubTab::Stats => {
-                self.stats_scroll = self.stats_scroll.saturating_sub(1);
             }
         }
     }
@@ -1437,15 +1355,6 @@ impl App {
             return;
         }
 
-        // 4.5. 自动设置 AI 集成（GROVE.md + CLAUDE.md/AGENTS.md）
-        {
-            let cfg = storage::config::load_config();
-            crate::cli::init::setup_worktree(
-                worktree_path.to_str().unwrap_or("."),
-                &cfg.layout.context_docs,
-            );
-        }
-
         // 5. 保存 task 元数据
         let now = Utc::now();
         let task = Task {
@@ -1549,9 +1458,11 @@ impl App {
 
         // 检查是否已有正在运行的 session（磁盘持久化）
         if let Some(session) = storage::difit_session::load_session(&project_key, &task_id) {
-            if storage::difit_session::is_process_alive(session.pid) {
+            if session.is_difit_alive() {
                 self.reviewing_tasks.insert(task_id, session.url.clone());
-                self.reattach_difit_monitor_thread(&session);
+                if session.needs_reattach() {
+                    self.reattach_difit_monitor_thread(&session);
+                }
                 self.project.preview_sub_tab = PreviewSubTab::Diff;
                 if !self.project.preview_visible {
                     self.project.preview_visible = true;
@@ -1575,60 +1486,7 @@ impl App {
             self.project.preview_visible = true;
         }
 
-        let tx = self.difit_result_tx.clone();
-        let url_tx = self.difit_url_tx.clone();
-
-        std::thread::spawn(move || {
-            match crate::difit::spawn_difit(&worktree_path, &target_branch, &availability) {
-                Ok(mut handle) => {
-                    // 持久化 session
-                    let session = storage::difit_session::DifitSession {
-                        pid: handle.child_pid,
-                        task_id: task_id.clone(),
-                        project_key: project_key.clone(),
-                        url: None,
-                        temp_file: handle.temp_file_path.clone(),
-                    };
-                    let _ = storage::difit_session::save_session(&project_key, &task_id, &session);
-
-                    let on_url: Box<dyn FnOnce(String) + Send> = {
-                        let url_tx = url_tx;
-                        let tid = task_id.clone();
-                        Box::new(move |url| {
-                            let _ = url_tx.send((tid, url));
-                        })
-                    };
-
-                    match crate::difit::wait_for_completion(&mut handle, Some(on_url)) {
-                        Ok(output) => {
-                            storage::difit_session::remove_session(&project_key, &task_id);
-                            let no_diff = output.contains("No differences found");
-                            let (comments, count) = crate::difit::parse_comments(&output);
-                            let _ = tx.send(BgResult::DifitOk {
-                                project_key,
-                                task_id,
-                                comments,
-                                count,
-                                no_diff,
-                            });
-                        }
-                        Err(e) => {
-                            storage::difit_session::remove_session(&project_key, &task_id);
-                            let _ = tx.send(BgResult::DifitErr {
-                                task_id,
-                                error: e.to_string(),
-                            });
-                        }
-                    }
-                }
-                Err(e) => {
-                    let _ = tx.send(BgResult::DifitErr {
-                        task_id,
-                        error: e.to_string(),
-                    });
-                }
-            }
-        });
+        self.spawn_difit_thread(task_id, project_key, worktree_path, target_branch, availability);
     }
 
     /// 启动 difit 查看当前 Monitor 模式的 diff（后台执行）
@@ -1662,9 +1520,11 @@ impl App {
 
         // 检查是否已有正在运行的 session（磁盘持久化）
         if let Some(session) = storage::difit_session::load_session(&project_key, &task_id) {
-            if storage::difit_session::is_process_alive(session.pid) {
+            if session.is_difit_alive() {
                 self.reviewing_tasks.insert(task_id, session.url.clone());
-                self.reattach_difit_monitor_thread(&session);
+                if session.needs_reattach() {
+                    self.reattach_difit_monitor_thread(&session);
+                }
                 self.monitor.content_tab = PreviewSubTab::Diff;
                 let url_hint = session
                     .url
@@ -1682,8 +1542,21 @@ impl App {
         // 启动时立即切换到 Diff tab
         self.monitor.content_tab = PreviewSubTab::Diff;
 
+        self.spawn_difit_thread(task_id, project_key, worktree_path, target_branch, availability);
+    }
+
+    /// 公共函数：启动 difit 后台监听线程
+    fn spawn_difit_thread(
+        &self,
+        task_id: String,
+        project_key: String,
+        worktree_path: String,
+        target_branch: String,
+        availability: crate::difit::DifitAvailability,
+    ) {
         let tx = self.difit_result_tx.clone();
         let url_tx = self.difit_url_tx.clone();
+        let grove_pid = std::process::id();
 
         std::thread::spawn(move || {
             match crate::difit::spawn_difit(&worktree_path, &target_branch, &availability) {
@@ -1694,6 +1567,7 @@ impl App {
                         project_key: project_key.clone(),
                         url: None,
                         temp_file: handle.temp_file_path.clone(),
+                        monitor_pid: Some(grove_pid),
                     };
                     let _ = storage::difit_session::save_session(&project_key, &task_id, &session);
 
@@ -1750,13 +1624,14 @@ impl App {
 
         let sessions = storage::difit_session::load_all_sessions(&project_key);
         for session in sessions {
-            if storage::difit_session::is_process_alive(session.pid) {
+            if session.needs_reattach() {
                 self.reviewing_tasks
                     .insert(session.task_id.clone(), session.url.clone());
                 self.reattach_difit_monitor_thread(&session);
-            } else {
+            } else if !session.is_difit_alive() {
                 storage::difit_session::remove_session(&project_key, &session.task_id);
             }
+            // If difit alive but being monitored, skip (already handled)
         }
     }
 
@@ -1766,6 +1641,11 @@ impl App {
         let temp_file = session.temp_file.clone();
         let project_key = session.project_key.clone();
         let task_id = session.task_id.clone();
+
+        // Update session with current Grove's monitor_pid
+        let mut updated_session = session.clone();
+        updated_session.monitor_pid = Some(std::process::id());
+        let _ = storage::difit_session::save_session(&project_key, &task_id, &updated_session);
 
         let tx = self.difit_result_tx.clone();
         let url_tx = self.difit_url_tx.clone();
@@ -1965,6 +1845,9 @@ impl App {
                 }
             }
         }
+
+        // Sync difit sessions from disk (in case MCP started a review)
+        self.recover_difit_sessions();
     }
 
     // ========== Archive 功能 ==========
@@ -2211,15 +2094,6 @@ impl App {
             return;
         }
 
-        // 5.5. 自动设置 AI 集成
-        {
-            let cfg = storage::config::load_config();
-            crate::cli::init::setup_worktree(
-                worktree_path.to_str().unwrap_or("."),
-                &cfg.layout.context_docs,
-            );
-        }
-
         // 6. 更新 task metadata (updated_at)
         if let Err(e) = tasks::touch_task(&self.project.project_key, task_id) {
             // 只是警告，不中断流程
@@ -2392,15 +2266,6 @@ impl App {
         ) {
             self.show_toast(format!("Git error: {}", e));
             return;
-        }
-
-        // 自动设置 AI 集成
-        {
-            let cfg = storage::config::load_config();
-            crate::cli::init::setup_worktree(
-                worktree_path.to_str().unwrap_or("."),
-                &cfg.layout.context_docs,
-            );
         }
 
         // 移回 tasks.toml
@@ -2878,7 +2743,7 @@ impl App {
                     if no_diff {
                         self.show_toast("No differences found");
                     } else {
-                        let _ = crate::storage::diff_comments::save_diff_comments(
+                        let _ = crate::storage::comments::save_diff_comments(
                             &project_key,
                             &task_id,
                             &comments,
@@ -3254,16 +3119,9 @@ impl App {
             match panel.step {
                 ConfigStep::Main => {
                     if panel.main_selected == 0 {
-                        panel.main_selected = 2;
+                        panel.main_selected = 3;
                     } else {
                         panel.main_selected -= 1;
-                    }
-                }
-                ConfigStep::AgentMenu => {
-                    if panel.agent_menu_selected == 0 {
-                        panel.agent_menu_selected = 1;
-                    } else {
-                        panel.agent_menu_selected -= 1;
                     }
                 }
                 ConfigStep::SelectLayout => {
@@ -3286,9 +3144,7 @@ impl App {
                 ConfigStep::HookWizard => {
                     panel.hook_data.select_prev();
                 }
-                ConfigStep::SelectContextDocs
-                | ConfigStep::EditAgentCommand
-                | ConfigStep::CustomPaneCommand => {}
+                ConfigStep::EditAgentCommand | ConfigStep::CustomPaneCommand | ConfigStep::McpConfig => {}
             }
         }
     }
@@ -3298,10 +3154,7 @@ impl App {
         if let Some(ref mut panel) = self.config_panel {
             match panel.step {
                 ConfigStep::Main => {
-                    panel.main_selected = (panel.main_selected + 1) % 3;
-                }
-                ConfigStep::AgentMenu => {
-                    panel.agent_menu_selected = (panel.agent_menu_selected + 1) % 2;
+                    panel.main_selected = (panel.main_selected + 1) % 4;
                 }
                 ConfigStep::SelectLayout => {
                     let count = TaskLayout::all().len() + 1;
@@ -3313,9 +3166,7 @@ impl App {
                 ConfigStep::HookWizard => {
                     panel.hook_data.select_next();
                 }
-                ConfigStep::EditAgentCommand
-                | ConfigStep::SelectContextDocs
-                | ConfigStep::CustomPaneCommand => {}
+                ConfigStep::EditAgentCommand | ConfigStep::CustomPaneCommand | ConfigStep::McpConfig => {}
             }
         }
     }
@@ -3327,24 +3178,22 @@ impl App {
             Some(ConfigStep::Main) => {
                 if let Some(ref mut panel) = self.config_panel {
                     match panel.main_selected {
-                        0 => panel.step = ConfigStep::AgentMenu,
+                        0 => panel.step = ConfigStep::EditAgentCommand,
                         1 => panel.step = ConfigStep::SelectLayout,
                         2 => {
                             panel.step = ConfigStep::HookWizard;
                             panel.hook_data =
                                 crate::ui::components::hook_panel::HookConfigData::new();
                         }
+                        3 => panel.step = ConfigStep::McpConfig,
                         _ => {}
                     }
                 }
             }
-            Some(ConfigStep::AgentMenu) => {
+            Some(ConfigStep::McpConfig) => {
+                // MCP 信息页面，Enter 返回主菜单
                 if let Some(ref mut panel) = self.config_panel {
-                    match panel.agent_menu_selected {
-                        0 => panel.step = ConfigStep::EditAgentCommand,
-                        1 => panel.step = ConfigStep::SelectContextDocs,
-                        _ => {}
-                    }
+                    panel.step = ConfigStep::Main;
                 }
             }
             Some(ConfigStep::EditAgentCommand) => {
@@ -3399,9 +3248,6 @@ impl App {
                     }
                 }
             }
-            Some(ConfigStep::SelectContextDocs) => {
-                self.config_save_context_docs();
-            }
             None => {}
         }
     }
@@ -3413,15 +3259,15 @@ impl App {
             Some(ConfigStep::Main) => {
                 self.config_panel = None;
             }
-            Some(ConfigStep::AgentMenu) | Some(ConfigStep::SelectLayout) => {
+            Some(ConfigStep::SelectLayout) | Some(ConfigStep::EditAgentCommand) => {
                 if let Some(ref mut panel) = self.config_panel {
                     panel.step = ConfigStep::Main;
                 }
             }
-            Some(ConfigStep::EditAgentCommand) | Some(ConfigStep::SelectContextDocs) => {
-                // 返回 Agent 子菜单
+            Some(ConfigStep::McpConfig) => {
+                // 返回主菜单
                 if let Some(ref mut panel) = self.config_panel {
-                    panel.step = ConfigStep::AgentMenu;
+                    panel.step = ConfigStep::Main;
                 }
             }
             Some(ConfigStep::CustomChoose) => {
@@ -3518,9 +3364,9 @@ impl App {
         config.layout.agent_command = if cmd.is_empty() { None } else { Some(cmd) };
         let _ = storage::config::save_config(&config);
 
-        // 返回 Agent 子菜单
+        // 返回主菜单
         if let Some(ref mut panel) = self.config_panel {
-            panel.step = ConfigStep::AgentMenu;
+            panel.step = ConfigStep::Main;
         }
         self.show_toast("Agent command saved");
     }
@@ -3718,36 +3564,6 @@ impl App {
             panel.custom_cmd_input.pop();
             panel.custom_cmd_cursor = panel.custom_cmd_input.len();
         }
-    }
-
-    /// 保存 context docs 到 config
-    pub fn config_save_context_docs(&mut self) {
-        let docs = if let Some(ref panel) = self.config_panel {
-            let mut docs: Vec<String> = Vec::new();
-            let presets = ["CLAUDE.md", "AGENTS.md", "GEMINI.md"];
-            for (i, name) in presets.iter().enumerate() {
-                if panel.context_docs_selected[i] {
-                    docs.push(name.to_string());
-                }
-            }
-            if panel.context_docs_custom_enabled && !panel.context_docs_custom_name.is_empty() {
-                docs.push(panel.context_docs_custom_name.clone());
-            }
-            docs
-        } else {
-            return;
-        };
-
-        // 保存到文件
-        let mut config = storage::config::load_config();
-        config.layout.context_docs = docs;
-        let _ = storage::config::save_config(&config);
-
-        // 返回 Agent 子菜单
-        if let Some(ref mut panel) = self.config_panel {
-            panel.step = ConfigStep::AgentMenu;
-        }
-        self.show_toast("Context docs saved");
     }
 
     // ========== Monitor 操作 ==========

@@ -92,20 +92,26 @@ pub fn render(frame: &mut Frame, app: &mut App) {
         sep_area,
     );
 
-    // Content: 根据 content_tab 调用 preview_panel 公开函数
+    // Content: 根据 content_tab 调用 preview_panel 公开函数 (Tab order: Stats, Git, Notes, Review)
     match app.monitor.content_tab {
+        PreviewSubTab::Stats => {
+            let stats_history = app
+                .file_watcher
+                .as_ref()
+                .and_then(|fw| fw.get_history(&app.monitor.task_id));
+            preview_panel::render_stats_tab(
+                frame,
+                main_area,
+                stats_history.as_ref(),
+                app.monitor.stats_scroll,
+                colors,
+            );
+        }
         PreviewSubTab::Git => preview_panel::render_git_tab(
             frame,
             main_area,
             &app.monitor.panel_data,
             app.monitor.git_scroll,
-            colors,
-        ),
-        PreviewSubTab::Ai => preview_panel::render_ai_tab(
-            frame,
-            main_area,
-            &app.monitor.panel_data,
-            app.monitor.ai_summary_scroll,
             colors,
         ),
         PreviewSubTab::Notes => preview_panel::render_notes_tab(
@@ -130,19 +136,6 @@ pub fn render(frame: &mut Frame, app: &mut App) {
                 reviewing_url,
                 colors,
             )
-        }
-        PreviewSubTab::Stats => {
-            let stats_history = app
-                .file_watcher
-                .as_ref()
-                .and_then(|fw| fw.get_history(&app.monitor.task_id));
-            preview_panel::render_stats_tab(
-                frame,
-                main_area,
-                stats_history.as_ref(),
-                app.monitor.stats_scroll,
-                colors,
-            );
         }
     }
 
@@ -447,11 +440,10 @@ fn render_tab_bar(
     click_areas: &mut ClickAreas,
 ) {
     let tabs = [
-        (PreviewSubTab::Git, "1:Git"),
-        (PreviewSubTab::Ai, "2:AI"),
+        (PreviewSubTab::Stats, "1:Stats"),
+        (PreviewSubTab::Git, "2:Git"),
         (PreviewSubTab::Notes, "3:Notes"),
         (PreviewSubTab::Diff, "4:Review"),
-        (PreviewSubTab::Stats, "5:Stats"),
     ];
 
     let mut spans = Vec::new();
