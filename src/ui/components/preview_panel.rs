@@ -118,7 +118,7 @@ fn render_sub_tab_bar(
         (PreviewSubTab::Git, "1:Git"),
         (PreviewSubTab::Ai, "2:AI"),
         (PreviewSubTab::Notes, "3:Notes"),
-        (PreviewSubTab::Diff, "4:Diff"),
+        (PreviewSubTab::Diff, "4:Review"),
     ];
 
     let mut left_spans = Vec::new();

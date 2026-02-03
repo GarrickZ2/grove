@@ -1,5 +1,4 @@
 use std::process::Command;
-use std::sync::mpsc::Sender;
 
 /// difit 可用性状态
 pub enum DifitAvailability {
@@ -90,7 +89,7 @@ pub fn spawn_difit(
 /// 返回捕获的完整输出。
 pub fn wait_for_completion(
     handle: &mut DifitHandle,
-    url_tx: Option<Sender<String>>,
+    mut on_url: Option<Box<dyn FnOnce(String) + Send>>,
 ) -> std::io::Result<String> {
     let mut url_sent = false;
 
@@ -103,8 +102,8 @@ pub fn wait_for_completion(
             // 检测 URL
             if !url_sent {
                 if let Some(url) = parse_url(&content) {
-                    if let Some(ref tx) = url_tx {
-                        let _ = tx.send(url);
+                    if let Some(cb) = on_url.take() {
+                        cb(url);
                     }
                     url_sent = true;
                 }

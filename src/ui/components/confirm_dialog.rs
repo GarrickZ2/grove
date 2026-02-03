@@ -26,8 +26,6 @@ pub enum ConfirmType {
     SyncUncommittedTarget { task_name: String, target: String },
     /// Merge - worktree 有未提交代码
     MergeUncommittedWorktree { task_name: String },
-    /// Merge - target 有未提交代码
-    MergeUncommittedTarget { task_name: String, target: String },
     /// Merge 成功后询问是否 Archive
     MergeSuccess { task_name: String },
     /// Reset - 重置任务
@@ -49,7 +47,6 @@ impl ConfirmType {
             ConfirmType::SyncUncommittedWorktree { .. } => " Sync ",
             ConfirmType::SyncUncommittedTarget { .. } => " Sync ",
             ConfirmType::MergeUncommittedWorktree { .. } => " Merge ",
-            ConfirmType::MergeUncommittedTarget { .. } => " Merge ",
             ConfirmType::MergeSuccess { .. } => " Success ",
             ConfirmType::Reset { .. } => " Reset ",
             ConfirmType::ExitSession { .. } => " Exit ",
@@ -114,16 +111,6 @@ impl ConfirmType {
                     Line::from(""),
                     Line::from("Worktree has uncommitted changes."),
                     Line::from("They will NOT be merged."),
-                    Line::from(""),
-                    Line::from("Continue anyway?"),
-                ]
-            }
-            ConfirmType::MergeUncommittedTarget { task_name, target } => {
-                vec![
-                    Line::from(format!("Task: {}", task_name)),
-                    Line::from(""),
-                    Line::from(format!("Target '{}' has uncommitted", target)),
-                    Line::from("changes."),
                     Line::from(""),
                     Line::from("Continue anyway?"),
                 ]

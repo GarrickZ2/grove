@@ -163,16 +163,15 @@ pub fn render(frame: &mut Frame, app: &mut App) {
         }
 
         let reviewing = app
-            .reviewing_task_id
-            .as_ref()
-            .zip(app.project.selected_worktree())
-            .is_some_and(|(rid, wt)| rid == &wt.id);
+            .project
+            .selected_worktree()
+            .is_some_and(|wt| app.reviewing_tasks.contains_key(&wt.id));
 
-        let reviewing_url = if reviewing {
-            app.reviewing_url.as_deref()
-        } else {
-            None
-        };
+        let reviewing_url = app
+            .project
+            .selected_worktree()
+            .and_then(|wt| app.reviewing_tasks.get(&wt.id))
+            .and_then(|u| u.as_deref());
 
         preview_panel::render(
             frame,

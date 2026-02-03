@@ -2,6 +2,7 @@
 //!
 //! 将正在运行的 difit server 信息保存到磁盘，
 //! 支持 Grove 重启后恢复 reviewing 状态。
+//! 每个 task 独立一个 session 文件，支持多 task 并发 review。
 
 use serde::{Deserialize, Serialize};
 use std::io;
@@ -24,13 +25,20 @@ pub struct DifitSession {
     pub temp_file: String,
 }
 
-fn session_path(project_key: &str) -> io::Result<PathBuf> {
+fn sessions_dir(project_key: &str) -> io::Result<PathBuf> {
     let dir = ensure_project_dir(project_key)?;
-    Ok(dir.join("difit_session.toml"))
+    let sessions_dir = dir.join("difit_sessions");
+    std::fs::create_dir_all(&sessions_dir)?;
+    Ok(sessions_dir)
 }
 
-pub fn load_session(project_key: &str) -> Option<DifitSession> {
-    let path = session_path(project_key).ok()?;
+fn session_path(project_key: &str, task_id: &str) -> io::Result<PathBuf> {
+    let dir = sessions_dir(project_key)?;
+    Ok(dir.join(format!("{}.toml", task_id)))
+}
+
+pub fn load_session(project_key: &str, task_id: &str) -> Option<DifitSession> {
+    let path = session_path(project_key, task_id).ok()?;
     if !path.exists() {
         return None;
     }
@@ -38,17 +46,41 @@ pub fn load_session(project_key: &str) -> Option<DifitSession> {
     toml::from_str(&content).ok()
 }
 
-pub fn save_session(project_key: &str, session: &DifitSession) -> io::Result<()> {
-    let path = session_path(project_key)?;
+pub fn save_session(project_key: &str, task_id: &str, session: &DifitSession) -> io::Result<()> {
+    let path = session_path(project_key, task_id)?;
     let content = toml::to_string_pretty(session)
         .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
     std::fs::write(path, content)
 }
 
-pub fn remove_session(project_key: &str) {
-    if let Ok(path) = session_path(project_key) {
+pub fn remove_session(project_key: &str, task_id: &str) {
+    if let Ok(path) = session_path(project_key, task_id) {
         let _ = std::fs::remove_file(path);
     }
+}
+
+/// Load all existing difit sessions for a project (for recovery on startup)
+pub fn load_all_sessions(project_key: &str) -> Vec<DifitSession> {
+    let dir = match sessions_dir(project_key) {
+        Ok(d) => d,
+        Err(_) => return Vec::new(),
+    };
+    let entries = match std::fs::read_dir(&dir) {
+        Ok(e) => e,
+        Err(_) => return Vec::new(),
+    };
+    let mut sessions = Vec::new();
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().is_some_and(|ext| ext == "toml") {
+            if let Ok(content) = std::fs::read_to_string(&path) {
+                if let Ok(session) = toml::from_str::<DifitSession>(&content) {
+                    sessions.push(session);
+                }
+            }
+        }
+    }
+    sessions
 }
 
 /// Check if a process with the given PID is still alive
