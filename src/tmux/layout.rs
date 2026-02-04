@@ -488,3 +488,246 @@ fn send_keys(target: &str, command: &str) -> Result<(), String> {
 fn select_pane(target: &str) -> Result<(), String> {
     tmux_cmd(&["select-pane", "-t", target])
 }
+
+// ── Web format compatibility ──────────────────────────────────────────
+
+/// Web 格式的布局节点（用于解析 grove-web 保存的配置）
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WebLayoutNode {
+    #[allow(dead_code)]
+    pub id: String,
+    #[serde(rename = "type")]
+    pub node_type: String,
+    /// "vertical" | "horizontal" (for split nodes)
+    pub direction: Option<String>,
+    /// "shell" | "agent" | "grove" (for pane nodes)
+    pub pane_type: Option<String>,
+    /// Child nodes (for split nodes)
+    pub children: Option<Vec<WebLayoutNode>>,
+}
+
+/// Web 格式的自定义布局（带 ID 和名称）
+#[derive(Debug, Clone, Deserialize)]
+pub struct WebCustomLayout {
+    pub id: String,
+    #[allow(dead_code)]
+    pub name: String,
+    pub root: WebLayoutNode,
+}
+
+/// 将 Web 格式的节点转换为 TUI 格式
+fn convert_web_node(web_node: &WebLayoutNode) -> Option<LayoutNode> {
+    match web_node.node_type.as_str() {
+        "pane" => {
+            let pane_type = web_node.pane_type.as_deref().unwrap_or("shell");
+            let pane = match pane_type {
+                "agent" => PaneRole::Agent,
+                "grove" => PaneRole::Grove,
+                "shell" => PaneRole::Shell,
+                "file-picker" | "filePicker" => PaneRole::FilePicker,
+                other => PaneRole::Custom(other.to_string()),
+            };
+            Some(LayoutNode::Pane { pane })
+        }
+        "split" => {
+            let children = web_node.children.as_ref()?;
+            if children.len() < 2 {
+                return None;
+            }
+
+            // Web 的 direction: "vertical" 表示上下分割，"horizontal" 表示左右分割
+            // TUI 的 SplitDirection::Vertical 表示上下分割（v），Horizontal 表示左右分割（h）
+            let dir = match web_node.direction.as_deref() {
+                Some("vertical") => SplitDirection::Vertical,
+                Some("horizontal") => SplitDirection::Horizontal,
+                _ => SplitDirection::Horizontal, // default
+            };
+
+            // 递归转换子节点
+            let first = convert_web_node(&children[0])?;
+            let second = if children.len() == 2 {
+                convert_web_node(&children[1])?
+            } else {
+                // 超过 2 个子节点时，递归合并
+                let mut remaining = WebLayoutNode {
+                    id: "merged".to_string(),
+                    node_type: "split".to_string(),
+                    direction: web_node.direction.clone(),
+                    pane_type: None,
+                    children: Some(children[1..].to_vec()),
+                };
+                // 如果只剩 2 个，正常处理
+                if children.len() == 3 {
+                    remaining = children[1].clone();
+                    let third = convert_web_node(&children[2])?;
+                    // 创建一个中间 split 节点
+                    let second_converted = convert_web_node(&remaining)?;
+                    LayoutNode::Split {
+                        dir,
+                        ratio: 50,
+                        first: Box::new(second_converted),
+                        second: Box::new(third),
+                    }
+                } else {
+                    convert_web_node(&remaining)?
+                }
+            };
+
+            Some(LayoutNode::Split {
+                dir,
+                ratio: 50, // Web 格式没有 ratio，默认 50%
+                first: Box::new(first),
+                second: Box::new(second),
+            })
+        }
+        _ => None,
+    }
+}
+
+/// 解析 Web 格式的自定义布局配置
+/// 支持两种格式：
+/// 1. TUI 格式：直接的 LayoutNode JSON
+/// 2. Web 格式：[{id, name, root}] 数组
+pub fn parse_custom_layout_tree(json_str: &str, selected_id: Option<&str>) -> Option<LayoutNode> {
+    // 首先尝试解析为 TUI 原生格式
+    if let Ok(node) = serde_json::from_str::<LayoutNode>(json_str) {
+        return Some(node);
+    }
+
+    // 尝试解析为 Web 格式数组
+    if let Ok(layouts) = serde_json::from_str::<Vec<WebCustomLayout>>(json_str) {
+        if layouts.is_empty() {
+            return None;
+        }
+
+        // 根据 selected_id 选择布局，如果没有则使用第一个
+        let layout = if let Some(id) = selected_id {
+            layouts.iter().find(|l| l.id == id).or(layouts.first())?
+        } else {
+            layouts.first()?
+        };
+
+        return convert_web_node(&layout.root);
+    }
+
+    None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_tui_format() {
+        // TUI 原生格式
+        let json = r#"{"pane":"shell"}"#;
+        let result = parse_custom_layout_tree(json, None);
+        assert!(result.is_some());
+        assert!(matches!(
+            result,
+            Some(LayoutNode::Pane {
+                pane: PaneRole::Shell
+            })
+        ));
+    }
+
+    #[test]
+    fn test_parse_web_format_simple() {
+        // Web 格式 - 简单 pane
+        let json = r#"[{"id":"test1","name":"Test Layout","root":{"id":"pane1","type":"pane","paneType":"agent"}}]"#;
+        let result = parse_custom_layout_tree(json, None);
+        assert!(result.is_some());
+        assert!(matches!(
+            result,
+            Some(LayoutNode::Pane {
+                pane: PaneRole::Agent
+            })
+        ));
+    }
+
+    #[test]
+    fn test_parse_web_format_split() {
+        // Web 格式 - 分割布局
+        let json = r#"[{"id":"test1","name":"Test Layout","root":{"id":"split1","type":"split","direction":"horizontal","children":[{"id":"pane1","type":"pane","paneType":"agent"},{"id":"pane2","type":"pane","paneType":"shell"}]}}]"#;
+        let result = parse_custom_layout_tree(json, None);
+        assert!(result.is_some());
+        if let Some(LayoutNode::Split {
+            dir, first, second, ..
+        }) = result
+        {
+            assert_eq!(dir, SplitDirection::Horizontal);
+            assert!(matches!(
+                *first,
+                LayoutNode::Pane {
+                    pane: PaneRole::Agent
+                }
+            ));
+            assert!(matches!(
+                *second,
+                LayoutNode::Pane {
+                    pane: PaneRole::Shell
+                }
+            ));
+        } else {
+            panic!("Expected Split node");
+        }
+    }
+
+    #[test]
+    fn test_parse_web_format_selected_id() {
+        // Web 格式 - 多个布局，选择指定 ID
+        let json = r#"[
+            {"id":"layout1","name":"Layout 1","root":{"id":"pane1","type":"pane","paneType":"shell"}},
+            {"id":"layout2","name":"Layout 2","root":{"id":"pane2","type":"pane","paneType":"agent"}}
+        ]"#;
+
+        // 选择 layout2
+        let result = parse_custom_layout_tree(json, Some("layout2"));
+        assert!(result.is_some());
+        assert!(matches!(
+            result,
+            Some(LayoutNode::Pane {
+                pane: PaneRole::Agent
+            })
+        ));
+
+        // 选择 layout1
+        let result = parse_custom_layout_tree(json, Some("layout1"));
+        assert!(result.is_some());
+        assert!(matches!(
+            result,
+            Some(LayoutNode::Pane {
+                pane: PaneRole::Shell
+            })
+        ));
+    }
+
+    #[test]
+    fn test_parse_web_format_vertical_split() {
+        // Web 格式 - 垂直分割
+        let json = r#"[{"id":"test1","name":"Test","root":{"id":"s1","type":"split","direction":"vertical","children":[{"id":"p1","type":"pane","paneType":"grove"},{"id":"p2","type":"pane","paneType":"shell"}]}}]"#;
+        let result = parse_custom_layout_tree(json, None);
+        assert!(result.is_some());
+        if let Some(LayoutNode::Split {
+            dir, first, second, ..
+        }) = result
+        {
+            assert_eq!(dir, SplitDirection::Vertical);
+            assert!(matches!(
+                *first,
+                LayoutNode::Pane {
+                    pane: PaneRole::Grove
+                }
+            ));
+            assert!(matches!(
+                *second,
+                LayoutNode::Pane {
+                    pane: PaneRole::Shell
+                }
+            ));
+        } else {
+            panic!("Expected Split node");
+        }
+    }
+}

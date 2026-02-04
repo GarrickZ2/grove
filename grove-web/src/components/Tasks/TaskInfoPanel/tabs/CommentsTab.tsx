@@ -1,7 +1,11 @@
+import { useState, useEffect, useCallback } from "react";
 import { motion } from "framer-motion";
-import { MessageSquare, CheckCircle, XCircle, Clock, FileCode } from "lucide-react";
-import type { Task, ReviewComment, ReviewStatus } from "../../../../data/types";
-import { getTaskReviewComments } from "../../../../data/mockData";
+import { MessageSquare, CheckCircle, XCircle, Clock, FileCode, Loader2 } from "lucide-react";
+import type { Task } from "../../../../data/types";
+import { useProject } from "../../../../context/ProjectContext";
+import { getReviewComments, type ReviewCommentEntry } from "../../../../api";
+
+type ReviewStatus = "open" | "resolved" | "not_resolved";
 
 interface CommentsTabProps {
   task: Task;
@@ -34,19 +38,8 @@ function getStatusConfig(status: ReviewStatus): {
   }
 }
 
-function formatTimeAgo(date: Date): string {
-  const seconds = Math.floor((Date.now() - date.getTime()) / 1000);
-  if (seconds < 60) return "just now";
-  const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return `${minutes}m ago`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours}h ago`;
-  const days = Math.floor(hours / 24);
-  return `${days}d ago`;
-}
-
-function ReviewCommentCard({ comment }: { comment: ReviewComment }) {
-  const statusConfig = getStatusConfig(comment.status);
+function ReviewCommentCard({ comment }: { comment: ReviewCommentEntry }) {
+  const statusConfig = getStatusConfig(comment.status as ReviewStatus);
   const StatusIcon = statusConfig.icon;
 
   return (
@@ -59,9 +52,7 @@ function ReviewCommentCard({ comment }: { comment: ReviewComment }) {
       <div className="flex items-center justify-between px-3 py-2 bg-[var(--color-bg-secondary)] border-b border-[var(--color-border)]">
         <div className="flex items-center gap-2 text-xs text-[var(--color-text-muted)]">
           <FileCode className="w-3.5 h-3.5" />
-          <code className="font-mono">{comment.file}</code>
-          <span>:</span>
-          <span>L{comment.line}</span>
+          <code className="font-mono truncate max-w-[200px]">{comment.location}</code>
         </div>
         <div className="flex items-center gap-1.5">
           <StatusIcon
@@ -80,30 +71,55 @@ function ReviewCommentCard({ comment }: { comment: ReviewComment }) {
       {/* Content */}
       <div className="p-3">
         <p className="text-sm text-[var(--color-text)]">{comment.content}</p>
-        <div className="flex items-center gap-2 mt-2 text-xs text-[var(--color-text-muted)]">
-          <span>@{comment.author}</span>
-          <span>•</span>
-          <span>{formatTimeAgo(comment.createdAt)}</span>
-          {comment.resolvedAt && (
-            <>
-              <span>•</span>
-              <span className="text-[var(--color-success)]">
-                Resolved {formatTimeAgo(comment.resolvedAt)}
-              </span>
-            </>
-          )}
-        </div>
+        {comment.reply && (
+          <div className="mt-2 pt-2 border-t border-[var(--color-border)]">
+            <p className="text-xs text-[var(--color-text-muted)] mb-1">Reply:</p>
+            <p className="text-sm text-[var(--color-text-muted)]">{comment.reply}</p>
+          </div>
+        )}
       </div>
     </motion.div>
   );
 }
 
 export function CommentsTab({ task }: CommentsTabProps) {
-  const comments = getTaskReviewComments(task.id);
+  const { selectedProject } = useProject();
+  const [comments, setComments] = useState<ReviewCommentEntry[]>([]);
+  const [openCount, setOpenCount] = useState(0);
+  const [resolvedCount, setResolvedCount] = useState(0);
+  const [notResolvedCount, setNotResolvedCount] = useState(0);
+  const [isLoading, setIsLoading] = useState(true);
 
-  const openCount = comments.filter((c) => c.status === "open").length;
-  const resolvedCount = comments.filter((c) => c.status === "resolved").length;
-  const notResolvedCount = comments.filter((c) => c.status === "not_resolved").length;
+  const loadComments = useCallback(async () => {
+    if (!selectedProject) return;
+
+    try {
+      setIsLoading(true);
+      const response = await getReviewComments(selectedProject.id, task.id);
+      setComments(response.comments);
+      setOpenCount(response.open_count);
+      setResolvedCount(response.resolved_count);
+      setNotResolvedCount(response.not_resolved_count);
+    } catch (err) {
+      console.error("Failed to load review comments:", err);
+      setComments([]);
+    } finally {
+      setIsLoading(false);
+    }
+  }, [selectedProject, task.id]);
+
+  useEffect(() => {
+    loadComments();
+  }, [loadComments]);
+
+  if (isLoading) {
+    return (
+      <div className="h-full flex flex-col items-center justify-center text-center">
+        <Loader2 className="w-8 h-8 text-[var(--color-text-muted)] mb-3 animate-spin" />
+        <p className="text-[var(--color-text-muted)]">Loading comments...</p>
+      </div>
+    );
+  }
 
   if (comments.length === 0) {
     return (

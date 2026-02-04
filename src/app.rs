@@ -18,7 +18,8 @@ use crate::storage::{
 use crate::theme::{detect_system_theme, get_theme_colors, Theme, ThemeColors};
 use crate::tmux;
 use crate::tmux::layout::{
-    self as layout_mod, CustomLayout, LayoutNode, PaneRole, SplitDirection, TaskLayout,
+    self as layout_mod, parse_custom_layout_tree, CustomLayout, LayoutNode, PaneRole,
+    SplitDirection, TaskLayout,
 };
 use crate::ui::click_areas::ClickAreas;
 use crate::ui::components::action_palette::{ActionPaletteData, ActionType};
@@ -1122,7 +1123,9 @@ impl App {
                 .layout
                 .custom
                 .as_ref()
-                .and_then(|c| serde_json::from_str::<LayoutNode>(&c.tree).ok())
+                .and_then(|c| {
+                    parse_custom_layout_tree(&c.tree, config.layout.selected_custom_id.as_deref())
+                })
                 .map(|root| CustomLayout { root }),
             update_info: Some(update_info),
             bg_result_rx: None,

@@ -1,5 +1,6 @@
-import { useState } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { motion } from "framer-motion";
+import { Loader2 } from "lucide-react";
 import { RepoHeader } from "./RepoHeader";
 import { ActiveTasksList } from "./ActiveTasksList";
 import { QuickStats } from "./QuickStats";
@@ -9,19 +10,63 @@ import { CommitHistory } from "./CommitHistory";
 import { ConfirmDialog, NewBranchDialog, RenameBranchDialog } from "../Dialogs";
 import { useProject } from "../../context";
 import {
-  mockRepoStatus,
-  mockBranches,
-  mockStats,
-  getCommitFileChanges,
-} from "../../data/mockData";
-import type { Branch, Commit, Stats } from "../../data/types";
+  getGitStatus,
+  getGitBranches,
+  getGitCommits,
+  gitCheckout,
+  gitPull,
+  gitPush,
+  gitFetch,
+  createBranch,
+  deleteBranch,
+  renameBranch,
+  type RepoStatusResponse,
+  type BranchDetailInfo,
+  type RepoCommitEntry,
+} from "../../api";
+import type { Branch, Commit, RepoStatus, Stats } from "../../data/types";
 
 interface DashboardPageProps {
   onNavigate: (page: string, data?: Record<string, unknown>) => void;
 }
 
+// Convert API response to frontend types
+function convertRepoStatus(status: RepoStatusResponse): RepoStatus {
+  return {
+    currentBranch: status.current_branch,
+    ahead: status.ahead,
+    behind: status.behind,
+    staged: 0, // API provides total uncommitted count
+    unstaged: status.uncommitted,
+    untracked: 0,
+    hasConflicts: status.has_conflicts,
+  };
+}
+
+function convertBranch(branch: BranchDetailInfo): Branch {
+  return {
+    name: branch.name,
+    isLocal: branch.is_local,
+    isCurrent: branch.is_current,
+    lastCommit: branch.last_commit || undefined,
+    aheadBehind:
+      branch.ahead !== null && branch.behind !== null
+        ? { ahead: branch.ahead, behind: branch.behind }
+        : undefined,
+  };
+}
+
+function convertCommit(commit: RepoCommitEntry): Commit {
+  return {
+    hash: commit.hash,
+    message: commit.message,
+    author: commit.author,
+    timeAgo: commit.time_ago, // Use pre-formatted time from API
+  };
+}
+
 export function DashboardPage({ onNavigate }: DashboardPageProps) {
-  const { selectedProject } = useProject();
+  const { selectedProject, refreshSelectedProject } = useProject();
 
   // Drawer & Dialog states
   const [showBranchDrawer, setShowBranchDrawer] = useState(false);
@@ -29,6 +74,76 @@ export function DashboardPage({ onNavigate }: DashboardPageProps) {
   const [showRenameBranchDialog, setShowRenameBranchDialog] = useState(false);
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
   const [selectedBranch, setSelectedBranch] = useState<Branch | null>(null);
+
+  // Git data states - separate loading for each section
+  const [repoStatus, setRepoStatus] = useState<RepoStatus | null>(null);
+  const [branches, setBranches] = useState<Branch[]>([]);
+  const [repoCommits, setRepoCommits] = useState<Commit[]>([]);
+  const [isStatusLoading, setIsStatusLoading] = useState(true);
+  const [isBranchesLoading, setIsBranchesLoading] = useState(true);
+  const [isCommitsLoading, setIsCommitsLoading] = useState(true);
+  const [isOperating, setIsOperating] = useState(false);
+  const [operationMessage, setOperationMessage] = useState<string | null>(null);
+
+  // Load git status (fast - for header)
+  const loadGitStatus = useCallback(async () => {
+    if (!selectedProject) return;
+    try {
+      setIsStatusLoading(true);
+      const statusRes = await getGitStatus(selectedProject.id);
+      setRepoStatus(convertRepoStatus(statusRes));
+    } catch (err) {
+      console.error("Failed to load git status:", err);
+    } finally {
+      setIsStatusLoading(false);
+    }
+  }, [selectedProject]);
+
+  // Load branches (can be slow)
+  const loadBranches = useCallback(async () => {
+    if (!selectedProject) return;
+    try {
+      setIsBranchesLoading(true);
+      const branchesRes = await getGitBranches(selectedProject.id);
+      setBranches(branchesRes.branches.map(convertBranch));
+    } catch (err) {
+      console.error("Failed to load branches:", err);
+    } finally {
+      setIsBranchesLoading(false);
+    }
+  }, [selectedProject]);
+
+  // Load commits (can be slow)
+  const loadCommits = useCallback(async () => {
+    if (!selectedProject) return;
+    try {
+      setIsCommitsLoading(true);
+      const commitsRes = await getGitCommits(selectedProject.id);
+      setRepoCommits(commitsRes.commits.map(convertCommit));
+    } catch (err) {
+      console.error("Failed to load commits:", err);
+    } finally {
+      setIsCommitsLoading(false);
+    }
+  }, [selectedProject]);
+
+  // Load all git data (for refresh after operations)
+  const loadGitData = useCallback(async () => {
+    await Promise.all([loadGitStatus(), loadBranches(), loadCommits()]);
+  }, [loadGitStatus, loadBranches, loadCommits]);
+
+  // Initial load - start all requests in parallel but update UI independently
+  useEffect(() => {
+    loadGitStatus();
+    loadBranches();
+    loadCommits();
+  }, [loadGitStatus, loadBranches, loadCommits]);
+
+  // Show operation message briefly
+  const showMessage = (message: string) => {
+    setOperationMessage(message);
+    setTimeout(() => setOperationMessage(null), 3000);
+  };
 
   // If no project selected, show placeholder
   if (!selectedProject) {
@@ -52,43 +167,105 @@ export function DashboardPage({ onNavigate }: DashboardPageProps) {
     idleTasks: idleTasks.length,
     mergedTasks: mergedTasks.length,
     archivedTasks: archivedTasks.length,
-    recentActivity: mockStats.recentActivity.filter(a => a.projectName === selectedProject.name),
-    fileEdits: mockStats.fileEdits,
-    weeklyActivity: mockStats.weeklyActivity,
+    recentActivity: [],
+    fileEdits: [],
+    weeklyActivity: [],
   };
-
-  // Get all commits from all tasks
-  const allCommits: Commit[] = selectedProject.tasks
-    .flatMap(t => t.commits)
-    .sort((a, b) => b.date.getTime() - a.date.getTime())
-    .slice(0, 10);
 
   // Handlers
-  const handleShowToast = (message: string) => {
-    console.log("Toast:", message);
+  const handleOpenIDE = () => showMessage("Opening in IDE...");
+  const handleOpenTerminal = () => showMessage("Opening Terminal...");
+  const handleNewTask = () => showMessage("Creating new task...");
+
+  const handlePull = async () => {
+    if (!selectedProject || isOperating) return;
+    setIsOperating(true);
+    try {
+      const result = await gitPull(selectedProject.id);
+      showMessage(result.message);
+      if (result.success) {
+        await loadGitData();
+      }
+    } catch (err) {
+      showMessage("Pull failed");
+    } finally {
+      setIsOperating(false);
+    }
   };
 
-  const handleOpenIDE = () => handleShowToast("Opening in IDE...");
-  const handleOpenTerminal = () => handleShowToast("Opening Terminal...");
-  const handleNewTask = () => handleShowToast("Creating new task...");
+  const handlePush = async () => {
+    if (!selectedProject || isOperating) return;
+    setIsOperating(true);
+    try {
+      const result = await gitPush(selectedProject.id);
+      showMessage(result.message);
+      if (result.success) {
+        await loadGitData();
+      }
+    } catch (err) {
+      showMessage("Push failed");
+    } finally {
+      setIsOperating(false);
+    }
+  };
 
-  const handlePull = () => handleShowToast("Pulling from origin...");
-  const handlePush = () => handleShowToast("Pushing to origin...");
-  const handleCommit = () => handleShowToast("Opening commit dialog...");
-  const handleStash = () => handleShowToast("Stashing changes...");
-  const handleFetch = () => handleShowToast("Fetching from origin...");
+  const handleCommit = () => showMessage("Opening commit dialog...");
 
-  const handleCheckout = (branch: Branch) => {
-    handleShowToast(`Checking out ${branch.name}...`);
+  const handleFetch = async () => {
+    if (!selectedProject || isOperating) return;
+    setIsOperating(true);
+    try {
+      const result = await gitFetch(selectedProject.id);
+      showMessage(result.message);
+      if (result.success) {
+        await loadGitData();
+      }
+    } catch (err) {
+      showMessage("Fetch failed");
+    } finally {
+      setIsOperating(false);
+    }
+  };
+
+  const handleCheckout = async (branch: Branch) => {
+    if (!selectedProject || isOperating) return;
+    setIsOperating(true);
+    try {
+      const result = await gitCheckout(selectedProject.id, branch.name);
+      showMessage(result.message);
+      if (result.success) {
+        await loadGitData();
+        await refreshSelectedProject();
+      }
+    } catch (err) {
+      showMessage("Checkout failed");
+    } finally {
+      setIsOperating(false);
+    }
   };
 
   const handleNewBranch = () => {
     setShowNewBranchDialog(true);
   };
 
-  const handleCreateBranch = (name: string, baseBranch: string, checkout: boolean) => {
-    handleShowToast(`Creating branch ${name} from ${baseBranch}${checkout ? " and checking out" : ""}...`);
-    setShowNewBranchDialog(false);
+  const handleCreateBranch = async (name: string, baseBranch: string, checkout: boolean) => {
+    if (!selectedProject || isOperating) return;
+    setIsOperating(true);
+    try {
+      const result = await createBranch(selectedProject.id, name, baseBranch, checkout);
+      showMessage(result.message);
+      if (result.success) {
+        await loadGitData();
+        if (checkout) {
+          await refreshSelectedProject();
+        }
+      }
+    } catch (err) {
+      showMessage("Create branch failed");
+    } finally {
+      setIsOperating(false);
+      setShowNewBranchDialog(false);
+    }
   };
 
   const handleRenameBranch = (branch: Branch) => {
@@ -96,10 +273,22 @@ export function DashboardPage({ onNavigate }: DashboardPageProps) {
     setShowRenameBranchDialog(true);
   };
 
-  const handleConfirmRename = (oldName: string, newName: string) => {
-    handleShowToast(`Renaming ${oldName} to ${newName}...`);
-    setShowRenameBranchDialog(false);
-    setSelectedBranch(null);
+  const handleConfirmRename = async (oldName: string, newName: string) => {
+    if (!selectedProject || isOperating) return;
+    setIsOperating(true);
+    try {
+      const result = await renameBranch(selectedProject.id, oldName, newName);
+      showMessage(result.message);
+      if (result.success) {
+        await loadGitData();
+      }
+    } catch (err) {
+      showMessage("Rename failed");
+    } finally {
+      setIsOperating(false);
+      setShowRenameBranchDialog(false);
+      setSelectedBranch(null);
+    }
   };
 
   const handleDeleteBranch = (branch: Branch) => {
@@ -107,21 +296,50 @@ export function DashboardPage({ onNavigate }: DashboardPageProps) {
     setShowDeleteDialog(true);
   };
 
-  const handleConfirmDelete = () => {
-    if (selectedBranch) {
-      handleShowToast(`Deleting branch ${selectedBranch.name}...`);
+  const handleConfirmDelete = async () => {
+    if (!selectedProject || !selectedBranch || isOperating) return;
+    setIsOperating(true);
+    try {
+      const result = await deleteBranch(selectedProject.id, selectedBranch.name);
+      showMessage(result.message);
+      if (result.success) {
+        await loadGitData();
+      }
+    } catch (err) {
+      showMessage("Delete failed");
+    } finally {
+      setIsOperating(false);
+      setShowDeleteDialog(false);
+      setSelectedBranch(null);
     }
-    setShowDeleteDialog(false);
-    setSelectedBranch(null);
   };
 
   const handleMergeBranch = (branch: Branch) => {
-    handleShowToast(`Merging ${branch.name} into current branch...`);
+    showMessage(`Merging ${branch.name} into current branch...`);
   };
 
-  const handleCreatePR = (branch: Branch) => {
-    handleShowToast(`Creating PR for ${branch.name}...`);
+  const handlePullMerge = (branch: Branch) => {
+    showMessage(`Pulling ${branch.name} into current branch (merge)...`);
+    // TODO: Implement git pull --merge from remote branch
   };
+
+  const handlePullRebase = (branch: Branch) => {
+    showMessage(`Pulling ${branch.name} into current branch (rebase)...`);
+    // TODO: Implement git pull --rebase from remote branch
+  };
+
+  // Default repo status for loading state
+  const defaultRepoStatus: RepoStatus = {
+    currentBranch: selectedProject.currentBranch || "main",
+    ahead: 0,
+    behind: 0,
+    staged: 0,
+    unstaged: 0,
+    untracked: 0,
+    hasConflicts: false,
+  };
+
+  const currentStatus = repoStatus || defaultRepoStatus;
 
   return (
     <motion.div
@@ -130,6 +348,25 @@ export function DashboardPage({ onNavigate }: DashboardPageProps) {
       transition={{ duration: 0.3 }}
       className="space-y-6"
     >
+      {/* Operation Message Toast */}
+      {operationMessage && (
+        <motion.div
+          initial={{ opacity: 0, y: -20 }}
+          animate={{ opacity: 1, y: 0 }}
+          exit={{ opacity: 0, y: -20 }}
+          className="fixed top-4 right-4 z-50 px-4 py-2 rounded-lg bg-[var(--color-bg-secondary)] border border-[var(--color-border)] shadow-lg"
+        >
+          <span className="text-sm text-[var(--color-text)]">{operationMessage}</span>
+        </motion.div>
+      )}
+
+      {/* Loading Overlay */}
+      {isOperating && (
+        <div className="fixed inset-0 bg-black/20 z-40 flex items-center justify-center">
+          <Loader2 className="w-8 h-8 text-[var(--color-highlight)] animate-spin" />
+        </div>
+      )}
+
       {/* Repository Header with IDE/Terminal/New Task buttons */}
       <RepoHeader
         name={selectedProject.name}
@@ -140,15 +377,20 @@ export function DashboardPage({ onNavigate }: DashboardPageProps) {
       />
 
       {/* Row 1: Git Status Bar */}
-      <GitStatusBar
-        status={mockRepoStatus}
-        onSwitchBranch={() => setShowBranchDrawer(true)}
-        onPull={handlePull}
-        onPush={handlePush}
-        onCommit={handleCommit}
-        onStash={handleStash}
-        onFetch={handleFetch}
-      />
+      {isStatusLoading ? (
+        <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)] p-4 flex items-center justify-center">
+          <Loader2 className="w-6 h-6 text-[var(--color-text-muted)] animate-spin" />
+        </div>
+      ) : (
+        <GitStatusBar
+          status={currentStatus}
+          onSwitchBranch={() => setShowBranchDrawer(true)}
+          onPull={handlePull}
+          onPush={handlePush}
+          onCommit={handleCommit}
+          onFetch={handleFetch}
+        />
+      )}
 
       {/* Row 2: Active Tasks + Task Stats side by side */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
@@ -161,29 +403,31 @@ export function DashboardPage({ onNavigate }: DashboardPageProps) {
 
       {/* Row 3: Recent Commits */}
       <CommitHistory
-        commits={allCommits}
-        getFileChanges={getCommitFileChanges}
-        onViewAll={() => onNavigate("commits")}
+        commits={repoCommits}
+        getFileChanges={() => []}
+        isLoading={isCommitsLoading}
       />
 
       {/* Branch Drawer (Slide from right) */}
       <BranchDrawer
         isOpen={showBranchDrawer}
-        branches={mockBranches}
+        branches={branches}
+        isLoading={isBranchesLoading}
         onClose={() => setShowBranchDrawer(false)}
         onCheckout={handleCheckout}
         onNewBranch={handleNewBranch}
         onRename={handleRenameBranch}
         onDelete={handleDeleteBranch}
         onMerge={handleMergeBranch}
-        onCreatePR={handleCreatePR}
+        onPullMerge={handlePullMerge}
+        onPullRebase={handlePullRebase}
       />
 
       {/* Dialogs */}
       <NewBranchDialog
         isOpen={showNewBranchDialog}
-        branches={mockBranches}
-        currentBranch={mockRepoStatus.currentBranch}
+        branches={branches}
+        currentBranch={currentStatus.currentBranch}
         onClose={() => setShowNewBranchDialog(false)}
         onCreate={handleCreateBranch}
       />

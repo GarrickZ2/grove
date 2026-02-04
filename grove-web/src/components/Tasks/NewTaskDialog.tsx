@@ -1,41 +1,56 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { X, GitBranch, Plus, FileText } from "lucide-react";
 import { Button, Input } from "../ui";
 import { useProject } from "../../context";
-import { mockBranches } from "../../data/mockData";
+import { getBranches, type BranchInfo } from "../../api";
 
 interface NewTaskDialogProps {
   isOpen: boolean;
   onClose: () => void;
-  onCreate: (name: string, targetBranch: string, notes: string) => void;
+  onCreate: (name: string, targetBranch: string, notes: string) => void | Promise<void>;
+  isLoading?: boolean;
+  externalError?: string | null;
 }
 
-export function NewTaskDialog({ isOpen, onClose, onCreate }: NewTaskDialogProps) {
+export function NewTaskDialog({ isOpen, onClose, onCreate, isLoading, externalError }: NewTaskDialogProps) {
   const { selectedProject } = useProject();
   const [taskName, setTaskName] = useState("");
   const [targetBranch, setTargetBranch] = useState(selectedProject?.currentBranch || "main");
   const [notes, setNotes] = useState("");
   const [error, setError] = useState("");
+  const [branches, setBranches] = useState<BranchInfo[]>([]);
+  const [loadingBranches, setLoadingBranches] = useState(false);
 
-  const localBranches = mockBranches.filter((b) => b.isLocal);
+  // Load branches when dialog opens
+  useEffect(() => {
+    if (isOpen && selectedProject) {
+      setLoadingBranches(true);
+      getBranches(selectedProject.id)
+        .then((response) => {
+          setBranches(response.branches);
+          setTargetBranch(response.current);
+        })
+        .catch((err) => {
+          console.error("Failed to load branches:", err);
+          // Fallback to current branch from project
+          setBranches([{ name: selectedProject.currentBranch || "main", is_current: true }]);
+        })
+        .finally(() => {
+          setLoadingBranches(false);
+        });
+    }
+  }, [isOpen, selectedProject]);
 
-  const handleSubmit = () => {
+  const handleSubmit = async () => {
     // Validate task name
     if (!taskName.trim()) {
       setError("Task name is required");
       return;
     }
 
-    // Validate task name format (alphanumeric, hyphens, underscores)
-    const nameRegex = /^[a-zA-Z0-9_-]+$/;
-    if (!nameRegex.test(taskName.trim())) {
-      setError("Task name can only contain letters, numbers, hyphens, and underscores");
-      return;
-    }
-
-    onCreate(taskName.trim(), targetBranch, notes.trim());
-    handleClose();
+    setError("");
+    await onCreate(taskName.trim(), targetBranch, notes.trim());
   };
 
   const handleClose = () => {
@@ -95,7 +110,7 @@ export function NewTaskDialog({ isOpen, onClose, onCreate }: NewTaskDialogProps)
                     setTaskName(e.target.value);
                     setError("");
                   }}
-                  error={error}
+                  error={error || externalError || undefined}
                 />
 
                 {/* Target Branch */}
@@ -108,16 +123,21 @@ export function NewTaskDialog({ isOpen, onClose, onCreate }: NewTaskDialogProps)
                     <select
                       value={targetBranch}
                       onChange={(e) => setTargetBranch(e.target.value)}
+                      disabled={loadingBranches}
                       className="w-full pl-9 pr-3 py-2 bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-lg
                         text-sm text-[var(--color-text)] appearance-none cursor-pointer
                         focus:outline-none focus:border-[var(--color-highlight)] focus:ring-1 focus:ring-[var(--color-highlight)]
-                        transition-all duration-200"
+                        transition-all duration-200 disabled:opacity-50"
                     >
-                      {localBranches.map((branch) => (
-                        <option key={branch.name} value={branch.name}>
-                          {branch.name}
-                        </option>
-                      ))}
+                      {loadingBranches ? (
+                        <option>Loading...</option>
+                      ) : (
+                        branches.map((branch) => (
+                          <option key={branch.name} value={branch.name}>
+                            {branch.name}{branch.is_current ? " (current)" : ""}
+                          </option>
+                        ))
+                      )}
                     </select>
                   </div>
                   <p className="text-xs text-[var(--color-text-muted)] mt-1.5">
@@ -160,12 +180,12 @@ export function NewTaskDialog({ isOpen, onClose, onCreate }: NewTaskDialogProps)
 
               {/* Actions */}
               <div className="flex justify-end gap-3 px-5 py-4 bg-[var(--color-bg)] border-t border-[var(--color-border)]">
-                <Button variant="secondary" onClick={handleClose}>
+                <Button variant="secondary" onClick={handleClose} disabled={isLoading}>
                   Cancel
                 </Button>
-                <Button onClick={handleSubmit}>
+                <Button onClick={handleSubmit} disabled={isLoading}>
                   <Plus className="w-4 h-4 mr-1.5" />
-                  Create Task
+                  {isLoading ? "Creating..." : "Create Task"}
                 </Button>
               </div>
             </div>

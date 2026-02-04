@@ -1,34 +1,79 @@
-import { useState, useEffect } from "react";
-import { FileText, Edit3, Save, X } from "lucide-react";
+import { useState, useEffect, useCallback } from "react";
+import { FileText, Edit3, Save, X, Loader2 } from "lucide-react";
 import { Button } from "../../../ui";
 import type { Task } from "../../../../data/types";
-import { getTaskNotes } from "../../../../data/mockData";
+import { useProject } from "../../../../context/ProjectContext";
+import { getNotes, updateNotes } from "../../../../api";
 
 interface NotesTabProps {
   task: Task;
 }
 
 export function NotesTab({ task }: NotesTabProps) {
-  const notes = getTaskNotes(task.id);
+  const { selectedProject } = useProject();
   const [isEditing, setIsEditing] = useState(false);
-  const [content, setContent] = useState(notes?.content || "");
+  const [content, setContent] = useState("");
+  const [originalContent, setOriginalContent] = useState("");
+  const [isLoading, setIsLoading] = useState(true);
+  const [isSaving, setIsSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  // Load notes from API
+  const loadNotes = useCallback(async () => {
+    if (!selectedProject) return;
+
+    try {
+      setIsLoading(true);
+      setError(null);
+      const response = await getNotes(selectedProject.id, task.id);
+      setContent(response.content);
+      setOriginalContent(response.content);
+    } catch (err) {
+      console.error("Failed to load notes:", err);
+      setContent("");
+      setOriginalContent("");
+    } finally {
+      setIsLoading(false);
+    }
+  }, [selectedProject, task.id]);
 
   useEffect(() => {
-    setContent(notes?.content || "");
+    loadNotes();
     setIsEditing(false);
-  }, [task.id, notes?.content]);
+  }, [loadNotes]);
 
-  const handleSave = () => {
-    console.log("Saving notes:", content);
-    setIsEditing(false);
+  const handleSave = async () => {
+    if (!selectedProject) return;
+
+    try {
+      setIsSaving(true);
+      setError(null);
+      await updateNotes(selectedProject.id, task.id, content);
+      setOriginalContent(content);
+      setIsEditing(false);
+    } catch (err) {
+      console.error("Failed to save notes:", err);
+      setError("Failed to save notes");
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   const handleCancel = () => {
-    setContent(notes?.content || "");
+    setContent(originalContent);
     setIsEditing(false);
   };
 
-  if (!notes && !isEditing) {
+  if (isLoading) {
+    return (
+      <div className="h-full flex flex-col items-center justify-center text-center">
+        <Loader2 className="w-8 h-8 text-[var(--color-text-muted)] mb-3 animate-spin" />
+        <p className="text-[var(--color-text-muted)]">Loading notes...</p>
+      </div>
+    );
+  }
+
+  if (!content && !isEditing) {
     return (
       <div className="h-full flex flex-col items-center justify-center text-center">
         <FileText className="w-12 h-12 text-[var(--color-text-muted)] mb-3" />
@@ -51,13 +96,17 @@ export function NotesTab({ task }: NotesTabProps) {
         </h3>
         {isEditing ? (
           <div className="flex gap-2">
-            <Button variant="ghost" size="sm" onClick={handleCancel}>
+            <Button variant="ghost" size="sm" onClick={handleCancel} disabled={isSaving}>
               <X className="w-4 h-4 mr-1" />
               Cancel
             </Button>
-            <Button size="sm" onClick={handleSave}>
-              <Save className="w-4 h-4 mr-1" />
-              Save
+            <Button size="sm" onClick={handleSave} disabled={isSaving}>
+              {isSaving ? (
+                <Loader2 className="w-4 h-4 mr-1 animate-spin" />
+              ) : (
+                <Save className="w-4 h-4 mr-1" />
+              )}
+              {isSaving ? "Saving..." : "Save"}
             </Button>
           </div>
         ) : (
@@ -118,11 +167,9 @@ export function NotesTab({ task }: NotesTabProps) {
         </div>
       )}
 
-      {/* Updated time */}
-      {notes && (
-        <p className="text-xs text-[var(--color-text-muted)] mt-2">
-          Last updated: {notes.updatedAt.toLocaleString()}
-        </p>
+      {/* Error message */}
+      {error && (
+        <p className="text-xs text-[var(--color-error)] mt-2">{error}</p>
       )}
     </div>
   );

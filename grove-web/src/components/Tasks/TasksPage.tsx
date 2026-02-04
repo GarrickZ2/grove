@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Plus } from "lucide-react";
 import { TaskSidebar } from "./TaskSidebar/TaskSidebar";
@@ -7,18 +7,28 @@ import { TaskView } from "./TaskView";
 import { NewTaskDialog } from "./NewTaskDialog";
 import { Button } from "../ui";
 import { useProject } from "../../context";
+import {
+  createTask as apiCreateTask,
+  archiveTask as apiArchiveTask,
+  recoverTask as apiRecoverTask,
+  deleteTask as apiDeleteTask,
+} from "../../api";
 import type { Task, TaskFilter } from "../../data/types";
 
 type ViewMode = "list" | "info" | "terminal";
 
 export function TasksPage() {
-  const { selectedProject } = useProject();
+  const { selectedProject, refreshSelectedProject } = useProject();
   const [selectedTask, setSelectedTask] = useState<Task | null>(null);
   const [viewMode, setViewMode] = useState<ViewMode>("list");
   const [filter, setFilter] = useState<TaskFilter>("active");
   const [searchQuery, setSearchQuery] = useState("");
   const [showNewTaskDialog, setShowNewTaskDialog] = useState(false);
   const [reviewOpen, setReviewOpen] = useState(false);
+
+  // Loading states
+  const [isCreating, setIsCreating] = useState(false);
+  const [createError, setCreateError] = useState<string | null>(null);
 
   // Get tasks for current project
   const tasks = selectedProject?.tasks || [];
@@ -83,9 +93,18 @@ export function TasksPage() {
   };
 
   // Handle recover archived task
-  const handleRecover = () => {
-    console.log("Recovering task...");
-  };
+  const handleRecover = useCallback(async () => {
+    if (!selectedProject || !selectedTask) return;
+    try {
+      await apiRecoverTask(selectedProject.id, selectedTask.id);
+      await refreshSelectedProject();
+      // Update local state to reflect the change
+      setSelectedTask(null);
+      setViewMode("list");
+    } catch (err) {
+      console.error("Failed to recover task:", err);
+    }
+  }, [selectedProject, selectedTask, refreshSelectedProject]);
 
   // Handle toggle review
   const handleToggleReview = () => {
@@ -93,18 +112,61 @@ export function TasksPage() {
   };
 
   // Handle new task creation
-  const handleCreateTask = (name: string, targetBranch: string, notes: string) => {
-    console.log("Creating task:", name, "with target:", targetBranch, "notes:", notes);
-    setShowNewTaskDialog(false);
-  };
+  const handleCreateTask = useCallback(
+    async (name: string, targetBranch: string, _notes: string) => {
+      if (!selectedProject) return;
+      try {
+        setIsCreating(true);
+        setCreateError(null);
+        await apiCreateTask(selectedProject.id, name, targetBranch);
+        await refreshSelectedProject();
+        setShowNewTaskDialog(false);
+      } catch (err: unknown) {
+        console.error("Failed to create task:", err);
+        if (err && typeof err === "object" && "status" in err) {
+          const apiErr = err as { status: number; message: string };
+          if (apiErr.status === 400) {
+            setCreateError("Invalid task name or target branch");
+          } else {
+            setCreateError("Failed to create task");
+          }
+        } else {
+          setCreateError("Failed to create task");
+        }
+      } finally {
+        setIsCreating(false);
+      }
+    },
+    [selectedProject, refreshSelectedProject]
+  );
 
   // Handle task actions
   const handleCommit = () => console.log("Opening commit dialog...");
   const handleRebase = () => console.log("Opening rebase dialog...");
   const handleSync = () => console.log("Syncing task...");
   const handleMerge = () => console.log("Merging task...");
-  const handleArchive = () => console.log("Archiving task...");
-  const handleClean = () => console.log("Cleaning task...");
+  const handleArchive = useCallback(async () => {
+    if (!selectedProject || !selectedTask) return;
+    try {
+      await apiArchiveTask(selectedProject.id, selectedTask.id);
+      await refreshSelectedProject();
+      setSelectedTask(null);
+      setViewMode("list");
+    } catch (err) {
+      console.error("Failed to archive task:", err);
+    }
+  }, [selectedProject, selectedTask, refreshSelectedProject]);
+  const handleClean = useCallback(async () => {
+    if (!selectedProject || !selectedTask) return;
+    try {
+      await apiDeleteTask(selectedProject.id, selectedTask.id);
+      await refreshSelectedProject();
+      setSelectedTask(null);
+      setViewMode("list");
+    } catch (err) {
+      console.error("Failed to delete task:", err);
+    }
+  }, [selectedProject, selectedTask, refreshSelectedProject]);
   const handleReset = () => console.log("Resetting task...");
   const handleStartSession = () => {
     // Start session and enter terminal mode
@@ -228,6 +290,7 @@ export function TasksPage() {
 
               {/* TaskView (Terminal + optional Code Review) */}
               <TaskView
+                projectId={selectedProject.id}
                 task={selectedTask}
                 reviewOpen={reviewOpen}
                 onToggleReview={handleToggleReview}
@@ -248,8 +311,13 @@ export function TasksPage() {
       {/* New Task Dialog */}
       <NewTaskDialog
         isOpen={showNewTaskDialog}
-        onClose={() => setShowNewTaskDialog(false)}
+        onClose={() => {
+          setShowNewTaskDialog(false);
+          setCreateError(null);
+        }}
         onCreate={handleCreateTask}
+        isLoading={isCreating}
+        externalError={createError}
       />
     </motion.div>
   );

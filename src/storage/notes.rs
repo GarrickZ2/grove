@@ -34,3 +34,9 @@ pub fn load_notes(project: &str, task_id: &str) -> io::Result<String> {
         Ok(String::new())
     }
 }
+
+/// 保存用户笔记
+pub fn save_notes(project: &str, task_id: &str, content: &str) -> io::Result<()> {
+    let path = notes_dir(project)?.join(format!("{}.md", task_id));
+    std::fs::write(&path, content)
+}

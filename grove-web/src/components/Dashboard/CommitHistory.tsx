@@ -1,15 +1,21 @@
 import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { ChevronRight, ChevronDown, GitCommit, FileText, Plus, Minus, ArrowRight } from "lucide-react";
+import { ChevronRight, ChevronDown, GitCommit, FileText, Plus, Minus, ArrowRight, Loader2 } from "lucide-react";
 import type { Commit, CommitFileChange } from "../../data/types";
 
 interface CommitHistoryProps {
   commits: Commit[];
   getFileChanges: (hash: string) => CommitFileChange[];
-  onViewAll?: () => void;
+  isLoading?: boolean;
 }
 
-function formatTimeAgo(date: Date): string {
+function formatTimeAgo(date: Date | undefined, timeAgo: string | undefined): string {
+  // Prefer pre-formatted timeAgo string from API
+  if (timeAgo) return timeAgo;
+
+  // Fall back to calculating from date
+  if (!date) return "";
+
   const seconds = Math.floor((Date.now() - date.getTime()) / 1000);
   if (seconds < 60) return "just now";
   const minutes = Math.floor(seconds / 60);
@@ -33,7 +39,7 @@ function getStatusIcon(status: CommitFileChange['status']) {
   }
 }
 
-export function CommitHistory({ commits, getFileChanges, onViewAll }: CommitHistoryProps) {
+export function CommitHistory({ commits, getFileChanges, isLoading = false }: CommitHistoryProps) {
   const [expandedCommit, setExpandedCommit] = useState<string | null>(null);
 
   const toggleExpand = (hash: string) => {
@@ -45,11 +51,19 @@ export function CommitHistory({ commits, getFileChanges, onViewAll }: CommitHist
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-3 border-b border-[var(--color-border)]">
         <h2 className="text-sm font-medium text-[var(--color-text)]">Recent Commits</h2>
+        {isLoading && (
+          <Loader2 className="w-4 h-4 text-[var(--color-text-muted)] animate-spin" />
+        )}
       </div>
 
       {/* Commits List */}
       <div className="max-h-[400px] overflow-y-auto">
-        {commits.length === 0 ? (
+        {isLoading ? (
+          <div className="px-4 py-8 text-center">
+            <Loader2 className="w-8 h-8 mx-auto text-[var(--color-text-muted)] animate-spin mb-2" />
+            <p className="text-sm text-[var(--color-text-muted)]">Loading commits...</p>
+          </div>
+        ) : commits.length === 0 ? (
           <div className="px-4 py-8 text-center">
             <GitCommit className="w-10 h-10 mx-auto text-[var(--color-text-muted)] mb-2" />
             <p className="text-sm text-[var(--color-text-muted)]">No commits yet</p>
@@ -102,7 +116,7 @@ export function CommitHistory({ commits, getFileChanges, onViewAll }: CommitHist
                         <div className="flex items-center gap-2 text-xs text-[var(--color-text-muted)]">
                           <span>{commit.author}</span>
                           <span>•</span>
-                          <span>{formatTimeAgo(commit.date)}</span>
+                          <span>{formatTimeAgo(commit.date, commit.timeAgo)}</span>
                         </div>
                       </div>
                     </div>
@@ -164,17 +178,6 @@ export function CommitHistory({ commits, getFileChanges, onViewAll }: CommitHist
         )}
       </div>
 
-      {/* View All Button */}
-      {onViewAll && commits.length > 0 && (
-        <div className="px-4 py-3 border-t border-[var(--color-border)]">
-          <button
-            onClick={onViewAll}
-            className="w-full text-center text-sm text-[var(--color-highlight)] hover:underline"
-          >
-            View All Commits →
-          </button>
-        </div>
-      )}
     </div>
   );
 }

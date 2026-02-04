@@ -1,4 +1,4 @@
-import { useState } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Terminal,
@@ -12,19 +12,25 @@ import {
   AlertCircle,
   AlertTriangle,
   Info,
-  FolderOpen,
   ExternalLink,
   Package,
   CheckCircle2,
   XCircle,
   RefreshCw,
-  Download,
   Palette,
   Settings,
   Code,
+  Wrench,
 } from "lucide-react";
-import { Input, Button, Toggle } from "../ui";
+import { Button, Combobox } from "../ui";
+import type { ComboboxOption } from "../ui";
 import { useTheme, themes } from "../../context";
+import {
+  getConfig,
+  patchConfig,
+  checkAllDependencies,
+} from "../../api";
+import { LayoutEditor, type CustomLayoutConfig, type PaneType, type LayoutNode, createDefaultLayout, countPanes } from "./LayoutEditor";
 
 interface SettingsPageProps {
   config: {
@@ -97,22 +103,47 @@ function Section({
   );
 }
 
-// Popular agents for quick select
-const popularAgents = [
-  { name: "Claude", command: "claude", color: "#d97706" },
-  { name: "Cursor", command: "cursor", color: "#3b82f6" },
-  { name: "Aider", command: "aider", color: "#8b5cf6" },
-  { name: "Custom", command: "", color: "var(--color-text-muted)" },
-];
-
 // Layout presets
-const layoutPresets = [
+interface LayoutPreset {
+  id: string;
+  name: string;
+  description: string;
+  panes: string[];
+  layout?: "horizontal" | "left-right-split"; // for special layouts
+}
+
+const layoutPresets: LayoutPreset[] = [
   { id: "single", name: "Single", description: "Shell only", panes: ["Shell"] },
   { id: "agent", name: "Agent", description: "Agent only", panes: ["Agent"] },
   { id: "agent-shell", name: "Agent + Shell", description: "60% + 40%", panes: ["Agent", "Shell"] },
-  { id: "agent-grove-shell", name: "3 Panes", description: "Three panes", panes: ["Agent", "Grove", "Shell"] },
+  { id: "agent-grove-shell", name: "3 Panes", description: "Left + Right split", panes: ["Agent", "Grove", "Shell"], layout: "left-right-split" },
   { id: "grove-agent", name: "Grove + Agent", description: "40% + 60%", panes: ["Grove", "Agent"] },
+  { id: "custom", name: "Custom", description: "Configure your own", panes: [] },
 ];
+
+// Default custom layouts - create once and reuse
+const defaultCustomLayouts: CustomLayoutConfig[] = [createDefaultLayout()];
+
+// Map pane type to display info
+const paneTypeColors: Record<PaneType | string, { bg: string; text: string }> = {
+  agent: { bg: "var(--color-highlight)", text: "var(--color-highlight)" },
+  grove: { bg: "var(--color-info)", text: "var(--color-info)" },
+  "file-picker": { bg: "var(--color-accent)", text: "var(--color-accent)" },
+  shell: { bg: "var(--color-text-muted)", text: "var(--color-text-muted)" },
+  custom: { bg: "var(--color-warning)", text: "var(--color-warning)" },
+  // Legacy string panes
+  Agent: { bg: "var(--color-highlight)", text: "var(--color-highlight)" },
+  Grove: { bg: "var(--color-info)", text: "var(--color-info)" },
+  Shell: { bg: "var(--color-text-muted)", text: "var(--color-text-muted)" },
+};
+
+const paneTypeLabels: Record<PaneType, string> = {
+  agent: "Agent",
+  grove: "Grove",
+  "file-picker": "FP",
+  shell: "Shell",
+  custom: "Cmd",
+};
 
 // Notification levels
 const notificationLevels = [
@@ -121,93 +152,66 @@ const notificationLevels = [
   { level: "critical", icon: AlertCircle, color: "var(--color-error)", title: "Critical" },
 ];
 
-// Dependencies configuration
-interface Dependency {
-  id: string;
-  name: string;
-  description: string;
-  required: boolean;
-  checkCommand: string;
-  installUrl: string;
-  installCommand?: string;
-  docsUrl?: string;
-}
-
-const dependencies: Dependency[] = [
-  {
-    id: "git",
-    name: "Git",
-    description: "Version control system",
-    required: true,
-    checkCommand: "git --version",
-    installUrl: "https://git-scm.com/downloads",
-    installCommand: "brew install git",
-    docsUrl: "https://git-scm.com/doc",
-  },
-  {
-    id: "tmux",
-    name: "tmux",
-    description: "Terminal multiplexer for session management",
-    required: true,
-    checkCommand: "tmux -V",
-    installUrl: "https://github.com/tmux/tmux/wiki/Installing",
-    installCommand: "brew install tmux",
-    docsUrl: "https://github.com/tmux/tmux/wiki",
-  },
-  {
-    id: "grove",
-    name: "Grove CLI",
-    description: "Grove command-line interface",
-    required: true,
-    checkCommand: "grove --version",
-    installUrl: "https://github.com/anthropics/grove",
-    installCommand: "cargo install grove",
-    docsUrl: "https://github.com/anthropics/grove#readme",
-  },
-  {
-    id: "claude",
-    name: "Claude Code",
-    description: "AI coding assistant (optional)",
-    required: false,
-    checkCommand: "claude --version",
-    installUrl: "https://claude.ai/download",
-    docsUrl: "https://docs.anthropic.com/claude-code",
-  },
+// Combobox options
+const agentOptions: ComboboxOption[] = [
+  { id: "claude", label: "Claude", value: "claude" },
+  { id: "cursor", label: "Cursor", value: "cursor" },
+  { id: "aider", label: "Aider", value: "aider" },
+  { id: "windsurf", label: "Windsurf", value: "windsurf" },
 ];
 
-// Mock dependency status (will be replaced with real checks)
-type DependencyStatus = "checking" | "installed" | "not_installed" | "error";
+const ideOptions: ComboboxOption[] = [
+  { id: "code", label: "VS Code", value: "code" },
+  { id: "cursor", label: "Cursor", value: "cursor" },
+  { id: "rustrover", label: "RustRover", value: "rustrover" },
+  { id: "webstorm", label: "WebStorm", value: "webstorm" },
+  { id: "idea", label: "IntelliJ IDEA", value: "idea" },
+  { id: "zed", label: "Zed", value: "zed" },
+];
 
-interface DependencyState {
-  status: DependencyStatus;
-  version?: string;
-  error?: string;
-}
+const terminalOptions: ComboboxOption[] = [
+  { id: "system", label: "System Default", value: "" },
+  { id: "iterm", label: "iTerm", value: "iterm" },
+  { id: "warp", label: "Warp", value: "warp" },
+  { id: "kitty", label: "Kitty", value: "kitty" },
+  { id: "alacritty", label: "Alacritty", value: "alacritty" },
+];
 
-// Initial mock states - simulating different scenarios
-const initialDependencyStates: Record<string, DependencyState> = {
-  git: { status: "installed", version: "2.43.0" },
-  tmux: { status: "installed", version: "3.4" },
-  grove: { status: "installed", version: "0.3.1" },
-  claude: { status: "not_installed" },
+// Sound options for hooks (macOS system sounds)
+const soundOptions: ComboboxOption[] = [
+  { id: "off", label: "Off", value: "" },
+  { id: "default", label: "Default", value: "default" },
+  { id: "Basso", label: "Basso", value: "Basso" },
+  { id: "Blow", label: "Blow", value: "Blow" },
+  { id: "Bottle", label: "Bottle", value: "Bottle" },
+  { id: "Frog", label: "Frog", value: "Frog" },
+  { id: "Funk", label: "Funk", value: "Funk" },
+  { id: "Glass", label: "Glass", value: "Glass" },
+  { id: "Hero", label: "Hero", value: "Hero" },
+  { id: "Morse", label: "Morse", value: "Morse" },
+  { id: "Ping", label: "Ping", value: "Ping" },
+  { id: "Pop", label: "Pop", value: "Pop" },
+  { id: "Purr", label: "Purr", value: "Purr" },
+  { id: "Sosumi", label: "Sosumi", value: "Sosumi" },
+  { id: "Submarine", label: "Submarine", value: "Submarine" },
+  { id: "Tink", label: "Tink", value: "Tink" },
+];
+
+// Dependency display info
+const dependencyInfo: Record<string, { name: string; description: string; docsUrl?: string }> = {
+  git: { name: "Git", description: "Version control system", docsUrl: "https://git-scm.com/doc" },
+  tmux: { name: "tmux", description: "Terminal multiplexer", docsUrl: "https://github.com/tmux/tmux/wiki" },
+  fzf: { name: "fzf", description: "Fuzzy finder for file picker", docsUrl: "https://github.com/junegunn/fzf" },
+  npx: { name: "npx", description: "Node package runner", docsUrl: "https://docs.npmjs.com/cli/v10/commands/npx" },
 };
 
-// IDE options - brand colors are intentionally hardcoded
-const ideOptions = [
-  { id: "code", name: "VS Code", command: "code", color: "#007ACC" },
-  { id: "cursor", name: "Cursor", command: "cursor", color: "#7c3aed" },
-  { id: "rustrover", name: "RustRover", command: "rustrover", color: "#FF6B00" },
-  { id: "custom", name: "Custom", command: "", color: "var(--color-text-muted)" },
-];
+type DependencyStatusType = "checking" | "installed" | "not_installed" | "error";
 
-// Terminal options - brand colors are intentionally hardcoded
-const terminalOptions = [
-  { id: "system", name: "System", command: "", color: "var(--color-text-muted)" },
-  { id: "iterm", name: "iTerm", command: "iterm", color: "#4caf50" },
-  { id: "warp", name: "Warp", command: "warp", color: "#01A4FF" },
-  { id: "kitty", name: "Kitty", command: "kitty", color: "#8B5CF6" },
-  { id: "custom", name: "Custom", command: "", color: "var(--color-text-muted)" },
-];
+interface DependencyState {
+  status: DependencyStatusType;
+  version?: string;
+  installCommand: string;
+}
 
 export function SettingsPage({ config }: SettingsPageProps) {
   const { theme, setTheme } = useTheme();
@@ -215,34 +219,41 @@ export function SettingsPage({ config }: SettingsPageProps) {
   const [openSections, setOpenSections] = useState<Record<string, boolean>>({
     appearance: true,
     environment: false,
-    agent: false,
+    devtools: false,
     layout: false,
     hooks: false,
     mcp: false,
   });
 
   // Environment state
-  const [depStates, setDepStates] = useState<Record<string, DependencyState>>(initialDependencyStates);
+  const [depStates, setDepStates] = useState<Record<string, DependencyState>>({});
   const [isChecking, setIsChecking] = useState(false);
 
-  // Agent state
+  // Config state (from API)
+  const [isLoaded, setIsLoaded] = useState(false); // Prevent auto-save during initial load
+
+  // Local state for Development Tools
   const [agentCommand, setAgentCommand] = useState(config.agent.command);
+  const [ideCommand, setIdeCommand] = useState("");
+  const [terminalCommand, setTerminalCommand] = useState("");
 
   // Layout state
   const [selectedLayout, setSelectedLayout] = useState(config.layout.default);
+  const [customLayouts, setCustomLayouts] = useState<CustomLayoutConfig[]>(defaultCustomLayouts);
+  const [selectedCustomLayoutId, setSelectedCustomLayoutId] = useState<string | null>(defaultCustomLayouts[0]?.id || null);
+  const [customLayoutsLoaded, setCustomLayoutsLoaded] = useState(false); // Track if custom layouts were loaded from API
+  const [isLayoutEditorOpen, setIsLayoutEditorOpen] = useState(false);
 
-  // Hooks state
-  const [hooksEnabled, setHooksEnabled] = useState(config.hooks.enabled);
-  const [scriptPath, setScriptPath] = useState(config.hooks.scriptPath);
+  // Hooks state - for command generator
+  const [hookLevel, setHookLevel] = useState<"notice" | "warn" | "critical">("notice");
+  const [hookBanner, setHookBanner] = useState(true);
+  const [hookSound, setHookSound] = useState("default"); // empty = off, or sound name
 
   // MCP state
   const [copiedField, setCopiedField] = useState<string | null>(null);
 
-  // IDE & Terminal state
-  const [selectedIde, setSelectedIde] = useState("code");
-  const [customIdeCommand, setCustomIdeCommand] = useState("");
-  const [selectedTerminal, setSelectedTerminal] = useState("system");
-  const [customTerminalCommand, setCustomTerminalCommand] = useState("");
+  // Generate hook command based on selections
+  const hookCommand = `grove hooks ${hookLevel}${hookBanner ? " --banner" : ""}${hookSound ? ` --sound ${hookSound}` : ""}`;
 
   const toggleSection = (id: string) => {
     setOpenSections((prev) => ({ ...prev, [id]: !prev[id] }));
@@ -254,26 +265,163 @@ export function SettingsPage({ config }: SettingsPageProps) {
     setTimeout(() => setCopiedField(null), 2000);
   };
 
-  // Simulate dependency check (will be replaced with real API calls)
-  const checkDependencies = () => {
+  // Load config from API
+  const loadConfig = useCallback(async () => {
+    try {
+      const cfg = await getConfig();
+      setAgentCommand(cfg.layout.agent_command || config.agent.command);
+      setIdeCommand(cfg.web.ide || "");
+      setTerminalCommand(cfg.web.terminal || "");
+      setSelectedLayout(cfg.layout.default);
+
+      // Load theme - sync with context
+      // API stores theme id (e.g., "dark", "tokyo-night")
+      if (cfg.theme.name && cfg.theme.name.toLowerCase() !== "auto") {
+        // Try to match by id (lowercase, with dash)
+        const themeId = cfg.theme.name.toLowerCase().replace(/\s+/g, "-");
+        setTheme(themeId);
+      }
+
+      // Load custom layouts
+      if (cfg.layout.custom_layouts) {
+        try {
+          const parsed = JSON.parse(cfg.layout.custom_layouts);
+          // Check if it's an array (Web format) vs object (TUI format)
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            const layouts = parsed as CustomLayoutConfig[];
+            setCustomLayouts(layouts);
+            setCustomLayoutsLoaded(true); // Mark as loaded from Web format
+            // Use saved selected_custom_id or fallback to first layout
+            const savedId = cfg.layout.selected_custom_id;
+            if (savedId && layouts.some(l => l.id === savedId)) {
+              setSelectedCustomLayoutId(savedId);
+            } else {
+              setSelectedCustomLayoutId(layouts[0].id);
+            }
+          }
+          // If it's TUI format (object), keep the default customLayouts
+          // customLayoutsLoaded stays false, so we won't overwrite TUI data
+        } catch {
+          console.log("Failed to parse custom layouts");
+        }
+      } else {
+        // No existing custom layouts, mark as loaded so we can save new ones
+        setCustomLayoutsLoaded(true);
+      }
+
+      setIsLoaded(true);
+    } catch {
+      // API not available, use props config
+      console.log("Config API not available, using local config");
+      setIsLoaded(true);
+    }
+  }, [config.agent.command, setTheme]);
+
+  // Check dependencies via API
+  const checkDependencies = useCallback(async () => {
     setIsChecking(true);
-    // Simulate checking animation
+
+    // Set all to checking
     setDepStates((prev) => {
       const newStates: Record<string, DependencyState> = {};
-      for (const id of Object.keys(prev)) {
-        newStates[id] = { status: "checking" };
+      for (const key of Object.keys(prev)) {
+        newStates[key] = { ...prev[key], status: "checking" };
+      }
+      // Also add expected deps if not present
+      for (const name of ["git", "tmux", "fzf", "npx"]) {
+        if (!newStates[name]) {
+          newStates[name] = { status: "checking", installCommand: "" };
+        }
       }
       return newStates;
     });
 
-    // Simulate async check completion
-    setTimeout(() => {
-      setDepStates(initialDependencyStates);
-      setIsChecking(false);
-    }, 1500);
-  };
+    try {
+      const response = await checkAllDependencies();
+      const newStates: Record<string, DependencyState> = {};
 
-  const getStatusIcon = (status: DependencyStatus) => {
+      for (const dep of response.dependencies) {
+        newStates[dep.name] = {
+          status: dep.installed ? "installed" : "not_installed",
+          version: dep.version || undefined,
+          installCommand: dep.install_command,
+        };
+      }
+
+      setDepStates(newStates);
+    } catch {
+      // API not available, show error state
+      setDepStates((prev) => {
+        const newStates: Record<string, DependencyState> = {};
+        for (const key of Object.keys(prev)) {
+          newStates[key] = { ...prev[key], status: "error" };
+        }
+        return newStates;
+      });
+    } finally {
+      setIsChecking(false);
+    }
+  }, []);
+
+  // Save config to API (called automatically)
+  // Note: themeId parameter allows immediate save with new theme value
+  const saveConfig = useCallback(async (overrideThemeId?: string) => {
+    if (!isLoaded) return; // Don't save during initial load
+
+    try {
+      await patchConfig({
+        theme: {
+          name: overrideThemeId || theme.id,
+        },
+        layout: {
+          default: selectedLayout,
+          agent_command: agentCommand || undefined,
+          // Only save custom layouts if they were loaded/created in Web format
+          // This prevents overwriting TUI's custom layout format
+          ...(customLayoutsLoaded ? {
+            custom_layouts: JSON.stringify(customLayouts),
+            selected_custom_id: selectedCustomLayoutId || undefined,
+          } : {}),
+        },
+        web: {
+          ide: ideCommand || undefined,
+          terminal: terminalCommand || undefined,
+        },
+      });
+    } catch {
+      console.error("Failed to save config");
+    }
+  }, [isLoaded, theme.id, selectedLayout, agentCommand, customLayouts, selectedCustomLayoutId, customLayoutsLoaded, ideCommand, terminalCommand]);
+
+  // Handle theme change with immediate save
+  const handleThemeChange = useCallback((newThemeId: string) => {
+    setTheme(newThemeId);
+    // Save immediately with the new theme ID to avoid stale closure issues
+    if (isLoaded) {
+      patchConfig({
+        theme: { name: newThemeId },
+      }).catch(() => console.error("Failed to save theme"));
+    }
+  }, [setTheme, isLoaded]);
+
+  // Auto-save when any config value changes (debounced)
+  useEffect(() => {
+    if (!isLoaded) return;
+
+    const timer = setTimeout(() => {
+      saveConfig();
+    }, 500); // 500ms debounce
+
+    return () => clearTimeout(timer);
+  }, [theme.id, selectedLayout, agentCommand, customLayouts, selectedCustomLayoutId, customLayoutsLoaded, ideCommand, terminalCommand, isLoaded, saveConfig]);
+
+  // Initial load
+  useEffect(() => {
+    loadConfig();
+    checkDependencies();
+  }, [loadConfig, checkDependencies]);
+
+  const getStatusIcon = (status: DependencyStatusType) => {
     switch (status) {
       case "checking":
         return <RefreshCw className="w-4 h-4 text-[var(--color-text-muted)] animate-spin" />;
@@ -286,34 +434,8 @@ export function SettingsPage({ config }: SettingsPageProps) {
     }
   };
 
-  const getStatusText = (dep: Dependency, state: DependencyState) => {
-    switch (state.status) {
-      case "checking":
-        return "Checking...";
-      case "installed":
-        return state.version ? `v${state.version}` : "Installed";
-      case "not_installed":
-        return dep.required ? "Not installed" : "Not installed (optional)";
-      case "error":
-        return state.error || "Error";
-    }
-  };
-
-  const requiredCount = dependencies.filter(d => d.required).length;
-  const requiredInstalled = dependencies.filter(d => d.required && depStates[d.id]?.status === "installed").length;
-
-  const claudeDesktopConfig = JSON.stringify(
-    {
-      mcpServers: {
-        grove: {
-          command: config.mcp.command,
-          args: config.mcp.args,
-        },
-      },
-    },
-    null,
-    2
-  );
+  const depKeys = Object.keys(depStates);
+  const installedCount = depKeys.filter((k) => depStates[k]?.status === "installed").length;
 
   const claudeCodeConfig = JSON.stringify(
     {
@@ -360,32 +482,59 @@ export function SettingsPage({ config }: SettingsPageProps) {
           <div className="space-y-3">
             <div className="text-sm font-medium text-[var(--color-text-muted)] mb-2">Select Theme</div>
             <div className="grid grid-cols-4 gap-2">
-              {themes.map((t) => (
-                <motion.button
-                  key={t.id}
-                  whileHover={{ scale: 1.02 }}
-                  whileTap={{ scale: 0.98 }}
-                  onClick={() => setTheme(t.id)}
-                  className={`relative p-3 rounded-lg border text-center transition-all
-                    ${theme.id === t.id
-                      ? "border-[var(--color-highlight)] bg-[var(--color-highlight)]/10"
-                      : "border-[var(--color-border)] hover:border-[var(--color-text-muted)] bg-[var(--color-bg-secondary)]"
-                    }`}
-                >
-                  {theme.id === t.id && (
-                    <div className="absolute top-1.5 right-1.5 w-4 h-4 rounded-full bg-[var(--color-highlight)] flex items-center justify-center">
-                      <Check className="w-2.5 h-2.5 text-white" />
+              {themes.map((t) => {
+                const isAuto = t.id === "auto";
+                // For Auto theme, show half dark / half light preview
+                const darkTheme = themes.find((th) => th.id === "dark");
+                const lightTheme = themes.find((th) => th.id === "light");
+
+                return (
+                  <motion.button
+                    key={t.id}
+                    whileHover={{ scale: 1.02 }}
+                    whileTap={{ scale: 0.98 }}
+                    onClick={() => handleThemeChange(t.id)}
+                    className={`relative p-3 rounded-lg border text-center transition-all
+                      ${theme.id === t.id
+                        ? "border-[var(--color-highlight)] bg-[var(--color-highlight)]/10"
+                        : "border-[var(--color-border)] hover:border-[var(--color-text-muted)] bg-[var(--color-bg-secondary)]"
+                      }`}
+                  >
+                    {theme.id === t.id && (
+                      <div className="absolute top-1.5 right-1.5 w-4 h-4 rounded-full bg-[var(--color-highlight)] flex items-center justify-center">
+                        <Check className="w-2.5 h-2.5 text-white" />
+                      </div>
+                    )}
+                    {/* Color Preview */}
+                    <div className="flex gap-1 mb-2 justify-center">
+                      {isAuto ? (
+                        // Auto theme: show half dark / half light
+                        <>
+                          <div className="w-3 h-3 rounded-full overflow-hidden flex">
+                            <div className="w-1.5 h-3" style={{ backgroundColor: darkTheme?.colors.highlight }} />
+                            <div className="w-1.5 h-3" style={{ backgroundColor: lightTheme?.colors.highlight }} />
+                          </div>
+                          <div className="w-3 h-3 rounded-full overflow-hidden flex">
+                            <div className="w-1.5 h-3" style={{ backgroundColor: darkTheme?.colors.accent }} />
+                            <div className="w-1.5 h-3" style={{ backgroundColor: lightTheme?.colors.accent }} />
+                          </div>
+                          <div className="w-3 h-3 rounded-full overflow-hidden flex">
+                            <div className="w-1.5 h-3" style={{ backgroundColor: darkTheme?.colors.info }} />
+                            <div className="w-1.5 h-3" style={{ backgroundColor: lightTheme?.colors.info }} />
+                          </div>
+                        </>
+                      ) : (
+                        <>
+                          <div className="w-3 h-3 rounded-full" style={{ backgroundColor: t.colors.highlight }} />
+                          <div className="w-3 h-3 rounded-full" style={{ backgroundColor: t.colors.accent }} />
+                          <div className="w-3 h-3 rounded-full" style={{ backgroundColor: t.colors.info }} />
+                        </>
+                      )}
                     </div>
-                  )}
-                  {/* Color Preview */}
-                  <div className="flex gap-1 mb-2 justify-center">
-                    <div className="w-3 h-3 rounded-full" style={{ backgroundColor: t.colors.highlight }} />
-                    <div className="w-3 h-3 rounded-full" style={{ backgroundColor: t.colors.accent }} />
-                    <div className="w-3 h-3 rounded-full" style={{ backgroundColor: t.colors.info }} />
-                  </div>
-                  <div className="text-xs font-medium text-[var(--color-text)]">{t.name}</div>
-                </motion.button>
-              ))}
+                    <div className="text-xs font-medium text-[var(--color-text)]">{t.name}</div>
+                  </motion.button>
+                );
+              })}
             </div>
           </div>
         </Section>
@@ -394,7 +543,7 @@ export function SettingsPage({ config }: SettingsPageProps) {
         <Section
           id="environment"
           title="Environment"
-          description={`${requiredInstalled}/${requiredCount} required dependencies installed`}
+          description={`${installedCount}/${depKeys.length || 4} dependencies installed`}
           icon={Package}
           iconColor="var(--color-accent)"
           isOpen={openSections.environment}
@@ -404,10 +553,10 @@ export function SettingsPage({ config }: SettingsPageProps) {
             {/* Status Summary */}
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
-                {requiredInstalled === requiredCount ? (
+                {installedCount === (depKeys.length || 4) ? (
                   <>
                     <CheckCircle2 className="w-5 h-5 text-[var(--color-success)]" />
-                    <span className="text-sm text-[var(--color-success)]">All required dependencies installed</span>
+                    <span className="text-sm text-[var(--color-success)]">All dependencies installed</span>
                   </>
                 ) : (
                   <>
@@ -429,71 +578,54 @@ export function SettingsPage({ config }: SettingsPageProps) {
 
             {/* Dependencies List */}
             <div className="space-y-2">
-              {dependencies.map((dep) => {
-                const state = depStates[dep.id] || { status: "checking" as DependencyStatus };
+              {(depKeys.length > 0 ? depKeys : ["git", "tmux", "fzf", "npx"]).map((depName) => {
+                const state = depStates[depName] || { status: "checking" as DependencyStatusType, installCommand: "" };
+                const info = dependencyInfo[depName] || { name: depName, description: "" };
                 const isInstalled = state.status === "installed";
 
                 return (
                   <motion.div
-                    key={dep.id}
+                    key={depName}
                     initial={{ opacity: 0, y: 10 }}
                     animate={{ opacity: 1, y: 0 }}
-                    className={`flex items-center justify-between p-4 rounded-lg border transition-all
+                    className={`flex items-center justify-between p-3 rounded-lg border transition-all
                       ${isInstalled
                         ? "bg-[var(--color-bg-secondary)] border-[var(--color-border)]"
                         : "bg-[var(--color-warning)]/5 border-[var(--color-warning)]/20"
                       }`}
                   >
-                    <div className="flex items-center gap-4">
+                    <div className="flex items-center gap-3">
                       {getStatusIcon(state.status)}
                       <div>
-                        <div className="flex items-center gap-2">
-                          <span className="font-medium text-[var(--color-text)]">{dep.name}</span>
-                          {!dep.required && (
-                            <span className="text-[10px] px-1.5 py-0.5 rounded bg-[var(--color-border)] text-[var(--color-text-muted)]">
-                              Optional
-                            </span>
-                          )}
-                        </div>
-                        <div className="text-xs text-[var(--color-text-muted)]">{dep.description}</div>
+                        <div className="font-medium text-sm text-[var(--color-text)]">{info.name}</div>
+                        <div className="text-xs text-[var(--color-text-muted)]">{info.description}</div>
                       </div>
                     </div>
 
-                    <div className="flex items-center gap-3">
-                      <span className={`text-xs ${isInstalled ? "text-[var(--color-success)]" : "text-[var(--color-warning)]"}`}>
-                        {getStatusText(dep, state)}
-                      </span>
+                    <div className="flex items-center gap-2">
+                      {isInstalled && state.version && (
+                        <span className="text-xs text-[var(--color-success)]">v{state.version}</span>
+                      )}
 
-                      {!isInstalled && state.status !== "checking" && (
-                        <div className="flex items-center gap-2">
-                          {dep.installCommand && (
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              onClick={() => handleCopy(`install-${dep.id}`, dep.installCommand!)}
-                            >
-                              {copiedField === `install-${dep.id}` ? (
-                                <Check className="w-4 h-4 text-[var(--color-success)]" />
-                              ) : (
-                                <Copy className="w-4 h-4" />
-                              )}
-                            </Button>
-                          )}
-                          <a
-                            href={dep.installUrl}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg bg-[var(--color-highlight)] hover:opacity-90 text-white transition-opacity"
+                      {!isInstalled && state.status !== "checking" && state.installCommand && (
+                        <div title={`Copy: ${state.installCommand}`}>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => handleCopy(`install-${depName}`, state.installCommand)}
                           >
-                            <Download className="w-3.5 h-3.5" />
-                            Install
-                          </a>
+                            {copiedField === `install-${depName}` ? (
+                              <Check className="w-4 h-4 text-[var(--color-success)]" />
+                            ) : (
+                              <Copy className="w-4 h-4" />
+                            )}
+                          </Button>
                         </div>
                       )}
 
-                      {isInstalled && dep.docsUrl && (
+                      {isInstalled && info.docsUrl && (
                         <a
-                          href={dep.docsUrl}
+                          href={info.docsUrl}
                           target="_blank"
                           rel="noopener noreferrer"
                           className="text-[var(--color-text-muted)] hover:text-[var(--color-text)] transition-colors"
@@ -506,164 +638,64 @@ export function SettingsPage({ config }: SettingsPageProps) {
                 );
               })}
             </div>
-
-            {/* Install Commands Reference */}
-            <div className="p-4 bg-[var(--color-bg-secondary)] rounded-lg border border-[var(--color-border)]">
-              <div className="text-sm font-medium text-[var(--color-text-muted)] mb-3">Quick Install (macOS)</div>
-              <div className="space-y-2 font-mono text-xs">
-                <div className="flex items-center justify-between p-2 bg-[var(--color-bg)] rounded">
-                  <code className="text-[var(--color-text-muted)]">
-                    <span className="opacity-50">$</span> brew install git tmux
-                  </code>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => handleCopy("brew-deps", "brew install git tmux")}
-                  >
-                    {copiedField === "brew-deps" ? (
-                      <Check className="w-3.5 h-3.5 text-[var(--color-success)]" />
-                    ) : (
-                      <Copy className="w-3.5 h-3.5" />
-                    )}
-                  </Button>
-                </div>
-                <div className="flex items-center justify-between p-2 bg-[var(--color-bg)] rounded">
-                  <code className="text-[var(--color-text-muted)]">
-                    <span className="opacity-50">$</span> cargo install grove
-                  </code>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => handleCopy("cargo-grove", "cargo install grove")}
-                  >
-                    {copiedField === "cargo-grove" ? (
-                      <Check className="w-3.5 h-3.5 text-[var(--color-success)]" />
-                    ) : (
-                      <Copy className="w-3.5 h-3.5" />
-                    )}
-                  </Button>
-                </div>
-              </div>
-            </div>
-
-            {/* Default IDE */}
-            <div className="p-4 bg-[var(--color-bg-secondary)] rounded-lg border border-[var(--color-border)]">
-              <div className="flex items-center gap-2 mb-3">
-                <Code className="w-4 h-4 text-[var(--color-info)]" />
-                <div className="text-sm font-medium text-[var(--color-text-muted)]">Default IDE</div>
-              </div>
-              <div className="grid grid-cols-4 gap-2 mb-3">
-                {ideOptions.map((ide) => (
-                  <motion.button
-                    key={ide.id}
-                    whileHover={{ scale: 1.02 }}
-                    whileTap={{ scale: 0.98 }}
-                    onClick={() => setSelectedIde(ide.id)}
-                    className={`p-2 rounded-lg border text-center transition-all
-                      ${
-                        selectedIde === ide.id
-                          ? "border-[var(--color-info)] bg-[var(--color-info)]/10"
-                          : "border-[var(--color-border)] hover:border-[var(--color-text-muted)] bg-[var(--color-bg)]"
-                      }`}
-                  >
-                    <div className="text-xs text-[var(--color-text)]">{ide.name}</div>
-                  </motion.button>
-                ))}
-              </div>
-              {selectedIde === "custom" && (
-                <div className="flex gap-2">
-                  <Input
-                    value={customIdeCommand}
-                    onChange={(e) => setCustomIdeCommand(e.target.value)}
-                    placeholder="Enter IDE command (e.g., webstorm)"
-                  />
-                </div>
-              )}
-            </div>
-
-            {/* Default Terminal */}
-            <div className="p-4 bg-[var(--color-bg-secondary)] rounded-lg border border-[var(--color-border)]">
-              <div className="flex items-center gap-2 mb-3">
-                <Terminal className="w-4 h-4 text-[var(--color-highlight)]" />
-                <div className="text-sm font-medium text-[var(--color-text-muted)]">Default Terminal</div>
-              </div>
-              <div className="grid grid-cols-5 gap-2 mb-3">
-                {terminalOptions.map((term) => (
-                  <motion.button
-                    key={term.id}
-                    whileHover={{ scale: 1.02 }}
-                    whileTap={{ scale: 0.98 }}
-                    onClick={() => setSelectedTerminal(term.id)}
-                    className={`p-2 rounded-lg border text-center transition-all
-                      ${
-                        selectedTerminal === term.id
-                          ? "border-[var(--color-highlight)] bg-[var(--color-highlight)]/10"
-                          : "border-[var(--color-border)] hover:border-[var(--color-text-muted)] bg-[var(--color-bg)]"
-                      }`}
-                  >
-                    <div className="text-xs text-[var(--color-text)]">{term.name}</div>
-                  </motion.button>
-                ))}
-              </div>
-              {selectedTerminal === "custom" && (
-                <div className="flex gap-2">
-                  <Input
-                    value={customTerminalCommand}
-                    onChange={(e) => setCustomTerminalCommand(e.target.value)}
-                    placeholder="Enter terminal command"
-                  />
-                </div>
-              )}
-            </div>
           </div>
         </Section>
 
-        {/* Coding Agent Section */}
+        {/* Development Tools Section (NEW - merged Agent + IDE + Terminal) */}
         <Section
-          id="agent"
-          title="Coding Agent"
-          description="Configure the AI coding agent for your tasks"
-          icon={Terminal}
+          id="devtools"
+          title="Development Tools"
+          description="Configure your coding agent, IDE, and terminal"
+          icon={Wrench}
           iconColor="var(--color-highlight)"
-          isOpen={openSections.agent}
-          onToggle={() => toggleSection("agent")}
+          isOpen={openSections.devtools}
+          onToggle={() => toggleSection("devtools")}
         >
-          <div className="space-y-4">
-            {/* Quick Select */}
+          <div className="space-y-6">
+            {/* Coding Agent */}
             <div>
-              <div className="text-sm font-medium text-[var(--color-text-muted)] mb-3">Quick Select</div>
-              <div className="grid grid-cols-4 gap-2">
-                {popularAgents.map((agent) => (
-                  <motion.button
-                    key={agent.name}
-                    whileHover={{ scale: 1.02 }}
-                    whileTap={{ scale: 0.98 }}
-                    onClick={() => setAgentCommand(agent.command)}
-                    className={`p-3 rounded-lg border text-center transition-all
-                      ${
-                        agentCommand === agent.command
-                          ? "border-[var(--color-highlight)] bg-[var(--color-highlight)]/10"
-                          : "border-[var(--color-border)] hover:border-[var(--color-text-muted)] bg-[var(--color-bg-secondary)]"
-                      }`}
-                  >
-                    <Sparkles className="w-4 h-4 mx-auto mb-1" style={{ color: agent.color }} />
-                    <div className="text-xs text-[var(--color-text)]">{agent.name}</div>
-                  </motion.button>
-                ))}
+              <div className="flex items-center gap-2 mb-3">
+                <Sparkles className="w-4 h-4 text-[var(--color-warning)]" />
+                <span className="text-sm font-medium text-[var(--color-text)]">Coding Agent</span>
               </div>
+              <Combobox
+                options={agentOptions}
+                value={agentCommand}
+                onChange={setAgentCommand}
+                placeholder="Select agent..."
+                customPlaceholder="Enter agent command (e.g., claude --yolo)"
+              />
             </div>
 
-            {/* Command Input */}
+            {/* Default IDE */}
             <div>
-              <div className="text-sm font-medium text-[var(--color-text-muted)] mb-2">Command</div>
-              <div className="flex gap-2">
-                <Input
-                  value={agentCommand}
-                  onChange={(e) => setAgentCommand(e.target.value)}
-                  placeholder="Enter agent command"
-                />
-                <Button variant="primary">Save</Button>
+              <div className="flex items-center gap-2 mb-3">
+                <Code className="w-4 h-4 text-[var(--color-info)]" />
+                <span className="text-sm font-medium text-[var(--color-text)]">Default IDE</span>
               </div>
+              <Combobox
+                options={ideOptions}
+                value={ideCommand}
+                onChange={setIdeCommand}
+                placeholder="Select IDE..."
+                customPlaceholder="Enter IDE command (e.g., webstorm)"
+              />
+            </div>
+
+            {/* Default Terminal */}
+            <div>
+              <div className="flex items-center gap-2 mb-3">
+                <Terminal className="w-4 h-4 text-[var(--color-accent)]" />
+                <span className="text-sm font-medium text-[var(--color-text)]">Default Terminal</span>
+              </div>
+              <Combobox
+                options={terminalOptions}
+                value={terminalCommand}
+                onChange={setTerminalCommand}
+                placeholder="System Default"
+                customPlaceholder="Enter terminal command"
+                allowCustom={true}
+              />
             </div>
           </div>
         </Section>
@@ -679,91 +711,278 @@ export function SettingsPage({ config }: SettingsPageProps) {
           onToggle={() => toggleSection("layout")}
         >
           <div className="grid grid-cols-3 gap-3">
-            {layoutPresets.map((preset) => (
-              <motion.button
-                key={preset.id}
-                whileHover={{ scale: 1.02 }}
-                whileTap={{ scale: 0.98 }}
-                onClick={() => setSelectedLayout(preset.id)}
-                className={`relative p-3 rounded-lg border text-left transition-all
-                  ${
-                    selectedLayout === preset.id
-                      ? "border-[var(--color-highlight)] bg-[var(--color-highlight)]/5"
-                      : "border-[var(--color-border)] hover:border-[var(--color-text-muted)] bg-[var(--color-bg-secondary)]"
-                  }`}
-              >
-                {selectedLayout === preset.id && (
-                  <div className="absolute top-2 right-2 w-4 h-4 rounded-full bg-[var(--color-highlight)] flex items-center justify-center">
-                    <Check className="w-2.5 h-2.5 text-white" />
-                  </div>
-                )}
-                {/* Preview */}
-                <div className="h-10 mb-2 bg-[var(--color-bg)] rounded border border-[var(--color-border)] p-1 flex gap-0.5">
-                  {preset.panes.map((pane, i) => (
-                    <div
-                      key={i}
-                      className={`flex-1 rounded text-[8px] flex items-center justify-center
-                        ${pane === "Agent" ? "bg-[var(--color-highlight)]/20 text-[var(--color-highlight)]" : ""}
-                        ${pane === "Grove" ? "bg-[var(--color-info)]/20 text-[var(--color-info)]" : ""}
-                        ${pane === "Shell" ? "bg-[var(--color-text-muted)]/20 text-[var(--color-text-muted)]" : ""}
-                      `}
-                    >
-                      {pane}
+            {layoutPresets.map((preset) => {
+              const isCustom = preset.id === "custom";
+              const isSelected = selectedLayout === preset.id;
+
+              // Render preview based on layout type
+              const renderPreview = () => {
+                if (isCustom) {
+                  // Custom layout preview based on tree structure
+                  const currentCustomLayout = customLayouts.find(l => l.id === selectedCustomLayoutId) || customLayouts[0];
+
+                  if (!currentCustomLayout) {
+                    return (
+                      <div className="h-10 mb-2 bg-[var(--color-bg)] rounded border border-dashed border-[var(--color-border)] flex items-center justify-center">
+                        <span className="text-[10px] text-[var(--color-text-muted)]">Click to configure</span>
+                      </div>
+                    );
+                  }
+
+                  // Recursive function to render LayoutNode tree
+                  const renderLayoutNode = (node: LayoutNode): React.ReactNode => {
+                    if (node.type === "pane") {
+                      const colors = paneTypeColors[node.paneType || "shell"] || paneTypeColors.shell;
+                      return (
+                        <div
+                          key={node.id}
+                          className="flex-1 rounded text-[8px] flex items-center justify-center min-w-0 min-h-0"
+                          style={{ backgroundColor: `${colors.bg}20`, color: colors.text }}
+                        >
+                          {paneTypeLabels[node.paneType || "shell"] || node.paneType}
+                        </div>
+                      );
+                    }
+
+                    // Split node
+                    if (node.children) {
+                      const isHorizontal = node.direction === "horizontal";
+                      return (
+                        <div
+                          key={node.id}
+                          className={`flex ${isHorizontal ? "flex-row" : "flex-col"} gap-0.5 flex-1 min-w-0 min-h-0`}
+                        >
+                          {renderLayoutNode(node.children[0])}
+                          {renderLayoutNode(node.children[1])}
+                        </div>
+                      );
+                    }
+
+                    return null;
+                  };
+
+                  const paneCount = countPanes(currentCustomLayout.root);
+
+                  return (
+                    <div className="h-10 mb-2 bg-[var(--color-bg)] rounded border border-[var(--color-border)] p-1 flex">
+                      {renderLayoutNode(currentCustomLayout.root)}
+                      {paneCount === 0 && (
+                        <span className="text-[10px] text-[var(--color-text-muted)] m-auto">Click to configure</span>
+                      )}
                     </div>
-                  ))}
-                </div>
-                <div className="text-xs font-medium text-[var(--color-text)]">{preset.name}</div>
-                <div className="text-[10px] text-[var(--color-text-muted)]">{preset.description}</div>
-              </motion.button>
-            ))}
+                  );
+                }
+
+                // 3 Panes: Left + Right split (left one big, right two stacked)
+                if (preset.layout === "left-right-split") {
+                  return (
+                    <div className="h-10 mb-2 bg-[var(--color-bg)] rounded border border-[var(--color-border)] p-1 flex gap-0.5">
+                      {/* Left pane (60%) */}
+                      <div
+                        className="w-[60%] rounded text-[8px] flex items-center justify-center"
+                        style={{
+                          backgroundColor: `${paneTypeColors[preset.panes[0]]?.bg || "var(--color-text-muted)"}20`,
+                          color: paneTypeColors[preset.panes[0]]?.text || "var(--color-text-muted)",
+                        }}
+                      >
+                        {preset.panes[0]}
+                      </div>
+                      {/* Right panes (40%, stacked) */}
+                      <div className="w-[40%] flex flex-col gap-0.5">
+                        {preset.panes.slice(1).map((pane, i) => (
+                          <div
+                            key={i}
+                            className="flex-1 rounded text-[8px] flex items-center justify-center"
+                            style={{
+                              backgroundColor: `${paneTypeColors[pane]?.bg || "var(--color-text-muted)"}20`,
+                              color: paneTypeColors[pane]?.text || "var(--color-text-muted)",
+                            }}
+                          >
+                            {pane}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                }
+
+                // Default horizontal layout
+                return (
+                  <div className="h-10 mb-2 bg-[var(--color-bg)] rounded border border-[var(--color-border)] p-1 flex gap-0.5">
+                    {preset.panes.map((pane, i) => {
+                      const colors = paneTypeColors[pane] || paneTypeColors.shell;
+                      return (
+                        <div
+                          key={i}
+                          className="flex-1 rounded text-[8px] flex items-center justify-center"
+                          style={{ backgroundColor: `${colors.bg}20`, color: colors.text }}
+                        >
+                          {pane}
+                        </div>
+                      );
+                    })}
+                  </div>
+                );
+              };
+
+              return (
+                <motion.button
+                  key={preset.id}
+                  whileHover={{ scale: 1.02 }}
+                  whileTap={{ scale: 0.98 }}
+                  onClick={() => {
+                    setSelectedLayout(preset.id);
+                    if (isCustom) {
+                      setIsLayoutEditorOpen(true);
+                    }
+                  }}
+                  className={`relative p-3 rounded-lg border text-left transition-all
+                    ${
+                      isSelected
+                        ? "border-[var(--color-highlight)] bg-[var(--color-highlight)]/5"
+                        : "border-[var(--color-border)] hover:border-[var(--color-text-muted)] bg-[var(--color-bg-secondary)]"
+                    }`}
+                >
+                  {isSelected && (
+                    <div className="absolute top-2 right-2 w-4 h-4 rounded-full bg-[var(--color-highlight)] flex items-center justify-center">
+                      <Check className="w-2.5 h-2.5 text-white" />
+                    </div>
+                  )}
+                  {renderPreview()}
+                  <div className="text-xs font-medium text-[var(--color-text)]">{preset.name}</div>
+                  <div className="text-[10px] text-[var(--color-text-muted)]">
+                    {isCustom && customLayouts.length > 0
+                      ? `${customLayouts.length} layout${customLayouts.length > 1 ? "s" : ""} configured`
+                      : preset.description}
+                  </div>
+                </motion.button>
+              );
+            })}
           </div>
+
+          {/* Edit Custom Layout Button */}
+          {selectedLayout === "custom" && (
+            <div className="mt-3 flex justify-end">
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => setIsLayoutEditorOpen(true)}
+              >
+                Edit Custom Layout
+              </Button>
+            </div>
+          )}
         </Section>
+
+        {/* Layout Editor Dialog */}
+        <LayoutEditor
+          isOpen={isLayoutEditorOpen}
+          onClose={() => setIsLayoutEditorOpen(false)}
+          layouts={customLayouts}
+          onChange={(layouts) => {
+            setCustomLayouts(layouts);
+            setCustomLayoutsLoaded(true); // Mark as edited, so we can save
+          }}
+          selectedLayoutId={selectedCustomLayoutId}
+          onSelectLayout={setSelectedCustomLayoutId}
+        />
 
         {/* Hooks Section */}
         <Section
           id="hooks"
           title="Hooks"
-          description="Notification hooks for task events"
+          description="Generate notification commands for agents"
           icon={Bell}
           iconColor="var(--color-warning)"
           isOpen={openSections.hooks}
           onToggle={() => toggleSection("hooks")}
         >
           <div className="space-y-4">
-            <Toggle
-              enabled={hooksEnabled}
-              onChange={setHooksEnabled}
-              label="Enable Hooks"
-              description="Receive notifications from agents"
-            />
-
-            <div className={!hooksEnabled ? "opacity-50 pointer-events-none" : ""}>
-              <div className="text-sm font-medium text-[var(--color-text-muted)] mb-2">Script Path</div>
+            {/* Level Selection */}
+            <div>
+              <div className="text-sm font-medium text-[var(--color-text-muted)] mb-2">Level</div>
               <div className="flex gap-2">
-                <Input
-                  value={scriptPath}
-                  onChange={(e) => setScriptPath(e.target.value)}
-                  placeholder="~/.grove/hooks/notify.sh"
-                />
-                <Button variant="secondary">
-                  <FolderOpen className="w-4 h-4" />
-                </Button>
+                {notificationLevels.map(({ level, icon: Icon, color, title }) => {
+                  const isSelected = hookLevel === level;
+                  return (
+                    <motion.button
+                      key={level}
+                      whileHover={{ scale: 1.02 }}
+                      whileTap={{ scale: 0.98 }}
+                      onClick={() => setHookLevel(level as "notice" | "warn" | "critical")}
+                      className={`flex-1 flex items-center justify-center gap-2 px-3 py-2.5 rounded-lg border transition-all
+                        ${isSelected
+                          ? "border-[var(--color-highlight)] bg-[var(--color-highlight)]/10"
+                          : "border-[var(--color-border)] bg-[var(--color-bg-secondary)] hover:border-[var(--color-text-muted)]"
+                        }`}
+                    >
+                      <Icon className="w-4 h-4" style={{ color: isSelected ? color : "var(--color-text-muted)" }} />
+                      <span className={`text-sm ${isSelected ? "text-[var(--color-text)]" : "text-[var(--color-text-muted)]"}`}>
+                        {title}
+                      </span>
+                    </motion.button>
+                  );
+                })}
               </div>
             </div>
 
-            <div className={!hooksEnabled ? "opacity-50" : ""}>
-              <div className="text-sm font-medium text-[var(--color-text-muted)] mb-2">Notification Levels</div>
-              <div className="flex gap-2">
-                {notificationLevels.map(({ level, icon: Icon, color, title }) => (
-                  <div
-                    key={level}
-                    className="flex items-center gap-2 px-3 py-2 rounded-lg bg-[var(--color-bg-secondary)] border border-[var(--color-border)]"
-                  >
-                    <Icon className="w-4 h-4" style={{ color }} />
-                    <span className="text-xs text-[var(--color-text-muted)]">{title}</span>
-                  </div>
-                ))}
+            {/* Banner & Sound Options */}
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <div className="text-sm font-medium text-[var(--color-text-muted)] mb-2">Banner</div>
+                <div className="flex gap-2">
+                  {[true, false].map((value) => {
+                    const isSelected = hookBanner === value;
+                    return (
+                      <motion.button
+                        key={value ? "on" : "off"}
+                        whileHover={{ scale: 1.02 }}
+                        whileTap={{ scale: 0.98 }}
+                        onClick={() => setHookBanner(value)}
+                        className={`flex-1 px-3 py-2 rounded-lg border text-sm transition-all
+                          ${isSelected
+                            ? "border-[var(--color-highlight)] bg-[var(--color-highlight)]/10 text-[var(--color-text)]"
+                            : "border-[var(--color-border)] bg-[var(--color-bg-secondary)] text-[var(--color-text-muted)] hover:border-[var(--color-text-muted)]"
+                          }`}
+                      >
+                        {value ? "On" : "Off"}
+                      </motion.button>
+                    );
+                  })}
+                </div>
               </div>
+              <div>
+                <div className="text-sm font-medium text-[var(--color-text-muted)] mb-2">Sound</div>
+                <Combobox
+                  options={soundOptions}
+                  value={hookSound}
+                  onChange={setHookSound}
+                  placeholder="Select sound..."
+                  allowCustom={false}
+                />
+              </div>
+            </div>
+
+            {/* Generated Command */}
+            <div>
+              <div className="text-sm font-medium text-[var(--color-text-muted)] mb-2">Generated Command</div>
+              <div className="flex items-center gap-2 p-3 bg-[var(--color-bg-secondary)] rounded-lg border border-[var(--color-border)]">
+                <code className="flex-1 text-sm text-[var(--color-highlight)] font-mono">{hookCommand}</code>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => handleCopy("hook-command", hookCommand)}
+                >
+                  {copiedField === "hook-command" ? (
+                    <Check className="w-4 h-4 text-[var(--color-success)]" />
+                  ) : (
+                    <Copy className="w-4 h-4" />
+                  )}
+                </Button>
+              </div>
+              <p className="text-xs text-[var(--color-text-muted)] mt-2">
+                Add this command to your agent's workflow to send notifications to Grove.
+              </p>
             </div>
           </div>
         </Section>
@@ -779,72 +998,62 @@ export function SettingsPage({ config }: SettingsPageProps) {
           onToggle={() => toggleSection("mcp")}
         >
           <div className="space-y-4">
-            {/* Config Info */}
-            <div className="grid grid-cols-2 gap-2">
-              {[
-                { label: "Name", value: config.mcp.name },
-                { label: "Type", value: config.mcp.type },
-                { label: "Command", value: config.mcp.command },
-                { label: "Args", value: JSON.stringify(config.mcp.args) },
-              ].map(({ label, value }) => (
-                <div
-                  key={label}
-                  className="flex items-center justify-between p-2 rounded bg-[var(--color-bg-secondary)] border border-[var(--color-border)]"
-                >
-                  <span className="text-xs text-[var(--color-text-muted)]">{label}</span>
-                  <code className="text-xs text-[var(--color-highlight)]">{value}</code>
+            {/* Server Info - More Prominent */}
+            <div className="p-4 bg-[var(--color-highlight)]/5 rounded-xl border border-[var(--color-highlight)]/20">
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <div className="text-xs text-[var(--color-text-muted)] mb-1">Name</div>
+                  <code className="text-sm font-semibold text-[var(--color-highlight)]">{config.mcp.name}</code>
                 </div>
-              ))}
+                <div>
+                  <div className="text-xs text-[var(--color-text-muted)] mb-1">Type</div>
+                  <code className="text-sm font-semibold text-[var(--color-text)]">{config.mcp.type}</code>
+                </div>
+                <div>
+                  <div className="text-xs text-[var(--color-text-muted)] mb-1">Command</div>
+                  <code className="text-sm font-semibold text-[var(--color-text)]">{config.mcp.command}</code>
+                </div>
+                <div>
+                  <div className="text-xs text-[var(--color-text-muted)] mb-1">Args</div>
+                  <code className="text-sm font-semibold text-[var(--color-text)]">{config.mcp.args.join(" ")}</code>
+                </div>
+              </div>
             </div>
 
-            {/* Copy Configs */}
-            <div className="space-y-3">
-              <div>
-                <div className="flex items-center justify-between mb-2">
-                  <span className="text-sm text-[var(--color-text-muted)]">Claude Desktop</span>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => handleCopy("desktop", claudeDesktopConfig)}
-                  >
-                    {copiedField === "desktop" ? (
-                      <Check className="w-4 h-4 text-[var(--color-success)]" />
-                    ) : (
-                      <Copy className="w-4 h-4" />
-                    )}
-                  </Button>
-                </div>
-                <pre className="p-3 bg-[var(--color-bg-secondary)] rounded-lg border border-[var(--color-border)] text-xs text-[var(--color-text-muted)] overflow-x-auto">
-                  {claudeDesktopConfig}
-                </pre>
+            {/* Claude Code Config */}
+            <div>
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-sm font-medium text-[var(--color-text)]">Claude Code Configuration</span>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => handleCopy("code", claudeCodeConfig)}
+                >
+                  {copiedField === "code" ? (
+                    <Check className="w-4 h-4 text-[var(--color-success)]" />
+                  ) : (
+                    <Copy className="w-4 h-4" />
+                  )}
+                </Button>
               </div>
-
-              <div>
-                <div className="flex items-center justify-between mb-2">
-                  <span className="text-sm text-[var(--color-text-muted)]">Claude Code</span>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => handleCopy("code", claudeCodeConfig)}
-                  >
-                    {copiedField === "code" ? (
-                      <Check className="w-4 h-4 text-[var(--color-success)]" />
-                    ) : (
-                      <Copy className="w-4 h-4" />
-                    )}
-                  </Button>
-                </div>
-                <pre className="p-3 bg-[var(--color-bg-secondary)] rounded-lg border border-[var(--color-border)] text-xs text-[var(--color-text-muted)] overflow-x-auto">
-                  {claudeCodeConfig}
-                </pre>
-              </div>
+              <pre className="p-3 bg-[var(--color-bg-secondary)] rounded-lg border border-[var(--color-border)] text-xs text-[var(--color-text-muted)] overflow-x-auto">
+                {claudeCodeConfig}
+              </pre>
+              <p className="text-xs text-[var(--color-text-muted)] mt-2">
+                Add to your <code className="text-[var(--color-highlight)]">~/.claude/settings.json</code> file.
+              </p>
             </div>
 
             {/* Docs Link */}
-            <div className="flex items-center gap-3 p-3 rounded-lg bg-[var(--color-info)]/5 border border-[var(--color-info)]/20">
+            <a
+              href="https://modelcontextprotocol.io/examples"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex items-center gap-3 p-3 rounded-lg bg-[var(--color-info)]/5 border border-[var(--color-info)]/20 hover:bg-[var(--color-info)]/10 transition-colors"
+            >
               <ExternalLink className="w-4 h-4 text-[var(--color-info)]" />
-              <span className="text-sm text-[var(--color-text-muted)]">Learn more about MCP integration</span>
-            </div>
+              <span className="text-sm text-[var(--color-text)]">Learn more about MCP protocol</span>
+            </a>
           </div>
         </Section>
       </div>

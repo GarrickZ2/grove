@@ -6,7 +6,10 @@ interface StatsTabProps {
   task: Task;
 }
 
-function formatDate(date: Date): string {
+function formatDate(date: Date | undefined, timeAgo?: string): string {
+  // Prefer pre-formatted timeAgo if available
+  if (timeAgo) return timeAgo;
+  if (!date) return "";
   return date.toLocaleDateString("en-US", {
     year: "numeric",
     month: "short",
@@ -149,7 +152,7 @@ export function StatsTab({ task }: StatsTabProps) {
                     <div className="flex items-center gap-2 text-xs text-[var(--color-text-muted)] mt-0.5">
                       <code className="font-mono">{commit.hash.slice(0, 7)}</code>
                       <span>•</span>
-                      <span>{formatDate(commit.date)}</span>
+                      <span>{formatDate(commit.date, commit.timeAgo)}</span>
                     </div>
                   </div>
                 </div>

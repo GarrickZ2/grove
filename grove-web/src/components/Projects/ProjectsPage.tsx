@@ -9,20 +9,51 @@ import { useProject } from "../../context";
 import type { Project } from "../../data/types";
 
 export function ProjectsPage() {
-  const { projects, selectedProject, selectProject } = useProject();
+  const { projects, selectedProject, selectProject, addProject, deleteProject } = useProject();
   const [showAddDialog, setShowAddDialog] = useState(false);
   const [projectToDelete, setProjectToDelete] = useState<Project | null>(null);
+  const [isAdding, setIsAdding] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  const handleAddProject = (path: string) => {
-    console.log("Adding project:", path);
-    // TODO: Implement actual project addition
+  const handleAddProject = async (path: string, name?: string) => {
+    try {
+      setIsAdding(true);
+      setError(null);
+      await addProject(path, name);
+      setShowAddDialog(false);
+    } catch (err: unknown) {
+      console.error("Failed to add project:", err);
+      if (err && typeof err === "object" && "status" in err) {
+        const apiErr = err as { status: number; message: string };
+        if (apiErr.status === 409) {
+          setError("Project already registered");
+        } else if (apiErr.status === 400) {
+          setError("Invalid path or not a git repository");
+        } else {
+          setError("Failed to add project");
+        }
+      } else {
+        setError("Failed to add project");
+      }
+    } finally {
+      setIsAdding(false);
+    }
   };
 
-  const handleDeleteProject = () => {
+  const handleDeleteProject = async () => {
     if (projectToDelete) {
-      console.log("Deleting project:", projectToDelete.name);
-      // TODO: Implement actual project deletion
-      setProjectToDelete(null);
+      try {
+        setIsDeleting(true);
+        setError(null);
+        await deleteProject(projectToDelete.id);
+        setProjectToDelete(null);
+      } catch (err) {
+        console.error("Failed to delete project:", err);
+        setError("Failed to delete project");
+      } finally {
+        setIsDeleting(false);
+      }
     }
   };
 
@@ -81,9 +112,9 @@ export function ProjectsPage() {
             whileHover={{ scale: 1.02 }}
             whileTap={{ scale: 0.98 }}
             onClick={() => setShowAddDialog(true)}
-            className="p-4 rounded-xl border-2 border-dashed border-[var(--color-border)] hover:border-[var(--color-highlight)] bg-transparent hover:bg-[var(--color-bg-secondary)] transition-colors flex flex-col items-center justify-center min-h-[140px]"
+            className="p-4 rounded-xl border-2 border-dashed border-[var(--color-border)] hover:border-[var(--color-highlight)] bg-transparent hover:bg-[var(--color-bg-secondary)] transition-colors flex items-center justify-center gap-2"
           >
-            <Plus className="w-8 h-8 text-[var(--color-text-muted)] mb-2" />
+            <Plus className="w-5 h-5 text-[var(--color-text-muted)]" />
             <span className="text-sm text-[var(--color-text-muted)]">Add Project</span>
           </motion.button>
         </div>
@@ -92,8 +123,13 @@ export function ProjectsPage() {
       {/* Dialogs */}
       <AddProjectDialog
         isOpen={showAddDialog}
-        onClose={() => setShowAddDialog(false)}
+        onClose={() => {
+          setShowAddDialog(false);
+          setError(null);
+        }}
         onAdd={handleAddProject}
+        isLoading={isAdding}
+        externalError={error}
       />
 
       <DeleteProjectDialog
@@ -101,6 +137,7 @@ export function ProjectsPage() {
         project={projectToDelete}
         onClose={() => setProjectToDelete(null)}
         onConfirm={handleDeleteProject}
+        isLoading={isDeleting}
       />
     </motion.div>
   );

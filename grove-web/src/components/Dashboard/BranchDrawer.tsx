@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   GitBranch,
@@ -11,36 +11,114 @@ import {
   Edit3,
   Trash2,
   GitMerge,
-  ExternalLink,
+  Folder,
+  FolderOpen,
+  Loader2,
+  ArrowDownToLine,
 } from "lucide-react";
 import type { Branch } from "../../data/types";
 
 interface BranchDrawerProps {
   isOpen: boolean;
   branches: Branch[];
+  isLoading?: boolean;
   onClose: () => void;
   onCheckout: (branch: Branch) => void;
   onNewBranch: () => void;
   onRename: (branch: Branch) => void;
   onDelete: (branch: Branch) => void;
   onMerge: (branch: Branch) => void;
-  onCreatePR: (branch: Branch) => void;
+  onPullMerge?: (branch: Branch) => void;
+  onPullRebase?: (branch: Branch) => void;
+}
+
+// Tree node for nested folder structure
+interface BranchTreeNode {
+  name: string; // folder name or branch display name
+  fullPath: string; // full path for folder key
+  branch?: Branch; // only set for leaf nodes (actual branches)
+  children: Map<string, BranchTreeNode>;
+}
+
+// Build a tree structure from flat branch list
+function buildBranchTree(branches: Branch[]): BranchTreeNode {
+  const root: BranchTreeNode = {
+    name: "",
+    fullPath: "",
+    children: new Map(),
+  };
+
+  branches.forEach(branch => {
+    const parts = branch.name.split("/");
+    let current = root;
+    let pathSoFar = "";
+
+    for (let i = 0; i < parts.length; i++) {
+      const part = parts[i];
+      pathSoFar = pathSoFar ? `${pathSoFar}/${part}` : part;
+
+      if (i === parts.length - 1) {
+        // Last part - this is the branch itself
+        current.children.set(part, {
+          name: part,
+          fullPath: pathSoFar,
+          branch,
+          children: new Map(),
+        });
+      } else {
+        // Intermediate folder
+        if (!current.children.has(part)) {
+          current.children.set(part, {
+            name: part,
+            fullPath: pathSoFar,
+            children: new Map(),
+          });
+        }
+        current = current.children.get(part)!;
+      }
+    }
+  });
+
+  return root;
+}
+
+// Count total branches in a tree node (including nested)
+function countBranches(node: BranchTreeNode): number {
+  if (node.branch) return 1;
+  let count = 0;
+  node.children.forEach(child => {
+    count += countBranches(child);
+  });
+  return count;
+}
+
+// Get sorted children (folders first, then branches, alphabetically)
+function getSortedChildren(node: BranchTreeNode): BranchTreeNode[] {
+  const children = Array.from(node.children.values());
+  const folders = children.filter(c => !c.branch).sort((a, b) => a.name.localeCompare(b.name));
+  const branches = children.filter(c => c.branch).sort((a, b) => a.name.localeCompare(b.name));
+  return [...folders, ...branches];
 }
 
 export function BranchDrawer({
   isOpen,
   branches,
+  isLoading = false,
   onClose,
   onCheckout,
   onNewBranch,
   onRename,
   onDelete,
   onMerge,
-  onCreatePR,
+  onPullMerge,
+  onPullRebase,
 }: BranchDrawerProps) {
   const [searchQuery, setSearchQuery] = useState("");
   const [showRemote, setShowRemote] = useState(false);
   const [selectedBranch, setSelectedBranch] = useState<Branch | null>(null);
+  const [expandedFolders, setExpandedFolders] = useState<Set<string>>(
+    new Set(["grove", "feature", "origin", "origin/feature", "origin/grove"])
+  );
 
   const localBranches = branches.filter(b => b.isLocal);
   const remoteBranches = branches.filter(b => !b.isLocal);
@@ -52,9 +130,25 @@ export function BranchDrawer({
     b.name.toLowerCase().includes(searchQuery.toLowerCase())
   );
 
+  // Build tree structures
+  const localTree = useMemo(() => buildBranchTree(filteredLocal), [filteredLocal]);
+  const remoteTree = useMemo(() => buildBranchTree(filteredRemote), [filteredRemote]);
+
   const handleBranchClick = (branch: Branch) => {
     if (branch.isCurrent) return;
     setSelectedBranch(selectedBranch?.name === branch.name ? null : branch);
+  };
+
+  const toggleFolder = (path: string) => {
+    setExpandedFolders(prev => {
+      const next = new Set(prev);
+      if (next.has(path)) {
+        next.delete(path);
+      } else {
+        next.add(path);
+      }
+      return next;
+    });
   };
 
   return (
@@ -109,105 +203,35 @@ export function BranchDrawer({
 
             {/* Branch List */}
             <div className="flex-1 overflow-y-auto p-2">
+              {isLoading ? (
+                <div className="flex flex-col items-center justify-center py-12">
+                  <Loader2 className="w-8 h-8 text-[var(--color-text-muted)] animate-spin mb-2" />
+                  <p className="text-sm text-[var(--color-text-muted)]">Loading branches...</p>
+                </div>
+              ) : (
+              <>
               {/* Local Branches */}
               <div className="text-xs font-medium text-[var(--color-text-muted)] px-2 py-1.5 uppercase tracking-wider">
-                Local
+                Local ({filteredLocal.length})
               </div>
               <div className="space-y-0.5">
-                {filteredLocal.map((branch) => (
-                  <div key={branch.name}>
-                    <button
-                      onClick={() => handleBranchClick(branch)}
-                      className={`w-full flex items-center justify-between px-3 py-2.5 rounded-lg transition-colors text-left
-                        ${branch.isCurrent
-                          ? "bg-[var(--color-highlight)]/10 border border-[var(--color-highlight)]/30"
-                          : selectedBranch?.name === branch.name
-                            ? "bg-[var(--color-bg-tertiary)]"
-                            : "hover:bg-[var(--color-bg-tertiary)]"
-                        }`}
-                    >
-                      <div className="flex items-center gap-2 min-w-0">
-                        <GitBranch className={`w-4 h-4 flex-shrink-0 ${
-                          branch.isCurrent ? "text-[var(--color-highlight)]" : "text-[var(--color-text-muted)]"
-                        }`} />
-                        <span className={`text-sm truncate ${
-                          branch.isCurrent ? "text-[var(--color-highlight)] font-medium" : "text-[var(--color-text)]"
-                        }`}>
-                          {branch.name}
-                        </span>
-                      </div>
-                      {branch.isCurrent && (
-                        <Check className="w-4 h-4 text-[var(--color-highlight)] flex-shrink-0" />
-                      )}
-                    </button>
-
-                    {/* Actions Panel */}
-                    <AnimatePresence>
-                      {selectedBranch?.name === branch.name && !branch.isCurrent && (
-                        <motion.div
-                          initial={{ height: 0, opacity: 0 }}
-                          animate={{ height: "auto", opacity: 1 }}
-                          exit={{ height: 0, opacity: 0 }}
-                          className="overflow-hidden"
-                        >
-                          <div className="px-2 py-2 ml-6 space-y-1">
-                            <button
-                              onClick={() => {
-                                onCheckout(branch);
-                                onClose();
-                              }}
-                              className="w-full flex items-center gap-2 px-3 py-2 text-sm text-white bg-[var(--color-highlight)] hover:opacity-90 rounded-lg transition-colors"
-                            >
-                              <Check className="w-4 h-4" />
-                              Checkout
-                            </button>
-                            <button
-                              onClick={() => {
-                                onMerge(branch);
-                                onClose();
-                              }}
-                              className="w-full flex items-center gap-2 px-3 py-2 text-sm text-[var(--color-text)] hover:bg-[var(--color-bg)] rounded-lg transition-colors"
-                            >
-                              <GitMerge className="w-4 h-4" />
-                              Merge into current
-                            </button>
-                            <button
-                              onClick={() => {
-                                onCreatePR(branch);
-                                onClose();
-                              }}
-                              className="w-full flex items-center gap-2 px-3 py-2 text-sm text-[var(--color-text)] hover:bg-[var(--color-bg)] rounded-lg transition-colors"
-                            >
-                              <ExternalLink className="w-4 h-4" />
-                              Create PR
-                            </button>
-                            <div className="border-t border-[var(--color-border)] my-1" />
-                            <button
-                              onClick={() => {
-                                onRename(branch);
-                                onClose();
-                              }}
-                              className="w-full flex items-center gap-2 px-3 py-2 text-sm text-[var(--color-text)] hover:bg-[var(--color-bg)] rounded-lg transition-colors"
-                            >
-                              <Edit3 className="w-4 h-4" />
-                              Rename
-                            </button>
-                            <button
-                              onClick={() => {
-                                onDelete(branch);
-                                onClose();
-                              }}
-                              className="w-full flex items-center gap-2 px-3 py-2 text-sm text-[var(--color-error)] hover:bg-[var(--color-error)]/10 rounded-lg transition-colors"
-                            >
-                              <Trash2 className="w-4 h-4" />
-                              Delete
-                            </button>
-                          </div>
-                        </motion.div>
-                      )}
-                    </AnimatePresence>
-                  </div>
-                ))}
+                <TreeView
+                  node={localTree}
+                  depth={0}
+                  expandedFolders={expandedFolders}
+                  selectedBranch={selectedBranch}
+                  folderColor="var(--color-warning)"
+                  onToggleFolder={toggleFolder}
+                  onBranchClick={handleBranchClick}
+                  onCheckout={onCheckout}
+                  onMerge={onMerge}
+                  onRename={onRename}
+                  onDelete={onDelete}
+                  onPullMerge={onPullMerge}
+                  onPullRebase={onPullRebase}
+                  onClose={onClose}
+                  isLocal={true}
+                />
               </div>
 
               {/* Remote Branches */}
@@ -232,25 +256,29 @@ export function BranchDrawer({
                         exit={{ opacity: 0, height: 0 }}
                         className="space-y-0.5 overflow-hidden"
                       >
-                        {filteredRemote.map((branch) => (
-                          <button
-                            key={branch.name}
-                            onClick={() => {
-                              onCheckout(branch);
-                              onClose();
-                            }}
-                            className="w-full flex items-center gap-2 px-3 py-2.5 rounded-lg hover:bg-[var(--color-bg-tertiary)] transition-colors text-left"
-                          >
-                            <GitBranch className="w-4 h-4 text-[var(--color-text-muted)]" />
-                            <span className="text-sm text-[var(--color-text)] truncate">
-                              {branch.name}
-                            </span>
-                          </button>
-                        ))}
+                        <TreeView
+                          node={remoteTree}
+                          depth={0}
+                          expandedFolders={expandedFolders}
+                          selectedBranch={selectedBranch}
+                          folderColor="var(--color-info)"
+                          onToggleFolder={toggleFolder}
+                          onBranchClick={handleBranchClick}
+                          onCheckout={onCheckout}
+                          onMerge={onMerge}
+                          onRename={onRename}
+                          onDelete={onDelete}
+                          onPullMerge={onPullMerge}
+                          onPullRebase={onPullRebase}
+                          onClose={onClose}
+                          isLocal={false}
+                        />
                       </motion.div>
                     )}
                   </AnimatePresence>
                 </div>
+              )}
+              </>
               )}
             </div>
 
@@ -271,5 +299,365 @@ export function BranchDrawer({
         </>
       )}
     </AnimatePresence>
+  );
+}
+
+// Recursive tree view component
+interface TreeViewProps {
+  node: BranchTreeNode;
+  depth: number;
+  expandedFolders: Set<string>;
+  selectedBranch: Branch | null;
+  folderColor: string;
+  onToggleFolder: (path: string) => void;
+  onBranchClick: (branch: Branch) => void;
+  onCheckout: (branch: Branch) => void;
+  onMerge: (branch: Branch) => void;
+  onRename: (branch: Branch) => void;
+  onDelete: (branch: Branch) => void;
+  onPullMerge?: (branch: Branch) => void;
+  onPullRebase?: (branch: Branch) => void;
+  onClose: () => void;
+  isLocal: boolean;
+}
+
+function TreeView({
+  node,
+  depth,
+  expandedFolders,
+  selectedBranch,
+  folderColor,
+  onToggleFolder,
+  onBranchClick,
+  onCheckout,
+  onMerge,
+  onRename,
+  onDelete,
+  onPullMerge,
+  onPullRebase,
+  onClose,
+  isLocal,
+}: TreeViewProps) {
+  const sortedChildren = getSortedChildren(node);
+
+  return (
+    <>
+      {sortedChildren.map(child => {
+        if (child.branch) {
+          // Render branch
+          if (isLocal) {
+            return (
+              <BranchItem
+                key={child.branch.name}
+                branch={child.branch}
+                displayName={child.name}
+                isSelected={selectedBranch?.name === child.branch.name}
+                depth={depth}
+                onBranchClick={onBranchClick}
+                onCheckout={onCheckout}
+                onMerge={onMerge}
+                onRename={onRename}
+                onDelete={onDelete}
+                onClose={onClose}
+              />
+            );
+          } else {
+            // Remote branch - with actions menu
+            return (
+              <RemoteBranchItem
+                key={child.branch.name}
+                branch={child.branch}
+                displayName={child.name}
+                isSelected={selectedBranch?.name === child.branch.name}
+                depth={depth}
+                onBranchClick={onBranchClick}
+                onCheckout={onCheckout}
+                onPullMerge={onPullMerge}
+                onPullRebase={onPullRebase}
+                onClose={onClose}
+              />
+            );
+          }
+        } else {
+          // Render folder
+          const isExpanded = expandedFolders.has(child.fullPath);
+          const branchCount = countBranches(child);
+
+          return (
+            <div key={child.fullPath}>
+              <button
+                onClick={() => onToggleFolder(child.fullPath)}
+                style={{ paddingLeft: `${depth * 16 + 12}px` }}
+                className="w-full flex items-center gap-2 pr-3 py-2 rounded-lg hover:bg-[var(--color-bg-tertiary)] transition-colors text-left"
+              >
+                {isExpanded ? (
+                  <FolderOpen className="w-4 h-4" style={{ color: folderColor }} />
+                ) : (
+                  <Folder className="w-4 h-4" style={{ color: folderColor }} />
+                )}
+                <span className="text-sm font-medium text-[var(--color-text)]">
+                  {child.name}
+                </span>
+                <span className="text-xs text-[var(--color-text-muted)] ml-auto">
+                  {branchCount}
+                </span>
+                {isExpanded ? (
+                  <ChevronDown className="w-3.5 h-3.5 text-[var(--color-text-muted)]" />
+                ) : (
+                  <ChevronRight className="w-3.5 h-3.5 text-[var(--color-text-muted)]" />
+                )}
+              </button>
+              <AnimatePresence>
+                {isExpanded && (
+                  <motion.div
+                    initial={{ opacity: 0, height: 0 }}
+                    animate={{ opacity: 1, height: "auto" }}
+                    exit={{ opacity: 0, height: 0 }}
+                    className="overflow-hidden"
+                  >
+                    <div
+                      className="border-l border-[var(--color-border)]"
+                      style={{ marginLeft: `${depth * 16 + 20}px` }}
+                    >
+                      <TreeView
+                        node={child}
+                        depth={depth + 1}
+                        expandedFolders={expandedFolders}
+                        selectedBranch={selectedBranch}
+                        folderColor={folderColor}
+                        onToggleFolder={onToggleFolder}
+                        onBranchClick={onBranchClick}
+                        onCheckout={onCheckout}
+                        onMerge={onMerge}
+                        onRename={onRename}
+                        onDelete={onDelete}
+                        onPullMerge={onPullMerge}
+                        onPullRebase={onPullRebase}
+                        onClose={onClose}
+                        isLocal={isLocal}
+                      />
+                    </div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </div>
+          );
+        }
+      })}
+    </>
+  );
+}
+
+// Branch item component for local branches with actions
+interface BranchItemProps {
+  branch: Branch;
+  displayName: string;
+  isSelected: boolean;
+  depth: number;
+  onBranchClick: (branch: Branch) => void;
+  onCheckout: (branch: Branch) => void;
+  onMerge: (branch: Branch) => void;
+  onRename: (branch: Branch) => void;
+  onDelete: (branch: Branch) => void;
+  onClose: () => void;
+}
+
+function BranchItem({
+  branch,
+  displayName,
+  isSelected,
+  depth,
+  onBranchClick,
+  onCheckout,
+  onMerge,
+  onRename,
+  onDelete,
+  onClose,
+}: BranchItemProps) {
+  return (
+    <div>
+      <button
+        onClick={() => onBranchClick(branch)}
+        style={{ paddingLeft: `${depth * 16 + 12}px` }}
+        className={`w-full flex items-center justify-between pr-3 py-2 rounded-lg transition-colors text-left
+          ${branch.isCurrent
+            ? "bg-[var(--color-highlight)]/10 border border-[var(--color-highlight)]/30"
+            : isSelected
+              ? "bg-[var(--color-bg-tertiary)]"
+              : "hover:bg-[var(--color-bg-tertiary)]"
+          }`}
+      >
+        <div className="flex items-center gap-2 min-w-0">
+          <GitBranch className={`w-4 h-4 flex-shrink-0 ${
+            branch.isCurrent ? "text-[var(--color-highlight)]" : "text-[var(--color-text-muted)]"
+          }`} />
+          <span className={`text-sm truncate ${
+            branch.isCurrent ? "text-[var(--color-highlight)] font-medium" : "text-[var(--color-text)]"
+          }`}>
+            {displayName}
+          </span>
+        </div>
+        {branch.isCurrent && (
+          <Check className="w-4 h-4 text-[var(--color-highlight)] flex-shrink-0" />
+        )}
+      </button>
+
+      {/* Actions Panel */}
+      <AnimatePresence>
+        {isSelected && !branch.isCurrent && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: "auto", opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            className="overflow-hidden"
+          >
+            <div
+              className="py-2 space-y-1"
+              style={{ paddingLeft: `${depth * 16 + 28}px`, paddingRight: "8px" }}
+            >
+              <button
+                onClick={() => {
+                  onCheckout(branch);
+                  onClose();
+                }}
+                className="w-full flex items-center gap-2 px-3 py-2 text-sm text-white bg-[var(--color-highlight)] hover:opacity-90 rounded-lg transition-colors"
+              >
+                <Check className="w-4 h-4" />
+                Checkout
+              </button>
+              <button
+                onClick={() => {
+                  onMerge(branch);
+                  onClose();
+                }}
+                className="w-full flex items-center gap-2 px-3 py-2 text-sm text-[var(--color-text)] hover:bg-[var(--color-bg)] rounded-lg transition-colors"
+              >
+                <GitMerge className="w-4 h-4" />
+                Merge into current
+              </button>
+              <div className="border-t border-[var(--color-border)] my-1" />
+              <button
+                onClick={() => {
+                  onRename(branch);
+                  onClose();
+                }}
+                className="w-full flex items-center gap-2 px-3 py-2 text-sm text-[var(--color-text)] hover:bg-[var(--color-bg)] rounded-lg transition-colors"
+              >
+                <Edit3 className="w-4 h-4" />
+                Rename
+              </button>
+              <button
+                onClick={() => {
+                  onDelete(branch);
+                  onClose();
+                }}
+                className="w-full flex items-center gap-2 px-3 py-2 text-sm text-[var(--color-error)] hover:bg-[var(--color-error)]/10 rounded-lg transition-colors"
+              >
+                <Trash2 className="w-4 h-4" />
+                Delete
+              </button>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+}
+
+// Remote branch item component with actions
+interface RemoteBranchItemProps {
+  branch: Branch;
+  displayName: string;
+  isSelected: boolean;
+  depth: number;
+  onBranchClick: (branch: Branch) => void;
+  onCheckout: (branch: Branch) => void;
+  onPullMerge?: (branch: Branch) => void;
+  onPullRebase?: (branch: Branch) => void;
+  onClose: () => void;
+}
+
+function RemoteBranchItem({
+  branch,
+  displayName,
+  isSelected,
+  depth,
+  onBranchClick,
+  onCheckout,
+  onPullMerge,
+  onPullRebase,
+  onClose,
+}: RemoteBranchItemProps) {
+  return (
+    <div>
+      <button
+        onClick={() => onBranchClick(branch)}
+        style={{ paddingLeft: `${depth * 16 + 12}px` }}
+        className={`w-full flex items-center justify-between pr-3 py-2 rounded-lg transition-colors text-left
+          ${isSelected
+            ? "bg-[var(--color-bg-tertiary)]"
+            : "hover:bg-[var(--color-bg-tertiary)]"
+          }`}
+      >
+        <div className="flex items-center gap-2 min-w-0">
+          <GitBranch className="w-4 h-4 flex-shrink-0 text-[var(--color-text-muted)]" />
+          <span className="text-sm text-[var(--color-text)] truncate">
+            {displayName}
+          </span>
+        </div>
+      </button>
+
+      {/* Actions Panel */}
+      <AnimatePresence>
+        {isSelected && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: "auto", opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            className="overflow-hidden"
+          >
+            <div
+              className="py-2 space-y-1"
+              style={{ paddingLeft: `${depth * 16 + 28}px`, paddingRight: "8px" }}
+            >
+              <button
+                onClick={() => {
+                  onCheckout(branch);
+                  onClose();
+                }}
+                className="w-full flex items-center gap-2 px-3 py-2 text-sm text-white bg-[var(--color-highlight)] hover:opacity-90 rounded-lg transition-colors"
+              >
+                <Check className="w-4 h-4" />
+                Checkout
+              </button>
+              {onPullMerge && (
+                <button
+                  onClick={() => {
+                    onPullMerge(branch);
+                    onClose();
+                  }}
+                  className="w-full flex items-center gap-2 px-3 py-2 text-sm text-[var(--color-text)] hover:bg-[var(--color-bg)] rounded-lg transition-colors"
+                >
+                  <ArrowDownToLine className="w-4 h-4" />
+                  Pull (merge)
+                </button>
+              )}
+              {onPullRebase && (
+                <button
+                  onClick={() => {
+                    onPullRebase(branch);
+                    onClose();
+                  }}
+                  className="w-full flex items-center gap-2 px-3 py-2 text-sm text-[var(--color-text)] hover:bg-[var(--color-bg)] rounded-lg transition-colors"
+                >
+                  <ArrowDownToLine className="w-4 h-4" />
+                  Pull (rebase)
+                </button>
+              )}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
   );
 }

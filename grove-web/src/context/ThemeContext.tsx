@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, useEffect } from "react";
+import { createContext, useContext, useState, useEffect, useMemo } from "react";
 import type { ReactNode } from "react";
 
 // Theme definitions matching TUI themes
@@ -21,9 +21,19 @@ export interface Theme {
   id: string;
   name: string;
   colors: ThemeColors;
+  isAuto?: boolean; // Marker for auto theme
 }
 
+// Auto theme placeholder - colors will be resolved dynamically
+const autoTheme: Theme = {
+  id: "auto",
+  name: "Auto",
+  colors: {} as ThemeColors, // Will be resolved to dark/light
+  isAuto: true,
+};
+
 export const themes: Theme[] = [
+  autoTheme,
   {
     id: "dark",
     name: "Dark",
@@ -159,19 +169,62 @@ interface ThemeContextType {
 
 const ThemeContext = createContext<ThemeContextType | undefined>(undefined);
 
-export function ThemeProvider({ children }: { children: ReactNode }) {
-  const [theme, setThemeState] = useState<Theme>(themes[0]);
+// Helper to detect system dark mode
+function getSystemIsDark(): boolean {
+  return window.matchMedia?.("(prefers-color-scheme: dark)").matches ?? true;
+}
 
+// Get the dark theme definition
+function getDarkTheme(): Theme {
+  return themes.find((t) => t.id === "dark") || themes[1];
+}
+
+// Get the light theme definition
+function getLightTheme(): Theme {
+  return themes.find((t) => t.id === "light") || themes[2];
+}
+
+export function ThemeProvider({ children }: { children: ReactNode }) {
+  // Store the selected theme ID (could be "auto")
+  const [selectedThemeId, setSelectedThemeId] = useState<string>("auto");
+  // Track system dark mode for auto theme
+  const [systemIsDark, setSystemIsDark] = useState<boolean>(getSystemIsDark);
+
+  // Load saved theme on mount
   useEffect(() => {
     const savedTheme = localStorage.getItem("grove-theme");
     if (savedTheme) {
       const found = themes.find((t) => t.id === savedTheme);
-      if (found) setThemeState(found);
+      if (found) setSelectedThemeId(savedTheme);
     }
   }, []);
 
+  // Listen for system theme changes
   useEffect(() => {
-    // Apply CSS variables to root
+    const mediaQuery = window.matchMedia("(prefers-color-scheme: dark)");
+    const handleChange = (e: MediaQueryListEvent) => {
+      setSystemIsDark(e.matches);
+    };
+
+    mediaQuery.addEventListener("change", handleChange);
+    return () => mediaQuery.removeEventListener("change", handleChange);
+  }, []);
+
+  // Resolve the actual theme to use
+  const theme = useMemo<Theme>(() => {
+    if (selectedThemeId === "auto") {
+      // Return auto theme with resolved colors
+      const resolvedTheme = systemIsDark ? getDarkTheme() : getLightTheme();
+      return {
+        ...autoTheme,
+        colors: resolvedTheme.colors,
+      };
+    }
+    return themes.find((t) => t.id === selectedThemeId) || getDarkTheme();
+  }, [selectedThemeId, systemIsDark]);
+
+  // Apply CSS variables when theme changes
+  useEffect(() => {
     const root = document.documentElement;
     const colors = theme.colors;
     root.style.setProperty("--color-bg", colors.bg);
@@ -191,7 +244,7 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
   const setTheme = (themeId: string) => {
     const found = themes.find((t) => t.id === themeId);
     if (found) {
-      setThemeState(found);
+      setSelectedThemeId(themeId);
       localStorage.setItem("grove-theme", themeId);
     }
   };

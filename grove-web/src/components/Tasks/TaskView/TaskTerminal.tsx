@@ -1,126 +1,30 @@
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
 import { motion } from "framer-motion";
 import { Terminal as TerminalIcon, Play, ChevronRight } from "lucide-react";
 import { Button } from "../../ui";
 import type { Task } from "../../../data/types";
-import { mockTerminalOutput } from "../../../data/mockData";
+import { XTerminal } from "../TaskDetail/XTerminal";
 
 interface TaskTerminalProps {
+  /** Project ID for the task */
+  projectId: string;
+  /** Task to display */
   task: Task;
   collapsed?: boolean;
   onExpand?: () => void;
   onStartSession: () => void;
 }
 
-// Parse ANSI codes and convert to styled spans
-function parseAnsiToHtml(text: string): React.ReactNode[] {
-  const result: React.ReactNode[] = [];
-  let currentIndex = 0;
-  let key = 0;
-
-  // Simple ANSI color mappings
-  const colorMap: Record<string, string> = {
-    "30": "#1a1a1a",
-    "31": "var(--color-error)",
-    "32": "var(--color-success)",
-    "33": "var(--color-warning)",
-    "34": "var(--color-info)",
-    "35": "#a855f7",
-    "36": "#22d3ee",
-    "37": "var(--color-text)",
-    "90": "var(--color-text-muted)",
-  };
-
-  const regex = /\x1b\[([0-9;]*)m/g;
-  let match;
-  let currentStyle: React.CSSProperties = {};
-
-  while ((match = regex.exec(text)) !== null) {
-    // Add text before this match
-    if (match.index > currentIndex) {
-      const textBefore = text.slice(currentIndex, match.index);
-      result.push(
-        <span key={key++} style={currentStyle}>
-          {textBefore}
-        </span>
-      );
-    }
-
-    // Parse the ANSI code
-    const codes = match[1].split(";");
-    for (const code of codes) {
-      if (code === "0" || code === "") {
-        // Reset
-        currentStyle = {};
-      } else if (code === "1") {
-        // Bold
-        currentStyle = { ...currentStyle, fontWeight: "bold" };
-      } else if (colorMap[code]) {
-        // Color
-        currentStyle = { ...currentStyle, color: colorMap[code] };
-      }
-    }
-
-    currentIndex = match.index + match[0].length;
-  }
-
-  // Add remaining text
-  if (currentIndex < text.length) {
-    result.push(
-      <span key={key++} style={currentStyle}>
-        {text.slice(currentIndex)}
-      </span>
-    );
-  }
-
-  return result;
-}
-
-export function TaskTerminal({ task, collapsed = false, onExpand, onStartSession }: TaskTerminalProps) {
-  const containerRef = useRef<HTMLDivElement>(null);
-  const [displayedContent, setDisplayedContent] = useState("");
-  const [cursorVisible, setCursorVisible] = useState(true);
+export function TaskTerminal({
+  projectId,
+  task,
+  collapsed = false,
+  onExpand,
+  onStartSession,
+}: TaskTerminalProps) {
+  const [isConnected, setIsConnected] = useState(false);
 
   const isLive = task.status === "live";
-
-  // Simulate terminal output for live tasks
-  useEffect(() => {
-    if (!isLive) {
-      setDisplayedContent("");
-      return;
-    }
-
-    // Gradually "type" the output
-    let charIndex = 0;
-    const content = mockTerminalOutput;
-
-    const typeInterval = setInterval(() => {
-      if (charIndex < content.length) {
-        setDisplayedContent(content.slice(0, charIndex + 1));
-        charIndex++;
-      } else {
-        clearInterval(typeInterval);
-      }
-    }, 15);
-
-    return () => clearInterval(typeInterval);
-  }, [isLive, task.id]);
-
-  // Cursor blink effect
-  useEffect(() => {
-    const blinkInterval = setInterval(() => {
-      setCursorVisible((prev) => !prev);
-    }, 530);
-
-    return () => clearInterval(blinkInterval);
-  }, []);
-
-  // Auto-scroll to bottom
-  useEffect(() => {
-    if (containerRef.current) {
-      containerRef.current.scrollTop = containerRef.current.scrollHeight;
-    }
-  }, [displayedContent]);
 
   // Collapsed mode: vertical bar
   if (collapsed) {
@@ -140,7 +44,7 @@ export function TaskTerminal({ task, collapsed = false, onExpand, onStartSession
           </div>
 
           {/* Live indicator */}
-          {isLive && (
+          {isConnected && (
             <div className="p-3">
               <div className="w-2.5 h-2.5 rounded-full bg-[var(--color-success)] animate-pulse" />
             </div>
@@ -161,7 +65,7 @@ export function TaskTerminal({ task, collapsed = false, onExpand, onStartSession
     );
   }
 
-  // Not live: show start session prompt
+  // Not live: show start session prompt (keep for idle tasks)
   if (!isLive) {
     return (
       <motion.div
@@ -188,7 +92,7 @@ export function TaskTerminal({ task, collapsed = false, onExpand, onStartSession
     );
   }
 
-  // Full terminal view
+  // Full terminal view - Real xterm.js with tmux session
   return (
     <motion.div
       layout
@@ -203,26 +107,23 @@ export function TaskTerminal({ task, collapsed = false, onExpand, onStartSession
           <span>Terminal</span>
         </div>
         <div className="flex items-center gap-1.5">
-          <div className="w-2.5 h-2.5 rounded-full bg-[var(--color-success)] animate-pulse" />
-          <span className="text-xs text-[var(--color-text-muted)]">Live</span>
+          <div
+            className={`w-2.5 h-2.5 rounded-full ${isConnected ? "bg-[var(--color-success)] animate-pulse" : "bg-[var(--color-warning)]"}`}
+          />
+          <span className="text-xs text-[var(--color-text-muted)]">
+            {isConnected ? "Connected" : "Connecting..."}
+          </span>
         </div>
       </div>
 
-      {/* Terminal Content */}
-      <div
-        ref={containerRef}
-        className="flex-1 p-3 overflow-y-auto font-mono text-sm leading-relaxed"
-        style={{ backgroundColor: "#0d0d0d" }}
-      >
-        <pre className="whitespace-pre-wrap text-[var(--color-text)]">
-          {parseAnsiToHtml(displayedContent)}
-          {displayedContent.endsWith("█") ? null : (
-            <span
-              className="inline-block w-2 h-4 bg-[var(--color-text)]"
-              style={{ opacity: cursorVisible ? 1 : 0 }}
-            />
-          )}
-        </pre>
+      {/* Terminal Content - Real xterm.js with tmux session */}
+      <div className="flex-1 min-h-0">
+        <XTerminal
+          projectId={projectId}
+          taskId={task.id}
+          onConnected={() => setIsConnected(true)}
+          onDisconnected={() => setIsConnected(false)}
+        />
       </div>
     </motion.div>
   );

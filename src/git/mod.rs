@@ -158,6 +158,8 @@ pub fn list_branches(repo_path: &str) -> Result<Vec<String>, String> {
             .lines()
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty())
+            // Filter out detached HEAD states like "(HEAD detached at origin/master)"
+            .filter(|s| !s.starts_with('('))
             .collect()
     })
 }

@@ -18,12 +18,25 @@ pub struct Config {
     pub layout: LayoutConfig,
     #[serde(default)]
     pub mcp: McpConfig,
+    #[serde(default)]
+    pub web: WebConfig,
 }
 
 /// MCP Server 配置（预留扩展）
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct McpConfig {
     // 预留字段，目前仅用于显示配置说明
+}
+
+/// Web 专用配置（TUI 会忽略未知字段）
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct WebConfig {
+    /// IDE 命令 (e.g., "code", "cursor", "rustrover")
+    #[serde(default)]
+    pub ide: Option<String>,
+    /// Terminal 命令 (e.g., "iterm", "warp", "kitty")
+    #[serde(default)]
+    pub terminal: Option<String>,
 }
 
 /// 自定义布局配置
@@ -45,6 +58,9 @@ pub struct LayoutConfig {
     /// 自定义布局配置
     #[serde(default)]
     pub custom: Option<CustomLayoutConfig>,
+    /// 选中的自定义布局 ID（当 default="custom" 时使用）
+    #[serde(default)]
+    pub selected_custom_id: Option<String>,
 }
 
 fn default_layout_name() -> String {
@@ -57,6 +73,7 @@ impl Default for LayoutConfig {
             default: default_layout_name(),
             agent_command: None,
             custom: None,
+            selected_custom_id: None,
         }
     }
 }

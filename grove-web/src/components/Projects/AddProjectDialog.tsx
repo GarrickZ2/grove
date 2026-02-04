@@ -6,15 +6,17 @@ import { Button } from "../ui";
 interface AddProjectDialogProps {
   isOpen: boolean;
   onClose: () => void;
-  onAdd: (path: string) => void;
+  onAdd: (path: string, name?: string) => void | Promise<void>;
+  isLoading?: boolean;
+  externalError?: string | null;
 }
 
-export function AddProjectDialog({ isOpen, onClose, onAdd }: AddProjectDialogProps) {
+export function AddProjectDialog({ isOpen, onClose, onAdd, isLoading, externalError }: AddProjectDialogProps) {
   const [path, setPath] = useState("");
   const [error, setError] = useState("");
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const handleSubmit = () => {
+  const handleSubmit = async () => {
     if (!path.trim()) {
       setError("Project path is required");
       return;
@@ -26,8 +28,8 @@ export function AddProjectDialog({ isOpen, onClose, onAdd }: AddProjectDialogPro
       return;
     }
 
-    onAdd(path.trim());
-    handleClose();
+    setError("");
+    await onAdd(path.trim());
   };
 
   const handleClose = () => {
@@ -131,8 +133,8 @@ export function AddProjectDialog({ isOpen, onClose, onAdd }: AddProjectDialogPro
                       Browse
                     </Button>
                   </div>
-                  {error && (
-                    <p className="text-xs text-[var(--color-error)] mt-1.5">{error}</p>
+                  {(error || externalError) && (
+                    <p className="text-xs text-[var(--color-error)] mt-1.5">{error || externalError}</p>
                   )}
                 </div>
 
@@ -146,12 +148,12 @@ export function AddProjectDialog({ isOpen, onClose, onAdd }: AddProjectDialogPro
 
               {/* Actions */}
               <div className="flex justify-end gap-3 px-5 py-4 bg-[var(--color-bg)] border-t border-[var(--color-border)]">
-                <Button variant="secondary" onClick={handleClose}>
+                <Button variant="secondary" onClick={handleClose} disabled={isLoading}>
                   Cancel
                 </Button>
-                <Button onClick={handleSubmit}>
+                <Button onClick={handleSubmit} disabled={isLoading}>
                   <Plus className="w-4 h-4 mr-1.5" />
-                  Add Project
+                  {isLoading ? "Adding..." : "Add Project"}
                 </Button>
               </div>
             </div>

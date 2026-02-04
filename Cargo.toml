@@ -33,6 +33,15 @@ notify = "6.1"
 rmcp = { version = "0.14", features = ["server", "transport-io"] }
 tokio = { version = "1", features = ["full"] }
 
+# Web API Server
+axum = { version = "0.8", features = ["ws"] }
+tower-http = { version = "0.6", features = ["cors", "fs"] }
+open = "5"
+
+# Terminal WebSocket
+portable-pty = "0.8"
+futures = "0.3"
+
 # Config for 'cargo dist'
 [workspace.metadata.dist]
 # CI backends to support

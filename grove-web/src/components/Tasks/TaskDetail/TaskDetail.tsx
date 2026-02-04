@@ -11,25 +11,26 @@ import { StatsTab } from "./tabs/StatsTab";
 import type { Task } from "../../../data/types";
 
 interface TaskDetailProps {
+  /** Project ID for the task */
+  projectId: string;
   task: Task;
   onSync: () => void;
   onMerge: () => void;
   onArchive: () => void;
   onClean: () => void;
   onRecover: () => void;
-  onStartSession: () => void;
 }
 
 export type TabType = "git" | "notes" | "review" | "ai" | "stats";
 
 export function TaskDetail({
+  projectId,
   task,
   onSync,
   onMerge,
   onArchive,
   onClean,
   onRecover,
-  onStartSession,
 }: TaskDetailProps) {
   const [activeTab, setActiveTab] = useState<TabType>("git");
 
@@ -55,10 +56,7 @@ export function TaskDetail({
 
       {/* Terminal (only for live/idle tasks) */}
       {task.status !== "archived" && task.status !== "merged" && (
-        <TaskTerminal
-          task={task}
-          onStartSession={onStartSession}
-        />
+        <TaskTerminal projectId={projectId} task={task} />
       )}
 
       {/* Tabs */}

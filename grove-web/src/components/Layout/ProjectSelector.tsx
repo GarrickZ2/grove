@@ -127,8 +127,9 @@ interface ProjectItemProps {
 }
 
 function ProjectItem({ project, isSelected, onClick }: ProjectItemProps) {
-  const liveCount = project.tasks.filter((t) => t.status === "live").length;
-  const totalCount = project.tasks.length;
+  // Use taskCount/liveCount from list API, or calculate from tasks array if full project loaded
+  const totalCount = project.taskCount ?? project.tasks.length;
+  const liveCount = project.liveCount ?? project.tasks.filter((t) => t.status === "live").length;
 
   return (
     <button

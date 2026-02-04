@@ -3,6 +3,7 @@
 pub mod fp;
 pub mod hooks;
 pub mod mcp;
+pub mod web;
 
 use clap::{Parser, Subcommand};
 
@@ -26,4 +27,16 @@ pub enum Commands {
     Mcp,
     /// Interactive file picker using fzf
     Fp,
+    /// Start the web UI server (API + frontend)
+    Web {
+        /// Port to listen on
+        #[arg(short, long, default_value_t = web::DEFAULT_PORT)]
+        port: u16,
+        /// Don't automatically open browser
+        #[arg(long)]
+        no_open: bool,
+        /// Development mode (run Vite dev server with HMR)
+        #[arg(long)]
+        dev: bool,
+    },
 }

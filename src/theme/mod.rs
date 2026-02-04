@@ -50,16 +50,17 @@ impl Theme {
     }
 
     /// 从名称创建主题（用于配置加载）
+    /// 支持两种格式：label（如 "Dark", "Tokyo Night"）和 id（如 "dark", "tokyo-night"）
     pub fn from_name(name: &str) -> Self {
-        match name {
-            "Auto" => Theme::Auto,
-            "Dark" => Theme::Dark,
-            "Light" => Theme::Light,
-            "Dracula" => Theme::Dracula,
-            "Nord" => Theme::Nord,
-            "Gruvbox" => Theme::Gruvbox,
-            "Tokyo Night" => Theme::TokyoNight,
-            "Catppuccin" => Theme::Catppuccin,
+        match name.to_lowercase().as_str() {
+            "auto" => Theme::Auto,
+            "dark" => Theme::Dark,
+            "light" => Theme::Light,
+            "dracula" => Theme::Dracula,
+            "nord" => Theme::Nord,
+            "gruvbox" => Theme::Gruvbox,
+            "tokyo night" | "tokyo-night" | "tokyonight" => Theme::TokyoNight,
+            "catppuccin" => Theme::Catppuccin,
             _ => Theme::Auto, // 默认 Auto
         }
     }

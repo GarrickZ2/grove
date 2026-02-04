@@ -1,3 +1,4 @@
+mod api;
 mod app;
 mod check;
 mod cli;
@@ -60,6 +61,13 @@ fn main() -> io::Result<()> {
             }
             Commands::Fp => {
                 cli::fp::execute();
+            }
+            Commands::Web { port, no_open, dev } => {
+                tokio::runtime::Runtime::new()
+                    .expect("Failed to create tokio runtime")
+                    .block_on(async {
+                        cli::web::execute(port, no_open, dev).await;
+                    });
             }
         }
         return Ok(());

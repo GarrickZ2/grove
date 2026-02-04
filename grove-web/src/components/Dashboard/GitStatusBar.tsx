@@ -4,7 +4,6 @@ import {
   ArrowDown,
   ArrowUp,
   GitCommit,
-  Archive,
   RefreshCw,
   ChevronRight,
   FileEdit,
@@ -18,7 +17,6 @@ interface GitStatusBarProps {
   onPull: () => void;
   onPush: () => void;
   onCommit: () => void;
-  onStash: () => void;
   onFetch: () => void;
 }
 
@@ -28,12 +26,10 @@ export function GitStatusBar({
   onPull,
   onPush,
   onCommit,
-  onStash,
   onFetch,
 }: GitStatusBarProps) {
   const hasChanges = status.staged + status.unstaged + status.untracked > 0;
   const hasStagedChanges = status.staged > 0 || status.unstaged > 0;
-  const totalChanges = status.staged + status.unstaged + status.untracked;
 
   // Determine sync status
   const getSyncColor = () => {
@@ -90,23 +86,23 @@ export function GitStatusBar({
             </div>
           </div>
 
-          {/* Changes Card */}
-          <div className="flex items-center gap-3 px-4 py-2.5 rounded-lg bg-[var(--color-bg)] border border-[var(--color-border)]">
-            <div
-              className="w-8 h-8 rounded-lg flex items-center justify-center"
-              style={{ backgroundColor: hasChanges ? "color-mix(in srgb, var(--color-warning) 15%, transparent)" : "color-mix(in srgb, var(--color-success) 15%, transparent)" }}
-            >
-              <FileEdit className="w-4 h-4" style={{ color: hasChanges ? "var(--color-warning)" : "var(--color-success)" }} />
-            </div>
-            <div>
-              <div className="text-sm font-semibold" style={{ color: hasChanges ? "var(--color-warning)" : "var(--color-success)" }}>
-                {hasChanges ? `+${status.staged + status.unstaged} (${totalChanges})` : "Clean"}
+          {/* Uncommitted Changes Card */}
+          {hasChanges && (
+            <div className="flex items-center gap-3 px-4 py-2.5 rounded-lg bg-[var(--color-bg)] border border-[var(--color-border)]">
+              <div
+                className="w-8 h-8 rounded-lg flex items-center justify-center"
+                style={{ backgroundColor: "color-mix(in srgb, var(--color-warning) 15%, transparent)" }}
+              >
+                <FileEdit className="w-4 h-4" style={{ color: "var(--color-warning)" }} />
               </div>
-              <div className="text-xs text-[var(--color-text-muted)]">
-                {hasChanges ? "Uncommitted" : "Working tree"}
+              <div>
+                <div className="text-sm font-semibold" style={{ color: "var(--color-warning)" }}>
+                  {status.unstaged} files
+                </div>
+                <div className="text-xs text-[var(--color-text-muted)]">Uncommitted</div>
               </div>
             </div>
-          </div>
+          )}
         </div>
 
         {/* Right: Actions */}
@@ -129,12 +125,6 @@ export function GitStatusBar({
             onClick={onCommit}
             disabled={!hasStagedChanges}
             highlight={hasStagedChanges}
-          />
-          <ActionButton
-            icon={Archive}
-            label="Stash"
-            onClick={onStash}
-            disabled={!hasChanges}
           />
           <ActionButton
             icon={RefreshCw}

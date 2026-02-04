@@ -5,7 +5,8 @@ export interface Commit {
   hash: string;
   message: string;
   author: string;
-  date: Date;
+  date?: Date;
+  timeAgo?: string;  // pre-formatted time string from API (e.g., "2 hours ago")
   files?: CommitFileChange[];  // expanded view shows file changes
 }
 
@@ -30,6 +31,9 @@ export interface Project {
   currentBranch: string;
   tasks: Task[];
   addedAt: Date;
+  // These are from ProjectListItem, used for display before full project is loaded
+  taskCount?: number;
+  liveCount?: number;
 }
 
 export type ActivityType = 'create' | 'merge' | 'sync' | 'archive' | 'recover';

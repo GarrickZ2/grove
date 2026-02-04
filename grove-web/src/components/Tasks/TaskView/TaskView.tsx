@@ -6,6 +6,8 @@ import { TaskCodeReview } from "./TaskCodeReview";
 import type { Task } from "../../../data/types";
 
 interface TaskViewProps {
+  /** Project ID for the task */
+  projectId: string;
   task: Task;
   reviewOpen: boolean;
   onToggleReview: () => void;
@@ -20,6 +22,7 @@ interface TaskViewProps {
 }
 
 export function TaskView({
+  projectId,
   task,
   reviewOpen,
   onToggleReview,
@@ -68,6 +71,7 @@ export function TaskView({
       <div className="flex-1 flex gap-3 mt-3 min-h-0">
         {/* Terminal - collapses to vertical bar when review is open */}
         <TaskTerminal
+          projectId={projectId}
           task={task}
           collapsed={reviewOpen}
           onExpand={handleExpandTerminal}

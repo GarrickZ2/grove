@@ -7,10 +7,11 @@ interface DeleteProjectDialogProps {
   isOpen: boolean;
   project: Project | null;
   onClose: () => void;
-  onConfirm: () => void;
+  onConfirm: () => void | Promise<void>;
+  isLoading?: boolean;
 }
 
-export function DeleteProjectDialog({ isOpen, project, onClose, onConfirm }: DeleteProjectDialogProps) {
+export function DeleteProjectDialog({ isOpen, project, onClose, onConfirm, isLoading }: DeleteProjectDialogProps) {
   if (!project) return null;
 
   return (
@@ -67,15 +68,16 @@ export function DeleteProjectDialog({ isOpen, project, onClose, onConfirm }: Del
 
               {/* Actions */}
               <div className="flex justify-end gap-3 px-5 py-4 bg-[var(--color-bg)] border-t border-[var(--color-border)]">
-                <Button variant="secondary" onClick={onClose}>
+                <Button variant="secondary" onClick={onClose} disabled={isLoading}>
                   Cancel
                 </Button>
                 <Button
                   onClick={onConfirm}
+                  disabled={isLoading}
                   className="bg-[var(--color-error)] hover:bg-[var(--color-error)]/90"
                 >
                   <Trash2 className="w-4 h-4 mr-1.5" />
-                  Delete
+                  {isLoading ? "Deleting..." : "Delete"}
                 </Button>
               </div>
             </div>
