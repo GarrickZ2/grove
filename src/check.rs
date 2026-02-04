@@ -58,6 +58,15 @@ fn check_git() -> bool {
         .unwrap_or(false)
 }
 
+/// Check if fzf is installed (for grove fp command)
+pub fn check_fzf() -> bool {
+    Command::new("fzf")
+        .arg("--version")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+}
+
 enum TmuxCheck {
     Ok,
     NotInstalled,

@@ -1,5 +1,6 @@
 //! CLI 模块
 
+pub mod fp;
 pub mod hooks;
 pub mod mcp;
 
@@ -23,4 +24,6 @@ pub enum Commands {
     },
     /// Start MCP server (stdio transport) for AI integration
     Mcp,
+    /// Interactive file picker using fzf
+    Fp,
 }

@@ -52,7 +52,7 @@ pub struct ConfigPanelData {
     pub custom_build_path: Vec<PathSegment>,
     /// Custom layout: 正在构建的树
     pub custom_build_root: Option<LayoutNode>,
-    /// Custom layout: 选择列表光标 (0=SplitH, 1=SplitV, 2=separator, 3=Agent, 4=Grove, 5=Shell, 6=Custom)
+    /// Custom layout: 选择列表光标 (0=SplitH, 1=SplitV, 2=Agent, 3=Grove, 4=Shell, 5=FilePicker, 6=Custom)
     pub custom_choose_selected: usize,
     /// Custom layout: 自定义命令输入
     pub custom_cmd_input: String,
@@ -571,7 +571,7 @@ fn render_custom_choose(
     click_areas: &mut ClickAreas,
 ) {
     let area = frame.area();
-    let height: u16 = 17;
+    let height: u16 = 18;
 
     let x = area.width.saturating_sub(DIALOG_WIDTH) / 2;
     let y = area.height.saturating_sub(height) / 2;
@@ -600,7 +600,7 @@ fn render_custom_choose(
             Constraint::Length(1),
             Constraint::Length(1),
             Constraint::Length(1),
-            Constraint::Length(7), // 2 splits + separator + 4 leaves
+            Constraint::Length(8), // 2 splits + separator + 5 leaves
             Constraint::Min(0),
             Constraint::Length(1),
             Constraint::Length(1),
@@ -624,14 +624,15 @@ fn render_custom_choose(
     // split 可选：split 会将 1 个 placeholder 变为 2（+1 pane），需要剩余容量 >= 2
     let can_split = current_panes < CUSTOM_MAX_PANES;
 
-    // 选项列表：0=SplitH, 1=SplitV, 2=separator, 3=Agent, 4=Grove, 5=Shell, 6=Custom
-    let items: [(&str, bool); 7] = [
+    // 选项列表：0=SplitH, 1=SplitV, 2=separator, 3=Agent, 4=Grove, 5=Shell, 6=FilePicker, 7=Custom
+    let items: [(&str, bool); 8] = [
         ("Split Horizontal \u{2500}", can_split),
         ("Split Vertical   \u{2502}", can_split),
         ("\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}", false), // separator
         ("Agent", true),
         ("Grove (monitor)", true),
         ("Shell", true),
+        ("FilePicker (fzf)", true),
         ("Custom command...", true),
     ];
 

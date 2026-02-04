@@ -12,6 +12,7 @@ pub enum PaneRole {
     Agent,
     Grove,
     Shell,
+    FilePicker,
     Custom(String),
 }
 
@@ -362,6 +363,9 @@ fn apply_node(
                 }
                 PaneRole::Shell => {
                     // shell 不需要发命令
+                }
+                PaneRole::FilePicker => {
+                    send_keys(target_pane, "grove fp")?;
                 }
                 PaneRole::Custom(cmd) => {
                     if !cmd.is_empty() {

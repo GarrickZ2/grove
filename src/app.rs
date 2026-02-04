@@ -3134,9 +3134,9 @@ impl App {
                     }
                 }
                 ConfigStep::CustomChoose => {
-                    // 6 logical items: 0=SplitH, 1=SplitV, 2=Agent, 3=Grove, 4=Shell, 5=Custom
+                    // 7 logical items: 0=SplitH, 1=SplitV, 2=Agent, 3=Grove, 4=Shell, 5=FilePicker, 6=Custom
                     if panel.custom_choose_selected == 0 {
-                        panel.custom_choose_selected = 5;
+                        panel.custom_choose_selected = 6;
                     } else {
                         panel.custom_choose_selected -= 1;
                     }
@@ -3161,7 +3161,7 @@ impl App {
                     panel.layout_selected = (panel.layout_selected + 1) % count;
                 }
                 ConfigStep::CustomChoose => {
-                    panel.custom_choose_selected = (panel.custom_choose_selected + 1) % 6;
+                    panel.custom_choose_selected = (panel.custom_choose_selected + 1) % 7;
                 }
                 ConfigStep::HookWizard => {
                     panel.hook_data.select_next();
@@ -3441,19 +3441,20 @@ impl App {
                     self.config_custom_advance();
                 }
             }
-            // 2 = Agent, 3 = Grove, 4 = Shell
-            2..=4 => {
+            // 2 = Agent, 3 = Grove, 4 = Shell, 5 = FilePicker
+            2..=5 => {
                 let role = match selected {
                     2 => PaneRole::Agent,
                     3 => PaneRole::Grove,
                     4 => PaneRole::Shell,
+                    5 => PaneRole::FilePicker,
                     _ => unreachable!(),
                 };
                 let node = LayoutNode::Pane { pane: role };
                 self.config_custom_set_leaf(node);
             }
-            // 5 = Custom command
-            5 => {
+            // 6 = Custom command
+            6 => {
                 if let Some(ref mut panel) = self.config_panel {
                     panel.step = ConfigStep::CustomPaneCommand;
                     panel.custom_cmd_input.clear();

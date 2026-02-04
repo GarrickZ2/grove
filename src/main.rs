@@ -58,6 +58,9 @@ fn main() -> io::Result<()> {
                         }
                     });
             }
+            Commands::Fp => {
+                cli::fp::execute();
+            }
         }
         return Ok(());
     }
