@@ -170,8 +170,8 @@ fn load_replies(project: &str, task_id: &str) -> io::Result<RepliesMap> {
 /// 保存 AI 回复数据
 fn save_replies(project: &str, task_id: &str, replies: &RepliesMap) -> io::Result<()> {
     let path = replies_path(project, task_id)?;
-    let content =
-        serde_json::to_string_pretty(replies).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+    let content = serde_json::to_string_pretty(replies)
+        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
     std::fs::write(&path, content)
 }
 

@@ -449,10 +449,7 @@ fn run_watcher_thread(
 
             if let Ok(mut pending) = pending_events.write() {
                 for (task_id, event) in batch {
-                    pending
-                        .entry(task_id)
-                        .or_insert_with(Vec::new)
-                        .push(event);
+                    pending.entry(task_id).or_insert_with(Vec::new).push(event);
                     event_count_since_flush += 1;
                 }
             }
@@ -473,4 +470,3 @@ fn run_watcher_thread(
         }
     }
 }
-

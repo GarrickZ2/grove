@@ -443,11 +443,7 @@ fn render_layout_selector(
 }
 
 /// 渲染 MCP 配置说明页面
-fn render_mcp_info(
-    frame: &mut Frame,
-    colors: &ThemeColors,
-    click_areas: &mut ClickAreas,
-) {
+fn render_mcp_info(frame: &mut Frame, colors: &ThemeColors, click_areas: &mut ClickAreas) {
     let area = frame.area();
     let height = DIALOG_HEIGHT_MCP;
 
@@ -499,10 +495,7 @@ fn render_mcp_info(
             "    \"grove\": { \"command\": \"grove\", \"args\": [\"mcp\"] }",
             Style::default().fg(colors.highlight),
         )),
-        Line::from(Span::styled(
-            "  }",
-            Style::default().fg(colors.highlight),
-        )),
+        Line::from(Span::styled("  }", Style::default().fg(colors.highlight))),
     ];
 
     let list = Paragraph::new(lines);

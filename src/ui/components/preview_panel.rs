@@ -461,7 +461,10 @@ pub fn render_diff_tab(
                 .add_modifier(Modifier::BOLD),
         ),
         Span::styled(
-            format!("  ({} open, {} resolved, {} not resolved)", open, resolved, not_resolved),
+            format!(
+                "  ({} open, {} resolved, {} not resolved)",
+                open, resolved, not_resolved
+            ),
             Style::default().fg(colors.muted),
         ),
     ]));
@@ -479,10 +482,7 @@ pub fn render_diff_tab(
                             .fg(colors.highlight)
                             .add_modifier(Modifier::BOLD),
                     ),
-                    Span::styled(
-                        &comment.location,
-                        Style::default().fg(colors.highlight),
-                    ),
+                    Span::styled(&comment.location, Style::default().fg(colors.highlight)),
                 ]));
             }
             CommentStatus::Resolved => {
@@ -519,10 +519,7 @@ pub fn render_diff_tab(
                             .fg(Color::Yellow)
                             .add_modifier(Modifier::BOLD),
                     ),
-                    Span::styled(
-                        &comment.location,
-                        Style::default().fg(colors.highlight),
-                    ),
+                    Span::styled(&comment.location, Style::default().fg(colors.highlight)),
                 ]));
             }
         }

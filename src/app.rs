@@ -319,7 +319,6 @@ impl ProjectState {
         self.notes_scroll = self.notes_scroll.saturating_sub(1);
     }
 
-
     /// 向下滚动 Git tab
     pub fn scroll_git_down(&mut self) {
         self.git_scroll += 1;
@@ -1181,7 +1180,10 @@ impl App {
         // Only create watcher to load history, don't start the background thread
         let watcher = FileWatcher::new(&self.monitor.project_key);
         // Load existing history without starting file monitoring
-        watcher.load_history_only(&self.monitor.task_id, Path::new(&self.monitor.worktree_path));
+        watcher.load_history_only(
+            &self.monitor.task_id,
+            Path::new(&self.monitor.worktree_path),
+        );
 
         self.file_watcher = Some(watcher);
     }
@@ -1486,7 +1488,13 @@ impl App {
             self.project.preview_visible = true;
         }
 
-        self.spawn_difit_thread(task_id, project_key, worktree_path, target_branch, availability);
+        self.spawn_difit_thread(
+            task_id,
+            project_key,
+            worktree_path,
+            target_branch,
+            availability,
+        );
     }
 
     /// 启动 difit 查看当前 Monitor 模式的 diff（后台执行）
@@ -1542,7 +1550,13 @@ impl App {
         // 启动时立即切换到 Diff tab
         self.monitor.content_tab = PreviewSubTab::Diff;
 
-        self.spawn_difit_thread(task_id, project_key, worktree_path, target_branch, availability);
+        self.spawn_difit_thread(
+            task_id,
+            project_key,
+            worktree_path,
+            target_branch,
+            availability,
+        );
     }
 
     /// 公共函数：启动 difit 后台监听线程
@@ -3144,7 +3158,9 @@ impl App {
                 ConfigStep::HookWizard => {
                     panel.hook_data.select_prev();
                 }
-                ConfigStep::EditAgentCommand | ConfigStep::CustomPaneCommand | ConfigStep::McpConfig => {}
+                ConfigStep::EditAgentCommand
+                | ConfigStep::CustomPaneCommand
+                | ConfigStep::McpConfig => {}
             }
         }
     }
@@ -3166,7 +3182,9 @@ impl App {
                 ConfigStep::HookWizard => {
                     panel.hook_data.select_next();
                 }
-                ConfigStep::EditAgentCommand | ConfigStep::CustomPaneCommand | ConfigStep::McpConfig => {}
+                ConfigStep::EditAgentCommand
+                | ConfigStep::CustomPaneCommand
+                | ConfigStep::McpConfig => {}
             }
         }
     }

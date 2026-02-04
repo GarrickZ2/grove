@@ -12,7 +12,8 @@ use std::env;
 use rmcp::{
     handler::server::{tool::ToolRouter, wrapper::Parameters},
     model::*,
-    schemars, schemars::JsonSchema,
+    schemars,
+    schemars::JsonSchema,
     tool, tool_handler, tool_router, ErrorData as McpError, ServerHandler, ServiceExt,
 };
 use serde::{Deserialize, Serialize};
@@ -232,9 +233,9 @@ impl GroveMcpServer {
         let project_key = project_hash(&project_path);
 
         match notes::load_notes(&project_key, &task_id) {
-            Ok(content) if content.is_empty() => {
-                Ok(CallToolResult::success(vec![Content::text("No notes yet.")]))
-            }
+            Ok(content) if content.is_empty() => Ok(CallToolResult::success(vec![Content::text(
+                "No notes yet.",
+            )])),
             Ok(content) => Ok(CallToolResult::success(vec![Content::text(content)])),
             Err(e) => Err(McpError::internal_error(
                 format!("Failed to read notes: {}", e),
@@ -284,7 +285,10 @@ impl GroveMcpServer {
         let project_key = project_hash(&project_path);
 
         if params.0.replies.is_empty() {
-            return Err(McpError::invalid_params("replies array cannot be empty", None));
+            return Err(McpError::invalid_params(
+                "replies array cannot be empty",
+                None,
+            ));
         }
 
         let mut results: Vec<String> = Vec::new();
@@ -346,7 +350,9 @@ impl GroveMcpServer {
             return Err(McpError::invalid_params(output.trim().to_string(), None));
         }
 
-        Ok(CallToolResult::success(vec![Content::text(output.trim().to_string())]))
+        Ok(CallToolResult::success(vec![Content::text(
+            output.trim().to_string(),
+        )]))
     }
 
     /// Complete the current task: commit, sync (rebase), and merge
@@ -370,8 +376,9 @@ impl GroveMcpServer {
             .map_err(|_| McpError::internal_error("GROVE_BRANCH not set", None))?;
 
         // Step 1: Check for uncommitted changes and commit if any
-        let has_changes = git::has_uncommitted_changes(&worktree_path)
-            .map_err(|e| McpError::internal_error(format!("Failed to check changes: {}", e), None))?;
+        let has_changes = git::has_uncommitted_changes(&worktree_path).map_err(|e| {
+            McpError::internal_error(format!("Failed to check changes: {}", e), None)
+        })?;
 
         let commit_hash = if has_changes {
             // git add -A
@@ -380,7 +387,10 @@ impl GroveMcpServer {
                 .args(["add", "-A"])
                 .output()
             {
-                return Err(McpError::internal_error(format!("git add failed: {}", e), None));
+                return Err(McpError::internal_error(
+                    format!("git add failed: {}", e),
+                    None,
+                ));
             }
 
             // git commit
@@ -392,7 +402,8 @@ impl GroveMcpServer {
                         commit_hash: None,
                         conflicts: None,
                         message: format!("Commit failed: {}", e),
-                    }).unwrap()
+                    })
+                    .unwrap(),
                 )]));
             }
 
@@ -438,7 +449,8 @@ impl GroveMcpServer {
                     commit_hash,
                     conflicts: None,
                     message: format!("Failed to checkout target branch: {}", e),
-                }).unwrap()
+                })
+                .unwrap(),
             )]));
         }
 
@@ -457,7 +469,8 @@ impl GroveMcpServer {
                     commit_hash,
                     conflicts: None,
                     message: format!("Merge failed: {}", e),
-                }).unwrap()
+                })
+                .unwrap(),
             )]));
         }
 
@@ -476,7 +489,6 @@ impl GroveMcpServer {
         Ok(CallToolResult::success(vec![Content::text(json)]))
     }
 }
-
 
 // ============================================================================
 // Helper Functions

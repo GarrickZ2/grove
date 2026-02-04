@@ -105,9 +105,7 @@ impl DifitSession {
 
     /// Check if there's a live Grove process monitoring this session
     pub fn is_being_monitored(&self) -> bool {
-        self.monitor_pid
-            .map(is_process_alive)
-            .unwrap_or(false)
+        self.monitor_pid.map(is_process_alive).unwrap_or(false)
     }
 
     /// Check if this session needs reattach (difit alive but no monitor)
