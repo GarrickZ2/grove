@@ -1,0 +1,1 @@
+export { TaskInfoPanel } from "./TaskInfoPanel";
