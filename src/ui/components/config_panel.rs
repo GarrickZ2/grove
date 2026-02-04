@@ -98,7 +98,7 @@ const DIALOG_WIDTH: u16 = 50;
 const DIALOG_HEIGHT_MAIN: u16 = 11;
 const DIALOG_HEIGHT_AGENT_CMD: u16 = 11;
 const DIALOG_HEIGHT_LAYOUT: u16 = 15;
-const DIALOG_HEIGHT_MCP: u16 = 14;
+const DIALOG_HEIGHT_MCP: u16 = 15;
 
 /// 渲染 Config 面板
 pub fn render(
@@ -478,24 +478,31 @@ fn render_mcp_info(frame: &mut Frame, colors: &ThemeColors, click_areas: &mut Cl
 
     let lines: Vec<Line> = vec![
         Line::from(Span::styled(
-            "  Grove provides MCP tools for AI agents:",
+            "  Grove provides MCP tools for AI agents.",
             Style::default().fg(colors.text),
         )),
         Line::from(""),
         Line::from(Span::styled(
-            "  Add to claude_desktop_config.json:",
+            "  MCP Server Config:",
             Style::default().fg(colors.muted),
         )),
         Line::from(""),
-        Line::from(Span::styled(
-            "  \"mcpServers\": {",
-            Style::default().fg(colors.highlight),
-        )),
-        Line::from(Span::styled(
-            "    \"grove\": { \"command\": \"grove\", \"args\": [\"mcp\"] }",
-            Style::default().fg(colors.highlight),
-        )),
-        Line::from(Span::styled("  }", Style::default().fg(colors.highlight))),
+        Line::from(vec![
+            Span::styled("    name:    ", Style::default().fg(colors.muted)),
+            Span::styled("grove", Style::default().fg(colors.highlight)),
+        ]),
+        Line::from(vec![
+            Span::styled("    type:    ", Style::default().fg(colors.muted)),
+            Span::styled("stdio", Style::default().fg(colors.highlight)),
+        ]),
+        Line::from(vec![
+            Span::styled("    command: ", Style::default().fg(colors.muted)),
+            Span::styled("grove", Style::default().fg(colors.highlight)),
+        ]),
+        Line::from(vec![
+            Span::styled("    args:    ", Style::default().fg(colors.muted)),
+            Span::styled("[\"mcp\"]", Style::default().fg(colors.highlight)),
+        ]),
     ];
 
     let list = Paragraph::new(lines);

@@ -1223,6 +1223,13 @@ impl App {
 
         // 恢复已有的 difit review sessions
         self.recover_difit_sessions();
+
+        // 重新初始化 FileWatcher（关闭旧的，启动新的）
+        if let Some(ref watcher) = self.file_watcher {
+            watcher.shutdown();
+        }
+        self.file_watcher = None;
+        self.start_file_watcher_project();
     }
 
     /// 从 Project 返回 Workspace
