@@ -50,9 +50,9 @@ function ReviewCommentCard({ comment }: { comment: ReviewCommentEntry }) {
     >
       {/* Header */}
       <div className="flex items-center justify-between px-3 py-2 bg-[var(--color-bg-secondary)] border-b border-[var(--color-border)]">
-        <div className="flex items-center gap-2 text-xs text-[var(--color-text-muted)]">
-          <FileCode className="w-3.5 h-3.5" />
-          <code className="font-mono truncate max-w-[200px]">{comment.location}</code>
+        <div className="flex items-center gap-2 text-xs text-[var(--color-text-muted)] min-w-0 flex-1 mr-3">
+          <FileCode className="w-3.5 h-3.5 flex-shrink-0" />
+          <code className="font-mono truncate">{comment.location}</code>
         </div>
         <div className="flex items-center gap-1.5">
           <StatusIcon

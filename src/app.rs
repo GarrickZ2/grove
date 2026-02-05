@@ -1583,7 +1583,7 @@ impl App {
         let grove_pid = std::process::id();
 
         std::thread::spawn(move || {
-            match crate::difit::spawn_difit(&worktree_path, &target_branch, &availability) {
+            match crate::difit::spawn_difit(&worktree_path, &target_branch, &availability, false) {
                 Ok(mut handle) => {
                     let session = storage::difit_session::DifitSession {
                         pid: handle.child_pid,
@@ -2105,6 +2105,12 @@ impl App {
             self.show_toast(format!("Failed to delete branch: {}", e));
             return;
         }
+
+        // 4.5 Clear all task-related data (Notes, AI data, Stats, Difit session)
+        let _ = notes::delete_notes(&self.project.project_key, task_id);
+        let _ = comments::delete_ai_data(&self.project.project_key, task_id);
+        let _ = crate::watcher::clear_edit_history(&self.project.project_key, task_id);
+        storage::difit_session::remove_session(&self.project.project_key, task_id);
 
         // 5. 重新创建 branch 和 worktree (从 target)
         let worktree_path = Path::new(&task.worktree_path);
@@ -2713,7 +2719,7 @@ impl App {
         std::thread::spawn(move || {
             let result = match method {
                 MergeMethod::Squash => {
-                    // Squash merge + commit; rollback on commit failure
+                    // Squash merge + commit; rollback on any failure
                     git::merge_squash(&repo_path, &branch).and_then(|()| {
                         git::commit(&repo_path, &task_name).inspect_err(|_| {
                             let _ = git::reset_merge(&repo_path);
@@ -2728,7 +2734,11 @@ impl App {
 
             let bg_result = match result {
                 Ok(()) => BgResult::MergeOk { task_id, task_name },
-                Err(e) => BgResult::MergeErr(e),
+                Err(e) => {
+                    // Rollback merge state on any error (including conflicts)
+                    let _ = git::reset_merge(&repo_path);
+                    BgResult::MergeErr(e)
+                }
             };
             let _ = tx.send(bg_result);
         });

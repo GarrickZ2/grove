@@ -18,6 +18,8 @@ export interface ProjectListItem {
 
 export interface ProjectListResponse {
   projects: ProjectListItem[];
+  /** ID of the project matching the current working directory (if any) */
+  current_project_id: string | null;
 }
 
 export interface ProjectResponse {
@@ -40,6 +42,7 @@ export interface ProjectStatsResponse {
   idle_tasks: number;
   merged_tasks: number;
   archived_tasks: number;
+  weekly_activity: number[];
 }
 
 export interface BranchInfo {
@@ -59,9 +62,8 @@ export interface BranchesResponse {
 /**
  * List all registered projects
  */
-export async function listProjects(): Promise<ProjectListItem[]> {
-  const response = await apiClient.get<ProjectListResponse>('/api/v1/projects');
-  return response.projects;
+export async function listProjects(): Promise<ProjectListResponse> {
+  return apiClient.get<ProjectListResponse>('/api/v1/projects');
 }
 
 /**
@@ -100,4 +102,23 @@ export async function getProjectStats(id: string): Promise<ProjectStatsResponse>
  */
 export async function getBranches(id: string): Promise<BranchesResponse> {
   return apiClient.get<BranchesResponse>(`/api/v1/projects/${id}/branches`);
+}
+
+export interface OpenResponse {
+  success: boolean;
+  message: string;
+}
+
+/**
+ * Open project in IDE
+ */
+export async function openIDE(id: string): Promise<OpenResponse> {
+  return apiClient.post<undefined, OpenResponse>(`/api/v1/projects/${id}/open-ide`);
+}
+
+/**
+ * Open project in terminal
+ */
+export async function openTerminal(id: string): Promise<OpenResponse> {
+  return apiClient.post<undefined, OpenResponse>(`/api/v1/projects/${id}/open-terminal`);
 }

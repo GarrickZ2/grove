@@ -14,6 +14,8 @@ import {
 interface ProjectContextType {
   selectedProject: Project | null;
   projects: Project[];
+  /** ID of the project matching the server's current working directory */
+  currentProjectId: string | null;
   selectProject: (project: Project | null) => void;
   addProject: (path: string, name?: string) => Promise<Project>;
   deleteProject: (id: string) => Promise<void>;
@@ -76,6 +78,7 @@ function convertProjectListItem(item: ProjectListItem): Project {
 export function ProjectProvider({ children }: { children: ReactNode }) {
   const [selectedProject, setSelectedProject] = useState<Project | null>(null);
   const [projects, setProjects] = useState<Project[]>([]);
+  const [currentProjectId, setCurrentProjectId] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -84,12 +87,14 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
     try {
       setIsLoading(true);
       setError(null);
-      const projectList = await listProjects();
-      setProjects(projectList.map(convertProjectListItem));
+      const response = await listProjects();
+      setProjects(response.projects.map(convertProjectListItem));
+      setCurrentProjectId(response.current_project_id);
     } catch (err) {
       console.error("Failed to load projects:", err);
       setError("Failed to load projects");
       setProjects([]);
+      setCurrentProjectId(null);
     } finally {
       setIsLoading(false);
     }
@@ -111,16 +116,30 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
     loadProjects();
   }, [loadProjects]);
 
-  // Auto-select saved project after projects are loaded
+  // Auto-select project after projects are loaded
+  // Priority: currentProjectId (from server cwd) > savedProjectId > first project
   useEffect(() => {
     if (isLoading || projects.length === 0) return;
 
-    const savedProjectId = localStorage.getItem("grove-selected-project");
+    // Priority 1: If server is running in a registered project directory, select it
+    if (currentProjectId) {
+      const found = projects.find((p) => p.id === currentProjectId);
+      if (found) {
+        loadProjectDetails(found.id).then((fullProject) => {
+          if (fullProject) {
+            setSelectedProject(fullProject);
+            localStorage.setItem("grove-selected-project", fullProject.id);
+          }
+        });
+        return;
+      }
+    }
 
+    // Priority 2: Use saved project from localStorage
+    const savedProjectId = localStorage.getItem("grove-selected-project");
     if (savedProjectId) {
       const found = projects.find((p) => p.id === savedProjectId);
       if (found) {
-        // Load full project details
         loadProjectDetails(found.id).then((fullProject) => {
           if (fullProject) {
             setSelectedProject(fullProject);
@@ -130,7 +149,7 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
       }
     }
 
-    // Default to first project
+    // Priority 3: Default to first project
     if (projects.length > 0) {
       loadProjectDetails(projects[0].id).then((fullProject) => {
         if (fullProject) {
@@ -139,7 +158,7 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
         }
       });
     }
-  }, [isLoading, projects, loadProjectDetails]);
+  }, [isLoading, projects, currentProjectId, loadProjectDetails]);
 
   const selectProject = useCallback(
     async (project: Project | null) => {
@@ -201,6 +220,7 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
       value={{
         selectedProject,
         projects,
+        currentProjectId,
         selectProject,
         addProject,
         deleteProject,

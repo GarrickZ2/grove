@@ -45,7 +45,7 @@ export function TaskDetail({
       case "ai":
         return <AITab task={task} />;
       case "stats":
-        return <StatsTab task={task} />;
+        return <StatsTab projectId={projectId} task={task} />;
     }
   };
 

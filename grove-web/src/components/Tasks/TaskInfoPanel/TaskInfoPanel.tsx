@@ -11,18 +11,34 @@ import {
   ChevronLeft,
   RotateCcw,
   Trash2,
+  GitCommit,
+  RefreshCw,
+  GitMerge,
+  Archive,
+  Code,
+  GitBranchPlus,
+  MoreHorizontal,
 } from "lucide-react";
-import { Button } from "../../ui";
+import { Button, DropdownMenu } from "../../ui";
 import type { Task } from "../../../data/types";
 import { StatsTab, GitTab, NotesTab, CommentsTab } from "./tabs";
 
 interface TaskInfoPanelProps {
+  projectId: string;
   task: Task;
   onClose: () => void;
   onEnterTerminal?: () => void;
   onRecover?: () => void;
   onClean?: () => void;
   isTerminalMode?: boolean;
+  // Action handlers for non-archived tasks
+  onCommit?: () => void;
+  onReview?: () => void;
+  onRebase?: () => void;
+  onSync?: () => void;
+  onMerge?: () => void;
+  onArchive?: () => void;
+  onReset?: () => void;
 }
 
 type TabType = "stats" | "git" | "notes" | "comments";
@@ -41,21 +57,31 @@ const TABS: TabConfig[] = [
 ];
 
 export function TaskInfoPanel({
+  projectId,
   task,
   onClose,
   onEnterTerminal,
   onRecover,
   onClean,
   isTerminalMode = false,
+  onCommit,
+  onReview,
+  onRebase,
+  onSync,
+  onMerge,
+  onArchive,
+  onReset,
 }: TaskInfoPanelProps) {
   const isArchived = task.status === "archived";
+  const isBroken = task.status === "broken";
+  const canOperate = !isArchived && !isBroken;
   const [activeTab, setActiveTab] = useState<TabType>("stats");
   const [expanded, setExpanded] = useState(false);
 
   const renderTabContent = () => {
     switch (activeTab) {
       case "stats":
-        return <StatsTab task={task} />;
+        return <StatsTab projectId={projectId} task={task} />;
       case "git":
         return <GitTab task={task} />;
       case "notes":
@@ -159,8 +185,20 @@ export function TaskInfoPanel({
                 </span>
               </div>
 
-              {/* Tab Content */}
-              <div className="flex-1 overflow-y-auto p-3">{renderTabContent()}</div>
+              {/* Tab Content with fade animation */}
+              <div className="flex-1 overflow-y-auto p-3">
+                <AnimatePresence mode="wait">
+                  <motion.div
+                    key={activeTab}
+                    initial={{ opacity: 0, y: 10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: -10 }}
+                    transition={{ duration: 0.15 }}
+                  >
+                    {renderTabContent()}
+                  </motion.div>
+                </AnimatePresence>
+              </div>
             </motion.div>
           )}
         </AnimatePresence>
@@ -189,25 +227,129 @@ export function TaskInfoPanel({
           {isArchived ? (
             <>
               {onRecover && (
-                <Button variant="secondary" size="sm" onClick={onRecover}>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={onRecover}
+                  className="text-[var(--color-success)] hover:bg-[var(--color-success)]/10"
+                >
                   <RotateCcw className="w-4 h-4 mr-1" />
                   Recover
                 </Button>
               )}
               {onClean && (
-                <Button variant="ghost" size="sm" onClick={onClean} className="text-[var(--color-error)] hover:bg-[var(--color-error)]/10">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={onClean}
+                  className="text-[var(--color-error)] hover:bg-[var(--color-error)]/10"
+                >
                   <Trash2 className="w-4 h-4 mr-1" />
                   Clean
                 </Button>
               )}
             </>
           ) : (
-            onEnterTerminal && (
-              <Button variant="secondary" size="sm" onClick={onEnterTerminal}>
-                <Terminal className="w-4 h-4 mr-1" />
-                Terminal
-              </Button>
-            )
+            <>
+              {/* Primary actions */}
+              {onCommit && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={onCommit}
+                  disabled={isArchived}
+                  className="text-[var(--color-highlight)] hover:bg-[var(--color-highlight)]/10"
+                >
+                  <GitCommit className="w-4 h-4 mr-1" />
+                  Commit
+                </Button>
+              )}
+              {onReview && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={onReview}
+                  disabled={isArchived}
+                  className="text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-bg-tertiary)]"
+                >
+                  <Code className="w-4 h-4 mr-1" />
+                  Review
+                </Button>
+              )}
+              {onRebase && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={onRebase}
+                  disabled={!canOperate}
+                  className="text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-bg-tertiary)]"
+                >
+                  <GitBranchPlus className="w-4 h-4 mr-1" />
+                  Rebase
+                </Button>
+              )}
+              {onSync && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={onSync}
+                  disabled={!canOperate}
+                  className="text-[var(--color-info)] hover:bg-[var(--color-info)]/10"
+                >
+                  <RefreshCw className="w-4 h-4 mr-1" />
+                  Sync
+                </Button>
+              )}
+              {onMerge && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={onMerge}
+                  disabled={!canOperate}
+                  className="text-[var(--color-success)] hover:bg-[var(--color-success)]/10"
+                >
+                  <GitMerge className="w-4 h-4 mr-1" />
+                  Merge
+                </Button>
+              )}
+              {/* Dangerous actions in dropdown */}
+              {(onArchive || onReset || onClean) && (
+                <DropdownMenu
+                  trigger={<MoreHorizontal className="w-4 h-4" />}
+                  items={[
+                    ...(onArchive ? [{
+                      id: "archive",
+                      label: "Archive",
+                      icon: Archive,
+                      onClick: onArchive,
+                      variant: "warning" as const,
+                      disabled: isBroken,
+                    }] : []),
+                    ...(onReset ? [{
+                      id: "reset",
+                      label: "Reset",
+                      icon: RotateCcw,
+                      onClick: onReset,
+                      variant: "warning" as const,
+                      disabled: isArchived,
+                    }] : []),
+                    ...(onClean ? [{
+                      id: "clean",
+                      label: "Clean",
+                      icon: Trash2,
+                      onClick: onClean,
+                      variant: "danger" as const,
+                    }] : []),
+                  ]}
+                />
+              )}
+              {onEnterTerminal && (
+                <Button variant="secondary" size="sm" onClick={onEnterTerminal}>
+                  <Terminal className="w-4 h-4 mr-1" />
+                  Terminal
+                </Button>
+              )}
+            </>
           )}
         </div>
       </div>
@@ -223,7 +365,7 @@ export function TaskInfoPanel({
       </div>
 
       {/* Tab Navigation */}
-      <div className="flex border-b border-[var(--color-border)] bg-[var(--color-bg)]">
+      <div className="relative flex border-b border-[var(--color-border)] bg-[var(--color-bg)]">
         {TABS.map((tab) => {
           const Icon = tab.icon;
           const isActive = activeTab === tab.id;
@@ -232,24 +374,44 @@ export function TaskInfoPanel({
               key={tab.id}
               onClick={() => setActiveTab(tab.id)}
               className={`
-                flex-1 flex items-center justify-center gap-1.5 px-2 py-2 text-xs font-medium
-                transition-colors border-b-2
+                relative flex-1 flex items-center justify-center gap-1.5 px-2 py-2 text-xs font-medium
+                transition-colors
                 ${
                   isActive
-                    ? "border-[var(--color-highlight)] text-[var(--color-highlight)]"
-                    : "border-transparent text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
+                    ? "text-[var(--color-highlight)]"
+                    : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
                 }
               `}
             >
               <Icon className="w-3.5 h-3.5" />
               <span className="hidden sm:inline">{tab.label}</span>
+              {/* Sliding indicator */}
+              {isActive && (
+                <motion.div
+                  layoutId="tab-indicator"
+                  className="absolute bottom-0 left-0 right-0 h-0.5 bg-[var(--color-highlight)]"
+                  transition={{ type: "spring", stiffness: 500, damping: 35 }}
+                />
+              )}
             </button>
           );
         })}
       </div>
 
-      {/* Tab Content */}
-      <div className="flex-1 overflow-y-auto p-3">{renderTabContent()}</div>
+      {/* Tab Content with fade animation */}
+      <div className="flex-1 overflow-y-auto p-3">
+        <AnimatePresence mode="wait">
+          <motion.div
+            key={activeTab}
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -10 }}
+            transition={{ duration: 0.15 }}
+          >
+            {renderTabContent()}
+          </motion.div>
+        </AnimatePresence>
+      </div>
     </motion.div>
   );
 }

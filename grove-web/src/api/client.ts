@@ -8,6 +8,26 @@ export interface ApiError {
   message: string;
 }
 
+// Try to extract error message from response body
+async function extractErrorMessage(response: Response): Promise<string> {
+  try {
+    const text = await response.text();
+    if (text) {
+      try {
+        const json = JSON.parse(text);
+        // Check common error message fields
+        return json.message || json.error || json.detail || text;
+      } catch {
+        // Not JSON, return raw text
+        return text;
+      }
+    }
+  } catch {
+    // Ignore extraction errors
+  }
+  return response.statusText;
+}
+
 export class ApiClient {
   private baseUrl: string;
 
@@ -24,9 +44,10 @@ export class ApiClient {
     });
 
     if (!response.ok) {
+      const message = await extractErrorMessage(response);
       throw {
         status: response.status,
-        message: response.statusText,
+        message,
       } as ApiError;
     }
 
@@ -43,9 +64,10 @@ export class ApiClient {
     });
 
     if (!response.ok) {
+      const message = await extractErrorMessage(response);
       throw {
         status: response.status,
-        message: response.statusText,
+        message,
       } as ApiError;
     }
 
@@ -62,9 +84,10 @@ export class ApiClient {
     });
 
     if (!response.ok) {
+      const message = await extractErrorMessage(response);
       throw {
         status: response.status,
-        message: response.statusText,
+        message,
       } as ApiError;
     }
 
@@ -80,9 +103,10 @@ export class ApiClient {
     });
 
     if (!response.ok) {
+      const message = await extractErrorMessage(response);
       throw {
         status: response.status,
-        message: response.statusText,
+        message,
       } as ApiError;
     }
 
@@ -104,9 +128,10 @@ export class ApiClient {
     });
 
     if (!response.ok) {
+      const message = await extractErrorMessage(response);
       throw {
         status: response.status,
-        message: response.statusText,
+        message,
       } as ApiError;
     }
 

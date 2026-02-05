@@ -298,18 +298,19 @@ fn format_merge_error(stdout: &str, stderr: &str) -> String {
     // 检查是否有冲突
     let combined = format!("{}\n{}", stdout, stderr);
     if combined.contains("CONFLICT") || combined.contains("conflict") {
-        // 提取冲突文件
-        let conflicts: Vec<&str> = combined
+        // 提取冲突文件数量
+        let conflict_count = combined
             .lines()
             .filter(|line| line.contains("CONFLICT"))
-            .collect();
+            .count();
 
-        if conflicts.is_empty() {
-            "Merge conflict - resolve manually".to_string()
-        } else if conflicts.len() == 1 {
-            conflicts[0].trim().to_string()
+        // 返回友好的 conflict 提示，建议用户先 sync
+        if conflict_count == 0 {
+            "Merge conflict detected. Please use Sync to resolve conflicts locally first, then try Merge again.".to_string()
+        } else if conflict_count == 1 {
+            "1 conflict detected. Please use Sync to resolve conflicts locally first, then try Merge again.".to_string()
         } else {
-            format!("{} conflicts - resolve manually", conflicts.len())
+            format!("{} conflicts detected. Please use Sync to resolve conflicts locally first, then try Merge again.", conflict_count)
         }
     } else if !stderr.trim().is_empty() {
         stderr.trim().to_string()

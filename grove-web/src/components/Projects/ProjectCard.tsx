@@ -1,23 +1,28 @@
 import { motion } from "framer-motion";
-import { Folder, Trash2, Circle } from "lucide-react";
+import { Trash2, Circle } from "lucide-react";
 import type { Project } from "../../data/types";
+import { getProjectStyle } from "../../utils/projectStyle";
 
 interface ProjectCardProps {
   project: Project;
   isSelected: boolean;
   onSelect: () => void;
+  onDoubleClick?: () => void;
   onDelete: () => void;
 }
 
-export function ProjectCard({ project, isSelected, onSelect, onDelete }: ProjectCardProps) {
-  const liveTasks = project.tasks.filter((t) => t.status === "live").length;
-  const activeTasks = project.tasks.filter((t) => t.status !== "archived").length;
+export function ProjectCard({ project, isSelected, onSelect, onDoubleClick, onDelete }: ProjectCardProps) {
+  // Use taskCount/liveCount from list response, fallback to calculating from tasks array
+  const taskCount = project.taskCount ?? project.tasks.length;
+  const liveCount = project.liveCount ?? project.tasks.filter((t) => t.status === "live").length;
+  const { color, Icon } = getProjectStyle(project.id);
 
   return (
     <motion.div
       whileHover={{ scale: 1.02 }}
       whileTap={{ scale: 0.98 }}
       onClick={onSelect}
+      onDoubleClick={onDoubleClick}
       className={`
         relative p-4 rounded-xl border cursor-pointer transition-colors
         ${
@@ -36,8 +41,11 @@ export function ProjectCard({ project, isSelected, onSelect, onDelete }: Project
 
       {/* Project icon and name */}
       <div className="flex items-start gap-3 mb-3">
-        <div className="w-10 h-10 rounded-lg bg-[var(--color-bg-tertiary)] flex items-center justify-center flex-shrink-0">
-          <Folder className="w-5 h-5 text-[var(--color-highlight)]" />
+        <div
+          className="w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0"
+          style={{ backgroundColor: color.bg }}
+        >
+          <Icon className="w-5 h-5" style={{ color: color.fg }} />
         </div>
         <div className="flex-1 min-w-0">
           <h3 className="text-sm font-semibold text-[var(--color-text)] truncate">
@@ -51,24 +59,24 @@ export function ProjectCard({ project, isSelected, onSelect, onDelete }: Project
 
       {/* Stats */}
       <div className="flex items-center gap-4 text-xs">
+        {/* Total tasks */}
+        <span className="text-[var(--color-text-muted)]">
+          {taskCount} {taskCount === 1 ? "Task" : "Tasks"}
+        </span>
+
         {/* Live tasks */}
         <div className="flex items-center gap-1.5">
           <Circle
             className="w-3 h-3"
             style={{
-              color: liveTasks > 0 ? "var(--color-success)" : "var(--color-text-muted)",
-              fill: liveTasks > 0 ? "var(--color-success)" : "transparent",
+              color: liveCount > 0 ? "var(--color-success)" : "var(--color-text-muted)",
+              fill: liveCount > 0 ? "var(--color-success)" : "transparent",
             }}
           />
-          <span className={liveTasks > 0 ? "text-[var(--color-success)]" : "text-[var(--color-text-muted)]"}>
-            {liveTasks} Live
+          <span className={liveCount > 0 ? "text-[var(--color-success)]" : "text-[var(--color-text-muted)]"}>
+            {liveCount} Live
           </span>
         </div>
-
-        {/* Active tasks */}
-        <span className="text-[var(--color-text-muted)]">
-          {activeTasks} Active
-        </span>
       </div>
 
       {/* Delete button */}

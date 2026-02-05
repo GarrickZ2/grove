@@ -1,16 +1,28 @@
 //! Web API module for Grove
 
 pub mod handlers;
+mod state;
+
+pub use state::{init_file_watchers, shutdown_file_watchers};
 
 use axum::{
+    body::Body,
+    http::{header, Response, StatusCode, Uri},
+    response::IntoResponse,
     routing::{delete, get, patch, post},
     Router,
 };
+use rust_embed::Embed;
 use std::path::PathBuf;
 use tower_http::{
     cors::{Any, CorsLayer},
     services::{ServeDir, ServeFile},
 };
+
+/// Embedded frontend assets (built from grove-web/dist)
+#[derive(Embed)]
+#[folder = "grove-web/dist"]
+struct FrontendAssets;
 
 /// Create the API router
 pub fn create_api_router() -> Router {
@@ -18,6 +30,10 @@ pub fn create_api_router() -> Router {
         // Config API
         .route("/config", get(handlers::config::get_config))
         .route("/config", patch(handlers::config::patch_config))
+        .route(
+            "/config/applications",
+            get(handlers::config::list_applications),
+        )
         // Environment API
         .route("/env/check", get(handlers::env::check_all))
         .route("/env/check/{name}", get(handlers::env::check_one))
@@ -37,6 +53,15 @@ pub fn create_api_router() -> Router {
         .route(
             "/projects/{id}/branches",
             get(handlers::projects::get_branches),
+        )
+        // Open IDE/Terminal API
+        .route(
+            "/projects/{id}/open-ide",
+            post(handlers::projects::open_ide),
+        )
+        .route(
+            "/projects/{id}/open-terminal",
+            post(handlers::projects::open_terminal),
         )
         // Tasks API
         .route(
@@ -77,6 +102,15 @@ pub fn create_api_router() -> Router {
             "/projects/{id}/tasks/{taskId}/merge",
             post(handlers::tasks::merge_task),
         )
+        .route(
+            "/projects/{id}/tasks/{taskId}/reset",
+            post(handlers::tasks::reset_task),
+        )
+        // Task Stats API
+        .route(
+            "/projects/{id}/tasks/{taskId}/stats",
+            get(handlers::stats::get_task_stats),
+        )
         // Diff/Changes API
         .route(
             "/projects/{id}/tasks/{taskId}/diff",
@@ -90,6 +124,13 @@ pub fn create_api_router() -> Router {
         .route(
             "/projects/{id}/tasks/{taskId}/review",
             get(handlers::tasks::get_review_comments).post(handlers::tasks::reply_review_comment),
+        )
+        // Difit (Code Review Server) API
+        .route(
+            "/projects/{id}/tasks/{taskId}/difit",
+            get(handlers::difit::get_difit_status)
+                .post(handlers::difit::start_difit)
+                .delete(handlers::difit::stop_difit),
         )
         // Project Git API
         .route("/projects/{id}/git/status", get(handlers::git::get_status))
@@ -116,6 +157,52 @@ pub fn create_api_router() -> Router {
         .route("/projects/{id}/git/stash", post(handlers::git::stash))
 }
 
+/// Serve embedded static files
+async fn serve_embedded(uri: Uri) -> impl IntoResponse {
+    let path = uri.path().trim_start_matches('/');
+
+    // Try to find the file, or fall back to index.html for SPA routing
+    let (file, serve_path) = if let Some(content) = FrontendAssets::get(path) {
+        (Some(content), path)
+    } else if path.is_empty() || !path.contains('.') || path.ends_with(".html") {
+        // For SPA: serve index.html for non-asset paths
+        (FrontendAssets::get("index.html"), "index.html")
+    } else {
+        (None, path)
+    };
+
+    match file {
+        Some(content) => {
+            let mime = mime_guess::from_path(serve_path).first_or_octet_stream();
+            Response::builder()
+                .status(StatusCode::OK)
+                .header(header::CONTENT_TYPE, mime.as_ref())
+                .body(Body::from(content.data.into_owned()))
+                .unwrap()
+        }
+        None => {
+            // Final fallback to index.html
+            if let Some(index) = FrontendAssets::get("index.html") {
+                Response::builder()
+                    .status(StatusCode::OK)
+                    .header(header::CONTENT_TYPE, "text/html; charset=utf-8")
+                    .body(Body::from(index.data.into_owned()))
+                    .unwrap()
+            } else {
+                Response::builder()
+                    .status(StatusCode::NOT_FOUND)
+                    .body(Body::from("Not Found"))
+                    .unwrap()
+            }
+        }
+    }
+}
+
+/// Check if embedded assets are available
+pub fn has_embedded_assets() -> bool {
+    FrontendAssets::get("index.html").is_some()
+}
+
 /// Create the full router with static file serving
 pub fn create_router(static_dir: Option<PathBuf>) -> Router {
     let cors = CorsLayer::new()
@@ -127,12 +214,14 @@ pub fn create_router(static_dir: Option<PathBuf>) -> Router {
 
     let router = Router::new().nest("/api/v1", api_router);
 
-    // Add static file serving if directory is provided
+    // Priority: external static_dir > embedded assets
     if let Some(dir) = static_dir {
         let index_file = dir.join("index.html");
         let serve_dir = ServeDir::new(&dir).not_found_service(ServeFile::new(&index_file));
-
         router.fallback_service(serve_dir).layer(cors)
+    } else if has_embedded_assets() {
+        // Use embedded assets
+        router.fallback(serve_embedded).layer(cors)
     } else {
         router.layer(cors)
     }
@@ -175,10 +264,14 @@ pub fn find_static_dir() -> Option<PathBuf> {
 
 /// Start the web server (API + static files)
 pub async fn start_server(port: u16, static_dir: Option<PathBuf>) -> std::io::Result<()> {
-    let app = create_router(static_dir.clone());
+    // Initialize FileWatchers for all live tasks
+    init_file_watchers();
+
+    let has_ui = static_dir.is_some() || has_embedded_assets();
+    let app = create_router(static_dir);
     let addr = format!("0.0.0.0:{}", port);
 
-    if static_dir.is_some() {
+    if has_ui {
         println!("Grove Web UI: http://localhost:{}", port);
     } else {
         println!("Grove API server: http://localhost:{}/api/v1", port);
@@ -186,7 +279,14 @@ pub async fn start_server(port: u16, static_dir: Option<PathBuf>) -> std::io::Re
     }
 
     let listener = tokio::net::TcpListener::bind(&addr).await?;
+
+    // Use graceful shutdown to flush FileWatcher data on Ctrl+C
     axum::serve(listener, app)
+        .with_graceful_shutdown(async {
+            tokio::signal::ctrl_c().await.ok();
+            println!("\nShutting down...");
+            shutdown_file_watchers();
+        })
         .await
         .map_err(std::io::Error::other)
 }

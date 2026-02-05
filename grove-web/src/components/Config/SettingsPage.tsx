@@ -22,13 +22,15 @@ import {
   Code,
   Wrench,
 } from "lucide-react";
-import { Button, Combobox } from "../ui";
+import { Button, Combobox, AppPicker, AgentPicker, ideAppOptions, terminalAppOptions } from "../ui";
 import type { ComboboxOption } from "../ui";
 import { useTheme, themes } from "../../context";
 import {
   getConfig,
   patchConfig,
   checkAllDependencies,
+  listApplications,
+  type AppInfo,
 } from "../../api";
 import { LayoutEditor, type CustomLayoutConfig, type PaneType, type LayoutNode, createDefaultLayout, countPanes } from "./LayoutEditor";
 
@@ -152,30 +154,8 @@ const notificationLevels = [
   { level: "critical", icon: AlertCircle, color: "var(--color-error)", title: "Critical" },
 ];
 
-// Combobox options
-const agentOptions: ComboboxOption[] = [
-  { id: "claude", label: "Claude", value: "claude" },
-  { id: "cursor", label: "Cursor", value: "cursor" },
-  { id: "aider", label: "Aider", value: "aider" },
-  { id: "windsurf", label: "Windsurf", value: "windsurf" },
-];
-
-const ideOptions: ComboboxOption[] = [
-  { id: "code", label: "VS Code", value: "code" },
-  { id: "cursor", label: "Cursor", value: "cursor" },
-  { id: "rustrover", label: "RustRover", value: "rustrover" },
-  { id: "webstorm", label: "WebStorm", value: "webstorm" },
-  { id: "idea", label: "IntelliJ IDEA", value: "idea" },
-  { id: "zed", label: "Zed", value: "zed" },
-];
-
-const terminalOptions: ComboboxOption[] = [
-  { id: "system", label: "System Default", value: "" },
-  { id: "iterm", label: "iTerm", value: "iterm" },
-  { id: "warp", label: "Warp", value: "warp" },
-  { id: "kitty", label: "Kitty", value: "kitty" },
-  { id: "alacritty", label: "Alacritty", value: "alacritty" },
-];
+// Note: Agent options are imported from AgentPicker
+// IDE and Terminal options are imported from AppPicker
 
 // Sound options for hooks (macOS system sounds)
 const soundOptions: ComboboxOption[] = [
@@ -236,6 +216,8 @@ export function SettingsPage({ config }: SettingsPageProps) {
   const [agentCommand, setAgentCommand] = useState(config.agent.command);
   const [ideCommand, setIdeCommand] = useState("");
   const [terminalCommand, setTerminalCommand] = useState("");
+  const [applications, setApplications] = useState<AppInfo[]>([]);
+  const [isLoadingApps, setIsLoadingApps] = useState(false);
 
   // Layout state
   const [selectedLayout, setSelectedLayout] = useState(config.layout.default);
@@ -415,11 +397,25 @@ export function SettingsPage({ config }: SettingsPageProps) {
     return () => clearTimeout(timer);
   }, [theme.id, selectedLayout, agentCommand, customLayouts, selectedCustomLayoutId, customLayoutsLoaded, ideCommand, terminalCommand, isLoaded, saveConfig]);
 
+  // Load applications list
+  const loadApplications = useCallback(async () => {
+    setIsLoadingApps(true);
+    try {
+      const apps = await listApplications();
+      setApplications(apps);
+    } catch {
+      console.error("Failed to load applications");
+    } finally {
+      setIsLoadingApps(false);
+    }
+  }, []);
+
   // Initial load
   useEffect(() => {
     loadConfig();
     checkDependencies();
-  }, [loadConfig, checkDependencies]);
+    loadApplications();
+  }, [loadConfig, checkDependencies, loadApplications]);
 
   const getStatusIcon = (status: DependencyStatusType) => {
     switch (status) {
@@ -658,8 +654,7 @@ export function SettingsPage({ config }: SettingsPageProps) {
                 <Sparkles className="w-4 h-4 text-[var(--color-warning)]" />
                 <span className="text-sm font-medium text-[var(--color-text)]">Coding Agent</span>
               </div>
-              <Combobox
-                options={agentOptions}
+              <AgentPicker
                 value={agentCommand}
                 onChange={setAgentCommand}
                 placeholder="Select agent..."
@@ -673,12 +668,18 @@ export function SettingsPage({ config }: SettingsPageProps) {
                 <Code className="w-4 h-4 text-[var(--color-info)]" />
                 <span className="text-sm font-medium text-[var(--color-text)]">Default IDE</span>
               </div>
-              <Combobox
-                options={ideOptions}
+              <AppPicker
+                options={ideAppOptions}
                 value={ideCommand}
                 onChange={setIdeCommand}
                 placeholder="Select IDE..."
-                customPlaceholder="Enter IDE command (e.g., webstorm)"
+                applications={applications}
+                isLoadingApps={isLoadingApps}
+                appFilter={(app) =>
+                  // Filter for common IDEs/editors
+                  /code|studio|idea|storm|rider|cursor|zed|sublime|atom|vim|emacs|nova|bbedit|textmate|xcode/i.test(app.name) ||
+                  /com\.(microsoft|jetbrains|apple|sublimehq|github)/i.test(app.bundle_id || "")
+                }
               />
             </div>
 
@@ -688,13 +689,18 @@ export function SettingsPage({ config }: SettingsPageProps) {
                 <Terminal className="w-4 h-4 text-[var(--color-accent)]" />
                 <span className="text-sm font-medium text-[var(--color-text)]">Default Terminal</span>
               </div>
-              <Combobox
-                options={terminalOptions}
+              <AppPicker
+                options={terminalAppOptions}
                 value={terminalCommand}
                 onChange={setTerminalCommand}
                 placeholder="System Default"
-                customPlaceholder="Enter terminal command"
-                allowCustom={true}
+                applications={applications}
+                isLoadingApps={isLoadingApps}
+                appFilter={(app) =>
+                  // Filter for terminals
+                  /terminal|iterm|warp|kitty|alacritty|hyper|konsole|tilix/i.test(app.name) ||
+                  /com\.(apple\.Terminal|googlecode\.iterm|warp|kovidgoyal)/i.test(app.bundle_id || "")
+                }
               />
             </div>
           </div>

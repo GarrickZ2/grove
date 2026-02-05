@@ -1,3 +1,4 @@
+import { Loader2 } from "lucide-react";
 import { TaskSearch } from "./TaskSearch";
 import { TaskFilters } from "./TaskFilters";
 import { TaskListItem } from "./TaskListItem";
@@ -8,6 +9,7 @@ interface TaskSidebarProps {
   selectedTask: Task | null;
   filter: TaskFilter;
   searchQuery: string;
+  isLoading?: boolean;
   onSelectTask: (task: Task) => void;
   onDoubleClickTask: (task: Task) => void;
   onFilterChange: (filter: TaskFilter) => void;
@@ -19,6 +21,7 @@ export function TaskSidebar({
   selectedTask,
   filter,
   searchQuery,
+  isLoading = false,
   onSelectTask,
   onDoubleClickTask,
   onFilterChange,
@@ -38,7 +41,11 @@ export function TaskSidebar({
 
       {/* Task List */}
       <div className="flex-1 overflow-y-auto">
-        {tasks.length === 0 ? (
+        {isLoading ? (
+          <div className="flex items-center justify-center h-full">
+            <Loader2 className="w-6 h-6 text-[var(--color-text-muted)] animate-spin" />
+          </div>
+        ) : tasks.length === 0 ? (
           <div className="flex items-center justify-center h-full">
             <p className="text-sm text-[var(--color-text-muted)]">No tasks found</p>
           </div>

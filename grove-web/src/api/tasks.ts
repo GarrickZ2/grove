@@ -34,6 +34,7 @@ export interface TaskListResponse {
 export interface CreateTaskRequest {
   name: string;
   target?: string;
+  notes?: string;
 }
 
 export type TaskFilter = 'active' | 'archived';
@@ -100,6 +101,27 @@ export interface ReplyCommentRequest {
   message: string;
 }
 
+// Task stats types
+export interface FileEditEntry {
+  path: string;
+  edit_count: number;
+  last_edited: string; // ISO 8601
+}
+
+export interface ActivityEntry {
+  hour: string;      // ISO 8601 hour (e.g., "2024-01-15T14:00:00Z")
+  buckets: number[]; // 60 minute buckets (index 0 = minute 00, index 59 = minute 59)
+  total: number;     // Total edits in this hour
+}
+
+export interface TaskStatsResponse {
+  total_edits: number;
+  files_touched: number;
+  last_activity: string | null;
+  file_edits: FileEditEntry[];
+  hourly_activity: ActivityEntry[];
+}
+
 // ============================================================================
 // API Functions
 // ============================================================================
@@ -130,11 +152,12 @@ export async function getTask(projectId: string, taskId: string): Promise<TaskRe
 export async function createTask(
   projectId: string,
   name: string,
-  target?: string
+  target?: string,
+  notes?: string
 ): Promise<TaskResponse> {
   return apiClient.post<CreateTaskRequest, TaskResponse>(
     `/api/v1/projects/${projectId}/tasks`,
-    { name, target }
+    { name, target, notes }
   );
 }
 
@@ -207,12 +230,22 @@ export async function commitTask(
   );
 }
 
+export interface MergeRequest {
+  method?: "squash" | "merge-commit";
+}
+
 /**
  * Merge task into target branch
  */
-export async function mergeTask(projectId: string, taskId: string): Promise<GitOperationResponse> {
-  return apiClient.post<undefined, GitOperationResponse>(
-    `/api/v1/projects/${projectId}/tasks/${taskId}/merge`
+export async function mergeTask(
+  projectId: string,
+  taskId: string,
+  method?: "squash" | "merge-commit"
+): Promise<GitOperationResponse> {
+  const body = method ? { method } : undefined;
+  return apiClient.post<MergeRequest | undefined, GitOperationResponse>(
+    `/api/v1/projects/${projectId}/tasks/${taskId}/merge`,
+    body
   );
 }
 
@@ -255,5 +288,29 @@ export async function replyReviewComment(
   return apiClient.post<ReplyCommentRequest, ReviewCommentsResponse>(
     `/api/v1/projects/${projectId}/tasks/${taskId}/review`,
     { comment_id: commentId, status, message }
+  );
+}
+
+/**
+ * Get task statistics (file edits, activity)
+ */
+export async function getTaskStats(
+  projectId: string,
+  taskId: string
+): Promise<TaskStatsResponse> {
+  return apiClient.get<TaskStatsResponse>(
+    `/api/v1/projects/${projectId}/tasks/${taskId}/stats`
+  );
+}
+
+/**
+ * Reset task: remove worktree and branch, recreate from target
+ */
+export async function resetTask(
+  projectId: string,
+  taskId: string
+): Promise<GitOperationResponse> {
+  return apiClient.post<undefined, GitOperationResponse>(
+    `/api/v1/projects/${projectId}/tasks/${taskId}/reset`
   );
 }

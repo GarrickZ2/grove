@@ -8,7 +8,11 @@ import { DeleteProjectDialog } from "./DeleteProjectDialog";
 import { useProject } from "../../context";
 import type { Project } from "../../data/types";
 
-export function ProjectsPage() {
+interface ProjectsPageProps {
+  onNavigate?: (page: string) => void;
+}
+
+export function ProjectsPage({ onNavigate }: ProjectsPageProps) {
   const { projects, selectedProject, selectProject, addProject, deleteProject } = useProject();
   const [showAddDialog, setShowAddDialog] = useState(false);
   const [projectToDelete, setProjectToDelete] = useState<Project | null>(null);
@@ -61,6 +65,11 @@ export function ProjectsPage() {
     selectProject(project);
   };
 
+  const handleDoubleClick = async (project: Project) => {
+    await selectProject(project);
+    onNavigate?.("dashboard");
+  };
+
   return (
     <motion.div
       initial={{ opacity: 0, y: 20 }}
@@ -99,6 +108,7 @@ export function ProjectsPage() {
                 project={project}
                 isSelected={selectedProject?.id === project.id}
                 onSelect={() => handleSelectProject(project)}
+                onDoubleClick={() => handleDoubleClick(project)}
                 onDelete={() => setProjectToDelete(project)}
               />
             </motion.div>

@@ -13,6 +13,7 @@ export interface RepoStatusResponse {
   uncommitted: number;
   stash_count: number;
   has_conflicts: boolean;
+  has_origin: boolean;
 }
 
 export interface BranchDetailInfo {

@@ -11,8 +11,14 @@ pub use detect::detect_system_theme;
 pub enum Theme {
     #[default]
     Auto,
-    Dark,
+    // Light themes first
     Light,
+    SolarizedLight,
+    GithubLight,
+    RosePineDawn,
+    CatppuccinLatte,
+    // Dark themes
+    Dark,
     Dracula,
     Nord,
     Gruvbox,
@@ -25,8 +31,14 @@ impl Theme {
     pub fn label(&self) -> &'static str {
         match self {
             Theme::Auto => "Auto",
-            Theme::Dark => "Dark",
+            // Light themes
             Theme::Light => "Light",
+            Theme::SolarizedLight => "Solarized Light",
+            Theme::GithubLight => "GitHub Light",
+            Theme::RosePineDawn => "Rosé Pine Dawn",
+            Theme::CatppuccinLatte => "Catppuccin Latte",
+            // Dark themes
+            Theme::Dark => "Dark",
             Theme::Dracula => "Dracula",
             Theme::Nord => "Nord",
             Theme::Gruvbox => "Gruvbox",
@@ -39,8 +51,14 @@ impl Theme {
     pub fn all() -> &'static [Theme] {
         &[
             Theme::Auto,
-            Theme::Dark,
+            // Light themes first
             Theme::Light,
+            Theme::SolarizedLight,
+            Theme::GithubLight,
+            Theme::RosePineDawn,
+            Theme::CatppuccinLatte,
+            // Dark themes
+            Theme::Dark,
             Theme::Dracula,
             Theme::Nord,
             Theme::Gruvbox,
@@ -54,8 +72,16 @@ impl Theme {
     pub fn from_name(name: &str) -> Self {
         match name.to_lowercase().as_str() {
             "auto" => Theme::Auto,
-            "dark" => Theme::Dark,
+            // Light themes
             "light" => Theme::Light,
+            "solarized light" | "solarized-light" | "solarizedlight" => Theme::SolarizedLight,
+            "github light" | "github-light" | "githublight" => Theme::GithubLight,
+            "rosé pine dawn" | "rose pine dawn" | "rose-pine-dawn" | "rosepinedawn" => {
+                Theme::RosePineDawn
+            }
+            "catppuccin latte" | "catppuccin-latte" | "catppuccinlatte" => Theme::CatppuccinLatte,
+            // Dark themes
+            "dark" => Theme::Dark,
             "dracula" => Theme::Dracula,
             "nord" => Theme::Nord,
             "gruvbox" => Theme::Gruvbox,
@@ -120,8 +146,14 @@ pub fn get_theme_colors(theme: Theme) -> ThemeColors {
                 light_colors()
             }
         }
-        Theme::Dark => dark_colors(),
+        // Light themes
         Theme::Light => light_colors(),
+        Theme::SolarizedLight => solarized_light_colors(),
+        Theme::GithubLight => github_light_colors(),
+        Theme::RosePineDawn => rose_pine_dawn_colors(),
+        Theme::CatppuccinLatte => catppuccin_latte_colors(),
+        // Dark themes
+        Theme::Dark => dark_colors(),
         Theme::Dracula => dracula_colors(),
         Theme::Nord => nord_colors(),
         Theme::Gruvbox => gruvbox_colors(),

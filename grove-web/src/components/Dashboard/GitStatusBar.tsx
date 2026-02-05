@@ -9,6 +9,7 @@ import {
   FileEdit,
   ArrowUpDown,
 } from "lucide-react";
+import { Tooltip } from "../ui";
 import type { RepoStatus } from "../../data/types";
 
 interface GitStatusBarProps {
@@ -33,6 +34,7 @@ export function GitStatusBar({
 
   // Determine sync status
   const getSyncColor = () => {
+    if (!status.hasOrigin) return "var(--color-text-muted)";
     if (status.hasConflicts) return "var(--color-error)";
     if (status.behind > 0) return "var(--color-warning)";
     if (status.ahead > 0) return "var(--color-info)";
@@ -40,6 +42,7 @@ export function GitStatusBar({
   };
 
   const getSyncLabel = () => {
+    if (!status.hasOrigin) return "No remote";
     if (status.hasConflicts) return "Conflicts";
     if (status.ahead === 0 && status.behind === 0) return "In sync";
     return "Sync";
@@ -111,25 +114,37 @@ export function GitStatusBar({
             icon={ArrowDown}
             label="Pull"
             onClick={onPull}
+            disabled={!status.hasOrigin}
+            disabledReason={!status.hasOrigin ? "No remote origin configured" : undefined}
           />
           <ActionButton
             icon={ArrowUp}
             label="Push"
             onClick={onPush}
-            disabled={status.ahead === 0}
-            highlight={status.ahead > 0}
+            disabled={!status.hasOrigin || status.ahead === 0}
+            disabledReason={
+              !status.hasOrigin
+                ? "No remote origin configured"
+                : status.ahead === 0
+                  ? "No commits to push"
+                  : undefined
+            }
+            highlight={status.hasOrigin && status.ahead > 0}
           />
           <ActionButton
             icon={GitCommit}
             label="Commit"
             onClick={onCommit}
             disabled={!hasStagedChanges}
+            disabledReason={!hasStagedChanges ? "No changes to commit" : undefined}
             highlight={hasStagedChanges}
           />
           <ActionButton
             icon={RefreshCw}
             label="Fetch"
             onClick={onFetch}
+            disabled={!status.hasOrigin}
+            disabledReason={!status.hasOrigin ? "No remote origin configured" : undefined}
           />
         </div>
       </div>
@@ -142,15 +157,16 @@ interface ActionButtonProps {
   label: string;
   onClick: () => void;
   disabled?: boolean;
+  disabledReason?: string;
   highlight?: boolean;
 }
 
-function ActionButton({ icon: Icon, label, onClick, disabled = false, highlight = false }: ActionButtonProps) {
-  return (
+function ActionButton({ icon: Icon, label, onClick, disabled = false, disabledReason, highlight = false }: ActionButtonProps) {
+  const button = (
     <motion.button
       whileHover={{ scale: disabled ? 1 : 1.05 }}
       whileTap={{ scale: disabled ? 1 : 0.95 }}
-      onClick={onClick}
+      onClick={disabled ? undefined : onClick}
       disabled={disabled}
       className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium transition-colors
         ${disabled
@@ -164,4 +180,15 @@ function ActionButton({ icon: Icon, label, onClick, disabled = false, highlight 
       {label}
     </motion.button>
   );
+
+  // Wrap with tooltip if disabled and has reason
+  if (disabled && disabledReason) {
+    return (
+      <Tooltip content={disabledReason} position="bottom">
+        {button}
+      </Tooltip>
+    );
+  }
+
+  return button;
 }

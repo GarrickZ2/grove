@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
 import { Terminal as TerminalIcon, Play, ChevronRight } from "lucide-react";
 import { Button } from "../../ui";
@@ -13,6 +13,10 @@ interface TaskTerminalProps {
   collapsed?: boolean;
   onExpand?: () => void;
   onStartSession: () => void;
+  /** Auto-start session on mount */
+  autoStart?: boolean;
+  /** Called when terminal connects successfully (session is now live) */
+  onConnected?: () => void;
 }
 
 export function TaskTerminal({
@@ -21,10 +25,35 @@ export function TaskTerminal({
   collapsed = false,
   onExpand,
   onStartSession,
+  autoStart = false,
+  onConnected: onConnectedProp,
 }: TaskTerminalProps) {
   const [isConnected, setIsConnected] = useState(false);
+  // Local state to track if user has started session
+  const [sessionStarted, setSessionStarted] = useState(false);
 
   const isLive = task.status === "live";
+  // Show terminal if task is live OR user has manually started session
+  const showTerminal = isLive || sessionStarted;
+
+  // Auto-start session on mount if requested
+  useEffect(() => {
+    if (autoStart && !isLive) {
+      setSessionStarted(true);
+    }
+  }, [autoStart, isLive]);
+
+  // Handle terminal connected
+  const handleConnected = () => {
+    setIsConnected(true);
+    onConnectedProp?.();
+  };
+
+  // Handle start session click
+  const handleStartSession = () => {
+    setSessionStarted(true);
+    onStartSession();
+  };
 
   // Collapsed mode: vertical bar
   if (collapsed) {
@@ -65,8 +94,8 @@ export function TaskTerminal({
     );
   }
 
-  // Not live: show start session prompt (keep for idle tasks)
-  if (!isLive) {
+  // Not started: show start session prompt
+  if (!showTerminal) {
     return (
       <motion.div
         layout
@@ -83,7 +112,7 @@ export function TaskTerminal({
           <p className="text-sm text-[var(--color-text-muted)] mb-3">
             Session not running
           </p>
-          <Button variant="secondary" size="sm" onClick={onStartSession}>
+          <Button variant="secondary" size="sm" onClick={handleStartSession}>
             <Play className="w-4 h-4 mr-1.5" />
             Start Session
           </Button>
@@ -121,7 +150,7 @@ export function TaskTerminal({
         <XTerminal
           projectId={projectId}
           taskId={task.id}
-          onConnected={() => setIsConnected(true)}
+          onConnected={handleConnected}
           onDisconnected={() => setIsConnected(false)}
         />
       </div>

@@ -19,6 +19,8 @@ pub struct RepoStatusResponse {
     pub uncommitted: u32,
     pub stash_count: u32,
     pub has_conflicts: bool,
+    /// Whether the repo has an origin remote for the current branch
+    pub has_origin: bool,
 }
 
 /// Branch info with ahead/behind
@@ -168,6 +170,9 @@ pub async fn get_status(Path(id): Path<String>) -> Result<Json<RepoStatusRespons
     // Get ahead/behind from origin
     let (ahead, behind) = get_ahead_behind(&project_path, &current_branch);
 
+    // Determine if origin exists for this branch
+    let has_origin = ahead.is_some() || behind.is_some();
+
     // Get uncommitted count
     let uncommitted = git::uncommitted_count(&project_path).unwrap_or(0) as u32;
 
@@ -184,6 +189,7 @@ pub async fn get_status(Path(id): Path<String>) -> Result<Json<RepoStatusRespons
         uncommitted,
         stash_count,
         has_conflicts,
+        has_origin,
     }))
 }
 

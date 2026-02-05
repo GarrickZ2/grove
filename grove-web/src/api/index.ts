@@ -3,13 +3,13 @@
 export { apiClient, ApiClient } from './client';
 export type { ApiError } from './client';
 
-export { getConfig, patchConfig } from './config';
-export type { Config, ConfigPatch, ThemeConfig, LayoutConfig, WebConfig } from './config';
+export { getConfig, patchConfig, listApplications } from './config';
+export type { Config, ConfigPatch, ThemeConfig, LayoutConfig, WebConfig, AppInfo } from './config';
 
 export { checkAllDependencies, checkDependency } from './env';
 export type { DependencyStatus, EnvCheckResponse } from './env';
 
-export { listProjects, getProject, addProject, deleteProject, getProjectStats, getBranches } from './projects';
+export { listProjects, getProject, addProject, deleteProject, getProjectStats, getBranches, openIDE, openTerminal } from './projects';
 export type {
   ProjectListItem,
   ProjectListResponse,
@@ -18,6 +18,7 @@ export type {
   ProjectStatsResponse,
   BranchInfo,
   BranchesResponse,
+  OpenResponse,
 } from './projects';
 
 export {
@@ -32,10 +33,12 @@ export {
   syncTask,
   commitTask,
   mergeTask,
+  resetTask,
   getDiff,
   getCommits,
   getReviewComments,
   replyReviewComment,
+  getTaskStats,
 } from './tasks';
 export type {
   CommitResponse,
@@ -54,6 +57,9 @@ export type {
   ReviewCommentEntry,
   ReviewCommentsResponse,
   ReplyCommentRequest,
+  FileEditEntry,
+  ActivityEntry,
+  TaskStatsResponse,
 } from './tasks';
 
 export {
@@ -77,3 +83,6 @@ export type {
   RepoCommitsResponse,
   GitOpResponse,
 } from './git';
+
+export { startDifit, getDifitStatus, stopDifit } from './difit';
+export type { DifitStatusResponse, StopDifitResponse } from './difit';

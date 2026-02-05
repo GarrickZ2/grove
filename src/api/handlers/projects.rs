@@ -1,11 +1,13 @@
 //! Project API handlers
 
 use axum::{extract::Path, http::StatusCode, Json};
+use chrono::Utc;
 use serde::{Deserialize, Serialize};
 
 use crate::git;
 use crate::model::loader;
 use crate::storage::{tasks, workspace};
+use crate::watcher;
 
 // ============================================================================
 // Request/Response DTOs
@@ -26,6 +28,8 @@ pub struct ProjectListItem {
 #[derive(Debug, Serialize)]
 pub struct ProjectListResponse {
     pub projects: Vec<ProjectListItem>,
+    /// ID of the project matching the current working directory (if any)
+    pub current_project_id: Option<String>,
 }
 
 /// Task response (matches frontend Task type)
@@ -79,6 +83,8 @@ pub struct ProjectStatsResponse {
     pub idle_tasks: u32,
     pub merged_tasks: u32,
     pub archived_tasks: u32,
+    /// Weekly activity (last 7 days, index 0 = today)
+    pub weekly_activity: Vec<u32>,
 }
 
 /// Branch info response
@@ -181,7 +187,55 @@ fn count_project_tasks(project_key: &str) -> (u32, u32) {
 /// GET /api/v1/projects
 /// List all registered projects
 pub async fn list_projects() -> Result<Json<ProjectListResponse>, StatusCode> {
+    // Get current working directory
+    let cwd = std::env::current_dir().ok();
+
+    // Check if we need to auto-register current directory
+    let mut auto_registered = false;
+    if let Some(ref cwd) = cwd {
+        let cwd_str = cwd.to_string_lossy().to_string();
+        if git::is_git_repo(&cwd_str) {
+            if let Ok(git_root) = git::repo_root(&cwd_str) {
+                // Check if already registered
+                let projects = workspace::load_projects().unwrap_or_default();
+                let already_registered = projects.iter().any(|p| p.path == git_root);
+
+                if !already_registered {
+                    // Auto-register this project
+                    let name = std::path::Path::new(&git_root)
+                        .file_name()
+                        .map(|n| n.to_string_lossy().to_string())
+                        .unwrap_or_else(|| "Unknown".to_string());
+
+                    if workspace::add_project(&name, &git_root).is_ok() {
+                        auto_registered = true;
+                    }
+                }
+            }
+        }
+    }
+
+    // Reload projects (in case we auto-registered one)
     let projects = workspace::load_projects().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    // Find project matching current directory
+    let current_project_id = cwd.as_ref().and_then(|cwd| {
+        projects.iter().find_map(|p| {
+            let project_path = std::path::Path::new(&p.path);
+            if cwd.starts_with(project_path) {
+                Some(workspace::project_hash(&p.path))
+            } else {
+                None
+            }
+        })
+    });
+
+    // Log auto-registration
+    if auto_registered {
+        if let Some(ref id) = current_project_id {
+            eprintln!("Auto-registered current directory as project: {}", id);
+        }
+    }
 
     let items: Vec<ProjectListItem> = projects
         .iter()
@@ -200,7 +254,10 @@ pub async fn list_projects() -> Result<Json<ProjectListResponse>, StatusCode> {
         })
         .collect();
 
-    Ok(Json(ProjectListResponse { projects: items }))
+    Ok(Json(ProjectListResponse {
+        projects: items,
+        current_project_id,
+    }))
 }
 
 /// GET /api/v1/projects/{id}
@@ -293,6 +350,7 @@ pub async fn delete_project(Path(id): Path<String>) -> Result<StatusCode, Status
 /// Get project statistics
 pub async fn get_stats(Path(id): Path<String>) -> Result<Json<ProjectStatsResponse>, StatusCode> {
     let project = find_project_by_id(&id)?;
+    let project_key = workspace::project_hash(&project.path);
 
     // Load all worktrees
     let (current, other, _) = loader::load_worktrees(&project.path);
@@ -314,12 +372,30 @@ pub async fn get_stats(Path(id): Path<String>) -> Result<Json<ProjectStatsRespon
     let total_tasks = current.len() as u32 + other.len() as u32;
     let archived_tasks = archived.len() as u32;
 
+    // Calculate weekly activity from all tasks' edit history
+    let now = Utc::now();
+    let mut weekly: [u32; 7] = [0; 7];
+    let active_tasks = tasks::load_tasks(&project_key).unwrap_or_default();
+
+    for task in &active_tasks {
+        if let Ok(events) = watcher::load_edit_history(&project_key, &task.id) {
+            for event in events {
+                let duration = now.signed_duration_since(event.timestamp);
+                let days_ago = duration.num_days();
+                if (0..7).contains(&days_ago) {
+                    weekly[days_ago as usize] += 1;
+                }
+            }
+        }
+    }
+
     Ok(Json(ProjectStatsResponse {
         total_tasks,
         live_tasks,
         idle_tasks,
         merged_tasks,
         archived_tasks,
+        weekly_activity: weekly.to_vec(),
     }))
 }
 
@@ -344,4 +420,184 @@ pub async fn get_branches(Path(id): Path<String>) -> Result<Json<BranchesRespons
         .collect();
 
     Ok(Json(BranchesResponse { branches, current }))
+}
+
+/// Open command response
+#[derive(Debug, Serialize)]
+pub struct OpenResponse {
+    pub success: bool,
+    pub message: String,
+}
+
+/// POST /api/v1/projects/{id}/open-ide
+/// Open project in IDE
+pub async fn open_ide(Path(id): Path<String>) -> Result<Json<OpenResponse>, StatusCode> {
+    use crate::storage::config;
+    use std::process::Command;
+
+    let project = find_project_by_id(&id)?;
+    let config = config::load_config();
+
+    // Get IDE command from config, default to "code" (VS Code)
+    let ide_cmd = config.web.ide.unwrap_or_else(|| "code".to_string());
+
+    // Check if it's an app path (.app) or a command
+    let result = if ide_cmd.ends_with(".app") {
+        // It's an application path, use 'open -a' with the app bundle
+        Command::new("open")
+            .args(["-a", &ide_cmd, &project.path])
+            .spawn()
+    } else {
+        // It's a command (like "code", "cursor", etc.)
+        Command::new(&ide_cmd).arg(&project.path).spawn()
+    };
+
+    let display_name = if ide_cmd.ends_with(".app") {
+        std::path::Path::new(&ide_cmd)
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or(&ide_cmd)
+            .to_string()
+    } else {
+        ide_cmd.clone()
+    };
+
+    match result {
+        Ok(_) => Ok(Json(OpenResponse {
+            success: true,
+            message: format!("Opening {} in {}", project.name, display_name),
+        })),
+        Err(e) => Ok(Json(OpenResponse {
+            success: false,
+            message: format!("Failed to open IDE '{}': {}", display_name, e),
+        })),
+    }
+}
+
+/// POST /api/v1/projects/{id}/open-terminal
+/// Open project in terminal
+pub async fn open_terminal(Path(id): Path<String>) -> Result<Json<OpenResponse>, StatusCode> {
+    use crate::storage::config;
+    use std::process::Command;
+
+    let project = find_project_by_id(&id)?;
+    let config = config::load_config();
+
+    // Get terminal command from config
+    let terminal_cmd = config.web.terminal.as_deref();
+
+    let (result, display_name) = match terminal_cmd {
+        // Handle .app paths first
+        Some(cmd) if cmd.ends_with(".app") => {
+            let app_name = std::path::Path::new(cmd)
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or(cmd);
+
+            // Special handling for iTerm
+            if app_name.to_lowercase().contains("iterm") {
+                (
+                    Command::new("osascript")
+                        .args([
+                            "-e",
+                            &format!(
+                                r#"tell application "iTerm"
+                                    activate
+                                    create window with default profile
+                                    tell current session of current window
+                                        write text "cd '{}'"
+                                    end tell
+                                end tell"#,
+                                project.path
+                            ),
+                        ])
+                        .spawn(),
+                    app_name.to_string(),
+                )
+            } else {
+                // Generic .app handling via 'open -a'
+                (
+                    Command::new("open")
+                        .args(["-a", cmd, &project.path])
+                        .spawn(),
+                    app_name.to_string(),
+                )
+            }
+        }
+        Some("iterm") | Some("iTerm") => {
+            // Open iTerm with specified directory
+            (
+                Command::new("osascript")
+                    .args([
+                        "-e",
+                        &format!(
+                            r#"tell application "iTerm"
+                                activate
+                                create window with default profile
+                                tell current session of current window
+                                    write text "cd '{}'"
+                                end tell
+                            end tell"#,
+                            project.path
+                        ),
+                    ])
+                    .spawn(),
+                "iTerm".to_string(),
+            )
+        }
+        Some("warp") | Some("Warp") => {
+            // Open Warp terminal
+            (
+                Command::new("open")
+                    .args(["-a", "Warp", &project.path])
+                    .spawn(),
+                "Warp".to_string(),
+            )
+        }
+        Some("kitty") => {
+            // Open Kitty terminal
+            (
+                Command::new("kitty")
+                    .args(["--directory", &project.path])
+                    .spawn(),
+                "Kitty".to_string(),
+            )
+        }
+        Some("alacritty") => {
+            // Open Alacritty terminal
+            (
+                Command::new("alacritty")
+                    .args(["--working-directory", &project.path])
+                    .spawn(),
+                "Alacritty".to_string(),
+            )
+        }
+        Some(cmd) => {
+            // Try to use custom command directly
+            (
+                Command::new(cmd).arg(&project.path).spawn(),
+                cmd.to_string(),
+            )
+        }
+        None => {
+            // Default: open macOS Terminal.app
+            (
+                Command::new("open")
+                    .args(["-a", "Terminal", &project.path])
+                    .spawn(),
+                "Terminal".to_string(),
+            )
+        }
+    };
+
+    match result {
+        Ok(_) => Ok(Json(OpenResponse {
+            success: true,
+            message: format!("Opening {} in {}", project.name, display_name),
+        })),
+        Err(e) => Ok(Json(OpenResponse {
+            success: false,
+            message: format!("Failed to open terminal '{}': {}", display_name, e),
+        })),
+    }
 }

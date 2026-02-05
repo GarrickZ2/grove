@@ -70,6 +70,7 @@ export interface RepoStatus {
   unstaged: number;   // modified but not staged
   untracked: number;  // untracked files count
   hasConflicts: boolean;
+  hasOrigin: boolean; // whether the repo has origin for current branch
 }
 
 // Commit file change details

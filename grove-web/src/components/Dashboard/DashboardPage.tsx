@@ -20,9 +20,13 @@ import {
   createBranch,
   deleteBranch,
   renameBranch,
+  getProjectStats,
+  openIDE,
+  openTerminal,
   type RepoStatusResponse,
   type BranchDetailInfo,
   type RepoCommitEntry,
+  type ProjectStatsResponse,
 } from "../../api";
 import type { Branch, Commit, RepoStatus, Stats } from "../../data/types";
 
@@ -40,6 +44,7 @@ function convertRepoStatus(status: RepoStatusResponse): RepoStatus {
     unstaged: status.uncommitted,
     untracked: 0,
     hasConflicts: status.has_conflicts,
+    hasOrigin: status.has_origin,
   };
 }
 
@@ -79,9 +84,11 @@ export function DashboardPage({ onNavigate }: DashboardPageProps) {
   const [repoStatus, setRepoStatus] = useState<RepoStatus | null>(null);
   const [branches, setBranches] = useState<Branch[]>([]);
   const [repoCommits, setRepoCommits] = useState<Commit[]>([]);
+  const [projectStats, setProjectStats] = useState<ProjectStatsResponse | null>(null);
   const [isStatusLoading, setIsStatusLoading] = useState(true);
   const [isBranchesLoading, setIsBranchesLoading] = useState(true);
   const [isCommitsLoading, setIsCommitsLoading] = useState(true);
+  const [isStatsLoading, setIsStatsLoading] = useState(true);
   const [isOperating, setIsOperating] = useState(false);
   const [operationMessage, setOperationMessage] = useState<string | null>(null);
 
@@ -127,17 +134,32 @@ export function DashboardPage({ onNavigate }: DashboardPageProps) {
     }
   }, [selectedProject]);
 
+  // Load project stats
+  const loadStats = useCallback(async () => {
+    if (!selectedProject) return;
+    try {
+      setIsStatsLoading(true);
+      const statsRes = await getProjectStats(selectedProject.id);
+      setProjectStats(statsRes);
+    } catch (err) {
+      console.error("Failed to load stats:", err);
+    } finally {
+      setIsStatsLoading(false);
+    }
+  }, [selectedProject]);
+
   // Load all git data (for refresh after operations)
   const loadGitData = useCallback(async () => {
-    await Promise.all([loadGitStatus(), loadBranches(), loadCommits()]);
-  }, [loadGitStatus, loadBranches, loadCommits]);
+    await Promise.all([loadGitStatus(), loadBranches(), loadCommits(), loadStats()]);
+  }, [loadGitStatus, loadBranches, loadCommits, loadStats]);
 
   // Initial load - start all requests in parallel but update UI independently
   useEffect(() => {
     loadGitStatus();
     loadBranches();
     loadCommits();
-  }, [loadGitStatus, loadBranches, loadCommits]);
+    loadStats();
+  }, [loadGitStatus, loadBranches, loadCommits, loadStats]);
 
   // Show operation message briefly
   const showMessage = (message: string) => {
@@ -154,27 +176,57 @@ export function DashboardPage({ onNavigate }: DashboardPageProps) {
     );
   }
 
-  // Get tasks for current project
-  const liveTasks = selectedProject.tasks.filter(t => t.status === "live");
-  const idleTasks = selectedProject.tasks.filter(t => t.status === "idle");
-  const mergedTasks = selectedProject.tasks.filter(t => t.status === "merged");
-  const archivedTasks = selectedProject.tasks.filter(t => t.status === "archived");
+  // Get tasks for current project (for live tasks list)
+  // Only show tasks whose target branch matches the current branch
+  const currentBranch = repoStatus?.currentBranch || selectedProject.currentBranch || "main";
+  const liveTasks = selectedProject.tasks.filter(
+    t => (t.status === "live" || t.status === "idle") && t.target === currentBranch
+  );
 
-  // Build project-specific stats
-  const projectStats: Stats = {
-    totalTasks: selectedProject.tasks.length,
-    liveTasks: liveTasks.length,
-    idleTasks: idleTasks.length,
-    mergedTasks: mergedTasks.length,
-    archivedTasks: archivedTasks.length,
-    recentActivity: [],
-    fileEdits: [],
-    weeklyActivity: [],
-  };
+  // Build project-specific stats from API data or fallback to task list
+  const displayStats: Stats = projectStats
+    ? {
+        totalTasks: projectStats.total_tasks,
+        liveTasks: projectStats.live_tasks,
+        idleTasks: projectStats.idle_tasks,
+        mergedTasks: projectStats.merged_tasks,
+        archivedTasks: projectStats.archived_tasks,
+        recentActivity: [],
+        fileEdits: [],
+        weeklyActivity: projectStats.weekly_activity,
+      }
+    : {
+        totalTasks: selectedProject.tasks.length,
+        liveTasks: liveTasks.length,
+        idleTasks: selectedProject.tasks.filter(t => t.status === "idle").length,
+        mergedTasks: selectedProject.tasks.filter(t => t.status === "merged").length,
+        archivedTasks: selectedProject.tasks.filter(t => t.status === "archived").length,
+        recentActivity: [],
+        fileEdits: [],
+        weeklyActivity: [],
+      };
 
   // Handlers
-  const handleOpenIDE = () => showMessage("Opening in IDE...");
-  const handleOpenTerminal = () => showMessage("Opening Terminal...");
+  const handleOpenIDE = async () => {
+    if (!selectedProject) return;
+    try {
+      const result = await openIDE(selectedProject.id);
+      showMessage(result.message);
+    } catch (err) {
+      showMessage("Failed to open IDE");
+    }
+  };
+
+  const handleOpenTerminal = async () => {
+    if (!selectedProject) return;
+    try {
+      const result = await openTerminal(selectedProject.id);
+      showMessage(result.message);
+    } catch (err) {
+      showMessage("Failed to open terminal");
+    }
+  };
+
   const handleNewTask = () => showMessage("Creating new task...");
 
   const handlePull = async () => {
@@ -337,6 +389,7 @@ export function DashboardPage({ onNavigate }: DashboardPageProps) {
     unstaged: 0,
     untracked: 0,
     hasConflicts: false,
+    hasOrigin: true, // assume true until loaded
   };
 
   const currentStatus = repoStatus || defaultRepoStatus;
@@ -398,7 +451,7 @@ export function DashboardPage({ onNavigate }: DashboardPageProps) {
           tasks={liveTasks}
           onTaskClick={(task) => onNavigate("tasks", { taskId: task.id })}
         />
-        <QuickStats stats={projectStats} />
+        <QuickStats stats={displayStats} isLoading={isStatsLoading} />
       </div>
 
       {/* Row 3: Recent Commits */}

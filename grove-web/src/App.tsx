@@ -1,46 +1,44 @@
 import { useState, useEffect } from "react";
-import { AnimatePresence } from "framer-motion";
 import { Sidebar } from "./components/Layout/Sidebar";
 import { SettingsPage } from "./components/Config";
 import { DashboardPage } from "./components/Dashboard";
 import { TasksPage } from "./components/Tasks";
-import { ProjectSelectorPage, ProjectsPage } from "./components/Projects";
+import { ProjectsPage } from "./components/Projects";
 import { WelcomePage } from "./components/Welcome";
 import { ThemeProvider, ProjectProvider, useProject } from "./context";
 import { mockConfig } from "./data/mockData";
-
-const WELCOME_SHOWN_KEY = "grove-welcome-shown";
 
 function AppContent() {
   const [activeItem, setActiveItem] = useState("dashboard");
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [showWelcome, setShowWelcome] = useState(false);
-  const { selectedProject, isLoading } = useProject();
+  const [hasExitedWelcome, setHasExitedWelcome] = useState(false);
+  const [navigationData, setNavigationData] = useState<Record<string, unknown> | null>(null);
+  const { selectedProject, currentProjectId, isLoading } = useProject();
 
-  // Check if welcome page should be shown
-  useEffect(() => {
-    const hasSeenWelcome = localStorage.getItem(WELCOME_SHOWN_KEY);
-    if (!hasSeenWelcome) {
-      setShowWelcome(true);
-    }
-  }, []);
+  // Check if we should show welcome page
+  const shouldShowWelcome = showWelcome || (currentProjectId === null && !hasExitedWelcome);
 
-  // Update document title based on selected project
+  // Update document title based on current view
   useEffect(() => {
-    if (selectedProject) {
+    if (shouldShowWelcome) {
+      document.title = "Grove";
+    } else if (selectedProject) {
       document.title = `${selectedProject.name} - Grove`;
     } else {
       document.title = "Grove";
     }
-  }, [selectedProject]);
+  }, [selectedProject, shouldShowWelcome]);
 
   const handleGetStarted = () => {
-    localStorage.setItem(WELCOME_SHOWN_KEY, "true");
     setShowWelcome(false);
+    setHasExitedWelcome(true);
+    setActiveItem("projects"); // Go to projects management page
   };
 
-  const handleNavigate = (page: string, _data?: Record<string, unknown>) => {
+  const handleNavigate = (page: string, data?: Record<string, unknown>) => {
     setActiveItem(page);
+    setNavigationData(data || null);
   };
 
   // Show loading state
@@ -52,17 +50,11 @@ function AppContent() {
     );
   }
 
-  // Settings is always accessible, even without a project selected
-  // For other pages, require project selection
-  const requiresProject = activeItem !== "settings";
-  const showProjectSelector = requiresProject && !selectedProject && !showWelcome;
-
-  if (showProjectSelector) {
-    return (
-      <ProjectSelectorPage
-        onProjectSelected={() => setActiveItem("dashboard")}
-      />
-    );
+  // Show Welcome page if:
+  // 1. User explicitly requested it (clicked logo)
+  // 2. Not running in a git repo directory (currentProjectId is null) AND user hasn't clicked "Get Started"
+  if (shouldShowWelcome) {
+    return <WelcomePage onGetStarted={handleGetStarted} />;
   }
 
   const renderContent = () => {
@@ -70,9 +62,14 @@ function AppContent() {
       case "dashboard":
         return <DashboardPage onNavigate={handleNavigate} />;
       case "projects":
-        return <ProjectsPage />;
+        return <ProjectsPage onNavigate={setActiveItem} />;
       case "tasks":
-        return <TasksPage />;
+        return (
+          <TasksPage
+            initialTaskId={navigationData?.taskId as string | undefined}
+            onNavigationConsumed={() => setNavigationData(null)}
+          />
+        );
       case "settings":
         return <SettingsPage config={mockConfig} />;
       default:
@@ -95,29 +92,21 @@ function AppContent() {
   const isFullWidthPage = activeItem === "tasks";
 
   return (
-    <>
-      {/* Welcome Page */}
-      <AnimatePresence>
-        {showWelcome && <WelcomePage onGetStarted={handleGetStarted} />}
-      </AnimatePresence>
-
-      {/* Main App */}
-      <div className="flex h-screen bg-[var(--color-bg)]">
-        <Sidebar
-          activeItem={activeItem}
-          onItemClick={setActiveItem}
-          collapsed={sidebarCollapsed}
-          onToggleCollapse={() => setSidebarCollapsed(!sidebarCollapsed)}
-          onManageProjects={() => setActiveItem("projects")}
-          onLogoClick={() => setShowWelcome(true)}
-        />
+    <div className="flex h-screen bg-[var(--color-bg)]">
+      <Sidebar
+        activeItem={activeItem}
+        onItemClick={setActiveItem}
+        collapsed={sidebarCollapsed}
+        onToggleCollapse={() => setSidebarCollapsed(!sidebarCollapsed)}
+        onManageProjects={() => setActiveItem("projects")}
+        onLogoClick={() => setShowWelcome(true)}
+      />
         <main className={`flex-1 ${isFullWidthPage ? "overflow-hidden" : "overflow-y-auto"}`}>
           <div className={isFullWidthPage ? "h-full p-6" : "max-w-5xl mx-auto p-6"}>
             {renderContent()}
           </div>
         </main>
       </div>
-    </>
   );
 }
 

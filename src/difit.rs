@@ -44,17 +44,31 @@ pub struct DifitHandle {
 }
 
 /// 启动 difit 子进程，立即返回句柄
+///
+/// `no_open`: 如果为 true，添加 `--no-open` 参数（用于 Web 版本，避免自动打开浏览器）
 pub fn spawn_difit(
     worktree_path: &str,
     target_branch: &str,
     availability: &DifitAvailability,
+    no_open: bool,
 ) -> std::io::Result<DifitHandle> {
     let temp_path = std::env::temp_dir().join(format!("grove_difit_{}.txt", std::process::id()));
     let temp_str = temp_path.to_string_lossy().to_string();
 
+    let no_open_flag = if no_open { " --no-open" } else { "" };
     let difit_cmd = match availability {
-        DifitAvailability::Global => format!("difit . {} --include-untracked", target_branch),
-        DifitAvailability::Npx => format!("npx -y difit . {} --include-untracked", target_branch),
+        DifitAvailability::Global => {
+            format!(
+                "difit . {}{} --include-untracked",
+                target_branch, no_open_flag
+            )
+        }
+        DifitAvailability::Npx => {
+            format!(
+                "npx -y difit . {}{} --include-untracked",
+                target_branch, no_open_flag
+            )
+        }
         DifitAvailability::NotAvailable => {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::NotFound,

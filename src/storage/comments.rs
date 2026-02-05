@@ -244,7 +244,12 @@ pub fn reply_comment(
 /// 同时清理 replies.json，因为新的 comments 和旧的 replies 不再匹配。
 pub fn save_diff_comments(project: &str, task_id: &str, content: &str) -> io::Result<()> {
     let path = diff_comments_path(project, task_id)?;
-    std::fs::write(&path, content)?;
+
+    // Write with explicit sync to ensure data is flushed to disk
+    use std::io::Write;
+    let mut file = std::fs::File::create(&path)?;
+    file.write_all(content.as_bytes())?;
+    file.sync_all()?;
 
     // Clear old replies since comments have been replaced
     let replies_path = replies_path(project, task_id)?;
@@ -252,5 +257,14 @@ pub fn save_diff_comments(project: &str, task_id: &str, content: &str) -> io::Re
         let _ = std::fs::remove_file(replies_path);
     }
 
+    Ok(())
+}
+
+/// 删除 AI 数据目录（包含 summary.md, todo.json, replies.json, diff_comments.md）
+pub fn delete_ai_data(project: &str, task_id: &str) -> io::Result<()> {
+    let dir = ensure_project_dir(project)?.join("ai").join(task_id);
+    if dir.exists() {
+        std::fs::remove_dir_all(&dir)?;
+    }
     Ok(())
 }

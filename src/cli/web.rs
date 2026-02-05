@@ -165,19 +165,38 @@ async fn execute_dev_mode(api_port: u16, no_open: bool) {
 
 /// Run in production mode (static files + API)
 async fn execute_prod_mode(port: u16, no_open: bool) {
-    // Try to find static directory
-    let mut static_dir = api::find_static_dir();
+    // Check for embedded assets first
+    let has_embedded = api::has_embedded_assets();
 
-    // If not found, try to build
-    if static_dir.is_none() {
+    // Try to find external static directory (for development override)
+    let static_dir = api::find_static_dir();
+
+    // If no embedded assets and no external files, try to build
+    if !has_embedded && static_dir.is_none() {
         if let Some(project_dir) = find_project_dir() {
             if build_frontend(&project_dir) {
-                static_dir = Some(project_dir.join("grove-web").join("dist"));
+                // Rebuild static_dir after building
+                let built_dir = project_dir.join("grove-web").join("dist");
+                let url = format!("http://localhost:{}", port);
+
+                if !no_open {
+                    let url_clone = url.clone();
+                    tokio::spawn(async move {
+                        tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+                        println!("Opening browser: {}", url_clone);
+                        let _ = open::that(&url_clone);
+                    });
+                }
+
+                if let Err(e) = api::start_server(port, Some(built_dir)).await {
+                    eprintln!("Server error: {}", e);
+                    std::process::exit(1);
+                }
+                return;
             }
         }
-    }
 
-    if static_dir.is_none() {
+        // No embedded assets and couldn't build
         eprintln!("Could not find or build frontend files.");
         eprintln!("Please build the frontend first:");
         eprintln!("  cd grove-web && npm install && npm run build");
@@ -196,7 +215,7 @@ async fn execute_prod_mode(port: u16, no_open: bool) {
         });
     }
 
-    // Start the server
+    // Start the server (will use embedded assets if no external static_dir)
     if let Err(e) = api::start_server(port, static_dir).await {
         eprintln!("Server error: {}", e);
         std::process::exit(1);

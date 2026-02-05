@@ -36,6 +36,8 @@ tokio = { version = "1", features = ["full"] }
 # Web API Server
 axum = { version = "0.8", features = ["ws"] }
 tower-http = { version = "0.6", features = ["cors", "fs"] }
+rust-embed = "8"
+mime_guess = "2"
 open = "5"
 
 # Terminal WebSocket

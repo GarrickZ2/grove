@@ -10,6 +10,8 @@ interface TaskViewProps {
   projectId: string;
   task: Task;
   reviewOpen: boolean;
+  /** Auto-start terminal session on mount */
+  autoStartSession?: boolean;
   onToggleReview: () => void;
   onCommit: () => void;
   onRebase: () => void;
@@ -19,12 +21,15 @@ interface TaskViewProps {
   onClean: () => void;
   onReset: () => void;
   onStartSession: () => void;
+  /** Called when terminal connects (session becomes live) */
+  onTerminalConnected?: () => void;
 }
 
 export function TaskView({
   projectId,
   task,
   reviewOpen,
+  autoStartSession = false,
   onToggleReview,
   onCommit,
   onRebase,
@@ -34,6 +39,7 @@ export function TaskView({
   onClean,
   onReset,
   onStartSession,
+  onTerminalConnected,
 }: TaskViewProps) {
   // When terminal expands, close review
   const handleExpandTerminal = () => {
@@ -76,6 +82,8 @@ export function TaskView({
           collapsed={reviewOpen}
           onExpand={handleExpandTerminal}
           onStartSession={onStartSession}
+          autoStart={autoStartSession}
+          onConnected={onTerminalConnected}
         />
 
         {/* Code Review Panel */}
@@ -88,7 +96,11 @@ export function TaskView({
               transition={{ type: "spring", damping: 25, stiffness: 200 }}
               className="flex-1 flex flex-col overflow-hidden"
             >
-              <TaskCodeReview onClose={onToggleReview} />
+              <TaskCodeReview
+                projectId={projectId}
+                taskId={task.id}
+                onClose={onToggleReview}
+              />
             </motion.div>
           )}
         </AnimatePresence>

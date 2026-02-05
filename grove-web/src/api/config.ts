@@ -33,6 +33,17 @@ export interface ConfigPatch {
   web?: Partial<WebConfig>;
 }
 
+// Application info for picker
+export interface AppInfo {
+  name: string;
+  path: string;
+  bundle_id?: string;
+}
+
+export interface ApplicationsResponse {
+  apps: AppInfo[];
+}
+
 // API functions
 export async function getConfig(): Promise<Config> {
   return apiClient.get<Config>('/api/v1/config');
@@ -40,4 +51,9 @@ export async function getConfig(): Promise<Config> {
 
 export async function patchConfig(patch: ConfigPatch): Promise<Config> {
   return apiClient.patch<ConfigPatch, Config>('/api/v1/config', patch);
+}
+
+export async function listApplications(): Promise<AppInfo[]> {
+  const response = await apiClient.get<ApplicationsResponse>('/api/v1/config/applications');
+  return response.apps;
 }

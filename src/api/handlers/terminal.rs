@@ -15,6 +15,7 @@ use std::io::{Read, Write};
 use std::sync::Arc;
 use tokio::sync::mpsc;
 
+use crate::api::state;
 use crate::storage::{config, tasks, workspace};
 use crate::tmux;
 use crate::tmux::layout::{parse_custom_layout_tree, CustomLayout, TaskLayout};
@@ -70,8 +71,12 @@ pub async fn task_terminal_handler(
     let session = tmux::session_name(&project_key, &task_id);
 
     // 4. Ensure session exists (create if needed)
-    if !tmux::session_exists(&session) {
+    let session_created = !tmux::session_exists(&session);
+    if session_created {
         ensure_task_session(&project, &project_key, &task)?;
+
+        // Register FileWatcher for this task's worktree
+        state::watch_task(&project_key, &task.id, &task.worktree_path);
     }
 
     // 5. Upgrade to WebSocket and handle tmux attach

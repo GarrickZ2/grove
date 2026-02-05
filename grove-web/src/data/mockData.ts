@@ -234,6 +234,7 @@ export const mockRepoStatus: RepoStatus = {
   unstaged: 3,
   untracked: 1,
   hasConflicts: false,
+  hasOrigin: true,
 };
 
 // Mock Branches
