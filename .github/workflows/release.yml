@@ -40,14 +40,15 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '22.14.0'
-          cache: 'npm'
-          cache-dependency-path: grove-web/package-lock.json
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
       - name: Build Frontend
         run: |
-          npm install -g npm@latest
           cd grove-web
-          npm ci --legacy-peer-deps
-          npm run build
+          pnpm install --no-frozen-lockfile
+          pnpm run build
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
@@ -75,14 +76,15 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '22.14.0'
-          cache: 'npm'
-          cache-dependency-path: grove-web/package-lock.json
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
       - name: Build Frontend
         run: |
-          npm install -g npm@latest
           cd grove-web
-          npm ci --legacy-peer-deps
-          npm run build
+          pnpm install --no-frozen-lockfile
+          pnpm run build
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
@@ -110,14 +112,15 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '22.14.0'
-          cache: 'npm'
-          cache-dependency-path: grove-web/package-lock.json
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
       - name: Build Frontend
         run: |
-          npm install -g npm@latest
           cd grove-web
-          npm ci --legacy-peer-deps
-          npm run build
+          pnpm install --no-frozen-lockfile
+          pnpm run build
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
@@ -147,14 +150,15 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '22.14.0'
-          cache: 'npm'
-          cache-dependency-path: grove-web/package-lock.json
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
       - name: Build Frontend
         run: |
-          npm install -g npm@latest
           cd grove-web
-          npm ci --legacy-peer-deps
-          npm run build
+          pnpm install --no-frozen-lockfile
+          pnpm run build
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
       - name: Install cross
