@@ -15,12 +15,24 @@ import {
   FolderOpen,
   Loader2,
   ArrowDownToLine,
+  ListTodo,
+  Circle,
 } from "lucide-react";
-import type { Branch } from "../../data/types";
+import type { Branch, Task } from "../../data/types";
+
+// Branch with task info
+interface BranchWithTasks {
+  name: string;
+  taskCount: number;
+  liveTasks: number;
+  idleTasks: number;
+  tasks: Task[];
+}
 
 interface BranchDrawerProps {
   isOpen: boolean;
   branches: Branch[];
+  tasks?: Task[];
   isLoading?: boolean;
   onClose: () => void;
   onCheckout: (branch: Branch) => void;
@@ -30,6 +42,7 @@ interface BranchDrawerProps {
   onMerge: (branch: Branch) => void;
   onPullMerge?: (branch: Branch) => void;
   onPullRebase?: (branch: Branch) => void;
+  onTaskClick?: (task: Task) => void;
 }
 
 // Tree node for nested folder structure
@@ -103,6 +116,7 @@ function getSortedChildren(node: BranchTreeNode): BranchTreeNode[] {
 export function BranchDrawer({
   isOpen,
   branches,
+  tasks = [],
   isLoading = false,
   onClose,
   onCheckout,
@@ -112,10 +126,13 @@ export function BranchDrawer({
   onMerge,
   onPullMerge,
   onPullRebase,
+  onTaskClick,
 }: BranchDrawerProps) {
   const [searchQuery, setSearchQuery] = useState("");
   const [showRemote, setShowRemote] = useState(false);
+  const [showWithTasks, setShowWithTasks] = useState(true);
   const [selectedBranch, setSelectedBranch] = useState<Branch | null>(null);
+  const [selectedTaskBranch, setSelectedTaskBranch] = useState<string | null>(null);
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(
     new Set(["grove", "feature", "origin", "origin/feature", "origin/grove"])
   );
@@ -130,6 +147,36 @@ export function BranchDrawer({
     b.name.toLowerCase().includes(searchQuery.toLowerCase())
   );
 
+  // Group active tasks by target branch
+  const branchesWithTasks = useMemo(() => {
+    const activeTasks = tasks.filter(t => t.status !== "archived");
+    const branchMap = new Map<string, Task[]>();
+
+    activeTasks.forEach(task => {
+      const existing = branchMap.get(task.target) || [];
+      existing.push(task);
+      branchMap.set(task.target, existing);
+    });
+
+    const result: BranchWithTasks[] = [];
+    branchMap.forEach((branchTasks, branchName) => {
+      // Filter by search query
+      if (searchQuery && !branchName.toLowerCase().includes(searchQuery.toLowerCase())) {
+        return;
+      }
+      result.push({
+        name: branchName,
+        taskCount: branchTasks.length,
+        liveTasks: branchTasks.filter(t => t.status === "live").length,
+        idleTasks: branchTasks.filter(t => t.status === "idle").length,
+        tasks: branchTasks,
+      });
+    });
+
+    // Sort by task count descending
+    return result.sort((a, b) => b.taskCount - a.taskCount);
+  }, [tasks, searchQuery]);
+
   // Build tree structures
   const localTree = useMemo(() => buildBranchTree(filteredLocal), [filteredLocal]);
   const remoteTree = useMemo(() => buildBranchTree(filteredRemote), [filteredRemote]);
@@ -137,6 +184,12 @@ export function BranchDrawer({
   const handleBranchClick = (branch: Branch) => {
     if (branch.isCurrent) return;
     setSelectedBranch(selectedBranch?.name === branch.name ? null : branch);
+    setSelectedTaskBranch(null);
+  };
+
+  const handleTaskBranchClick = (branchName: string) => {
+    setSelectedTaskBranch(selectedTaskBranch === branchName ? null : branchName);
+    setSelectedBranch(null);
   };
 
   const toggleFolder = (path: string) => {
@@ -149,6 +202,11 @@ export function BranchDrawer({
       }
       return next;
     });
+  };
+
+  // Find branch object by name
+  const findBranch = (name: string): Branch | undefined => {
+    return branches.find(b => b.name === name);
   };
 
   return (
@@ -170,7 +228,7 @@ export function BranchDrawer({
             animate={{ x: 0 }}
             exit={{ x: "100%" }}
             transition={{ type: "spring", damping: 30, stiffness: 300 }}
-            className="fixed right-0 top-0 bottom-0 w-80 bg-[var(--color-bg-secondary)] border-l border-[var(--color-border)] shadow-xl z-50 flex flex-col"
+            className="fixed right-0 top-0 bottom-0 w-96 bg-[var(--color-bg-secondary)] border-l border-[var(--color-border)] shadow-xl z-50 flex flex-col"
           >
             {/* Header */}
             <div className="flex items-center justify-between px-4 py-3 border-b border-[var(--color-border)]">
@@ -210,6 +268,57 @@ export function BranchDrawer({
                 </div>
               ) : (
               <>
+              {/* Branches with Active Tasks */}
+              {branchesWithTasks.length > 0 && (
+                <div className="mb-4">
+                  <button
+                    onClick={() => setShowWithTasks(!showWithTasks)}
+                    className="flex items-center gap-1 text-xs font-medium text-[var(--color-highlight)] px-2 py-1.5 hover:text-[var(--color-highlight)] transition-colors uppercase tracking-wider w-full"
+                  >
+                    {showWithTasks ? (
+                      <ChevronDown className="w-3 h-3" />
+                    ) : (
+                      <ChevronRight className="w-3 h-3" />
+                    )}
+                    <ListTodo className="w-3.5 h-3.5 mr-1" />
+                    With Active Tasks ({branchesWithTasks.length})
+                  </button>
+                  <AnimatePresence>
+                    {showWithTasks && (
+                      <motion.div
+                        initial={{ opacity: 0, height: 0 }}
+                        animate={{ opacity: 1, height: "auto" }}
+                        exit={{ opacity: 0, height: 0 }}
+                        className="space-y-0.5 overflow-hidden"
+                      >
+                        {branchesWithTasks.map(bwt => (
+                          <TaskBranchItem
+                            key={bwt.name}
+                            branchWithTasks={bwt}
+                            isSelected={selectedTaskBranch === bwt.name}
+                            isCurrent={findBranch(bwt.name)?.isCurrent || false}
+                            onBranchClick={() => handleTaskBranchClick(bwt.name)}
+                            onCheckout={() => {
+                              const branch = findBranch(bwt.name);
+                              if (branch) {
+                                onCheckout(branch);
+                                onClose();
+                              }
+                            }}
+                            onTaskClick={(task) => {
+                              if (onTaskClick) {
+                                onTaskClick(task);
+                                onClose();
+                              }
+                            }}
+                          />
+                        ))}
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
+                </div>
+              )}
+
               {/* Local Branches */}
               <div className="text-xs font-medium text-[var(--color-text-muted)] px-2 py-1.5 uppercase tracking-wider">
                 Local ({filteredLocal.length})
@@ -299,6 +408,135 @@ export function BranchDrawer({
         </>
       )}
     </AnimatePresence>
+  );
+}
+
+// Task branch item component
+interface TaskBranchItemProps {
+  branchWithTasks: BranchWithTasks;
+  isSelected: boolean;
+  isCurrent: boolean;
+  onBranchClick: () => void;
+  onCheckout: () => void;
+  onTaskClick: (task: Task) => void;
+}
+
+function TaskBranchItem({
+  branchWithTasks,
+  isSelected,
+  isCurrent,
+  onBranchClick,
+  onCheckout,
+  onTaskClick,
+}: TaskBranchItemProps) {
+  return (
+    <div>
+      <button
+        onClick={onBranchClick}
+        className={`w-full flex items-center justify-between px-3 py-2 rounded-lg transition-colors text-left
+          ${isCurrent
+            ? "bg-[var(--color-highlight)]/10 border border-[var(--color-highlight)]/30"
+            : isSelected
+              ? "bg-[var(--color-bg-tertiary)]"
+              : "hover:bg-[var(--color-bg-tertiary)]"
+          }`}
+      >
+        <div className="flex items-center gap-2 min-w-0">
+          <GitBranch className={`w-4 h-4 flex-shrink-0 ${
+            isCurrent ? "text-[var(--color-highlight)]" : "text-[var(--color-text-muted)]"
+          }`} />
+          <span className={`text-sm truncate ${
+            isCurrent ? "text-[var(--color-highlight)] font-medium" : "text-[var(--color-text)]"
+          }`}>
+            {branchWithTasks.name}
+          </span>
+        </div>
+        <div className="flex items-center gap-2 flex-shrink-0">
+          {/* Task count badges */}
+          <div className="flex items-center gap-1">
+            {branchWithTasks.liveTasks > 0 && (
+              <span className="flex items-center gap-0.5 text-xs px-1.5 py-0.5 rounded-full bg-[var(--color-success)]/20 text-[var(--color-success)]">
+                <Circle className="w-2 h-2 fill-current" />
+                {branchWithTasks.liveTasks}
+              </span>
+            )}
+            {branchWithTasks.idleTasks > 0 && (
+              <span className="flex items-center gap-0.5 text-xs px-1.5 py-0.5 rounded-full bg-[var(--color-text-muted)]/20 text-[var(--color-text-muted)]">
+                <Circle className="w-2 h-2" />
+                {branchWithTasks.idleTasks}
+              </span>
+            )}
+          </div>
+          {isCurrent && (
+            <Check className="w-4 h-4 text-[var(--color-highlight)]" />
+          )}
+        </div>
+      </button>
+
+      {/* Expanded Panel */}
+      <AnimatePresence>
+        {isSelected && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: "auto", opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            className="overflow-hidden"
+          >
+            <div className="py-2 px-3 space-y-2">
+              {/* Checkout button (if not current) */}
+              {!isCurrent && (
+                <button
+                  onClick={onCheckout}
+                  className="w-full flex items-center gap-2 px-3 py-2 text-sm text-white bg-[var(--color-highlight)] hover:opacity-90 rounded-lg transition-colors"
+                >
+                  <Check className="w-4 h-4" />
+                  Checkout
+                </button>
+              )}
+
+              {/* Task list */}
+              <div className="border-t border-[var(--color-border)] pt-2 mt-2">
+                <div className="text-xs text-[var(--color-text-muted)] mb-1.5">
+                  Tasks ({branchWithTasks.taskCount})
+                </div>
+                {/* Hint: checkout required before accessing tasks */}
+                {!isCurrent && (
+                  <div className="text-xs text-[var(--color-warning)] mb-2 px-2">
+                    Checkout this branch to access tasks
+                  </div>
+                )}
+                <div className="space-y-1">
+                  {branchWithTasks.tasks.map(task => (
+                    <button
+                      key={task.id}
+                      onClick={() => isCurrent && onTaskClick(task)}
+                      disabled={!isCurrent}
+                      className={`w-full flex items-center gap-2 px-2 py-1.5 text-sm rounded-md transition-colors text-left
+                        ${isCurrent
+                          ? "text-[var(--color-text)] hover:bg-[var(--color-bg)] cursor-pointer"
+                          : "text-[var(--color-text-muted)] cursor-not-allowed opacity-60"
+                        }`}
+                    >
+                      <Circle className={`w-2.5 h-2.5 flex-shrink-0 ${
+                        task.status === "live"
+                          ? "fill-[var(--color-success)] text-[var(--color-success)]"
+                          : "text-[var(--color-text-muted)]"
+                      }`} />
+                      <span className="truncate">{task.name}</span>
+                      {task.filesChanged > 0 && (
+                        <span className="text-xs text-[var(--color-text-muted)] ml-auto flex-shrink-0">
+                          {task.filesChanged} files
+                        </span>
+                      )}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
   );
 }
 

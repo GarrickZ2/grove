@@ -465,6 +465,7 @@ export function DashboardPage({ onNavigate }: DashboardPageProps) {
       <BranchDrawer
         isOpen={showBranchDrawer}
         branches={branches}
+        tasks={selectedProject.tasks}
         isLoading={isBranchesLoading}
         onClose={() => setShowBranchDrawer(false)}
         onCheckout={handleCheckout}
@@ -474,6 +475,7 @@ export function DashboardPage({ onNavigate }: DashboardPageProps) {
         onMerge={handleMergeBranch}
         onPullMerge={handlePullMerge}
         onPullRebase={handlePullRebase}
+        onTaskClick={(task) => onNavigate("tasks", { taskId: task.id })}
       />
 
       {/* Dialogs */}
