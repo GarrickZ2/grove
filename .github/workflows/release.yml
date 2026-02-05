@@ -44,6 +44,7 @@ jobs:
           cache-dependency-path: grove-web/package-lock.json
       - name: Build Frontend
         run: |
+          npm install -g npm@latest
           cd grove-web
           npm ci --legacy-peer-deps
           npm run build
@@ -78,6 +79,7 @@ jobs:
           cache-dependency-path: grove-web/package-lock.json
       - name: Build Frontend
         run: |
+          npm install -g npm@latest
           cd grove-web
           npm ci --legacy-peer-deps
           npm run build
@@ -112,6 +114,7 @@ jobs:
           cache-dependency-path: grove-web/package-lock.json
       - name: Build Frontend
         run: |
+          npm install -g npm@latest
           cd grove-web
           npm ci --legacy-peer-deps
           npm run build
@@ -148,6 +151,7 @@ jobs:
           cache-dependency-path: grove-web/package-lock.json
       - name: Build Frontend
         run: |
+          npm install -g npm@latest
           cd grove-web
           npm ci --legacy-peer-deps
           npm run build
