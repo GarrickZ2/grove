@@ -5,6 +5,34 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.1] - 2026-02-05
+
+### Added
+
+- **Grove GUI (macOS)** — native desktop application using Tauri 2 WebView
+  - `grove gui` launches a native desktop window sharing the same frontend as `grove web`
+  - Built as optional Cargo feature (`--features gui`), enabled by default in macOS releases
+  - Auto port fallback: if default port is in use, automatically tries the next available port
+- **Theme-aware project icons** — project icon colors now adapt to the active theme
+  - Ported per-theme accent palettes (10 colors) from TUI to web interface
+- **Dynamic version display** — Welcome page now shows version from `Cargo.toml` via `/api/v1/version` endpoint
+- **Markdown rendering** — Notes tab now uses `react-markdown` + `remark-gfm` for full GFM support
+  - Headings (h1-h6), tables, code blocks, blockquotes, task lists, and more
+- **Auto port fallback** — `grove web` and `grove gui` automatically try next port if default is in use (up to 10 attempts)
+
+### Fixed
+
+- **Git operation buttons blocking UI** — removed full-screen overlay during Pull/Push/Fetch/Commit; buttons now disable individually
+- **Notes textarea not expanding** — fixed CSS flex layout issue where edit mode textarea didn't fill available space
+- **Projects page navigation lag** — double-clicking a project now navigates instantly (loads details in background)
+- **Toast notification position** — moved from top-right (blocking New Task button) to top-center
+
+### Changed
+
+- **CI/CD: macOS releases now include GUI support** — GitHub Release binaries for macOS (arm64/x86_64) are built with `--features gui`, providing TUI + Web + GUI in a single binary
+- **Increased minimum GUI window size** — from 1100x700 to 1280x720 to prevent content clipping
+- **Removed Welcome page icon glow effect** — cleaner logo appearance
+
 ## [0.4.0] - 2026-02-05
 
 ### Added

@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { FileText, Edit3, Save, X, Loader2 } from "lucide-react";
-import { Button } from "../../../ui";
+import { Button, MarkdownRenderer } from "../../../ui";
 import type { Task } from "../../../../data/types";
 import { useProject } from "../../../../context/ProjectContext";
 import { getNotes, updateNotes } from "../../../../api";
@@ -119,51 +119,20 @@ export function NotesTab({ task }: NotesTabProps) {
 
       {/* Content */}
       {isEditing ? (
-        <textarea
-          value={content}
-          onChange={(e) => setContent(e.target.value)}
-          placeholder="Write your notes in Markdown..."
-          className="flex-1 w-full p-3 bg-[var(--color-bg)] border border-[var(--color-border)] rounded-lg
-            text-sm text-[var(--color-text)] font-mono resize-none
-            focus:outline-none focus:border-[var(--color-highlight)] focus:ring-1 focus:ring-[var(--color-highlight)]
-            transition-all duration-200"
-        />
+        <div className="flex-1 min-h-0">
+          <textarea
+            value={content}
+            onChange={(e) => setContent(e.target.value)}
+            placeholder="Write your notes in Markdown..."
+            className="w-full h-full p-3 bg-[var(--color-bg)] border border-[var(--color-border)] rounded-lg
+              text-sm text-[var(--color-text)] font-mono resize-none
+              focus:outline-none focus:border-[var(--color-highlight)] focus:ring-1 focus:ring-[var(--color-highlight)]
+              transition-all duration-200"
+          />
+        </div>
       ) : (
         <div className="flex-1 overflow-y-auto rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] p-4">
-          <div className="prose prose-invert prose-sm max-w-none">
-            {content.split('\n').map((line, index) => {
-              // Simple markdown rendering
-              if (line.startsWith('# ')) {
-                return <h1 key={index} className="text-lg font-bold text-[var(--color-text)] mt-4 mb-2 first:mt-0">{line.slice(2)}</h1>;
-              }
-              if (line.startsWith('## ')) {
-                return <h2 key={index} className="text-base font-semibold text-[var(--color-text)] mt-3 mb-2">{line.slice(3)}</h2>;
-              }
-              if (line.startsWith('- [x] ')) {
-                return (
-                  <div key={index} className="flex items-center gap-2 text-sm text-[var(--color-text-muted)]">
-                    <span className="text-[var(--color-success)]">✓</span>
-                    <span className="line-through">{line.slice(6)}</span>
-                  </div>
-                );
-              }
-              if (line.startsWith('- [ ] ')) {
-                return (
-                  <div key={index} className="flex items-center gap-2 text-sm text-[var(--color-text)]">
-                    <span className="text-[var(--color-text-muted)]">○</span>
-                    <span>{line.slice(6)}</span>
-                  </div>
-                );
-              }
-              if (line.startsWith('- ')) {
-                return <li key={index} className="text-sm text-[var(--color-text)] ml-4">{line.slice(2)}</li>;
-              }
-              if (line.trim() === '') {
-                return <div key={index} className="h-2" />;
-              }
-              return <p key={index} className="text-sm text-[var(--color-text)]">{line}</p>;
-            })}
-          </div>
+          <MarkdownRenderer content={content} />
         </div>
       )}
 

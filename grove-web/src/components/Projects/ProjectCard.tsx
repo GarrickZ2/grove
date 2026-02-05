@@ -2,6 +2,7 @@ import { motion } from "framer-motion";
 import { Trash2, Circle } from "lucide-react";
 import type { Project } from "../../data/types";
 import { getProjectStyle } from "../../utils/projectStyle";
+import { useTheme } from "../../context";
 
 interface ProjectCardProps {
   project: Project;
@@ -12,10 +13,11 @@ interface ProjectCardProps {
 }
 
 export function ProjectCard({ project, isSelected, onSelect, onDoubleClick, onDelete }: ProjectCardProps) {
+  const { theme } = useTheme();
   // Use taskCount/liveCount from list response, fallback to calculating from tasks array
   const taskCount = project.taskCount ?? project.tasks.length;
   const liveCount = project.liveCount ?? project.tasks.filter((t) => t.status === "live").length;
-  const { color, Icon } = getProjectStyle(project.id);
+  const { color, Icon } = getProjectStyle(project.id, theme.accentPalette);
 
   return (
     <motion.div

@@ -682,7 +682,7 @@ export function TasksPage({ initialTaskId, onNavigationConsumed }: TasksPageProp
             initial={{ opacity: 0, y: -20 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -20 }}
-            className="fixed top-4 right-4 z-50 px-4 py-2 rounded-lg bg-[var(--color-bg-secondary)] border border-[var(--color-border)] shadow-lg"
+            className="fixed top-4 left-1/2 -translate-x-1/2 z-50 px-4 py-2 rounded-lg bg-[var(--color-bg-secondary)] border border-[var(--color-border)] shadow-lg"
           >
             <span className="text-sm text-[var(--color-text)]">{operationMessage}</span>
           </motion.div>

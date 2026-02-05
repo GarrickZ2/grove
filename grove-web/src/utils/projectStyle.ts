@@ -72,18 +72,37 @@ function secondaryHash(str: string): number {
   return Math.abs(hash);
 }
 
+// Convert hex color to rgba with alpha
+function hexToRgba(hex: string, alpha: number): string {
+  const r = parseInt(hex.slice(1, 3), 16);
+  const g = parseInt(hex.slice(3, 5), 16);
+  const b = parseInt(hex.slice(5, 7), 16);
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+}
+
 // Get consistent color and icon for a project
-export function getProjectStyle(projectId: string) {
+// When accentPalette is provided, uses theme-aware colors instead of fixed colors
+export function getProjectStyle(projectId: string, accentPalette?: string[]) {
   // Use two different hash functions for color and icon
   // This ensures similar project names get different colors AND icons
   const colorHash = fnv1aHash(projectId);
   const iconHash = secondaryHash(projectId + "_icon"); // Add suffix for more variation
 
-  const colorIndex = colorHash % PROJECT_COLORS.length;
   const iconIndex = iconHash % PROJECT_ICONS.length;
 
+  let color: { bg: string; fg: string };
+
+  if (accentPalette && accentPalette.length > 0) {
+    const colorIndex = colorHash % accentPalette.length;
+    const fg = accentPalette[colorIndex];
+    color = { bg: hexToRgba(fg, 0.15), fg };
+  } else {
+    const colorIndex = colorHash % PROJECT_COLORS.length;
+    color = PROJECT_COLORS[colorIndex];
+  }
+
   return {
-    color: PROJECT_COLORS[colorIndex],
+    color,
     Icon: PROJECT_ICONS[iconIndex],
   };
 }

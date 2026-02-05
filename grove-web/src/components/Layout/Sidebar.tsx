@@ -5,7 +5,6 @@ import {
   ListTodo,
   ChevronLeft,
   ChevronRight,
-  TreePine,
 } from "lucide-react";
 import { ProjectSelector } from "./ProjectSelector";
 
@@ -44,9 +43,7 @@ export function Sidebar({ activeItem, onItemClick, collapsed, onToggleCollapse, 
           className="flex items-center gap-3 hover:opacity-80 transition-opacity"
           title="Back to Welcome"
         >
-          <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-[var(--color-highlight)] to-[var(--color-accent)] flex items-center justify-center flex-shrink-0">
-            <TreePine className="w-5 h-5 text-white" strokeWidth={2} />
-          </div>
+          <img src="/logo.png" alt="Grove" className="w-10 h-10 rounded-xl flex-shrink-0" />
           {!collapsed && (
             <motion.span
               initial={{ opacity: 0 }}

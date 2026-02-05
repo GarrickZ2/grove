@@ -5,6 +5,9 @@ pub mod hooks;
 pub mod mcp;
 pub mod web;
 
+#[cfg(feature = "gui")]
+pub mod gui;
+
 use clap::{Parser, Subcommand};
 
 #[derive(Parser)]
@@ -38,5 +41,11 @@ pub enum Commands {
         /// Development mode (run Vite dev server with HMR)
         #[arg(long)]
         dev: bool,
+    },
+    /// Start the GUI desktop application (native window)
+    Gui {
+        /// Port for the internal API server
+        #[arg(short, long, default_value_t = 3001)]
+        port: u16,
     },
 }

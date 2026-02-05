@@ -8,3 +8,4 @@ pub mod projects;
 pub mod stats;
 pub mod tasks;
 pub mod terminal;
+pub mod version;

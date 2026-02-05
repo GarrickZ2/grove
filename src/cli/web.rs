@@ -153,8 +153,8 @@ async fn execute_dev_mode(api_port: u16, no_open: bool) {
     println!("  API:      http://localhost:{}/api/v1", api_port);
     println!("\nPress Ctrl+C to stop");
 
-    // Start API server (blocking)
-    if let Err(e) = api::start_server(api_port, None).await {
+    // Start API server (blocking) - don't open browser (Vite handles frontend)
+    if let Err(e) = api::start_server(api_port, None, false).await {
         eprintln!("API server error: {}", e);
     }
 
@@ -171,24 +171,14 @@ async fn execute_prod_mode(port: u16, no_open: bool) {
     // Try to find external static directory (for development override)
     let static_dir = api::find_static_dir();
 
+    let open_browser = !no_open;
+
     // If no embedded assets and no external files, try to build
     if !has_embedded && static_dir.is_none() {
         if let Some(project_dir) = find_project_dir() {
             if build_frontend(&project_dir) {
-                // Rebuild static_dir after building
                 let built_dir = project_dir.join("grove-web").join("dist");
-                let url = format!("http://localhost:{}", port);
-
-                if !no_open {
-                    let url_clone = url.clone();
-                    tokio::spawn(async move {
-                        tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
-                        println!("Opening browser: {}", url_clone);
-                        let _ = open::that(&url_clone);
-                    });
-                }
-
-                if let Err(e) = api::start_server(port, Some(built_dir)).await {
+                if let Err(e) = api::start_server(port, Some(built_dir), open_browser).await {
                     eprintln!("Server error: {}", e);
                     std::process::exit(1);
                 }
@@ -203,20 +193,8 @@ async fn execute_prod_mode(port: u16, no_open: bool) {
         std::process::exit(1);
     }
 
-    let url = format!("http://localhost:{}", port);
-
-    // Open browser after a short delay
-    if !no_open {
-        let url_clone = url.clone();
-        tokio::spawn(async move {
-            tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
-            println!("Opening browser: {}", url_clone);
-            let _ = open::that(&url_clone);
-        });
-    }
-
     // Start the server (will use embedded assets if no external static_dir)
-    if let Err(e) = api::start_server(port, static_dir).await {
+    if let Err(e) = api::start_server(port, static_dir, open_browser).await {
         eprintln!("Server error: {}", e);
         std::process::exit(1);
     }

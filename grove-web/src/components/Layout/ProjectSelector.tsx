@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { ChevronDown, Check, Plus, Settings2 } from "lucide-react";
-import { useProject } from "../../context";
+import { useProject, useTheme } from "../../context";
 import type { Project } from "../../data/types";
 import { getProjectStyle } from "../../utils/projectStyle";
 
@@ -12,6 +12,7 @@ interface ProjectSelectorProps {
 
 export function ProjectSelector({ collapsed, onManageProjects }: ProjectSelectorProps) {
   const { selectedProject, projects, selectProject } = useProject();
+  const { theme } = useTheme();
   const [isOpen, setIsOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
 
@@ -33,7 +34,7 @@ export function ProjectSelector({ collapsed, onManageProjects }: ProjectSelector
   };
 
   if (collapsed) {
-    const style = selectedProject ? getProjectStyle(selectedProject.id) : null;
+    const style = selectedProject ? getProjectStyle(selectedProject.id, theme.accentPalette) : null;
     const Icon = style?.Icon;
     return (
       <div className="px-2 py-2">
@@ -55,7 +56,7 @@ export function ProjectSelector({ collapsed, onManageProjects }: ProjectSelector
     );
   }
 
-  const selectedStyle = selectedProject ? getProjectStyle(selectedProject.id) : null;
+  const selectedStyle = selectedProject ? getProjectStyle(selectedProject.id, theme.accentPalette) : null;
   const SelectedIcon = selectedStyle?.Icon;
 
   return (
@@ -103,6 +104,7 @@ export function ProjectSelector({ collapsed, onManageProjects }: ProjectSelector
                   project={project}
                   isSelected={selectedProject?.id === project.id}
                   onClick={() => handleSelectProject(project)}
+                  accentPalette={theme.accentPalette}
                 />
               ))}
             </div>
@@ -144,13 +146,14 @@ interface ProjectItemProps {
   project: Project;
   isSelected: boolean;
   onClick: () => void;
+  accentPalette: string[];
 }
 
-function ProjectItem({ project, isSelected, onClick }: ProjectItemProps) {
+function ProjectItem({ project, isSelected, onClick, accentPalette }: ProjectItemProps) {
   // Use taskCount/liveCount from list API, or calculate from tasks array if full project loaded
   const totalCount = project.taskCount ?? project.tasks.length;
   const liveCount = project.liveCount ?? project.tasks.filter((t) => t.status === "live").length;
-  const { color, Icon } = getProjectStyle(project.id);
+  const { color, Icon } = getProjectStyle(project.id, accentPalette);
 
   return (
     <button

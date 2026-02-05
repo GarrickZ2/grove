@@ -53,8 +53,8 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: aarch64-apple-darwin
-      - name: Build
-        run: cargo build --release --target aarch64-apple-darwin
+      - name: Build (with GUI support)
+        run: cargo build --release --target aarch64-apple-darwin --features gui
       - name: Package
         run: |
           cd target/aarch64-apple-darwin/release
@@ -89,8 +89,8 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: x86_64-apple-darwin
-      - name: Build
-        run: cargo build --release --target x86_64-apple-darwin
+      - name: Build (with GUI support)
+        run: cargo build --release --target x86_64-apple-darwin --features gui
       - name: Package
         run: |
           cd target/x86_64-apple-darwin/release

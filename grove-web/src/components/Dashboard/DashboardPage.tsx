@@ -227,8 +227,6 @@ export function DashboardPage({ onNavigate }: DashboardPageProps) {
     }
   };
 
-  const handleNewTask = () => showMessage("Creating new task...");
-
   const handlePull = async () => {
     if (!selectedProject || isOperating) return;
     setIsOperating(true);
@@ -407,26 +405,19 @@ export function DashboardPage({ onNavigate }: DashboardPageProps) {
           initial={{ opacity: 0, y: -20 }}
           animate={{ opacity: 1, y: 0 }}
           exit={{ opacity: 0, y: -20 }}
-          className="fixed top-4 right-4 z-50 px-4 py-2 rounded-lg bg-[var(--color-bg-secondary)] border border-[var(--color-border)] shadow-lg"
+          className="fixed top-4 left-1/2 -translate-x-1/2 z-50 px-4 py-2 rounded-lg bg-[var(--color-bg-secondary)] border border-[var(--color-border)] shadow-lg"
         >
           <span className="text-sm text-[var(--color-text)]">{operationMessage}</span>
         </motion.div>
       )}
 
-      {/* Loading Overlay */}
-      {isOperating && (
-        <div className="fixed inset-0 bg-black/20 z-40 flex items-center justify-center">
-          <Loader2 className="w-8 h-8 text-[var(--color-highlight)] animate-spin" />
-        </div>
-      )}
-
-      {/* Repository Header with IDE/Terminal/New Task buttons */}
+      {/* Repository Header with IDE/Terminal buttons */}
       <RepoHeader
+        projectId={selectedProject.id}
         name={selectedProject.name}
         path={selectedProject.path}
         onOpenIDE={handleOpenIDE}
         onOpenTerminal={handleOpenTerminal}
-        onNewTask={handleNewTask}
       />
 
       {/* Row 1: Git Status Bar */}
@@ -437,6 +428,7 @@ export function DashboardPage({ onNavigate }: DashboardPageProps) {
       ) : (
         <GitStatusBar
           status={currentStatus}
+          isOperating={isOperating}
           onSwitchBranch={() => setShowBranchDrawer(true)}
           onPull={handlePull}
           onPush={handlePush}

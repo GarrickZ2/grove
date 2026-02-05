@@ -1,11 +1,20 @@
+import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
-import { ArrowRight, GitBranch, Terminal, Layers, TreePine } from "lucide-react";
+import { ArrowRight, GitBranch, Terminal, Layers } from "lucide-react";
+import { getVersion } from "../../api";
 
 interface WelcomePageProps {
   onGetStarted: () => void;
 }
 
 export function WelcomePage({ onGetStarted }: WelcomePageProps) {
+  const [version, setVersion] = useState<string>("");
+
+  useEffect(() => {
+    getVersion()
+      .then((res) => setVersion(res.version))
+      .catch(() => {});
+  }, []);
   return (
     <motion.div
       initial={{ opacity: 1 }}
@@ -48,25 +57,9 @@ export function WelcomePage({ onGetStarted }: WelcomePageProps) {
           initial={{ scale: 0.8, opacity: 0 }}
           animate={{ scale: 1, opacity: 1 }}
           transition={{ delay: 0.1, duration: 0.5, ease: "easeOut" }}
-          className="mb-8 relative"
+          className="mb-8"
         >
-          {/* Glow ring */}
-          <motion.div
-            animate={{
-              scale: [1, 1.1, 1],
-              opacity: [0.3, 0.5, 0.3],
-            }}
-            transition={{
-              duration: 3,
-              repeat: Infinity,
-              ease: "easeInOut",
-            }}
-            className="absolute inset-0 rounded-3xl bg-gradient-to-br from-[var(--color-highlight)] to-[var(--color-accent)] blur-xl"
-          />
-          {/* Logo container */}
-          <div className="relative w-28 h-28 rounded-3xl bg-gradient-to-br from-[var(--color-highlight)] to-[var(--color-accent)] flex items-center justify-center shadow-2xl">
-            <TreePine className="w-14 h-14 text-white" strokeWidth={1.5} />
-          </div>
+          <img src="/logo.png" alt="Grove" className="w-28 h-28 rounded-3xl" />
         </motion.div>
 
         {/* Title with shimmer effect */}
@@ -120,14 +113,16 @@ export function WelcomePage({ onGetStarted }: WelcomePageProps) {
         </motion.button>
 
         {/* Version */}
-        <motion.p
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          transition={{ delay: 0.7, duration: 0.5 }}
-          className="mt-8 text-sm text-[var(--color-text-muted)]"
-        >
-          v0.1.0
-        </motion.p>
+        {version && (
+          <motion.p
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            transition={{ delay: 0.7, duration: 0.5 }}
+            className="mt-8 text-sm text-[var(--color-text-muted)]"
+          >
+            v{version}
+          </motion.p>
+        )}
       </div>
 
       {/* CSS for shimmer animation */}

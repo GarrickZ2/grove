@@ -1,0 +1,10 @@
+{
+  "$schema": "https://schema.tauri.app/config/2/schema.json",
+  "identifier": "default",
+  "description": "Default capabilities for Grove desktop app",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "shell:allow-open"
+  ]
+}

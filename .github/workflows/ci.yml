@@ -48,3 +48,6 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - run: cargo build --release
+      - name: Build with GUI (macOS only)
+        if: matrix.os == 'macos-latest'
+        run: cargo build --release --features gui

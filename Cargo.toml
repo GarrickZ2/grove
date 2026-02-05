@@ -1,6 +1,6 @@
 [package]
 name = "grove-rs"
-version = "0.4.0"
+version = "0.4.1"
 edition = "2021"
 description = "A Kanban-style TUI for parallel AI coding. Manage Git worktrees as tasks, run multiple agents in isolated tmux sessions, get notified via hooks."
 license = "MIT"
@@ -13,6 +13,10 @@ readme = "README.md"
 [[bin]]
 name = "grove"
 path = "src/main.rs"
+
+[features]
+default = []
+gui = ["dep:tauri", "dep:tauri-plugin-shell", "dep:tauri-build"]
 
 [dependencies]
 ratatui = "0.29"
@@ -43,6 +47,13 @@ open = "5"
 # Terminal WebSocket
 portable-pty = "0.8"
 futures = "0.3"
+
+# GUI (Tauri) - optional
+tauri = { version = "2", optional = true }
+tauri-plugin-shell = { version = "2", optional = true }
+
+[build-dependencies]
+tauri-build = { version = "2", features = [], optional = true }
 
 # Config for 'cargo dist'
 [workspace.metadata.dist]

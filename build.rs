@@ -10,6 +10,10 @@ use std::path::Path;
 use std::process::Command;
 
 fn main() {
+    // Build Tauri when gui feature is enabled
+    #[cfg(feature = "gui")]
+    tauri_build::build();
+
     let dist_dir = Path::new("grove-web/dist");
     let grove_web_dir = Path::new("grove-web");
 

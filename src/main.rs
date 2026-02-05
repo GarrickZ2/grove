@@ -69,6 +69,28 @@ fn main() -> io::Result<()> {
                         cli::web::execute(port, no_open, dev).await;
                     });
             }
+            Commands::Gui { port } => {
+                #[cfg(feature = "gui")]
+                {
+                    tokio::runtime::Runtime::new()
+                        .expect("Failed to create tokio runtime")
+                        .block_on(async {
+                            cli::gui::execute(port).await;
+                        });
+                }
+                #[cfg(not(feature = "gui"))]
+                {
+                    let _ = port; // suppress unused warning
+                    eprintln!("GUI mode is not available in this build.");
+                    eprintln!();
+                    eprintln!("To enable GUI support, rebuild with the 'gui' feature:");
+                    eprintln!("  cargo build --release --features gui");
+                    eprintln!();
+                    eprintln!("Or install with GUI support:");
+                    eprintln!("  cargo install grove-rs --features gui");
+                    std::process::exit(1);
+                }
+            }
         }
         return Ok(());
     }

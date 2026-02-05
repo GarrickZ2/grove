@@ -21,6 +21,7 @@ export interface Theme {
   id: string;
   name: string;
   colors: ThemeColors;
+  accentPalette: string[]; // Per-theme accent colors for project icons
   isAuto?: boolean; // Marker for auto theme
 }
 
@@ -29,6 +30,7 @@ const autoTheme: Theme = {
   id: "auto",
   name: "Auto",
   colors: {} as ThemeColors, // Will be resolved to dark/light
+  accentPalette: [], // Will be resolved to dark/light
   isAuto: true,
 };
 
@@ -52,6 +54,10 @@ export const themes: Theme[] = [
       error: "#dc2626",
       info: "#2563eb",
     },
+    accentPalette: [
+      "#dc5050", "#e68c3c", "#c8aa28", "#3caa5a", "#28a0a0",
+      "#3282c8", "#6464d2", "#965ac8", "#be5096", "#d25a6e",
+    ],
   },
   {
     id: "solarized-light",
@@ -70,6 +76,10 @@ export const themes: Theme[] = [
       error: "#dc322f",
       info: "#268bd2",
     },
+    accentPalette: [
+      "#dc322f", "#cb4b16", "#b58900", "#859900", "#2aa198",
+      "#268bd2", "#6c71c4", "#d33682", "#93a1a1", "#657b83",
+    ],
   },
   {
     id: "github-light",
@@ -88,6 +98,10 @@ export const themes: Theme[] = [
       error: "#cf222e",
       info: "#0969da",
     },
+    accentPalette: [
+      "#cf222e", "#bc4c00", "#9a6700", "#1a7f37", "#087d8b",
+      "#0969da", "#8250df", "#bf3989", "#656d76", "#1f2328",
+    ],
   },
   {
     id: "rose-pine-dawn",
@@ -106,6 +120,10 @@ export const themes: Theme[] = [
       error: "#b4637a",
       info: "#286983",
     },
+    accentPalette: [
+      "#b4637a", "#d7827e", "#ea9d34", "#286983", "#56949f",
+      "#907aa9", "#9893a5", "#797593", "#c88a8a", "#575279",
+    ],
   },
   {
     id: "catppuccin-latte",
@@ -124,6 +142,10 @@ export const themes: Theme[] = [
       error: "#d20f39",
       info: "#1e66f5",
     },
+    accentPalette: [
+      "#d20f39", "#fe640b", "#df8e1d", "#40a02b", "#179299",
+      "#1e66f5", "#209fb5", "#8839ef", "#ea76cb", "#dd7878",
+    ],
   },
   // Dark themes
   {
@@ -143,6 +165,10 @@ export const themes: Theme[] = [
       error: "#ef4444",
       info: "#3b82f6",
     },
+    accentPalette: [
+      "#eb8282", "#f0aa73", "#e6c869", "#82cd91", "#6ec6c3",
+      "#78afe1", "#969be6", "#b994e1", "#dc94c3", "#e696a0",
+    ],
   },
   {
     id: "dracula",
@@ -161,6 +187,10 @@ export const themes: Theme[] = [
       error: "#ff5555",
       info: "#8be9fd",
     },
+    accentPalette: [
+      "#ff5555", "#ffb86c", "#f1fa8c", "#50fa7b", "#8be9fd",
+      "#6272a4", "#bd93f9", "#ff79c6", "#f8f8f2", "#ff9696",
+    ],
   },
   {
     id: "nord",
@@ -179,6 +209,10 @@ export const themes: Theme[] = [
       error: "#bf616a",
       info: "#88c0d0",
     },
+    accentPalette: [
+      "#bf616a", "#d08770", "#ebcb8b", "#a3be8c", "#8fbcbb",
+      "#88c0d0", "#81a1c1", "#b48ead", "#d2a0aa", "#c88278",
+    ],
   },
   {
     id: "gruvbox",
@@ -197,6 +231,10 @@ export const themes: Theme[] = [
       error: "#fb4934",
       info: "#83a598",
     },
+    accentPalette: [
+      "#fb4934", "#fe8019", "#fabd2f", "#b8bb26", "#83a598",
+      "#458588", "#689d6a", "#d3869b", "#ebdbb2", "#d65d0e",
+    ],
   },
   {
     id: "tokyo-night",
@@ -215,6 +253,10 @@ export const themes: Theme[] = [
       error: "#f7768e",
       info: "#7dcfff",
     },
+    accentPalette: [
+      "#f7768e", "#e0af68", "#e0dc8c", "#9ece6a", "#73daca",
+      "#7dcfff", "#7aa2f7", "#bb9af7", "#f5c2e7", "#ff9eaa",
+    ],
   },
   {
     id: "catppuccin",
@@ -233,6 +275,10 @@ export const themes: Theme[] = [
       error: "#f38ba8",
       info: "#89b4fa",
     },
+    accentPalette: [
+      "#f38ba8", "#fab387", "#f9e2af", "#a6e3a1", "#94e2d5",
+      "#89b4fa", "#74c7ec", "#cba6f7", "#f5c2e7", "#f2cdcd",
+    ],
   },
 ];
 
@@ -287,11 +333,12 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
   // Resolve the actual theme to use
   const theme = useMemo<Theme>(() => {
     if (selectedThemeId === "auto") {
-      // Return auto theme with resolved colors
+      // Return auto theme with resolved colors and palette
       const resolvedTheme = systemIsDark ? getDarkTheme() : getLightTheme();
       return {
         ...autoTheme,
         colors: resolvedTheme.colors,
+        accentPalette: resolvedTheme.accentPalette,
       };
     }
     return themes.find((t) => t.id === selectedThemeId) || getDarkTheme();

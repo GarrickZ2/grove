@@ -9,3 +9,4 @@ export { Tooltip } from "./Tooltip";
 export { DropdownMenu } from "./DropdownMenu";
 export { AppPicker, ideAppOptions, terminalAppOptions } from "./AppPicker";
 export { AgentPicker, agentOptions } from "./AgentPicker";
+export { MarkdownRenderer } from "./MarkdownRenderer";

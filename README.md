@@ -40,7 +40,7 @@ Grove gives each task its own **isolated universe**:
 
 ## Features
 
-**Two Interfaces** — TUI for keyboard warriors, Web UI for visual workflows
+**Three Interfaces** — TUI for keyboard warriors, Web UI for visual workflows, native GUI for macOS
 
 **Task Dashboard** — See all tasks at a glance with live status
 
@@ -80,7 +80,13 @@ grove web              # Open http://localhost:3001
 grove web --port 8080  # Custom port
 ```
 
-**Create your first task:** Press `n` in TUI, or click "New Task" in Web UI.
+**Run GUI (macOS):**
+```bash
+grove gui              # Launch native desktop window
+grove gui --port 8080  # Custom API port
+```
+
+**Create your first task:** Press `n` in TUI, or click "New Task" in Web/GUI.
 
 ## Keyboard Shortcuts
 
@@ -123,6 +129,21 @@ grove web --host 0.0.0.0   # Expose to network
 ```
 
 The web UI is embedded directly in the binary — no separate frontend deployment needed.
+
+## Grove GUI (macOS)
+
+A native desktop application powered by Tauri 2 WebView. Shares the same frontend as Grove Web, but runs in a native window instead of a browser.
+
+```bash
+grove gui              # Launch desktop window
+grove gui --port 8080  # Custom API port
+```
+
+**Included by default** in macOS release binaries (GitHub Releases / install.sh). For `cargo install`, enable with:
+
+```bash
+cargo install grove-rs --features gui
+```
 
 ---
 

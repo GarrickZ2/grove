@@ -88,3 +88,6 @@ export type {
 
 export { startDifit, getDifitStatus, stopDifit } from './difit';
 export type { DifitStatusResponse, StopDifitResponse } from './difit';
+
+export { getVersion } from './version';
+export type { VersionResponse } from './version';

@@ -27,6 +27,8 @@ struct FrontendAssets;
 /// Create the API router
 pub fn create_api_router() -> Router {
     Router::new()
+        // Version API
+        .route("/version", get(handlers::version::get_version))
         // Config API
         .route("/config", get(handlers::config::get_config))
         .route("/config", patch(handlers::config::patch_config))
@@ -266,23 +268,57 @@ pub fn find_static_dir() -> Option<PathBuf> {
     None
 }
 
+/// Try binding to a port, automatically incrementing if already in use.
+/// Tries up to `max_attempts` ports starting from `start_port`.
+pub async fn bind_with_fallback(
+    start_port: u16,
+    max_attempts: u16,
+) -> std::io::Result<(tokio::net::TcpListener, u16)> {
+    for offset in 0..max_attempts {
+        let port = start_port + offset;
+        let addr = format!("0.0.0.0:{}", port);
+        match tokio::net::TcpListener::bind(&addr).await {
+            Ok(listener) => return Ok((listener, port)),
+            Err(e) if e.kind() == std::io::ErrorKind::AddrInUse && offset + 1 < max_attempts => {
+                eprintln!("Port {} is in use, trying {}...", port, port + 1);
+                continue;
+            }
+            Err(e) => return Err(e),
+        }
+    }
+    unreachable!()
+}
+
 /// Start the web server (API + static files)
-pub async fn start_server(port: u16, static_dir: Option<PathBuf>) -> std::io::Result<()> {
+pub async fn start_server(
+    port: u16,
+    static_dir: Option<PathBuf>,
+    open_browser: bool,
+) -> std::io::Result<()> {
     // Initialize FileWatchers for all live tasks
     init_file_watchers();
 
     let has_ui = static_dir.is_some() || has_embedded_assets();
     let app = create_router(static_dir);
-    let addr = format!("0.0.0.0:{}", port);
+
+    let (listener, actual_port) = bind_with_fallback(port, 10).await?;
 
     if has_ui {
-        println!("Grove Web UI: http://localhost:{}", port);
+        println!("Grove Web UI: http://localhost:{}", actual_port);
     } else {
-        println!("Grove API server: http://localhost:{}/api/v1", port);
+        println!("Grove API server: http://localhost:{}/api/v1", actual_port);
         println!("(No static files found, API only mode)");
     }
 
-    let listener = tokio::net::TcpListener::bind(&addr).await?;
+    // Open browser with the actual bound port
+    if open_browser && has_ui {
+        let url = format!("http://localhost:{}", actual_port);
+        tokio::spawn(async move {
+            tokio::time::sleep(tokio::time::Duration::from_millis(300)).await;
+            println!("Opening browser: {}", url);
+            let _ = open::that(&url);
+        });
+    }
 
     // Use graceful shutdown to flush FileWatcher data on Ctrl+C
     axum::serve(listener, app)

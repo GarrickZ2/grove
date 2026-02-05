@@ -161,14 +161,17 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
   }, [isLoading, projects, currentProjectId, loadProjectDetails]);
 
   const selectProject = useCallback(
-    async (project: Project | null) => {
+    (project: Project | null) => {
       if (project) {
-        // Load full project details
-        const fullProject = await loadProjectDetails(project.id);
-        if (fullProject) {
-          setSelectedProject(fullProject);
-          localStorage.setItem("grove-selected-project", fullProject.id);
-        }
+        // Set basic project info immediately for instant navigation
+        setSelectedProject(project);
+        localStorage.setItem("grove-selected-project", project.id);
+        // Load full project details in background
+        loadProjectDetails(project.id).then((fullProject) => {
+          if (fullProject) {
+            setSelectedProject(fullProject);
+          }
+        });
       } else {
         setSelectedProject(null);
         localStorage.removeItem("grove-selected-project");

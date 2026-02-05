@@ -14,6 +14,7 @@ import type { RepoStatus } from "../../data/types";
 
 interface GitStatusBarProps {
   status: RepoStatus;
+  isOperating?: boolean;
   onSwitchBranch: () => void;
   onPull: () => void;
   onPush: () => void;
@@ -23,6 +24,7 @@ interface GitStatusBarProps {
 
 export function GitStatusBar({
   status,
+  isOperating = false,
   onSwitchBranch,
   onPull,
   onPush,
@@ -114,14 +116,15 @@ export function GitStatusBar({
             icon={ArrowDown}
             label="Pull"
             onClick={onPull}
-            disabled={!status.hasOrigin}
+            disabled={!status.hasOrigin || isOperating}
             disabledReason={!status.hasOrigin ? "No remote origin configured" : undefined}
+            loading={isOperating}
           />
           <ActionButton
             icon={ArrowUp}
             label="Push"
             onClick={onPush}
-            disabled={!status.hasOrigin || status.ahead === 0}
+            disabled={!status.hasOrigin || status.ahead === 0 || isOperating}
             disabledReason={
               !status.hasOrigin
                 ? "No remote origin configured"
@@ -129,22 +132,25 @@ export function GitStatusBar({
                   ? "No commits to push"
                   : undefined
             }
-            highlight={status.hasOrigin && status.ahead > 0}
+            highlight={status.hasOrigin && status.ahead > 0 && !isOperating}
+            loading={isOperating}
           />
           <ActionButton
             icon={GitCommit}
             label="Commit"
             onClick={onCommit}
-            disabled={!hasStagedChanges}
+            disabled={!hasStagedChanges || isOperating}
             disabledReason={!hasStagedChanges ? "No changes to commit" : undefined}
-            highlight={hasStagedChanges}
+            highlight={hasStagedChanges && !isOperating}
+            loading={isOperating}
           />
           <ActionButton
             icon={RefreshCw}
             label="Fetch"
             onClick={onFetch}
-            disabled={!status.hasOrigin}
+            disabled={!status.hasOrigin || isOperating}
             disabledReason={!status.hasOrigin ? "No remote origin configured" : undefined}
+            loading={isOperating}
           />
         </div>
       </div>
@@ -159,9 +165,11 @@ interface ActionButtonProps {
   disabled?: boolean;
   disabledReason?: string;
   highlight?: boolean;
+  loading?: boolean;
 }
 
-function ActionButton({ icon: Icon, label, onClick, disabled = false, disabledReason, highlight = false }: ActionButtonProps) {
+function ActionButton({ icon: Icon, label, onClick, disabled = false, disabledReason, highlight = false, loading = false }: ActionButtonProps) {
+  const isDisabledByLoading = disabled && loading && !disabledReason;
   const button = (
     <motion.button
       whileHover={{ scale: disabled ? 1 : 1.05 }}
@@ -170,7 +178,9 @@ function ActionButton({ icon: Icon, label, onClick, disabled = false, disabledRe
       disabled={disabled}
       className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium transition-colors
         ${disabled
-          ? "text-[var(--color-text-muted)] opacity-40 cursor-not-allowed"
+          ? isDisabledByLoading
+            ? "text-[var(--color-text-muted)] opacity-60 cursor-wait"
+            : "text-[var(--color-text-muted)] opacity-40 cursor-not-allowed"
           : highlight
             ? "bg-[var(--color-highlight)] text-white hover:opacity-90"
             : "bg-[var(--color-bg)] hover:bg-[var(--color-bg-tertiary)] text-[var(--color-text)] border border-[var(--color-border)]"

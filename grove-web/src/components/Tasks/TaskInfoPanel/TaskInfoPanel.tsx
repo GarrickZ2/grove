@@ -186,7 +186,7 @@ export function TaskInfoPanel({
               </div>
 
               {/* Tab Content with fade animation */}
-              <div className="flex-1 overflow-y-auto p-3">
+              <div className="flex-1 min-h-0 flex flex-col p-3">
                 <AnimatePresence mode="wait">
                   <motion.div
                     key={activeTab}
@@ -194,6 +194,7 @@ export function TaskInfoPanel({
                     animate={{ opacity: 1, y: 0 }}
                     exit={{ opacity: 0, y: -10 }}
                     transition={{ duration: 0.15 }}
+                    className="flex-1 min-h-0 overflow-y-auto"
                   >
                     {renderTabContent()}
                   </motion.div>
@@ -399,7 +400,7 @@ export function TaskInfoPanel({
       </div>
 
       {/* Tab Content with fade animation */}
-      <div className="flex-1 overflow-y-auto p-3">
+      <div className="flex-1 min-h-0 flex flex-col p-3">
         <AnimatePresence mode="wait">
           <motion.div
             key={activeTab}
@@ -407,6 +408,7 @@ export function TaskInfoPanel({
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -10 }}
             transition={{ duration: 0.15 }}
+            className="flex-1 min-h-0 overflow-y-auto"
           >
             {renderTabContent()}
           </motion.div>

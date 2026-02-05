@@ -65,8 +65,8 @@ export function ProjectsPage({ onNavigate }: ProjectsPageProps) {
     selectProject(project);
   };
 
-  const handleDoubleClick = async (project: Project) => {
-    await selectProject(project);
+  const handleDoubleClick = (project: Project) => {
+    selectProject(project);
     onNavigate?.("dashboard");
   };
 
