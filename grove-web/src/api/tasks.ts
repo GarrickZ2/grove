@@ -314,3 +314,21 @@ export async function resetTask(
     `/api/v1/projects/${projectId}/tasks/${taskId}/reset`
   );
 }
+
+export interface RebaseToRequest {
+  target: string;
+}
+
+/**
+ * Change task's target branch (rebase-to)
+ */
+export async function rebaseToTask(
+  projectId: string,
+  taskId: string,
+  target: string
+): Promise<GitOperationResponse> {
+  return apiClient.post<RebaseToRequest, GitOperationResponse>(
+    `/api/v1/projects/${projectId}/tasks/${taskId}/rebase-to`,
+    { target }
+  );
+}

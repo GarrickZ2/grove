@@ -106,6 +106,10 @@ pub fn create_api_router() -> Router {
             "/projects/{id}/tasks/{taskId}/reset",
             post(handlers::tasks::reset_task),
         )
+        .route(
+            "/projects/{id}/tasks/{taskId}/rebase-to",
+            post(handlers::tasks::rebase_to_task),
+        )
         // Task Stats API
         .route(
             "/projects/{id}/tasks/{taskId}/stats",

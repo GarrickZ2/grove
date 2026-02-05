@@ -6,6 +6,7 @@ import { TaskInfoPanel } from "./TaskInfoPanel";
 import { TaskView } from "./TaskView";
 import { NewTaskDialog } from "./NewTaskDialog";
 import { CommitDialog, ConfirmDialog, MergeDialog } from "../Dialogs";
+import { RebaseDialog } from "./dialogs";
 import { Button } from "../ui";
 import { useProject } from "../../context";
 import {
@@ -19,6 +20,8 @@ import {
   mergeTask as apiMergeTask,
   getCommits as apiGetCommits,
   resetTask as apiResetTask,
+  rebaseToTask as apiRebaseToTask,
+  getBranches as apiGetBranches,
   type TaskResponse,
 } from "../../api";
 import type { Task, TaskFilter, TaskStatus } from "../../data/types";
@@ -94,6 +97,11 @@ export function TasksPage({ initialTaskId, onNavigationConsumed }: TasksPageProp
   // Reset confirm dialog state
   const [showResetConfirm, setShowResetConfirm] = useState(false);
   const [isResetting, setIsResetting] = useState(false);
+
+  // Rebase dialog state
+  const [showRebaseDialog, setShowRebaseDialog] = useState(false);
+  const [isRebasing, setIsRebasing] = useState(false);
+  const [availableBranches, setAvailableBranches] = useState<string[]>([]);
 
   // Operation message toast
   const [operationMessage, setOperationMessage] = useState<string | null>(null);
@@ -300,11 +308,43 @@ export function TasksPage({ initialTaskId, onNavigationConsumed }: TasksPageProp
   }, [selectedProject, selectedTask, refreshSelectedProject]);
 
   // Handle rebase - TUI: opens branch selector to change target branch
-  // For now, show a message - full implementation would need a branch selector dialog
-  const handleRebase = () => {
-    showMessage("Rebase: Please use terminal to change target branch or run git rebase");
-    setViewMode("terminal");
-  };
+  const handleRebase = useCallback(async () => {
+    if (!selectedProject) return;
+    try {
+      // Fetch available branches
+      const branchesRes = await apiGetBranches(selectedProject.id);
+      setAvailableBranches(branchesRes.branches.map((b) => b.name));
+      setShowRebaseDialog(true);
+    } catch (err) {
+      console.error("Failed to fetch branches:", err);
+      showMessage("Failed to load branches");
+    }
+  }, [selectedProject]);
+
+  // Handle rebase submit
+  const handleRebaseSubmit = useCallback(async (newTarget: string) => {
+    if (!selectedProject || !selectedTask || isRebasing) return;
+    try {
+      setIsRebasing(true);
+      const result = await apiRebaseToTask(selectedProject.id, selectedTask.id, newTarget);
+      if (result.success) {
+        showMessage(result.message || "Target branch changed");
+        setShowRebaseDialog(false);
+        await refreshSelectedProject();
+        // Update selected task with new target
+        setSelectedTask((prev) => prev ? { ...prev, target: newTarget } : null);
+      } else {
+        showMessage(result.message || "Failed to change target branch");
+      }
+    } catch (err) {
+      console.error("Failed to rebase:", err);
+      const errorMessage = err instanceof Error ? err.message :
+        (err as { message?: string })?.message || "Failed to change target branch";
+      showMessage(errorMessage);
+    } finally {
+      setIsRebasing(false);
+    }
+  }, [selectedProject, selectedTask, isRebasing, refreshSelectedProject]);
 
   // Handle review from info mode - enter terminal mode with review panel open
   const handleReviewFromInfo = () => {
@@ -720,6 +760,16 @@ export function TasksPage({ initialTaskId, onNavigationConsumed }: TasksPageProp
         variant="danger"
         onConfirm={handleResetConfirm}
         onCancel={() => setShowResetConfirm(false)}
+      />
+
+      {/* Rebase Dialog (Change Target Branch) */}
+      <RebaseDialog
+        isOpen={showRebaseDialog}
+        taskName={selectedTask?.name}
+        currentTarget={selectedTask?.target || ""}
+        availableBranches={availableBranches}
+        onClose={() => setShowRebaseDialog(false)}
+        onRebase={handleRebaseSubmit}
       />
     </motion.div>
   );

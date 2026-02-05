@@ -71,6 +71,12 @@ pub struct MergeRequest {
     pub method: Option<String>,
 }
 
+/// Rebase-to request (change target branch)
+#[derive(Debug, Deserialize)]
+pub struct RebaseToRequest {
+    pub target: String,
+}
+
 /// Git operation response
 #[derive(Debug, Serialize)]
 pub struct GitOperationResponse {
@@ -912,5 +918,66 @@ pub async fn reset_task(
     Ok(Json(GitOperationResponse {
         success: true,
         message: "Task reset successfully".to_string(),
+    }))
+}
+
+/// POST /api/v1/projects/{id}/tasks/{taskId}/rebase-to
+/// Change task's target branch
+/// Logic from TUI: app.rs open_branch_selector(), storage::tasks::update_task_target()
+pub async fn rebase_to_task(
+    Path((id, task_id)): Path<(String, String)>,
+    Json(req): Json<RebaseToRequest>,
+) -> Result<Json<GitOperationResponse>, (StatusCode, Json<ApiErrorResponse>)> {
+    let (project, project_key) = find_project_by_id(&id).map_err(|s| {
+        (
+            s,
+            Json(ApiErrorResponse {
+                error: "Project not found".to_string(),
+            }),
+        )
+    })?;
+
+    // Verify task exists
+    let _task = tasks::get_task(&project_key, &task_id)
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResponse {
+                    error: format!("Failed to load task: {}", e),
+                }),
+            )
+        })?
+        .ok_or_else(|| {
+            (
+                StatusCode::NOT_FOUND,
+                Json(ApiErrorResponse {
+                    error: "Task not found".to_string(),
+                }),
+            )
+        })?;
+
+    // Verify target branch exists
+    if !git::branch_exists(&project.path, &req.target) {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ApiErrorResponse {
+                error: format!("Branch '{}' does not exist", req.target),
+            }),
+        ));
+    }
+
+    // Update task target (TUI: storage::tasks::update_task_target)
+    tasks::update_task_target(&project_key, &task_id, &req.target).map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ApiErrorResponse {
+                error: format!("Failed to update task target: {}", e),
+            }),
+        )
+    })?;
+
+    Ok(Json(GitOperationResponse {
+        success: true,
+        message: format!("Target branch changed to '{}'", req.target),
     }))
 }
