@@ -5,6 +5,43 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] - 2026-02-05
+
+### Added
+
+- **Grove Web** — full-featured web interface for managing Grove projects and tasks
+  - Built with React + TypeScript + Vite, embedded directly in the binary
+  - Dashboard view with repository overview, branch list, commit history
+  - Projects page for managing multiple git repositories
+  - Tasks page with full task lifecycle management (create, archive, recover, delete)
+  - Integrated web terminal via WebSocket (xterm.js)
+  - Git operations UI: branches, checkout, pull, push, fetch, stash
+  - Code review integration with difit status and comments display
+  - Task stats visualization with activity timeline
+  - Dark/light theme support with multiple color schemes
+- **`grove web` CLI** — start the web server (`grove web` or `grove web --port 3001`)
+  - Auto-builds frontend on first run if needed
+  - Embeds static assets via `rust_embed` for single-binary deployment
+- **Web API** — comprehensive REST API (Axum-based)
+  - `/api/projects` — list, add, delete projects
+  - `/api/projects/{id}/tasks` — full CRUD + archive/recover operations
+  - `/api/projects/{id}/tasks/{id}/sync`, `/commit`, `/merge`, `/reset`, `/rebase-to`
+  - `/api/projects/{id}/git/*` — branches, commits, checkout, pull, push, fetch, stash
+  - `/api/projects/{id}/tasks/{id}/difit` — code review server integration
+  - `/api/projects/{id}/tasks/{id}/stats` — task activity statistics
+  - `/api/terminal` — WebSocket terminal for interactive shell access
+  - `/api/config` — global configuration management
+- **`grove fp` CLI** — interactive file picker using fzf
+  - Tab to multi-select, Enter to copy path, Ctrl-O to open file
+  - Requires fzf to be installed
+- **FilePicker pane role** — available in Custom Layout builder for agent workflows
+- **Rebase to target branch** — new action in Tasks page to rebase worktree onto target
+- **Task count in Branch Drawer** — Dashboard shows number of tasks per branch
+
+### Fixed
+
+- **File watcher path mismatch** — fixed issue where file activity tracking could miss edits due to path normalization differences
+
 ## [0.3.1] - 2026-02-03
 
 ### Added

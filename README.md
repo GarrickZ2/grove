@@ -40,6 +40,8 @@ Grove gives each task its own **isolated universe**:
 
 ## Features
 
+**Two Interfaces** — TUI for keyboard warriors, Web UI for visual workflows
+
 **Task Dashboard** — See all tasks at a glance with live status
 
 **True Isolation** — Each task = own branch + worktree + terminal
@@ -50,9 +52,9 @@ Grove gives each task its own **isolated universe**:
 
 **Agent Hooks** — Get notified when AI finishes (sound + system notification)
 
-**AI Agent Integration** — Built-in workflow for AI coding agents (Claude Code, Cursor, etc.)
+**MCP Server** — Model Context Protocol integration for AI agents (Claude Code, etc.)
 
-**Preview Panel** — Side panel with Git info, AI summaries, and notes per task
+**Preview Panel** — Side panel with Git info, code review, and notes per task
 
 **8 Themes** — Dracula, Nord, Gruvbox, Tokyo Night, Catppuccin, and more
 
@@ -67,12 +69,18 @@ curl -sSL https://raw.githubusercontent.com/GarrickZ2/grove/master/install.sh | 
 cargo install grove-rs
 ```
 
-**Run:**
+**Run TUI:**
 ```bash
 cd your-project && grove
 ```
 
-**Create your first task:** Press `n`, name it, start coding.
+**Run Web UI:**
+```bash
+grove web              # Open http://localhost:3001
+grove web --port 8080  # Custom port
+```
+
+**Create your first task:** Press `n` in TUI, or click "New Task" in Web UI.
 
 ## Keyboard Shortcuts
 
@@ -88,6 +96,36 @@ cd your-project && grove
 | `?` | Help |
 | `q` | Quit |
 
+---
+
+## Grove Web
+
+A full-featured web interface for managing Grove projects and tasks.
+
+**Dashboard** — Repository overview with branch list, commit history, and quick stats
+
+**Projects** — Manage multiple git repositories from one place
+
+**Tasks** — Create, archive, recover, and delete tasks with visual workflows
+
+**Integrated Terminal** — Full terminal access via WebSocket (xterm.js)
+
+**Git Operations** — Branches, checkout, pull, push, fetch, stash — all from the browser
+
+**Code Review** — View difit review status and comments inline
+
+**Activity Stats** — Task activity timeline and file edit heatmap
+
+```bash
+grove web                  # Start server on port 3001
+grove web --port 8080      # Custom port
+grove web --host 0.0.0.0   # Expose to network
+```
+
+The web UI is embedded directly in the binary — no separate frontend deployment needed.
+
+---
+
 ## Agent Hooks
 
 Let Grove watch your AI agents so you don't have to.
@@ -102,32 +140,43 @@ grove hooks critical  # Something's wrong
 
 Press `h` in Grove to configure sound and notification settings.
 
-## AI Agent Integration
+## MCP Server
 
-Grove automatically sets up each task for AI coding agents. When a task is created:
+Grove provides a Model Context Protocol (MCP) server for AI agent integration.
 
-1. **GROVE.md** is generated in the worktree with workflow instructions
-2. **CLAUDE.md / AGENTS.md** are injected with a mandatory integration block
-3. Environment variables (`GROVE_TASK_ID`, `GROVE_PROJECT`, etc.) are set in the tmux session
+Add to your Claude Code MCP config (`~/.claude/config.json`):
 
-Agents can use the CLI to track progress:
-
-```bash
-grove agent status                              # Check task context
-grove agent notes                               # Read user-provided notes
-grove agent summary                             # Read current summary
-grove agent summary "Implemented feature X..."  # Update summary
-grove agent todo                                # Read TODO list
-grove agent todo --todo "task A" --done "task B" # Update TODOs
+```json
+{
+  "mcpServers": {
+    "grove": {
+      "command": "grove",
+      "args": ["mcp"]
+    }
+  }
+}
 ```
+
+**Available Tools:**
+
+| Tool | Description |
+|------|-------------|
+| `grove_status` | Check if running inside a Grove task, get context |
+| `grove_read_notes` | Read user-provided task notes |
+| `grove_read_review` | Read code review comments with status |
+| `grove_reply_review` | Batch reply to review comments |
+| `grove_complete_task` | Complete task: commit → rebase → merge → archive |
+
+When inside a Grove task, the agent can read notes, respond to code review feedback, and complete the task with a single tool call.
 
 ## Preview Panel
 
-Press `Tab` to toggle the side panel showing details for the selected task:
+Press `p` to toggle the side panel showing details for the selected task:
 
 - **Git** — recent commits, diff stats, uncommitted changes
-- **AI Summary** — cumulative work summary written by agents
+- **Review** — code review comments from difit
 - **Notes** — user-provided context and requirements (editable with `e`)
+- **Stats** — file edit heatmap and activity timeline
 
 Use `j/k` to scroll panel content, `Left/Right` to switch sub-tabs.
 
