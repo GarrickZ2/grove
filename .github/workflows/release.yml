@@ -43,6 +43,7 @@ jobs:
       - name: Build Frontend
         run: |
           cd grove-web
+          npm cache clean --force
           npm install --legacy-peer-deps
           npm run build
       - name: Install Rust
@@ -75,6 +76,7 @@ jobs:
       - name: Build Frontend
         run: |
           cd grove-web
+          npm cache clean --force
           npm install --legacy-peer-deps
           npm run build
       - name: Install Rust
@@ -107,6 +109,7 @@ jobs:
       - name: Build Frontend
         run: |
           cd grove-web
+          npm cache clean --force
           npm install --legacy-peer-deps
           npm run build
       - name: Install Rust
@@ -141,6 +144,7 @@ jobs:
       - name: Build Frontend
         run: |
           cd grove-web
+          npm cache clean --force
           npm install --legacy-peer-deps
           npm run build
       - name: Install Rust
