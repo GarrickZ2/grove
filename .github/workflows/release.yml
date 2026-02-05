@@ -43,7 +43,7 @@ jobs:
       - name: Build Frontend
         run: |
           cd grove-web
-          npm ci --legacy-peer-deps
+          npm install --legacy-peer-deps
           npm run build
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -75,7 +75,7 @@ jobs:
       - name: Build Frontend
         run: |
           cd grove-web
-          npm ci --legacy-peer-deps
+          npm install --legacy-peer-deps
           npm run build
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -107,7 +107,7 @@ jobs:
       - name: Build Frontend
         run: |
           cd grove-web
-          npm ci --legacy-peer-deps
+          npm install --legacy-peer-deps
           npm run build
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -141,7 +141,7 @@ jobs:
       - name: Build Frontend
         run: |
           cd grove-web
-          npm ci --legacy-peer-deps
+          npm install --legacy-peer-deps
           npm run build
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
