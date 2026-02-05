@@ -39,7 +39,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '22.5.1'
+          node-version: '22.14.0'
           cache: 'npm'
           cache-dependency-path: grove-web/package-lock.json
       - name: Build Frontend
@@ -73,7 +73,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '22.5.1'
+          node-version: '22.14.0'
           cache: 'npm'
           cache-dependency-path: grove-web/package-lock.json
       - name: Build Frontend
@@ -107,7 +107,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '22.5.1'
+          node-version: '22.14.0'
           cache: 'npm'
           cache-dependency-path: grove-web/package-lock.json
       - name: Build Frontend
@@ -143,7 +143,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '22.5.1'
+          node-version: '22.14.0'
           cache: 'npm'
           cache-dependency-path: grove-web/package-lock.json
       - name: Build Frontend
