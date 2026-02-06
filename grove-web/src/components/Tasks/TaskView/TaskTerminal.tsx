@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
-import { Terminal as TerminalIcon, Play, ChevronRight } from "lucide-react";
+import { Terminal as TerminalIcon, Play, ChevronRight, Maximize2, Minimize2 } from "lucide-react";
 import { Button } from "../../ui";
 import type { Task } from "../../../data/types";
 import { XTerminal } from "../TaskDetail/XTerminal";
@@ -18,6 +18,10 @@ interface TaskTerminalProps {
   autoStart?: boolean;
   /** Called when terminal connects successfully (session is now live) */
   onConnected?: () => void;
+  /** Whether this panel is in fullscreen mode */
+  fullscreen?: boolean;
+  /** Toggle fullscreen mode */
+  onToggleFullscreen?: () => void;
 }
 
 export function TaskTerminal({
@@ -28,6 +32,8 @@ export function TaskTerminal({
   onStartSession,
   autoStart = false,
   onConnected: onConnectedProp,
+  fullscreen = false,
+  onToggleFullscreen,
 }: TaskTerminalProps) {
   const { terminalTheme } = useTerminalTheme();
   const [isConnected, setIsConnected] = useState(false);
@@ -129,7 +135,7 @@ export function TaskTerminal({
       layout
       initial={{ opacity: 0, y: -10 }}
       animate={{ opacity: 1, y: 0 }}
-      className="flex-1 flex flex-col rounded-lg border border-[var(--color-border)] overflow-hidden"
+      className={`flex-1 flex flex-col overflow-hidden ${fullscreen ? '' : 'rounded-lg border border-[var(--color-border)]'}`}
       style={{ backgroundColor: terminalTheme.colors.background }}
     >
       {/* Terminal Header */}
@@ -145,6 +151,15 @@ export function TaskTerminal({
           <span className="text-xs text-[var(--color-text-muted)]">
             {isConnected ? "Connected" : "Connecting..."}
           </span>
+          {onToggleFullscreen && (
+            <button
+              onClick={onToggleFullscreen}
+              className="ml-1 p-1 text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-bg-tertiary)] rounded transition-colors"
+              title={fullscreen ? "Exit Fullscreen" : "Fullscreen"}
+            >
+              {fullscreen ? <Minimize2 className="w-3.5 h-3.5" /> : <Maximize2 className="w-3.5 h-3.5" />}
+            </button>
+          )}
         </div>
       </div>
 

@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import Editor from "@monaco-editor/react";
-import { X, FileCode, Loader2, Save } from "lucide-react";
+import { X, FileCode, Loader2, Save, Maximize2, Minimize2 } from "lucide-react";
 import { Button } from "../../ui";
 import { FileTree } from "./FileTree";
 import { buildFileTree } from "../../../utils/fileTree";
@@ -10,6 +10,10 @@ interface TaskEditorProps {
   projectId: string;
   taskId: string;
   onClose: () => void;
+  /** Whether this panel is in fullscreen mode */
+  fullscreen?: boolean;
+  /** Toggle fullscreen mode */
+  onToggleFullscreen?: () => void;
 }
 
 /** Map file extensions to Monaco language IDs */
@@ -61,7 +65,7 @@ function getLanguage(filePath: string): string {
   return map[ext] || 'plaintext';
 }
 
-export function TaskEditor({ projectId, taskId, onClose }: TaskEditorProps) {
+export function TaskEditor({ projectId, taskId, onClose, fullscreen = false, onToggleFullscreen }: TaskEditorProps) {
   const [files, setFiles] = useState<string[]>([]);
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
   const [fileContent, setFileContent] = useState<string>('');
@@ -146,7 +150,7 @@ export function TaskEditor({ projectId, taskId, onClose }: TaskEditorProps) {
   const breadcrumb = selectedFile ? selectedFile.split('/') : [];
 
   return (
-    <div className="flex-1 flex flex-col rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-secondary)] overflow-hidden">
+    <div className={`flex-1 flex flex-col bg-[var(--color-bg-secondary)] overflow-hidden ${fullscreen ? '' : 'rounded-lg border border-[var(--color-border)]'}`}>
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-2 bg-[var(--color-bg)] border-b border-[var(--color-border)]">
         <div className="flex items-center gap-2 text-sm text-[var(--color-text)] min-w-0">
@@ -170,10 +174,21 @@ export function TaskEditor({ projectId, taskId, onClose }: TaskEditorProps) {
             </span>
           )}
         </div>
-        <Button variant="ghost" size="sm" onClick={onClose}>
-          <X className="w-4 h-4 mr-1" />
-          Close
-        </Button>
+        <div className="flex items-center gap-1">
+          {onToggleFullscreen && (
+            <button
+              onClick={onToggleFullscreen}
+              className="p-1.5 text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-bg-tertiary)] rounded transition-colors"
+              title={fullscreen ? "Exit Fullscreen" : "Fullscreen"}
+            >
+              {fullscreen ? <Minimize2 className="w-3.5 h-3.5" /> : <Maximize2 className="w-3.5 h-3.5" />}
+            </button>
+          )}
+          <Button variant="ghost" size="sm" onClick={onClose}>
+            <X className="w-4 h-4 mr-1" />
+            Close
+          </Button>
+        </div>
       </div>
 
       {/* Main content: File tree + Editor */}

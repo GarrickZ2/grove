@@ -7,6 +7,8 @@ import {
   AlertCircle,
   CheckCircle,
   FileQuestion,
+  Maximize2,
+  Minimize2,
 } from "lucide-react";
 import { Button } from "../../ui";
 import { startDifit, getDifitStatus, stopDifit } from "../../../api";
@@ -19,16 +21,24 @@ interface TaskCodeReviewProps {
   taskId: string;
   /** Callback when close button is clicked */
   onClose: () => void;
+  /** Whether this panel is in fullscreen mode */
+  fullscreen?: boolean;
+  /** Toggle fullscreen mode */
+  onToggleFullscreen?: () => void;
 }
 
 export function TaskCodeReview({
   projectId,
   taskId,
   onClose,
+  fullscreen = false,
+  onToggleFullscreen,
 }: TaskCodeReviewProps) {
   const [status, setStatus] = useState<DifitStatusResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const containerClass = `flex-1 flex flex-col bg-[var(--color-bg-secondary)] overflow-hidden ${fullscreen ? '' : 'rounded-lg border border-[var(--color-border)]'}`;
 
   // Start difit and poll for URL
   useEffect(() => {
@@ -95,10 +105,21 @@ export function TaskCodeReview({
         <Code className="w-4 h-4" />
         <span className="font-medium">Code Review</span>
       </div>
-      <Button variant="ghost" size="sm" onClick={handleClose}>
-        <X className="w-4 h-4 mr-1" />
-        Close
-      </Button>
+      <div className="flex items-center gap-1">
+        {onToggleFullscreen && (
+          <button
+            onClick={onToggleFullscreen}
+            className="p-1.5 text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-bg-tertiary)] rounded transition-colors"
+            title={fullscreen ? "Exit Fullscreen" : "Fullscreen"}
+          >
+            {fullscreen ? <Minimize2 className="w-3.5 h-3.5" /> : <Maximize2 className="w-3.5 h-3.5" />}
+          </button>
+        )}
+        <Button variant="ghost" size="sm" onClick={handleClose}>
+          <X className="w-4 h-4 mr-1" />
+          Close
+        </Button>
+      </div>
     </div>
   );
 
@@ -110,7 +131,7 @@ export function TaskCodeReview({
         animate={{ x: 0, opacity: 1 }}
         exit={{ x: "100%", opacity: 0 }}
         transition={{ type: "spring", damping: 25, stiffness: 200 }}
-        className="flex-1 flex flex-col rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-secondary)] overflow-hidden"
+        className={containerClass}
       >
         <Header />
         <div className="flex-1 flex flex-col items-center justify-center p-8">
@@ -134,7 +155,7 @@ export function TaskCodeReview({
         animate={{ x: 0, opacity: 1 }}
         exit={{ x: "100%", opacity: 0 }}
         transition={{ type: "spring", damping: 25, stiffness: 200 }}
-        className="flex-1 flex flex-col rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-secondary)] overflow-hidden"
+        className={containerClass}
       >
         <Header />
         <div className="flex-1 flex flex-col items-center justify-center p-8">
@@ -158,7 +179,7 @@ export function TaskCodeReview({
         animate={{ x: 0, opacity: 1 }}
         exit={{ x: "100%", opacity: 0 }}
         transition={{ type: "spring", damping: 25, stiffness: 200 }}
-        className="flex-1 flex flex-col rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-secondary)] overflow-hidden"
+        className={containerClass}
       >
         <Header />
         <div className="flex-1 flex flex-col items-center justify-center p-8">
@@ -185,7 +206,7 @@ export function TaskCodeReview({
         animate={{ x: 0, opacity: 1 }}
         exit={{ x: "100%", opacity: 0 }}
         transition={{ type: "spring", damping: 25, stiffness: 200 }}
-        className="flex-1 flex flex-col rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-secondary)] overflow-hidden"
+        className={containerClass}
       >
         <Header />
         <div className="flex-1 flex flex-col items-center justify-center p-8">
@@ -209,7 +230,7 @@ export function TaskCodeReview({
         animate={{ x: 0, opacity: 1 }}
         exit={{ x: "100%", opacity: 0 }}
         transition={{ type: "spring", damping: 25, stiffness: 200 }}
-        className="flex-1 flex flex-col rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-secondary)] overflow-hidden"
+        className={containerClass}
       >
         <Header />
         <div className="flex-1 flex flex-col items-center justify-center p-8">
@@ -233,7 +254,7 @@ export function TaskCodeReview({
         animate={{ x: 0, opacity: 1 }}
         exit={{ x: "100%", opacity: 0 }}
         transition={{ type: "spring", damping: 25, stiffness: 200 }}
-        className="flex-1 flex flex-col rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-secondary)] overflow-hidden"
+        className={containerClass}
       >
         <Header />
         <div className="flex-1 relative">

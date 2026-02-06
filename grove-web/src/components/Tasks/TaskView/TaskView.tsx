@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { TaskHeader } from "./TaskHeader";
 import { TaskToolbar } from "./TaskToolbar";
@@ -49,17 +50,68 @@ export function TaskView({
   onTerminalConnected,
 }: TaskViewProps) {
   const [headerCollapsed, setHeaderCollapsed] = useState(false);
+  const [fullscreenPanel, setFullscreenPanel] = useState<'none' | 'terminal' | 'review' | 'editor'>('none');
 
   // Auto-sync header collapse with review/editor panel state
   useEffect(() => {
     setHeaderCollapsed(reviewOpen || editorOpen);
   }, [reviewOpen, editorOpen]);
 
+  // Escape key exits fullscreen
+  useEffect(() => {
+    if (fullscreenPanel === 'none') return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setFullscreenPanel('none');
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [fullscreenPanel]);
+
   // When terminal expands, close review/editor
   const handleExpandTerminal = () => {
     if (reviewOpen) onToggleReview();
     if (editorOpen) onToggleEditor();
   };
+
+  // Fullscreen overlay rendered via portal to escape all parent containers
+  const fullscreenOverlay = fullscreenPanel !== 'none' && createPortal(
+    <div className="fixed inset-0 z-50 flex flex-col bg-[var(--color-bg)]">
+      {fullscreenPanel === 'terminal' && (
+        <TaskTerminal
+          projectId={projectId}
+          task={task}
+          collapsed={false}
+          onExpand={handleExpandTerminal}
+          onStartSession={onStartSession}
+          autoStart={autoStartSession}
+          onConnected={onTerminalConnected}
+          fullscreen
+          onToggleFullscreen={() => setFullscreenPanel('none')}
+        />
+      )}
+      {fullscreenPanel === 'review' && reviewOpen && (
+        <TaskCodeReview
+          projectId={projectId}
+          taskId={task.id}
+          onClose={() => { setFullscreenPanel('none'); onToggleReview(); }}
+          fullscreen
+          onToggleFullscreen={() => setFullscreenPanel('none')}
+        />
+      )}
+      {fullscreenPanel === 'editor' && editorOpen && (
+        <TaskEditor
+          projectId={projectId}
+          taskId={task.id}
+          onClose={() => { setFullscreenPanel('none'); onToggleEditor(); }}
+          fullscreen
+          onToggleFullscreen={() => setFullscreenPanel('none')}
+        />
+      )}
+    </div>,
+    document.body,
+  );
 
   return (
     <motion.div
@@ -107,6 +159,8 @@ export function TaskView({
           onStartSession={onStartSession}
           autoStart={autoStartSession}
           onConnected={onTerminalConnected}
+          fullscreen={false}
+          onToggleFullscreen={() => setFullscreenPanel('terminal')}
         />
 
         {/* Code Review Panel */}
@@ -123,6 +177,8 @@ export function TaskView({
                 projectId={projectId}
                 taskId={task.id}
                 onClose={onToggleReview}
+                fullscreen={false}
+                onToggleFullscreen={() => setFullscreenPanel('review')}
               />
             </motion.div>
           )}
@@ -142,11 +198,16 @@ export function TaskView({
                 projectId={projectId}
                 taskId={task.id}
                 onClose={onToggleEditor}
+                fullscreen={false}
+                onToggleFullscreen={() => setFullscreenPanel('editor')}
               />
             </motion.div>
           )}
         </AnimatePresence>
       </div>
+
+      {/* Fullscreen overlay portal */}
+      {fullscreenOverlay}
     </motion.div>
   );
 }
