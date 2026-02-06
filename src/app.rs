@@ -1396,6 +1396,7 @@ impl App {
 
         // 5. 保存 task 元数据
         let now = Utc::now();
+        let sname = session::session_name(&project_key, &slug);
         let task = Task {
             id: slug.clone(),
             name: name.clone(),
@@ -1406,6 +1407,7 @@ impl App {
             updated_at: now,
             status: TaskStatus::Active,
             multiplexer: self.multiplexer.to_string(),
+            session_name: sname.clone(),
         };
 
         if let Err(e) = tasks::add_task(&project_key, task) {
@@ -1414,7 +1416,7 @@ impl App {
         }
 
         // 6. 创建 session（使用 project_key 保持一致）
-        let session = session::session_name(&project_key, &slug);
+        let session = sname;
         let wt_dir = worktree_path.to_str().unwrap_or(".").to_string();
         let session_env = self.build_session_env(
             &slug,
@@ -1783,15 +1785,22 @@ impl App {
         let wt_target = wt.target.clone();
         let wt_path = wt.path.clone();
         let slug = slug_from_path(&wt_path);
-        let session = session::session_name(&self.project.project_key, &slug);
 
-        // 从 task 记录获取 multiplexer
-        let task_mux = tasks::get_task(&self.project.project_key, &wt_id)
+        // 从 task 记录获取 multiplexer 和 session_name
+        let task_data = tasks::get_task(&self.project.project_key, &wt_id)
             .ok()
-            .flatten()
-            .map(|t| t.multiplexer)
+            .flatten();
+        let task_mux = task_data
+            .as_ref()
+            .map(|t| t.multiplexer.clone())
+            .unwrap_or_default();
+        let task_session_name = task_data
+            .as_ref()
+            .map(|t| t.session_name.clone())
             .unwrap_or_default();
         let mux = session::resolve_multiplexer(&task_mux, &self.multiplexer);
+        let session =
+            session::resolve_session_name(&task_session_name, &self.project.project_key, &slug);
 
         // 4. 如果 session 不存在，创建它
         let mut layout_path: Option<String> = None;
@@ -2026,13 +2035,19 @@ impl App {
         storage::difit_session::remove_session(&project_key, task_id);
 
         // 4. 关闭 session（放在最后，避免 monitor 进程被提前终止）
-        let task_mux_str = tasks::get_archived_task(&project_key, task_id)
+        let archived_task = tasks::get_archived_task(&project_key, task_id)
             .ok()
-            .flatten()
-            .map(|t| t.multiplexer)
+            .flatten();
+        let task_mux_str = archived_task
+            .as_ref()
+            .map(|t| t.multiplexer.clone())
+            .unwrap_or_default();
+        let task_session_name = archived_task
+            .as_ref()
+            .map(|t| t.session_name.clone())
             .unwrap_or_default();
         let task_mux = session::resolve_multiplexer(&task_mux_str, &self.multiplexer);
-        let session = session::session_name(&project_key, task_id);
+        let session = session::resolve_session_name(&task_session_name, &project_key, task_id);
         let _ = session::kill_session(&task_mux, &session);
         // Clean up zellij layout file if applicable
         if task_mux == Multiplexer::Zellij {
@@ -2088,17 +2103,24 @@ impl App {
     /// 执行清理
     fn do_clean(&mut self, task_id: &str, is_archived: bool) {
         // 1. 关闭 session
-        let task_mux_str = if is_archived {
+        let task_data = if is_archived {
             tasks::get_archived_task(&self.project.project_key, task_id)
         } else {
             tasks::get_task(&self.project.project_key, task_id)
         }
         .ok()
-        .flatten()
-        .map(|t| t.multiplexer)
-        .unwrap_or_default();
+        .flatten();
+        let task_mux_str = task_data
+            .as_ref()
+            .map(|t| t.multiplexer.clone())
+            .unwrap_or_default();
+        let task_session_name = task_data
+            .as_ref()
+            .map(|t| t.session_name.clone())
+            .unwrap_or_default();
         let task_mux = session::resolve_multiplexer(&task_mux_str, &self.multiplexer);
-        let session = session::session_name(&self.project.project_key, task_id);
+        let session =
+            session::resolve_session_name(&task_session_name, &self.project.project_key, task_id);
         let _ = session::kill_session(&task_mux, &session);
         if task_mux == Multiplexer::Zellij {
             crate::zellij::layout::remove_session_layout(&session);
@@ -2194,7 +2216,8 @@ impl App {
 
         // 2. Kill session (用旧 task 的 multiplexer)
         let old_mux = session::resolve_multiplexer(&task.multiplexer, &self.multiplexer);
-        let session = session::session_name(&self.project.project_key, task_id);
+        let session =
+            session::resolve_session_name(&task.session_name, &self.project.project_key, task_id);
         let _ = session::kill_session(&old_mux, &session);
         if old_mux == Multiplexer::Zellij {
             crate::zellij::layout::remove_session_layout(&session);
@@ -2321,8 +2344,17 @@ impl App {
                 PendingAction::MergeArchive { task_id } => self.do_archive(&task_id),
                 PendingAction::Reset { task_id } => self.do_reset(&task_id),
                 PendingAction::ExitSession => {
-                    let session =
-                        session::session_name(&self.monitor.project_key, &self.monitor.task_id);
+                    let task_session_name =
+                        tasks::get_task(&self.monitor.project_key, &self.monitor.task_id)
+                            .ok()
+                            .flatten()
+                            .map(|t| t.session_name)
+                            .unwrap_or_default();
+                    let session = session::resolve_session_name(
+                        &task_session_name,
+                        &self.monitor.project_key,
+                        &self.monitor.task_id,
+                    );
                     let _ = session::kill_session(&self.monitor.multiplexer, &session);
                     self.should_quit = true;
                 }
@@ -2437,7 +2469,8 @@ impl App {
         }
 
         // 创建 session (使用当前全局 multiplexer)
-        let session = session::session_name(&self.project.project_key, task_id);
+        let session =
+            session::resolve_session_name(&task.session_name, &self.project.project_key, task_id);
         let session_env = self.build_session_env(
             &task.id,
             &task.name,
@@ -3093,10 +3126,12 @@ impl App {
         let archived_tasks = tasks::load_archived_tasks(&project_key).unwrap_or_default();
 
         // 2. 清理所有任务
+        let global_mux = storage::config::load_config().multiplexer;
         for task in active_tasks.iter().chain(archived_tasks.iter()) {
-            // 关闭 session
-            let session = tmux::session_name(&project_key, &task.id);
-            let _ = tmux::kill_session(&session);
+            // 关闭 session（根据 task 的 multiplexer 类型）
+            let task_mux = session::resolve_multiplexer(&task.multiplexer, &global_mux);
+            let session = session::resolve_session_name(&task.session_name, &project_key, &task.id);
+            let _ = session::kill_session(&task_mux, &session);
 
             // 删除 worktree (如果存在)
             if Path::new(&task.worktree_path).exists() {
@@ -3896,8 +3931,17 @@ impl App {
                 }
             }
             MonitorAction::Exit => {
-                let session_name =
-                    session::session_name(&self.monitor.project_key, &self.monitor.task_id);
+                let task_session_name =
+                    tasks::get_task(&self.monitor.project_key, &self.monitor.task_id)
+                        .ok()
+                        .flatten()
+                        .map(|t| t.session_name)
+                        .unwrap_or_default();
+                let session_name = session::resolve_session_name(
+                    &task_session_name,
+                    &self.monitor.project_key,
+                    &self.monitor.task_id,
+                );
                 self.confirm_dialog = Some(
                     crate::ui::components::confirm_dialog::ConfirmType::ExitSession {
                         session_name,

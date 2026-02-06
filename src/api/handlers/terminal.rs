@@ -71,23 +71,35 @@ pub async fn task_terminal_handler(
     // 3. Resolve multiplexer and build session name
     let global_mux = config::load_config().multiplexer;
     let task_mux = session::resolve_multiplexer(&task.multiplexer, &global_mux);
-    let session_name = session::session_name(&project_key, &task_id);
+    let session_name = session::resolve_session_name(&task.session_name, &project_key, &task_id);
 
     // 4. Ensure session exists (create if needed)
     let session_created = !session::session_exists(&task_mux, &session_name);
+    let mut zellij_layout_path: Option<String> = None;
     if session_created {
-        ensure_task_session(&project, &project_key, &task, &task_mux)?;
+        zellij_layout_path = ensure_task_session(&project, &project_key, &task, &task_mux)?;
 
         // Register FileWatcher for this task's worktree
         state::watch_task(&project_key, &task.id, &task.worktree_path);
     }
 
+    let working_dir = task.worktree_path.clone();
+
     // 5. Upgrade to WebSocket and handle mux terminal
-    Ok(
-        ws.on_upgrade(move |socket| {
-            handle_mux_terminal(socket, session_name, task_mux, cols, rows)
-        }),
-    )
+    Ok(ws.on_upgrade(move |socket| {
+        handle_mux_terminal(
+            socket,
+            MuxTerminalParams {
+                session_name,
+                mux: task_mux,
+                new_session: session_created,
+                working_dir,
+                zellij_layout_path,
+                cols,
+                rows,
+            },
+        )
+    }))
 }
 
 /// Error type for task terminal handler
@@ -107,14 +119,15 @@ impl IntoResponse for TaskTerminalError {
     }
 }
 
-/// Ensure the task's session exists, creating it if needed
+/// Ensure the task's session exists, creating it if needed.
+/// Returns the Zellij layout path if one was generated (for use at attach time).
 fn ensure_task_session(
     project: &workspace::RegisteredProject,
     project_key: &str,
     task: &tasks::Task,
     mux: &Multiplexer,
-) -> Result<(), TaskTerminalError> {
-    let session_name = session::session_name(project_key, &task.id);
+) -> Result<Option<String>, TaskTerminalError> {
+    let session_name = session::resolve_session_name(&task.session_name, project_key, &task.id);
 
     // Build session environment
     let project_name = std::path::Path::new(&project.path)
@@ -152,6 +165,7 @@ fn ensure_task_session(
     };
 
     // Apply layout (skip for Single layout)
+    let mut layout_path: Option<String> = None;
     if layout != TaskLayout::Single {
         match mux {
             Multiplexer::Tmux => {
@@ -173,14 +187,15 @@ fn ensure_task_session(
                     &agent_cmd,
                     custom_layout.as_ref(),
                 );
-                if let Err(e) = crate::zellij::layout::write_session_layout(&session_name, &kdl) {
-                    eprintln!("Warning: Failed to write zellij layout: {}", e);
+                match crate::zellij::layout::write_session_layout(&session_name, &kdl) {
+                    Ok(path) => layout_path = Some(path),
+                    Err(e) => eprintln!("Warning: Failed to write zellij layout: {}", e),
                 }
             }
         }
     }
 
-    Ok(())
+    Ok(layout_path)
 }
 
 /// Handle the WebSocket connection for a simple shell terminal
@@ -195,14 +210,28 @@ async fn handle_shell_terminal(socket: WebSocket, cwd: String, cols: u16, rows: 
     handle_pty_terminal(socket, cmd, cols, rows).await;
 }
 
-/// Handle the WebSocket connection for a multiplexer session terminal
-async fn handle_mux_terminal(
-    socket: WebSocket,
+/// Parameters for multiplexer terminal connection
+struct MuxTerminalParams {
     session_name: String,
     mux: Multiplexer,
+    new_session: bool,
+    working_dir: String,
+    zellij_layout_path: Option<String>,
     cols: u16,
     rows: u16,
-) {
+}
+
+/// Handle the WebSocket connection for a multiplexer session terminal
+async fn handle_mux_terminal(socket: WebSocket, params: MuxTerminalParams) {
+    let MuxTerminalParams {
+        session_name,
+        mux,
+        new_session,
+        working_dir,
+        zellij_layout_path,
+        cols,
+        rows,
+    } = params;
     match mux {
         Multiplexer::Tmux => {
             let mut cmd = CommandBuilder::new("tmux");
@@ -213,8 +242,30 @@ async fn handle_mux_terminal(
         }
         Multiplexer::Zellij => {
             let mut cmd = CommandBuilder::new("zellij");
-            cmd.arg("attach");
-            cmd.arg(&session_name);
+            // Remove ZELLIJ env vars to prevent nested session issues
+            cmd.env_remove("ZELLIJ");
+            cmd.env_remove("ZELLIJ_SESSION_NAME");
+            cmd.cwd(&working_dir);
+
+            if new_session {
+                // New session: use `zellij -s <name>` (mirrors TUI attach_session logic)
+                // Clean up any EXITED residual session first
+                let _ = std::process::Command::new("zellij")
+                    .args(["delete-session", &session_name])
+                    .output();
+
+                cmd.arg("-s");
+                cmd.arg(&session_name);
+                if let Some(lp) = &zellij_layout_path {
+                    cmd.arg("-n");
+                    cmd.arg(lp);
+                }
+            } else {
+                // Existing session: attach
+                cmd.arg("attach");
+                cmd.arg(&session_name);
+            }
+
             handle_pty_terminal(socket, cmd, cols, rows).await;
         }
     }

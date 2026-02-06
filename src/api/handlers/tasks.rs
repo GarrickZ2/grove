@@ -328,6 +328,7 @@ pub async fn create_task(
     // Create task record
     let now = Utc::now();
     let global_mux_for_task = storage::config::load_config().multiplexer;
+    let sname = crate::session::session_name(&project_key, &task_id);
     let task = tasks::Task {
         id: task_id.clone(),
         name: req.name.clone(),
@@ -338,6 +339,7 @@ pub async fn create_task(
         updated_at: now,
         status: tasks::TaskStatus::Active,
         multiplexer: global_mux_for_task.to_string(),
+        session_name: sname,
     };
 
     // Save task
@@ -377,12 +379,16 @@ pub async fn archive_task(
 ) -> Result<Json<TaskResponse>, StatusCode> {
     let (project, project_key) = find_project_by_id(&id)?;
 
-    // 1. Get task info (need multiplexer before archive moves it)
+    // 1. Get task info (need multiplexer + session_name before archive moves it)
     let global_mux = storage::config::load_config().multiplexer;
-    let task_mux_str = tasks::get_task(&project_key, &task_id)
-        .ok()
-        .flatten()
+    let task_info = tasks::get_task(&project_key, &task_id).ok().flatten();
+    let task_mux_str = task_info
+        .as_ref()
         .map(|t| t.multiplexer.clone())
+        .unwrap_or_default();
+    let task_sname = task_info
+        .as_ref()
+        .map(|t| t.session_name.clone())
         .unwrap_or_default();
     let task_mux = session::resolve_multiplexer(&task_mux_str, &global_mux);
 
@@ -401,7 +407,7 @@ pub async fn archive_task(
     difit_session::remove_session(&project_key, &task_id);
 
     // 4. Kill session (TUI: do_archive step 4)
-    let session_name = session::session_name(&project_key, &task_id);
+    let session_name = session::resolve_session_name(&task_sname, &project_key, &task_id);
     let _ = session::kill_session(&task_mux, &session_name);
     if task_mux == Multiplexer::Zellij {
         crate::zellij::layout::remove_session_layout(&session_name);
@@ -923,7 +929,7 @@ pub async fn reset_task(
     // 2. Kill session (TUI: do_reset step 2)
     let global_mux = storage::config::load_config().multiplexer;
     let task_mux = session::resolve_multiplexer(&task.multiplexer, &global_mux);
-    let session = session::session_name(&project_key, &task_id);
+    let session = session::resolve_session_name(&task.session_name, &project_key, &task_id);
     let _ = session::kill_session(&task_mux, &session);
     if task_mux == Multiplexer::Zellij {
         crate::zellij::layout::remove_session_layout(&session);

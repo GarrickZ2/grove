@@ -169,10 +169,14 @@ fn count_project_tasks(project_key: &str) -> (u32, u32) {
     let mut live_count = 0u32;
     let total = active_tasks.len() as u32;
 
+    let global_mux = crate::storage::config::load_config().multiplexer;
+
     // Check which tasks have live sessions
     for task in &active_tasks {
-        let session = crate::tmux::session_name(project_key, &task.id);
-        if crate::tmux::session_exists(&session) {
+        let task_mux = crate::session::resolve_multiplexer(&task.multiplexer, &global_mux);
+        let session =
+            crate::session::resolve_session_name(&task.session_name, project_key, &task.id);
+        if crate::session::session_exists(&task_mux, &session) {
             live_count += 1;
         }
     }

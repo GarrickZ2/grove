@@ -114,11 +114,12 @@ export function XTerminal({
 
     ws.onopen = () => {
       if (isTaskMode) {
-        terminal.writeln("\x1b[32mConnected to tmux session\x1b[0m");
+        terminal.writeln("\x1b[32mConnected to session\x1b[0m");
       } else {
         terminal.writeln("\x1b[32mConnected to terminal\x1b[0m");
       }
       terminal.writeln("");
+      terminal.focus();
       onConnectedRef.current?.();
     };
 
@@ -184,6 +185,7 @@ export function XTerminal({
       ref={containerRef}
       className="w-full h-full"
       style={{ backgroundColor: terminalTheme.colors.background }}
+      onClick={() => terminalRef.current?.focus()}
     />
   );
 }

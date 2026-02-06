@@ -37,6 +37,9 @@ pub struct Task {
     /// 创建时使用的 multiplexer ("tmux" / "zellij")
     #[serde(default = "default_multiplexer")]
     pub multiplexer: String,
+    /// 持久化的 session name（Zellij 有 40 字符限制）
+    #[serde(default)]
+    pub session_name: String,
 }
 
 fn default_multiplexer() -> String {

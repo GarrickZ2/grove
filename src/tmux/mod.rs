@@ -2,12 +2,6 @@ pub mod layout;
 
 use std::process::Command;
 
-/// 生成 session 名称
-/// 格式: grove-{project}-{task_slug}
-pub fn session_name(project: &str, task_slug: &str) -> String {
-    format!("grove-{}-{}", project, task_slug)
-}
-
 /// Session 环境变量
 #[derive(Debug, Clone, Default)]
 pub struct SessionEnv {

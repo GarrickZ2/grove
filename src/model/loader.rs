@@ -125,7 +125,7 @@ fn task_to_worktree(
         } else {
             // 再检查 session 是否运行
             let resolved_mux = session::resolve_multiplexer(&task.multiplexer, global_mux);
-            let session = session::session_name(project, &task.id);
+            let session = session::resolve_session_name(&task.session_name, project, &task.id);
             if session::session_exists(&resolved_mux, &session) {
                 WorktreeStatus::Live
             } else {
