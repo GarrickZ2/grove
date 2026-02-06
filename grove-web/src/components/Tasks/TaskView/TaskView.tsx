@@ -1,3 +1,4 @@
+import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { TaskHeader } from "./TaskHeader";
 import { TaskToolbar } from "./TaskToolbar";
@@ -42,6 +43,13 @@ export function TaskView({
   onStartSession,
   onTerminalConnected,
 }: TaskViewProps) {
+  const [headerCollapsed, setHeaderCollapsed] = useState(false);
+
+  // Auto-sync header collapse with review panel state
+  useEffect(() => {
+    setHeaderCollapsed(reviewOpen);
+  }, [reviewOpen]);
+
   // When terminal expands, close review
   const handleExpandTerminal = () => {
     if (reviewOpen) {
@@ -59,10 +67,15 @@ export function TaskView({
     >
       {/* Header */}
       <div className="rounded-t-lg border border-[var(--color-border)] bg-[var(--color-bg-secondary)]">
-        <TaskHeader task={task} />
+        {!headerCollapsed && <TaskHeader task={task} />}
         <TaskToolbar
           task={task}
           reviewOpen={reviewOpen}
+          compact={headerCollapsed}
+          taskName={task.name}
+          taskStatus={task.status}
+          headerCollapsed={headerCollapsed}
+          onToggleHeaderCollapse={() => setHeaderCollapsed(!headerCollapsed)}
           onCommit={onCommit}
           onToggleReview={onToggleReview}
           onRebase={onRebase}
@@ -72,8 +85,7 @@ export function TaskView({
           onClean={onClean}
           onReset={onReset}
         />
-        {/* File Search Bar */}
-        {task.status !== "archived" && task.status !== "merged" && (
+        {!headerCollapsed && task.status !== "archived" && task.status !== "merged" && (
           <FileSearchBar projectId={projectId} taskId={task.id} />
         )}
       </div>

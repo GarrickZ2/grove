@@ -10,12 +10,23 @@ import {
   Trash2,
   RotateCcw,
   MoreHorizontal,
+  ChevronDown,
+  ChevronUp,
+  Circle,
+  CheckCircle,
+  AlertTriangle,
+  XCircle,
 } from "lucide-react";
-import type { Task } from "../../../data/types";
+import type { Task, TaskStatus } from "../../../data/types";
 
 interface TaskToolbarProps {
   task: Task;
   reviewOpen: boolean;
+  compact?: boolean;
+  taskName?: string;
+  taskStatus?: TaskStatus;
+  headerCollapsed?: boolean;
+  onToggleHeaderCollapse?: () => void;
   onCommit: () => void;
   onToggleReview: () => void;
   onRebase: () => void;
@@ -160,9 +171,35 @@ function ActionsDropdown({ items }: { items: DropdownItem[] }) {
   );
 }
 
+function getCompactStatusConfig(status: TaskStatus): {
+  icon: typeof Circle;
+  color: string;
+  label: string;
+} {
+  switch (status) {
+    case "live":
+      return { icon: Circle, color: "var(--color-success)", label: "Live" };
+    case "idle":
+      return { icon: Circle, color: "var(--color-text-muted)", label: "Idle" };
+    case "merged":
+      return { icon: CheckCircle, color: "#a855f7", label: "Merged" };
+    case "conflict":
+      return { icon: AlertTriangle, color: "var(--color-error)", label: "Conflict" };
+    case "broken":
+      return { icon: XCircle, color: "var(--color-error)", label: "Broken" };
+    case "archived":
+      return { icon: Archive, color: "var(--color-text-muted)", label: "Archived" };
+  }
+}
+
 export function TaskToolbar({
   task,
   reviewOpen,
+  compact = false,
+  taskName,
+  taskStatus,
+  headerCollapsed,
+  onToggleHeaderCollapse,
   onCommit,
   onToggleReview,
   onRebase,
@@ -203,10 +240,34 @@ export function TaskToolbar({
     },
   ];
 
+  const statusConfig = taskStatus ? getCompactStatusConfig(taskStatus) : null;
+  const CompactStatusIcon = statusConfig?.icon;
+
   return (
     <div className="flex items-center justify-between px-4 py-2 border-b border-[var(--color-border)] bg-[var(--color-bg)]">
       {/* Primary Actions */}
-      <div className="flex items-center gap-1">
+      <div className="flex items-center gap-1 min-w-0">
+        {compact && taskName && statusConfig && CompactStatusIcon && (
+          <>
+            <span className="text-sm font-medium text-[var(--color-text)] truncate max-w-[200px]">
+              {taskName}
+            </span>
+            <CompactStatusIcon
+              className="w-3 h-3 flex-shrink-0"
+              style={{
+                color: statusConfig.color,
+                fill: taskStatus === "live" ? statusConfig.color : "transparent",
+              }}
+            />
+            <span
+              className="text-xs flex-shrink-0"
+              style={{ color: statusConfig.color }}
+            >
+              {statusConfig.label}
+            </span>
+            <div className="w-px h-4 bg-[var(--color-border)] mx-1 flex-shrink-0" />
+          </>
+        )}
         <ToolbarButton
           icon={GitCommit}
           label="Commit"
@@ -240,8 +301,26 @@ export function TaskToolbar({
         />
       </div>
 
-      {/* Dangerous Actions in Dropdown */}
-      <ActionsDropdown items={dangerousActions} />
+      <div className="flex items-center gap-1">
+        {/* Header collapse/expand toggle */}
+        {onToggleHeaderCollapse && (
+          <motion.button
+            whileHover={{ scale: 1.05 }}
+            whileTap={{ scale: 0.95 }}
+            onClick={onToggleHeaderCollapse}
+            className="flex items-center justify-center w-7 h-7 rounded-md text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-bg-tertiary)] transition-colors"
+            title={headerCollapsed ? "Expand header" : "Collapse header"}
+          >
+            {headerCollapsed ? (
+              <ChevronDown className="w-3.5 h-3.5" />
+            ) : (
+              <ChevronUp className="w-3.5 h-3.5" />
+            )}
+          </motion.button>
+        )}
+        {/* Dangerous Actions in Dropdown */}
+        <ActionsDropdown items={dangerousActions} />
+      </div>
     </div>
   );
 }
