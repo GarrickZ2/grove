@@ -3,6 +3,7 @@ import { TaskHeader } from "./TaskHeader";
 import { TaskToolbar } from "./TaskToolbar";
 import { TaskTerminal } from "./TaskTerminal";
 import { TaskCodeReview } from "./TaskCodeReview";
+import { FileSearchBar } from "../FileSearchBar";
 import type { Task } from "../../../data/types";
 
 interface TaskViewProps {
@@ -57,7 +58,7 @@ export function TaskView({
       className="flex-1 flex flex-col h-full overflow-hidden"
     >
       {/* Header */}
-      <div className="rounded-t-lg border border-[var(--color-border)] bg-[var(--color-bg-secondary)] overflow-hidden">
+      <div className="rounded-t-lg border border-[var(--color-border)] bg-[var(--color-bg-secondary)]">
         <TaskHeader task={task} />
         <TaskToolbar
           task={task}
@@ -71,6 +72,10 @@ export function TaskView({
           onClean={onClean}
           onReset={onReset}
         />
+        {/* File Search Bar */}
+        {task.status !== "archived" && task.status !== "merged" && (
+          <FileSearchBar projectId={projectId} taskId={task.id} />
+        )}
       </div>
 
       {/* Main Content Area */}

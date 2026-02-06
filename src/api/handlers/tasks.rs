@@ -141,6 +141,12 @@ pub struct ReviewCommentsResponse {
     pub not_resolved_count: u32,
 }
 
+/// File list response
+#[derive(Serialize)]
+pub struct FilesResponse {
+    pub files: Vec<String>,
+}
+
 /// Reply to review comment request
 #[derive(Debug, Deserialize)]
 pub struct ReplyCommentRequest {
@@ -666,18 +672,25 @@ pub async fn merge_task(
         }));
     }
 
+    // Load notes for commit message (non-fatal)
+    let notes_content = notes::load_notes(&project_key, &task_id)
+        .ok()
+        .filter(|s| !s.trim().is_empty());
+
     // Execute merge (TUI: do_merge)
     let result = if use_squash {
         // Squash merge + commit; rollback on commit failure
+        let msg = git::build_commit_message(&task.name, notes_content.as_deref());
         git::merge_squash(&project.path, &task.branch).and_then(|()| {
-            git::commit(&project.path, &task.name).inspect_err(|_| {
+            git::commit(&project.path, &msg).inspect_err(|_| {
                 let _ = git::reset_merge(&project.path);
             })
         })
     } else {
         // Merge with --no-ff
-        let message = format!("Merge: {}", task.name);
-        git::merge_no_ff(&project.path, &task.branch, &message)
+        let title = format!("Merge: {}", task.name);
+        let msg = git::build_commit_message(&title, notes_content.as_deref());
+        git::merge_no_ff(&project.path, &task.branch, &msg)
     };
 
     if let Err(e) = result {
@@ -980,4 +993,20 @@ pub async fn rebase_to_task(
         success: true,
         message: format!("Target branch changed to '{}'", req.target),
     }))
+}
+
+/// GET /api/v1/projects/{id}/tasks/{taskId}/files
+/// List all git-tracked files in a task's worktree
+pub async fn list_files(
+    Path((id, task_id)): Path<(String, String)>,
+) -> Result<Json<FilesResponse>, StatusCode> {
+    let (_project, project_key) = find_project_by_id(&id)?;
+
+    let task = tasks::get_task(&project_key, &task_id)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::NOT_FOUND)?;
+
+    let files = git::list_files(&task.worktree_path).unwrap_or_default();
+
+    Ok(Json(FilesResponse { files }))
 }

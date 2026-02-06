@@ -19,6 +19,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Markdown rendering** — Notes tab now uses `react-markdown` + `remark-gfm` for full GFM support
   - Headings (h1-h6), tables, code blocks, blockquotes, task lists, and more
 - **Auto port fallback** — `grove web` and `grove gui` automatically try next port if default is in use (up to 10 attempts)
+- **Merge with Notes injection** — task notes are automatically injected into merge commit messages (squash & merge-commit), works across TUI, Web, and MCP
+- **File Search Bar** — fuzzy file search in Task Terminal view (`Ctrl+F` to focus)
+  - Searches all git-tracked files in the task worktree
+  - `Tab` to multi-select files, `Enter` to copy paths to clipboard, `Esc` to close
+  - Fuzzy matching with path-segment-aware scoring and match highlighting
 
 ### Fixed
 
@@ -26,6 +31,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Notes textarea not expanding** — fixed CSS flex layout issue where edit mode textarea didn't fill available space
 - **Projects page navigation lag** — double-clicking a project now navigates instantly (loads details in background)
 - **Toast notification position** — moved from top-right (blocking New Task button) to top-center
+- **Toolbar dropdown menu clipped** — removed `overflow-hidden` from header container so "..." actions menu renders correctly
 
 ### Changed
 

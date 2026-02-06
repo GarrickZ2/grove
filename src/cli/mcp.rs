@@ -364,7 +364,7 @@ impl GroveMcpServer {
         &self,
         params: Parameters<CompleteTaskParams>,
     ) -> Result<CallToolResult, McpError> {
-        let (_task_id, project_path) = get_task_context()
+        let (task_id, project_path) = get_task_context()
             .ok_or_else(|| McpError::invalid_request("Not in a Grove task", None))?;
 
         // Get environment variables
@@ -454,8 +454,15 @@ impl GroveMcpServer {
             )]));
         }
 
+        // Load notes for merge commit message (non-fatal)
+        let project_key = project_hash(&project_path);
+        let notes_content = notes::load_notes(&project_key, &task_id)
+            .ok()
+            .filter(|s| !s.trim().is_empty());
+
         // Merge with --no-ff
-        let merge_message = format!("Merge branch '{}' into {}", branch, target_branch);
+        let merge_title = format!("Merge branch '{}' into {}", branch, target_branch);
+        let merge_message = git::build_commit_message(&merge_title, notes_content.as_deref());
         if let Err(e) = git::merge_no_ff(&project_path, &branch, &merge_message) {
             // Reset merge state
             let _ = git::reset_merge(&project_path);

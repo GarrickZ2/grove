@@ -112,6 +112,11 @@ pub fn create_api_router() -> Router {
             "/projects/{id}/tasks/{taskId}/rebase-to",
             post(handlers::tasks::rebase_to_task),
         )
+        // Task Files API
+        .route(
+            "/projects/{id}/tasks/{taskId}/files",
+            get(handlers::tasks::list_files),
+        )
         // Task Stats API
         .route(
             "/projects/{id}/tasks/{taskId}/stats",

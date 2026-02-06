@@ -2713,6 +2713,11 @@ impl App {
         let task_name = task.name.clone();
         let task_id = task_id.to_string();
 
+        // 加载 notes（失败不阻塞 merge）
+        let notes_content = notes::load_notes(&self.project.project_key, &task_id)
+            .ok()
+            .filter(|s| !s.trim().is_empty());
+
         let (tx, rx) = mpsc::channel();
         self.bg_result_rx = Some(rx);
 
@@ -2720,15 +2725,17 @@ impl App {
             let result = match method {
                 MergeMethod::Squash => {
                     // Squash merge + commit; rollback on any failure
+                    let msg = git::build_commit_message(&task_name, notes_content.as_deref());
                     git::merge_squash(&repo_path, &branch).and_then(|()| {
-                        git::commit(&repo_path, &task_name).inspect_err(|_| {
+                        git::commit(&repo_path, &msg).inspect_err(|_| {
                             let _ = git::reset_merge(&repo_path);
                         })
                     })
                 }
                 MergeMethod::MergeCommit => {
-                    let message = format!("Merge: {}", task_name);
-                    git::merge_no_ff(&repo_path, &branch, &message)
+                    let title = format!("Merge: {}", task_name);
+                    let msg = git::build_commit_message(&title, notes_content.as_deref());
+                    git::merge_no_ff(&repo_path, &branch, &msg)
                 }
             };
 

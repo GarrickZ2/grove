@@ -334,6 +334,24 @@ pub fn commit(repo_path: &str, message: &str) -> Result<(), String> {
     git_cmd_unit(repo_path, &["commit", "-m", message])
 }
 
+/// 构建包含 notes 的 commit message
+/// 如果 notes 为空或 None，返回原始标题
+pub fn build_commit_message(title: &str, notes: Option<&str>) -> String {
+    match notes {
+        Some(n) if !n.trim().is_empty() => {
+            format!("{}\n\n## Notes\n\n{}", title, n.trim())
+        }
+        _ => title.to_string(),
+    }
+}
+
+/// 获取 git 跟踪的文件列表
+/// 执行: git ls-files
+pub fn list_files(repo_path: &str) -> Result<Vec<String>, String> {
+    let output = git_cmd(repo_path, &["ls-files"])?;
+    Ok(output.lines().map(|s| s.to_string()).collect())
+}
+
 /// 获取相对于 origin 的 commits ahead 数量
 /// 执行: git rev-list --count origin/{branch}..HEAD
 pub fn commits_ahead_of_origin(repo_path: &str) -> Result<Option<u32>, String> {
@@ -498,4 +516,38 @@ pub fn add_and_commit(worktree_path: &str, message: &str) -> Result<(), String> 
 
     // 再 commit
     git_cmd_unit(worktree_path, &["commit", "-m", message])
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_build_commit_message_with_notes() {
+        let msg = build_commit_message("Add feature", Some("This is a note\nWith multiple lines"));
+        assert_eq!(
+            msg,
+            "Add feature\n\n## Notes\n\nThis is a note\nWith multiple lines"
+        );
+    }
+
+    #[test]
+    fn test_build_commit_message_no_notes() {
+        assert_eq!(build_commit_message("Add feature", None), "Add feature");
+    }
+
+    #[test]
+    fn test_build_commit_message_empty_notes() {
+        assert_eq!(build_commit_message("Add feature", Some("")), "Add feature");
+        assert_eq!(
+            build_commit_message("Add feature", Some("  \n  ")),
+            "Add feature"
+        );
+    }
+
+    #[test]
+    fn test_build_commit_message_trims_notes() {
+        let msg = build_commit_message("Title", Some("\n  content here  \n\n"));
+        assert_eq!(msg, "Title\n\n## Notes\n\ncontent here");
+    }
 }

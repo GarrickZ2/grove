@@ -40,6 +40,7 @@ export {
   getReviewComments,
   replyReviewComment,
   getTaskStats,
+  getTaskFiles,
 } from './tasks';
 export type {
   CommitResponse,
@@ -59,6 +60,7 @@ export type {
   ReviewCommentsResponse,
   ReplyCommentRequest,
   RebaseToRequest,
+  FilesResponse,
   FileEditEntry,
   ActivityEntry,
   TaskStatsResponse,

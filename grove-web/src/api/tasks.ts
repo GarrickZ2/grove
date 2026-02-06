@@ -315,8 +315,19 @@ export async function resetTask(
   );
 }
 
+export interface FilesResponse {
+  files: string[];
+}
+
 export interface RebaseToRequest {
   target: string;
+}
+
+/**
+ * Get all git-tracked files in a task's worktree
+ */
+export async function getTaskFiles(projectId: string, taskId: string): Promise<FilesResponse> {
+  return apiClient.get<FilesResponse>(`/api/v1/projects/${projectId}/tasks/${taskId}/files`);
 }
 
 /**
