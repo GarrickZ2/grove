@@ -343,3 +343,44 @@ export async function rebaseToTask(
     { target }
   );
 }
+
+// ============================================================================
+// File Content API (for Monaco Editor)
+// ============================================================================
+
+export interface FileContentResponse {
+  content: string;
+  path: string;
+}
+
+export interface WriteFileRequest {
+  content: string;
+}
+
+/**
+ * Read a file's content from a task's worktree
+ */
+export async function getFileContent(
+  projectId: string,
+  taskId: string,
+  filePath: string
+): Promise<FileContentResponse> {
+  return apiClient.get<FileContentResponse>(
+    `/api/v1/projects/${projectId}/tasks/${taskId}/file?path=${encodeURIComponent(filePath)}`
+  );
+}
+
+/**
+ * Write content to a file in a task's worktree
+ */
+export async function writeFileContent(
+  projectId: string,
+  taskId: string,
+  filePath: string,
+  content: string
+): Promise<FileContentResponse> {
+  return apiClient.put<WriteFileRequest, FileContentResponse>(
+    `/api/v1/projects/${projectId}/tasks/${taskId}/file?path=${encodeURIComponent(filePath)}`,
+    { content }
+  );
+}

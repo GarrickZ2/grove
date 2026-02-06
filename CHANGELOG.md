@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.3] - 2026-02-05
+
+### Added
+
+- **Monaco Editor panel** — new "Editor" button in Task view opens an embedded code editor
+  - File tree sidebar (250px) built from `git ls-files`, with expandable directories
+  - Monaco Editor with syntax highlighting and auto language detection (30+ languages)
+  - `Cmd/Ctrl+S` to save files directly to the worktree
+  - File read/write API with path traversal protection (`GET/PUT /api/v1/.../file?path=...`)
+- **Editor button in Info panel** — click "Editor" from task details to enter terminal mode with editor open
+
+### Changed
+
+- **Toolbar action reorder** — Git actions (Commit, Rebase, Sync, Merge) now appear first, panel actions (Review, Editor) follow, in both Info panel and Terminal toolbar
+- **Editor/Review mutual exclusion** — opening one panel automatically closes the other; terminal collapses for both
+
 ## [0.4.2] - 2026-02-05
 
 ### Added

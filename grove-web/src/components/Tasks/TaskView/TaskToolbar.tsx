@@ -3,6 +3,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import {
   GitCommit,
   Code,
+  FileCode,
   GitBranchPlus,
   RefreshCw,
   GitMerge,
@@ -22,6 +23,7 @@ import type { Task, TaskStatus } from "../../../data/types";
 interface TaskToolbarProps {
   task: Task;
   reviewOpen: boolean;
+  editorOpen: boolean;
   compact?: boolean;
   taskName?: string;
   taskStatus?: TaskStatus;
@@ -29,6 +31,7 @@ interface TaskToolbarProps {
   onToggleHeaderCollapse?: () => void;
   onCommit: () => void;
   onToggleReview: () => void;
+  onToggleEditor: () => void;
   onRebase: () => void;
   onSync: () => void;
   onMerge: () => void;
@@ -195,6 +198,7 @@ function getCompactStatusConfig(status: TaskStatus): {
 export function TaskToolbar({
   task,
   reviewOpen,
+  editorOpen,
   compact = false,
   taskName,
   taskStatus,
@@ -202,6 +206,7 @@ export function TaskToolbar({
   onToggleHeaderCollapse,
   onCommit,
   onToggleReview,
+  onToggleEditor,
   onRebase,
   onSync,
   onMerge,
@@ -275,13 +280,6 @@ export function TaskToolbar({
           disabled={isArchived}
         />
         <ToolbarButton
-          icon={Code}
-          label="Review"
-          onClick={onToggleReview}
-          active={reviewOpen}
-          disabled={isArchived}
-        />
-        <ToolbarButton
           icon={GitBranchPlus}
           label="Rebase"
           onClick={onRebase}
@@ -298,6 +296,20 @@ export function TaskToolbar({
           label="Merge"
           onClick={onMerge}
           disabled={!canOperate}
+        />
+        <ToolbarButton
+          icon={Code}
+          label="Review"
+          onClick={onToggleReview}
+          active={reviewOpen}
+          disabled={isArchived}
+        />
+        <ToolbarButton
+          icon={FileCode}
+          label="Editor"
+          onClick={onToggleEditor}
+          active={editorOpen}
+          disabled={isArchived}
         />
       </div>
 

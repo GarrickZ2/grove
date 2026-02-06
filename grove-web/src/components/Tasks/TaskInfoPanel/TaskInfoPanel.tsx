@@ -16,6 +16,7 @@ import {
   GitMerge,
   Archive,
   Code,
+  FileCode,
   GitBranchPlus,
   MoreHorizontal,
 } from "lucide-react";
@@ -34,6 +35,7 @@ interface TaskInfoPanelProps {
   // Action handlers for non-archived tasks
   onCommit?: () => void;
   onReview?: () => void;
+  onEditor?: () => void;
   onRebase?: () => void;
   onSync?: () => void;
   onMerge?: () => void;
@@ -66,6 +68,7 @@ export function TaskInfoPanel({
   isTerminalMode = false,
   onCommit,
   onReview,
+  onEditor,
   onRebase,
   onSync,
   onMerge,
@@ -252,7 +255,7 @@ export function TaskInfoPanel({
             </>
           ) : (
             <>
-              {/* Primary actions */}
+              {/* Git actions first */}
               {onCommit && (
                 <Button
                   variant="ghost"
@@ -263,18 +266,6 @@ export function TaskInfoPanel({
                 >
                   <GitCommit className="w-4 h-4 mr-1" />
                   Commit
-                </Button>
-              )}
-              {onReview && (
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={onReview}
-                  disabled={isArchived}
-                  className="text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-bg-tertiary)]"
-                >
-                  <Code className="w-4 h-4 mr-1" />
-                  Review
                 </Button>
               )}
               {onRebase && (
@@ -311,6 +302,31 @@ export function TaskInfoPanel({
                 >
                   <GitMerge className="w-4 h-4 mr-1" />
                   Merge
+                </Button>
+              )}
+              {/* Panel actions */}
+              {onReview && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={onReview}
+                  disabled={isArchived}
+                  className="text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-bg-tertiary)]"
+                >
+                  <Code className="w-4 h-4 mr-1" />
+                  Review
+                </Button>
+              )}
+              {onEditor && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={onEditor}
+                  disabled={isArchived}
+                  className="text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-bg-tertiary)]"
+                >
+                  <FileCode className="w-4 h-4 mr-1" />
+                  Editor
                 </Button>
               )}
               {/* Dangerous actions in dropdown */}

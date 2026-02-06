@@ -147,6 +147,25 @@ pub struct FilesResponse {
     pub files: Vec<String>,
 }
 
+/// File content response
+#[derive(Debug, Serialize)]
+pub struct FileContentResponse {
+    pub content: String,
+    pub path: String,
+}
+
+/// Write file request
+#[derive(Debug, Deserialize)]
+pub struct WriteFileRequest {
+    pub content: String,
+}
+
+/// File path query parameter
+#[derive(Debug, Deserialize)]
+pub struct FilePathQuery {
+    pub path: String,
+}
+
 /// Reply to review comment request
 #[derive(Debug, Deserialize)]
 pub struct ReplyCommentRequest {
@@ -1028,4 +1047,89 @@ pub async fn list_files(
     let files = git::list_files(&task.worktree_path).unwrap_or_default();
 
     Ok(Json(FilesResponse { files }))
+}
+
+/// GET /api/v1/projects/{id}/tasks/{taskId}/file?path=src/main.rs
+/// Read a file from a task's worktree
+pub async fn get_file(
+    Path((id, task_id)): Path<(String, String)>,
+    Query(params): Query<FilePathQuery>,
+) -> Result<Json<FileContentResponse>, (StatusCode, Json<ApiErrorResponse>)> {
+    let (_project, project_key) = find_project_by_id(&id).map_err(|s| {
+        (
+            s,
+            Json(ApiErrorResponse {
+                error: "Project not found".to_string(),
+            }),
+        )
+    })?;
+
+    let task = tasks::get_task(&project_key, &task_id)
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResponse {
+                    error: format!("Failed to load task: {}", e),
+                }),
+            )
+        })?
+        .ok_or_else(|| {
+            (
+                StatusCode::NOT_FOUND,
+                Json(ApiErrorResponse {
+                    error: "Task not found".to_string(),
+                }),
+            )
+        })?;
+
+    let content = git::read_file(&task.worktree_path, &params.path)
+        .map_err(|e| (StatusCode::BAD_REQUEST, Json(ApiErrorResponse { error: e })))?;
+
+    Ok(Json(FileContentResponse {
+        content,
+        path: params.path,
+    }))
+}
+
+/// PUT /api/v1/projects/{id}/tasks/{taskId}/file?path=src/main.rs
+/// Write a file in a task's worktree
+pub async fn update_file(
+    Path((id, task_id)): Path<(String, String)>,
+    Query(params): Query<FilePathQuery>,
+    Json(body): Json<WriteFileRequest>,
+) -> Result<Json<FileContentResponse>, (StatusCode, Json<ApiErrorResponse>)> {
+    let (_project, project_key) = find_project_by_id(&id).map_err(|s| {
+        (
+            s,
+            Json(ApiErrorResponse {
+                error: "Project not found".to_string(),
+            }),
+        )
+    })?;
+
+    let task = tasks::get_task(&project_key, &task_id)
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResponse {
+                    error: format!("Failed to load task: {}", e),
+                }),
+            )
+        })?
+        .ok_or_else(|| {
+            (
+                StatusCode::NOT_FOUND,
+                Json(ApiErrorResponse {
+                    error: "Task not found".to_string(),
+                }),
+            )
+        })?;
+
+    git::write_file(&task.worktree_path, &params.path, &body.content)
+        .map_err(|e| (StatusCode::BAD_REQUEST, Json(ApiErrorResponse { error: e })))?;
+
+    Ok(Json(FileContentResponse {
+        content: body.content,
+        path: params.path,
+    }))
 }

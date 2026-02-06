@@ -65,6 +65,7 @@ export function TasksPage({ initialTaskId, onNavigationConsumed }: TasksPageProp
   const [searchQuery, setSearchQuery] = useState("");
   const [showNewTaskDialog, setShowNewTaskDialog] = useState(false);
   const [reviewOpen, setReviewOpen] = useState(false);
+  const [editorOpen, setEditorOpen] = useState(false);
   // Auto-start session for newly created tasks
   const [autoStartSession, setAutoStartSession] = useState(false);
 
@@ -190,6 +191,7 @@ export function TasksPage({ initialTaskId, onNavigationConsumed }: TasksPageProp
     setAutoStartSession(false); // Reset auto-start when manually selecting
     setViewMode("terminal");
     setReviewOpen(false);
+    setEditorOpen(false);
   };
 
   // Handle closing task view - return to list mode
@@ -198,6 +200,7 @@ export function TasksPage({ initialTaskId, onNavigationConsumed }: TasksPageProp
       // From terminal, go back to info mode
       setViewMode("info");
       setReviewOpen(false);
+      setEditorOpen(false);
     } else {
       // From info, go back to list mode
       setSelectedTask(null);
@@ -233,9 +236,16 @@ export function TasksPage({ initialTaskId, onNavigationConsumed }: TasksPageProp
     }
   }, [selectedProject, selectedTask, refreshSelectedProject]);
 
-  // Handle toggle review
+  // Handle toggle review (mutual exclusion with editor)
   const handleToggleReview = () => {
+    if (!reviewOpen) setEditorOpen(false);
     setReviewOpen(!reviewOpen);
+  };
+
+  // Handle toggle editor (mutual exclusion with review)
+  const handleToggleEditor = () => {
+    if (!editorOpen) setReviewOpen(false);
+    setEditorOpen(!editorOpen);
   };
 
   // Handle new task creation
@@ -350,6 +360,14 @@ export function TasksPage({ initialTaskId, onNavigationConsumed }: TasksPageProp
   const handleReviewFromInfo = () => {
     setViewMode("terminal");
     setReviewOpen(true);
+    setEditorOpen(false);
+  };
+
+  // Handle editor from info mode - enter terminal mode with editor panel open
+  const handleEditorFromInfo = () => {
+    setViewMode("terminal");
+    setEditorOpen(true);
+    setReviewOpen(false);
   };
 
   const handleSync = useCallback(async () => {
@@ -606,6 +624,7 @@ export function TasksPage({ initialTaskId, onNavigationConsumed }: TasksPageProp
                     onClean={handleClean}
                     onCommit={selectedTask.status !== "archived" ? handleCommit : undefined}
                     onReview={selectedTask.status !== "archived" ? handleReviewFromInfo : undefined}
+                    onEditor={selectedTask.status !== "archived" ? handleEditorFromInfo : undefined}
                     onRebase={selectedTask.status !== "archived" ? handleRebase : undefined}
                     onSync={selectedTask.status !== "archived" ? handleSync : undefined}
                     onMerge={selectedTask.status !== "archived" ? handleMerge : undefined}
@@ -653,13 +672,15 @@ export function TasksPage({ initialTaskId, onNavigationConsumed }: TasksPageProp
                 isTerminalMode
               />
 
-              {/* TaskView (Terminal + optional Code Review) */}
+              {/* TaskView (Terminal + optional Code Review / Editor) */}
               <TaskView
                 projectId={selectedProject.id}
                 task={selectedTask}
                 reviewOpen={reviewOpen}
+                editorOpen={editorOpen}
                 autoStartSession={autoStartSession}
                 onToggleReview={handleToggleReview}
+                onToggleEditor={handleToggleEditor}
                 onCommit={handleCommit}
                 onRebase={handleRebase}
                 onSync={handleSync}

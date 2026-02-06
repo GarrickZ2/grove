@@ -41,6 +41,8 @@ export {
   replyReviewComment,
   getTaskStats,
   getTaskFiles,
+  getFileContent,
+  writeFileContent,
 } from './tasks';
 export type {
   CommitResponse,
@@ -61,6 +63,8 @@ export type {
   ReplyCommentRequest,
   RebaseToRequest,
   FilesResponse,
+  FileContentResponse,
+  WriteFileRequest,
   FileEditEntry,
   ActivityEntry,
   TaskStatsResponse,

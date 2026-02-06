@@ -117,6 +117,10 @@ pub fn create_api_router() -> Router {
             "/projects/{id}/tasks/{taskId}/files",
             get(handlers::tasks::list_files),
         )
+        .route(
+            "/projects/{id}/tasks/{taskId}/file",
+            get(handlers::tasks::get_file).put(handlers::tasks::update_file),
+        )
         // Task Stats API
         .route(
             "/projects/{id}/tasks/{taskId}/stats",

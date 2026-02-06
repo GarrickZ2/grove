@@ -4,6 +4,7 @@ import { TaskHeader } from "./TaskHeader";
 import { TaskToolbar } from "./TaskToolbar";
 import { TaskTerminal } from "./TaskTerminal";
 import { TaskCodeReview } from "./TaskCodeReview";
+import { TaskEditor } from "./TaskEditor";
 import { FileSearchBar } from "../FileSearchBar";
 import type { Task } from "../../../data/types";
 
@@ -12,9 +13,11 @@ interface TaskViewProps {
   projectId: string;
   task: Task;
   reviewOpen: boolean;
+  editorOpen: boolean;
   /** Auto-start terminal session on mount */
   autoStartSession?: boolean;
   onToggleReview: () => void;
+  onToggleEditor: () => void;
   onCommit: () => void;
   onRebase: () => void;
   onSync: () => void;
@@ -31,8 +34,10 @@ export function TaskView({
   projectId,
   task,
   reviewOpen,
+  editorOpen,
   autoStartSession = false,
   onToggleReview,
+  onToggleEditor,
   onCommit,
   onRebase,
   onSync,
@@ -45,16 +50,15 @@ export function TaskView({
 }: TaskViewProps) {
   const [headerCollapsed, setHeaderCollapsed] = useState(false);
 
-  // Auto-sync header collapse with review panel state
+  // Auto-sync header collapse with review/editor panel state
   useEffect(() => {
-    setHeaderCollapsed(reviewOpen);
-  }, [reviewOpen]);
+    setHeaderCollapsed(reviewOpen || editorOpen);
+  }, [reviewOpen, editorOpen]);
 
-  // When terminal expands, close review
+  // When terminal expands, close review/editor
   const handleExpandTerminal = () => {
-    if (reviewOpen) {
-      onToggleReview();
-    }
+    if (reviewOpen) onToggleReview();
+    if (editorOpen) onToggleEditor();
   };
 
   return (
@@ -71,6 +75,7 @@ export function TaskView({
         <TaskToolbar
           task={task}
           reviewOpen={reviewOpen}
+          editorOpen={editorOpen}
           compact={headerCollapsed}
           taskName={task.name}
           taskStatus={task.status}
@@ -78,6 +83,7 @@ export function TaskView({
           onToggleHeaderCollapse={() => setHeaderCollapsed(!headerCollapsed)}
           onCommit={onCommit}
           onToggleReview={onToggleReview}
+          onToggleEditor={onToggleEditor}
           onRebase={onRebase}
           onSync={onSync}
           onMerge={onMerge}
@@ -92,11 +98,11 @@ export function TaskView({
 
       {/* Main Content Area */}
       <div className="flex-1 flex gap-3 mt-3 min-h-0">
-        {/* Terminal - collapses to vertical bar when review is open */}
+        {/* Terminal - collapses to vertical bar when review or editor is open */}
         <TaskTerminal
           projectId={projectId}
           task={task}
-          collapsed={reviewOpen}
+          collapsed={reviewOpen || editorOpen}
           onExpand={handleExpandTerminal}
           onStartSession={onStartSession}
           autoStart={autoStartSession}
@@ -117,6 +123,25 @@ export function TaskView({
                 projectId={projectId}
                 taskId={task.id}
                 onClose={onToggleReview}
+              />
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        {/* Editor Panel */}
+        <AnimatePresence>
+          {editorOpen && (
+            <motion.div
+              initial={{ width: 0, opacity: 0 }}
+              animate={{ width: "100%", opacity: 1 }}
+              exit={{ width: 0, opacity: 0 }}
+              transition={{ type: "spring", damping: 25, stiffness: 200 }}
+              className="flex-1 flex flex-col overflow-hidden"
+            >
+              <TaskEditor
+                projectId={projectId}
+                taskId={task.id}
+                onClose={onToggleEditor}
               />
             </motion.div>
           )}

@@ -352,6 +352,52 @@ pub fn list_files(repo_path: &str) -> Result<Vec<String>, String> {
     Ok(output.lines().map(|s| s.to_string()).collect())
 }
 
+/// 读取 worktree 中的文件内容
+/// 包含路径穿越保护
+pub fn read_file(repo_path: &str, file_path: &str) -> Result<String, String> {
+    let base = Path::new(repo_path)
+        .canonicalize()
+        .map_err(|e| format!("Invalid repo path: {}", e))?;
+    let full = base
+        .join(file_path)
+        .canonicalize()
+        .map_err(|e| format!("Invalid file path: {}", e))?;
+
+    if !full.starts_with(&base) {
+        return Err("Path traversal detected".to_string());
+    }
+
+    std::fs::read_to_string(&full).map_err(|e| format!("Failed to read file: {}", e))
+}
+
+/// 写入 worktree 中的文件
+/// 包含路径穿越保护
+pub fn write_file(repo_path: &str, file_path: &str, content: &str) -> Result<(), String> {
+    let base = Path::new(repo_path)
+        .canonicalize()
+        .map_err(|e| format!("Invalid repo path: {}", e))?;
+    // For write, the file might not exist yet, so canonicalize the parent
+    let target = base.join(file_path);
+    let parent = target
+        .parent()
+        .ok_or_else(|| "Invalid file path".to_string())?;
+    let parent_canonical = parent
+        .canonicalize()
+        .map_err(|e| format!("Invalid parent path: {}", e))?;
+
+    if !parent_canonical.starts_with(&base) {
+        return Err("Path traversal detected".to_string());
+    }
+
+    // Reconstruct the full path using canonical parent + filename
+    let file_name = target
+        .file_name()
+        .ok_or_else(|| "Invalid file name".to_string())?;
+    let final_path = parent_canonical.join(file_name);
+
+    std::fs::write(&final_path, content).map_err(|e| format!("Failed to write file: {}", e))
+}
+
 /// 获取相对于 origin 的 commits ahead 数量
 /// 执行: git rev-list --count origin/{branch}..HEAD
 pub fn commits_ahead_of_origin(repo_path: &str) -> Result<Option<u32>, String> {

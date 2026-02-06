@@ -1,0 +1,229 @@
+import { useState, useEffect, useCallback, useRef } from "react";
+import Editor from "@monaco-editor/react";
+import { X, FileCode, Loader2, Save } from "lucide-react";
+import { Button } from "../../ui";
+import { FileTree } from "./FileTree";
+import { buildFileTree } from "../../../utils/fileTree";
+import { getTaskFiles, getFileContent, writeFileContent } from "../../../api";
+
+interface TaskEditorProps {
+  projectId: string;
+  taskId: string;
+  onClose: () => void;
+}
+
+/** Map file extensions to Monaco language IDs */
+function getLanguage(filePath: string): string {
+  const ext = filePath.split('.').pop()?.toLowerCase() || '';
+  const map: Record<string, string> = {
+    rs: 'rust',
+    ts: 'typescript',
+    tsx: 'typescriptreact',
+    js: 'javascript',
+    jsx: 'javascriptreact',
+    json: 'json',
+    toml: 'ini',
+    yaml: 'yaml',
+    yml: 'yaml',
+    md: 'markdown',
+    css: 'css',
+    scss: 'scss',
+    html: 'html',
+    xml: 'xml',
+    sql: 'sql',
+    sh: 'shell',
+    bash: 'shell',
+    zsh: 'shell',
+    py: 'python',
+    go: 'go',
+    java: 'java',
+    kt: 'kotlin',
+    swift: 'swift',
+    c: 'c',
+    cpp: 'cpp',
+    h: 'c',
+    hpp: 'cpp',
+    rb: 'ruby',
+    php: 'php',
+    lua: 'lua',
+    r: 'r',
+    dart: 'dart',
+    dockerfile: 'dockerfile',
+    graphql: 'graphql',
+    svg: 'xml',
+    kdl: 'plaintext',
+    lock: 'plaintext',
+  };
+  // Handle special filenames
+  const name = filePath.split('/').pop()?.toLowerCase() || '';
+  if (name === 'dockerfile') return 'dockerfile';
+  if (name === 'makefile') return 'makefile';
+  return map[ext] || 'plaintext';
+}
+
+export function TaskEditor({ projectId, taskId, onClose }: TaskEditorProps) {
+  const [files, setFiles] = useState<string[]>([]);
+  const [selectedFile, setSelectedFile] = useState<string | null>(null);
+  const [fileContent, setFileContent] = useState<string>('');
+  const [loading, setLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [modified, setModified] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const editorContentRef = useRef<string>('');
+
+  // Load file list on mount
+  useEffect(() => {
+    getTaskFiles(projectId, taskId)
+      .then((res) => setFiles(res.files))
+      .catch((err) => setError(err.message || 'Failed to load files'));
+  }, [projectId, taskId]);
+
+  // Build file tree
+  const fileTree = buildFileTree(files);
+
+  // Load file content when selected
+  const handleSelectFile = useCallback(async (path: string) => {
+    if (path === selectedFile) return;
+
+    setSelectedFile(path);
+    setLoading(true);
+    setModified(false);
+    setError(null);
+
+    try {
+      const res = await getFileContent(projectId, taskId, path);
+      setFileContent(res.content);
+      editorContentRef.current = res.content;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message :
+        (err as { message?: string })?.message || 'Failed to load file';
+      setError(msg);
+      setFileContent('');
+    } finally {
+      setLoading(false);
+    }
+  }, [projectId, taskId, selectedFile]);
+
+  // Handle editor content change
+  const handleEditorChange = useCallback((value: string | undefined) => {
+    if (value !== undefined) {
+      editorContentRef.current = value;
+      setModified(true);
+    }
+  }, []);
+
+  // Save file
+  const handleSave = useCallback(async () => {
+    if (!selectedFile || saving) return;
+
+    setSaving(true);
+    try {
+      await writeFileContent(projectId, taskId, selectedFile, editorContentRef.current);
+      setFileContent(editorContentRef.current);
+      setModified(false);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message :
+        (err as { message?: string })?.message || 'Failed to save file';
+      setError(msg);
+    } finally {
+      setSaving(false);
+    }
+  }, [projectId, taskId, selectedFile, saving]);
+
+  // Keyboard shortcut: Cmd/Ctrl+S to save
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === 's') {
+        e.preventDefault();
+        handleSave();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [handleSave]);
+
+  // Breadcrumb from file path
+  const breadcrumb = selectedFile ? selectedFile.split('/') : [];
+
+  return (
+    <div className="flex-1 flex flex-col rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-secondary)] overflow-hidden">
+      {/* Header */}
+      <div className="flex items-center justify-between px-4 py-2 bg-[var(--color-bg)] border-b border-[var(--color-border)]">
+        <div className="flex items-center gap-2 text-sm text-[var(--color-text)] min-w-0">
+          <FileCode className="w-4 h-4 flex-shrink-0" />
+          <span className="font-medium flex-shrink-0">Editor</span>
+          {breadcrumb.length > 0 && (
+            <>
+              <span className="text-[var(--color-text-muted)] flex-shrink-0">/</span>
+              <span className="text-[var(--color-text-muted)] text-xs truncate">
+                {breadcrumb.join(' / ')}
+              </span>
+            </>
+          )}
+          {modified && (
+            <span className="text-xs text-[var(--color-warning)] flex-shrink-0">Modified</span>
+          )}
+          {saving && (
+            <span className="text-xs text-[var(--color-text-muted)] flex-shrink-0 flex items-center gap-1">
+              <Save className="w-3 h-3" />
+              Saving...
+            </span>
+          )}
+        </div>
+        <Button variant="ghost" size="sm" onClick={onClose}>
+          <X className="w-4 h-4 mr-1" />
+          Close
+        </Button>
+      </div>
+
+      {/* Main content: File tree + Editor */}
+      <div className="flex-1 flex min-h-0">
+        {/* File tree sidebar */}
+        <div className="w-[250px] flex-shrink-0 border-r border-[var(--color-border)] bg-[var(--color-bg)] overflow-hidden">
+          <FileTree
+            nodes={fileTree}
+            selectedFile={selectedFile}
+            onSelectFile={handleSelectFile}
+          />
+        </div>
+
+        {/* Editor area */}
+        <div className="flex-1 flex flex-col min-w-0">
+          {loading ? (
+            <div className="flex-1 flex items-center justify-center">
+              <Loader2 className="w-8 h-8 text-[var(--color-text-muted)] animate-spin" />
+            </div>
+          ) : error ? (
+            <div className="flex-1 flex items-center justify-center p-4">
+              <p className="text-sm text-[var(--color-error)]">{error}</p>
+            </div>
+          ) : selectedFile ? (
+            <Editor
+              height="100%"
+              language={getLanguage(selectedFile)}
+              value={fileContent}
+              onChange={handleEditorChange}
+              theme="vs-dark"
+              options={{
+                minimap: { enabled: false },
+                fontSize: 13,
+                lineNumbers: 'on',
+                scrollBeyondLastLine: false,
+                wordWrap: 'on',
+                automaticLayout: true,
+                padding: { top: 8 },
+                renderWhitespace: 'selection',
+              }}
+            />
+          ) : (
+            <div className="flex-1 flex items-center justify-center">
+              <p className="text-sm text-[var(--color-text-muted)]">
+                Select a file to edit
+              </p>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
