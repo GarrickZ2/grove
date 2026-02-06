@@ -26,12 +26,14 @@ export interface Config {
   theme: ThemeConfig;
   layout: LayoutConfig;
   web: WebConfig;
+  multiplexer: string;
 }
 
 export interface ConfigPatch {
   theme?: Partial<ThemeConfig>;
   layout?: Partial<LayoutConfig>;
   web?: Partial<WebConfig>;
+  multiplexer?: string;
 }
 
 // Application info for picker

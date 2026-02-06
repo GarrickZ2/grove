@@ -1,11 +1,42 @@
 //! 应用配置持久化
 
 use serde::{Deserialize, Serialize};
+use std::fmt;
 use std::fs;
 use std::io;
 use std::path::PathBuf;
+use std::str::FromStr;
 
 use super::grove_dir;
+
+/// Terminal multiplexer 选择
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Multiplexer {
+    #[default]
+    Tmux,
+    Zellij,
+}
+
+impl fmt::Display for Multiplexer {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Multiplexer::Tmux => write!(f, "tmux"),
+            Multiplexer::Zellij => write!(f, "zellij"),
+        }
+    }
+}
+
+impl FromStr for Multiplexer {
+    type Err = String;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "tmux" => Ok(Multiplexer::Tmux),
+            "zellij" => Ok(Multiplexer::Zellij),
+            _ => Err(format!("unknown multiplexer: {}", s)),
+        }
+    }
+}
 
 /// 应用配置
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -20,6 +51,8 @@ pub struct Config {
     pub mcp: McpConfig,
     #[serde(default)]
     pub web: WebConfig,
+    #[serde(default)]
+    pub multiplexer: Multiplexer,
 }
 
 /// MCP Server 配置（预留扩展）

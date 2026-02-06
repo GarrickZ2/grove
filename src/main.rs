@@ -7,12 +7,14 @@ mod event;
 mod git;
 mod hooks;
 mod model;
+mod session;
 mod storage;
 mod theme;
 mod tmux;
 mod ui;
 mod update;
 mod watcher;
+mod zellij;
 
 use std::io::{self, Write};
 use std::panic;
@@ -133,20 +135,25 @@ fn run(terminal: &mut DefaultTerminal, app: &mut App) -> io::Result<()> {
 
     loop {
         // 检查是否有待 attach 的 session
-        if let Some(session) = app.pending_tmux_attach.take() {
+        if let Some(att) = app.pending_attach.take() {
             // 暂停 TUI
             execute!(io::stdout(), DisableMouseCapture)?;
             ratatui::restore();
 
             // attach 到 session（阻塞，直到用户 detach）
-            let _ = tmux::attach_session(&session);
+            let _ = session::attach_session(
+                &att.multiplexer,
+                &att.session,
+                Some(&att.working_dir),
+                Some(&att.env),
+                att.layout_path.as_deref(),
+            );
 
-            // 清除 tmux detach 消息（只清除一行）
-            // \x1b[1A - 光标上移一行
-            // \x1b[2K - 清除当前行
-            // \r     - 光标移到行首
-            print!("\x1b[1A\x1b[2K\r");
-            let _ = io::stdout().flush();
+            // 清除 tmux detach 消息（只清除一行，仅 tmux 需要）
+            if att.multiplexer == storage::config::Multiplexer::Tmux {
+                print!("\x1b[1A\x1b[2K\r");
+                let _ = io::stdout().flush();
+            }
 
             // 恢复 TUI
             *terminal = ratatui::init();
@@ -155,7 +162,7 @@ fn run(terminal: &mut DefaultTerminal, app: &mut App) -> io::Result<()> {
             // 刷新数据（用户可能在 session 中做了改动）
             app.refresh();
             // 刷新后再清除 hook 通知，避免 refresh 覆盖清除结果
-            app.clear_task_hook_by_session(&session);
+            app.clear_task_hook_by_session(&att.session);
             last_refresh = Instant::now();
         }
 

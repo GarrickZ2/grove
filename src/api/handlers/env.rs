@@ -41,6 +41,12 @@ const DEPENDENCIES: &[DependencyDef] = &[
         install_command: "brew install tmux",
     },
     DependencyDef {
+        name: "zellij",
+        check_cmd: "zellij",
+        check_args: &["--version"],
+        install_command: "brew install zellij",
+    },
+    DependencyDef {
         name: "fzf",
         check_cmd: "fzf",
         check_args: &["--version"],
@@ -102,6 +108,16 @@ fn parse_version(name: &str, output: &str) -> String {
         "fzf" => {
             // "0.46.1 (brew)" -> "0.46.1"
             output
+                .split_whitespace()
+                .next()
+                .unwrap_or(output)
+                .to_string()
+        }
+        "zellij" => {
+            // "zellij 0.40.1" -> "0.40.1"
+            output
+                .strip_prefix("zellij ")
+                .unwrap_or(output)
                 .split_whitespace()
                 .next()
                 .unwrap_or(output)

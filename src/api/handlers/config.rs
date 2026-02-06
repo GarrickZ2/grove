@@ -12,6 +12,7 @@ pub struct ConfigResponse {
     pub theme: ThemeConfigDto,
     pub layout: LayoutConfigDto,
     pub web: WebConfigDto,
+    pub multiplexer: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -53,6 +54,7 @@ impl From<&Config> for ConfigResponse {
                 terminal: config.web.terminal.clone(),
                 terminal_theme: config.web.terminal_theme.clone(),
             },
+            multiplexer: config.multiplexer.to_string(),
         }
     }
 }
@@ -63,6 +65,7 @@ pub struct ConfigPatchRequest {
     pub theme: Option<ThemeConfigPatch>,
     pub layout: Option<LayoutConfigPatch>,
     pub web: Option<WebConfigPatch>,
+    pub multiplexer: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -125,6 +128,13 @@ pub async fn patch_config(
         }
         if layout_patch.selected_custom_id.is_some() {
             config.layout.selected_custom_id = layout_patch.selected_custom_id;
+        }
+    }
+
+    // Apply multiplexer patch
+    if let Some(mux_str) = patch.multiplexer {
+        if let Ok(mux) = mux_str.parse::<config::Multiplexer>() {
+            config.multiplexer = mux;
         }
     }
 

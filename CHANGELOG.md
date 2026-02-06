@@ -5,6 +5,27 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.2] - 2026-02-05
+
+### Added
+
+- **Zellij multiplexer support** — use Zellij as an alternative to tmux for terminal sessions
+  - Global multiplexer config in `config.toml` (`multiplexer = "tmux"` or `"zellij"`)
+  - Per-task multiplexer tracking — each task records which multiplexer created it
+  - Session dispatcher (`src/session/mod.rs`) routes all operations to tmux or zellij
+  - Zellij session lifecycle: create (via `-s -n` layout), attach, kill, exists check
+  - KDL layout generation for all presets (single, agent, agent-shell, 3-pane, custom)
+  - ANSI-stripping for `zellij list-sessions` output parsing
+  - Cleanup of EXITED sessions via `delete-session` before re-creation
+  - Monitor mode: Leave shows toast with `Ctrl+o → d` hint (no programmatic detach API)
+  - Monitor mode: Exit properly kills zellij session via dispatcher
+- **TUI multiplexer selector** — new Config Panel step for choosing tmux/Zellij
+  - Shows install status for each option, prevents selecting uninstalled multiplexer
+- **Web multiplexer selector** — integrated into Environment settings
+  - Dependency list split into base deps and multiplexer section with divider
+  - Click tmux/zellij row to switch, "Active" badge on current selection
+- **Environment check updated** — requires at least one of tmux or zellij installed
+
 ## [0.4.1] - 2026-02-05
 
 ### Added

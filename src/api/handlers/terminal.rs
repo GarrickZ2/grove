@@ -16,7 +16,8 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 
 use crate::api::state;
-use crate::storage::{config, tasks, workspace};
+use crate::session;
+use crate::storage::{config, config::Multiplexer, tasks, workspace};
 use crate::tmux;
 use crate::tmux::layout::{parse_custom_layout_tree, CustomLayout, TaskLayout};
 
@@ -67,20 +68,26 @@ pub async fn task_terminal_handler(
         .map_err(|e| TaskTerminalError::Internal(format!("Failed to get task: {}", e)))?
         .ok_or(TaskTerminalError::NotFound("Task not found".to_string()))?;
 
-    // 3. Build session name
-    let session = tmux::session_name(&project_key, &task_id);
+    // 3. Resolve multiplexer and build session name
+    let global_mux = config::load_config().multiplexer;
+    let task_mux = session::resolve_multiplexer(&task.multiplexer, &global_mux);
+    let session_name = session::session_name(&project_key, &task_id);
 
     // 4. Ensure session exists (create if needed)
-    let session_created = !tmux::session_exists(&session);
+    let session_created = !session::session_exists(&task_mux, &session_name);
     if session_created {
-        ensure_task_session(&project, &project_key, &task)?;
+        ensure_task_session(&project, &project_key, &task, &task_mux)?;
 
         // Register FileWatcher for this task's worktree
         state::watch_task(&project_key, &task.id, &task.worktree_path);
     }
 
-    // 5. Upgrade to WebSocket and handle tmux attach
-    Ok(ws.on_upgrade(move |socket| handle_tmux_terminal(socket, session, cols, rows)))
+    // 5. Upgrade to WebSocket and handle mux terminal
+    Ok(
+        ws.on_upgrade(move |socket| {
+            handle_mux_terminal(socket, session_name, task_mux, cols, rows)
+        }),
+    )
 }
 
 /// Error type for task terminal handler
@@ -100,13 +107,14 @@ impl IntoResponse for TaskTerminalError {
     }
 }
 
-/// Ensure the task's tmux session exists, creating it if needed
+/// Ensure the task's session exists, creating it if needed
 fn ensure_task_session(
     project: &workspace::RegisteredProject,
     project_key: &str,
     task: &tasks::Task,
+    mux: &Multiplexer,
 ) -> Result<(), TaskTerminalError> {
-    let session = tmux::session_name(project_key, &task.id);
+    let session_name = session::session_name(project_key, &task.id);
 
     // Build session environment
     let project_name = std::path::Path::new(&project.path)
@@ -125,7 +133,7 @@ fn ensure_task_session(
     };
 
     // Create session
-    tmux::create_session(&session, &task.worktree_path, Some(&session_env))
+    session::create_session(mux, &session_name, &task.worktree_path, Some(&session_env))
         .map_err(|e| TaskTerminalError::Internal(format!("Failed to create session: {}", e)))?;
 
     // Load config and apply layout
@@ -145,15 +153,30 @@ fn ensure_task_session(
 
     // Apply layout (skip for Single layout)
     if layout != TaskLayout::Single {
-        if let Err(e) = tmux::layout::apply_layout(
-            &session,
-            &task.worktree_path,
-            &layout,
-            &agent_cmd,
-            custom_layout.as_ref(),
-        ) {
-            // Layout errors are non-fatal, just log them
-            eprintln!("Warning: Failed to apply layout: {}", e);
+        match mux {
+            Multiplexer::Tmux => {
+                if let Err(e) = tmux::layout::apply_layout(
+                    &session_name,
+                    &task.worktree_path,
+                    &layout,
+                    &agent_cmd,
+                    custom_layout.as_ref(),
+                ) {
+                    eprintln!("Warning: Failed to apply layout: {}", e);
+                }
+            }
+            Multiplexer::Zellij => {
+                // Zellij layout is applied at attach time, not at create time
+                // Generate and save KDL layout file
+                let kdl = crate::zellij::layout::generate_kdl(
+                    &layout,
+                    &agent_cmd,
+                    custom_layout.as_ref(),
+                );
+                if let Err(e) = crate::zellij::layout::write_session_layout(&session_name, &kdl) {
+                    eprintln!("Warning: Failed to write zellij layout: {}", e);
+                }
+            }
         }
     }
 
@@ -172,15 +195,29 @@ async fn handle_shell_terminal(socket: WebSocket, cwd: String, cols: u16, rows: 
     handle_pty_terminal(socket, cmd, cols, rows).await;
 }
 
-/// Handle the WebSocket connection for a tmux session terminal
-async fn handle_tmux_terminal(socket: WebSocket, session: String, cols: u16, rows: u16) {
-    // Create command: tmux attach-session -t <session>
-    let mut cmd = CommandBuilder::new("tmux");
-    cmd.arg("attach-session");
-    cmd.arg("-t");
-    cmd.arg(&session);
-
-    handle_pty_terminal(socket, cmd, cols, rows).await;
+/// Handle the WebSocket connection for a multiplexer session terminal
+async fn handle_mux_terminal(
+    socket: WebSocket,
+    session_name: String,
+    mux: Multiplexer,
+    cols: u16,
+    rows: u16,
+) {
+    match mux {
+        Multiplexer::Tmux => {
+            let mut cmd = CommandBuilder::new("tmux");
+            cmd.arg("attach-session");
+            cmd.arg("-t");
+            cmd.arg(&session_name);
+            handle_pty_terminal(socket, cmd, cols, rows).await;
+        }
+        Multiplexer::Zellij => {
+            let mut cmd = CommandBuilder::new("zellij");
+            cmd.arg("attach");
+            cmd.arg(&session_name);
+            handle_pty_terminal(socket, cmd, cols, rows).await;
+        }
+    }
 }
 
 /// Common PTY terminal handler

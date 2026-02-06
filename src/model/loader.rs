@@ -3,9 +3,10 @@
 use std::path::Path;
 
 use crate::git;
+use crate::session;
+use crate::storage::config::Multiplexer;
 use crate::storage::tasks::{self, Task, TaskStatus};
 use crate::storage::workspace::project_hash;
-use crate::tmux;
 
 use super::{FileChanges, Worktree, WorktreeStatus};
 
@@ -15,22 +16,30 @@ pub fn load_worktrees(project_path: &str) -> (Vec<Worktree>, Vec<Worktree>, Vec<
     // 1. 获取项目 key（路径的 hash）
     let project_key = project_hash(project_path);
 
-    // 2. 加载 tasks.toml (活跃任务)
+    // 2. 加载全局 multiplexer 配置
+    let global_mux = crate::storage::config::load_config().multiplexer;
+
+    // 3. 加载 tasks.toml (活跃任务)
     let active_tasks = tasks::load_tasks(&project_key).unwrap_or_default();
 
-    // 3. 获取当前分支
+    // 4. 获取当前分支
     let current_branch = git::current_branch(project_path).unwrap_or_else(|_| "main".to_string());
 
-    // 4. 检查主仓库是否有正在 merge 的 commit（冲突状态）
+    // 5. 检查主仓库是否有正在 merge 的 commit（冲突状态）
     let merging_commit = git::merging_commit(project_path);
 
-    // 5. 转换活跃任务
+    // 6. 转换活跃任务
     let mut current = Vec::new();
     let mut other = Vec::new();
 
     for task in active_tasks {
-        let worktree =
-            task_to_worktree(&task, &project_key, project_path, merging_commit.as_deref());
+        let worktree = task_to_worktree(
+            &task,
+            &project_key,
+            project_path,
+            merging_commit.as_deref(),
+            &global_mux,
+        );
 
         if task.target == current_branch {
             current.push(worktree);
@@ -81,6 +90,7 @@ fn task_to_worktree(
     project: &str,
     project_path: &str,
     merging_commit: Option<&str>,
+    global_mux: &Multiplexer,
 ) -> Worktree {
     let path = &task.worktree_path;
 
@@ -114,8 +124,9 @@ fn task_to_worktree(
             WorktreeStatus::Merged
         } else {
             // 再检查 session 是否运行
-            let session = tmux::session_name(project, &task.id);
-            if tmux::session_exists(&session) {
+            let resolved_mux = session::resolve_multiplexer(&task.multiplexer, global_mux);
+            let session = session::session_name(project, &task.id);
+            if session::session_exists(&resolved_mux, &session) {
                 WorktreeStatus::Live
             } else {
                 WorktreeStatus::Idle

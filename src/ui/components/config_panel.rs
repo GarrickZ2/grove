@@ -8,7 +8,7 @@ use ratatui::{
     Frame,
 };
 
-use crate::storage::config::LayoutConfig;
+use crate::storage::config::{LayoutConfig, Multiplexer};
 use crate::theme::ThemeColors;
 use crate::tmux::layout::{LayoutNode, PathSegment, SplitDirection, TaskLayout};
 use crate::ui::click_areas::{ClickAreas, DialogAction};
@@ -18,12 +18,14 @@ use super::hook_panel::HookConfigData;
 /// 配置面板步骤
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ConfigStep {
-    /// 主菜单 (0=Coding Agent, 1=Task Layout, 2=Hook Config, 3=MCP Config)
+    /// 主菜单 (0=Coding Agent, 1=Task Layout, 2=Multiplexer, 3=Hook Config, 4=MCP Config)
     Main,
     /// 编辑 agent 命令（文本输入）
     EditAgentCommand,
     /// 选择布局预设
     SelectLayout,
+    /// 选择 Multiplexer (tmux / zellij)
+    SelectMultiplexer,
     /// Hook 配置向导（复用现有逻辑）
     HookWizard,
     /// MCP 配置页面
@@ -38,8 +40,10 @@ pub enum ConfigStep {
 #[derive(Debug, Clone)]
 pub struct ConfigPanelData {
     pub step: ConfigStep,
-    /// 主菜单选中项 (0=Coding Agent, 1=Task Layout, 2=Hook Config, 3=MCP Config)
+    /// 主菜单选中项 (0=Coding Agent, 1=Task Layout, 2=Multiplexer, 3=Hook Config, 4=MCP Config)
     pub main_selected: usize,
+    /// Multiplexer 选中项 (0=tmux, 1=zellij)
+    pub multiplexer_selected: usize,
     /// 布局选中项
     pub layout_selected: usize,
     /// agent 命令输入缓冲
@@ -61,7 +65,7 @@ pub struct ConfigPanelData {
 }
 
 impl ConfigPanelData {
-    pub fn new(config: &LayoutConfig) -> Self {
+    pub fn with_multiplexer(config: &LayoutConfig, mux: &Multiplexer) -> Self {
         // 从 config 加载当前布局选中索引
         let layout_selected = TaskLayout::all()
             .iter()
@@ -77,9 +81,15 @@ impl ConfigPanelData {
             layout_selected
         };
 
+        let multiplexer_selected = match mux {
+            Multiplexer::Tmux => 0,
+            Multiplexer::Zellij => 1,
+        };
+
         Self {
             step: ConfigStep::Main,
             main_selected: 0,
+            multiplexer_selected,
             layout_selected,
             agent_input: agent_input.clone(),
             agent_cursor: agent_input.len(),
@@ -95,7 +105,7 @@ impl ConfigPanelData {
 
 /// 弹窗尺寸
 const DIALOG_WIDTH: u16 = 50;
-const DIALOG_HEIGHT_MAIN: u16 = 11;
+const DIALOG_HEIGHT_MAIN: u16 = 12;
 const DIALOG_HEIGHT_AGENT_CMD: u16 = 11;
 const DIALOG_HEIGHT_LAYOUT: u16 = 15;
 const DIALOG_HEIGHT_MCP: u16 = 15;
@@ -112,6 +122,9 @@ pub fn render(
         ConfigStep::Main => render_main(frame, data, config, colors, click_areas),
         ConfigStep::EditAgentCommand => render_agent_editor(frame, data, colors, click_areas),
         ConfigStep::SelectLayout => render_layout_selector(frame, data, colors, click_areas),
+        ConfigStep::SelectMultiplexer => {
+            render_multiplexer_selector(frame, data, colors, click_areas)
+        }
         ConfigStep::HookWizard => {
             super::hook_panel::render(frame, &data.hook_data, colors, click_areas);
         }
@@ -163,7 +176,7 @@ fn render_main(
     ])
     .areas(inner_area);
 
-    // 菜单项（4 项）
+    // 菜单项（5 项）
     let agent_value = config
         .agent_command
         .as_deref()
@@ -172,10 +185,16 @@ fn render_main(
     let layout_value = TaskLayout::from_name(&config.default)
         .map(|l| l.label())
         .unwrap_or("Single");
+    let mux_value = if data.multiplexer_selected == 1 {
+        "zellij"
+    } else {
+        "tmux"
+    };
 
     let items: Vec<(&str, &str)> = vec![
         ("Coding Agent", agent_value),
         ("Task Layout", layout_value),
+        ("Multiplexer", mux_value),
         ("Hook Config", ""),
         ("MCP Server", ""),
     ];
@@ -423,6 +442,125 @@ fn render_layout_selector(
     // 注册点击区域
     click_areas.dialog_area = Some(dialog_area);
     for i in 0..total_items {
+        let row_rect = Rect::new(
+            content_area.x,
+            content_area.y + i as u16,
+            content_area.width,
+            1,
+        );
+        click_areas.dialog_items.push((row_rect, i));
+    }
+    let half = hint_area.width / 2;
+    click_areas.dialog_buttons.push((
+        Rect::new(hint_area.x, hint_area.y, half, 1),
+        DialogAction::Confirm,
+    ));
+    click_areas.dialog_buttons.push((
+        Rect::new(hint_area.x + half, hint_area.y, hint_area.width - half, 1),
+        DialogAction::Cancel,
+    ));
+}
+
+/// 渲染 Multiplexer 选择页
+fn render_multiplexer_selector(
+    frame: &mut Frame,
+    data: &ConfigPanelData,
+    colors: &ThemeColors,
+    click_areas: &mut ClickAreas,
+) {
+    let area = frame.area();
+    let height: u16 = 11;
+
+    let x = area.width.saturating_sub(DIALOG_WIDTH) / 2;
+    let y = area.height.saturating_sub(height) / 2;
+    let dialog_area = Rect::new(x, y, DIALOG_WIDTH.min(area.width), height.min(area.height));
+
+    frame.render_widget(Clear, dialog_area);
+
+    let block = Block::default()
+        .title(" Multiplexer ")
+        .title_alignment(Alignment::Center)
+        .title_style(
+            Style::default()
+                .fg(colors.highlight)
+                .add_modifier(Modifier::BOLD),
+        )
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(colors.border))
+        .style(Style::default().bg(colors.bg));
+
+    let inner_area = block.inner(dialog_area);
+    frame.render_widget(block, dialog_area);
+
+    let [_spacer1, label_area, _spacer2, content_area, _spacer3, hint_area] = Layout::vertical([
+        Constraint::Length(1),
+        Constraint::Length(1),
+        Constraint::Length(1),
+        Constraint::Length(3),
+        Constraint::Min(1),
+        Constraint::Length(1),
+    ])
+    .areas(inner_area);
+
+    frame.render_widget(
+        Paragraph::new(Line::from(Span::styled(
+            "  Select terminal multiplexer:",
+            Style::default().fg(colors.text),
+        ))),
+        label_area,
+    );
+
+    let tmux_installed = crate::check::check_tmux_available();
+    let zellij_installed = crate::check::check_zellij_available();
+
+    let items: [(&str, bool); 2] = [("tmux", tmux_installed), ("zellij", zellij_installed)];
+
+    let mut lines: Vec<Line> = Vec::new();
+    for (i, (label, installed)) in items.iter().enumerate() {
+        let is_selected = i == data.multiplexer_selected;
+        let prefix = if is_selected { "  \u{276f} " } else { "    " };
+
+        let status = if *installed {
+            "\u{2713} installed"
+        } else {
+            "\u{2717} not installed"
+        };
+
+        let style = if !installed {
+            Style::default().fg(colors.muted)
+        } else if is_selected {
+            Style::default()
+                .fg(colors.highlight)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(colors.text)
+        };
+
+        let status_style = if *installed {
+            Style::default().fg(colors.highlight)
+        } else {
+            Style::default().fg(colors.muted)
+        };
+
+        lines.push(Line::from(vec![
+            Span::styled(prefix, style),
+            Span::styled(format!("{:<16}", label), style),
+            Span::styled(status, status_style),
+        ]));
+    }
+
+    frame.render_widget(Paragraph::new(lines), content_area);
+
+    render_hint(
+        frame,
+        hint_area,
+        "\u{2191}\u{2193} select   Enter save   Esc back",
+        colors,
+    );
+
+    // 注册点击区域
+    click_areas.dialog_area = Some(dialog_area);
+    for i in 0..items.len() {
         let row_rect = Rect::new(
             content_area.x,
             content_area.y + i as u16,

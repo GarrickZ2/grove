@@ -13,8 +13,8 @@ use std::path::Path as StdPath;
 use crate::git;
 use crate::hooks;
 use crate::model::loader;
-use crate::storage::{self, comments, difit_session, notes, tasks, workspace};
-use crate::tmux;
+use crate::session;
+use crate::storage::{self, comments, config::Multiplexer, difit_session, notes, tasks, workspace};
 use crate::watcher;
 
 use super::projects::{CommitResponse, TaskResponse};
@@ -308,6 +308,7 @@ pub async fn create_task(
 
     // Create task record
     let now = Utc::now();
+    let global_mux_for_task = storage::config::load_config().multiplexer;
     let task = tasks::Task {
         id: task_id.clone(),
         name: req.name.clone(),
@@ -317,6 +318,7 @@ pub async fn create_task(
         created_at: now,
         updated_at: now,
         status: tasks::TaskStatus::Active,
+        multiplexer: global_mux_for_task.to_string(),
     };
 
     // Save task
@@ -356,7 +358,16 @@ pub async fn archive_task(
 ) -> Result<Json<TaskResponse>, StatusCode> {
     let (project, project_key) = find_project_by_id(&id)?;
 
-    // 1. Get worktree path and remove it (TUI: do_archive step 1)
+    // 1. Get task info (need multiplexer before archive moves it)
+    let global_mux = storage::config::load_config().multiplexer;
+    let task_mux_str = tasks::get_task(&project_key, &task_id)
+        .ok()
+        .flatten()
+        .map(|t| t.multiplexer.clone())
+        .unwrap_or_default();
+    let task_mux = session::resolve_multiplexer(&task_mux_str, &global_mux);
+
+    // 1b. Get worktree path and remove it (TUI: do_archive step 1)
     if let Ok(Some(task)) = tasks::get_task(&project_key, &task_id) {
         if StdPath::new(&task.worktree_path).exists() {
             let _ = git::remove_worktree(&project.path, &task.worktree_path);
@@ -370,9 +381,12 @@ pub async fn archive_task(
     hooks::remove_task_hook(&project_key, &task_id);
     difit_session::remove_session(&project_key, &task_id);
 
-    // 4. Kill tmux session (TUI: do_archive step 4)
-    let session = tmux::session_name(&project_key, &task_id);
-    let _ = tmux::kill_session(&session);
+    // 4. Kill session (TUI: do_archive step 4)
+    let session_name = session::session_name(&project_key, &task_id);
+    let _ = session::kill_session(&task_mux, &session_name);
+    if task_mux == Multiplexer::Zellij {
+        crate::zellij::layout::remove_session_layout(&session_name);
+    }
 
     // Load the archived task to return
     let archived = loader::load_archived_worktrees(&project.path);
@@ -887,9 +901,14 @@ pub async fn reset_task(
             )
         })?;
 
-    // 2. Kill tmux session (TUI: do_reset step 2)
-    let session = tmux::session_name(&project_key, &task_id);
-    let _ = tmux::kill_session(&session);
+    // 2. Kill session (TUI: do_reset step 2)
+    let global_mux = storage::config::load_config().multiplexer;
+    let task_mux = session::resolve_multiplexer(&task.multiplexer, &global_mux);
+    let session = session::session_name(&project_key, &task_id);
+    let _ = session::kill_session(&task_mux, &session);
+    if task_mux == Multiplexer::Zellij {
+        crate::zellij::layout::remove_session_layout(&session);
+    }
 
     // 3. Remove worktree if exists (TUI: do_reset step 3)
     // For broken tasks, worktree might not exist - that's OK

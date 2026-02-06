@@ -833,6 +833,13 @@ fn handle_config_panel_key(app: &mut App, key: KeyEvent) {
             KeyCode::Char(c) => app.config_custom_cmd_input_char(c),
             _ => {}
         },
+        ConfigStep::SelectMultiplexer => match key.code {
+            KeyCode::Char('k') | KeyCode::Up => app.config_panel_prev(),
+            KeyCode::Char('j') | KeyCode::Down => app.config_panel_next(),
+            KeyCode::Enter => app.config_panel_confirm(),
+            KeyCode::Esc => app.config_panel_back(),
+            _ => {}
+        },
         ConfigStep::McpConfig => match key.code {
             KeyCode::Enter | KeyCode::Esc => app.config_panel_back(),
             _ => {}
@@ -1358,6 +1365,7 @@ fn popup_select_item(app: &mut App, idx: usize) {
         match d.step {
             ConfigStep::Main => d.main_selected = idx,
             ConfigStep::SelectLayout => d.layout_selected = idx,
+            ConfigStep::SelectMultiplexer => d.multiplexer_selected = idx,
             ConfigStep::HookWizard => d.hook_data.selected_index = idx,
             _ => {}
         }

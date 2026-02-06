@@ -181,6 +181,7 @@ const soundOptions: ComboboxOption[] = [
 const dependencyInfo: Record<string, { name: string; description: string; docsUrl?: string }> = {
   git: { name: "Git", description: "Version control system", docsUrl: "https://git-scm.com/doc" },
   tmux: { name: "tmux", description: "Terminal multiplexer", docsUrl: "https://github.com/tmux/tmux/wiki" },
+  zellij: { name: "Zellij", description: "Terminal multiplexer", docsUrl: "https://zellij.dev/documentation/" },
   fzf: { name: "fzf", description: "Fuzzy finder for file picker", docsUrl: "https://github.com/junegunn/fzf" },
   npx: { name: "npx", description: "Node package runner", docsUrl: "https://docs.npmjs.com/cli/v10/commands/npx" },
 };
@@ -220,6 +221,9 @@ export function SettingsPage({ config }: SettingsPageProps) {
   const [applications, setApplications] = useState<AppInfo[]>([]);
   const [isLoadingApps, setIsLoadingApps] = useState(false);
 
+  // Multiplexer state
+  const [multiplexer, setMultiplexer] = useState("tmux");
+
   // Layout state
   const [selectedLayout, setSelectedLayout] = useState(config.layout.default);
   const [customLayouts, setCustomLayouts] = useState<CustomLayoutConfig[]>(defaultCustomLayouts);
@@ -256,6 +260,7 @@ export function SettingsPage({ config }: SettingsPageProps) {
       setIdeCommand(cfg.web.ide || "");
       setTerminalCommand(cfg.web.terminal || "");
       setSelectedLayout(cfg.layout.default);
+      setMultiplexer(cfg.multiplexer || "tmux");
 
       // Load theme - sync with context
       // API stores theme id (e.g., "dark", "tokyo-night")
@@ -316,7 +321,7 @@ export function SettingsPage({ config }: SettingsPageProps) {
         newStates[key] = { ...prev[key], status: "checking" };
       }
       // Also add expected deps if not present
-      for (const name of ["git", "tmux", "fzf", "npx"]) {
+      for (const name of ["git", "tmux", "zellij", "fzf", "npx"]) {
         if (!newStates[name]) {
           newStates[name] = { status: "checking", installCommand: "" };
         }
@@ -375,11 +380,12 @@ export function SettingsPage({ config }: SettingsPageProps) {
           ide: ideCommand || undefined,
           terminal: terminalCommand || undefined,
         },
+        multiplexer,
       });
     } catch {
       console.error("Failed to save config");
     }
-  }, [isLoaded, theme.id, selectedLayout, agentCommand, customLayouts, selectedCustomLayoutId, customLayoutsLoaded, ideCommand, terminalCommand]);
+  }, [isLoaded, theme.id, selectedLayout, agentCommand, customLayouts, selectedCustomLayoutId, customLayoutsLoaded, ideCommand, terminalCommand, multiplexer]);
 
   // Handle theme change with immediate save
   const handleThemeChange = useCallback((newThemeId: string) => {
@@ -401,7 +407,7 @@ export function SettingsPage({ config }: SettingsPageProps) {
     }, 500); // 500ms debounce
 
     return () => clearTimeout(timer);
-  }, [theme.id, selectedLayout, agentCommand, customLayouts, selectedCustomLayoutId, customLayoutsLoaded, ideCommand, terminalCommand, isLoaded, saveConfig]);
+  }, [theme.id, selectedLayout, agentCommand, customLayouts, selectedCustomLayoutId, customLayoutsLoaded, ideCommand, terminalCommand, multiplexer, isLoaded, saveConfig]);
 
   // Load applications list
   const loadApplications = useCallback(async () => {
@@ -623,39 +629,65 @@ export function SettingsPage({ config }: SettingsPageProps) {
               </Button>
             </div>
 
-            {/* Dependencies List */}
-            <div className="space-y-2">
-              {(depKeys.length > 0 ? depKeys : ["git", "tmux", "fzf", "npx"]).map((depName) => {
+            {/* Dependency row renderer */}
+            {(() => {
+              const allDeps = depKeys.length > 0 ? depKeys : ["git", "tmux", "zellij", "fzf", "npx"];
+              const baseDeps = allDeps.filter((d) => d !== "tmux" && d !== "zellij");
+              const muxDeps = allDeps.filter((d) => d === "tmux" || d === "zellij");
+
+              const renderDepRow = (depName: string) => {
                 const state = depStates[depName] || { status: "checking" as DependencyStatusType, installCommand: "" };
                 const info = dependencyInfo[depName] || { name: depName, description: "" };
                 const isInstalled = state.status === "installed";
+                const isMux = depName === "tmux" || depName === "zellij";
+                const isMuxActive = isMux && multiplexer === depName;
+                const canSwitchMux = isMux && isInstalled && !isMuxActive;
 
                 return (
                   <motion.div
                     key={depName}
                     initial={{ opacity: 0, y: 10 }}
                     animate={{ opacity: 1, y: 0 }}
-                    className={`flex items-center justify-between p-3 rounded-lg border transition-all
-                      ${isInstalled
-                        ? "bg-[var(--color-bg-secondary)] border-[var(--color-border)]"
-                        : "bg-[var(--color-warning)]/5 border-[var(--color-warning)]/20"
+                    whileHover={canSwitchMux ? { scale: 1.01 } : {}}
+                    whileTap={canSwitchMux ? { scale: 0.98 } : {}}
+                    onClick={() => { if (canSwitchMux) setMultiplexer(depName); }}
+                    className={`flex items-center justify-between p-3 rounded-lg border transition-all duration-200
+                      ${canSwitchMux ? "cursor-pointer hover:border-[var(--color-highlight)]/50" : ""}
+                      ${isMuxActive
+                        ? "border-[var(--color-highlight)] bg-[var(--color-highlight)]/5"
+                        : isInstalled
+                          ? "bg-[var(--color-bg-secondary)] border-[var(--color-border)]"
+                          : "bg-[var(--color-warning)]/5 border-[var(--color-warning)]/20"
                       }`}
                   >
                     <div className="flex items-center gap-3">
                       {getStatusIcon(state.status)}
                       <div>
-                        <div className="font-medium text-sm text-[var(--color-text)]">{info.name}</div>
+                        <div className="font-medium text-sm text-[var(--color-text)]">
+                          {info.name}
+                          {isMuxActive && (
+                            <motion.span
+                              initial={{ opacity: 0, scale: 0.8 }}
+                              animate={{ opacity: 1, scale: 1 }}
+                              className="ml-2 text-xs font-normal text-[var(--color-highlight)]"
+                            >Active</motion.span>
+                          )}
+                        </div>
                         <div className="text-xs text-[var(--color-text-muted)]">{info.description}</div>
                       </div>
                     </div>
 
                     <div className="flex items-center gap-2">
+                      {canSwitchMux && (
+                        <span className="text-xs text-[var(--color-text-muted)]">Use</span>
+                      )}
+
                       {isInstalled && state.version && (
                         <span className="text-xs text-[var(--color-success)]">v{state.version}</span>
                       )}
 
                       {!isInstalled && state.status !== "checking" && state.installCommand && (
-                        <div title={`Copy: ${state.installCommand}`}>
+                        <div title={`Copy: ${state.installCommand}`} onClick={(e) => e.stopPropagation()}>
                           <Button
                             variant="ghost"
                             size="sm"
@@ -675,6 +707,7 @@ export function SettingsPage({ config }: SettingsPageProps) {
                           href={info.docsUrl}
                           target="_blank"
                           rel="noopener noreferrer"
+                          onClick={(e) => e.stopPropagation()}
                           className="text-[var(--color-text-muted)] hover:text-[var(--color-text)] transition-colors"
                         >
                           <ExternalLink className="w-4 h-4" />
@@ -683,8 +716,27 @@ export function SettingsPage({ config }: SettingsPageProps) {
                     </div>
                   </motion.div>
                 );
-              })}
-            </div>
+              };
+
+              return (
+                <>
+                  {/* Base Dependencies */}
+                  <div className="space-y-2">
+                    {baseDeps.map(renderDepRow)}
+                  </div>
+
+                  {/* Multiplexer Divider + Section */}
+                  <div className="flex items-center gap-3 mt-4 mb-2">
+                    <div className="flex-1 h-px bg-[var(--color-border)]" />
+                    <span className="text-xs font-medium text-[var(--color-text-muted)] uppercase tracking-wider">Multiplexer</span>
+                    <div className="flex-1 h-px bg-[var(--color-border)]" />
+                  </div>
+                  <div className="space-y-2">
+                    {muxDeps.map(renderDepRow)}
+                  </div>
+                </>
+              );
+            })()}
           </div>
         </Section>
 

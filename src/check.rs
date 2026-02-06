@@ -22,18 +22,23 @@ pub fn check_environment() -> CheckResult {
         );
     }
 
-    // 检查 tmux
-    match check_tmux() {
-        TmuxCheck::NotInstalled => {
-            errors.push("tmux is not installed. Please install tmux 3.0+ first.".to_string());
-        }
-        TmuxCheck::VersionTooOld(ver) => {
+    // 检查 tmux 和 zellij — 至少存在一个
+    let tmux_ok = check_tmux_available();
+    let zellij_ok = check_zellij_available();
+
+    if !tmux_ok && !zellij_ok {
+        errors
+            .push("Neither tmux nor zellij is installed. Please install at least one.".to_string());
+    }
+
+    // 如果 tmux 可用但版本太旧，给出警告（非致命）
+    if tmux_ok {
+        if let TmuxCheck::VersionTooOld(ver) = check_tmux() {
             errors.push(format!(
-                "tmux version {} is too old. Please upgrade to tmux 3.0+.",
+                "tmux version {} is too old. Please upgrade to tmux 3.0+ for tmux support.",
                 ver
             ));
         }
-        TmuxCheck::Ok => {}
     }
 
     CheckResult {
@@ -61,6 +66,24 @@ fn check_git() -> bool {
 /// Check if fzf is installed (for grove fp command)
 pub fn check_fzf() -> bool {
     Command::new("fzf")
+        .arg("--version")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+}
+
+/// Check if tmux is installed (any version)
+pub fn check_tmux_available() -> bool {
+    Command::new("tmux")
+        .arg("-V")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+}
+
+/// Check if zellij is installed
+pub fn check_zellij_available() -> bool {
+    Command::new("zellij")
         .arg("--version")
         .output()
         .map(|o| o.status.success())

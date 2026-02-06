@@ -34,6 +34,13 @@ pub struct Task {
     pub updated_at: DateTime<Utc>,
     /// 任务状态
     pub status: TaskStatus,
+    /// 创建时使用的 multiplexer ("tmux" / "zellij")
+    #[serde(default = "default_multiplexer")]
+    pub multiplexer: String,
+}
+
+fn default_multiplexer() -> String {
+    "tmux".to_string()
 }
 
 fn default_updated_at() -> DateTime<Utc> {
