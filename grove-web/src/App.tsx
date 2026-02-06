@@ -5,7 +5,7 @@ import { DashboardPage } from "./components/Dashboard";
 import { TasksPage } from "./components/Tasks";
 import { ProjectsPage } from "./components/Projects";
 import { WelcomePage } from "./components/Welcome";
-import { ThemeProvider, ProjectProvider, useProject } from "./context";
+import { ThemeProvider, ProjectProvider, TerminalThemeProvider, useProject } from "./context";
 import { mockConfig } from "./data/mockData";
 
 function AppContent() {
@@ -113,9 +113,11 @@ function AppContent() {
 function App() {
   return (
     <ThemeProvider>
-      <ProjectProvider>
-        <AppContent />
-      </ProjectProvider>
+      <TerminalThemeProvider>
+        <ProjectProvider>
+          <AppContent />
+        </ProjectProvider>
+      </TerminalThemeProvider>
     </ThemeProvider>
   );
 }

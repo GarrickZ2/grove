@@ -24,7 +24,7 @@ import {
 } from "lucide-react";
 import { Button, Combobox, AppPicker, AgentPicker, ideAppOptions, terminalAppOptions } from "../ui";
 import type { ComboboxOption } from "../ui";
-import { useTheme, themes } from "../../context";
+import { useTheme, themes, useTerminalTheme, terminalThemes } from "../../context";
 import {
   getConfig,
   patchConfig,
@@ -195,6 +195,7 @@ interface DependencyState {
 
 export function SettingsPage({ config }: SettingsPageProps) {
   const { theme, setTheme } = useTheme();
+  const { terminalTheme, setTerminalTheme } = useTerminalTheme();
 
   const [openSections, setOpenSections] = useState<Record<string, boolean>>({
     appearance: true,
@@ -264,6 +265,11 @@ export function SettingsPage({ config }: SettingsPageProps) {
         setTheme(themeId);
       }
 
+      // Load terminal theme - sync with context
+      if (cfg.web.terminal_theme) {
+        setTerminalTheme(cfg.web.terminal_theme);
+      }
+
       // Load custom layouts
       if (cfg.layout.custom_layouts) {
         try {
@@ -297,7 +303,7 @@ export function SettingsPage({ config }: SettingsPageProps) {
       console.log("Config API not available, using local config");
       setIsLoaded(true);
     }
-  }, [config.agent.command, setTheme]);
+  }, [config.agent.command, setTheme, setTerminalTheme]);
 
   // Check dependencies via API
   const checkDependencies = useCallback(async () => {
@@ -528,6 +534,51 @@ export function SettingsPage({ config }: SettingsPageProps) {
                       )}
                     </div>
                     <div className="text-xs font-medium text-[var(--color-text)]">{t.name}</div>
+                  </motion.button>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Terminal Color Scheme */}
+          <div className="space-y-3 mt-6 pt-6 border-t border-[var(--color-border)]">
+            <div className="text-sm font-medium text-[var(--color-text-muted)] mb-2">Terminal Color Scheme</div>
+            <div className="grid grid-cols-5 gap-2">
+              {terminalThemes.map((tt) => {
+                const isSelected = terminalTheme.id === tt.id;
+                const previewColors = [tt.colors.red, tt.colors.green, tt.colors.yellow, tt.colors.blue, tt.colors.magenta, tt.colors.cyan];
+
+                return (
+                  <motion.button
+                    key={tt.id}
+                    whileHover={{ scale: 1.02 }}
+                    whileTap={{ scale: 0.98 }}
+                    onClick={() => setTerminalTheme(tt.id)}
+                    className={`relative p-3 rounded-lg border text-center transition-all
+                      ${isSelected
+                        ? "border-[var(--color-highlight)] bg-[var(--color-highlight)]/10"
+                        : "border-[var(--color-border)] hover:border-[var(--color-text-muted)] bg-[var(--color-bg-secondary)]"
+                      }`}
+                  >
+                    {isSelected && (
+                      <div className="absolute top-1.5 right-1.5 w-4 h-4 rounded-full bg-[var(--color-highlight)] flex items-center justify-center">
+                        <Check className="w-2.5 h-2.5 text-white" />
+                      </div>
+                    )}
+                    {/* Mini color bar preview */}
+                    <div
+                      className="flex gap-0 mb-2 rounded overflow-hidden h-4"
+                      style={{ backgroundColor: tt.colors.background }}
+                    >
+                      {previewColors.map((color, i) => (
+                        <div
+                          key={i}
+                          className="flex-1 h-full"
+                          style={{ backgroundColor: color }}
+                        />
+                      ))}
+                    </div>
+                    <div className="text-[11px] font-medium text-[var(--color-text)] truncate">{tt.name}</div>
                   </motion.button>
                 );
               })}

@@ -33,6 +33,7 @@ pub struct LayoutConfigDto {
 pub struct WebConfigDto {
     pub ide: Option<String>,
     pub terminal: Option<String>,
+    pub terminal_theme: Option<String>,
 }
 
 impl From<&Config> for ConfigResponse {
@@ -50,6 +51,7 @@ impl From<&Config> for ConfigResponse {
             web: WebConfigDto {
                 ide: config.web.ide.clone(),
                 terminal: config.web.terminal.clone(),
+                terminal_theme: config.web.terminal_theme.clone(),
             },
         }
     }
@@ -82,6 +84,7 @@ pub struct LayoutConfigPatch {
 pub struct WebConfigPatch {
     pub ide: Option<String>,
     pub terminal: Option<String>,
+    pub terminal_theme: Option<String>,
 }
 
 /// GET /api/v1/config
@@ -132,6 +135,9 @@ pub async fn patch_config(
         }
         if web_patch.terminal.is_some() {
             config.web.terminal = web_patch.terminal;
+        }
+        if web_patch.terminal_theme.is_some() {
+            config.web.terminal_theme = web_patch.terminal_theme;
         }
     }
 

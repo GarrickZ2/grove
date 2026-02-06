@@ -4,6 +4,7 @@ import { Terminal as TerminalIcon, Maximize2, Minimize2 } from "lucide-react";
 import { Button } from "../../ui";
 import type { Task } from "../../../data/types";
 import { XTerminal } from "./XTerminal";
+import { useTerminalTheme } from "../../../context";
 
 interface TaskTerminalProps {
   /** Project ID for the task */
@@ -13,6 +14,7 @@ interface TaskTerminalProps {
 }
 
 export function TaskTerminal({ projectId, task }: TaskTerminalProps) {
+  const { terminalTheme } = useTerminalTheme();
   const [isConnected, setIsConnected] = useState(false);
   const [isExpanded, setIsExpanded] = useState(false);
 
@@ -20,8 +22,9 @@ export function TaskTerminal({ projectId, task }: TaskTerminalProps) {
     <motion.div
       initial={{ opacity: 0, y: -10 }}
       animate={{ opacity: 1, y: 0 }}
-      className={`mx-4 my-3 rounded-lg border border-[var(--color-border)] bg-[#0d0d0d] overflow-hidden transition-all duration-200
+      className={`mx-4 my-3 rounded-lg border border-[var(--color-border)] overflow-hidden transition-all duration-200
         ${isExpanded ? "h-[400px]" : "h-[220px]"}`}
+      style={{ backgroundColor: terminalTheme.colors.background }}
     >
       {/* Terminal Header */}
       <div className="flex items-center justify-between px-3 py-2 bg-[var(--color-bg)] border-b border-[var(--color-border)]">

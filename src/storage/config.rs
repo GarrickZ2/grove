@@ -37,6 +37,9 @@ pub struct WebConfig {
     /// Terminal 命令 (e.g., "iterm", "warp", "kitty")
     #[serde(default)]
     pub terminal: Option<String>,
+    /// Terminal color scheme (e.g., "dracula", "tokyo-night", "nord")
+    #[serde(default)]
+    pub terminal_theme: Option<String>,
 }
 
 /// 自定义布局配置

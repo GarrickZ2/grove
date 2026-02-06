@@ -4,6 +4,7 @@ import { Terminal as TerminalIcon, Play, ChevronRight } from "lucide-react";
 import { Button } from "../../ui";
 import type { Task } from "../../../data/types";
 import { XTerminal } from "../TaskDetail/XTerminal";
+import { useTerminalTheme } from "../../../context";
 
 interface TaskTerminalProps {
   /** Project ID for the task */
@@ -28,6 +29,7 @@ export function TaskTerminal({
   autoStart = false,
   onConnected: onConnectedProp,
 }: TaskTerminalProps) {
+  const { terminalTheme } = useTerminalTheme();
   const [isConnected, setIsConnected] = useState(false);
   // Local state to track if user has started session
   const [sessionStarted, setSessionStarted] = useState(false);
@@ -63,7 +65,7 @@ export function TaskTerminal({
         initial={{ width: 48 }}
         animate={{ width: 48 }}
         transition={{ type: "spring", damping: 25, stiffness: 200 }}
-        className="h-full flex flex-col rounded-lg border border-[var(--color-border)] bg-[#0d0d0d] overflow-hidden"
+        className="h-full flex flex-col rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-tertiary)] overflow-hidden"
       >
         {/* Vertical Bar */}
         <div className="flex-1 flex flex-col items-center py-2">
@@ -99,7 +101,7 @@ export function TaskTerminal({
     return (
       <motion.div
         layout
-        className="flex-1 flex flex-col rounded-lg border border-[var(--color-border)] bg-[#0d0d0d] overflow-hidden"
+        className="flex-1 flex flex-col rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-tertiary)] overflow-hidden"
       >
         <div className="flex items-center justify-between px-3 py-2 bg-[var(--color-bg)] border-b border-[var(--color-border)]">
           <div className="flex items-center gap-2 text-sm text-[var(--color-text-muted)]">
@@ -127,7 +129,8 @@ export function TaskTerminal({
       layout
       initial={{ opacity: 0, y: -10 }}
       animate={{ opacity: 1, y: 0 }}
-      className="flex-1 flex flex-col rounded-lg border border-[var(--color-border)] bg-[#0d0d0d] overflow-hidden"
+      className="flex-1 flex flex-col rounded-lg border border-[var(--color-border)] overflow-hidden"
+      style={{ backgroundColor: terminalTheme.colors.background }}
     >
       {/* Terminal Header */}
       <div className="flex items-center justify-between px-3 py-2 bg-[var(--color-bg)] border-b border-[var(--color-border)]">
