@@ -10,7 +10,7 @@ use ratatui::{
     Frame,
 };
 
-use crate::hooks::NotificationLevel;
+use crate::hooks::{HookEntry, NotificationLevel};
 use crate::model::{ProjectDetail, WorktreeStatus};
 use crate::theme::ThemeColors;
 
@@ -22,7 +22,7 @@ pub fn render(
     area: Rect,
     detail: &ProjectDetail,
     colors: &ThemeColors,
-    notifications: &HashMap<String, NotificationLevel>,
+    notifications: &HashMap<String, HookEntry>,
 ) {
     let mut lines = vec![
         // 空行
@@ -39,7 +39,7 @@ pub fn render(
     if !detail.active_tasks.is_empty() {
         lines.push(section_header("Active Tasks", colors));
         for task in &detail.active_tasks {
-            let notification = notifications.get(&task.id).copied();
+            let notification = notifications.get(&task.id).map(|e| e.level);
             lines.push(task_line(
                 &task.id,
                 task.name.as_str(),

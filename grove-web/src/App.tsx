@@ -5,7 +5,7 @@ import { DashboardPage } from "./components/Dashboard";
 import { TasksPage } from "./components/Tasks";
 import { ProjectsPage } from "./components/Projects";
 import { WelcomePage } from "./components/Welcome";
-import { ThemeProvider, ProjectProvider, TerminalThemeProvider, useProject } from "./context";
+import { ThemeProvider, ProjectProvider, TerminalThemeProvider, NotificationProvider, useProject } from "./context";
 import { mockConfig } from "./data/mockData";
 
 function AppContent() {
@@ -14,7 +14,7 @@ function AppContent() {
   const [showWelcome, setShowWelcome] = useState(false);
   const [hasExitedWelcome, setHasExitedWelcome] = useState(false);
   const [navigationData, setNavigationData] = useState<Record<string, unknown> | null>(null);
-  const { selectedProject, currentProjectId, isLoading } = useProject();
+  const { selectedProject, currentProjectId, isLoading, selectProject, projects } = useProject();
 
   // Check if we should show welcome page
   const shouldShowWelcome = showWelcome || (currentProjectId === null && !hasExitedWelcome);
@@ -37,6 +37,13 @@ function AppContent() {
   };
 
   const handleNavigate = (page: string, data?: Record<string, unknown>) => {
+    // Switch project if specified in navigation data
+    if (data?.projectId) {
+      const target = projects.find((p) => p.id === data.projectId);
+      if (target) {
+        selectProject(target);
+      }
+    }
     setActiveItem(page);
     setNavigationData(data || null);
   };
@@ -100,6 +107,7 @@ function AppContent() {
         onToggleCollapse={() => setSidebarCollapsed(!sidebarCollapsed)}
         onManageProjects={() => setActiveItem("projects")}
         onLogoClick={() => setShowWelcome(true)}
+        onNavigate={handleNavigate}
       />
         <main className={`flex-1 ${isFullWidthPage ? "overflow-hidden" : "overflow-y-auto"}`}>
           <div className={isFullWidthPage ? "h-full p-6" : "max-w-5xl mx-auto p-6"}>
@@ -115,7 +123,9 @@ function App() {
     <ThemeProvider>
       <TerminalThemeProvider>
         <ProjectProvider>
-          <AppContent />
+          <NotificationProvider>
+            <AppContent />
+          </NotificationProvider>
         </ProjectProvider>
       </TerminalThemeProvider>
     </ThemeProvider>

@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.4] - 2026-02-06
+
+### Added
+
+- **Hook Inbox** — notification center accessible via Bell icon in web sidebar
+  - Popover displays all hook notifications across projects with level icons, timestamps, and messages
+  - Click a notification to navigate to the corresponding project + task and auto-dismiss
+  - Dismiss button (×) on each notification for manual clearing
+  - Red badge on Bell icon shows unread count (9+ cap)
+  - 5-second polling via React context (`NotificationProvider`)
+- **Hook message support** — `grove hooks <level> --message "text"` attaches a message to notifications
+  - TUI hook config wizard updated with new "Message" input step (4-step flow)
+  - Web settings hook config updated with message input field
+- **Task notification indicators** — colored dots (red/yellow/blue) next to task names in web task list
+  - Clicking a task with a notification auto-dismisses it
+- **Hooks REST API** — `GET /api/v1/hooks` lists all notifications, `DELETE /api/v1/projects/{id}/hooks/{taskId}` dismisses one
+- **Enhanced hooks storage** — `HookEntry` model with `level`, `timestamp`, and optional `message`
+  - Backward-compatible deserialization: old format (`task = "notice"`) parsed alongside new table format
+
 ## [0.4.3] - 2026-02-05
 
 ### Added

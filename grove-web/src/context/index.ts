@@ -6,3 +6,5 @@ export { ProjectProvider, useProject } from "./ProjectContext";
 export { TerminalThemeProvider, useTerminalTheme } from "./TerminalThemeContext";
 export { terminalThemes, getTerminalTheme } from "./terminalThemes";
 export type { TerminalTheme, TerminalThemeColors } from "./terminalThemes";
+
+export { NotificationProvider, useNotifications } from "./NotificationContext";

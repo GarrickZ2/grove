@@ -7,7 +7,7 @@ use ratatui::{
     Frame,
 };
 
-use crate::hooks::NotificationLevel;
+use crate::hooks::{HookEntry, NotificationLevel};
 use crate::model::{format_relative_time, Worktree, WorktreeStatus};
 use crate::theme::ThemeColors;
 use crate::ui::click_areas::ClickAreas;
@@ -20,7 +20,7 @@ pub fn render(
     worktrees: &[&Worktree],
     selected_index: Option<usize>,
     colors: &ThemeColors,
-    notifications: &HashMap<String, NotificationLevel>,
+    notifications: &HashMap<String, HookEntry>,
     click_areas: &mut ClickAreas,
 ) {
     // 表头
@@ -74,7 +74,7 @@ pub fn render(
             let updated = format_relative_time(wt.updated_at);
 
             // 获取通知标记
-            let (notif_marker, notif_style) = match notifications.get(&wt.id) {
+            let (notif_marker, notif_style) = match notifications.get(&wt.id).map(|e| e.level) {
                 Some(NotificationLevel::Notice) => ("[i]", Style::default().fg(colors.info)),
                 Some(NotificationLevel::Warn) => ("[!]", Style::default().fg(colors.warning)),
                 Some(NotificationLevel::Critical) => ("[!!]", Style::default().fg(colors.error)),

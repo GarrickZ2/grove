@@ -235,12 +235,13 @@ export function SettingsPage({ config }: SettingsPageProps) {
   const [hookLevel, setHookLevel] = useState<"notice" | "warn" | "critical">("notice");
   const [hookBanner, setHookBanner] = useState(true);
   const [hookSound, setHookSound] = useState("default"); // empty = off, or sound name
+  const [hookMessage, setHookMessage] = useState("");
 
   // MCP state
   const [copiedField, setCopiedField] = useState<string | null>(null);
 
   // Generate hook command based on selections
-  const hookCommand = `grove hooks ${hookLevel}${hookBanner ? " --banner" : ""}${hookSound ? ` --sound ${hookSound}` : ""}`;
+  const hookCommand = `grove hooks ${hookLevel}${hookBanner ? " --banner" : ""}${hookSound ? ` --sound ${hookSound}` : ""}${hookMessage ? ` --message "${hookMessage}"` : ""}`;
 
   const toggleSection = (id: string) => {
     setOpenSections((prev) => ({ ...prev, [id]: !prev[id] }));
@@ -1070,6 +1071,21 @@ export function SettingsPage({ config }: SettingsPageProps) {
                   allowCustom={false}
                 />
               </div>
+            </div>
+
+            {/* Message */}
+            <div>
+              <div className="text-sm font-medium text-[var(--color-text-muted)] mb-2">Message</div>
+              <input
+                type="text"
+                value={hookMessage}
+                onChange={(e) => setHookMessage(e.target.value)}
+                placeholder="e.g., Task completed..."
+                className="w-full px-3 py-2 text-sm bg-[var(--color-bg-secondary)] text-[var(--color-text)] border border-[var(--color-border)] rounded-lg focus:outline-none focus:ring-1 focus:ring-[var(--color-highlight)] placeholder:text-[var(--color-text-muted)]"
+              />
+              <p className="text-xs text-[var(--color-text-muted)] mt-1">
+                Optional message included with the notification.
+              </p>
             </div>
 
             {/* Generated Command */}

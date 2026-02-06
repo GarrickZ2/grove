@@ -95,5 +95,8 @@ export type {
 export { startDifit, getDifitStatus, stopDifit } from './difit';
 export type { DifitStatusResponse, StopDifitResponse } from './difit';
 
+export { listAllHooks, dismissHook } from './hooks';
+export type { HookEntryResponse, HooksListResponse } from './hooks';
+
 export { getVersion } from './version';
 export type { VersionResponse } from './version';

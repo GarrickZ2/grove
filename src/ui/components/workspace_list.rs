@@ -11,7 +11,7 @@ use ratatui::{
     Frame,
 };
 
-use crate::hooks::NotificationLevel;
+use crate::hooks::{HookEntry, NotificationLevel};
 use crate::model::workspace::WorkspaceState;
 use crate::model::ProjectInfo;
 use crate::theme::ThemeColors;
@@ -119,7 +119,7 @@ pub fn render(
     area: Rect,
     workspace: &mut WorkspaceState,
     colors: &ThemeColors,
-    workspace_notifications: &HashMap<String, HashMap<String, NotificationLevel>>,
+    workspace_notifications: &HashMap<String, HashMap<String, HookEntry>>,
     click_areas: &mut ClickAreas,
 ) {
     let project_count = workspace.filtered_indices.len();
@@ -214,7 +214,7 @@ fn render_card(
     index: usize,
     is_selected: bool,
     colors: &ThemeColors,
-    workspace_notifications: &HashMap<String, HashMap<String, NotificationLevel>>,
+    workspace_notifications: &HashMap<String, HashMap<String, HookEntry>>,
 ) {
     let card_bg = if is_selected {
         colors.bg_secondary
@@ -249,7 +249,7 @@ fn render_card(
     // 通知徽章
     let max_level = workspace_notifications
         .get(&project.name)
-        .and_then(|tasks| tasks.values().max());
+        .and_then(|tasks| tasks.values().map(|e| e.level).max());
 
     let (notif_text, notif_color) = match max_level {
         Some(NotificationLevel::Critical) => (" [!!]", colors.error),

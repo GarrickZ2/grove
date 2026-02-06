@@ -2,6 +2,7 @@ import { Loader2 } from "lucide-react";
 import { TaskSearch } from "./TaskSearch";
 import { TaskFilters } from "./TaskFilters";
 import { TaskListItem } from "./TaskListItem";
+import { useNotifications } from "../../../context";
 import type { Task, TaskFilter } from "../../../data/types";
 
 interface TaskSidebarProps {
@@ -27,6 +28,8 @@ export function TaskSidebar({
   onFilterChange,
   onSearchChange,
 }: TaskSidebarProps) {
+  const { getTaskNotification, dismissNotification } = useNotifications();
+
   return (
     <div className="h-full flex flex-col rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)] overflow-hidden">
       {/* Search */}
@@ -51,15 +54,24 @@ export function TaskSidebar({
           </div>
         ) : (
           <div className="divide-y divide-[var(--color-border)]">
-            {tasks.map((task) => (
-              <TaskListItem
-                key={task.id}
-                task={task}
-                isSelected={selectedTask?.id === task.id}
-                onClick={() => onSelectTask(task)}
-                onDoubleClick={() => onDoubleClickTask(task)}
-              />
-            ))}
+            {tasks.map((task) => {
+              const notif = getTaskNotification(task.id);
+              return (
+                <TaskListItem
+                  key={task.id}
+                  task={task}
+                  isSelected={selectedTask?.id === task.id}
+                  onClick={() => {
+                    if (notif) {
+                      dismissNotification(notif.project_id, notif.task_id);
+                    }
+                    onSelectTask(task);
+                  }}
+                  onDoubleClick={() => onDoubleClickTask(task)}
+                  notification={notif ? { level: notif.level } : undefined}
+                />
+              );
+            })}
           </div>
         )}
       </div>

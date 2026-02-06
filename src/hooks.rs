@@ -1,5 +1,6 @@
 //! Hook 通知系统
 
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::fs;
@@ -15,33 +16,98 @@ pub enum NotificationLevel {
     Critical = 2,
 }
 
-/// Hooks 文件结构
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct HooksFile {
-    #[serde(default)]
-    pub tasks: HashMap<String, NotificationLevel>,
+/// Hook 通知条目（增强版：level + timestamp + message）
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HookEntry {
+    pub level: NotificationLevel,
+    #[serde(default = "Utc::now")]
+    pub timestamp: DateTime<Utc>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
 }
 
-impl HooksFile {
-    /// 更新 task 的通知级别（只保留更高级别）
-    pub fn update(&mut self, task_id: &str, level: NotificationLevel) {
-        let current = self.tasks.get(task_id).copied();
-        if current.is_none() || level > current.unwrap() {
-            self.tasks.insert(task_id.to_string(), level);
+/// 向后兼容的反序列化：支持旧格式（裸字符串）和新格式（table）
+#[derive(Debug, Clone, Deserialize)]
+#[serde(untagged)]
+enum HookEntryCompat {
+    /// 新格式：完整 HookEntry table
+    Full(HookEntry),
+    /// 旧格式：裸 NotificationLevel 字符串
+    Legacy(NotificationLevel),
+}
+
+impl From<HookEntryCompat> for HookEntry {
+    fn from(compat: HookEntryCompat) -> Self {
+        match compat {
+            HookEntryCompat::Full(entry) => entry,
+            HookEntryCompat::Legacy(level) => HookEntry {
+                level,
+                timestamp: Utc::now(),
+                message: None,
+            },
         }
     }
 }
 
-/// 加载项目的 hooks 文件
+/// 向后兼容的反序列化中间结构
+#[derive(Debug, Clone, Deserialize)]
+struct HooksFileCompat {
+    #[serde(default)]
+    tasks: HashMap<String, HookEntryCompat>,
+}
+
+/// Hooks 文件结构
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct HooksFile {
+    #[serde(default)]
+    pub tasks: HashMap<String, HookEntry>,
+}
+
+impl HooksFile {
+    /// 更新 task 的通知（只保留更高级别）
+    pub fn update(&mut self, task_id: &str, level: NotificationLevel, message: Option<String>) {
+        let current_level = self.tasks.get(task_id).map(|e| e.level);
+        if current_level.is_none() || level > current_level.unwrap() {
+            self.tasks.insert(
+                task_id.to_string(),
+                HookEntry {
+                    level,
+                    timestamp: Utc::now(),
+                    message,
+                },
+            );
+        }
+    }
+}
+
+/// 加载项目的 hooks 文件（向后兼容旧格式）
 pub fn load_hooks(project_key: &str) -> HooksFile {
     let project_dir = storage::grove_dir().join("projects").join(project_key);
     let hooks_path = project_dir.join("hooks.toml");
 
     if hooks_path.exists() {
-        fs::read_to_string(&hooks_path)
-            .ok()
-            .and_then(|s| toml::from_str(&s).ok())
-            .unwrap_or_default()
+        let content = match fs::read_to_string(&hooks_path) {
+            Ok(s) => s,
+            Err(_) => return HooksFile::default(),
+        };
+
+        // 先尝试新格式
+        if let Ok(file) = toml::from_str::<HooksFile>(&content) {
+            return file;
+        }
+
+        // 回退到兼容格式（处理旧的裸字符串值）
+        if let Ok(compat) = toml::from_str::<HooksFileCompat>(&content) {
+            return HooksFile {
+                tasks: compat
+                    .tasks
+                    .into_iter()
+                    .map(|(k, v)| (k, HookEntry::from(v)))
+                    .collect(),
+            };
+        }
+
+        HooksFile::default()
     } else {
         HooksFile::default()
     }
@@ -105,4 +171,85 @@ pub fn load_hooks_with_cleanup(project_path: &str) -> HooksFile {
     }
 
     hooks
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_deserialize_old_format() {
+        let old = r#"[tasks]
+handle-tt-account-unbind = "notice"
+"#;
+        // New HooksFile format should fail (expects table, not string)
+        let result = toml::from_str::<HooksFile>(old);
+        println!("Direct HooksFile parse: {:?}", result);
+
+        // Compat format should work
+        let compat = toml::from_str::<HooksFileCompat>(old);
+        println!("Compat parse: {:?}", compat);
+        assert!(compat.is_ok(), "Compat format should parse old hooks.toml");
+
+        let compat = compat.unwrap();
+        let hooks = HooksFile {
+            tasks: compat
+                .tasks
+                .into_iter()
+                .map(|(k, v)| (k, HookEntry::from(v)))
+                .collect(),
+        };
+        assert_eq!(hooks.tasks.len(), 1);
+        assert_eq!(
+            hooks.tasks["handle-tt-account-unbind"].level,
+            NotificationLevel::Notice
+        );
+    }
+
+    #[test]
+    fn test_deserialize_new_format() {
+        let new = r#"[tasks.demo-task]
+level = "notice"
+timestamp = "2026-02-06T15:25:11.594286Z"
+"#;
+        let result = toml::from_str::<HooksFile>(new);
+        println!("New format parse: {:?}", result);
+        assert!(
+            result.is_ok(),
+            "New format should parse: {:?}",
+            result.err()
+        );
+
+        let hooks = result.unwrap();
+        assert_eq!(hooks.tasks.len(), 1);
+        assert_eq!(hooks.tasks["demo-task"].level, NotificationLevel::Notice);
+    }
+
+    #[test]
+    fn test_roundtrip() {
+        let mut hooks = HooksFile::default();
+        hooks.update("test-task", NotificationLevel::Warn, Some("hello".into()));
+
+        let serialized = toml::to_string_pretty(&hooks).unwrap();
+        println!("Serialized:\n{}", serialized);
+
+        let deserialized = toml::from_str::<HooksFile>(&serialized);
+        println!("Deserialized: {:?}", deserialized);
+        assert!(
+            deserialized.is_ok(),
+            "Roundtrip should work: {:?}",
+            deserialized.err()
+        );
+
+        let deserialized = deserialized.unwrap();
+        assert_eq!(deserialized.tasks.len(), 1);
+        assert_eq!(
+            deserialized.tasks["test-task"].level,
+            NotificationLevel::Warn
+        );
+        assert_eq!(
+            deserialized.tasks["test-task"].message.as_deref(),
+            Some("hello")
+        );
+    }
 }

@@ -8,7 +8,7 @@ use chrono::Utc;
 use ratatui::widgets::ListState;
 
 use crate::git;
-use crate::hooks::{self, HooksFile, NotificationLevel};
+use crate::hooks::{self, HookEntry, HooksFile};
 use crate::model::{loader, ProjectInfo, ProjectTab, WorkspaceState, Worktree, WorktreeStatus};
 use crate::session;
 use crate::storage::{
@@ -900,10 +900,10 @@ pub struct App {
     pub action_palette: Option<ActionPaletteData>,
     /// Commit 弹窗
     pub commit_dialog: Option<CommitDialogData>,
-    /// Hook 通知数据 (task_id -> level) - 当前项目
-    pub notifications: HashMap<String, NotificationLevel>,
-    /// Workspace 级别的通知数据 (project_name -> task_id -> level)
-    pub workspace_notifications: HashMap<String, HashMap<String, NotificationLevel>>,
+    /// Hook 通知数据 (task_id -> HookEntry) - 当前项目
+    pub notifications: HashMap<String, HookEntry>,
+    /// Workspace 级别的通知数据 (project_name -> task_id -> HookEntry)
+    pub workspace_notifications: HashMap<String, HashMap<String, HookEntry>>,
     /// Config 配置面板
     pub config_panel: Option<ConfigPanelData>,
     /// 当前布局预设
@@ -3992,7 +3992,7 @@ fn slug_from_path(path: &str) -> String {
 /// 加载所有项目的通知数据（自动清理不存在的 task）
 fn load_all_project_notifications(
     projects: &[ProjectInfo],
-) -> HashMap<String, HashMap<String, NotificationLevel>> {
+) -> HashMap<String, HashMap<String, HookEntry>> {
     let mut result = HashMap::new();
     for project in projects {
         let project_name = Path::new(&project.path)

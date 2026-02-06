@@ -845,31 +845,43 @@ fn handle_config_panel_key(app: &mut App, key: KeyEvent) {
             _ => {}
         },
         ConfigStep::HookWizard => {
-            let is_result = app
-                .config_panel
-                .as_ref()
-                .map(|p| p.hook_data.step == HookConfigStep::ShowResult)
-                .unwrap_or(false);
+            let hook_step = app.config_panel.as_ref().map(|p| p.hook_data.step);
 
-            match key.code {
-                KeyCode::Char('k') | KeyCode::Up => {
-                    if !is_result {
-                        app.config_panel_prev();
+            match hook_step {
+                Some(HookConfigStep::InputMessage) => {
+                    // 文本输入模式
+                    match key.code {
+                        KeyCode::Enter => app.config_panel_confirm(),
+                        KeyCode::Esc => app.config_panel_back(),
+                        KeyCode::Backspace => {
+                            if let Some(ref mut panel) = app.config_panel {
+                                panel.hook_data.message_input.pop();
+                            }
+                        }
+                        KeyCode::Char(c) => {
+                            if let Some(ref mut panel) = app.config_panel {
+                                panel.hook_data.message_input.push(c);
+                            }
+                        }
+                        _ => {}
                     }
                 }
-                KeyCode::Char('j') | KeyCode::Down => {
-                    if !is_result {
-                        app.config_panel_next();
+                Some(HookConfigStep::ShowResult) => match key.code {
+                    KeyCode::Enter => app.config_panel_confirm(),
+                    KeyCode::Esc => app.config_panel_back(),
+                    KeyCode::Char('c') => app.config_hook_copy(),
+                    _ => {}
+                },
+                _ => {
+                    // 选项选择模式
+                    match key.code {
+                        KeyCode::Char('k') | KeyCode::Up => app.config_panel_prev(),
+                        KeyCode::Char('j') | KeyCode::Down => app.config_panel_next(),
+                        KeyCode::Enter => app.config_panel_confirm(),
+                        KeyCode::Esc => app.config_panel_back(),
+                        _ => {}
                     }
                 }
-                KeyCode::Enter => app.config_panel_confirm(),
-                KeyCode::Esc => app.config_panel_back(),
-                KeyCode::Char('c') => {
-                    if is_result {
-                        app.config_hook_copy();
-                    }
-                }
-                _ => {}
             }
         }
     }

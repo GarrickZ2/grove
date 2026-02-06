@@ -147,6 +147,12 @@ pub fn create_api_router() -> Router {
                 .post(handlers::difit::start_difit)
                 .delete(handlers::difit::stop_difit),
         )
+        // Hooks API
+        .route("/hooks", get(handlers::hooks::list_all_hooks))
+        .route(
+            "/projects/{id}/hooks/{taskId}",
+            delete(handlers::hooks::dismiss_hook),
+        )
         // Project Git API
         .route("/projects/{id}/git/status", get(handlers::git::get_status))
         .route(

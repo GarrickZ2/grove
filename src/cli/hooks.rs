@@ -16,6 +16,8 @@ pub enum HookLevel {
         banner: bool,
         #[arg(long)]
         no_banner: bool,
+        #[arg(long, short = 'm')]
+        message: Option<String>,
     },
     /// Warning notification (yellow) - default: sound + banner
     Warn {
@@ -25,6 +27,8 @@ pub enum HookLevel {
         banner: bool,
         #[arg(long)]
         no_banner: bool,
+        #[arg(long, short = 'm')]
+        message: Option<String>,
     },
     /// Critical notification (red) - default: sound + banner
     Critical {
@@ -34,6 +38,8 @@ pub enum HookLevel {
         banner: bool,
         #[arg(long)]
         no_banner: bool,
+        #[arg(long, short = 'm')]
+        message: Option<String>,
     },
 }
 
@@ -53,6 +59,15 @@ impl HookLevel {
             HookLevel::Notice { sound, .. } => sound,
             HookLevel::Warn { sound, .. } => sound,
             HookLevel::Critical { sound, .. } => sound,
+        }
+    }
+
+    /// 获取消息文本
+    fn message(&self) -> Option<&str> {
+        match self {
+            HookLevel::Notice { message, .. } => message.as_deref(),
+            HookLevel::Warn { message, .. } => message.as_deref(),
+            HookLevel::Critical { message, .. } => message.as_deref(),
         }
     }
 
@@ -109,6 +124,8 @@ pub fn execute(level: HookLevel) {
         Err(_) => return,
     };
 
+    let message = level.message().map(|s| s.to_string());
+
     // 播放声音
     let sound = level.sound();
     if sound.to_lowercase() != "none" {
@@ -118,12 +135,16 @@ pub fn execute(level: HookLevel) {
     // 发送系统通知横幅
     if level.should_banner() {
         let title = format!("Grove - {}", level.level_name());
-        let message = format!("[{}] {}", project_name, task_name);
-        send_banner(&title, &message);
+        let banner_msg = if let Some(ref msg) = message {
+            format!("[{}] {} - {}", project_name, task_name, msg)
+        } else {
+            format!("[{}] {}", project_name, task_name)
+        };
+        send_banner(&title, &banner_msg);
     }
 
     // 无条件记录到 hooks 文件（当用户 detach 回到 Grove 时会被清除）
-    update_hooks_file(&project_path, &task_id, level.level());
+    update_hooks_file(&project_path, &task_id, level.level(), message);
 }
 
 /// 播放提示音
@@ -151,12 +172,17 @@ fn send_banner(title: &str, message: &str) {
 }
 
 /// 更新 hooks.toml 文件
-fn update_hooks_file(project_path: &str, task_id: &str, level: NotificationLevel) {
+fn update_hooks_file(
+    project_path: &str,
+    task_id: &str,
+    level: NotificationLevel,
+    message: Option<String>,
+) {
     use crate::storage::workspace::project_hash;
 
     let project_key = project_hash(project_path);
 
     let mut hooks_file = hooks::load_hooks(&project_key);
-    hooks_file.update(task_id, level);
+    hooks_file.update(task_id, level, message);
     let _ = hooks::save_hooks(&project_key, &hooks_file);
 }

@@ -1,4 +1,4 @@
-//! Hook 配置面板组件（3 步配置流程）
+//! Hook 配置面板组件（4 步配置流程）
 
 use ratatui::{
     layout::{Alignment, Constraint, Layout, Rect},
@@ -17,6 +17,7 @@ pub enum HookConfigStep {
     SelectLevel,
     SelectSound,
     SelectBanner,
+    InputMessage,
     ShowResult,
 }
 
@@ -99,6 +100,7 @@ pub struct HookConfigData {
     pub level: HookLevel,
     pub sound: SoundOption,
     pub banner: bool,
+    pub message_input: String,
     pub selected_index: usize,
     pub generated_command: String,
 }
@@ -110,6 +112,7 @@ impl HookConfigData {
             level: HookLevel::Notice,
             sound: SoundOption::Glass,
             banner: false,
+            message_input: String::new(),
             selected_index: 0,
             generated_command: String::new(),
         }
@@ -121,7 +124,7 @@ impl HookConfigData {
             HookConfigStep::SelectLevel => HookLevel::all().len(),
             HookConfigStep::SelectSound => SoundOption::all().len(),
             HookConfigStep::SelectBanner => 2,
-            HookConfigStep::ShowResult => 0,
+            HookConfigStep::InputMessage | HookConfigStep::ShowResult => 0,
         }
     }
 
@@ -173,6 +176,9 @@ impl HookConfigData {
             }
             HookConfigStep::SelectBanner => {
                 self.banner = self.selected_index == 0; // 0 = Yes, 1 = No
+                self.step = HookConfigStep::InputMessage;
+            }
+            HookConfigStep::InputMessage => {
                 self.step = HookConfigStep::ShowResult;
                 self.generated_command = self.generate_command();
             }
@@ -196,9 +202,12 @@ impl HookConfigData {
                 self.step = HookConfigStep::SelectSound;
                 self.selected_index = 0;
             }
-            HookConfigStep::ShowResult => {
+            HookConfigStep::InputMessage => {
                 self.step = HookConfigStep::SelectBanner;
                 self.selected_index = 0;
+            }
+            HookConfigStep::ShowResult => {
+                self.step = HookConfigStep::InputMessage;
             }
         }
     }
@@ -213,6 +222,10 @@ impl HookConfigData {
             cmd.push_str(" --banner");
         } else {
             cmd.push_str(" --no-banner");
+        }
+
+        if !self.message_input.is_empty() {
+            cmd.push_str(&format!(" --message \"{}\"", self.message_input));
         }
 
         cmd
@@ -273,7 +286,7 @@ pub fn render(
 
     match data.step {
         HookConfigStep::SelectLevel => {
-            render_step_header(frame, header_area, "1/3", "Notification Level", colors);
+            render_step_header(frame, header_area, "1/4", "Notification Level", colors);
             render_level_options(frame, content_area, data.selected_index, colors);
             render_hint(
                 frame,
@@ -283,7 +296,7 @@ pub fn render(
             );
         }
         HookConfigStep::SelectSound => {
-            render_step_header(frame, header_area, "2/3", "Sound", colors);
+            render_step_header(frame, header_area, "2/4", "Sound", colors);
             render_sound_options(frame, content_area, data.selected_index, colors);
             render_hint(
                 frame,
@@ -293,14 +306,19 @@ pub fn render(
             );
         }
         HookConfigStep::SelectBanner => {
-            render_step_header(frame, header_area, "3/3", "System Notification", colors);
+            render_step_header(frame, header_area, "3/4", "System Notification", colors);
             render_banner_options(frame, content_area, data.selected_index, colors);
             render_hint(
                 frame,
                 hint_area,
-                "↑↓ select   Enter done   Esc back",
+                "↑↓ select   Enter next   Esc back",
                 colors,
             );
+        }
+        HookConfigStep::InputMessage => {
+            render_step_header(frame, header_area, "4/4", "Message (optional)", colors);
+            render_message_input(frame, content_area, &data.message_input, colors);
+            render_hint(frame, hint_area, "Enter done   Esc back", colors);
         }
         HookConfigStep::ShowResult => {
             render_result(frame, inner_area, &data.generated_command, colors);
@@ -419,6 +437,36 @@ fn render_banner_options(frame: &mut Frame, area: Rect, selected: usize, colors:
     }
     let list = Paragraph::new(lines);
     frame.render_widget(list, area);
+}
+
+fn render_message_input(frame: &mut Frame, area: Rect, input: &str, colors: &ThemeColors) {
+    let lines = vec![
+        Line::from(Span::styled(
+            "  Add a message to include with the notification:",
+            Style::default().fg(colors.muted),
+        )),
+        Line::from(""),
+        Line::from(vec![
+            Span::styled("  > ", Style::default().fg(colors.highlight)),
+            Span::styled(
+                if input.is_empty() {
+                    "(empty - press Enter to skip)"
+                } else {
+                    input
+                },
+                if input.is_empty() {
+                    Style::default().fg(colors.muted)
+                } else {
+                    Style::default()
+                        .fg(colors.text)
+                        .add_modifier(Modifier::BOLD)
+                },
+            ),
+            Span::styled("█", Style::default().fg(colors.highlight)),
+        ]),
+    ];
+    let paragraph = Paragraph::new(lines);
+    frame.render_widget(paragraph, area);
 }
 
 fn render_result(frame: &mut Frame, area: Rect, command: &str, colors: &ThemeColors) {

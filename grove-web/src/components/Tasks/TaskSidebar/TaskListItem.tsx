@@ -7,6 +7,7 @@ interface TaskListItemProps {
   isSelected: boolean;
   onClick: () => void;
   onDoubleClick: () => void;
+  notification?: { level: string };
 }
 
 function formatTimeAgo(date: Date): string {
@@ -20,6 +21,17 @@ function formatTimeAgo(date: Date): string {
   if (days === 1) return "1d ago";
   if (days < 14) return `${days}d ago`;
   return `${Math.floor(days / 7)}w ago`;
+}
+
+function getNotificationColor(level: string): string {
+  switch (level) {
+    case "critical":
+      return "var(--color-error)";
+    case "warn":
+      return "var(--color-warning)";
+    default:
+      return "var(--color-info)";
+  }
 }
 
 function getStatusConfig(status: TaskStatus): {
@@ -69,7 +81,7 @@ function getStatusConfig(status: TaskStatus): {
   }
 }
 
-export function TaskListItem({ task, isSelected, onClick, onDoubleClick }: TaskListItemProps) {
+export function TaskListItem({ task, isSelected, onClick, onDoubleClick, notification }: TaskListItemProps) {
   const statusConfig = getStatusConfig(task.status);
   const StatusIcon = statusConfig.icon;
 
@@ -110,9 +122,17 @@ export function TaskListItem({ task, isSelected, onClick, onDoubleClick }: TaskL
         {/* Task Info */}
         <div className="flex-1 min-w-0">
           <div className="flex items-center justify-between gap-2">
-            <span className="text-sm font-medium text-[var(--color-text)] truncate">
-              {task.name}
-            </span>
+            <div className="flex items-center gap-1.5 min-w-0">
+              <span className="text-sm font-medium text-[var(--color-text)] truncate">
+                {task.name}
+              </span>
+              {notification && (
+                <span
+                  className="w-2 h-2 rounded-full flex-shrink-0"
+                  style={{ backgroundColor: getNotificationColor(notification.level) }}
+                />
+              )}
+            </div>
             <span className="text-xs text-[var(--color-text-muted)] whitespace-nowrap flex-shrink-0">
               {formatTimeAgo(task.updatedAt)}
             </span>

@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { motion } from "framer-motion";
 import {
   Settings,
@@ -5,8 +6,11 @@ import {
   ListTodo,
   ChevronLeft,
   ChevronRight,
+  Bell,
 } from "lucide-react";
 import { ProjectSelector } from "./ProjectSelector";
+import { NotificationPopover } from "./NotificationPopover";
+import { useNotifications } from "../../context";
 
 interface NavItem {
   id: string;
@@ -26,9 +30,13 @@ interface SidebarProps {
   onToggleCollapse: () => void;
   onManageProjects: () => void;
   onLogoClick?: () => void;
+  onNavigate?: (page: string, data?: Record<string, unknown>) => void;
 }
 
-export function Sidebar({ activeItem, onItemClick, collapsed, onToggleCollapse, onManageProjects, onLogoClick }: SidebarProps) {
+export function Sidebar({ activeItem, onItemClick, collapsed, onToggleCollapse, onManageProjects, onLogoClick, onNavigate }: SidebarProps) {
+  const [notifOpen, setNotifOpen] = useState(false);
+  const { unreadCount } = useNotifications();
+
   return (
     <motion.aside
       initial={false}
@@ -79,6 +87,38 @@ export function Sidebar({ activeItem, onItemClick, collapsed, onToggleCollapse, 
 
       {/* Footer */}
       <div className="p-2 border-t border-[var(--color-border)]">
+        {/* Notification Bell */}
+        <div className="relative">
+          <motion.button
+            whileHover={{ x: collapsed ? 0 : 2 }}
+            whileTap={{ scale: 0.98 }}
+            onClick={() => setNotifOpen(!notifOpen)}
+            title={collapsed ? "Notifications" : undefined}
+            className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors duration-150
+              ${collapsed ? "justify-center" : ""}
+              ${notifOpen
+                ? "bg-[var(--color-highlight)]/10 text-[var(--color-highlight)]"
+                : "text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-bg-secondary)]"
+              }`}
+          >
+            <div className="relative flex-shrink-0">
+              <Bell className="w-5 h-5" />
+              {unreadCount > 0 && (
+                <span className="absolute -top-1.5 -right-1.5 min-w-[18px] h-[18px] flex items-center justify-center px-1 text-[10px] font-bold text-white bg-red-500 rounded-full leading-none">
+                  {unreadCount > 9 ? "9+" : unreadCount}
+                </span>
+              )}
+            </div>
+            {!collapsed && <span className="flex-1 text-left">Notifications</span>}
+          </motion.button>
+
+          <NotificationPopover
+            isOpen={notifOpen}
+            onClose={() => setNotifOpen(false)}
+            onNavigate={onNavigate}
+          />
+        </div>
+
         <NavButton
           item={{ id: "settings", label: "Settings", icon: Settings }}
           isActive={activeItem === "settings"}
