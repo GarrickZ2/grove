@@ -4,7 +4,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { ChevronDown, Check, Bot } from "lucide-react";
 
 // Import Lobe icons for AI agents
-import { Claude, Gemini, Copilot, Cursor, Trae, Aws, Qwen, Kimi } from "@lobehub/icons";
+import { Claude, Gemini, Copilot, Cursor, Trae, Aws, Qwen, Kimi, OpenAI } from "@lobehub/icons";
 
 export interface AgentOption {
   id: string;
@@ -23,6 +23,7 @@ export const agentOptions: AgentOption[] = [
   { id: "amazon-q", label: "Amazon Q", value: "q", icon: Aws.Color },
   { id: "qwen", label: "Qwen", value: "qwen", icon: Qwen.Color },
   { id: "kimi", label: "Kimi", value: "kimi", icon: Kimi.Color },
+  { id: "codex", label: "CodeX", value: "codex", icon: OpenAI },
 ];
 
 interface AgentPickerProps {

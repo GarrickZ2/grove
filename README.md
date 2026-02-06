@@ -2,6 +2,7 @@
 
 **Run 10 AI agents. Zero context switching.**
 
+[![Website](https://img.shields.io/badge/website-grove-10b981?style=flat&logo=github)](https://garrickz2.github.io/grove/)
 [![Crates.io](https://img.shields.io/crates/v/grove-rs.svg)](https://crates.io/crates/grove-rs)
 [![Downloads](https://img.shields.io/crates/d/grove-rs.svg)](https://crates.io/crates/grove-rs)
 [![Rust](https://img.shields.io/badge/rust-1.75+-orange.svg)](https://www.rust-lang.org/)
@@ -10,7 +11,9 @@
 
 ![Grove Screenshot](docs/images/screenshot-hero.png)
 
-Manage multiple AI coding tasks in parallel. Each task gets its own Git worktree and tmux session—isolated, organized, always ready to resume.
+Manage multiple AI coding tasks in parallel. Each task gets its own Git worktree and tmux/Zellij session—isolated, organized, always ready to resume.
+
+**Works with:** Claude Code · Cursor · GitHub Copilot · CodeX · Trae · Gemini · Amazon Q · Qwen · Kimi · any AI agent
 
 ---
 
@@ -30,11 +33,13 @@ With traditional Git, this means:
 
 Grove gives each task its own **isolated universe**:
 
-![Task Isolation](docs/images/screenshot-solution.png)
-
 - Switch between tasks **instantly** — no stashing, no rebuilding
 - Resume exactly where you left off — terminal state preserved
 - Let AI agents run in parallel without stepping on each other
+
+<p align="center">
+  <img src="docs/images/demo.gif" alt="Grove Demo" width="720">
+</p>
 
 ---
 
@@ -56,7 +61,9 @@ Grove gives each task its own **isolated universe**:
 
 **Preview Panel** — Side panel with Git info, code review, and notes per task
 
-**8 Themes** — Dracula, Nord, Gruvbox, Tokyo Night, Catppuccin, and more
+**11 Themes** — Dracula, Nord, Gruvbox, Tokyo Night, Catppuccin, and more
+
+![Multiple agents running in parallel](docs/images/multiple-agent-support.png)
 
 ---
 
@@ -88,39 +95,45 @@ grove gui --port 8080  # Custom API port
 
 **Create your first task:** Press `n` in TUI, or click "New Task" in Web/GUI.
 
-## Keyboard Shortcuts
+![New task dialog](docs/images/grove-tui-new-task.png)
+
+---
+
+## Three Interfaces
+
+### TUI — `grove`
+
+A full-featured terminal interface built with Ratatui. Navigate tasks, preview Git diffs, read review comments, and manage your entire workflow without leaving the terminal.
+
+![Grove TUI](docs/images/tui-task.png)
 
 | Key | Action |
 |-----|--------|
 | `n` | New task |
-| `Enter` | Open task in tmux |
+| `Enter` | Open task in tmux/Zellij |
 | `Space` | Action menu |
 | `j/k` | Navigate |
 | `Tab` | Switch tabs |
 | `/` | Search |
+| `p` | Toggle preview panel |
 | `t` | Change theme |
 | `?` | Help |
 | `q` | Quit |
 
----
+### Web UI — `grove web`
 
-## Grove Web
+A full-featured web interface embedded directly in the binary — no separate frontend deployment needed.
 
-A full-featured web interface for managing Grove projects and tasks.
+![Grove Web Dashboard](docs/images/web-dashboard.png)
 
-**Dashboard** — Repository overview with branch list, commit history, and quick stats
-
-**Projects** — Manage multiple git repositories from one place
-
-**Tasks** — Create, archive, recover, and delete tasks with visual workflows
-
-**Integrated Terminal** — Full terminal access via WebSocket (xterm.js)
-
-**Git Operations** — Branches, checkout, pull, push, fetch, stash — all from the browser
-
-**Code Review** — View difit review status and comments inline
-
-**Activity Stats** — Task activity timeline and file edit heatmap
+| | |
+|---|---|
+| ![Terminal](docs/images/web-task-terminal.png) | ![Editor](docs/images/web-editor.png) |
+| **Integrated Terminal** — Full xterm.js terminal via WebSocket | **Monaco Editor** — In-browser code editing with file tree |
+| ![Code Review](docs/images/web-revew-difit.png) | ![Notes](docs/images/web-task-notes.png) |
+| **Code Review** — Diff view with inline review comments | **Task Notes** — Context and requirements per task |
+| ![Stats](docs/images/web-task-stats.png) | ![Notifications](docs/images/web-task-notification.png) |
+| **Activity Stats** — File edit heatmap and timeline | **Hook Notifications** — Real-time agent notification inbox |
 
 ```bash
 grove web                  # Start server on port 3001
@@ -128,11 +141,11 @@ grove web --port 8080      # Custom port
 grove web --host 0.0.0.0   # Expose to network
 ```
 
-The web UI is embedded directly in the binary — no separate frontend deployment needed.
-
-## Grove GUI (macOS)
+### GUI — `grove gui` (macOS)
 
 A native desktop application powered by Tauri 2 WebView. Shares the same frontend as Grove Web, but runs in a native window instead of a browser.
+
+![Grove GUI](docs/images/gui-dashboard.png)
 
 ```bash
 grove gui              # Launch desktop window
@@ -147,11 +160,36 @@ cargo install grove-rs --features gui
 
 ---
 
+## Preview Panel
+
+Press `p` to toggle the side panel showing details for the selected task:
+
+![Preview Panel with Review tab](docs/images/tui-review.png)
+
+- **Stats** — file edit heatmap and activity timeline
+- **Git** — recent commits, diff stats, uncommitted changes
+- **Notes** — user-provided context and requirements (editable with `e`)
+- **Review** — code review comments from difit
+
+Use `j/k` to scroll panel content, `1/2/3/4` to switch sub-tabs.
+
+---
+
+## Themes
+
+11 built-in themes with auto dark/light detection. Press `t` to switch.
+
+![Theme showcase](docs/images/multiple-theme.png)
+
+Dracula · Nord · Gruvbox · Tokyo Night · Catppuccin · Catppuccin Latte · Rosé Pine Dawn · Solarized Light · GitHub Light · Light · Dark (default)
+
+---
+
 ## Agent Hooks
 
 Let Grove watch your AI agents so you don't have to.
 
-When Claude/Cursor/Copilot finishes a task, trigger notifications:
+When your AI agent finishes a task, trigger notifications:
 
 ```bash
 grove hooks notice    # Task completed
@@ -190,23 +228,12 @@ Add to your Claude Code MCP config (`~/.claude/config.json`):
 
 When inside a Grove task, the agent can read notes, respond to code review feedback, and complete the task with a single tool call.
 
-## Preview Panel
-
-Press `p` to toggle the side panel showing details for the selected task:
-
-- **Git** — recent commits, diff stats, uncommitted changes
-- **Review** — code review comments from difit
-- **Notes** — user-provided context and requirements (editable with `e`)
-- **Stats** — file edit heatmap and activity timeline
-
-Use `j/k` to scroll panel content, `Left/Right` to switch sub-tabs.
-
 ---
 
 ## Requirements
 
 - Git 2.20+
-- tmux 3.0+
+- tmux 3.0+ or Zellij
 - macOS 12+ or Linux
 
 ## License

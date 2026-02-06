@@ -10,6 +10,18 @@ use crate::theme::ThemeColors;
 
 use super::logo;
 
+/// Replace home directory prefix with ~
+fn shorten_path(path: &str) -> String {
+    if let Some(home) = dirs::home_dir() {
+        if let Some(home_str) = home.to_str() {
+            if let Some(stripped) = path.strip_prefix(home_str) {
+                return format!("~{}", stripped);
+            }
+        }
+    }
+    path.to_string()
+}
+
 /// Header 总高度：1 (边框) + 6 (Logo) + 1 (下边距) + 1 (项目信息) = 9
 pub const HEADER_HEIGHT: u16 = 9;
 
@@ -56,7 +68,7 @@ fn render_project_info(
     colors: &ThemeColors,
 ) {
     let left = Span::styled(
-        format!(" {}", project_path),
+        format!(" {}", shorten_path(project_path)),
         Style::default().fg(colors.text),
     );
 

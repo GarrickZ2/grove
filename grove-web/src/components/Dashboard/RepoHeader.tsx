@@ -1,6 +1,7 @@
 import { motion } from "framer-motion";
 import { Code, Terminal } from "lucide-react";
 import { getProjectStyle } from "../../utils/projectStyle";
+import { shortenPath } from "../../utils/path";
 import { useTheme } from "../../context";
 
 interface RepoHeaderProps {
@@ -31,7 +32,7 @@ export function RepoHeader({ projectId, name, path, onOpenIDE, onOpenTerminal }:
         </div>
         <div>
           <h1 className="text-2xl font-bold text-[var(--color-text)]">{name}</h1>
-          <p className="text-sm text-[var(--color-text-muted)] font-mono">{path}</p>
+          <p className="text-sm text-[var(--color-text-muted)] font-mono">{shortenPath(path)}</p>
         </div>
       </div>
 

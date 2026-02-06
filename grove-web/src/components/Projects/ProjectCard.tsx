@@ -2,6 +2,7 @@ import { motion } from "framer-motion";
 import { Trash2, Circle } from "lucide-react";
 import type { Project } from "../../data/types";
 import { getProjectStyle } from "../../utils/projectStyle";
+import { shortenPath } from "../../utils/path";
 import { useTheme } from "../../context";
 
 interface ProjectCardProps {
@@ -54,7 +55,7 @@ export function ProjectCard({ project, isSelected, onSelect, onDoubleClick, onDe
             {project.name}
           </h3>
           <p className="text-xs text-[var(--color-text-muted)] truncate">
-            {project.path}
+            {shortenPath(project.path)}
           </p>
         </div>
       </div>
