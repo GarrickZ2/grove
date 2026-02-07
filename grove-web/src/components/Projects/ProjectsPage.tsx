@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
 import { Plus, FolderGit2 } from "lucide-react";
 import { Button } from "../ui";
@@ -13,7 +13,12 @@ interface ProjectsPageProps {
 }
 
 export function ProjectsPage({ onNavigate }: ProjectsPageProps) {
-  const { projects, selectedProject, selectProject, addProject, deleteProject } = useProject();
+  const { projects, selectedProject, selectProject, addProject, deleteProject, refreshProjects } = useProject();
+
+  // Refresh project list when navigating to this page
+  useEffect(() => {
+    refreshProjects();
+  }, [refreshProjects]);
   const [showAddDialog, setShowAddDialog] = useState(false);
   const [projectToDelete, setProjectToDelete] = useState<Project | null>(null);
   const [isAdding, setIsAdding] = useState(false);
