@@ -8,9 +8,10 @@ import { getProjectStyle } from "../../utils/projectStyle";
 interface ProjectSelectorProps {
   collapsed: boolean;
   onManageProjects?: () => void;
+  onAddProject?: () => void;
 }
 
-export function ProjectSelector({ collapsed, onManageProjects }: ProjectSelectorProps) {
+export function ProjectSelector({ collapsed, onManageProjects, onAddProject }: ProjectSelectorProps) {
   const { selectedProject, projects, selectProject } = useProject();
   const { theme } = useTheme();
   const [isOpen, setIsOpen] = useState(false);
@@ -117,7 +118,7 @@ export function ProjectSelector({ collapsed, onManageProjects }: ProjectSelector
               <button
                 onClick={() => {
                   setIsOpen(false);
-                  // TODO: Open add project dialog
+                  onAddProject?.();
                 }}
                 className="w-full flex items-center gap-2 px-3 py-2 text-sm text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-bg-secondary)] rounded-md transition-colors"
               >

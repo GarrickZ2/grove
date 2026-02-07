@@ -1,7 +1,13 @@
 //! Config API handlers
 
-use axum::{http::StatusCode, Json};
+use axum::body::Body;
+use axum::extract::Query;
+use axum::http::{header, StatusCode};
+use axum::response::Response;
+use axum::Json;
 use serde::{Deserialize, Serialize};
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
 use std::path::Path;
 
 use crate::storage::config::{self, Config, CustomLayoutConfig, ThemeConfig};
@@ -223,22 +229,146 @@ pub async fn list_applications() -> Json<ApplicationsResponse> {
 /// Try to extract bundle identifier from app's Info.plist
 fn get_bundle_id(app_path: &Path) -> Option<String> {
     let plist_path = app_path.join("Contents/Info.plist");
+    get_plist_value(&plist_path, "CFBundleIdentifier")
+}
+
+/// Read a single key from a plist file using macOS `defaults` command
+fn get_plist_value(plist_path: &Path, key: &str) -> Option<String> {
     if !plist_path.exists() {
         return None;
     }
 
-    // Use /usr/libexec/PlistBuddy or defaults to read the plist
     let output = std::process::Command::new("defaults")
-        .args(["read", &plist_path.to_string_lossy(), "CFBundleIdentifier"])
+        .args(["read", &plist_path.to_string_lossy(), key])
         .output()
         .ok()?;
 
     if output.status.success() {
-        let id = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        if !id.is_empty() {
-            return Some(id);
+        let val = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        if !val.is_empty() {
+            return Some(val);
         }
     }
 
     None
+}
+
+// --- App Icon API ---
+
+/// Query params for icon endpoint
+#[derive(Debug, Deserialize)]
+pub struct IconQuery {
+    pub path: String,
+}
+
+/// GET /api/v1/config/applications/icon?path=<app_path>
+/// Returns the app icon as a 64×64 PNG image
+pub async fn get_app_icon(Query(query): Query<IconQuery>) -> Result<Response<Body>, StatusCode> {
+    let app_path = Path::new(&query.path);
+
+    // Validate the path points to a .app bundle
+    if !app_path.exists() || app_path.extension().and_then(|e| e.to_str()) != Some("app") {
+        return Err(StatusCode::NOT_FOUND);
+    }
+
+    // Check disk cache first
+    let cache_path = get_icon_cache_path(&query.path);
+    if let Some(png_data) = read_cached_icon(&cache_path, app_path) {
+        return Ok(png_response(png_data));
+    }
+
+    // Extract the icon
+    let png_data = extract_app_icon(app_path).ok_or(StatusCode::NOT_FOUND)?;
+
+    // Cache to disk
+    if let Some(parent) = cache_path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let _ = std::fs::write(&cache_path, &png_data);
+
+    Ok(png_response(png_data))
+}
+
+fn get_icon_cache_path(app_path_str: &str) -> std::path::PathBuf {
+    let mut hasher = DefaultHasher::new();
+    app_path_str.hash(&mut hasher);
+    let hash = hasher.finish();
+    crate::storage::grove_dir()
+        .join("cache")
+        .join("icons")
+        .join(format!("{:x}.png", hash))
+}
+
+fn read_cached_icon(cache_path: &Path, app_path: &Path) -> Option<Vec<u8>> {
+    let cache_meta = std::fs::metadata(cache_path).ok()?;
+    let plist_path = app_path.join("Contents/Info.plist");
+    let plist_meta = std::fs::metadata(&plist_path).ok()?;
+
+    // Cache is valid if it's newer than the plist
+    if cache_meta.modified().ok()? >= plist_meta.modified().ok()? {
+        std::fs::read(cache_path).ok()
+    } else {
+        None
+    }
+}
+
+fn png_response(data: Vec<u8>) -> Response<Body> {
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, "image/png")
+        .header(header::CACHE_CONTROL, "public, max-age=86400")
+        .body(Body::from(data))
+        .unwrap()
+}
+
+fn extract_app_icon(app_path: &Path) -> Option<Vec<u8>> {
+    // Read CFBundleIconFile (or CFBundleIconName) from Info.plist
+    let plist_path = app_path.join("Contents/Info.plist");
+    let icon_file_name = get_plist_value(&plist_path, "CFBundleIconFile")
+        .or_else(|| get_plist_value(&plist_path, "CFBundleIconName"))?;
+
+    // Ensure .icns extension
+    let icon_name = if icon_file_name.ends_with(".icns") {
+        icon_file_name
+    } else {
+        format!("{}.icns", icon_file_name)
+    };
+    let icns_path = app_path.join("Contents/Resources").join(&icon_name);
+
+    if !icns_path.exists() {
+        return None;
+    }
+
+    // Convert .icns to 64×64 PNG using macOS built-in `sips`
+    let temp_dir = std::env::temp_dir();
+    let temp_png = temp_dir.join(format!("grove_icon_{}.png", std::process::id()));
+
+    let output = std::process::Command::new("sips")
+        .args([
+            "-s",
+            "format",
+            "png",
+            "--resampleHeightWidth",
+            "64",
+            "64",
+            &icns_path.to_string_lossy(),
+            "--out",
+            &temp_png.to_string_lossy(),
+        ])
+        .output()
+        .ok()?;
+
+    if !output.status.success() {
+        let _ = std::fs::remove_file(&temp_png);
+        return None;
+    }
+
+    let data = std::fs::read(&temp_png).ok()?;
+    let _ = std::fs::remove_file(&temp_png);
+
+    if data.is_empty() {
+        None
+    } else {
+        Some(data)
+    }
 }

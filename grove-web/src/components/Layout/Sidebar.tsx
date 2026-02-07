@@ -29,11 +29,12 @@ interface SidebarProps {
   collapsed: boolean;
   onToggleCollapse: () => void;
   onManageProjects: () => void;
+  onAddProject?: () => void;
   onLogoClick?: () => void;
   onNavigate?: (page: string, data?: Record<string, unknown>) => void;
 }
 
-export function Sidebar({ activeItem, onItemClick, collapsed, onToggleCollapse, onManageProjects, onLogoClick, onNavigate }: SidebarProps) {
+export function Sidebar({ activeItem, onItemClick, collapsed, onToggleCollapse, onManageProjects, onAddProject, onLogoClick, onNavigate }: SidebarProps) {
   const [notifOpen, setNotifOpen] = useState(false);
   const { unreadCount } = useNotifications();
 
@@ -67,7 +68,7 @@ export function Sidebar({ activeItem, onItemClick, collapsed, onToggleCollapse, 
 
       {/* Project Selector */}
       <div className="relative border-b border-[var(--color-border)]">
-        <ProjectSelector collapsed={collapsed} onManageProjects={onManageProjects} />
+        <ProjectSelector collapsed={collapsed} onManageProjects={onManageProjects} onAddProject={onAddProject} />
       </div>
 
       {/* Navigation */}

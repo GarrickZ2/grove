@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { ChevronDown, Check, Search, Loader2, AppWindow } from "lucide-react";
 import type { AppInfo } from "../../api";
+import { AppIcon } from "./AppIcon";
 
 export interface AppPickerOption {
   id: string;
@@ -154,18 +155,19 @@ export function AppPicker({
       return {
         label: matchedOption?.option.label || matchedApp.name,
         isInstalled: true,
+        app: matchedApp,
       };
     }
 
     // Check if value is a legacy command
     const matchedByCommand = options.find((opt) => opt.command === value);
     if (matchedByCommand) {
-      return { label: matchedByCommand.label, isInstalled: false };
+      return { label: matchedByCommand.label, isInstalled: false, app: null };
     }
 
     // Custom value
     if (value) {
-      return { label: value, isInstalled: false };
+      return { label: value, isInstalled: false, app: null };
     }
 
     return null;
@@ -296,7 +298,7 @@ export function AppPicker({
                             : "text-[var(--color-text)] hover:bg-[var(--color-bg-tertiary)]"
                           }`}
                       >
-                        <AppWindow className="w-5 h-5 flex-shrink-0 text-[var(--color-text-muted)]" />
+                        <AppIcon app={app} className="w-5 h-5" />
                         <div className="flex-1 text-left min-w-0">
                           <div className="font-medium">{option.label}</div>
                           <div className="text-xs text-[var(--color-text-muted)] truncate">
@@ -325,7 +327,7 @@ export function AppPicker({
                             : "text-[var(--color-text)] hover:bg-[var(--color-bg-tertiary)]"
                           }`}
                       >
-                        <AppWindow className="w-4 h-4 flex-shrink-0 text-[var(--color-text-muted)]" />
+                        <AppIcon app={app} className="w-4 h-4" />
                         <div className="flex-1 text-left min-w-0">
                           <div className="truncate">{app.name}</div>
                         </div>
@@ -365,7 +367,11 @@ export function AppPicker({
         >
           {selectedInfo ? (
             <>
-              <AppWindow className="w-4 h-4 flex-shrink-0 text-[var(--color-text-muted)]" />
+              {selectedInfo.app ? (
+                <AppIcon app={selectedInfo.app} className="w-4 h-4" />
+              ) : (
+                <AppWindow className="w-4 h-4 flex-shrink-0 text-[var(--color-text-muted)]" />
+              )}
               <span className="flex-1 text-left text-[var(--color-text)]">
                 {selectedInfo.label}
               </span>

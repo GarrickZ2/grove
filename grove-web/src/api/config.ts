@@ -60,3 +60,7 @@ export async function listApplications(): Promise<AppInfo[]> {
   const response = await apiClient.get<ApplicationsResponse>('/api/v1/config/applications');
   return response.apps;
 }
+
+export function getAppIconUrl(app: AppInfo): string {
+  return `/api/v1/config/applications/icon?path=${encodeURIComponent(app.path)}`;
+}

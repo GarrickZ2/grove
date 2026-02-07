@@ -4,6 +4,7 @@ import { SettingsPage } from "./components/Config";
 import { DashboardPage } from "./components/Dashboard";
 import { TasksPage } from "./components/Tasks";
 import { ProjectsPage } from "./components/Projects";
+import { AddProjectDialog } from "./components/Projects/AddProjectDialog";
 import { WelcomePage } from "./components/Welcome";
 import { ThemeProvider, ProjectProvider, TerminalThemeProvider, NotificationProvider, useProject } from "./context";
 import { mockConfig } from "./data/mockData";
@@ -14,7 +15,23 @@ function AppContent() {
   const [showWelcome, setShowWelcome] = useState(false);
   const [hasExitedWelcome, setHasExitedWelcome] = useState(false);
   const [navigationData, setNavigationData] = useState<Record<string, unknown> | null>(null);
-  const { selectedProject, currentProjectId, isLoading, selectProject, projects } = useProject();
+  const { selectedProject, currentProjectId, isLoading, selectProject, projects, addProject } = useProject();
+  const [showAddProject, setShowAddProject] = useState(false);
+  const [isAddingProject, setIsAddingProject] = useState(false);
+  const [addProjectError, setAddProjectError] = useState<string | null>(null);
+
+  const handleAddProject = async (path: string, name?: string) => {
+    setIsAddingProject(true);
+    setAddProjectError(null);
+    try {
+      await addProject(path, name);
+      setShowAddProject(false);
+    } catch (err) {
+      setAddProjectError(err instanceof Error ? err.message : "Failed to add project");
+    } finally {
+      setIsAddingProject(false);
+    }
+  };
 
   // Check if we should show welcome page
   const shouldShowWelcome = showWelcome || (currentProjectId === null && !hasExitedWelcome);
@@ -106,6 +123,7 @@ function AppContent() {
         collapsed={sidebarCollapsed}
         onToggleCollapse={() => setSidebarCollapsed(!sidebarCollapsed)}
         onManageProjects={() => setActiveItem("projects")}
+        onAddProject={() => setShowAddProject(true)}
         onLogoClick={() => setShowWelcome(true)}
         onNavigate={handleNavigate}
       />
@@ -114,6 +132,16 @@ function AppContent() {
             {renderContent()}
           </div>
         </main>
+        <AddProjectDialog
+          isOpen={showAddProject}
+          onClose={() => {
+            setShowAddProject(false);
+            setAddProjectError(null);
+          }}
+          onAdd={handleAddProject}
+          isLoading={isAddingProject}
+          externalError={addProjectError}
+        />
       </div>
   );
 }

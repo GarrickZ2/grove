@@ -3,7 +3,7 @@
 export { apiClient, ApiClient } from './client';
 export type { ApiError } from './client';
 
-export { getConfig, patchConfig, listApplications } from './config';
+export { getConfig, patchConfig, listApplications, getAppIconUrl } from './config';
 export type { Config, ConfigPatch, ThemeConfig, LayoutConfig, WebConfig, AppInfo } from './config';
 
 export { checkAllDependencies, checkDependency } from './env';

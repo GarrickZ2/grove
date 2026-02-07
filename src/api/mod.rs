@@ -36,6 +36,10 @@ pub fn create_api_router() -> Router {
             "/config/applications",
             get(handlers::config::list_applications),
         )
+        .route(
+            "/config/applications/icon",
+            get(handlers::config::get_app_icon),
+        )
         // Environment API
         .route("/env/check", get(handlers::env::check_all))
         .route("/env/check/{name}", get(handlers::env::check_one))
