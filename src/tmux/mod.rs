@@ -21,6 +21,19 @@ pub struct SessionEnv {
     pub project_path: String,
 }
 
+impl SessionEnv {
+    /// 将环境变量添加到 Command (通用方法)
+    pub fn apply_to_command(&self, cmd: &mut Command) {
+        cmd.env("GROVE_TASK_ID", &self.task_id);
+        cmd.env("GROVE_TASK_NAME", &self.task_name);
+        cmd.env("GROVE_BRANCH", &self.branch);
+        cmd.env("GROVE_TARGET", &self.target);
+        cmd.env("GROVE_WORKTREE", &self.worktree);
+        cmd.env("GROVE_PROJECT_NAME", &self.project_name);
+        cmd.env("GROVE_PROJECT", &self.project_path);
+    }
+}
+
 /// 创建 session (后台)
 /// 执行: tmux new-session -d -s {name} -c {path} -e VAR=value ...
 pub fn create_session(

@@ -850,14 +850,45 @@ pub struct PendingAttach {
 
 /// 全局应用状态
 pub struct App {
+    // === 核心状态 ===
     /// 当前模式
     pub mode: AppMode,
     /// Workspace 状态
     pub workspace: WorkspaceState,
-    /// 是否应该退出
-    pub should_quit: bool,
     /// Project 页面状态
     pub project: ProjectState,
+    /// Monitor 模式状态
+    pub monitor: MonitorState,
+    /// 是否应该退出
+    pub should_quit: bool,
+
+    // === 对话框状态 ===
+    /// 是否显示 New Task 弹窗
+    pub show_new_task_dialog: bool,
+    /// New Task 输入内容
+    pub new_task_input: String,
+    /// 是否显示帮助面板
+    pub show_help: bool,
+    /// 确认弹窗（弱确认）
+    pub confirm_dialog: Option<ConfirmType>,
+    /// 输入确认弹窗（强确认）
+    pub input_confirm_dialog: Option<InputConfirmData>,
+    /// 分支选择器（Rebase To）
+    pub branch_selector: Option<BranchSelectorData>,
+    /// Merge 方式选择弹窗
+    pub merge_dialog: Option<MergeDialogData>,
+    /// Add Project 弹窗
+    pub add_project_dialog: Option<AddProjectData>,
+    /// Delete Project 弹窗
+    pub delete_project_dialog: Option<DeleteProjectData>,
+    /// Action Palette
+    pub action_palette: Option<ActionPaletteData>,
+    /// Commit 弹窗
+    pub commit_dialog: Option<CommitDialogData>,
+    /// Config 配置面板
+    pub config_panel: Option<ConfigPanelData>,
+
+    // === 主题与 UI ===
     /// Toast 提示
     pub toast: Option<Toast>,
     /// 当前主题
@@ -870,62 +901,40 @@ pub struct App {
     pub theme_selector_index: usize,
     /// 上次检测到的系统主题（用于 Auto 模式检测变化）
     last_system_dark: bool,
-    /// 是否显示 New Task 弹窗
-    pub show_new_task_dialog: bool,
-    /// New Task 输入内容
-    pub new_task_input: String,
-    /// 当前目标分支 (用于显示 "from {branch}")
-    pub target_branch: String,
-    /// 待 attach 的 session (暂停 TUI 后执行，完成后恢复 TUI)
-    pub pending_attach: Option<PendingAttach>,
-    /// 当前全局 multiplexer 设置
-    pub multiplexer: Multiplexer,
-    /// 确认弹窗（弱确认）
-    pub confirm_dialog: Option<ConfirmType>,
-    /// 输入确认弹窗（强确认）
-    pub input_confirm_dialog: Option<InputConfirmData>,
-    /// 分支选择器（Rebase To）
-    pub branch_selector: Option<BranchSelectorData>,
-    /// 待执行的操作（确认后执行）
-    pending_action: Option<PendingAction>,
-    /// 是否显示帮助面板
-    pub show_help: bool,
-    /// Merge 方式选择弹窗
-    pub merge_dialog: Option<MergeDialogData>,
-    /// Add Project 弹窗
-    pub add_project_dialog: Option<AddProjectData>,
-    /// Delete Project 弹窗
-    pub delete_project_dialog: Option<DeleteProjectData>,
-    /// Action Palette
-    pub action_palette: Option<ActionPaletteData>,
-    /// Commit 弹窗
-    pub commit_dialog: Option<CommitDialogData>,
-    /// Hook 通知数据 (task_id -> HookEntry) - 当前项目
-    pub notifications: HashMap<String, HookEntry>,
-    /// Workspace 级别的通知数据 (project_name -> task_id -> HookEntry)
-    pub workspace_notifications: HashMap<String, HashMap<String, HookEntry>>,
-    /// Config 配置面板
-    pub config_panel: Option<ConfigPanelData>,
-    /// 当前布局预设
-    pub task_layout: TaskLayout,
-    /// Agent 启动命令
-    pub agent_command: String,
-    /// 自定义布局（当 task_layout == Custom 时使用）
-    pub custom_layout: Option<CustomLayout>,
-    /// Update info (version check result)
-    pub update_info: Option<UpdateInfo>,
-    /// 后台操作结果通道
-    pub bg_result_rx: Option<mpsc::Receiver<BgResult>>,
-    /// Loading 消息（后台操作进行中时显示）
-    pub loading_message: Option<String>,
     /// 可点击区域缓存（每帧渲染时填充）
     pub click_areas: ClickAreas,
     /// 上次点击时间（双击检测）
     pub last_click_time: Instant,
     /// 上次点击位置（双击检测）
     pub last_click_pos: (u16, u16),
-    /// Monitor 模式状态
-    pub monitor: MonitorState,
+
+    // === 配置 ===
+    /// 当前全局 multiplexer 设置
+    pub multiplexer: Multiplexer,
+    /// 当前布局预设
+    pub task_layout: TaskLayout,
+    /// 自定义布局（当 task_layout == Custom 时使用）
+    pub custom_layout: Option<CustomLayout>,
+    /// Agent 启动命令
+    pub agent_command: String,
+
+    // === 异步操作 ===
+    /// 待 attach 的 session (暂停 TUI 后执行，完成后恢复 TUI)
+    pub pending_attach: Option<PendingAttach>,
+    /// 待执行的操作（确认后执行）
+    pending_action: Option<PendingAction>,
+    /// 后台操作结果通道
+    pub bg_result_rx: Option<mpsc::Receiver<BgResult>>,
+    /// Loading 消息（后台操作进行中时显示）
+    pub loading_message: Option<String>,
+    /// 当前目标分支 (用于显示 "from {branch}")
+    pub target_branch: String,
+
+    // === 通知与 Review ===
+    /// Hook 通知数据 (task_id -> HookEntry) - 当前项目
+    pub notifications: HashMap<String, HookEntry>,
+    /// Workspace 级别的通知数据 (project_name -> task_id -> HookEntry)
+    pub workspace_notifications: HashMap<String, HashMap<String, HookEntry>>,
     /// 正在 review 的 task (task_id → URL, None 表示 URL 尚未就绪)
     pub reviewing_tasks: HashMap<String, Option<String>>,
     /// 所有 difit 线程共享的 result channel
@@ -934,6 +943,10 @@ pub struct App {
     /// 所有 difit 线程共享的 URL 更新 channel: (task_id, url)
     pub difit_url_tx: mpsc::Sender<(String, String)>,
     pub difit_url_rx: mpsc::Receiver<(String, String)>,
+
+    // === 其他 ===
+    /// Update info (version check result)
+    pub update_info: Option<UpdateInfo>,
     /// File system watcher for tracking task activity
     pub file_watcher: Option<FileWatcher>,
 }

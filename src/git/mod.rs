@@ -35,13 +35,7 @@ fn git_cmd_unit(path: &str, args: &[&str]) -> Result<(), String> {
 
 /// 执行 git 命令，仅检查是否成功 (用于 bool 检查)
 fn git_cmd_check(path: &str, args: &[&str]) -> bool {
-    Command::new("git")
-        .current_dir(path)
-        .args(args)
-        .stdin(Stdio::null())
-        .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false)
+    git_cmd(path, args).is_ok()
 }
 
 /// 解析 git diff --numstat 输出为 (additions, deletions)
@@ -255,12 +249,11 @@ pub fn get_head_short(repo_path: &str) -> Result<String, String> {
     git_cmd(repo_path, &["rev-parse", "--short", "HEAD"]).map(|s| s.trim().to_string())
 }
 
-/// 执行 squash merge
-/// 执行: git merge --squash {branch}
-pub fn merge_squash(repo_path: &str, branch: &str) -> Result<(), String> {
+/// 通用 merge 命令执行函数 (带 merge 错误格式化)
+fn git_merge_cmd(repo_path: &str, args: &[&str]) -> Result<(), String> {
     let output = Command::new("git")
         .current_dir(repo_path)
-        .args(["merge", "--squash", branch])
+        .args(args)
         .stdin(Stdio::null())
         .output()
         .map_err(|e| format!("Failed to execute git: {}", e))?;
@@ -274,23 +267,16 @@ pub fn merge_squash(repo_path: &str, branch: &str) -> Result<(), String> {
     }
 }
 
+/// 执行 squash merge
+/// 执行: git merge --squash {branch}
+pub fn merge_squash(repo_path: &str, branch: &str) -> Result<(), String> {
+    git_merge_cmd(repo_path, &["merge", "--squash", branch])
+}
+
 /// 执行 merge commit（保留历史）
 /// 执行: git merge --no-ff {branch} -m {message}
 pub fn merge_no_ff(repo_path: &str, branch: &str, message: &str) -> Result<(), String> {
-    let output = Command::new("git")
-        .current_dir(repo_path)
-        .args(["merge", "--no-ff", branch, "-m", message])
-        .stdin(Stdio::null())
-        .output()
-        .map_err(|e| format!("Failed to execute git: {}", e))?;
-
-    if output.status.success() {
-        Ok(())
-    } else {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        Err(format_merge_error(&stdout, &stderr))
-    }
+    git_merge_cmd(repo_path, &["merge", "--no-ff", branch, "-m", message])
 }
 
 /// 格式化 merge 错误信息

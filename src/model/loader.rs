@@ -20,7 +20,16 @@ pub fn load_worktrees(project_path: &str) -> (Vec<Worktree>, Vec<Worktree>, Vec<
     let global_mux = crate::storage::config::load_config().multiplexer;
 
     // 3. 加载 tasks.toml (活跃任务)
-    let active_tasks = tasks::load_tasks(&project_key).unwrap_or_default();
+    let active_tasks = match tasks::load_tasks(&project_key) {
+        Ok(t) => t,
+        Err(e) => {
+            eprintln!(
+                "Warning: failed to load active tasks for {}: {}",
+                project_key, e
+            );
+            Vec::new()
+        }
+    };
 
     // 4. 获取当前分支
     let current_branch = git::current_branch(project_path).unwrap_or_else(|_| "main".to_string());
@@ -58,7 +67,16 @@ pub fn load_worktrees(project_path: &str) -> (Vec<Worktree>, Vec<Worktree>, Vec<
 pub fn load_archived_worktrees(project_path: &str) -> Vec<Worktree> {
     let project_key = project_hash(project_path);
 
-    let archived_tasks = tasks::load_archived_tasks(&project_key).unwrap_or_default();
+    let archived_tasks = match tasks::load_archived_tasks(&project_key) {
+        Ok(t) => t,
+        Err(e) => {
+            eprintln!(
+                "Warning: failed to load archived tasks for {}: {}",
+                project_key, e
+            );
+            Vec::new()
+        }
+    };
 
     archived_tasks
         .into_iter()

@@ -72,13 +72,7 @@ pub fn attach_session(
     }
 
     if let Some(env) = env {
-        cmd.env("GROVE_TASK_ID", &env.task_id);
-        cmd.env("GROVE_TASK_NAME", &env.task_name);
-        cmd.env("GROVE_BRANCH", &env.branch);
-        cmd.env("GROVE_TARGET", &env.target);
-        cmd.env("GROVE_WORKTREE", &env.worktree);
-        cmd.env("GROVE_PROJECT_NAME", &env.project_name);
-        cmd.env("GROVE_PROJECT", &env.project_path);
+        env.apply_to_command(&mut cmd);
     }
 
     let status = cmd.status().map_err(|e| format!("Zellij failed: {}", e))?;

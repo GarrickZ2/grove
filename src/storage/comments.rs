@@ -62,26 +62,6 @@ impl CommentsData {
         }
         (open, resolved, not_resolved)
     }
-
-    /// 根据 ID 查找 Comment
-    #[allow(dead_code)]
-    pub fn find_by_id(&mut self, id: u32) -> Option<&mut Comment> {
-        self.comments.iter_mut().find(|c| c.id == id)
-    }
-
-    /// 添加新 Comment，自动分配 ID
-    #[allow(dead_code)]
-    pub fn add_comment(&mut self, location: String, content: String) -> u32 {
-        let id = self.comments.iter().map(|c| c.id).max().unwrap_or(0) + 1;
-        self.comments.push(Comment {
-            id,
-            location,
-            content,
-            status: CommentStatus::Open,
-            reply: None,
-        });
-        id
-    }
 }
 
 /// AI 回复数据（按 location 索引）

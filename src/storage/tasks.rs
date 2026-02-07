@@ -63,9 +63,18 @@ fn tasks_file_path(project: &str) -> io::Result<PathBuf> {
     Ok(dir.join("tasks.toml"))
 }
 
-/// 加载任务列表
-pub fn load_tasks(project: &str) -> io::Result<Vec<Task>> {
-    let path = tasks_file_path(project)?;
+/// 任务类型 (活跃 / 归档)
+enum TasksKind {
+    Active,
+    Archived,
+}
+
+/// 通用加载任务函数
+fn load_tasks_generic(project: &str, kind: TasksKind) -> io::Result<Vec<Task>> {
+    let path = match kind {
+        TasksKind::Active => tasks_file_path(project)?,
+        TasksKind::Archived => archived_file_path(project)?,
+    };
 
     if !path.exists() {
         return Ok(Vec::new());
@@ -75,15 +84,28 @@ pub fn load_tasks(project: &str) -> io::Result<Vec<Task>> {
     Ok(tasks_file.tasks)
 }
 
-/// 保存任务列表
-pub fn save_tasks(project: &str, tasks: &[Task]) -> io::Result<()> {
-    let path = tasks_file_path(project)?;
+/// 通用保存任务函数
+fn save_tasks_generic(project: &str, tasks: &[Task], kind: TasksKind) -> io::Result<()> {
+    let path = match kind {
+        TasksKind::Active => tasks_file_path(project)?,
+        TasksKind::Archived => archived_file_path(project)?,
+    };
 
     let tasks_file = TasksFile {
         tasks: tasks.to_vec(),
     };
 
     super::save_toml(&path, &tasks_file)
+}
+
+/// 加载任务列表
+pub fn load_tasks(project: &str) -> io::Result<Vec<Task>> {
+    load_tasks_generic(project, TasksKind::Active)
+}
+
+/// 保存任务列表
+pub fn save_tasks(project: &str, tasks: &[Task]) -> io::Result<()> {
+    save_tasks_generic(project, tasks, TasksKind::Active)
 }
 
 /// 添加单个任务
@@ -103,25 +125,12 @@ fn archived_file_path(project: &str) -> io::Result<PathBuf> {
 
 /// 加载归档任务列表
 pub fn load_archived_tasks(project: &str) -> io::Result<Vec<Task>> {
-    let path = archived_file_path(project)?;
-
-    if !path.exists() {
-        return Ok(Vec::new());
-    }
-
-    let tasks_file: TasksFile = super::load_toml(&path)?;
-    Ok(tasks_file.tasks)
+    load_tasks_generic(project, TasksKind::Archived)
 }
 
 /// 保存归档任务列表
 pub fn save_archived_tasks(project: &str, tasks: &[Task]) -> io::Result<()> {
-    let path = archived_file_path(project)?;
-
-    let tasks_file = TasksFile {
-        tasks: tasks.to_vec(),
-    };
-
-    super::save_toml(&path, &tasks_file)
+    save_tasks_generic(project, tasks, TasksKind::Archived)
 }
 
 /// 归档任务 (tasks.toml → archived.toml)
