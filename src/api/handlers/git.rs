@@ -101,7 +101,7 @@ fn find_project_path(id: &str) -> Result<String, StatusCode> {
 }
 
 /// Execute git command and return result
-fn git_cmd(path: &str, args: &[&str]) -> Result<String, String> {
+fn git_cmd(path: &str, args: &[&str]) -> crate::error::Result<String> {
     use std::process::{Command, Stdio};
 
     let output = Command::new("git")
@@ -109,13 +109,13 @@ fn git_cmd(path: &str, args: &[&str]) -> Result<String, String> {
         .args(args)
         .stdin(Stdio::null())
         .output()
-        .map_err(|e| format!("Failed to execute git: {}", e))?;
+        .map_err(|e| crate::error::GroveError::git(format!("Failed to execute git: {}", e)))?;
 
     if output.status.success() {
         Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
     } else {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        Err(stderr.trim().to_string())
+        Err(crate::error::GroveError::git(stderr.trim().to_string()))
     }
 }
 
@@ -423,7 +423,7 @@ pub async fn create_branch(
     if let Err(e) = git_cmd(&project_path, &["branch", &req.name, &base]) {
         return Ok(Json(GitOpResponse {
             success: false,
-            message: e,
+            message: e.to_string(),
         }));
     }
 
@@ -462,7 +462,8 @@ pub async fn delete_branch(
         })),
         Err(e) => {
             // If it fails because not fully merged, suggest force delete
-            if e.contains("not fully merged") {
+            let error_msg = e.to_string();
+            if error_msg.contains("not fully merged") {
                 Ok(Json(GitOpResponse {
                     success: false,
                     message: format!(
@@ -473,7 +474,7 @@ pub async fn delete_branch(
             } else {
                 Ok(Json(GitOpResponse {
                     success: false,
-                    message: e,
+                    message: error_msg,
                 }))
             }
         }

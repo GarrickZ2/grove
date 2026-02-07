@@ -3,6 +3,7 @@
 use std::fs;
 use std::path::PathBuf;
 
+use crate::error::{GroveError, Result};
 use crate::tmux::layout::{CustomLayout, LayoutNode, PaneRole, SplitDirection, TaskLayout};
 
 /// 获取 session layout 目录
@@ -242,10 +243,11 @@ fn generate_node_kdl_sized(
 }
 
 /// 写入 session layout KDL 文件
-pub fn write_session_layout(session_name: &str, kdl_content: &str) -> Result<String, String> {
+pub fn write_session_layout(session_name: &str, kdl_content: &str) -> Result<String> {
     let dir = session_layout_dir();
     let path = dir.join(format!("{}.kdl", session_name));
-    fs::write(&path, kdl_content).map_err(|e| format!("Failed to write layout file: {}", e))?;
+    fs::write(&path, kdl_content)
+        .map_err(|e| GroveError::storage(format!("Failed to write layout file: {}", e)))?;
     Ok(path.to_string_lossy().to_string())
 }
 

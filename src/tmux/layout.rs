@@ -3,6 +3,8 @@
 use serde::{Deserialize, Serialize};
 use std::process::Command;
 
+use crate::error::{GroveError, Result};
+
 // ── Custom layout data model ─────────────────────────────────────────
 
 /// Pane 角色（叶子节点）
@@ -190,17 +192,17 @@ impl TaskLayout {
 // ── apply layout functions ───────────────────────────────────────────
 
 /// 查询 session 中所有 pane 的 ID（%N 格式，不受 base-index 影响）
-fn list_pane_ids(session: &str) -> Result<Vec<String>, String> {
+fn list_pane_ids(session: &str) -> Result<Vec<String>> {
     let output = Command::new("tmux")
         .args(["list-panes", "-t", session, "-F", "#{pane_id}"])
         .output()
-        .map_err(|e| format!("list-panes failed: {}", e))?;
+        .map_err(|e| GroveError::session(format!("list-panes failed: {}", e)))?;
 
     if !output.status.success() {
-        return Err(format!(
+        return Err(GroveError::session(format!(
             "list-panes failed: {}",
             String::from_utf8_lossy(&output.stderr).trim()
-        ));
+        )));
     }
 
     Ok(String::from_utf8_lossy(&output.stdout)
@@ -218,14 +220,16 @@ pub fn apply_layout(
     layout: &TaskLayout,
     agent_command: &str,
     custom_layout: Option<&CustomLayout>,
-) -> Result<(), String> {
+) -> Result<()> {
     match layout {
         TaskLayout::Single => Ok(()),
 
         TaskLayout::Agent => {
             // 单窗口，直接发送 agent 命令
             let panes = list_pane_ids(session)?;
-            let agent = panes.first().ok_or("no pane found")?;
+            let agent = panes
+                .first()
+                .ok_or_else(|| GroveError::session("no pane found"))?;
             if !agent_command.is_empty() {
                 send_keys(agent, agent_command)?;
             }
@@ -238,7 +242,10 @@ pub fn apply_layout(
             // |   (60%)     |   (40%)     |
             // +-------------+-------------+
             let panes = list_pane_ids(session)?;
-            let agent = panes.first().ok_or("no pane found")?.clone();
+            let agent = panes
+                .first()
+                .ok_or_else(|| GroveError::session("no pane found"))?
+                .clone();
 
             split_window_horizontal(&agent, working_dir, 40)?;
 
@@ -257,14 +264,20 @@ pub fn apply_layout(
             // |             |   shell     |
             // +-------------+-------------+
             let panes = list_pane_ids(session)?;
-            let agent = panes.first().ok_or("no pane found")?.clone();
+            let agent = panes
+                .first()
+                .ok_or_else(|| GroveError::session("no pane found"))?
+                .clone();
 
             // split-h: agent | right
             split_window_horizontal(&agent, working_dir, 40)?;
 
             // 查询 split 后的 pane 列表，第二个就是 right pane
             let panes = list_pane_ids(session)?;
-            let grove = panes.get(1).ok_or("split failed: no second pane")?.clone();
+            let grove = panes
+                .get(1)
+                .ok_or_else(|| GroveError::session("split failed: no second pane"))?
+                .clone();
 
             // split-v right: grove | shell
             split_window_vertical(&grove, working_dir, 60)?;
@@ -285,14 +298,20 @@ pub fn apply_layout(
             // |   (40%)     |             |
             // +-------------+-------------+
             let panes = list_pane_ids(session)?;
-            let grove = panes.first().ok_or("no pane found")?.clone();
+            let grove = panes
+                .first()
+                .ok_or_else(|| GroveError::session("no pane found"))?
+                .clone();
 
             // split-h: grove (40%) | agent (60%)
             split_window_horizontal(&grove, working_dir, 60)?;
 
             // 查询 split 后的 pane 列表，第二个是 agent pane
             let panes = list_pane_ids(session)?;
-            let agent = panes.get(1).ok_or("split failed: no second pane")?.clone();
+            let agent = panes
+                .get(1)
+                .ok_or_else(|| GroveError::session("split failed: no second pane"))?
+                .clone();
 
             send_keys(&grove, "grove")?;
             if !agent_command.is_empty() {
@@ -303,7 +322,8 @@ pub fn apply_layout(
         }
 
         TaskLayout::Custom => {
-            let cl = custom_layout.ok_or("No custom layout configured")?;
+            let cl =
+                custom_layout.ok_or_else(|| GroveError::config("No custom layout configured"))?;
             apply_custom_layout(session, working_dir, cl, agent_command)
         }
     }
@@ -315,9 +335,12 @@ pub fn apply_custom_layout(
     working_dir: &str,
     layout: &CustomLayout,
     agent_command: &str,
-) -> Result<(), String> {
+) -> Result<()> {
     let panes = list_pane_ids(session)?;
-    let root_pane = panes.first().ok_or("no pane found")?.clone();
+    let root_pane = panes
+        .first()
+        .ok_or_else(|| GroveError::session("no pane found"))?
+        .clone();
 
     let mut first_agent_pane: Option<String> = None;
 
@@ -345,7 +368,7 @@ fn apply_node(
     target_pane: &str,
     agent_command: &str,
     first_agent: &mut Option<String>,
-) -> Result<(), String> {
+) -> Result<()> {
     match node {
         LayoutNode::Pane { pane } => {
             // 在 target pane 上发送命令
@@ -401,7 +424,7 @@ fn apply_node(
             let new_pane = after
                 .into_iter()
                 .find(|p| !before.contains(p))
-                .ok_or("split failed: no new pane found")?;
+                .ok_or_else(|| GroveError::session("split failed: no new pane found"))?;
 
             // 递归处理两个子节点
             apply_node(
@@ -428,26 +451,26 @@ fn apply_node(
 }
 
 /// 执行 tmux 命令的通用辅助函数
-fn tmux_cmd(args: &[&str]) -> Result<(), String> {
+fn tmux_cmd(args: &[&str]) -> Result<()> {
     let output = Command::new("tmux")
         .args(args)
         .output()
-        .map_err(|e| format!("tmux {} failed: {}", args[0], e))?;
+        .map_err(|e| GroveError::session(format!("tmux {} failed: {}", args[0], e)))?;
 
     if output.status.success() {
         Ok(())
     } else {
-        Err(format!(
+        Err(GroveError::session(format!(
             "tmux {} failed: {}",
             args[0],
             String::from_utf8_lossy(&output.stderr).trim()
-        ))
+        )))
     }
 }
 
 /// tmux split-window -h (水平分割，创建左右布局)
 /// target: pane ID（%N 格式）
-fn split_window_horizontal(target: &str, working_dir: &str, percentage: u8) -> Result<(), String> {
+fn split_window_horizontal(target: &str, working_dir: &str, percentage: u8) -> Result<()> {
     let pct = percentage.to_string();
     tmux_cmd(&[
         "split-window",
@@ -463,7 +486,7 @@ fn split_window_horizontal(target: &str, working_dir: &str, percentage: u8) -> R
 
 /// tmux split-window -v (纵向分割，创建上下布局)
 /// target: pane ID（%N 格式）
-fn split_window_vertical(target: &str, working_dir: &str, percentage: u8) -> Result<(), String> {
+fn split_window_vertical(target: &str, working_dir: &str, percentage: u8) -> Result<()> {
     let pct = percentage.to_string();
     tmux_cmd(&[
         "split-window",
@@ -479,13 +502,13 @@ fn split_window_vertical(target: &str, working_dir: &str, percentage: u8) -> Res
 
 /// tmux send-keys
 /// target: pane ID（%N 格式）
-fn send_keys(target: &str, command: &str) -> Result<(), String> {
+fn send_keys(target: &str, command: &str) -> Result<()> {
     tmux_cmd(&["send-keys", "-t", target, command, "Enter"])
 }
 
 /// tmux select-pane
 /// target: pane ID（%N 格式）
-fn select_pane(target: &str) -> Result<(), String> {
+fn select_pane(target: &str) -> Result<()> {
     tmux_cmd(&["select-pane", "-t", target])
 }
 

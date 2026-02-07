@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::fs;
 
+use crate::error::Result;
 use crate::storage::{self, tasks, workspace::project_hash};
 
 /// 通知级别
@@ -114,13 +115,14 @@ pub fn load_hooks(project_key: &str) -> HooksFile {
 }
 
 /// 保存项目的 hooks 文件
-pub fn save_hooks(project_key: &str, hooks: &HooksFile) -> Result<(), String> {
+pub fn save_hooks(project_key: &str, hooks: &HooksFile) -> Result<()> {
     let project_dir = storage::grove_dir().join("projects").join(project_key);
-    fs::create_dir_all(&project_dir).map_err(|e| e.to_string())?;
+    fs::create_dir_all(&project_dir)?;
 
     let hooks_path = project_dir.join("hooks.toml");
-    let content = toml::to_string_pretty(hooks).map_err(|e| e.to_string())?;
-    fs::write(&hooks_path, content).map_err(|e| e.to_string())
+    let content = toml::to_string_pretty(hooks)?;
+    fs::write(&hooks_path, content)?;
+    Ok(())
 }
 
 /// 删除指定 task 的 hook 通知
