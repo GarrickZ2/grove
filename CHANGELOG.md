@@ -5,6 +5,30 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.5] - 2026-02-06
+
+### Added
+
+- **Blitz mode** — cross-project Active Tasks aggregation view
+  - Aggregates active tasks from all registered projects into a single list
+  - Card-style task items with project name badges and code change stats
+  - Notification-aware sorting (critical > warn > notice), then by updatedAt
+  - Selected task floats to top with smooth layout animation
+  - Aurora background effect with slow rotating conic gradient
+  - Staggered entrance animation with amber shimmer loading effect
+  - Full keyboard shortcut support (j/k navigation, all task actions)
+  - Reuses TaskInfoPanel, TaskView, and all dialog components from Zen mode
+- **LogoBrand component** — artistic mode indicator replacing plain logo text
+  - Zen: Leaf icon with emerald-to-violet gradient, vertical fade transition
+  - Blitz: Zap icon with amber accent, horizontal slide, lightning badge on logo
+  - Click to toggle between Zen and Blitz modes
+- **Mode transition effects** — component-level slide animations between Zen and Blitz
+
+### Fixed
+
+- **Duplicate projects in list** — `load_projects()` now deduplicates by path, keeping the newest entry
+- **Infinite API loop on Manage Projects** — prevented re-render cycle caused by `isLoading` state toggling on refresh
+
 ## [0.4.4] - 2026-02-06
 
 ### Added

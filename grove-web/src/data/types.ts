@@ -129,3 +129,10 @@ export interface AIData {
 
 // Task filter type
 export type TaskFilter = 'active' | 'archived';
+
+// Blitz mode: task with project context
+export interface BlitzTask {
+  task: Task;
+  projectId: string;
+  projectName: string;
+}

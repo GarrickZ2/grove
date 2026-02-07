@@ -103,6 +103,10 @@ pub fn load_projects() -> io::Result<Vec<RegisteredProject>> {
     // 按添加时间排序（最近添加的在前）
     projects.sort_by(|a, b| b.added_at.cmp(&a.added_at));
 
+    // 按路径去重（保留较新的，即排序后的第一个）
+    let mut seen = std::collections::HashSet::new();
+    projects.retain(|p| seen.insert(p.path.clone()));
+
     Ok(projects)
 }
 

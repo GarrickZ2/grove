@@ -1,18 +1,22 @@
 import { useState, useEffect } from "react";
+import { motion, AnimatePresence } from "framer-motion";
 import { Sidebar } from "./components/Layout/Sidebar";
 import { SettingsPage } from "./components/Config";
 import { DashboardPage } from "./components/Dashboard";
 import { TasksPage } from "./components/Tasks";
+import { BlitzPage } from "./components/Blitz";
 import { ProjectsPage } from "./components/Projects";
 import { AddProjectDialog } from "./components/Projects/AddProjectDialog";
 import { WelcomePage } from "./components/Welcome";
 import { ThemeProvider, ProjectProvider, TerminalThemeProvider, NotificationProvider, useProject } from "./context";
 import { mockConfig } from "./data/mockData";
 
+export type TasksMode = "zen" | "blitz";
+
 function AppContent() {
   const [activeItem, setActiveItem] = useState("dashboard");
+  const [tasksMode, setTasksMode] = useState<TasksMode>("zen");
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
-  const [showWelcome, setShowWelcome] = useState(false);
   const [hasExitedWelcome, setHasExitedWelcome] = useState(false);
   const [navigationData, setNavigationData] = useState<Record<string, unknown> | null>(null);
   const { selectedProject, currentProjectId, isLoading, selectProject, projects, addProject } = useProject();
@@ -34,7 +38,7 @@ function AppContent() {
   };
 
   // Check if we should show welcome page
-  const shouldShowWelcome = showWelcome || (currentProjectId === null && !hasExitedWelcome);
+  const shouldShowWelcome = currentProjectId === null && !hasExitedWelcome;
 
   // Update document title based on current view
   useEffect(() => {
@@ -48,13 +52,11 @@ function AppContent() {
   }, [selectedProject, shouldShowWelcome]);
 
   const handleGetStarted = () => {
-    setShowWelcome(false);
     setHasExitedWelcome(true);
-    setActiveItem("projects"); // Go to projects management page
+    setActiveItem("projects");
   };
 
   const handleNavigate = (page: string, data?: Record<string, unknown>) => {
-    // Switch project if specified in navigation data
     if (data?.projectId) {
       const target = projects.find((p) => p.id === data.projectId);
       if (target) {
@@ -74,9 +76,7 @@ function AppContent() {
     );
   }
 
-  // Show Welcome page if:
-  // 1. User explicitly requested it (clicked logo)
-  // 2. Not running in a git repo directory (currentProjectId is null) AND user hasn't clicked "Get Started"
+  // Show Welcome page
   if (shouldShowWelcome) {
     return <WelcomePage onGetStarted={handleGetStarted} />;
   }
@@ -112,37 +112,61 @@ function AppContent() {
     }
   };
 
-  // Tasks page needs full width, other pages have max-width
   const isFullWidthPage = activeItem === "tasks";
 
   return (
-    <div className="flex h-screen bg-[var(--color-bg)]">
-      <Sidebar
-        activeItem={activeItem}
-        onItemClick={setActiveItem}
-        collapsed={sidebarCollapsed}
-        onToggleCollapse={() => setSidebarCollapsed(!sidebarCollapsed)}
-        onManageProjects={() => setActiveItem("projects")}
-        onAddProject={() => setShowAddProject(true)}
-        onLogoClick={() => setShowWelcome(true)}
-        onNavigate={handleNavigate}
+    <div className="flex h-screen bg-[var(--color-bg)] overflow-hidden">
+      <AnimatePresence mode="wait">
+        {tasksMode === "blitz" ? (
+          <motion.div
+            key="blitz"
+            className="flex w-full h-full"
+            initial={{ opacity: 0, x: 40 }}
+            animate={{ opacity: 1, x: 0 }}
+            exit={{ opacity: 0, x: 40 }}
+            transition={{ duration: 0.3, ease: [0.25, 1, 0.5, 1] }}
+          >
+            <BlitzPage onSwitchToZen={() => setTasksMode("zen")} />
+          </motion.div>
+        ) : (
+          <motion.div
+            key="zen"
+            className="flex w-full h-full"
+            initial={{ opacity: 0, x: -40 }}
+            animate={{ opacity: 1, x: 0 }}
+            exit={{ opacity: 0, x: -40 }}
+            transition={{ duration: 0.3, ease: [0.25, 1, 0.5, 1] }}
+          >
+            <Sidebar
+              activeItem={activeItem}
+              onItemClick={setActiveItem}
+              collapsed={sidebarCollapsed}
+              onToggleCollapse={() => setSidebarCollapsed(!sidebarCollapsed)}
+              onManageProjects={() => setActiveItem("projects")}
+              onAddProject={() => setShowAddProject(true)}
+              onNavigate={handleNavigate}
+              tasksMode={tasksMode}
+              onTasksModeChange={setTasksMode}
+            />
+            <main className={`flex-1 ${isFullWidthPage ? "overflow-hidden" : "overflow-y-auto"}`}>
+              <div className={isFullWidthPage ? "h-full p-6" : "max-w-5xl mx-auto p-6"}>
+                {renderContent()}
+              </div>
+            </main>
+          </motion.div>
+        )}
+      </AnimatePresence>
+      <AddProjectDialog
+        isOpen={showAddProject}
+        onClose={() => {
+          setShowAddProject(false);
+          setAddProjectError(null);
+        }}
+        onAdd={handleAddProject}
+        isLoading={isAddingProject}
+        externalError={addProjectError}
       />
-        <main className={`flex-1 ${isFullWidthPage ? "overflow-hidden" : "overflow-y-auto"}`}>
-          <div className={isFullWidthPage ? "h-full p-6" : "max-w-5xl mx-auto p-6"}>
-            {renderContent()}
-          </div>
-        </main>
-        <AddProjectDialog
-          isOpen={showAddProject}
-          onClose={() => {
-            setShowAddProject(false);
-            setAddProjectError(null);
-          }}
-          onAdd={handleAddProject}
-          isLoading={isAddingProject}
-          externalError={addProjectError}
-        />
-      </div>
+    </div>
   );
 }
 

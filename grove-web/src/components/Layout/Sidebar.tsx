@@ -10,7 +10,9 @@ import {
 } from "lucide-react";
 import { ProjectSelector } from "./ProjectSelector";
 import { NotificationPopover } from "./NotificationPopover";
+import { LogoBrand } from "./LogoBrand";
 import { useNotifications } from "../../context";
+import type { TasksMode } from "../../App";
 
 interface NavItem {
   id: string;
@@ -30,11 +32,12 @@ interface SidebarProps {
   onToggleCollapse: () => void;
   onManageProjects: () => void;
   onAddProject?: () => void;
-  onLogoClick?: () => void;
   onNavigate?: (page: string, data?: Record<string, unknown>) => void;
+  tasksMode: TasksMode;
+  onTasksModeChange: (mode: TasksMode) => void;
 }
 
-export function Sidebar({ activeItem, onItemClick, collapsed, onToggleCollapse, onManageProjects, onAddProject, onLogoClick, onNavigate }: SidebarProps) {
+export function Sidebar({ activeItem, onItemClick, collapsed, onToggleCollapse, onManageProjects, onAddProject, onNavigate, tasksMode, onTasksModeChange }: SidebarProps) {
   const [notifOpen, setNotifOpen] = useState(false);
   const { unreadCount } = useNotifications();
 
@@ -45,25 +48,22 @@ export function Sidebar({ activeItem, onItemClick, collapsed, onToggleCollapse, 
       transition={{ duration: 0.2, ease: "easeInOut" }}
       className="h-screen bg-[var(--color-bg)] border-r border-[var(--color-border)] flex flex-col flex-shrink-0"
     >
-      {/* Logo */}
+      {/* Logo + Mode Brand */}
       <div className="p-4">
-        <button
-          onClick={onLogoClick}
-          className="flex items-center gap-3 hover:opacity-80 transition-opacity"
-          title="Back to Welcome"
-        >
-          <img src="/logo.png" alt="Grove" className="w-10 h-10 rounded-xl flex-shrink-0" />
-          {!collapsed && (
-            <motion.span
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              className="text-lg font-bold bg-gradient-to-r from-[var(--color-highlight)] to-[var(--color-accent)] bg-clip-text text-transparent"
-            >
-              GROVE
-            </motion.span>
-          )}
-        </button>
+        {collapsed ? (
+          <button
+            onClick={() => onTasksModeChange(tasksMode === "zen" ? "blitz" : "zen")}
+            className="flex items-center justify-center"
+            title={`Switch to ${tasksMode === "zen" ? "Blitz" : "Zen"} mode`}
+          >
+            <img src="/logo.png" alt="Grove" className="w-10 h-10 rounded-xl" />
+          </button>
+        ) : (
+          <LogoBrand
+            mode={tasksMode}
+            onToggle={() => onTasksModeChange(tasksMode === "zen" ? "blitz" : "zen")}
+          />
+        )}
       </div>
 
       {/* Project Selector */}

@@ -122,7 +122,7 @@ A full-featured terminal interface built with Ratatui. Navigate tasks, preview G
 
 ### Web UI — `grove web`
 
-A full-featured web interface embedded directly in the binary — no separate frontend deployment needed.
+A full-featured web interface embedded directly in the binary — no separate frontend deployment needed. Two modes: **Zen** (single-project focus) and **Blitz** (cross-project active task aggregation with notification-aware sorting).
 
 ![Grove Web Dashboard](docs/images/web-dashboard.png)
 

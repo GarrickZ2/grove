@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, useEffect, useCallback } from "react";
+import { createContext, useContext, useState, useEffect, useCallback, useRef } from "react";
 import type { ReactNode } from "react";
 import type { Project, Task, TaskStatus } from "../data/types";
 import {
@@ -82,21 +82,25 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  // Load projects on mount
+  // Load projects — only shows full-page loading spinner on the initial load.
+  // Subsequent refreshes update data silently to avoid unmounting the current page.
+  const initialLoadDone = useRef(false);
   const loadProjects = useCallback(async () => {
+    const isInitial = !initialLoadDone.current;
     try {
-      setIsLoading(true);
+      if (isInitial) setIsLoading(true);
       setError(null);
       const response = await listProjects();
       setProjects(response.projects.map(convertProjectListItem));
       setCurrentProjectId(response.current_project_id);
+      initialLoadDone.current = true;
     } catch (err) {
       console.error("Failed to load projects:", err);
       setError("Failed to load projects");
       setProjects([]);
       setCurrentProjectId(null);
     } finally {
-      setIsLoading(false);
+      if (isInitial) setIsLoading(false);
     }
   }, []);
 
@@ -118,8 +122,9 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
 
   // Auto-select project after projects are loaded
   // Priority: currentProjectId (from server cwd) > savedProjectId > first project
+  // Only runs when no project is currently selected.
   useEffect(() => {
-    if (isLoading || projects.length === 0) return;
+    if (isLoading || projects.length === 0 || selectedProject) return;
 
     // Priority 1: If server is running in a registered project directory, select it
     if (currentProjectId) {
@@ -158,6 +163,7 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
         }
       });
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isLoading, projects, currentProjectId, loadProjectDetails]);
 
   const selectProject = useCallback(

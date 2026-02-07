@@ -57,3 +57,26 @@ body {
   background: var(--color-highlight);
   color: white;
 }
+
+/* Aurora background animation for Blitz mode */
+@keyframes aurora {
+  0%, 100% {
+    transform: rotate(0deg) scale(1);
+  }
+  33% {
+    transform: rotate(120deg) scale(1.1);
+  }
+  66% {
+    transform: rotate(240deg) scale(0.95);
+  }
+}
+
+/* Blitz loading shimmer sweep */
+@keyframes shimmer {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(100%);
+  }
+}
