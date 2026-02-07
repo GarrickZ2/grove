@@ -9,6 +9,15 @@ homepage = "https://github.com/GarrickZ2/grove"
 keywords = ["git", "worktree", "tmux", "tui", "cli"]
 categories = ["command-line-utilities", "development-tools"]
 readme = "README.md"
+exclude = [
+    "docs/images/",
+    "docs/index.html",
+    "grove-web/",
+    "src-tauri/",
+    ".github/",
+    ".githooks/",
+    "CLAUDE.md",
+]
 
 [[bin]]
 name = "grove"
