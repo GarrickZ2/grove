@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { GitMerge, X, Loader2, GitBranch } from "lucide-react";
 import { Button } from "../ui";
@@ -28,6 +28,16 @@ export function MergeDialog({
 }: MergeDialogProps) {
   const [selectedMethod, setSelectedMethod] = useState<MergeMethod>("squash");
 
+  // Escape to close
+  useEffect(() => {
+    if (!isOpen) return;
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === "Escape") { e.preventDefault(); onCancel(); }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [isOpen, onCancel]);
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!isLoading) {
@@ -46,6 +56,7 @@ export function MergeDialog({
             exit={{ opacity: 0 }}
             onClick={onCancel}
             className="fixed inset-0 bg-black/50 z-50"
+            data-hotkeys-dialog
           />
 
           {/* Dialog */}

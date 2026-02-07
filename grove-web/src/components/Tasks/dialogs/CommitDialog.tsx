@@ -37,6 +37,7 @@ export function CommitDialog({ isOpen, onClose, onCommit }: CommitDialogProps) {
             exit={{ opacity: 0 }}
             onClick={handleClose}
             className="fixed inset-0 bg-black/50 z-50"
+            data-hotkeys-dialog
           />
 
           {/* Dialog */}

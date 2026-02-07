@@ -11,6 +11,7 @@ interface TaskSidebarProps {
   filter: TaskFilter;
   searchQuery: string;
   isLoading?: boolean;
+  searchInputRef?: React.RefObject<HTMLInputElement | null>;
   onSelectTask: (task: Task) => void;
   onDoubleClickTask: (task: Task) => void;
   onContextMenuTask?: (task: Task, e: React.MouseEvent) => void;
@@ -24,6 +25,7 @@ export function TaskSidebar({
   filter,
   searchQuery,
   isLoading = false,
+  searchInputRef,
   onSelectTask,
   onDoubleClickTask,
   onContextMenuTask,
@@ -36,7 +38,7 @@ export function TaskSidebar({
     <div className="h-full flex flex-col rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)] overflow-hidden">
       {/* Search */}
       <div className="p-3 border-b border-[var(--color-border)]">
-        <TaskSearch value={searchQuery} onChange={onSearchChange} />
+        <TaskSearch value={searchQuery} onChange={onSearchChange} inputRef={searchInputRef} />
       </div>
 
       {/* Filters */}

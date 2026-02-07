@@ -32,6 +32,9 @@ interface TaskInfoPanelProps {
   onRecover?: () => void;
   onClean?: () => void;
   isTerminalMode?: boolean;
+  // Controlled tab mode (optional)
+  activeTab?: TabType;
+  onTabChange?: (tab: TabType) => void;
   // Action handlers for non-archived tasks
   onCommit?: () => void;
   onReview?: () => void;
@@ -43,7 +46,7 @@ interface TaskInfoPanelProps {
   onReset?: () => void;
 }
 
-type TabType = "stats" | "git" | "notes" | "comments";
+export type TabType = "stats" | "git" | "notes" | "comments";
 
 interface TabConfig {
   id: TabType;
@@ -66,6 +69,8 @@ export function TaskInfoPanel({
   onRecover,
   onClean,
   isTerminalMode = false,
+  activeTab: controlledTab,
+  onTabChange,
   onCommit,
   onReview,
   onEditor,
@@ -78,8 +83,15 @@ export function TaskInfoPanel({
   const isArchived = task.status === "archived";
   const isBroken = task.status === "broken";
   const canOperate = !isArchived && !isBroken;
-  const [activeTab, setActiveTab] = useState<TabType>("stats");
+  const [internalTab, setInternalTab] = useState<TabType>("stats");
   const [expanded, setExpanded] = useState(false);
+
+  // Support controlled/uncontrolled tab mode
+  const activeTab = controlledTab ?? internalTab;
+  const handleTabChange = (tab: TabType) => {
+    setInternalTab(tab);
+    onTabChange?.(tab);
+  };
 
   const renderTabContent = () => {
     switch (activeTab) {
@@ -127,7 +139,7 @@ export function TaskInfoPanel({
                 <button
                   key={tab.id}
                   onClick={() => {
-                    setActiveTab(tab.id);
+                    handleTabChange(tab.id);
                     if (!expanded) setExpanded(true);
                   }}
                   className={`
@@ -389,7 +401,7 @@ export function TaskInfoPanel({
           return (
             <button
               key={tab.id}
-              onClick={() => setActiveTab(tab.id)}
+              onClick={() => handleTabChange(tab.id)}
               className={`
                 relative flex-1 flex items-center justify-center gap-1.5 px-2 py-2 text-xs font-medium
                 transition-colors

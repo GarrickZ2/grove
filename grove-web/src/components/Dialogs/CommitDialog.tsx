@@ -27,6 +27,16 @@ export function CommitDialog({
     }
   }, [isOpen]);
 
+  // Escape to close
+  useEffect(() => {
+    if (!isOpen) return;
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === "Escape") { e.preventDefault(); onCancel(); }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [isOpen, onCancel]);
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (message.trim() && !isLoading) {
@@ -52,6 +62,7 @@ export function CommitDialog({
             exit={{ opacity: 0 }}
             onClick={onCancel}
             className="fixed inset-0 bg-black/50 z-50"
+            data-hotkeys-dialog
           />
 
           {/* Dialog */}

@@ -46,6 +46,22 @@ export function NewTaskDialog({ isOpen, onClose, onCreate, isLoading, externalEr
     onClose();
   };
 
+  // Keyboard shortcuts: Escape to close, Alt+Enter to submit
+  useEffect(() => {
+    if (!isOpen) return;
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        handleClose();
+      } else if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
+        e.preventDefault();
+        handleSubmit();
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  });
+
   // Generate branch preview
   const branchPreview = previewBranchName(taskName);
 
@@ -60,6 +76,7 @@ export function NewTaskDialog({ isOpen, onClose, onCreate, isLoading, externalEr
             exit={{ opacity: 0 }}
             onClick={handleClose}
             className="fixed inset-0 bg-black/50 z-50"
+            data-hotkeys-dialog
           />
 
           {/* Dialog */}
@@ -93,6 +110,7 @@ export function NewTaskDialog({ isOpen, onClose, onCreate, isLoading, externalEr
                 <Input
                   label="Task Name"
                   placeholder="fix/auth-bug or feature/new-feature"
+                  autoFocus
                   value={taskName}
                   onChange={(e) => {
                     setTaskName(e.target.value);
@@ -149,14 +167,22 @@ export function NewTaskDialog({ isOpen, onClose, onCreate, isLoading, externalEr
               </div>
 
               {/* Actions */}
-              <div className="flex justify-end gap-3 px-5 py-4 bg-[var(--color-bg)] border-t border-[var(--color-border)]">
-                <Button variant="secondary" onClick={handleClose} disabled={isLoading}>
-                  Cancel
-                </Button>
-                <Button onClick={handleSubmit} disabled={isLoading}>
-                  <Plus className="w-4 h-4 mr-1.5" />
-                  {isLoading ? "Creating..." : "Create Task"}
-                </Button>
+              <div className="flex items-center justify-between px-5 py-4 bg-[var(--color-bg)] border-t border-[var(--color-border)]">
+                <p className="text-xs text-[var(--color-text-muted)]">
+                  <kbd className="px-1 py-0.5 text-[10px] font-mono rounded border bg-[var(--color-bg-secondary)] border-[var(--color-border)]">⌘</kbd>
+                  {" + "}
+                  <kbd className="px-1 py-0.5 text-[10px] font-mono rounded border bg-[var(--color-bg-secondary)] border-[var(--color-border)]">Enter</kbd>
+                  {" to create"}
+                </p>
+                <div className="flex gap-3">
+                  <Button variant="secondary" onClick={handleClose} disabled={isLoading}>
+                    Cancel
+                  </Button>
+                  <Button onClick={handleSubmit} disabled={isLoading}>
+                    <Plus className="w-4 h-4 mr-1.5" />
+                    {isLoading ? "Creating..." : "Create Task"}
+                  </Button>
+                </div>
               </div>
             </div>
           </motion.div>

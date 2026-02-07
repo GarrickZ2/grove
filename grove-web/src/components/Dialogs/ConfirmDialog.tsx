@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { AlertTriangle, X } from "lucide-react";
 import { Button } from "../ui";
@@ -23,6 +24,17 @@ export function ConfirmDialog({
   onConfirm,
   onCancel,
 }: ConfirmDialogProps) {
+  // Escape to close, Enter to confirm
+  useEffect(() => {
+    if (!isOpen) return;
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === "Escape") { e.preventDefault(); onCancel(); }
+      else if (e.key === "Enter") { e.preventDefault(); onConfirm(); }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [isOpen, onCancel, onConfirm]);
+
   const variantStyles = {
     danger: {
       iconBg: "bg-[var(--color-error)]/10",
@@ -54,6 +66,7 @@ export function ConfirmDialog({
             exit={{ opacity: 0 }}
             onClick={onCancel}
             className="fixed inset-0 bg-black/50 z-50"
+            data-hotkeys-dialog
           />
 
           {/* Dialog */}

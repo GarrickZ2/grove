@@ -183,6 +183,7 @@ export function XTerminal({
   return (
     <div
       ref={containerRef}
+      data-hotkeys-terminal
       className="w-full h-full"
       style={{ backgroundColor: terminalTheme.colors.background }}
       onClick={() => terminalRef.current?.focus()}

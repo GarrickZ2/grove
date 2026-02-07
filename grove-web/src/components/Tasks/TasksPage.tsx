@@ -1,16 +1,19 @@
-import { useState, useMemo, useCallback, useEffect } from "react";
+import { useState, useMemo, useCallback, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Plus, Terminal, GitCommit, GitBranchPlus, RefreshCw, GitMerge, Archive, RotateCcw, Trash2 } from "lucide-react";
 import { TaskSidebar } from "./TaskSidebar/TaskSidebar";
 import { TaskInfoPanel } from "./TaskInfoPanel";
+import type { TabType } from "./TaskInfoPanel";
 import { TaskView } from "./TaskView";
 import { NewTaskDialog } from "./NewTaskDialog";
 import { CommitDialog, ConfirmDialog, MergeDialog } from "../Dialogs";
 import { RebaseDialog } from "./dialogs";
+import { HelpOverlay } from "./HelpOverlay";
 import { Button } from "../ui";
 import { ContextMenu } from "../ui/ContextMenu";
 import type { ContextMenuItem } from "../ui/ContextMenu";
 import { useProject } from "../../context";
+import { useHotkeys } from "../../hooks";
 import {
   createTask as apiCreateTask,
   archiveTask as apiArchiveTask,
@@ -115,6 +118,15 @@ export function TasksPage({ initialTaskId, onNavigationConsumed }: TasksPageProp
   // Archived tasks (loaded separately)
   const [archivedTasks, setArchivedTasks] = useState<Task[]>([]);
   const [isLoadingArchived, setIsLoadingArchived] = useState(false);
+
+  // Help overlay state
+  const [showHelp, setShowHelp] = useState(false);
+
+  // Info panel tab state (lifted for hotkey control)
+  const [infoPanelTab, setInfoPanelTab] = useState<TabType>("stats");
+
+  // Search input ref for / hotkey
+  const searchInputRef = useRef<HTMLInputElement | null>(null);
 
   // Load archived tasks when filter changes to "archived"
   // Also filter by current branch
@@ -587,6 +599,123 @@ export function TasksPage({ initialTaskId, onNavigationConsumed }: TasksPageProp
     setAutoStartSession(false);
   }, [refreshSelectedProject]);
 
+  // --- Hotkey helpers ---
+  const selectNextTask = useCallback(() => {
+    if (filteredTasks.length === 0) return;
+    const currentIndex = selectedTask
+      ? filteredTasks.findIndex((t) => t.id === selectedTask.id)
+      : -1;
+    const nextIndex = currentIndex < filteredTasks.length - 1 ? currentIndex + 1 : 0;
+    const nextTask = filteredTasks[nextIndex];
+    setSelectedTask(nextTask);
+    if (viewMode === "list") setViewMode("info");
+    // Scroll the task into view
+    const el = document.querySelector(`[data-task-id="${nextTask.id}"]`);
+    el?.scrollIntoView({ block: "nearest" });
+  }, [filteredTasks, selectedTask, viewMode]);
+
+  const selectPreviousTask = useCallback(() => {
+    if (filteredTasks.length === 0) return;
+    const currentIndex = selectedTask
+      ? filteredTasks.findIndex((t) => t.id === selectedTask.id)
+      : -1;
+    const prevIndex = currentIndex > 0 ? currentIndex - 1 : filteredTasks.length - 1;
+    const prevTask = filteredTasks[prevIndex];
+    setSelectedTask(prevTask);
+    if (viewMode === "list") setViewMode("info");
+    const el = document.querySelector(`[data-task-id="${prevTask.id}"]`);
+    el?.scrollIntoView({ block: "nearest" });
+  }, [filteredTasks, selectedTask, viewMode]);
+
+  const openContextMenuAtSelectedTask = useCallback(() => {
+    if (!selectedTask) return;
+    const el = document.querySelector(`[data-task-id="${selectedTask.id}"]`);
+    if (el) {
+      const rect = el.getBoundingClientRect();
+      setContextMenu({
+        task: selectedTask,
+        position: { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 },
+      });
+    }
+  }, [selectedTask]);
+
+  const hasTask = !!selectedTask;
+  const isActive = hasTask && selectedTask.status !== "archived";
+  const isArchived = hasTask && selectedTask.status === "archived";
+  const canOperate = isActive && selectedTask.status !== "broken";
+  const notTerminal = viewMode !== "terminal";
+
+  // --- Register all hotkeys ---
+  useHotkeys(
+    [
+      // Navigation
+      { key: "j", handler: selectNextTask, options: { enabled: notTerminal } },
+      { key: "ArrowDown", handler: selectNextTask, options: { enabled: notTerminal } },
+      { key: "k", handler: selectPreviousTask, options: { enabled: notTerminal } },
+      { key: "ArrowUp", handler: selectPreviousTask, options: { enabled: notTerminal } },
+      {
+        key: "Enter",
+        handler: () => {
+          if (viewMode === "info" && selectedTask && selectedTask.status !== "archived") {
+            handleEnterTerminal();
+          } else if (viewMode === "list" && selectedTask) {
+            setViewMode("info");
+          }
+        },
+        options: { enabled: notTerminal && hasTask },
+      },
+      {
+        key: "Escape",
+        handler: handleCloseTask,
+        options: { enabled: viewMode !== "list" },
+      },
+
+      // Info panel tabs
+      { key: "1", handler: () => setInfoPanelTab("stats"), options: { enabled: notTerminal && hasTask } },
+      { key: "2", handler: () => setInfoPanelTab("git"), options: { enabled: notTerminal && hasTask } },
+      { key: "3", handler: () => setInfoPanelTab("notes"), options: { enabled: notTerminal && hasTask } },
+      { key: "4", handler: () => setInfoPanelTab("comments"), options: { enabled: notTerminal && hasTask } },
+
+      // Actions (work in all modes; xterm focus auto-suppresses via useHotkeys)
+      { key: "n", handler: () => setShowNewTaskDialog(true) },
+      { key: "Space", handler: openContextMenuAtSelectedTask, options: { enabled: hasTask && notTerminal } },
+      { key: "c", handler: handleCommit, options: { enabled: isActive } },
+      { key: "s", handler: handleSync, options: { enabled: canOperate } },
+      { key: "m", handler: handleMerge, options: { enabled: canOperate } },
+      { key: "b", handler: handleRebase, options: { enabled: canOperate } },
+      { key: "a", handler: handleArchive, options: { enabled: isActive && selectedTask?.status !== "broken" } },
+      { key: "x", handler: handleClean, options: { enabled: hasTask } },
+      {
+        key: "r",
+        handler: () => {
+          if (isArchived) {
+            handleRecover();
+          } else if (isActive) {
+            handleReset();
+          }
+        },
+        options: { enabled: hasTask },
+      },
+
+      // Search
+      {
+        key: "/",
+        handler: () => searchInputRef.current?.focus(),
+        options: { enabled: notTerminal },
+      },
+
+      // Help
+      { key: "?", handler: () => setShowHelp((v) => !v) },
+    ],
+    [
+      selectNextTask, selectPreviousTask, handleCloseTask,
+      handleEnterTerminal, openContextMenuAtSelectedTask,
+      handleCommit, handleSync, handleMerge, handleRebase,
+      handleArchive, handleClean, handleRecover, handleReset,
+      viewMode, selectedTask, hasTask, isActive, isArchived, canOperate, notTerminal,
+    ]
+  );
+
   // If no project selected
   if (!selectedProject) {
     return (
@@ -611,10 +740,19 @@ export function TasksPage({ initialTaskId, onNavigationConsumed }: TasksPageProp
       {/* Header */}
       <div className="flex items-center justify-between mb-4 flex-shrink-0">
         <h1 className="text-xl font-semibold text-[var(--color-text)]">Tasks</h1>
-        <Button onClick={() => setShowNewTaskDialog(true)} size="sm">
-          <Plus className="w-4 h-4 mr-1.5" />
-          New Task
-        </Button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => setShowHelp(true)}
+            className="px-2 py-1 text-xs text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-bg-tertiary)] rounded-md transition-colors"
+            title="Keyboard Shortcuts (?)"
+          >
+            <kbd className="px-1 py-0.5 text-[10px] font-mono rounded border bg-[var(--color-bg)] border-[var(--color-border)]">?</kbd>
+          </button>
+          <Button onClick={() => setShowNewTaskDialog(true)} size="sm">
+            <Plus className="w-4 h-4 mr-1.5" />
+            New Task
+          </Button>
+        </div>
       </div>
 
       {/* Main Content */}
@@ -636,6 +774,7 @@ export function TasksPage({ initialTaskId, onNavigationConsumed }: TasksPageProp
               filter={filter}
               searchQuery={searchQuery}
               isLoading={filter === "archived" && isLoadingArchived}
+              searchInputRef={searchInputRef}
               onSelectTask={handleSelectTask}
               onDoubleClickTask={handleDoubleClickTask}
               onContextMenuTask={handleContextMenu}
@@ -671,6 +810,8 @@ export function TasksPage({ initialTaskId, onNavigationConsumed }: TasksPageProp
                     onMerge={selectedTask.status !== "archived" ? handleMerge : undefined}
                     onArchive={selectedTask.status !== "archived" ? handleArchive : undefined}
                     onReset={selectedTask.status !== "archived" ? handleReset : undefined}
+                    activeTab={infoPanelTab}
+                    onTabChange={setInfoPanelTab}
                   />
                 </motion.div>
               ) : (
@@ -686,7 +827,7 @@ export function TasksPage({ initialTaskId, onNavigationConsumed }: TasksPageProp
                       Select a task to view details
                     </p>
                     <p className="text-sm text-[var(--color-text-muted)]">
-                      Double-click to enter Terminal mode
+                      Press <kbd className="px-1 py-0.5 text-[10px] font-mono rounded border bg-[var(--color-bg)] border-[var(--color-border)]">?</kbd> for keyboard shortcuts
                     </p>
                   </div>
                 </motion.div>
@@ -840,6 +981,9 @@ export function TasksPage({ initialTaskId, onNavigationConsumed }: TasksPageProp
         position={contextMenu?.position ?? null}
         onClose={closeContextMenu}
       />
+
+      {/* Help Overlay */}
+      <HelpOverlay isOpen={showHelp} onClose={() => setShowHelp(false)} />
     </motion.div>
   );
 }

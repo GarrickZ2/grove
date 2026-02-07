@@ -23,6 +23,16 @@ export function RebaseDialog({
   const [selectedBranch, setSelectedBranch] = useState(currentTarget);
   const [searchQuery, setSearchQuery] = useState("");
 
+  // Escape to close
+  useEffect(() => {
+    if (!isOpen) return;
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === "Escape") { e.preventDefault(); handleClose(); }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [isOpen]);
+
   // Reset state when dialog opens
   useEffect(() => {
     if (isOpen) {
@@ -65,6 +75,7 @@ export function RebaseDialog({
             exit={{ opacity: 0 }}
             onClick={handleClose}
             className="fixed inset-0 bg-black/50 z-50"
+            data-hotkeys-dialog
           />
 
           {/* Dialog */}

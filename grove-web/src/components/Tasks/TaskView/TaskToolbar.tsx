@@ -47,6 +47,7 @@ interface ToolbarButtonProps {
   active?: boolean;
   variant?: "default" | "warning" | "danger";
   disabled?: boolean;
+  shortcut?: string;
 }
 
 function ToolbarButton({
@@ -56,6 +57,7 @@ function ToolbarButton({
   active = false,
   variant = "default",
   disabled = false,
+  shortcut,
 }: ToolbarButtonProps) {
   const baseClass = "flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium rounded-md transition-colors";
 
@@ -83,6 +85,11 @@ function ToolbarButton({
     >
       <Icon className="w-3.5 h-3.5" />
       <span>{label}</span>
+      {shortcut && (
+        <span className="ml-0.5 px-1 py-0 text-[10px] font-mono rounded border bg-[var(--color-bg)] border-[var(--color-border)] text-[var(--color-text-muted)] opacity-60 leading-tight">
+          {shortcut}
+        </span>
+      )}
     </motion.button>
   );
 }
@@ -222,7 +229,7 @@ export function TaskToolbar({
   const dangerousActions: DropdownItem[] = [
     {
       id: "archive",
-      label: "Archive",
+      label: "Archive (a)",
       icon: Archive,
       onClick: onArchive,
       variant: "warning",
@@ -230,7 +237,7 @@ export function TaskToolbar({
     },
     {
       id: "reset",
-      label: "Reset",
+      label: "Reset (r)",
       icon: RotateCcw,
       onClick: onReset,
       variant: "warning",
@@ -238,7 +245,7 @@ export function TaskToolbar({
     },
     {
       id: "clean",
-      label: "Clean",
+      label: "Clean (x)",
       icon: Trash2,
       onClick: onClean,
       variant: "danger",
@@ -278,24 +285,28 @@ export function TaskToolbar({
           label="Commit"
           onClick={onCommit}
           disabled={isArchived}
+          shortcut="c"
         />
         <ToolbarButton
           icon={GitBranchPlus}
           label="Rebase"
           onClick={onRebase}
           disabled={!canOperate}
+          shortcut="b"
         />
         <ToolbarButton
           icon={RefreshCw}
           label="Sync"
           onClick={onSync}
           disabled={!canOperate}
+          shortcut="s"
         />
         <ToolbarButton
           icon={GitMerge}
           label="Merge"
           onClick={onMerge}
           disabled={!canOperate}
+          shortcut="m"
         />
         <ToolbarButton
           icon={Code}

@@ -88,6 +88,7 @@ export function TaskListItem({ task, isSelected, onClick, onDoubleClick, onConte
 
   return (
     <motion.button
+      data-task-id={task.id}
       whileHover={{ backgroundColor: "var(--color-bg-tertiary)" }}
       onClick={onClick}
       onDoubleClick={task.status !== "archived" ? onDoubleClick : undefined}

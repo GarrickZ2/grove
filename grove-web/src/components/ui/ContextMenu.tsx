@@ -1,4 +1,4 @@
-import { useRef, useEffect, useState } from "react";
+import { useRef, useEffect, useState, useCallback } from "react";
 import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "framer-motion";
 
@@ -21,6 +21,19 @@ interface ContextMenuProps {
 export function ContextMenu({ items, position, onClose }: ContextMenuProps) {
   const menuRef = useRef<HTMLDivElement>(null);
   const [adjusted, setAdjusted] = useState<{ x: number; y: number } | null>(null);
+  const [focusedIndex, setFocusedIndex] = useState(-1);
+
+  // Get actionable (non-divider, non-disabled) item indices
+  const actionableIndices = items
+    .map((item, i) => (!item.divider && !item.disabled ? i : -1))
+    .filter((i) => i !== -1);
+
+  // Reset focus when menu opens/closes
+  useEffect(() => {
+    if (position) {
+      setFocusedIndex(-1);
+    }
+  }, [position]);
 
   // Adjust position to keep menu within viewport
   useEffect(() => {
@@ -60,15 +73,64 @@ export function ContextMenu({ items, position, onClose }: ContextMenuProps) {
     return () => document.removeEventListener("mousedown", handleMouseDown);
   }, [position, onClose]);
 
-  // Close on Escape
+  const moveFocus = useCallback((direction: 1 | -1) => {
+    if (actionableIndices.length === 0) return;
+    setFocusedIndex((prev) => {
+      const currentPos = actionableIndices.indexOf(prev);
+      let nextPos: number;
+      if (currentPos === -1) {
+        nextPos = direction === 1 ? 0 : actionableIndices.length - 1;
+      } else {
+        nextPos = (currentPos + direction + actionableIndices.length) % actionableIndices.length;
+      }
+      return actionableIndices[nextPos];
+    });
+  }, [actionableIndices]);
+
+  const activateItem = useCallback(() => {
+    if (focusedIndex >= 0 && focusedIndex < items.length) {
+      const item = items[focusedIndex];
+      if (!item.divider && !item.disabled) {
+        item.onClick();
+        onClose();
+      }
+    }
+  }, [focusedIndex, items, onClose]);
+
+  // Keyboard navigation: Escape, arrows, j/k, Enter
   useEffect(() => {
     if (!position) return;
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
+      switch (e.key) {
+        case "Escape":
+          e.preventDefault();
+          e.stopPropagation();
+          onClose();
+          break;
+        case "ArrowDown":
+        case "j":
+          e.preventDefault();
+          e.stopPropagation();
+          moveFocus(1);
+          break;
+        case "ArrowUp":
+        case "k":
+          e.preventDefault();
+          e.stopPropagation();
+          moveFocus(-1);
+          break;
+        case "Enter":
+        case " ":
+          e.preventDefault();
+          e.stopPropagation();
+          activateItem();
+          break;
+      }
     };
-    document.addEventListener("keydown", handleKeyDown);
-    return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [position, onClose]);
+    // Use capture phase to intercept before useHotkeys
+    document.addEventListener("keydown", handleKeyDown, true);
+    return () => document.removeEventListener("keydown", handleKeyDown, true);
+  }, [position, onClose, moveFocus, activateItem]);
 
   // Close on scroll
   useEffect(() => {
@@ -78,14 +140,15 @@ export function ContextMenu({ items, position, onClose }: ContextMenuProps) {
     return () => window.removeEventListener("scroll", handleScroll, true);
   }, [position, onClose]);
 
-  const getVariantClass = (variant: ContextMenuItem["variant"]) => {
+  const getVariantClass = (variant: ContextMenuItem["variant"], isFocused: boolean) => {
+    const focusBg = isFocused ? "bg-[var(--color-bg-tertiary)]" : "";
     switch (variant) {
       case "warning":
-        return "text-[var(--color-warning)] hover:bg-[var(--color-warning)]/10";
+        return `text-[var(--color-warning)] ${isFocused ? "bg-[var(--color-warning)]/10" : "hover:bg-[var(--color-warning)]/10"}`;
       case "danger":
-        return "text-[var(--color-error)] hover:bg-[var(--color-error)]/10";
+        return `text-[var(--color-error)] ${isFocused ? "bg-[var(--color-error)]/10" : "hover:bg-[var(--color-error)]/10"}`;
       default:
-        return "text-[var(--color-text)] hover:bg-[var(--color-bg-tertiary)]";
+        return `text-[var(--color-text)] ${focusBg || "hover:bg-[var(--color-bg-tertiary)]"}`;
     }
   };
 
@@ -102,8 +165,9 @@ export function ContextMenu({ items, position, onClose }: ContextMenuProps) {
           transition={{ duration: 0.12 }}
           style={{ top: pos.y, left: pos.x }}
           className="fixed z-[9999] min-w-[160px] py-1 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] shadow-xl"
+          data-hotkeys-dialog
         >
-          {items.map((item) => {
+          {items.map((item, index) => {
             if (item.divider) {
               return (
                 <div
@@ -113,6 +177,7 @@ export function ContextMenu({ items, position, onClose }: ContextMenuProps) {
               );
             }
             const Icon = item.icon;
+            const isFocused = index === focusedIndex;
             return (
               <button
                 key={item.id}
@@ -122,10 +187,11 @@ export function ContextMenu({ items, position, onClose }: ContextMenuProps) {
                     onClose();
                   }
                 }}
+                onMouseEnter={() => setFocusedIndex(index)}
                 disabled={item.disabled}
                 className={`
                   w-full flex items-center gap-2 px-3 py-1.5 text-sm transition-colors
-                  ${getVariantClass(item.variant)}
+                  ${getVariantClass(item.variant, isFocused)}
                   ${item.disabled ? "opacity-50 cursor-not-allowed" : "cursor-default"}
                 `}
               >
