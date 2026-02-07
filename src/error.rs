@@ -7,7 +7,6 @@ use thiserror::Error;
 
 /// Grove 错误类型
 #[derive(Debug, Error)]
-#[allow(dead_code)] // 逐步迁移中，部分变体尚未使用
 pub enum GroveError {
     /// I/O 错误（文件读写、目录操作等）
     #[error("I/O error: {0}")]
@@ -41,20 +40,20 @@ pub enum GroveError {
     #[error("Storage error: {0}")]
     Storage(String),
 
-    /// 资源不存在
+    /// 资源不存在（预留，暂未使用）
+    #[allow(dead_code)]
     #[error("Not found: {0}")]
     NotFound(String),
 
-    /// 无效数据
+    /// 无效数据（预留，暂未使用）
+    #[allow(dead_code)]
     #[error("Invalid data: {0}")]
     InvalidData(String),
 }
 
 /// Grove Result 类型别名
-#[allow(dead_code)] // 逐步迁移中，尚未全面使用
 pub type Result<T> = std::result::Result<T, GroveError>;
 
-#[allow(dead_code)] // 逐步迁移中，部分方法尚未使用
 impl GroveError {
     /// 创建 Git 错误
     pub fn git(msg: impl Into<String>) -> Self {
@@ -76,12 +75,14 @@ impl GroveError {
         Self::Storage(msg.into())
     }
 
-    /// 创建 NotFound 错误
+    /// 创建 NotFound 错误（预留，暂未使用）
+    #[allow(dead_code)]
     pub fn not_found(msg: impl Into<String>) -> Self {
         Self::NotFound(msg.into())
     }
 
-    /// 创建 InvalidData 错误
+    /// 创建 InvalidData 错误（预留，暂未使用）
+    #[allow(dead_code)]
     pub fn invalid_data(msg: impl Into<String>) -> Self {
         Self::InvalidData(msg.into())
     }
