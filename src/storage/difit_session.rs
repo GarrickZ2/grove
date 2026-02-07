@@ -5,11 +5,11 @@
 //! 每个 task 独立一个 session 文件，支持多 task 并发 review。
 
 use serde::{Deserialize, Serialize};
-use std::io;
 use std::path::PathBuf;
 use std::process::Command;
 
 use super::ensure_project_dir;
+use crate::error::Result;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DifitSession {
@@ -28,14 +28,14 @@ pub struct DifitSession {
     pub monitor_pid: Option<u32>,
 }
 
-fn sessions_dir(project_key: &str) -> io::Result<PathBuf> {
+fn sessions_dir(project_key: &str) -> Result<PathBuf> {
     let dir = ensure_project_dir(project_key)?;
     let sessions_dir = dir.join("difit_sessions");
     std::fs::create_dir_all(&sessions_dir)?;
     Ok(sessions_dir)
 }
 
-fn session_path(project_key: &str, task_id: &str) -> io::Result<PathBuf> {
+fn session_path(project_key: &str, task_id: &str) -> Result<PathBuf> {
     let dir = sessions_dir(project_key)?;
     Ok(dir.join(format!("{}.toml", task_id)))
 }
@@ -49,11 +49,11 @@ pub fn load_session(project_key: &str, task_id: &str) -> Option<DifitSession> {
     toml::from_str(&content).ok()
 }
 
-pub fn save_session(project_key: &str, task_id: &str, session: &DifitSession) -> io::Result<()> {
+pub fn save_session(project_key: &str, task_id: &str, session: &DifitSession) -> Result<()> {
     let path = session_path(project_key, task_id)?;
-    let content = toml::to_string_pretty(session)
-        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
-    std::fs::write(path, content)
+    let content = toml::to_string_pretty(session)?;
+    std::fs::write(path, content)?;
+    Ok(())
 }
 
 pub fn remove_session(project_key: &str, task_id: &str) {

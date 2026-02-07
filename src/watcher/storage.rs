@@ -4,12 +4,13 @@
 //! efficient append-only writes and streaming reads.
 
 use std::fs::{self, File, OpenOptions};
-use std::io::{self, BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
+use crate::error::Result;
 use crate::storage::ensure_project_dir;
 
 /// A single file edit event
@@ -23,7 +24,7 @@ pub struct EditEvent {
 }
 
 /// Get the activity directory for a project
-fn activity_dir(project_key: &str, task_id: &str) -> io::Result<PathBuf> {
+fn activity_dir(project_key: &str, task_id: &str) -> Result<PathBuf> {
     let dir = ensure_project_dir(project_key)?
         .join("activity")
         .join(task_id);
@@ -32,12 +33,12 @@ fn activity_dir(project_key: &str, task_id: &str) -> io::Result<PathBuf> {
 }
 
 /// Get the path to the edits.jsonl file
-fn edits_file_path(project_key: &str, task_id: &str) -> io::Result<PathBuf> {
+fn edits_file_path(project_key: &str, task_id: &str) -> Result<PathBuf> {
     Ok(activity_dir(project_key, task_id)?.join("edits.jsonl"))
 }
 
 /// Load all edit events for a task
-pub fn load_edit_history(project_key: &str, task_id: &str) -> io::Result<Vec<EditEvent>> {
+pub fn load_edit_history(project_key: &str, task_id: &str) -> Result<Vec<EditEvent>> {
     let path = edits_file_path(project_key, task_id)?;
 
     if !path.exists() {
@@ -62,7 +63,7 @@ pub fn load_edit_history(project_key: &str, task_id: &str) -> io::Result<Vec<Edi
 }
 
 /// Append new edit events to the history file
-pub fn save_edit_history(project_key: &str, task_id: &str, events: &[EditEvent]) -> io::Result<()> {
+pub fn save_edit_history(project_key: &str, task_id: &str, events: &[EditEvent]) -> Result<()> {
     if events.is_empty() {
         return Ok(());
     }
@@ -83,7 +84,7 @@ pub fn save_edit_history(project_key: &str, task_id: &str, events: &[EditEvent])
 
 /// Clear all edit history for a task
 #[allow(dead_code)]
-pub fn clear_edit_history(project_key: &str, task_id: &str) -> io::Result<()> {
+pub fn clear_edit_history(project_key: &str, task_id: &str) -> Result<()> {
     let path = edits_file_path(project_key, task_id)?;
     if path.exists() {
         fs::remove_file(&path)?;

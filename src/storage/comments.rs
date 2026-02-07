@@ -1,10 +1,10 @@
 use std::collections::HashMap;
-use std::io;
 use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
 use super::ensure_project_dir;
+use crate::error::Result;
 
 /// Comment 状态
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -75,14 +75,14 @@ struct ReplyData {
 type RepliesMap = HashMap<String, ReplyData>;
 
 /// 获取 replies.json 存储路径: ~/.grove/projects/{project}/ai/{task_id}/replies.json
-fn replies_path(project: &str, task_id: &str) -> io::Result<PathBuf> {
+fn replies_path(project: &str, task_id: &str) -> Result<PathBuf> {
     let dir = ensure_project_dir(project)?.join("ai").join(task_id);
     std::fs::create_dir_all(&dir)?;
     Ok(dir.join("replies.json"))
 }
 
 /// 获取 diff_comments.md 路径（difit 写入的源头数据）
-fn diff_comments_path(project: &str, task_id: &str) -> io::Result<PathBuf> {
+fn diff_comments_path(project: &str, task_id: &str) -> Result<PathBuf> {
     let dir = ensure_project_dir(project)?.join("ai").join(task_id);
     std::fs::create_dir_all(&dir)?;
     Ok(dir.join("diff_comments.md"))
@@ -138,21 +138,22 @@ fn parse_diff_comments(content: &str) -> Vec<Comment> {
 }
 
 /// 加载 AI 回复数据
-fn load_replies(project: &str, task_id: &str) -> io::Result<RepliesMap> {
+fn load_replies(project: &str, task_id: &str) -> Result<RepliesMap> {
     let path = replies_path(project, task_id)?;
     if !path.exists() {
         return Ok(HashMap::new());
     }
     let content = std::fs::read_to_string(&path)?;
-    serde_json::from_str(&content).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
+    let data = serde_json::from_str(&content)?;
+    Ok(data)
 }
 
 /// 保存 AI 回复数据
-fn save_replies(project: &str, task_id: &str, replies: &RepliesMap) -> io::Result<()> {
+fn save_replies(project: &str, task_id: &str, replies: &RepliesMap) -> Result<()> {
     let path = replies_path(project, task_id)?;
-    let content = serde_json::to_string_pretty(replies)
-        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
-    std::fs::write(&path, content)
+    let content = serde_json::to_string_pretty(replies)?;
+    std::fs::write(&path, content)?;
+    Ok(())
 }
 
 /// 读取 Review Comments
@@ -161,7 +162,7 @@ fn save_replies(project: &str, task_id: &str, replies: &RepliesMap) -> io::Resul
 /// 1. 从 diff_comments.md 读取 difit 写入的源头数据
 /// 2. 从 replies.json 读取 AI 回复数据
 /// 3. 合并两者（按 location 匹配）
-pub fn load_comments(project: &str, task_id: &str) -> io::Result<CommentsData> {
+pub fn load_comments(project: &str, task_id: &str) -> Result<CommentsData> {
     let diff_path = diff_comments_path(project, task_id)?;
 
     // 从 diff_comments.md 读取源头数据
@@ -193,7 +194,7 @@ pub fn reply_comment(
     comment_id: u32,
     status: CommentStatus,
     message: &str,
-) -> io::Result<bool> {
+) -> Result<bool> {
     // 先加载完整数据找到 comment 的 location
     let data = load_comments(project, task_id)?;
     let comment = data.comments.iter().find(|c| c.id == comment_id);
@@ -222,7 +223,7 @@ pub fn reply_comment(
 ///
 /// difit 每次全量覆盖此文件，Grove 会从中读取 comments。
 /// 同时清理 replies.json，因为新的 comments 和旧的 replies 不再匹配。
-pub fn save_diff_comments(project: &str, task_id: &str, content: &str) -> io::Result<()> {
+pub fn save_diff_comments(project: &str, task_id: &str, content: &str) -> Result<()> {
     let path = diff_comments_path(project, task_id)?;
 
     // Write with explicit sync to ensure data is flushed to disk
@@ -241,7 +242,7 @@ pub fn save_diff_comments(project: &str, task_id: &str, content: &str) -> io::Re
 }
 
 /// 删除 AI 数据目录（包含 summary.md, todo.json, replies.json, diff_comments.md）
-pub fn delete_ai_data(project: &str, task_id: &str) -> io::Result<()> {
+pub fn delete_ai_data(project: &str, task_id: &str) -> Result<()> {
     let dir = ensure_project_dir(project)?.join("ai").join(task_id);
     if dir.exists() {
         std::fs::remove_dir_all(&dir)?;

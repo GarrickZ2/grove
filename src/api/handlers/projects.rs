@@ -319,7 +319,8 @@ pub async fn add_project(
 
     // Add project
     workspace::add_project(&name, &repo_path).map_err(|e| {
-        if e.kind() == std::io::ErrorKind::AlreadyExists {
+        // Check if error is "already registered" error
+        if e.to_string().contains("already registered") {
             StatusCode::CONFLICT
         } else {
             StatusCode::INTERNAL_SERVER_ERROR

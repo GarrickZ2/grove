@@ -10,13 +10,13 @@
 //!         ├── tasks.toml    # 活跃任务
 //!         └── archived.toml # 归档任务
 
-use std::io;
 use std::path::PathBuf;
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 use super::{ensure_project_dir, grove_dir};
+use crate::error::Result;
 
 /// 注册的项目信息（存储在 project.toml）
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -52,7 +52,7 @@ fn project_file_path(project_hash: &str) -> PathBuf {
 }
 
 /// 加载单个项目的元数据
-fn load_project_metadata(project_hash: &str) -> io::Result<Option<RegisteredProject>> {
+fn load_project_metadata(project_hash: &str) -> Result<Option<RegisteredProject>> {
     let path = project_file_path(project_hash);
 
     if !path.exists() {
@@ -64,7 +64,7 @@ fn load_project_metadata(project_hash: &str) -> io::Result<Option<RegisteredProj
 }
 
 /// 保存项目元数据
-fn save_project_metadata(project_hash: &str, project: &RegisteredProject) -> io::Result<()> {
+fn save_project_metadata(project_hash: &str, project: &RegisteredProject) -> Result<()> {
     ensure_project_dir(project_hash)?;
     let path = project_file_path(project_hash);
     super::save_toml(&path, project)
@@ -72,7 +72,7 @@ fn save_project_metadata(project_hash: &str, project: &RegisteredProject) -> io:
 
 /// 加载所有注册的项目列表
 /// 通过扫描 ~/.grove/projects/*/project.toml 获取
-pub fn load_projects() -> io::Result<Vec<RegisteredProject>> {
+pub fn load_projects() -> Result<Vec<RegisteredProject>> {
     let projects_dir = grove_dir().join("projects");
 
     if !projects_dir.exists() {
@@ -111,13 +111,12 @@ pub fn load_projects() -> io::Result<Vec<RegisteredProject>> {
 }
 
 /// 添加项目
-pub fn add_project(name: &str, path: &str) -> io::Result<()> {
+pub fn add_project(name: &str, path: &str) -> Result<()> {
     let hash = project_hash(path);
 
     // 检查是否已存在
     if load_project_metadata(&hash)?.is_some() {
-        return Err(io::Error::new(
-            io::ErrorKind::AlreadyExists,
+        return Err(crate::error::GroveError::storage(
             "Project already registered",
         ));
     }
@@ -132,7 +131,7 @@ pub fn add_project(name: &str, path: &str) -> io::Result<()> {
 }
 
 /// 删除项目（仅删除元数据，不删除实际目录）
-pub fn remove_project(path: &str) -> io::Result<()> {
+pub fn remove_project(path: &str) -> Result<()> {
     let hash = project_hash(path);
     let project_dir = grove_dir().join("projects").join(&hash);
 
@@ -150,7 +149,7 @@ pub fn remove_project(path: &str) -> io::Result<()> {
 }
 
 /// 检查项目是否已注册
-pub fn is_project_registered(path: &str) -> io::Result<bool> {
+pub fn is_project_registered(path: &str) -> Result<bool> {
     let hash = project_hash(path);
     let project_toml = project_file_path(&hash);
     Ok(project_toml.exists())
@@ -159,7 +158,7 @@ pub fn is_project_registered(path: &str) -> io::Result<bool> {
 /// Upsert 项目元数据
 /// - 如果不存在：创建新记录
 /// - 如果存在：更新 name（保留原 added_at）
-pub fn upsert_project(name: &str, path: &str) -> io::Result<()> {
+pub fn upsert_project(name: &str, path: &str) -> Result<()> {
     let hash = project_hash(path);
 
     let project = if let Some(existing) = load_project_metadata(&hash)? {

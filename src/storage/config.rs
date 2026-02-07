@@ -3,11 +3,11 @@
 use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::fs;
-use std::io;
 use std::path::PathBuf;
 use std::str::FromStr;
 
 use super::grove_dir;
+use crate::error::Result;
 
 /// Terminal multiplexer 选择
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -29,7 +29,7 @@ impl fmt::Display for Multiplexer {
 
 impl FromStr for Multiplexer {
     type Err = String;
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
         match s.to_lowercase().as_str() {
             "tmux" => Ok(Multiplexer::Tmux),
             "zellij" => Ok(Multiplexer::Zellij),
@@ -155,13 +155,13 @@ pub fn load_config() -> Config {
 }
 
 /// 保存配置
-pub fn save_config(config: &Config) -> io::Result<()> {
+pub fn save_config(config: &Config) -> Result<()> {
     // 确保 ~/.grove 目录存在
     let dir = grove_dir();
     fs::create_dir_all(&dir)?;
 
     let path = config_path();
-    let content = toml::to_string_pretty(config)
-        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
-    fs::write(path, content)
+    let content = toml::to_string_pretty(config)?;
+    fs::write(path, content)?;
+    Ok(())
 }

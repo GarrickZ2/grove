@@ -1,10 +1,10 @@
-use std::io;
 use std::path::PathBuf;
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 use super::ensure_project_dir;
+use crate::error::Result;
 
 /// 任务状态
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -58,7 +58,7 @@ struct TasksFile {
 }
 
 /// 获取 tasks.toml 文件路径
-fn tasks_file_path(project: &str) -> io::Result<PathBuf> {
+fn tasks_file_path(project: &str) -> Result<PathBuf> {
     let dir = ensure_project_dir(project)?;
     Ok(dir.join("tasks.toml"))
 }
@@ -70,7 +70,7 @@ enum TasksKind {
 }
 
 /// 通用加载任务函数
-fn load_tasks_generic(project: &str, kind: TasksKind) -> io::Result<Vec<Task>> {
+fn load_tasks_generic(project: &str, kind: TasksKind) -> Result<Vec<Task>> {
     let path = match kind {
         TasksKind::Active => tasks_file_path(project)?,
         TasksKind::Archived => archived_file_path(project)?,
@@ -85,7 +85,7 @@ fn load_tasks_generic(project: &str, kind: TasksKind) -> io::Result<Vec<Task>> {
 }
 
 /// 通用保存任务函数
-fn save_tasks_generic(project: &str, tasks: &[Task], kind: TasksKind) -> io::Result<()> {
+fn save_tasks_generic(project: &str, tasks: &[Task], kind: TasksKind) -> Result<()> {
     let path = match kind {
         TasksKind::Active => tasks_file_path(project)?,
         TasksKind::Archived => archived_file_path(project)?,
@@ -99,17 +99,17 @@ fn save_tasks_generic(project: &str, tasks: &[Task], kind: TasksKind) -> io::Res
 }
 
 /// 加载任务列表
-pub fn load_tasks(project: &str) -> io::Result<Vec<Task>> {
+pub fn load_tasks(project: &str) -> Result<Vec<Task>> {
     load_tasks_generic(project, TasksKind::Active)
 }
 
 /// 保存任务列表
-pub fn save_tasks(project: &str, tasks: &[Task]) -> io::Result<()> {
+pub fn save_tasks(project: &str, tasks: &[Task]) -> Result<()> {
     save_tasks_generic(project, tasks, TasksKind::Active)
 }
 
 /// 添加单个任务
-pub fn add_task(project: &str, task: Task) -> io::Result<()> {
+pub fn add_task(project: &str, task: Task) -> Result<()> {
     let mut tasks = load_tasks(project)?;
     tasks.push(task);
     save_tasks(project, &tasks)
@@ -118,23 +118,23 @@ pub fn add_task(project: &str, task: Task) -> io::Result<()> {
 // ========== Archived Tasks (分离存储) ==========
 
 /// 获取 archived.toml 文件路径
-fn archived_file_path(project: &str) -> io::Result<PathBuf> {
+fn archived_file_path(project: &str) -> Result<PathBuf> {
     let dir = ensure_project_dir(project)?;
     Ok(dir.join("archived.toml"))
 }
 
 /// 加载归档任务列表
-pub fn load_archived_tasks(project: &str) -> io::Result<Vec<Task>> {
+pub fn load_archived_tasks(project: &str) -> Result<Vec<Task>> {
     load_tasks_generic(project, TasksKind::Archived)
 }
 
 /// 保存归档任务列表
-pub fn save_archived_tasks(project: &str, tasks: &[Task]) -> io::Result<()> {
+pub fn save_archived_tasks(project: &str, tasks: &[Task]) -> Result<()> {
     save_tasks_generic(project, tasks, TasksKind::Archived)
 }
 
 /// 归档任务 (tasks.toml → archived.toml)
-pub fn archive_task(project: &str, task_id: &str) -> io::Result<()> {
+pub fn archive_task(project: &str, task_id: &str) -> Result<()> {
     let mut tasks = load_tasks(project)?;
     let mut archived = load_archived_tasks(project)?;
 
@@ -153,7 +153,7 @@ pub fn archive_task(project: &str, task_id: &str) -> io::Result<()> {
 }
 
 /// 恢复任务 (archived.toml → tasks.toml)
-pub fn recover_task(project: &str, task_id: &str) -> io::Result<()> {
+pub fn recover_task(project: &str, task_id: &str) -> Result<()> {
     let mut tasks = load_tasks(project)?;
     let mut archived = load_archived_tasks(project)?;
 
@@ -172,21 +172,21 @@ pub fn recover_task(project: &str, task_id: &str) -> io::Result<()> {
 }
 
 /// 删除活跃任务
-pub fn remove_task(project: &str, task_id: &str) -> io::Result<()> {
+pub fn remove_task(project: &str, task_id: &str) -> Result<()> {
     let mut tasks = load_tasks(project)?;
     tasks.retain(|t| t.id != task_id);
     save_tasks(project, &tasks)
 }
 
 /// 删除归档任务
-pub fn remove_archived_task(project: &str, task_id: &str) -> io::Result<()> {
+pub fn remove_archived_task(project: &str, task_id: &str) -> Result<()> {
     let mut archived = load_archived_tasks(project)?;
     archived.retain(|t| t.id != task_id);
     save_archived_tasks(project, &archived)
 }
 
 /// 更新任务的 target branch
-pub fn update_task_target(project: &str, task_id: &str, new_target: &str) -> io::Result<()> {
+pub fn update_task_target(project: &str, task_id: &str, new_target: &str) -> Result<()> {
     let mut tasks = load_tasks(project)?;
 
     if let Some(task) = tasks.iter_mut().find(|t| t.id == task_id) {
@@ -199,7 +199,7 @@ pub fn update_task_target(project: &str, task_id: &str, new_target: &str) -> io:
 }
 
 /// 更新 task 的 updated_at 时间戳
-pub fn touch_task(project: &str, task_id: &str) -> io::Result<()> {
+pub fn touch_task(project: &str, task_id: &str) -> Result<()> {
     let mut tasks = load_tasks(project)?;
 
     if let Some(task) = tasks.iter_mut().find(|t| t.id == task_id) {
@@ -211,13 +211,13 @@ pub fn touch_task(project: &str, task_id: &str) -> io::Result<()> {
 }
 
 /// 根据 task_id 获取任务（从 tasks.toml）
-pub fn get_task(project: &str, task_id: &str) -> io::Result<Option<Task>> {
+pub fn get_task(project: &str, task_id: &str) -> Result<Option<Task>> {
     let tasks = load_tasks(project)?;
     Ok(tasks.into_iter().find(|t| t.id == task_id))
 }
 
 /// 根据 task_id 获取归档任务
-pub fn get_archived_task(project: &str, task_id: &str) -> io::Result<Option<Task>> {
+pub fn get_archived_task(project: &str, task_id: &str) -> Result<Option<Task>> {
     let archived = load_archived_tasks(project)?;
     Ok(archived.into_iter().find(|t| t.id == task_id))
 }
