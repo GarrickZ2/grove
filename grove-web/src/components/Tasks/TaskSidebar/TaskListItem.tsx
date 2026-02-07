@@ -7,6 +7,7 @@ interface TaskListItemProps {
   isSelected: boolean;
   onClick: () => void;
   onDoubleClick: () => void;
+  onContextMenu?: (e: React.MouseEvent) => void;
   notification?: { level: string };
 }
 
@@ -81,7 +82,7 @@ function getStatusConfig(status: TaskStatus): {
   }
 }
 
-export function TaskListItem({ task, isSelected, onClick, onDoubleClick, notification }: TaskListItemProps) {
+export function TaskListItem({ task, isSelected, onClick, onDoubleClick, onContextMenu, notification }: TaskListItemProps) {
   const statusConfig = getStatusConfig(task.status);
   const StatusIcon = statusConfig.icon;
 
@@ -90,6 +91,7 @@ export function TaskListItem({ task, isSelected, onClick, onDoubleClick, notific
       whileHover={{ backgroundColor: "var(--color-bg-tertiary)" }}
       onClick={onClick}
       onDoubleClick={task.status !== "archived" ? onDoubleClick : undefined}
+      onContextMenu={onContextMenu}
       className={`w-full text-left px-3 py-2.5 transition-colors ${
         isSelected
           ? "bg-[var(--color-bg-tertiary)] border-l-2 border-l-[var(--color-highlight)]"

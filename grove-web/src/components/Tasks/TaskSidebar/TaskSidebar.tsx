@@ -13,6 +13,7 @@ interface TaskSidebarProps {
   isLoading?: boolean;
   onSelectTask: (task: Task) => void;
   onDoubleClickTask: (task: Task) => void;
+  onContextMenuTask?: (task: Task, e: React.MouseEvent) => void;
   onFilterChange: (filter: TaskFilter) => void;
   onSearchChange: (query: string) => void;
 }
@@ -25,6 +26,7 @@ export function TaskSidebar({
   isLoading = false,
   onSelectTask,
   onDoubleClickTask,
+  onContextMenuTask,
   onFilterChange,
   onSearchChange,
 }: TaskSidebarProps) {
@@ -68,6 +70,7 @@ export function TaskSidebar({
                     onSelectTask(task);
                   }}
                   onDoubleClick={() => onDoubleClickTask(task)}
+                  onContextMenu={onContextMenuTask ? (e) => onContextMenuTask(task, e) : undefined}
                   notification={notif ? { level: notif.level } : undefined}
                 />
               );

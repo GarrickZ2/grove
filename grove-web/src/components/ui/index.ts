@@ -7,6 +7,8 @@ export { Combobox } from "./Combobox";
 export type { ComboboxOption } from "./Combobox";
 export { Tooltip } from "./Tooltip";
 export { DropdownMenu } from "./DropdownMenu";
+export { ContextMenu } from "./ContextMenu";
+export type { ContextMenuItem } from "./ContextMenu";
 export { AppPicker, ideAppOptions, terminalAppOptions } from "./AppPicker";
 export { AgentPicker, agentOptions } from "./AgentPicker";
 export { MarkdownRenderer } from "./MarkdownRenderer";

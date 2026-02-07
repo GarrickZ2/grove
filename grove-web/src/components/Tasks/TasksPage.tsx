@@ -1,6 +1,6 @@
 import { useState, useMemo, useCallback, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Plus } from "lucide-react";
+import { Plus, Terminal, GitCommit, GitBranchPlus, RefreshCw, GitMerge, Archive, RotateCcw, Trash2 } from "lucide-react";
 import { TaskSidebar } from "./TaskSidebar/TaskSidebar";
 import { TaskInfoPanel } from "./TaskInfoPanel";
 import { TaskView } from "./TaskView";
@@ -8,6 +8,8 @@ import { NewTaskDialog } from "./NewTaskDialog";
 import { CommitDialog, ConfirmDialog, MergeDialog } from "../Dialogs";
 import { RebaseDialog } from "./dialogs";
 import { Button } from "../ui";
+import { ContextMenu } from "../ui/ContextMenu";
+import type { ContextMenuItem } from "../ui/ContextMenu";
 import { useProject } from "../../context";
 import {
   createTask as apiCreateTask,
@@ -106,6 +108,9 @@ export function TasksPage({ initialTaskId, onNavigationConsumed }: TasksPageProp
 
   // Operation message toast
   const [operationMessage, setOperationMessage] = useState<string | null>(null);
+
+  // Context menu state
+  const [contextMenu, setContextMenu] = useState<{ task: Task; position: { x: number; y: number } } | null>(null);
 
   // Archived tasks (loaded separately)
   const [archivedTasks, setArchivedTasks] = useState<Task[]>([]);
@@ -536,6 +541,41 @@ export function TasksPage({ initialTaskId, onNavigationConsumed }: TasksPageProp
       setShowResetConfirm(false);
     }
   }, [selectedProject, selectedTask, isResetting, refreshSelectedProject]);
+  // Context menu handlers
+  const handleContextMenu = useCallback((task: Task, e: React.MouseEvent) => {
+    e.preventDefault();
+    setSelectedTask(task);
+    setContextMenu({ task, position: { x: e.clientX, y: e.clientY } });
+  }, []);
+
+  const closeContextMenu = useCallback(() => {
+    setContextMenu(null);
+  }, []);
+
+  const getContextMenuItems = (task: Task): ContextMenuItem[] => {
+    if (task.status === "archived") {
+      return [
+        { id: "recover", label: "Recover", icon: RotateCcw, variant: "default", onClick: handleRecover },
+        { id: "div-1", label: "", divider: true, onClick: () => {} },
+        { id: "clean", label: "Clean", icon: Trash2, variant: "danger", onClick: handleClean },
+      ];
+    }
+
+    const canOperate = task.status !== "broken";
+    return [
+      { id: "terminal", label: "Enter Terminal", icon: Terminal, variant: "default", onClick: () => handleDoubleClickTask(task) },
+      { id: "div-1", label: "", divider: true, onClick: () => {} },
+      { id: "commit", label: "Commit", icon: GitCommit, variant: "default", onClick: handleCommit },
+      { id: "rebase", label: "Rebase", icon: GitBranchPlus, variant: "default", onClick: handleRebase, disabled: !canOperate },
+      { id: "sync", label: "Sync", icon: RefreshCw, variant: "default", onClick: handleSync, disabled: !canOperate },
+      { id: "merge", label: "Merge", icon: GitMerge, variant: "default", onClick: handleMerge, disabled: !canOperate },
+      { id: "div-2", label: "", divider: true, onClick: () => {} },
+      { id: "archive", label: "Archive", icon: Archive, variant: "warning", onClick: handleArchive, disabled: task.status === "broken" },
+      { id: "reset", label: "Reset", icon: RotateCcw, variant: "warning", onClick: handleReset },
+      { id: "clean", label: "Clean", icon: Trash2, variant: "danger", onClick: handleClean },
+    ];
+  };
+
   const handleStartSession = () => {
     // Start session and enter terminal mode
     setViewMode("terminal");
@@ -598,6 +638,7 @@ export function TasksPage({ initialTaskId, onNavigationConsumed }: TasksPageProp
               isLoading={filter === "archived" && isLoadingArchived}
               onSelectTask={handleSelectTask}
               onDoubleClickTask={handleDoubleClickTask}
+              onContextMenuTask={handleContextMenu}
               onFilterChange={setFilter}
               onSearchChange={setSearchQuery}
             />
@@ -791,6 +832,13 @@ export function TasksPage({ initialTaskId, onNavigationConsumed }: TasksPageProp
         availableBranches={availableBranches}
         onClose={() => setShowRebaseDialog(false)}
         onRebase={handleRebaseSubmit}
+      />
+
+      {/* Task Context Menu */}
+      <ContextMenu
+        items={contextMenu ? getContextMenuItems(contextMenu.task) : []}
+        position={contextMenu?.position ?? null}
+        onClose={closeContextMenu}
       />
     </motion.div>
   );
