@@ -3,6 +3,7 @@ mod app;
 mod check;
 mod cli;
 mod difit;
+mod error;
 mod event;
 mod git;
 mod hooks;
