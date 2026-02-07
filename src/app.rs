@@ -2753,10 +2753,11 @@ impl App {
                 self.show_toast(format!("Synced with {}", task.target));
             }
             Err(e) => {
-                if e.contains("conflict") || e.contains("CONFLICT") {
+                let error_msg = e.to_string();
+                if error_msg.contains("conflict") || error_msg.contains("CONFLICT") {
                     self.show_toast("Conflict - resolve in worktree");
                 } else {
-                    self.show_toast(format!("Sync failed: {}", e));
+                    self.show_toast(format!("Sync failed: {}", error_msg));
                 }
             }
         }
@@ -2931,7 +2932,7 @@ impl App {
                 Err(e) => {
                     // Rollback merge state on any error (including conflicts)
                     let _ = git::reset_merge(&repo_path);
-                    BgResult::MergeErr(e)
+                    BgResult::MergeErr(e.to_string())
                 }
             };
             let _ = tx.send(bg_result);

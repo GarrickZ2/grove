@@ -606,10 +606,11 @@ pub async fn sync_task(
 
     // Execute rebase (TUI: do_sync)
     if let Err(e) = git::rebase(&task.worktree_path, &task.target) {
-        let message = if e.contains("conflict") || e.contains("CONFLICT") {
+        let error_msg = e.to_string();
+        let message = if error_msg.contains("conflict") || error_msg.contains("CONFLICT") {
             "Conflict detected - please resolve in terminal".to_string()
         } else {
-            format!("Sync failed: {}", e)
+            format!("Sync failed: {}", error_msg)
         };
         return Ok(Json(GitOperationResponse {
             success: false,
@@ -643,7 +644,7 @@ pub async fn commit_task(
     if let Err(e) = git::add_and_commit(&task.worktree_path, &req.message) {
         return Ok(Json(GitOperationResponse {
             success: false,
-            message: e,
+            message: e.to_string(),
         }));
     }
 
@@ -736,7 +737,7 @@ pub async fn merge_task(
         let _ = git::reset_merge(&project.path);
         return Ok(Json(GitOperationResponse {
             success: false,
-            message: e,
+            message: e.to_string(),
         }));
     }
 
@@ -1088,8 +1089,14 @@ pub async fn get_file(
             )
         })?;
 
-    let content = git::read_file(&task.worktree_path, &params.path)
-        .map_err(|e| (StatusCode::BAD_REQUEST, Json(ApiErrorResponse { error: e })))?;
+    let content = git::read_file(&task.worktree_path, &params.path).map_err(|e| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ApiErrorResponse {
+                error: e.to_string(),
+            }),
+        )
+    })?;
 
     Ok(Json(FileContentResponse {
         content,
@@ -1131,8 +1138,14 @@ pub async fn update_file(
             )
         })?;
 
-    git::write_file(&task.worktree_path, &params.path, &body.content)
-        .map_err(|e| (StatusCode::BAD_REQUEST, Json(ApiErrorResponse { error: e })))?;
+    git::write_file(&task.worktree_path, &params.path, &body.content).map_err(|e| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ApiErrorResponse {
+                error: e.to_string(),
+            }),
+        )
+    })?;
 
     Ok(Json(FileContentResponse {
         content: body.content,

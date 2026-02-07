@@ -309,7 +309,7 @@ pub async fn checkout(
         })),
         Err(e) => Ok(Json(GitOpResponse {
             success: false,
-            message: e,
+            message: e.to_string(),
         })),
     }
 }
@@ -330,7 +330,7 @@ pub async fn pull(Path(id): Path<String>) -> Result<Json<GitOpResponse>, StatusC
         })),
         Err(e) => Ok(Json(GitOpResponse {
             success: false,
-            message: e,
+            message: e.to_string(),
         })),
     }
 }
@@ -351,7 +351,7 @@ pub async fn push(Path(id): Path<String>) -> Result<Json<GitOpResponse>, StatusC
         })),
         Err(e) => Ok(Json(GitOpResponse {
             success: false,
-            message: e,
+            message: e.to_string(),
         })),
     }
 }
@@ -368,7 +368,7 @@ pub async fn fetch(Path(id): Path<String>) -> Result<Json<GitOpResponse>, Status
         })),
         Err(e) => Ok(Json(GitOpResponse {
             success: false,
-            message: e,
+            message: e.to_string(),
         })),
     }
 }
@@ -402,7 +402,7 @@ pub async fn stash(
         })),
         Err(e) => Ok(Json(GitOpResponse {
             success: false,
-            message: e,
+            message: e.to_string(),
         })),
     }
 }
@@ -503,7 +503,7 @@ pub async fn rename_branch(
         })),
         Err(e) => Ok(Json(GitOpResponse {
             success: false,
-            message: e,
+            message: e.to_string(),
         })),
     }
 }

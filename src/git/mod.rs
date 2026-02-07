@@ -1,6 +1,8 @@
 use std::path::Path;
 use std::process::{Command, Stdio};
 
+use crate::error::{GroveError, Result};
+
 pub mod cache;
 
 // ============================================================================
@@ -8,28 +10,28 @@ pub mod cache;
 // ============================================================================
 
 /// 执行 git 命令并返回 stdout (trim 后)
-fn git_cmd(path: &str, args: &[&str]) -> Result<String, String> {
+fn git_cmd(path: &str, args: &[&str]) -> Result<String> {
     let output = Command::new("git")
         .current_dir(path)
         .args(args)
         .stdin(Stdio::null())
         .output()
-        .map_err(|e| format!("Failed to execute git: {}", e))?;
+        .map_err(|e| GroveError::git(format!("Failed to execute git: {}", e)))?;
 
     if output.status.success() {
         Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
     } else {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        Err(format!(
+        Err(GroveError::git(format!(
             "git {} failed: {}",
             args.first().unwrap_or(&""),
             stderr.trim()
-        ))
+        )))
     }
 }
 
 /// 执行 git 命令，仅返回成功/失败
-fn git_cmd_unit(path: &str, args: &[&str]) -> Result<(), String> {
+fn git_cmd_unit(path: &str, args: &[&str]) -> Result<()> {
     git_cmd(path, args).map(|_| ())
 }
 
@@ -63,7 +65,7 @@ pub fn create_worktree(
     branch: &str,
     worktree_path: &Path,
     base_branch: &str,
-) -> Result<(), String> {
+) -> Result<()> {
     git_cmd_unit(
         repo_path,
         &[
@@ -79,13 +81,13 @@ pub fn create_worktree(
 
 /// 获取当前分支名
 /// 执行: git rev-parse --abbrev-ref HEAD
-pub fn current_branch(repo_path: &str) -> Result<String, String> {
+pub fn current_branch(repo_path: &str) -> Result<String> {
     git_cmd(repo_path, &["rev-parse", "--abbrev-ref", "HEAD"])
 }
 
 /// 获取仓库根目录
 /// 执行: git rev-parse --show-toplevel
-pub fn repo_root(path: &str) -> Result<String, String> {
+pub fn repo_root(path: &str) -> Result<String> {
     git_cmd(path, &["rev-parse", "--show-toplevel"])
 }
 
@@ -96,23 +98,23 @@ pub fn is_git_repo(path: &str) -> bool {
 
 /// 计算 branch 相对于 target 新增的 commit 数
 /// 执行: git rev-list --count {target}..{branch}
-pub fn commits_behind(worktree_path: &str, branch: &str, target: &str) -> Result<u32, String> {
+pub fn commits_behind(worktree_path: &str, branch: &str, target: &str) -> Result<u32> {
     let range = format!("{}..{}", target, branch);
     git_cmd(worktree_path, &["rev-list", "--count", &range])?
         .parse::<u32>()
-        .map_err(|e| format!("Failed to parse count: {}", e))
+        .map_err(|e| GroveError::git(format!("Failed to parse count: {}", e)))
 }
 
 /// 获取文件变更统计 (相对于 target)
 /// 执行: git diff --numstat {target}
 /// 返回: (additions, deletions)
-pub fn file_changes(worktree_path: &str, target: &str) -> Result<(u32, u32), String> {
+pub fn file_changes(worktree_path: &str, target: &str) -> Result<(u32, u32)> {
     git_cmd(worktree_path, &["diff", "--numstat", target]).map(|output| parse_numstat(&output))
 }
 
 /// 删除 worktree（保留 branch）
 /// 执行: git worktree remove {path} --force
-pub fn remove_worktree(repo_path: &str, worktree_path: &str) -> Result<(), String> {
+pub fn remove_worktree(repo_path: &str, worktree_path: &str) -> Result<()> {
     git_cmd_unit(repo_path, &["worktree", "remove", worktree_path, "--force"])
 }
 
@@ -122,7 +124,7 @@ pub fn create_worktree_from_branch(
     repo_path: &str,
     branch: &str,
     worktree_path: &Path,
-) -> Result<(), String> {
+) -> Result<()> {
     git_cmd_unit(
         repo_path,
         &[
@@ -136,7 +138,7 @@ pub fn create_worktree_from_branch(
 
 /// 删除分支
 /// 执行: git branch -D {branch}
-pub fn delete_branch(repo_path: &str, branch: &str) -> Result<(), String> {
+pub fn delete_branch(repo_path: &str, branch: &str) -> Result<()> {
     git_cmd_unit(repo_path, &["branch", "-D", branch])
 }
 
@@ -146,7 +148,7 @@ pub fn branch_exists(repo_path: &str, branch: &str) -> bool {
 }
 
 /// 列出所有本地分支
-pub fn list_branches(repo_path: &str) -> Result<Vec<String>, String> {
+pub fn list_branches(repo_path: &str) -> Result<Vec<String>> {
     git_cmd(repo_path, &["branch", "--format=%(refname:short)"]).map(|output| {
         output
             .lines()
@@ -160,7 +162,7 @@ pub fn list_branches(repo_path: &str) -> Result<Vec<String>, String> {
 
 /// 检查分支是否已合并到 target
 /// 使用 git merge-base --is-ancestor 检查
-pub fn is_merged(repo_path: &str, branch: &str, target: &str) -> Result<bool, String> {
+pub fn is_merged(repo_path: &str, branch: &str, target: &str) -> Result<bool> {
     // exit code 0 = is ancestor (merged), non-zero = not merged
     Ok(git_cmd_check(
         repo_path,
@@ -170,7 +172,7 @@ pub fn is_merged(repo_path: &str, branch: &str, target: &str) -> Result<bool, St
 
 /// 检查是否有未提交的改动
 /// 执行: git status --porcelain
-pub fn has_uncommitted_changes(path: &str) -> Result<bool, String> {
+pub fn has_uncommitted_changes(path: &str) -> Result<bool> {
     git_cmd(path, &["status", "--porcelain"]).map(|output| !output.is_empty())
 }
 
@@ -214,68 +216,68 @@ pub fn branch_head_equals(repo_path: &str, branch: &str, commit: &str) -> bool {
 
 /// 执行 rebase
 /// 执行: git rebase {target}
-pub fn rebase(worktree_path: &str, target: &str) -> Result<(), String> {
+pub fn rebase(worktree_path: &str, target: &str) -> Result<()> {
     git_cmd_unit(worktree_path, &["rebase", target])
 }
 
 /// Fetch origin 分支
 /// 执行: git fetch origin {branch}
-pub fn fetch_origin(repo_path: &str, branch: &str) -> Result<(), String> {
+pub fn fetch_origin(repo_path: &str, branch: &str) -> Result<()> {
     git_cmd_unit(repo_path, &["fetch", "origin", branch])
 }
 
 /// 中止 rebase
 /// 执行: git rebase --abort
-pub fn abort_rebase(repo_path: &str) -> Result<(), String> {
+pub fn abort_rebase(repo_path: &str) -> Result<()> {
     git_cmd_unit(repo_path, &["rebase", "--abort"])
 }
 
 /// 获取冲突文件列表
 /// 执行: git diff --name-only --diff-filter=U
-pub fn get_conflict_files(repo_path: &str) -> Result<Vec<String>, String> {
+pub fn get_conflict_files(repo_path: &str) -> Result<Vec<String>> {
     let output = git_cmd(repo_path, &["diff", "--name-only", "--diff-filter=U"])?;
     Ok(output.lines().map(|s| s.to_string()).collect())
 }
 
 /// 切换分支
 /// 执行: git checkout {branch}
-pub fn checkout(repo_path: &str, branch: &str) -> Result<(), String> {
+pub fn checkout(repo_path: &str, branch: &str) -> Result<()> {
     git_cmd_unit(repo_path, &["checkout", branch])
 }
 
 /// 获取最新 commit hash (短格式)
 /// 执行: git rev-parse --short HEAD
-pub fn get_head_short(repo_path: &str) -> Result<String, String> {
+pub fn get_head_short(repo_path: &str) -> Result<String> {
     git_cmd(repo_path, &["rev-parse", "--short", "HEAD"]).map(|s| s.trim().to_string())
 }
 
 /// 通用 merge 命令执行函数 (带 merge 错误格式化)
-fn git_merge_cmd(repo_path: &str, args: &[&str]) -> Result<(), String> {
+fn git_merge_cmd(repo_path: &str, args: &[&str]) -> Result<()> {
     let output = Command::new("git")
         .current_dir(repo_path)
         .args(args)
         .stdin(Stdio::null())
         .output()
-        .map_err(|e| format!("Failed to execute git: {}", e))?;
+        .map_err(|e| GroveError::git(format!("Failed to execute git: {}", e)))?;
 
     if output.status.success() {
         Ok(())
     } else {
         let stderr = String::from_utf8_lossy(&output.stderr);
         let stdout = String::from_utf8_lossy(&output.stdout);
-        Err(format_merge_error(&stdout, &stderr))
+        Err(GroveError::git(format_merge_error(&stdout, &stderr)))
     }
 }
 
 /// 执行 squash merge
 /// 执行: git merge --squash {branch}
-pub fn merge_squash(repo_path: &str, branch: &str) -> Result<(), String> {
+pub fn merge_squash(repo_path: &str, branch: &str) -> Result<()> {
     git_merge_cmd(repo_path, &["merge", "--squash", branch])
 }
 
 /// 执行 merge commit（保留历史）
 /// 执行: git merge --no-ff {branch} -m {message}
-pub fn merge_no_ff(repo_path: &str, branch: &str, message: &str) -> Result<(), String> {
+pub fn merge_no_ff(repo_path: &str, branch: &str, message: &str) -> Result<()> {
     git_merge_cmd(repo_path, &["merge", "--no-ff", branch, "-m", message])
 }
 
@@ -310,13 +312,13 @@ fn format_merge_error(stdout: &str, stderr: &str) -> String {
 /// 回滚 merge 状态（用于 squash merge 后 commit 失败时回滚）
 /// 执行: git reset --merge
 /// 比 reset --hard 更安全：只回退 merge 引入的变更，保留之前已有的未提交改动
-pub fn reset_merge(repo_path: &str) -> Result<(), String> {
+pub fn reset_merge(repo_path: &str) -> Result<()> {
     git_cmd_unit(repo_path, &["reset", "--merge"])
 }
 
 /// 提交（用于 squash merge 后）
 /// 执行: git commit -m {message}
-pub fn commit(repo_path: &str, message: &str) -> Result<(), String> {
+pub fn commit(repo_path: &str, message: &str) -> Result<()> {
     git_cmd_unit(repo_path, &["commit", "-m", message])
 }
 
@@ -333,60 +335,62 @@ pub fn build_commit_message(title: &str, notes: Option<&str>) -> String {
 
 /// 获取 git 跟踪的文件列表
 /// 执行: git ls-files
-pub fn list_files(repo_path: &str) -> Result<Vec<String>, String> {
+pub fn list_files(repo_path: &str) -> Result<Vec<String>> {
     let output = git_cmd(repo_path, &["ls-files"])?;
     Ok(output.lines().map(|s| s.to_string()).collect())
 }
 
 /// 读取 worktree 中的文件内容
 /// 包含路径穿越保护
-pub fn read_file(repo_path: &str, file_path: &str) -> Result<String, String> {
+pub fn read_file(repo_path: &str, file_path: &str) -> Result<String> {
     let base = Path::new(repo_path)
         .canonicalize()
-        .map_err(|e| format!("Invalid repo path: {}", e))?;
+        .map_err(|e| GroveError::git(format!("Invalid repo path: {}", e)))?;
     let full = base
         .join(file_path)
         .canonicalize()
-        .map_err(|e| format!("Invalid file path: {}", e))?;
+        .map_err(|e| GroveError::git(format!("Invalid file path: {}", e)))?;
 
     if !full.starts_with(&base) {
-        return Err("Path traversal detected".to_string());
+        return Err(GroveError::git("Path traversal detected"));
     }
 
-    std::fs::read_to_string(&full).map_err(|e| format!("Failed to read file: {}", e))
+    std::fs::read_to_string(&full)
+        .map_err(|e| GroveError::git(format!("Failed to read file: {}", e)))
 }
 
 /// 写入 worktree 中的文件
 /// 包含路径穿越保护
-pub fn write_file(repo_path: &str, file_path: &str, content: &str) -> Result<(), String> {
+pub fn write_file(repo_path: &str, file_path: &str, content: &str) -> Result<()> {
     let base = Path::new(repo_path)
         .canonicalize()
-        .map_err(|e| format!("Invalid repo path: {}", e))?;
+        .map_err(|e| GroveError::git(format!("Invalid repo path: {}", e)))?;
     // For write, the file might not exist yet, so canonicalize the parent
     let target = base.join(file_path);
     let parent = target
         .parent()
-        .ok_or_else(|| "Invalid file path".to_string())?;
+        .ok_or_else(|| GroveError::git("Invalid file path"))?;
     let parent_canonical = parent
         .canonicalize()
-        .map_err(|e| format!("Invalid parent path: {}", e))?;
+        .map_err(|e| GroveError::git(format!("Invalid parent path: {}", e)))?;
 
     if !parent_canonical.starts_with(&base) {
-        return Err("Path traversal detected".to_string());
+        return Err(GroveError::git("Path traversal detected"));
     }
 
     // Reconstruct the full path using canonical parent + filename
     let file_name = target
         .file_name()
-        .ok_or_else(|| "Invalid file name".to_string())?;
+        .ok_or_else(|| GroveError::git("Invalid file name"))?;
     let final_path = parent_canonical.join(file_name);
 
-    std::fs::write(&final_path, content).map_err(|e| format!("Failed to write file: {}", e))
+    std::fs::write(&final_path, content)
+        .map_err(|e| GroveError::git(format!("Failed to write file: {}", e)))
 }
 
 /// 获取相对于 origin 的 commits ahead 数量
 /// 执行: git rev-list --count origin/{branch}..HEAD
-pub fn commits_ahead_of_origin(repo_path: &str) -> Result<Option<u32>, String> {
+pub fn commits_ahead_of_origin(repo_path: &str) -> Result<Option<u32>> {
     let branch = current_branch(repo_path)?;
     let origin_ref = format!("origin/{}", branch);
 
@@ -404,13 +408,13 @@ pub fn commits_ahead_of_origin(repo_path: &str) -> Result<Option<u32>, String> {
 
 /// 获取最近提交的相对时间
 /// 执行: git log -1 --format=%cr
-pub fn last_commit_time(repo_path: &str) -> Result<String, String> {
+pub fn last_commit_time(repo_path: &str) -> Result<String> {
     git_cmd(repo_path, &["log", "-1", "--format=%cr"]).or_else(|_| Ok("unknown".to_string()))
 }
 
 /// 获取相对于 origin 的文件变更统计
 /// 执行: git diff --numstat origin/{branch}
-pub fn changes_from_origin(repo_path: &str) -> Result<(u32, u32), String> {
+pub fn changes_from_origin(repo_path: &str) -> Result<(u32, u32)> {
     let branch = current_branch(repo_path)?;
     let origin_ref = format!("origin/{}", branch);
 
@@ -426,7 +430,7 @@ pub fn changes_from_origin(repo_path: &str) -> Result<(u32, u32), String> {
 
 /// 切换分支
 /// 执行: git checkout {branch}
-pub fn checkout_branch(worktree_path: &str, branch: &str) -> Result<(), String> {
+pub fn checkout_branch(worktree_path: &str, branch: &str) -> Result<()> {
     git_cmd_unit(worktree_path, &["checkout", branch])
 }
 
@@ -441,11 +445,7 @@ pub struct LogEntry {
 
 /// 获取最近的 commit 日志
 /// 执行: git log --oneline --format="%cr\t%s" -n {count} {target}..HEAD
-pub fn recent_log(
-    worktree_path: &str,
-    target: &str,
-    count: usize,
-) -> Result<Vec<LogEntry>, String> {
+pub fn recent_log(worktree_path: &str, target: &str, count: usize) -> Result<Vec<LogEntry>> {
     let range = format!("{}..HEAD", target);
     let n = format!("-{}", count);
     let output = git_cmd(worktree_path, &["log", "--format=%cr\t%s", &n, &range])?;
@@ -480,7 +480,7 @@ pub struct DiffStatEntry {
 
 /// 获取相对于 target 的变更文件列表（带统计）
 /// 执行: git diff --numstat --diff-filter=ACDMRT {target}
-pub fn diff_stat(worktree_path: &str, target: &str) -> Result<Vec<DiffStatEntry>, String> {
+pub fn diff_stat(worktree_path: &str, target: &str) -> Result<Vec<DiffStatEntry>> {
     // 先获取 numstat（additions/deletions）
     let numstat = git_cmd(worktree_path, &["diff", "--numstat", target])?;
     // 再获取 name-status（状态字母）
@@ -526,24 +526,24 @@ pub fn diff_stat(worktree_path: &str, target: &str) -> Result<Vec<DiffStatEntry>
 
 /// 获取未提交文件数量
 /// 执行: git status --porcelain
-pub fn uncommitted_count(path: &str) -> Result<usize, String> {
+pub fn uncommitted_count(path: &str) -> Result<usize> {
     git_cmd(path, &["status", "--porcelain"])
         .map(|output| output.lines().filter(|l| !l.trim().is_empty()).count())
 }
 
 /// 获取 stash 数量
-pub fn stash_count(path: &str) -> Result<usize, String> {
+pub fn stash_count(path: &str) -> Result<usize> {
     git_cmd(path, &["stash", "list"])
         .map(|output| output.lines().filter(|l| !l.trim().is_empty()).count())
 }
 
-pub fn add_and_commit(worktree_path: &str, message: &str) -> Result<(), String> {
+pub fn add_and_commit(worktree_path: &str, message: &str) -> Result<()> {
     // 先 add
     git_cmd_unit(worktree_path, &["add", "-A"])?;
 
     // 检查是否有东西要提交
     if !has_uncommitted_changes(worktree_path).unwrap_or(false) {
-        return Err("Nothing to commit".to_string());
+        return Err(GroveError::git("Nothing to commit"));
     }
 
     // 再 commit
