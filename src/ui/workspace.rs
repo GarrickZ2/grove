@@ -17,7 +17,7 @@ use super::components::{
 /// 渲染 Workspace 页面
 pub fn render(frame: &mut Frame, app: &mut App) {
     let area = frame.area();
-    let colors = &app.colors;
+    let colors = &app.ui.colors;
 
     // 填充整个背景
     Block::default()
@@ -30,46 +30,46 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     render_grid(frame, app, show_search);
 
     // 渲染 Toast
-    if let Some(ref t) = app.toast {
+    if let Some(ref t) = app.ui.toast {
         if !t.is_expired() {
-            toast::render(frame, &t.message, &app.colors);
+            toast::render(frame, &t.message, &app.ui.colors);
         }
     }
 
     // 渲染主题选择器
-    if app.show_theme_selector {
+    if app.ui.show_theme_selector {
         theme_selector::render(
             frame,
-            app.theme_selector_index,
-            &app.colors,
-            &mut app.click_areas,
+            app.ui.theme_selector_index,
+            &app.ui.colors,
+            &mut app.ui.click_areas,
         );
     }
 
     // 渲染帮助面板
-    if app.show_help {
-        help_panel::render(frame, &app.colors, app.update_info.as_ref());
+    if app.dialogs.show_help {
+        help_panel::render(frame, &app.ui.colors, app.update_info.as_ref());
     }
 
     // 渲染 Add Project 弹窗
-    if let Some(ref data) = app.add_project_dialog {
-        add_project_dialog::render(frame, data, &app.colors, &mut app.click_areas);
+    if let Some(ref data) = app.dialogs.add_project_dialog {
+        add_project_dialog::render(frame, data, &app.ui.colors, &mut app.ui.click_areas);
     }
 
     // 渲染 Delete Project 弹窗
-    if let Some(ref data) = app.delete_project_dialog {
-        delete_project_dialog::render(frame, data, &app.colors, &mut app.click_areas);
+    if let Some(ref data) = app.dialogs.delete_project_dialog {
+        delete_project_dialog::render(frame, data, &app.ui.colors, &mut app.ui.click_areas);
     }
 
     // 渲染 Config 配置面板
-    if let Some(ref data) = app.config_panel {
+    if let Some(ref data) = app.dialogs.config_panel {
         let config = crate::storage::config::load_config();
         config_panel::render(
             frame,
             data,
             &config.layout,
-            &app.colors,
-            &mut app.click_areas,
+            &app.ui.colors,
+            &mut app.ui.click_areas,
         );
     }
 }
@@ -77,7 +77,7 @@ pub fn render(frame: &mut Frame, app: &mut App) {
 /// 渲染网格布局
 fn render_grid(frame: &mut Frame, app: &mut App, show_search: bool) {
     let area = frame.area();
-    let colors = &app.colors;
+    let colors = &app.ui.colors;
 
     // 布局
     let (logo_area, search_area, content_area, footer_area) = if show_search {
@@ -114,7 +114,7 @@ fn render_grid(frame: &mut Frame, app: &mut App, show_search: bool) {
     }
 
     // 渲染内容（卡片网格或空状态）
-    app.click_areas.workspace_content_area = Some(content_area);
+    app.ui.click_areas.workspace_content_area = Some(content_area);
     let projects = app.workspace.filtered_projects();
     if projects.is_empty() {
         workspace_empty::render(frame, content_area, colors);
@@ -124,8 +124,8 @@ fn render_grid(frame: &mut Frame, app: &mut App, show_search: bool) {
             content_area,
             &mut app.workspace,
             colors,
-            &app.workspace_notifications,
-            &mut app.click_areas,
+            &app.notification.workspace_notifications,
+            &mut app.ui.click_areas,
         );
     }
 

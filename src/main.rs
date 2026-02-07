@@ -1,18 +1,24 @@
 mod api;
 mod app;
+mod async_ops_state;
 mod check;
 mod cli;
+mod config_state;
+mod dialogs;
 mod difit;
 mod error;
 mod event;
 mod git;
 mod hooks;
 mod model;
+mod notification_state;
+mod review_state;
 mod session;
 mod storage;
 mod theme;
 mod tmux;
 mod ui;
+mod ui_state;
 mod update;
 mod watcher;
 mod zellij;
@@ -136,7 +142,7 @@ fn run(terminal: &mut DefaultTerminal, app: &mut App) -> io::Result<()> {
 
     loop {
         // 检查是否有待 attach 的 session
-        if let Some(att) = app.pending_attach.take() {
+        if let Some(att) = app.async_ops.pending_attach.take() {
             // 暂停 TUI
             execute!(io::stdout(), DisableMouseCapture)?;
             ratatui::restore();
@@ -221,7 +227,7 @@ fn run(terminal: &mut DefaultTerminal, app: &mut App) -> io::Result<()> {
         app.poll_bg_result();
 
         // 渲染界面
-        app.click_areas.reset();
+        app.ui.click_areas.reset();
         terminal.draw(|frame| match app.mode {
             AppMode::Workspace => ui::workspace::render(frame, app),
             AppMode::Project => ui::project::render(frame, app),

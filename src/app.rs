@@ -7,9 +7,14 @@ use std::time::{Duration, Instant};
 use chrono::Utc;
 use ratatui::widgets::ListState;
 
+use crate::async_ops_state::AsyncOpsState;
+use crate::config_state::ConfigState;
+use crate::dialogs::DialogState;
 use crate::git;
 use crate::hooks::{self, HookEntry, HooksFile};
 use crate::model::{loader, ProjectInfo, ProjectTab, WorkspaceState, Worktree, WorktreeStatus};
+use crate::notification_state::NotificationState;
+use crate::review_state::ReviewState;
 use crate::session;
 use crate::storage::{
     self, comments,
@@ -18,13 +23,12 @@ use crate::storage::{
     tasks::{self, Task, TaskStatus},
     workspace::project_hash,
 };
-use crate::theme::{detect_system_theme, get_theme_colors, Theme, ThemeColors};
+use crate::theme::{detect_system_theme, get_theme_colors, Theme};
 use crate::tmux;
 use crate::tmux::layout::{
     self as layout_mod, parse_custom_layout_tree, CustomLayout, LayoutNode, PaneRole,
     SplitDirection, TaskLayout,
 };
-use crate::ui::click_areas::ClickAreas;
 use crate::ui::components::action_palette::{ActionPaletteData, ActionType};
 use crate::ui::components::add_project_dialog::AddProjectData;
 use crate::ui::components::branch_selector::BranchSelectorData;
@@ -35,28 +39,10 @@ use crate::ui::components::delete_project_dialog::{DeleteMode, DeleteProjectData
 use crate::ui::components::hook_panel::HookConfigStep;
 use crate::ui::components::input_confirm_dialog::InputConfirmData;
 use crate::ui::components::merge_dialog::{MergeDialogData, MergeMethod};
+use crate::ui_state::Toast;
+use crate::ui_state::UiState;
 use crate::update::UpdateInfo;
 use crate::watcher::FileWatcher;
-
-/// Toast 消息
-#[derive(Debug, Clone)]
-pub struct Toast {
-    pub message: String,
-    pub expires_at: Instant,
-}
-
-impl Toast {
-    pub fn new(message: impl Into<String>, duration: Duration) -> Self {
-        Self {
-            message: message.into(),
-            expires_at: Instant::now() + duration,
-        }
-    }
-
-    pub fn is_expired(&self) -> bool {
-        Instant::now() >= self.expires_at
-    }
-}
 
 /// 设置终端 tab 标题
 fn set_terminal_title(title: &str) {
@@ -863,86 +849,28 @@ pub struct App {
     pub should_quit: bool,
 
     // === 对话框状态 ===
-    /// 是否显示 New Task 弹窗
-    pub show_new_task_dialog: bool,
-    /// New Task 输入内容
-    pub new_task_input: String,
-    /// 是否显示帮助面板
-    pub show_help: bool,
-    /// 确认弹窗（弱确认）
-    pub confirm_dialog: Option<ConfirmType>,
-    /// 输入确认弹窗（强确认）
-    pub input_confirm_dialog: Option<InputConfirmData>,
-    /// 分支选择器（Rebase To）
-    pub branch_selector: Option<BranchSelectorData>,
-    /// Merge 方式选择弹窗
-    pub merge_dialog: Option<MergeDialogData>,
-    /// Add Project 弹窗
-    pub add_project_dialog: Option<AddProjectData>,
-    /// Delete Project 弹窗
-    pub delete_project_dialog: Option<DeleteProjectData>,
-    /// Action Palette
-    pub action_palette: Option<ActionPaletteData>,
-    /// Commit 弹窗
-    pub commit_dialog: Option<CommitDialogData>,
-    /// Config 配置面板
-    pub config_panel: Option<ConfigPanelData>,
+    /// 对话框状态（统一管理所有对话框）
+    pub dialogs: DialogState,
 
     // === 主题与 UI ===
-    /// Toast 提示
-    pub toast: Option<Toast>,
-    /// 当前主题
-    pub theme: Theme,
-    /// 当前颜色方案
-    pub colors: ThemeColors,
-    /// 是否显示主题选择器
-    pub show_theme_selector: bool,
-    /// 主题选择器当前选中索引
-    pub theme_selector_index: usize,
-    /// 上次检测到的系统主题（用于 Auto 模式检测变化）
-    last_system_dark: bool,
-    /// 可点击区域缓存（每帧渲染时填充）
-    pub click_areas: ClickAreas,
-    /// 上次点击时间（双击检测）
-    pub last_click_time: Instant,
-    /// 上次点击位置（双击检测）
-    pub last_click_pos: (u16, u16),
+    /// UI 状态（统一管理主题、Toast、点击区域等）
+    pub ui: UiState,
 
     // === 配置 ===
-    /// 当前全局 multiplexer 设置
-    pub multiplexer: Multiplexer,
-    /// 当前布局预设
-    pub task_layout: TaskLayout,
-    /// 自定义布局（当 task_layout == Custom 时使用）
-    pub custom_layout: Option<CustomLayout>,
-    /// Agent 启动命令
-    pub agent_command: String,
+    /// 配置状态（统一管理全局配置）
+    pub config: ConfigState,
 
     // === 异步操作 ===
-    /// 待 attach 的 session (暂停 TUI 后执行，完成后恢复 TUI)
-    pub pending_attach: Option<PendingAttach>,
-    /// 待执行的操作（确认后执行）
-    pending_action: Option<PendingAction>,
-    /// 后台操作结果通道
-    pub bg_result_rx: Option<mpsc::Receiver<BgResult>>,
-    /// Loading 消息（后台操作进行中时显示）
-    pub loading_message: Option<String>,
-    /// 当前目标分支 (用于显示 "from {branch}")
-    pub target_branch: String,
+    /// 异步操作状态（统一管理异步操作、后台任务等）
+    pub async_ops: AsyncOpsState,
 
-    // === 通知与 Review ===
-    /// Hook 通知数据 (task_id -> HookEntry) - 当前项目
-    pub notifications: HashMap<String, HookEntry>,
-    /// Workspace 级别的通知数据 (project_name -> task_id -> HookEntry)
-    pub workspace_notifications: HashMap<String, HashMap<String, HookEntry>>,
-    /// 正在 review 的 task (task_id → URL, None 表示 URL 尚未就绪)
-    pub reviewing_tasks: HashMap<String, Option<String>>,
-    /// 所有 difit 线程共享的 result channel
-    pub difit_result_tx: mpsc::Sender<BgResult>,
-    pub difit_result_rx: mpsc::Receiver<BgResult>,
-    /// 所有 difit 线程共享的 URL 更新 channel: (task_id, url)
-    pub difit_url_tx: mpsc::Sender<(String, String)>,
-    pub difit_url_rx: mpsc::Receiver<(String, String)>,
+    // === Review ===
+    /// Review 状态（统一管理代码审查相关状态）
+    pub review: ReviewState,
+
+    // === 通知 ===
+    /// 通知状态（统一管理 Hook 通知）
+    pub notification: NotificationState,
 
     // === 其他 ===
     /// Update info (version check result)
@@ -1029,61 +957,66 @@ impl App {
         // 判断是否在 git 仓库中
         let is_in_git_repo = git::is_git_repo(".");
 
-        let (mode, project, workspace, target_branch, notifications, workspace_notifications) =
-            if is_monitor {
-                // Monitor 模式 - 从环境变量读取
-                let project_path = std::env::var("GROVE_PROJECT").unwrap_or_default();
-                let target = std::env::var("GROVE_TARGET").unwrap_or_else(|_| "main".to_string());
-                (
-                    AppMode::Monitor,
-                    if !project_path.is_empty() {
-                        ProjectState::new(&project_path)
-                    } else {
-                        ProjectState::default()
-                    },
-                    WorkspaceState::default(),
-                    target,
-                    HashMap::new(),
-                    HashMap::new(),
-                )
-            } else if is_in_git_repo {
-                // 在 git 仓库中 -> Project 模式
-                let project_path = git::repo_root(".").unwrap_or_else(|_| ".".to_string());
-                let target_branch =
-                    git::current_branch(&project_path).unwrap_or_else(|_| "main".to_string());
+        let (mode, project, workspace, target_branch) = if is_monitor {
+            // Monitor 模式 - 从环境变量读取
+            let project_path = std::env::var("GROVE_PROJECT").unwrap_or_default();
+            let target = std::env::var("GROVE_TARGET").unwrap_or_else(|_| "main".to_string());
+            (
+                AppMode::Monitor,
+                if !project_path.is_empty() {
+                    ProjectState::new(&project_path)
+                } else {
+                    ProjectState::default()
+                },
+                WorkspaceState::default(),
+                target,
+            )
+        } else if is_in_git_repo {
+            // 在 git 仓库中 -> Project 模式
+            let project_path = git::repo_root(".").unwrap_or_else(|_| ".".to_string());
+            let target_branch =
+                git::current_branch(&project_path).unwrap_or_else(|_| "main".to_string());
 
-                // 自动注册/更新项目 metadata
-                let project_name = Path::new(&project_path)
-                    .file_name()
-                    .and_then(|n| n.to_str())
-                    .unwrap_or("unknown")
-                    .to_string();
-                let _ = storage::workspace::upsert_project(&project_name, &project_path);
+            // 自动注册/更新项目 metadata
+            let project_name = Path::new(&project_path)
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("unknown")
+                .to_string();
+            let _ = storage::workspace::upsert_project(&project_name, &project_path);
 
-                // 加载 hook 通知数据（自动清理不存在的 task）
-                let hooks_file = hooks::load_hooks_with_cleanup(&project_path);
+            (
+                AppMode::Project,
+                ProjectState::new(&project_path),
+                WorkspaceState::default(),
+                target_branch,
+            )
+        } else {
+            // 非 git 仓库 -> Workspace 模式
+            let workspace = WorkspaceState::new();
+            (
+                AppMode::Workspace,
+                ProjectState::default(),
+                workspace,
+                "main".to_string(),
+            )
+        };
 
-                (
-                    AppMode::Project,
-                    ProjectState::new(&project_path),
-                    WorkspaceState::default(),
-                    target_branch,
-                    hooks_file.tasks,
-                    HashMap::new(),
-                )
-            } else {
-                // 非 git 仓库 -> Workspace 模式
-                let workspace = WorkspaceState::new();
-                let workspace_notifications = load_all_project_notifications(&workspace.projects);
-                (
-                    AppMode::Workspace,
-                    ProjectState::default(),
-                    workspace,
-                    "main".to_string(),
-                    HashMap::new(),
-                    workspace_notifications,
-                )
-            };
+        // 加载通知数据
+        let notification = if mode == AppMode::Project {
+            // Project 模式：加载 hook 通知数据（自动清理不存在的 task）
+            let hooks_file = hooks::load_hooks_with_cleanup(
+                &git::repo_root(".").unwrap_or_else(|_| ".".to_string()),
+            );
+            NotificationState::with_notifications(hooks_file.tasks, HashMap::new())
+        } else if mode == AppMode::Workspace {
+            // Workspace 模式：加载所有项目的通知
+            let workspace_notifications = load_all_project_notifications(&workspace.projects);
+            NotificationState::with_notifications(HashMap::new(), workspace_notifications)
+        } else {
+            // Monitor 模式：空通知
+            NotificationState::new()
+        };
 
         // 构建初始 Toast（如果有更新）
         let initial_toast = if has_update {
@@ -1124,61 +1057,39 @@ impl App {
             AppMode::Workspace => set_terminal_title("Grove"),
         }
 
-        let (difit_result_tx, difit_result_rx) = mpsc::channel();
-        let (difit_url_tx, difit_url_rx) = mpsc::channel();
-
         let mut app = Self {
             mode,
             workspace,
             should_quit: false,
             project,
-            toast: initial_toast,
-            theme,
-            colors,
-            show_theme_selector: false,
-            theme_selector_index: 0,
-            last_system_dark,
-            show_new_task_dialog: false,
-            new_task_input: String::new(),
-            target_branch,
-            pending_attach: None,
-            multiplexer: config.multiplexer.clone(),
-            confirm_dialog: None,
-            input_confirm_dialog: None,
-            branch_selector: None,
-            pending_action: None,
-            show_help: false,
-            merge_dialog: None,
-            add_project_dialog: None,
-            delete_project_dialog: None,
-            action_palette: None,
-            commit_dialog: None,
-            notifications,
-            workspace_notifications,
-            config_panel: None,
-            task_layout: TaskLayout::from_name(&config.layout.default)
-                .unwrap_or(TaskLayout::Single),
-            agent_command: config.layout.agent_command.clone().unwrap_or_default(),
-            custom_layout: config
-                .layout
-                .custom
-                .as_ref()
-                .and_then(|c| {
-                    parse_custom_layout_tree(&c.tree, config.layout.selected_custom_id.as_deref())
-                })
-                .map(|root| CustomLayout { root }),
+            ui: {
+                let mut ui_state = UiState::new(theme, colors, last_system_dark);
+                ui_state.toast = initial_toast;
+                ui_state
+            },
+            dialogs: DialogState::new(),
+            config: ConfigState {
+                multiplexer: config.multiplexer.clone(),
+                task_layout: TaskLayout::from_name(&config.layout.default)
+                    .unwrap_or(TaskLayout::Single),
+                agent_command: config.layout.agent_command.clone().unwrap_or_default(),
+                custom_layout: config
+                    .layout
+                    .custom
+                    .as_ref()
+                    .and_then(|c| {
+                        parse_custom_layout_tree(
+                            &c.tree,
+                            config.layout.selected_custom_id.as_deref(),
+                        )
+                    })
+                    .map(|root| CustomLayout { root }),
+            },
+            async_ops: AsyncOpsState::with_target_branch(target_branch),
+            review: ReviewState::new(),
+            notification,
             update_info: Some(update_info),
-            bg_result_rx: None,
-            loading_message: None,
-            click_areas: ClickAreas::default(),
-            last_click_time: Instant::now() - Duration::from_secs(10),
-            last_click_pos: (0, 0),
             monitor,
-            reviewing_tasks: HashMap::new(),
-            difit_result_tx,
-            difit_result_rx,
-            difit_url_tx,
-            difit_url_rx,
             file_watcher: None,
         };
 
@@ -1233,14 +1144,14 @@ impl App {
 
     /// 检测是否为双击（400ms 内同位置）
     pub fn is_double_click(&self, col: u16, row: u16) -> bool {
-        self.last_click_time.elapsed() < Duration::from_millis(400)
-            && self.last_click_pos == (col, row)
+        self.ui.last_click_time.elapsed() < Duration::from_millis(400)
+            && self.ui.last_click_pos == (col, row)
     }
 
     /// 记录点击位置和时间
     pub fn record_click(&mut self, col: u16, row: u16) {
-        self.last_click_time = Instant::now();
-        self.last_click_pos = (col, row);
+        self.ui.last_click_time = Instant::now();
+        self.ui.last_click_pos = (col, row);
     }
 
     /// 从 Workspace 进入 Project
@@ -1254,7 +1165,7 @@ impl App {
         let _ = storage::workspace::upsert_project(&project_name, project_path);
 
         self.project = ProjectState::new(project_path);
-        self.target_branch =
+        self.async_ops.target_branch =
             git::current_branch(project_path).unwrap_or_else(|_| "main".to_string());
         self.mode = AppMode::Project;
 
@@ -1262,7 +1173,7 @@ impl App {
 
         // 加载 hook 通知数据（自动清理不存在的 task）
         let hooks_file = hooks::load_hooks_with_cleanup(project_path);
-        self.notifications = hooks_file.tasks;
+        self.notification.notifications = hooks_file.tasks;
 
         // 恢复已有的 difit review sessions
         self.recover_difit_sessions();
@@ -1278,7 +1189,8 @@ impl App {
     /// 从 Project 返回 Workspace
     pub fn back_to_workspace(&mut self) {
         self.workspace.reload_projects();
-        self.workspace_notifications = load_all_project_notifications(&self.workspace.projects);
+        self.notification.workspace_notifications =
+            load_all_project_notifications(&self.workspace.projects);
         self.mode = AppMode::Workspace;
         set_terminal_title("Grove");
     }
@@ -1287,40 +1199,40 @@ impl App {
     pub fn open_theme_selector(&mut self) {
         // 找到当前主题在列表中的索引
         let themes = Theme::all();
-        self.theme_selector_index = themes.iter().position(|t| *t == self.theme).unwrap_or(0);
-        self.show_theme_selector = true;
+        self.ui.theme_selector_index = themes.iter().position(|t| *t == self.ui.theme).unwrap_or(0);
+        self.ui.show_theme_selector = true;
     }
 
     /// 关闭主题选择器
     pub fn close_theme_selector(&mut self) {
-        self.show_theme_selector = false;
+        self.ui.show_theme_selector = false;
     }
 
     /// 主题选择器 - 选择上一个
     pub fn theme_selector_prev(&mut self) {
         let len = Theme::all().len();
-        self.theme_selector_index = if self.theme_selector_index == 0 {
+        self.ui.theme_selector_index = if self.ui.theme_selector_index == 0 {
             len - 1
         } else {
-            self.theme_selector_index - 1
+            self.ui.theme_selector_index - 1
         };
         // 实时预览
-        self.apply_theme_at_index(self.theme_selector_index);
+        self.apply_theme_at_index(self.ui.theme_selector_index);
     }
 
     /// 主题选择器 - 选择下一个
     pub fn theme_selector_next(&mut self) {
         let len = Theme::all().len();
-        self.theme_selector_index = (self.theme_selector_index + 1) % len;
+        self.ui.theme_selector_index = (self.ui.theme_selector_index + 1) % len;
         // 实时预览
-        self.apply_theme_at_index(self.theme_selector_index);
+        self.apply_theme_at_index(self.ui.theme_selector_index);
     }
 
     /// 主题选择器 - 确认选择
     pub fn theme_selector_confirm(&mut self) {
-        self.apply_theme_at_index(self.theme_selector_index);
-        self.show_theme_selector = false;
-        self.show_toast(format!("Theme: {}", self.theme.label()));
+        self.apply_theme_at_index(self.ui.theme_selector_index);
+        self.ui.show_theme_selector = false;
+        self.show_toast(format!("Theme: {}", self.ui.theme.label()));
         // 保存主题配置
         self.save_theme_config();
     }
@@ -1330,7 +1242,7 @@ impl App {
         use storage::config::{load_config, save_config, ThemeConfig};
         let mut config = load_config();
         config.theme = ThemeConfig {
-            name: self.theme.label().to_string(),
+            name: self.ui.theme.label().to_string(),
         };
         let _ = save_config(&config);
     }
@@ -1338,8 +1250,8 @@ impl App {
     /// 应用指定索引的主题
     fn apply_theme_at_index(&mut self, index: usize) {
         if let Some(theme) = Theme::all().get(index) {
-            self.theme = *theme;
-            self.colors = get_theme_colors(*theme);
+            self.ui.theme = *theme;
+            self.ui.colors = get_theme_colors(*theme);
         }
     }
 
@@ -1349,31 +1261,31 @@ impl App {
     pub fn open_new_task_dialog(&mut self) {
         // 刷新目标分支
         if let Ok(branch) = git::current_branch(&self.project.project_path) {
-            self.target_branch = branch;
+            self.async_ops.target_branch = branch;
         }
-        self.new_task_input.clear();
-        self.show_new_task_dialog = true;
+        self.dialogs.new_task_input.clear();
+        self.dialogs.show_new_task_dialog = true;
     }
 
     /// 关闭 New Task 弹窗
     pub fn close_new_task_dialog(&mut self) {
-        self.show_new_task_dialog = false;
-        self.new_task_input.clear();
+        self.dialogs.show_new_task_dialog = false;
+        self.dialogs.new_task_input.clear();
     }
 
     /// New Task 输入字符
     pub fn new_task_input_char(&mut self, c: char) {
-        self.new_task_input.push(c);
+        self.dialogs.new_task_input.push(c);
     }
 
     /// New Task 删除字符
     pub fn new_task_delete_char(&mut self) {
-        self.new_task_input.pop();
+        self.dialogs.new_task_input.pop();
     }
 
     /// 创建新任务
     pub fn create_new_task(&mut self) {
-        let name = self.new_task_input.trim().to_string();
+        let name = self.dialogs.new_task_input.trim().to_string();
         if name.is_empty() {
             self.show_toast("Task name cannot be empty");
             return;
@@ -1399,9 +1311,12 @@ impl App {
         };
 
         // 4. 创建 git worktree
-        if let Err(e) =
-            git::create_worktree(&repo_root, &branch, &worktree_path, &self.target_branch)
-        {
+        if let Err(e) = git::create_worktree(
+            &repo_root,
+            &branch,
+            &worktree_path,
+            &self.async_ops.target_branch,
+        ) {
             self.show_toast(format!("Git error: {}", e));
             self.close_new_task_dialog();
             return;
@@ -1414,12 +1329,12 @@ impl App {
             id: slug.clone(),
             name: name.clone(),
             branch: branch.clone(),
-            target: self.target_branch.clone(),
+            target: self.async_ops.target_branch.clone(),
             worktree_path: worktree_path.to_string_lossy().to_string(),
             created_at: now,
             updated_at: now,
             status: TaskStatus::Active,
-            multiplexer: self.multiplexer.to_string(),
+            multiplexer: self.config.multiplexer.to_string(),
             session_name: sname.clone(),
         };
 
@@ -1435,12 +1350,15 @@ impl App {
             &slug,
             &name,
             &branch,
-            &self.target_branch.clone(),
+            &self.async_ops.target_branch.clone(),
             &worktree_path.to_string_lossy(),
         );
-        if let Err(e) =
-            session::create_session(&self.multiplexer, &session, &wt_dir, Some(&session_env))
-        {
+        if let Err(e) = session::create_session(
+            &self.config.multiplexer,
+            &session,
+            &wt_dir,
+            Some(&session_env),
+        ) {
             self.show_toast(format!("Session error: {}", e));
             self.close_new_task_dialog();
             return;
@@ -1448,24 +1366,24 @@ impl App {
 
         // 7. 应用布局
         let mut layout_path: Option<String> = None;
-        if self.task_layout != TaskLayout::Single {
-            match self.multiplexer {
+        if self.config.task_layout != TaskLayout::Single {
+            match self.config.multiplexer {
                 Multiplexer::Tmux => {
                     if let Err(e) = tmux::layout::apply_layout(
                         &session,
                         &wt_dir,
-                        &self.task_layout,
-                        &self.agent_command,
-                        self.custom_layout.as_ref(),
+                        &self.config.task_layout,
+                        &self.config.agent_command,
+                        self.config.custom_layout.as_ref(),
                     ) {
                         self.show_toast(format!("Layout: {}", e));
                     }
                 }
                 Multiplexer::Zellij => {
                     let kdl = crate::zellij::layout::generate_kdl(
-                        &self.task_layout,
-                        &self.agent_command,
-                        self.custom_layout.as_ref(),
+                        &self.config.task_layout,
+                        &self.config.agent_command,
+                        self.config.custom_layout.as_ref(),
                     );
                     match crate::zellij::layout::write_session_layout(&session, &kdl) {
                         Ok(path) => layout_path = Some(path),
@@ -1486,9 +1404,9 @@ impl App {
         self.show_toast(format!("Created: {}", name));
 
         // 10. 标记需要 attach（主循环会暂停 TUI，attach 完成后恢复）
-        self.pending_attach = Some(PendingAttach {
+        self.async_ops.pending_attach = Some(PendingAttach {
             session,
-            multiplexer: self.multiplexer.clone(),
+            multiplexer: self.config.multiplexer.clone(),
             working_dir: wt_dir,
             env: session_env,
             layout_path,
@@ -1508,7 +1426,7 @@ impl App {
         let task_id = wt.id.clone();
 
         // 该 task 已有 review → 打开浏览器或提示
-        if let Some(url_opt) = self.reviewing_tasks.get(&task_id) {
+        if let Some(url_opt) = self.review.reviewing_tasks.get(&task_id) {
             if let Some(url) = url_opt {
                 let _ = std::process::Command::new("open").arg(url).spawn();
             } else {
@@ -1535,7 +1453,9 @@ impl App {
         // 检查是否已有正在运行的 session（磁盘持久化）
         if let Some(session) = storage::difit_session::load_session(&project_key, &task_id) {
             if session.is_difit_alive() {
-                self.reviewing_tasks.insert(task_id, session.url.clone());
+                self.review
+                    .reviewing_tasks
+                    .insert(task_id, session.url.clone());
                 if session.needs_reattach() {
                     self.reattach_difit_monitor_thread(&session);
                 }
@@ -1554,7 +1474,7 @@ impl App {
             storage::difit_session::remove_session(&project_key, &task_id);
         }
 
-        self.reviewing_tasks.insert(task_id.clone(), None);
+        self.review.reviewing_tasks.insert(task_id.clone(), None);
 
         // 启动时立即切换到 Diff tab
         self.project.preview_sub_tab = PreviewSubTab::Diff;
@@ -1576,7 +1496,7 @@ impl App {
         let task_id = self.monitor.task_id.clone();
 
         // 该 task 已有 review → 打开浏览器或提示
-        if let Some(url_opt) = self.reviewing_tasks.get(&task_id) {
+        if let Some(url_opt) = self.review.reviewing_tasks.get(&task_id) {
             if let Some(url) = url_opt {
                 let _ = std::process::Command::new("open").arg(url).spawn();
             } else {
@@ -1603,7 +1523,9 @@ impl App {
         // 检查是否已有正在运行的 session（磁盘持久化）
         if let Some(session) = storage::difit_session::load_session(&project_key, &task_id) {
             if session.is_difit_alive() {
-                self.reviewing_tasks.insert(task_id, session.url.clone());
+                self.review
+                    .reviewing_tasks
+                    .insert(task_id, session.url.clone());
                 if session.needs_reattach() {
                     self.reattach_difit_monitor_thread(&session);
                 }
@@ -1619,7 +1541,7 @@ impl App {
             storage::difit_session::remove_session(&project_key, &task_id);
         }
 
-        self.reviewing_tasks.insert(task_id.clone(), None);
+        self.review.reviewing_tasks.insert(task_id.clone(), None);
 
         // 启动时立即切换到 Diff tab
         self.monitor.content_tab = PreviewSubTab::Diff;
@@ -1642,8 +1564,8 @@ impl App {
         target_branch: String,
         availability: crate::difit::DifitAvailability,
     ) {
-        let tx = self.difit_result_tx.clone();
-        let url_tx = self.difit_url_tx.clone();
+        let tx = self.review.difit_result_tx.clone();
+        let url_tx = self.review.difit_url_tx.clone();
         let grove_pid = std::process::id();
 
         std::thread::spawn(move || {
@@ -1713,7 +1635,8 @@ impl App {
         let sessions = storage::difit_session::load_all_sessions(&project_key);
         for session in sessions {
             if session.needs_reattach() {
-                self.reviewing_tasks
+                self.review
+                    .reviewing_tasks
                     .insert(session.task_id.clone(), session.url.clone());
                 self.reattach_difit_monitor_thread(&session);
             } else if !session.is_difit_alive() {
@@ -1735,8 +1658,8 @@ impl App {
         updated_session.monitor_pid = Some(std::process::id());
         let _ = storage::difit_session::save_session(&project_key, &task_id, &updated_session);
 
-        let tx = self.difit_result_tx.clone();
-        let url_tx = self.difit_url_tx.clone();
+        let tx = self.review.difit_result_tx.clone();
+        let url_tx = self.review.difit_url_tx.clone();
 
         std::thread::spawn(move || {
             let mut url_sent = false;
@@ -1811,7 +1734,7 @@ impl App {
             .as_ref()
             .map(|t| t.session_name.clone())
             .unwrap_or_default();
-        let mux = session::resolve_multiplexer(&task_mux, &self.multiplexer);
+        let mux = session::resolve_multiplexer(&task_mux, &self.config.multiplexer);
         let session =
             session::resolve_session_name(&task_session_name, &self.project.project_key, &slug);
 
@@ -1826,24 +1749,24 @@ impl App {
             }
 
             // 应用布局
-            if self.task_layout != TaskLayout::Single {
+            if self.config.task_layout != TaskLayout::Single {
                 match mux {
                     Multiplexer::Tmux => {
                         if let Err(e) = tmux::layout::apply_layout(
                             &session,
                             &wt_path,
-                            &self.task_layout,
-                            &self.agent_command,
-                            self.custom_layout.as_ref(),
+                            &self.config.task_layout,
+                            &self.config.agent_command,
+                            self.config.custom_layout.as_ref(),
                         ) {
                             self.show_toast(format!("Layout: {}", e));
                         }
                     }
                     Multiplexer::Zellij => {
                         let kdl = crate::zellij::layout::generate_kdl(
-                            &self.task_layout,
-                            &self.agent_command,
-                            self.custom_layout.as_ref(),
+                            &self.config.task_layout,
+                            &self.config.agent_command,
+                            self.config.custom_layout.as_ref(),
                         );
                         match crate::zellij::layout::write_session_layout(&session, &kdl) {
                             Ok(path) => layout_path = Some(path),
@@ -1860,7 +1783,7 @@ impl App {
         // 6. 设置 pending attach（主循环会暂停 TUI，attach 完成后恢复）
         let session_env =
             self.build_session_env(&wt_id, &wt_task_name, &wt_branch, &wt_target, &wt_path);
-        self.pending_attach = Some(PendingAttach {
+        self.async_ops.pending_attach = Some(PendingAttach {
             session,
             multiplexer: mux,
             working_dir: wt_path,
@@ -1883,9 +1806,9 @@ impl App {
 
     /// 清除指定任务的通知标记并保存到文件
     fn remove_notification(&mut self, task_id: &str) {
-        if self.notifications.remove(task_id).is_some() {
+        if self.notification.notifications.remove(task_id).is_some() {
             let hooks_file = HooksFile {
-                tasks: self.notifications.clone(),
+                tasks: self.notification.notifications.clone(),
             };
             let _ = hooks::save_hooks(&self.project.project_key, &hooks_file);
         }
@@ -1918,14 +1841,14 @@ impl App {
 
     /// 显示 Toast 消息
     pub fn show_toast(&mut self, message: impl Into<String>) {
-        self.toast = Some(Toast::new(message, Duration::from_secs(2)));
+        self.ui.toast = Some(Toast::new(message, Duration::from_secs(2)));
     }
 
     /// 更新 Toast 状态（清理过期的 Toast）
     pub fn update_toast(&mut self) {
-        if let Some(ref toast) = self.toast {
+        if let Some(ref toast) = self.ui.toast {
             if toast.is_expired() {
-                self.toast = None;
+                self.ui.toast = None;
             }
         }
     }
@@ -1933,14 +1856,14 @@ impl App {
     /// 检查系统主题变化（用于 Auto 模式）
     pub fn check_system_theme(&mut self) {
         // 只在 Auto 模式下检查
-        if self.theme != Theme::Auto {
+        if self.ui.theme != Theme::Auto {
             return;
         }
 
         let current_dark = detect_system_theme();
-        if current_dark != self.last_system_dark {
-            self.last_system_dark = current_dark;
-            self.colors = get_theme_colors(Theme::Auto);
+        if current_dark != self.ui.last_system_dark {
+            self.ui.last_system_dark = current_dark;
+            self.ui.colors = get_theme_colors(Theme::Auto);
         }
     }
 
@@ -1956,12 +1879,12 @@ impl App {
                 self.project.refresh();
                 // 重新加载通知
                 let hooks_file = hooks::load_hooks_with_cleanup(&self.project.project_path);
-                self.notifications = hooks_file.tasks;
+                self.notification.notifications = hooks_file.tasks;
             }
             AppMode::Workspace => {
                 self.workspace.refresh();
                 // 重新加载所有项目的通知
-                self.workspace_notifications =
+                self.notification.workspace_notifications =
                     load_all_project_notifications(&self.workspace.projects);
             }
             AppMode::Monitor => {
@@ -2010,8 +1933,8 @@ impl App {
             self.do_archive(&task_id);
         } else {
             // 未 merge，显示确认弹窗
-            self.pending_action = Some(PendingAction::Archive { task_id });
-            self.confirm_dialog = Some(ConfirmType::ArchiveUnmerged { task_name, branch });
+            self.async_ops.pending_action = Some(PendingAction::Archive { task_id });
+            self.dialogs.confirm_dialog = Some(ConfirmType::ArchiveUnmerged { task_name, branch });
         }
     }
 
@@ -2044,7 +1967,7 @@ impl App {
         // 3. 删除 hook 通知 + 清理 review session
         hooks::remove_task_hook(&project_key, task_id);
         self.remove_notification(task_id);
-        self.reviewing_tasks.remove(task_id);
+        self.review.reviewing_tasks.remove(task_id);
         storage::difit_session::remove_session(&project_key, task_id);
 
         // 4. 关闭 session（放在最后，避免 monitor 进程被提前终止）
@@ -2059,7 +1982,7 @@ impl App {
             .as_ref()
             .map(|t| t.session_name.clone())
             .unwrap_or_default();
-        let task_mux = session::resolve_multiplexer(&task_mux_str, &self.multiplexer);
+        let task_mux = session::resolve_multiplexer(&task_mux_str, &self.config.multiplexer);
         let session = session::resolve_session_name(&task_session_name, &project_key, task_id);
         let _ = session::kill_session(&task_mux, &session);
         // Clean up zellij layout file if applicable
@@ -2099,17 +2022,17 @@ impl App {
         let is_merged =
             git::is_merged(&self.project.project_path, &branch, &target).unwrap_or(false);
 
-        self.pending_action = Some(PendingAction::Clean {
+        self.async_ops.pending_action = Some(PendingAction::Clean {
             task_id,
             is_archived,
         });
 
         if is_merged {
             // 已 merge，弱提示
-            self.confirm_dialog = Some(ConfirmType::CleanMerged { task_name, branch });
+            self.dialogs.confirm_dialog = Some(ConfirmType::CleanMerged { task_name, branch });
         } else {
             // 未 merge，强确认（需要输入 delete）
-            self.input_confirm_dialog = Some(InputConfirmData::new(task_name, branch));
+            self.dialogs.input_confirm_dialog = Some(InputConfirmData::new(task_name, branch));
         }
     }
 
@@ -2131,7 +2054,7 @@ impl App {
             .as_ref()
             .map(|t| t.session_name.clone())
             .unwrap_or_default();
-        let task_mux = session::resolve_multiplexer(&task_mux_str, &self.multiplexer);
+        let task_mux = session::resolve_multiplexer(&task_mux_str, &self.config.multiplexer);
         let session =
             session::resolve_session_name(&task_session_name, &self.project.project_key, task_id);
         let _ = session::kill_session(&task_mux, &session);
@@ -2175,7 +2098,7 @@ impl App {
         // 6. 删除 hook 通知 + 清理 review session
         hooks::remove_task_hook(&self.project.project_key, task_id);
         self.remove_notification(task_id);
-        self.reviewing_tasks.remove(task_id);
+        self.review.reviewing_tasks.remove(task_id);
         storage::difit_session::remove_session(&self.project.project_key, task_id);
 
         // 7. 刷新数据
@@ -2208,8 +2131,8 @@ impl App {
         let target = wt.target.clone();
 
         // 显示确认弹窗
-        self.pending_action = Some(PendingAction::Reset { task_id });
-        self.confirm_dialog = Some(ConfirmType::Reset {
+        self.async_ops.pending_action = Some(PendingAction::Reset { task_id });
+        self.dialogs.confirm_dialog = Some(ConfirmType::Reset {
             task_name,
             branch,
             target,
@@ -2228,7 +2151,7 @@ impl App {
         };
 
         // 2. Kill session (用旧 task 的 multiplexer)
-        let old_mux = session::resolve_multiplexer(&task.multiplexer, &self.multiplexer);
+        let old_mux = session::resolve_multiplexer(&task.multiplexer, &self.config.multiplexer);
         let session =
             session::resolve_session_name(&task.session_name, &self.project.project_key, task_id);
         let _ = session::kill_session(&old_mux, &session);
@@ -2283,7 +2206,7 @@ impl App {
             &task.worktree_path,
         );
         if let Err(e) = session::create_session(
-            &self.multiplexer,
+            &self.config.multiplexer,
             &session,
             &task.worktree_path,
             Some(&session_env),
@@ -2294,11 +2217,13 @@ impl App {
 
         // 7.5 生成 zellij layout（如需要）
         let mut layout_path: Option<String> = None;
-        if self.multiplexer == Multiplexer::Zellij && self.task_layout != TaskLayout::Single {
+        if self.config.multiplexer == Multiplexer::Zellij
+            && self.config.task_layout != TaskLayout::Single
+        {
             let kdl = crate::zellij::layout::generate_kdl(
-                &self.task_layout,
-                &self.agent_command,
-                self.custom_layout.as_ref(),
+                &self.config.task_layout,
+                &self.config.agent_command,
+                self.config.custom_layout.as_ref(),
             );
             if let Ok(path) = crate::zellij::layout::write_session_layout(&session, &kdl) {
                 layout_path = Some(path);
@@ -2310,9 +2235,9 @@ impl App {
         self.show_toast("Task reset");
 
         // 9. 自动进入 session
-        self.pending_attach = Some(PendingAttach {
+        self.async_ops.pending_attach = Some(PendingAttach {
             session,
-            multiplexer: self.multiplexer.clone(),
+            multiplexer: self.config.multiplexer.clone(),
             working_dir: task.worktree_path.clone(),
             env: session_env,
             layout_path,
@@ -2323,8 +2248,8 @@ impl App {
 
     /// 确认弱确认弹窗
     pub fn confirm_dialog_yes(&mut self) {
-        if let Some(action) = self.pending_action.take() {
-            self.confirm_dialog = None;
+        if let Some(action) = self.async_ops.pending_action.take() {
+            self.dialogs.confirm_dialog = None;
             match action {
                 PendingAction::Archive { task_id } => self.do_archive(&task_id),
                 PendingAction::Clean {
@@ -2377,20 +2302,20 @@ impl App {
 
     /// 取消弱确认弹窗
     pub fn confirm_dialog_cancel(&mut self) {
-        self.confirm_dialog = None;
-        self.pending_action = None;
+        self.dialogs.confirm_dialog = None;
+        self.async_ops.pending_action = None;
     }
 
     /// 输入确认弹窗 - 输入字符
     pub fn input_confirm_char(&mut self, c: char) {
-        if let Some(ref mut data) = self.input_confirm_dialog {
+        if let Some(ref mut data) = self.dialogs.input_confirm_dialog {
             data.input.push(c);
         }
     }
 
     /// 输入确认弹窗 - 删除字符
     pub fn input_confirm_backspace(&mut self) {
-        if let Some(ref mut data) = self.input_confirm_dialog {
+        if let Some(ref mut data) = self.dialogs.input_confirm_dialog {
             data.input.pop();
         }
     }
@@ -2398,14 +2323,15 @@ impl App {
     /// 输入确认弹窗 - 确认
     pub fn input_confirm_submit(&mut self) {
         let confirmed = self
+            .dialogs
             .input_confirm_dialog
             .as_ref()
             .map(|d| d.is_confirmed())
             .unwrap_or(false);
 
         if confirmed {
-            if let Some(action) = self.pending_action.take() {
-                self.input_confirm_dialog = None;
+            if let Some(action) = self.async_ops.pending_action.take() {
+                self.dialogs.input_confirm_dialog = None;
                 if let PendingAction::Clean {
                     task_id,
                     is_archived,
@@ -2421,8 +2347,8 @@ impl App {
 
     /// 输入确认弹窗 - 取消
     pub fn input_confirm_cancel(&mut self) {
-        self.input_confirm_dialog = None;
-        self.pending_action = None;
+        self.dialogs.input_confirm_dialog = None;
+        self.async_ops.pending_action = None;
     }
 
     // ========== Recover 功能 ==========
@@ -2443,8 +2369,8 @@ impl App {
         let branch = wt.branch.clone();
 
         // 显示确认弹窗
-        self.pending_action = Some(PendingAction::Recover { task_id });
-        self.confirm_dialog = Some(ConfirmType::Recover { task_name, branch });
+        self.async_ops.pending_action = Some(PendingAction::Recover { task_id });
+        self.dialogs.confirm_dialog = Some(ConfirmType::Recover { task_name, branch });
     }
 
     /// 恢复归档的任务
@@ -2492,7 +2418,7 @@ impl App {
             &task.worktree_path,
         );
         if let Err(e) = session::create_session(
-            &self.multiplexer,
+            &self.config.multiplexer,
             &session,
             task.worktree_path.as_str(),
             Some(&session_env),
@@ -2504,9 +2430,9 @@ impl App {
         // 刷新数据并进入
         self.project.refresh();
         self.show_toast("Task recovered");
-        self.pending_attach = Some(PendingAttach {
+        self.async_ops.pending_attach = Some(PendingAttach {
             session,
-            multiplexer: self.multiplexer.clone(),
+            multiplexer: self.config.multiplexer.clone(),
             working_dir: task.worktree_path.clone(),
             env: session_env,
             layout_path: None,
@@ -2531,10 +2457,11 @@ impl App {
             .unwrap_or_else(|_| "unknown".to_string());
 
         // 设置 pending action
-        self.pending_action = Some(PendingAction::Checkout);
+        self.async_ops.pending_action = Some(PendingAction::Checkout);
 
         // 打开选择器
-        self.branch_selector = Some(BranchSelectorData::new_checkout(branches, current_branch));
+        self.dialogs.branch_selector =
+            Some(BranchSelectorData::new_checkout(branches, current_branch));
     }
 
     // ========== Rebase To 功能 ==========
@@ -2564,36 +2491,37 @@ impl App {
         };
 
         // 存储待操作的 task_id
-        self.pending_action = Some(PendingAction::RebaseTo { task_id });
+        self.async_ops.pending_action = Some(PendingAction::RebaseTo { task_id });
 
         // 打开选择器
-        self.branch_selector = Some(BranchSelectorData::new(branches, task_name, current_target));
+        self.dialogs.branch_selector =
+            Some(BranchSelectorData::new(branches, task_name, current_target));
     }
 
     /// 分支选择器 - 向上
     pub fn branch_selector_prev(&mut self) {
-        if let Some(ref mut data) = self.branch_selector {
+        if let Some(ref mut data) = self.dialogs.branch_selector {
             data.select_prev();
         }
     }
 
     /// 分支选择器 - 向下
     pub fn branch_selector_next(&mut self) {
-        if let Some(ref mut data) = self.branch_selector {
+        if let Some(ref mut data) = self.dialogs.branch_selector {
             data.select_next();
         }
     }
 
     /// 分支选择器 - 输入字符
     pub fn branch_selector_char(&mut self, c: char) {
-        if let Some(ref mut data) = self.branch_selector {
+        if let Some(ref mut data) = self.dialogs.branch_selector {
             data.input_char(c);
         }
     }
 
     /// 分支选择器 - 删除字符
     pub fn branch_selector_backspace(&mut self) {
-        if let Some(ref mut data) = self.branch_selector {
+        if let Some(ref mut data) = self.dialogs.branch_selector {
             data.delete_char();
         }
     }
@@ -2601,17 +2529,18 @@ impl App {
     /// 分支选择器 - 确认
     pub fn branch_selector_confirm(&mut self) {
         let selected_branch = self
+            .dialogs
             .branch_selector
             .as_ref()
             .and_then(|d| d.selected_branch())
             .map(|s| s.to_string());
 
         let Some(branch) = selected_branch else {
-            self.branch_selector = None;
+            self.dialogs.branch_selector = None;
             return;
         };
 
-        match self.pending_action.take() {
+        match self.async_ops.pending_action.take() {
             Some(PendingAction::RebaseTo { task_id }) => {
                 // 更新 task target
                 if let Err(e) =
@@ -2653,13 +2582,13 @@ impl App {
             _ => {}
         }
 
-        self.branch_selector = None;
+        self.dialogs.branch_selector = None;
     }
 
     /// 分支选择器 - 取消
     pub fn branch_selector_cancel(&mut self) {
-        self.branch_selector = None;
-        self.pending_action = None;
+        self.dialogs.branch_selector = None;
+        self.async_ops.pending_action = None;
     }
 
     // ========== Sync 功能 ==========
@@ -2688,11 +2617,12 @@ impl App {
         // 检查 worktree 是否有未提交的代码
         match git::has_uncommitted_changes(&worktree_path) {
             Ok(true) => {
-                self.pending_action = Some(PendingAction::Sync {
+                self.async_ops.pending_action = Some(PendingAction::Sync {
                     task_id,
                     check_target: true,
                 });
-                self.confirm_dialog = Some(ConfirmType::SyncUncommittedWorktree { task_name });
+                self.dialogs.confirm_dialog =
+                    Some(ConfirmType::SyncUncommittedWorktree { task_name });
             }
             Ok(false) => {
                 self.check_sync_target(&task_id);
@@ -2717,11 +2647,11 @@ impl App {
         // 检查 target branch（主仓库）是否有未提交的代码
         match git::has_uncommitted_changes(&self.project.project_path) {
             Ok(true) => {
-                self.pending_action = Some(PendingAction::Sync {
+                self.async_ops.pending_action = Some(PendingAction::Sync {
                     task_id: task_id.to_string(),
                     check_target: false,
                 });
-                self.confirm_dialog = Some(ConfirmType::SyncUncommittedTarget {
+                self.dialogs.confirm_dialog = Some(ConfirmType::SyncUncommittedTarget {
                     task_name: task.name.clone(),
                     target: task.target.clone(),
                 });
@@ -2789,11 +2719,12 @@ impl App {
         // 检查 worktree 是否有未提交的代码
         match git::has_uncommitted_changes(&worktree_path) {
             Ok(true) => {
-                self.pending_action = Some(PendingAction::Merge {
+                self.async_ops.pending_action = Some(PendingAction::Merge {
                     task_id,
                     check_target: true,
                 });
-                self.confirm_dialog = Some(ConfirmType::MergeUncommittedWorktree { task_name });
+                self.dialogs.confirm_dialog =
+                    Some(ConfirmType::MergeUncommittedWorktree { task_name });
             }
             Ok(false) => {
                 self.check_merge_target(&task_id);
@@ -2852,7 +2783,7 @@ impl App {
         if commit_count <= 1 {
             self.do_merge(task_id, MergeMethod::MergeCommit);
         } else {
-            self.merge_dialog = Some(MergeDialogData::new(
+            self.dialogs.merge_dialog = Some(MergeDialogData::new(
                 task_id.to_string(),
                 task.name,
                 task.branch,
@@ -2863,14 +2794,14 @@ impl App {
 
     /// Merge 弹窗 - 切换选项
     pub fn merge_dialog_toggle(&mut self) {
-        if let Some(ref mut data) = self.merge_dialog {
+        if let Some(ref mut data) = self.dialogs.merge_dialog {
             data.toggle();
         }
     }
 
     /// Merge 弹窗 - 确认
     pub fn merge_dialog_confirm(&mut self) {
-        let dialog_data = self.merge_dialog.take();
+        let dialog_data = self.dialogs.merge_dialog.take();
         let Some(data) = dialog_data else { return };
 
         self.do_merge(&data.task_id, data.selected);
@@ -2878,7 +2809,7 @@ impl App {
 
     /// Merge 弹窗 - 取消
     pub fn merge_dialog_cancel(&mut self) {
-        self.merge_dialog = None;
+        self.dialogs.merge_dialog = None;
     }
 
     /// 执行 Merge（后台线程）
@@ -2893,7 +2824,7 @@ impl App {
         };
 
         // 设置 loading 状态
-        self.loading_message = Some("Merging...".to_string());
+        self.async_ops.loading_message = Some("Merging...".to_string());
 
         // 准备后台线程需要的数据
         let repo_path = self.project.project_path.clone();
@@ -2907,7 +2838,7 @@ impl App {
             .filter(|s| !s.trim().is_empty());
 
         let (tx, rx) = mpsc::channel();
-        self.bg_result_rx = Some(rx);
+        self.async_ops.bg_result_rx = Some(rx);
 
         std::thread::spawn(move || {
             let result = match method {
@@ -2942,8 +2873,9 @@ impl App {
     /// 处理后台操作结果（主循环调用）
     pub fn poll_bg_result(&mut self) {
         // 1. 轮询 difit URL 更新（共享 channel）
-        while let Ok((task_id, url)) = self.difit_url_rx.try_recv() {
-            self.reviewing_tasks
+        while let Ok((task_id, url)) = self.review.difit_url_rx.try_recv() {
+            self.review
+                .reviewing_tasks
                 .insert(task_id.clone(), Some(url.clone()));
             // 更新 session 文件写入 URL
             let project_key = if self.mode == AppMode::Monitor {
@@ -2959,7 +2891,7 @@ impl App {
         }
 
         // 2. 轮询 difit 结果（共享 channel）
-        while let Ok(result) = self.difit_result_rx.try_recv() {
+        while let Ok(result) = self.review.difit_result_rx.try_recv() {
             match result {
                 BgResult::DifitOk {
                     project_key,
@@ -2968,7 +2900,7 @@ impl App {
                     count,
                     no_diff,
                 } => {
-                    self.reviewing_tasks.remove(&task_id);
+                    self.review.reviewing_tasks.remove(&task_id);
                     if no_diff {
                         self.show_toast("No differences found");
                     } else {
@@ -2991,7 +2923,7 @@ impl App {
                     }
                 }
                 BgResult::DifitErr { task_id, error } => {
-                    self.reviewing_tasks.remove(&task_id);
+                    self.review.reviewing_tasks.remove(&task_id);
                     self.show_toast(format!("difit error: {}", error));
                 }
                 _ => {}
@@ -2999,16 +2931,20 @@ impl App {
         }
 
         // 3. 轮询 merge 结果（独立 channel，保持不变）
-        let result = self.bg_result_rx.as_ref().and_then(|rx| rx.try_recv().ok());
+        let result = self
+            .async_ops
+            .bg_result_rx
+            .as_ref()
+            .and_then(|rx| rx.try_recv().ok());
         if let Some(result) = result {
-            self.bg_result_rx = None;
-            self.loading_message = None;
+            self.async_ops.bg_result_rx = None;
+            self.async_ops.loading_message = None;
 
             match result {
                 BgResult::MergeOk { task_id, task_name } => {
                     self.project.refresh();
-                    self.pending_action = Some(PendingAction::MergeArchive { task_id });
-                    self.confirm_dialog = Some(ConfirmType::MergeSuccess { task_name });
+                    self.async_ops.pending_action = Some(PendingAction::MergeArchive { task_id });
+                    self.dialogs.confirm_dialog = Some(ConfirmType::MergeSuccess { task_name });
                 }
                 BgResult::MergeErr(e) => {
                     self.show_toast(e);
@@ -3022,37 +2958,37 @@ impl App {
 
     /// 打开 Add Project 弹窗
     pub fn open_add_project_dialog(&mut self) {
-        self.add_project_dialog = Some(AddProjectData::new());
+        self.dialogs.add_project_dialog = Some(AddProjectData::new());
     }
 
     /// 关闭 Add Project 弹窗
     pub fn close_add_project_dialog(&mut self) {
-        self.add_project_dialog = None;
+        self.dialogs.add_project_dialog = None;
     }
 
     /// Add Project - 输入字符
     pub fn add_project_input_char(&mut self, c: char) {
-        if let Some(ref mut data) = self.add_project_dialog {
+        if let Some(ref mut data) = self.dialogs.add_project_dialog {
             data.input_char(c);
         }
     }
 
     /// Add Project - 删除字符
     pub fn add_project_delete_char(&mut self) {
-        if let Some(ref mut data) = self.add_project_dialog {
+        if let Some(ref mut data) = self.dialogs.add_project_dialog {
             data.delete_char();
         }
     }
 
     /// Add Project - 确认添加
     pub fn add_project_confirm(&mut self) {
-        let path = match &self.add_project_dialog {
+        let path = match &self.dialogs.add_project_dialog {
             Some(data) => data.expanded_path(),
             None => return,
         };
 
         if path.is_empty() {
-            if let Some(ref mut data) = self.add_project_dialog {
+            if let Some(ref mut data) = self.dialogs.add_project_dialog {
                 data.set_error("Path cannot be empty");
             }
             return;
@@ -3060,7 +2996,7 @@ impl App {
 
         // 验证路径是否存在
         if !Path::new(&path).exists() {
-            if let Some(ref mut data) = self.add_project_dialog {
+            if let Some(ref mut data) = self.dialogs.add_project_dialog {
                 data.set_error("Path does not exist");
             }
             return;
@@ -3068,7 +3004,7 @@ impl App {
 
         // 验证是否是 git 仓库
         if !git::is_git_repo(&path) {
-            if let Some(ref mut data) = self.add_project_dialog {
+            if let Some(ref mut data) = self.dialogs.add_project_dialog {
                 data.set_error("Not a git repository");
             }
             return;
@@ -3076,7 +3012,7 @@ impl App {
 
         // 验证是否已注册
         if storage::workspace::is_project_registered(&path).unwrap_or(false) {
-            if let Some(ref mut data) = self.add_project_dialog {
+            if let Some(ref mut data) = self.dialogs.add_project_dialog {
                 data.set_error("Project already registered");
             }
             return;
@@ -3091,7 +3027,7 @@ impl App {
 
         // 添加项目
         if let Err(e) = storage::workspace::add_project(&name, &path) {
-            if let Some(ref mut data) = self.add_project_dialog {
+            if let Some(ref mut data) = self.dialogs.add_project_dialog {
                 data.set_error(format!("Failed to add: {}", e));
             }
             return;
@@ -3108,7 +3044,7 @@ impl App {
     /// 打开 Delete Project 弹窗
     pub fn open_delete_project_dialog(&mut self) {
         if let Some(project) = self.workspace.selected_project() {
-            self.delete_project_dialog = Some(DeleteProjectData::new(
+            self.dialogs.delete_project_dialog = Some(DeleteProjectData::new(
                 project.name.clone(),
                 project.path.clone(),
                 project.task_count,
@@ -3118,19 +3054,19 @@ impl App {
 
     /// 关闭 Delete Project 弹窗
     pub fn close_delete_project_dialog(&mut self) {
-        self.delete_project_dialog = None;
+        self.dialogs.delete_project_dialog = None;
     }
 
     /// Delete Project - 切换选项
     pub fn delete_project_toggle(&mut self) {
-        if let Some(ref mut data) = self.delete_project_dialog {
+        if let Some(ref mut data) = self.dialogs.delete_project_dialog {
             data.toggle();
         }
     }
 
     /// Delete Project - 确认删除
     pub fn delete_project_confirm(&mut self) {
-        let dialog_data = self.delete_project_dialog.take();
+        let dialog_data = self.dialogs.delete_project_dialog.take();
         let Some(data) = dialog_data else { return };
 
         let project_key = project_hash(&data.project_path);
@@ -3214,33 +3150,33 @@ impl App {
             ],
         };
 
-        self.action_palette = Some(ActionPaletteData::new(actions));
+        self.dialogs.action_palette = Some(ActionPaletteData::new(actions));
     }
 
     /// Action Palette - 向上移动
     pub fn action_palette_prev(&mut self) {
-        if let Some(ref mut palette) = self.action_palette {
+        if let Some(ref mut palette) = self.dialogs.action_palette {
             palette.select_prev();
         }
     }
 
     /// Action Palette - 向下移动
     pub fn action_palette_next(&mut self) {
-        if let Some(ref mut palette) = self.action_palette {
+        if let Some(ref mut palette) = self.dialogs.action_palette {
             palette.select_next();
         }
     }
 
     /// Action Palette - 输入字符
     pub fn action_palette_char(&mut self, c: char) {
-        if let Some(ref mut palette) = self.action_palette {
+        if let Some(ref mut palette) = self.dialogs.action_palette {
             palette.push_char(c);
         }
     }
 
     /// Action Palette - 删除字符
     pub fn action_palette_backspace(&mut self) {
-        if let Some(ref mut palette) = self.action_palette {
+        if let Some(ref mut palette) = self.dialogs.action_palette {
             palette.pop_char();
         }
     }
@@ -3248,11 +3184,12 @@ impl App {
     /// Action Palette - 确认执行
     pub fn action_palette_confirm(&mut self) {
         let action = self
+            .dialogs
             .action_palette
             .as_ref()
             .and_then(|p| p.selected_action());
 
-        self.action_palette = None;
+        self.dialogs.action_palette = None;
 
         if let Some(action) = action {
             match action {
@@ -3271,7 +3208,7 @@ impl App {
 
     /// Action Palette - 取消
     pub fn action_palette_cancel(&mut self) {
-        self.action_palette = None;
+        self.dialogs.action_palette = None;
     }
 
     // ========== Commit Dialog 功能 ==========
@@ -3284,7 +3221,7 @@ impl App {
 
         if let Some(idx) = selected_idx {
             if let Some(worktree) = worktrees.get(idx) {
-                self.commit_dialog = Some(CommitDialogData::new(
+                self.dialogs.commit_dialog = Some(CommitDialogData::new(
                     worktree.task_name.clone(),
                     worktree.path.clone(),
                 ));
@@ -3294,26 +3231,26 @@ impl App {
 
     /// Commit Dialog - 输入字符
     pub fn commit_dialog_char(&mut self, c: char) {
-        if let Some(ref mut dialog) = self.commit_dialog {
+        if let Some(ref mut dialog) = self.dialogs.commit_dialog {
             dialog.message.push(c);
         }
     }
 
     /// Commit Dialog - 删除字符
     pub fn commit_dialog_backspace(&mut self) {
-        if let Some(ref mut dialog) = self.commit_dialog {
+        if let Some(ref mut dialog) = self.dialogs.commit_dialog {
             dialog.message.pop();
         }
     }
 
     /// Commit Dialog - 取消
     pub fn commit_dialog_cancel(&mut self) {
-        self.commit_dialog = None;
+        self.dialogs.commit_dialog = None;
     }
 
     /// Commit Dialog - 确认提交
     pub fn commit_dialog_confirm(&mut self) {
-        let dialog = self.commit_dialog.take();
+        let dialog = self.dialogs.commit_dialog.take();
 
         if let Some(dialog) = dialog {
             if dialog.message.trim().is_empty() {
@@ -3341,7 +3278,7 @@ impl App {
     /// 打开 Config 配置面板
     pub fn open_config_panel(&mut self) {
         let config = storage::config::load_config();
-        self.config_panel = Some(ConfigPanelData::with_multiplexer(
+        self.dialogs.config_panel = Some(ConfigPanelData::with_multiplexer(
             &config.layout,
             &config.multiplexer,
         ));
@@ -3349,7 +3286,7 @@ impl App {
 
     /// Config Panel - 上移选择
     pub fn config_panel_prev(&mut self) {
-        if let Some(ref mut panel) = self.config_panel {
+        if let Some(ref mut panel) = self.dialogs.config_panel {
             match panel.step {
                 ConfigStep::Main => {
                     if panel.main_selected == 0 {
@@ -3394,7 +3331,7 @@ impl App {
 
     /// Config Panel - 下移选择
     pub fn config_panel_next(&mut self) {
-        if let Some(ref mut panel) = self.config_panel {
+        if let Some(ref mut panel) = self.dialogs.config_panel {
             match panel.step {
                 ConfigStep::Main => {
                     panel.main_selected = (panel.main_selected + 1) % 5;
@@ -3421,10 +3358,10 @@ impl App {
 
     /// Config Panel - 确认
     pub fn config_panel_confirm(&mut self) {
-        let step = self.config_panel.as_ref().map(|p| p.step.clone());
+        let step = self.dialogs.config_panel.as_ref().map(|p| p.step.clone());
         match step {
             Some(ConfigStep::Main) => {
-                if let Some(ref mut panel) = self.config_panel {
+                if let Some(ref mut panel) = self.dialogs.config_panel {
                     match panel.main_selected {
                         0 => panel.step = ConfigStep::EditAgentCommand,
                         1 => panel.step = ConfigStep::SelectLayout,
@@ -3441,7 +3378,7 @@ impl App {
             }
             Some(ConfigStep::McpConfig) => {
                 // MCP 信息页面，Enter 返回主菜单
-                if let Some(ref mut panel) = self.config_panel {
+                if let Some(ref mut panel) = self.dialogs.config_panel {
                     panel.step = ConfigStep::Main;
                 }
             }
@@ -3451,6 +3388,7 @@ impl App {
             Some(ConfigStep::SelectLayout) => {
                 // Check if Custom... is selected
                 let is_custom = self
+                    .dialogs
                     .config_panel
                     .as_ref()
                     .map(|p| p.layout_selected == TaskLayout::all().len())
@@ -3458,7 +3396,7 @@ impl App {
 
                 if is_custom {
                     // Enter custom layout builder
-                    if let Some(ref mut panel) = self.config_panel {
+                    if let Some(ref mut panel) = self.dialogs.config_panel {
                         panel.step = ConfigStep::CustomChoose;
                         panel.custom_build_path = Vec::new();
                         panel.custom_build_root = None;
@@ -3479,6 +3417,7 @@ impl App {
             }
             Some(ConfigStep::HookWizard) => {
                 let is_result = self
+                    .dialogs
                     .config_panel
                     .as_ref()
                     .map(|p| p.hook_data.step == HookConfigStep::ShowResult)
@@ -3486,10 +3425,10 @@ impl App {
 
                 if is_result {
                     // 结果页面，返回主菜单
-                    if let Some(ref mut panel) = self.config_panel {
+                    if let Some(ref mut panel) = self.dialogs.config_panel {
                         panel.step = ConfigStep::Main;
                     }
-                } else if let Some(ref mut panel) = self.config_panel {
+                } else if let Some(ref mut panel) = self.dialogs.config_panel {
                     panel.hook_data.confirm();
 
                     // 如果进入结果页，复制到剪贴板
@@ -3506,26 +3445,26 @@ impl App {
 
     /// Config Panel - 返回/取消
     pub fn config_panel_back(&mut self) {
-        let step = self.config_panel.as_ref().map(|p| p.step.clone());
+        let step = self.dialogs.config_panel.as_ref().map(|p| p.step.clone());
         match step {
             Some(ConfigStep::Main) => {
-                self.config_panel = None;
+                self.dialogs.config_panel = None;
             }
             Some(ConfigStep::SelectLayout)
             | Some(ConfigStep::EditAgentCommand)
             | Some(ConfigStep::SelectMultiplexer) => {
-                if let Some(ref mut panel) = self.config_panel {
+                if let Some(ref mut panel) = self.dialogs.config_panel {
                     panel.step = ConfigStep::Main;
                 }
             }
             Some(ConfigStep::McpConfig) => {
                 // 返回主菜单
-                if let Some(ref mut panel) = self.config_panel {
+                if let Some(ref mut panel) = self.dialogs.config_panel {
                     panel.step = ConfigStep::Main;
                 }
             }
             Some(ConfigStep::CustomChoose) => {
-                if let Some(ref mut panel) = self.config_panel {
+                if let Some(ref mut panel) = self.dialogs.config_panel {
                     if panel.custom_build_path.is_empty() {
                         // 回到 layout 选择
                         panel.step = ConfigStep::SelectLayout;
@@ -3545,24 +3484,24 @@ impl App {
                 }
             }
             Some(ConfigStep::CustomPaneCommand) => {
-                if let Some(ref mut panel) = self.config_panel {
+                if let Some(ref mut panel) = self.dialogs.config_panel {
                     panel.step = ConfigStep::CustomChoose;
                     panel.custom_cmd_input.clear();
                     panel.custom_cmd_cursor = 0;
                 }
             }
             Some(ConfigStep::HookWizard) => {
-                let hook_step = self.config_panel.as_ref().map(|p| p.hook_data.step);
+                let hook_step = self.dialogs.config_panel.as_ref().map(|p| p.hook_data.step);
 
                 match hook_step {
                     Some(HookConfigStep::SelectLevel) | Some(HookConfigStep::ShowResult) => {
                         // 返回 config 主菜单
-                        if let Some(ref mut panel) = self.config_panel {
+                        if let Some(ref mut panel) = self.dialogs.config_panel {
                             panel.step = ConfigStep::Main;
                         }
                     }
                     _ => {
-                        if let Some(ref mut panel) = self.config_panel {
+                        if let Some(ref mut panel) = self.dialogs.config_panel {
                             panel.hook_data.back();
                         }
                     }
@@ -3574,7 +3513,7 @@ impl App {
 
     /// Config Panel - agent 命令输入字符
     pub fn config_agent_input_char(&mut self, c: char) {
-        if let Some(ref mut panel) = self.config_panel {
+        if let Some(ref mut panel) = self.dialogs.config_panel {
             panel.agent_input.push(c);
             panel.agent_cursor = panel.agent_input.len();
         }
@@ -3582,7 +3521,7 @@ impl App {
 
     /// Config Panel - agent 命令删除字符
     pub fn config_agent_delete_char(&mut self) {
-        if let Some(ref mut panel) = self.config_panel {
+        if let Some(ref mut panel) = self.dialogs.config_panel {
             panel.agent_input.pop();
             panel.agent_cursor = panel.agent_input.len();
         }
@@ -3590,7 +3529,7 @@ impl App {
 
     /// Config Panel - Hook 复制命令
     pub fn config_hook_copy(&mut self) {
-        if let Some(ref panel) = self.config_panel {
+        if let Some(ref panel) = self.dialogs.config_panel {
             if panel.step == ConfigStep::HookWizard
                 && panel.hook_data.step == HookConfigStep::ShowResult
             {
@@ -3605,13 +3544,14 @@ impl App {
     /// 保存 agent 命令到 config
     fn config_save_agent_command(&mut self) {
         let cmd = self
+            .dialogs
             .config_panel
             .as_ref()
             .map(|p| p.agent_input.trim().to_string())
             .unwrap_or_default();
 
         // 更新内存状态
-        self.agent_command = cmd.clone();
+        self.config.agent_command = cmd.clone();
 
         // 保存到文件
         let mut config = storage::config::load_config();
@@ -3619,7 +3559,7 @@ impl App {
         let _ = storage::config::save_config(&config);
 
         // 返回主菜单
-        if let Some(ref mut panel) = self.config_panel {
+        if let Some(ref mut panel) = self.dialogs.config_panel {
             panel.step = ConfigStep::Main;
         }
         self.show_toast("Agent command saved");
@@ -3628,6 +3568,7 @@ impl App {
     /// 保存布局到 config
     fn config_save_layout(&mut self) {
         let layout = self
+            .dialogs
             .config_panel
             .as_ref()
             .and_then(|p| TaskLayout::all().get(p.layout_selected).cloned())
@@ -3636,7 +3577,7 @@ impl App {
         let label = layout.label().to_string();
 
         // 更新内存状态
-        self.task_layout = layout.clone();
+        self.config.task_layout = layout.clone();
 
         // 保存到文件
         let mut config = storage::config::load_config();
@@ -3644,7 +3585,7 @@ impl App {
         let _ = storage::config::save_config(&config);
 
         // 返回主菜单
-        if let Some(ref mut panel) = self.config_panel {
+        if let Some(ref mut panel) = self.dialogs.config_panel {
             panel.step = ConfigStep::Main;
         }
         self.show_toast(format!("Layout: {}", label));
@@ -3653,6 +3594,7 @@ impl App {
     /// Config Panel - 保存 Multiplexer 选择
     fn config_save_multiplexer(&mut self) {
         let selected = self
+            .dialogs
             .config_panel
             .as_ref()
             .map(|p| p.multiplexer_selected)
@@ -3676,7 +3618,7 @@ impl App {
         }
 
         // 更新内存状态
-        self.multiplexer = mux.clone();
+        self.config.multiplexer = mux.clone();
 
         // 保存到文件
         let mut config = storage::config::load_config();
@@ -3684,7 +3626,7 @@ impl App {
         let _ = storage::config::save_config(&config);
 
         // 返回主菜单
-        if let Some(ref mut panel) = self.config_panel {
+        if let Some(ref mut panel) = self.dialogs.config_panel {
             panel.step = ConfigStep::Main;
         }
         self.show_toast(format!("Multiplexer: {}", mux));
@@ -3693,7 +3635,7 @@ impl App {
     /// Custom Choose 确认选择
     fn config_custom_choose_confirm(&mut self) {
         let (selected, can_split) = {
-            let panel = match self.config_panel.as_ref() {
+            let panel = match self.dialogs.config_panel.as_ref() {
                 Some(p) => p,
                 None => return,
             };
@@ -3724,7 +3666,7 @@ impl App {
                     second: Box::new(LayoutNode::Placeholder),
                 };
 
-                if let Some(ref mut panel) = self.config_panel {
+                if let Some(ref mut panel) = self.dialogs.config_panel {
                     let path = panel.custom_build_path.clone();
                     if panel.custom_build_root.is_none() {
                         panel.custom_build_root = Some(node);
@@ -3749,7 +3691,7 @@ impl App {
             }
             // 6 = Custom command
             6 => {
-                if let Some(ref mut panel) = self.config_panel {
+                if let Some(ref mut panel) = self.dialogs.config_panel {
                     panel.step = ConfigStep::CustomPaneCommand;
                     panel.custom_cmd_input.clear();
                     panel.custom_cmd_cursor = 0;
@@ -3762,6 +3704,7 @@ impl App {
     /// Custom Pane Command 确认
     fn config_custom_pane_command_confirm(&mut self) {
         let cmd = self
+            .dialogs
             .config_panel
             .as_ref()
             .map(|p| p.custom_cmd_input.trim().to_string())
@@ -3775,7 +3718,7 @@ impl App {
             pane: PaneRole::Custom(cmd),
         };
 
-        if let Some(ref mut panel) = self.config_panel {
+        if let Some(ref mut panel) = self.dialogs.config_panel {
             panel.step = ConfigStep::CustomChoose;
         }
 
@@ -3784,7 +3727,7 @@ impl App {
 
     /// 设置叶子节点并推进
     fn config_custom_set_leaf(&mut self, node: LayoutNode) {
-        if let Some(ref mut panel) = self.config_panel {
+        if let Some(ref mut panel) = self.dialogs.config_panel {
             let path = panel.custom_build_path.clone();
             if panel.custom_build_root.is_none() {
                 // Root is a single pane
@@ -3799,13 +3742,14 @@ impl App {
     /// 推进到下一个待配置节点，如果全部完成则保存
     fn config_custom_advance(&mut self) {
         let next = self
+            .dialogs
             .config_panel
             .as_ref()
             .and_then(|p| p.custom_build_root.as_ref())
             .and_then(layout_mod::next_incomplete_path);
 
         if let Some(path) = next {
-            if let Some(ref mut panel) = self.config_panel {
+            if let Some(ref mut panel) = self.dialogs.config_panel {
                 panel.custom_build_path = path;
                 panel.custom_choose_selected = 3; // default to Agent
                 panel.step = ConfigStep::CustomChoose;
@@ -3819,6 +3763,7 @@ impl App {
     /// 保存自定义布局
     fn config_save_custom_layout(&mut self) {
         let root = self
+            .dialogs
             .config_panel
             .as_ref()
             .and_then(|p| p.custom_build_root.clone());
@@ -3828,8 +3773,8 @@ impl App {
         };
 
         // 更新内存状态
-        self.task_layout = TaskLayout::Custom;
-        self.custom_layout = Some(CustomLayout { root: root.clone() });
+        self.config.task_layout = TaskLayout::Custom;
+        self.config.custom_layout = Some(CustomLayout { root: root.clone() });
 
         // 保存到文件
         let mut config = storage::config::load_config();
@@ -3839,7 +3784,7 @@ impl App {
         let _ = storage::config::save_config(&config);
 
         // 返回主菜单
-        if let Some(ref mut panel) = self.config_panel {
+        if let Some(ref mut panel) = self.dialogs.config_panel {
             panel.step = ConfigStep::Main;
         }
         self.show_toast("Layout: Custom");
@@ -3847,7 +3792,7 @@ impl App {
 
     /// Custom layout 命令输入字符
     pub fn config_custom_cmd_input_char(&mut self, c: char) {
-        if let Some(ref mut panel) = self.config_panel {
+        if let Some(ref mut panel) = self.dialogs.config_panel {
             panel.custom_cmd_input.push(c);
             panel.custom_cmd_cursor = panel.custom_cmd_input.len();
         }
@@ -3855,7 +3800,7 @@ impl App {
 
     /// Custom layout 命令删除字符
     pub fn config_custom_cmd_delete_char(&mut self) {
-        if let Some(ref mut panel) = self.config_panel {
+        if let Some(ref mut panel) = self.dialogs.config_panel {
             panel.custom_cmd_input.pop();
             panel.custom_cmd_cursor = panel.custom_cmd_input.len();
         }
@@ -3875,7 +3820,7 @@ impl App {
                     self.show_toast("No worktree path");
                     return;
                 }
-                self.commit_dialog = Some(CommitDialogData::new(task_name, worktree_path));
+                self.dialogs.commit_dialog = Some(CommitDialogData::new(task_name, worktree_path));
             }
             MonitorAction::Sync => {
                 self.monitor_sync();
@@ -3895,7 +3840,7 @@ impl App {
                 if commit_count <= 1 {
                     self.do_merge(&task_id, MergeMethod::MergeCommit);
                 } else {
-                    self.merge_dialog =
+                    self.dialogs.merge_dialog =
                         Some(MergeDialogData::new(task_id, task_name, branch, target));
                 }
             }
@@ -3911,16 +3856,17 @@ impl App {
                 if is_merged {
                     self.do_archive(&task_id);
                 } else {
-                    self.pending_action = Some(PendingAction::Archive { task_id });
-                    self.confirm_dialog = Some(ConfirmType::ArchiveUnmerged { task_name, branch });
+                    self.async_ops.pending_action = Some(PendingAction::Archive { task_id });
+                    self.dialogs.confirm_dialog =
+                        Some(ConfirmType::ArchiveUnmerged { task_name, branch });
                 }
             }
             MonitorAction::Clean => {
                 let task_name = self.monitor.task_name.clone();
                 let branch = self.monitor.branch.clone();
                 // Clean 始终强确认
-                self.input_confirm_dialog = Some(InputConfirmData::new(task_name, branch));
-                self.pending_action = Some(PendingAction::Clean {
+                self.dialogs.input_confirm_dialog = Some(InputConfirmData::new(task_name, branch));
+                self.async_ops.pending_action = Some(PendingAction::Clean {
                     task_id: self.monitor.task_id.clone(),
                     is_archived: false,
                 });
@@ -3956,12 +3902,12 @@ impl App {
                     &self.monitor.project_key,
                     &self.monitor.task_id,
                 );
-                self.confirm_dialog = Some(
+                self.dialogs.confirm_dialog = Some(
                     crate::ui::components::confirm_dialog::ConfirmType::ExitSession {
                         session_name,
                     },
                 );
-                self.pending_action = Some(PendingAction::ExitSession);
+                self.async_ops.pending_action = Some(PendingAction::ExitSession);
             }
         }
     }

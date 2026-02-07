@@ -16,7 +16,7 @@ use super::components::{
 /// 渲染 Project 页面
 pub fn render(frame: &mut Frame, app: &mut App) {
     let area = frame.area();
-    let colors = &app.colors;
+    let colors = &app.ui.colors;
 
     // 填充整个背景
     Block::default()
@@ -68,7 +68,7 @@ pub fn render(frame: &mut Frame, app: &mut App) {
         };
 
     // 渲染 Header（点击可返回 Workspace）
-    app.click_areas.project_header_area = Some(header_area);
+    app.ui.click_areas.project_header_area = Some(header_area);
     header::render(
         frame,
         header_area,
@@ -120,7 +120,7 @@ pub fn render(frame: &mut Frame, app: &mut App) {
         tabs_area,
         app.project.current_tab,
         colors,
-        &mut app.click_areas,
+        &mut app.ui.click_areas,
     );
 
     // 渲染搜索框（如果有搜索内容或正在输入）
@@ -144,8 +144,8 @@ pub fn render(frame: &mut Frame, app: &mut App) {
         ])
         .areas(list_area);
 
-        app.click_areas.worktree_list_area = Some(left_area);
-        app.click_areas.preview_content_area = Some(right_area);
+        app.ui.click_areas.worktree_list_area = Some(left_area);
+        app.ui.click_areas.preview_content_area = Some(right_area);
 
         if worktrees.is_empty() {
             empty_state::render(frame, left_area, app.project.current_tab, colors);
@@ -157,20 +157,20 @@ pub fn render(frame: &mut Frame, app: &mut App) {
                 &worktrees,
                 selected,
                 colors,
-                &app.notifications,
-                &mut app.click_areas,
+                &app.notification.notifications,
+                &mut app.ui.click_areas,
             );
         }
 
         let reviewing = app
             .project
             .selected_worktree()
-            .is_some_and(|wt| app.reviewing_tasks.contains_key(&wt.id));
+            .is_some_and(|wt| app.review.reviewing_tasks.contains_key(&wt.id));
 
         let reviewing_url = app
             .project
             .selected_worktree()
-            .and_then(|wt| app.reviewing_tasks.get(&wt.id))
+            .and_then(|wt| app.review.reviewing_tasks.get(&wt.id))
             .and_then(|u| u.as_deref());
 
         // Get stats history for the selected task
@@ -194,12 +194,12 @@ pub fn render(frame: &mut Frame, app: &mut App) {
             reviewing_url,
             stats_history.as_ref(),
             colors,
-            &mut app.click_areas,
+            &mut app.ui.click_areas,
         );
     } else if worktrees.is_empty() {
         empty_state::render(frame, list_area, app.project.current_tab, colors);
     } else {
-        app.click_areas.worktree_list_area = Some(list_area);
+        app.ui.click_areas.worktree_list_area = Some(list_area);
         let selected = app.project.current_list_state().selected();
         worktree_list::render(
             frame,
@@ -207,8 +207,8 @@ pub fn render(frame: &mut Frame, app: &mut App) {
             &worktrees,
             selected,
             colors,
-            &app.notifications,
-            &mut app.click_areas,
+            &app.notification.notifications,
+            &mut app.ui.click_areas,
         );
     }
 
@@ -222,73 +222,73 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     );
 
     // 渲染 Toast（优先显示 loading 消息）
-    if let Some(ref msg) = app.loading_message {
+    if let Some(ref msg) = app.async_ops.loading_message {
         toast::render_loading(frame, msg, colors);
-    } else if let Some(ref t) = app.toast {
+    } else if let Some(ref t) = app.ui.toast {
         if !t.is_expired() {
             toast::render(frame, &t.message, colors);
         }
     }
 
     // 渲染主题选择器（如果打开）
-    if app.show_theme_selector {
+    if app.ui.show_theme_selector {
         theme_selector::render(
             frame,
-            app.theme_selector_index,
+            app.ui.theme_selector_index,
             colors,
-            &mut app.click_areas,
+            &mut app.ui.click_areas,
         );
     }
 
     // 渲染 New Task 弹窗（如果打开）
-    if app.show_new_task_dialog {
+    if app.dialogs.show_new_task_dialog {
         new_task_dialog::render(
             frame,
-            &app.new_task_input,
-            &app.target_branch,
+            &app.dialogs.new_task_input,
+            &app.async_ops.target_branch,
             colors,
-            &mut app.click_areas,
+            &mut app.ui.click_areas,
         );
     }
 
     // 渲染确认弹窗（弱确认）
-    if let Some(ref confirm_type) = app.confirm_dialog {
-        confirm_dialog::render(frame, confirm_type, colors, &mut app.click_areas);
+    if let Some(ref confirm_type) = app.dialogs.confirm_dialog {
+        confirm_dialog::render(frame, confirm_type, colors, &mut app.ui.click_areas);
     }
 
     // 渲染输入确认弹窗（强确认）
-    if let Some(ref data) = app.input_confirm_dialog {
-        input_confirm_dialog::render(frame, data, colors, &mut app.click_areas);
+    if let Some(ref data) = app.dialogs.input_confirm_dialog {
+        input_confirm_dialog::render(frame, data, colors, &mut app.ui.click_areas);
     }
 
     // 渲染分支选择器
-    if let Some(ref data) = app.branch_selector {
-        branch_selector::render(frame, data, colors, &mut app.click_areas);
+    if let Some(ref data) = app.dialogs.branch_selector {
+        branch_selector::render(frame, data, colors, &mut app.ui.click_areas);
     }
 
     // 渲染 Merge 选择弹窗
-    if let Some(ref data) = app.merge_dialog {
-        merge_dialog::render(frame, data, colors, &mut app.click_areas);
+    if let Some(ref data) = app.dialogs.merge_dialog {
+        merge_dialog::render(frame, data, colors, &mut app.ui.click_areas);
     }
 
     // 渲染 Action Palette
-    if let Some(ref mut data) = app.action_palette {
-        action_palette::render(frame, data, colors, &mut app.click_areas);
+    if let Some(ref mut data) = app.dialogs.action_palette {
+        action_palette::render(frame, data, colors, &mut app.ui.click_areas);
     }
 
     // 渲染 Commit Dialog
-    if let Some(ref data) = app.commit_dialog {
-        commit_dialog::render(frame, data, colors, &mut app.click_areas);
+    if let Some(ref data) = app.dialogs.commit_dialog {
+        commit_dialog::render(frame, data, colors, &mut app.ui.click_areas);
     }
 
     // 渲染 Config 配置面板
-    if let Some(ref data) = app.config_panel {
+    if let Some(ref data) = app.dialogs.config_panel {
         let config = crate::storage::config::load_config();
-        config_panel::render(frame, data, &config.layout, colors, &mut app.click_areas);
+        config_panel::render(frame, data, &config.layout, colors, &mut app.ui.click_areas);
     }
 
     // 渲染帮助面板
-    if app.show_help {
+    if app.dialogs.show_help {
         help_panel::render(frame, colors, app.update_info.as_ref());
     }
 }

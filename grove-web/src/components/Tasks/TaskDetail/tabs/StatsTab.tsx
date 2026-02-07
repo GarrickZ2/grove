@@ -3,6 +3,7 @@ import { motion } from "framer-motion";
 import { Calendar, GitCommit, FileCode, Clock, Activity, Loader2 } from "lucide-react";
 import { getTaskStats, type TaskStatsResponse } from "../../../../api";
 import type { Task } from "../../../../data/types";
+import { compactPath } from "../../../../utils/pathUtils";
 
 interface StatsTabProps {
   projectId: string;
@@ -22,33 +23,31 @@ function formatDate(date: Date | undefined, timeAgo?: string): string {
   });
 }
 
-function formatDuration(start: Date, end: Date): string {
-  // Handle invalid dates
-  if (!start || !end || isNaN(start.getTime()) || isNaN(end.getTime())) {
+// Calculate active time from activity timeline
+function calculateActiveTime(hourlyActivity: Array<{ buckets: number[] }>): string {
+  if (!hourlyActivity || hourlyActivity.length === 0) {
     return "—";
   }
 
-  const diff = end.getTime() - start.getTime();
-
-  // Handle negative or zero diff
-  if (diff <= 0) {
-    return "< 1m";
+  // Count all minutes with activity (buckets > 0)
+  let activeMinutes = 0;
+  for (const hourEntry of hourlyActivity) {
+    if (Array.isArray(hourEntry.buckets)) {
+      activeMinutes += hourEntry.buckets.filter(count => count > 0).length;
+    }
   }
 
-  const days = Math.floor(diff / (1000 * 60 * 60 * 24));
-  const hours = Math.floor((diff % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
-  const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
-
-  if (days > 0) {
-    return `${days}d ${hours}h`;
+  if (activeMinutes === 0) {
+    return "—";
   }
+
+  const hours = Math.floor(activeMinutes / 60);
+  const minutes = activeMinutes % 60;
+
   if (hours > 0) {
     return `${hours}h ${minutes}m`;
   }
-  if (minutes > 0) {
-    return `${minutes}m`;
-  }
-  return "< 1m";
+  return `${minutes}m`;
 }
 
 interface StatCardProps {
@@ -113,20 +112,6 @@ function formatRelativeTime(isoString: string): string {
   return `${diffDays}d ago`;
 }
 
-// Truncate file path for display
-function truncatePath(path: string, maxLen: number = 35): string {
-  if (path.length <= maxLen) return path;
-  const parts = path.split("/");
-  if (parts.length <= 2) return "..." + path.slice(-maxLen + 3);
-  // Show first dir + ... + filename
-  const first = parts[0];
-  const last = parts[parts.length - 1];
-  const middle = "...";
-  if (first.length + middle.length + last.length <= maxLen) {
-    return `${first}/${middle}/${last}`;
-  }
-  return "..." + path.slice(-maxLen + 3);
-}
 
 export function StatsTab({ projectId, task }: StatsTabProps) {
   const [stats, setStats] = useState<TaskStatsResponse | null>(null);
@@ -153,7 +138,7 @@ export function StatsTab({ projectId, task }: StatsTabProps) {
     : 1;
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-4 overflow-y-auto h-full pr-2">
       {/* Stats Grid */}
       <div className="grid grid-cols-2 gap-3">
         <StatCard
@@ -195,7 +180,7 @@ export function StatsTab({ projectId, task }: StatsTabProps) {
         <div className="flex items-center gap-4">
           <div className="flex-1">
             <div className="text-2xl font-semibold text-[var(--color-text)]">
-              {formatDuration(task.createdAt, task.updatedAt)}
+              {stats?.hourly_activity ? calculateActiveTime(stats.hourly_activity) : isLoading ? "—" : "—"}
             </div>
             <div className="text-xs text-[var(--color-text-muted)] mt-1">
               Active time
@@ -268,13 +253,13 @@ export function StatsTab({ projectId, task }: StatsTabProps) {
               >
                 {/* Filename on left */}
                 <span
-                  className="text-xs text-[var(--color-text-muted)] font-mono truncate w-48 flex-shrink-0"
+                  className="text-xs text-[var(--color-text-muted)] font-mono truncate w-[180px] flex-shrink-0"
                   title={file.path}
                 >
-                  {truncatePath(file.path, 28)}
+                  {compactPath(file.path, 24)}
                 </span>
                 {/* Edit count bar in middle */}
-                <div className="flex-1 h-5 bg-[var(--color-bg-tertiary)] rounded-sm overflow-hidden">
+                <div className="flex-1 h-5 bg-[var(--color-bg-tertiary)] rounded-sm overflow-hidden min-w-0">
                   <div
                     className="h-full rounded-sm transition-all"
                     style={{
@@ -378,8 +363,9 @@ export function StatsTab({ projectId, task }: StatsTabProps) {
                     {buckets.map((count, minute) => (
                       <div
                         key={minute}
+                        className="flex-1"
                         style={{
-                          width: "10px",
+                          minWidth: "4px",
                           height: "20px",
                           borderRadius: "2px",
                           backgroundColor: getActivityBlockColor(count),

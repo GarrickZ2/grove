@@ -64,16 +64,22 @@ export function BlitzTaskListItem({ blitzTask, isSelected, onClick, onDoubleClic
 
   return (
     <motion.button
-      layout
       data-task-id={task.id}
       onClick={onClick}
       onDoubleClick={task.status !== "archived" ? onDoubleClick : undefined}
       onContextMenu={onContextMenu}
-      className={`w-full text-left px-3 py-2.5 rounded-lg transition-colors duration-150 ${
+      className={`relative w-full text-left rounded-lg transition-colors duration-150 ${
         isSelected
-          ? "bg-[var(--color-highlight)]/10 ring-1 ring-[var(--color-highlight)]/30"
-          : "bg-[var(--color-bg-secondary)] hover:bg-[var(--color-bg-tertiary)]"
+          ? "px-4 py-3 bg-[var(--color-highlight)]/5"
+          : "px-3 py-2.5 bg-[var(--color-bg-secondary)] hover:bg-[var(--color-bg-tertiary)]"
       }`}
+      style={isSelected ? {
+        border: "2px solid transparent",
+        backgroundImage: `linear-gradient(var(--color-bg-secondary), var(--color-bg-secondary)), linear-gradient(135deg, var(--color-highlight), color-mix(in srgb, var(--color-highlight) 40%, white), var(--color-highlight))`,
+        backgroundOrigin: "border-box",
+        backgroundClip: "padding-box, border-box",
+        boxShadow: `0 0 8px -2px var(--color-highlight)`,
+      } : undefined}
     >
       <div className="flex items-start gap-2.5">
         {/* Status Icon */}

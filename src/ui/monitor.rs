@@ -28,7 +28,7 @@ const MINI_LOGO: &str = "GROVE ACTIONS";
 /// 渲染 Monitor 视图
 pub fn render(frame: &mut Frame, app: &mut App) {
     let area = frame.area();
-    let colors = &app.colors;
+    let colors = &app.ui.colors;
 
     // 填充整个背景
     Block::default()
@@ -47,8 +47,8 @@ pub fn render(frame: &mut Frame, app: &mut App) {
         Layout::horizontal([Constraint::Length(sidebar_w), Constraint::Fill(1)]).areas(area);
 
     // 记录 click areas
-    app.click_areas.monitor_sidebar_area = Some(sidebar_area);
-    app.click_areas.monitor_content_area = Some(content_area);
+    app.ui.click_areas.monitor_sidebar_area = Some(sidebar_area);
+    app.ui.click_areas.monitor_content_area = Some(content_area);
 
     // 左侧 sidebar
     if app.monitor.sidebar_collapsed {
@@ -59,7 +59,7 @@ pub fn render(frame: &mut Frame, app: &mut App) {
             sidebar_area,
             &app.monitor,
             colors,
-            &mut app.click_areas,
+            &mut app.ui.click_areas,
         );
     }
 
@@ -79,7 +79,7 @@ pub fn render(frame: &mut Frame, app: &mut App) {
         tab_area,
         app.monitor.content_tab,
         colors,
-        &mut app.click_areas,
+        &mut app.ui.click_areas,
     );
 
     // Separator
@@ -122,8 +122,12 @@ pub fn render(frame: &mut Frame, app: &mut App) {
             colors,
         ),
         PreviewSubTab::Diff => {
-            let reviewing = app.reviewing_tasks.contains_key(&app.monitor.task_id);
+            let reviewing = app
+                .review
+                .reviewing_tasks
+                .contains_key(&app.monitor.task_id);
             let reviewing_url = app
+                .review
                 .reviewing_tasks
                 .get(&app.monitor.task_id)
                 .and_then(|u| u.as_deref());
@@ -142,36 +146,36 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     render_monitor_footer(frame, footer_area, &app.monitor, colors);
 
     // 渲染 Toast
-    if let Some(ref msg) = app.loading_message {
+    if let Some(ref msg) = app.async_ops.loading_message {
         toast::render_loading(frame, msg, colors);
-    } else if let Some(ref t) = app.toast {
+    } else if let Some(ref t) = app.ui.toast {
         if !t.is_expired() {
             toast::render(frame, &t.message, colors);
         }
     }
 
     // 渲染覆盖弹窗
-    if app.show_theme_selector {
+    if app.ui.show_theme_selector {
         theme_selector::render(
             frame,
-            app.theme_selector_index,
+            app.ui.theme_selector_index,
             colors,
-            &mut app.click_areas,
+            &mut app.ui.click_areas,
         );
     }
-    if let Some(ref confirm_type) = app.confirm_dialog {
-        confirm_dialog::render(frame, confirm_type, colors, &mut app.click_areas);
+    if let Some(ref confirm_type) = app.dialogs.confirm_dialog {
+        confirm_dialog::render(frame, confirm_type, colors, &mut app.ui.click_areas);
     }
-    if let Some(ref data) = app.input_confirm_dialog {
-        input_confirm_dialog::render(frame, data, colors, &mut app.click_areas);
+    if let Some(ref data) = app.dialogs.input_confirm_dialog {
+        input_confirm_dialog::render(frame, data, colors, &mut app.ui.click_areas);
     }
-    if let Some(ref data) = app.merge_dialog {
-        merge_dialog::render(frame, data, colors, &mut app.click_areas);
+    if let Some(ref data) = app.dialogs.merge_dialog {
+        merge_dialog::render(frame, data, colors, &mut app.ui.click_areas);
     }
-    if let Some(ref data) = app.commit_dialog {
-        commit_dialog::render(frame, data, colors, &mut app.click_areas);
+    if let Some(ref data) = app.dialogs.commit_dialog {
+        commit_dialog::render(frame, data, colors, &mut app.ui.click_areas);
     }
-    if app.show_help {
+    if app.dialogs.show_help {
         help_panel::render(frame, colors, app.update_info.as_ref());
     }
 }

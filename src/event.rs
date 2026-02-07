@@ -114,73 +114,73 @@ fn handle_key(app: &mut App, key: KeyEvent) {
     // 优先处理弹窗事件
 
     // 帮助面板
-    if app.show_help {
+    if app.dialogs.show_help {
         handle_help_key(app, key);
         return;
     }
 
     // Merge 选择弹窗
-    if app.merge_dialog.is_some() {
+    if app.dialogs.merge_dialog.is_some() {
         handle_merge_dialog_key(app, key);
         return;
     }
 
     // 分支选择器
-    if app.branch_selector.is_some() {
+    if app.dialogs.branch_selector.is_some() {
         handle_branch_selector_key(app, key);
         return;
     }
 
     // 输入确认弹窗（强确认）
-    if app.input_confirm_dialog.is_some() {
+    if app.dialogs.input_confirm_dialog.is_some() {
         handle_input_confirm_key(app, key);
         return;
     }
 
     // 确认弹窗（弱确认）
-    if app.confirm_dialog.is_some() {
+    if app.dialogs.confirm_dialog.is_some() {
         handle_confirm_dialog_key(app, key);
         return;
     }
 
     // New Task 弹窗
-    if app.show_new_task_dialog {
+    if app.dialogs.show_new_task_dialog {
         handle_new_task_dialog_key(app, key);
         return;
     }
 
     // 主题选择器
-    if app.show_theme_selector {
+    if app.ui.show_theme_selector {
         handle_theme_selector_key(app, key);
         return;
     }
 
     // Add Project 弹窗
-    if app.add_project_dialog.is_some() {
+    if app.dialogs.add_project_dialog.is_some() {
         handle_add_project_dialog_key(app, key);
         return;
     }
 
     // Delete Project 弹窗
-    if app.delete_project_dialog.is_some() {
+    if app.dialogs.delete_project_dialog.is_some() {
         handle_delete_project_dialog_key(app, key);
         return;
     }
 
     // Action Palette
-    if app.action_palette.is_some() {
+    if app.dialogs.action_palette.is_some() {
         handle_action_palette_key(app, key);
         return;
     }
 
     // Commit Dialog
-    if app.commit_dialog.is_some() {
+    if app.dialogs.commit_dialog.is_some() {
         handle_commit_dialog_key(app, key);
         return;
     }
 
     // Config Panel
-    if app.config_panel.is_some() {
+    if app.dialogs.config_panel.is_some() {
         handle_config_panel_key(app, key);
         return;
     }
@@ -257,7 +257,7 @@ fn handle_workspace_key(app: &mut App, key: KeyEvent) {
 
         // 功能按键 - 帮助
         KeyCode::Char('?') => {
-            app.show_help = true;
+            app.dialogs.show_help = true;
         }
 
         // 功能按键 - 刷新
@@ -442,7 +442,7 @@ fn handle_project_key(app: &mut App, key: KeyEvent) {
 
         // 功能按键 - 帮助
         KeyCode::Char('?') => {
-            app.show_help = true;
+            app.dialogs.show_help = true;
         }
 
         // 功能按键 - 返回 Workspace
@@ -685,7 +685,7 @@ fn handle_help_key(app: &mut App, key: KeyEvent) {
     match key.code {
         // 关闭帮助面板
         KeyCode::Char('?') | KeyCode::Esc | KeyCode::Char('q') => {
-            app.show_help = false;
+            app.dialogs.show_help = false;
         }
         _ => {}
     }
@@ -794,7 +794,7 @@ fn handle_config_panel_key(app: &mut App, key: KeyEvent) {
     use crate::ui::components::config_panel::ConfigStep;
     use crate::ui::components::hook_panel::HookConfigStep;
 
-    let step = app.config_panel.as_ref().map(|p| p.step.clone());
+    let step = app.dialogs.config_panel.as_ref().map(|p| p.step.clone());
     let Some(step) = step else { return };
 
     match step {
@@ -845,7 +845,7 @@ fn handle_config_panel_key(app: &mut App, key: KeyEvent) {
             _ => {}
         },
         ConfigStep::HookWizard => {
-            let hook_step = app.config_panel.as_ref().map(|p| p.hook_data.step);
+            let hook_step = app.dialogs.config_panel.as_ref().map(|p| p.hook_data.step);
 
             match hook_step {
                 Some(HookConfigStep::InputMessage) => {
@@ -854,12 +854,12 @@ fn handle_config_panel_key(app: &mut App, key: KeyEvent) {
                         KeyCode::Enter => app.config_panel_confirm(),
                         KeyCode::Esc => app.config_panel_back(),
                         KeyCode::Backspace => {
-                            if let Some(ref mut panel) = app.config_panel {
+                            if let Some(ref mut panel) = app.dialogs.config_panel {
                                 panel.hook_data.message_input.pop();
                             }
                         }
                         KeyCode::Char(c) => {
-                            if let Some(ref mut panel) = app.config_panel {
+                            if let Some(ref mut panel) = app.dialogs.config_panel {
                                 panel.hook_data.message_input.push(c);
                             }
                         }
@@ -937,7 +937,7 @@ fn handle_monitor_key(app: &mut App, key: KeyEvent) {
         KeyCode::Char('T') | KeyCode::Char('t') => app.open_theme_selector(),
 
         // 帮助
-        KeyCode::Char('?') => app.show_help = !app.show_help,
+        KeyCode::Char('?') => app.dialogs.show_help = !app.dialogs.show_help,
 
         // 退出
         KeyCode::Char('q') => app.quit(),
@@ -973,18 +973,18 @@ fn handle_mouse(app: &mut App, mouse: crossterm::event::MouseEvent) {
 }
 
 fn has_active_popup(app: &App) -> bool {
-    app.show_help
-        || app.merge_dialog.is_some()
-        || app.branch_selector.is_some()
-        || app.input_confirm_dialog.is_some()
-        || app.confirm_dialog.is_some()
-        || app.show_new_task_dialog
-        || app.show_theme_selector
-        || app.add_project_dialog.is_some()
-        || app.delete_project_dialog.is_some()
-        || app.action_palette.is_some()
-        || app.commit_dialog.is_some()
-        || app.config_panel.is_some()
+    app.dialogs.show_help
+        || app.dialogs.merge_dialog.is_some()
+        || app.dialogs.branch_selector.is_some()
+        || app.dialogs.input_confirm_dialog.is_some()
+        || app.dialogs.confirm_dialog.is_some()
+        || app.dialogs.show_new_task_dialog
+        || app.ui.show_theme_selector
+        || app.dialogs.add_project_dialog.is_some()
+        || app.dialogs.delete_project_dialog.is_some()
+        || app.dialogs.action_palette.is_some()
+        || app.dialogs.commit_dialog.is_some()
+        || app.dialogs.config_panel.is_some()
 }
 
 fn handle_left_click(app: &mut App, col: u16, row: u16) {
@@ -992,8 +992,8 @@ fn handle_left_click(app: &mut App, col: u16, row: u16) {
     app.record_click(col, row);
 
     // 弹窗优先：有弹窗时消费点击（帮助面板点击关闭）
-    if app.show_help {
-        app.show_help = false;
+    if app.dialogs.show_help {
+        app.dialogs.show_help = false;
         return;
     }
     if has_active_popup(app) {
@@ -1011,6 +1011,7 @@ fn handle_left_click(app: &mut App, col: u16, row: u16) {
 fn handle_workspace_click(app: &mut App, col: u16, row: u16, is_double: bool) {
     // 检查卡片点击
     let clicked = app
+        .ui
         .click_areas
         .workspace_cards
         .iter()
@@ -1030,7 +1031,7 @@ fn handle_workspace_click(app: &mut App, col: u16, row: u16, is_double: bool) {
 
 fn handle_project_click(app: &mut App, col: u16, row: u16, is_double: bool) {
     // 检查 header 区域（点击返回 Workspace）
-    if let Some(area) = app.click_areas.project_header_area {
+    if let Some(area) = app.ui.click_areas.project_header_area {
         if contains(&area, col, row) {
             app.back_to_workspace();
             return;
@@ -1039,6 +1040,7 @@ fn handle_project_click(app: &mut App, col: u16, row: u16, is_double: bool) {
 
     // 检查 project tabs
     let clicked_tab = app
+        .ui
         .click_areas
         .project_tabs
         .iter()
@@ -1052,6 +1054,7 @@ fn handle_project_click(app: &mut App, col: u16, row: u16, is_double: bool) {
 
     // 检查 preview sub-tabs
     let clicked_sub = app
+        .ui
         .click_areas
         .preview_sub_tabs
         .iter()
@@ -1065,6 +1068,7 @@ fn handle_project_click(app: &mut App, col: u16, row: u16, is_double: bool) {
 
     // 检查 worktree 行
     let clicked_row = app
+        .ui
         .click_areas
         .worktree_rows
         .iter()
@@ -1087,6 +1091,7 @@ fn handle_monitor_click(app: &mut App, col: u16, row: u16) {
 
     // 检查 action 按钮点击
     let clicked_action = app
+        .ui
         .click_areas
         .monitor_actions
         .iter()
@@ -1102,6 +1107,7 @@ fn handle_monitor_click(app: &mut App, col: u16, row: u16) {
 
     // 检查 tab bar 点击
     let clicked_tab = app
+        .ui
         .click_areas
         .monitor_tabs
         .iter()
@@ -1115,7 +1121,7 @@ fn handle_monitor_click(app: &mut App, col: u16, row: u16) {
     }
 
     // 点击 sidebar 区域
-    if let Some(area) = app.click_areas.monitor_sidebar_area {
+    if let Some(area) = app.ui.click_areas.monitor_sidebar_area {
         if contains(&area, col, row) {
             if app.monitor.sidebar_collapsed {
                 // 折叠时点击展开
@@ -1128,7 +1134,7 @@ fn handle_monitor_click(app: &mut App, col: u16, row: u16) {
     }
 
     // 点击 content 区域 → 切换焦点到 content
-    if let Some(area) = app.click_areas.monitor_content_area {
+    if let Some(area) = app.ui.click_areas.monitor_content_area {
         if contains(&area, col, row) {
             app.monitor.focus = MonitorFocus::Content;
         }
@@ -1137,13 +1143,13 @@ fn handle_monitor_click(app: &mut App, col: u16, row: u16) {
 
 fn handle_scroll_down(app: &mut App, col: u16, row: u16) {
     if has_active_popup(app) {
-        if app.show_theme_selector {
+        if app.ui.show_theme_selector {
             app.theme_selector_next();
-        } else if app.action_palette.is_some() {
+        } else if app.dialogs.action_palette.is_some() {
             app.action_palette_next();
-        } else if app.branch_selector.is_some() {
+        } else if app.dialogs.branch_selector.is_some() {
             app.branch_selector_next();
-        } else if app.config_panel.is_some() {
+        } else if app.dialogs.config_panel.is_some() {
             app.config_panel_next();
         }
         return;
@@ -1154,7 +1160,7 @@ fn handle_scroll_down(app: &mut App, col: u16, row: u16) {
             app.monitor.scroll_down();
         }
         AppMode::Workspace => {
-            if let Some(area) = app.click_areas.workspace_content_area {
+            if let Some(area) = app.ui.click_areas.workspace_content_area {
                 if contains(&area, col, row) {
                     app.workspace.select_down();
                 }
@@ -1162,7 +1168,7 @@ fn handle_scroll_down(app: &mut App, col: u16, row: u16) {
         }
         AppMode::Project => {
             // 优先检查 preview 区域
-            if let Some(area) = app.click_areas.preview_content_area {
+            if let Some(area) = app.ui.click_areas.preview_content_area {
                 if contains(&area, col, row) {
                     match app.project.preview_sub_tab {
                         PreviewSubTab::Stats => app.project.scroll_stats_down(),
@@ -1173,7 +1179,7 @@ fn handle_scroll_down(app: &mut App, col: u16, row: u16) {
                     return;
                 }
             }
-            if let Some(area) = app.click_areas.worktree_list_area {
+            if let Some(area) = app.ui.click_areas.worktree_list_area {
                 if contains(&area, col, row) {
                     app.project.select_next();
                 }
@@ -1184,13 +1190,13 @@ fn handle_scroll_down(app: &mut App, col: u16, row: u16) {
 
 fn handle_scroll_up(app: &mut App, col: u16, row: u16) {
     if has_active_popup(app) {
-        if app.show_theme_selector {
+        if app.ui.show_theme_selector {
             app.theme_selector_prev();
-        } else if app.action_palette.is_some() {
+        } else if app.dialogs.action_palette.is_some() {
             app.action_palette_prev();
-        } else if app.branch_selector.is_some() {
+        } else if app.dialogs.branch_selector.is_some() {
             app.branch_selector_prev();
-        } else if app.config_panel.is_some() {
+        } else if app.dialogs.config_panel.is_some() {
             app.config_panel_prev();
         }
         return;
@@ -1201,14 +1207,14 @@ fn handle_scroll_up(app: &mut App, col: u16, row: u16) {
             app.monitor.scroll_up();
         }
         AppMode::Workspace => {
-            if let Some(area) = app.click_areas.workspace_content_area {
+            if let Some(area) = app.ui.click_areas.workspace_content_area {
                 if contains(&area, col, row) {
                     app.workspace.select_up();
                 }
             }
         }
         AppMode::Project => {
-            if let Some(area) = app.click_areas.preview_content_area {
+            if let Some(area) = app.ui.click_areas.preview_content_area {
                 if contains(&area, col, row) {
                     match app.project.preview_sub_tab {
                         PreviewSubTab::Stats => app.project.scroll_stats_up(),
@@ -1219,7 +1225,7 @@ fn handle_scroll_up(app: &mut App, col: u16, row: u16) {
                     return;
                 }
             }
-            if let Some(area) = app.click_areas.worktree_list_area {
+            if let Some(area) = app.ui.click_areas.worktree_list_area {
                 if contains(&area, col, row) {
                     app.project.select_previous();
                 }
@@ -1254,7 +1260,7 @@ fn handle_scroll_left(app: &mut App) {
 
 fn handle_popup_click(app: &mut App, col: u16, row: u16) {
     // 1. 检查是否在弹窗外 → 不处理（消费事件）
-    if let Some(dialog_rect) = app.click_areas.dialog_area {
+    if let Some(dialog_rect) = app.ui.click_areas.dialog_area {
         if !contains(&dialog_rect, col, row) {
             return;
         }
@@ -1262,6 +1268,7 @@ fn handle_popup_click(app: &mut App, col: u16, row: u16) {
 
     // 2. 检查按钮点击
     let clicked_btn = app
+        .ui
         .click_areas
         .dialog_buttons
         .iter()
@@ -1277,6 +1284,7 @@ fn handle_popup_click(app: &mut App, col: u16, row: u16) {
 
     // 3. 检查列表/选项项点击
     let clicked_item = app
+        .ui
         .click_areas
         .dialog_items
         .iter()
@@ -1288,53 +1296,53 @@ fn handle_popup_click(app: &mut App, col: u16, row: u16) {
 }
 
 fn popup_confirm(app: &mut App) {
-    if app.confirm_dialog.is_some() {
+    if app.dialogs.confirm_dialog.is_some() {
         app.confirm_dialog_yes();
-    } else if app.merge_dialog.is_some() {
+    } else if app.dialogs.merge_dialog.is_some() {
         app.merge_dialog_confirm();
-    } else if app.input_confirm_dialog.is_some() {
+    } else if app.dialogs.input_confirm_dialog.is_some() {
         app.input_confirm_submit();
-    } else if app.show_new_task_dialog {
+    } else if app.dialogs.show_new_task_dialog {
         app.create_new_task();
-    } else if app.add_project_dialog.is_some() {
+    } else if app.dialogs.add_project_dialog.is_some() {
         app.add_project_confirm();
-    } else if app.delete_project_dialog.is_some() {
+    } else if app.dialogs.delete_project_dialog.is_some() {
         app.delete_project_confirm();
-    } else if app.show_theme_selector {
+    } else if app.ui.show_theme_selector {
         app.theme_selector_confirm();
-    } else if app.action_palette.is_some() {
+    } else if app.dialogs.action_palette.is_some() {
         app.action_palette_confirm();
-    } else if app.branch_selector.is_some() {
+    } else if app.dialogs.branch_selector.is_some() {
         app.branch_selector_confirm();
-    } else if app.commit_dialog.is_some() {
+    } else if app.dialogs.commit_dialog.is_some() {
         app.commit_dialog_confirm();
-    } else if app.config_panel.is_some() {
+    } else if app.dialogs.config_panel.is_some() {
         app.config_panel_confirm();
     }
 }
 
 fn popup_cancel(app: &mut App) {
-    if app.confirm_dialog.is_some() {
+    if app.dialogs.confirm_dialog.is_some() {
         app.confirm_dialog_cancel();
-    } else if app.merge_dialog.is_some() {
+    } else if app.dialogs.merge_dialog.is_some() {
         app.merge_dialog_cancel();
-    } else if app.input_confirm_dialog.is_some() {
+    } else if app.dialogs.input_confirm_dialog.is_some() {
         app.input_confirm_cancel();
-    } else if app.show_new_task_dialog {
+    } else if app.dialogs.show_new_task_dialog {
         app.close_new_task_dialog();
-    } else if app.add_project_dialog.is_some() {
+    } else if app.dialogs.add_project_dialog.is_some() {
         app.close_add_project_dialog();
-    } else if app.delete_project_dialog.is_some() {
+    } else if app.dialogs.delete_project_dialog.is_some() {
         app.close_delete_project_dialog();
-    } else if app.show_theme_selector {
+    } else if app.ui.show_theme_selector {
         app.close_theme_selector();
-    } else if app.action_palette.is_some() {
+    } else if app.dialogs.action_palette.is_some() {
         app.action_palette_cancel();
-    } else if app.branch_selector.is_some() {
+    } else if app.dialogs.branch_selector.is_some() {
         app.branch_selector_cancel();
-    } else if app.commit_dialog.is_some() {
+    } else if app.dialogs.commit_dialog.is_some() {
         app.commit_dialog_cancel();
-    } else if app.config_panel.is_some() {
+    } else if app.dialogs.config_panel.is_some() {
         app.config_panel_back();
     }
 }
@@ -1345,7 +1353,7 @@ fn popup_select_item(app: &mut App, idx: usize) {
     use crate::ui::components::merge_dialog::MergeMethod;
 
     // Merge dialog: 设置选中的合并方式
-    if let Some(ref mut d) = app.merge_dialog {
+    if let Some(ref mut d) = app.dialogs.merge_dialog {
         d.selected = if idx == 0 {
             MergeMethod::Squash
         } else {
@@ -1353,7 +1361,7 @@ fn popup_select_item(app: &mut App, idx: usize) {
         };
     }
     // Delete project dialog: 设置删除模式
-    else if let Some(ref mut d) = app.delete_project_dialog {
+    else if let Some(ref mut d) = app.dialogs.delete_project_dialog {
         d.selected = if idx == 0 {
             DeleteMode::CleanOnly
         } else {
@@ -1361,19 +1369,19 @@ fn popup_select_item(app: &mut App, idx: usize) {
         };
     }
     // Theme selector: 设置选中索引
-    else if app.show_theme_selector {
-        app.theme_selector_index = idx;
+    else if app.ui.show_theme_selector {
+        app.ui.theme_selector_index = idx;
     }
     // Action palette: 设置选中索引
-    else if let Some(ref mut d) = app.action_palette {
+    else if let Some(ref mut d) = app.dialogs.action_palette {
         d.selected_index = idx;
     }
     // Branch selector: 设置选中索引
-    else if let Some(ref mut d) = app.branch_selector {
+    else if let Some(ref mut d) = app.dialogs.branch_selector {
         d.selected_index = idx;
     }
     // Config panel: 根据当前 step 设置对应光标
-    else if let Some(ref mut d) = app.config_panel {
+    else if let Some(ref mut d) = app.dialogs.config_panel {
         match d.step {
             ConfigStep::Main => d.main_selected = idx,
             ConfigStep::SelectLayout => d.layout_selected = idx,
