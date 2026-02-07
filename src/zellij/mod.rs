@@ -2,6 +2,7 @@ pub mod layout;
 
 use std::process::Command;
 
+use crate::error::{GroveError, Result};
 use crate::tmux::SessionEnv;
 
 /// 创建 zellij Command 并移除 ZELLIJ 环境变量（防止嵌套 session 干扰）
@@ -32,11 +33,7 @@ fn strip_ansi(s: &str) -> String {
 }
 
 /// 创建 session (no-op: zellij 不支持 detached 创建)
-pub fn create_session(
-    _name: &str,
-    _working_dir: &str,
-    _env: Option<&SessionEnv>,
-) -> Result<(), String> {
+pub fn create_session(_name: &str, _working_dir: &str, _env: Option<&SessionEnv>) -> Result<()> {
     Ok(())
 }
 
@@ -49,7 +46,7 @@ pub fn attach_session(
     working_dir: Option<&str>,
     env: Option<&SessionEnv>,
     layout_path: Option<&str>,
-) -> Result<(), String> {
+) -> Result<()> {
     let exists = session_exists(name);
     let mut cmd = zellij_cmd();
 
@@ -75,12 +72,14 @@ pub fn attach_session(
         env.apply_to_command(&mut cmd);
     }
 
-    let status = cmd.status().map_err(|e| format!("Zellij failed: {}", e))?;
+    let status = cmd
+        .status()
+        .map_err(|e| GroveError::session(format!("Zellij failed: {}", e)))?;
 
     if status.success() {
         Ok(())
     } else {
-        Err("Zellij session failed".to_string())
+        Err(GroveError::session("Zellij session failed"))
     }
 }
 
@@ -102,11 +101,11 @@ pub fn session_exists(name: &str) -> bool {
 }
 
 /// 关闭活跃 session
-pub fn kill_session(name: &str) -> Result<(), String> {
+pub fn kill_session(name: &str) -> Result<()> {
     let output = zellij_cmd()
         .args(["kill-session", name])
         .output()
-        .map_err(|e| format!("Zellij kill-session failed: {}", e))?;
+        .map_err(|e| GroveError::session(format!("Zellij kill-session failed: {}", e)))?;
 
     if output.status.success() {
         Ok(())
@@ -118,7 +117,10 @@ pub fn kill_session(name: &str) -> Result<(), String> {
         {
             Ok(())
         } else {
-            Err(format!("Zellij kill-session failed: {}", stderr.trim()))
+            Err(GroveError::session(format!(
+                "Zellij kill-session failed: {}",
+                stderr.trim()
+            )))
         }
     }
 }

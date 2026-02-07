@@ -2,6 +2,8 @@ pub mod layout;
 
 use std::process::Command;
 
+use crate::error::{GroveError, Result};
+
 /// Session 环境变量
 #[derive(Debug, Clone, Default)]
 pub struct SessionEnv {
@@ -36,11 +38,7 @@ impl SessionEnv {
 
 /// 创建 session (后台)
 /// 执行: tmux new-session -d -s {name} -c {path} -e VAR=value ...
-pub fn create_session(
-    name: &str,
-    working_dir: &str,
-    env: Option<&SessionEnv>,
-) -> Result<(), String> {
+pub fn create_session(name: &str, working_dir: &str, env: Option<&SessionEnv>) -> Result<()> {
     let mut args = vec![
         "new-session".to_string(),
         "-d".to_string(),
@@ -71,7 +69,7 @@ pub fn create_session(
     let output = Command::new("tmux")
         .args(&args)
         .output()
-        .map_err(|e| format!("Session create failed: {}", e))?;
+        .map_err(|e| GroveError::session(format!("Session create failed: {}", e)))?;
 
     if output.status.success() {
         Ok(())
@@ -81,7 +79,10 @@ pub fn create_session(
         if stderr.contains("duplicate session") {
             Ok(())
         } else {
-            Err(format!("Session create failed: {}", stderr.trim()))
+            Err(GroveError::session(format!(
+                "Session create failed: {}",
+                stderr.trim()
+            )))
         }
     }
 }
@@ -89,16 +90,16 @@ pub fn create_session(
 /// attach 到 session (阻塞)
 /// 执行: tmux attach-session -t {name}
 /// 注意: 这个函数应该在 TUI 退出后调用
-pub fn attach_session(name: &str) -> Result<(), String> {
+pub fn attach_session(name: &str) -> Result<()> {
     let status = Command::new("tmux")
         .args(["attach-session", "-t", name])
         .status()
-        .map_err(|e| format!("Session attach failed: {}", e))?;
+        .map_err(|e| GroveError::session(format!("Session attach failed: {}", e)))?;
 
     if status.success() {
         Ok(())
     } else {
-        Err("Session attach failed".to_string())
+        Err(GroveError::session("Session attach failed"))
     }
 }
 
@@ -113,11 +114,11 @@ pub fn session_exists(name: &str) -> bool {
 
 /// 关闭 session
 /// 执行: tmux kill-session -t {name}
-pub fn kill_session(name: &str) -> Result<(), String> {
+pub fn kill_session(name: &str) -> Result<()> {
     let output = Command::new("tmux")
         .args(["kill-session", "-t", name])
         .output()
-        .map_err(|e| format!("Session close failed: {}", e))?;
+        .map_err(|e| GroveError::session(format!("Session close failed: {}", e)))?;
 
     if output.status.success() {
         Ok(())
@@ -127,7 +128,10 @@ pub fn kill_session(name: &str) -> Result<(), String> {
         if stderr.contains("no server running") || stderr.contains("session not found") {
             Ok(())
         } else {
-            Err(format!("Session close failed: {}", stderr.trim()))
+            Err(GroveError::session(format!(
+                "Session close failed: {}",
+                stderr.trim()
+            )))
         }
     }
 }

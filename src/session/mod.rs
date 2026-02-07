@@ -4,6 +4,7 @@ use std::process::Command;
 
 use once_cell::sync::Lazy;
 
+use crate::error::Result;
 use crate::storage::config::Multiplexer;
 use crate::tmux::{self, SessionEnv};
 use crate::zellij;
@@ -102,7 +103,7 @@ pub fn create_session(
     name: &str,
     working_dir: &str,
     env: Option<&SessionEnv>,
-) -> Result<(), String> {
+) -> Result<()> {
     match mux {
         Multiplexer::Tmux => tmux::create_session(name, working_dir, env),
         Multiplexer::Zellij => zellij::create_session(name, working_dir, env),
@@ -118,7 +119,7 @@ pub fn attach_session(
     working_dir: Option<&str>,
     env: Option<&SessionEnv>,
     layout_path: Option<&str>,
-) -> Result<(), String> {
+) -> Result<()> {
     match mux {
         Multiplexer::Tmux => tmux::attach_session(name),
         Multiplexer::Zellij => zellij::attach_session(name, working_dir, env, layout_path),
@@ -134,7 +135,7 @@ pub fn session_exists(mux: &Multiplexer, name: &str) -> bool {
 }
 
 /// 关闭 session
-pub fn kill_session(mux: &Multiplexer, name: &str) -> Result<(), String> {
+pub fn kill_session(mux: &Multiplexer, name: &str) -> Result<()> {
     match mux {
         Multiplexer::Tmux => tmux::kill_session(name),
         Multiplexer::Zellij => zellij::kill_session(name),
