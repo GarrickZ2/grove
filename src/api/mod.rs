@@ -9,7 +9,7 @@ use axum::{
     body::Body,
     http::{header, Response, StatusCode, Uri},
     response::IntoResponse,
-    routing::{delete, get, patch, post},
+    routing::{delete, get, patch, post, put},
     Router,
 };
 use rust_embed::Embed;
@@ -144,12 +144,17 @@ pub fn create_api_router() -> Router {
             "/projects/{id}/tasks/{taskId}/review",
             get(handlers::tasks::get_review_comments).post(handlers::tasks::reply_review_comment),
         )
-        // Difit (Code Review Server) API
         .route(
-            "/projects/{id}/tasks/{taskId}/difit",
-            get(handlers::difit::get_difit_status)
-                .post(handlers::difit::start_difit)
-                .delete(handlers::difit::stop_difit),
+            "/projects/{id}/tasks/{taskId}/review/comments",
+            post(handlers::tasks::create_review_comment),
+        )
+        .route(
+            "/projects/{id}/tasks/{taskId}/review/comments/{commentId}",
+            delete(handlers::tasks::delete_review_comment),
+        )
+        .route(
+            "/projects/{id}/tasks/{taskId}/review/comments/{commentId}/status",
+            put(handlers::tasks::update_review_comment_status),
         )
         // Hooks API
         .route("/hooks", get(handlers::hooks::list_all_hooks))

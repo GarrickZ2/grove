@@ -14,7 +14,6 @@ use crate::git;
 use crate::hooks::{self, HookEntry, HooksFile};
 use crate::model::{loader, ProjectInfo, ProjectTab, WorkspaceState, Worktree, WorktreeStatus};
 use crate::notification_state::NotificationState;
-use crate::review_state::ReviewState;
 use crate::session;
 use crate::storage::{
     self, comments,
@@ -864,10 +863,6 @@ pub struct App {
     /// 异步操作状态（统一管理异步操作、后台任务等）
     pub async_ops: AsyncOpsState,
 
-    // === Review ===
-    /// Review 状态（统一管理代码审查相关状态）
-    pub review: ReviewState,
-
     // === 通知 ===
     /// 通知状态（统一管理 Hook 通知）
     pub notification: NotificationState,
@@ -906,22 +901,8 @@ pub enum PendingAction {
 
 /// 后台操作结果
 pub enum BgResult {
-    MergeOk {
-        task_id: String,
-        task_name: String,
-    },
+    MergeOk { task_id: String, task_name: String },
     MergeErr(String),
-    DifitOk {
-        project_key: String,
-        task_id: String,
-        comments: String,
-        count: usize,
-        no_diff: bool,
-    },
-    DifitErr {
-        task_id: String,
-        error: String,
-    },
 }
 
 impl App {
@@ -1086,15 +1067,11 @@ impl App {
                     .map(|root| CustomLayout { root }),
             },
             async_ops: AsyncOpsState::with_target_branch(target_branch),
-            review: ReviewState::new(),
             notification,
             update_info: Some(update_info),
             monitor,
             file_watcher: None,
         };
-
-        // 恢复已有的 difit review sessions
-        app.recover_difit_sessions();
 
         // Start file watcher
         match app.mode {
@@ -1174,9 +1151,6 @@ impl App {
         // 加载 hook 通知数据（自动清理不存在的 task）
         let hooks_file = hooks::load_hooks_with_cleanup(project_path);
         self.notification.notifications = hooks_file.tasks;
-
-        // 恢复已有的 difit review sessions
-        self.recover_difit_sessions();
 
         // 重新初始化 FileWatcher（关闭旧的，启动新的）
         if let Some(ref watcher) = self.file_watcher {
@@ -1413,8 +1387,8 @@ impl App {
         });
     }
 
-    /// 启动 difit 查看当前 Project 模式选中 task 的 diff（后台执行）
-    pub fn launch_difit_project(&mut self) {
+    /// 在浏览器中打开 diff review (Project 模式)
+    pub fn open_diff_review_project(&mut self) {
         let selected = self.project.current_list_state().selected();
         let Some(index) = selected else { return };
 
@@ -1423,278 +1397,28 @@ impl App {
             return;
         };
 
-        let task_id = wt.id.clone();
-
-        // 该 task 已有 review → 打开浏览器或提示
-        if let Some(url_opt) = self.review.reviewing_tasks.get(&task_id) {
-            if let Some(url) = url_opt {
-                let _ = std::process::Command::new("open").arg(url).spawn();
-            } else {
-                self.show_toast("Review is starting...");
-            }
-            return;
-        }
-
-        if !std::path::Path::new(&wt.path).exists() {
-            self.show_toast("Worktree path not found");
-            return;
-        }
-
-        let availability = crate::difit::check_available();
-        if matches!(availability, crate::difit::DifitAvailability::NotAvailable) {
-            self.show_toast("difit not available — install via: npm i -g difit");
-            return;
-        }
-
-        let worktree_path = wt.path.clone();
-        let target_branch = wt.target.clone();
         let project_key = self.project.project_key.clone();
-
-        // 检查是否已有正在运行的 session（磁盘持久化）
-        if let Some(session) = storage::difit_session::load_session(&project_key, &task_id) {
-            if session.is_difit_alive() {
-                self.review
-                    .reviewing_tasks
-                    .insert(task_id, session.url.clone());
-                if session.needs_reattach() {
-                    self.reattach_difit_monitor_thread(&session);
-                }
-                self.project.preview_sub_tab = PreviewSubTab::Diff;
-                if !self.project.preview_visible {
-                    self.project.preview_visible = true;
-                }
-                let url_hint = session
-                    .url
-                    .as_deref()
-                    .map(|u| format!(" at {}", u))
-                    .unwrap_or_default();
-                self.show_toast(format!("Reconnected to running review{}", url_hint));
-                return;
-            }
-            storage::difit_session::remove_session(&project_key, &task_id);
-        }
-
-        self.review.reviewing_tasks.insert(task_id.clone(), None);
-
-        // 启动时立即切换到 Diff tab
-        self.project.preview_sub_tab = PreviewSubTab::Diff;
-        if !self.project.preview_visible {
-            self.project.preview_visible = true;
-        }
-
-        self.spawn_difit_thread(
-            task_id,
-            project_key,
-            worktree_path,
-            target_branch,
-            availability,
+        let task_id = wt.id.clone();
+        let port = crate::cli::web::DEFAULT_PORT;
+        let url = format!(
+            "http://localhost:{}/review/{}/{}",
+            port, project_key, task_id
         );
+        self.show_toast(format!("Opening diff review: {}", task_id));
+        let _ = open::that(&url);
     }
 
-    /// 启动 difit 查看当前 Monitor 模式的 diff（后台执行）
-    pub fn launch_difit_monitor(&mut self) {
-        let task_id = self.monitor.task_id.clone();
-
-        // 该 task 已有 review → 打开浏览器或提示
-        if let Some(url_opt) = self.review.reviewing_tasks.get(&task_id) {
-            if let Some(url) = url_opt {
-                let _ = std::process::Command::new("open").arg(url).spawn();
-            } else {
-                self.show_toast("Review is starting...");
-            }
-            return;
-        }
-
-        if self.monitor.worktree_path.is_empty() {
-            self.show_toast("No worktree path");
-            return;
-        }
-
-        let availability = crate::difit::check_available();
-        if matches!(availability, crate::difit::DifitAvailability::NotAvailable) {
-            self.show_toast("difit not available — install via: npm i -g difit");
-            return;
-        }
-
-        let worktree_path = self.monitor.worktree_path.clone();
-        let target_branch = self.monitor.target.clone();
+    /// 在浏览器中打开 diff review (Monitor 模式)
+    pub fn open_diff_review_monitor(&mut self) {
         let project_key = self.monitor.project_key.clone();
-
-        // 检查是否已有正在运行的 session（磁盘持久化）
-        if let Some(session) = storage::difit_session::load_session(&project_key, &task_id) {
-            if session.is_difit_alive() {
-                self.review
-                    .reviewing_tasks
-                    .insert(task_id, session.url.clone());
-                if session.needs_reattach() {
-                    self.reattach_difit_monitor_thread(&session);
-                }
-                self.monitor.content_tab = PreviewSubTab::Diff;
-                let url_hint = session
-                    .url
-                    .as_deref()
-                    .map(|u| format!(" at {}", u))
-                    .unwrap_or_default();
-                self.show_toast(format!("Reconnected to running review{}", url_hint));
-                return;
-            }
-            storage::difit_session::remove_session(&project_key, &task_id);
-        }
-
-        self.review.reviewing_tasks.insert(task_id.clone(), None);
-
-        // 启动时立即切换到 Diff tab
-        self.monitor.content_tab = PreviewSubTab::Diff;
-
-        self.spawn_difit_thread(
-            task_id,
-            project_key,
-            worktree_path,
-            target_branch,
-            availability,
+        let task_id = self.monitor.task_id.clone();
+        let port = crate::cli::web::DEFAULT_PORT;
+        let url = format!(
+            "http://localhost:{}/review/{}/{}",
+            port, project_key, task_id
         );
-    }
-
-    /// 公共函数：启动 difit 后台监听线程
-    fn spawn_difit_thread(
-        &self,
-        task_id: String,
-        project_key: String,
-        worktree_path: String,
-        target_branch: String,
-        availability: crate::difit::DifitAvailability,
-    ) {
-        let tx = self.review.difit_result_tx.clone();
-        let url_tx = self.review.difit_url_tx.clone();
-        let grove_pid = std::process::id();
-
-        std::thread::spawn(move || {
-            match crate::difit::spawn_difit(&worktree_path, &target_branch, &availability, false) {
-                Ok(mut handle) => {
-                    let session = storage::difit_session::DifitSession {
-                        pid: handle.child_pid,
-                        task_id: task_id.clone(),
-                        project_key: project_key.clone(),
-                        url: None,
-                        temp_file: handle.temp_file_path.clone(),
-                        monitor_pid: Some(grove_pid),
-                    };
-                    let _ = storage::difit_session::save_session(&project_key, &task_id, &session);
-
-                    let on_url: Box<dyn FnOnce(String) + Send> = {
-                        let url_tx = url_tx;
-                        let tid = task_id.clone();
-                        Box::new(move |url| {
-                            let _ = url_tx.send((tid, url));
-                        })
-                    };
-
-                    match crate::difit::wait_for_completion(&mut handle, Some(on_url)) {
-                        Ok(output) => {
-                            storage::difit_session::remove_session(&project_key, &task_id);
-                            let no_diff = output.contains("No differences found");
-                            let (comments, count) = crate::difit::parse_comments(&output);
-                            let _ = tx.send(BgResult::DifitOk {
-                                project_key,
-                                task_id,
-                                comments,
-                                count,
-                                no_diff,
-                            });
-                        }
-                        Err(e) => {
-                            storage::difit_session::remove_session(&project_key, &task_id);
-                            let _ = tx.send(BgResult::DifitErr {
-                                task_id,
-                                error: e.to_string(),
-                            });
-                        }
-                    }
-                }
-                Err(e) => {
-                    let _ = tx.send(BgResult::DifitErr {
-                        task_id,
-                        error: e.to_string(),
-                    });
-                }
-            }
-        });
-    }
-
-    /// 恢复已有的 difit review sessions（启动时调用）
-    fn recover_difit_sessions(&mut self) {
-        let project_key = if self.mode == AppMode::Monitor {
-            self.monitor.project_key.clone()
-        } else {
-            self.project.project_key.clone()
-        };
-        if project_key.is_empty() {
-            return;
-        }
-
-        let sessions = storage::difit_session::load_all_sessions(&project_key);
-        for session in sessions {
-            if session.needs_reattach() {
-                self.review
-                    .reviewing_tasks
-                    .insert(session.task_id.clone(), session.url.clone());
-                self.reattach_difit_monitor_thread(&session);
-            } else if !session.is_difit_alive() {
-                storage::difit_session::remove_session(&project_key, &session.task_id);
-            }
-            // If difit alive but being monitored, skip (already handled)
-        }
-    }
-
-    /// 重新建立对已运行 difit 进程的监听线程
-    fn reattach_difit_monitor_thread(&mut self, session: &storage::difit_session::DifitSession) {
-        let pid = session.pid;
-        let temp_file = session.temp_file.clone();
-        let project_key = session.project_key.clone();
-        let task_id = session.task_id.clone();
-
-        // Update session with current Grove's monitor_pid
-        let mut updated_session = session.clone();
-        updated_session.monitor_pid = Some(std::process::id());
-        let _ = storage::difit_session::save_session(&project_key, &task_id, &updated_session);
-
-        let tx = self.review.difit_result_tx.clone();
-        let url_tx = self.review.difit_url_tx.clone();
-
-        std::thread::spawn(move || {
-            let mut url_sent = false;
-            loop {
-                if !storage::difit_session::is_process_alive(pid) {
-                    break;
-                }
-
-                if !url_sent {
-                    if let Ok(content) = std::fs::read_to_string(&temp_file) {
-                        if let Some(url) = crate::difit::parse_url(&content) {
-                            let _ = url_tx.send((task_id.clone(), url));
-                            url_sent = true;
-                        }
-                    }
-                }
-
-                std::thread::sleep(std::time::Duration::from_millis(500));
-            }
-
-            // 进程退出 — 读取输出
-            let output = std::fs::read_to_string(&temp_file).unwrap_or_default();
-            let _ = std::fs::remove_file(&temp_file);
-            storage::difit_session::remove_session(&project_key, &task_id);
-
-            let no_diff = output.contains("No differences found");
-            let (comments, count) = crate::difit::parse_comments(&output);
-            let _ = tx.send(BgResult::DifitOk {
-                project_key,
-                task_id,
-                comments,
-                count,
-                no_diff,
-            });
-        });
+        self.show_toast(format!("Opening diff review: {}", task_id));
+        let _ = open::that(&url);
     }
 
     /// 进入当前选中的 worktree (attach session)
@@ -1895,9 +1619,6 @@ impl App {
                 }
             }
         }
-
-        // Sync difit sessions from disk (in case MCP started a review)
-        self.recover_difit_sessions();
     }
 
     // ========== Archive 功能 ==========
@@ -1964,11 +1685,9 @@ impl App {
             return;
         }
 
-        // 3. 删除 hook 通知 + 清理 review session
+        // 3. 删除 hook 通知
         hooks::remove_task_hook(&project_key, task_id);
         self.remove_notification(task_id);
-        self.review.reviewing_tasks.remove(task_id);
-        storage::difit_session::remove_session(&project_key, task_id);
 
         // 4. 关闭 session（放在最后，避免 monitor 进程被提前终止）
         let archived_task = tasks::get_archived_task(&project_key, task_id)
@@ -2095,11 +1814,9 @@ impl App {
             return;
         }
 
-        // 6. 删除 hook 通知 + 清理 review session
+        // 6. 删除 hook 通知
         hooks::remove_task_hook(&self.project.project_key, task_id);
         self.remove_notification(task_id);
-        self.review.reviewing_tasks.remove(task_id);
-        storage::difit_session::remove_session(&self.project.project_key, task_id);
 
         // 7. 刷新数据
         self.project.refresh();
@@ -2173,11 +1890,10 @@ impl App {
             return;
         }
 
-        // 4.5 Clear all task-related data (Notes, AI data, Stats, Difit session)
+        // 4.5 Clear all task-related data (Notes, AI data, Stats)
         let _ = notes::delete_notes(&self.project.project_key, task_id);
         let _ = comments::delete_ai_data(&self.project.project_key, task_id);
         let _ = crate::watcher::clear_edit_history(&self.project.project_key, task_id);
-        storage::difit_session::remove_session(&self.project.project_key, task_id);
 
         // 5. 重新创建 branch 和 worktree (从 target)
         let worktree_path = Path::new(&task.worktree_path);
@@ -2872,65 +2588,7 @@ impl App {
 
     /// 处理后台操作结果（主循环调用）
     pub fn poll_bg_result(&mut self) {
-        // 1. 轮询 difit URL 更新（共享 channel）
-        while let Ok((task_id, url)) = self.review.difit_url_rx.try_recv() {
-            self.review
-                .reviewing_tasks
-                .insert(task_id.clone(), Some(url.clone()));
-            // 更新 session 文件写入 URL
-            let project_key = if self.mode == AppMode::Monitor {
-                self.monitor.project_key.clone()
-            } else {
-                self.project.project_key.clone()
-            };
-            if let Some(mut session) = storage::difit_session::load_session(&project_key, &task_id)
-            {
-                session.url = Some(url);
-                let _ = storage::difit_session::save_session(&project_key, &task_id, &session);
-            }
-        }
-
-        // 2. 轮询 difit 结果（共享 channel）
-        while let Ok(result) = self.review.difit_result_rx.try_recv() {
-            match result {
-                BgResult::DifitOk {
-                    project_key,
-                    task_id,
-                    comments,
-                    count,
-                    no_diff,
-                } => {
-                    self.review.reviewing_tasks.remove(&task_id);
-                    if no_diff {
-                        self.show_toast("No differences found");
-                    } else {
-                        let _ = crate::storage::comments::save_diff_comments(
-                            &project_key,
-                            &task_id,
-                            &comments,
-                        );
-                        if self.mode == AppMode::Project {
-                            self.project.refresh_panel_data();
-                        }
-                        if self.mode == AppMode::Monitor {
-                            self.monitor.refresh_panel_data();
-                        }
-                        if count > 0 {
-                            self.show_toast(format!("Saved {} review comments", count));
-                        } else {
-                            self.show_toast("Review completed (no comments)");
-                        }
-                    }
-                }
-                BgResult::DifitErr { task_id, error } => {
-                    self.review.reviewing_tasks.remove(&task_id);
-                    self.show_toast(format!("difit error: {}", error));
-                }
-                _ => {}
-            }
-        }
-
-        // 3. 轮询 merge 结果（独立 channel，保持不变）
+        // 轮询 merge 结果
         let result = self
             .async_ops
             .bg_result_rx
@@ -2949,7 +2607,6 @@ impl App {
                 BgResult::MergeErr(e) => {
                     self.show_toast(e);
                 }
-                _ => {}
             }
         }
     }
@@ -3200,7 +2857,7 @@ impl App {
                 ActionType::Merge => self.start_merge(),
                 ActionType::Recover => self.start_recover(),
                 ActionType::Commit => self.open_commit_dialog(),
-                ActionType::Review => self.launch_difit_project(),
+                ActionType::Review => self.open_diff_review_project(),
                 ActionType::Reset => self.start_reset(),
             }
         }
@@ -3875,7 +3532,7 @@ impl App {
                 self.monitor.request_notes_edit();
             }
             MonitorAction::Review => {
-                self.launch_difit_monitor();
+                self.open_diff_review_monitor();
             }
             MonitorAction::Leave => {
                 match self.monitor.multiplexer {

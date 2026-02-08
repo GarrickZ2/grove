@@ -93,7 +93,7 @@ export interface Stats {
 }
 
 // Review comment for code review
-export type ReviewStatus = 'open' | 'resolved' | 'not_resolved';
+export type ReviewStatus = 'open' | 'resolved' | 'outdated';
 
 export interface ReviewComment {
   id: string;

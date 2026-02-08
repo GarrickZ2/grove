@@ -9,9 +9,10 @@ interface ProjectSelectorProps {
   collapsed: boolean;
   onManageProjects?: () => void;
   onAddProject?: () => void;
+  onProjectSwitch?: () => void;
 }
 
-export function ProjectSelector({ collapsed, onManageProjects, onAddProject }: ProjectSelectorProps) {
+export function ProjectSelector({ collapsed, onManageProjects, onAddProject, onProjectSwitch }: ProjectSelectorProps) {
   const { selectedProject, projects, selectProject } = useProject();
   const { theme } = useTheme();
   const [isOpen, setIsOpen] = useState(false);
@@ -30,8 +31,10 @@ export function ProjectSelector({ collapsed, onManageProjects, onAddProject }: P
   }, []);
 
   const handleSelectProject = (project: Project) => {
+    const switched = selectedProject?.id !== project.id;
     selectProject(project);
     setIsOpen(false);
+    if (switched) onProjectSwitch?.();
   };
 
   if (collapsed) {

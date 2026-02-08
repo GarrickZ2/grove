@@ -5,14 +5,13 @@ mod check;
 mod cli;
 mod config_state;
 mod dialogs;
-mod difit;
+mod diff;
 mod error;
 mod event;
 mod git;
 mod hooks;
 mod model;
 mod notification_state;
-mod review_state;
 mod session;
 mod storage;
 mod theme;
@@ -77,6 +76,9 @@ fn main() -> io::Result<()> {
                     .block_on(async {
                         cli::web::execute(port, no_open, dev).await;
                     });
+            }
+            Commands::Diff { task_id, port } => {
+                cli::diff::execute(task_id, port);
             }
             Commands::Gui { port } => {
                 #[cfg(feature = "gui")]

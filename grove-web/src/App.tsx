@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Sidebar } from "./components/Layout/Sidebar";
 import { SettingsPage } from "./components/Config";
@@ -8,6 +8,7 @@ import { BlitzPage } from "./components/Blitz";
 import { ProjectsPage } from "./components/Projects";
 import { AddProjectDialog } from "./components/Projects/AddProjectDialog";
 import { WelcomePage } from "./components/Welcome";
+import { DiffReviewPage } from "./components/Review";
 import { ThemeProvider, ProjectProvider, TerminalThemeProvider, NotificationProvider, useProject } from "./context";
 import { mockConfig } from "./data/mockData";
 
@@ -64,8 +65,13 @@ function AppContent() {
       }
     }
     setActiveItem(page);
-    setNavigationData(data || null);
+    setNavigationData(data ?? null);
   };
+
+  // When project changes via sidebar ProjectSelector, go back to dashboard
+  const handleProjectSwitch = useCallback(() => {
+    setActiveItem("dashboard");
+  }, []);
 
   // Show loading state
   if (isLoading) {
@@ -147,6 +153,7 @@ function AppContent() {
               onNavigate={handleNavigate}
               tasksMode={tasksMode}
               onTasksModeChange={setTasksMode}
+              onProjectSwitch={handleProjectSwitch}
             />
             <main className={`flex-1 ${isFullWidthPage ? "overflow-hidden" : "overflow-y-auto"}`}>
               <div className={isFullWidthPage ? "h-full p-6" : "max-w-5xl mx-auto p-6"}>
@@ -171,6 +178,16 @@ function AppContent() {
 }
 
 function App() {
+  // Check for /review/{projectId}/{taskId} path — render diff review directly
+  const reviewMatch = window.location.pathname.match(/^\/review\/([^/]+)\/([^/]+)/);
+  if (reviewMatch) {
+    return (
+      <ThemeProvider>
+        <DiffReviewPage projectId={reviewMatch[1]} taskId={reviewMatch[2]} />
+      </ThemeProvider>
+    );
+  }
+
   return (
     <ThemeProvider>
       <TerminalThemeProvider>

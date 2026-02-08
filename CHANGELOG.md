@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.7] - 2026-02-08
+
+### Changed
+
+- **MCP `grove_reply_review`** — now only appends reply text, no longer changes comment status; added `author` field support
+- **MCP `grove_add_comment`** — switched from `location` string to structured parameters (`file_path`, `start_line`, `end_line`, `content`, `author`)
+- **MCP `grove_complete_task`** — description now emphasizes ONLY call when user explicitly requests; never automatically
+
+### Added
+
+- **`update_comment_status()` storage API** — dedicated function for changing comment open/resolved status, separated from reply logic
+- **`PUT .../review/comments/{commentId}/status` REST endpoint** — Web UI now uses this dedicated endpoint for Resolve/Reopen actions
+- **`updateCommentStatus()` frontend API** — new client function calling the status endpoint
+
 ## [0.4.5] - 2026-02-06
 
 ### Added

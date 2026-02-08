@@ -162,17 +162,6 @@ pub fn render(frame: &mut Frame, app: &mut App) {
             );
         }
 
-        let reviewing = app
-            .project
-            .selected_worktree()
-            .is_some_and(|wt| app.review.reviewing_tasks.contains_key(&wt.id));
-
-        let reviewing_url = app
-            .project
-            .selected_worktree()
-            .and_then(|wt| app.review.reviewing_tasks.get(&wt.id))
-            .and_then(|u| u.as_deref());
-
         // Get stats history for the selected task
         let stats_history = app.project.selected_worktree().and_then(|wt| {
             app.file_watcher
@@ -190,8 +179,6 @@ pub fn render(frame: &mut Frame, app: &mut App) {
             app.project.git_scroll,
             app.project.diff_scroll,
             app.project.stats_scroll,
-            reviewing,
-            reviewing_url,
             stats_history.as_ref(),
             colors,
             &mut app.ui.click_areas,

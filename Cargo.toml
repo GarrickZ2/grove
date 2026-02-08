@@ -1,6 +1,6 @@
 [package]
 name = "grove-rs"
-version = "0.4.6"
+version = "0.4.7"
 edition = "2021"
 description = "A Kanban-style TUI for parallel AI coding. Manage Git worktrees as tasks, run multiple agents in isolated tmux sessions, get notified via hooks."
 license = "MIT"

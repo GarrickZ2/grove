@@ -92,8 +92,8 @@ export type {
   GitOpResponse,
 } from './git';
 
-export { startDifit, getDifitStatus, stopDifit } from './difit';
-export type { DifitStatusResponse, StopDifitResponse } from './difit';
+export { getFullDiff, createComment, deleteComment } from './review';
+export type { DiffLine, DiffHunk, DiffFile, FullDiffResult } from './review';
 
 export { listAllHooks, dismissHook } from './hooks';
 export type { HookEntryResponse, HooksListResponse } from './hooks';

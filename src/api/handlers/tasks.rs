@@ -3,6 +3,7 @@
 use axum::{
     extract::{Path, Query},
     http::StatusCode,
+    response::IntoResponse,
     Json,
 };
 use chrono::Utc;
@@ -14,7 +15,7 @@ use crate::git;
 use crate::hooks;
 use crate::model::loader;
 use crate::session;
-use crate::storage::{self, comments, config::Multiplexer, difit_session, notes, tasks, workspace};
+use crate::storage::{self, comments, config::Multiplexer, notes, tasks, workspace};
 use crate::watcher;
 
 use super::projects::{CommitResponse, TaskResponse};
@@ -120,16 +121,35 @@ pub struct CommitEntry {
 pub struct CommitsResponse {
     pub commits: Vec<CommitEntry>,
     pub total: u32,
+    /// Number of leading commits (newest-first) to skip when building version options.
+    /// When working tree is clean: equals the count of consecutive commits whose tree
+    /// matches HEAD's tree (at least 1, since commits\[0\] IS HEAD).
+    /// When working tree is dirty: 0 (all commits become versions, Latest = working tree).
+    pub skip_versions: u32,
+}
+
+/// Review comment reply entry
+#[derive(Debug, Serialize)]
+pub struct ReviewCommentReplyEntry {
+    pub id: u32,
+    pub content: String,
+    pub author: String,
+    pub timestamp: String,
 }
 
 /// Review comment entry
 #[derive(Debug, Serialize)]
 pub struct ReviewCommentEntry {
     pub id: u32,
-    pub location: String,
+    pub file_path: String,
+    pub side: String,
+    pub start_line: u32,
+    pub end_line: u32,
     pub content: String,
-    pub status: String, // "open" | "resolved" | "not_resolved"
-    pub reply: Option<String>,
+    pub author: String,
+    pub timestamp: String,
+    pub status: String, // "open" | "resolved" | "outdated"
+    pub replies: Vec<ReviewCommentReplyEntry>,
 }
 
 /// Review comments response
@@ -138,7 +158,7 @@ pub struct ReviewCommentsResponse {
     pub comments: Vec<ReviewCommentEntry>,
     pub open_count: u32,
     pub resolved_count: u32,
-    pub not_resolved_count: u32,
+    pub outdated_count: u32,
 }
 
 /// File list response
@@ -170,8 +190,28 @@ pub struct FilePathQuery {
 #[derive(Debug, Deserialize)]
 pub struct ReplyCommentRequest {
     pub comment_id: u32,
-    pub status: String, // "resolved" | "not_resolved"
     pub message: String,
+    pub author: Option<String>,
+}
+
+/// Update review comment status request
+#[derive(Debug, Deserialize)]
+pub struct UpdateCommentStatusRequest {
+    pub status: String, // "open" | "resolved"
+}
+
+/// Create review comment request
+#[derive(Debug, Deserialize)]
+pub struct CreateReviewCommentRequest {
+    pub content: String,
+    /// 新格式：结构化字段
+    pub file_path: Option<String>,
+    pub side: Option<String>,
+    pub start_line: Option<u32>,
+    pub end_line: Option<u32>,
+    pub author: Option<String>,
+    /// 旧格式兼容：location string (如 "src/main.rs:42")
+    pub location: Option<String>,
 }
 
 // ============================================================================
@@ -198,7 +238,7 @@ fn worktree_to_response(wt: &crate::model::Worktree) -> TaskResponse {
         .unwrap_or_default()
         .into_iter()
         .map(|log| CommitResponse {
-            hash: String::new(),
+            hash: log.hash,
             message: log.message,
             time_ago: log.time_ago,
         })
@@ -402,9 +442,8 @@ pub async fn archive_task(
     // 2. Move to archived.toml (TUI: do_archive step 2)
     tasks::archive_task(&project_key, &task_id).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
-    // 3. Remove hook notification and cleanup review session (TUI: do_archive step 3)
+    // 3. Remove hook notification (TUI: do_archive step 3)
     hooks::remove_task_hook(&project_key, &task_id);
-    difit_session::remove_session(&project_key, &task_id);
 
     // 4. Kill session (TUI: do_archive step 4)
     let session_name = session::resolve_session_name(&task_sname, &project_key, &task_id);
@@ -750,11 +789,24 @@ pub async fn merge_task(
     }))
 }
 
+/// Diff query parameters
+#[derive(Debug, Deserialize)]
+pub struct DiffQuery {
+    /// When true, return full parsed diff with hunks and lines
+    pub full: Option<bool>,
+    /// Start ref (defaults to task.target)
+    pub from_ref: Option<String>,
+    /// End ref: commit hash or omit for working tree (latest)
+    pub to_ref: Option<String>,
+}
+
 /// GET /api/v1/projects/{id}/tasks/{taskId}/diff
-/// Get changed files for a task
+/// Get changed files for a task.
+/// With `?full=true`, returns full parsed diff (hunks + lines).
 pub async fn get_diff(
     Path((id, task_id)): Path<(String, String)>,
-) -> Result<Json<DiffResponse>, StatusCode> {
+    Query(query): Query<DiffQuery>,
+) -> Result<axum::response::Response, StatusCode> {
     let (_project, project_key) = find_project_by_id(&id)?;
 
     // Get task info
@@ -762,40 +814,59 @@ pub async fn get_diff(
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .ok_or(StatusCode::NOT_FOUND)?;
 
-    // Get diff stats
-    let diff_entries = git::diff_stat(&task.worktree_path, &task.target).unwrap_or_default();
+    if query.full.unwrap_or(false) {
+        // Determine from/to refs
+        let from_ref = query.from_ref.as_deref().unwrap_or(&task.target);
+        let to_ref = match query.to_ref.as_deref() {
+            None | Some("latest") | Some("") => None, // working tree diff
+            Some(hash) => Some(hash),
+        };
 
-    let mut total_additions = 0u32;
-    let mut total_deletions = 0u32;
+        // Return full parsed diff
+        let result = crate::diff::get_diff_range(&task.worktree_path, from_ref, to_ref)
+            .unwrap_or_else(|_| crate::diff::DiffResult {
+                files: Vec::new(),
+                total_additions: 0,
+                total_deletions: 0,
+            });
+        Ok(Json(result).into_response())
+    } else {
+        // Return summary format (backward compatible)
+        let diff_entries = git::diff_stat(&task.worktree_path, &task.target).unwrap_or_default();
 
-    let files: Vec<DiffFileEntry> = diff_entries
-        .into_iter()
-        .map(|entry| {
-            total_additions += entry.additions;
-            total_deletions += entry.deletions;
+        let mut total_additions = 0u32;
+        let mut total_deletions = 0u32;
 
-            let status = match entry.status {
-                'A' => "A",
-                'D' => "D",
-                'R' => "R",
-                _ => "M",
-            }
-            .to_string();
+        let files: Vec<DiffFileEntry> = diff_entries
+            .into_iter()
+            .map(|entry| {
+                total_additions += entry.additions;
+                total_deletions += entry.deletions;
 
-            DiffFileEntry {
-                path: entry.path,
-                status,
-                additions: entry.additions,
-                deletions: entry.deletions,
-            }
+                let status = match entry.status {
+                    'A' => "A",
+                    'D' => "D",
+                    'R' => "R",
+                    _ => "M",
+                }
+                .to_string();
+
+                DiffFileEntry {
+                    path: entry.path,
+                    status,
+                    additions: entry.additions,
+                    deletions: entry.deletions,
+                }
+            })
+            .collect();
+
+        Ok(Json(DiffResponse {
+            files,
+            total_additions,
+            total_deletions,
         })
-        .collect();
-
-    Ok(Json(DiffResponse {
-        files,
-        total_additions,
-        total_deletions,
-    }))
+        .into_response())
+    }
 }
 
 /// GET /api/v1/projects/{id}/tasks/{taskId}/commits
@@ -818,13 +889,34 @@ pub async fn get_commits(
     let commits: Vec<CommitEntry> = log_entries
         .into_iter()
         .map(|entry| CommitEntry {
-            hash: String::new(), // We don't have hash in LogEntry, could add later
+            hash: entry.hash,
             message: entry.message,
             time_ago: entry.time_ago,
         })
         .collect();
 
-    Ok(Json(CommitsResponse { commits, total }))
+    // Compute how many leading commits to skip for version display.
+    // When working tree is dirty: 0 (Latest = working tree, all commits are distinct versions).
+    // When clean: skip consecutive commits whose tree matches HEAD's tree.
+    let dirty = git::has_uncommitted_changes(&task.worktree_path).unwrap_or(false);
+    let skip_versions = if dirty {
+        0u32
+    } else if let Ok(head_tree) = git::tree_hash(&task.worktree_path, "HEAD") {
+        commits
+            .iter()
+            .take_while(|c| {
+                git::tree_hash(&task.worktree_path, &c.hash).ok().as_ref() == Some(&head_tree)
+            })
+            .count() as u32
+    } else {
+        1 // fallback: at least skip commits[0] which IS HEAD
+    };
+
+    Ok(Json(CommitsResponse {
+        commits,
+        total,
+        skip_versions,
+    }))
 }
 
 /// GET /api/v1/projects/{id}/tasks/{taskId}/review
@@ -835,10 +927,26 @@ pub async fn get_review_comments(
     let (_project, project_key) = find_project_by_id(&id)?;
 
     // Load comments
-    let data = comments::load_comments(&project_key, &task_id)
+    let mut data = comments::load_comments(&project_key, &task_id)
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
-    let (open, resolved, not_resolved) = data.count_by_status();
+    // 动态检测 outdated 并修正行号
+    if let Ok(Some(task)) = tasks::get_task(&project_key, &task_id) {
+        let wt_path = task.worktree_path.clone();
+        let target = task.target.clone();
+        let changed = comments::apply_outdated_detection(&mut data, |file_path, side| {
+            if side == "DELETE" {
+                git::show_file(&wt_path, &target, file_path).ok()
+            } else {
+                git::read_file(&wt_path, file_path).ok()
+            }
+        });
+        if changed {
+            let _ = comments::save_comments(&project_key, &task_id, &data);
+        }
+    }
+
+    let (open, resolved, outdated) = data.count_by_status();
 
     let comment_entries: Vec<ReviewCommentEntry> = data
         .comments
@@ -847,16 +955,32 @@ pub async fn get_review_comments(
             let status = match c.status {
                 comments::CommentStatus::Open => "open",
                 comments::CommentStatus::Resolved => "resolved",
-                comments::CommentStatus::NotResolved => "not_resolved",
+                comments::CommentStatus::Outdated => "outdated",
             }
             .to_string();
 
+            let replies = c
+                .replies
+                .into_iter()
+                .map(|r| ReviewCommentReplyEntry {
+                    id: r.id,
+                    content: r.content,
+                    author: r.author,
+                    timestamp: r.timestamp,
+                })
+                .collect();
+
             ReviewCommentEntry {
                 id: c.id,
-                location: c.location,
+                file_path: c.file_path,
+                side: c.side,
+                start_line: c.start_line,
+                end_line: c.end_line,
                 content: c.content,
+                author: c.author,
+                timestamp: c.timestamp,
                 status,
-                reply: c.reply,
+                replies,
             }
         })
         .collect();
@@ -865,27 +989,44 @@ pub async fn get_review_comments(
         comments: comment_entries,
         open_count: open as u32,
         resolved_count: resolved as u32,
-        not_resolved_count: not_resolved as u32,
+        outdated_count: outdated as u32,
     }))
 }
 
 /// POST /api/v1/projects/{id}/tasks/{taskId}/review
-/// Reply to a review comment
+/// Reply to a review comment (no status change)
 pub async fn reply_review_comment(
     Path((id, task_id)): Path<(String, String)>,
     Json(req): Json<ReplyCommentRequest>,
 ) -> Result<Json<ReviewCommentsResponse>, StatusCode> {
     let (_project, project_key) = find_project_by_id(&id)?;
 
-    // Parse status
+    let author = req.author.as_deref().unwrap_or("You");
+
+    // Reply to comment (no status change)
+    comments::reply_comment(&project_key, &task_id, req.comment_id, &req.message, author)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    // Return updated comments
+    get_review_comments(Path((id, task_id))).await
+}
+
+/// PUT /api/v1/projects/{id}/tasks/{taskId}/review/comments/{commentId}/status
+/// Update a review comment's status (open/resolved)
+pub async fn update_review_comment_status(
+    Path((id, task_id, comment_id)): Path<(String, String, u32)>,
+    Json(req): Json<UpdateCommentStatusRequest>,
+) -> Result<Json<ReviewCommentsResponse>, StatusCode> {
+    let (_project, project_key) = find_project_by_id(&id)?;
+
+    // Parse status — only open/resolved allowed; outdated is auto-detected
     let status = match req.status.as_str() {
+        "open" => comments::CommentStatus::Open,
         "resolved" => comments::CommentStatus::Resolved,
-        "not_resolved" => comments::CommentStatus::NotResolved,
         _ => return Err(StatusCode::BAD_REQUEST),
     };
 
-    // Reply to comment
-    comments::reply_comment(&project_key, &task_id, req.comment_id, status, &req.message)
+    comments::update_comment_status(&project_key, &task_id, comment_id, status)
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     // Return updated comments
@@ -950,12 +1091,11 @@ pub async fn reset_task(
         let _ = git::delete_branch(&project.path, &task.branch);
     }
 
-    // 4.5 Clear all task-related data (Notes, AI data, Stats, Difit session)
+    // 4.5 Clear all task-related data (Notes, AI data, Stats)
     // This ensures a completely fresh start
     let _ = notes::delete_notes(&project_key, &task_id);
     let _ = comments::delete_ai_data(&project_key, &task_id);
     let _ = watcher::clear_edit_history(&project_key, &task_id);
-    difit_session::remove_session(&project_key, &task_id);
 
     // 5. Recreate branch and worktree from target (TUI: do_reset step 5)
     // This is the critical step that fixes broken tasks
@@ -1151,4 +1291,77 @@ pub async fn update_file(
         content: body.content,
         path: params.path,
     }))
+}
+
+/// POST /api/v1/projects/{id}/tasks/{taskId}/review/comments
+/// Create a new review comment
+pub async fn create_review_comment(
+    Path((id, task_id)): Path<(String, String)>,
+    Json(req): Json<CreateReviewCommentRequest>,
+) -> Result<Json<ReviewCommentsResponse>, StatusCode> {
+    let (_project, project_key) = find_project_by_id(&id)?;
+
+    // 优先使用结构化字段，fallback 解析 location string
+    let (file_path, side, start_line, end_line) = if let Some(ref fp) = req.file_path {
+        let side = req.side.as_deref().unwrap_or("ADD");
+        let start = req.start_line.unwrap_or(1);
+        let end = req.end_line.unwrap_or(start);
+        (fp.clone(), side.to_string(), start, end)
+    } else if let Some(ref loc) = req.location {
+        let (fp, (start, end)) = comments::parse_location(loc);
+        (fp, "ADD".to_string(), start, end)
+    } else {
+        return Err(StatusCode::BAD_REQUEST);
+    };
+
+    let author = req.author.as_deref().unwrap_or("You");
+
+    // 计算 anchor_text: 读取对应 side 的文件并提取锚定行
+    let anchor_text = tasks::get_task(&project_key, &task_id)
+        .ok()
+        .flatten()
+        .and_then(|task| {
+            let content = if side == "DELETE" {
+                git::show_file(&task.worktree_path, &task.target, &file_path).ok()
+            } else {
+                git::read_file(&task.worktree_path, &file_path).ok()
+            };
+            content.and_then(|c| comments::extract_lines(&c, start_line, end_line))
+        });
+
+    // Add comment
+    comments::add_comment(
+        &project_key,
+        &task_id,
+        &file_path,
+        &side,
+        start_line,
+        end_line,
+        &req.content,
+        author,
+        anchor_text,
+    )
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    // Return updated comments
+    get_review_comments(Path((id, task_id))).await
+}
+
+/// DELETE /api/v1/projects/{id}/tasks/{taskId}/review/comments/{commentId}
+/// Delete a review comment
+pub async fn delete_review_comment(
+    Path((id, task_id, comment_id)): Path<(String, String, u32)>,
+) -> Result<Json<ReviewCommentsResponse>, StatusCode> {
+    let (_project, project_key) = find_project_by_id(&id)?;
+
+    // Delete comment
+    let deleted = comments::delete_comment(&project_key, &task_id, comment_id)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    if !deleted {
+        return Err(StatusCode::NOT_FOUND);
+    }
+
+    // Return updated comments
+    get_review_comments(Path((id, task_id))).await
 }

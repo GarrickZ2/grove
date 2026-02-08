@@ -322,7 +322,7 @@ export const mockReviewComments: Record<string, ReviewComment[]> = {
       line: 23,
       content: "The color contrast ratio might not meet WCAG AA standards.",
       author: "reviewer",
-      status: "not_resolved",
+      status: "outdated",
       createdAt: hoursAgo(3),
     },
   ],

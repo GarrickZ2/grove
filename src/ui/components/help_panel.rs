@@ -72,7 +72,7 @@ fn build_help_lines(colors: &ThemeColors, update_info: Option<&UpdateInfo>) -> V
         key_line("4", "Diff tab", colors),
         key_line("j / k", "Scroll content", colors),
         key_line("i", "Edit notes ($EDITOR)", colors),
-        key_line("d", "Code review (difit)", colors),
+        key_line("d", "Diff review (browser)", colors),
         Line::from(""),
         // Actions 分组
         section_header("Actions", colors),

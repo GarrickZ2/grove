@@ -1,11 +1,11 @@
 import { useState, useEffect, useCallback } from "react";
 import { motion } from "framer-motion";
-import { MessageSquare, CheckCircle, XCircle, Clock, FileCode, Loader2 } from "lucide-react";
+import { MessageSquare, CheckCircle, Clock, FileCode, Loader2 } from "lucide-react";
 import type { Task } from "../../../../data/types";
 import { useProject } from "../../../../context/ProjectContext";
 import { getReviewComments, type ReviewCommentEntry } from "../../../../api";
 
-type ReviewStatus = "open" | "resolved" | "not_resolved";
+type ReviewStatus = "open" | "resolved" | "outdated";
 
 interface ReviewTabProps {
   task: Task;
@@ -29,11 +29,11 @@ function getStatusConfig(status: ReviewStatus): {
         color: "var(--color-success)",
         label: "Resolved",
       };
-    case "not_resolved":
+    case "outdated":
       return {
-        icon: XCircle,
-        color: "var(--color-error)",
-        label: "Not Resolved",
+        icon: Clock,
+        color: "var(--color-text-muted)",
+        label: "Outdated",
       };
   }
 }
@@ -52,7 +52,7 @@ function ReviewCommentCard({ comment }: { comment: ReviewCommentEntry }) {
       <div className="flex items-center justify-between px-3 py-2 bg-[var(--color-bg-secondary)] border-b border-[var(--color-border)]">
         <div className="flex items-center gap-2 text-xs text-[var(--color-text-muted)] min-w-0 flex-1 mr-3">
           <FileCode className="w-3.5 h-3.5 flex-shrink-0" />
-          <code className="font-mono truncate">{comment.location}</code>
+          <code className="font-mono truncate">{comment.file_path}:{comment.side}:{comment.start_line}{comment.start_line !== comment.end_line ? `-${comment.end_line}` : ''}</code>
         </div>
         <div className="flex items-center gap-1.5">
           <StatusIcon
@@ -71,12 +71,12 @@ function ReviewCommentCard({ comment }: { comment: ReviewCommentEntry }) {
       {/* Content */}
       <div className="p-3">
         <p className="text-sm text-[var(--color-text)]">{comment.content}</p>
-        {comment.reply && (
-          <div className="mt-2 pt-2 border-t border-[var(--color-border)]">
-            <p className="text-xs text-[var(--color-text-muted)] mb-1">Reply:</p>
-            <p className="text-sm text-[var(--color-text-muted)]">{comment.reply}</p>
+        {comment.replies.length > 0 && comment.replies.map((reply) => (
+          <div key={reply.id} className="mt-2 pt-2 border-t border-[var(--color-border)]">
+            <p className="text-xs text-[var(--color-text-muted)] mb-1">{reply.author} &middot; {reply.timestamp}</p>
+            <p className="text-sm text-[var(--color-text-muted)]">{reply.content}</p>
           </div>
-        )}
+        ))}
       </div>
     </motion.div>
   );
@@ -87,7 +87,7 @@ export function ReviewTab({ task }: ReviewTabProps) {
   const [comments, setComments] = useState<ReviewCommentEntry[]>([]);
   const [openCount, setOpenCount] = useState(0);
   const [resolvedCount, setResolvedCount] = useState(0);
-  const [notResolvedCount, setNotResolvedCount] = useState(0);
+  const [outdatedCount, setOutdatedCount] = useState(0);
   const [isLoading, setIsLoading] = useState(true);
 
   const loadComments = useCallback(async () => {
@@ -99,7 +99,7 @@ export function ReviewTab({ task }: ReviewTabProps) {
       setComments(response.comments);
       setOpenCount(response.open_count);
       setResolvedCount(response.resolved_count);
-      setNotResolvedCount(response.not_resolved_count);
+      setOutdatedCount(response.outdated_count);
     } catch (err) {
       console.error("Failed to load review comments:", err);
       setComments([]);
@@ -142,10 +142,10 @@ export function ReviewTab({ task }: ReviewTabProps) {
           <CheckCircle className="w-4 h-4 text-[var(--color-success)]" />
           <span className="text-[var(--color-text)]">{resolvedCount} Resolved</span>
         </div>
-        {notResolvedCount > 0 && (
+        {outdatedCount > 0 && (
           <div className="flex items-center gap-1.5">
-            <XCircle className="w-4 h-4 text-[var(--color-error)]" />
-            <span className="text-[var(--color-text)]">{notResolvedCount} Not Resolved</span>
+            <Clock className="w-4 h-4 text-[var(--color-text-muted)]" />
+            <span className="text-[var(--color-text)]">{outdatedCount} Outdated</span>
           </div>
         )}
       </div>

@@ -397,9 +397,9 @@ fn handle_project_key(app: &mut App, key: KeyEvent) {
             app.project.request_notes_edit();
         }
 
-        // difit diff 查看
+        // Diff review in browser
         KeyCode::Char('d') | KeyCode::Char('D') => {
-            app.launch_difit_project();
+            app.open_diff_review_project();
         }
 
         // 功能按键 - New Task
@@ -927,8 +927,8 @@ fn handle_monitor_key(app: &mut App, key: KeyEvent) {
             app.monitor.request_notes_edit();
         }
 
-        // difit diff 查看
-        KeyCode::Char('d') | KeyCode::Char('D') => app.launch_difit_monitor(),
+        // Diff review in browser
+        KeyCode::Char('d') | KeyCode::Char('D') => app.open_diff_review_monitor(),
 
         // 刷新
         KeyCode::Char('r') | KeyCode::Char('R') => app.monitor.refresh_panel_data(),

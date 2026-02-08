@@ -64,7 +64,7 @@ impl ActionType {
             ActionType::Merge => "Merge to target branch",
             ActionType::Recover => "Restore worktree from archive",
             ActionType::Commit => "Add all and commit changes",
-            ActionType::Review => "Code review with difit",
+            ActionType::Review => "Open diff review in browser",
             ActionType::Reset => "Rebuild branch and worktree",
         }
     }

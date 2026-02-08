@@ -10,7 +10,7 @@ pub mod cache;
 // ============================================================================
 
 /// 执行 git 命令并返回 stdout (trim 后)
-fn git_cmd(path: &str, args: &[&str]) -> Result<String> {
+pub(crate) fn git_cmd(path: &str, args: &[&str]) -> Result<String> {
     let output = Command::new("git")
         .current_dir(path)
         .args(args)
@@ -340,6 +340,14 @@ pub fn list_files(repo_path: &str) -> Result<Vec<String>> {
     Ok(output.lines().map(|s| s.to_string()).collect())
 }
 
+/// 读取指定 git ref 上的文件内容
+///
+/// 执行: `git show {ref}:{file_path}`
+pub fn show_file(repo_path: &str, git_ref: &str, file_path: &str) -> Result<String> {
+    let object = format!("{}:{}", git_ref, file_path);
+    git_cmd(repo_path, &["show", &object])
+}
+
 /// 读取 worktree 中的文件内容
 /// 包含路径穿越保护
 pub fn read_file(repo_path: &str, file_path: &str) -> Result<String> {
@@ -439,28 +447,31 @@ pub fn checkout_branch(worktree_path: &str, branch: &str) -> Result<()> {
 /// Commit log entry
 #[derive(Debug, Clone)]
 pub struct LogEntry {
+    pub hash: String,
     pub time_ago: String,
     pub message: String,
 }
 
 /// 获取最近的 commit 日志
-/// 执行: git log --oneline --format="%cr\t%s" -n {count} {target}..HEAD
+/// 执行: git log --format="%H\t%cr\t%s" -n {count} {target}..HEAD
 pub fn recent_log(worktree_path: &str, target: &str, count: usize) -> Result<Vec<LogEntry>> {
     let range = format!("{}..HEAD", target);
     let n = format!("-{}", count);
-    let output = git_cmd(worktree_path, &["log", "--format=%cr\t%s", &n, &range])?;
+    let output = git_cmd(worktree_path, &["log", "--format=%H\t%cr\t%s", &n, &range])?;
     Ok(output
         .lines()
         .filter(|l| !l.is_empty())
         .map(|line| {
-            let parts: Vec<&str> = line.splitn(2, '\t').collect();
-            if parts.len() == 2 {
+            let parts: Vec<&str> = line.splitn(3, '\t').collect();
+            if parts.len() == 3 {
                 LogEntry {
-                    time_ago: parts[0].to_string(),
-                    message: parts[1].to_string(),
+                    hash: parts[0].to_string(),
+                    time_ago: parts[1].to_string(),
+                    message: parts[2].to_string(),
                 }
             } else {
                 LogEntry {
+                    hash: String::new(),
                     time_ago: String::new(),
                     message: line.to_string(),
                 }
@@ -481,10 +492,30 @@ pub struct DiffStatEntry {
 /// 获取相对于 target 的变更文件列表（带统计）
 /// 执行: git diff --numstat --diff-filter=ACDMRT {target}
 pub fn diff_stat(worktree_path: &str, target: &str) -> Result<Vec<DiffStatEntry>> {
+    // intent-to-add 未跟踪文件，让 diff 能看到新文件
+    let untracked = git_cmd(
+        worktree_path,
+        &["ls-files", "--others", "--exclude-standard"],
+    )?;
+    let has_untracked = !untracked.trim().is_empty();
+    if has_untracked {
+        let _ = git_cmd_unit(worktree_path, &["add", "--intent-to-add", "--all"]);
+    }
+
     // 先获取 numstat（additions/deletions）
     let numstat = git_cmd(worktree_path, &["diff", "--numstat", target])?;
     // 再获取 name-status（状态字母）
     let name_status = git_cmd(worktree_path, &["diff", "--name-status", target])?;
+
+    // 撤销 intent-to-add
+    if has_untracked {
+        for path in untracked.lines() {
+            let path = path.trim();
+            if !path.is_empty() {
+                let _ = git_cmd_unit(worktree_path, &["reset", "HEAD", "--", path]);
+            }
+        }
+    }
 
     let status_map: std::collections::HashMap<&str, char> = name_status
         .lines()
@@ -522,6 +553,65 @@ pub fn diff_stat(worktree_path: &str, target: &str) -> Result<Vec<DiffStatEntry>
             }
         })
         .collect())
+}
+
+/// 获取完整的 unified diff 输出（用于 diff review UI）
+///
+/// 包含所有变更：已提交 + 已暂存 + 未暂存 + 未跟踪文件，相对于 target branch。
+/// 实现方式：先 `git add --intent-to-add` 未跟踪文件，执行 diff，再撤销 intent-to-add。
+pub fn get_raw_diff(worktree_path: &str, target: &str) -> Result<String> {
+    // 1. 找出未跟踪文件
+    let untracked = git_cmd(
+        worktree_path,
+        &["ls-files", "--others", "--exclude-standard"],
+    )?;
+    let has_untracked = !untracked.trim().is_empty();
+
+    // 2. 如果有未跟踪文件，用 intent-to-add 让 git diff 能看到它们
+    if has_untracked {
+        let _ = git_cmd_unit(worktree_path, &["add", "--intent-to-add", "--all"]);
+    }
+
+    // 3. 执行 diff
+    let result = git_cmd(worktree_path, &["diff", "-U3", target]);
+
+    // 4. 撤销 intent-to-add（恢复未跟踪状态）
+    if has_untracked {
+        // git reset 只影响 index，不影响工作区
+        // 只 reset 那些是 intent-to-add 的文件（即之前 untracked 的）
+        for path in untracked.lines() {
+            let path = path.trim();
+            if !path.is_empty() {
+                let _ = git_cmd_unit(worktree_path, &["reset", "HEAD", "--", path]);
+            }
+        }
+    }
+
+    result
+}
+
+/// 获取指定 ref 的 tree hash
+/// 执行: git rev-parse {ref}^{tree}
+pub fn tree_hash(repo_path: &str, git_ref: &str) -> Result<String> {
+    let spec = format!("{}^{{tree}}", git_ref);
+    git_cmd(repo_path, &["rev-parse", &spec])
+}
+
+/// 获取指定范围的 unified diff
+///
+/// `to_ref=None` 表示 working tree（含 untracked），否则 commit 间 diff。
+pub fn get_raw_diff_range(
+    worktree_path: &str,
+    from_ref: &str,
+    to_ref: Option<&str>,
+) -> Result<String> {
+    match to_ref {
+        Some(to) => {
+            let range = format!("{}..{}", from_ref, to);
+            git_cmd(worktree_path, &["diff", "-U3", &range])
+        }
+        None => get_raw_diff(worktree_path, from_ref),
+    }
 }
 
 /// 获取未提交文件数量

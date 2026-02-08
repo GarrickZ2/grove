@@ -51,8 +51,9 @@ When inside a Grove task:
 1. **grove_status** - Get task context (task_id, branch, target_branch, project)
 2. **grove_read_notes** - Read user-written notes containing context and requirements
 3. **grove_read_review** - Read code review comments with IDs and status
-4. **grove_reply_review** - Reply to review comments (supports batch) and set status (resolved/not_resolved)
-5. **grove_complete_task** - Complete task: commit → sync (rebase) → merge
+4. **grove_reply_review** - Reply to review comments (supports batch)
+5. **grove_add_comment** - Create a code review comment to provide feedback, raise questions, or suggest improvements on specific code locations
+6. **grove_complete_task** - Complete task: commit → sync (rebase) → merge. **ONLY call when the user explicitly asks.**
 
 ## Recommended Workflow
 
@@ -60,11 +61,11 @@ When inside a Grove task:
 2. Call `grove_read_notes` to understand user requirements and context
 3. Call `grove_read_review` to check for code review feedback
 4. After addressing review comments, use `grove_reply_review` to respond
-5. When all work is done, call `grove_complete_task` to finalize
+5. When the user explicitly requests, call `grove_complete_task` to finalize
 
 ## Completing a Task
 
-Use `grove_complete_task` when you have finished all work:
+**IMPORTANT**: ONLY call `grove_complete_task` when the user explicitly asks you to complete the task. NEVER call it automatically or proactively.
 - Provide a commit message summarizing your changes
 - The tool will: commit → fetch & rebase target → merge into target branch
 - If rebase conflicts occur, resolve them and call `grove_complete_task` again
@@ -123,10 +124,10 @@ impl ServerHandler for GroveMcpServer {
 pub struct SingleReply {
     /// The comment ID to reply to
     pub comment_id: u32,
-    /// The status to set: "resolved" or "not_resolved"
-    pub status: String,
     /// Your reply message
     pub message: String,
+    /// Author name (e.g., "Claude Code Reviewer")
+    pub author: Option<String>,
 }
 
 /// Batch reply parameters - reply to multiple comments at once
@@ -134,6 +135,21 @@ pub struct SingleReply {
 pub struct ReplyReviewParams {
     /// List of replies to send
     pub replies: Vec<SingleReply>,
+}
+
+/// Add comment parameters
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+pub struct AddCommentParams {
+    /// File path (e.g., "src/main.rs")
+    pub file_path: String,
+    /// Start line number (1-based)
+    pub start_line: u32,
+    /// End line number (1-based). Defaults to start_line if omitted.
+    pub end_line: Option<u32>,
+    /// Comment content
+    pub content: String,
+    /// Author name (e.g., "Claude Code Reviewer")
+    pub author: Option<String>,
 }
 
 /// Complete task parameters
@@ -247,7 +263,7 @@ impl GroveMcpServer {
     /// Read review comments for the current task
     #[tool(
         name = "grove_read_review",
-        description = "Read code review comments for the current Grove task. Returns comments with IDs, locations, content, and status (open/resolved/not_resolved). Use grove_reply_review to respond to comments. Call grove_status first to ensure you are in a Grove task."
+        description = "Read code review comments for the current Grove task. Returns comments with IDs, locations, content, and status (open/resolved/outdated). Use grove_reply_review to respond to comments. Call grove_status first to ensure you are in a Grove task."
     )]
     async fn grove_read_review(&self) -> Result<CallToolResult, McpError> {
         let (task_id, project_path) = get_task_context()
@@ -259,7 +275,20 @@ impl GroveMcpServer {
             Ok(data) if data.is_empty() => Ok(CallToolResult::success(vec![Content::text(
                 "No code review comments yet.",
             )])),
-            Ok(data) => {
+            Ok(mut data) => {
+                // 动态检测 outdated
+                let worktree = env::var("GROVE_WORKTREE").unwrap_or_default();
+                let target = env::var("GROVE_TARGET").unwrap_or_default();
+                if !worktree.is_empty() && !target.is_empty() {
+                    comments::apply_outdated_detection(&mut data, |file_path, side| {
+                        if side == "DELETE" {
+                            git::show_file(&worktree, &target, file_path).ok()
+                        } else {
+                            git::read_file(&worktree, file_path).ok()
+                        }
+                    });
+                }
+
                 let output = format_comments(&data);
                 Ok(CallToolResult::success(vec![Content::text(output)]))
             }
@@ -273,7 +302,7 @@ impl GroveMcpServer {
     /// Reply to review comments (supports batch)
     #[tool(
         name = "grove_reply_review",
-        description = "Reply to one or more code review comments and update their status. Supports batch replies to reduce tool calls. Use status='resolved' if fixed, or 'not_resolved' if cannot fix. Call grove_read_review first to get comment IDs."
+        description = "Reply to one or more code review comments. Supports batch replies to reduce tool calls. Call grove_read_review first to get comment IDs."
     )]
     async fn grove_reply_review(
         &self,
@@ -295,30 +324,17 @@ impl GroveMcpServer {
         let mut errors: Vec<String> = Vec::new();
 
         for reply in &params.0.replies {
-            // Parse status
-            let status = match reply.status.to_lowercase().as_str() {
-                "resolved" => comments::CommentStatus::Resolved,
-                "not_resolved" | "notresolved" | "not-resolved" => {
-                    comments::CommentStatus::NotResolved
-                }
-                _ => {
-                    errors.push(format!(
-                        "#{}: invalid status '{}' (must be 'resolved' or 'not_resolved')",
-                        reply.comment_id, reply.status
-                    ));
-                    continue;
-                }
-            };
+            let author = reply.author.as_deref().unwrap_or("AI");
 
             match comments::reply_comment(
                 &project_key,
                 &task_id,
                 reply.comment_id,
-                status,
                 &reply.message,
+                author,
             ) {
                 Ok(true) => {
-                    results.push(format!("#{}: {} ✓", reply.comment_id, reply.status));
+                    results.push(format!("#{}: replied ✓", reply.comment_id));
                 }
                 Ok(false) => {
                     errors.push(format!("#{}: not found", reply.comment_id));
@@ -355,10 +371,67 @@ impl GroveMcpServer {
         )]))
     }
 
+    /// Add a new code review comment on the current task
+    #[tool(
+        name = "grove_add_comment",
+        description = "Create a code review comment on specific code in the current Grove task. Use this when reviewing code to provide feedback, raise questions, or suggest improvements. The comment will appear in the diff review UI."
+    )]
+    async fn grove_add_comment(
+        &self,
+        params: Parameters<AddCommentParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let (task_id, project_path) = get_task_context()
+            .ok_or_else(|| McpError::invalid_request("Not in a Grove task", None))?;
+
+        let project_key = project_hash(&project_path);
+
+        let file_path = &params.0.file_path;
+        let start_line = params.0.start_line;
+        let end_line = params.0.end_line.unwrap_or(start_line);
+        let author = params.0.author.as_deref().unwrap_or("AI");
+
+        // 计算 anchor_text
+        let anchor_text = {
+            let worktree = env::var("GROVE_WORKTREE").unwrap_or_default();
+            if !worktree.is_empty() {
+                git::read_file(&worktree, file_path)
+                    .ok()
+                    .and_then(|c| comments::extract_lines(&c, start_line, end_line))
+            } else {
+                None
+            }
+        };
+
+        match comments::add_comment(
+            &project_key,
+            &task_id,
+            file_path,
+            "ADD",
+            start_line,
+            end_line,
+            &params.0.content,
+            author,
+            anchor_text,
+        ) {
+            Ok(comment) => {
+                let loc = format!("{}:{}", comment.file_path, comment.start_line);
+                let output = format!(
+                    "Comment #{} added at {}\n> {}",
+                    comment.id, loc, comment.content
+                );
+                Ok(CallToolResult::success(vec![Content::text(output)]))
+            }
+            Err(e) => Err(McpError::internal_error(
+                format!("Failed to add comment: {}", e),
+                None,
+            )),
+        }
+    }
+
     /// Complete the current task: commit, sync (rebase), and merge
     #[tool(
         name = "grove_complete_task",
-        description = "Complete the current Grove task in one operation. This will: (1) commit all changes with your message, (2) sync with target branch via rebase, (3) merge into target branch. If rebase conflicts occur, resolve them and call this tool again. Call grove_status first to ensure you are in a Grove task."
+        description = "Complete the current Grove task in one operation. This will: (1) commit all changes with your message, (2) sync with target branch via rebase, (3) merge into target branch. If rebase conflicts occur, resolve them and call this tool again. IMPORTANT: ONLY call this tool when the user explicitly requests task completion. NEVER call it automatically or proactively. Call grove_status first to ensure you are in a Grove task."
     )]
     async fn grove_complete_task(
         &self,
@@ -513,38 +586,42 @@ fn get_task_context() -> Option<(String, String)> {
 
 /// Format comments for display
 fn format_comments(data: &comments::CommentsData) -> String {
-    let (open, resolved, not_resolved) = data.count_by_status();
+    let (open, resolved, outdated) = data.count_by_status();
     let mut output = format!(
-        "Review Comments ({} open, {} resolved, {} not resolved)\n\n",
-        open, resolved, not_resolved
+        "Review Comments ({} open, {} resolved, {} outdated)\n\n",
+        open, resolved, outdated
     );
 
     for comment in &data.comments {
+        let loc = format!("{}:{}", comment.file_path, comment.start_line);
         match comment.status {
             comments::CommentStatus::Open => {
-                output.push_str(&format!("[#{}] {}\n", comment.id, comment.location));
+                output.push_str(&format!("[#{}] {}\n", comment.id, loc));
                 output.push_str(&format!("> {}\n", comment.content));
-                output.push_str("  (no reply)\n\n");
-            }
-            comments::CommentStatus::NotResolved => {
-                output.push_str(&format!(
-                    "[#{}] NOT RESOLVED {}\n",
-                    comment.id, comment.location
-                ));
-                output.push_str(&format!("> {}\n", comment.content));
-                if let Some(reply) = &comment.reply {
-                    output.push_str(&format!("  AI: {}\n\n", reply));
+                if comment.replies.is_empty() {
+                    output.push_str("  (no reply)\n\n");
+                } else {
+                    for r in &comment.replies {
+                        output.push_str(&format!("  {}: {}\n", r.author, r.content));
+                    }
+                    output.push('\n');
                 }
+            }
+            comments::CommentStatus::Outdated => {
+                output.push_str(&format!("[#{}] OUTDATED {}\n", comment.id, loc));
+                output.push_str(&format!("> {}\n", comment.content));
+                for r in &comment.replies {
+                    output.push_str(&format!("  {}: {}\n", r.author, r.content));
+                }
+                output.push('\n');
             }
             comments::CommentStatus::Resolved => {
-                output.push_str(&format!(
-                    "[#{}] RESOLVED ~~{}~~\n",
-                    comment.id, comment.location
-                ));
+                output.push_str(&format!("[#{}] RESOLVED ~~{}~~\n", comment.id, loc));
                 output.push_str(&format!("> ~~{}~~\n", comment.content));
-                if let Some(reply) = &comment.reply {
-                    output.push_str(&format!("  AI: {}\n\n", reply));
+                for r in &comment.replies {
+                    output.push_str(&format!("  {}: {}\n", r.author, r.content));
                 }
+                output.push('\n');
             }
         }
     }

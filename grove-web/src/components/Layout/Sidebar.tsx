@@ -35,9 +35,10 @@ interface SidebarProps {
   onNavigate?: (page: string, data?: Record<string, unknown>) => void;
   tasksMode: TasksMode;
   onTasksModeChange: (mode: TasksMode) => void;
+  onProjectSwitch?: () => void;
 }
 
-export function Sidebar({ activeItem, onItemClick, collapsed, onToggleCollapse, onManageProjects, onAddProject, onNavigate, tasksMode, onTasksModeChange }: SidebarProps) {
+export function Sidebar({ activeItem, onItemClick, collapsed, onToggleCollapse, onManageProjects, onAddProject, onNavigate, tasksMode, onTasksModeChange, onProjectSwitch }: SidebarProps) {
   const [notifOpen, setNotifOpen] = useState(false);
   const { unreadCount } = useNotifications();
 
@@ -68,7 +69,7 @@ export function Sidebar({ activeItem, onItemClick, collapsed, onToggleCollapse, 
 
       {/* Project Selector */}
       <div className="relative border-b border-[var(--color-border)]">
-        <ProjectSelector collapsed={collapsed} onManageProjects={onManageProjects} onAddProject={onAddProject} />
+        <ProjectSelector collapsed={collapsed} onManageProjects={onManageProjects} onAddProject={onAddProject} onProjectSwitch={onProjectSwitch} />
       </div>
 
       {/* Navigation */}

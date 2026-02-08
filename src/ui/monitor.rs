@@ -121,26 +121,13 @@ pub fn render(frame: &mut Frame, app: &mut App) {
             app.monitor.notes_scroll,
             colors,
         ),
-        PreviewSubTab::Diff => {
-            let reviewing = app
-                .review
-                .reviewing_tasks
-                .contains_key(&app.monitor.task_id);
-            let reviewing_url = app
-                .review
-                .reviewing_tasks
-                .get(&app.monitor.task_id)
-                .and_then(|u| u.as_deref());
-            preview_panel::render_diff_tab(
-                frame,
-                main_area,
-                &app.monitor.panel_data,
-                app.monitor.diff_scroll,
-                reviewing,
-                reviewing_url,
-                colors,
-            )
-        }
+        PreviewSubTab::Diff => preview_panel::render_diff_tab(
+            frame,
+            main_area,
+            &app.monitor.panel_data,
+            app.monitor.diff_scroll,
+            colors,
+        ),
     }
 
     render_monitor_footer(frame, footer_area, &app.monitor, colors);

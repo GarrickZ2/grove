@@ -13,8 +13,6 @@ use crate::theme::ThemeColors;
 use crate::ui::click_areas::ClickAreas;
 use crate::watcher::TaskEditHistory;
 
-const SPINNER_FRAMES: &[char] = &['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
-
 /// 渲染预览面板
 #[allow(clippy::too_many_arguments)]
 pub fn render(
@@ -27,8 +25,6 @@ pub fn render(
     git_scroll: u16,
     diff_scroll: u16,
     stats_scroll: u16,
-    reviewing: bool,
-    reviewing_url: Option<&str>,
     stats_history: Option<&TaskEditHistory>,
     colors: &ThemeColors,
     click_areas: &mut ClickAreas,
@@ -98,15 +94,9 @@ pub fn render(
         PreviewSubTab::Notes => {
             render_notes_tab(frame, content_area, panel_data, notes_scroll, colors)
         }
-        PreviewSubTab::Diff => render_diff_tab(
-            frame,
-            content_area,
-            panel_data,
-            diff_scroll,
-            reviewing,
-            reviewing_url,
-            colors,
-        ),
+        PreviewSubTab::Diff => {
+            render_diff_tab(frame, content_area, panel_data, diff_scroll, colors)
+        }
     }
 }
 
@@ -373,59 +363,8 @@ pub fn render_diff_tab(
     area: Rect,
     data: &PanelData,
     scroll: u16,
-    reviewing: bool,
-    reviewing_url: Option<&str>,
     colors: &ThemeColors,
 ) {
-    if reviewing {
-        let center_height = if reviewing_url.is_some() { 5 } else { 3 };
-        let [_, center, _] = Layout::vertical([
-            Constraint::Percentage(35),
-            Constraint::Length(center_height),
-            Constraint::Percentage(35),
-        ])
-        .areas(area);
-
-        let frame_idx = (std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .subsec_millis()
-            / 100) as usize
-            % SPINNER_FRAMES.len();
-
-        let mut lines = vec![
-            Line::from(vec![
-                Span::styled(
-                    format!("{} ", SPINNER_FRAMES[frame_idx]),
-                    Style::default().fg(colors.highlight),
-                ),
-                Span::styled(
-                    "Reviewing in difit...",
-                    Style::default()
-                        .fg(colors.highlight)
-                        .add_modifier(Modifier::BOLD),
-                ),
-            ]),
-            Line::from(""),
-        ];
-
-        if let Some(url) = reviewing_url {
-            lines.push(Line::from(Span::styled(
-                url,
-                Style::default().fg(colors.highlight),
-            )));
-            lines.push(Line::from(""));
-        }
-
-        lines.push(Line::from(Span::styled(
-            "Complete the review in your browser to see comments here.",
-            Style::default().fg(colors.muted),
-        )));
-
-        frame.render_widget(Paragraph::new(lines).alignment(Alignment::Center), center);
-        return;
-    }
-
     if data.review_comments.is_empty() {
         let [_, center, _] = Layout::vertical([
             Constraint::Percentage(30),
@@ -441,7 +380,7 @@ pub fn render_diff_tab(
             )),
             Line::from(""),
             Line::from(Span::styled(
-                "Press d to start a code review with difit.",
+                "Press d to open diff review in browser.",
                 Style::default().fg(colors.muted),
             )),
         ];
@@ -452,7 +391,7 @@ pub fn render_diff_tab(
     let mut lines: Vec<Line> = Vec::new();
 
     // Header with counts
-    let (open, resolved, not_resolved) = data.review_comments.count_by_status();
+    let (open, resolved, outdated) = data.review_comments.count_by_status();
     lines.push(Line::from(vec![
         Span::styled(
             " Review Comments",
@@ -462,8 +401,8 @@ pub fn render_diff_tab(
         ),
         Span::styled(
             format!(
-                "  ({} open, {} resolved, {} not resolved)",
-                open, resolved, not_resolved
+                "  ({} open, {} resolved, {} outdated)",
+                open, resolved, outdated
             ),
             Style::default().fg(colors.muted),
         ),
@@ -473,6 +412,7 @@ pub fn render_diff_tab(
     // Render each comment
     for comment in &data.review_comments.comments {
         // Comment header with ID and status
+        let loc = format!("{}:{}", comment.file_path, comment.start_line);
         match comment.status {
             CommentStatus::Open => {
                 lines.push(Line::from(vec![
@@ -482,7 +422,7 @@ pub fn render_diff_tab(
                             .fg(colors.highlight)
                             .add_modifier(Modifier::BOLD),
                     ),
-                    Span::styled(&comment.location, Style::default().fg(colors.highlight)),
+                    Span::styled(loc.clone(), Style::default().fg(colors.highlight)),
                 ]));
             }
             CommentStatus::Resolved => {
@@ -499,13 +439,10 @@ pub fn render_diff_tab(
                             .fg(colors.status_merged)
                             .add_modifier(Modifier::BOLD),
                     ),
-                    Span::styled(
-                        format!("~~{}~~", &comment.location),
-                        Style::default().fg(colors.muted),
-                    ),
+                    Span::styled(format!("~~{}~~", &loc), Style::default().fg(colors.muted)),
                 ]));
             }
-            CommentStatus::NotResolved => {
+            CommentStatus::Outdated => {
                 lines.push(Line::from(vec![
                     Span::styled(
                         format!(" [#{}] ", comment.id),
@@ -514,12 +451,12 @@ pub fn render_diff_tab(
                             .add_modifier(Modifier::BOLD),
                     ),
                     Span::styled(
-                        "NOT RESOLVED ",
+                        "OUTDATED ",
                         Style::default()
                             .fg(Color::Yellow)
                             .add_modifier(Modifier::BOLD),
                     ),
-                    Span::styled(&comment.location, Style::default().fg(colors.highlight)),
+                    Span::styled(loc.clone(), Style::default().fg(colors.highlight)),
                 ]));
             }
         }
@@ -540,21 +477,29 @@ pub fn render_diff_tab(
             lines.push(Line::from(Span::styled(display_text, content_style)));
         }
 
-        // Reply (if any)
-        if let Some(reply) = &comment.reply {
-            let reply_style = Style::default().fg(colors.status_merged);
-            for (i, reply_line) in reply.lines().enumerate() {
-                let prefix = if i == 0 { " └─ AI: " } else { "        " };
+        // Replies
+        if comment.replies.is_empty() {
+            if comment.status == CommentStatus::Open {
                 lines.push(Line::from(Span::styled(
-                    format!("{}{}", prefix, reply_line),
-                    reply_style,
+                    " └─ (no reply)",
+                    Style::default().fg(colors.muted),
                 )));
             }
-        } else if comment.status == CommentStatus::Open {
-            lines.push(Line::from(Span::styled(
-                " └─ (no reply)",
-                Style::default().fg(colors.muted),
-            )));
+        } else {
+            let reply_style = Style::default().fg(colors.status_merged);
+            for reply in &comment.replies {
+                for (i, reply_line) in reply.content.lines().enumerate() {
+                    let prefix = if i == 0 {
+                        format!(" └─ {}: ", reply.author)
+                    } else {
+                        "        ".to_string()
+                    };
+                    lines.push(Line::from(Span::styled(
+                        format!("{}{}", prefix, reply_line),
+                        reply_style,
+                    )));
+                }
+            }
         }
 
         // Separator between comments

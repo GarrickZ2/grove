@@ -78,26 +78,45 @@ export interface CommitEntry {
 export interface CommitsResponse {
   commits: CommitEntry[];
   total: number;
+  /** Number of leading commits to skip when building version options */
+  skip_versions: number;
+}
+
+export interface CommentReply {
+  id: number;
+  content: string;
+  author: string;
+  timestamp: string;
 }
 
 export interface ReviewCommentEntry {
   id: number;
-  location: string;
+  file_path: string;
+  side: 'ADD' | 'DELETE';
+  start_line: number;
+  end_line: number;
   content: string;
-  status: string; // "open" | "resolved" | "not_resolved"
-  reply: string | null;
+  author: string;
+  timestamp: string;
+  status: string; // "open" | "resolved" | "outdated"
+  replies: CommentReply[];
+}
+
+/** Build a location key for matching: "file:SIDE:line" */
+export function commentLocationKey(c: ReviewCommentEntry): string {
+  return `${c.file_path}:${c.side}:${c.end_line}`;
 }
 
 export interface ReviewCommentsResponse {
   comments: ReviewCommentEntry[];
   open_count: number;
   resolved_count: number;
-  not_resolved_count: number;
+  outdated_count: number;
 }
 
 export interface ReplyCommentRequest {
   comment_id: number;
-  status: string; // "resolved" | "not_resolved"
+  status: string; // "resolved" | "outdated"
   message: string;
 }
 
@@ -282,7 +301,7 @@ export async function replyReviewComment(
   projectId: string,
   taskId: string,
   commentId: number,
-  status: 'resolved' | 'not_resolved',
+  status: 'resolved' | 'outdated',
   message: string
 ): Promise<ReviewCommentsResponse> {
   return apiClient.post<ReplyCommentRequest, ReviewCommentsResponse>(

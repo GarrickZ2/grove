@@ -1,5 +1,6 @@
 //! CLI 模块
 
+pub mod diff;
 pub mod fp;
 pub mod hooks;
 pub mod mcp;
@@ -41,6 +42,14 @@ pub enum Commands {
         /// Development mode (run Vite dev server with HMR)
         #[arg(long)]
         dev: bool,
+    },
+    /// Open diff review for a task in the browser
+    Diff {
+        /// Task ID (defaults to GROVE_TASK_ID env var)
+        task_id: Option<String>,
+        /// Port for the web server
+        #[arg(short, long, default_value_t = web::DEFAULT_PORT)]
+        port: u16,
     },
     /// Start the GUI desktop application (native window)
     Gui {

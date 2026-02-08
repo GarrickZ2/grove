@@ -174,9 +174,9 @@ export function TasksPage({ initialTaskId, onNavigationConsumed }: TasksPageProp
   const handleSelectTask = (task: Task) => {
     setSelectedTask(task);
     setAutoStartSession(false); // Reset auto-start when manually selecting
-    if (viewMode === "list") {
-      setViewMode("info");
-    }
+    setViewMode("info");
+    setReviewOpen(false);
+    setEditorOpen(false);
   };
 
   // Handle double click - enter Terminal mode (only for non-archived tasks)
