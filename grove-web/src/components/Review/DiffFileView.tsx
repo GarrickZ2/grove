@@ -67,7 +67,6 @@ interface DiffFileViewProps {
   onExpandComment?: (id: number) => void;
   projectId?: string;
   taskId?: string;
-  isDemo?: boolean;
 }
 
 export function DiffFileView({
@@ -97,7 +96,6 @@ export function DiffFileView({
   onExpandComment,
   projectId,
   taskId,
-  isDemo,
 }: DiffFileViewProps) {
   const ref = useRef<HTMLDivElement>(null);
   const [copied, setCopied] = useState(false);
@@ -199,14 +197,7 @@ export function DiffFileView({
   const ensureFileLines = useCallback(() => {
     if (fileLines || fileLinesLoadingRef.current) return;
     fileLinesLoadingRef.current = true;
-    if (isDemo) {
-      const maxLine = gaps.length > 0 ? Math.max(...gaps.map((g) => g.endLine)) : 0;
-      const lines: string[] = [];
-      for (let i = 0; i < maxLine; i++) {
-        lines.push(`    // ... (expanded context line ${i + 1})`);
-      }
-      setFileLines(lines);
-    } else if (projectId && taskId) {
+    if (projectId && taskId) {
       getFileContent(projectId, taskId, file.new_path)
         .then((content) => setFileLines(content.split('\n')))
         .catch(() => {
@@ -218,7 +209,7 @@ export function DiffFileView({
           setFileLines(lines);
         });
     }
-  }, [fileLines, isDemo, projectId, taskId, file.new_path, gaps]);
+  }, [fileLines, projectId, taskId, file.new_path, gaps]);
 
   const handleExpandDown = useCallback((gapIndex: number) => {
     ensureFileLines();

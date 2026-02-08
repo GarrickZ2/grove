@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { ChevronDown, ChevronUp } from 'lucide-react';
-import type { VersionOption } from './demoData';
+import type { VersionOption } from './DiffReviewPage';
 
 interface VersionSelectorProps {
   options: VersionOption[];

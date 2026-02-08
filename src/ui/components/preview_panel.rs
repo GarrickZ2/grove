@@ -409,10 +409,21 @@ pub fn render_diff_tab(
     ]));
     lines.push(Line::from(""));
 
+    // Available width for wrapping (minus left margin)
+    let wrap_width = (area.width as usize).saturating_sub(2);
+
     // Render each comment
     for comment in &data.review_comments.comments {
-        // Comment header with ID and status
-        let loc = format!("{}:{}", comment.file_path, comment.start_line);
+        // Comment header with ID, status, and location
+        let file_parts: Vec<&str> = comment.file_path.split('/').collect();
+        let filename = file_parts.last().copied().unwrap_or(&comment.file_path);
+        let line_label = if comment.start_line == comment.end_line || comment.end_line == 0 {
+            format!("L{}", comment.start_line)
+        } else {
+            format!("L{}-{}", comment.start_line, comment.end_line)
+        };
+        let loc = format!("{} {}", filename, line_label);
+
         match comment.status {
             CommentStatus::Open => {
                 lines.push(Line::from(vec![
@@ -434,12 +445,12 @@ pub fn render_diff_tab(
                             .add_modifier(Modifier::BOLD),
                     ),
                     Span::styled(
-                        "✓ RESOLVED ",
+                        "✓ ",
                         Style::default()
                             .fg(colors.status_merged)
                             .add_modifier(Modifier::BOLD),
                     ),
-                    Span::styled(format!("~~{}~~", &loc), Style::default().fg(colors.muted)),
+                    Span::styled(loc.clone(), Style::default().fg(colors.muted)),
                 ]));
             }
             CommentStatus::Outdated => {
@@ -451,7 +462,7 @@ pub fn render_diff_tab(
                             .add_modifier(Modifier::BOLD),
                     ),
                     Span::styled(
-                        "OUTDATED ",
+                        "⚠ ",
                         Style::default()
                             .fg(Color::Yellow)
                             .add_modifier(Modifier::BOLD),
@@ -461,20 +472,39 @@ pub fn render_diff_tab(
             }
         }
 
-        // Comment content
-        let content_style = if comment.status == CommentStatus::Resolved {
+        // Main comment: author + content
+        let is_resolved = comment.status == CommentStatus::Resolved;
+        let author_style = if is_resolved {
+            Style::default()
+                .fg(colors.muted)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default()
+                .fg(colors.text)
+                .add_modifier(Modifier::BOLD)
+        };
+        let content_style = if is_resolved {
             Style::default().fg(colors.muted)
         } else {
             Style::default().fg(colors.text)
         };
 
+        // Author line
+        lines.push(Line::from(vec![
+            Span::styled(" │ ", Style::default().fg(colors.border)),
+            Span::styled(format!("{}: ", comment.author), author_style),
+        ]));
+
+        // Content lines with manual wrapping
+        let content_prefix = " │ ";
+        let content_width = wrap_width.saturating_sub(content_prefix.len());
         for content_line in comment.content.lines() {
-            let display_text = if comment.status == CommentStatus::Resolved {
-                format!(" │ ~~{}~~", content_line)
-            } else {
-                format!(" │ {}", content_line)
-            };
-            lines.push(Line::from(Span::styled(display_text, content_style)));
+            for wrapped in wrap_text(content_line, content_width) {
+                lines.push(Line::from(vec![
+                    Span::styled(content_prefix, Style::default().fg(colors.border)),
+                    Span::styled(wrapped, content_style),
+                ]));
+            }
         }
 
         // Replies
@@ -486,18 +516,55 @@ pub fn render_diff_tab(
                 )));
             }
         } else {
-            let reply_style = Style::default().fg(colors.status_merged);
-            for reply in &comment.replies {
-                for (i, reply_line) in reply.content.lines().enumerate() {
-                    let prefix = if i == 0 {
-                        format!(" └─ {}: ", reply.author)
+            let reply_count = comment.replies.len();
+            for (reply_idx, reply) in comment.replies.iter().enumerate() {
+                let is_last = reply_idx == reply_count - 1;
+                let connector = if is_last { "└" } else { "├" };
+                let continuation = if is_last { "  " } else { "│ " };
+
+                let reply_style = Style::default().fg(colors.status_merged);
+
+                // First line: connector + author
+                let first_prefix = format!(" {}─ {}: ", connector, reply.author);
+                let cont_prefix = format!(" {}  ", continuation);
+                let reply_content_width = wrap_width.saturating_sub(cont_prefix.len());
+
+                let content_lines: Vec<&str> = reply.content.lines().collect();
+                let mut all_wrapped: Vec<String> = Vec::new();
+                for text_line in &content_lines {
+                    all_wrapped.extend(wrap_text(text_line, reply_content_width));
+                }
+
+                for (line_idx, wrapped_line) in all_wrapped.iter().enumerate() {
+                    if line_idx == 0 {
+                        // First line uses connector + author prefix
+                        let first_line_width = wrap_width.saturating_sub(first_prefix.len());
+                        let re_wrapped = wrap_text(wrapped_line, first_line_width);
+                        for (wi, wl) in re_wrapped.iter().enumerate() {
+                            if wi == 0 {
+                                lines.push(Line::from(vec![
+                                    Span::styled(
+                                        first_prefix.clone(),
+                                        Style::default().fg(colors.border),
+                                    ),
+                                    Span::styled(wl.clone(), reply_style),
+                                ]));
+                            } else {
+                                lines.push(Line::from(vec![
+                                    Span::styled(
+                                        cont_prefix.clone(),
+                                        Style::default().fg(colors.border),
+                                    ),
+                                    Span::styled(wl.clone(), reply_style),
+                                ]));
+                            }
+                        }
                     } else {
-                        "        ".to_string()
-                    };
-                    lines.push(Line::from(Span::styled(
-                        format!("{}{}", prefix, reply_line),
-                        reply_style,
-                    )));
+                        lines.push(Line::from(vec![
+                            Span::styled(cont_prefix.clone(), Style::default().fg(colors.border)),
+                            Span::styled(wrapped_line.clone(), reply_style),
+                        ]));
+                    }
                 }
             }
         }
@@ -506,10 +573,39 @@ pub fn render_diff_tab(
         lines.push(Line::from(""));
     }
 
-    let paragraph = Paragraph::new(lines)
-        .wrap(Wrap { trim: false })
-        .scroll((scroll, 0));
+    let paragraph = Paragraph::new(lines).scroll((scroll, 0));
     frame.render_widget(paragraph, area);
+}
+
+/// Word-wrap a single line of text to fit within `max_width` characters.
+/// Returns one or more lines. If `max_width` is 0, returns the original text.
+fn wrap_text(text: &str, max_width: usize) -> Vec<String> {
+    if max_width == 0 || text.chars().count() <= max_width {
+        return vec![text.to_string()];
+    }
+
+    let mut result = Vec::new();
+    let mut current = String::new();
+    let mut current_len = 0;
+
+    for word in text.split_inclusive(' ') {
+        let word_len = word.chars().count();
+        if current_len + word_len > max_width && current_len > 0 {
+            result.push(current.trim_end().to_string());
+            current = String::new();
+            current_len = 0;
+        }
+        current.push_str(word);
+        current_len += word_len;
+    }
+    if !current.is_empty() {
+        result.push(current.trim_end().to_string());
+    }
+
+    if result.is_empty() {
+        result.push(text.to_string());
+    }
+    result
 }
 
 fn render_no_selection(frame: &mut Frame, area: Rect, colors: &ThemeColors) {

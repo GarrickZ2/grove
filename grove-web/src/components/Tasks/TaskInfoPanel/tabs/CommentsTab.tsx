@@ -4,11 +4,35 @@ import { MessageSquare, CheckCircle, Clock, FileCode, Loader2 } from "lucide-rea
 import type { Task } from "../../../../data/types";
 import { useProject } from "../../../../context/ProjectContext";
 import { getReviewComments, type ReviewCommentEntry } from "../../../../api";
+import { AgentAvatar } from "../../../Review/AgentAvatar";
 
 type ReviewStatus = "open" | "resolved" | "outdated";
 
 interface CommentsTabProps {
   task: Task;
+}
+
+/** Format ISO timestamp to local timezone, seconds precision, no T or offset */
+function formatTimestamp(ts: string): string {
+  try {
+    const d = new Date(ts);
+    if (isNaN(d.getTime())) return ts;
+    const pad = (n: number) => String(n).padStart(2, "0");
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+  } catch {
+    return ts;
+  }
+}
+
+/** Extract filename from path and build line label */
+function formatLocation(comment: ReviewCommentEntry): string {
+  const parts = comment.file_path.split("/");
+  const filename = parts[parts.length - 1] || comment.file_path;
+  const lineLabel =
+    comment.start_line !== comment.end_line
+      ? `L${comment.start_line}-${comment.end_line}`
+      : `L${comment.start_line}`;
+  return `${filename} ${lineLabel}`;
 }
 
 function getStatusConfig(status: ReviewStatus): {
@@ -51,8 +75,8 @@ function ReviewCommentCard({ comment }: { comment: ReviewCommentEntry }) {
       {/* Header */}
       <div className="flex items-center justify-between px-3 py-2 bg-[var(--color-bg-secondary)] border-b border-[var(--color-border)]">
         <div className="flex items-center gap-2 text-xs text-[var(--color-text-muted)]">
-          <FileCode className="w-3.5 h-3.5" />
-          <code className="font-mono truncate max-w-[200px]">{comment.file_path}:{comment.side}:{comment.start_line}{comment.start_line !== comment.end_line ? `-${comment.end_line}` : ''}</code>
+          <FileCode className="w-3.5 h-3.5 flex-shrink-0" />
+          <code className="font-mono">{formatLocation(comment)}</code>
         </div>
         <div className="flex items-center gap-1.5">
           <StatusIcon
@@ -68,13 +92,24 @@ function ReviewCommentCard({ comment }: { comment: ReviewCommentEntry }) {
         </div>
       </div>
 
-      {/* Content */}
+      {/* Main comment */}
       <div className="p-3">
-        <p className="text-sm text-[var(--color-text)]">{comment.content}</p>
+        <div className="flex items-center gap-2 mb-1.5">
+          <AgentAvatar name={comment.author} size={18} />
+          <span className="text-xs font-medium text-[var(--color-text)]">{comment.author}</span>
+          <span className="text-xs text-[var(--color-text-muted)]">{formatTimestamp(comment.timestamp)}</span>
+        </div>
+        <p className="text-sm text-[var(--color-text)] pl-[26px]">{comment.content}</p>
+
+        {/* Replies */}
         {comment.replies.length > 0 && comment.replies.map((reply) => (
-          <div key={reply.id} className="mt-2 pt-2 border-t border-[var(--color-border)]">
-            <p className="text-xs text-[var(--color-text-muted)] mb-1">{reply.author} &middot; {reply.timestamp}</p>
-            <p className="text-sm text-[var(--color-text-muted)]">{reply.content}</p>
+          <div key={reply.id} className="mt-2.5 pt-2.5 border-t border-[var(--color-border)] pl-[26px]">
+            <div className="flex items-center gap-2 mb-1">
+              <AgentAvatar name={reply.author} size={16} />
+              <span className="text-xs font-medium text-[var(--color-text)]">{reply.author}</span>
+              <span className="text-xs text-[var(--color-text-muted)]">{formatTimestamp(reply.timestamp)}</span>
+            </div>
+            <p className="text-sm text-[var(--color-text-muted)] pl-[24px]">{reply.content}</p>
           </div>
         ))}
       </div>

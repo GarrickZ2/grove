@@ -278,9 +278,89 @@
             font-size: 0.75rem;
             box-shadow: 0 1px 2px rgba(0,0,0,0.3);
         }
+
+
+        /* ── Side TOC ── */
+        #side-toc {
+            position: fixed;
+            left: 24px;
+            top: 50%;
+            transform: translateY(-50%);
+            z-index: 40;
+            display: flex;
+            flex-direction: column;
+            gap: 0;
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.4s ease;
+        }
+        #side-toc.visible {
+            opacity: 1;
+            pointer-events: auto;
+        }
+        .toc-item {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 7px 0;
+            cursor: pointer;
+        }
+        .toc-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: #3f3f46;
+            border: 1.5px solid #52525b;
+            transition: all 0.3s ease;
+            flex-shrink: 0;
+        }
+        .toc-item:hover .toc-dot {
+            background: #71717a;
+            border-color: #a1a1aa;
+            box-shadow: 0 0 6px rgba(113,113,122,0.4);
+        }
+        .toc-item.active .toc-dot {
+            background: #10b981;
+            border-color: #10b981;
+            box-shadow: 0 0 10px rgba(16,185,129,0.5);
+            width: 10px;
+            height: 10px;
+        }
+        .toc-label {
+            font-size: 12px;
+            font-weight: 500;
+            color: #52525b;
+            white-space: nowrap;
+            transition: all 0.25s ease;
+            user-select: none;
+        }
+        .toc-item:hover .toc-label {
+            color: #a1a1aa;
+        }
+        .toc-item.active .toc-label {
+            color: #10b981;
+        }
+
+        /* Hide TOC on small screens */
+        @media (max-width: 1279px) {
+            #side-toc { display: none; }
+        }
     </style>
 </head>
 <body class="bg-grove-bg text-grove-text font-sans antialiased">
+
+    <!-- ========== SIDE TOC ========== -->
+    <nav id="side-toc" aria-label="Page sections">
+        <div class="toc-item" data-target="why-grove"><span class="toc-label">Why Grove</span><span class="toc-dot"></span></div>
+        <div class="toc-item" data-target="how-it-works"><span class="toc-label">How It Works</span><span class="toc-dot"></span></div>
+        <div class="toc-item" data-target="interfaces"><span class="toc-label">Interfaces</span><span class="toc-dot"></span></div>
+        <div class="toc-item" data-target="collaborate"><span class="toc-label">Collaborate</span><span class="toc-dot"></span></div>
+        <div class="toc-item" data-target="features"><span class="toc-label">Features</span><span class="toc-dot"></span></div>
+        <div class="toc-item" data-target="ai-integration"><span class="toc-label">AI Integration</span><span class="toc-dot"></span></div>
+        <div class="toc-item" data-target="themes"><span class="toc-label">Themes</span><span class="toc-dot"></span></div>
+        <div class="toc-item" data-target="keyboard"><span class="toc-label">Shortcuts</span><span class="toc-dot"></span></div>
+        <div class="toc-item" data-target="install"><span class="toc-label">Install</span><span class="toc-dot"></span></div>
+    </nav>
 
     <!-- ========== NAVBAR ========== -->
     <nav id="navbar" class="fixed top-0 left-0 right-0 z-50 transition-all duration-300">
@@ -433,7 +513,7 @@
     </section>
 
     <!-- ========== PROBLEM / SOLUTION ========== -->
-    <section class="bg-gradient-section py-24 md:py-32">
+    <section id="why-grove" class="snap-section bg-gradient-section py-24 md:py-32">
         <div class="max-w-6xl mx-auto px-6">
             <h2 class="text-3xl md:text-4xl font-bold text-center mb-6 fade-in">
                 Your workflow shouldn't fight your tools
@@ -572,7 +652,7 @@
     </section>
 
     <!-- ========== HOW IT WORKS ========== -->
-    <section id="how-it-works" class="bg-gradient-section-alt py-24 md:py-32">
+    <section id="how-it-works" class="snap-section bg-gradient-section-alt py-24 md:py-32">
         <div class="max-w-6xl mx-auto px-6">
             <h2 class="text-3xl md:text-4xl font-bold text-center mb-4 fade-in">
                 Each task gets its own <span class="bg-gradient-to-r from-grove-green to-grove-cyan bg-clip-text text-transparent">isolated universe</span>
@@ -622,7 +702,7 @@
     </section>
 
     <!-- ========== THREE INTERFACES ========== -->
-    <section id="interfaces" class="bg-gradient-section py-24 md:py-32">
+    <section id="interfaces" class="snap-section bg-gradient-section py-24 md:py-32">
         <div class="max-w-6xl mx-auto px-6">
             <h2 class="text-3xl md:text-4xl font-bold text-center mb-4 fade-in">
                 Three interfaces. <span class="bg-gradient-to-r from-grove-green to-grove-cyan bg-clip-text text-transparent">One backend.</span>
@@ -796,8 +876,71 @@
         </div>
     </section>
 
+    <!-- ========== COLLABORATE ========== -->
+    <section id="collaborate" class="snap-section bg-gradient-section-alt py-24 md:py-32">
+        <div class="max-w-6xl mx-auto px-6">
+            <div class="text-center mb-4 fade-in">
+                <span class="inline-flex items-center gap-2 text-sm font-medium text-grove-green bg-grove-green/10 border border-grove-green/20 rounded-full px-4 py-1.5 mb-6">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 8h2a2 2 0 012 2v6a2 2 0 01-2 2h-2v4l-4-4H9a1.994 1.994 0 01-1.414-.586m0 0L11 14h4a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2v4l.586-.586z"/></svg>
+                    Multi-Agent Collaboration
+                </span>
+            </div>
+            <h2 class="text-3xl md:text-4xl font-bold text-center mb-4 fade-in">
+                Discuss and Collaborate With Your<br>Multi Agent Team
+            </h2>
+            <p class="text-grove-muted text-center max-w-2xl mx-auto mb-16 fade-in">
+                Review code changes together with multiple AI agents. Each agent brings its own perspective — discuss, debate, and decide on the best approach right in the diff view.
+            </p>
+
+            <!-- Screenshot placeholder -->
+            <div class="fade-in mb-16">
+                <div class="img-glow">
+                    <div class="rounded-xl overflow-hidden border border-white/5">
+                        <img src="images/agent-review.png" alt="Multi-agent collaboration in diff review"
+                             class="w-full"
+                             onerror="this.parentElement.innerHTML='<div class=\'bg-grove-card flex items-center justify-center h-80 text-grove-muted text-sm\'>Screenshot coming soon</div>'">
+                    </div>
+                </div>
+            </div>
+
+            <!-- Feature tags -->
+            <div class="flex flex-wrap justify-center gap-3 mb-16 fade-in">
+                <span class="px-4 py-2 rounded-full bg-grove-card border border-white/5 text-sm text-grove-muted">Threaded Discussions</span>
+                <span class="px-4 py-2 rounded-full bg-grove-card border border-white/5 text-sm text-grove-muted">Multi-Agent Threads</span>
+                <span class="px-4 py-2 rounded-full bg-grove-card border border-white/5 text-sm text-grove-muted">Inline Code Comments</span>
+                <span class="px-4 py-2 rounded-full bg-grove-card border border-white/5 text-sm text-grove-muted">Resolve / Reopen</span>
+                <span class="px-4 py-2 rounded-full bg-grove-card border border-white/5 text-sm text-grove-muted">MCP Powered</span>
+            </div>
+
+            <!-- 3-step flow -->
+            <div class="grid md:grid-cols-3 gap-8 fade-in">
+                <div class="text-center">
+                    <div class="w-12 h-12 rounded-xl bg-grove-green/10 border border-grove-green/20 flex items-center justify-center mx-auto mb-4">
+                        <span class="text-grove-green font-bold text-lg">1</span>
+                    </div>
+                    <h3 class="text-lg font-semibold mb-2">Agent Reviews Code</h3>
+                    <p class="text-grove-muted text-sm">AI agents use <code class="text-grove-green/80 bg-grove-green/5 px-1.5 py-0.5 rounded text-xs">grove_add_comment</code> to leave inline review comments on your diff.</p>
+                </div>
+                <div class="text-center">
+                    <div class="w-12 h-12 rounded-xl bg-grove-green/10 border border-grove-green/20 flex items-center justify-center mx-auto mb-4">
+                        <span class="text-grove-green font-bold text-lg">2</span>
+                    </div>
+                    <h3 class="text-lg font-semibold mb-2">Team Discusses</h3>
+                    <p class="text-grove-muted text-sm">Multiple agents reply in threads via <code class="text-grove-green/80 bg-grove-green/5 px-1.5 py-0.5 rounded text-xs">grove_reply_review</code>, sharing different perspectives on the approach.</p>
+                </div>
+                <div class="text-center">
+                    <div class="w-12 h-12 rounded-xl bg-grove-green/10 border border-grove-green/20 flex items-center justify-center mx-auto mb-4">
+                        <span class="text-grove-green font-bold text-lg">3</span>
+                    </div>
+                    <h3 class="text-lg font-semibold mb-2">You Decide</h3>
+                    <p class="text-grove-muted text-sm">Review all suggestions in the Web UI, resolve comments, and make the final call. You stay in control.</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
     <!-- ========== FEATURES GRID ========== -->
-    <section id="features" class="bg-gradient-section-alt py-24 md:py-32">
+    <section id="features" class="snap-section bg-gradient-section py-24 md:py-32">
         <div class="max-w-6xl mx-auto px-6">
             <h2 class="text-3xl md:text-4xl font-bold text-center mb-4 fade-in">
                 Everything you need for parallel AI workflows
@@ -892,7 +1035,7 @@
     </section>
 
     <!-- ========== AI AGENT INTEGRATION (DEEP DIVE) ========== -->
-    <section id="ai-integration" class="bg-gradient-section py-24 md:py-32">
+    <section id="ai-integration" class="snap-section bg-gradient-section-alt py-24 md:py-32">
         <div class="max-w-6xl mx-auto px-6">
             <h2 class="text-3xl md:text-4xl font-bold text-center mb-4 fade-in">
                 Use <span class="bg-gradient-to-r from-grove-green to-grove-cyan bg-clip-text text-transparent">any agent</span> you like
@@ -943,15 +1086,19 @@
                             </div>
                             <div class="flex items-start gap-3 text-sm">
                                 <code class="text-grove-green bg-grove-bg-tertiary px-2 py-0.5 rounded font-mono text-xs whitespace-nowrap mt-0.5">grove_read_review</code>
-                                <span class="text-grove-muted">Read code review comments with IDs, file locations, content, and status (open/resolved).</span>
+                                <span class="text-grove-muted">Read code review comments with IDs, file locations, content, and status (open/resolved/outdated).</span>
                             </div>
                             <div class="flex items-start gap-3 text-sm">
                                 <code class="text-grove-green bg-grove-bg-tertiary px-2 py-0.5 rounded font-mono text-xs whitespace-nowrap mt-0.5">grove_reply_review</code>
-                                <span class="text-grove-muted">Batch reply to review comments and set status to resolved or not_resolved.</span>
+                                <span class="text-grove-muted">Reply to review comments with batch support. Agents can discuss but cannot change comment status &mdash; only you can resolve or reopen.</span>
+                            </div>
+                            <div class="flex items-start gap-3 text-sm">
+                                <code class="text-grove-green bg-grove-bg-tertiary px-2 py-0.5 rounded font-mono text-xs whitespace-nowrap mt-0.5">grove_add_comment</code>
+                                <span class="text-grove-muted">Create a code review comment at a specific file location (file_path, start_line, end_line). Agents can proactively flag issues.</span>
                             </div>
                             <div class="flex items-start gap-3 text-sm">
                                 <code class="text-grove-green bg-grove-bg-tertiary px-2 py-0.5 rounded font-mono text-xs whitespace-nowrap mt-0.5">grove_complete_task</code>
-                                <span class="text-grove-muted">Complete the task in one call: commit changes, rebase onto target branch, and merge.</span>
+                                <span class="text-grove-muted">Complete the task in one call: commit changes, rebase onto target branch, and merge. Only runs when you ask.</span>
                             </div>
                         </div>
                     </div>
@@ -1085,7 +1232,7 @@
     </section>
 
     <!-- ========== PREVIEW PANEL & THEMES ========== -->
-    <section class="bg-gradient-section-alt py-24 md:py-32">
+    <section id="themes" class="snap-section bg-gradient-section py-24 md:py-32">
         <div class="max-w-6xl mx-auto px-6">
             <!-- Themes -->
             <div class="max-w-5xl mx-auto mb-24">
@@ -1193,7 +1340,7 @@
     </section>
 
     <!-- ========== KEYBOARD SHORTCUTS ========== -->
-    <section class="bg-gradient-section py-24 md:py-32">
+    <section id="keyboard" class="snap-section bg-gradient-section-alt py-24 md:py-32">
         <div class="max-w-6xl mx-auto px-6">
             <h2 class="text-3xl md:text-4xl font-bold text-center mb-4 fade-in">
                 Keyboard-first design
@@ -1256,7 +1403,7 @@
     </section>
 
     <!-- ========== INSTALL ========== -->
-    <section id="install" class="bg-gradient-section-alt py-24 md:py-32">
+    <section id="install" class="snap-section bg-gradient-section py-24 md:py-32">
         <div class="max-w-6xl mx-auto px-6">
             <h2 class="text-3xl md:text-4xl font-bold text-center mb-4 fade-in">
                 Install in <span class="bg-gradient-to-r from-grove-green to-grove-cyan bg-clip-text text-transparent">10 seconds</span>
@@ -1466,7 +1613,7 @@
         const featureImages = {
             terminal: 'images/integrate-terminal.png',
             editor: 'images/editor.png',
-            review: 'images/local-review.png',
+            review: 'images/diff-review.png',
             notes: 'images/task-notes.png',
             stats: 'images/stats.png',
             notifications: 'images/notification-on-pending-action.png'
@@ -1516,6 +1663,113 @@
         }, { threshold: 0.1, rootMargin: '0px 0px -50px 0px' });
 
         document.querySelectorAll('.fade-in').forEach(el => observer.observe(el));
+
+        // ── Side TOC ──
+        (function() {
+            const toc = document.getElementById('side-toc');
+            const tocItems = toc.querySelectorAll('.toc-item');
+            const sectionIds = Array.from(tocItems).map(item => item.dataset.target);
+            const sections = sectionIds.map(id => document.getElementById(id)).filter(Boolean);
+
+            // Click handler — smooth scroll to section
+            tocItems.forEach(item => {
+                item.addEventListener('click', () => {
+                    const target = document.getElementById(item.dataset.target);
+                    if (target) target.scrollIntoView({ behavior: 'smooth' });
+                });
+            });
+
+            // Show/hide TOC based on scroll position (hidden in hero area)
+            function updateTocVisibility() {
+                const scrollY = window.scrollY;
+                const heroHeight = document.getElementById('why-grove')?.offsetTop || 600;
+                toc.classList.toggle('visible', scrollY > heroHeight - 200);
+            }
+
+            // IntersectionObserver to track active section
+            let currentActive = null;
+            const tocObserver = new IntersectionObserver((entries) => {
+                entries.forEach(entry => {
+                    if (entry.isIntersecting) {
+                        const id = entry.target.id;
+                        if (currentActive !== id) {
+                            currentActive = id;
+                            tocItems.forEach(item => {
+                                item.classList.toggle('active', item.dataset.target === id);
+                            });
+                        }
+                    }
+                });
+            }, { threshold: 0.15, rootMargin: '-10% 0px -70% 0px' });
+
+            sections.forEach(section => tocObserver.observe(section));
+
+            window.addEventListener('scroll', updateTocVisibility, { passive: true });
+            updateTocVisibility();
+        })();
+
+        // ── Section snap on overscroll ──
+        (function() {
+            const sections = Array.from(document.querySelectorAll('.snap-section'));
+            if (!sections.length) return;
+
+            let snapping = false;
+            let delta = 0;
+            let lastWheel = 0;
+            const THRESHOLD = 80;
+
+            window.addEventListener('wheel', (e) => {
+                if (snapping) return;
+
+                const now = Date.now();
+                if (now - lastWheel > 300) delta = 0;
+                lastWheel = now;
+
+                const scrollTop = window.scrollY;
+                const vh = window.innerHeight;
+
+                // Find which section the viewport top is in
+                let idx = 0;
+                for (let i = sections.length - 1; i >= 0; i--) {
+                    if (scrollTop >= sections[i].offsetTop - 10) { idx = i; break; }
+                }
+
+                const section = sections[idx];
+                const sectionBottom = section.offsetTop + section.offsetHeight;
+                const viewBottom = scrollTop + vh;
+
+                if (e.deltaY > 0) {
+                    // Scrolling down — section bottom already in view?
+                    if (viewBottom >= sectionBottom - 30 && idx < sections.length - 1) {
+                        delta += e.deltaY;
+                        if (delta >= THRESHOLD) {
+                            snapping = true;
+                            delta = 0;
+                            sections[idx + 1].scrollIntoView({ behavior: 'smooth' });
+                            setTimeout(() => { snapping = false; }, 700);
+                        }
+                    } else {
+                        delta = 0;
+                    }
+                } else if (e.deltaY < 0) {
+                    // Scrolling up — at section top?
+                    if (scrollTop <= section.offsetTop + 30 && idx > 0) {
+                        delta += Math.abs(e.deltaY);
+                        if (delta >= THRESHOLD) {
+                            snapping = true;
+                            delta = 0;
+                            // Scroll to previous section so its bottom aligns with viewport bottom
+                            const prev = sections[idx - 1];
+                            const target = Math.max(0, prev.offsetTop + prev.offsetHeight - vh);
+                            window.scrollTo({ top: target, behavior: 'smooth' });
+                            setTimeout(() => { snapping = false; }, 700);
+                        }
+                    } else {
+                        delta = 0;
+                    }
+                }
+            }, { passive: true });
+        })();
     </script>
 </body>
 </html>

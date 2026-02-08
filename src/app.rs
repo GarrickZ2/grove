@@ -320,10 +320,7 @@ impl ProjectState {
 
     /// 向下滚动 Review tab
     pub fn scroll_diff_down(&mut self) {
-        let comment_count = self.panel_data.review_comments.comments.len() as u16;
-        if self.diff_scroll < comment_count.saturating_sub(1) {
-            self.diff_scroll += 1;
-        }
+        self.diff_scroll += 1;
     }
 
     /// 向上滚动 Diff tab
@@ -787,11 +784,7 @@ impl MonitorState {
                 }
             }
             PreviewSubTab::Diff => {
-                // Review tab: count comment items for scroll limit
-                let comment_count = self.panel_data.review_comments.comments.len() as u16;
-                if self.diff_scroll < comment_count.saturating_sub(1) {
-                    self.diff_scroll += 1;
-                }
+                self.diff_scroll += 1;
             }
         }
     }

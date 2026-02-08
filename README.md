@@ -130,8 +130,8 @@ A full-featured web interface embedded directly in the binary — no separate fr
 |---|---|
 | ![Terminal](docs/images/web-task-terminal.png) | ![Editor](docs/images/web-editor.png) |
 | **Integrated Terminal** — Full xterm.js terminal via WebSocket | **Monaco Editor** — In-browser code editing with file tree |
-| ![Code Review](docs/images/web-revew-difit.png) | ![Notes](docs/images/web-task-notes.png) |
-| **Code Review** — Diff view with inline review comments | **Task Notes** — Context and requirements per task |
+| ![Code Review](docs/images/web-review-diff.png) | ![Notes](docs/images/web-task-notes.png) |
+| **Code Review** — Diff review with inline comments and multi-agent discussions | **Task Notes** — Context and requirements per task |
 | ![Stats](docs/images/web-task-stats.png) | ![Notifications](docs/images/web-task-notification.png) |
 | **Activity Stats** — File edit heatmap and timeline | **Hook Notifications** — Real-time agent notification inbox |
 
@@ -169,7 +169,7 @@ Press `p` to toggle the side panel showing details for the selected task:
 - **Stats** — file edit heatmap and activity timeline
 - **Git** — recent commits, diff stats, uncommitted changes
 - **Notes** — user-provided context and requirements (editable with `e`)
-- **Review** — code review comments from difit
+- **Review** — code review comments with threaded discussions
 
 Use `j/k` to scroll panel content, `1/2/3/4` to switch sub-tabs.
 
@@ -223,10 +223,11 @@ Add to your Claude Code MCP config (`~/.claude/config.json`):
 | `grove_status` | Check if running inside a Grove task, get context |
 | `grove_read_notes` | Read user-provided task notes |
 | `grove_read_review` | Read code review comments with status |
-| `grove_reply_review` | Batch reply to review comments |
+| `grove_reply_review` | Reply to review comments (supports batch) |
+| `grove_add_comment` | Create a code review comment on specific code locations |
 | `grove_complete_task` | Complete task: commit → rebase → merge → archive |
 
-When inside a Grove task, the agent can read notes, respond to code review feedback, and complete the task with a single tool call.
+When inside a Grove task, the agent can read notes, respond to code review feedback, add review comments, and complete the task with a single tool call.
 
 ---
 

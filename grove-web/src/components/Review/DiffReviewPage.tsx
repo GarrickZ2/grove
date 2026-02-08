@@ -1,9 +1,14 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { getFullDiff, createComment, deleteComment as apiDeleteComment, replyReviewComment as apiReplyComment, updateCommentStatus as apiUpdateCommentStatus } from '../../api/review';
 import { getReviewComments, getCommits } from '../../api/tasks';
-import type { VersionOption } from './demoData';
 import type { FullDiffResult } from '../../api/review';
-import type { ReviewCommentEntry, CommentReply } from '../../api/tasks';
+import type { ReviewCommentEntry } from '../../api/tasks';
+
+export interface VersionOption {
+  id: string;
+  label: string;
+  ref?: string;  // git ref (commit hash); undefined for 'latest' and 'target'
+}
 
 export interface CommentAnchor {
   filePath: string;
@@ -15,7 +20,6 @@ import { FileTreeSidebar } from './FileTreeSidebar';
 import { DiffFileView } from './DiffFileView';
 import { ConversationSidebar } from './ConversationSidebar';
 import { MessageSquare, ChevronUp, ChevronDown, PanelLeftClose, PanelLeftOpen, Crosshair } from 'lucide-react';
-import { DEMO_DIFF, DEMO_COMMENTS, DEMO_VERSIONS } from './demoData';
 import { VersionSelector } from './VersionSelector';
 import './diffTheme.css';
 
@@ -26,8 +30,6 @@ interface DiffReviewPageProps {
 }
 
 export function DiffReviewPage({ projectId, taskId, embedded }: DiffReviewPageProps) {
-  const isDemo = projectId === 'demo';
-
   const [diffData, setDiffData] = useState<FullDiffResult | null>(null);
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
   const [viewType, setViewType] = useState<'unified' | 'split'>('unified');
@@ -96,7 +98,7 @@ export function DiffReviewPage({ projectId, taskId, embedded }: DiffReviewPagePr
   }, [viewedFiles, fileHashes]);
 
   // Version options for FROM / TO selectors
-  const versionList = isDemo ? DEMO_VERSIONS : versions;
+  const versionList = versions;
   // FROM: everything except Latest (newest first: Version N..1, Base)
   const fromOptions = useMemo(
     () => versionList.filter((v) => v.id !== 'latest'),
@@ -124,19 +126,19 @@ export function DiffReviewPage({ projectId, taskId, embedded }: DiffReviewPagePr
   // Version change handlers — directly trigger refetch
   const handleFromVersionChange = useCallback((id: string) => {
     setFromVersion(id);
-    if (isDemo || versions.length === 0) return;
+    if (versions.length === 0) return;
     const fromOpt = versions.find((v) => v.id === id);
     const toOpt = versions.find((v) => v.id === toVersion);
     refetchDiff(fromOpt?.ref, toOpt?.ref);
-  }, [isDemo, versions, toVersion, refetchDiff]);
+  }, [versions, toVersion, refetchDiff]);
 
   const handleToVersionChange = useCallback((id: string) => {
     setToVersion(id);
-    if (isDemo || versions.length === 0) return;
+    if (versions.length === 0) return;
     const fromOpt = versions.find((v) => v.id === fromVersion);
     const toOpt = versions.find((v) => v.id === id);
     refetchDiff(fromOpt?.ref, toOpt?.ref);
-  }, [isDemo, versions, fromVersion, refetchDiff]);
+  }, [versions, fromVersion, refetchDiff]);
 
   // Initial load: diff + comments + commits (builds version list)
   useEffect(() => {
@@ -149,39 +151,32 @@ export function DiffReviewPage({ projectId, taskId, embedded }: DiffReviewPagePr
         let data: FullDiffResult;
         let reviewComments: ReviewCommentEntry[] = [];
 
-        if (isDemo) {
-          // Demo mode — use mock data, no backend needed
-          await new Promise((r) => setTimeout(r, 300)); // simulate loading
-          data = DEMO_DIFF;
-          reviewComments = DEMO_COMMENTS;
-        } else {
-          const [diffResult, reviewData, commitsData] = await Promise.all([
-            getFullDiff(projectId, taskId),
-            getReviewComments(projectId, taskId).catch(() => null),
-            getCommits(projectId, taskId).catch(() => null),
-          ]);
-          data = diffResult;
-          if (reviewData) reviewComments = reviewData.comments;
+        const [diffResult, reviewData, commitsData] = await Promise.all([
+          getFullDiff(projectId, taskId),
+          getReviewComments(projectId, taskId).catch(() => null),
+          getCommits(projectId, taskId).catch(() => null),
+        ]);
+        data = diffResult;
+        if (reviewData) reviewComments = reviewData.comments;
 
-          // Build version options: Latest, Version N..1, Base (newest first)
-          // skip_versions = number of leading commits equivalent to Latest
-          {
-            const opts: VersionOption[] = [{ id: 'latest', label: 'Latest' }];
-            if (commitsData && commitsData.commits.length > 0) {
-              const totalCommits = commitsData.commits.length;
-              const startIdx = commitsData.skip_versions ?? 1;
-              for (let i = startIdx; i < totalCommits; i++) {
-                const versionNum = totalCommits - i;
-                opts.push({
-                  id: `v${versionNum}`,
-                  label: `Version ${versionNum}`,
-                  ref: commitsData.commits[i].hash,
-                });
-              }
+        // Build version options: Latest, Version N..1, Base (newest first)
+        // skip_versions = number of leading commits equivalent to Latest
+        {
+          const opts: VersionOption[] = [{ id: 'latest', label: 'Latest' }];
+          if (commitsData && commitsData.commits.length > 0) {
+            const totalCommits = commitsData.commits.length;
+            const startIdx = commitsData.skip_versions ?? 1;
+            for (let i = startIdx; i < totalCommits; i++) {
+              const versionNum = totalCommits - i;
+              opts.push({
+                id: `v${versionNum}`,
+                label: `Version ${versionNum}`,
+                ref: commitsData.commits[i].hash,
+              });
             }
-            opts.push({ id: 'target', label: 'Base' });
-            if (!cancelled) setVersions(opts);
           }
+          opts.push({ id: 'target', label: 'Base' });
+          if (!cancelled) setVersions(opts);
         }
 
         if (!cancelled) {
@@ -202,7 +197,7 @@ export function DiffReviewPage({ projectId, taskId, embedded }: DiffReviewPagePr
 
     load();
     return () => { cancelled = true; };
-  }, [projectId, taskId, isDemo]);
+  }, [projectId, taskId]);
 
   // Auto-collapse resolved/outdated comments on first load
   useEffect(() => {
@@ -311,25 +306,6 @@ export function DiffReviewPage({ projectId, taskId, embedded }: DiffReviewPagePr
 
   // Add comment
   const handleAddComment = useCallback(async (anchor: CommentAnchor, content: string) => {
-    if (isDemo) {
-      // Demo mode — local state only
-      const newId = comments.length > 0 ? Math.max(...comments.map((c) => c.id)) + 1 : 1;
-      const entry: ReviewCommentEntry = {
-        id: newId,
-        file_path: anchor.filePath,
-        side: anchor.side,
-        start_line: anchor.startLine,
-        end_line: anchor.endLine,
-        content,
-        author: 'You',
-        timestamp: 'just now',
-        status: 'open',
-        replies: [],
-      };
-      setComments((prev) => [...prev, entry]);
-      setCommentFormAnchor(null);
-      return;
-    }
     try {
       const result = await createComment(projectId, taskId, anchor, content);
       setComments(result.comments);
@@ -337,21 +313,17 @@ export function DiffReviewPage({ projectId, taskId, embedded }: DiffReviewPagePr
     } catch {
       // Could add toast here
     }
-  }, [projectId, taskId, isDemo, comments]);
+  }, [projectId, taskId]);
 
   // Delete comment
   const handleDeleteComment = useCallback(async (id: number) => {
-    if (isDemo) {
-      setComments((prev) => prev.filter((c) => c.id !== id));
-      return;
-    }
     try {
       const result = await apiDeleteComment(projectId, taskId, id);
       setComments(result.comments);
     } catch {
       // Could add toast here
     }
-  }, [projectId, taskId, isDemo]);
+  }, [projectId, taskId]);
 
   // Cancel comment form
   const handleCancelComment = useCallback(() => {
@@ -371,23 +343,6 @@ export function DiffReviewPage({ projectId, taskId, embedded }: DiffReviewPagePr
 
   // Reply to comment (no status change)
   const handleReplyComment = useCallback(async (commentId: number, _status: string, message: string) => {
-    if (isDemo) {
-      // Demo mode — push reply to replies array
-      setComments((prev) =>
-        prev.map((c) => {
-          if (c.id !== commentId) return c;
-          const newReply: CommentReply = {
-            id: c.replies.length > 0 ? Math.max(...c.replies.map((r) => r.id)) + 1 : 1,
-            content: message,
-            author: 'You',
-            timestamp: 'just now',
-          };
-          return { ...c, replies: [...c.replies, newReply] };
-        })
-      );
-      setReplyFormCommentId(null);
-      return;
-    }
     try {
       const result = await apiReplyComment(projectId, taskId, commentId, message);
       setComments(result.comments);
@@ -395,17 +350,10 @@ export function DiffReviewPage({ projectId, taskId, embedded }: DiffReviewPagePr
     } catch {
       // Could add toast here
     }
-  }, [projectId, taskId, isDemo]);
+  }, [projectId, taskId]);
 
   // Resolve comment (mark as resolved + auto-collapse)
   const handleResolveComment = useCallback(async (id: number) => {
-    if (isDemo) {
-      setComments((prev) =>
-        prev.map((c) => (c.id === id ? { ...c, status: 'resolved' } : c))
-      );
-      setCollapsedCommentIds((prev) => new Set([...prev, id]));
-      return;
-    }
     try {
       const result = await apiUpdateCommentStatus(projectId, taskId, id, 'resolved');
       setComments(result.comments);
@@ -413,21 +361,10 @@ export function DiffReviewPage({ projectId, taskId, embedded }: DiffReviewPagePr
     } catch {
       // Could add toast here
     }
-  }, [projectId, taskId, isDemo]);
+  }, [projectId, taskId]);
 
   // Reopen comment (mark resolved → open + auto-expand)
   const handleReopenComment = useCallback(async (id: number) => {
-    if (isDemo) {
-      setComments((prev) =>
-        prev.map((c) => (c.id === id ? { ...c, status: 'open' } : c))
-      );
-      setCollapsedCommentIds((prev) => {
-        const next = new Set(prev);
-        next.delete(id);
-        return next;
-      });
-      return;
-    }
     try {
       const result = await apiUpdateCommentStatus(projectId, taskId, id, 'open');
       setComments(result.comments);
@@ -439,7 +376,7 @@ export function DiffReviewPage({ projectId, taskId, embedded }: DiffReviewPagePr
     } catch {
       // Could add toast here
     }
-  }, [projectId, taskId, isDemo]);
+  }, [projectId, taskId]);
 
   // Navigate to a comment (from conversation sidebar)
   const handleNavigateToComment = useCallback((filePath: string, _line: number) => {
@@ -600,7 +537,6 @@ export function DiffReviewPage({ projectId, taskId, embedded }: DiffReviewPagePr
                   isActive={selectedFile === file.new_path}
                   projectId={projectId}
                   taskId={taskId}
-                  isDemo={isDemo}
                   onVisible={() => handleFileVisible(file.new_path)}
                   comments={getFileComments(file.new_path)}
                   commentFormAnchor={commentFormAnchor}
