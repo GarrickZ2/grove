@@ -164,11 +164,11 @@ fn ensure_task_session(
         None
     };
 
-    // Apply layout (skip for Single layout)
+    // Apply layout
     let mut layout_path: Option<String> = None;
-    if layout != TaskLayout::Single {
-        match mux {
-            Multiplexer::Tmux => {
+    match mux {
+        Multiplexer::Tmux => {
+            if layout != TaskLayout::Single {
                 if let Err(e) = tmux::layout::apply_layout(
                     &session_name,
                     &task.worktree_path,
@@ -179,18 +179,18 @@ fn ensure_task_session(
                     eprintln!("Warning: Failed to apply layout: {}", e);
                 }
             }
-            Multiplexer::Zellij => {
-                // Zellij layout is applied at attach time, not at create time
-                // Generate and save KDL layout file
-                let kdl = crate::zellij::layout::generate_kdl(
-                    &layout,
-                    &agent_cmd,
-                    custom_layout.as_ref(),
-                );
-                match crate::zellij::layout::write_session_layout(&session_name, &kdl) {
-                    Ok(path) => layout_path = Some(path),
-                    Err(e) => eprintln!("Warning: Failed to write zellij layout: {}", e),
-                }
+        }
+        Multiplexer::Zellij => {
+            // Zellij: 始终生成 KDL layout 以通过 pane 命令注入环境变量
+            let kdl = crate::zellij::layout::generate_kdl(
+                &layout,
+                &agent_cmd,
+                custom_layout.as_ref(),
+                &session_env.shell_export_prefix(),
+            );
+            match crate::zellij::layout::write_session_layout(&session_name, &kdl) {
+                Ok(path) => layout_path = Some(path),
+                Err(e) => eprintln!("Warning: Failed to write zellij layout: {}", e),
             }
         }
     }

@@ -27,6 +27,7 @@ import { StatsTab, GitTab, NotesTab, CommentsTab } from "./tabs";
 interface TaskInfoPanelProps {
   projectId: string;
   task: Task;
+  projectName?: string;
   onClose: () => void;
   onEnterTerminal?: () => void;
   onRecover?: () => void;
@@ -64,6 +65,7 @@ const TABS: TabConfig[] = [
 export function TaskInfoPanel({
   projectId,
   task,
+  projectName,
   onClose,
   onEnterTerminal,
   onRecover,
@@ -185,9 +187,14 @@ export function TaskInfoPanel({
             >
               {/* Task Info Header */}
               <div className="px-3 py-2 border-b border-[var(--color-border)]">
-                <h2 className="text-sm font-semibold text-[var(--color-text)] truncate">
-                  {task.name}
-                </h2>
+                <div className="flex items-center gap-1.5">
+                  <h2 className="text-sm font-semibold text-[var(--color-text)] truncate">
+                    {task.name}
+                  </h2>
+                  {projectName && (
+                    <span className="flex-shrink-0 px-1.5 py-0.5 text-[10px] font-medium text-[var(--color-text-muted)] bg-[var(--color-bg-tertiary)] rounded">{projectName}</span>
+                  )}
+                </div>
                 <p className="text-xs text-[var(--color-text-muted)] font-mono truncate">
                   {task.branch} → {task.target}
                 </p>
@@ -385,9 +392,14 @@ export function TaskInfoPanel({
 
       {/* Task Name */}
       <div className="px-3 py-2 border-b border-[var(--color-border)]">
-        <h2 className="text-sm font-semibold text-[var(--color-text)] truncate">
-          {task.name}
-        </h2>
+        <div className="flex items-center gap-1.5">
+          <h2 className="text-sm font-semibold text-[var(--color-text)] truncate">
+            {task.name}
+          </h2>
+          {projectName && (
+            <span className="flex-shrink-0 px-1.5 py-0.5 text-[10px] font-medium text-[var(--color-text-muted)] bg-[var(--color-bg-tertiary)] rounded">{projectName}</span>
+          )}
+        </div>
         <p className="text-xs text-[var(--color-text-muted)] font-mono truncate">
           {task.branch} → {task.target}
         </p>

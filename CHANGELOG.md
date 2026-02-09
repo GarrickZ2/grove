@@ -10,12 +10,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - **MCP review tools missing structured comment IDs** — `grove_read_review`, `grove_add_comment`, and `grove_reply_review` now return structured JSON responses with explicit `comment_id` fields, enabling AI agents to reliably extract IDs and reply to comments
+- **Zellij sessions missing environment variables** — Zellij sessions now inject `GROVE_*` env vars via KDL layout `export` prefix in all pane commands
+- **Review: Comment Detail Modal not refreshing after reply** — expanded comment now derives from latest comments array by ID, so replies appear immediately
+- **Review: Esc key in Comment Detail Modal exiting Review mode** — Esc now uses layered capture-phase handling: closes reply form first, then modal, without propagating to parent
+
+### Added
+
+- **Project name tag** — task headers now display the project name as an inline tag badge next to the task name (TaskInfoPanel, TaskView header, and compact toolbar)
 
 ### Changed
 
 - **Blitz mode: removed task float-to-top** — selecting a task no longer reorders the list; tasks stay in their natural sort order
 - **Blitz mode: single-click enters terminal** — clicking a task now directly opens the terminal view (previously required double-click)
 - **Blitz mode: periodic card sweep effect** — selected task card shows a subtle left-to-right highlight sweep that repeats every few seconds
+- **Review: Conversation Sidebar filtered in Changes mode** — comments are now filtered to only show those belonging to files visible in the current diff
+- **Review: Conversation Sidebar click behavior** — project comments expand on click; file comments navigate to file; inline comments scroll to the exact line
+- **Review: Comment Detail Modal Reply button** — now uses theme highlight color instead of muted gray
 
 ## [0.4.8] - 2026-02-08
 

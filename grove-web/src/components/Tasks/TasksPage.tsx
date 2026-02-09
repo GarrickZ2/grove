@@ -776,6 +776,7 @@ export function TasksPage({ initialTaskId, onNavigationConsumed }: TasksPageProp
                   <TaskInfoPanel
                     projectId={selectedProject.id}
                     task={selectedTask}
+                    projectName={selectedProject.name}
                     onClose={handleCloseTask}
                     onEnterTerminal={selectedTask.status !== "archived" ? handleEnterTerminal : undefined}
                     onRecover={selectedTask.status === "archived" ? handleRecover : undefined}
@@ -828,6 +829,7 @@ export function TasksPage({ initialTaskId, onNavigationConsumed }: TasksPageProp
               <TaskInfoPanel
                 projectId={selectedProject.id}
                 task={selectedTask}
+                projectName={selectedProject.name}
                 onClose={handleCloseTask}
                 isTerminalMode
               />
@@ -836,6 +838,7 @@ export function TasksPage({ initialTaskId, onNavigationConsumed }: TasksPageProp
               <TaskView
                 projectId={selectedProject.id}
                 task={selectedTask}
+                projectName={selectedProject.name}
                 reviewOpen={reviewOpen}
                 editorOpen={editorOpen}
                 autoStartSession={autoStartSession}

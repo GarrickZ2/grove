@@ -685,6 +685,7 @@ export function BlitzPage({ onSwitchToZen }: BlitzPageProps) {
                     <TaskInfoPanel
                       projectId={currentSelected.projectId}
                       task={currentSelected.task}
+                      projectName={currentSelected.projectName}
                       onClose={handleCloseTask}
                       onEnterTerminal={currentSelected.task.status !== "archived" ? handleEnterTerminal : undefined}
                       onClean={handleClean}
@@ -734,12 +735,14 @@ export function BlitzPage({ onSwitchToZen }: BlitzPageProps) {
                   <TaskInfoPanel
                     projectId={currentSelected.projectId}
                     task={currentSelected.task}
+                    projectName={currentSelected.projectName}
                     onClose={handleCloseTask}
                     isTerminalMode
                   />
                   <TaskView
                     projectId={currentSelected.projectId}
                     task={currentSelected.task}
+                    projectName={currentSelected.projectName}
                     reviewOpen={reviewOpen}
                     editorOpen={editorOpen}
                     onToggleReview={handleToggleReview}

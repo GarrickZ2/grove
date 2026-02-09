@@ -561,12 +561,21 @@ export function DiffReviewPage({ projectId, taskId, embedded }: DiffReviewPagePr
   }, [projectId, taskId]);
 
   // Navigate to a comment (from conversation sidebar)
-  const handleNavigateToComment = useCallback((filePath: string, _line: number) => {
-    const el = document.getElementById(`diff-file-${encodeURIComponent(filePath)}`);
-    if (el) {
-      el.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    }
+  const handleNavigateToComment = useCallback((filePath: string, line: number) => {
     setSelectedFile(filePath);
+    // Delay to allow React to render the file (especially in focus mode)
+    setTimeout(() => {
+      const fileEl = document.getElementById(`diff-file-${encodeURIComponent(filePath)}`);
+      if (!fileEl) return;
+      if (line > 0) {
+        const lineEl = fileEl.querySelector(`tr[data-line="${line}"]`);
+        if (lineEl) {
+          lineEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          return;
+        }
+      }
+      fileEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }, 50);
   }, []);
 
   // Comments for a specific file
@@ -781,7 +790,10 @@ export function DiffReviewPage({ projectId, taskId, embedded }: DiffReviewPagePr
 
             {/* Conversation sidebar */}
             <ConversationSidebar
-              comments={comments}
+              comments={viewMode === 'diff'
+                ? comments.filter(c => !c.file_path || displayFiles.some(f => f.new_path === c.file_path))
+                : comments
+              }
               visible={convSidebarVisible}
               onAddProjectComment={handleAddProjectComment}
               onNavigateToComment={handleNavigateToComment}

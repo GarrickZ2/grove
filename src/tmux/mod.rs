@@ -34,6 +34,26 @@ impl SessionEnv {
         cmd.env("GROVE_PROJECT_NAME", &self.project_name);
         cmd.env("GROVE_PROJECT", &self.project_path);
     }
+
+    /// 生成 shell export 前缀，用于在 zellij KDL layout 中注入环境变量
+    ///
+    /// 返回格式: `export GROVE_TASK_ID='val' GROVE_BRANCH='val' ...; `
+    pub fn shell_export_prefix(&self) -> String {
+        let vars = [
+            ("GROVE_TASK_ID", &self.task_id),
+            ("GROVE_TASK_NAME", &self.task_name),
+            ("GROVE_BRANCH", &self.branch),
+            ("GROVE_TARGET", &self.target),
+            ("GROVE_WORKTREE", &self.worktree),
+            ("GROVE_PROJECT_NAME", &self.project_name),
+            ("GROVE_PROJECT", &self.project_path),
+        ];
+        let parts: Vec<String> = vars
+            .iter()
+            .map(|(k, v)| format!("{}='{}'", k, v.replace('\'', "'\\''")))
+            .collect();
+        format!("export {}; ", parts.join(" "))
+    }
 }
 
 /// 创建 session (后台)

@@ -1333,9 +1333,9 @@ impl App {
 
         // 7. 应用布局
         let mut layout_path: Option<String> = None;
-        if self.config.task_layout != TaskLayout::Single {
-            match self.config.multiplexer {
-                Multiplexer::Tmux => {
+        match self.config.multiplexer {
+            Multiplexer::Tmux => {
+                if self.config.task_layout != TaskLayout::Single {
                     if let Err(e) = tmux::layout::apply_layout(
                         &session,
                         &wt_dir,
@@ -1346,16 +1346,18 @@ impl App {
                         self.show_toast(format!("Layout: {}", e));
                     }
                 }
-                Multiplexer::Zellij => {
-                    let kdl = crate::zellij::layout::generate_kdl(
-                        &self.config.task_layout,
-                        &self.config.agent_command,
-                        self.config.custom_layout.as_ref(),
-                    );
-                    match crate::zellij::layout::write_session_layout(&session, &kdl) {
-                        Ok(path) => layout_path = Some(path),
-                        Err(e) => self.show_toast(format!("Layout: {}", e)),
-                    }
+            }
+            Multiplexer::Zellij => {
+                // Zellij: 始终生成 KDL layout 以注入环境变量
+                let kdl = crate::zellij::layout::generate_kdl(
+                    &self.config.task_layout,
+                    &self.config.agent_command,
+                    self.config.custom_layout.as_ref(),
+                    &session_env.shell_export_prefix(),
+                );
+                match crate::zellij::layout::write_session_layout(&session, &kdl) {
+                    Ok(path) => layout_path = Some(path),
+                    Err(e) => self.show_toast(format!("Layout: {}", e)),
                 }
             }
         }
@@ -1466,9 +1468,9 @@ impl App {
             }
 
             // 应用布局
-            if self.config.task_layout != TaskLayout::Single {
-                match mux {
-                    Multiplexer::Tmux => {
+            match mux {
+                Multiplexer::Tmux => {
+                    if self.config.task_layout != TaskLayout::Single {
                         if let Err(e) = tmux::layout::apply_layout(
                             &session,
                             &wt_path,
@@ -1479,16 +1481,17 @@ impl App {
                             self.show_toast(format!("Layout: {}", e));
                         }
                     }
-                    Multiplexer::Zellij => {
-                        let kdl = crate::zellij::layout::generate_kdl(
-                            &self.config.task_layout,
-                            &self.config.agent_command,
-                            self.config.custom_layout.as_ref(),
-                        );
-                        match crate::zellij::layout::write_session_layout(&session, &kdl) {
-                            Ok(path) => layout_path = Some(path),
-                            Err(e) => self.show_toast(format!("Layout: {}", e)),
-                        }
+                }
+                Multiplexer::Zellij => {
+                    let kdl = crate::zellij::layout::generate_kdl(
+                        &self.config.task_layout,
+                        &self.config.agent_command,
+                        self.config.custom_layout.as_ref(),
+                        &session_env.shell_export_prefix(),
+                    );
+                    match crate::zellij::layout::write_session_layout(&session, &kdl) {
+                        Ok(path) => layout_path = Some(path),
+                        Err(e) => self.show_toast(format!("Layout: {}", e)),
                     }
                 }
             }
@@ -1924,15 +1927,14 @@ impl App {
             return;
         }
 
-        // 7.5 生成 zellij layout（如需要）
+        // 7.5 生成 zellij layout（始终生成以注入环境变量）
         let mut layout_path: Option<String> = None;
-        if self.config.multiplexer == Multiplexer::Zellij
-            && self.config.task_layout != TaskLayout::Single
-        {
+        if self.config.multiplexer == Multiplexer::Zellij {
             let kdl = crate::zellij::layout::generate_kdl(
                 &self.config.task_layout,
                 &self.config.agent_command,
                 self.config.custom_layout.as_ref(),
+                &session_env.shell_export_prefix(),
             );
             if let Ok(path) = crate::zellij::layout::write_session_layout(&session, &kdl) {
                 layout_path = Some(path);

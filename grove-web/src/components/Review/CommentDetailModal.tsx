@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { X, CheckCircle, RotateCcw, Reply, Send, Trash2 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -24,6 +24,25 @@ export function CommentDetailModal({
 }: CommentDetailModalProps) {
   const [replyText, setReplyText] = useState('');
   const [showReplyForm, setShowReplyForm] = useState(false);
+  const showReplyFormRef = useRef(showReplyForm);
+  showReplyFormRef.current = showReplyForm;
+
+  // Layered Escape: reply form → modal, and always stop propagation
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.stopPropagation();
+        if (showReplyFormRef.current) {
+          setShowReplyForm(false);
+          setReplyText('');
+        } else {
+          onClose();
+        }
+      }
+    };
+    document.addEventListener('keydown', handleKeyDown, true); // capture phase
+    return () => document.removeEventListener('keydown', handleKeyDown, true);
+  }, [onClose]);
 
   const statusColor =
     comment.status === 'resolved'
@@ -214,9 +233,9 @@ export function CommentDetailModal({
                 gap: 6,
                 padding: '6px 12px',
                 background: 'transparent',
-                border: '1px solid var(--color-border)',
+                border: '1px solid var(--color-highlight)',
                 borderRadius: 6,
-                color: 'var(--color-text)',
+                color: 'var(--color-highlight)',
                 cursor: 'pointer',
                 fontSize: 13,
               }}
@@ -313,10 +332,6 @@ export function CommentDetailModal({
               autoFocus
               onKeyDown={(e) => {
                 if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) handleSubmitReply();
-                if (e.key === 'Escape') {
-                  setShowReplyForm(false);
-                  setReplyText('');
-                }
               }}
               style={{
                 width: '100%',
@@ -357,12 +372,13 @@ export function CommentDetailModal({
                   alignItems: 'center',
                   gap: 6,
                   padding: '6px 12px',
-                  background: 'var(--color-primary)',
+                  background: 'var(--color-highlight)',
                   border: 'none',
                   borderRadius: 6,
-                  color: 'white',
+                  color: 'var(--color-bg)',
                   cursor: 'pointer',
                   fontSize: 13,
+                  fontWeight: 600,
                   opacity: replyText.trim() ? 1 : 0.5,
                 }}
               >

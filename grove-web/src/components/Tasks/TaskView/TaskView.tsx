@@ -13,6 +13,7 @@ interface TaskViewProps {
   /** Project ID for the task */
   projectId: string;
   task: Task;
+  projectName?: string;
   reviewOpen: boolean;
   editorOpen: boolean;
   /** Auto-start terminal session on mount */
@@ -34,6 +35,7 @@ interface TaskViewProps {
 export function TaskView({
   projectId,
   task,
+  projectName,
   reviewOpen,
   editorOpen,
   autoStartSession = false,
@@ -123,7 +125,7 @@ export function TaskView({
     >
       {/* Header */}
       <div className="rounded-t-lg border border-[var(--color-border)] bg-[var(--color-bg-secondary)]">
-        {!headerCollapsed && <TaskHeader task={task} />}
+        {!headerCollapsed && <TaskHeader task={task} projectName={projectName} />}
         <TaskToolbar
           task={task}
           reviewOpen={reviewOpen}
@@ -131,6 +133,7 @@ export function TaskView({
           compact={headerCollapsed}
           taskName={task.name}
           taskStatus={task.status}
+          projectName={projectName}
           headerCollapsed={headerCollapsed}
           onToggleHeaderCollapse={() => setHeaderCollapsed(!headerCollapsed)}
           onCommit={onCommit}

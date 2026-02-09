@@ -3,6 +3,7 @@ import type { Task, TaskStatus } from "../../../data/types";
 
 interface TaskHeaderProps {
   task: Task;
+  projectName?: string;
 }
 
 function getStatusConfig(status: TaskStatus): {
@@ -52,7 +53,7 @@ function getStatusConfig(status: TaskStatus): {
   }
 }
 
-export function TaskHeader({ task }: TaskHeaderProps) {
+export function TaskHeader({ task, projectName }: TaskHeaderProps) {
   const statusConfig = getStatusConfig(task.status);
   const StatusIcon = statusConfig.icon;
 
@@ -60,9 +61,14 @@ export function TaskHeader({ task }: TaskHeaderProps) {
     <div className="px-4 py-3 border-b border-[var(--color-border)]">
       {/* Title and Status */}
       <div className="flex items-center justify-between">
-        <h2 className="text-lg font-semibold text-[var(--color-text)]">
-          {task.name}
-        </h2>
+        <div className="flex items-center gap-2 min-w-0">
+          <h2 className="text-lg font-semibold text-[var(--color-text)] truncate">
+            {task.name}
+          </h2>
+          {projectName && (
+            <span className="flex-shrink-0 px-1.5 py-0.5 text-[10px] font-medium text-[var(--color-text-muted)] bg-[var(--color-bg-tertiary)] rounded">{projectName}</span>
+          )}
+        </div>
         <div className="flex items-center gap-2">
           <div className="relative">
             <StatusIcon

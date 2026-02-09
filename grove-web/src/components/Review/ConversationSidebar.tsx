@@ -30,7 +30,12 @@ export function ConversationSidebar({
   const [filter, setFilter] = useState<StatusFilter>('all');
   const [collapsedFiles, setCollapsedFiles] = useState<Set<string>>(new Set());
   const [projectCommentContent, setProjectCommentContent] = useState('');
-  const [expandedComment, setExpandedComment] = useState<ReviewCommentEntry | null>(null);
+  const [expandedCommentId, setExpandedCommentId] = useState<number | null>(null);
+
+  // Derive expanded comment from latest comments array so it stays in sync after reply/resolve
+  const expandedComment = expandedCommentId !== null
+    ? comments.find((c) => c.id === expandedCommentId) ?? null
+    : null;
 
   // Status counts
   const openCount = comments.filter((c) => c.status === 'open').length;
@@ -160,12 +165,12 @@ export function ConversationSidebar({
               <ConversationItem
                 key={comment.id}
                 comment={comment}
-                onClick={() => {}}
+                onClick={() => setExpandedCommentId(comment.id)}
                 onResolve={onResolveComment}
                 onReopen={onReopenComment}
                 onReply={onReplyComment}
                 onDelete={onDeleteComment}
-                onExpand={() => setExpandedComment(comment)}
+                onExpand={() => setExpandedCommentId(comment.id)}
               />
             ))}
           </div>
@@ -203,7 +208,7 @@ export function ConversationSidebar({
                       onReopen={onReopenComment}
                       onReply={onReplyComment}
                       onDelete={onDeleteComment}
-                      onExpand={() => setExpandedComment(comment)}
+                      onExpand={() => setExpandedCommentId(comment.id)}
                     />
                   ))}
                 </div>
@@ -244,7 +249,7 @@ export function ConversationSidebar({
                       onReopen={onReopenComment}
                       onReply={onReplyComment}
                       onDelete={onDeleteComment}
-                      onExpand={() => setExpandedComment(comment)}
+                      onExpand={() => setExpandedCommentId(comment.id)}
                     />
                   ))}
                 </div>
@@ -285,7 +290,7 @@ export function ConversationSidebar({
       {expandedComment && (
         <CommentDetailModal
           comment={expandedComment}
-          onClose={() => setExpandedComment(null)}
+          onClose={() => setExpandedCommentId(null)}
           onResolve={onResolveComment}
           onReopen={onReopenComment}
           onReply={onReplyComment}

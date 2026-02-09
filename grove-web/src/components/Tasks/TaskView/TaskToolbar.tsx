@@ -27,6 +27,7 @@ interface TaskToolbarProps {
   compact?: boolean;
   taskName?: string;
   taskStatus?: TaskStatus;
+  projectName?: string;
   headerCollapsed?: boolean;
   onToggleHeaderCollapse?: () => void;
   onCommit: () => void;
@@ -209,6 +210,7 @@ export function TaskToolbar({
   compact = false,
   taskName,
   taskStatus,
+  projectName,
   headerCollapsed,
   onToggleHeaderCollapse,
   onCommit,
@@ -264,6 +266,11 @@ export function TaskToolbar({
             <span className="text-sm font-medium text-[var(--color-text)] truncate max-w-[200px]">
               {taskName}
             </span>
+            {projectName && (
+              <span className="flex-shrink-0 px-1.5 py-0.5 text-[10px] font-medium text-[var(--color-text-muted)] bg-[var(--color-bg-tertiary)] rounded">
+                {projectName}
+              </span>
+            )}
             <CompactStatusIcon
               className="w-3 h-3 flex-shrink-0"
               style={{
