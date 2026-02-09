@@ -68,7 +68,7 @@ export function BlitzTaskListItem({ blitzTask, isSelected, onClick, onDoubleClic
       onClick={onClick}
       onDoubleClick={task.status !== "archived" ? onDoubleClick : undefined}
       onContextMenu={onContextMenu}
-      className={`relative w-full text-left rounded-lg transition-colors duration-150 ${
+      className={`relative w-full text-left rounded-lg transition-colors duration-150 overflow-hidden ${
         isSelected
           ? "px-4 py-3 bg-[var(--color-highlight)]/5"
           : "px-3 py-2.5 bg-[var(--color-bg-secondary)] hover:bg-[var(--color-bg-tertiary)]"
@@ -81,7 +81,18 @@ export function BlitzTaskListItem({ blitzTask, isSelected, onClick, onDoubleClic
         boxShadow: `0 0 8px -2px var(--color-highlight)`,
       } : undefined}
     >
-      <div className="flex items-start gap-2.5">
+      {/* Selection sweep effect — single gentle left-to-right pass */}
+      {isSelected && (
+        <div
+          key={`${task.id}-sweep`}
+          className="absolute inset-0 pointer-events-none animate-[card-sweep_4s_ease-out_infinite]"
+          style={{
+            background: "linear-gradient(90deg, transparent 0%, var(--color-highlight) 45%, var(--color-highlight) 55%, transparent 100%)",
+            opacity: 0.06,
+          }}
+        />
+      )}
+      <div className="relative flex items-start gap-2.5">
         {/* Status Icon */}
         <div className="flex-shrink-0 mt-0.5">
           <StatusIcon

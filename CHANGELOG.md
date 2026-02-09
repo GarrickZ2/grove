@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.10] - 2026-02-09
+
+### Fixed
+
+- **MCP review tools missing structured comment IDs** — `grove_read_review`, `grove_add_comment`, and `grove_reply_review` now return structured JSON responses with explicit `comment_id` fields, enabling AI agents to reliably extract IDs and reply to comments
+
+### Changed
+
+- **Blitz mode: removed task float-to-top** — selecting a task no longer reorders the list; tasks stay in their natural sort order
+- **Blitz mode: single-click enters terminal** — clicking a task now directly opens the terminal view (previously required double-click)
+- **Blitz mode: periodic card sweep effect** — selected task card shows a subtle left-to-right highlight sweep that repeats every few seconds
+
 ## [0.4.8] - 2026-02-08
 
 ### Fixed

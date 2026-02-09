@@ -1,5 +1,5 @@
 import { useState, useMemo, useCallback, useRef } from "react";
-import { motion, AnimatePresence, LayoutGroup } from "framer-motion";
+import { motion, AnimatePresence } from "framer-motion";
 import { Terminal, GitCommit, GitBranchPlus, RefreshCw, GitMerge, Archive, RotateCcw, Trash2, Search } from "lucide-react";
 import { TaskInfoPanel } from "../Tasks/TaskInfoPanel";
 import type { TabType } from "../Tasks/TaskInfoPanel";
@@ -112,20 +112,7 @@ export function BlitzPage({ onSwitchToZen }: BlitzPageProps) {
     return filteredTasks.find((bt) => bt.task.id === selectedBlitzTask.task.id && bt.projectId === selectedBlitzTask.projectId) ?? selectedBlitzTask;
   }, [filteredTasks, selectedBlitzTask]);
 
-  // Reorder: selected task floats to top
-  const displayTasks = useMemo(() => {
-    if (!currentSelected) return filteredTasks;
-    const selected: BlitzTask[] = [];
-    const rest: BlitzTask[] = [];
-    for (const bt of filteredTasks) {
-      if (bt.task.id === currentSelected.task.id && bt.projectId === currentSelected.projectId) {
-        selected.push(bt);
-      } else {
-        rest.push(bt);
-      }
-    }
-    return [...selected, ...rest];
-  }, [filteredTasks, currentSelected]);
+  const displayTasks = filteredTasks;
 
   const showMessage = (message: string) => {
     setOperationMessage(message);
@@ -135,7 +122,13 @@ export function BlitzPage({ onSwitchToZen }: BlitzPageProps) {
   // --- Handlers ---
   const handleSelectTask = (bt: BlitzTask) => {
     setSelectedBlitzTask(bt);
-    if (viewMode === "list") setViewMode("info");
+    if (bt.task.status !== "archived") {
+      setViewMode("terminal");
+      setReviewOpen(false);
+      setEditorOpen(false);
+    } else if (viewMode === "list") {
+      setViewMode("info");
+    }
   };
 
   const handleDoubleClickTask = (bt: BlitzTask) => {
@@ -609,43 +602,39 @@ export function BlitzPage({ onSwitchToZen }: BlitzPageProps) {
               <p className="text-sm text-[var(--color-text-muted)]">No active tasks</p>
             </div>
           ) : (
-            <LayoutGroup>
-              <div className="flex flex-col gap-1.5 px-2 py-1">
-                {displayTasks.map((bt, index) => {
-                  const notif = getTaskNotification(bt.task.id);
-                  const isThisSelected =
-                    currentSelected?.task.id === bt.task.id &&
-                    currentSelected?.projectId === bt.projectId;
-                  return (
-                    <motion.div
-                      key={`${bt.projectId}-${bt.task.id}`}
-                      layout
-                      initial={{ opacity: 0, x: -16 }}
-                      animate={{ opacity: 1, x: 0 }}
-                      transition={{
-                        layout: { type: "spring", stiffness: 350, damping: 30 },
-                        opacity: { delay: index * 0.06, duration: 0.35 },
-                        x: { delay: index * 0.06, duration: 0.35, ease: [0.22, 1, 0.36, 1] },
+            <div className="flex flex-col gap-1.5 px-2 py-1">
+              {displayTasks.map((bt, index) => {
+                const notif = getTaskNotification(bt.task.id);
+                const isThisSelected =
+                  currentSelected?.task.id === bt.task.id &&
+                  currentSelected?.projectId === bt.projectId;
+                return (
+                  <motion.div
+                    key={`${bt.projectId}-${bt.task.id}`}
+                    initial={{ opacity: 0, x: -16 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    transition={{
+                      opacity: { delay: index * 0.06, duration: 0.35 },
+                      x: { delay: index * 0.06, duration: 0.35, ease: [0.22, 1, 0.36, 1] },
+                    }}
+                  >
+                    <BlitzTaskListItem
+                      blitzTask={bt}
+                      isSelected={isThisSelected}
+                      onClick={() => {
+                        if (notif) {
+                          dismissNotification(notif.project_id, notif.task_id);
+                        }
+                        handleSelectTask(bt);
                       }}
-                    >
-                      <BlitzTaskListItem
-                        blitzTask={bt}
-                        isSelected={isThisSelected}
-                        onClick={() => {
-                          if (notif) {
-                            dismissNotification(notif.project_id, notif.task_id);
-                          }
-                          handleSelectTask(bt);
-                        }}
-                        onDoubleClick={() => handleDoubleClickTask(bt)}
-                        onContextMenu={(e) => handleContextMenu(bt, e)}
-                        notification={notif ? { level: notif.level } : undefined}
-                      />
-                    </motion.div>
-                  );
-                })}
-              </div>
-            </LayoutGroup>
+                      onDoubleClick={() => handleDoubleClickTask(bt)}
+                      onContextMenu={(e) => handleContextMenu(bt, e)}
+                      notification={notif ? { level: notif.level } : undefined}
+                    />
+                  </motion.div>
+                );
+              })}
+            </div>
           )}
         </div>
 

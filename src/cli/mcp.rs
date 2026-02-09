@@ -218,6 +218,70 @@ pub struct CompleteTaskResult {
     pub message: String,
 }
 
+// --- Review JSON response types ---
+
+#[derive(Debug, Serialize)]
+struct ReviewReplyEntry {
+    reply_id: u32,
+    content: String,
+    author: String,
+}
+
+#[derive(Debug, Serialize)]
+struct ReviewCommentEntry {
+    comment_id: u32,
+    #[serde(rename = "type")]
+    comment_type: String,
+    status: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    file_path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    side: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    start_line: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    end_line: Option<u32>,
+    content: String,
+    author: String,
+    replies: Vec<ReviewReplyEntry>,
+}
+
+#[derive(Debug, Serialize)]
+struct ReadReviewResult {
+    open_count: usize,
+    resolved_count: usize,
+    outdated_count: usize,
+    comments: Vec<ReviewCommentEntry>,
+}
+
+#[derive(Debug, Serialize)]
+struct CreatedCommentEntry {
+    comment_id: u32,
+    #[serde(rename = "type")]
+    comment_type: String,
+    location: String,
+}
+
+#[derive(Debug, Serialize)]
+struct AddCommentResult {
+    created: Vec<CreatedCommentEntry>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    errors: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct ReplyResultEntry {
+    comment_id: u32,
+    success: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct ReplyReviewResult {
+    replies: Vec<ReplyResultEntry>,
+}
+
 // ============================================================================
 // Tool Implementations
 // ============================================================================
@@ -306,8 +370,48 @@ impl GroveMcpServer {
                     });
                 }
 
-                let output = format_comments(&data);
-                Ok(CallToolResult::success(vec![Content::text(output)]))
+                let (open, resolved, outdated) = data.count_by_status();
+                let result = ReadReviewResult {
+                    open_count: open,
+                    resolved_count: resolved,
+                    outdated_count: outdated,
+                    comments: data
+                        .comments
+                        .iter()
+                        .map(|c| ReviewCommentEntry {
+                            comment_id: c.id,
+                            comment_type: match c.comment_type {
+                                comments::CommentType::Inline => "inline".to_string(),
+                                comments::CommentType::File => "file".to_string(),
+                                comments::CommentType::Project => "project".to_string(),
+                            },
+                            status: match c.status {
+                                comments::CommentStatus::Open => "open".to_string(),
+                                comments::CommentStatus::Resolved => "resolved".to_string(),
+                                comments::CommentStatus::Outdated => "outdated".to_string(),
+                            },
+                            file_path: c.file_path.clone(),
+                            side: c.side.clone(),
+                            start_line: c.start_line,
+                            end_line: c.end_line,
+                            content: c.content.clone(),
+                            author: c.author.clone(),
+                            replies: c
+                                .replies
+                                .iter()
+                                .map(|r| ReviewReplyEntry {
+                                    reply_id: r.id,
+                                    content: r.content.clone(),
+                                    author: r.author.clone(),
+                                })
+                                .collect(),
+                        })
+                        .collect(),
+                };
+
+                let json = serde_json::to_string_pretty(&result)
+                    .map_err(|e| McpError::internal_error(e.to_string(), None))?;
+                Ok(CallToolResult::success(vec![Content::text(json)]))
             }
             Err(e) => Err(McpError::internal_error(
                 format!("Failed to read comments: {}", e),
@@ -345,8 +449,7 @@ impl GroveMcpServer {
             (None, None) => "Claude Code".to_string(),
         };
 
-        let mut results: Vec<String> = Vec::new();
-        let mut errors: Vec<String> = Vec::new();
+        let mut reply_results: Vec<ReplyResultEntry> = Vec::new();
 
         for reply in &params.0.replies {
             match comments::reply_comment(
@@ -357,41 +460,42 @@ impl GroveMcpServer {
                 &author,
             ) {
                 Ok(true) => {
-                    results.push(format!("#{}: replied ✓", reply.comment_id));
+                    reply_results.push(ReplyResultEntry {
+                        comment_id: reply.comment_id,
+                        success: true,
+                        error: None,
+                    });
                 }
                 Ok(false) => {
-                    errors.push(format!("#{}: not found", reply.comment_id));
+                    reply_results.push(ReplyResultEntry {
+                        comment_id: reply.comment_id,
+                        success: false,
+                        error: Some("comment not found".to_string()),
+                    });
                 }
                 Err(e) => {
-                    errors.push(format!("#{}: error - {}", reply.comment_id, e));
+                    reply_results.push(ReplyResultEntry {
+                        comment_id: reply.comment_id,
+                        success: false,
+                        error: Some(e.to_string()),
+                    });
                 }
             }
         }
 
-        let mut output = String::new();
-        if !results.is_empty() {
-            output.push_str(&format!("Replied to {} comment(s):\n", results.len()));
-            for r in &results {
-                output.push_str(&format!("  {}\n", r));
-            }
-        }
-        if !errors.is_empty() {
-            if !output.is_empty() {
-                output.push('\n');
-            }
-            output.push_str(&format!("Errors ({}):\n", errors.len()));
-            for e in &errors {
-                output.push_str(&format!("  {}\n", e));
-            }
+        let all_failed = reply_results.iter().all(|r| !r.success);
+        let result = ReplyReviewResult {
+            replies: reply_results,
+        };
+
+        let json = serde_json::to_string_pretty(&result)
+            .map_err(|e| McpError::internal_error(e.to_string(), None))?;
+
+        if all_failed {
+            return Err(McpError::invalid_params(json, None));
         }
 
-        if results.is_empty() && !errors.is_empty() {
-            return Err(McpError::invalid_params(output.trim().to_string(), None));
-        }
-
-        Ok(CallToolResult::success(vec![Content::text(
-            output.trim().to_string(),
-        )]))
+        Ok(CallToolResult::success(vec![Content::text(json)]))
     }
 
     /// Add review comments. Supports three levels: inline (code lines), file (entire file),
@@ -418,7 +522,7 @@ impl GroveMcpServer {
             (None, None) => "Claude Code".to_string(),
         };
 
-        let mut results = Vec::new();
+        let mut created = Vec::new();
         let mut errors = Vec::new();
 
         // Process each comment
@@ -514,7 +618,11 @@ impl GroveMcpServer {
                         }
                         comments::CommentType::Project => "Project-level".to_string(),
                     };
-                    results.push(format!("#{} ({}) at {}", comment.id, type_str, location));
+                    created.push(CreatedCommentEntry {
+                        comment_id: comment.id,
+                        comment_type: type_str.to_string(),
+                        location,
+                    });
                 }
                 Err(e) => {
                     errors.push(format!("Comment #{}: {}", idx + 1, e));
@@ -522,31 +630,16 @@ impl GroveMcpServer {
             }
         }
 
-        // Build response
-        let mut output = String::new();
-        if !results.is_empty() {
-            output.push_str(&format!("Created {} comment(s):\n", results.len()));
-            for r in &results {
-                output.push_str(&format!("  {}\n", r));
-            }
-        }
-        if !errors.is_empty() {
-            if !output.is_empty() {
-                output.push('\n');
-            }
-            output.push_str(&format!("Errors ({}):\n", errors.len()));
-            for e in &errors {
-                output.push_str(&format!("  {}\n", e));
-            }
+        let result = AddCommentResult { created, errors };
+
+        let json = serde_json::to_string_pretty(&result)
+            .map_err(|e| McpError::internal_error(e.to_string(), None))?;
+
+        if result.created.is_empty() && !result.errors.is_empty() {
+            return Err(McpError::invalid_params(json, None));
         }
 
-        if results.is_empty() && !errors.is_empty() {
-            return Err(McpError::invalid_params(output.trim().to_string(), None));
-        }
-
-        Ok(CallToolResult::success(vec![Content::text(
-            output.trim().to_string(),
-        )]))
+        Ok(CallToolResult::success(vec![Content::text(json)]))
     }
 
     /// Complete the current task: commit, sync (rebase), and merge
@@ -703,99 +796,6 @@ fn get_task_context() -> Option<(String, String)> {
         return None;
     }
     Some((task_id, project_path))
-}
-
-/// Format comments for display
-fn format_comments(data: &comments::CommentsData) -> String {
-    let (open, resolved, outdated) = data.count_by_status();
-    let mut output = format!(
-        "Review Comments ({} open, {} resolved, {} outdated)\n\n",
-        open, resolved, outdated
-    );
-
-    // Group comments by type
-    let inline_comments: Vec<_> = data
-        .comments
-        .iter()
-        .filter(|c| c.comment_type == comments::CommentType::Inline)
-        .collect();
-    let file_comments: Vec<_> = data
-        .comments
-        .iter()
-        .filter(|c| c.comment_type == comments::CommentType::File)
-        .collect();
-    let project_comments: Vec<_> = data
-        .comments
-        .iter()
-        .filter(|c| c.comment_type == comments::CommentType::Project)
-        .collect();
-
-    // Project-level comments first
-    if !project_comments.is_empty() {
-        output.push_str("## Project-Level Comments\n\n");
-        for comment in project_comments {
-            format_comment(&mut output, comment, "Project-level");
-        }
-    }
-
-    // File-level comments
-    if !file_comments.is_empty() {
-        output.push_str("## File-Level Comments\n\n");
-        for comment in file_comments {
-            let file_path = comment.file_path.as_deref().unwrap_or("unknown");
-            let loc = format!("File: {}", file_path);
-            format_comment(&mut output, comment, &loc);
-        }
-    }
-
-    // Inline code comments
-    if !inline_comments.is_empty() {
-        output.push_str("## Inline Code Comments\n\n");
-        for comment in inline_comments {
-            let file_path = comment.file_path.as_deref().unwrap_or("unknown");
-            let start = comment.start_line.unwrap_or(0);
-            let end = comment.end_line.unwrap_or(0);
-            let side = comment.side.as_deref().unwrap_or("ADD");
-            let loc = format!("{} (lines {}-{}, {})", file_path, start, end, side);
-            format_comment(&mut output, comment, &loc);
-        }
-    }
-
-    output
-}
-
-/// Format a single comment
-fn format_comment(output: &mut String, comment: &comments::Comment, location: &str) {
-    match comment.status {
-        comments::CommentStatus::Open => {
-            output.push_str(&format!("[#{}] {}\n", comment.id, location));
-            output.push_str(&format!("> {}\n", comment.content));
-            if comment.replies.is_empty() {
-                output.push_str("  (no reply)\n\n");
-            } else {
-                for r in &comment.replies {
-                    output.push_str(&format!("  {}: {}\n", r.author, r.content));
-                }
-                output.push('\n');
-            }
-        }
-        comments::CommentStatus::Outdated => {
-            output.push_str(&format!("[#{}] OUTDATED {}\n", comment.id, location));
-            output.push_str(&format!("> {}\n", comment.content));
-            for r in &comment.replies {
-                output.push_str(&format!("  {}: {}\n", r.author, r.content));
-            }
-            output.push('\n');
-        }
-        comments::CommentStatus::Resolved => {
-            output.push_str(&format!("[#{}] RESOLVED ~~{}~~\n", comment.id, location));
-            output.push_str(&format!("> ~~{}~~\n", comment.content));
-            for r in &comment.replies {
-                output.push_str(&format!("  {}: {}\n", r.author, r.content));
-            }
-            output.push('\n');
-        }
-    }
 }
 
 // ============================================================================

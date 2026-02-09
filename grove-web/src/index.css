@@ -80,3 +80,22 @@ body {
     transform: translateX(100%);
   }
 }
+
+/* Blitz card selection sweep — periodic gentle pass */
+@keyframes card-sweep {
+  0% {
+    transform: translateX(-100%);
+    opacity: 0;
+  }
+  5% {
+    opacity: 1;
+  }
+  20% {
+    transform: translateX(100%);
+    opacity: 0;
+  }
+  100% {
+    transform: translateX(100%);
+    opacity: 0;
+  }
+}
