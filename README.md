@@ -231,6 +231,23 @@ When inside a Grove task, the agent can read notes, respond to code review feedb
 
 ---
 
+## Changelog
+
+### v0.4.9
+
+**Review: File Mode, Multi-Level Comments & Virtual Files**
+
+- **File Mode** — View all repository files in review, not just changed files. Segmented control with sliding animation to switch between Changes and All Files modes
+- **File-Level & Project-Level Comments** — Comment on entire files or at project level, in addition to inline code comments. New `CommentType` (inline/file/project) in backend and MCP tools
+- **Virtual Files** — Files referenced in comments but not in the diff are shown as virtual entries in All Files Mode. Right-click to create virtual file placeholders in the file tree
+- **Selection Commenting** — Select multiple lines of code to reveal a floating Comment button for quick multi-line comments
+- **Markdown in Comments** — Inline comments and CommentsTab now render markdown content
+- **Comment Detail Modal** — Expand button in Conversation Sidebar opens full comment detail view
+- **Focus Mode Default** — Focus Mode enabled by default in both modes; auto-collapse files when marked as viewed
+- **UI Polish** — Icon-only action buttons to prevent overflow, improved mode selector design
+
+---
+
 ## Requirements
 
 - Git 2.20+
