@@ -5,6 +5,28 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.8] - 2026-02-08
+
+### Fixed
+
+- **Icon loading race condition** — fixed race condition in app icon extraction caused by shared temp file names
+  - Now uses unique temp files (target path + nanoseconds) to prevent conflicts
+  - Improved cache naming: uses bundle_id instead of hash for better readability
+  - Reduced browser cache from 24h to 5min, added ETag for validation
+- **Git commit button** — fixed button that was only showing toast, now properly opens commit dialog
+- **Git tab 404 errors** — fixed by checking archived tasks in addition to active tasks
+- **Settings accordion behavior** — now properly closes other tabs when opening a new one
+
+### Added
+
+- **VSCode-style file icons** — file tree now uses vscode-icons-js library for proper file type icons
+  - Replaced generic colored icons with specific file type icons
+
+### Changed
+
+- **TaskInfoPanel close button** — replaced confusing ArrowLeft icon with X icon for better UX
+  - Clearer visual distinction between "close panel" and "collapse panel" actions
+
 ## [0.4.7] - 2026-02-08
 
 ### Changed
