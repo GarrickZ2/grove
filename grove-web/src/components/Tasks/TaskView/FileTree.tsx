@@ -1,6 +1,7 @@
 import { useState, useCallback } from "react";
-import { ChevronRight, ChevronDown, File, Folder, FolderOpen } from "lucide-react";
+import { ChevronRight, ChevronDown } from "lucide-react";
 import type { FileTreeNode } from "../../../utils/fileTree";
+import { VSCodeIcon } from "../../ui";
 
 interface FileTreeProps {
   nodes: FileTreeNode[];
@@ -67,15 +68,12 @@ function FileTreeItem({ node, depth, selectedFile, onSelectFile }: FileTreeItemP
         )}
 
         {/* File/folder icon */}
-        {node.isDir ? (
-          expanded ? (
-            <FolderOpen className="w-4 h-4 flex-shrink-0 text-[var(--color-warning)]" />
-          ) : (
-            <Folder className="w-4 h-4 flex-shrink-0 text-[var(--color-warning)]" />
-          )
-        ) : (
-          <File className="w-4 h-4 flex-shrink-0" />
-        )}
+        <VSCodeIcon
+          filename={node.name}
+          isFolder={node.isDir}
+          isOpen={expanded}
+          size={16}
+        />
 
         {/* Name */}
         <span className="truncate text-xs">{node.name}</span>

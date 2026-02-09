@@ -244,7 +244,21 @@ export function SettingsPage({ config }: SettingsPageProps) {
   const hookCommand = `grove hooks ${hookLevel}${hookBanner ? " --banner" : ""}${hookSound ? ` --sound ${hookSound}` : ""}${hookMessage ? ` --message "${hookMessage}"` : ""}`;
 
   const toggleSection = (id: string) => {
-    setOpenSections((prev) => ({ ...prev, [id]: !prev[id] }));
+    setOpenSections((prev) => {
+      const isCurrentlyOpen = prev[id];
+
+      // If clicking the currently open section, just close it
+      if (isCurrentlyOpen) {
+        return { ...prev, [id]: false };
+      }
+
+      // Otherwise, close all sections and open the clicked one (accordion behavior)
+      const newSections: Record<string, boolean> = {};
+      for (const key of Object.keys(prev)) {
+        newSections[key] = key === id;
+      }
+      return newSections;
+    });
   };
 
   const handleCopy = (field: string, value: string) => {

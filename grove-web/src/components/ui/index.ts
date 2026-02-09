@@ -13,3 +13,4 @@ export { AppPicker, ideAppOptions, terminalAppOptions } from "./AppPicker";
 export { AgentPicker, agentOptions } from "./AgentPicker";
 export { MarkdownRenderer } from "./MarkdownRenderer";
 export { KeyBadge } from "./KeyBadge";
+export { VSCodeIcon } from "./VSCodeIcon";

@@ -7,7 +7,7 @@ import { QuickStats } from "./QuickStats";
 import { GitStatusBar } from "./GitStatusBar";
 import { BranchDrawer } from "./BranchDrawer";
 import { CommitHistory } from "./CommitHistory";
-import { ConfirmDialog, NewBranchDialog, RenameBranchDialog } from "../Dialogs";
+import { ConfirmDialog, NewBranchDialog, RenameBranchDialog, CommitDialog } from "../Dialogs";
 import { useProject } from "../../context";
 import {
   getGitStatus,
@@ -17,6 +17,7 @@ import {
   gitPull,
   gitPush,
   gitFetch,
+  gitCommit,
   createBranch,
   deleteBranch,
   renameBranch,
@@ -78,6 +79,7 @@ export function DashboardPage({ onNavigate }: DashboardPageProps) {
   const [showNewBranchDialog, setShowNewBranchDialog] = useState(false);
   const [showRenameBranchDialog, setShowRenameBranchDialog] = useState(false);
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
+  const [showCommitDialog, setShowCommitDialog] = useState(false);
   const [selectedBranch, setSelectedBranch] = useState<Branch | null>(null);
 
   // Git data states - separate loading for each section
@@ -259,7 +261,27 @@ export function DashboardPage({ onNavigate }: DashboardPageProps) {
     }
   };
 
-  const handleCommit = () => showMessage("Opening commit dialog...");
+  const handleCommit = () => {
+    if (!selectedProject || isOperating) return;
+    setShowCommitDialog(true);
+  };
+
+  const handleCommitSubmit = async (message: string) => {
+    if (!selectedProject || isOperating) return;
+    setIsOperating(true);
+    try {
+      const result = await gitCommit(selectedProject.id, message);
+      showMessage(result.message);
+      if (result.success) {
+        setShowCommitDialog(false);
+        await loadGitData();
+      }
+    } catch (err) {
+      showMessage("Commit failed");
+    } finally {
+      setIsOperating(false);
+    }
+  };
 
   const handleFetch = async () => {
     if (!selectedProject || isOperating) return;
@@ -500,6 +522,13 @@ export function DashboardPage({ onNavigate }: DashboardPageProps) {
           setShowDeleteDialog(false);
           setSelectedBranch(null);
         }}
+      />
+
+      <CommitDialog
+        isOpen={showCommitDialog}
+        isLoading={isOperating}
+        onCommit={handleCommitSubmit}
+        onCancel={() => setShowCommitDialog(false)}
       />
     </motion.div>
   );

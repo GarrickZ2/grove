@@ -64,6 +64,10 @@ export interface RenameBranchRequest {
   new_name: string;
 }
 
+export interface CommitRequest {
+  message: string;
+}
+
 // ============================================================================
 // API Functions
 // ============================================================================
@@ -169,5 +173,15 @@ export async function renameBranch(
   return apiClient.post<RenameBranchRequest, GitOpResponse>(
     `/api/v1/projects/${projectId}/git/branches/${encodeURIComponent(oldName)}/rename`,
     { new_name: newName }
+  );
+}
+
+/**
+ * Commit changes
+ */
+export async function gitCommit(projectId: string, message: string): Promise<GitOpResponse> {
+  return apiClient.post<CommitRequest, GitOpResponse>(
+    `/api/v1/projects/${projectId}/git/commit`,
+    { message }
   );
 }

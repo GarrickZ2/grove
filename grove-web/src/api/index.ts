@@ -79,6 +79,7 @@ export {
   gitPush,
   gitFetch,
   gitStash,
+  gitCommit,
   createBranch,
   deleteBranch,
   renameBranch,

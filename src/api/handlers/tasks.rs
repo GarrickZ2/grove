@@ -809,9 +809,14 @@ pub async fn get_diff(
 ) -> Result<axum::response::Response, StatusCode> {
     let (_project, project_key) = find_project_by_id(&id)?;
 
-    // Get task info
+    // Get task info (try active tasks first, then archived)
     let task = tasks::get_task(&project_key, &task_id)
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .or_else(|| {
+            tasks::get_archived_task(&project_key, &task_id)
+                .ok()
+                .flatten()
+        })
         .ok_or(StatusCode::NOT_FOUND)?;
 
     if query.full.unwrap_or(false) {
@@ -876,9 +881,14 @@ pub async fn get_commits(
 ) -> Result<Json<CommitsResponse>, StatusCode> {
     let (_project, project_key) = find_project_by_id(&id)?;
 
-    // Get task info
+    // Get task info (try active tasks first, then archived)
     let task = tasks::get_task(&project_key, &task_id)
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .or_else(|| {
+            tasks::get_archived_task(&project_key, &task_id)
+                .ok()
+                .flatten()
+        })
         .ok_or(StatusCode::NOT_FOUND)?;
 
     // Get recent commits

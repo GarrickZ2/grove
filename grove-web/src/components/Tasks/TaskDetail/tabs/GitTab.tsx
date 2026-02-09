@@ -14,12 +14,14 @@ export function GitTab({ task }: GitTabProps) {
   const [diffData, setDiffData] = useState<DiffResponse | null>(null);
   const [commitsData, setCommitsData] = useState<CommitsResponse | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   const loadGitData = useCallback(async () => {
     if (!selectedProject) return;
 
     try {
       setIsLoading(true);
+      setError(null);
       const [diff, commits] = await Promise.all([
         getDiff(selectedProject.id, task.id),
         getCommits(selectedProject.id, task.id),
@@ -28,6 +30,7 @@ export function GitTab({ task }: GitTabProps) {
       setCommitsData(commits);
     } catch (err) {
       console.error("Failed to load git data:", err);
+      setError("Failed to load git data. The task may have been deleted or archived.");
     } finally {
       setIsLoading(false);
     }
@@ -42,6 +45,17 @@ export function GitTab({ task }: GitTabProps) {
       <div className="h-full flex flex-col items-center justify-center text-center">
         <Loader2 className="w-8 h-8 text-[var(--color-text-muted)] mb-3 animate-spin" />
         <p className="text-[var(--color-text-muted)]">Loading git info...</p>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="h-full flex flex-col items-center justify-center text-center p-4">
+        <p className="text-[var(--color-error)] mb-2">{error}</p>
+        <p className="text-sm text-[var(--color-text-muted)]">
+          Please refresh the page or select another task.
+        </p>
       </div>
     );
   }

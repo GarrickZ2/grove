@@ -185,6 +185,7 @@ pub fn create_api_router() -> Router {
         .route("/projects/{id}/git/push", post(handlers::git::push))
         .route("/projects/{id}/git/fetch", post(handlers::git::fetch))
         .route("/projects/{id}/git/stash", post(handlers::git::stash))
+        .route("/projects/{id}/git/commit", post(handlers::git::commit))
 }
 
 /// Serve embedded static files

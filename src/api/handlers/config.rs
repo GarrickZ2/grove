@@ -271,32 +271,46 @@ pub async fn get_app_icon(Query(query): Query<IconQuery>) -> Result<Response<Bod
         return Err(StatusCode::NOT_FOUND);
     }
 
+    // Get bundle ID for better cache key
+    let bundle_id = get_bundle_id(app_path);
+
     // Check disk cache first
-    let cache_path = get_icon_cache_path(&query.path);
+    let cache_path = get_icon_cache_path(&query.path, bundle_id.as_deref());
     if let Some(png_data) = read_cached_icon(&cache_path, app_path) {
         return Ok(png_response(png_data));
     }
 
-    // Extract the icon
-    let png_data = extract_app_icon(app_path).ok_or(StatusCode::NOT_FOUND)?;
-
-    // Cache to disk
+    // Create cache directory
     if let Some(parent) = cache_path.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
-    let _ = std::fs::write(&cache_path, &png_data);
+
+    // Extract icon directly to cache path (no temp file needed)
+    let png_data = extract_app_icon_to_file(app_path, &cache_path).ok_or(StatusCode::NOT_FOUND)?;
 
     Ok(png_response(png_data))
 }
 
-fn get_icon_cache_path(app_path_str: &str) -> std::path::PathBuf {
+fn get_icon_cache_path(app_path_str: &str, bundle_id: Option<&str>) -> std::path::PathBuf {
+    let cache_dir = crate::storage::grove_dir().join("cache").join("icons");
+
+    // Priority 1: Use bundle ID if available (e.g., "com.apple.calculator.png")
+    if let Some(id) = bundle_id {
+        let safe_name = id.replace(['/', '\\', ':'], "_");
+        return cache_dir.join(format!("{}.png", safe_name));
+    }
+
+    // Priority 2: Use app name from path (e.g., "Calculator.png")
+    if let Some(app_name) = Path::new(app_path_str).file_stem().and_then(|s| s.to_str()) {
+        let safe_name = app_name.replace(['/', '\\', ':', ' '], "_").to_lowercase();
+        return cache_dir.join(format!("{}.png", safe_name));
+    }
+
+    // Fallback: Use hash of full path (should rarely happen)
     let mut hasher = DefaultHasher::new();
     app_path_str.hash(&mut hasher);
     let hash = hasher.finish();
-    crate::storage::grove_dir()
-        .join("cache")
-        .join("icons")
-        .join(format!("{:x}.png", hash))
+    cache_dir.join(format!("{:x}.png", hash))
 }
 
 fn read_cached_icon(cache_path: &Path, app_path: &Path) -> Option<Vec<u8>> {
@@ -306,43 +320,146 @@ fn read_cached_icon(cache_path: &Path, app_path: &Path) -> Option<Vec<u8>> {
 
     // Cache is valid if it's newer than the plist
     if cache_meta.modified().ok()? >= plist_meta.modified().ok()? {
-        std::fs::read(cache_path).ok()
+        let data = std::fs::read(cache_path).ok()?;
+
+        // Validate cached data is a valid PNG (check header and min size)
+        if data.len() >= 8 && &data[0..8] == b"\x89PNG\r\n\x1a\n" {
+            Some(data)
+        } else {
+            // Invalid cache, delete it
+            let _ = std::fs::remove_file(cache_path);
+            None
+        }
     } else {
+        // Stale cache, delete it
+        let _ = std::fs::remove_file(cache_path);
         None
     }
 }
 
 fn png_response(data: Vec<u8>) -> Response<Body> {
+    // Use shorter cache time (5 minutes) to allow quick updates during development
+    // ETag based on content hash for cache validation
+    let mut hasher = DefaultHasher::new();
+    data.hash(&mut hasher);
+    let etag = format!("\"{}\"", hasher.finish());
+
     Response::builder()
         .status(StatusCode::OK)
         .header(header::CONTENT_TYPE, "image/png")
-        .header(header::CACHE_CONTROL, "public, max-age=86400")
+        .header(header::CACHE_CONTROL, "public, max-age=300") // 5 minutes instead of 24 hours
+        .header(header::ETAG, etag)
         .body(Body::from(data))
         .unwrap()
 }
 
-fn extract_app_icon(app_path: &Path) -> Option<Vec<u8>> {
+/// Extract app icon and write directly to the target file path
+/// Returns the PNG data if successful
+fn extract_app_icon_to_file(app_path: &Path, output_path: &Path) -> Option<Vec<u8>> {
+    let resources_dir = app_path.join("Contents/Resources");
+
+    if !resources_dir.exists() {
+        return None;
+    }
+
     // Read CFBundleIconFile (or CFBundleIconName) from Info.plist
     let plist_path = app_path.join("Contents/Info.plist");
     let icon_file_name = get_plist_value(&plist_path, "CFBundleIconFile")
-        .or_else(|| get_plist_value(&plist_path, "CFBundleIconName"))?;
+        .or_else(|| get_plist_value(&plist_path, "CFBundleIconName"));
 
-    // Ensure .icns extension
-    let icon_name = if icon_file_name.ends_with(".icns") {
-        icon_file_name
+    // Try to find the .icns file
+    let icns_path = if let Some(icon_name) = icon_file_name {
+        // Ensure .icns extension
+        let name_with_ext = if icon_name.ends_with(".icns") {
+            icon_name.clone()
+        } else {
+            format!("{}.icns", icon_name)
+        };
+
+        let path = resources_dir.join(&name_with_ext);
+        if path.exists() {
+            Some(path)
+        } else {
+            // Try without .icns extension
+            let alt_path = resources_dir.join(&icon_name);
+            if alt_path.exists() {
+                Some(alt_path)
+            } else {
+                None
+            }
+        }
     } else {
-        format!("{}.icns", icon_file_name)
+        None
     };
-    let icns_path = app_path.join("Contents/Resources").join(&icon_name);
 
+    // If we found an icon from plist, use it
+    if let Some(path) = icns_path {
+        return convert_icns_to_png(&path, output_path);
+    }
+
+    // Fallback: try to find any .icns file in Resources directory
+    if let Ok(entries) = std::fs::read_dir(&resources_dir) {
+        // First, try common icon names
+        let common_names = ["AppIcon.icns", "app.icns", "icon.icns", "application.icns"];
+
+        for name in &common_names {
+            let path = resources_dir.join(name);
+            if path.exists() {
+                if let Some(data) = convert_icns_to_png(&path, output_path) {
+                    return Some(data);
+                }
+            }
+        }
+
+        // If common names don't work, find the largest .icns file
+        // (usually the main app icon is the largest)
+        let mut icns_files: Vec<_> = entries
+            .flatten()
+            .filter_map(|entry| {
+                let path = entry.path();
+                if path.extension()?.to_str()? == "icns" {
+                    let size = std::fs::metadata(&path).ok()?.len();
+                    Some((path, size))
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        // Sort by size descending
+        icns_files.sort_by(|a, b| b.1.cmp(&a.1));
+
+        // Try the largest .icns file
+        if let Some((path, _)) = icns_files.first() {
+            if let Some(data) = convert_icns_to_png(path, output_path) {
+                return Some(data);
+            }
+        }
+    }
+
+    None
+}
+
+/// Convert icns to PNG using a temporary file based on output_path
+/// Prevents race conditions by using unique temp file per request
+fn convert_icns_to_png(icns_path: &Path, output_path: &Path) -> Option<Vec<u8>> {
     if !icns_path.exists() {
         return None;
     }
 
-    // Convert .icns to 64×64 PNG using macOS built-in `sips`
-    let temp_dir = std::env::temp_dir();
-    let temp_png = temp_dir.join(format!("grove_icon_{}.png", std::process::id()));
+    // Use output path + timestamp + PID to create unique temp file
+    // This ensures no conflicts even with parallel requests for the same app
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap();
+    let temp_path = output_path.with_extension(format!(
+        "tmp.{}.{}.{}",
+        std::process::id(),
+        now.as_secs(),
+        now.subsec_nanos()
+    ));
 
+    // Convert to temporary file
     let output = std::process::Command::new("sips")
         .args([
             "-s",
@@ -353,22 +470,49 @@ fn extract_app_icon(app_path: &Path) -> Option<Vec<u8>> {
             "64",
             &icns_path.to_string_lossy(),
             "--out",
-            &temp_png.to_string_lossy(),
+            &temp_path.to_string_lossy(),
         ])
+        .stderr(std::process::Stdio::null())
         .output()
         .ok()?;
 
     if !output.status.success() {
-        let _ = std::fs::remove_file(&temp_png);
+        // Try alternative approach: extract without resizing
+        let alt_output = std::process::Command::new("sips")
+            .args([
+                "-s",
+                "format",
+                "png",
+                &icns_path.to_string_lossy(),
+                "--out",
+                &temp_path.to_string_lossy(),
+            ])
+            .stderr(std::process::Stdio::null())
+            .output()
+            .ok()?;
+
+        if !alt_output.status.success() {
+            let _ = std::fs::remove_file(&temp_path);
+            return None;
+        }
+    }
+
+    // Read the temporary file
+    let data = std::fs::read(&temp_path).ok()?;
+
+    // Validate PNG data (check PNG header)
+    if data.len() < 8 || &data[0..8] != b"\x89PNG\r\n\x1a\n" {
+        let _ = std::fs::remove_file(&temp_path);
         return None;
     }
 
-    let data = std::fs::read(&temp_png).ok()?;
-    let _ = std::fs::remove_file(&temp_png);
-
-    if data.is_empty() {
-        None
-    } else {
-        Some(data)
+    // Atomically move temp file to final location
+    // If another thread already created the cache, this will overwrite it (idempotent)
+    if std::fs::rename(&temp_path, output_path).is_err() {
+        // Rename failed (maybe cross-device), try copy + delete
+        let _ = std::fs::copy(&temp_path, output_path);
+        let _ = std::fs::remove_file(&temp_path);
     }
+
+    Some(data)
 }

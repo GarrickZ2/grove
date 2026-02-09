@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
-  ArrowLeft,
+  X,
   BarChart3,
   GitBranch,
   FileText,
@@ -119,13 +119,13 @@ export function TaskInfoPanel({
       >
         {/* Vertical Tab Bar (always visible) */}
         <div className="w-12 flex-shrink-0 flex flex-col border-r border-[var(--color-border)] bg-[var(--color-bg)]">
-          {/* Back button */}
+          {/* Close button */}
           <button
             onClick={onClose}
             className="p-3 text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-bg-tertiary)] transition-colors"
-            title="Back"
+            title="Close panel"
           >
-            <ArrowLeft className="w-5 h-5" />
+            <X className="w-5 h-5" />
           </button>
 
           <div className="h-px bg-[var(--color-border)]" />
@@ -234,8 +234,8 @@ export function TaskInfoPanel({
       {/* Header */}
       <div className="flex items-center justify-between gap-2 px-3 py-2 border-b border-[var(--color-border)] bg-[var(--color-bg)]">
         <Button variant="ghost" size="sm" onClick={onClose}>
-          <ArrowLeft className="w-4 h-4 mr-1" />
-          Back
+          <X className="w-4 h-4 mr-1" />
+          Close
         </Button>
 
         {/* Action buttons based on task status */}

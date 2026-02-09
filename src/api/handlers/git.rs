@@ -76,6 +76,12 @@ pub struct StashRequest {
     pub pop: bool,
 }
 
+/// Commit request
+#[derive(Debug, Deserialize)]
+pub struct CommitRequest {
+    pub message: String,
+}
+
 /// Create branch request
 #[derive(Debug, Deserialize)]
 pub struct CreateBranchRequest {
@@ -470,6 +476,50 @@ pub async fn delete_branch(
                         "Branch '{}' is not fully merged. Use force delete if sure.",
                         branch_name
                     ),
+                }))
+            } else {
+                Ok(Json(GitOpResponse {
+                    success: false,
+                    message: error_msg,
+                }))
+            }
+        }
+    }
+}
+
+/// POST /api/v1/projects/{id}/git/commit
+/// Commit changes
+pub async fn commit(
+    Path(id): Path<String>,
+    Json(req): Json<CommitRequest>,
+) -> Result<Json<GitOpResponse>, StatusCode> {
+    let project_path = find_project_path(&id)?;
+
+    // Add all changes first
+    if let Err(e) = git_cmd(&project_path, &["add", "-A"]) {
+        return Ok(Json(GitOpResponse {
+            success: false,
+            message: format!("Failed to stage changes: {}", e),
+        }));
+    }
+
+    // Commit with the provided message
+    match git_cmd(&project_path, &["commit", "-m", &req.message]) {
+        Ok(output) => Ok(Json(GitOpResponse {
+            success: true,
+            message: if output.is_empty() {
+                "Changes committed".to_string()
+            } else {
+                output
+            },
+        })),
+        Err(e) => {
+            let error_msg = e.to_string();
+            // Handle "nothing to commit" case
+            if error_msg.contains("nothing to commit") {
+                Ok(Json(GitOpResponse {
+                    success: false,
+                    message: "No changes to commit".to_string(),
                 }))
             } else {
                 Ok(Json(GitOpResponse {

@@ -1,3 +1,52 @@
+# Rust
 /target
+Cargo.lock  # Uncomment if this is a library project
+**/*.rs.bk
+*.pdb
+
+# IDE
 .idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Claude Code
 .claude/
+
+# Development / Marketing materials (not for version control)
+.grove-dev/
+
+# Web Frontend (Node.js / React)
+grove-web/node_modules/
+grove-web/dist/
+grove-web/build/
+grove-web/.next/
+grove-web/.turbo/
+grove-web/out/
+grove-web/.cache/
+grove-web/.parcel-cache/
+grove-web/.env.local
+grove-web/.env.*.local
+grove-web/npm-debug.log*
+grove-web/yarn-debug.log*
+grove-web/yarn-error.log*
+grove-web/.pnpm-debug.log*
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Temporary files
+*.tmp
+*.temp
+*.log
+*.pid
+*.seed
+*.pid.lock
+
+# Test coverage
+coverage/
+*.lcov
+.nyc_output/
