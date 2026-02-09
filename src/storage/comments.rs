@@ -6,6 +6,19 @@ use serde::{Deserialize, Serialize};
 use super::ensure_project_dir;
 use crate::error::Result;
 
+/// Comment 类型
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum CommentType {
+    /// Inline code comment (legacy default)
+    #[default]
+    Inline,
+    /// File-level comment (on entire file)
+    File,
+    /// Project-level comment (not tied to any file)
+    Project,
+}
+
 /// Comment 状态
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
@@ -50,32 +63,47 @@ fn default_side() -> String {
 pub struct Comment {
     /// 唯一序号
     pub id: u32,
-    /// 文件路径
-    pub file_path: String,
-    /// 变更侧: "ADD" | "DELETE"
-    #[serde(default = "default_side")]
-    pub side: String,
-    /// 起始行
-    pub start_line: u32,
-    /// 结束行
+
+    /// Comment 类型 (inline, file, or project level)
     #[serde(default)]
-    pub end_line: u32,
+    pub comment_type: CommentType,
+
+    /// 文件路径 (required for inline/file, None for project)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub file_path: Option<String>,
+
+    /// 变更侧: "ADD" | "DELETE" (required for inline, None for file/project)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub side: Option<String>,
+
+    /// 起始行 (required for inline, None for file/project)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub start_line: Option<u32>,
+
+    /// 结束行 (required for inline, None for file/project)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub end_line: Option<u32>,
+
     /// Comment 内容
     pub content: String,
+
     /// 作者
     #[serde(default = "default_author")]
     pub author: String,
+
     /// 时间戳
     #[serde(default = "default_timestamp")]
     pub timestamp: String,
+
     /// 状态
     #[serde(default)]
     pub status: CommentStatus,
+
     /// 回复列表
     #[serde(default)]
     pub replies: Vec<CommentReply>,
 
-    /// 创建 comment 时锚定行的代码快照，用于自动 outdated 检测
+    /// 创建 comment 时锚定行的代码快照，用于自动 outdated 检测 (only for inline comments)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub anchor_text: Option<String>,
 
@@ -93,11 +121,11 @@ impl Comment {
     fn migrate_legacy(&mut self) {
         // 迁移 location → file_path / start_line / end_line
         if let Some(loc) = self.location.take() {
-            if self.file_path.is_empty() {
+            if self.file_path.is_none() {
                 let (file, (start, end)) = parse_location(&loc);
-                self.file_path = file;
-                self.start_line = start;
-                self.end_line = end;
+                self.file_path = Some(file);
+                self.start_line = Some(start);
+                self.end_line = Some(end);
             }
         }
 
@@ -113,10 +141,114 @@ impl Comment {
             }
         }
 
-        // 确保 end_line >= start_line
-        if self.end_line == 0 {
-            self.end_line = self.start_line;
+        // 确保 end_line >= start_line (for inline comments)
+        if let (Some(start), None) = (self.start_line, self.end_line) {
+            self.end_line = Some(start);
         }
+    }
+
+    /// 创建 inline comment (legacy behavior)
+    #[allow(clippy::too_many_arguments)]
+    pub fn new_inline(
+        id: u32,
+        file_path: String,
+        side: String,
+        start_line: u32,
+        end_line: u32,
+        content: String,
+        author: String,
+        anchor_text: Option<String>,
+    ) -> Self {
+        Comment {
+            id,
+            comment_type: CommentType::Inline,
+            file_path: Some(file_path),
+            side: Some(side),
+            start_line: Some(start_line),
+            end_line: Some(end_line),
+            content,
+            author,
+            timestamp: chrono::Utc::now().to_rfc3339(),
+            status: CommentStatus::Open,
+            replies: Vec::new(),
+            anchor_text,
+            location: None,
+            reply: None,
+        }
+    }
+
+    /// 创建 file-level comment
+    pub fn new_file(id: u32, file_path: String, content: String, author: String) -> Self {
+        Comment {
+            id,
+            comment_type: CommentType::File,
+            file_path: Some(file_path),
+            side: None,
+            start_line: None,
+            end_line: None,
+            content,
+            author,
+            timestamp: chrono::Utc::now().to_rfc3339(),
+            status: CommentStatus::Open,
+            replies: Vec::new(),
+            anchor_text: None,
+            location: None,
+            reply: None,
+        }
+    }
+
+    /// 创建 project-level comment
+    pub fn new_project(id: u32, content: String, author: String) -> Self {
+        Comment {
+            id,
+            comment_type: CommentType::Project,
+            file_path: None,
+            side: None,
+            start_line: None,
+            end_line: None,
+            content,
+            author,
+            timestamp: chrono::Utc::now().to_rfc3339(),
+            status: CommentStatus::Open,
+            replies: Vec::new(),
+            anchor_text: None,
+            location: None,
+            reply: None,
+        }
+    }
+
+    /// 验证 comment 数据基于类型
+    pub fn validate(&self) -> Result<()> {
+        match self.comment_type {
+            CommentType::Inline => {
+                if self.file_path.is_none() {
+                    return Err(crate::error::GroveError::Storage(
+                        "Inline comment requires file_path".to_string(),
+                    ));
+                }
+                if self.side.is_none() {
+                    return Err(crate::error::GroveError::Storage(
+                        "Inline comment requires side".to_string(),
+                    ));
+                }
+                if self.start_line.is_none() || self.end_line.is_none() {
+                    return Err(crate::error::GroveError::Storage(
+                        "Inline comment requires line numbers".to_string(),
+                    ));
+                }
+            }
+            CommentType::File => {
+                if self.file_path.is_none() {
+                    return Err(crate::error::GroveError::Storage(
+                        "File comment requires file_path".to_string(),
+                    ));
+                }
+            }
+            CommentType::Project => {
+                // No required fields
+            }
+        }
+        Ok(())
     }
 }
 
@@ -284,10 +416,11 @@ fn parse_diff_comments(content: &str) -> Vec<Comment> {
 
             comments.push(Comment {
                 id,
-                file_path,
-                side: default_side(),
-                start_line,
-                end_line,
+                comment_type: CommentType::Inline,
+                file_path: Some(file_path),
+                side: Some(default_side()),
+                start_line: Some(start_line),
+                end_line: Some(end_line),
                 content,
                 author: default_author(),
                 timestamp: default_timestamp(),
@@ -363,8 +496,8 @@ where
     let mut line_changed = false;
 
     for comment in &mut data.comments {
-        // 仅对 Open 且有 anchor_text 的 comment 做检测
-        if comment.status != CommentStatus::Open {
+        // 仅对 Inline 类型的 Open 且有 anchor_text 的 comment 做检测
+        if comment.comment_type != CommentType::Inline || comment.status != CommentStatus::Open {
             continue;
         }
         let anchor = match &comment.anchor_text {
@@ -372,7 +505,16 @@ where
             _ => continue,
         };
 
-        let content = read_fn(&comment.file_path, &comment.side);
+        let file_path = match &comment.file_path {
+            Some(f) => f,
+            None => continue,
+        };
+        let side = match &comment.side {
+            Some(s) => s,
+            None => continue,
+        };
+
+        let content = read_fn(file_path, side);
         match content {
             None => {
                 // 文件不存在 → outdated
@@ -381,11 +523,13 @@ where
             Some(file_content) => {
                 if let Some(new_start) = find_anchor(&file_content, &anchor) {
                     // 找到 → 更新行号（如有位移）
-                    let span = comment.end_line.saturating_sub(comment.start_line);
-                    if comment.start_line != new_start {
-                        comment.start_line = new_start;
-                        comment.end_line = new_start + span;
-                        line_changed = true;
+                    if let (Some(start), Some(end)) = (comment.start_line, comment.end_line) {
+                        let span = end.saturating_sub(start);
+                        if start != new_start {
+                            comment.start_line = Some(new_start);
+                            comment.end_line = Some(new_start + span);
+                            line_changed = true;
+                        }
                     }
                 } else {
                     // 没找到 → outdated
@@ -425,19 +569,21 @@ pub fn load_comments(project: &str, task_id: &str) -> Result<CommentsData> {
         Vec::new()
     };
 
-    // 从 replies.json 读取 AI 回复，合并到 comments
+    // 从 replies.json 读取 AI 回复，合并到 comments (仅用于 inline comments)
     let replies = load_replies(project, task_id)?;
     for comment in &mut comments {
-        let loc_key = format!("{}:{}", comment.file_path, comment.start_line);
-        if let Some(reply_data) = replies.get(&loc_key) {
-            comment.status = reply_data.status;
-            if !reply_data.reply.is_empty() {
-                comment.replies.push(CommentReply {
-                    id: 1,
-                    content: reply_data.reply.clone(),
-                    author: "AI".to_string(),
-                    timestamp: default_timestamp(),
-                });
+        if let (Some(ref fp), Some(sl)) = (&comment.file_path, comment.start_line) {
+            let loc_key = format!("{}:{}", fp, sl);
+            if let Some(reply_data) = replies.get(&loc_key) {
+                comment.status = reply_data.status;
+                if !reply_data.reply.is_empty() {
+                    comment.replies.push(CommentReply {
+                        id: 1,
+                        content: reply_data.reply.clone(),
+                        author: "AI".to_string(),
+                        timestamp: default_timestamp(),
+                    });
+                }
             }
         }
     }
@@ -496,15 +642,16 @@ pub fn update_comment_status(
 /// 添加新 Comment
 ///
 /// 使用新的 comments.json 格式存储。自动分配 ID。
-/// `anchor_text`: 锚定行的代码快照，用于自动 outdated 检测。
+/// `anchor_text`: 锚定行的代码快照，用于自动 outdated 检测（仅用于 inline）。
 #[allow(clippy::too_many_arguments)]
 pub fn add_comment(
     project: &str,
     task_id: &str,
-    file_path: &str,
-    side: &str,
-    start_line: u32,
-    end_line: u32,
+    comment_type: CommentType,
+    file_path: Option<String>,
+    side: Option<String>,
+    start_line: Option<u32>,
+    end_line: Option<u32>,
     content: &str,
     author: &str,
     anchor_text: Option<String>,
@@ -514,21 +661,43 @@ pub fn add_comment(
     // 分配新 ID (最大 id + 1)
     let new_id = data.comments.iter().map(|c| c.id).max().unwrap_or(0) + 1;
 
-    let comment = Comment {
-        id: new_id,
-        file_path: file_path.to_string(),
-        side: side.to_string(),
-        start_line,
-        end_line: if end_line == 0 { start_line } else { end_line },
-        content: content.to_string(),
-        author: author.to_string(),
-        timestamp: chrono::Utc::now().to_rfc3339(),
-        status: CommentStatus::Open,
-        replies: Vec::new(),
-        anchor_text,
-        location: None,
-        reply: None,
+    // 创建 comment 基于类型
+    let comment = match comment_type {
+        CommentType::Inline => Comment::new_inline(
+            new_id,
+            file_path.ok_or_else(|| {
+                crate::error::GroveError::Storage(
+                    "file_path required for inline comment".to_string(),
+                )
+            })?,
+            side.ok_or_else(|| {
+                crate::error::GroveError::Storage("side required for inline comment".to_string())
+            })?,
+            start_line.ok_or_else(|| {
+                crate::error::GroveError::Storage(
+                    "start_line required for inline comment".to_string(),
+                )
+            })?,
+            end_line.unwrap_or_else(|| start_line.unwrap()),
+            content.to_string(),
+            author.to_string(),
+            anchor_text,
+        ),
+        CommentType::File => Comment::new_file(
+            new_id,
+            file_path.ok_or_else(|| {
+                crate::error::GroveError::Storage("file_path required for file comment".to_string())
+            })?,
+            content.to_string(),
+            author.to_string(),
+        ),
+        CommentType::Project => {
+            Comment::new_project(new_id, content.to_string(), author.to_string())
+        }
     };
+
+    // 验证
+    comment.validate()?;
 
     data.comments.push(comment.clone());
     save_comments_json(project, task_id, &data)?;
@@ -623,10 +792,11 @@ mod tests {
         let mut data = CommentsData {
             comments: vec![Comment {
                 id: 1,
-                file_path: "src/main.rs".to_string(),
-                side: "ADD".to_string(),
-                start_line: 5,
-                end_line: 5,
+                comment_type: CommentType::Inline,
+                file_path: Some("src/main.rs".to_string()),
+                side: Some("ADD".to_string()),
+                start_line: Some(5),
+                end_line: Some(5),
                 content: "fix this".to_string(),
                 author: "You".to_string(),
                 timestamp: "2025-01-01".to_string(),
@@ -651,10 +821,11 @@ mod tests {
         let mut data = CommentsData {
             comments: vec![Comment {
                 id: 1,
-                file_path: "src/main.rs".to_string(),
-                side: "ADD".to_string(),
-                start_line: 2,
-                end_line: 3,
+                comment_type: CommentType::Inline,
+                file_path: Some("src/main.rs".to_string()),
+                side: Some("ADD".to_string()),
+                start_line: Some(2),
+                end_line: Some(3),
                 content: "fix this".to_string(),
                 author: "You".to_string(),
                 timestamp: "2025-01-01".to_string(),
@@ -673,8 +844,8 @@ mod tests {
 
         assert!(changed);
         assert_eq!(data.comments[0].status, CommentStatus::Open);
-        assert_eq!(data.comments[0].start_line, 5);
-        assert_eq!(data.comments[0].end_line, 6);
+        assert_eq!(data.comments[0].start_line, Some(5));
+        assert_eq!(data.comments[0].end_line, Some(6));
     }
 
     #[test]
@@ -682,10 +853,11 @@ mod tests {
         let mut data = CommentsData {
             comments: vec![Comment {
                 id: 1,
-                file_path: "src/main.rs".to_string(),
-                side: "ADD".to_string(),
-                start_line: 1,
-                end_line: 1,
+                comment_type: CommentType::Inline,
+                file_path: Some("src/main.rs".to_string()),
+                side: Some("ADD".to_string()),
+                start_line: Some(1),
+                end_line: Some(1),
                 content: "fix this".to_string(),
                 author: "You".to_string(),
                 timestamp: "2025-01-01".to_string(),
@@ -708,10 +880,11 @@ mod tests {
         let mut data = CommentsData {
             comments: vec![Comment {
                 id: 1,
-                file_path: "src/main.rs".to_string(),
-                side: "ADD".to_string(),
-                start_line: 1,
-                end_line: 1,
+                comment_type: CommentType::Inline,
+                file_path: Some("src/main.rs".to_string()),
+                side: Some("ADD".to_string()),
+                start_line: Some(1),
+                end_line: Some(1),
                 content: "fix this".to_string(),
                 author: "You".to_string(),
                 timestamp: "2025-01-01".to_string(),
@@ -734,10 +907,11 @@ mod tests {
         let mut data = CommentsData {
             comments: vec![Comment {
                 id: 1,
-                file_path: "deleted.rs".to_string(),
-                side: "ADD".to_string(),
-                start_line: 1,
-                end_line: 1,
+                comment_type: CommentType::Inline,
+                file_path: Some("deleted.rs".to_string()),
+                side: Some("ADD".to_string()),
+                start_line: Some(1),
+                end_line: Some(1),
                 content: "fix this".to_string(),
                 author: "You".to_string(),
                 timestamp: "2025-01-01".to_string(),

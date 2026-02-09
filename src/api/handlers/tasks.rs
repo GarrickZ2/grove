@@ -141,10 +141,16 @@ pub struct ReviewCommentReplyEntry {
 #[derive(Debug, Serialize)]
 pub struct ReviewCommentEntry {
     pub id: u32,
-    pub file_path: String,
-    pub side: String,
-    pub start_line: u32,
-    pub end_line: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub comment_type: Option<String>, // "inline" | "file" | "project" (defaults to "inline" for backward compatibility)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub file_path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub side: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub start_line: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub end_line: Option<u32>,
     pub content: String,
     pub author: String,
     pub timestamp: String,
@@ -204,6 +210,8 @@ pub struct UpdateCommentStatusRequest {
 #[derive(Debug, Deserialize)]
 pub struct CreateReviewCommentRequest {
     pub content: String,
+    /// Comment type: "inline" | "file" | "project" (defaults to "inline")
+    pub comment_type: Option<String>,
     /// 新格式：结构化字段
     pub file_path: Option<String>,
     pub side: Option<String>,
@@ -982,6 +990,11 @@ pub async fn get_review_comments(
 
             ReviewCommentEntry {
                 id: c.id,
+                comment_type: Some(match c.comment_type {
+                    comments::CommentType::Inline => "inline".to_string(),
+                    comments::CommentType::File => "file".to_string(),
+                    comments::CommentType::Project => "project".to_string(),
+                }),
                 file_path: c.file_path,
                 side: c.side,
                 start_line: c.start_line,
@@ -1311,47 +1324,93 @@ pub async fn create_review_comment(
 ) -> Result<Json<ReviewCommentsResponse>, StatusCode> {
     let (_project, project_key) = find_project_by_id(&id)?;
 
-    // 优先使用结构化字段，fallback 解析 location string
-    let (file_path, side, start_line, end_line) = if let Some(ref fp) = req.file_path {
-        let side = req.side.as_deref().unwrap_or("ADD");
-        let start = req.start_line.unwrap_or(1);
-        let end = req.end_line.unwrap_or(start);
-        (fp.clone(), side.to_string(), start, end)
-    } else if let Some(ref loc) = req.location {
-        let (fp, (start, end)) = comments::parse_location(loc);
-        (fp, "ADD".to_string(), start, end)
-    } else {
-        return Err(StatusCode::BAD_REQUEST);
+    // Parse comment type
+    let comment_type = match req.comment_type.as_deref() {
+        Some("file") => comments::CommentType::File,
+        Some("project") => comments::CommentType::Project,
+        _ => comments::CommentType::Inline, // default to inline for backward compatibility
     };
 
     let author = req.author.as_deref().unwrap_or("You");
 
-    // 计算 anchor_text: 读取对应 side 的文件并提取锚定行
-    let anchor_text = tasks::get_task(&project_key, &task_id)
-        .ok()
-        .flatten()
-        .and_then(|task| {
-            let content = if side == "DELETE" {
-                git::show_file(&task.worktree_path, &task.target, &file_path).ok()
+    // Process based on comment type
+    match comment_type {
+        comments::CommentType::Inline => {
+            // Parse file_path, side, lines (fallback to location string for backward compat)
+            let (file_path, side, start_line, end_line) = if let Some(ref fp) = req.file_path {
+                let side = req.side.as_deref().unwrap_or("ADD");
+                let start = req.start_line.unwrap_or(1);
+                let end = req.end_line.unwrap_or(start);
+                (fp.clone(), side.to_string(), start, end)
+            } else if let Some(ref loc) = req.location {
+                let (fp, (start, end)) = comments::parse_location(loc);
+                (fp, "ADD".to_string(), start, end)
             } else {
-                git::read_file(&task.worktree_path, &file_path).ok()
+                return Err(StatusCode::BAD_REQUEST);
             };
-            content.and_then(|c| comments::extract_lines(&c, start_line, end_line))
-        });
 
-    // Add comment
-    comments::add_comment(
-        &project_key,
-        &task_id,
-        &file_path,
-        &side,
-        start_line,
-        end_line,
-        &req.content,
-        author,
-        anchor_text,
-    )
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+            // 计算 anchor_text: 读取对应 side 的文件并提取锚定行
+            let anchor_text = tasks::get_task(&project_key, &task_id)
+                .ok()
+                .flatten()
+                .and_then(|task| {
+                    let content = if side == "DELETE" {
+                        git::show_file(&task.worktree_path, &task.target, &file_path).ok()
+                    } else {
+                        git::read_file(&task.worktree_path, &file_path).ok()
+                    };
+                    content.and_then(|c| comments::extract_lines(&c, start_line, end_line))
+                });
+
+            comments::add_comment(
+                &project_key,
+                &task_id,
+                comment_type,
+                Some(file_path),
+                Some(side),
+                Some(start_line),
+                Some(end_line),
+                &req.content,
+                author,
+                anchor_text,
+            )
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        }
+        comments::CommentType::File => {
+            // File comment requires file_path
+            let file_path = req.file_path.ok_or(StatusCode::BAD_REQUEST)?;
+
+            comments::add_comment(
+                &project_key,
+                &task_id,
+                comment_type,
+                Some(file_path),
+                None, // no side
+                None, // no start_line
+                None, // no end_line
+                &req.content,
+                author,
+                None, // no anchor_text
+            )
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        }
+        comments::CommentType::Project => {
+            // Project comment requires no file_path
+            comments::add_comment(
+                &project_key,
+                &task_id,
+                comment_type,
+                None, // no file_path
+                None, // no side
+                None, // no start_line
+                None, // no end_line
+                &req.content,
+                author,
+                None, // no anchor_text
+            )
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        }
+    }
 
     // Return updated comments
     get_review_comments(Path((id, task_id))).await

@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
-import { getFullDiff, createComment, deleteComment as apiDeleteComment, replyReviewComment as apiReplyComment, updateCommentStatus as apiUpdateCommentStatus, getFileContent } from '../../api/review';
+import { getFullDiff, createInlineComment, createFileComment, createProjectComment, deleteComment as apiDeleteComment, replyReviewComment as apiReplyComment, updateCommentStatus as apiUpdateCommentStatus, getFileContent } from '../../api/review';
 import { getReviewComments, getCommits, getTaskFiles } from '../../api/tasks';
 import type { FullDiffResult, DiffFile } from '../../api/review';
 import type { ReviewCommentEntry } from '../../api/tasks';
@@ -39,6 +39,7 @@ export function DiffReviewPage({ projectId, taskId, embedded }: DiffReviewPagePr
   const [error, setError] = useState<string | null>(null);
   const [comments, setComments] = useState<ReviewCommentEntry[]>([]);
   const [commentFormAnchor, setCommentFormAnchor] = useState<CommentAnchor | null>(null);
+  const [fileCommentFormPath, setFileCommentFormPath] = useState<string | null>(null);
   const contentRef = useRef<HTMLDivElement>(null);
 
   // Full file content cache
@@ -63,11 +64,33 @@ export function DiffReviewPage({ projectId, taskId, embedded }: DiffReviewPagePr
   const [versions, setVersions] = useState<VersionOption[]>([]);
   const initialCollapseRef = useRef(false);
 
+  // Temporary virtual files/directories created in current session
+  const [temporaryVirtualPaths, setTemporaryVirtualPaths] = useState<Set<string>>(new Set());
+
   // Filter files based on view mode
   const displayFiles = useMemo(() => {
     if (viewMode === 'full') {
-      // In File Mode, use all git-tracked files from worktree
-      return allFiles.map((path): DiffFile => ({
+      // In All Files Mode: show all git-tracked files + virtual files
+      // Extract virtual files from diffData (they have is_virtual flag from comments)
+      const virtualFiles = diffData?.files.filter(f => f.is_virtual) || [];
+
+      // Add temporary virtual files (created in current session, not persisted yet)
+      const temporaryVirtualFiles: DiffFile[] = Array.from(temporaryVirtualPaths).map(path => ({
+        old_path: '',
+        new_path: path,
+        change_type: 'added' as const,
+        hunks: [],
+        is_binary: false,
+        additions: 0,
+        deletions: 0,
+        is_virtual: true,
+      }));
+
+      // Merge all virtual files (from comments + temporary)
+      const allVirtualFiles = [...virtualFiles, ...temporaryVirtualFiles];
+
+      // Get all git-tracked files
+      const allFileDiffFiles = allFiles.map((path): DiffFile => ({
         old_path: path,
         new_path: path,
         change_type: 'modified', // Doesn't matter for full file view
@@ -76,11 +99,19 @@ export function DiffReviewPage({ projectId, taskId, embedded }: DiffReviewPagePr
         additions: 0,
         deletions: 0,
       }));
+
+      // Create a set of existing file paths to avoid duplicates
+      const existingPaths = new Set(allFiles);
+
+      // Only add virtual files that don't already exist as real files
+      const uniqueVirtualFiles = allVirtualFiles.filter(vf => !existingPaths.has(vf.new_path));
+
+      return [...allFileDiffFiles, ...uniqueVirtualFiles];
     }
-    // In Diff Mode, use diff data
+    // In Changes Mode (Diff Mode): only show real diff files, NO virtual files
     if (!diffData) return [];
-    return diffData.files;
-  }, [viewMode, allFiles, diffData]);
+    return diffData.files.filter(f => !f.is_virtual);
+  }, [viewMode, allFiles, diffData, temporaryVirtualPaths]);
 
   // Use ref to access displayFiles in callbacks without dependency issues
   const displayFilesRef = useRef(displayFiles);
@@ -140,10 +171,12 @@ export function DiffReviewPage({ projectId, taskId, embedded }: DiffReviewPagePr
   const fileCommentCounts = useMemo(() => {
     const counts = new Map<string, { total: number; unresolved: number }>();
     for (const c of comments) {
-      const existing = counts.get(c.file_path) || { total: 0, unresolved: 0 };
-      existing.total++;
-      if (c.status !== 'resolved') existing.unresolved++;
-      counts.set(c.file_path, existing);
+      if (c.file_path) {
+        const existing = counts.get(c.file_path) || { total: 0, unresolved: 0 };
+        existing.total++;
+        if (c.status !== 'resolved') existing.unresolved++;
+        counts.set(c.file_path, existing);
+      }
     }
     return counts;
   }, [comments]);
@@ -260,12 +293,35 @@ export function DiffReviewPage({ projectId, taskId, embedded }: DiffReviewPagePr
         }
 
         if (!cancelled) {
-          setDiffData(data);
+          // Detect virtual files (files with comments but not in diff)
+          // Include all comment types (file, inline) - any comment with a file_path
+          const existingFilePaths = new Set(data.files.map(f => f.new_path));
+          const virtualFilePaths = reviewComments
+            .filter(c => c.file_path && !existingFilePaths.has(c.file_path))
+            .map(c => c.file_path!)
+            .filter((path, idx, arr) => arr.indexOf(path) === idx); // unique
+
+          // Create virtual file entries
+          const virtualFiles: DiffFile[] = virtualFilePaths.map(path => ({
+            old_path: '',
+            new_path: path,
+            change_type: 'added' as const,
+            hunks: [],
+            is_binary: false,
+            additions: 0,
+            deletions: 0,
+            is_virtual: true, // mark as virtual
+          }));
+
+          // Merge virtual files with real files
+          const allDiffFiles = [...data.files, ...virtualFiles];
+
+          setDiffData({ ...data, files: allDiffFiles });
           if (filesData) {
             setAllFiles(filesData.files);
           }
-          if (data.files.length > 0) {
-            setSelectedFile(data.files[0].new_path);
+          if (allDiffFiles.length > 0) {
+            setSelectedFile(allDiffFiles[0].new_path);
           }
           setComments(reviewComments);
         }
@@ -376,6 +432,13 @@ export function DiffReviewPage({ projectId, taskId, embedded }: DiffReviewPagePr
     });
   }, []);
 
+  // Create virtual file/directory (temporary, only persisted if comment is added)
+  const handleCreateVirtualPath = useCallback((path: string) => {
+    setTemporaryVirtualPaths(prev => new Set(prev).add(path));
+    // Auto-select the newly created virtual file
+    setSelectedFile(path);
+  }, []);
+
   // Gutter click — open comment form (side-aware + shift-click multiline)
   const handleGutterClick = useCallback((filePath: string, side: 'ADD' | 'DELETE', line: number, shiftKey: boolean) => {
     setCommentFormAnchor((prev) => {
@@ -397,7 +460,7 @@ export function DiffReviewPage({ projectId, taskId, embedded }: DiffReviewPagePr
   // Add comment
   const handleAddComment = useCallback(async (anchor: CommentAnchor, content: string) => {
     try {
-      const result = await createComment(projectId, taskId, anchor, content);
+      const result = await createInlineComment(projectId, taskId, anchor, content);
       setComments(result.comments);
       setCommentFormAnchor(null);
     } catch {
@@ -419,6 +482,35 @@ export function DiffReviewPage({ projectId, taskId, embedded }: DiffReviewPagePr
   const handleCancelComment = useCallback(() => {
     setCommentFormAnchor(null);
   }, []);
+
+  // File comment handlers
+  const handleAddFileComment = useCallback((filePath: string) => {
+    setFileCommentFormPath(filePath);
+  }, []);
+
+  const handleCancelFileComment = useCallback(() => {
+    setFileCommentFormPath(null);
+  }, []);
+
+  const handleSubmitFileComment = useCallback(async (filePath: string, content: string) => {
+    try {
+      const result = await createFileComment(projectId, taskId, filePath, content);
+      setComments(result.comments);
+      setFileCommentFormPath(null);
+    } catch {
+      // Could add toast here
+    }
+  }, [projectId, taskId]);
+
+  // Add project comment
+  const handleAddProjectComment = useCallback(async (content: string) => {
+    try {
+      const result = await createProjectComment(projectId, taskId, content);
+      setComments(result.comments);
+    } catch {
+      // Could add toast here
+    }
+  }, [projectId, taskId]);
 
   // Open reply form
   const handleOpenReplyForm = useCallback((commentId: number) => {
@@ -637,6 +729,8 @@ export function DiffReviewPage({ projectId, taskId, embedded }: DiffReviewPagePr
               fileCommentCounts={fileCommentCounts}
               collapsed={!sidebarVisible}
               getFileViewedStatus={getFileViewedStatus}
+              onCreateVirtualPath={handleCreateVirtualPath}
+              viewMode={viewMode}
             />
 
             {/* Diff content */}
@@ -677,14 +771,19 @@ export function DiffReviewPage({ projectId, taskId, embedded }: DiffReviewPagePr
                   fullFileContent={fullFileContents.get(file.new_path)}
                   isLoadingFullFile={loadingFiles.has(file.new_path)}
                   onRequestFullFile={loadFullFileContent}
+                  onAddFileComment={handleAddFileComment}
+                  fileCommentFormPath={fileCommentFormPath}
+                  onCancelFileComment={handleCancelFileComment}
+                  onSubmitFileComment={handleSubmitFileComment}
                 />
               ))}
             </div>
 
             {/* Conversation sidebar */}
             <ConversationSidebar
-              comments={focusMode && validSelectedFile ? comments.filter((c) => c.file_path === validSelectedFile) : comments}
+              comments={comments}
               visible={convSidebarVisible}
+              onAddProjectComment={handleAddProjectComment}
               onNavigateToComment={handleNavigateToComment}
               onResolveComment={handleResolveComment}
               onReopenComment={handleReopenComment}

@@ -8,7 +8,7 @@ use ratatui::{
 
 use crate::app::{PanelData, PreviewSubTab};
 use crate::model::{Worktree, WorktreeStatus};
-use crate::storage::comments::CommentStatus;
+use crate::storage::comments::{CommentStatus, CommentType};
 use crate::theme::ThemeColors;
 use crate::ui::click_areas::ClickAreas;
 use crate::watcher::TaskEditHistory;
@@ -414,15 +414,37 @@ pub fn render_diff_tab(
 
     // Render each comment
     for comment in &data.review_comments.comments {
-        // Comment header with ID, status, and location
-        let file_parts: Vec<&str> = comment.file_path.split('/').collect();
-        let filename = file_parts.last().copied().unwrap_or(&comment.file_path);
-        let line_label = if comment.start_line == comment.end_line || comment.end_line == 0 {
-            format!("L{}", comment.start_line)
-        } else {
-            format!("L{}-{}", comment.start_line, comment.end_line)
+        // Determine comment type and icon
+        let (type_icon, loc) = match comment.comment_type {
+            CommentType::Inline => {
+                if let Some(ref fp) = comment.file_path {
+                    let file_parts: Vec<&str> = fp.split('/').collect();
+                    let filename = file_parts.last().copied().unwrap_or(fp);
+                    if let (Some(start), Some(end)) = (comment.start_line, comment.end_line) {
+                        let line_label = if start == end {
+                            format!("L{}", start)
+                        } else {
+                            format!("L{}-{}", start, end)
+                        };
+                        ("💬", format!("{} {}", filename, line_label))
+                    } else {
+                        ("💬", filename.to_string())
+                    }
+                } else {
+                    ("💬", "Unknown".to_string())
+                }
+            }
+            CommentType::File => {
+                if let Some(ref fp) = comment.file_path {
+                    let file_parts: Vec<&str> = fp.split('/').collect();
+                    let filename = file_parts.last().copied().unwrap_or(fp);
+                    ("📄", format!("File: {}", filename))
+                } else {
+                    ("📄", "Unknown file".to_string())
+                }
+            }
+            CommentType::Project => ("🗂️", "Project-level".to_string()),
         };
-        let loc = format!("{} {}", filename, line_label);
 
         match comment.status {
             CommentStatus::Open => {
@@ -432,6 +454,10 @@ pub fn render_diff_tab(
                         Style::default()
                             .fg(colors.highlight)
                             .add_modifier(Modifier::BOLD),
+                    ),
+                    Span::styled(
+                        format!("{} ", type_icon),
+                        Style::default().fg(colors.highlight),
                     ),
                     Span::styled(loc.clone(), Style::default().fg(colors.highlight)),
                 ]));
@@ -450,6 +476,7 @@ pub fn render_diff_tab(
                             .fg(colors.status_merged)
                             .add_modifier(Modifier::BOLD),
                     ),
+                    Span::styled(format!("{} ", type_icon), Style::default().fg(colors.muted)),
                     Span::styled(loc.clone(), Style::default().fg(colors.muted)),
                 ]));
             }
@@ -466,6 +493,10 @@ pub fn render_diff_tab(
                         Style::default()
                             .fg(Color::Yellow)
                             .add_modifier(Modifier::BOLD),
+                    ),
+                    Span::styled(
+                        format!("{} ", type_icon),
+                        Style::default().fg(colors.highlight),
                     ),
                     Span::styled(loc.clone(), Style::default().fg(colors.highlight)),
                 ]));

@@ -1,6 +1,6 @@
-import { useState } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import type { DiffFile } from '../../api/review';
-import { FolderOpen, Folder, Search, MessageSquare } from 'lucide-react';
+import { FolderOpen, Folder, Search, MessageSquare, FilePlus, FolderPlus } from 'lucide-react';
 
 interface FileCommentCount {
   total: number;
@@ -16,6 +16,8 @@ interface FileTreeSidebarProps {
   fileCommentCounts?: Map<string, FileCommentCount>;
   collapsed?: boolean;
   getFileViewedStatus?: (path: string) => 'none' | 'viewed' | 'updated';
+  onCreateVirtualPath?: (path: string) => void;
+  viewMode?: 'diff' | 'full';
 }
 
 interface DirNode {
@@ -43,7 +45,25 @@ export function FileTreeSidebar({
   fileCommentCounts,
   collapsed = false,
   getFileViewedStatus,
+  onCreateVirtualPath,
+  viewMode = 'diff',
 }: FileTreeSidebarProps) {
+  // Context menu state
+  const [contextMenu, setContextMenu] = useState<{
+    x: number;
+    y: number;
+    targetPath: string;
+    isDirectory: boolean;
+  } | null>(null);
+
+  // Inline input state for creating virtual files
+  const [creatingVirtual, setCreatingVirtual] = useState<{
+    type: 'file' | 'directory';
+    parentPath: string;
+    depth: number;
+  } | null>(null);
+  const virtualInputRef = useRef<HTMLInputElement>(null);
+
   // Filter files by search query
   const filteredFiles = searchQuery
     ? files.filter((f) => f.new_path.toLowerCase().includes(searchQuery.toLowerCase()))
@@ -51,8 +71,51 @@ export function FileTreeSidebar({
 
   const tree = buildTree(filteredFiles);
 
+  // Close context menu on click outside
+  const handleCloseContextMenu = () => {
+    setContextMenu(null);
+  };
+
+  const handleContextMenu = (e: React.MouseEvent, path: string, isDirectory: boolean) => {
+    // Only show context menu in All Files Mode
+    if (viewMode !== 'full') return;
+
+    e.preventDefault();
+    e.stopPropagation();
+    setContextMenu({
+      x: e.clientX,
+      y: e.clientY,
+      targetPath: path,
+      isDirectory,
+    });
+  };
+
+  const handleCreateVirtual = (type: 'file' | 'directory') => {
+    if (!contextMenu) return;
+    const parentPath = contextMenu.isDirectory ? contextMenu.targetPath : contextMenu.targetPath.split('/').slice(0, -1).join('/');
+    const depth = parentPath ? parentPath.split('/').length : 0;
+
+    setCreatingVirtual({
+      type,
+      parentPath,
+      depth: depth + 1,
+    });
+    setContextMenu(null);
+  };
+
+  const handleSubmitVirtualPath = (name: string) => {
+    if (!creatingVirtual || !onCreateVirtualPath) return;
+    const fullPath = creatingVirtual.parentPath ? `${creatingVirtual.parentPath}/${name}` : name;
+    onCreateVirtualPath(fullPath);
+    setCreatingVirtual(null);
+  };
+
+  const handleCancelVirtualPath = () => {
+    setCreatingVirtual(null);
+  };
+
   return (
-    <div className={`diff-sidebar ${collapsed ? 'collapsed' : ''}`}>
+    <div className={`diff-sidebar ${collapsed ? 'collapsed' : ''}`} onClick={handleCloseContextMenu}>
       {/* Search box */}
       {onSearchChange && (
         <div className="diff-sidebar-search">
@@ -68,6 +131,17 @@ export function FileTreeSidebar({
       )}
 
       <div className="diff-sidebar-list">
+        {/* Root level virtual path input */}
+        {creatingVirtual && creatingVirtual.parentPath === '' && (
+          <VirtualPathInput
+            type={creatingVirtual.type}
+            depth={0}
+            onSubmit={handleSubmitVirtualPath}
+            onCancel={handleCancelVirtualPath}
+            inputRef={virtualInputRef}
+          />
+        )}
+
         {tree.map((node) => (
           <TreeNode
             key={isDirNode(node) ? node.path : node.path}
@@ -77,9 +151,75 @@ export function FileTreeSidebar({
             onSelectFile={onSelectFile}
             fileCommentCounts={fileCommentCounts}
             getFileViewedStatus={getFileViewedStatus}
+            onContextMenu={handleContextMenu}
+            creatingVirtual={creatingVirtual}
+            onSubmitVirtualPath={handleSubmitVirtualPath}
+            onCancelVirtualPath={handleCancelVirtualPath}
+            virtualInputRef={virtualInputRef}
           />
         ))}
       </div>
+
+      {/* Context Menu */}
+      {contextMenu && (
+        <div
+          className="file-tree-context-menu"
+          style={{
+            position: 'fixed',
+            left: contextMenu.x,
+            top: contextMenu.y,
+            zIndex: 9999,
+          }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <button onClick={() => handleCreateVirtual('file')}>
+            <FilePlus style={{ width: 14, height: 14 }} />
+            Create Virtual File
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Inline input for creating virtual files/directories
+function VirtualPathInput({
+  type,
+  depth,
+  onSubmit,
+  onCancel,
+  inputRef,
+}: {
+  type: 'file' | 'directory';
+  depth: number;
+  onSubmit: (name: string) => void;
+  onCancel: () => void;
+  inputRef: React.RefObject<HTMLInputElement | null>;
+}) {
+  const Icon = type === 'file' ? FilePlus : FolderPlus;
+
+  return (
+    <div
+      className="diff-sidebar-item virtual-input"
+      style={{ paddingLeft: depth * 12 + 12 }}
+    >
+      <Icon style={{ width: 14, height: 14, color: 'var(--color-warning)', flexShrink: 0 }} />
+      <input
+        ref={inputRef}
+        type="text"
+        className="virtual-path-input"
+        placeholder={`${type === 'file' ? 'filename' : 'dirname'}...`}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') {
+            const value = (e.target as HTMLInputElement).value.trim();
+            if (value) onSubmit(value);
+          } else if (e.key === 'Escape') {
+            onCancel();
+          }
+        }}
+        onBlur={onCancel}
+        onClick={(e) => e.stopPropagation()}
+      />
     </div>
   );
 }
@@ -91,6 +231,11 @@ function TreeNode({
   onSelectFile,
   fileCommentCounts,
   getFileViewedStatus,
+  onContextMenu,
+  creatingVirtual,
+  onSubmitVirtualPath,
+  onCancelVirtualPath,
+  virtualInputRef,
 }: {
   node: DirNode | FileNode;
   depth: number;
@@ -98,16 +243,31 @@ function TreeNode({
   onSelectFile: (path: string) => void;
   fileCommentCounts?: Map<string, FileCommentCount>;
   getFileViewedStatus?: (path: string) => 'none' | 'viewed' | 'updated';
+  onContextMenu?: (e: React.MouseEvent, path: string, isDirectory: boolean) => void;
+  creatingVirtual?: { type: 'file' | 'directory'; parentPath: string; depth: number } | null;
+  onSubmitVirtualPath?: (name: string) => void;
+  onCancelVirtualPath?: () => void;
+  virtualInputRef?: React.RefObject<HTMLInputElement | null>;
 }) {
   const [expanded, setExpanded] = useState(true);
 
+  useEffect(() => {
+    if (creatingVirtual && virtualInputRef?.current) {
+      virtualInputRef.current.focus();
+    }
+  }, [creatingVirtual, virtualInputRef]);
+
   if (isDirNode(node)) {
+    // Check if we should show inline input after this directory
+    const shouldShowInput = creatingVirtual && creatingVirtual.parentPath === node.path && expanded;
+
     return (
       <>
         <button
           className="diff-sidebar-item"
           style={{ paddingLeft: depth * 12 + 12 }}
           onClick={() => setExpanded(!expanded)}
+          onContextMenu={(e) => onContextMenu?.(e, node.path, true)}
         >
           {expanded ? (
             <FolderOpen style={{ width: 14, height: 14, color: 'var(--color-text-muted)', flexShrink: 0 }} />
@@ -116,18 +276,35 @@ function TreeNode({
           )}
           <span style={{ opacity: 0.85, fontWeight: 500 }}>{node.name}</span>
         </button>
-        {expanded &&
-          node.children.map((child) => (
-            <TreeNode
-              key={isDirNode(child) ? child.path : child.path}
-              node={child}
-              depth={depth + 1}
-              selectedFile={selectedFile}
-              onSelectFile={onSelectFile}
-              fileCommentCounts={fileCommentCounts}
-              getFileViewedStatus={getFileViewedStatus}
-            />
-          ))}
+        {expanded && (
+          <>
+            {shouldShowInput && (
+              <VirtualPathInput
+                type={creatingVirtual.type}
+                depth={creatingVirtual.depth}
+                onSubmit={onSubmitVirtualPath!}
+                onCancel={onCancelVirtualPath!}
+                inputRef={virtualInputRef!}
+              />
+            )}
+            {node.children.map((child) => (
+              <TreeNode
+                key={isDirNode(child) ? child.path : child.path}
+                node={child}
+                depth={depth + 1}
+                selectedFile={selectedFile}
+                onSelectFile={onSelectFile}
+                fileCommentCounts={fileCommentCounts}
+                getFileViewedStatus={getFileViewedStatus}
+                onContextMenu={onContextMenu}
+                creatingVirtual={creatingVirtual}
+                onSubmitVirtualPath={onSubmitVirtualPath}
+                onCancelVirtualPath={onCancelVirtualPath}
+                virtualInputRef={virtualInputRef}
+              />
+            ))}
+          </>
+        )}
       </>
     );
   }
@@ -139,12 +316,17 @@ function TreeNode({
 
   return (
     <button
-      className={`diff-sidebar-item ${isActive ? 'active' : ''}`}
+      className={`diff-sidebar-item ${isActive ? 'active' : ''} ${file.is_virtual ? 'virtual' : ''}`}
       style={{ paddingLeft: depth * 12 + 12 }}
       onClick={() => onSelectFile(file.new_path)}
+      onContextMenu={(e) => onContextMenu?.(e, file.new_path, false)}
+      title={file.is_virtual ? 'Planned file (not yet created)' : undefined}
     >
-      <StatusIcon changeType={file.change_type} />
-      <span className={`truncate ${viewedStatus === 'viewed' ? 'diff-sidebar-file-viewed' : ''}`}>
+      <StatusIcon changeType={file.change_type} isVirtual={file.is_virtual} />
+      <span
+        className={`truncate ${viewedStatus === 'viewed' ? 'diff-sidebar-file-viewed' : ''}`}
+        style={file.is_virtual ? { opacity: 0.7, fontStyle: 'italic' } : undefined}
+      >
         {node.name}
       </span>
       {viewedStatus === 'viewed' && (
@@ -169,7 +351,7 @@ function TreeNode({
   );
 }
 
-function StatusIcon({ changeType }: { changeType: string }) {
+function StatusIcon({ changeType, isVirtual }: { changeType: string; isVirtual?: boolean }) {
   const color =
     changeType === 'added'
       ? 'var(--color-success)'
@@ -183,13 +365,15 @@ function StatusIcon({ changeType }: { changeType: string }) {
   return (
     <span
       style={{
-        color,
+        color: isVirtual ? 'var(--color-warning)' : color,
         fontWeight: 600,
         fontSize: 10,
         width: 14,
         textAlign: 'center',
         flexShrink: 0,
+        opacity: isVirtual ? 0.7 : 1,
       }}
+      title={isVirtual ? 'Planned file (not yet created)' : undefined}
     >
       {letter}
     </span>

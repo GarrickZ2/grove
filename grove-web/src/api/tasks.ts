@@ -89,12 +89,15 @@ export interface CommentReply {
   timestamp: string;
 }
 
+export type CommentType = 'inline' | 'file' | 'project';
+
 export interface ReviewCommentEntry {
   id: number;
-  file_path: string;
-  side: 'ADD' | 'DELETE';
-  start_line: number;
-  end_line: number;
+  comment_type?: CommentType; // defaults to 'inline' for backward compatibility
+  file_path?: string; // optional (None for project-level)
+  side?: 'ADD' | 'DELETE'; // optional (None for file/project-level)
+  start_line?: number; // optional (None for file/project-level)
+  end_line?: number; // optional (None for file/project-level)
   content: string;
   author: string;
   timestamp: string;
@@ -104,7 +107,14 @@ export interface ReviewCommentEntry {
 
 /** Build a location key for matching: "file:SIDE:line" */
 export function commentLocationKey(c: ReviewCommentEntry): string {
-  return `${c.file_path}:${c.side}:${c.end_line}`;
+  const type = c.comment_type || 'inline';
+  if (type === 'inline' && c.file_path && c.side && c.end_line !== undefined) {
+    return `${c.file_path}:${c.side}:${c.end_line}`;
+  } else if (type === 'file' && c.file_path) {
+    return `file:${c.file_path}`;
+  } else {
+    return `project:${c.id}`;
+  }
 }
 
 export interface ReviewCommentsResponse {

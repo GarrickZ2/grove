@@ -52,7 +52,11 @@ When inside a Grove task:
 2. **grove_read_notes** - Read user-written notes containing context and requirements
 3. **grove_read_review** - Read code review comments with IDs and status
 4. **grove_reply_review** - Reply to review comments (supports batch)
-5. **grove_add_comment** - Create a code review comment to provide feedback, raise questions, or suggest improvements on specific code locations
+5. **grove_add_comment** - Create review comments (supports batch). Three levels:
+   - **Inline**: Comment on specific code lines (e.g., "extract this function")
+   - **File**: Comment on entire file (e.g., "file too large, split modules")
+   - **Project**: Overall feedback (e.g., "add integration tests")
+   Use to review code, raise questions, suggest improvements, or **visualize implementation plans** by marking key points.
 6. **grove_complete_task** - Complete task: commit → sync (rebase) → merge. **ONLY call when the user explicitly asks.**
 
 ## Recommended Workflow
@@ -126,8 +130,6 @@ pub struct SingleReply {
     pub comment_id: u32,
     /// Your reply message
     pub message: String,
-    /// Author name (e.g., "Claude Code Reviewer")
-    pub author: Option<String>,
 }
 
 /// Batch reply parameters - reply to multiple comments at once
@@ -135,21 +137,36 @@ pub struct SingleReply {
 pub struct ReplyReviewParams {
     /// List of replies to send
     pub replies: Vec<SingleReply>,
+    /// Agent name (e.g., "Claude Code"). Combined with role to form full author name.
+    pub agent_name: Option<String>,
+    /// Role of the agent (e.g., "Reviewer", "Implementer"). Combined with agent_name.
+    pub role: Option<String>,
+}
+
+/// Single comment item
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+pub struct CommentItem {
+    /// Type of comment: "inline", "file", or "project" (defaults to "inline")
+    pub comment_type: Option<String>,
+    /// File path (required for inline/file, omit for project)
+    pub file_path: Option<String>,
+    /// Start line number (required for inline only, 1-based)
+    pub start_line: Option<u32>,
+    /// End line number (required for inline only, 1-based). Defaults to start_line if omitted.
+    pub end_line: Option<u32>,
+    /// Comment content
+    pub content: String,
 }
 
 /// Add comment parameters
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct AddCommentParams {
-    /// File path (e.g., "src/main.rs")
-    pub file_path: String,
-    /// Start line number (1-based)
-    pub start_line: u32,
-    /// End line number (1-based). Defaults to start_line if omitted.
-    pub end_line: Option<u32>,
-    /// Comment content
-    pub content: String,
-    /// Author name (e.g., "Claude Code Reviewer")
-    pub author: Option<String>,
+    /// List of comments to create. Pass a single-element array to create one comment.
+    pub comments: Vec<CommentItem>,
+    /// Agent name (e.g., "Claude Code"). Combined with role to form full author name.
+    pub agent_name: Option<String>,
+    /// Role of the agent (e.g., "Reviewer", "Planner", "Implementer"). Combined with agent_name.
+    pub role: Option<String>,
 }
 
 /// Complete task parameters
@@ -320,18 +337,24 @@ impl GroveMcpServer {
             ));
         }
 
+        // Build author string: "agent_name (role)"
+        let author = match (&params.0.agent_name, &params.0.role) {
+            (Some(name), Some(role)) => format!("{} ({})", name, role),
+            (Some(name), None) => name.clone(),
+            (None, Some(role)) => format!("Claude Code ({})", role),
+            (None, None) => "Claude Code".to_string(),
+        };
+
         let mut results: Vec<String> = Vec::new();
         let mut errors: Vec<String> = Vec::new();
 
         for reply in &params.0.replies {
-            let author = reply.author.as_deref().unwrap_or("AI");
-
             match comments::reply_comment(
                 &project_key,
                 &task_id,
                 reply.comment_id,
                 &reply.message,
-                author,
+                &author,
             ) {
                 Ok(true) => {
                     results.push(format!("#{}: replied ✓", reply.comment_id));
@@ -371,10 +394,11 @@ impl GroveMcpServer {
         )]))
     }
 
-    /// Add a new code review comment on the current task
+    /// Add review comments. Supports three levels: inline (code lines), file (entire file),
+    /// project (overall). Use for code review, questions, improvements, or visualizing plans.
     #[tool(
         name = "grove_add_comment",
-        description = "Create a code review comment on specific code in the current Grove task. Use this when reviewing code to provide feedback, raise questions, or suggest improvements. The comment will appear in the diff review UI."
+        description = "Create review comments. Three levels: 'inline' (specific lines), 'file' (entire file), 'project' (overall feedback). Use for code review, raising questions, suggesting improvements, or visualizing implementation plans by marking key points. Pass array with one item to create single comment, multiple items for batch."
     )]
     async fn grove_add_comment(
         &self,
@@ -384,48 +408,145 @@ impl GroveMcpServer {
             .ok_or_else(|| McpError::invalid_request("Not in a Grove task", None))?;
 
         let project_key = project_hash(&project_path);
+        let worktree = env::var("GROVE_WORKTREE").unwrap_or_default();
 
-        let file_path = &params.0.file_path;
-        let start_line = params.0.start_line;
-        let end_line = params.0.end_line.unwrap_or(start_line);
-        let author = params.0.author.as_deref().unwrap_or("AI");
-
-        // 计算 anchor_text
-        let anchor_text = {
-            let worktree = env::var("GROVE_WORKTREE").unwrap_or_default();
-            if !worktree.is_empty() {
-                git::read_file(&worktree, file_path)
-                    .ok()
-                    .and_then(|c| comments::extract_lines(&c, start_line, end_line))
-            } else {
-                None
-            }
+        // Build author string: "agent_name (role)"
+        let author = match (&params.0.agent_name, &params.0.role) {
+            (Some(name), Some(role)) => format!("{} ({})", name, role),
+            (Some(name), None) => name.clone(),
+            (None, Some(role)) => format!("Claude Code ({})", role),
+            (None, None) => "Claude Code".to_string(),
         };
 
-        match comments::add_comment(
-            &project_key,
-            &task_id,
-            file_path,
-            "ADD",
-            start_line,
-            end_line,
-            &params.0.content,
-            author,
-            anchor_text,
-        ) {
-            Ok(comment) => {
-                let loc = format!("{}:{}", comment.file_path, comment.start_line);
-                let output = format!(
-                    "Comment #{} added at {}\n> {}",
-                    comment.id, loc, comment.content
-                );
-                Ok(CallToolResult::success(vec![Content::text(output)]))
+        let mut results = Vec::new();
+        let mut errors = Vec::new();
+
+        // Process each comment
+        for (idx, item) in params.0.comments.iter().enumerate() {
+            // Parse comment type
+            let comment_type = match item.comment_type.as_deref() {
+                Some("file") => comments::CommentType::File,
+                Some("project") => comments::CommentType::Project,
+                _ => comments::CommentType::Inline,
+            };
+
+            // Prepare parameters and create comment based on type
+            let result: Result<comments::Comment, String> = match comment_type {
+                comments::CommentType::Inline => {
+                    match (item.file_path.as_ref(), item.start_line) {
+                        (Some(file_path), Some(start)) => {
+                            let end = item.end_line.unwrap_or(start);
+
+                            // Calculate anchor text
+                            let anchor = if !worktree.is_empty() {
+                                git::read_file(&worktree, file_path)
+                                    .ok()
+                                    .and_then(|c| comments::extract_lines(&c, start, end))
+                            } else {
+                                None
+                            };
+
+                            comments::add_comment(
+                                &project_key,
+                                &task_id,
+                                comment_type,
+                                Some(file_path.clone()),
+                                Some("ADD".to_string()),
+                                Some(start),
+                                Some(end),
+                                &item.content,
+                                &author,
+                                anchor,
+                            )
+                            .map_err(|e| e.to_string())
+                        }
+                        (None, _) => Err("file_path required for inline comments".to_string()),
+                        (_, None) => Err("start_line required for inline comments".to_string()),
+                    }
+                }
+                comments::CommentType::File => match item.file_path.as_ref() {
+                    Some(file_path) => comments::add_comment(
+                        &project_key,
+                        &task_id,
+                        comment_type,
+                        Some(file_path.clone()),
+                        None,
+                        None,
+                        None,
+                        &item.content,
+                        &author,
+                        None,
+                    )
+                    .map_err(|e| e.to_string()),
+                    None => Err("file_path required for file comments".to_string()),
+                },
+                comments::CommentType::Project => comments::add_comment(
+                    &project_key,
+                    &task_id,
+                    comment_type,
+                    None,
+                    None,
+                    None,
+                    None,
+                    &item.content,
+                    &author,
+                    None,
+                )
+                .map_err(|e| e.to_string()),
+            };
+
+            match result {
+                Ok(comment) => {
+                    let type_str = match comment.comment_type {
+                        comments::CommentType::Inline => "inline",
+                        comments::CommentType::File => "file",
+                        comments::CommentType::Project => "project",
+                    };
+                    let location = match comment.comment_type {
+                        comments::CommentType::Inline => {
+                            let fp = comment.file_path.as_deref().unwrap_or("");
+                            let sl = comment.start_line.unwrap_or(0);
+                            let el = comment.end_line.unwrap_or(0);
+                            format!("{}:{}-{}", fp, sl, el)
+                        }
+                        comments::CommentType::File => {
+                            format!("File: {}", comment.file_path.as_deref().unwrap_or(""))
+                        }
+                        comments::CommentType::Project => "Project-level".to_string(),
+                    };
+                    results.push(format!("#{} ({}) at {}", comment.id, type_str, location));
+                }
+                Err(e) => {
+                    errors.push(format!("Comment #{}: {}", idx + 1, e));
+                }
             }
-            Err(e) => Err(McpError::internal_error(
-                format!("Failed to add comment: {}", e),
-                None,
-            )),
         }
+
+        // Build response
+        let mut output = String::new();
+        if !results.is_empty() {
+            output.push_str(&format!("Created {} comment(s):\n", results.len()));
+            for r in &results {
+                output.push_str(&format!("  {}\n", r));
+            }
+        }
+        if !errors.is_empty() {
+            if !output.is_empty() {
+                output.push('\n');
+            }
+            output.push_str(&format!("Errors ({}):\n", errors.len()));
+            for e in &errors {
+                output.push_str(&format!("  {}\n", e));
+            }
+        }
+
+        if results.is_empty() && !errors.is_empty() {
+            return Err(McpError::invalid_params(output.trim().to_string(), None));
+        }
+
+        Ok(CallToolResult::success(vec![Content::text(
+            output.trim().to_string(),
+        )]))
     }
 
     /// Complete the current task: commit, sync (rebase), and merge
@@ -592,41 +713,89 @@ fn format_comments(data: &comments::CommentsData) -> String {
         open, resolved, outdated
     );
 
-    for comment in &data.comments {
-        let loc = format!("{}:{}", comment.file_path, comment.start_line);
-        match comment.status {
-            comments::CommentStatus::Open => {
-                output.push_str(&format!("[#{}] {}\n", comment.id, loc));
-                output.push_str(&format!("> {}\n", comment.content));
-                if comment.replies.is_empty() {
-                    output.push_str("  (no reply)\n\n");
-                } else {
-                    for r in &comment.replies {
-                        output.push_str(&format!("  {}: {}\n", r.author, r.content));
-                    }
-                    output.push('\n');
-                }
-            }
-            comments::CommentStatus::Outdated => {
-                output.push_str(&format!("[#{}] OUTDATED {}\n", comment.id, loc));
-                output.push_str(&format!("> {}\n", comment.content));
-                for r in &comment.replies {
-                    output.push_str(&format!("  {}: {}\n", r.author, r.content));
-                }
-                output.push('\n');
-            }
-            comments::CommentStatus::Resolved => {
-                output.push_str(&format!("[#{}] RESOLVED ~~{}~~\n", comment.id, loc));
-                output.push_str(&format!("> ~~{}~~\n", comment.content));
+    // Group comments by type
+    let inline_comments: Vec<_> = data
+        .comments
+        .iter()
+        .filter(|c| c.comment_type == comments::CommentType::Inline)
+        .collect();
+    let file_comments: Vec<_> = data
+        .comments
+        .iter()
+        .filter(|c| c.comment_type == comments::CommentType::File)
+        .collect();
+    let project_comments: Vec<_> = data
+        .comments
+        .iter()
+        .filter(|c| c.comment_type == comments::CommentType::Project)
+        .collect();
+
+    // Project-level comments first
+    if !project_comments.is_empty() {
+        output.push_str("## Project-Level Comments\n\n");
+        for comment in project_comments {
+            format_comment(&mut output, comment, "Project-level");
+        }
+    }
+
+    // File-level comments
+    if !file_comments.is_empty() {
+        output.push_str("## File-Level Comments\n\n");
+        for comment in file_comments {
+            let file_path = comment.file_path.as_deref().unwrap_or("unknown");
+            let loc = format!("File: {}", file_path);
+            format_comment(&mut output, comment, &loc);
+        }
+    }
+
+    // Inline code comments
+    if !inline_comments.is_empty() {
+        output.push_str("## Inline Code Comments\n\n");
+        for comment in inline_comments {
+            let file_path = comment.file_path.as_deref().unwrap_or("unknown");
+            let start = comment.start_line.unwrap_or(0);
+            let end = comment.end_line.unwrap_or(0);
+            let side = comment.side.as_deref().unwrap_or("ADD");
+            let loc = format!("{} (lines {}-{}, {})", file_path, start, end, side);
+            format_comment(&mut output, comment, &loc);
+        }
+    }
+
+    output
+}
+
+/// Format a single comment
+fn format_comment(output: &mut String, comment: &comments::Comment, location: &str) {
+    match comment.status {
+        comments::CommentStatus::Open => {
+            output.push_str(&format!("[#{}] {}\n", comment.id, location));
+            output.push_str(&format!("> {}\n", comment.content));
+            if comment.replies.is_empty() {
+                output.push_str("  (no reply)\n\n");
+            } else {
                 for r in &comment.replies {
                     output.push_str(&format!("  {}: {}\n", r.author, r.content));
                 }
                 output.push('\n');
             }
         }
+        comments::CommentStatus::Outdated => {
+            output.push_str(&format!("[#{}] OUTDATED {}\n", comment.id, location));
+            output.push_str(&format!("> {}\n", comment.content));
+            for r in &comment.replies {
+                output.push_str(&format!("  {}: {}\n", r.author, r.content));
+            }
+            output.push('\n');
+        }
+        comments::CommentStatus::Resolved => {
+            output.push_str(&format!("[#{}] RESOLVED ~~{}~~\n", comment.id, location));
+            output.push_str(&format!("> ~~{}~~\n", comment.content));
+            for r in &comment.replies {
+                output.push_str(&format!("  {}: {}\n", r.author, r.content));
+            }
+            output.push('\n');
+        }
     }
-
-    output
 }
 
 // ============================================================================

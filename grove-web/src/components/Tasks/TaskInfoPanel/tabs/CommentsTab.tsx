@@ -1,6 +1,8 @@
 import { useState, useEffect, useCallback } from "react";
 import { motion } from "framer-motion";
 import { MessageSquare, CheckCircle, Clock, FileCode, Loader2 } from "lucide-react";
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import type { Task } from "../../../../data/types";
 import { useProject } from "../../../../context/ProjectContext";
 import { getReviewComments, type ReviewCommentEntry } from "../../../../api";
@@ -26,13 +28,25 @@ function formatTimestamp(ts: string): string {
 
 /** Extract filename from path and build line label */
 function formatLocation(comment: ReviewCommentEntry): string {
-  const parts = comment.file_path.split("/");
-  const filename = parts[parts.length - 1] || comment.file_path;
-  const lineLabel =
-    comment.start_line !== comment.end_line
-      ? `L${comment.start_line}-${comment.end_line}`
-      : `L${comment.start_line}`;
-  return `${filename} ${lineLabel}`;
+  const type = comment.comment_type || 'inline';
+
+  if (type === 'project') {
+    return 'Project-level';
+  } else if (type === 'file' && comment.file_path) {
+    const parts = comment.file_path.split("/");
+    const filename = parts[parts.length - 1] || comment.file_path;
+    return `${filename} (File-level)`;
+  } else if (comment.file_path && comment.start_line !== undefined && comment.end_line !== undefined) {
+    const parts = comment.file_path.split("/");
+    const filename = parts[parts.length - 1] || comment.file_path;
+    const lineLabel =
+      comment.start_line !== comment.end_line
+        ? `L${comment.start_line}-${comment.end_line}`
+        : `L${comment.start_line}`;
+    return `${filename} ${lineLabel}`;
+  }
+
+  return 'Unknown location';
 }
 
 function getStatusConfig(status: ReviewStatus): {
@@ -99,7 +113,11 @@ function ReviewCommentCard({ comment }: { comment: ReviewCommentEntry }) {
           <span className="text-xs font-medium text-[var(--color-text)]">{comment.author}</span>
           <span className="text-xs text-[var(--color-text-muted)]">{formatTimestamp(comment.timestamp)}</span>
         </div>
-        <p className="text-sm text-[var(--color-text)] pl-[26px]">{comment.content}</p>
+        <div className="text-sm text-[var(--color-text)] pl-[26px] markdown-content">
+          <ReactMarkdown remarkPlugins={[remarkGfm]}>
+            {comment.content}
+          </ReactMarkdown>
+        </div>
 
         {/* Replies */}
         {comment.replies.length > 0 && comment.replies.map((reply) => (
@@ -109,7 +127,11 @@ function ReviewCommentCard({ comment }: { comment: ReviewCommentEntry }) {
               <span className="text-xs font-medium text-[var(--color-text)]">{reply.author}</span>
               <span className="text-xs text-[var(--color-text-muted)]">{formatTimestamp(reply.timestamp)}</span>
             </div>
-            <p className="text-sm text-[var(--color-text-muted)] pl-[24px]">{reply.content}</p>
+            <div className="text-sm text-[var(--color-text-muted)] pl-[24px] markdown-content">
+              <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                {reply.content}
+              </ReactMarkdown>
+            </div>
           </div>
         ))}
       </div>

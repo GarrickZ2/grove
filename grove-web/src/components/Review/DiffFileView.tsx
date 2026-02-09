@@ -71,6 +71,10 @@ interface DiffFileViewProps {
   fullFileContent?: string;
   isLoadingFullFile?: boolean;
   onRequestFullFile?: (filePath: string) => void;
+  onAddFileComment?: (filePath: string) => void;
+  fileCommentFormPath?: string | null;
+  onCancelFileComment?: () => void;
+  onSubmitFileComment?: (filePath: string, content: string) => void;
 }
 
 export function DiffFileView({
@@ -98,6 +102,10 @@ export function DiffFileView({
   collapsedCommentIds,
   onCollapseComment,
   onExpandComment,
+  onAddFileComment,
+  fileCommentFormPath,
+  onCancelFileComment,
+  onSubmitFileComment,
   projectId,
   taskId,
   viewMode = 'diff',
@@ -107,6 +115,78 @@ export function DiffFileView({
 }: DiffFileViewProps) {
   const ref = useRef<HTMLDivElement>(null);
   const [copied, setCopied] = useState(false);
+
+  // Selection-based comment button
+  const [selectionAnchor, setSelectionAnchor] = useState<{
+    startLine: number;
+    endLine: number;
+    side: 'ADD' | 'DELETE';
+    top: number;
+    right: number;
+  } | null>(null);
+
+  const handleMouseUp = useCallback(() => {
+    const selection = window.getSelection();
+    if (!selection || selection.isCollapsed || !ref.current) {
+      setSelectionAnchor(null);
+      return;
+    }
+
+    const range = selection.getRangeAt(0);
+
+    // Find tr elements with data-line within this file section
+    const findLineRow = (node: Node): HTMLTableRowElement | null => {
+      let el = node instanceof HTMLElement ? node : node.parentElement;
+      while (el && el !== ref.current) {
+        if (el.tagName === 'TR' && el.hasAttribute('data-line')) {
+          return el as HTMLTableRowElement;
+        }
+        el = el.parentElement;
+      }
+      return null;
+    };
+
+    const startRow = findLineRow(range.startContainer);
+    const endRow = findLineRow(range.endContainer);
+
+    if (!startRow || !endRow) {
+      setSelectionAnchor(null);
+      return;
+    }
+
+    const startLine = parseInt(startRow.dataset.line || '0', 10);
+    const endLine = parseInt(endRow.dataset.line || '0', 10);
+    const side = (startRow.dataset.side || 'ADD') as 'ADD' | 'DELETE';
+
+    if (startLine <= 0 || endLine <= 0 || startLine === endLine) {
+      setSelectionAnchor(null);
+      return;
+    }
+
+    // Position the button at end of selection, relative to file section
+    const sectionRect = ref.current.getBoundingClientRect();
+    const endRect = endRow.getBoundingClientRect();
+
+    setSelectionAnchor({
+      startLine: Math.min(startLine, endLine),
+      endLine: Math.max(startLine, endLine),
+      side,
+      top: endRect.bottom - sectionRect.top,
+      right: 16,
+    });
+  }, []);
+
+  // Clear selection anchor when selection changes elsewhere
+  useEffect(() => {
+    const handleSelectionChange = () => {
+      const selection = window.getSelection();
+      if (!selection || selection.isCollapsed) {
+        setSelectionAnchor(null);
+      }
+    };
+    document.addEventListener('selectionchange', handleSelectionChange);
+    return () => document.removeEventListener('selectionchange', handleSelectionChange);
+  }, []);
 
   useEffect(() => {
     if (!ref.current || !onVisible) return;
@@ -137,22 +217,38 @@ export function DiffFileView({
     });
   }, [file.hunks, language]);
 
+  // Filter file-level comments for this file
+  const fileComments = useMemo(() => {
+    return comments.filter(
+      (c) => c.comment_type === 'file' && c.file_path === file.new_path
+    );
+  }, [comments, file.new_path]);
+
+  // Filter inline comments for line rendering
+  const inlineComments = useMemo(() => {
+    return comments.filter((c) => !c.comment_type || c.comment_type === 'inline');
+  }, [comments]);
+
   const commentsByKey = useMemo(() => {
     const map = new Map<string, ReviewCommentEntry[]>();
-    for (const c of comments) {
-      const key = `${c.side}:${c.end_line}`;
-      const existing = map.get(key) || [];
-      existing.push(c);
-      map.set(key, existing);
+    for (const c of inlineComments) {
+      if (c.side && c.end_line !== undefined) {
+        const key = `${c.side}:${c.end_line}`;
+        const existing = map.get(key) || [];
+        existing.push(c);
+        map.set(key, existing);
+      }
     }
     return map;
-  }, [comments]);
+  }, [inlineComments]);
 
   const highlightedLines = useMemo(() => {
     const set = new Set<string>();
-    for (const c of comments) {
-      for (let l = c.start_line; l <= c.end_line; l++) {
-        set.add(`${c.side}:${l}`);
+    for (const c of inlineComments) {
+      if (c.side && c.start_line !== undefined && c.end_line !== undefined) {
+        for (let l = c.start_line; l <= c.end_line; l++) {
+          set.add(`${c.side}:${l}`);
+        }
       }
     }
     if (commentFormAnchor && commentFormAnchor.filePath === file.new_path) {
@@ -161,7 +257,7 @@ export function DiffFileView({
       }
     }
     return set;
-  }, [comments, commentFormAnchor, file.new_path]);
+  }, [inlineComments, commentFormAnchor, file.new_path]);
 
   // ---- Gap computation for context line expansion ----
   const gaps = useMemo(() => {
@@ -297,7 +393,7 @@ export function DiffFileView({
   };
 
   return (
-    <div ref={ref} className="diff-file-section" id={`diff-file-${encodeURIComponent(file.new_path)}`}>
+    <div ref={ref} className="diff-file-section" id={`diff-file-${encodeURIComponent(file.new_path)}`} onMouseUp={handleMouseUp}>
       {/* File header */}
       <div className={`diff-file-header ${isActive ? 'ring-1 ring-[var(--color-highlight)]' : ''}`}>
         {onToggleCollapse && (
@@ -325,6 +421,16 @@ export function DiffFileView({
           )}
         </button>
         <span className="diff-file-header-right">
+          {onAddFileComment && (
+            <button
+              className="diff-file-comment-btn"
+              onClick={() => onAddFileComment(file.new_path)}
+              title="Add comment on file"
+            >
+              <MessageSquare style={{ width: 14, height: 14 }} />
+              <span>Comment on file</span>
+            </button>
+          )}
           {commentCount && commentCount.total > 0 && (
             <span className="diff-file-comment-count">
               <MessageSquare style={{ width: 12, height: 12 }} />
@@ -359,7 +465,124 @@ export function DiffFileView({
 
       {isCollapsed ? null : (
         <>
-          {file.is_binary ? (
+          {/* File-level comments section */}
+          {(fileComments.length > 0 || fileCommentFormPath === file.new_path || file.is_virtual) && (
+            <div className="diff-file-comments">
+              <div className="diff-file-comments-header">
+                <MessageSquare style={{ width: 14, height: 14 }} />
+                <span>Comments on file</span>
+              </div>
+              {fileComments.map((comment) => (
+                <Fragment key={`file-comment-${comment.id}`}>
+                  <CommentCard
+                    comment={comment}
+                    onDelete={onDeleteComment}
+                    onReply={onOpenReplyForm}
+                    onResolve={onResolveComment}
+                    onReopen={onReopenComment}
+                    onCollapse={onCollapseComment}
+                  />
+                  {replyFormCommentId === comment.id && onReplyComment && onCancelReply && (
+                    <div className="diff-comment-reply-form">
+                      <ReplyForm
+                        commentId={comment.id}
+                        onSubmit={onReplyComment}
+                        onCancel={onCancelReply}
+                      />
+                    </div>
+                  )}
+                </Fragment>
+              ))}
+
+              {/* File comment form */}
+              {fileCommentFormPath === file.new_path && onSubmitFileComment && onCancelFileComment && (
+                <div
+                  style={{
+                    background: 'var(--color-bg-secondary)',
+                    border: '1px solid var(--color-highlight)',
+                    borderRadius: 8,
+                    padding: '8px 12px',
+                    margin: '8px 16px',
+                    fontSize: 12,
+                  }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 }}>
+                    <MessageSquare style={{ width: 12, height: 12, color: 'var(--color-highlight)' }} />
+                    <span style={{ color: 'var(--color-text-muted)', fontSize: 11 }}>Comment on {file.new_path}</span>
+                  </div>
+                  <textarea
+                    placeholder="Leave a comment about this file..."
+                    autoFocus
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+                        const textarea = e.target as HTMLTextAreaElement;
+                        if (textarea.value.trim()) {
+                          onSubmitFileComment(file.new_path, textarea.value.trim());
+                        }
+                      }
+                      if (e.key === 'Escape') {
+                        onCancelFileComment();
+                      }
+                    }}
+                    id={`file-comment-textarea-${file.new_path}`}
+                    className="diff-reply-textarea"
+                  />
+                  <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 6, marginTop: 6 }}>
+                    <button
+                      onClick={onCancelFileComment}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 4,
+                        padding: '4px 10px',
+                        background: 'var(--color-bg-tertiary)',
+                        border: '1px solid var(--color-border)',
+                        borderRadius: 6,
+                        color: 'var(--color-text-muted)',
+                        fontSize: 12,
+                        cursor: 'pointer',
+                      }}
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      onClick={() => {
+                        const textarea = document.getElementById(`file-comment-textarea-${file.new_path}`) as HTMLTextAreaElement;
+                        if (textarea && textarea.value.trim()) {
+                          onSubmitFileComment(file.new_path, textarea.value.trim());
+                        }
+                      }}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 4,
+                        padding: '4px 10px',
+                        background: 'var(--color-highlight)',
+                        border: 'none',
+                        borderRadius: 6,
+                        color: 'white',
+                        fontSize: 12,
+                        fontWeight: 500,
+                        cursor: 'pointer',
+                      }}
+                    >
+                      Comment
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {file.is_virtual ? (
+            <div className="diff-virtual-placeholder">
+              <div className="diff-virtual-icon">📝</div>
+              <div className="diff-virtual-text">
+                <strong>Planned File</strong>
+                <p>This file is planned to be created but doesn't exist yet in the current branch.</p>
+              </div>
+            </div>
+          ) : file.is_binary ? (
             <div className="diff-binary">
               {viewMode === 'full'
                 ? 'Binary file — cannot display in Full Files mode'
@@ -387,6 +610,36 @@ export function DiffFileView({
             <SplitView file={file} highlightedHunks={highlightedHunks} {...expandProps} {...commonCommentProps} />
           )}
         </>
+      )}
+
+      {/* Floating comment button on text selection */}
+      {selectionAnchor && onGutterClick && (
+        <button
+          className="diff-selection-comment-btn"
+          style={{
+            position: 'absolute',
+            top: selectionAnchor.top,
+            right: selectionAnchor.right,
+          }}
+          onMouseDown={(e) => {
+            e.preventDefault(); // Prevent losing selection
+            // Set multi-line comment anchor
+            if (onGutterClick) {
+              // First click sets start line, then extend to end line
+              onGutterClick(file.new_path, selectionAnchor.side, selectionAnchor.startLine, false);
+              // Use setTimeout to ensure state updates, then extend with shift
+              setTimeout(() => {
+                onGutterClick(file.new_path, selectionAnchor.side, selectionAnchor.endLine, true);
+                setSelectionAnchor(null);
+                window.getSelection()?.removeAllRanges();
+              }, 0);
+            }
+          }}
+          title={`Comment on lines ${selectionAnchor.startLine}-${selectionAnchor.endLine}`}
+        >
+          <MessageSquare style={{ width: 14, height: 14 }} />
+          <span>L{selectionAnchor.startLine}-{selectionAnchor.endLine}</span>
+        </button>
       )}
     </div>
   );
@@ -999,7 +1252,7 @@ function HunkRows({
 
         return (
           <Fragment key={lineIdx}>
-            <tr className={`${rowClass} ${isHighlighted ? 'diff-line-highlighted' : ''}`}>
+            <tr className={`${rowClass} ${isHighlighted ? 'diff-line-highlighted' : ''}`} data-line={lineNum ?? undefined} data-side={side}>
               <td
                 className="diff-gutter"
                 onClick={(e) => {
@@ -1513,7 +1766,7 @@ function FullFileView({
 
           return (
             <Fragment key={lineNum}>
-              <tr className={`diff-line-full ${isHighlighted ? 'diff-line-highlighted' : ''}`}>
+              <tr className={`diff-line-full ${isHighlighted ? 'diff-line-highlighted' : ''}`} data-line={lineNum} data-side="ADD">
                 <td
                   className={`diff-gutter ${isHighlighted ? 'diff-line-highlighted' : ''} ${collapsedCount > 0 ? 'has-collapsed-comment' : ''}`}
                   onClick={(e) => {

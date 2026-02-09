@@ -1,5 +1,7 @@
 import { useState } from 'react';
 import { X, Send, MessageSquare, Trash2, Reply, CheckCircle, RotateCcw, Minus } from 'lucide-react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import type { ReviewCommentEntry } from '../../api/tasks';
 import type { CommentAnchor } from './DiffReviewPage';
 import { AgentAvatar } from './AgentAvatar';
@@ -105,7 +107,11 @@ export function CommentCard({ comment, onDelete, onReply, onResolve, onReopen, o
       </div>
 
       {/* Body */}
-      <div className="diff-comment-body">{comment.content}</div>
+      <div className="diff-comment-body markdown-content">
+        <ReactMarkdown remarkPlugins={[remarkGfm]}>
+          {comment.content}
+        </ReactMarkdown>
+      </div>
 
       {/* Replies */}
       {comment.replies.map((reply) => (
@@ -115,7 +121,11 @@ export function CommentCard({ comment, onDelete, onReply, onResolve, onReopen, o
             <span className="diff-comment-author" style={{ fontSize: 11 }}>{reply.author}</span>
             <span className="diff-comment-time">{reply.timestamp}</span>
           </div>
-          <div className="diff-comment-body">{reply.content}</div>
+          <div className="diff-comment-body markdown-content">
+            <ReactMarkdown remarkPlugins={[remarkGfm]}>
+              {reply.content}
+            </ReactMarkdown>
+          </div>
         </div>
       ))}
     </div>

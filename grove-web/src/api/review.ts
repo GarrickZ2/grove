@@ -31,6 +31,7 @@ export interface DiffFile {
   is_binary: boolean;
   additions: number;
   deletions: number;
+  is_virtual?: boolean; // Virtual file (has comments but doesn't exist in diff)
 }
 
 export interface FullDiffResult {
@@ -56,25 +57,75 @@ export async function getFullDiff(
   return apiClient.get<FullDiffResult>(url);
 }
 
-/** Create a new review comment */
+/** Create a new review comment (inline, file, or project level) */
 export async function createComment(
+  projectId: string,
+  taskId: string,
+  params: {
+    comment_type?: 'inline' | 'file' | 'project';
+    filePath?: string;
+    side?: string;
+    startLine?: number;
+    endLine?: number;
+    content: string;
+    author?: string;
+  },
+): Promise<ReviewCommentsResponse> {
+  return apiClient.post<Record<string, unknown>, ReviewCommentsResponse>(
+    `/api/v1/projects/${projectId}/tasks/${taskId}/review/comments`,
+    {
+      comment_type: params.comment_type || 'inline',
+      file_path: params.filePath,
+      side: params.side,
+      start_line: params.startLine,
+      end_line: params.endLine,
+      content: params.content,
+      author: params.author || 'You',
+    },
+  );
+}
+
+/** Create an inline comment (legacy helper) */
+export async function createInlineComment(
   projectId: string,
   taskId: string,
   anchor: { filePath: string; side: string; startLine: number; endLine: number },
   content: string,
 ): Promise<ReviewCommentsResponse> {
-  return apiClient.post<Record<string, unknown>, ReviewCommentsResponse>(
-    `/api/v1/projects/${projectId}/tasks/${taskId}/review/comments`,
-    {
-      file_path: anchor.filePath,
-      side: anchor.side,
-      start_line: anchor.startLine,
-      end_line: anchor.endLine,
-      content,
-      author: 'You',
-      location: `${anchor.filePath}:${anchor.startLine}`,
-    },
-  );
+  return createComment(projectId, taskId, {
+    comment_type: 'inline',
+    filePath: anchor.filePath,
+    side: anchor.side,
+    startLine: anchor.startLine,
+    endLine: anchor.endLine,
+    content,
+  });
+}
+
+/** Create a file-level comment */
+export async function createFileComment(
+  projectId: string,
+  taskId: string,
+  filePath: string,
+  content: string,
+): Promise<ReviewCommentsResponse> {
+  return createComment(projectId, taskId, {
+    comment_type: 'file',
+    filePath,
+    content,
+  });
+}
+
+/** Create a project-level comment */
+export async function createProjectComment(
+  projectId: string,
+  taskId: string,
+  content: string,
+): Promise<ReviewCommentsResponse> {
+  return createComment(projectId, taskId, {
+    comment_type: 'project',
+    content,
+  });
 }
 
 /** Reply to a review comment (no status change) */
