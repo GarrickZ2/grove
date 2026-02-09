@@ -67,6 +67,10 @@ interface DiffFileViewProps {
   onExpandComment?: (id: number) => void;
   projectId?: string;
   taskId?: string;
+  viewMode?: 'diff' | 'full';
+  fullFileContent?: string;
+  isLoadingFullFile?: boolean;
+  onRequestFullFile?: (filePath: string) => void;
 }
 
 export function DiffFileView({
@@ -96,6 +100,10 @@ export function DiffFileView({
   onExpandComment,
   projectId,
   taskId,
+  viewMode = 'diff',
+  fullFileContent,
+  isLoadingFullFile,
+  onRequestFullFile,
 }: DiffFileViewProps) {
   const ref = useRef<HTMLDivElement>(null);
   const [copied, setCopied] = useState(false);
@@ -104,13 +112,19 @@ export function DiffFileView({
     if (!ref.current || !onVisible) return;
     const observer = new IntersectionObserver(
       (entries) => {
-        if (entries[0].isIntersecting) onVisible();
+        if (entries[0].isIntersecting) {
+          onVisible();
+          // Trigger full file load when in full mode
+          if (viewMode === 'full' && !fullFileContent && !isLoadingFullFile && onRequestFullFile) {
+            onRequestFullFile(file.new_path);
+          }
+        }
       },
       { threshold: 0.3 }
     );
     observer.observe(ref.current);
     return () => observer.disconnect();
-  }, [onVisible]);
+  }, [onVisible, viewMode, fullFileContent, isLoadingFullFile, onRequestFullFile, file.new_path]);
 
   const badgeClass = `diff-file-badge ${file.change_type}`;
 
@@ -346,7 +360,25 @@ export function DiffFileView({
       {isCollapsed ? null : (
         <>
           {file.is_binary ? (
-            <div className="diff-binary">Binary file changed</div>
+            <div className="diff-binary">
+              {viewMode === 'full'
+                ? 'Binary file — cannot display in Full Files mode'
+                : 'Binary file changed'}
+            </div>
+          ) : viewMode === 'full' ? (
+            isLoadingFullFile ? (
+              <div className="diff-loading">Loading full file...</div>
+            ) : fullFileContent ? (
+              <FullFileView
+                file={file}
+                content={fullFileContent}
+                language={language}
+                viewType={viewType}
+                {...commonCommentProps}
+              />
+            ) : (
+              <div className="diff-error">Failed to load file content</div>
+            )
           ) : file.hunks.length === 0 ? (
             <div className="diff-binary">No content changes (mode/permissions only)</div>
           ) : viewType === 'unified' ? (
@@ -466,6 +498,23 @@ function ExpandedContextRows({
   fileLines,
   language,
   viewType,
+  filePath,
+  onGutterClick,
+  highlightedLines,
+  commentsByKey,
+  commentFormAnchor,
+  onAddComment,
+  onDeleteComment,
+  onCancelComment,
+  replyFormCommentId,
+  onOpenReplyForm,
+  onReplyComment,
+  onCancelReply,
+  onResolveComment,
+  onReopenComment,
+  collapsedCommentIds,
+  onCollapseComment,
+  onExpandComment,
 }: {
   startLine: number;
   endLine: number;
@@ -473,7 +522,7 @@ function ExpandedContextRows({
   fileLines: string[] | null;
   language: string | undefined;
   viewType: 'unified' | 'split';
-}) {
+} & CommentProps) {
   const lines = useMemo(() => {
     if (!fileLines) return null;
     const result: string[] = [];
@@ -499,26 +548,268 @@ function ExpandedContextRows({
           ? <span dangerouslySetInnerHTML={{ __html: htmlLines[idx] }} />
           : lines[idx];
 
+        // Expanded context lines can have comments on both sides
+        const leftKey = `DELETE:${oldLine}`;
+        const rightKey = `ADD:${newLine}`;
+        const leftHighlighted = highlightedLines?.has(leftKey) || false;
+        const rightHighlighted = highlightedLines?.has(rightKey) || false;
+        const leftComments = commentsByKey?.get(leftKey) || [];
+        const rightComments = commentsByKey?.get(rightKey) || [];
+        const expandedLeftComments = leftComments.filter((c) => !collapsedCommentIds?.has(c.id));
+        const expandedRightComments = rightComments.filter((c) => !collapsedCommentIds?.has(c.id));
+        const collapsedLeftCount = leftComments.length - expandedLeftComments.length;
+        const collapsedRightCount = rightComments.length - expandedRightComments.length;
+
+        const showLeftForm = commentFormAnchor
+          && commentFormAnchor.filePath === filePath
+          && commentFormAnchor.side === 'DELETE'
+          && commentFormAnchor.endLine === oldLine;
+
+        const showRightForm = commentFormAnchor
+          && commentFormAnchor.filePath === filePath
+          && commentFormAnchor.side === 'ADD'
+          && commentFormAnchor.endLine === newLine;
+
         if (viewType === 'split') {
+          const hasLeftComments = expandedLeftComments.length > 0 || showLeftForm;
+          const hasRightComments = expandedRightComments.length > 0 || showRightForm;
+
           return (
-            <tr key={`exp-${newLine}`} className="diff-line-expanded">
-              <td className="diff-gutter">{oldLine}</td>
-              <td className="diff-code">{content}</td>
-              <td className="diff-gutter">{newLine}</td>
-              <td className="diff-code">{content}</td>
-            </tr>
+            <Fragment key={`exp-${newLine}`}>
+              <tr className="diff-line-expanded">
+                <td
+                  className={`diff-gutter ${leftHighlighted ? 'diff-line-highlighted' : ''} ${collapsedLeftCount > 0 ? 'has-collapsed-comment' : ''}`}
+                  onClick={(e) => {
+                    if (collapsedLeftCount > 0 && onExpandComment) {
+                      leftComments.filter((c) => collapsedCommentIds?.has(c.id)).forEach((c) => onExpandComment(c.id));
+                      return;
+                    }
+                    if (onGutterClick) {
+                      onGutterClick(filePath, 'DELETE', oldLine, e.shiftKey);
+                    }
+                  }}
+                  title={collapsedLeftCount > 0 ? `${collapsedLeftCount} hidden comment${collapsedLeftCount > 1 ? 's' : ''}` : 'Click to add comment'}
+                >
+                  <span className="diff-gutter-content">
+                    {collapsedLeftCount > 0 && (
+                      <GutterAvatar name={leftComments.find((c) => collapsedCommentIds?.has(c.id))?.author ?? '?'} />
+                    )}
+                    {oldLine}
+                  </span>
+                </td>
+                <td className={`diff-code ${leftHighlighted ? 'diff-line-highlighted' : ''}`}>{content}</td>
+                <td
+                  className={`diff-gutter ${rightHighlighted ? 'diff-line-highlighted' : ''} ${collapsedRightCount > 0 ? 'has-collapsed-comment' : ''}`}
+                  onClick={(e) => {
+                    if (collapsedRightCount > 0 && onExpandComment) {
+                      rightComments.filter((c) => collapsedCommentIds?.has(c.id)).forEach((c) => onExpandComment(c.id));
+                      return;
+                    }
+                    if (onGutterClick) {
+                      onGutterClick(filePath, 'ADD', newLine, e.shiftKey);
+                    }
+                  }}
+                  title={collapsedRightCount > 0 ? `${collapsedRightCount} hidden comment${collapsedRightCount > 1 ? 's' : ''}` : 'Click to add comment'}
+                >
+                  <span className="diff-gutter-content">
+                    {collapsedRightCount > 0 && (
+                      <GutterAvatar name={rightComments.find((c) => collapsedCommentIds?.has(c.id))?.author ?? '?'} />
+                    )}
+                    {newLine}
+                  </span>
+                </td>
+                <td className={`diff-code ${rightHighlighted ? 'diff-line-highlighted' : ''}`}>{content}</td>
+              </tr>
+              {(hasLeftComments || hasRightComments) && (
+                <tr className="diff-split-comment-row">
+                  <td colSpan={2} style={{ padding: 0, verticalAlign: 'top' }}>
+                    {expandedLeftComments.map((c) => (
+                      <Fragment key={`lc-${c.id}`}>
+                        <CommentCard
+                          comment={c}
+                          onDelete={onDeleteComment}
+                          onReply={onOpenReplyForm}
+                          onResolve={onResolveComment}
+                          onReopen={onReopenComment}
+                          onCollapse={onCollapseComment}
+                        />
+                        {replyFormCommentId === c.id && onReplyComment && onCancelReply && (
+                          <div style={{ margin: '-2px 8px 6px 8px' }}>
+                            <div className="diff-comment-card" style={{ marginLeft: 0, marginRight: 0 }}>
+                              <ReplyForm
+                                commentId={c.id}
+                                onSubmit={onReplyComment}
+                                onCancel={onCancelReply}
+                              />
+                            </div>
+                          </div>
+                        )}
+                      </Fragment>
+                    ))}
+                    {showLeftForm && onAddComment && onCancelComment && (
+                      <CommentForm
+                        anchor={commentFormAnchor!}
+                        onSubmit={onAddComment}
+                        onCancel={onCancelComment}
+                      />
+                    )}
+                  </td>
+                  <td colSpan={2} style={{ padding: 0, verticalAlign: 'top' }}>
+                    {expandedRightComments.map((c) => (
+                      <Fragment key={`rc-${c.id}`}>
+                        <CommentCard
+                          comment={c}
+                          onDelete={onDeleteComment}
+                          onReply={onOpenReplyForm}
+                          onResolve={onResolveComment}
+                          onReopen={onReopenComment}
+                          onCollapse={onCollapseComment}
+                        />
+                        {replyFormCommentId === c.id && onReplyComment && onCancelReply && (
+                          <div style={{ margin: '-2px 8px 6px 8px' }}>
+                            <div className="diff-comment-card" style={{ marginLeft: 0, marginRight: 0 }}>
+                              <ReplyForm
+                                commentId={c.id}
+                                onSubmit={onReplyComment}
+                                onCancel={onCancelReply}
+                              />
+                            </div>
+                          </div>
+                        )}
+                      </Fragment>
+                    ))}
+                    {showRightForm && onAddComment && onCancelComment && (
+                      <CommentForm
+                        anchor={commentFormAnchor!}
+                        onSubmit={onAddComment}
+                        onCancel={onCancelComment}
+                      />
+                    )}
+                  </td>
+                </tr>
+              )}
+            </Fragment>
           );
         }
 
+        // Unified view
+        const hasComments = expandedLeftComments.length > 0 || expandedRightComments.length > 0 || showLeftForm || showRightForm;
+
         return (
-          <tr key={`exp-${newLine}`} className="diff-line-expanded">
-            <td className="diff-gutter">{oldLine}</td>
-            <td className="diff-gutter">{newLine}</td>
-            <td className="diff-code">
-              <span className="diff-code-prefix">{' '}</span>
-              {content}
-            </td>
-          </tr>
+          <Fragment key={`exp-${newLine}`}>
+            <tr className={`diff-line-expanded ${leftHighlighted || rightHighlighted ? 'diff-line-highlighted' : ''}`}>
+              <td
+                className={`diff-gutter ${leftHighlighted ? 'diff-line-highlighted' : ''} ${collapsedLeftCount > 0 ? 'has-collapsed-comment' : ''}`}
+                onClick={(e) => {
+                  if (collapsedLeftCount > 0 && onExpandComment) {
+                    leftComments.filter((c) => collapsedCommentIds?.has(c.id)).forEach((c) => onExpandComment(c.id));
+                    return;
+                  }
+                  if (onGutterClick) {
+                    onGutterClick(filePath, 'DELETE', oldLine, e.shiftKey);
+                  }
+                }}
+                title={collapsedLeftCount > 0 ? `${collapsedLeftCount} hidden comment${collapsedLeftCount > 1 ? 's' : ''}` : 'Click to add comment (old side)'}
+              >
+                <span className="diff-gutter-content">
+                  {collapsedLeftCount > 0 && (
+                    <GutterAvatar name={leftComments.find((c) => collapsedCommentIds?.has(c.id))?.author ?? '?'} />
+                  )}
+                  {oldLine}
+                </span>
+              </td>
+              <td
+                className={`diff-gutter ${rightHighlighted ? 'diff-line-highlighted' : ''} ${collapsedRightCount > 0 ? 'has-collapsed-comment' : ''}`}
+                onClick={(e) => {
+                  if (collapsedRightCount > 0 && onExpandComment) {
+                    rightComments.filter((c) => collapsedCommentIds?.has(c.id)).forEach((c) => onExpandComment(c.id));
+                    return;
+                  }
+                  if (onGutterClick) {
+                    onGutterClick(filePath, 'ADD', newLine, e.shiftKey);
+                  }
+                }}
+                title={collapsedRightCount > 0 ? `${collapsedRightCount} hidden comment${collapsedRightCount > 1 ? 's' : ''}` : 'Click to add comment (new side)'}
+              >
+                <span className="diff-gutter-content">
+                  {collapsedRightCount > 0 && (
+                    <GutterAvatar name={rightComments.find((c) => collapsedCommentIds?.has(c.id))?.author ?? '?'} />
+                  )}
+                  {newLine}
+                </span>
+              </td>
+              <td className="diff-code">
+                <span className="diff-code-prefix">{' '}</span>
+                {content}
+              </td>
+            </tr>
+            {hasComments && (
+              <tr>
+                <td colSpan={3} style={{ padding: 0 }}>
+                  {expandedLeftComments.map((c) => (
+                    <Fragment key={`comment-${c.id}`}>
+                      <CommentCard
+                        comment={c}
+                        onDelete={onDeleteComment}
+                        onReply={onOpenReplyForm}
+                        onResolve={onResolveComment}
+                        onReopen={onReopenComment}
+                        onCollapse={onCollapseComment}
+                      />
+                      {replyFormCommentId === c.id && onReplyComment && onCancelReply && (
+                        <div style={{ margin: '-2px 16px 6px 60px' }}>
+                          <div className="diff-comment-card" style={{ marginLeft: 0, marginRight: 0 }}>
+                            <ReplyForm
+                              commentId={c.id}
+                              onSubmit={onReplyComment}
+                              onCancel={onCancelReply}
+                            />
+                          </div>
+                        </div>
+                      )}
+                    </Fragment>
+                  ))}
+                  {expandedRightComments.map((c) => (
+                    <Fragment key={`comment-${c.id}`}>
+                      <CommentCard
+                        comment={c}
+                        onDelete={onDeleteComment}
+                        onReply={onOpenReplyForm}
+                        onResolve={onResolveComment}
+                        onReopen={onReopenComment}
+                        onCollapse={onCollapseComment}
+                      />
+                      {replyFormCommentId === c.id && onReplyComment && onCancelReply && (
+                        <div style={{ margin: '-2px 16px 6px 60px' }}>
+                          <div className="diff-comment-card" style={{ marginLeft: 0, marginRight: 0 }}>
+                            <ReplyForm
+                              commentId={c.id}
+                              onSubmit={onReplyComment}
+                              onCancel={onCancelReply}
+                            />
+                          </div>
+                        </div>
+                      )}
+                    </Fragment>
+                  ))}
+                  {showLeftForm && onAddComment && onCancelComment && (
+                    <CommentForm
+                      anchor={commentFormAnchor!}
+                      onSubmit={onAddComment}
+                      onCancel={onCancelComment}
+                    />
+                  )}
+                  {showRightForm && onAddComment && onCancelComment && (
+                    <CommentForm
+                      anchor={commentFormAnchor!}
+                      onSubmit={onAddComment}
+                      onCancel={onCancelComment}
+                    />
+                  )}
+                </td>
+              </tr>
+            )}
+          </Fragment>
         );
       })}
     </>
@@ -559,6 +850,7 @@ function UnifiedView({
                   fileLines={fileLines}
                   language={language}
                   viewType="unified"
+                  {...commentProps}
                 />
               )}
               {/* Hunk header (with expand buttons merged in) + lines */}
@@ -657,6 +949,23 @@ function HunkRows({
           fileLines={fileLines}
           language={expandLanguage}
           viewType="unified"
+          filePath={filePath}
+          commentsByKey={commentsByKey}
+          highlightedLines={highlightedLines}
+          commentFormAnchor={commentFormAnchor}
+          onGutterClick={onGutterClick}
+          onAddComment={onAddComment}
+          onDeleteComment={onDeleteComment}
+          onCancelComment={onCancelComment}
+          replyFormCommentId={replyFormCommentId}
+          onOpenReplyForm={onOpenReplyForm}
+          onReplyComment={onReplyComment}
+          onCancelReply={onCancelReply}
+          onResolveComment={onResolveComment}
+          onReopenComment={onReopenComment}
+          collapsedCommentIds={collapsedCommentIds}
+          onCollapseComment={onCollapseComment}
+          onExpandComment={onExpandComment}
         />
       )}
       {/* Diff content lines */}
@@ -815,6 +1124,7 @@ function SplitView({
                   fileLines={fileLines}
                   language={language}
                   viewType="split"
+                  {...commentProps}
                 />
               )}
               <SplitHunkRows
@@ -902,6 +1212,23 @@ function SplitHunkRows({
           fileLines={fileLines}
           language={expandLanguage}
           viewType="split"
+          filePath={filePath}
+          commentsByKey={commentsByKey}
+          highlightedLines={highlightedLines}
+          commentFormAnchor={commentFormAnchor}
+          onGutterClick={onGutterClick}
+          onAddComment={onAddComment}
+          onDeleteComment={onDeleteComment}
+          onCancelComment={onCancelComment}
+          replyFormCommentId={replyFormCommentId}
+          onOpenReplyForm={onOpenReplyForm}
+          onReplyComment={onReplyComment}
+          onCancelReply={onCancelReply}
+          onResolveComment={onResolveComment}
+          onReopenComment={onReopenComment}
+          collapsedCommentIds={collapsedCommentIds}
+          onCollapseComment={onCollapseComment}
+          onExpandComment={onExpandComment}
         />
       )}
       {pairs.map((pair, idx) => {
@@ -1140,3 +1467,104 @@ function buildSplitPairs(lines: DiffFile['hunks'][0]['lines'], highlightedCode?:
 
   return pairs;
 }
+
+// ============================================================================
+// Full File View (for viewMode='full')
+// ============================================================================
+
+interface FullFileViewProps extends CommentProps {
+  file: DiffFile;
+  content: string;
+  language: string | undefined;
+  viewType: 'unified' | 'split';
+}
+
+function FullFileView({
+  file,
+  content,
+  language,
+  ...commentProps
+}: FullFileViewProps) {
+  const lines = useMemo(() => content.split('\n'), [content]);
+  const htmlLines = useMemo(() => highlightLines(lines, language), [lines, language]);
+
+  // Full Files mode always uses unified style with single line numbers
+  return (
+    <table className="diff-table">
+      <tbody>
+        {lines.map((line, idx) => {
+          const lineNum = idx + 1;
+          const lineKey = `ADD:${lineNum}`;
+          const isHighlighted = commentProps.highlightedLines?.has(lineKey) || false;
+          const lineComments = commentProps.commentsByKey?.get(lineKey) || [];
+          const expandedComments = lineComments.filter((c) => !commentProps.collapsedCommentIds?.has(c.id));
+          const collapsedCount = lineComments.length - expandedComments.length;
+
+          const showForm = commentProps.commentFormAnchor
+            && commentProps.commentFormAnchor.filePath === commentProps.filePath
+            && commentProps.commentFormAnchor.side === 'ADD'
+            && commentProps.commentFormAnchor.endLine === lineNum;
+
+          const hasComments = expandedComments.length > 0 || showForm;
+
+          const contentHtml = htmlLines?.[idx]
+            ? <span dangerouslySetInnerHTML={{ __html: htmlLines[idx] }} />
+            : line;
+
+          return (
+            <Fragment key={lineNum}>
+              <tr className={`diff-line-full ${isHighlighted ? 'diff-line-highlighted' : ''}`}>
+                <td
+                  className={`diff-gutter ${isHighlighted ? 'diff-line-highlighted' : ''} ${collapsedCount > 0 ? 'has-collapsed-comment' : ''}`}
+                  onClick={(e) => {
+                    if (collapsedCount > 0 && commentProps.onExpandComment) {
+                      lineComments.filter((c) => commentProps.collapsedCommentIds?.has(c.id)).forEach((c) => commentProps.onExpandComment!(c.id));
+                      return;
+                    }
+                    if (commentProps.onGutterClick) {
+                      commentProps.onGutterClick(commentProps.filePath, 'ADD', lineNum, e.shiftKey);
+                    }
+                  }}
+                  title={collapsedCount > 0 ? `${collapsedCount} hidden comment${collapsedCount > 1 ? 's' : ''}` : 'Click to add comment'}
+                >
+                  <span className="diff-gutter-content">
+                    {collapsedCount > 0 && (
+                      <GutterAvatar name={lineComments.find((c) => commentProps.collapsedCommentIds?.has(c.id))?.author ?? '?'} />
+                    )}
+                    {lineNum}
+                  </span>
+                </td>
+                <td className={`diff-code ${isHighlighted ? 'diff-line-highlighted' : ''}`}>
+                  <span className="diff-code-prefix">{' '}</span>
+                  {contentHtml}
+                </td>
+              </tr>
+              {hasComments && (
+                <tr>
+                  <td colSpan={2} style={{ padding: 0 }}>
+                    {expandedComments.map((c) => (
+                      <Fragment key={`comment-${c.id}`}>
+                        <CommentCard comment={c} onDelete={commentProps.onDeleteComment} onReply={commentProps.onOpenReplyForm} onResolve={commentProps.onResolveComment} onReopen={commentProps.onReopenComment} onCollapse={commentProps.onCollapseComment} />
+                        {commentProps.replyFormCommentId === c.id && commentProps.onReplyComment && commentProps.onCancelReply && (
+                          <div style={{ margin: '-2px 16px 6px 60px' }}>
+                            <div className="diff-comment-card" style={{ marginLeft: 0, marginRight: 0 }}>
+                              <ReplyForm commentId={c.id} onSubmit={commentProps.onReplyComment} onCancel={commentProps.onCancelReply} />
+                            </div>
+                          </div>
+                        )}
+                      </Fragment>
+                    ))}
+                    {showForm && commentProps.onAddComment && commentProps.onCancelComment && (
+                      <CommentForm anchor={commentProps.commentFormAnchor!} onSubmit={commentProps.onAddComment} onCancel={commentProps.onCancelComment} />
+                    )}
+                  </td>
+                </tr>
+              )}
+            </Fragment>
+          );
+        })}
+      </tbody>
+    </table>
+  );
+}
+

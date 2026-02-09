@@ -13,6 +13,77 @@
   height: 100%;
 }
 
+/* Page Header with Mode Selector */
+.diff-page-header {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 12px 16px;
+  background: var(--color-bg-secondary);
+  border-bottom: 1px solid var(--color-border);
+  flex-shrink: 0;
+}
+
+.diff-page-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.diff-mode-selector {
+  position: relative;
+  display: inline-flex;
+  gap: 4px;
+  padding: 3px;
+  background: var(--color-bg-tertiary);
+  border-radius: 8px;
+}
+
+/* Sliding background indicator */
+.diff-mode-selector::before {
+  content: '';
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: calc(50% - 5px);
+  height: calc(100% - 6px);
+  background: var(--color-bg);
+  border-radius: 6px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  transition: transform 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+  z-index: 0;
+}
+
+/* Move background when second button is active */
+.diff-mode-selector:has(button:nth-child(2).active)::before {
+  transform: translateX(calc(100% + 4px));
+}
+
+.diff-mode-selector button {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  background: transparent;
+  border: none;
+  border-radius: 6px;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 500;
+  transition: color 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.diff-mode-selector button:hover {
+  color: var(--color-text-primary);
+}
+
+.diff-mode-selector button.active {
+  color: var(--color-text-primary);
+}
+
 /* Header */
 .diff-header {
   display: flex;
@@ -410,6 +481,17 @@ td.diff-code.diff-line-highlighted {
   background: color-mix(in srgb, var(--color-highlight) 12%, var(--color-bg));
   color: var(--color-highlight);
   border-color: color-mix(in srgb, var(--color-highlight) 40%, var(--color-border));
+}
+
+.diff-toggle-pill.disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.diff-toggle-pill.disabled:hover {
+  background: transparent;
+  color: var(--color-text-muted);
+  border-color: var(--color-border);
 }
 
 /* View mode toggle (Unified / Split) */
@@ -1491,4 +1573,54 @@ td.diff-code.diff-line-highlighted {
 /* Punctuation — keep subtle */
 .diff-code .hljs-punctuation {
   color: var(--color-text-muted);
+}
+
+/* ========================================================================== */
+/* Full File View Mode */
+/* ========================================================================== */
+
+/* Full file view mode - unchanged lines */
+.diff-line-full {
+  background: var(--color-bg);
+}
+
+.diff-line-full:hover {
+  background: var(--color-bg-tertiary);
+}
+
+/* View mode toggle (single button like Focus) */
+.diff-view-toggle-single {
+  padding: 4px 12px;
+  background: transparent;
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  font-size: 13px;
+  transition: all 0.15s;
+  white-space: nowrap;
+}
+
+.diff-view-toggle-single:hover {
+  background: var(--color-bg-tertiary);
+  border-color: var(--color-highlight);
+}
+
+.diff-view-toggle-single.active {
+  background: var(--color-highlight);
+  color: white;
+  border-color: var(--color-highlight);
+}
+
+/* Loading/Error states */
+.diff-loading,
+.diff-error {
+  padding: 24px;
+  text-align: center;
+  color: var(--color-text-secondary);
+  font-size: 14px;
+}
+
+.diff-error {
+  color: var(--color-danger, #e06c75);
 }

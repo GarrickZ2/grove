@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
-import { getFullDiff, createComment, deleteComment as apiDeleteComment, replyReviewComment as apiReplyComment, updateCommentStatus as apiUpdateCommentStatus } from '../../api/review';
-import { getReviewComments, getCommits } from '../../api/tasks';
-import type { FullDiffResult } from '../../api/review';
+import { getFullDiff, createComment, deleteComment as apiDeleteComment, replyReviewComment as apiReplyComment, updateCommentStatus as apiUpdateCommentStatus, getFileContent } from '../../api/review';
+import { getReviewComments, getCommits, getTaskFiles } from '../../api/tasks';
+import type { FullDiffResult, DiffFile } from '../../api/review';
 import type { ReviewCommentEntry } from '../../api/tasks';
 
 export interface VersionOption {
@@ -19,7 +19,7 @@ export interface CommentAnchor {
 import { FileTreeSidebar } from './FileTreeSidebar';
 import { DiffFileView } from './DiffFileView';
 import { ConversationSidebar } from './ConversationSidebar';
-import { MessageSquare, ChevronUp, ChevronDown, PanelLeftClose, PanelLeftOpen, Crosshair } from 'lucide-react';
+import { MessageSquare, ChevronUp, ChevronDown, PanelLeftClose, PanelLeftOpen, Crosshair, GitCompare, FileText } from 'lucide-react';
 import { VersionSelector } from './VersionSelector';
 import './diffTheme.css';
 
@@ -31,13 +31,22 @@ interface DiffReviewPageProps {
 
 export function DiffReviewPage({ projectId, taskId, embedded }: DiffReviewPageProps) {
   const [diffData, setDiffData] = useState<FullDiffResult | null>(null);
+  const [allFiles, setAllFiles] = useState<string[]>([]); // All git-tracked files for File Mode
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
   const [viewType, setViewType] = useState<'unified' | 'split'>('unified');
+  const [viewMode, setViewMode] = useState<'diff' | 'full'>('diff');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [comments, setComments] = useState<ReviewCommentEntry[]>([]);
   const [commentFormAnchor, setCommentFormAnchor] = useState<CommentAnchor | null>(null);
   const contentRef = useRef<HTMLDivElement>(null);
+
+  // Full file content cache
+  const [fullFileContents, setFullFileContents] = useState<Map<string, string>>(new Map());
+  const [loadingFiles, setLoadingFiles] = useState<Set<string>>(new Set());
+  const requestQueue = useRef<string[]>([]);
+  const activeRequests = useRef<Set<string>>(new Set());
+  const MAX_CONCURRENT = 3;
 
   // New state
   const [currentFileIndex, setCurrentFileIndex] = useState(0);
@@ -47,15 +56,85 @@ export function DiffReviewPage({ projectId, taskId, embedded }: DiffReviewPagePr
   const [replyFormCommentId, setReplyFormCommentId] = useState<number | null>(null);
   const [sidebarVisible, setSidebarVisible] = useState(true);
   const [convSidebarVisible, setConvSidebarVisible] = useState(false);
-  const [focusMode, setFocusMode] = useState(false);
+  const [focusMode, setFocusMode] = useState(true); // Default to true for better performance
   const [fromVersion, setFromVersion] = useState('target');
   const [toVersion, setToVersion] = useState('latest');
   const [collapsedCommentIds, setCollapsedCommentIds] = useState<Set<number>>(new Set());
   const [versions, setVersions] = useState<VersionOption[]>([]);
   const initialCollapseRef = useRef(false);
 
+  // Filter files based on view mode
+  const displayFiles = useMemo(() => {
+    if (viewMode === 'full') {
+      // In File Mode, use all git-tracked files from worktree
+      return allFiles.map((path): DiffFile => ({
+        old_path: path,
+        new_path: path,
+        change_type: 'modified', // Doesn't matter for full file view
+        hunks: [], // No hunks in File Mode
+        is_binary: false,
+        additions: 0,
+        deletions: 0,
+      }));
+    }
+    // In Diff Mode, use diff data
+    if (!diffData) return [];
+    return diffData.files;
+  }, [viewMode, allFiles, diffData]);
+
+  // Use ref to access displayFiles in callbacks without dependency issues
+  const displayFilesRef = useRef(displayFiles);
+
+  useEffect(() => {
+    displayFilesRef.current = displayFiles;
+  }, [displayFiles]);
+
   // Auto-detect iframe mode
   const isEmbedded = embedded ?? (typeof window !== 'undefined' && window !== window.parent);
+
+  // When switching modes, ensure selectedFile is valid
+  useEffect(() => {
+    if (displayFiles.length === 0) return;
+    const isValid = displayFiles.some((f) => f.new_path === selectedFile);
+    if (!isValid) {
+      setSelectedFile(displayFiles[0].new_path);
+      setCurrentFileIndex(0);
+    }
+  }, [displayFiles, selectedFile]);
+
+  // Load full file content with concurrency control
+  const loadFullFileContent = useCallback(async (filePath: string) => {
+    if (fullFileContents.has(filePath) || loadingFiles.has(filePath)) return;
+
+    // Add to queue
+    requestQueue.current.push(filePath);
+
+    // Process queue
+    const processQueue = async () => {
+      while (requestQueue.current.length > 0 && activeRequests.current.size < MAX_CONCURRENT) {
+        const path = requestQueue.current.shift()!;
+        activeRequests.current.add(path);
+        setLoadingFiles(prev => new Set(prev).add(path));
+
+        try {
+          const content = await getFileContent(projectId, taskId, path);
+          setFullFileContents(prev => new Map(prev).set(path, content));
+        } catch (error) {
+          console.error(`Failed to load ${path}:`, error);
+        } finally {
+          setLoadingFiles(prev => {
+            const next = new Set(prev);
+            next.delete(path);
+            return next;
+          });
+          activeRequests.current.delete(path);
+          processQueue(); // Continue processing
+        }
+      }
+    };
+
+    processQueue();
+  }, [projectId, taskId, fullFileContents, loadingFiles]);
 
   // Compute per-file comment counts
   const fileCommentCounts = useMemo(() => {
@@ -151,10 +230,11 @@ export function DiffReviewPage({ projectId, taskId, embedded }: DiffReviewPagePr
         let data: FullDiffResult;
         let reviewComments: ReviewCommentEntry[] = [];
 
-        const [diffResult, reviewData, commitsData] = await Promise.all([
+        const [diffResult, reviewData, commitsData, filesData] = await Promise.all([
           getFullDiff(projectId, taskId),
           getReviewComments(projectId, taskId).catch(() => null),
           getCommits(projectId, taskId).catch(() => null),
+          getTaskFiles(projectId, taskId).catch(() => null),
         ]);
         data = diffResult;
         if (reviewData) reviewComments = reviewData.comments;
@@ -181,6 +261,9 @@ export function DiffReviewPage({ projectId, taskId, embedded }: DiffReviewPagePr
 
         if (!cancelled) {
           setDiffData(data);
+          if (filesData) {
+            setAllFiles(filesData.files);
+          }
           if (data.files.length > 0) {
             setSelectedFile(data.files[0].new_path);
           }
@@ -231,46 +314,53 @@ export function DiffReviewPage({ projectId, taskId, embedded }: DiffReviewPagePr
     if (el) {
       el.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }
-    // Update file index
-    if (diffData) {
-      const idx = diffData.files.findIndex((f) => f.new_path === path);
-      if (idx >= 0) setCurrentFileIndex(idx);
-    }
-  }, [diffData]);
+    // Update file index - use displayFiles length for now, will be updated by parent
+  }, []);
 
   // Track visible file on scroll
   const handleFileVisible = useCallback((path: string) => {
     setSelectedFile(path);
-    if (diffData) {
-      const idx = diffData.files.findIndex((f) => f.new_path === path);
-      if (idx >= 0) setCurrentFileIndex(idx);
-    }
-  }, [diffData]);
+  }, []);
 
-  // File navigation
+  // File navigation using refs to avoid dependency issues
   const goToNextFile = useCallback(() => {
-    if (!diffData || diffData.files.length === 0) return;
-    const next = Math.min(currentFileIndex + 1, diffData.files.length - 1);
-    setCurrentFileIndex(next);
-    handleSelectFile(diffData.files[next].new_path);
-  }, [diffData, currentFileIndex, handleSelectFile]);
+    const files = displayFilesRef.current;
+    if (files.length === 0) return;
+
+    setCurrentFileIndex((prevIndex) => {
+      const next = Math.min(prevIndex + 1, files.length - 1);
+      setSelectedFile(files[next].new_path);
+      const el = document.getElementById(`diff-file-${encodeURIComponent(files[next].new_path)}`);
+      if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      return next;
+    });
+  }, []);
 
   const goToPrevFile = useCallback(() => {
-    if (!diffData || diffData.files.length === 0) return;
-    const prev = Math.max(currentFileIndex - 1, 0);
-    setCurrentFileIndex(prev);
-    handleSelectFile(diffData.files[prev].new_path);
-  }, [diffData, currentFileIndex, handleSelectFile]);
+    const files = displayFilesRef.current;
+    if (files.length === 0) return;
 
-  // Toggle viewed — stores current file hash
+    setCurrentFileIndex((prevIndex) => {
+      const prev = Math.max(prevIndex - 1, 0);
+      setSelectedFile(files[prev].new_path);
+      const el = document.getElementById(`diff-file-${encodeURIComponent(files[prev].new_path)}`);
+      if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      return prev;
+    });
+  }, []);
+
+  // Toggle viewed — stores current file hash and auto-collapses when marked as viewed
   const handleToggleViewed = useCallback((path: string) => {
     setViewedFiles((prev) => {
       const next = new Map(prev);
       if (next.has(path)) {
         next.delete(path);
+        // When unmarking as viewed, keep current collapsed state
       } else {
         const hash = fileHashes.get(path) || '';
         next.set(path, hash);
+        // Auto-collapse when marking as viewed
+        setCollapsedFiles((prevCollapsed) => new Set(prevCollapsed).add(path));
       }
       return next;
     });
@@ -380,17 +470,12 @@ export function DiffReviewPage({ projectId, taskId, embedded }: DiffReviewPagePr
 
   // Navigate to a comment (from conversation sidebar)
   const handleNavigateToComment = useCallback((filePath: string, _line: number) => {
-    // Scroll to the file first
     const el = document.getElementById(`diff-file-${encodeURIComponent(filePath)}`);
     if (el) {
       el.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }
     setSelectedFile(filePath);
-    if (diffData) {
-      const idx = diffData.files.findIndex((f) => f.new_path === filePath);
-      if (idx >= 0) setCurrentFileIndex(idx);
-    }
-  }, [diffData]);
+  }, []);
 
   // Comments for a specific file
   const getFileComments = (filePath: string) => {
@@ -420,12 +505,36 @@ export function DiffReviewPage({ projectId, taskId, embedded }: DiffReviewPagePr
     );
   }
 
-  const viewedCount = diffData ? diffData.files.filter((f) => getFileViewedStatus(f.new_path) === 'viewed').length : 0;
-  const totalFiles = diffData ? diffData.files.length : 0;
-  const isEmpty = !diffData || diffData.files.length === 0;
+  const viewedCount = displayFiles.filter((f) => getFileViewedStatus(f.new_path) === 'viewed').length;
+  const totalFiles = displayFiles.length;
+  const isEmpty = displayFiles.length === 0;
+
+  // Ensure selectedFile is valid - if not, use first file
+  const validSelectedFile = displayFiles.find((f) => f.new_path === selectedFile)?.new_path || displayFiles[0]?.new_path || null;
 
   return (
     <div className={`diff-review-page ${isEmbedded ? 'embedded' : ''}`}>
+      {/* Page Header with Mode Selector */}
+      <div className="diff-page-header">
+        <div className="diff-page-title">Code Review</div>
+        <div className="diff-mode-selector">
+          <button
+            className={viewMode === 'diff' ? 'active' : ''}
+            onClick={() => setViewMode('diff')}
+          >
+            <GitCompare size={14} />
+            <span>Changes</span>
+          </button>
+          <button
+            className={viewMode === 'full' ? 'active' : ''}
+            onClick={() => setViewMode('full')}
+          >
+            <FileText size={14} />
+            <span>All Files</span>
+          </button>
+        </div>
+      </div>
+
       {/* Toolbar */}
       <div className="diff-toolbar">
         <div className="diff-toolbar-left">
@@ -448,21 +557,23 @@ export function DiffReviewPage({ projectId, taskId, embedded }: DiffReviewPagePr
             <Crosshair style={{ width: 12, height: 12 }} />
             Focus
           </button>
-          <div className="diff-view-toggle">
-            <button
-              className={viewType === 'unified' ? 'active' : ''}
-              onClick={() => setViewType('unified')}
-            >
-              Unified
-            </button>
-            <button
-              className={viewType === 'split' ? 'active' : ''}
-              onClick={() => setViewType('split')}
-            >
-              Split
-            </button>
-          </div>
-          {fromOptions.length > 0 && toOptions.length > 0 && (
+          {viewMode === 'diff' && (
+            <div className="diff-view-toggle">
+              <button
+                className={viewType === 'unified' ? 'active' : ''}
+                onClick={() => setViewType('unified')}
+              >
+                Unified
+              </button>
+              <button
+                className={viewType === 'split' ? 'active' : ''}
+                onClick={() => setViewType('split')}
+              >
+                Split
+              </button>
+            </div>
+          )}
+          {viewMode === 'diff' && fromOptions.length > 0 && toOptions.length > 0 && (
             <div className="diff-version-range">
               <VersionSelector options={fromOptions} selected={fromVersion} onChange={handleFromVersionChange} />
               <span className="diff-version-arrow">&rarr;</span>
@@ -472,8 +583,12 @@ export function DiffReviewPage({ projectId, taskId, embedded }: DiffReviewPagePr
           <span style={{ fontWeight: 600, color: 'var(--color-text)' }}>
             {totalFiles} file{totalFiles !== 1 ? 's' : ''}
           </span>
-          <span className="stat-add">+{diffData?.total_additions ?? 0}</span>
-          <span className="stat-del">-{diffData?.total_deletions ?? 0}</span>
+          {viewMode === 'diff' && (
+            <>
+              <span className="stat-add">+{diffData?.total_additions ?? 0}</span>
+              <span className="stat-del">-{diffData?.total_deletions ?? 0}</span>
+            </>
+          )}
         </div>
         <div className="diff-toolbar-right">
           <ViewedProgress viewed={viewedCount} total={totalFiles} />
@@ -514,8 +629,8 @@ export function DiffReviewPage({ projectId, taskId, embedded }: DiffReviewPagePr
           <>
             {/* Sidebar */}
             <FileTreeSidebar
-              files={diffData!.files}
-              selectedFile={selectedFile}
+              files={displayFiles}
+              selectedFile={validSelectedFile}
               onSelectFile={handleSelectFile}
               searchQuery={sidebarSearch}
               onSearchChange={setSidebarSearch}
@@ -527,14 +642,14 @@ export function DiffReviewPage({ projectId, taskId, embedded }: DiffReviewPagePr
             {/* Diff content */}
             <div className="diff-content" ref={contentRef}>
               {(focusMode
-                ? diffData!.files.filter((f) => f.new_path === selectedFile)
-                : diffData!.files
+                ? displayFiles.filter((f) => f.new_path === validSelectedFile)
+                : displayFiles
               ).map((file) => (
                 <DiffFileView
                   key={file.new_path}
                   file={file}
                   viewType={viewType}
-                  isActive={selectedFile === file.new_path}
+                  isActive={validSelectedFile === file.new_path}
                   projectId={projectId}
                   taskId={taskId}
                   onVisible={() => handleFileVisible(file.new_path)}
@@ -558,13 +673,17 @@ export function DiffReviewPage({ projectId, taskId, embedded }: DiffReviewPagePr
                   collapsedCommentIds={collapsedCommentIds}
                   onCollapseComment={handleCollapseComment}
                   onExpandComment={handleExpandComment}
+                  viewMode={viewMode}
+                  fullFileContent={fullFileContents.get(file.new_path)}
+                  isLoadingFullFile={loadingFiles.has(file.new_path)}
+                  onRequestFullFile={loadFullFileContent}
                 />
               ))}
             </div>
 
             {/* Conversation sidebar */}
             <ConversationSidebar
-              comments={focusMode && selectedFile ? comments.filter((c) => c.file_path === selectedFile) : comments}
+              comments={focusMode && validSelectedFile ? comments.filter((c) => c.file_path === validSelectedFile) : comments}
               visible={convSidebarVisible}
               onNavigateToComment={handleNavigateToComment}
               onResolveComment={handleResolveComment}
