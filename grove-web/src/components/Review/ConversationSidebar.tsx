@@ -15,6 +15,9 @@ interface ConversationSidebarProps {
   onReplyComment?: (commentId: number, status: string, message: string) => void;
   onDeleteComment?: (id: number) => void;
   onAddProjectComment?: (content: string) => void;
+  onEditComment?: (id: number, content: string) => void;
+  onEditReply?: (commentId: number, replyId: number, content: string) => void;
+  onDeleteReply?: (commentId: number, replyId: number) => void;
 }
 
 export function ConversationSidebar({
@@ -26,6 +29,9 @@ export function ConversationSidebar({
   onReplyComment,
   onDeleteComment,
   onAddProjectComment,
+  onEditComment,
+  onEditReply,
+  onDeleteReply,
 }: ConversationSidebarProps) {
   const [filter, setFilter] = useState<StatusFilter>('all');
   const [collapsedFiles, setCollapsedFiles] = useState<Set<string>>(new Set());
@@ -295,6 +301,9 @@ export function ConversationSidebar({
           onReopen={onReopenComment}
           onReply={onReplyComment}
           onDelete={onDeleteComment}
+          onEdit={onEditComment}
+          onEditReply={onEditReply}
+          onDeleteReply={onDeleteReply}
         />
       )}
     </div>
@@ -383,6 +392,7 @@ function ConversationItem({
       <div className="conv-item-header">
         <AgentAvatar name={comment.author} size={18} className="conv-item-avatar" />
         <span className="conv-item-author">{comment.author}</span>
+        <span className="conv-item-meta" style={{ opacity: 0.6 }}>#{comment.id}</span>
         {locationLabel && <span className="conv-item-meta">{locationLabel}</span>}
         <span
           className="conv-item-status"

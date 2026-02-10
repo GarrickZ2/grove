@@ -140,7 +140,7 @@ export function NotificationPopover({ isOpen, onClose, onNavigate }: Notificatio
                     onDismiss={() => dismissNotification(n.project_id, n.task_id)}
                     onClick={() => {
                       dismissNotification(n.project_id, n.task_id);
-                      onNavigate?.("tasks", { taskId: n.task_id, projectId: n.project_id });
+                      onNavigate?.("tasks", { taskId: n.task_id, projectId: n.project_id, viewMode: "terminal" });
                       onClose();
                     }}
                   />

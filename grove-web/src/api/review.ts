@@ -80,7 +80,7 @@ export async function createComment(
       start_line: params.startLine,
       end_line: params.endLine,
       content: params.content,
-      author: params.author || 'You',
+      author: params.author,
     },
   );
 }
@@ -91,6 +91,7 @@ export async function createInlineComment(
   taskId: string,
   anchor: { filePath: string; side: string; startLine: number; endLine: number },
   content: string,
+  author?: string,
 ): Promise<ReviewCommentsResponse> {
   return createComment(projectId, taskId, {
     comment_type: 'inline',
@@ -99,6 +100,7 @@ export async function createInlineComment(
     startLine: anchor.startLine,
     endLine: anchor.endLine,
     content,
+    author,
   });
 }
 
@@ -108,11 +110,13 @@ export async function createFileComment(
   taskId: string,
   filePath: string,
   content: string,
+  author?: string,
 ): Promise<ReviewCommentsResponse> {
   return createComment(projectId, taskId, {
     comment_type: 'file',
     filePath,
     content,
+    author,
   });
 }
 
@@ -121,10 +125,12 @@ export async function createProjectComment(
   projectId: string,
   taskId: string,
   content: string,
+  author?: string,
 ): Promise<ReviewCommentsResponse> {
   return createComment(projectId, taskId, {
     comment_type: 'project',
     content,
+    author,
   });
 }
 
@@ -134,10 +140,11 @@ export async function replyReviewComment(
   taskId: string,
   commentId: number,
   message: string,
+  author?: string,
 ): Promise<ReviewCommentsResponse> {
   return apiClient.post<Record<string, unknown>, ReviewCommentsResponse>(
     `/api/v1/projects/${projectId}/tasks/${taskId}/review`,
-    { comment_id: commentId, message, author: 'You' },
+    { comment_id: commentId, message, author },
   );
 }
 
@@ -174,5 +181,44 @@ export async function deleteComment(
 ): Promise<ReviewCommentsResponse> {
   return apiClient.delete<ReviewCommentsResponse>(
     `/api/v1/projects/${projectId}/tasks/${taskId}/review/comments/${commentId}`,
+  );
+}
+
+/** Edit a review comment's content */
+export async function editComment(
+  projectId: string,
+  taskId: string,
+  commentId: number,
+  content: string,
+): Promise<ReviewCommentsResponse> {
+  return apiClient.put<Record<string, unknown>, ReviewCommentsResponse>(
+    `/api/v1/projects/${projectId}/tasks/${taskId}/review/comments/${commentId}/content`,
+    { content },
+  );
+}
+
+/** Edit a reply's content */
+export async function editReply(
+  projectId: string,
+  taskId: string,
+  commentId: number,
+  replyId: number,
+  content: string,
+): Promise<ReviewCommentsResponse> {
+  return apiClient.put<Record<string, unknown>, ReviewCommentsResponse>(
+    `/api/v1/projects/${projectId}/tasks/${taskId}/review/comments/${commentId}/replies/${replyId}`,
+    { content },
+  );
+}
+
+/** Delete a reply */
+export async function deleteReply(
+  projectId: string,
+  taskId: string,
+  commentId: number,
+  replyId: number,
+): Promise<ReviewCommentsResponse> {
+  return apiClient.delete<ReviewCommentsResponse>(
+    `/api/v1/projects/${projectId}/tasks/${taskId}/review/comments/${commentId}/replies/${replyId}`,
   );
 }

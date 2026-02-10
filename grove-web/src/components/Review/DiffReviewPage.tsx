@@ -1,8 +1,8 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
-import { getFullDiff, createInlineComment, createFileComment, createProjectComment, deleteComment as apiDeleteComment, replyReviewComment as apiReplyComment, updateCommentStatus as apiUpdateCommentStatus, getFileContent } from '../../api/review';
+import { getFullDiff, createInlineComment, createFileComment, createProjectComment, deleteComment as apiDeleteComment, replyReviewComment as apiReplyComment, updateCommentStatus as apiUpdateCommentStatus, getFileContent, editComment as apiEditComment, editReply as apiEditReply, deleteReply as apiDeleteReply } from '../../api/review';
 import { getReviewComments, getCommits, getTaskFiles } from '../../api/tasks';
 import type { FullDiffResult, DiffFile } from '../../api/review';
-import type { ReviewCommentEntry } from '../../api/tasks';
+import type { ReviewCommentEntry, ReviewCommentsResponse } from '../../api/tasks';
 
 export interface VersionOption {
   id: string;
@@ -51,7 +51,17 @@ export function DiffReviewPage({ projectId, taskId, embedded }: DiffReviewPagePr
 
   // New state
   const [currentFileIndex, setCurrentFileIndex] = useState(0);
-  const [viewedFiles, setViewedFiles] = useState<Map<string, string>>(new Map()); // path → hash at view time
+  // Viewed files: path → hash at view time, persisted to localStorage
+  const viewedStorageKey = `grove:viewed:${projectId}:${taskId}`;
+  const [viewedFiles, setViewedFiles] = useState<Map<string, string>>(() => {
+    try {
+      const stored = localStorage.getItem(viewedStorageKey);
+      if (stored) {
+        return new Map(JSON.parse(stored) as [string, string][]);
+      }
+    } catch { /* ignore */ }
+    return new Map();
+  });
   const [sidebarSearch, setSidebarSearch] = useState('');
   const [collapsedFiles, setCollapsedFiles] = useState<Set<string>>(new Set());
   const [replyFormCommentId, setReplyFormCommentId] = useState<number | null>(null);
@@ -63,6 +73,9 @@ export function DiffReviewPage({ projectId, taskId, embedded }: DiffReviewPagePr
   const [collapsedCommentIds, setCollapsedCommentIds] = useState<Set<number>>(new Set());
   const [versions, setVersions] = useState<VersionOption[]>([]);
   const initialCollapseRef = useRef(false);
+
+  // Git user name for authoring comments (fetched from API)
+  const gitUserNameRef = useRef<string>('You');
 
   // Temporary virtual files/directories created in current session
   const [temporaryVirtualPaths, setTemporaryVirtualPaths] = useState<Set<string>>(new Set());
@@ -270,7 +283,12 @@ export function DiffReviewPage({ projectId, taskId, embedded }: DiffReviewPagePr
           getTaskFiles(projectId, taskId).catch(() => null),
         ]);
         data = diffResult;
-        if (reviewData) reviewComments = reviewData.comments;
+        if (reviewData) {
+          reviewComments = reviewData.comments;
+          if (reviewData.git_user_name) {
+            gitUserNameRef.current = reviewData.git_user_name;
+          }
+        }
 
         // Build version options: Latest, Version N..1, Base (newest first)
         // skip_versions = number of leading commits equivalent to Latest
@@ -418,9 +436,13 @@ export function DiffReviewPage({ projectId, taskId, embedded }: DiffReviewPagePr
         // Auto-collapse when marking as viewed
         setCollapsedFiles((prevCollapsed) => new Set(prevCollapsed).add(path));
       }
+      // Persist to localStorage
+      try {
+        localStorage.setItem(viewedStorageKey, JSON.stringify(Array.from(next.entries())));
+      } catch { /* ignore quota errors */ }
       return next;
     });
-  }, [fileHashes]);
+  }, [fileHashes, viewedStorageKey]);
 
   // Toggle collapse
   const handleToggleCollapse = useCallback((path: string) => {
@@ -437,6 +459,14 @@ export function DiffReviewPage({ projectId, taskId, embedded }: DiffReviewPagePr
     setTemporaryVirtualPaths(prev => new Set(prev).add(path));
     // Auto-select the newly created virtual file
     setSelectedFile(path);
+  }, []);
+
+  // Helper: apply ReviewCommentsResponse (update comments + refresh git_user_name)
+  const applyReviewResponse = useCallback((result: ReviewCommentsResponse) => {
+    setComments(result.comments);
+    if (result.git_user_name) {
+      gitUserNameRef.current = result.git_user_name;
+    }
   }, []);
 
   // Gutter click — open comment form (side-aware + shift-click multiline)
@@ -460,8 +490,8 @@ export function DiffReviewPage({ projectId, taskId, embedded }: DiffReviewPagePr
   // Add comment
   const handleAddComment = useCallback(async (anchor: CommentAnchor, content: string) => {
     try {
-      const result = await createInlineComment(projectId, taskId, anchor, content);
-      setComments(result.comments);
+      const result = await createInlineComment(projectId, taskId, anchor, content, gitUserNameRef.current);
+      applyReviewResponse(result);
       setCommentFormAnchor(null);
     } catch {
       // Could add toast here
@@ -472,7 +502,7 @@ export function DiffReviewPage({ projectId, taskId, embedded }: DiffReviewPagePr
   const handleDeleteComment = useCallback(async (id: number) => {
     try {
       const result = await apiDeleteComment(projectId, taskId, id);
-      setComments(result.comments);
+      applyReviewResponse(result);
     } catch {
       // Could add toast here
     }
@@ -494,8 +524,8 @@ export function DiffReviewPage({ projectId, taskId, embedded }: DiffReviewPagePr
 
   const handleSubmitFileComment = useCallback(async (filePath: string, content: string) => {
     try {
-      const result = await createFileComment(projectId, taskId, filePath, content);
-      setComments(result.comments);
+      const result = await createFileComment(projectId, taskId, filePath, content, gitUserNameRef.current);
+      applyReviewResponse(result);
       setFileCommentFormPath(null);
     } catch {
       // Could add toast here
@@ -505,8 +535,8 @@ export function DiffReviewPage({ projectId, taskId, embedded }: DiffReviewPagePr
   // Add project comment
   const handleAddProjectComment = useCallback(async (content: string) => {
     try {
-      const result = await createProjectComment(projectId, taskId, content);
-      setComments(result.comments);
+      const result = await createProjectComment(projectId, taskId, content, gitUserNameRef.current);
+      applyReviewResponse(result);
     } catch {
       // Could add toast here
     }
@@ -526,8 +556,8 @@ export function DiffReviewPage({ projectId, taskId, embedded }: DiffReviewPagePr
   // Reply to comment (no status change)
   const handleReplyComment = useCallback(async (commentId: number, _status: string, message: string) => {
     try {
-      const result = await apiReplyComment(projectId, taskId, commentId, message);
-      setComments(result.comments);
+      const result = await apiReplyComment(projectId, taskId, commentId, message, gitUserNameRef.current);
+      applyReviewResponse(result);
       setReplyFormCommentId(null);
     } catch {
       // Could add toast here
@@ -538,7 +568,7 @@ export function DiffReviewPage({ projectId, taskId, embedded }: DiffReviewPagePr
   const handleResolveComment = useCallback(async (id: number) => {
     try {
       const result = await apiUpdateCommentStatus(projectId, taskId, id, 'resolved');
-      setComments(result.comments);
+      applyReviewResponse(result);
       setCollapsedCommentIds((prev) => new Set([...prev, id]));
     } catch {
       // Could add toast here
@@ -549,12 +579,42 @@ export function DiffReviewPage({ projectId, taskId, embedded }: DiffReviewPagePr
   const handleReopenComment = useCallback(async (id: number) => {
     try {
       const result = await apiUpdateCommentStatus(projectId, taskId, id, 'open');
-      setComments(result.comments);
+      applyReviewResponse(result);
       setCollapsedCommentIds((prev) => {
         const next = new Set(prev);
         next.delete(id);
         return next;
       });
+    } catch {
+      // Could add toast here
+    }
+  }, [projectId, taskId]);
+
+  // Edit comment content
+  const handleEditComment = useCallback(async (id: number, content: string) => {
+    try {
+      const result = await apiEditComment(projectId, taskId, id, content);
+      applyReviewResponse(result);
+    } catch {
+      // Could add toast here
+    }
+  }, [projectId, taskId]);
+
+  // Edit reply content
+  const handleEditReply = useCallback(async (commentId: number, replyId: number, content: string) => {
+    try {
+      const result = await apiEditReply(projectId, taskId, commentId, replyId, content);
+      applyReviewResponse(result);
+    } catch {
+      // Could add toast here
+    }
+  }, [projectId, taskId]);
+
+  // Delete reply
+  const handleDeleteReply = useCallback(async (commentId: number, replyId: number) => {
+    try {
+      const result = await apiDeleteReply(projectId, taskId, commentId, replyId);
+      applyReviewResponse(result);
     } catch {
       // Could add toast here
     }
@@ -784,6 +844,9 @@ export function DiffReviewPage({ projectId, taskId, embedded }: DiffReviewPagePr
                   fileCommentFormPath={fileCommentFormPath}
                   onCancelFileComment={handleCancelFileComment}
                   onSubmitFileComment={handleSubmitFileComment}
+                  onEditComment={handleEditComment}
+                  onEditReply={handleEditReply}
+                  onDeleteReply={handleDeleteReply}
                 />
               ))}
             </div>
@@ -801,6 +864,9 @@ export function DiffReviewPage({ projectId, taskId, embedded }: DiffReviewPagePr
               onReopenComment={handleReopenComment}
               onReplyComment={handleReplyComment}
               onDeleteComment={handleDeleteComment}
+              onEditComment={handleEditComment}
+              onEditReply={handleEditReply}
+              onDeleteReply={handleDeleteReply}
             />
           </>
         )}

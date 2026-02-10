@@ -1,10 +1,22 @@
 import { useState } from 'react';
-import { X, Send, MessageSquare, Trash2, Reply, CheckCircle, RotateCcw, Minus } from 'lucide-react';
+import { X, Send, MessageSquare, Trash2, Reply, CheckCircle, RotateCcw, Minus, Pencil } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import type { ReviewCommentEntry } from '../../api/tasks';
 import type { CommentAnchor } from './DiffReviewPage';
 import { AgentAvatar } from './AgentAvatar';
+
+/** Format ISO timestamp to human-readable local time, e.g. "2026-02-10 08:37:24" */
+function formatTime(ts: string): string {
+  try {
+    const d = new Date(ts);
+    if (isNaN(d.getTime())) return ts;
+    const pad = (n: number) => n.toString().padStart(2, '0');
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+  } catch {
+    return ts;
+  }
+}
 
 // ============================================================================
 // Comment Card — GitHub/GitLab style with avatar, author, timestamp, replies
@@ -17,9 +29,17 @@ interface CommentCardProps {
   onResolve?: (id: number) => void;
   onReopen?: (id: number) => void;
   onCollapse?: (id: number) => void;
+  onEdit?: (id: number, content: string) => void;
+  onEditReply?: (commentId: number, replyId: number, content: string) => void;
+  onDeleteReply?: (commentId: number, replyId: number) => void;
 }
 
-export function CommentCard({ comment, onDelete, onReply, onResolve, onReopen, onCollapse }: CommentCardProps) {
+export function CommentCard({ comment, onDelete, onReply, onResolve, onReopen, onCollapse, onEdit, onEditReply, onDeleteReply }: CommentCardProps) {
+  const [editingComment, setEditingComment] = useState(false);
+  const [editCommentText, setEditCommentText] = useState('');
+  const [editingReplyId, setEditingReplyId] = useState<number | null>(null);
+  const [editReplyText, setEditReplyText] = useState('');
+
   const statusColor =
     comment.status === 'resolved'
       ? 'var(--color-success)'
@@ -38,13 +58,38 @@ export function CommentCard({ comment, onDelete, onReply, onResolve, onReopen, o
     ? `L${comment.start_line}-L${comment.end_line}`
     : null;
 
+  const handleStartEditComment = () => {
+    setEditCommentText(comment.content);
+    setEditingComment(true);
+  };
+
+  const handleSaveEditComment = () => {
+    if (editCommentText.trim() && onEdit) {
+      onEdit(comment.id, editCommentText.trim());
+      setEditingComment(false);
+    }
+  };
+
+  const handleStartEditReply = (replyId: number, content: string) => {
+    setEditReplyText(content);
+    setEditingReplyId(replyId);
+  };
+
+  const handleSaveEditReply = () => {
+    if (editReplyText.trim() && onEditReply && editingReplyId !== null) {
+      onEditReply(comment.id, editingReplyId, editReplyText.trim());
+      setEditingReplyId(null);
+    }
+  };
+
   return (
     <div className="diff-comment-card">
       {/* Header: avatar + author + time + line range + status badge + actions */}
       <div className="diff-comment-header">
         <AgentAvatar name={comment.author || '?'} size={24} className="diff-comment-avatar" />
         <span className="diff-comment-author">{comment.author}</span>
-        <span className="diff-comment-time">{comment.timestamp}</span>
+        <span className="diff-comment-id">#{comment.id}</span>
+        <span className="diff-comment-time">{formatTime(comment.timestamp)}</span>
         {lineRange && (
           <span style={{ fontSize: 10, color: 'var(--color-text-muted)', fontFamily: 'monospace' }}>{lineRange}</span>
         )}
@@ -85,6 +130,15 @@ export function CommentCard({ comment, onDelete, onReply, onResolve, onReopen, o
               <Reply style={{ width: 13, height: 13 }} />
             </button>
           )}
+          {onEdit && (
+            <button
+              className="diff-comment-action-btn"
+              onClick={handleStartEditComment}
+              title="Edit comment"
+            >
+              <Pencil style={{ width: 13, height: 13 }} />
+            </button>
+          )}
           {onCollapse && (
             <button
               className="diff-comment-action-btn"
@@ -106,12 +160,51 @@ export function CommentCard({ comment, onDelete, onReply, onResolve, onReopen, o
         </span>
       </div>
 
-      {/* Body */}
-      <div className="diff-comment-body markdown-content">
-        <ReactMarkdown remarkPlugins={[remarkGfm]}>
-          {comment.content}
-        </ReactMarkdown>
-      </div>
+      {/* Body — editable or read-only */}
+      {editingComment ? (
+        <div style={{ padding: '4px 0' }}>
+          <textarea
+            className="diff-reply-textarea"
+            value={editCommentText}
+            onChange={(e) => setEditCommentText(e.target.value)}
+            autoFocus
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) handleSaveEditComment();
+              if (e.key === 'Escape') setEditingComment(false);
+            }}
+          />
+          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 6, marginTop: 4 }}>
+            <button
+              onClick={() => setEditingComment(false)}
+              style={{
+                padding: '3px 10px',
+                background: 'var(--color-bg-tertiary)',
+                border: '1px solid var(--color-border)',
+                borderRadius: 6,
+                color: 'var(--color-text-muted)',
+                fontSize: 11,
+                cursor: 'pointer',
+              }}
+            >
+              Cancel
+            </button>
+            <button
+              className="diff-reply-submit-btn"
+              disabled={!editCommentText.trim()}
+              onClick={handleSaveEditComment}
+              style={{ fontSize: 11, padding: '3px 10px' }}
+            >
+              Save
+            </button>
+          </div>
+        </div>
+      ) : (
+        <div className="diff-comment-body markdown-content">
+          <ReactMarkdown remarkPlugins={[remarkGfm]}>
+            {comment.content}
+          </ReactMarkdown>
+        </div>
+      )}
 
       {/* Replies */}
       {comment.replies.map((reply) => (
@@ -119,13 +212,81 @@ export function CommentCard({ comment, onDelete, onReply, onResolve, onReopen, o
           <div className="diff-comment-header">
             <AgentAvatar name={reply.author} size={18} className="diff-comment-avatar small" />
             <span className="diff-comment-author" style={{ fontSize: 11 }}>{reply.author}</span>
-            <span className="diff-comment-time">{reply.timestamp}</span>
+            <span className="diff-comment-time">{formatTime(reply.timestamp)}</span>
+            <span className="diff-comment-actions">
+              {onReply && (
+                <button
+                  className="diff-comment-action-btn"
+                  onClick={() => onReply(comment.id)}
+                  title="Reply"
+                >
+                  <Reply style={{ width: 11, height: 11 }} />
+                </button>
+              )}
+              {onEditReply && (
+                <button
+                  className="diff-comment-action-btn"
+                  onClick={() => handleStartEditReply(reply.id, reply.content)}
+                  title="Edit reply"
+                >
+                  <Pencil style={{ width: 11, height: 11 }} />
+                </button>
+              )}
+              {onDeleteReply && (
+                <button
+                  className="diff-comment-action-btn"
+                  onClick={() => onDeleteReply(comment.id, reply.id)}
+                  title="Delete reply"
+                >
+                  <Trash2 style={{ width: 11, height: 11 }} />
+                </button>
+              )}
+            </span>
           </div>
-          <div className="diff-comment-body markdown-content">
-            <ReactMarkdown remarkPlugins={[remarkGfm]}>
-              {reply.content}
-            </ReactMarkdown>
-          </div>
+          {editingReplyId === reply.id ? (
+            <div style={{ padding: '4px 0' }}>
+              <textarea
+                className="diff-reply-textarea"
+                value={editReplyText}
+                onChange={(e) => setEditReplyText(e.target.value)}
+                autoFocus
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) handleSaveEditReply();
+                  if (e.key === 'Escape') setEditingReplyId(null);
+                }}
+              />
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 6, marginTop: 4 }}>
+                <button
+                  onClick={() => setEditingReplyId(null)}
+                  style={{
+                    padding: '3px 10px',
+                    background: 'var(--color-bg-tertiary)',
+                    border: '1px solid var(--color-border)',
+                    borderRadius: 6,
+                    color: 'var(--color-text-muted)',
+                    fontSize: 11,
+                    cursor: 'pointer',
+                  }}
+                >
+                  Cancel
+                </button>
+                <button
+                  className="diff-reply-submit-btn"
+                  disabled={!editReplyText.trim()}
+                  onClick={handleSaveEditReply}
+                  style={{ fontSize: 11, padding: '3px 10px' }}
+                >
+                  Save
+                </button>
+              </div>
+            </div>
+          ) : (
+            <div className="diff-comment-body markdown-content">
+              <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                {reply.content}
+              </ReactMarkdown>
+            </div>
+          )}
         </div>
       ))}
     </div>

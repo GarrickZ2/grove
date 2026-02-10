@@ -156,6 +156,14 @@ pub fn create_api_router() -> Router {
             "/projects/{id}/tasks/{taskId}/review/comments/{commentId}/status",
             put(handlers::tasks::update_review_comment_status),
         )
+        .route(
+            "/projects/{id}/tasks/{taskId}/review/comments/{commentId}/content",
+            put(handlers::tasks::edit_review_comment),
+        )
+        .route(
+            "/projects/{id}/tasks/{taskId}/review/comments/{commentId}/replies/{replyId}",
+            put(handlers::tasks::edit_review_reply).delete(handlers::tasks::delete_review_reply),
+        )
         // Hooks API
         .route("/hooks", get(handlers::hooks::list_all_hooks))
         .route(

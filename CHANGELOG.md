@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.11] - 2026-02-09
+
+### Fixed
+
+- **Unified diff multi-line comment button not appearing** — cross-side text selections in unified view now correctly show the comment button (side check restricted to split mode only)
+- **Comment author showing "You" instead of git user name** — comment creation and replies now use `git user.name` from worktree config as default author, passed through frontend → API → backend
+- **Comment placed at wrong line when anchor text has multiple matches** — `find_anchor()` now collects all matches and picks the one closest to the original line number, preventing relocation to earlier occurrences of common patterns like `if err != nil {`
+
 ## [0.4.10] - 2026-02-09
 
 ### Fixed

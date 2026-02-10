@@ -75,6 +75,9 @@ interface DiffFileViewProps {
   fileCommentFormPath?: string | null;
   onCancelFileComment?: () => void;
   onSubmitFileComment?: (filePath: string, content: string) => void;
+  onEditComment?: (id: number, content: string) => void;
+  onEditReply?: (commentId: number, replyId: number, content: string) => void;
+  onDeleteReply?: (commentId: number, replyId: number) => void;
 }
 
 export function DiffFileView({
@@ -106,6 +109,9 @@ export function DiffFileView({
   fileCommentFormPath,
   onCancelFileComment,
   onSubmitFileComment,
+  onEditComment,
+  onEditReply,
+  onDeleteReply,
   projectId,
   taskId,
   viewMode = 'diff',
@@ -122,8 +128,27 @@ export function DiffFileView({
     endLine: number;
     side: 'ADD' | 'DELETE';
     top: number;
-    right: number;
+    centerX: number;
   } | null>(null);
+
+  // Split mode: constrain selection to one panel by disabling user-select on the other
+  const handleMouseDown = useCallback((e: React.MouseEvent) => {
+    const splitTable = ref.current?.querySelector('.diff-split');
+    if (!splitTable) return;
+
+    // Clear previous containment
+    splitTable.classList.remove('selecting-left', 'selecting-right');
+
+    // Walk up from click target to find a data-side cell
+    let el = e.target as HTMLElement | null;
+    while (el && el !== ref.current) {
+      if (el.hasAttribute('data-side')) {
+        splitTable.classList.add(el.dataset.side === 'DELETE' ? 'selecting-left' : 'selecting-right');
+        return;
+      }
+      el = el.parentElement;
+    }
+  }, []);
 
   const handleMouseUp = useCallback(() => {
     const selection = window.getSelection();
@@ -134,47 +159,61 @@ export function DiffFileView({
 
     const range = selection.getRangeAt(0);
 
-    // Find tr elements with data-line within this file section
-    const findLineRow = (node: Node): HTMLTableRowElement | null => {
+    // Find nearest element (TR or TD) with data-line within this file section
+    const findLineCell = (node: Node): HTMLElement | null => {
       let el = node instanceof HTMLElement ? node : node.parentElement;
       while (el && el !== ref.current) {
-        if (el.tagName === 'TR' && el.hasAttribute('data-line')) {
-          return el as HTMLTableRowElement;
+        if (el.hasAttribute('data-line')) {
+          return el;
         }
         el = el.parentElement;
       }
       return null;
     };
 
-    const startRow = findLineRow(range.startContainer);
-    const endRow = findLineRow(range.endContainer);
+    const startCell = findLineCell(range.startContainer);
+    const endCell = findLineCell(range.endContainer);
 
-    if (!startRow || !endRow) {
+    if (!startCell || !endCell) {
       setSelectionAnchor(null);
       return;
     }
 
-    const startLine = parseInt(startRow.dataset.line || '0', 10);
-    const endLine = parseInt(endRow.dataset.line || '0', 10);
-    const side = (startRow.dataset.side || 'ADD') as 'ADD' | 'DELETE';
+    const startSide = (startCell.dataset.side || 'ADD') as 'ADD' | 'DELETE';
+    const endSide = (endCell.dataset.side || 'ADD') as 'ADD' | 'DELETE';
+
+    // In split mode, ignore selections that cross panels
+    if (viewType === 'split' && startSide !== endSide) {
+      setSelectionAnchor(null);
+      return;
+    }
+
+    const startLine = parseInt(startCell.dataset.line || '0', 10);
+    const endLine = parseInt(endCell.dataset.line || '0', 10);
+    // In unified mode, prefer ADD side for cross-side selections
+    const side = viewType === 'unified' && startSide !== endSide ? 'ADD' : startSide;
 
     if (startLine <= 0 || endLine <= 0 || startLine === endLine) {
       setSelectionAnchor(null);
       return;
     }
 
-    // Position the button at end of selection, relative to file section
+    // Position the button centered below the selection, relative to file section
     const sectionRect = ref.current.getBoundingClientRect();
-    const endRect = endRow.getBoundingClientRect();
+    const startRect = startCell.getBoundingClientRect();
+    const endRect = endCell.getBoundingClientRect();
+    const selLeft = Math.min(startRect.left, endRect.left);
+    const selRight = Math.max(startRect.right, endRect.right);
+    const centerX = (selLeft + selRight) / 2 - sectionRect.left;
 
     setSelectionAnchor({
       startLine: Math.min(startLine, endLine),
       endLine: Math.max(startLine, endLine),
       side,
-      top: endRect.bottom - sectionRect.top,
-      right: 16,
+      top: endRect.bottom - sectionRect.top + 4,
+      centerX,
     });
-  }, []);
+  }, [viewType]);
 
   // Clear selection anchor when selection changes elsewhere
   useEffect(() => {
@@ -259,6 +298,10 @@ export function DiffFileView({
     return set;
   }, [inlineComments, commentFormAnchor, file.new_path]);
 
+  // ---- File content for context expansion (declared early so gaps can reference it) ----
+  const [fileLines, setFileLines] = useState<string[] | null>(null);
+  const fileLinesLoadingRef = useRef(false);
+
   // ---- Gap computation for context line expansion ----
   const gaps = useMemo(() => {
     const result: HunkGap[] = [];
@@ -290,8 +333,23 @@ export function DiffFileView({
         }
       }
     }
+    // Trailing gap: lines after the last hunk
+    if (file.hunks.length > 0 && fileLines) {
+      const lastHunk = file.hunks[file.hunks.length - 1];
+      const lastNewEnd = lastHunk.new_start + lastHunk.new_lines - 1;
+      const lastOldEnd = lastHunk.old_start + lastHunk.old_lines - 1;
+      if (lastNewEnd < fileLines.length) {
+        result.push({
+          gapIndex: file.hunks.length,
+          startLine: lastNewEnd + 1,
+          endLine: fileLines.length,
+          oldStartLine: lastOldEnd + 1,
+          totalLines: fileLines.length - lastNewEnd,
+        });
+      }
+    }
     return result;
-  }, [file.hunks]);
+  }, [file.hunks, fileLines]);
 
   const gapsByHunkIndex = useMemo(() => {
     const map = new Map<number, HunkGap>();
@@ -300,9 +358,6 @@ export function DiffFileView({
   }, [gaps]);
 
   const [expansions, setExpansions] = useState<Map<number, GapExpansion>>(new Map());
-
-  const [fileLines, setFileLines] = useState<string[] | null>(null);
-  const fileLinesLoadingRef = useRef(false);
 
   const ensureFileLines = useCallback(() => {
     if (fileLines || fileLinesLoadingRef.current) return;
@@ -321,12 +376,24 @@ export function DiffFileView({
     }
   }, [fileLines, projectId, taskId, file.new_path, gaps]);
 
+  // Pre-load fileLines when file is expanded so trailing gap can be computed immediately
+  useEffect(() => {
+    if (!isCollapsed && file.hunks.length > 0) {
+      ensureFileLines();
+    }
+  }, [isCollapsed, file.hunks.length, ensureFileLines]);
+
   const handleExpandDown = useCallback((gapIndex: number) => {
     ensureFileLines();
     setExpansions((prev) => {
       const next = new Map(prev);
       const exp = next.get(gapIndex) || { fromTop: 0, fromBottom: 0, full: false };
-      const gap = gaps.find((g) => g.gapIndex === gapIndex)!;
+      const gap = gaps.find((g) => g.gapIndex === gapIndex);
+      if (!gap) {
+        // Gap not computed yet (trailing gap before fileLines loaded) — queue 20 lines
+        next.set(gapIndex, { ...exp, fromTop: exp.fromTop + 20 });
+        return next;
+      }
       const remaining = gap.totalLines - exp.fromTop - exp.fromBottom;
       const expandBy = Math.min(20, remaining);
       next.set(gapIndex, { ...exp, fromTop: exp.fromTop + expandBy });
@@ -339,7 +406,11 @@ export function DiffFileView({
     setExpansions((prev) => {
       const next = new Map(prev);
       const exp = next.get(gapIndex) || { fromTop: 0, fromBottom: 0, full: false };
-      const gap = gaps.find((g) => g.gapIndex === gapIndex)!;
+      const gap = gaps.find((g) => g.gapIndex === gapIndex);
+      if (!gap) {
+        next.set(gapIndex, { ...exp, fromBottom: exp.fromBottom + 20 });
+        return next;
+      }
       const remaining = gap.totalLines - exp.fromTop - exp.fromBottom;
       const expandBy = Math.min(20, remaining);
       next.set(gapIndex, { ...exp, fromBottom: exp.fromBottom + expandBy });
@@ -390,10 +461,13 @@ export function DiffFileView({
     collapsedCommentIds,
     onCollapseComment,
     onExpandComment,
+    onEditComment,
+    onEditReply,
+    onDeleteReply,
   };
 
   return (
-    <div ref={ref} className="diff-file-section" id={`diff-file-${encodeURIComponent(file.new_path)}`} onMouseUp={handleMouseUp}>
+    <div ref={ref} className="diff-file-section" id={`diff-file-${encodeURIComponent(file.new_path)}`} onMouseDown={handleMouseDown} onMouseUp={handleMouseUp}>
       {/* File header */}
       <div className={`diff-file-header ${isActive ? 'ring-1 ring-[var(--color-highlight)]' : ''}`}>
         {onToggleCollapse && (
@@ -481,6 +555,9 @@ export function DiffFileView({
                     onResolve={onResolveComment}
                     onReopen={onReopenComment}
                     onCollapse={onCollapseComment}
+                    onEdit={onEditComment}
+                    onEditReply={onEditReply}
+                    onDeleteReply={onDeleteReply}
                   />
                   {replyFormCommentId === comment.id && onReplyComment && onCancelReply && (
                     <div className="diff-comment-reply-form">
@@ -619,7 +696,8 @@ export function DiffFileView({
           style={{
             position: 'absolute',
             top: selectionAnchor.top,
-            right: selectionAnchor.right,
+            left: selectionAnchor.centerX,
+            transform: 'translateX(-50%)',
           }}
           onMouseDown={(e) => {
             e.preventDefault(); // Prevent losing selection
@@ -667,6 +745,9 @@ interface CommentProps {
   collapsedCommentIds?: Set<number>;
   onCollapseComment?: (id: number) => void;
   onExpandComment?: (id: number) => void;
+  onEditComment?: (id: number, content: string) => void;
+  onEditReply?: (commentId: number, replyId: number, content: string) => void;
+  onDeleteReply?: (commentId: number, replyId: number) => void;
 }
 
 // ============================================================================
@@ -678,12 +759,15 @@ function getExpandedRanges(gap: HunkGap | undefined, expansion: GapExpansion | u
   if (expansion.full) {
     return { top: { start: gap.startLine, end: gap.endLine }, bottom: null };
   }
+  // Clamp to actual gap bounds (fromTop/fromBottom may overshoot if queued before gap was computed)
+  const clampedTop = Math.min(expansion.fromTop, gap.totalLines);
+  const clampedBottom = Math.min(expansion.fromBottom, gap.totalLines - clampedTop);
   return {
-    top: expansion.fromTop > 0
-      ? { start: gap.startLine, end: gap.startLine + expansion.fromTop - 1 }
+    top: clampedTop > 0
+      ? { start: gap.startLine, end: Math.min(gap.startLine + clampedTop - 1, gap.endLine) }
       : null,
-    bottom: expansion.fromBottom > 0
-      ? { start: gap.endLine - expansion.fromBottom + 1, end: gap.endLine }
+    bottom: clampedBottom > 0
+      ? { start: Math.max(gap.endLine - clampedBottom + 1, gap.startLine), end: gap.endLine }
       : null,
   };
 }
@@ -691,6 +775,13 @@ function getExpandedRanges(gap: HunkGap | undefined, expansion: GapExpansion | u
 // ============================================================================
 // Inline expand buttons (rendered inside hunk header)
 // ============================================================================
+
+/// Check if a gap is fully expanded (no remaining hidden lines)
+function isGapFullyExpanded(gap: HunkGap | undefined, expansion: GapExpansion | undefined): boolean {
+  if (!gap || !expansion) return false;
+  if (expansion.full) return true;
+  return expansion.fromTop + expansion.fromBottom >= gap.totalLines;
+}
 
 function ExpandButtons({
   gap,
@@ -768,6 +859,9 @@ function ExpandedContextRows({
   collapsedCommentIds,
   onCollapseComment,
   onExpandComment,
+  onEditComment,
+  onEditReply,
+  onDeleteReply,
 }: {
   startLine: number;
   endLine: number;
@@ -850,9 +944,9 @@ function ExpandedContextRows({
                     {oldLine}
                   </span>
                 </td>
-                <td className={`diff-code ${leftHighlighted ? 'diff-line-highlighted' : ''}`}>{content}</td>
+                <td className={`diff-code ${leftHighlighted ? 'diff-line-highlighted' : ''}`} data-line={oldLine} data-side="DELETE">{content}</td>
                 <td
-                  className={`diff-gutter ${rightHighlighted ? 'diff-line-highlighted' : ''} ${collapsedRightCount > 0 ? 'has-collapsed-comment' : ''}`}
+                  className={`diff-gutter diff-gutter-split-middle ${rightHighlighted ? 'diff-line-highlighted' : ''} ${collapsedRightCount > 0 ? 'has-collapsed-comment' : ''}`}
                   onClick={(e) => {
                     if (collapsedRightCount > 0 && onExpandComment) {
                       rightComments.filter((c) => collapsedCommentIds?.has(c.id)).forEach((c) => onExpandComment(c.id));
@@ -871,7 +965,7 @@ function ExpandedContextRows({
                     {newLine}
                   </span>
                 </td>
-                <td className={`diff-code ${rightHighlighted ? 'diff-line-highlighted' : ''}`}>{content}</td>
+                <td className={`diff-code ${rightHighlighted ? 'diff-line-highlighted' : ''}`} data-line={newLine} data-side="ADD">{content}</td>
               </tr>
               {(hasLeftComments || hasRightComments) && (
                 <tr className="diff-split-comment-row">
@@ -885,6 +979,9 @@ function ExpandedContextRows({
                           onResolve={onResolveComment}
                           onReopen={onReopenComment}
                           onCollapse={onCollapseComment}
+                          onEdit={onEditComment}
+                          onEditReply={onEditReply}
+                          onDeleteReply={onDeleteReply}
                         />
                         {replyFormCommentId === c.id && onReplyComment && onCancelReply && (
                           <div style={{ margin: '-2px 8px 6px 8px' }}>
@@ -917,6 +1014,9 @@ function ExpandedContextRows({
                           onResolve={onResolveComment}
                           onReopen={onReopenComment}
                           onCollapse={onCollapseComment}
+                          onEdit={onEditComment}
+                          onEditReply={onEditReply}
+                          onDeleteReply={onDeleteReply}
                         />
                         {replyFormCommentId === c.id && onReplyComment && onCancelReply && (
                           <div style={{ margin: '-2px 8px 6px 8px' }}>
@@ -1008,6 +1108,9 @@ function ExpandedContextRows({
                         onResolve={onResolveComment}
                         onReopen={onReopenComment}
                         onCollapse={onCollapseComment}
+                        onEdit={onEditComment}
+                        onEditReply={onEditReply}
+                        onDeleteReply={onDeleteReply}
                       />
                       {replyFormCommentId === c.id && onReplyComment && onCancelReply && (
                         <div style={{ margin: '-2px 16px 6px 60px' }}>
@@ -1031,6 +1134,9 @@ function ExpandedContextRows({
                         onResolve={onResolveComment}
                         onReopen={onReopenComment}
                         onCollapse={onCollapseComment}
+                        onEdit={onEditComment}
+                        onEditReply={onEditReply}
+                        onDeleteReply={onDeleteReply}
                       />
                       {replyFormCommentId === c.id && onReplyComment && onCancelReply && (
                         <div style={{ margin: '-2px 16px 6px 60px' }}>
@@ -1123,6 +1229,75 @@ function UnifiedView({
             </Fragment>
           );
         })}
+        {/* Trailing gap: remaining lines after last hunk */}
+        {file.hunks.length > 0 && (() => {
+          const trailingIndex = file.hunks.length;
+          const trailingGap = gapsByHunkIndex.get(trailingIndex);
+          const trailingExpansion = expansions.get(trailingIndex);
+          const ranges = getExpandedRanges(trailingGap, trailingExpansion);
+          const fullyExpanded = isGapFullyExpanded(trailingGap, trailingExpansion);
+
+          // fileLines loaded but no trailing content → hide
+          if (fileLines && !trailingGap) return null;
+
+          return (
+            <>
+              {ranges.top && trailingGap && (
+                <ExpandedContextRows
+                  startLine={ranges.top.start}
+                  endLine={ranges.top.end}
+                  oldStartLine={trailingGap.oldStartLine + (ranges.top.start - trailingGap.startLine)}
+                  fileLines={fileLines}
+                  language={language}
+                  viewType="unified"
+                  {...commentProps}
+                />
+              )}
+              {!fullyExpanded && (
+                <tr className="diff-expand-row">
+                  <td className="diff-gutter diff-hunk-gutter" />
+                  <td className="diff-gutter diff-hunk-gutter" />
+                  <td className="diff-hunk-header" colSpan={1}>
+                    <div className="diff-hunk-header-content">
+                      {trailingGap ? (
+                        <ExpandButtons
+                          gap={trailingGap}
+                          expansion={trailingExpansion}
+                          onExpandUp={onExpandUp}
+                          onExpandDown={onExpandDown}
+                          onExpandAll={onExpandAll}
+                        />
+                      ) : (
+                        <>
+                          <span className="diff-expand-buttons">
+                            <button onClick={() => onExpandDown(trailingIndex)} title="Expand 20 lines">
+                              <ChevronDown style={{ width: 14, height: 14 }} />
+                            </button>
+                            <button onClick={() => onExpandAll(trailingIndex)} title="Expand all remaining lines">
+                              <ChevronsUpDown style={{ width: 14, height: 14 }} />
+                            </button>
+                          </span>
+                          <span className="diff-expand-label">remaining lines</span>
+                        </>
+                      )}
+                    </div>
+                  </td>
+                </tr>
+              )}
+              {ranges.bottom && trailingGap && (
+                <ExpandedContextRows
+                  startLine={ranges.bottom.start}
+                  endLine={ranges.bottom.end}
+                  oldStartLine={trailingGap.oldStartLine + (ranges.bottom.start - trailingGap.startLine)}
+                  fileLines={fileLines}
+                  language={language}
+                  viewType="unified"
+                  {...commentProps}
+                />
+              )}
+            </>
+          );
+        })()}
       </tbody>
     </table>
   );
@@ -1163,6 +1338,9 @@ function HunkRows({
   collapsedCommentIds,
   onCollapseComment,
   onExpandComment,
+  onEditComment,
+  onEditReply,
+  onDeleteReply,
   gap,
   expansion,
   expandRangeBottom,
@@ -1172,27 +1350,31 @@ function HunkRows({
   onExpandDown,
   onExpandAll,
 }: { hunk: DiffHunk; highlightedCode?: string[] } & CommentProps & HunkExpandProps) {
+  const gapExpanded = isGapFullyExpanded(gap, expansion);
+
   return (
     <>
-      {/* Hunk header with expand buttons */}
-      <tr className={gap ? 'diff-expand-row' : ''}>
-        <td className="diff-gutter diff-hunk-gutter" />
-        <td className="diff-gutter diff-hunk-gutter" />
-        <td className="diff-hunk-header" colSpan={1}>
-          <div className="diff-hunk-header-content">
-            {gap && (
-              <ExpandButtons
-                gap={gap}
-                expansion={expansion}
-                onExpandUp={onExpandUp}
-                onExpandDown={onExpandDown}
-                onExpandAll={onExpandAll}
-              />
-            )}
-            <span className="diff-hunk-header-text">{hunk.header}</span>
-          </div>
-        </td>
-      </tr>
+      {/* Hunk header with expand buttons — hidden when gap is fully expanded */}
+      {!gapExpanded && (
+        <tr className={gap ? 'diff-expand-row' : ''}>
+          <td className="diff-gutter diff-hunk-gutter" />
+          <td className="diff-gutter diff-hunk-gutter" />
+          <td className="diff-hunk-header" colSpan={1}>
+            <div className="diff-hunk-header-content">
+              {gap && (
+                <ExpandButtons
+                  gap={gap}
+                  expansion={expansion}
+                  onExpandUp={onExpandUp}
+                  onExpandDown={onExpandDown}
+                  onExpandAll={onExpandAll}
+                />
+              )}
+              <span className="diff-hunk-header-text">{hunk.header}</span>
+            </div>
+          </td>
+        </tr>
+      )}
       {/* Bottom expanded lines (closer to this hunk) */}
       {expandRangeBottom && gap && (
         <ExpandedContextRows
@@ -1304,6 +1486,9 @@ function HunkRows({
                       onResolve={onResolveComment}
                       onReopen={onReopenComment}
                       onCollapse={onCollapseComment}
+                      onEdit={onEditComment}
+                      onEditReply={onEditReply}
+                      onDeleteReply={onDeleteReply}
                     />
                     {replyFormCommentId === c.id && onReplyComment && onCancelReply && (
                       <div style={{ margin: '-2px 16px 6px 60px' }}>
@@ -1396,6 +1581,73 @@ function SplitView({
             </Fragment>
           );
         })}
+        {/* Trailing gap: remaining lines after last hunk */}
+        {file.hunks.length > 0 && (() => {
+          const trailingIndex = file.hunks.length;
+          const trailingGap = gapsByHunkIndex.get(trailingIndex);
+          const trailingExpansion = expansions.get(trailingIndex);
+          const ranges = getExpandedRanges(trailingGap, trailingExpansion);
+          const fullyExpanded = isGapFullyExpanded(trailingGap, trailingExpansion);
+
+          if (fileLines && !trailingGap) return null;
+
+          return (
+            <>
+              {ranges.top && trailingGap && (
+                <ExpandedContextRows
+                  startLine={ranges.top.start}
+                  endLine={ranges.top.end}
+                  oldStartLine={trailingGap.oldStartLine + (ranges.top.start - trailingGap.startLine)}
+                  fileLines={fileLines}
+                  language={language}
+                  viewType="split"
+                  {...commentProps}
+                />
+              )}
+              {!fullyExpanded && (
+                <tr className="diff-expand-row">
+                  <td className="diff-gutter diff-hunk-gutter" />
+                  <td className="diff-hunk-header" colSpan={3}>
+                    <div className="diff-hunk-header-content">
+                      {trailingGap ? (
+                        <ExpandButtons
+                          gap={trailingGap}
+                          expansion={trailingExpansion}
+                          onExpandUp={onExpandUp}
+                          onExpandDown={onExpandDown}
+                          onExpandAll={onExpandAll}
+                        />
+                      ) : (
+                        <>
+                          <span className="diff-expand-buttons">
+                            <button onClick={() => onExpandDown(trailingIndex)} title="Expand 20 lines">
+                              <ChevronDown style={{ width: 14, height: 14 }} />
+                            </button>
+                            <button onClick={() => onExpandAll(trailingIndex)} title="Expand all remaining lines">
+                              <ChevronsUpDown style={{ width: 14, height: 14 }} />
+                            </button>
+                          </span>
+                          <span className="diff-expand-label">remaining lines</span>
+                        </>
+                      )}
+                    </div>
+                  </td>
+                </tr>
+              )}
+              {ranges.bottom && trailingGap && (
+                <ExpandedContextRows
+                  startLine={ranges.bottom.start}
+                  endLine={ranges.bottom.end}
+                  oldStartLine={trailingGap.oldStartLine + (ranges.bottom.start - trailingGap.startLine)}
+                  fileLines={fileLines}
+                  language={language}
+                  viewType="split"
+                  {...commentProps}
+                />
+              )}
+            </>
+          );
+        })()}
       </tbody>
     </table>
   );
@@ -1425,6 +1677,9 @@ function SplitHunkRows({
   collapsedCommentIds,
   onCollapseComment,
   onExpandComment,
+  onEditComment,
+  onEditReply,
+  onDeleteReply,
   gap,
   expansion,
   expandRangeBottom,
@@ -1435,27 +1690,30 @@ function SplitHunkRows({
   onExpandAll,
 }: { hunk: DiffHunk; highlightedCode?: string[] } & CommentProps & HunkExpandProps) {
   const pairs = buildSplitPairs(hunk.lines, highlightedCode);
+  const gapExpanded = isGapFullyExpanded(gap, expansion);
 
   return (
     <>
-      {/* Hunk header with expand buttons */}
-      <tr className={gap ? 'diff-expand-row' : ''}>
-        <td className="diff-gutter diff-hunk-gutter" />
-        <td className="diff-hunk-header" colSpan={3}>
-          <div className="diff-hunk-header-content">
-            {gap && (
-              <ExpandButtons
-                gap={gap}
-                expansion={expansion}
-                onExpandUp={onExpandUp}
-                onExpandDown={onExpandDown}
-                onExpandAll={onExpandAll}
-              />
-            )}
-            <span className="diff-hunk-header-text">{hunk.header}</span>
-          </div>
-        </td>
-      </tr>
+      {/* Hunk header with expand buttons — hidden when gap is fully expanded */}
+      {!gapExpanded && (
+        <tr className={gap ? 'diff-expand-row' : ''}>
+          <td className="diff-gutter diff-hunk-gutter" />
+          <td className="diff-hunk-header" colSpan={3}>
+            <div className="diff-hunk-header-content">
+              {gap && (
+                <ExpandButtons
+                  gap={gap}
+                  expansion={expansion}
+                  onExpandUp={onExpandUp}
+                  onExpandDown={onExpandDown}
+                  onExpandAll={onExpandAll}
+                />
+              )}
+              <span className="diff-hunk-header-text">{hunk.header}</span>
+            </div>
+          </td>
+        </tr>
+      )}
       {/* Bottom expanded lines */}
       {expandRangeBottom && gap && (
         <ExpandedContextRows
@@ -1543,6 +1801,8 @@ function SplitHunkRows({
                       ? 'diff-code-empty'
                       : ''
                 } ${leftHighlighted ? 'diff-line-highlighted' : ''}`}
+                data-line={leftLineNum ?? undefined}
+                data-side="DELETE"
               >
                 {pair.left ? (
                   pair.left.html
@@ -1551,7 +1811,7 @@ function SplitHunkRows({
                 ) : ''}
               </td>
               <td
-                className={`diff-gutter ${pair.right?.line_type === 'insert' ? 'diff-line-insert' : ''} ${rightHighlighted ? 'diff-line-highlighted' : ''} ${collapsedRightCount > 0 ? 'has-collapsed-comment' : ''}`}
+                className={`diff-gutter diff-gutter-split-middle ${pair.right?.line_type === 'insert' ? 'diff-line-insert' : ''} ${rightHighlighted ? 'diff-line-highlighted' : ''} ${collapsedRightCount > 0 ? 'has-collapsed-comment' : ''}`}
                 onClick={(e) => {
                   if (collapsedRightCount > 0 && onExpandComment) {
                     rightComments.filter((c) => collapsedCommentIds?.has(c.id)).forEach((c) => onExpandComment(c.id));
@@ -1578,6 +1838,8 @@ function SplitHunkRows({
                       ? 'diff-code-empty'
                       : ''
                 } ${rightHighlighted ? 'diff-line-highlighted' : ''}`}
+                data-line={rightLineNum ?? undefined}
+                data-side="ADD"
               >
                 {pair.right ? (
                   pair.right.html
@@ -1598,6 +1860,9 @@ function SplitHunkRows({
                         onResolve={onResolveComment}
                         onReopen={onReopenComment}
                         onCollapse={onCollapseComment}
+                        onEdit={onEditComment}
+                        onEditReply={onEditReply}
+                        onDeleteReply={onDeleteReply}
                       />
                       {replyFormCommentId === c.id && onReplyComment && onCancelReply && (
                         <div style={{ margin: '-2px 8px 6px 8px' }}>
@@ -1630,6 +1895,9 @@ function SplitHunkRows({
                         onResolve={onResolveComment}
                         onReopen={onReopenComment}
                         onCollapse={onCollapseComment}
+                        onEdit={onEditComment}
+                        onEditReply={onEditReply}
+                        onDeleteReply={onDeleteReply}
                       />
                       {replyFormCommentId === c.id && onReplyComment && onCancelReply && (
                         <div style={{ margin: '-2px 8px 6px 8px' }}>
@@ -1797,7 +2065,7 @@ function FullFileView({
                   <td colSpan={2} style={{ padding: 0 }}>
                     {expandedComments.map((c) => (
                       <Fragment key={`comment-${c.id}`}>
-                        <CommentCard comment={c} onDelete={commentProps.onDeleteComment} onReply={commentProps.onOpenReplyForm} onResolve={commentProps.onResolveComment} onReopen={commentProps.onReopenComment} onCollapse={commentProps.onCollapseComment} />
+                        <CommentCard comment={c} onDelete={commentProps.onDeleteComment} onReply={commentProps.onOpenReplyForm} onResolve={commentProps.onResolveComment} onReopen={commentProps.onReopenComment} onCollapse={commentProps.onCollapseComment} onEdit={commentProps.onEditComment} onEditReply={commentProps.onEditReply} onDeleteReply={commentProps.onDeleteReply} />
                         {commentProps.replyFormCommentId === c.id && commentProps.onReplyComment && commentProps.onCancelReply && (
                           <div style={{ margin: '-2px 16px 6px 60px' }}>
                             <div className="diff-comment-card" style={{ marginLeft: 0, marginRight: 0 }}>

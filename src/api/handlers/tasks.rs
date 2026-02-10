@@ -165,6 +165,8 @@ pub struct ReviewCommentsResponse {
     pub open_count: u32,
     pub resolved_count: u32,
     pub outdated_count: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub git_user_name: Option<String>,
 }
 
 /// File list response
@@ -206,6 +208,18 @@ pub struct UpdateCommentStatusRequest {
     pub status: String, // "open" | "resolved"
 }
 
+/// Edit comment content request
+#[derive(Debug, Deserialize)]
+pub struct EditCommentRequest {
+    pub content: String,
+}
+
+/// Edit reply content request
+#[derive(Debug, Deserialize)]
+pub struct EditReplyRequest {
+    pub content: String,
+}
+
 /// Create review comment request
 #[derive(Debug, Deserialize)]
 pub struct CreateReviewCommentRequest {
@@ -237,6 +251,14 @@ fn status_to_string(status: &crate::model::WorktreeStatus) -> &'static str {
         crate::model::WorktreeStatus::Error => "broken",
         crate::model::WorktreeStatus::Archived => "archived",
     }
+}
+
+/// Get git user.name for a task's worktree (used for display purposes in frontend).
+fn get_git_user_name(project_key: &str, task_id: &str) -> Option<String> {
+    tasks::get_task(project_key, task_id)
+        .ok()
+        .flatten()
+        .and_then(|task| git::git_user_name(&task.worktree_path))
 }
 
 /// Convert Worktree to TaskResponse
@@ -575,6 +597,15 @@ pub async fn delete_task(
         })
         .ok_or(StatusCode::NOT_FOUND)?;
 
+    // Kill session
+    let global_mux = storage::config::load_config().multiplexer;
+    let task_mux = session::resolve_multiplexer(&task.multiplexer, &global_mux);
+    let session_name = session::resolve_session_name(&task.session_name, &project_key, &task_id);
+    let _ = session::kill_session(&task_mux, &session_name);
+    if task_mux == Multiplexer::Zellij {
+        crate::zellij::layout::remove_session_layout(&session_name);
+    }
+
     // Remove worktree
     let _ = git::remove_worktree(&project.path, &task.worktree_path);
 
@@ -584,6 +615,12 @@ pub async fn delete_task(
     // Remove task record (try both active and archived)
     let _ = tasks::remove_task(&project_key, &task_id);
     let _ = tasks::remove_archived_task(&project_key, &task_id);
+
+    // Clean all associated data
+    hooks::remove_task_hook(&project_key, &task_id);
+    let _ = notes::delete_notes(&project_key, &task_id);
+    let _ = comments::delete_review_data(&project_key, &task_id);
+    let _ = watcher::clear_edit_history(&project_key, &task_id);
 
     Ok(StatusCode::NO_CONTENT)
 }
@@ -1013,6 +1050,7 @@ pub async fn get_review_comments(
         open_count: open as u32,
         resolved_count: resolved as u32,
         outdated_count: outdated as u32,
+        git_user_name: get_git_user_name(&project_key, &task_id),
     }))
 }
 
@@ -1024,7 +1062,12 @@ pub async fn reply_review_comment(
 ) -> Result<Json<ReviewCommentsResponse>, StatusCode> {
     let (_project, project_key) = find_project_by_id(&id)?;
 
-    let author = req.author.as_deref().unwrap_or("You");
+    let default_name = get_git_user_name(&project_key, &task_id);
+    let author = req
+        .author
+        .as_deref()
+        .or(default_name.as_deref())
+        .unwrap_or("You");
 
     // Reply to comment (no status change)
     comments::reply_comment(&project_key, &task_id, req.comment_id, &req.message, author)
@@ -1117,7 +1160,7 @@ pub async fn reset_task(
     // 4.5 Clear all task-related data (Notes, AI data, Stats)
     // This ensures a completely fresh start
     let _ = notes::delete_notes(&project_key, &task_id);
-    let _ = comments::delete_ai_data(&project_key, &task_id);
+    let _ = comments::delete_review_data(&project_key, &task_id);
     let _ = watcher::clear_edit_history(&project_key, &task_id);
 
     // 5. Recreate branch and worktree from target (TUI: do_reset step 5)
@@ -1331,7 +1374,12 @@ pub async fn create_review_comment(
         _ => comments::CommentType::Inline, // default to inline for backward compatibility
     };
 
-    let author = req.author.as_deref().unwrap_or("You");
+    let default_name = get_git_user_name(&project_key, &task_id);
+    let author = req
+        .author
+        .as_deref()
+        .or(default_name.as_deref())
+        .unwrap_or("You");
 
     // Process based on comment type
     match comment_type {
@@ -1432,5 +1480,58 @@ pub async fn delete_review_comment(
     }
 
     // Return updated comments
+    get_review_comments(Path((id, task_id))).await
+}
+
+/// PUT /api/v1/projects/{id}/tasks/{taskId}/review/comments/{commentId}/content
+/// Edit a review comment's content
+pub async fn edit_review_comment(
+    Path((id, task_id, comment_id)): Path<(String, String, u32)>,
+    Json(req): Json<EditCommentRequest>,
+) -> Result<Json<ReviewCommentsResponse>, StatusCode> {
+    let (_project, project_key) = find_project_by_id(&id)?;
+
+    let edited = comments::edit_comment(&project_key, &task_id, comment_id, &req.content)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    if !edited {
+        return Err(StatusCode::NOT_FOUND);
+    }
+
+    get_review_comments(Path((id, task_id))).await
+}
+
+/// PUT /api/v1/projects/{id}/tasks/{taskId}/review/comments/{commentId}/replies/{replyId}
+/// Edit a review reply's content
+pub async fn edit_review_reply(
+    Path((id, task_id, comment_id, reply_id)): Path<(String, String, u32, u32)>,
+    Json(req): Json<EditReplyRequest>,
+) -> Result<Json<ReviewCommentsResponse>, StatusCode> {
+    let (_project, project_key) = find_project_by_id(&id)?;
+
+    let edited = comments::edit_reply(&project_key, &task_id, comment_id, reply_id, &req.content)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    if !edited {
+        return Err(StatusCode::NOT_FOUND);
+    }
+
+    get_review_comments(Path((id, task_id))).await
+}
+
+/// DELETE /api/v1/projects/{id}/tasks/{taskId}/review/comments/{commentId}/replies/{replyId}
+/// Delete a review reply
+pub async fn delete_review_reply(
+    Path((id, task_id, comment_id, reply_id)): Path<(String, String, u32, u32)>,
+) -> Result<Json<ReviewCommentsResponse>, StatusCode> {
+    let (_project, project_key) = find_project_by_id(&id)?;
+
+    let deleted = comments::delete_reply(&project_key, &task_id, comment_id, reply_id)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    if !deleted {
+        return Err(StatusCode::NOT_FOUND);
+    }
+
     get_review_comments(Path((id, task_id))).await
 }

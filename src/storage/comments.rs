@@ -325,49 +325,73 @@ type RepliesMap = HashMap<String, ReplyData>;
 // Path helpers
 // ============================================================================
 
-/// 获取 comments.json 存储路径 (新格式)
-fn comments_json_path(project: &str, task_id: &str) -> Result<PathBuf> {
-    let dir = ensure_project_dir(project)?.join("ai").join(task_id);
+/// 新路径: review/<task-id>.json
+fn review_path(project: &str, task_id: &str) -> Result<PathBuf> {
+    let dir = ensure_project_dir(project)?.join("review");
     std::fs::create_dir_all(&dir)?;
-    Ok(dir.join("comments.json"))
+    Ok(dir.join(format!("{}.json", task_id)))
 }
 
-/// 获取 replies.json 存储路径: ~/.grove/projects/{project}/ai/{task_id}/replies.json
+/// 旧路径: ai/<task-id>/comments.json (仅用于 fallback 读取，不创建目录)
+fn legacy_comments_json_path(project: &str, task_id: &str) -> Result<PathBuf> {
+    Ok(ensure_project_dir(project)?
+        .join("ai")
+        .join(task_id)
+        .join("comments.json"))
+}
+
+/// 获取 replies.json 存储路径 (旧格式 fallback，不创建目录)
 fn replies_path(project: &str, task_id: &str) -> Result<PathBuf> {
-    let dir = ensure_project_dir(project)?.join("ai").join(task_id);
-    std::fs::create_dir_all(&dir)?;
-    Ok(dir.join("replies.json"))
+    Ok(ensure_project_dir(project)?
+        .join("ai")
+        .join(task_id)
+        .join("replies.json"))
 }
 
-/// 获取 diff_comments.md 路径（旧格式）
+/// 获取 diff_comments.md 路径 (旧格式 fallback，不创建目录)
 fn diff_comments_path(project: &str, task_id: &str) -> Result<PathBuf> {
-    let dir = ensure_project_dir(project)?.join("ai").join(task_id);
-    std::fs::create_dir_all(&dir)?;
-    Ok(dir.join("diff_comments.md"))
+    Ok(ensure_project_dir(project)?
+        .join("ai")
+        .join(task_id)
+        .join("diff_comments.md"))
 }
 
 // ============================================================================
 // JSON format (new)
 // ============================================================================
 
-/// 从 comments.json 加载
+/// 从 JSON 文件加载 CommentsData
+///
+/// 先查新路径 `review/<task-id>.json`，fallback 旧路径 `ai/<task-id>/comments.json`
 fn load_comments_json(project: &str, task_id: &str) -> Result<Option<CommentsData>> {
-    let path = comments_json_path(project, task_id)?;
-    if !path.exists() {
-        return Ok(None);
+    // 1. 新路径
+    let new_path = review_path(project, task_id)?;
+    if new_path.exists() {
+        let content = std::fs::read_to_string(&new_path)?;
+        let mut data: CommentsData = serde_json::from_str(&content)?;
+        for comment in &mut data.comments {
+            comment.migrate_legacy();
+        }
+        return Ok(Some(data));
     }
-    let content = std::fs::read_to_string(&path)?;
-    let mut data: CommentsData = serde_json::from_str(&content)?;
-    // 对每条 comment 执行迁移
-    for comment in &mut data.comments {
-        comment.migrate_legacy();
+
+    // 2. 旧路径 fallback
+    let legacy_path = legacy_comments_json_path(project, task_id)?;
+    if legacy_path.exists() {
+        let content = std::fs::read_to_string(&legacy_path)?;
+        let mut data: CommentsData = serde_json::from_str(&content)?;
+        for comment in &mut data.comments {
+            comment.migrate_legacy();
+        }
+        return Ok(Some(data));
     }
-    Ok(Some(data))
+
+    Ok(None)
 }
 
-/// 保存到 comments.json
+/// 保存到 review/<task-id>.json (新路径)
 fn save_comments_json(project: &str, task_id: &str, data: &CommentsData) -> Result<()> {
-    let path = comments_json_path(project, task_id)?;
+    let path = review_path(project, task_id)?;
     let content = serde_json::to_string_pretty(data)?;
     std::fs::write(&path, content)?;
     Ok(())
@@ -466,23 +490,37 @@ pub fn extract_lines(content: &str, start_line: u32, end_line: u32) -> Option<St
 
 /// 在文件内容中搜索 anchor_text（按行滑动窗口匹配）
 ///
-/// 返回找到的起始行号（1-based），未找到返回 None
-pub fn find_anchor(content: &str, anchor: &str) -> Option<u32> {
+/// `hint_line` 是评论的原始行号（1-based），用于在多个匹配中选择最近的。
+/// 返回找到的起始行号（1-based），未找到返回 None。
+pub fn find_anchor(content: &str, anchor: &str, hint_line: Option<u32>) -> Option<u32> {
     let file_lines: Vec<&str> = content.lines().collect();
     let anchor_lines: Vec<&str> = anchor.lines().collect();
     if anchor_lines.is_empty() {
         return None;
     }
 
+    // Collect all matching positions
+    let mut matches: Vec<u32> = Vec::new();
     'outer: for i in 0..=file_lines.len().saturating_sub(anchor_lines.len()) {
         for (j, anchor_line) in anchor_lines.iter().enumerate() {
             if file_lines[i + j] != *anchor_line {
                 continue 'outer;
             }
         }
-        return Some((i + 1) as u32); // 1-based
+        matches.push((i + 1) as u32); // 1-based
     }
-    None
+
+    if matches.is_empty() {
+        return None;
+    }
+
+    // Pick the match closest to hint_line (or first match if no hint)
+    match hint_line {
+        Some(hint) => matches
+            .into_iter()
+            .min_by_key(|&m| (m as i64 - hint as i64).unsigned_abs()),
+        None => Some(matches[0]),
+    }
 }
 
 /// 动态检测 outdated 并修正行号漂移（仅修改内存中的数据）
@@ -521,7 +559,7 @@ where
                 comment.status = CommentStatus::Outdated;
             }
             Some(file_content) => {
-                if let Some(new_start) = find_anchor(&file_content, &anchor) {
+                if let Some(new_start) = find_anchor(&file_content, &anchor, comment.start_line) {
                     // 找到 → 更新行号（如有位移）
                     if let (Some(start), Some(end)) = (comment.start_line, comment.end_line) {
                         let span = end.saturating_sub(start);
@@ -721,11 +759,68 @@ pub fn delete_comment(project: &str, task_id: &str, comment_id: u32) -> Result<b
     }
 }
 
-/// 删除 AI 数据目录（包含 summary.md, todo.json, replies.json, diff_comments.md, comments.json）
-pub fn delete_ai_data(project: &str, task_id: &str) -> Result<()> {
-    let dir = ensure_project_dir(project)?.join("ai").join(task_id);
-    if dir.exists() {
-        std::fs::remove_dir_all(&dir)?;
+/// 编辑 Comment 内容
+pub fn edit_comment(
+    project: &str,
+    task_id: &str,
+    comment_id: u32,
+    new_content: &str,
+) -> Result<bool> {
+    let mut data = load_comments(project, task_id)?;
+    if let Some(comment) = data.comments.iter_mut().find(|c| c.id == comment_id) {
+        comment.content = new_content.to_string();
+        save_comments_json(project, task_id, &data)?;
+        Ok(true)
+    } else {
+        Ok(false)
+    }
+}
+
+/// 编辑 Reply 内容
+pub fn edit_reply(
+    project: &str,
+    task_id: &str,
+    comment_id: u32,
+    reply_id: u32,
+    new_content: &str,
+) -> Result<bool> {
+    let mut data = load_comments(project, task_id)?;
+    if let Some(comment) = data.comments.iter_mut().find(|c| c.id == comment_id) {
+        if let Some(reply) = comment.replies.iter_mut().find(|r| r.id == reply_id) {
+            reply.content = new_content.to_string();
+            save_comments_json(project, task_id, &data)?;
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+/// 删除 Reply
+pub fn delete_reply(project: &str, task_id: &str, comment_id: u32, reply_id: u32) -> Result<bool> {
+    let mut data = load_comments(project, task_id)?;
+    if let Some(comment) = data.comments.iter_mut().find(|c| c.id == comment_id) {
+        let len_before = comment.replies.len();
+        comment.replies.retain(|r| r.id != reply_id);
+        if comment.replies.len() < len_before {
+            save_comments_json(project, task_id, &data)?;
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+/// 删除 review 数据（新旧路径都清理）
+pub fn delete_review_data(project: &str, task_id: &str) -> Result<()> {
+    // 新路径: review/<task-id>.json
+    let new_path = review_path(project, task_id)?;
+    if new_path.exists() {
+        std::fs::remove_file(&new_path)?;
+    }
+
+    // 旧路径: ai/<task-id>/ (整个目录)
+    let legacy_dir = ensure_project_dir(project)?.join("ai").join(task_id);
+    if legacy_dir.exists() {
+        std::fs::remove_dir_all(&legacy_dir)?;
     }
     Ok(())
 }
@@ -765,26 +860,38 @@ mod tests {
     #[test]
     fn test_find_anchor_found() {
         let content = "aaa\nbbb\nccc\nddd\neee";
-        assert_eq!(find_anchor(content, "bbb\nccc"), Some(2));
+        assert_eq!(find_anchor(content, "bbb\nccc", None), Some(2));
     }
 
     #[test]
     fn test_find_anchor_not_found() {
         let content = "aaa\nbbb\nccc";
-        assert_eq!(find_anchor(content, "xxx"), None);
+        assert_eq!(find_anchor(content, "xxx", None), None);
     }
 
     #[test]
     fn test_find_anchor_shifted() {
         // 模拟代码位移：原来在第2行，现在前面多了一行
         let content = "new_line\naaa\nbbb\nccc";
-        assert_eq!(find_anchor(content, "aaa\nbbb"), Some(2));
+        assert_eq!(find_anchor(content, "aaa\nbbb", Some(1)), Some(2));
     }
 
     #[test]
     fn test_find_anchor_empty() {
         let content = "aaa\nbbb";
-        assert_eq!(find_anchor(content, ""), None);
+        assert_eq!(find_anchor(content, "", None), None);
+    }
+
+    #[test]
+    fn test_find_anchor_nearest_to_hint() {
+        // "bbb" 出现在第 2 行和第 4 行，hint=4 应选第 4 行
+        let content = "aaa\nbbb\nccc\nbbb\neee";
+        assert_eq!(find_anchor(content, "bbb", Some(4)), Some(4));
+        // hint=2 应选第 2 行
+        assert_eq!(find_anchor(content, "bbb", Some(2)), Some(2));
+        // hint=3 有歧义（等距），选较近的其一即可
+        let result = find_anchor(content, "bbb", Some(3));
+        assert!(result == Some(2) || result == Some(4));
     }
 
     #[test]

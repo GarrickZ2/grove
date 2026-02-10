@@ -54,6 +54,13 @@ fn parse_numstat(output: &str) -> (u32, u32) {
     })
 }
 
+/// Get `git config user.name` from the given repo path.
+pub fn git_user_name(path: &str) -> Option<String> {
+    git_cmd(path, &["config", "user.name"])
+        .ok()
+        .filter(|s| !s.is_empty())
+}
+
 // ============================================================================
 // Git 公开 API
 // ============================================================================

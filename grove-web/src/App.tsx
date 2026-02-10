@@ -97,6 +97,7 @@ function AppContent() {
         return (
           <TasksPage
             initialTaskId={navigationData?.taskId as string | undefined}
+            initialViewMode={navigationData?.viewMode as string | undefined}
             onNavigationConsumed={() => setNavigationData(null)}
           />
         );

@@ -36,11 +36,13 @@ type ViewMode = "list" | "info" | "terminal";
 interface TasksPageProps {
   /** Initial task ID to select (from navigation) */
   initialTaskId?: string;
+  /** Initial view mode to use (from navigation, e.g. "terminal") */
+  initialViewMode?: string;
   /** Callback when navigation data has been consumed */
   onNavigationConsumed?: () => void;
 }
 
-export function TasksPage({ initialTaskId, onNavigationConsumed }: TasksPageProps) {
+export function TasksPage({ initialTaskId, initialViewMode, onNavigationConsumed }: TasksPageProps) {
   const { selectedProject, refreshSelectedProject } = useProject();
   const [selectedTask, setSelectedTask] = useState<Task | null>(null);
   const [viewMode, setViewMode] = useState<ViewMode>("list");
@@ -142,12 +144,13 @@ export function TasksPage({ initialTaskId, onNavigationConsumed }: TasksPageProp
       const task = activeTasks.find((t) => t.id === initialTaskId);
       if (task) {
         setSelectedTask(task);
-        setViewMode("info");
+        const targetMode = (initialViewMode === "terminal" || initialViewMode === "info") ? initialViewMode : "info";
+        setViewMode(targetMode as ViewMode);
         // Consume the navigation data so it doesn't re-trigger
         onNavigationConsumed?.();
       }
     }
-  }, [initialTaskId, activeTasks, selectedTask, onNavigationConsumed]);
+  }, [initialTaskId, initialViewMode, activeTasks, selectedTask, onNavigationConsumed]);
 
   // Filter and search tasks
   const filteredTasks = useMemo(() => {

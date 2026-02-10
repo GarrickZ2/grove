@@ -122,6 +122,7 @@ export interface ReviewCommentsResponse {
   open_count: number;
   resolved_count: number;
   outdated_count: number;
+  git_user_name?: string;
 }
 
 export interface ReplyCommentRequest {

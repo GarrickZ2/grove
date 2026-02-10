@@ -378,6 +378,7 @@ impl GroveMcpServer {
                     comments: data
                         .comments
                         .iter()
+                        .filter(|c| c.status != comments::CommentStatus::Resolved)
                         .map(|c| ReviewCommentEntry {
                             comment_id: c.id,
                             comment_type: match c.comment_type {

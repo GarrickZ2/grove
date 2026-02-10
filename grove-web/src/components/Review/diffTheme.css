@@ -444,6 +444,17 @@ td.diff-code.diff-line-highlighted {
   overflow: hidden;
 }
 
+/* Split mode: constrain text selection to one panel */
+.diff-split.selecting-left td[data-side="ADD"] {
+  user-select: none !important;
+  -webkit-user-select: none !important;
+}
+
+.diff-split.selecting-right td[data-side="DELETE"] {
+  user-select: none !important;
+  -webkit-user-select: none !important;
+}
+
 .diff-split .diff-code-empty {
   background: var(--color-bg-secondary);
 }

@@ -336,10 +336,10 @@ function TreeNode({
         <span className="diff-sidebar-updated-badge">Updated</span>
       )}
       <span className="diff-sidebar-item-right">
-        {commentInfo && commentInfo.total > 0 && (
+        {commentInfo && commentInfo.unresolved > 0 && (
           <span className="diff-sidebar-comment-badge">
             <MessageSquare style={{ width: 10, height: 10 }} />
-            {commentInfo.total}
+            {commentInfo.unresolved}
           </span>
         )}
         <span className="diff-sidebar-item-stats">
