@@ -17,6 +17,7 @@ use serde::{Deserialize, Serialize};
 
 use super::{ensure_project_dir, grove_dir};
 use crate::error::Result;
+use crate::git;
 
 /// 注册的项目信息（存储在 project.toml）
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -70,6 +71,19 @@ fn save_project_metadata(project_hash: &str, project: &RegisteredProject) -> Res
     super::save_toml(&path, project)
 }
 
+/// 解析项目路径,处理 worktree 情况
+///
+/// - 获取 git repo root
+/// - 如果是 worktree,返回主 repo 路径
+/// - 如果是主 repo,返回规范化后的路径
+fn resolve_project_path(path: &str) -> Result<String> {
+    // 获取 repo root(规范化路径)
+    let repo_root = git::repo_root(path)?;
+
+    // 如果是 worktree,返回主 repo 路径;否则返回 repo_root
+    git::get_main_repo_path(&repo_root).or(Ok(repo_root))
+}
+
 /// 加载所有注册的项目列表
 /// 通过扫描 ~/.grove/projects/*/project.toml 获取
 pub fn load_projects() -> Result<Vec<RegisteredProject>> {
@@ -111,8 +125,12 @@ pub fn load_projects() -> Result<Vec<RegisteredProject>> {
 }
 
 /// 添加项目
+///
+/// 自动处理 worktree:如果传入的路径是 worktree,会自动注册主 repo
 pub fn add_project(name: &str, path: &str) -> Result<()> {
-    let hash = project_hash(path);
+    // 解析项目路径(处理 worktree)
+    let resolved_path = resolve_project_path(path)?;
+    let hash = project_hash(&resolved_path);
 
     // 检查是否已存在
     if load_project_metadata(&hash)?.is_some() {
@@ -123,7 +141,7 @@ pub fn add_project(name: &str, path: &str) -> Result<()> {
 
     let project = RegisteredProject {
         name: name.to_string(),
-        path: path.to_string(),
+        path: resolved_path,
         added_at: Utc::now(),
     };
 
@@ -149,8 +167,12 @@ pub fn remove_project(path: &str) -> Result<()> {
 }
 
 /// 检查项目是否已注册
+///
+/// 自动处理 worktree:如果传入的路径是 worktree,会检查主 repo 是否已注册
 pub fn is_project_registered(path: &str) -> Result<bool> {
-    let hash = project_hash(path);
+    // 解析项目路径(处理 worktree)
+    let resolved_path = resolve_project_path(path)?;
+    let hash = project_hash(&resolved_path);
     let project_toml = project_file_path(&hash);
     Ok(project_toml.exists())
 }
@@ -158,21 +180,25 @@ pub fn is_project_registered(path: &str) -> Result<bool> {
 /// Upsert 项目元数据
 /// - 如果不存在：创建新记录
 /// - 如果存在：更新 name（保留原 added_at）
+///
+/// 自动处理 worktree:如果传入的路径是 worktree,会自动注册主 repo
 pub fn upsert_project(name: &str, path: &str) -> Result<()> {
-    let hash = project_hash(path);
+    // 解析项目路径(处理 worktree)
+    let resolved_path = resolve_project_path(path)?;
+    let hash = project_hash(&resolved_path);
 
     let project = if let Some(existing) = load_project_metadata(&hash)? {
         // 存在 → 更新 name，保留 added_at
         RegisteredProject {
             name: name.to_string(),
-            path: path.to_string(),
+            path: resolved_path,
             added_at: existing.added_at,
         }
     } else {
         // 不存在 → 新建
         RegisteredProject {
             name: name.to_string(),
-            path: path.to_string(),
+            path: resolved_path,
             added_at: Utc::now(),
         }
     };

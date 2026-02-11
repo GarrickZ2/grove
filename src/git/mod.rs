@@ -103,6 +103,54 @@ pub fn is_git_repo(path: &str) -> bool {
     git_cmd_check(path, &["rev-parse", "--git-dir"])
 }
 
+/// 检查当前路径是否是一个 worktree (而不是主 repo)
+/// Worktree 的特征:git-dir 和 git-common-dir 不同
+pub fn is_worktree(path: &str) -> bool {
+    let git_dir = git_cmd(path, &["rev-parse", "--git-dir"]);
+    let common_dir = git_cmd(path, &["rev-parse", "--git-common-dir"]);
+
+    if let (Ok(gdir), Ok(cdir)) = (git_dir, common_dir) {
+        // 规范化路径以进行比较
+        let gdir_abs = Path::new(path).join(&gdir);
+        let cdir_abs = Path::new(path).join(&cdir);
+
+        // 如果两个目录不同,说明是 worktree
+        match (gdir_abs.canonicalize(), cdir_abs.canonicalize()) {
+            (Ok(g), Ok(c)) => g != c,
+            _ => false,
+        }
+    } else {
+        false
+    }
+}
+
+/// 获取主 repo 路径 (对于 worktree,返回主 repo;对于主 repo,返回自身)
+/// 使用 git-common-dir 来定位主 repo
+pub fn get_main_repo_path(path: &str) -> Result<String> {
+    if is_worktree(path) {
+        // 对于 worktree,git-common-dir 指向主 repo 的 .git 目录
+        let common_dir = git_cmd(path, &["rev-parse", "--git-common-dir"])?;
+        let common_abs = Path::new(path).join(&common_dir);
+
+        // 主 repo 的 .git 目录的父目录就是主 repo 路径
+        if let Some(parent) = common_abs.parent() {
+            parent
+                .canonicalize()
+                .map_err(|e| GroveError::git(format!("Failed to canonicalize path: {}", e)))
+                .and_then(|p| {
+                    p.to_str()
+                        .map(|s| s.to_string())
+                        .ok_or_else(|| GroveError::git("Invalid path encoding"))
+                })
+        } else {
+            Err(GroveError::git("Failed to find main repo path"))
+        }
+    } else {
+        // 对于主 repo,返回自身
+        repo_root(path)
+    }
+}
+
 /// 计算 branch 相对于 target 新增的 commit 数
 /// 执行: git rev-list --count {target}..{branch}
 pub fn commits_behind(worktree_path: &str, branch: &str, target: &str) -> Result<u32> {

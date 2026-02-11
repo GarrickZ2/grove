@@ -947,7 +947,12 @@ impl App {
             )
         } else if is_in_git_repo {
             // 在 git 仓库中 -> Project 模式
-            let project_path = git::repo_root(".").unwrap_or_else(|_| ".".to_string());
+            let repo_path = git::repo_root(".").unwrap_or_else(|_| ".".to_string());
+
+            // 如果在 worktree 中,使用主 repo 路径
+            let project_path =
+                git::get_main_repo_path(&repo_path).unwrap_or_else(|_| repo_path.clone());
+
             let target_branch =
                 git::current_branch(&project_path).unwrap_or_else(|_| "main".to_string());
 
@@ -2667,7 +2672,7 @@ impl App {
             return;
         }
 
-        // 验证是否已注册
+        // 验证是否已注册(add_project 内部会处理 worktree)
         if storage::workspace::is_project_registered(&path).unwrap_or(false) {
             if let Some(ref mut data) = self.dialogs.add_project_dialog {
                 data.set_error("Project already registered");
@@ -2682,7 +2687,7 @@ impl App {
             .unwrap_or("unknown")
             .to_string();
 
-        // 添加项目
+        // 添加项目(内部会自动处理 worktree)
         if let Err(e) = storage::workspace::add_project(&name, &path) {
             if let Some(ref mut data) = self.dialogs.add_project_dialog {
                 data.set_error(format!("Failed to add: {}", e));

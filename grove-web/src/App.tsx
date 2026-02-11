@@ -57,6 +57,14 @@ function AppContent() {
     setActiveItem("projects");
   };
 
+  // Auto-navigate to dashboard when a project is auto-selected via currentProjectId
+  useEffect(() => {
+    if (currentProjectId && selectedProject && !hasExitedWelcome) {
+      setHasExitedWelcome(true);
+      setActiveItem("dashboard");
+    }
+  }, [currentProjectId, selectedProject, hasExitedWelcome]);
+
   const handleNavigate = (page: string, data?: Record<string, unknown>) => {
     if (data?.projectId) {
       const target = projects.find((p) => p.id === data.projectId);

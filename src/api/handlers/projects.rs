@@ -200,20 +200,17 @@ pub async fn list_projects() -> Result<Json<ProjectListResponse>, StatusCode> {
         let cwd_str = cwd.to_string_lossy().to_string();
         if git::is_git_repo(&cwd_str) {
             if let Ok(git_root) = git::repo_root(&cwd_str) {
-                // Check if already registered
-                let projects = workspace::load_projects().unwrap_or_default();
-                let already_registered = projects.iter().any(|p| p.path == git_root);
+                // Auto-register this project (add_project handles worktree internally)
+                let name = std::path::Path::new(&git_root)
+                    .file_name()
+                    .map(|n| n.to_string_lossy().to_string())
+                    .unwrap_or_else(|| "Unknown".to_string());
 
-                if !already_registered {
-                    // Auto-register this project
-                    let name = std::path::Path::new(&git_root)
-                        .file_name()
-                        .map(|n| n.to_string_lossy().to_string())
-                        .unwrap_or_else(|| "Unknown".to_string());
-
-                    if workspace::add_project(&name, &git_root).is_ok() {
-                        auto_registered = true;
-                    }
+                // Try to add, ignore "already registered" error
+                match workspace::add_project(&name, &git_root) {
+                    Ok(_) => auto_registered = true,
+                    Err(e) if e.to_string().contains("already registered") => {}
+                    Err(_) => {}
                 }
             }
         }
@@ -317,7 +314,7 @@ pub async fn add_project(
             .to_string()
     });
 
-    // Add project
+    // Add project (internally handles worktree)
     workspace::add_project(&name, &repo_path).map_err(|e| {
         // Check if error is "already registered" error
         if e.to_string().contains("already registered") {
