@@ -1,4 +1,3 @@
-import { motion } from "framer-motion";
 import { Circle, CheckCircle, AlertTriangle, XCircle } from "lucide-react";
 import type { BlitzTask } from "../../data/types";
 import type { TaskStatus } from "../../data/types";
@@ -10,6 +9,14 @@ interface BlitzTaskListItemProps {
   onDoubleClick: () => void;
   onContextMenu?: (e: React.MouseEvent) => void;
   notification?: { level: string };
+  shortcutNumber?: number;
+  showShortcut?: boolean;
+  onDragStart?: () => void;
+  onDragOver?: () => void;
+  onDragEnd?: () => void;
+  onDragLeave?: () => void;
+  isDragging?: boolean;
+  isDragOver?: boolean;
 }
 
 function formatTimeAgo(date: Date): string {
@@ -57,21 +64,52 @@ function getStatusConfig(status: TaskStatus): {
   }
 }
 
-export function BlitzTaskListItem({ blitzTask, isSelected, onClick, onDoubleClick, onContextMenu, notification }: BlitzTaskListItemProps) {
+export function BlitzTaskListItem({
+  blitzTask,
+  isSelected,
+  onClick,
+  onDoubleClick,
+  onContextMenu,
+  notification,
+  shortcutNumber,
+  showShortcut,
+  onDragStart,
+  onDragOver,
+  onDragEnd,
+  onDragLeave,
+  isDragging,
+  isDragOver,
+}: BlitzTaskListItemProps) {
   const { task, projectName } = blitzTask;
   const statusConfig = getStatusConfig(task.status);
   const StatusIcon = statusConfig.icon;
 
+  const displayShortcut = showShortcut && shortcutNumber !== undefined;
+
   return (
-    <motion.button
+    <button
       data-task-id={task.id}
       onClick={onClick}
       onDoubleClick={task.status !== "archived" ? onDoubleClick : undefined}
       onContextMenu={onContextMenu}
-      className={`relative w-full text-left rounded-lg transition-colors duration-150 overflow-hidden ${
+      draggable
+      onDragStart={(e) => {
+        e.dataTransfer.effectAllowed = 'move';
+        onDragStart?.();
+      }}
+      onDragOver={(e) => {
+        e.preventDefault();
+        e.dataTransfer.dropEffect = 'move';
+        onDragOver?.();
+      }}
+      onDragEnd={onDragEnd}
+      onDragLeave={onDragLeave}
+      className={`relative w-full text-left rounded-lg transition-all duration-150 overflow-hidden ${
         isSelected
           ? "px-4 py-3 bg-[var(--color-highlight)]/5"
           : "px-3 py-2.5 bg-[var(--color-bg-secondary)] hover:bg-[var(--color-bg-tertiary)]"
+      } ${isDragging ? "opacity-40 cursor-grabbing" : "cursor-grab"} ${
+        isDragOver ? "border-t-2 border-t-[var(--color-highlight)]" : ""
       }`}
       style={isSelected ? {
         border: "2px solid transparent",
@@ -108,6 +146,19 @@ export function BlitzTaskListItem({ blitzTask, isSelected, onClick, onDoubleClic
         <div className="flex-1 min-w-0">
           <div className="flex items-center justify-between gap-2">
             <div className="flex items-center gap-1.5 min-w-0">
+              {displayShortcut && (
+                <span
+                  className="flex-shrink-0 text-xs font-bold px-1.5 py-0.5 rounded"
+                  style={{
+                    backgroundColor: 'var(--color-highlight)',
+                    color: 'var(--color-bg)',
+                    minWidth: '20px',
+                    textAlign: 'center',
+                  }}
+                >
+                  {shortcutNumber}
+                </span>
+              )}
               <span className={`text-sm font-medium truncate ${isSelected ? "text-[var(--color-highlight)]" : "text-[var(--color-text)]"}`}>
                 {task.name}
               </span>
@@ -145,6 +196,6 @@ export function BlitzTaskListItem({ blitzTask, isSelected, onClick, onDoubleClic
           </div>
         </div>
       </div>
-    </motion.button>
+    </button>
   );
 }

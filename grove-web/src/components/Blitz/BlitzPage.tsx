@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback, useRef } from "react";
+import { useState, useMemo, useCallback, useRef, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Terminal, GitCommit, GitBranchPlus, RefreshCw, GitMerge, Archive, RotateCcw, Trash2, Search } from "lucide-react";
 import { TaskInfoPanel } from "../Tasks/TaskInfoPanel";
@@ -42,6 +42,12 @@ export function BlitzPage({ onSwitchToZen }: BlitzPageProps) {
   const [searchQuery, setSearchQuery] = useState("");
   const [reviewOpen, setReviewOpen] = useState(false);
   const [editorOpen, setEditorOpen] = useState(false);
+  const [isCommandKeyPressed, setIsCommandKeyPressed] = useState(false);
+
+  // Drag and drop state
+  const [draggedIndex, setDraggedIndex] = useState<number | null>(null);
+  const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
+  const [taskOrder, setTaskOrder] = useState<string[]>([]);
 
   // Commit dialog state
   const [showCommitDialog, setShowCommitDialog] = useState(false);
@@ -112,7 +118,70 @@ export function BlitzPage({ onSwitchToZen }: BlitzPageProps) {
     return filteredTasks.find((bt) => bt.task.id === selectedBlitzTask.task.id && bt.projectId === selectedBlitzTask.projectId) ?? selectedBlitzTask;
   }, [filteredTasks, selectedBlitzTask]);
 
-  const displayTasks = filteredTasks;
+  // Initialize task order when filtered tasks change
+  useEffect(() => {
+    if (filteredTasks.length > 0 && taskOrder.length === 0) {
+      setTaskOrder(filteredTasks.map(bt => `${bt.projectId}:${bt.task.id}`));
+    }
+  }, [filteredTasks, taskOrder.length]);
+
+  // Apply custom order to tasks
+  const displayTasks = useMemo(() => {
+    if (taskOrder.length === 0) return filteredTasks;
+
+    const taskMap = new Map(filteredTasks.map(bt => [`${bt.projectId}:${bt.task.id}`, bt]));
+    const ordered = taskOrder
+      .map(key => taskMap.get(key))
+      .filter((bt): bt is BlitzTask => bt !== undefined);
+
+    // Add any new tasks that aren't in the order yet
+    const orderedKeys = new Set(taskOrder);
+    const newTasks = filteredTasks.filter(bt => !orderedKeys.has(`${bt.projectId}:${bt.task.id}`));
+
+    return [...ordered, ...newTasks];
+  }, [filteredTasks, taskOrder]);
+
+  // Listen for Command key press for quick navigation
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.metaKey || e.ctrlKey) {
+        setIsCommandKeyPressed(true);
+
+        // Handle Command+0-9 for quick navigation
+        if (e.key >= '0' && e.key <= '9') {
+          e.preventDefault();
+          const index = e.key === '0' ? 9 : parseInt(e.key) - 1; // 1->0, 2->1, ..., 0->9
+          if (index < displayTasks.length) {
+            const taskToSelect = displayTasks[index];
+            const notif = getTaskNotification(taskToSelect.task.id);
+            if (notif) {
+              dismissNotification(notif.project_id, notif.task_id);
+            }
+            handleSelectTask(taskToSelect);
+          }
+        }
+      }
+    };
+
+    const handleKeyUp = (e: KeyboardEvent) => {
+      if (!e.metaKey && !e.ctrlKey) {
+        setIsCommandKeyPressed(false);
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    window.addEventListener('keyup', handleKeyUp);
+
+    // Handle window blur (when user switches apps while holding Command)
+    const handleBlur = () => setIsCommandKeyPressed(false);
+    window.addEventListener('blur', handleBlur);
+
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('keyup', handleKeyUp);
+      window.removeEventListener('blur', handleBlur);
+    };
+  }, [displayTasks, getTaskNotification, dismissNotification]);
 
   const showMessage = (message: string) => {
     setOperationMessage(message);
@@ -137,6 +206,36 @@ export function BlitzPage({ onSwitchToZen }: BlitzPageProps) {
     setViewMode("terminal");
     setReviewOpen(false);
     setEditorOpen(false);
+  };
+
+  // Drag and drop handlers
+  const handleDragStart = (index: number) => {
+    setDraggedIndex(index);
+  };
+
+  const handleDragOver = (index: number) => {
+    if (draggedIndex === null || draggedIndex === index) return;
+    setDragOverIndex(index);
+  };
+
+  const handleDragEnd = () => {
+    if (draggedIndex === null || dragOverIndex === null || draggedIndex === dragOverIndex) {
+      setDraggedIndex(null);
+      setDragOverIndex(null);
+      return;
+    }
+
+    const newOrder = [...taskOrder];
+    const [movedItem] = newOrder.splice(draggedIndex, 1);
+    newOrder.splice(dragOverIndex, 0, movedItem);
+
+    setTaskOrder(newOrder);
+    setDraggedIndex(null);
+    setDragOverIndex(null);
+  };
+
+  const handleDragLeave = () => {
+    setDragOverIndex(null);
   };
 
   const handleCloseTask = () => {
@@ -630,6 +729,14 @@ export function BlitzPage({ onSwitchToZen }: BlitzPageProps) {
                       onDoubleClick={() => handleDoubleClickTask(bt)}
                       onContextMenu={(e) => handleContextMenu(bt, e)}
                       notification={notif ? { level: notif.level } : undefined}
+                      shortcutNumber={index < 10 ? (index === 9 ? 0 : index + 1) : undefined}
+                      showShortcut={isCommandKeyPressed}
+                      onDragStart={() => handleDragStart(index)}
+                      onDragOver={() => handleDragOver(index)}
+                      onDragEnd={handleDragEnd}
+                      onDragLeave={handleDragLeave}
+                      isDragging={draggedIndex === index}
+                      isDragOver={dragOverIndex === index}
                     />
                   </motion.div>
                 );
