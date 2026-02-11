@@ -37,6 +37,127 @@ interface ExpandProps {
 }
 
 // ============================================================================
+// Helper: Highlight search matches in text and HTML
+// ============================================================================
+
+// Global counter for match indexing across all renders
+let globalMatchIndex = 0;
+
+export function resetGlobalMatchIndex() {
+  globalMatchIndex = 0;
+}
+
+function highlightSearchMatches(
+  text: string,
+  searchQuery: string,
+  caseSensitive: boolean
+): React.ReactNode {
+  if (!searchQuery) return text;
+
+  const flags = caseSensitive ? 'g' : 'gi';
+  const regex = new RegExp(searchQuery.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), flags);
+  const parts: React.ReactNode[] = [];
+  let lastIndex = 0;
+  let match;
+
+  while ((match = regex.exec(text)) !== null) {
+    // Add text before match
+    if (match.index > lastIndex) {
+      parts.push(text.substring(lastIndex, match.index));
+    }
+
+    const currentIndex = globalMatchIndex++;
+
+    // Add highlighted match
+    parts.push(
+      <mark
+        key={`${match.index}-${match[0]}`}
+        className="code-search-match"
+        data-match-index={currentIndex}
+        style={{
+          background: 'rgba(255, 215, 0, 0.4)',
+          color: 'inherit',
+          padding: 0,
+          borderRadius: '2px',
+        }}
+      >
+        {match[0]}
+      </mark>
+    );
+    lastIndex = match.index + match[0].length;
+  }
+
+  // Add remaining text
+  if (lastIndex < text.length) {
+    parts.push(text.substring(lastIndex));
+  }
+
+  return parts.length > 0 ? parts : text;
+}
+
+// Helper to add search highlights to syntax-highlighted HTML
+function highlightSearchInHTML(
+  html: string,
+  searchQuery: string,
+  caseSensitive: boolean
+): string {
+  if (!searchQuery) return html;
+
+  // Create a temporary div to parse HTML
+  const tempDiv = document.createElement('div');
+  tempDiv.innerHTML = html;
+
+  const flags = caseSensitive ? 'g' : 'gi';
+  const regex = new RegExp(searchQuery.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), flags);
+
+  // Function to process text nodes
+  function processTextNode(node: Node) {
+    if (node.nodeType === Node.TEXT_NODE && node.textContent) {
+      const text = node.textContent;
+      const matches = [...text.matchAll(regex)];
+
+      if (matches.length > 0) {
+        const fragment = document.createDocumentFragment();
+        let lastIndex = 0;
+
+        matches.forEach((match) => {
+          // Add text before match
+          if (match.index! > lastIndex) {
+            fragment.appendChild(document.createTextNode(text.substring(lastIndex, match.index)));
+          }
+
+          // Add highlighted match
+          const mark = document.createElement('mark');
+          mark.className = 'code-search-match';
+          mark.setAttribute('data-match-index', String(globalMatchIndex++));
+          mark.style.background = 'rgba(255, 215, 0, 0.4)';
+          mark.style.color = 'inherit';
+          mark.style.padding = '0';
+          mark.style.borderRadius = '2px';
+          mark.textContent = match[0];
+          fragment.appendChild(mark);
+
+          lastIndex = match.index! + match[0].length;
+        });
+
+        // Add remaining text
+        if (lastIndex < text.length) {
+          fragment.appendChild(document.createTextNode(text.substring(lastIndex)));
+        }
+
+        node.parentNode?.replaceChild(fragment, node);
+      }
+    } else if (node.nodeType === Node.ELEMENT_NODE) {
+      // Recursively process child nodes
+      Array.from(node.childNodes).forEach(processTextNode);
+    }
+  }
+
+  processTextNode(tempDiv);
+  return tempDiv.innerHTML;
+}
+
+// ============================================================================
 // DiffFileView
 // ============================================================================
 
@@ -78,6 +199,8 @@ interface DiffFileViewProps {
   onEditComment?: (id: number, content: string) => void;
   onEditReply?: (commentId: number, replyId: number, content: string) => void;
   onDeleteReply?: (commentId: number, replyId: number) => void;
+  codeSearchQuery?: string;
+  codeSearchCaseSensitive?: boolean;
 }
 
 export function DiffFileView({
@@ -118,6 +241,8 @@ export function DiffFileView({
   fullFileContent,
   isLoadingFullFile,
   onRequestFullFile,
+  codeSearchQuery = '',
+  codeSearchCaseSensitive = false,
 }: DiffFileViewProps) {
   const ref = useRef<HTMLDivElement>(null);
   const [copied, setCopied] = useState(false);
@@ -555,6 +680,8 @@ export function DiffFileView({
                     onResolve={onResolveComment}
                     onReopen={onReopenComment}
                     onCollapse={onCollapseComment}
+                    onExpand={onExpandComment}
+                    isCollapsed={collapsedCommentIds?.has(comment.id)}
                     onEdit={onEditComment}
                     onEditReply={onEditReply}
                     onDeleteReply={onDeleteReply}
@@ -682,9 +809,9 @@ export function DiffFileView({
           ) : file.hunks.length === 0 ? (
             <div className="diff-binary">No content changes (mode/permissions only)</div>
           ) : viewType === 'unified' ? (
-            <UnifiedView file={file} highlightedHunks={highlightedHunks} {...expandProps} {...commonCommentProps} />
+            <UnifiedView file={file} highlightedHunks={highlightedHunks} {...expandProps} {...commonCommentProps} codeSearchQuery={codeSearchQuery} codeSearchCaseSensitive={codeSearchCaseSensitive} />
           ) : (
-            <SplitView file={file} highlightedHunks={highlightedHunks} {...expandProps} {...commonCommentProps} />
+            <SplitView file={file} highlightedHunks={highlightedHunks} {...expandProps} {...commonCommentProps} codeSearchQuery={codeSearchQuery} codeSearchCaseSensitive={codeSearchCaseSensitive} />
           )}
         </>
       )}
@@ -862,6 +989,8 @@ function ExpandedContextRows({
   onEditComment,
   onEditReply,
   onDeleteReply,
+  codeSearchQuery,
+  codeSearchCaseSensitive,
 }: {
   startLine: number;
   endLine: number;
@@ -869,6 +998,8 @@ function ExpandedContextRows({
   fileLines: string[] | null;
   language: string | undefined;
   viewType: 'unified' | 'split';
+  codeSearchQuery: string;
+  codeSearchCaseSensitive: boolean;
 } & CommentProps) {
   const lines = useMemo(() => {
     if (!fileLines) return null;
@@ -892,8 +1023,12 @@ function ExpandedContextRows({
         const newLine = startLine + idx;
         const oldLine = oldStartLine + idx;
         const content = htmlLines?.[idx]
-          ? <span dangerouslySetInnerHTML={{ __html: htmlLines[idx] }} />
-          : lines[idx];
+          ? <span dangerouslySetInnerHTML={{
+              __html: codeSearchQuery
+                ? highlightSearchInHTML(htmlLines[idx], codeSearchQuery, codeSearchCaseSensitive)
+                : htmlLines[idx]
+            }} />
+          : highlightSearchMatches(lines[idx], codeSearchQuery, codeSearchCaseSensitive);
 
         // Expanded context lines can have comments on both sides
         const leftKey = `DELETE:${oldLine}`;
@@ -979,6 +1114,8 @@ function ExpandedContextRows({
                           onResolve={onResolveComment}
                           onReopen={onReopenComment}
                           onCollapse={onCollapseComment}
+                          onExpand={onExpandComment}
+                          isCollapsed={collapsedCommentIds?.has(c.id)}
                           onEdit={onEditComment}
                           onEditReply={onEditReply}
                           onDeleteReply={onDeleteReply}
@@ -1014,6 +1151,8 @@ function ExpandedContextRows({
                           onResolve={onResolveComment}
                           onReopen={onReopenComment}
                           onCollapse={onCollapseComment}
+                          onExpand={onExpandComment}
+                          isCollapsed={collapsedCommentIds?.has(c.id)}
                           onEdit={onEditComment}
                           onEditReply={onEditReply}
                           onDeleteReply={onDeleteReply}
@@ -1108,6 +1247,8 @@ function ExpandedContextRows({
                         onResolve={onResolveComment}
                         onReopen={onReopenComment}
                         onCollapse={onCollapseComment}
+                        onExpand={onExpandComment}
+                        isCollapsed={collapsedCommentIds?.has(c.id)}
                         onEdit={onEditComment}
                         onEditReply={onEditReply}
                         onDeleteReply={onDeleteReply}
@@ -1134,6 +1275,8 @@ function ExpandedContextRows({
                         onResolve={onResolveComment}
                         onReopen={onReopenComment}
                         onCollapse={onCollapseComment}
+                        onExpand={onExpandComment}
+                        isCollapsed={collapsedCommentIds?.has(c.id)}
                         onEdit={onEditComment}
                         onEditReply={onEditReply}
                         onDeleteReply={onDeleteReply}
@@ -1189,8 +1332,10 @@ function UnifiedView({
   onExpandUp,
   onExpandDown,
   onExpandAll,
+  codeSearchQuery,
+  codeSearchCaseSensitive,
   ...commentProps
-}: { file: DiffFile; highlightedHunks: string[][] } & ExpandProps & CommentProps) {
+}: { file: DiffFile; highlightedHunks: string[][]; codeSearchQuery: string; codeSearchCaseSensitive: boolean } & ExpandProps & CommentProps) {
   return (
     <table className="diff-table">
       <tbody>
@@ -1210,6 +1355,8 @@ function UnifiedView({
                   language={language}
                   viewType="unified"
                   {...commentProps}
+                  codeSearchQuery={codeSearchQuery}
+                  codeSearchCaseSensitive={codeSearchCaseSensitive}
                 />
               )}
               {/* Hunk header (with expand buttons merged in) + lines */}
@@ -1225,6 +1372,8 @@ function UnifiedView({
                 onExpandDown={onExpandDown}
                 onExpandAll={onExpandAll}
                 {...commentProps}
+                  codeSearchQuery={codeSearchQuery}
+                  codeSearchCaseSensitive={codeSearchCaseSensitive}
               />
             </Fragment>
           );
@@ -1251,6 +1400,8 @@ function UnifiedView({
                   language={language}
                   viewType="unified"
                   {...commentProps}
+                  codeSearchQuery={codeSearchQuery}
+                  codeSearchCaseSensitive={codeSearchCaseSensitive}
                 />
               )}
               {!fullyExpanded && (
@@ -1293,6 +1444,8 @@ function UnifiedView({
                   language={language}
                   viewType="unified"
                   {...commentProps}
+                  codeSearchQuery={codeSearchQuery}
+                  codeSearchCaseSensitive={codeSearchCaseSensitive}
                 />
               )}
             </>
@@ -1349,7 +1502,9 @@ function HunkRows({
   onExpandUp,
   onExpandDown,
   onExpandAll,
-}: { hunk: DiffHunk; highlightedCode?: string[] } & CommentProps & HunkExpandProps) {
+  codeSearchQuery,
+  codeSearchCaseSensitive,
+}: { hunk: DiffHunk; highlightedCode?: string[]; codeSearchQuery: string; codeSearchCaseSensitive: boolean } & CommentProps & HunkExpandProps) {
   const gapExpanded = isGapFullyExpanded(gap, expansion);
 
   return (
@@ -1401,6 +1556,8 @@ function HunkRows({
           collapsedCommentIds={collapsedCommentIds}
           onCollapseComment={onCollapseComment}
           onExpandComment={onExpandComment}
+          codeSearchQuery={codeSearchQuery}
+          codeSearchCaseSensitive={codeSearchCaseSensitive}
         />
       )}
       {/* Diff content lines */}
@@ -1469,9 +1626,13 @@ function HunkRows({
               <td className="diff-code">
                 <span className="diff-code-prefix">{line.line_type === 'insert' ? '+' : line.line_type === 'delete' ? '-' : ' '}</span>
                 {highlightedCode?.[lineIdx] ? (
-                  <span dangerouslySetInnerHTML={{ __html: highlightedCode[lineIdx] }} />
+                  <span dangerouslySetInnerHTML={{
+                    __html: codeSearchQuery
+                      ? highlightSearchInHTML(highlightedCode[lineIdx], codeSearchQuery, codeSearchCaseSensitive)
+                      : highlightedCode[lineIdx]
+                  }} />
                 ) : (
-                  line.content
+                  highlightSearchMatches(line.content, codeSearchQuery, codeSearchCaseSensitive)
                 )}
               </td>
             </tr>
@@ -1486,6 +1647,8 @@ function HunkRows({
                       onResolve={onResolveComment}
                       onReopen={onReopenComment}
                       onCollapse={onCollapseComment}
+                      onExpand={onExpandComment}
+                      isCollapsed={collapsedCommentIds?.has(c.id)}
                       onEdit={onEditComment}
                       onEditReply={onEditReply}
                       onDeleteReply={onDeleteReply}
@@ -1537,8 +1700,10 @@ function SplitView({
   onExpandUp,
   onExpandDown,
   onExpandAll,
+  codeSearchQuery,
+  codeSearchCaseSensitive,
   ...commentProps
-}: { file: DiffFile; highlightedHunks: string[][] } & ExpandProps & CommentProps) {
+}: { file: DiffFile; highlightedHunks: string[][]; codeSearchQuery: string; codeSearchCaseSensitive: boolean } & ExpandProps & CommentProps) {
   return (
     <table className="diff-table diff-split">
       <colgroup>
@@ -1563,6 +1728,8 @@ function SplitView({
                   language={language}
                   viewType="split"
                   {...commentProps}
+                  codeSearchQuery={codeSearchQuery}
+                  codeSearchCaseSensitive={codeSearchCaseSensitive}
                 />
               )}
               <SplitHunkRows
@@ -1577,6 +1744,8 @@ function SplitView({
                 onExpandDown={onExpandDown}
                 onExpandAll={onExpandAll}
                 {...commentProps}
+                  codeSearchQuery={codeSearchQuery}
+                  codeSearchCaseSensitive={codeSearchCaseSensitive}
               />
             </Fragment>
           );
@@ -1602,6 +1771,8 @@ function SplitView({
                   language={language}
                   viewType="split"
                   {...commentProps}
+                  codeSearchQuery={codeSearchQuery}
+                  codeSearchCaseSensitive={codeSearchCaseSensitive}
                 />
               )}
               {!fullyExpanded && (
@@ -1643,6 +1814,8 @@ function SplitView({
                   language={language}
                   viewType="split"
                   {...commentProps}
+                  codeSearchQuery={codeSearchQuery}
+                  codeSearchCaseSensitive={codeSearchCaseSensitive}
                 />
               )}
             </>
@@ -1688,7 +1861,9 @@ function SplitHunkRows({
   onExpandUp,
   onExpandDown,
   onExpandAll,
-}: { hunk: DiffHunk; highlightedCode?: string[] } & CommentProps & HunkExpandProps) {
+  codeSearchQuery,
+  codeSearchCaseSensitive,
+}: { hunk: DiffHunk; highlightedCode?: string[]; codeSearchQuery: string; codeSearchCaseSensitive: boolean } & CommentProps & HunkExpandProps) {
   const pairs = buildSplitPairs(hunk.lines, highlightedCode);
   const gapExpanded = isGapFullyExpanded(gap, expansion);
 
@@ -1740,6 +1915,8 @@ function SplitHunkRows({
           collapsedCommentIds={collapsedCommentIds}
           onCollapseComment={onCollapseComment}
           onExpandComment={onExpandComment}
+          codeSearchQuery={codeSearchQuery}
+          codeSearchCaseSensitive={codeSearchCaseSensitive}
         />
       )}
       {pairs.map((pair, idx) => {
@@ -1806,8 +1983,12 @@ function SplitHunkRows({
               >
                 {pair.left ? (
                   pair.left.html
-                    ? <span dangerouslySetInnerHTML={{ __html: pair.left.html }} />
-                    : pair.left.content
+                    ? <span dangerouslySetInnerHTML={{
+                        __html: codeSearchQuery
+                          ? highlightSearchInHTML(pair.left.html, codeSearchQuery, codeSearchCaseSensitive)
+                          : pair.left.html
+                      }} />
+                    : highlightSearchMatches(pair.left.content, codeSearchQuery, codeSearchCaseSensitive)
                 ) : ''}
               </td>
               <td
@@ -1843,8 +2024,12 @@ function SplitHunkRows({
               >
                 {pair.right ? (
                   pair.right.html
-                    ? <span dangerouslySetInnerHTML={{ __html: pair.right.html }} />
-                    : pair.right.content
+                    ? <span dangerouslySetInnerHTML={{
+                        __html: codeSearchQuery
+                          ? highlightSearchInHTML(pair.right.html, codeSearchQuery, codeSearchCaseSensitive)
+                          : pair.right.html
+                      }} />
+                    : highlightSearchMatches(pair.right.content, codeSearchQuery, codeSearchCaseSensitive)
                 ) : ''}
               </td>
             </tr>
@@ -1860,6 +2045,8 @@ function SplitHunkRows({
                         onResolve={onResolveComment}
                         onReopen={onReopenComment}
                         onCollapse={onCollapseComment}
+                        onExpand={onExpandComment}
+                        isCollapsed={collapsedCommentIds?.has(c.id)}
                         onEdit={onEditComment}
                         onEditReply={onEditReply}
                         onDeleteReply={onDeleteReply}
@@ -1895,6 +2082,8 @@ function SplitHunkRows({
                         onResolve={onResolveComment}
                         onReopen={onReopenComment}
                         onCollapse={onCollapseComment}
+                        onExpand={onExpandComment}
+                        isCollapsed={collapsedCommentIds?.has(c.id)}
                         onEdit={onEditComment}
                         onEditReply={onEditReply}
                         onDeleteReply={onDeleteReply}
@@ -2065,7 +2254,7 @@ function FullFileView({
                   <td colSpan={2} style={{ padding: 0 }}>
                     {expandedComments.map((c) => (
                       <Fragment key={`comment-${c.id}`}>
-                        <CommentCard comment={c} onDelete={commentProps.onDeleteComment} onReply={commentProps.onOpenReplyForm} onResolve={commentProps.onResolveComment} onReopen={commentProps.onReopenComment} onCollapse={commentProps.onCollapseComment} onEdit={commentProps.onEditComment} onEditReply={commentProps.onEditReply} onDeleteReply={commentProps.onDeleteReply} />
+                        <CommentCard comment={c} onDelete={commentProps.onDeleteComment} onReply={commentProps.onOpenReplyForm} onResolve={commentProps.onResolveComment} onReopen={commentProps.onReopenComment} onCollapse={commentProps.onCollapseComment} onExpand={commentProps.onExpandComment} isCollapsed={commentProps.collapsedCommentIds?.has(c.id)} onEdit={commentProps.onEditComment} onEditReply={commentProps.onEditReply} onDeleteReply={commentProps.onDeleteReply} />
                         {commentProps.replyFormCommentId === c.id && commentProps.onReplyComment && commentProps.onCancelReply && (
                           <div style={{ margin: '-2px 16px 6px 60px' }}>
                             <div className="diff-comment-card" style={{ marginLeft: 0, marginRight: 0 }}>

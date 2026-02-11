@@ -2051,3 +2051,17 @@ td.diff-code.diff-line-highlighted {
 .diff-selection-comment-btn:hover {
   opacity: 0.9;
 }
+
+/* Code Search Matches */
+.code-search-match {
+  background: rgba(255, 215, 0, 0.4);
+  color: inherit;
+  padding: 0;
+  border-radius: 2px;
+}
+
+.code-search-match.code-search-current {
+  background: rgba(255, 165, 0, 0.6);
+  outline: 2px solid orange;
+  outline-offset: -1px;
+}

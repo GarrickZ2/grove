@@ -17,8 +17,9 @@ export interface CommentAnchor {
   endLine: number;
 }
 import { FileTreeSidebar } from './FileTreeSidebar';
-import { DiffFileView } from './DiffFileView';
+import { DiffFileView, resetGlobalMatchIndex } from './DiffFileView';
 import { ConversationSidebar } from './ConversationSidebar';
+import { CodeSearchBar } from './CodeSearchBar';
 import { MessageSquare, ChevronUp, ChevronDown, PanelLeftClose, PanelLeftOpen, Crosshair, GitCompare, FileText } from 'lucide-react';
 import { VersionSelector } from './VersionSelector';
 import './diffTheme.css';
@@ -73,6 +74,13 @@ export function DiffReviewPage({ projectId, taskId, embedded }: DiffReviewPagePr
   const [collapsedCommentIds, setCollapsedCommentIds] = useState<Set<number>>(new Set());
   const [versions, setVersions] = useState<VersionOption[]>([]);
   const initialCollapseRef = useRef(false);
+
+  // Code search state (Ctrl+F)
+  const [codeSearchVisible, setCodeSearchVisible] = useState(false);
+  const [codeSearchQuery, setCodeSearchQuery] = useState('');
+  const [codeSearchCaseSensitive, setCodeSearchCaseSensitive] = useState(false);
+  const [codeSearchCurrentIndex, setCodeSearchCurrentIndex] = useState(0);
+  const [codeSearchTotalMatches, setCodeSearchTotalMatches] = useState(0);
 
   // Git user name for authoring comments (fetched from API)
   const gitUserNameRef = useRef<string>('You');
@@ -356,16 +364,78 @@ export function DiffReviewPage({ projectId, taskId, embedded }: DiffReviewPagePr
     return () => { cancelled = true; };
   }, [projectId, taskId]);
 
-  // Auto-collapse resolved/outdated comments on first load
+  // Auto-collapse resolved comments on first load
   useEffect(() => {
     if (!initialCollapseRef.current && comments.length > 0) {
       initialCollapseRef.current = true;
       const ids = new Set(
-        comments.filter((c) => c.status === 'resolved' || c.status === 'outdated').map((c) => c.id)
+        comments.filter((c) => c.status === 'resolved').map((c) => c.id)
       );
       if (ids.size > 0) setCollapsedCommentIds(ids);
     }
   }, [comments]);
+
+  // Listen for Ctrl+F / Cmd+F to open code search
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === 'f') {
+        e.preventDefault();
+        setCodeSearchVisible(true);
+      }
+      // ESC to close code search
+      if (e.key === 'Escape' && codeSearchVisible) {
+        setCodeSearchVisible(false);
+        setCodeSearchQuery('');
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [codeSearchVisible]);
+
+  // Update match count and handle navigation
+  useEffect(() => {
+    if (!codeSearchQuery) {
+      setCodeSearchTotalMatches(0);
+      setCodeSearchCurrentIndex(0);
+      return;
+    }
+
+    // Small delay to allow DOM to update
+    const timer = setTimeout(() => {
+      const matches = document.querySelectorAll('.code-search-match');
+      setCodeSearchTotalMatches(matches.length);
+
+      // Highlight current match
+      matches.forEach((el, idx) => {
+        if (idx === codeSearchCurrentIndex) {
+          el.classList.add('code-search-current');
+          // Scroll to current match
+          el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        } else {
+          el.classList.remove('code-search-current');
+        }
+      });
+    }, 100);
+
+    return () => clearTimeout(timer);
+  }, [codeSearchQuery, codeSearchCaseSensitive, codeSearchCurrentIndex, diffData]);
+
+  // Navigate to previous match
+  const handleSearchPrevious = useCallback(() => {
+    if (codeSearchTotalMatches === 0) return;
+    setCodeSearchCurrentIndex((prev) => (prev === 0 ? codeSearchTotalMatches - 1 : prev - 1));
+  }, [codeSearchTotalMatches]);
+
+  // Navigate to next match
+  const handleSearchNext = useCallback(() => {
+    if (codeSearchTotalMatches === 0) return;
+    setCodeSearchCurrentIndex((prev) => (prev === codeSearchTotalMatches - 1 ? 0 : prev + 1));
+  }, [codeSearchTotalMatches]);
+
+  // Reset current index when query changes
+  useEffect(() => {
+    setCodeSearchCurrentIndex(0);
+  }, [codeSearchQuery, codeSearchCaseSensitive]);
 
   // Collapse a comment
   const handleCollapseComment = useCallback((id: number) => {
@@ -804,10 +874,13 @@ export function DiffReviewPage({ projectId, taskId, embedded }: DiffReviewPagePr
 
             {/* Diff content */}
             <div className="diff-content" ref={contentRef}>
-              {(focusMode
-                ? displayFiles.filter((f) => f.new_path === validSelectedFile)
-                : displayFiles
-              ).map((file) => (
+              {(() => {
+                // Reset global match index before rendering
+                resetGlobalMatchIndex();
+                return (focusMode
+                  ? displayFiles.filter((f) => f.new_path === validSelectedFile)
+                  : displayFiles
+                ).map((file) => (
                 <DiffFileView
                   key={file.new_path}
                   file={file}
@@ -847,8 +920,10 @@ export function DiffReviewPage({ projectId, taskId, embedded }: DiffReviewPagePr
                   onEditComment={handleEditComment}
                   onEditReply={handleEditReply}
                   onDeleteReply={handleDeleteReply}
+                  codeSearchQuery={codeSearchQuery}
+                  codeSearchCaseSensitive={codeSearchCaseSensitive}
                 />
-              ))}
+              ))})()}
             </div>
 
             {/* Conversation sidebar */}
@@ -872,6 +947,23 @@ export function DiffReviewPage({ projectId, taskId, embedded }: DiffReviewPagePr
         )}
       </div>
 
+      {/* Code Search Bar (Ctrl+F) */}
+      <CodeSearchBar
+        visible={codeSearchVisible}
+        query={codeSearchQuery}
+        caseSensitive={codeSearchCaseSensitive}
+        currentIndex={codeSearchCurrentIndex}
+        totalMatches={codeSearchTotalMatches}
+        onQueryChange={setCodeSearchQuery}
+        onCaseSensitiveToggle={() => setCodeSearchCaseSensitive((v) => !v)}
+        onPrevious={handleSearchPrevious}
+        onNext={handleSearchNext}
+        onClose={() => {
+          setCodeSearchVisible(false);
+          setCodeSearchQuery('');
+          setCodeSearchCurrentIndex(0);
+        }}
+      />
     </div>
   );
 }
