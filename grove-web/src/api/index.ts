@@ -99,5 +99,5 @@ export type { DiffLine, DiffHunk, DiffFile, FullDiffResult } from './review';
 export { listAllHooks, dismissHook } from './hooks';
 export type { HookEntryResponse, HooksListResponse } from './hooks';
 
-export { getVersion } from './version';
-export type { VersionResponse } from './version';
+export { getVersion, checkUpdate } from './version';
+export type { VersionResponse, UpdateCheckResponse } from './version';

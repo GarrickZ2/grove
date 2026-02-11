@@ -9,6 +9,7 @@ import { ProjectsPage } from "./components/Projects";
 import { AddProjectDialog } from "./components/Projects/AddProjectDialog";
 import { WelcomePage } from "./components/Welcome";
 import { DiffReviewPage } from "./components/Review";
+import { UpdateBanner } from "./components/ui/UpdateBanner";
 import { ThemeProvider, ProjectProvider, TerminalThemeProvider, NotificationProvider, useProject } from "./context";
 import { mockConfig } from "./data/mockData";
 
@@ -131,6 +132,7 @@ function AppContent() {
 
   return (
     <div className="flex h-screen bg-[var(--color-bg)] overflow-hidden">
+      <UpdateBanner />
       <AnimatePresence mode="wait">
         {tasksMode === "blitz" ? (
           <motion.div

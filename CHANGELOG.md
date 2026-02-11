@@ -5,6 +5,37 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.12] - 2026-02-11
+
+### Added
+
+- **Web: Version update notification** — Web and GUI now show a compact, auto-dismissing notification banner when a new version is available
+  - New API endpoint `/api/v1/update-check` reuses TUI's update detection logic
+  - 24-hour cache to avoid frequent GitHub API requests
+  - Displays in top-center with version info and quick actions
+  - Auto-dismisses after 10 seconds, persists dismissal per browser session
+  - "View Release" button links to GitHub releases page
+  - "Copy Command" button copies install script to clipboard
+- **Review: Code search with Ctrl+F** — Full-text code search across diff view with match highlighting
+  - Ctrl/Cmd+F opens floating search bar
+  - Real-time match counting (e.g., "3/15")
+  - Navigate between matches with Enter/Shift+Enter or arrow buttons
+  - Works in both syntax-highlighted and plain text code
+  - Case-sensitive search toggle
+  - Current match highlighted with orange outline
+  - Auto-scroll to matches with smooth animation
+- **Blitz: Quick task navigation shortcuts** — Hold Command/Ctrl to see numbered badges (1-9,0) on first 10 tasks, press Command+number to instantly select that task
+- **Blitz: Drag-to-reorder tasks** — Drag task cards to reorder them in the list
+  - Visual feedback during drag (opacity change, border indicator)
+  - Custom sort order persists in session state
+  - Smooth animations and cursor changes
+
+### Fixed
+
+- **Worktree paths registered as separate projects** — Worktree directories are now properly excluded from project registration, preventing nested project clutter in the projects list
+- **Review: Comment collapse button not working** — File-level comment collapse/expand functionality now works correctly with proper state management
+- **Review: Outdated comments auto-collapsing** — Changed auto-collapse logic to only affect resolved comments, not outdated ones
+
 ## [0.4.11] - 2026-02-09
 
 ### Fixed
