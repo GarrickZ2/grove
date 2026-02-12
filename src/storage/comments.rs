@@ -559,6 +559,8 @@ where
                 comment.status = CommentStatus::Outdated;
             }
             Some(file_content) => {
+                let file_line_count = file_content.lines().count().max(1) as u32;
+
                 if let Some(new_start) = find_anchor(&file_content, &anchor, comment.start_line) {
                     // 找到 → 更新行号（如有位移）
                     if let (Some(start), Some(end)) = (comment.start_line, comment.end_line) {
@@ -570,8 +572,17 @@ where
                         }
                     }
                 } else {
-                    // 没找到 → outdated
+                    // 没找到 → outdated，但保留行号信息
+                    // 如果行号超过文件长度，调整到最后一行
                     comment.status = CommentStatus::Outdated;
+                    if let (Some(start), Some(end)) = (comment.start_line, comment.end_line) {
+                        if end > file_line_count {
+                            let span = end.saturating_sub(start);
+                            comment.end_line = Some(file_line_count);
+                            comment.start_line = Some(file_line_count.saturating_sub(span).max(1));
+                            line_changed = true;
+                        }
+                    }
                 }
             }
         }
