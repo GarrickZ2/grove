@@ -139,6 +139,8 @@ function ReviewCommentCard({ comment }: { comment: ReviewCommentEntry }) {
   );
 }
 
+type FilterType = "all" | "open" | "resolved";
+
 export function CommentsTab({ task }: CommentsTabProps) {
   const { selectedProject } = useProject();
   const [comments, setComments] = useState<ReviewCommentEntry[]>([]);
@@ -146,6 +148,7 @@ export function CommentsTab({ task }: CommentsTabProps) {
   const [resolvedCount, setResolvedCount] = useState(0);
   const [outdatedCount, setOutdatedCount] = useState(0);
   const [isLoading, setIsLoading] = useState(true);
+  const [filter, setFilter] = useState<FilterType>("all");
 
   const loadComments = useCallback(async () => {
     if (!selectedProject) return;
@@ -178,6 +181,18 @@ export function CommentsTab({ task }: CommentsTabProps) {
     );
   }
 
+  // Filter comments based on selected filter
+  const filteredComments = comments.filter(comment => {
+    if (filter === "all") return true;
+    if (filter === "open") return comment.status === "open" || comment.status === "outdated";
+    if (filter === "resolved") return comment.status === "resolved";
+    return true;
+  });
+
+  const totalCount = comments.length;
+  // Open count includes outdated
+  const actualOpenCount = openCount + outdatedCount;
+
   if (comments.length === 0) {
     return (
       <div className="h-full flex flex-col items-center justify-center text-center">
@@ -189,36 +204,63 @@ export function CommentsTab({ task }: CommentsTabProps) {
 
   return (
     <div className="space-y-4">
-      {/* Summary */}
-      <div className="flex gap-4 text-sm">
-        <div className="flex items-center gap-1.5">
-          <Clock className="w-4 h-4 text-[var(--color-warning)]" />
-          <span className="text-[var(--color-text)]">{openCount} Open</span>
-        </div>
-        <div className="flex items-center gap-1.5">
-          <CheckCircle className="w-4 h-4 text-[var(--color-success)]" />
-          <span className="text-[var(--color-text)]">{resolvedCount} Resolved</span>
-        </div>
-        {outdatedCount > 0 && (
-          <div className="flex items-center gap-1.5">
-            <Clock className="w-4 h-4 text-[var(--color-text-muted)]" />
-            <span className="text-[var(--color-text)]">{outdatedCount} Outdated</span>
-          </div>
-        )}
+      {/* Filter Buttons */}
+      <div className="flex gap-2 text-sm">
+        <button
+          onClick={() => setFilter("all")}
+          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md transition-colors ${
+            filter === "all"
+              ? "bg-[var(--color-highlight)] text-white"
+              : "text-[var(--color-text)] hover:bg-[var(--color-bg-tertiary)]"
+          }`}
+        >
+          <MessageSquare className="w-4 h-4" />
+          <span className="font-medium">{totalCount} All</span>
+        </button>
+        <button
+          onClick={() => setFilter("open")}
+          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md transition-colors ${
+            filter === "open"
+              ? "bg-[var(--color-warning)] text-white"
+              : "text-[var(--color-text)] hover:bg-[var(--color-bg-tertiary)]"
+          }`}
+        >
+          <Clock className="w-4 h-4" />
+          <span className="font-medium">{actualOpenCount} Open</span>
+        </button>
+        <button
+          onClick={() => setFilter("resolved")}
+          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md transition-colors ${
+            filter === "resolved"
+              ? "bg-[var(--color-success)] text-white"
+              : "text-[var(--color-text)] hover:bg-[var(--color-bg-tertiary)]"
+          }`}
+        >
+          <CheckCircle className="w-4 h-4" />
+          <span className="font-medium">{resolvedCount} Resolved</span>
+        </button>
       </div>
 
       {/* Comments */}
       <div className="space-y-3">
-        {comments.map((comment, index) => (
-          <motion.div
-            key={comment.id}
-            initial={{ opacity: 0, y: 10 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: index * 0.05 }}
-          >
-            <ReviewCommentCard comment={comment} />
-          </motion.div>
-        ))}
+        {filteredComments.length === 0 ? (
+          <div className="py-8 text-center">
+            <p className="text-sm text-[var(--color-text-muted)]">
+              No {filter === "all" ? "" : filter} comments
+            </p>
+          </div>
+        ) : (
+          filteredComments.map((comment, index) => (
+            <motion.div
+              key={comment.id}
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: index * 0.05 }}
+            >
+              <ReviewCommentCard comment={comment} />
+            </motion.div>
+          ))
+        )}
       </div>
     </div>
   );
