@@ -1,5 +1,4 @@
 import { useState, useEffect } from "react";
-import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { TaskHeader } from "./TaskHeader";
 import { TaskToolbar } from "./TaskToolbar";
@@ -77,43 +76,6 @@ export function TaskView({
     if (editorOpen) onToggleEditor();
   };
 
-  // Fullscreen overlay rendered via portal to escape all parent containers
-  const fullscreenOverlay = fullscreenPanel !== 'none' && createPortal(
-    <div className="fixed inset-0 z-50 flex flex-col bg-[var(--color-bg)]">
-      {fullscreenPanel === 'terminal' && (
-        <TaskTerminal
-          projectId={projectId}
-          task={task}
-          collapsed={false}
-          onExpand={handleExpandTerminal}
-          onStartSession={onStartSession}
-          autoStart={autoStartSession}
-          onConnected={onTerminalConnected}
-          fullscreen
-          onToggleFullscreen={() => setFullscreenPanel('none')}
-        />
-      )}
-      {fullscreenPanel === 'review' && reviewOpen && (
-        <TaskCodeReview
-          projectId={projectId}
-          taskId={task.id}
-          onClose={() => { setFullscreenPanel('none'); onToggleReview(); }}
-          fullscreen
-          onToggleFullscreen={() => setFullscreenPanel('none')}
-        />
-      )}
-      {fullscreenPanel === 'editor' && editorOpen && (
-        <TaskEditor
-          projectId={projectId}
-          taskId={task.id}
-          onClose={() => { setFullscreenPanel('none'); onToggleEditor(); }}
-          fullscreen
-          onToggleFullscreen={() => setFullscreenPanel('none')}
-        />
-      )}
-    </div>,
-    document.body,
-  );
 
   return (
     <motion.div
@@ -154,63 +116,65 @@ export function TaskView({
       {/* Main Content Area */}
       <div className="flex-1 flex gap-3 mt-3 min-h-0">
         {/* Terminal - collapses to vertical bar when review or editor is open */}
-        <TaskTerminal
-          projectId={projectId}
-          task={task}
-          collapsed={reviewOpen || editorOpen}
-          onExpand={handleExpandTerminal}
-          onStartSession={onStartSession}
-          autoStart={autoStartSession}
-          onConnected={onTerminalConnected}
-          fullscreen={false}
-          onToggleFullscreen={() => setFullscreenPanel('terminal')}
-        />
+        <div className={fullscreenPanel === 'terminal' ? 'fixed inset-0 z-50 flex flex-col bg-[var(--color-bg)]' : 'contents'}>
+          <TaskTerminal
+            projectId={projectId}
+            task={task}
+            collapsed={fullscreenPanel === 'terminal' ? false : (reviewOpen || editorOpen)}
+            onExpand={handleExpandTerminal}
+            onStartSession={onStartSession}
+            autoStart={autoStartSession}
+            onConnected={onTerminalConnected}
+            fullscreen={fullscreenPanel === 'terminal'}
+            onToggleFullscreen={() => setFullscreenPanel(fullscreenPanel === 'terminal' ? 'none' : 'terminal')}
+          />
+        </div>
 
         {/* Code Review Panel */}
-        <AnimatePresence>
+        <AnimatePresence mode="popLayout">
           {reviewOpen && (
             <motion.div
-              initial={{ width: 0, opacity: 0 }}
-              animate={{ width: "100%", opacity: 1 }}
-              exit={{ width: 0, opacity: 0 }}
-              transition={{ type: "spring", damping: 25, stiffness: 200 }}
-              className="flex-1 flex flex-col overflow-hidden"
+              layout
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              transition={{ duration: 0.2 }}
+              className={fullscreenPanel === 'review' ? 'fixed inset-0 z-50 flex flex-col bg-[var(--color-bg)]' : 'flex-1 flex flex-col overflow-hidden'}
             >
               <TaskCodeReview
                 projectId={projectId}
                 taskId={task.id}
-                onClose={onToggleReview}
-                fullscreen={false}
-                onToggleFullscreen={() => setFullscreenPanel('review')}
+                onClose={fullscreenPanel === 'review' ? () => { setFullscreenPanel('none'); onToggleReview(); } : onToggleReview}
+                fullscreen={fullscreenPanel === 'review'}
+                onToggleFullscreen={() => setFullscreenPanel(fullscreenPanel === 'review' ? 'none' : 'review')}
               />
             </motion.div>
           )}
         </AnimatePresence>
 
         {/* Editor Panel */}
-        <AnimatePresence>
+        <AnimatePresence mode="popLayout">
           {editorOpen && (
             <motion.div
-              initial={{ width: 0, opacity: 0 }}
-              animate={{ width: "100%", opacity: 1 }}
-              exit={{ width: 0, opacity: 0 }}
-              transition={{ type: "spring", damping: 25, stiffness: 200 }}
-              className="flex-1 flex flex-col overflow-hidden"
+              layout
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              transition={{ duration: 0.2 }}
+              className={fullscreenPanel === 'editor' ? 'fixed inset-0 z-50 flex flex-col bg-[var(--color-bg)]' : 'flex-1 flex flex-col overflow-hidden'}
             >
               <TaskEditor
                 projectId={projectId}
                 taskId={task.id}
-                onClose={onToggleEditor}
-                fullscreen={false}
-                onToggleFullscreen={() => setFullscreenPanel('editor')}
+                onClose={fullscreenPanel === 'editor' ? () => { setFullscreenPanel('none'); onToggleEditor(); } : onToggleEditor}
+                fullscreen={fullscreenPanel === 'editor'}
+                onToggleFullscreen={() => setFullscreenPanel(fullscreenPanel === 'editor' ? 'none' : 'editor')}
               />
             </motion.div>
           )}
         </AnimatePresence>
       </div>
 
-      {/* Fullscreen overlay portal */}
-      {fullscreenOverlay}
     </motion.div>
   );
 }
