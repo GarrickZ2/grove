@@ -1,9 +1,8 @@
 import { useState, useEffect, useRef } from 'react';
 import { X, CheckCircle, RotateCcw, Reply, Send, Trash2, Pencil } from 'lucide-react';
-import ReactMarkdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
 import type { ReviewCommentEntry } from '../../api/tasks';
 import { AgentAvatar } from './AgentAvatar';
+import { MarkdownRenderer } from '../ui';
 
 /** Format ISO timestamp to human-readable local time, e.g. "2026-02-10 08:37:24" */
 function formatTime(ts: string): string {
@@ -288,10 +287,8 @@ export function CommentDetailModal({
               </div>
             </div>
           ) : (
-            <div className="markdown-content">
-              <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                {comment.content}
-              </ReactMarkdown>
+            <div>
+              <MarkdownRenderer content={comment.content} />
             </div>
           )}
 
@@ -427,10 +424,8 @@ export function CommentDetailModal({
                       </div>
                     </div>
                   ) : (
-                    <div className="markdown-content" style={{ fontSize: 13 }}>
-                      <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                        {reply.content}
-                      </ReactMarkdown>
+                    <div style={{ fontSize: 13 }}>
+                      <MarkdownRenderer content={reply.content} />
                     </div>
                   )}
                 </div>

@@ -1,10 +1,9 @@
 import { useState } from 'react';
 import { X, Send, MessageSquare, Trash2, Reply, CheckCircle, RotateCcw, Minus, Pencil, Plus } from 'lucide-react';
-import ReactMarkdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
 import type { ReviewCommentEntry } from '../../api/tasks';
 import type { CommentAnchor } from './DiffReviewPage';
 import { AgentAvatar } from './AgentAvatar';
+import { MarkdownRenderer } from '../ui';
 
 /** Format ISO timestamp to human-readable local time, e.g. "2026-02-10 08:37:24" */
 function formatTime(ts: string): string {
@@ -215,10 +214,8 @@ export function CommentCard({ comment, onDelete, onReply, onResolve, onReopen, o
               </div>
             </div>
           ) : (
-            <div className="diff-comment-body markdown-content">
-              <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                {comment.content}
-              </ReactMarkdown>
+            <div style={{ padding: '0 12px 10px 12px', whiteSpace: 'normal' }}>
+              <MarkdownRenderer content={comment.content} />
             </div>
           )}
 
@@ -297,10 +294,8 @@ export function CommentCard({ comment, onDelete, onReply, onResolve, onReopen, o
                   </div>
                 </div>
               ) : (
-                <div className="diff-comment-body markdown-content">
-                  <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                    {reply.content}
-                  </ReactMarkdown>
+                <div style={{ padding: 0, whiteSpace: 'normal' }}>
+                  <MarkdownRenderer content={reply.content} />
                 </div>
               )}
             </div>

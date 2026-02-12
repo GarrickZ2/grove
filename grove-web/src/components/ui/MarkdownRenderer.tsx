@@ -29,7 +29,7 @@ export function MarkdownRenderer({ content }: MarkdownRendererProps) {
           <h6 className="text-xs font-medium text-[var(--color-text-muted)] mt-2 mb-1">{children}</h6>
         ),
         p: ({ children }) => (
-          <p className="text-sm text-[var(--color-text)] mb-2 last:mb-0">{children}</p>
+          <p className="text-sm text-[var(--color-text)] mb-2 last:mb-0 [li>&]:mb-0">{children}</p>
         ),
         ul: ({ children }) => (
           <ul className="list-disc list-inside text-sm text-[var(--color-text)] mb-2 ml-2 space-y-0.5">{children}</ul>
