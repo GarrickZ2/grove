@@ -201,6 +201,7 @@ interface DiffFileViewProps {
   onDeleteReply?: (commentId: number, replyId: number) => void;
   codeSearchQuery?: string;
   codeSearchCaseSensitive?: boolean;
+  scrollToLine?: number; // Line number to scroll to and expand if in collapsed gap
 }
 
 export function DiffFileView({
@@ -243,6 +244,7 @@ export function DiffFileView({
   onRequestFullFile,
   codeSearchQuery = '',
   codeSearchCaseSensitive = false,
+  scrollToLine,
 }: DiffFileViewProps) {
   const ref = useRef<HTMLDivElement>(null);
   const [copied, setCopied] = useState(false);
@@ -561,6 +563,27 @@ export function DiffFileView({
     onExpandDown: handleExpandDown,
     onExpandAll: handleExpandAll,
   };
+
+  // Auto-expand gap when scrolling to a line in collapsed area
+  useEffect(() => {
+    if (scrollToLine === undefined || !isActive) return;
+
+    // Find gap containing this line
+    const gap = gaps.find(g => scrollToLine >= g.startLine && scrollToLine <= g.endLine);
+    if (gap) {
+      // Check if gap is not fully expanded
+      const expansion = expansions.get(gap.gapIndex);
+      if (!expansion || !expansion.full) {
+        // Expand the gap fully
+        ensureFileLines();
+        setExpansions((prev) => {
+          const next = new Map(prev);
+          next.set(gap.gapIndex, { fromTop: 0, fromBottom: 0, full: true });
+          return next;
+        });
+      }
+    }
+  }, [scrollToLine, gaps, expansions, isActive, ensureFileLines]);
 
   const handleCopyPath = () => {
     navigator.clipboard.writeText(file.new_path);
@@ -1058,7 +1081,7 @@ function ExpandedContextRows({
 
           return (
             <Fragment key={`exp-${newLine}`}>
-              <tr className="diff-line-expanded">
+              <tr className="diff-line-expanded" data-line={newLine}>
                 <td
                   className={`diff-gutter ${leftHighlighted ? 'diff-line-highlighted' : ''} ${collapsedLeftCount > 0 ? 'has-collapsed-comment' : ''}`}
                   onClick={(e) => {
@@ -1189,7 +1212,7 @@ function ExpandedContextRows({
 
         return (
           <Fragment key={`exp-${newLine}`}>
-            <tr className={`diff-line-expanded ${leftHighlighted || rightHighlighted ? 'diff-line-highlighted' : ''}`}>
+            <tr className={`diff-line-expanded ${leftHighlighted || rightHighlighted ? 'diff-line-highlighted' : ''}`} data-line={newLine}>
               <td
                 className={`diff-gutter ${leftHighlighted ? 'diff-line-highlighted' : ''} ${collapsedLeftCount > 0 ? 'has-collapsed-comment' : ''}`}
                 onClick={(e) => {

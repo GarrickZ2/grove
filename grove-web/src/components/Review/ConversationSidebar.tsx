@@ -9,7 +9,7 @@ type StatusFilter = 'all' | 'open' | 'resolved' | 'outdated';
 interface ConversationSidebarProps {
   comments: ReviewCommentEntry[];
   visible: boolean;
-  onNavigateToComment: (filePath: string, line: number) => void;
+  onNavigateToComment: (filePath: string, line: number, commentId?: number) => void;
   onResolveComment?: (id: number) => void;
   onReopenComment?: (id: number) => void;
   onReplyComment?: (commentId: number, status: string, message: string) => void;
@@ -209,7 +209,7 @@ export function ConversationSidebar({
                     <ConversationItem
                       key={comment.id}
                       comment={comment}
-                      onClick={() => comment.file_path && onNavigateToComment(comment.file_path, 0)}
+                      onClick={() => comment.file_path && onNavigateToComment(comment.file_path, 0, comment.id)}
                       onResolve={onResolveComment}
                       onReopen={onReopenComment}
                       onReply={onReplyComment}
@@ -250,7 +250,7 @@ export function ConversationSidebar({
                     <ConversationItem
                       key={comment.id}
                       comment={comment}
-                      onClick={() => comment.file_path && comment.start_line && onNavigateToComment(comment.file_path, comment.start_line)}
+                      onClick={() => comment.file_path && comment.end_line && onNavigateToComment(comment.file_path, comment.end_line, comment.id)}
                       onResolve={onResolveComment}
                       onReopen={onReopenComment}
                       onReply={onReplyComment}

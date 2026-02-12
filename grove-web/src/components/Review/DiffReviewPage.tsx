@@ -88,6 +88,9 @@ export function DiffReviewPage({ projectId, taskId, embedded }: DiffReviewPagePr
   // Temporary virtual files/directories created in current session
   const [temporaryVirtualPaths, setTemporaryVirtualPaths] = useState<Set<string>>(new Set());
 
+  // Scroll to line state for auto-expanding collapsed gaps
+  const [scrollToLine, setScrollToLine] = useState<{file: string; line: number} | null>(null);
+
   // Filter files based on view mode
   const displayFiles = useMemo(() => {
     if (viewMode === 'full') {
@@ -708,21 +711,63 @@ export function DiffReviewPage({ projectId, taskId, embedded }: DiffReviewPagePr
   }, [projectId, taskId]);
 
   // Navigate to a comment (from conversation sidebar)
-  const handleNavigateToComment = useCallback((filePath: string, line: number) => {
+  const handleNavigateToComment = useCallback((filePath: string, line: number, commentId?: number) => {
     setSelectedFile(filePath);
-    // Delay to allow React to render the file (especially in focus mode)
-    setTimeout(() => {
+    // Auto-expand file if it's collapsed
+    setCollapsedFiles((prev) => {
+      if (prev.has(filePath)) {
+        const next = new Set(prev);
+        next.delete(filePath);
+        return next;
+      }
+      return prev;
+    });
+    // Auto-expand comment if it's collapsed
+    if (commentId !== undefined) {
+      setCollapsedCommentIds((prev) => {
+        if (prev.has(commentId)) {
+          const next = new Set(prev);
+          next.delete(commentId);
+          return next;
+        }
+        return prev;
+      });
+    }
+    // Set scroll target to trigger gap expansion
+    if (line > 0) {
+      setScrollToLine({file: filePath, line});
+    }
+
+    // Retry mechanism for finding the line element (gap expansion may take time)
+    const tryScroll = (attempt: number) => {
       const fileEl = document.getElementById(`diff-file-${encodeURIComponent(filePath)}`);
-      if (!fileEl) return;
+      if (!fileEl) {
+        if (attempt < 5) {
+          setTimeout(() => tryScroll(attempt + 1), 100);
+        }
+        return;
+      }
+
       if (line > 0) {
-        const lineEl = fileEl.querySelector(`tr[data-line="${line}"]`);
+        const lineEl = fileEl.querySelector(`tr[data-line="${line}"]`) || fileEl.querySelector(`td[data-line="${line}"]`);
         if (lineEl) {
           lineEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          setScrollToLine(null);
+          return;
+        } else if (attempt < 5) {
+          // Line not found yet, retry (gap might still be expanding)
+          setTimeout(() => tryScroll(attempt + 1), 100);
           return;
         }
       }
+
+      // Fallback: scroll to file
       fileEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    }, 50);
+      setScrollToLine(null);
+    };
+
+    // Start with initial delay to allow React to render
+    setTimeout(() => tryScroll(1), 150);
   }, []);
 
   // Comments for a specific file
@@ -939,6 +984,7 @@ export function DiffReviewPage({ projectId, taskId, embedded }: DiffReviewPagePr
                   onDeleteReply={handleDeleteReply}
                   codeSearchQuery={codeSearchQuery}
                   codeSearchCaseSensitive={codeSearchCaseSensitive}
+                  scrollToLine={scrollToLine?.file === file.new_path ? scrollToLine.line : undefined}
                 />
               ))})()}
             </div>
