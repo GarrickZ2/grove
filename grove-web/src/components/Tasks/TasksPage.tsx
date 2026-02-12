@@ -368,6 +368,43 @@ export function TasksPage({ initialTaskId, initialViewMode, onNavigationConsumed
     setReviewOpen(false);
   };
 
+  // Unified review handler - works in both info and terminal modes
+  const handleReviewShortcut = () => {
+    if (viewMode === "terminal") {
+      handleToggleReview();
+    } else {
+      handleReviewFromInfo();
+    }
+  };
+
+  // Unified editor handler - works in both info and terminal modes
+  const handleEditorShortcut = () => {
+    if (viewMode === "terminal") {
+      handleToggleEditor();
+    } else {
+      handleEditorFromInfo();
+    }
+  };
+
+  // Terminal shortcut - toggle between terminal and info modes
+  const handleTerminalShortcut = () => {
+    if (viewMode === "terminal") {
+      // If review or editor is open, close them
+      if (reviewOpen || editorOpen) {
+        setReviewOpen(false);
+        setEditorOpen(false);
+      } else {
+        // If pure terminal mode, go back to info mode
+        setViewMode("info");
+      }
+    } else {
+      // In other modes, switch to terminal mode
+      setViewMode("terminal");
+      setReviewOpen(false);
+      setEditorOpen(false);
+    }
+  };
+
   const handleSync = useCallback(async () => {
     if (!selectedProject || !selectedTask || isSyncing) return;
     try {
@@ -664,19 +701,9 @@ export function TasksPage({ initialTaskId, initialViewMode, onNavigationConsumed
       { key: "s", handler: handleSync, options: { enabled: canOperate } },
       { key: "m", handler: handleMerge, options: { enabled: canOperate } },
       { key: "b", handler: handleRebase, options: { enabled: canOperate } },
-      { key: "a", handler: handleArchive, options: { enabled: isActive && selectedTask?.status !== "broken" } },
-      { key: "x", handler: handleClean, options: { enabled: hasTask } },
-      {
-        key: "r",
-        handler: () => {
-          if (isArchived) {
-            handleRecover();
-          } else if (isActive) {
-            handleReset();
-          }
-        },
-        options: { enabled: hasTask },
-      },
+      { key: "r", handler: handleReviewShortcut, options: { enabled: isActive } },
+      { key: "e", handler: handleEditorShortcut, options: { enabled: isActive } },
+      { key: "t", handler: handleTerminalShortcut, options: { enabled: isActive } },
 
       // Search
       {
@@ -692,7 +719,7 @@ export function TasksPage({ initialTaskId, initialViewMode, onNavigationConsumed
       selectNextTask, selectPreviousTask, handleCloseTask,
       handleEnterTerminal, openContextMenuAtSelectedTask,
       handleCommit, handleSync, handleMerge, handleRebase,
-      handleArchive, handleClean, handleRecover, handleReset,
+      handleReviewShortcut, handleEditorShortcut, handleTerminalShortcut,
       viewMode, selectedTask, hasTask, isActive, isArchived, canOperate, notTerminal,
     ]
   );

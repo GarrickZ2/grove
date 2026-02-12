@@ -47,9 +47,8 @@ const SHORTCUT_GROUPS: ShortcutGroup[] = [
       { keys: ["s"], description: "Sync" },
       { keys: ["m"], description: "Merge" },
       { keys: ["b"], description: "Rebase (change branch)" },
-      { keys: ["a"], description: "Archive" },
-      { keys: ["r"], description: "Reset / Recover" },
-      { keys: ["x"], description: "Clean / Delete" },
+      { keys: ["d"], description: "Open Review panel" },
+      { keys: ["e"], description: "Open Editor panel" },
     ],
   },
   {

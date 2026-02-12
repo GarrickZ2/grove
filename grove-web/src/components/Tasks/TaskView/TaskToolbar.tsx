@@ -231,7 +231,7 @@ export function TaskToolbar({
   const dangerousActions: DropdownItem[] = [
     {
       id: "archive",
-      label: "Archive (a)",
+      label: "Archive",
       icon: Archive,
       onClick: onArchive,
       variant: "warning",
@@ -239,7 +239,7 @@ export function TaskToolbar({
     },
     {
       id: "reset",
-      label: "Reset (r)",
+      label: "Reset",
       icon: RotateCcw,
       onClick: onReset,
       variant: "warning",
@@ -247,7 +247,7 @@ export function TaskToolbar({
     },
     {
       id: "clean",
-      label: "Clean (x)",
+      label: "Clean",
       icon: Trash2,
       onClick: onClean,
       variant: "danger",
@@ -288,6 +288,24 @@ export function TaskToolbar({
           </>
         )}
         <ToolbarButton
+          icon={Code}
+          label="Review"
+          onClick={onToggleReview}
+          active={reviewOpen}
+          disabled={isArchived}
+          shortcut="r"
+        />
+        <ToolbarButton
+          icon={FileCode}
+          label="Editor"
+          onClick={onToggleEditor}
+          active={editorOpen}
+          disabled={isArchived}
+          shortcut="e"
+        />
+        {/* Vertical separator */}
+        <div className="w-px h-6 bg-[var(--color-border)] mx-1.5" />
+        <ToolbarButton
           icon={GitCommit}
           label="Commit"
           onClick={onCommit}
@@ -314,20 +332,6 @@ export function TaskToolbar({
           onClick={onMerge}
           disabled={!canOperate}
           shortcut="m"
-        />
-        <ToolbarButton
-          icon={Code}
-          label="Review"
-          onClick={onToggleReview}
-          active={reviewOpen}
-          disabled={isArchived}
-        />
-        <ToolbarButton
-          icon={FileCode}
-          label="Editor"
-          onClick={onToggleEditor}
-          active={editorOpen}
-          disabled={isArchived}
         />
       </div>
 

@@ -71,7 +71,9 @@ export function TaskTerminal({
         initial={{ width: 48 }}
         animate={{ width: 48 }}
         transition={{ type: "spring", damping: 25, stiffness: 200 }}
-        className="h-full flex flex-col rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-tertiary)] overflow-hidden"
+        className="h-full flex flex-col rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-tertiary)] overflow-hidden cursor-pointer hover:bg-[var(--color-bg)] transition-colors"
+        onClick={onExpand}
+        title="Expand Terminal (t)"
       >
         {/* Vertical Bar */}
         <div className="flex-1 flex flex-col items-center py-2">
@@ -89,14 +91,10 @@ export function TaskTerminal({
 
           <div className="flex-1" />
 
-          {/* Expand button */}
-          <button
-            onClick={onExpand}
-            className="p-3 text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-bg-tertiary)] transition-colors"
-            title="Expand Terminal (closes Review)"
-          >
+          {/* Expand indicator */}
+          <div className="p-3 text-[var(--color-text-muted)]">
             <ChevronRight className="w-5 h-5" />
-          </button>
+          </div>
         </div>
       </motion.div>
     );
