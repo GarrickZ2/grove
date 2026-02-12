@@ -5,6 +5,39 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.13] - 2026-02-11
+
+### Added
+
+- **Web: Comment filtering in Comments tab** — Filter comments by status (All/Open/Resolved) with Outdated included under Open status
+- **Web: File system operations in Editor** — Context menu support for file operations in the Editor mode
+- **Web: Review/Editor keyboard shortcuts** — Removed dangerous action hotkeys and added mode-specific keyboard shortcuts
+
+### Fixed
+
+- **Review: Markdown rendering spacing issues** — Unified markdown rendering using MarkdownRenderer component for consistent spacing between Review comments and Notes
+  - Removed `white-space: pre-wrap` inheritance from diff table that was preserving markdown source newlines
+  - Added `[li>&]:mb-0` to remove margin from paragraphs inside list items
+  - Fixed excessive spacing between list items in comments
+- **Review: Auto-expand navigation improvements** — Enhanced comment navigation experience
+  - Auto-expand collapsed code chunks when navigating to comments
+  - Auto-expand collapsed files when navigating to comments
+  - Auto-expand comment cards when clicking from Conversation panel
+  - Use `end_line` instead of `start_line` for navigation (comments render at end_line)
+  - Added retry mechanism for async gap expansion
+- **Review: Comment line number clamping** — Comments with line numbers exceeding file length now render at the last line (frontend logic)
+  - Properly handles both ADD and DELETE sides
+  - Works for all comment statuses (resolved/open/outdated)
+  - Pure view layer logic, doesn't modify backend data
+- **Review: Outdated comment line number clamping** — Outdated comments now clamp to file's last line when anchor exceeds file length
+- **Web: Panel switching optimization** — Improved animation performance and state management for panel transitions
+- **Web: Viewed status tracking** — Fixed viewed status tracking for files in All Files mode
+- **Review: CSS color variable fix** — Replaced undefined `--color-primary` with `--color-highlight`
+
+### Documentation
+
+- **CLAUDE.md: Web frontend build requirement** — Added documentation for web frontend build process
+
 ## [0.4.12] - 2026-02-11
 
 ### Added
