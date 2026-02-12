@@ -1,6 +1,6 @@
 import { useState, useMemo, useCallback, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Plus, Terminal, GitCommit, GitBranchPlus, RefreshCw, GitMerge, Archive, RotateCcw, Trash2 } from "lucide-react";
+import { Plus, Terminal, GitCommit, GitBranchPlus, RefreshCw, GitMerge, Archive, RotateCcw, Trash2, AlertTriangle } from "lucide-react";
 import { TaskSidebar } from "./TaskSidebar/TaskSidebar";
 import { TaskInfoPanel } from "./TaskInfoPanel";
 import type { TabType } from "./TaskInfoPanel";
@@ -28,10 +28,29 @@ import {
   rebaseToTask as apiRebaseToTask,
   getBranches as apiGetBranches,
 } from "../../api";
+import type { ApiError } from "../../api/client";
 import type { Task, TaskFilter } from "../../data/types";
 import { convertTaskResponse } from "../../utils/taskConvert";
 
 type ViewMode = "list" | "info" | "terminal";
+
+type ArchiveConfirmData = {
+  code?: string;
+  task_name?: string;
+  branch?: string;
+  target?: string;
+  worktree_dirty?: boolean;
+  branch_merged?: boolean;
+  dirty_check_failed?: boolean;
+  merge_check_failed?: boolean;
+};
+
+type PendingArchiveConfirm = {
+  projectId: string;
+  taskId: string;
+  message: React.ReactNode;
+  context: "normal" | "after-merge";
+};
 
 interface TasksPageProps {
   /** Initial task ID to select (from navigation) */
@@ -73,6 +92,65 @@ export function TasksPage({ initialTaskId, initialViewMode, onNavigationConsumed
   const [mergedTaskId, setMergedTaskId] = useState<string | null>(null);
   const [mergedTaskName, setMergedTaskName] = useState<string>("");
 
+  const [pendingArchiveConfirm, setPendingArchiveConfirm] =
+    useState<PendingArchiveConfirm | null>(null);
+
+  const buildArchiveConfirmMessage = useCallback((
+    data: ArchiveConfirmData,
+    fallbackTaskName: string
+  ): React.ReactNode => {
+    const taskName = data.task_name || fallbackTaskName;
+    const branch = data.branch || "";
+    const target = data.target || "";
+
+    const hasWarning = data.worktree_dirty || 
+                       data.branch_merged === false || 
+                       data.dirty_check_failed || 
+                       data.merge_check_failed;
+
+    return (
+      <div className="flex flex-col gap-4">
+        <div className="bg-[var(--color-bg-tertiary)] rounded-lg p-3 space-y-2">
+          <div className="flex justify-between text-sm">
+            <span className="text-[var(--color-text-muted)]">Task</span>
+            <span className="text-[var(--color-text)] font-medium">{taskName}</span>
+          </div>
+          <div className="flex justify-between text-sm">
+            <span className="text-[var(--color-text-muted)]">Branch</span>
+            <span className="text-[var(--color-text)] font-mono text-xs">{branch}</span>
+          </div>
+          <div className="flex justify-between text-sm">
+            <span className="text-[var(--color-text-muted)]">Target</span>
+            <span className="text-[var(--color-text)] font-mono text-xs">{target}</span>
+          </div>
+        </div>
+
+        {hasWarning && (
+          <div className="bg-[var(--color-warning)]/10 text-[var(--color-warning)] rounded-lg p-3 text-sm">
+            <div className="flex items-start gap-2">
+              <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />
+              <div className="space-y-1">
+                {data.dirty_check_failed && <p>Cannot check worktree status.</p>}
+                {data.worktree_dirty && (
+                  <>
+                    <p className="font-medium">Worktree has uncommitted changes.</p>
+                    <p>They will be LOST after archive.</p>
+                  </>
+                )}
+                {data.merge_check_failed && <p>Cannot check merge status.</p>}
+                {data.branch_merged === false && <p>Branch not merged yet.</p>}
+              </div>
+            </div>
+          </div>
+        )}
+
+        <p className="text-sm text-[var(--color-text-muted)]">
+          Are you sure you want to archive this task?
+        </p>
+      </div>
+    );
+  }, []);
+
   // Clean confirm dialog state
   const [showCleanConfirm, setShowCleanConfirm] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
@@ -83,9 +161,6 @@ export function TasksPage({ initialTaskId, initialViewMode, onNavigationConsumed
   // Reset confirm dialog state
   const [showResetConfirm, setShowResetConfirm] = useState(false);
   const [isResetting, setIsResetting] = useState(false);
-
-  // Archive confirm dialog state
-  const [showArchiveConfirm, setShowArchiveConfirm] = useState(false);
 
   // Rebase dialog state
   const [showRebaseDialog, setShowRebaseDialog] = useState(false);
@@ -492,21 +567,38 @@ export function TasksPage({ initialTaskId, initialViewMode, onNavigationConsumed
   // Handle archive after merge (TUI: PendingAction::MergeArchive)
   const handleArchiveAfterMerge = useCallback(async () => {
     if (!selectedProject || !mergedTaskId) return;
+    let shouldCleanup = true;
     try {
       await apiArchiveTask(selectedProject.id, mergedTaskId);
       await refreshSelectedProject();
       showMessage("Task archived");
     } catch (err) {
+      const e = err as ApiError;
+      const data = (e.data || {}) as ArchiveConfirmData;
+      if (e?.status === 409 && data.code === "ARCHIVE_CONFIRM_REQUIRED") {
+        setPendingArchiveConfirm({
+          projectId: selectedProject.id,
+          taskId: mergedTaskId,
+          message: buildArchiveConfirmMessage(data, mergedTaskName),
+          context: "after-merge",
+        });
+        setShowArchiveAfterMerge(false);
+        shouldCleanup = false;
+        return;
+      }
+
       console.error("Failed to archive task:", err);
-      showMessage("Failed to archive task");
+      showMessage(e?.message || "Failed to archive task");
     } finally {
-      setShowArchiveAfterMerge(false);
-      setMergedTaskId(null);
-      setMergedTaskName("");
-      setSelectedTask(null);
-      setViewMode("list");
+      if (shouldCleanup) {
+        setShowArchiveAfterMerge(false);
+        setMergedTaskId(null);
+        setMergedTaskName("");
+        setSelectedTask(null);
+        setViewMode("list");
+      }
     }
-  }, [selectedProject, mergedTaskId, refreshSelectedProject]);
+  }, [selectedProject, mergedTaskId, mergedTaskName, refreshSelectedProject]);
 
   const handleSkipArchive = useCallback(() => {
     setShowArchiveAfterMerge(false);
@@ -515,11 +607,8 @@ export function TasksPage({ initialTaskId, initialViewMode, onNavigationConsumed
     setSelectedTask(null);
     setViewMode("list");
   }, []);
-  const handleArchive = () => {
-    setShowArchiveConfirm(true);
-  };
 
-  const handleArchiveConfirm = useCallback(async () => {
+  const handleArchive = useCallback(async () => {
     if (!selectedProject || !selectedTask) return;
     try {
       await apiArchiveTask(selectedProject.id, selectedTask.id);
@@ -527,11 +616,56 @@ export function TasksPage({ initialTaskId, initialViewMode, onNavigationConsumed
       setSelectedTask(null);
       setViewMode("list");
     } catch (err) {
+      const e = err as ApiError;
+      const data = (e.data || {}) as ArchiveConfirmData;
+      if (e?.status === 409 && data.code === "ARCHIVE_CONFIRM_REQUIRED") {
+        setPendingArchiveConfirm({
+          projectId: selectedProject.id,
+          taskId: selectedTask.id,
+          message: buildArchiveConfirmMessage(data, selectedTask.name),
+          context: "normal",
+        });
+        return;
+      }
+
       console.error("Failed to archive task:", err);
-    } finally {
-      setShowArchiveConfirm(false);
+      showMessage(e?.message || "Failed to archive task");
     }
   }, [selectedProject, selectedTask, refreshSelectedProject]);
+
+  const handleArchiveConfirm = useCallback(async () => {
+    if (!pendingArchiveConfirm) return;
+    try {
+      await apiArchiveTask(pendingArchiveConfirm.projectId, pendingArchiveConfirm.taskId, {
+        force: true,
+      });
+      await refreshSelectedProject();
+      showMessage("Task archived");
+      setSelectedTask(null);
+      setViewMode("list");
+    } catch (err) {
+      const e = err as ApiError;
+      console.error("Failed to archive task:", err);
+      showMessage(e?.message || "Failed to archive task");
+    } finally {
+      if (pendingArchiveConfirm.context === "after-merge") {
+        setMergedTaskId(null);
+        setMergedTaskName("");
+      }
+      setPendingArchiveConfirm(null);
+    }
+  }, [pendingArchiveConfirm, refreshSelectedProject]);
+
+  const handleArchiveCancel = useCallback(() => {
+    if (!pendingArchiveConfirm) return;
+    if (pendingArchiveConfirm.context === "after-merge") {
+      setMergedTaskId(null);
+      setMergedTaskName("");
+      setSelectedTask(null);
+      setViewMode("list");
+    }
+    setPendingArchiveConfirm(null);
+  }, [pendingArchiveConfirm]);
   const handleClean = () => {
     setShowCleanConfirm(true);
   };
@@ -966,12 +1100,34 @@ export function TasksPage({ initialTaskId, initialViewMode, onNavigationConsumed
       <ConfirmDialog
         isOpen={showArchiveAfterMerge}
         title="Merge Successful"
-        message={`"${mergedTaskName}" has been merged successfully. Would you like to archive this task?`}
-        confirmLabel="Archive"
-        cancelLabel="Keep"
+        message={
+          <div className="flex flex-col gap-4">
+            <div className="bg-[var(--color-bg-tertiary)] rounded-lg p-3">
+              <div className="flex justify-between text-sm">
+                <span className="text-[var(--color-text-muted)]">Task</span>
+                <span className="text-[var(--color-text)] font-medium">{mergedTaskName}</span>
+              </div>
+            </div>
+            <p className="text-sm text-[var(--color-text-muted)]">
+              Do you want to archive this task now?
+            </p>
+          </div>
+        }
         variant="info"
+        confirmLabel="Archive"
+        cancelLabel="Later"
         onConfirm={handleArchiveAfterMerge}
         onCancel={handleSkipArchive}
+      />
+
+      {/* Archive Confirm Dialog (API preflight) */}
+      <ConfirmDialog
+        isOpen={!!pendingArchiveConfirm}
+        title="Archive"
+        message={pendingArchiveConfirm?.message || ""}
+        variant="warning"
+        onConfirm={handleArchiveConfirm}
+        onCancel={handleArchiveCancel}
       />
 
       {/* Reset Confirm Dialog (TUI: ConfirmType::Reset) */}
@@ -983,18 +1139,6 @@ export function TasksPage({ initialTaskId, initialViewMode, onNavigationConsumed
         variant="danger"
         onConfirm={handleResetConfirm}
         onCancel={() => setShowResetConfirm(false)}
-      />
-
-      {/* Archive Confirm Dialog */}
-      <ConfirmDialog
-        isOpen={showArchiveConfirm}
-        title="Archive Task"
-        message={`Are you sure you want to archive "${selectedTask?.name}"? This will mark the task as completed and hide it from the active task list.`}
-        confirmLabel="Archive"
-        cancelLabel="Cancel"
-        variant="warning"
-        onConfirm={handleArchiveConfirm}
-        onCancel={() => setShowArchiveConfirm(false)}
       />
 
       {/* Rebase Dialog (Change Target Branch) */}

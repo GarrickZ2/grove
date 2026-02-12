@@ -153,9 +153,14 @@ mod tests {
         state.show_new_task_dialog = true;
         state.new_task_input = "test".to_string();
         state.show_help = true;
-        state.confirm_dialog = Some(ConfirmType::ArchiveUnmerged {
+        state.confirm_dialog = Some(ConfirmType::ArchiveConfirm {
             task_name: "Test Task".to_string(),
             branch: "test-branch".to_string(),
+            target: "main".to_string(),
+            worktree_dirty: true,
+            branch_merged: true,
+            dirty_check_failed: false,
+            merge_check_failed: false,
         });
         state.input_confirm_dialog = Some(InputConfirmData::new(
             "Test Task".to_string(),
@@ -194,9 +199,14 @@ mod tests {
         let mut state = DialogState::new();
         assert!(!state.has_active_dialog());
 
-        state.confirm_dialog = Some(ConfirmType::ArchiveUnmerged {
+        state.confirm_dialog = Some(ConfirmType::ArchiveConfirm {
             task_name: "Test".to_string(),
             branch: "test".to_string(),
+            target: "main".to_string(),
+            worktree_dirty: false,
+            branch_merged: false,
+            dirty_check_failed: false,
+            merge_check_failed: false,
         });
         assert!(state.has_active_dialog());
     }

@@ -194,9 +194,14 @@ export async function createTask(
 /**
  * Archive a task
  */
-export async function archiveTask(projectId: string, taskId: string): Promise<TaskResponse> {
+export async function archiveTask(
+  projectId: string,
+  taskId: string,
+  options?: { force?: boolean }
+): Promise<TaskResponse> {
+  const force = options?.force ?? false;
   return apiClient.post<undefined, TaskResponse>(
-    `/api/v1/projects/${projectId}/tasks/${taskId}/archive`
+    `/api/v1/projects/${projectId}/tasks/${taskId}/archive?force=${force}`
   );
 }
 
