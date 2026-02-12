@@ -205,6 +205,23 @@ export function DiffReviewPage({ projectId, taskId, embedded }: DiffReviewPagePr
   // Compute file hashes for viewed-state tracking
   const fileHashes = useMemo(() => {
     const hashes = new Map<string, string>();
+
+    // In All Files mode, compute hash for all displayFiles
+    if (viewMode === 'full') {
+      for (const file of displayFiles) {
+        // For files without hunks (no changes), use file path as stable identifier
+        let hash = 5381;
+        const pathToHash = file.new_path;
+        for (let i = 0; i < pathToHash.length; i++) {
+          hash = ((hash << 5) + hash) + pathToHash.charCodeAt(i);
+          hash = hash & hash;
+        }
+        hashes.set(file.new_path, hash.toString(36));
+      }
+      return hashes;
+    }
+
+    // In Changes mode, compute hash based on diff content
     if (!diffData) return hashes;
     for (const f of diffData.files) {
       let hash = 5381;
@@ -219,7 +236,7 @@ export function DiffReviewPage({ projectId, taskId, embedded }: DiffReviewPagePr
       hashes.set(f.new_path, hash.toString(36));
     }
     return hashes;
-  }, [diffData]);
+  }, [diffData, viewMode, displayFiles]);
 
   // Compute viewed status per file: 'none' | 'viewed' | 'updated'
   const getFileViewedStatus = useCallback((path: string): 'none' | 'viewed' | 'updated' => {
