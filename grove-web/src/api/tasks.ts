@@ -414,3 +414,83 @@ export async function writeFileContent(
     { content }
   );
 }
+
+// ============================================================================
+// File System Operations API
+// ============================================================================
+
+export interface FsOperationResponse {
+  success: boolean;
+  message: string;
+}
+
+export interface CreateFileRequest {
+  path: string;
+  content?: string;
+}
+
+export interface CreateDirectoryRequest {
+  path: string;
+}
+
+export interface CopyFileRequest {
+  source: string;
+  destination: string;
+}
+
+/**
+ * Create a new file in a task's worktree
+ */
+export async function createFile(
+  projectId: string,
+  taskId: string,
+  path: string,
+  content?: string
+): Promise<FsOperationResponse> {
+  return apiClient.post<CreateFileRequest, FsOperationResponse>(
+    `/api/v1/projects/${projectId}/tasks/${taskId}/fs/create-file`,
+    { path, content }
+  );
+}
+
+/**
+ * Create a new directory in a task's worktree
+ */
+export async function createDirectory(
+  projectId: string,
+  taskId: string,
+  path: string
+): Promise<FsOperationResponse> {
+  return apiClient.post<CreateDirectoryRequest, FsOperationResponse>(
+    `/api/v1/projects/${projectId}/tasks/${taskId}/fs/create-dir`,
+    { path }
+  );
+}
+
+/**
+ * Delete a file or directory in a task's worktree
+ */
+export async function deleteFileOrDir(
+  projectId: string,
+  taskId: string,
+  path: string
+): Promise<FsOperationResponse> {
+  return apiClient.delete<FsOperationResponse>(
+    `/api/v1/projects/${projectId}/tasks/${taskId}/fs/delete?path=${encodeURIComponent(path)}`
+  );
+}
+
+/**
+ * Copy a file in a task's worktree
+ */
+export async function copyFile(
+  projectId: string,
+  taskId: string,
+  source: string,
+  destination: string
+): Promise<FsOperationResponse> {
+  return apiClient.post<CopyFileRequest, FsOperationResponse>(
+    `/api/v1/projects/${projectId}/tasks/${taskId}/fs/copy`,
+    { source, destination }
+  );
+}

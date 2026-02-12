@@ -1535,3 +1535,345 @@ pub async fn delete_review_reply(
 
     get_review_comments(Path((id, task_id))).await
 }
+
+// ============================================================================
+// File System Operations API
+// ============================================================================
+
+/// Create file request
+#[derive(Debug, Deserialize)]
+pub struct CreateFileRequest {
+    pub path: String,
+    #[serde(default)]
+    pub content: Option<String>,
+}
+
+/// Create directory request
+#[derive(Debug, Deserialize)]
+pub struct CreateDirectoryRequest {
+    pub path: String,
+}
+
+/// Delete file/directory request (via query param)
+#[derive(Debug, Deserialize)]
+pub struct DeletePathQuery {
+    pub path: String,
+}
+
+/// Copy file request
+#[derive(Debug, Deserialize)]
+pub struct CopyFileRequest {
+    pub source: String,
+    pub destination: String,
+}
+
+/// File system operation response
+#[derive(Debug, Serialize)]
+pub struct FsOperationResponse {
+    pub success: bool,
+    pub message: String,
+}
+
+/// POST /api/v1/projects/{id}/tasks/{taskId}/fs/create-file
+/// Create a new file in the task's worktree
+pub async fn create_file(
+    Path((id, task_id)): Path<(String, String)>,
+    Json(req): Json<CreateFileRequest>,
+) -> Result<Json<FsOperationResponse>, (StatusCode, Json<ApiErrorResponse>)> {
+    let (_project, project_key) = find_project_by_id(&id).map_err(|s| {
+        (
+            s,
+            Json(ApiErrorResponse {
+                error: "Project not found".to_string(),
+            }),
+        )
+    })?;
+
+    let task = tasks::get_task(&project_key, &task_id)
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResponse {
+                    error: format!("Failed to load task: {}", e),
+                }),
+            )
+        })?
+        .ok_or_else(|| {
+            (
+                StatusCode::NOT_FOUND,
+                Json(ApiErrorResponse {
+                    error: "Task not found".to_string(),
+                }),
+            )
+        })?;
+
+    // Construct full path in worktree
+    let full_path = StdPath::new(&task.worktree_path).join(&req.path);
+
+    // Check if file already exists
+    if full_path.exists() {
+        return Err((
+            StatusCode::CONFLICT,
+            Json(ApiErrorResponse {
+                error: format!("File already exists: {}", req.path),
+            }),
+        ));
+    }
+
+    // Create parent directories if needed
+    if let Some(parent) = full_path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResponse {
+                    error: format!("Failed to create parent directories: {}", e),
+                }),
+            )
+        })?;
+    }
+
+    // Write content to file
+    let content = req.content.unwrap_or_default();
+    std::fs::write(&full_path, content).map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ApiErrorResponse {
+                error: format!("Failed to create file: {}", e),
+            }),
+        )
+    })?;
+
+    Ok(Json(FsOperationResponse {
+        success: true,
+        message: format!("File created: {}", req.path),
+    }))
+}
+
+/// POST /api/v1/projects/{id}/tasks/{taskId}/fs/create-dir
+/// Create a new directory in the task's worktree
+pub async fn create_directory(
+    Path((id, task_id)): Path<(String, String)>,
+    Json(req): Json<CreateDirectoryRequest>,
+) -> Result<Json<FsOperationResponse>, (StatusCode, Json<ApiErrorResponse>)> {
+    let (_project, project_key) = find_project_by_id(&id).map_err(|s| {
+        (
+            s,
+            Json(ApiErrorResponse {
+                error: "Project not found".to_string(),
+            }),
+        )
+    })?;
+
+    let task = tasks::get_task(&project_key, &task_id)
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResponse {
+                    error: format!("Failed to load task: {}", e),
+                }),
+            )
+        })?
+        .ok_or_else(|| {
+            (
+                StatusCode::NOT_FOUND,
+                Json(ApiErrorResponse {
+                    error: "Task not found".to_string(),
+                }),
+            )
+        })?;
+
+    // Construct full path in worktree
+    let full_path = StdPath::new(&task.worktree_path).join(&req.path);
+
+    // Check if directory already exists
+    if full_path.exists() {
+        return Err((
+            StatusCode::CONFLICT,
+            Json(ApiErrorResponse {
+                error: format!("Directory already exists: {}", req.path),
+            }),
+        ));
+    }
+
+    // Create directory
+    std::fs::create_dir_all(&full_path).map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ApiErrorResponse {
+                error: format!("Failed to create directory: {}", e),
+            }),
+        )
+    })?;
+
+    Ok(Json(FsOperationResponse {
+        success: true,
+        message: format!("Directory created: {}", req.path),
+    }))
+}
+
+/// DELETE /api/v1/projects/{id}/tasks/{taskId}/fs/delete?path=...
+/// Delete a file or directory in the task's worktree
+pub async fn delete_path(
+    Path((id, task_id)): Path<(String, String)>,
+    Query(params): Query<DeletePathQuery>,
+) -> Result<Json<FsOperationResponse>, (StatusCode, Json<ApiErrorResponse>)> {
+    let (_project, project_key) = find_project_by_id(&id).map_err(|s| {
+        (
+            s,
+            Json(ApiErrorResponse {
+                error: "Project not found".to_string(),
+            }),
+        )
+    })?;
+
+    let task = tasks::get_task(&project_key, &task_id)
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResponse {
+                    error: format!("Failed to load task: {}", e),
+                }),
+            )
+        })?
+        .ok_or_else(|| {
+            (
+                StatusCode::NOT_FOUND,
+                Json(ApiErrorResponse {
+                    error: "Task not found".to_string(),
+                }),
+            )
+        })?;
+
+    // Construct full path in worktree
+    let full_path = StdPath::new(&task.worktree_path).join(&params.path);
+
+    // Check if path exists
+    if !full_path.exists() {
+        return Err((
+            StatusCode::NOT_FOUND,
+            Json(ApiErrorResponse {
+                error: format!("Path not found: {}", params.path),
+            }),
+        ));
+    }
+
+    // Delete file or directory
+    if full_path.is_dir() {
+        std::fs::remove_dir_all(&full_path).map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResponse {
+                    error: format!("Failed to delete directory: {}", e),
+                }),
+            )
+        })?;
+    } else {
+        std::fs::remove_file(&full_path).map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResponse {
+                    error: format!("Failed to delete file: {}", e),
+                }),
+            )
+        })?;
+    }
+
+    Ok(Json(FsOperationResponse {
+        success: true,
+        message: format!("Deleted: {}", params.path),
+    }))
+}
+
+/// POST /api/v1/projects/{id}/tasks/{taskId}/fs/copy
+/// Copy a file in the task's worktree
+pub async fn copy_file(
+    Path((id, task_id)): Path<(String, String)>,
+    Json(req): Json<CopyFileRequest>,
+) -> Result<Json<FsOperationResponse>, (StatusCode, Json<ApiErrorResponse>)> {
+    let (_project, project_key) = find_project_by_id(&id).map_err(|s| {
+        (
+            s,
+            Json(ApiErrorResponse {
+                error: "Project not found".to_string(),
+            }),
+        )
+    })?;
+
+    let task = tasks::get_task(&project_key, &task_id)
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResponse {
+                    error: format!("Failed to load task: {}", e),
+                }),
+            )
+        })?
+        .ok_or_else(|| {
+            (
+                StatusCode::NOT_FOUND,
+                Json(ApiErrorResponse {
+                    error: "Task not found".to_string(),
+                }),
+            )
+        })?;
+
+    // Construct full paths
+    let source_path = StdPath::new(&task.worktree_path).join(&req.source);
+    let dest_path = StdPath::new(&task.worktree_path).join(&req.destination);
+
+    // Check if source exists and is a file
+    if !source_path.exists() {
+        return Err((
+            StatusCode::NOT_FOUND,
+            Json(ApiErrorResponse {
+                error: format!("Source file not found: {}", req.source),
+            }),
+        ));
+    }
+
+    if !source_path.is_file() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ApiErrorResponse {
+                error: "Source must be a file, not a directory".to_string(),
+            }),
+        ));
+    }
+
+    // Check if destination already exists
+    if dest_path.exists() {
+        return Err((
+            StatusCode::CONFLICT,
+            Json(ApiErrorResponse {
+                error: format!("Destination already exists: {}", req.destination),
+            }),
+        ));
+    }
+
+    // Create parent directories for destination if needed
+    if let Some(parent) = dest_path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResponse {
+                    error: format!("Failed to create parent directories: {}", e),
+                }),
+            )
+        })?;
+    }
+
+    // Copy file
+    std::fs::copy(&source_path, &dest_path).map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ApiErrorResponse {
+                error: format!("Failed to copy file: {}", e),
+            }),
+        )
+    })?;
+
+    Ok(Json(FsOperationResponse {
+        success: true,
+        message: format!("Copied {} to {}", req.source, req.destination),
+    }))
+}

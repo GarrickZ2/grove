@@ -127,6 +127,23 @@ pub fn create_api_router() -> Router {
             "/projects/{id}/tasks/{taskId}/file",
             get(handlers::tasks::get_file).put(handlers::tasks::update_file),
         )
+        // File System Operations API
+        .route(
+            "/projects/{id}/tasks/{taskId}/fs/create-file",
+            post(handlers::tasks::create_file),
+        )
+        .route(
+            "/projects/{id}/tasks/{taskId}/fs/create-dir",
+            post(handlers::tasks::create_directory),
+        )
+        .route(
+            "/projects/{id}/tasks/{taskId}/fs/delete",
+            delete(handlers::tasks::delete_path),
+        )
+        .route(
+            "/projects/{id}/tasks/{taskId}/fs/copy",
+            post(handlers::tasks::copy_file),
+        )
         // Task Stats API
         .route(
             "/projects/{id}/tasks/{taskId}/stats",

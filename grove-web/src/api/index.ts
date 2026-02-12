@@ -43,6 +43,10 @@ export {
   getTaskFiles,
   getFileContent,
   writeFileContent,
+  createFile,
+  createDirectory,
+  deleteFileOrDir,
+  copyFile,
 } from './tasks';
 export type {
   CommitResponse,
@@ -68,6 +72,10 @@ export type {
   FileEditEntry,
   ActivityEntry,
   TaskStatsResponse,
+  FsOperationResponse,
+  CreateFileRequest,
+  CreateDirectoryRequest,
+  CopyFileRequest,
 } from './tasks';
 
 export {

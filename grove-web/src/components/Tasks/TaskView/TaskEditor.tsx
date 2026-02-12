@@ -4,7 +4,16 @@ import { X, FileCode, Loader2, Save, Maximize2, Minimize2 } from "lucide-react";
 import { Button } from "../../ui";
 import { FileTree } from "./FileTree";
 import { buildFileTree } from "../../../utils/fileTree";
-import { getTaskFiles, getFileContent, writeFileContent } from "../../../api";
+import {
+  getTaskFiles,
+  getFileContent,
+  writeFileContent,
+  createFile,
+  createDirectory,
+  deleteFileOrDir,
+} from "../../../api";
+import { FileContextMenu, type ContextMenuPosition, type ContextMenuTarget } from "./FileContextMenu";
+import { ConfirmDialog } from "../../Dialogs/ConfirmDialog";
 
 interface TaskEditorProps {
   projectId: string;
@@ -74,6 +83,18 @@ export function TaskEditor({ projectId, taskId, onClose, fullscreen = false, onT
   const [modified, setModified] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const editorContentRef = useRef<string>('');
+
+  // Context menu state
+  const [contextMenuOpen, setContextMenuOpen] = useState(false);
+  const [contextMenuPosition, setContextMenuPosition] = useState<ContextMenuPosition>({ x: 0, y: 0 });
+  const [contextMenuTarget, setContextMenuTarget] = useState<ContextMenuTarget | null>(null);
+
+  // Inline creation state
+  const [creatingPath, setCreatingPath] = useState<{ type: 'file' | 'directory'; parentPath: string; depth: number } | null>(null);
+
+  // Delete confirmation
+  const [confirmDialogOpen, setConfirmDialogOpen] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
 
   // Load file list on mount
   useEffect(() => {
@@ -146,6 +167,128 @@ export function TaskEditor({ projectId, taskId, onClose, fullscreen = false, onT
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [handleSave]);
 
+  // Reload file list
+  const reloadFiles = useCallback(async () => {
+    try {
+      const res = await getTaskFiles(projectId, taskId);
+      setFiles(res.files);
+    } catch (err) {
+      console.error('Failed to reload files:', err);
+    }
+  }, [projectId, taskId]);
+
+  // Context menu handler
+  const handleContextMenu = useCallback((e: React.MouseEvent, path: string, isDir: boolean) => {
+    setContextMenuPosition({ x: e.clientX, y: e.clientY });
+    setContextMenuTarget({ path, isDirectory: isDir });
+    setContextMenuOpen(true);
+  }, []);
+
+  // Delete handler
+  const handleDelete = useCallback((path: string) => {
+    setDeleteTarget(path);
+    setConfirmDialogOpen(true);
+  }, []);
+
+  // Copy path handler
+  const handleCopyPath = useCallback((path: string) => {
+    navigator.clipboard.writeText(path).then(() => {
+      // Could show a toast notification here
+      console.log('Path copied:', path);
+    }).catch((err) => {
+      console.error('Failed to copy path:', err);
+    });
+  }, []);
+
+  // Create file submit handler
+  const handleCreateFile = useCallback(async (path: string) => {
+    await createFile(projectId, taskId, path, "");
+    await reloadFiles();
+    // Optionally open the newly created file
+    setSelectedFile(path);
+    setLoading(true);
+    setModified(false);
+    setError(null);
+    try {
+      const res = await getFileContent(projectId, taskId, path);
+      setFileContent(res.content);
+      editorContentRef.current = res.content;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setError(msg);
+      setFileContent('');
+    } finally {
+      setLoading(false);
+    }
+  }, [projectId, taskId, reloadFiles]);
+
+  // Create directory submit handler
+  const handleCreateDirectory = useCallback(async (path: string) => {
+    await createDirectory(projectId, taskId, path);
+    await reloadFiles();
+  }, [projectId, taskId, reloadFiles]);
+
+  // New file handler
+  const handleNewFile = useCallback((parentPath?: string) => {
+    const basePath = parentPath || "";
+    const depth = basePath ? basePath.split('/').length : 0;
+    setCreatingPath({ type: 'file', parentPath: basePath, depth: depth + 1 });
+    setContextMenuOpen(false);
+  }, []);
+
+  // New directory handler
+  const handleNewDirectory = useCallback((parentPath?: string) => {
+    const basePath = parentPath || "";
+    const depth = basePath ? basePath.split('/').length : 0;
+    setCreatingPath({ type: 'directory', parentPath: basePath, depth: depth + 1 });
+    setContextMenuOpen(false);
+  }, []);
+
+  // Submit inline path creation
+  const handleSubmitPath = useCallback(async (name: string) => {
+    if (!creatingPath) return;
+
+    const fullPath = creatingPath.parentPath ? `${creatingPath.parentPath}/${name}` : name;
+
+    try {
+      if (creatingPath.type === 'file') {
+        await handleCreateFile(fullPath);
+      } else {
+        await handleCreateDirectory(fullPath);
+      }
+    } catch (err) {
+      console.error('Failed to create path:', err);
+    } finally {
+      setCreatingPath(null);
+    }
+  }, [creatingPath, handleCreateFile, handleCreateDirectory]);
+
+  // Cancel inline path creation
+  const handleCancelPath = useCallback(() => {
+    setCreatingPath(null);
+  }, []);
+
+  // Delete confirm handler
+  const handleConfirmDelete = useCallback(async () => {
+    if (!deleteTarget) return;
+
+    try {
+      await deleteFileOrDir(projectId, taskId, deleteTarget);
+      await reloadFiles();
+      // If deleted file was selected, clear selection
+      if (selectedFile === deleteTarget) {
+        setSelectedFile(null);
+        setFileContent('');
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setError(msg);
+    } finally {
+      setDeleteTarget(null);
+      setConfirmDialogOpen(false);
+    }
+  }, [deleteTarget, projectId, taskId, reloadFiles, selectedFile]);
+
   // Breadcrumb from file path
   const breadcrumb = selectedFile ? selectedFile.split('/') : [];
 
@@ -199,6 +342,10 @@ export function TaskEditor({ projectId, taskId, onClose, fullscreen = false, onT
             nodes={fileTree}
             selectedFile={selectedFile}
             onSelectFile={handleSelectFile}
+            onContextMenu={handleContextMenu}
+            creatingPath={creatingPath}
+            onSubmitPath={handleSubmitPath}
+            onCancelPath={handleCancelPath}
           />
         </div>
 
@@ -239,6 +386,31 @@ export function TaskEditor({ projectId, taskId, onClose, fullscreen = false, onT
           )}
         </div>
       </div>
+
+      {/* Context Menu */}
+      <FileContextMenu
+        isOpen={contextMenuOpen}
+        position={contextMenuPosition}
+        target={contextMenuTarget}
+        onClose={() => setContextMenuOpen(false)}
+        onNewFile={handleNewFile}
+        onNewDirectory={handleNewDirectory}
+        onDelete={handleDelete}
+        onCopyPath={handleCopyPath}
+      />
+
+      {/* Confirm Dialog for deletion */}
+      <ConfirmDialog
+        isOpen={confirmDialogOpen}
+        title="Delete"
+        message={`Are you sure you want to delete "${deleteTarget}"? This action cannot be undone.`}
+        confirmLabel="Delete"
+        onConfirm={handleConfirmDelete}
+        onCancel={() => {
+          setConfirmDialogOpen(false);
+          setDeleteTarget(null);
+        }}
+      />
     </div>
   );
 }
