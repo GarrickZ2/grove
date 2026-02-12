@@ -120,6 +120,19 @@ All data stored in `~/.grove/`:
 
 ## Development Guidelines
 
+### Web Frontend Development
+
+When modifying the web frontend (`grove-web/`):
+
+1. **Always build after changes** — Run `npm run build` in the `grove-web/` directory after making any frontend code changes to ensure the build is successful
+2. **Check for TypeScript errors** — The build process runs `tsc -b` first, catching type errors
+3. **Location** — All web frontend code is in the `grove-web/` directory
+
+```bash
+cd grove-web
+npm run build  # Build frontend after changes
+```
+
 ### UI Component Pattern
 
 All UI components follow the same pattern:
@@ -164,6 +177,20 @@ Activate the hook with:
 ```bash
 git config core.hooksPath .githooks
 ```
+
+### Git Commit Guidelines
+
+**IMPORTANT: Commit Discipline**
+
+- **One commit per bug fix or feature** — Do not create commits for every small change. Group related changes into a single, cohesive commit.
+- **Each commit should be self-contained** — A commit should represent a complete bug fix or feature that makes sense on its own.
+- **Examples:**
+  - ✅ Good: One commit for "fix(web): optimize panel switching and animations" that includes all related animation fixes
+  - ✅ Good: One commit for "feat(editor): add file system operations" that includes context menu, dialogs, and API handlers
+  - ❌ Bad: Multiple commits for "fix terminal layout", "fix terminal fullscreen", "fix terminal animation" when they're all part of the same issue
+  - ❌ Bad: Separate commits for "add context menu UI" and "add context menu handlers" when they're part of the same feature
+
+If you find yourself creating multiple commits in quick succession for the same logical change, you should combine them using `git rebase -i` or `git commit --amend`.
 
 ### Git Operations
 
