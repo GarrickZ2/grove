@@ -396,17 +396,39 @@ export function DiffFileView({
   }, [comments]);
 
   const commentsByKey = useMemo(() => {
+    // Calculate max line numbers for ADD and DELETE sides
+    let maxAddLine = 0;
+    let maxDeleteLine = 0;
+    for (const hunk of file.hunks) {
+      for (const line of hunk.lines) {
+        if (line.new_line != null && line.new_line > maxAddLine) {
+          maxAddLine = line.new_line;
+        }
+        if (line.old_line != null && line.old_line > maxDeleteLine) {
+          maxDeleteLine = line.old_line;
+        }
+      }
+    }
+
     const map = new Map<string, ReviewCommentEntry[]>();
     for (const c of inlineComments) {
       if (c.side && c.end_line !== undefined) {
-        const key = `${c.side}:${c.end_line}`;
+        // Clamp line number to file length
+        let lineNum = c.end_line;
+        if (c.side === 'ADD' && maxAddLine > 0 && lineNum > maxAddLine) {
+          lineNum = maxAddLine;
+        } else if (c.side === 'DELETE' && maxDeleteLine > 0 && lineNum > maxDeleteLine) {
+          lineNum = maxDeleteLine;
+        }
+
+        const key = `${c.side}:${lineNum}`;
         const existing = map.get(key) || [];
         existing.push(c);
         map.set(key, existing);
       }
     }
     return map;
-  }, [inlineComments]);
+  }, [inlineComments, file.hunks]);
 
   const highlightedLines = useMemo(() => {
     const set = new Set<string>();
