@@ -112,7 +112,7 @@ export function TaskTerminal({
       }}
     >
       {/* Main terminal content - hidden when collapsed but still mounted */}
-      <div className={collapsed ? 'hidden' : 'flex-1 flex flex-col'}>
+      <div className={collapsed ? 'hidden' : 'flex-1 flex flex-col min-h-0 overflow-hidden'}>
         {/* Not started: show start session prompt */}
         {!showTerminal ? (
           <>
@@ -161,7 +161,7 @@ export function TaskTerminal({
             </div>
 
             {/* Terminal Content - Real xterm.js with tmux session */}
-            <div className="flex-1 min-h-0">
+            <div className="flex-1 min-h-0 overflow-hidden">
               <XTerminal
                 projectId={projectId}
                 taskId={task.id}

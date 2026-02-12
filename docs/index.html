@@ -664,12 +664,12 @@
             <!-- GIF Showcase -->
             <div class="max-w-3xl mx-auto mb-12 fade-in">
                 <div class="img-glow">
-                    <img id="step-gif" src="images/create-task.gif" alt="Grove workflow demo">
+                    <img id="step-gif" src="images/create.gif" alt="Grove workflow demo">
                 </div>
             </div>
 
-            <!-- 3-Step Tabs -->
-            <div class="grid md:grid-cols-3 gap-8 max-w-4xl mx-auto">
+            <!-- 4-Step Tabs -->
+            <div class="grid md:grid-cols-4 gap-6 max-w-5xl mx-auto">
                 <div class="step-tab active text-center fade-in" onclick="switchStep('create')" data-step="create">
                     <div class="step-circle w-14 h-14 rounded-full bg-grove-green/10 border border-grove-green/20 flex items-center justify-center mx-auto mb-5 transition-all duration-300">
                         <span class="text-grove-green font-bold text-lg">1</span>
@@ -688,9 +688,18 @@
                         Press <kbd>Enter</kbd> to jump into the task. Each session is fully isolated &mdash; fire up AI agents, edit code, run tests, all in parallel.
                     </p>
                 </div>
-                <div class="step-tab text-center fade-in" onclick="switchStep('complete')" data-step="complete" style="transition-delay: 0.2s">
+                <div class="step-tab text-center fade-in" onclick="switchStep('review')" data-step="review" style="transition-delay: 0.2s">
+                    <div class="step-circle w-14 h-14 rounded-full bg-grove-purple/10 border border-grove-purple/20 flex items-center justify-center mx-auto mb-5 transition-all duration-300">
+                        <span class="text-grove-purple font-bold text-lg">3</span>
+                    </div>
+                    <h3 class="font-semibold text-lg mb-2">Review</h3>
+                    <p class="text-grove-muted text-sm leading-relaxed">
+                        Open the Web UI to review diffs, leave comments, and discuss changes with AI agents. Search code with <kbd>Ctrl+F</kbd> and filter comments.
+                    </p>
+                </div>
+                <div class="step-tab text-center fade-in" onclick="switchStep('complete')" data-step="complete" style="transition-delay: 0.3s">
                     <div class="step-circle w-14 h-14 rounded-full bg-grove-green/10 border border-grove-green/20 flex items-center justify-center mx-auto mb-5 transition-all duration-300">
-                        <span class="text-grove-green font-bold text-lg">3</span>
+                        <span class="text-grove-green font-bold text-lg">4</span>
                     </div>
                     <h3 class="font-semibold text-lg mb-2">Complete</h3>
                     <p class="text-grove-muted text-sm leading-relaxed">
@@ -1593,12 +1602,12 @@
                 setTimeout(function() { toast.remove(); }, 300);
             }, 2000);
         }
-
-        // Step GIF switching (Create / Work / Complete)
+        // Step GIF switching (Create / Work / Review / Complete)
         const stepGifs = {
-            create: 'images/create-task.gif',
-            work: 'images/work-task.gif',
-            complete: 'images/complete-task.gif'
+            create: 'images/create.gif',
+            work: 'images/work.gif',
+            review: 'images/review.gif',
+            complete: 'images/complete.gif'
         };
         function switchStep(step) {
             const img = document.getElementById('step-gif');

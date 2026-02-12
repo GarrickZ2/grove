@@ -145,18 +145,31 @@ export function XTerminal({
       }
     });
 
-    // Handle resize
+    // Handle resize with debounce to avoid excessive fits during animations
+    let resizeTimer: ReturnType<typeof setTimeout> | null = null;
     const resizeObserver = new ResizeObserver(() => {
-      fitAddon.fit();
-      // Send resize message to backend
-      if (wsRef.current?.readyState === WebSocket.OPEN) {
-        const resizeMsg = JSON.stringify({
-          type: "resize",
-          cols: terminal.cols,
-          rows: terminal.rows,
-        });
-        wsRef.current.send(resizeMsg);
-      }
+      if (resizeTimer) clearTimeout(resizeTimer);
+      resizeTimer = setTimeout(() => {
+        if (!containerRef.current) return;
+
+        // Force layout flush before fit to ensure container has correct dimensions
+        void containerRef.current.offsetHeight;
+
+        fitAddon.fit();
+
+        // Scroll to bottom after fit to ensure latest content is visible
+        terminal.scrollToBottom();
+
+        // Send resize message to backend
+        if (wsRef.current?.readyState === WebSocket.OPEN) {
+          const resizeMsg = JSON.stringify({
+            type: "resize",
+            cols: terminal.cols,
+            rows: terminal.rows,
+          });
+          wsRef.current.send(resizeMsg);
+        }
+      }, 250);
     });
     resizeObserver.observe(containerRef.current);
 
