@@ -145,13 +145,50 @@ fn config_path() -> PathBuf {
 /// 加载配置（不存在则返回默认值）
 pub fn load_config() -> Config {
     let path = config_path();
-    if !path.exists() {
-        return Config::default();
+    let mut config = if !path.exists() {
+        Config::default()
+    } else {
+        fs::read_to_string(&path)
+            .ok()
+            .and_then(|s| toml::from_str(&s).ok())
+            .unwrap_or_default()
+    };
+
+    // 智能选择 multiplexer：根据实际安装情况自动调整
+    let tmux_installed = crate::check::check_tmux_available();
+    let zellij_installed = crate::check::check_zellij_available();
+
+    // 检查当前配置的 multiplexer 是否已安装
+    let current_installed = match config.multiplexer {
+        Multiplexer::Tmux => tmux_installed,
+        Multiplexer::Zellij => zellij_installed,
+    };
+
+    // 如果当前选择的未安装，自动切换到已安装的
+    if !current_installed {
+        config.multiplexer = match config.multiplexer {
+            Multiplexer::Tmux => {
+                // tmux 未安装，尝试切换到 zellij
+                if zellij_installed {
+                    Multiplexer::Zellij
+                } else {
+                    // zellij 也没装，保持 tmux（启动不失败）
+                    Multiplexer::Tmux
+                }
+            }
+            Multiplexer::Zellij => {
+                // zellij 未安装，尝试切换到 tmux
+                if tmux_installed {
+                    Multiplexer::Tmux
+                } else {
+                    // tmux 也没装，保持 zellij（启动不失败）
+                    Multiplexer::Zellij
+                }
+            }
+        };
     }
-    fs::read_to_string(&path)
-        .ok()
-        .and_then(|s| toml::from_str(&s).ok())
-        .unwrap_or_default()
+
+    config
 }
 
 /// 保存配置

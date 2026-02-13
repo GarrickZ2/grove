@@ -418,15 +418,36 @@ td.diff-code.diff-line-delete {
   background: color-mix(in srgb, var(--color-error) 8%, var(--color-bg));
 }
 
-/* Multiline comment highlight */
-.diff-line-highlighted .diff-gutter,
-td.diff-gutter.diff-line-highlighted {
-  background: color-mix(in srgb, var(--color-info) 8%, var(--color-bg-secondary)) !important;
+/* Multiline comment highlight - only highlight code text, not entire line background */
+/* Unified view: distinguish DELETE (left gutter) vs ADD (right gutter) based on data-side */
+tr.diff-line-highlighted[data-side="DELETE"] .diff-gutter:first-child,
+tr.diff-line-highlighted[data-side="ADD"] .diff-gutter:nth-child(2) {
+  border-left: 3px solid var(--color-info);
 }
 
-.diff-line-highlighted .diff-code,
+/* Split view: direct class on td element */
+td.diff-gutter.diff-line-highlighted {
+  border-left: 3px solid var(--color-info);
+}
+
+/* Unified view: code highlight applies to the code cell */
+tr.diff-line-highlighted .diff-code,
+/* Split view: code highlight on td element */
 td.diff-code.diff-line-highlighted {
-  background: color-mix(in srgb, var(--color-info) 5%, var(--color-bg)) !important;
+  position: relative;
+}
+
+tr.diff-line-highlighted .diff-code::before,
+td.diff-code.diff-line-highlighted::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: color-mix(in srgb, var(--color-info) 12%, transparent);
+  pointer-events: none;
+  border-radius: 3px;
 }
 
 /* Split view specific */

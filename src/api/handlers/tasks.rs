@@ -322,7 +322,7 @@ pub async fn list_tasks(
 
     let filter = query.filter.as_deref().unwrap_or("active");
 
-    let tasks = if filter == "archived" {
+    let mut tasks: Vec<TaskResponse> = if filter == "archived" {
         // Load archived tasks
         let archived = loader::load_archived_worktrees(&project.path);
         archived.iter().map(worktree_to_response).collect()
@@ -335,6 +335,9 @@ pub async fn list_tasks(
             .map(worktree_to_response)
             .collect()
     };
+
+    // Sort by updated_at descending (newest first)
+    tasks.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
 
     Ok(Json(TaskListResponse { tasks }))
 }

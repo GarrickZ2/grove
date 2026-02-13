@@ -310,13 +310,35 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
   // Track system dark mode for auto theme
   const [systemIsDark, setSystemIsDark] = useState<boolean>(getSystemIsDark);
 
-  // Load saved theme on mount
+  // Load theme from backend config on mount
   useEffect(() => {
-    const savedTheme = localStorage.getItem("grove-theme");
-    if (savedTheme) {
-      const found = themes.find((t) => t.id === savedTheme);
-      if (found) setSelectedThemeId(savedTheme);
-    }
+    const loadTheme = async () => {
+      try {
+        const response = await fetch("/api/v1/config");
+        if (response.ok) {
+          const config = await response.json();
+          if (config.theme?.theme) {
+            const themeId = config.theme.theme.toLowerCase();
+            const found = themes.find((t) => t.id === themeId);
+            if (found) {
+              setSelectedThemeId(themeId);
+              return;
+            }
+          }
+        }
+      } catch (error) {
+        console.error("Failed to load theme from config:", error);
+      }
+
+      // Fallback to localStorage if API fails
+      const savedTheme = localStorage.getItem("grove-theme");
+      if (savedTheme) {
+        const found = themes.find((t) => t.id === savedTheme);
+        if (found) setSelectedThemeId(savedTheme);
+      }
+    };
+
+    loadTheme();
   }, []);
 
   // Listen for system theme changes

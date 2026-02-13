@@ -52,17 +52,34 @@ const DEPENDENCIES: &[DependencyDef] = &[
         check_args: &["--version"],
         install_command: "brew install fzf",
     },
-    DependencyDef {
-        name: "npx",
-        check_cmd: "npx",
-        check_args: &["--version"],
-        install_command: "brew install node",
-    },
 ];
 
 fn check_dependency(dep: &DependencyDef) -> DependencyStatus {
-    let result = Command::new(dep.check_cmd).args(dep.check_args).output();
+    // 对 tmux 和 zellij 使用 check.rs 中的函数（支持测试环境变量）
+    let installed = match dep.name {
+        "tmux" => crate::check::check_tmux_available(),
+        "zellij" => crate::check::check_zellij_available(),
+        _ => {
+            // 其他依赖直接执行命令检查
+            Command::new(dep.check_cmd)
+                .args(dep.check_args)
+                .output()
+                .map(|o| o.status.success())
+                .unwrap_or(false)
+        }
+    };
 
+    if !installed {
+        return DependencyStatus {
+            name: dep.name.to_string(),
+            installed: false,
+            version: None,
+            install_command: dep.install_command.to_string(),
+        };
+    }
+
+    // 已安装，获取版本信息
+    let result = Command::new(dep.check_cmd).args(dep.check_args).output();
     match result {
         Ok(output) if output.status.success() => {
             let version_str = String::from_utf8_lossy(&output.stdout);
@@ -76,7 +93,7 @@ fn check_dependency(dep: &DependencyDef) -> DependencyStatus {
         }
         _ => DependencyStatus {
             name: dep.name.to_string(),
-            installed: false,
+            installed: true,
             version: None,
             install_command: dep.install_command.to_string(),
         },
@@ -122,10 +139,6 @@ fn parse_version(name: &str, output: &str) -> String {
                 .next()
                 .unwrap_or(output)
                 .to_string()
-        }
-        "npx" => {
-            // "10.2.4" -> "10.2.4"
-            output.trim().to_string()
         }
         _ => output.to_string(),
     }

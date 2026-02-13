@@ -2,9 +2,10 @@
 
 use axum::{extract::Path, http::StatusCode, Json};
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 
 use crate::git;
-use crate::storage::workspace;
+use crate::storage::{tasks, workspace};
 
 // ============================================================================
 // Request/Response DTOs
@@ -212,6 +213,24 @@ pub async fn get_branches(
     let local_branches =
         git::list_branches(&project_path).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
+    // Get Grove-managed branches from tasks
+    let project_key = workspace::project_hash(&project_path);
+    let mut grove_branches = HashSet::new();
+
+    // Collect branches from active tasks
+    if let Ok(active_tasks) = tasks::load_tasks(&project_key) {
+        for task in active_tasks {
+            grove_branches.insert(task.branch);
+        }
+    }
+
+    // Collect branches from archived tasks
+    if let Ok(archived_tasks) = tasks::load_archived_tasks(&project_key) {
+        for task in archived_tasks {
+            grove_branches.insert(task.branch);
+        }
+    }
+
     // Get remote branches
     let remote_output = git_cmd(
         &project_path,
@@ -228,8 +247,12 @@ pub async fn get_branches(
 
     let mut branches: Vec<BranchDetailInfo> = Vec::new();
 
-    // Add local branches
+    // Add local branches (filter out Grove-managed branches)
     for name in &local_branches {
+        if grove_branches.contains(name) {
+            continue;
+        }
+
         let is_current = name == &current_branch;
         let last_commit = git_cmd(&project_path, &["rev-parse", "--short", name]).ok();
         let (ahead, behind) = get_ahead_behind(&project_path, name);

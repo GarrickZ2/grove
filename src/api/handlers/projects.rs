@@ -3,6 +3,7 @@
 use axum::{extract::Path, http::StatusCode, Json};
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 
 use crate::git;
 use crate::model::loader;
@@ -275,6 +276,9 @@ pub async fn get_project(Path(id): Path<String>) -> Result<Json<ProjectResponse>
         all_tasks.push(worktree_to_response(wt));
     }
 
+    // Sort by updated_at descending (newest first)
+    all_tasks.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+
     // Get current branch
     let current_branch = git::current_branch(&project.path).unwrap_or_else(|_| "main".to_string());
 
@@ -413,8 +417,27 @@ pub async fn get_branches(Path(id): Path<String>) -> Result<Json<BranchesRespons
     let branch_names =
         git::list_branches(&project.path).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
+    // Get Grove-managed branches from tasks
+    let project_key = workspace::project_hash(&project.path);
+    let mut grove_branches = HashSet::new();
+
+    // Collect branches from active tasks
+    if let Ok(active_tasks) = tasks::load_tasks(&project_key) {
+        for task in active_tasks {
+            grove_branches.insert(task.branch);
+        }
+    }
+
+    // Collect branches from archived tasks
+    if let Ok(archived_tasks) = tasks::load_archived_tasks(&project_key) {
+        for task in archived_tasks {
+            grove_branches.insert(task.branch);
+        }
+    }
+
     let branches: Vec<BranchInfo> = branch_names
         .into_iter()
+        .filter(|name| !grove_branches.contains(name))
         .map(|name| {
             let is_current = name == current;
             BranchInfo { name, is_current }

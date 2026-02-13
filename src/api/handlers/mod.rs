@@ -2,6 +2,7 @@
 
 pub mod config;
 pub mod env;
+pub mod folder;
 pub mod git;
 pub mod hooks;
 pub mod projects;

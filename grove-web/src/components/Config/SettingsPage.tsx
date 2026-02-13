@@ -183,7 +183,6 @@ const dependencyInfo: Record<string, { name: string; description: string; docsUr
   tmux: { name: "tmux", description: "Terminal multiplexer", docsUrl: "https://github.com/tmux/tmux/wiki" },
   zellij: { name: "Zellij", description: "Terminal multiplexer", docsUrl: "https://zellij.dev/documentation/" },
   fzf: { name: "fzf", description: "Fuzzy finder for file picker", docsUrl: "https://github.com/junegunn/fzf" },
-  npx: { name: "npx", description: "Node package runner", docsUrl: "https://docs.npmjs.com/cli/v10/commands/npx" },
 };
 
 type DependencyStatusType = "checking" | "installed" | "not_installed" | "error";
@@ -336,7 +335,7 @@ export function SettingsPage({ config }: SettingsPageProps) {
         newStates[key] = { ...prev[key], status: "checking" };
       }
       // Also add expected deps if not present
-      for (const name of ["git", "tmux", "zellij", "fzf", "npx"]) {
+      for (const name of ["git", "tmux", "zellij", "fzf"]) {
         if (!newStates[name]) {
           newStates[name] = { status: "checking", installCommand: "" };
         }
@@ -646,7 +645,7 @@ export function SettingsPage({ config }: SettingsPageProps) {
 
             {/* Dependency row renderer */}
             {(() => {
-              const allDeps = depKeys.length > 0 ? depKeys : ["git", "tmux", "zellij", "fzf", "npx"];
+              const allDeps = depKeys.length > 0 ? depKeys : ["git", "tmux", "zellij", "fzf"];
               const baseDeps = allDeps.filter((d) => d !== "tmux" && d !== "zellij");
               const muxDeps = allDeps.filter((d) => d === "tmux" || d === "zellij");
 
@@ -655,7 +654,8 @@ export function SettingsPage({ config }: SettingsPageProps) {
                 const info = dependencyInfo[depName] || { name: depName, description: "" };
                 const isInstalled = state.status === "installed";
                 const isMux = depName === "tmux" || depName === "zellij";
-                const isMuxActive = isMux && multiplexer === depName;
+                // 只有在已安装时才显示为 Active
+                const isMuxActive = isMux && multiplexer === depName && isInstalled;
                 const canSwitchMux = isMux && isInstalled && !isMuxActive;
 
                 return (

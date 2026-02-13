@@ -45,6 +45,8 @@ pub fn create_api_router() -> Router {
         // Environment API
         .route("/env/check", get(handlers::env::check_all))
         .route("/env/check/{name}", get(handlers::env::check_one))
+        // Folder selection API
+        .route("/browse-folder", get(handlers::folder::browse_folder))
         // Terminal WebSocket
         .route("/terminal", get(handlers::terminal::ws_handler))
         // Task Terminal WebSocket (tmux session)

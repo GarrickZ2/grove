@@ -1,4 +1,4 @@
-import { useState, useRef } from "react";
+import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { X, FolderGit2, Plus, FolderOpen } from "lucide-react";
 import { Button } from "../ui";
@@ -14,7 +14,6 @@ interface AddProjectDialogProps {
 export function AddProjectDialog({ isOpen, onClose, onAdd, isLoading, externalError }: AddProjectDialogProps) {
   const [path, setPath] = useState("");
   const [error, setError] = useState("");
-  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleSubmit = async () => {
     if (!path.trim()) {
@@ -38,19 +37,19 @@ export function AddProjectDialog({ isOpen, onClose, onAdd, isLoading, externalEr
     onClose();
   };
 
-  const handleBrowse = () => {
-    fileInputRef.current?.click();
-  };
-
-  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = e.target.files;
-    if (files && files.length > 0) {
-      // In web, we can only get the directory name, not full path
-      // This is a limitation of browser security
-      // For a real desktop app, you'd use Electron/Tauri file dialog
-      const dirName = files[0].webkitRelativePath.split("/")[0];
-      setPath(`~/${dirName}`);
-      setError("");
+  const handleBrowse = async () => {
+    try {
+      const response = await fetch("/api/v1/browse-folder");
+      if (response.ok) {
+        const data = await response.json();
+        if (data.path) {
+          setPath(data.path);
+          setError("");
+        }
+      }
+    } catch (error) {
+      console.error("Failed to browse folder:", error);
+      setError("Failed to open folder picker");
     }
   };
 
@@ -94,16 +93,6 @@ export function AddProjectDialog({ isOpen, onClose, onAdd, isLoading, externalEr
 
               {/* Content */}
               <div className="px-5 py-4 space-y-4">
-                {/* Hidden file input for directory selection */}
-                <input
-                  ref={fileInputRef}
-                  type="file"
-                  /* @ts-expect-error webkitdirectory is not in types */
-                  webkitdirectory=""
-                  className="hidden"
-                  onChange={handleFileSelect}
-                />
-
                 {/* Path input with browse button */}
                 <div>
                   <label className="block text-sm font-medium text-[var(--color-text-muted)] mb-2">

@@ -15,21 +15,9 @@ pub fn check_environment() -> CheckResult {
         errors.push("git is not installed. Please install git first.".to_string());
     }
 
-    // 检查 npx
-    if !check_npx() {
-        errors.push(
-            "npx is not installed. Please install Node.js (which includes npx) first.".to_string(),
-        );
-    }
-
-    // 检查 tmux 和 zellij — 至少存在一个
+    // 检查 tmux 和 zellij — 不强制要求，只检查版本
+    // 用户可以在 Settings 页面查看状态并安装
     let tmux_ok = check_tmux_available();
-    let zellij_ok = check_zellij_available();
-
-    if !tmux_ok && !zellij_ok {
-        errors
-            .push("Neither tmux nor zellij is installed. Please install at least one.".to_string());
-    }
 
     // 如果 tmux 可用但版本太旧，给出警告（非致命）
     if tmux_ok {
@@ -45,14 +33,6 @@ pub fn check_environment() -> CheckResult {
         ok: errors.is_empty(),
         errors,
     }
-}
-
-fn check_npx() -> bool {
-    Command::new("npx")
-        .arg("--version")
-        .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false)
 }
 
 fn check_git() -> bool {
@@ -74,6 +54,12 @@ pub fn check_fzf() -> bool {
 
 /// Check if tmux is installed (any version)
 pub fn check_tmux_available() -> bool {
+    // 测试模式：通过环境变量模拟 tmux 不存在
+    // 使用方法: GROVE_TEST_NO_TMUX=1 cargo run
+    if std::env::var("GROVE_TEST_NO_TMUX").is_ok() {
+        return false;
+    }
+
     Command::new("tmux")
         .arg("-V")
         .output()
@@ -83,6 +69,12 @@ pub fn check_tmux_available() -> bool {
 
 /// Check if zellij is installed
 pub fn check_zellij_available() -> bool {
+    // 测试模式：通过环境变量模拟 zellij 不存在
+    // 使用方法: GROVE_TEST_NO_ZELLIJ=1 cargo run
+    if std::env::var("GROVE_TEST_NO_ZELLIJ").is_ok() {
+        return false;
+    }
+
     Command::new("zellij")
         .arg("--version")
         .output()
