@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { FileText, FolderPlus, Trash2, Copy } from "lucide-react";
 
@@ -34,6 +34,28 @@ export function FileContextMenu({
   onCopyPath,
 }: FileContextMenuProps) {
   const menuRef = useRef<HTMLDivElement>(null);
+  const [adjustedPosition, setAdjustedPosition] = useState(position);
+
+  // Adjust position to prevent overflow
+  useEffect(() => {
+    if (!isOpen || !menuRef.current) return;
+
+    const menu = menuRef.current;
+    const rect = menu.getBoundingClientRect();
+    const newPos = { ...position };
+
+    // Adjust horizontal position
+    if (position.x + rect.width > window.innerWidth) {
+      newPos.x = Math.max(10, window.innerWidth - rect.width - 10);
+    }
+
+    // Adjust vertical position
+    if (position.y + rect.height > window.innerHeight) {
+      newPos.y = Math.max(10, window.innerHeight - rect.height - 10);
+    }
+
+    setAdjustedPosition(newPos);
+  }, [isOpen, position]);
 
   // Close menu on escape or click outside
   useEffect(() => {
@@ -82,8 +104,8 @@ export function FileContextMenu({
           transition={{ duration: 0.15 }}
           className="fixed z-[100] min-w-[200px] bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-lg shadow-xl overflow-hidden"
           style={{
-            left: `${position.x}px`,
-            top: `${position.y}px`,
+            left: `${adjustedPosition.x}px`,
+            top: `${adjustedPosition.y}px`,
           }}
         >
           <div className="py-1">

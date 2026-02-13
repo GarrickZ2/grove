@@ -78,10 +78,13 @@ function shouldSuppress(_e: KeyboardEvent): "all" | "alpha" | false {
   const active = document.activeElement;
   if (active?.closest(".xterm")) return "all";
 
-  // 2. Dialog open — suppress all
+  // 2. Monaco/CodeMirror editor focused — suppress all
+  if (active?.closest(".monaco-editor") || active?.closest(".cm-editor") || active?.closest(".CodeMirror")) return "all";
+
+  // 3. Dialog open — suppress all
   if (document.querySelector("[data-hotkeys-dialog]")) return "all";
 
-  // 3. Input/textarea focused — suppress alpha keys, allow arrows/escape/alt combos
+  // 4. Input/textarea focused — suppress alpha keys, allow arrows/escape/alt combos
   if (
     active instanceof HTMLInputElement ||
     active instanceof HTMLTextAreaElement ||

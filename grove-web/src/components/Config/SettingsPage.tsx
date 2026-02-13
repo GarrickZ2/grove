@@ -473,6 +473,19 @@ export function SettingsPage({ config }: SettingsPageProps) {
     2
   );
 
+  const codexConfig = `[mcp_servers.grove]
+command = "${config.mcp.command}"
+args = ${JSON.stringify(config.mcp.args)}
+env_vars = [
+  "GROVE_TASK_ID",
+  "GROVE_TASK_NAME",
+  "GROVE_BRANCH",
+  "GROVE_TARGET",
+  "GROVE_WORKTREE",
+  "GROVE_PROJECT_NAME",
+  "GROVE_PROJECT"
+]`;
+
   return (
     <motion.div
       initial={{ opacity: 0, y: 20 }}
@@ -1179,7 +1192,31 @@ export function SettingsPage({ config }: SettingsPageProps) {
                 {claudeCodeConfig}
               </pre>
               <p className="text-xs text-[var(--color-text-muted)] mt-2">
-                Add to your <code className="text-[var(--color-highlight)]">~/.claude/settings.json</code> file.
+                Add to your <code className="text-[var(--color-highlight)]">~/.claude.json</code> file.
+              </p>
+            </div>
+
+            {/* CodeX Config */}
+            <div>
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-sm font-medium text-[var(--color-text)]">CodeX Configuration</span>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => handleCopy("codex", codexConfig)}
+                >
+                  {copiedField === "codex" ? (
+                    <Check className="w-4 h-4 text-[var(--color-success)]" />
+                  ) : (
+                    <Copy className="w-4 h-4" />
+                  )}
+                </Button>
+              </div>
+              <pre className="p-3 bg-[var(--color-bg-secondary)] rounded-lg border border-[var(--color-border)] text-xs text-[var(--color-text-muted)] overflow-x-auto">
+                {codexConfig}
+              </pre>
+              <p className="text-xs text-[var(--color-text-muted)] mt-2">
+                Add to your <code className="text-[var(--color-highlight)]">~/.codex/config.toml</code> file.
               </p>
             </div>
 

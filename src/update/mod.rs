@@ -26,7 +26,7 @@ impl InstallMethod {
             InstallMethod::CargoInstall => "cargo install grove-rs",
             InstallMethod::Homebrew => "brew upgrade grove",
             InstallMethod::GitHubRelease => {
-                "curl -sSL https://raw.githubusercontent.com/GarrickZ2/grove/main/install.sh | sh"
+                "curl -sSL https://raw.githubusercontent.com/GarrickZ2/grove/master/install.sh | sh"
             }
             InstallMethod::Unknown => "https://github.com/GarrickZ2/grove/releases",
         }

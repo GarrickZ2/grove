@@ -391,8 +391,33 @@ pub fn build_commit_message(title: &str, notes: Option<&str>) -> String {
 /// 获取 git 跟踪的文件列表
 /// 执行: git ls-files
 pub fn list_files(repo_path: &str) -> Result<Vec<String>> {
-    let output = git_cmd(repo_path, &["ls-files"])?;
-    Ok(output.lines().map(|s| s.to_string()).collect())
+    // List tracked files
+    let tracked = git_cmd(repo_path, &["ls-files"])?;
+
+    // List untracked files (excluding ignored files)
+    let untracked =
+        git_cmd(repo_path, &["ls-files", "--others", "--exclude-standard"]).unwrap_or_default();
+
+    // Combine and deduplicate
+    let mut all_files: Vec<String> = tracked
+        .lines()
+        .chain(untracked.lines())
+        .map(|s| s.to_string())
+        .collect();
+
+    // Remove duplicates (shouldn't happen, but just in case)
+    all_files.sort();
+    all_files.dedup();
+
+    // Filter out files that don't actually exist in the filesystem
+    // (e.g., files that were git-added but then deleted without git rm)
+    let repo_path_base = Path::new(repo_path);
+    all_files.retain(|file| {
+        let full_path = repo_path_base.join(file);
+        full_path.exists()
+    });
+
+    Ok(all_files)
 }
 
 /// 读取指定 git ref 上的文件内容

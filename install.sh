@@ -1,6 +1,6 @@
 #!/bin/sh
 # Grove installer script
-# Usage: curl -sSL https://raw.githubusercontent.com/GarrickZ2/grove/main/install.sh | sh
+# Usage: curl -sSL https://raw.githubusercontent.com/GarrickZ2/grove/master/install.sh | sh
 
 set -e
 
