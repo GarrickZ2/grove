@@ -53,6 +53,8 @@ pub struct Config {
     pub web: WebConfig,
     #[serde(default)]
     pub multiplexer: Multiplexer,
+    #[serde(default)]
+    pub auto_link: AutoLinkConfig,
 }
 
 /// MCP Server 配置（预留扩展）
@@ -127,6 +129,55 @@ pub struct UpdateConfig {
     pub last_check: Option<String>,
     /// Cached latest version
     pub latest_version: Option<String>,
+}
+
+/// AutoLink 配置：自动创建软链接
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AutoLinkConfig {
+    /// 是否启用 AutoLink
+    #[serde(default = "default_auto_link_enabled")]
+    pub enabled: bool,
+
+    /// Glob 模式列表（支持 **, *, ? 等通配符）
+    #[serde(default = "default_auto_link_patterns")]
+    pub patterns: Vec<String>,
+
+    /// 是否检查 git ignore 状态（推荐开启）
+    #[serde(default = "default_check_gitignore")]
+    pub check_gitignore: bool,
+}
+
+fn default_auto_link_enabled() -> bool {
+    true // 默认启用
+}
+
+fn default_auto_link_patterns() -> Vec<String> {
+    vec![
+        "node_modules".to_string(),    // 根目录 node_modules
+        "**/node_modules".to_string(), // 所有子目录中的 node_modules
+        ".vscode".to_string(),
+        ".idea".to_string(),
+        ".fleet".to_string(),
+        "target".to_string(), // Rust 构建产物
+        "dist".to_string(),
+        "build".to_string(),
+        ".next".to_string(),
+        ".nuxt".to_string(),
+    ]
+}
+
+fn default_check_gitignore() -> bool {
+    true
+}
+
+impl Default for AutoLinkConfig {
+    fn default() -> Self {
+        Self {
+            enabled: default_auto_link_enabled(),
+            patterns: default_auto_link_patterns(),
+            check_gitignore: default_check_gitignore(),
+        }
+    }
 }
 
 impl Default for ThemeConfig {

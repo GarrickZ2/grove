@@ -22,11 +22,18 @@ export interface WebConfig {
   terminal_theme?: string;
 }
 
+export interface AutoLinkConfig {
+  enabled: boolean;
+  patterns: string[];
+  check_gitignore: boolean;
+}
+
 export interface Config {
   theme: ThemeConfig;
   layout: LayoutConfig;
   web: WebConfig;
   multiplexer: string;
+  auto_link: AutoLinkConfig;
 }
 
 export interface ConfigPatch {
@@ -34,6 +41,7 @@ export interface ConfigPatch {
   layout?: Partial<LayoutConfig>;
   web?: Partial<WebConfig>;
   multiplexer?: string;
+  auto_link?: Partial<AutoLinkConfig>;
 }
 
 // Application info for picker

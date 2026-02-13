@@ -19,6 +19,7 @@ pub struct ConfigResponse {
     pub layout: LayoutConfigDto,
     pub web: WebConfigDto,
     pub multiplexer: String,
+    pub auto_link: AutoLinkConfigDto,
 }
 
 #[derive(Debug, Serialize)]
@@ -43,6 +44,13 @@ pub struct WebConfigDto {
     pub terminal_theme: Option<String>,
 }
 
+#[derive(Debug, Serialize)]
+pub struct AutoLinkConfigDto {
+    pub enabled: bool,
+    pub patterns: Vec<String>,
+    pub check_gitignore: bool,
+}
+
 impl From<&Config> for ConfigResponse {
     fn from(config: &Config) -> Self {
         Self {
@@ -61,6 +69,11 @@ impl From<&Config> for ConfigResponse {
                 terminal_theme: config.web.terminal_theme.clone(),
             },
             multiplexer: config.multiplexer.to_string(),
+            auto_link: AutoLinkConfigDto {
+                enabled: config.auto_link.enabled,
+                patterns: config.auto_link.patterns.clone(),
+                check_gitignore: config.auto_link.check_gitignore,
+            },
         }
     }
 }
@@ -72,6 +85,7 @@ pub struct ConfigPatchRequest {
     pub layout: Option<LayoutConfigPatch>,
     pub web: Option<WebConfigPatch>,
     pub multiplexer: Option<String>,
+    pub auto_link: Option<AutoLinkConfigPatch>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -94,6 +108,13 @@ pub struct WebConfigPatch {
     pub ide: Option<String>,
     pub terminal: Option<String>,
     pub terminal_theme: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct AutoLinkConfigPatch {
+    pub enabled: Option<bool>,
+    pub patterns: Option<Vec<String>>,
+    pub check_gitignore: Option<bool>,
 }
 
 /// GET /api/v1/config
@@ -154,6 +175,19 @@ pub async fn patch_config(
         }
         if web_patch.terminal_theme.is_some() {
             config.web.terminal_theme = web_patch.terminal_theme;
+        }
+    }
+
+    // Apply auto_link patch
+    if let Some(auto_link_patch) = patch.auto_link {
+        if let Some(enabled) = auto_link_patch.enabled {
+            config.auto_link.enabled = enabled;
+        }
+        if let Some(patterns) = auto_link_patch.patterns {
+            config.auto_link.patterns = patterns;
+        }
+        if let Some(check_gitignore) = auto_link_patch.check_gitignore {
+            config.auto_link.check_gitignore = check_gitignore;
         }
     }
 

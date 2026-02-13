@@ -720,6 +720,187 @@ pub fn add_and_commit(worktree_path: &str, message: &str) -> Result<()> {
     git_cmd_unit(worktree_path, &["commit", "-m", message])
 }
 
+// ============================================================================
+// AutoLink: 软链接管理
+// ============================================================================
+
+/// 检查路径是否被 git ignore
+///
+/// # Arguments
+/// * `repo_path` - 仓库根目录
+/// * `file_path` - 相对于仓库根目录的路径
+///
+/// # Returns
+/// * `Ok(true)` - 路径被 gitignore
+/// * `Ok(false)` - 路径被 git 追踪
+/// * `Err(_)` - git 命令执行失败
+pub fn is_gitignored(repo_path: &str, file_path: &str) -> Result<bool> {
+    let output = Command::new("git")
+        .current_dir(repo_path)
+        .args(["check-ignore", "-q", file_path])
+        .output()
+        .map_err(|e| GroveError::git(format!("git check-ignore failed: {}", e)))?;
+
+    // 退出码：0 = ignored, 1 = not ignored, 128 = error
+    match output.status.code() {
+        Some(0) => Ok(true),
+        Some(1) => Ok(false),
+        _ => {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            Err(GroveError::git(format!(
+                "git check-ignore error: {}",
+                stderr
+            )))
+        }
+    }
+}
+
+/// 为 worktree 创建软链接
+///
+/// # Arguments
+/// * `worktree_path` - 新创建的 worktree 路径
+/// * `main_repo_path` - 主仓库路径
+/// * `patterns` - Glob 模式列表（支持 **, *, ? 等）
+/// * `check_gitignore` - 是否检查 git ignore 状态
+///
+/// # Returns
+/// 成功创建的软链接路径列表（相对于主仓库根目录）
+pub fn create_worktree_symlinks(
+    worktree_path: &Path,
+    main_repo_path: &Path,
+    patterns: &[String],
+    check_gitignore: bool,
+) -> Result<Vec<String>> {
+    use globset::{Glob, GlobSetBuilder};
+    use walkdir::WalkDir;
+
+    if patterns.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    // 1. 构建 globset 匹配器
+    let mut builder = GlobSetBuilder::new();
+    for pattern in patterns {
+        let glob = Glob::new(pattern).map_err(|e| {
+            GroveError::config(format!("Invalid glob pattern '{}': {}", pattern, e))
+        })?;
+        builder.add(glob);
+    }
+    let globset = builder
+        .build()
+        .map_err(|e| GroveError::config(format!("Failed to build globset: {}", e)))?;
+
+    let mut created_links = Vec::new();
+
+    // 2. 递归遍历主仓库，查找匹配的路径
+    for entry in WalkDir::new(main_repo_path)
+        .follow_links(false) // 不跟随软链接
+        .into_iter()
+        .filter_entry(|e| {
+            // 跳过 .git 目录
+            let name = e.file_name().to_str().unwrap_or("");
+            name != ".git"
+        })
+    {
+        let entry = match entry {
+            Ok(e) => e,
+            Err(e) => {
+                eprintln!("Warning: Failed to read entry: {}", e);
+                continue;
+            }
+        };
+
+        // 获取相对路径
+        let rel_path = match entry.path().strip_prefix(main_repo_path) {
+            Ok(p) => p,
+            Err(_) => continue,
+        };
+
+        // 跳过空路径（根目录）
+        if rel_path.as_os_str().is_empty() {
+            continue;
+        }
+
+        // 3. 检查是否匹配 glob 模式
+        if !globset.is_match(rel_path) {
+            continue;
+        }
+
+        // 4. 检查 gitignore 状态
+        if check_gitignore {
+            let rel_path_str = rel_path.to_str().unwrap_or("");
+            match is_gitignored(main_repo_path.to_str().unwrap(), rel_path_str) {
+                Ok(true) => {} // 被 ignore，继续处理
+                Ok(false) => {
+                    eprintln!("Warning: Skipping '{}' - tracked by git", rel_path_str);
+                    continue;
+                }
+                Err(e) => {
+                    eprintln!(
+                        "Warning: Failed to check gitignore for '{}': {}",
+                        rel_path_str, e
+                    );
+                    continue;
+                }
+            }
+        }
+
+        // 5. 准备软链接路径
+        let source = entry.path();
+        let target = worktree_path.join(rel_path);
+
+        // 跳过已存在的路径
+        if target.exists() || target.is_symlink() {
+            continue;
+        }
+
+        // 创建父目录
+        if let Some(parent) = target.parent() {
+            if !parent.exists() {
+                if let Err(e) = std::fs::create_dir_all(parent) {
+                    eprintln!(
+                        "Warning: Failed to create parent dir for '{}': {}",
+                        rel_path.display(),
+                        e
+                    );
+                    continue;
+                }
+            }
+        }
+
+        // 6. 创建软链接（跨平台）
+        let result = {
+            #[cfg(unix)]
+            {
+                std::os::unix::fs::symlink(source, &target)
+            }
+            #[cfg(windows)]
+            {
+                if source.is_dir() {
+                    std::os::windows::fs::symlink_dir(source, &target)
+                } else {
+                    std::os::windows::fs::symlink_file(source, &target)
+                }
+            }
+        };
+
+        match result {
+            Ok(_) => {
+                created_links.push(rel_path.to_string_lossy().to_string());
+            }
+            Err(e) => {
+                eprintln!(
+                    "Warning: Failed to create symlink for '{}': {}",
+                    rel_path.display(),
+                    e
+                );
+            }
+        }
+    }
+
+    Ok(created_links)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
