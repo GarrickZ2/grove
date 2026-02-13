@@ -12,6 +12,7 @@ mod git;
 mod hooks;
 mod model;
 mod notification_state;
+mod operations;
 mod session;
 mod storage;
 mod theme;

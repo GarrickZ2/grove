@@ -4,7 +4,6 @@ use std::path::Path;
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
-use chrono::Utc;
 use ratatui::widgets::ListState;
 
 use crate::async_ops_state::AsyncOpsState;
@@ -19,7 +18,7 @@ use crate::storage::{
     self, comments,
     config::Multiplexer,
     notes,
-    tasks::{self, Task, TaskStatus},
+    tasks::{self},
     workspace::project_hash,
 };
 use crate::theme::{detect_system_theme, get_theme_colors, Theme};
@@ -1280,102 +1279,48 @@ impl App {
             return;
         }
 
-        // 1. 获取项目信息
         let repo_root = self.project.project_path.clone();
-
         let project_key = project_hash(&repo_root);
+        let autolink_patterns = crate::storage::config::load_config().auto_link.patterns;
 
-        // 2. 生成标识符
-        let slug = tasks::to_slug(&name);
-        let branch = tasks::generate_branch_name(&name);
-
-        // 3. 计算路径（使用 project_key 作为目录名）
-        let worktree_path = match storage::ensure_worktree_dir(&project_key) {
-            Ok(dir) => dir.join(&slug),
+        // Phase 1: Core operation
+        let result = match crate::operations::tasks::create_task(
+            &repo_root,
+            &project_key,
+            name.clone(),
+            self.async_ops.target_branch.clone(),
+            &self.config.multiplexer,
+            &autolink_patterns,
+        ) {
+            Ok(r) => r,
             Err(e) => {
-                self.show_toast(format!("Failed to create dir: {}", e));
+                self.show_toast(format!("Failed to create task: {}", e));
                 self.close_new_task_dialog();
                 return;
             }
         };
 
-        // 4. 创建 git worktree
-        if let Err(e) = git::create_worktree(
-            &repo_root,
-            &branch,
-            &worktree_path,
-            &self.async_ops.target_branch,
-        ) {
-            self.show_toast(format!("Git error: {}", e));
-            self.close_new_task_dialog();
-            return;
+        // Log symlinks if any
+        if result.symlinks_created > 0 {
+            eprintln!("Info: Created {} symlink(s)", result.symlinks_created);
         }
 
-        // 4.5. 创建 AutoLink 软链接（始终启用，仅链接 gitignored 路径）
-        let full_config = crate::storage::config::load_config();
-        let main_repo = match git::get_main_repo_path(&repo_root) {
-            Ok(path) => path,
-            Err(_) => repo_root.clone(),
-        };
-
-        match git::create_worktree_symlinks(
-            &worktree_path,
-            Path::new(&main_repo),
-            &full_config.auto_link.patterns,
-            true, // 始终检查 gitignore
-        ) {
-            Ok(links) if !links.is_empty() => {
-                let msg = format!("Created {} symlink(s)", links.len());
-                eprintln!("Info: {}", msg);
-                // 可选：显示详细列表
-                for link in &links {
-                    eprintln!("  ✓ {}", link);
-                }
-            }
-            Ok(_) => {
-                eprintln!("Info: No symlinks created (no matching paths)");
-            }
-            Err(e) => {
-                // 软链接失败不应阻止 worktree 创建
-                eprintln!("Warning: Symlink creation failed: {}", e);
-            }
-        }
-
-        // 5. 保存 task 元数据
-        let now = Utc::now();
-        let sname = session::session_name(&project_key, &slug);
-        let task = Task {
-            id: slug.clone(),
-            name: name.clone(),
-            branch: branch.clone(),
-            target: self.async_ops.target_branch.clone(),
-            worktree_path: worktree_path.to_string_lossy().to_string(),
-            created_at: now,
-            updated_at: now,
-            status: TaskStatus::Active,
-            multiplexer: self.config.multiplexer.to_string(),
-            session_name: sname.clone(),
-        };
-
-        if let Err(e) = tasks::add_task(&project_key, task) {
-            // 只是警告，worktree 已创建
-            eprintln!("Warning: Failed to save task: {}", e);
-        }
-
-        // 6. 创建 session（使用 project_key 保持一致）
-        let session = sname;
-        let wt_dir = worktree_path.to_str().unwrap_or(".").to_string();
+        // Phase 2: TUI-specific session creation
+        let slug = result.task.id.clone();
+        let session = result.task.session_name.clone();
+        let wt_dir = result.worktree_path.clone();
+        let worktree_path = std::path::PathBuf::from(&wt_dir);
         let session_env = self.build_session_env(
-            &slug,
-            &name,
-            &branch,
-            &self.async_ops.target_branch.clone(),
-            &worktree_path.to_string_lossy(),
+            &result.task.id,
+            &result.task.name,
+            &result.task.branch,
+            &result.task.target,
+            &result.worktree_path,
         );
         if let Err(e) = session::create_session(
             &self.config.multiplexer,
             &session,
-            &wt_dir,
+            &result.worktree_path,
             Some(&session_env),
         ) {
             self.show_toast(format!("Session error: {}", e));
@@ -1795,50 +1740,42 @@ impl App {
             self.project.project_path.clone()
         };
 
-        // 1. 获取 worktree 路径并删除
-        if let Ok(Some(task)) = tasks::get_task(&project_key, task_id) {
-            if Path::new(&task.worktree_path).exists() {
-                let _ = git::remove_worktree(&project_path, &task.worktree_path);
-            }
-        }
-
-        // 2. 移动到 archived.toml（在 kill session 之前！）
-        if let Err(e) = tasks::archive_task(&project_key, task_id) {
-            self.show_toast(format!("Archive failed: {}", e));
-            return;
-        }
-
-        // 3. 删除 hook 通知
-        hooks::remove_task_hook(&project_key, task_id);
-        self.remove_notification(task_id);
-
-        // 4. 关闭 session（放在最后，避免 monitor 进程被提前终止）
-        let archived_task = tasks::get_archived_task(&project_key, task_id)
-            .ok()
-            .flatten();
-        let task_mux_str = archived_task
+        // Get task info before archive
+        let task_info = tasks::get_task(&project_key, task_id).ok().flatten();
+        let task_mux_str = task_info
             .as_ref()
             .map(|t| t.multiplexer.clone())
             .unwrap_or_default();
-        let task_session_name = archived_task
+        let task_session_name = task_info
             .as_ref()
             .map(|t| t.session_name.clone())
             .unwrap_or_default();
-        let task_mux = session::resolve_multiplexer(&task_mux_str, &self.config.multiplexer);
-        let session = session::resolve_session_name(&task_session_name, &project_key, task_id);
-        let _ = session::kill_session(&task_mux, &session);
-        // Clean up zellij layout file if applicable
-        if task_mux == Multiplexer::Zellij {
-            crate::zellij::layout::remove_session_layout(&session);
-        }
 
-        // 5. 刷新数据
-        if self.mode == AppMode::Monitor {
-            self.should_quit = true;
-        } else {
-            self.project.refresh();
+        // Call shared operation
+        match crate::operations::tasks::archive_task(
+            &project_path,
+            &project_key,
+            task_id,
+            &task_mux_str,
+            &task_session_name,
+            &self.config.multiplexer,
+        ) {
+            Ok(_) => {
+                // TUI-specific: remove notification
+                self.remove_notification(task_id);
+
+                // Refresh data
+                if self.mode == AppMode::Monitor {
+                    self.should_quit = true;
+                } else {
+                    self.project.refresh();
+                }
+                self.show_toast("Task archived");
+            }
+            Err(e) => {
+                self.show_toast(format!("Archive failed: {}", e));
+            }
         }
-        self.show_toast("Task archived");
     }
 
     // ========== Clean 功能 ==========
@@ -1986,8 +1923,8 @@ impl App {
 
     /// 执行 Reset
     fn do_reset(&mut self, task_id: &str) {
-        // 1. 获取 task 信息
-        let task = match tasks::get_task(&self.project.project_key, task_id) {
+        // Get task info before reset
+        let task_info = match tasks::get_task(&self.project.project_key, task_id) {
             Ok(Some(t)) => t,
             _ => {
                 self.show_toast("Task not found");
@@ -1995,71 +1932,46 @@ impl App {
             }
         };
 
-        // 2. Kill session (用旧 task 的 multiplexer)
-        let old_mux = session::resolve_multiplexer(&task.multiplexer, &self.config.multiplexer);
-        let session =
-            session::resolve_session_name(&task.session_name, &self.project.project_key, task_id);
-        let _ = session::kill_session(&old_mux, &session);
-        if old_mux == Multiplexer::Zellij {
-            crate::zellij::layout::remove_session_layout(&session);
-        }
-
-        // 3. Remove worktree (如果存在)
-        if Path::new(&task.worktree_path).exists() {
-            if let Err(e) = git::remove_worktree(&self.project.project_path, &task.worktree_path) {
-                self.show_toast(format!("Failed to remove worktree: {}", e));
+        // Call shared operation
+        let result = match crate::operations::tasks::reset_task(
+            &self.project.project_path,
+            &self.project.project_key,
+            task_id,
+            &task_info.multiplexer,
+            &task_info.session_name,
+            &self.config.multiplexer,
+        ) {
+            Ok(r) => r,
+            Err(e) => {
+                self.show_toast(format!("Reset failed: {}", e));
                 return;
             }
-        }
+        };
 
-        // 4. Delete branch
-        if let Err(e) = git::delete_branch(&self.project.project_path, &task.branch) {
-            self.show_toast(format!("Failed to delete branch: {}", e));
-            return;
-        }
-
-        // 4.5 Clear all task-related data (Notes, AI data, Stats)
-        let _ = notes::delete_notes(&self.project.project_key, task_id);
-        let _ = comments::delete_review_data(&self.project.project_key, task_id);
-        let _ = crate::watcher::clear_edit_history(&self.project.project_key, task_id);
-
-        // 5. 重新创建 branch 和 worktree (从 target)
-        let worktree_path = Path::new(&task.worktree_path);
-        if let Err(e) = git::create_worktree(
-            &self.project.project_path,
-            &task.branch,
-            worktree_path,
-            &task.target,
-        ) {
-            self.show_toast(format!("Failed to recreate worktree: {}", e));
-            return;
-        }
-
-        // 6. 更新 task metadata (updated_at)
-        if let Err(e) = tasks::touch_task(&self.project.project_key, task_id) {
-            // 只是警告，不中断流程
-            eprintln!("Warning: Failed to update task: {}", e);
-        }
-
-        // 7. 创建新 session（使用当前全局 multiplexer）
+        // TUI-specific: Create new session
+        let session = session::resolve_session_name(
+            &result.task.session_name,
+            &self.project.project_key,
+            task_id,
+        );
         let session_env = self.build_session_env(
-            &task.id,
-            &task.name,
-            &task.branch,
-            &task.target,
-            &task.worktree_path,
+            &result.task.id,
+            &result.task.name,
+            &result.task.branch,
+            &result.task.target,
+            &result.task.worktree_path,
         );
         if let Err(e) = session::create_session(
             &self.config.multiplexer,
             &session,
-            &task.worktree_path,
+            &result.task.worktree_path,
             Some(&session_env),
         ) {
             self.show_toast(format!("Failed to create session: {}", e));
             return;
         }
 
-        // 7.5 生成 zellij layout（始终生成以注入环境变量）
+        // Generate zellij layout if applicable
         let mut layout_path: Option<String> = None;
         if self.config.multiplexer == Multiplexer::Zellij {
             let kdl = crate::zellij::layout::generate_kdl(
@@ -2073,15 +1985,13 @@ impl App {
             }
         }
 
-        // 8. 刷新数据
+        // Refresh and auto-attach
         self.project.refresh();
         self.show_toast("Task reset");
-
-        // 9. 自动进入 session
         self.async_ops.pending_attach = Some(PendingAttach {
             session,
             multiplexer: self.config.multiplexer.clone(),
-            working_dir: task.worktree_path.clone(),
+            working_dir: result.task.worktree_path.clone(),
             env: session_env,
             layout_path,
         });
@@ -2218,65 +2128,49 @@ impl App {
 
     /// 恢复归档的任务
     fn recover_worktree(&mut self, task_id: &str) {
-        // 获取 task 信息
-        let task = match tasks::get_archived_task(&self.project.project_key, task_id) {
-            Ok(Some(t)) => t,
-            _ => {
-                self.show_toast("Task not found");
+        // Call shared operation
+        let result = match crate::operations::tasks::recover_task(
+            &self.project.project_path,
+            &self.project.project_key,
+            task_id,
+        ) {
+            Ok(r) => r,
+            Err(e) => {
+                self.show_toast(format!("Recover failed: {}", e));
                 return;
             }
         };
 
-        // 检查 branch 是否还存在
-        if !git::branch_exists(&self.project.project_path, &task.branch) {
-            self.show_toast("Branch deleted - cannot recover");
-            return;
-        }
-
-        // 重新创建 worktree
-        let worktree_path = Path::new(&task.worktree_path);
-        if let Err(e) = git::create_worktree_from_branch(
-            &self.project.project_path,
-            &task.branch,
-            worktree_path,
-        ) {
-            self.show_toast(format!("Git error: {}", e));
-            return;
-        }
-
-        // 移回 tasks.toml
-        if let Err(e) = tasks::recover_task(&self.project.project_key, task_id) {
-            self.show_toast(format!("Recover failed: {}", e));
-            return;
-        }
-
-        // 创建 session (使用当前全局 multiplexer)
-        let session =
-            session::resolve_session_name(&task.session_name, &self.project.project_key, task_id);
+        // TUI-specific: Create session
+        let session = session::resolve_session_name(
+            &result.task.session_name,
+            &self.project.project_key,
+            task_id,
+        );
         let session_env = self.build_session_env(
-            &task.id,
-            &task.name,
-            &task.branch,
-            &task.target,
-            &task.worktree_path,
+            &result.task.id,
+            &result.task.name,
+            &result.task.branch,
+            &result.task.target,
+            &result.task.worktree_path,
         );
         if let Err(e) = session::create_session(
             &self.config.multiplexer,
             &session,
-            task.worktree_path.as_str(),
+            result.task.worktree_path.as_str(),
             Some(&session_env),
         ) {
             self.show_toast(format!("Session error: {}", e));
             return;
         }
 
-        // 刷新数据并进入
+        // Refresh and auto-attach
         self.project.refresh();
         self.show_toast("Task recovered");
         self.async_ops.pending_attach = Some(PendingAttach {
             session,
             multiplexer: self.config.multiplexer.clone(),
-            working_dir: task.worktree_path.clone(),
+            working_dir: result.task.worktree_path.clone(),
             env: session_env,
             layout_path: None,
         });
@@ -2510,20 +2404,15 @@ impl App {
 
     /// 执行 Sync
     fn do_sync(&mut self, task_id: &str) {
-        // 获取 task 信息
-        let task = match tasks::get_task(&self.project.project_key, task_id) {
-            Ok(Some(t)) => t,
-            _ => {
-                self.show_toast("Task not found");
-                return;
-            }
-        };
-
-        // 执行 rebase
-        match git::rebase(&task.worktree_path, &task.target) {
-            Ok(()) => {
+        // Call shared operation
+        match crate::operations::tasks::sync_task(
+            &self.project.project_path,
+            &self.project.project_key,
+            task_id,
+        ) {
+            Ok(target) => {
                 self.project.refresh();
-                self.show_toast(format!("Synced with {}", task.target));
+                self.show_toast(format!("Synced with {}", target));
             }
             Err(e) => {
                 let error_msg = e.to_string();
@@ -2657,57 +2546,36 @@ impl App {
 
     /// 执行 Merge（后台线程）
     fn do_merge(&mut self, task_id: &str, method: MergeMethod) {
-        // 获取 task 信息
-        let task = match tasks::get_task(&self.project.project_key, task_id) {
-            Ok(Some(t)) => t,
-            _ => {
-                self.show_toast("Task not found");
-                return;
-            }
-        };
-
         // 设置 loading 状态
         self.async_ops.loading_message = Some("Merging...".to_string());
 
         // 准备后台线程需要的数据
         let repo_path = self.project.project_path.clone();
-        let branch = task.branch.clone();
-        let task_name = task.name.clone();
+        let project_key = self.project.project_key.clone();
         let task_id = task_id.to_string();
 
-        // 加载 notes（失败不阻塞 merge）
-        let notes_content = notes::load_notes(&self.project.project_key, &task_id)
-            .ok()
-            .filter(|s| !s.trim().is_empty());
+        // 将 UI MergeMethod 转换为 operations MergeMethod
+        let ops_method = match method {
+            MergeMethod::Squash => crate::operations::tasks::MergeMethod::Squash,
+            MergeMethod::MergeCommit => crate::operations::tasks::MergeMethod::MergeCommit,
+        };
 
         let (tx, rx) = mpsc::channel();
         self.async_ops.bg_result_rx = Some(rx);
 
         std::thread::spawn(move || {
-            let result = match method {
-                MergeMethod::Squash => {
-                    // Squash merge + commit; rollback on any failure
-                    let msg = git::build_commit_message(&task_name, notes_content.as_deref());
-                    git::merge_squash(&repo_path, &branch).and_then(|()| {
-                        git::commit(&repo_path, &msg).inspect_err(|_| {
-                            let _ = git::reset_merge(&repo_path);
-                        })
-                    })
-                }
-                MergeMethod::MergeCommit => {
-                    let title = format!("Merge: {}", task_name);
-                    let msg = git::build_commit_message(&title, notes_content.as_deref());
-                    git::merge_no_ff(&repo_path, &branch, &msg)
-                }
-            };
-
-            let bg_result = match result {
-                Ok(()) => BgResult::MergeOk { task_id, task_name },
-                Err(e) => {
-                    // Rollback merge state on any error (including conflicts)
-                    let _ = git::reset_merge(&repo_path);
-                    BgResult::MergeErr(e.to_string())
-                }
+            // Call shared operation
+            let bg_result = match crate::operations::tasks::merge_task(
+                &repo_path,
+                &project_key,
+                &task_id,
+                ops_method,
+            ) {
+                Ok(result) => BgResult::MergeOk {
+                    task_id: result.task_id,
+                    task_name: result.task_name,
+                },
+                Err(e) => BgResult::MergeErr(e.to_string()),
             };
             let _ = tx.send(bg_result);
         });

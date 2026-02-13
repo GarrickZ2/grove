@@ -6,7 +6,6 @@ use axum::{
     response::IntoResponse,
     Json,
 };
-use chrono::Utc;
 use serde::{Deserialize, Serialize};
 
 use std::path::Path as StdPath;
@@ -447,60 +446,47 @@ pub async fn create_task(
         git::current_branch(&project.path).unwrap_or_else(|_| "main".to_string())
     });
 
-    // Generate branch name
-    let branch = tasks::generate_branch_name(&req.name);
-    let task_id = tasks::to_slug(&req.name);
+    // Get config
+    let full_config = storage::config::load_config();
+    let autolink_patterns = &full_config.auto_link.patterns;
 
-    // Determine worktree path
-    let worktree_dir = storage::ensure_worktree_dir(&project_key)
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    let worktree_path = worktree_dir.join(&task_id);
+    // Call shared operation
+    let result = crate::operations::tasks::create_task(
+        &project.path,
+        &project_key,
+        req.name.clone(),
+        target.clone(),
+        &full_config.multiplexer,
+        autolink_patterns,
+    )
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
-    // Create worktree
-    git::create_worktree(&project.path, &branch, &worktree_path, &target)
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-
-    // Create task record
-    let now = Utc::now();
-    let global_mux_for_task = storage::config::load_config().multiplexer;
-    let sname = crate::session::session_name(&project_key, &task_id);
-    let task = tasks::Task {
-        id: task_id.clone(),
-        name: req.name.clone(),
-        branch: branch.clone(),
-        target: target.clone(),
-        worktree_path: worktree_path.to_string_lossy().to_string(),
-        created_at: now,
-        updated_at: now,
-        status: tasks::TaskStatus::Active,
-        multiplexer: global_mux_for_task.to_string(),
-        session_name: sname,
-    };
-
-    // Save task
-    tasks::add_task(&project_key, task).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    // Log symlinks if any
+    if result.symlinks_created > 0 {
+        eprintln!("Info: Created {} symlink(s)", result.symlinks_created);
+    }
 
     // Save notes if provided
     if let Some(ref notes_content) = req.notes {
         if !notes_content.is_empty() {
-            let _ = notes::save_notes(&project_key, &task_id, notes_content);
+            let _ = notes::save_notes(&project_key, &result.task.id, notes_content);
         }
     }
 
     // Return task response
     Ok(Json(TaskResponse {
-        id: task_id,
-        name: req.name,
-        branch,
-        target,
-        status: "idle".to_string(), // New task is idle (no tmux session from web)
+        id: result.task.id.clone(),
+        name: result.task.name.clone(),
+        branch: result.task.branch.clone(),
+        target: result.task.target.clone(),
+        status: "idle".to_string(), // New task is idle (no session from web)
         additions: 0,
         deletions: 0,
         files_changed: 0,
         commits: Vec::new(),
-        created_at: now.to_rfc3339(),
-        updated_at: now.to_rfc3339(),
-        path: worktree_path.to_string_lossy().to_string(),
+        created_at: result.task.created_at.to_rfc3339(),
+        updated_at: result.task.updated_at.to_rfc3339(),
+        path: result.worktree_path.clone(),
     }))
 }
 
@@ -578,7 +564,7 @@ pub async fn archive_task(
         }
     }
 
-    // 1. Get task info (need multiplexer + session_name before archive moves it)
+    // Get task info (need multiplexer + session_name before archive moves it)
     let global_mux = storage::config::load_config().multiplexer;
     let task_info = tasks::get_task(&project_key, &task_id).ok().flatten();
     let task_mux_str = task_info
@@ -589,17 +575,17 @@ pub async fn archive_task(
         .as_ref()
         .map(|t| t.session_name.clone())
         .unwrap_or_default();
-    let task_mux = session::resolve_multiplexer(&task_mux_str, &global_mux);
 
-    // 1b. Get worktree path and remove it (TUI: do_archive step 1)
-    if let Ok(Some(task)) = tasks::get_task(&project_key, &task_id) {
-        if StdPath::new(&task.worktree_path).exists() {
-            let _ = git::remove_worktree(&project.path, &task.worktree_path);
-        }
-    }
-
-    // 2. Move to archived.toml (TUI: do_archive step 2)
-    tasks::archive_task(&project_key, &task_id).map_err(|_| {
+    // Call shared operation
+    let _ = crate::operations::tasks::archive_task(
+        &project.path,
+        &project_key,
+        &task_id,
+        &task_mux_str,
+        &task_sname,
+        &global_mux,
+    )
+    .map_err(|_| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(ArchiveConfirmResponse::error(
@@ -609,16 +595,6 @@ pub async fn archive_task(
             )),
         )
     })?;
-
-    // 3. Remove hook notification (TUI: do_archive step 3)
-    hooks::remove_task_hook(&project_key, &task_id);
-
-    // 4. Kill session (TUI: do_archive step 4)
-    let session_name = session::resolve_session_name(&task_sname, &project_key, &task_id);
-    let _ = session::kill_session(&task_mux, &session_name);
-    if task_mux == Multiplexer::Zellij {
-        crate::zellij::layout::remove_session_layout(&session_name);
-    }
 
     // Load the archived task to return
     let archived = loader::load_archived_worktrees(&project.path);
@@ -638,7 +614,6 @@ pub async fn archive_task(
 
 /// POST /api/v1/projects/{id}/tasks/{taskId}/recover
 /// Recover an archived task
-/// Logic from TUI: app.rs recover_worktree()
 pub async fn recover_task(
     Path((id, task_id)): Path<(String, String)>,
 ) -> Result<Json<TaskResponse>, (StatusCode, Json<ApiErrorResponse>)> {
@@ -651,60 +626,23 @@ pub async fn recover_task(
         )
     })?;
 
-    // 1. Get archived task info (TUI: recover_worktree step 1)
-    let task = tasks::get_archived_task(&project_key, &task_id)
+    // Call shared operation
+    let _result = crate::operations::tasks::recover_task(&project.path, &project_key, &task_id)
         .map_err(|e| {
+            let status = if e.to_string().contains("not found") {
+                StatusCode::NOT_FOUND
+            } else if e.to_string().contains("no longer exists") {
+                StatusCode::CONFLICT
+            } else {
+                StatusCode::INTERNAL_SERVER_ERROR
+            };
             (
-                StatusCode::INTERNAL_SERVER_ERROR,
+                status,
                 Json(ApiErrorResponse {
-                    error: format!("Failed to load archived task: {}", e),
-                }),
-            )
-        })?
-        .ok_or_else(|| {
-            (
-                StatusCode::NOT_FOUND,
-                Json(ApiErrorResponse {
-                    error: "Archived task not found".to_string(),
+                    error: e.to_string(),
                 }),
             )
         })?;
-
-    // 2. Check if branch still exists (TUI: recover_worktree step 2)
-    if !git::branch_exists(&project.path, &task.branch) {
-        return Err((
-            StatusCode::CONFLICT,
-            Json(ApiErrorResponse {
-                error: format!(
-                    "Branch '{}' no longer exists. Cannot recover task.",
-                    task.branch
-                ),
-            }),
-        ));
-    }
-
-    // 3. Recreate worktree from existing branch (TUI: recover_worktree step 3)
-    let worktree_path = StdPath::new(&task.worktree_path);
-    if let Err(e) = git::create_worktree_from_branch(&project.path, &task.branch, worktree_path) {
-        return Err((
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ApiErrorResponse {
-                error: format!("Failed to recreate worktree: {}", e),
-            }),
-        ));
-    }
-
-    // 4. Move task from archived.toml back to tasks.toml (TUI: recover_worktree step 4)
-    tasks::recover_task(&project_key, &task_id).map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ApiErrorResponse {
-                error: format!("Failed to recover task record: {}", e),
-            }),
-        )
-    })?;
-
-    // Note: TUI creates tmux session (steps 5-6), but web doesn't auto-create session
 
     // Load the recovered task to return
     let (current, other, _) = loader::load_worktrees(&project.path);
@@ -799,60 +737,31 @@ pub async fn update_notes(
 }
 
 /// POST /api/v1/projects/{id}/tasks/{taskId}/sync
-/// Sync task: fetch origin and rebase onto target
-/// POST /api/v1/projects/{id}/tasks/{taskId}/sync
 /// Sync task: rebase worktree branch onto target branch
-/// Logic from TUI: app.rs do_sync()
 pub async fn sync_task(
     Path((id, task_id)): Path<(String, String)>,
 ) -> Result<Json<GitOperationResponse>, StatusCode> {
     let (project, project_key) = find_project_by_id(&id)?;
 
-    // Get task info
-    let task = tasks::get_task(&project_key, &task_id)
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-        .ok_or(StatusCode::NOT_FOUND)?;
-
-    // Check if worktree has uncommitted changes (TUI: start_sync)
-    if git::has_uncommitted_changes(&task.worktree_path).unwrap_or(false) {
-        return Ok(Json(GitOperationResponse {
-            success: false,
-            message: "Worktree has uncommitted changes. Please commit or stash first.".to_string(),
-        }));
+    // Call shared operation
+    match crate::operations::tasks::sync_task(&project.path, &project_key, &task_id) {
+        Ok(target) => Ok(Json(GitOperationResponse {
+            success: true,
+            message: format!("Synced with {}", target),
+        })),
+        Err(e) => {
+            let error_msg = e.to_string();
+            let message = if error_msg.contains("conflict") || error_msg.contains("CONFLICT") {
+                "Conflict detected - please resolve in terminal".to_string()
+            } else {
+                format!("Sync failed: {}", error_msg)
+            };
+            Ok(Json(GitOperationResponse {
+                success: false,
+                message,
+            }))
+        }
     }
-
-    // Check if target branch (main repo) has uncommitted changes (TUI: check_sync_target)
-    if git::has_uncommitted_changes(&project.path).unwrap_or(false) {
-        return Ok(Json(GitOperationResponse {
-            success: false,
-            message: format!(
-                "Target branch '{}' has uncommitted changes. Please commit first.",
-                task.target
-            ),
-        }));
-    }
-
-    // Execute rebase (TUI: do_sync)
-    if let Err(e) = git::rebase(&task.worktree_path, &task.target) {
-        let error_msg = e.to_string();
-        let message = if error_msg.contains("conflict") || error_msg.contains("CONFLICT") {
-            "Conflict detected - please resolve in terminal".to_string()
-        } else {
-            format!("Sync failed: {}", error_msg)
-        };
-        return Ok(Json(GitOperationResponse {
-            success: false,
-            message,
-        }));
-    }
-
-    // Update task timestamp
-    let _ = tasks::touch_task(&project_key, &task_id);
-
-    Ok(Json(GitOperationResponse {
-        success: true,
-        message: format!("Synced with {}", task.target),
-    }))
 }
 
 /// POST /api/v1/projects/{id}/tasks/{taskId}/commit
@@ -887,95 +796,43 @@ pub async fn commit_task(
 
 /// POST /api/v1/projects/{id}/tasks/{taskId}/merge
 /// Merge task branch into target
-/// Logic from TUI: app.rs start_merge(), check_merge_target(), open_merge_dialog(), do_merge()
 pub async fn merge_task(
     Path((id, task_id)): Path<(String, String)>,
     body: Option<Json<MergeRequest>>,
 ) -> Result<Json<GitOperationResponse>, StatusCode> {
     let (project, project_key) = find_project_by_id(&id)?;
 
-    // Get task info
-    let task = tasks::get_task(&project_key, &task_id)
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-        .ok_or(StatusCode::NOT_FOUND)?;
-
-    // Check if worktree has uncommitted changes (TUI: start_merge)
-    if git::has_uncommitted_changes(&task.worktree_path).unwrap_or(false) {
-        return Ok(Json(GitOperationResponse {
-            success: false,
-            message: "Worktree has uncommitted changes. Please commit or stash first.".to_string(),
-        }));
-    }
-
-    // Check if target branch (main repo) has uncommitted changes (TUI: check_merge_target)
-    // Git doesn't allow merge with uncommitted changes - must block
-    if git::has_uncommitted_changes(&project.path).unwrap_or(false) {
-        return Ok(Json(GitOperationResponse {
-            success: false,
-            message: format!(
-                "Cannot merge: '{}' has uncommitted changes. Please commit first.",
-                task.target
-            ),
-        }));
-    }
-
-    // Determine merge method (TUI: open_merge_dialog)
-    let method = body.as_ref().and_then(|b| b.method.as_deref());
-    let use_squash = match method {
-        Some("squash") => true,
-        Some("merge-commit") => false,
+    // Determine merge method
+    let method_str = body.as_ref().and_then(|b| b.method.as_deref());
+    let method = match method_str {
+        Some("squash") => crate::operations::tasks::MergeMethod::Squash,
+        Some("merge-commit") => crate::operations::tasks::MergeMethod::MergeCommit,
         _ => {
             // Auto-select: if only 1 commit, use merge-commit; otherwise squash
-            let commit_count =
+            let task = tasks::get_task(&project_key, &task_id)
+                .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+                .ok_or(StatusCode::NOT_FOUND)?;
+            let count =
                 git::commits_behind(&task.worktree_path, &task.branch, &task.target).unwrap_or(0);
-            commit_count > 1
+            if count > 1 {
+                crate::operations::tasks::MergeMethod::Squash
+            } else {
+                crate::operations::tasks::MergeMethod::MergeCommit
+            }
         }
     };
 
-    // Checkout target branch in main repo first
-    if let Err(e) = git::checkout(&project.path, &task.target) {
-        return Ok(Json(GitOperationResponse {
-            success: false,
-            message: format!("Failed to checkout {}: {}", task.target, e),
-        }));
-    }
-
-    // Load notes for commit message (non-fatal)
-    let notes_content = notes::load_notes(&project_key, &task_id)
-        .ok()
-        .filter(|s| !s.trim().is_empty());
-
-    // Execute merge (TUI: do_merge)
-    let result = if use_squash {
-        // Squash merge + commit; rollback on commit failure
-        let msg = git::build_commit_message(&task.name, notes_content.as_deref());
-        git::merge_squash(&project.path, &task.branch).and_then(|()| {
-            git::commit(&project.path, &msg).inspect_err(|_| {
-                let _ = git::reset_merge(&project.path);
-            })
-        })
-    } else {
-        // Merge with --no-ff
-        let title = format!("Merge: {}", task.name);
-        let msg = git::build_commit_message(&title, notes_content.as_deref());
-        git::merge_no_ff(&project.path, &task.branch, &msg)
-    };
-
-    if let Err(e) = result {
-        let _ = git::reset_merge(&project.path);
-        return Ok(Json(GitOperationResponse {
+    // Call shared operation
+    match crate::operations::tasks::merge_task(&project.path, &project_key, &task_id, method) {
+        Ok(result) => Ok(Json(GitOperationResponse {
+            success: true,
+            message: format!("Merged into {}", result.target_branch),
+        })),
+        Err(e) => Ok(Json(GitOperationResponse {
             success: false,
             message: e.to_string(),
-        }));
+        })),
     }
-
-    // Update task timestamp
-    let _ = tasks::touch_task(&project_key, &task_id);
-
-    Ok(Json(GitOperationResponse {
-        success: true,
-        message: format!("Merged into {}", task.target),
-    }))
 }
 
 /// Diff query parameters
@@ -1259,8 +1116,8 @@ pub async fn reset_task(
         )
     })?;
 
-    // 1. Get task info (TUI: do_reset step 1)
-    let task = tasks::get_task(&project_key, &task_id)
+    // Get task info before reset
+    let task_info = tasks::get_task(&project_key, &task_id)
         .map_err(|e| {
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
@@ -1278,55 +1135,27 @@ pub async fn reset_task(
             )
         })?;
 
-    // 2. Kill session (TUI: do_reset step 2)
+    // Get global multiplexer
     let global_mux = storage::config::load_config().multiplexer;
-    let task_mux = session::resolve_multiplexer(&task.multiplexer, &global_mux);
-    let session = session::resolve_session_name(&task.session_name, &project_key, &task_id);
-    let _ = session::kill_session(&task_mux, &session);
-    if task_mux == Multiplexer::Zellij {
-        crate::zellij::layout::remove_session_layout(&session);
-    }
 
-    // 3. Remove worktree if exists (TUI: do_reset step 3)
-    // For broken tasks, worktree might not exist - that's OK
-    if StdPath::new(&task.worktree_path).exists() {
-        // Ignore errors - we're resetting anyway
-        let _ = git::remove_worktree(&project.path, &task.worktree_path);
-    }
-
-    // 4. Delete branch if exists (TUI: do_reset step 4)
-    // For broken tasks, branch might not exist - that's OK, we'll recreate it
-    if git::branch_exists(&project.path, &task.branch) {
-        // Ignore errors - we're recreating anyway
-        let _ = git::delete_branch(&project.path, &task.branch);
-    }
-
-    // 4.5 Clear all task-related data (Notes, AI data, Stats)
-    // This ensures a completely fresh start
-    let _ = notes::delete_notes(&project_key, &task_id);
-    let _ = comments::delete_review_data(&project_key, &task_id);
-    let _ = watcher::clear_edit_history(&project_key, &task_id);
-
-    // 5. Recreate branch and worktree from target (TUI: do_reset step 5)
-    // This is the critical step that fixes broken tasks
-    let worktree_path = StdPath::new(&task.worktree_path);
-    if let Err(e) = git::create_worktree(&project.path, &task.branch, worktree_path, &task.target) {
-        return Ok(Json(GitOperationResponse {
+    // Call shared operation
+    match crate::operations::tasks::reset_task(
+        &project.path,
+        &project_key,
+        &task_id,
+        &task_info.multiplexer,
+        &task_info.session_name,
+        &global_mux,
+    ) {
+        Ok(_) => Ok(Json(GitOperationResponse {
+            success: true,
+            message: "Task reset successfully".to_string(),
+        })),
+        Err(e) => Ok(Json(GitOperationResponse {
             success: false,
-            message: format!("Failed to recreate worktree: {}", e),
-        }));
+            message: format!("Failed to reset task: {}", e),
+        })),
     }
-
-    // 6. Update task timestamp (TUI: do_reset step 6)
-    let _ = tasks::touch_task(&project_key, &task_id);
-
-    // Note: TUI creates a new tmux session and auto-attaches (steps 7-9)
-    // In web, we don't auto-create session - user can enter terminal to start one
-
-    Ok(Json(GitOperationResponse {
-        success: true,
-        message: "Task reset successfully".to_string(),
-    }))
 }
 
 /// POST /api/v1/projects/{id}/tasks/{taskId}/rebase-to

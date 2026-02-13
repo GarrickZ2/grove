@@ -50,3 +50,5 @@ Thumbs.db
 coverage/
 *.lcov
 .nyc_output/
+test_autolink.rs
+examples/test_autolink.rs
