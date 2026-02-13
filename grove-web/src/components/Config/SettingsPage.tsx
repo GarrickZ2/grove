@@ -204,10 +204,10 @@ export function SettingsPage({ config }: SettingsPageProps) {
     appearance: true,
     environment: false,
     devtools: false,
+    autolink: false,
     layout: false,
     hooks: false,
     mcp: false,
-    autolink: false,
   });
 
   // Environment state
@@ -244,9 +244,7 @@ export function SettingsPage({ config }: SettingsPageProps) {
   const [copiedField, setCopiedField] = useState<string | null>(null);
 
   // AutoLink state
-  const [autoLinkEnabled, setAutoLinkEnabled] = useState(true);
   const [autoLinkPatterns, setAutoLinkPatterns] = useState<string[]>([]);
-  const [autoLinkCheckGitignore, setAutoLinkCheckGitignore] = useState(true);
 
   // Generate hook command based on selections
   const hookCommand = `grove hooks ${hookLevel}${hookBanner ? " --banner" : ""}${hookSound ? ` --sound ${hookSound}` : ""}${hookMessage ? ` --message "${hookMessage}"` : ""}`;
@@ -326,9 +324,7 @@ export function SettingsPage({ config }: SettingsPageProps) {
       }
 
       // Load AutoLink config
-      setAutoLinkEnabled(cfg.auto_link.enabled);
       setAutoLinkPatterns(cfg.auto_link.patterns);
-      setAutoLinkCheckGitignore(cfg.auto_link.check_gitignore);
 
       setIsLoaded(true);
     } catch {
@@ -410,15 +406,13 @@ export function SettingsPage({ config }: SettingsPageProps) {
         },
         multiplexer,
         auto_link: {
-          enabled: autoLinkEnabled,
           patterns: autoLinkPatterns,
-          check_gitignore: autoLinkCheckGitignore,
         },
       });
     } catch {
       console.error("Failed to save config");
     }
-  }, [isLoaded, theme.id, selectedLayout, agentCommand, customLayouts, selectedCustomLayoutId, customLayoutsLoaded, ideCommand, terminalCommand, multiplexer, autoLinkEnabled, autoLinkPatterns, autoLinkCheckGitignore]);
+  }, [isLoaded, theme.id, selectedLayout, agentCommand, customLayouts, selectedCustomLayoutId, customLayoutsLoaded, ideCommand, terminalCommand, multiplexer, autoLinkPatterns]);
 
   // Handle theme change with immediate save
   const handleThemeChange = useCallback((newThemeId: string) => {
@@ -440,7 +434,7 @@ export function SettingsPage({ config }: SettingsPageProps) {
     }, 500); // 500ms debounce
 
     return () => clearTimeout(timer);
-  }, [theme.id, selectedLayout, agentCommand, customLayouts, selectedCustomLayoutId, customLayoutsLoaded, ideCommand, terminalCommand, multiplexer, autoLinkEnabled, autoLinkPatterns, autoLinkCheckGitignore, isLoaded, saveConfig]);
+  }, [theme.id, selectedLayout, agentCommand, customLayouts, selectedCustomLayoutId, customLayoutsLoaded, ideCommand, terminalCommand, multiplexer, autoLinkPatterns, isLoaded, saveConfig]);
 
   // Load applications list
   const loadApplications = useCallback(async () => {
@@ -856,6 +850,130 @@ env_vars = [
           </div>
         </Section>
 
+        {/* AutoLink Section */}
+        <Section
+          id="autolink"
+          title="AutoLink"
+          description={`${autoLinkPatterns.length} patterns configured`}
+          icon={Link}
+          iconColor="var(--color-purple)"
+          isOpen={openSections.autolink}
+          onToggle={() => toggleSection("autolink")}
+        >
+          <div className="space-y-6">
+            {/* 功能说明 */}
+            <div className="p-3 bg-[var(--color-bg-secondary)] rounded-lg">
+              <p className="text-xs text-[var(--color-text-muted)]">
+                Automatically create symlinks in new worktrees for gitignored files/folders.
+                Saves disk space and avoids rebuilding node_modules, IDE configs, etc.
+              </p>
+            </div>
+
+            {/* Glob 模式列表 */}
+            <div>
+              <div className="flex items-center justify-between mb-3">
+                <div>
+                  <h4 className="text-sm font-medium text-[var(--color-text)]">Path Patterns</h4>
+                  <p className="text-xs text-[var(--color-text-muted)] mt-1">
+                    Glob patterns to match files/folders (supports *, **, ?)
+                  </p>
+                </div>
+                <Button
+                  onClick={() => setAutoLinkPatterns([...autoLinkPatterns, ""])}
+                  variant="secondary"
+                  size="sm"
+                >
+                  <Plus className="w-3 h-3 mr-1" />
+                  Add
+                </Button>
+              </div>
+
+              {/* 模式输入列表 */}
+              <div className="space-y-2 mb-4">
+                {autoLinkPatterns.map((pattern, index) => (
+                  <div key={index} className="flex items-center gap-2">
+                    <input
+                      type="text"
+                      value={pattern}
+                      onChange={(e) => {
+                        const newPatterns = [...autoLinkPatterns];
+                        newPatterns[index] = e.target.value;
+                        setAutoLinkPatterns(newPatterns);
+                      }}
+                      placeholder="e.g., node_modules or **/dist"
+                      className="flex-1 px-3 py-2 text-sm bg-[var(--color-bg)] border border-[var(--color-border)] rounded-lg focus:outline-none focus:ring-2 focus:ring-[var(--color-accent)] font-mono"
+                    />
+                    <button
+                      onClick={() => {
+                        setAutoLinkPatterns(autoLinkPatterns.filter((_, i) => i !== index));
+                      }}
+                      className="p-2 text-[var(--color-text-muted)] hover:text-red-500 transition-colors"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                  </div>
+                ))}
+
+                {autoLinkPatterns.length === 0 && (
+                  <div className="text-center py-4 text-sm text-[var(--color-text-muted)]">
+                    No patterns configured. Click "Add" to create one.
+                  </div>
+                )}
+              </div>
+
+              {/* 预设模板 */}
+              <div className="p-3 bg-[var(--color-bg-secondary)] rounded-lg mb-3">
+                <h5 className="text-xs font-medium text-[var(--color-text)] mb-2">
+                  Quick Add Presets
+                </h5>
+                <div className="flex flex-wrap gap-2">
+                  {[
+                    { label: "**/node_modules", pattern: "**/node_modules" },
+                    { label: "target", pattern: "target" },
+                    { label: "build", pattern: "build" },
+                    { label: "dist", pattern: "dist" },
+                    { label: ".next", pattern: ".next" },
+                    { label: ".nuxt", pattern: ".nuxt" },
+                    { label: ".turbo", pattern: ".turbo" },
+                    { label: ".cache", pattern: ".cache" },
+                    { label: "vendor", pattern: "vendor" },
+                    { label: "**/venv", pattern: "**/venv" },
+                    { label: "**/__pycache__", pattern: "**/__pycache__" },
+                  ].map((preset) => (
+                    <button
+                      key={preset.pattern}
+                      onClick={() => {
+                        if (!autoLinkPatterns.includes(preset.pattern)) {
+                          setAutoLinkPatterns([...autoLinkPatterns, preset.pattern]);
+                        }
+                      }}
+                      disabled={autoLinkPatterns.includes(preset.pattern)}
+                      className={`px-2 py-1 text-xs rounded font-mono ${
+                        autoLinkPatterns.includes(preset.pattern)
+                          ? "bg-[var(--color-border)] text-[var(--color-text-muted)] cursor-not-allowed"
+                          : "bg-[var(--color-accent)] text-white hover:opacity-80"
+                      }`}
+                    >
+                      {preset.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Glob 语法帮助 */}
+              <div className="p-3 bg-[var(--color-bg-secondary)] rounded-lg">
+                <h5 className="text-xs font-medium text-[var(--color-text)] mb-2">Glob Syntax</h5>
+                <ul className="text-xs text-[var(--color-text-muted)] space-y-1">
+                  <li>• <code className="font-mono">*</code> matches any characters (except /)</li>
+                  <li>• <code className="font-mono">**</code> matches any path segment</li>
+                  <li>• <code className="font-mono">?</code> matches single character</li>
+                  <li>• Examples: <code className="font-mono">node_modules</code>, <code className="font-mono">**/dist</code>, <code className="font-mono">packages/*/build</code></li>
+                </ul>
+              </div>
+            </div>
+          </div>
+        </Section>
+
         {/* Task Layout Section */}
         <Section
           id="layout"
@@ -1252,174 +1370,6 @@ env_vars = [
           </div>
         </Section>
 
-        {/* AutoLink Section */}
-        <Section
-          id="autolink"
-          title="AutoLink"
-          description={autoLinkEnabled ? `Enabled (${autoLinkPatterns.length} patterns)` : "Disabled"}
-          icon={Link}
-          iconColor="var(--color-purple)"
-          isOpen={openSections.autolink}
-          onToggle={() => toggleSection("autolink")}
-        >
-          <div className="space-y-6">
-            {/* 功能说明 */}
-            <div className="p-3 bg-[var(--color-bg-secondary)] rounded-lg">
-              <p className="text-xs text-[var(--color-text-muted)]">
-                Automatically create symlinks in new worktrees for files/folders from the main repo.
-                This saves disk space and avoids rebuilding node_modules, IDE configs, etc.
-              </p>
-            </div>
-
-            {/* 启用开关 */}
-            <div className="flex items-center justify-between">
-              <div>
-                <h4 className="text-sm font-medium text-[var(--color-text)]">Enable AutoLink</h4>
-                <p className="text-xs text-[var(--color-text-muted)] mt-1">
-                  Create symlinks when creating new worktrees
-                </p>
-              </div>
-              <button
-                onClick={() => setAutoLinkEnabled(!autoLinkEnabled)}
-                className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
-                  autoLinkEnabled ? "bg-[var(--color-accent)]" : "bg-[var(--color-border)]"
-                }`}
-              >
-                <span
-                  className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
-                    autoLinkEnabled ? "translate-x-6" : "translate-x-1"
-                  }`}
-                />
-              </button>
-            </div>
-
-            {autoLinkEnabled && (
-              <>
-                {/* Check gitignore 开关 */}
-                <div className="flex items-center justify-between pt-4 border-t border-[var(--color-border)]">
-                  <div>
-                    <h4 className="text-sm font-medium text-[var(--color-text)]">Check Git Ignore</h4>
-                    <p className="text-xs text-[var(--color-text-muted)] mt-1">
-                      Only link paths that are gitignored (recommended to avoid conflicts)
-                    </p>
-                  </div>
-                  <button
-                    onClick={() => setAutoLinkCheckGitignore(!autoLinkCheckGitignore)}
-                    className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
-                      autoLinkCheckGitignore ? "bg-[var(--color-accent)]" : "bg-[var(--color-border)]"
-                    }`}
-                  >
-                    <span
-                      className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
-                        autoLinkCheckGitignore ? "translate-x-6" : "translate-x-1"
-                      }`}
-                    />
-                  </button>
-                </div>
-
-                {/* Glob 模式列表 */}
-                <div className="pt-4 border-t border-[var(--color-border)]">
-                  <div className="flex items-center justify-between mb-3">
-                    <div>
-                      <h4 className="text-sm font-medium text-[var(--color-text)]">Path Patterns</h4>
-                      <p className="text-xs text-[var(--color-text-muted)] mt-1">
-                        Glob patterns to match files/folders (supports *, **, ?)
-                      </p>
-                    </div>
-                    <Button
-                      onClick={() => setAutoLinkPatterns([...autoLinkPatterns, ""])}
-                      variant="secondary"
-                      size="sm"
-                    >
-                      <Plus className="w-3 h-3 mr-1" />
-                      Add
-                    </Button>
-                  </div>
-
-                  {/* 模式输入列表 */}
-                  <div className="space-y-2 mb-4">
-                    {autoLinkPatterns.map((pattern, index) => (
-                      <div key={index} className="flex items-center gap-2">
-                        <input
-                          type="text"
-                          value={pattern}
-                          onChange={(e) => {
-                            const newPatterns = [...autoLinkPatterns];
-                            newPatterns[index] = e.target.value;
-                            setAutoLinkPatterns(newPatterns);
-                          }}
-                          placeholder="e.g., node_modules or **/dist"
-                          className="flex-1 px-3 py-2 text-sm bg-[var(--color-bg)] border border-[var(--color-border)] rounded-lg focus:outline-none focus:ring-2 focus:ring-[var(--color-accent)] font-mono"
-                        />
-                        <button
-                          onClick={() => {
-                            setAutoLinkPatterns(autoLinkPatterns.filter((_, i) => i !== index));
-                          }}
-                          className="p-2 text-[var(--color-text-muted)] hover:text-red-500 transition-colors"
-                        >
-                          <X className="w-4 h-4" />
-                        </button>
-                      </div>
-                    ))}
-
-                    {autoLinkPatterns.length === 0 && (
-                      <div className="text-center py-4 text-sm text-[var(--color-text-muted)]">
-                        No patterns configured. Click "Add" to create one.
-                      </div>
-                    )}
-                  </div>
-
-                  {/* 预设模板 */}
-                  <div className="p-3 bg-[var(--color-bg-secondary)] rounded-lg">
-                    <h5 className="text-xs font-medium text-[var(--color-text)] mb-2">
-                      Quick Add Presets
-                    </h5>
-                    <div className="flex flex-wrap gap-2">
-                      {[
-                        { label: "node_modules", pattern: "node_modules" },
-                        { label: "**/node_modules", pattern: "**/node_modules" },
-                        { label: ".vscode", pattern: ".vscode" },
-                        { label: ".idea", pattern: ".idea" },
-                        { label: "target", pattern: "target" },
-                        { label: "dist", pattern: "dist" },
-                        { label: ".next", pattern: ".next" },
-                        { label: "packages/*/dist", pattern: "packages/*/dist" },
-                      ].map((preset) => (
-                        <button
-                          key={preset.pattern}
-                          onClick={() => {
-                            if (!autoLinkPatterns.includes(preset.pattern)) {
-                              setAutoLinkPatterns([...autoLinkPatterns, preset.pattern]);
-                            }
-                          }}
-                          disabled={autoLinkPatterns.includes(preset.pattern)}
-                          className={`px-2 py-1 text-xs rounded font-mono ${
-                            autoLinkPatterns.includes(preset.pattern)
-                              ? "bg-[var(--color-border)] text-[var(--color-text-muted)] cursor-not-allowed"
-                              : "bg-[var(--color-accent)] text-white hover:opacity-80"
-                          }`}
-                        >
-                          {preset.label}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-
-                  {/* Glob 语法帮助 */}
-                  <div className="mt-4 p-3 bg-[var(--color-bg-secondary)] rounded-lg">
-                    <h5 className="text-xs font-medium text-[var(--color-text)] mb-2">Glob Syntax</h5>
-                    <ul className="text-xs text-[var(--color-text-muted)] space-y-1">
-                      <li>• <code className="font-mono">*</code> matches any characters (except /)</li>
-                      <li>• <code className="font-mono">**</code> matches any path segment</li>
-                      <li>• <code className="font-mono">?</code> matches single character</li>
-                      <li>• Examples: <code className="font-mono">node_modules</code>, <code className="font-mono">**/dist</code>, <code className="font-mono">packages/*/build</code></li>
-                    </ul>
-                  </div>
-                </div>
-              </>
-            )}
-          </div>
-        </Section>
       </div>
     </motion.div>
   );

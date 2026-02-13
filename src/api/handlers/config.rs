@@ -46,9 +46,7 @@ pub struct WebConfigDto {
 
 #[derive(Debug, Serialize)]
 pub struct AutoLinkConfigDto {
-    pub enabled: bool,
     pub patterns: Vec<String>,
-    pub check_gitignore: bool,
 }
 
 impl From<&Config> for ConfigResponse {
@@ -70,9 +68,7 @@ impl From<&Config> for ConfigResponse {
             },
             multiplexer: config.multiplexer.to_string(),
             auto_link: AutoLinkConfigDto {
-                enabled: config.auto_link.enabled,
                 patterns: config.auto_link.patterns.clone(),
-                check_gitignore: config.auto_link.check_gitignore,
             },
         }
     }
@@ -112,9 +108,7 @@ pub struct WebConfigPatch {
 
 #[derive(Debug, Deserialize)]
 pub struct AutoLinkConfigPatch {
-    pub enabled: Option<bool>,
     pub patterns: Option<Vec<String>>,
-    pub check_gitignore: Option<bool>,
 }
 
 /// GET /api/v1/config
@@ -180,14 +174,8 @@ pub async fn patch_config(
 
     // Apply auto_link patch
     if let Some(auto_link_patch) = patch.auto_link {
-        if let Some(enabled) = auto_link_patch.enabled {
-            config.auto_link.enabled = enabled;
-        }
         if let Some(patterns) = auto_link_patch.patterns {
             config.auto_link.patterns = patterns;
-        }
-        if let Some(check_gitignore) = auto_link_patch.check_gitignore {
-            config.auto_link.check_gitignore = check_gitignore;
         }
     }
 

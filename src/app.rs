@@ -1311,35 +1311,33 @@ impl App {
             return;
         }
 
-        // 4.5. 创建 AutoLink 软链接
+        // 4.5. 创建 AutoLink 软链接（始终启用，仅链接 gitignored 路径）
         let full_config = crate::storage::config::load_config();
-        if full_config.auto_link.enabled {
-            let main_repo = match git::get_main_repo_path(&repo_root) {
-                Ok(path) => path,
-                Err(_) => repo_root.clone(),
-            };
+        let main_repo = match git::get_main_repo_path(&repo_root) {
+            Ok(path) => path,
+            Err(_) => repo_root.clone(),
+        };
 
-            match git::create_worktree_symlinks(
-                &worktree_path,
-                Path::new(&main_repo),
-                &full_config.auto_link.patterns,
-                full_config.auto_link.check_gitignore,
-            ) {
-                Ok(links) if !links.is_empty() => {
-                    let msg = format!("Created {} symlink(s)", links.len());
-                    eprintln!("Info: {}", msg);
-                    // 可选：显示详细列表
-                    for link in &links {
-                        eprintln!("  ✓ {}", link);
-                    }
+        match git::create_worktree_symlinks(
+            &worktree_path,
+            Path::new(&main_repo),
+            &full_config.auto_link.patterns,
+            true, // 始终检查 gitignore
+        ) {
+            Ok(links) if !links.is_empty() => {
+                let msg = format!("Created {} symlink(s)", links.len());
+                eprintln!("Info: {}", msg);
+                // 可选：显示详细列表
+                for link in &links {
+                    eprintln!("  ✓ {}", link);
                 }
-                Ok(_) => {
-                    eprintln!("Info: No symlinks created (no matching paths)");
-                }
-                Err(e) => {
-                    // 软链接失败不应阻止 worktree 创建
-                    eprintln!("Warning: Symlink creation failed: {}", e);
-                }
+            }
+            Ok(_) => {
+                eprintln!("Info: No symlinks created (no matching paths)");
+            }
+            Err(e) => {
+                // 软链接失败不应阻止 worktree 创建
+                eprintln!("Warning: Symlink creation failed: {}", e);
             }
         }
 

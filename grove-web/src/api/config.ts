@@ -23,9 +23,7 @@ export interface WebConfig {
 }
 
 export interface AutoLinkConfig {
-  enabled: boolean;
   patterns: string[];
-  check_gitignore: boolean;
 }
 
 export interface Config {
