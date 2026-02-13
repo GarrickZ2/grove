@@ -292,6 +292,33 @@ export function BlitzPage({ onSwitchToZen }: BlitzPageProps) {
     await refresh();
   }, [refresh]);
 
+  // Unified shortcut handlers for Review/Editor/Terminal
+  const handleReviewShortcut = () => {
+    if (viewMode === "terminal") {
+      handleToggleReview();
+    } else {
+      handleReviewFromInfo();
+    }
+  };
+
+  const handleEditorShortcut = () => {
+    if (viewMode === "terminal") {
+      handleToggleEditor();
+    } else {
+      handleEditorFromInfo();
+    }
+  };
+
+  const handleTerminalShortcut = () => {
+    if (viewMode === "terminal") {
+      // Close review/editor if open
+      if (reviewOpen) setReviewOpen(false);
+      if (editorOpen) setEditorOpen(false);
+    } else {
+      handleEnterTerminal();
+    }
+  };
+
   // --- Actions ---
   const handleCommit = () => {
     setCommitError(null);
@@ -613,15 +640,11 @@ export function BlitzPage({ onSwitchToZen }: BlitzPageProps) {
       { key: "s", handler: handleSync, options: { enabled: canOperate } },
       { key: "m", handler: handleMerge, options: { enabled: canOperate } },
       { key: "b", handler: handleRebase, options: { enabled: canOperate } },
-      // Archive removed from hotkeys - too dangerous for accidental press
-      { key: "x", handler: handleClean, options: { enabled: hasTask } },
-      {
-        key: "r",
-        handler: () => {
-          if (isActive) handleReset();
-        },
-        options: { enabled: hasTask && isActive },
-      },
+      { key: "r", handler: handleReviewShortcut, options: { enabled: isActive } },
+      { key: "e", handler: handleEditorShortcut, options: { enabled: isActive } },
+      { key: "t", handler: handleTerminalShortcut, options: { enabled: isActive } },
+      // Dangerous operations removed from hotkeys - use menu instead
+      // Archive, Clean, Reset are too dangerous for accidental press
 
       // Search
       { key: "/", handler: () => searchInputRef.current?.focus(), options: { enabled: notTerminal } },
@@ -633,8 +656,9 @@ export function BlitzPage({ onSwitchToZen }: BlitzPageProps) {
       selectNextTask, selectPreviousTask, handleCloseTask,
       handleEnterTerminal, openContextMenuAtSelectedTask,
       handleCommit, handleSync, handleMerge, handleRebase,
-      handleArchive, handleClean, handleReset,
+      handleReviewShortcut, handleEditorShortcut, handleTerminalShortcut,
       viewMode, selectedTask, hasTask, isActive, canOperate, notTerminal,
+      reviewOpen, editorOpen,
     ]
   );
 
