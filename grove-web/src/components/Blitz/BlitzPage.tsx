@@ -42,7 +42,6 @@ export function BlitzPage({ onSwitchToZen }: BlitzPageProps) {
   const [searchQuery, setSearchQuery] = useState("");
   const [reviewOpen, setReviewOpen] = useState(false);
   const [editorOpen, setEditorOpen] = useState(false);
-  const [isCommandKeyPressed, setIsCommandKeyPressed] = useState(false);
 
   // Drag and drop state
   const [draggedIndex, setDraggedIndex] = useState<number | null>(null);
@@ -144,8 +143,10 @@ export function BlitzPage({ onSwitchToZen }: BlitzPageProps) {
   // Listen for Command key press for quick navigation
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.metaKey || e.ctrlKey) {
-        setIsCommandKeyPressed(true);
+      // Only listen for Command key (metaKey), not Control
+      if (e.metaKey) {
+        // Add CSS class to body to show shortcuts (no React re-render)
+        document.body.classList.add('blitz-command-pressed');
 
         // Handle Command+0-9 for quick navigation
         if (e.key >= '0' && e.key <= '9') {
@@ -164,8 +165,8 @@ export function BlitzPage({ onSwitchToZen }: BlitzPageProps) {
     };
 
     const handleKeyUp = (e: KeyboardEvent) => {
-      if (!e.metaKey && !e.ctrlKey) {
-        setIsCommandKeyPressed(false);
+      if (!e.metaKey) {
+        document.body.classList.remove('blitz-command-pressed');
       }
     };
 
@@ -173,13 +174,17 @@ export function BlitzPage({ onSwitchToZen }: BlitzPageProps) {
     window.addEventListener('keyup', handleKeyUp);
 
     // Handle window blur (when user switches apps while holding Command)
-    const handleBlur = () => setIsCommandKeyPressed(false);
+    const handleBlur = () => {
+      document.body.classList.remove('blitz-command-pressed');
+    };
     window.addEventListener('blur', handleBlur);
 
     return () => {
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('keyup', handleKeyUp);
       window.removeEventListener('blur', handleBlur);
+      // Clean up class on unmount
+      document.body.classList.remove('blitz-command-pressed');
     };
   }, [displayTasks, getTaskNotification, dismissNotification]);
 
@@ -730,7 +735,6 @@ export function BlitzPage({ onSwitchToZen }: BlitzPageProps) {
                       onContextMenu={(e) => handleContextMenu(bt, e)}
                       notification={notif ? { level: notif.level } : undefined}
                       shortcutNumber={index < 10 ? (index === 9 ? 0 : index + 1) : undefined}
-                      showShortcut={isCommandKeyPressed}
                       onDragStart={() => handleDragStart(index)}
                       onDragOver={() => handleDragOver(index)}
                       onDragEnd={handleDragEnd}

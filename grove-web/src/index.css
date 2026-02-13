@@ -99,3 +99,8 @@ body {
     opacity: 0;
   }
 }
+
+/* Blitz mode: Show shortcuts when Command key is pressed */
+body.blitz-command-pressed .blitz-shortcut {
+  opacity: 1 !important;
+}

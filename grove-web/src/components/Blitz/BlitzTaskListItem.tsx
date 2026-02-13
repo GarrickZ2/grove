@@ -10,7 +10,6 @@ interface BlitzTaskListItemProps {
   onContextMenu?: (e: React.MouseEvent) => void;
   notification?: { level: string };
   shortcutNumber?: number;
-  showShortcut?: boolean;
   onDragStart?: () => void;
   onDragOver?: () => void;
   onDragEnd?: () => void;
@@ -72,7 +71,6 @@ export function BlitzTaskListItem({
   onContextMenu,
   notification,
   shortcutNumber,
-  showShortcut,
   onDragStart,
   onDragOver,
   onDragEnd,
@@ -83,8 +81,6 @@ export function BlitzTaskListItem({
   const { task, projectName } = blitzTask;
   const statusConfig = getStatusConfig(task.status);
   const StatusIcon = statusConfig.icon;
-
-  const displayShortcut = showShortcut && shortcutNumber !== undefined;
 
   return (
     <button
@@ -146,9 +142,9 @@ export function BlitzTaskListItem({
         <div className="flex-1 min-w-0">
           <div className="flex items-center justify-between gap-2">
             <div className="flex items-center gap-1.5 min-w-0">
-              {displayShortcut && (
+              {shortcutNumber !== undefined && (
                 <span
-                  className="flex-shrink-0 text-xs font-bold px-1.5 py-0.5 rounded"
+                  className="blitz-shortcut flex-shrink-0 text-xs font-bold px-1.5 py-0.5 rounded opacity-0 transition-opacity duration-100"
                   style={{
                     backgroundColor: 'var(--color-highlight)',
                     color: 'var(--color-bg)',
