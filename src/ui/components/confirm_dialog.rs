@@ -80,20 +80,22 @@ impl ConfirmType {
                 ];
 
                 if *dirty_check_failed {
-                    lines.push(Line::from("Cannot check worktree status."));
+                    lines.push(Line::from("⚠ Unable to verify working tree status."));
                 } else if *worktree_dirty {
-                    lines.push(Line::from("Worktree has uncommitted changes."));
-                    lines.push(Line::from("They will be LOST after archive."));
+                    lines.push(Line::from("⚠ Working tree contains uncommitted changes."));
+                    lines.push(Line::from(
+                        "  These changes will be permanently lost upon archiving.",
+                    ));
                 }
 
                 if *merge_check_failed {
-                    lines.push(Line::from("Cannot check merge status."));
+                    lines.push(Line::from("⚠ Unable to verify merge status."));
                 } else if !*branch_merged {
-                    lines.push(Line::from("Branch not merged yet."));
+                    lines.push(Line::from("⚠ Branch has not been merged into target."));
                 }
 
                 lines.push(Line::from(""));
-                lines.push(Line::from("Archive anyway?"));
+                lines.push(Line::from("Proceed with archiving?"));
                 lines
             }
             ConfirmType::CleanMerged { task_name, branch } => {
@@ -101,10 +103,10 @@ impl ConfirmType {
                     Line::from(format!("Task: {}", task_name)),
                     Line::from(format!("Branch: {}", branch)),
                     Line::from(""),
-                    Line::from("This will delete:"),
-                    Line::from("• Worktree directory"),
+                    Line::from("The following will be permanently deleted:"),
+                    Line::from("• Working tree directory"),
                     Line::from("• Git branch"),
-                    Line::from("• Task record"),
+                    Line::from("• Task metadata"),
                 ]
             }
             ConfirmType::Recover { task_name, branch } => {
@@ -112,48 +114,46 @@ impl ConfirmType {
                     Line::from(format!("Task: {}", task_name)),
                     Line::from(format!("Branch: {}", branch)),
                     Line::from(""),
-                    Line::from("This will:"),
-                    Line::from("• Recreate worktree"),
-                    Line::from("• Start session"),
+                    Line::from("The following will be performed:"),
+                    Line::from("• Recreate working tree"),
+                    Line::from("• Start terminal session"),
                 ]
             }
             ConfirmType::SyncUncommittedWorktree { task_name } => {
                 vec![
                     Line::from(format!("Task: {}", task_name)),
                     Line::from(""),
-                    Line::from("Worktree has uncommitted changes."),
-                    Line::from("They will NOT be synced."),
+                    Line::from("⚠ Working tree contains uncommitted changes."),
+                    Line::from("  These changes will not be synchronized."),
                     Line::from(""),
-                    Line::from("Continue anyway?"),
+                    Line::from("Proceed with sync?"),
                 ]
             }
             ConfirmType::SyncUncommittedTarget { task_name, target } => {
                 vec![
                     Line::from(format!("Task: {}", task_name)),
                     Line::from(""),
-                    Line::from(format!("Target '{}' has uncommitted", target)),
-                    Line::from("changes."),
+                    Line::from(format!("⚠ Target branch '{}' contains uncommitted", target)),
+                    Line::from("  changes."),
                     Line::from(""),
-                    Line::from("Continue anyway?"),
+                    Line::from("Proceed with sync?"),
                 ]
             }
             ConfirmType::MergeUncommittedWorktree { task_name } => {
                 vec![
                     Line::from(format!("Task: {}", task_name)),
                     Line::from(""),
-                    Line::from("Worktree has uncommitted changes."),
-                    Line::from("They will NOT be merged."),
+                    Line::from("⚠ Working tree contains uncommitted changes."),
+                    Line::from("  These changes will not be included in the merge."),
                     Line::from(""),
-                    Line::from("Continue anyway?"),
+                    Line::from("Proceed with merge?"),
                 ]
             }
             ConfirmType::MergeSuccess { task_name } => {
                 vec![
-                    Line::from("Merged successfully!"),
-                    Line::from(""),
                     Line::from(format!("Task: {}", task_name)),
                     Line::from(""),
-                    Line::from("Archive this task?"),
+                    Line::from("Would you like to archive this task?"),
                 ]
             }
             ConfirmType::Reset {
@@ -162,25 +162,24 @@ impl ConfirmType {
                 target,
             } => {
                 vec![
-                    Line::from(format!("Reset \"{}\"?", task_name)),
+                    Line::from(format!("Task: {}", task_name)),
                     Line::from(""),
-                    Line::from("This will:"),
-                    Line::from("  - Kill tmux session"),
-                    Line::from(format!("  - Delete branch \"{}\"", branch)),
-                    Line::from(format!("  - Recreate from \"{}\"", target)),
-                    Line::from("  - Recreate worktree"),
+                    Line::from("The following actions will be performed:"),
+                    Line::from("  • Terminate terminal session"),
+                    Line::from(format!("  • Delete branch \"{}\"", branch)),
+                    Line::from(format!("  • Recreate from \"{}\"", target)),
+                    Line::from("  • Recreate working tree"),
                     Line::from(""),
-                    Line::from("All changes will be lost!"),
+                    Line::from("⚠ All uncommitted changes will be permanently lost."),
                 ]
             }
             ConfirmType::ExitSession { session_name } => {
                 vec![
-                    Line::from("Exit this tmux session?"),
+                    Line::from("Exit terminal session?"),
                     Line::from(""),
                     Line::from(format!("Session: {}", session_name)),
                     Line::from(""),
-                    Line::from("This will close all panes"),
-                    Line::from("in the current session."),
+                    Line::from("This will close all panes in the current session."),
                 ]
             }
         }
@@ -287,57 +286,71 @@ mod tests {
 
     #[test]
     fn archive_confirm_dirty_only() {
-        let msg = lines_to_strings(ConfirmType::ArchiveConfirm {
-            task_name: "T".to_string(),
-            branch: "b".to_string(),
-            target: "main".to_string(),
-            worktree_dirty: true,
-            branch_merged: true,
-            dirty_check_failed: false,
-            merge_check_failed: false,
-        }
-        .message());
+        let msg = lines_to_strings(
+            ConfirmType::ArchiveConfirm {
+                task_name: "T".to_string(),
+                branch: "b".to_string(),
+                target: "main".to_string(),
+                worktree_dirty: true,
+                branch_merged: true,
+                dirty_check_failed: false,
+                merge_check_failed: false,
+            }
+            .message(),
+        );
 
-        assert!(msg.iter().any(|l| l.contains("Worktree has uncommitted changes.")));
         assert!(msg
             .iter()
-            .any(|l| l.contains("They will be LOST after archive.")));
-        assert!(!msg.iter().any(|l| l.contains("Branch not merged yet.")));
+            .any(|l| l.contains("Working tree contains uncommitted changes.")));
+        assert!(msg
+            .iter()
+            .any(|l| l.contains("permanently lost upon archiving")));
+        assert!(!msg.iter().any(|l| l.contains("Branch has not been merged")));
     }
 
     #[test]
     fn archive_confirm_unmerged_only() {
-        let msg = lines_to_strings(ConfirmType::ArchiveConfirm {
-            task_name: "T".to_string(),
-            branch: "b".to_string(),
-            target: "main".to_string(),
-            worktree_dirty: false,
-            branch_merged: false,
-            dirty_check_failed: false,
-            merge_check_failed: false,
-        }
-        .message());
+        let msg = lines_to_strings(
+            ConfirmType::ArchiveConfirm {
+                task_name: "T".to_string(),
+                branch: "b".to_string(),
+                target: "main".to_string(),
+                worktree_dirty: false,
+                branch_merged: false,
+                dirty_check_failed: false,
+                merge_check_failed: false,
+            }
+            .message(),
+        );
 
-        assert!(msg.iter().any(|l| l.contains("Branch not merged yet.")));
+        assert!(msg
+            .iter()
+            .any(|l| l.contains("Branch has not been merged into target.")));
         assert!(!msg
             .iter()
-            .any(|l| l.contains("Worktree has uncommitted changes.")));
+            .any(|l| l.contains("Working tree contains uncommitted changes.")));
     }
 
     #[test]
     fn archive_confirm_dirty_and_unmerged() {
-        let msg = lines_to_strings(ConfirmType::ArchiveConfirm {
-            task_name: "T".to_string(),
-            branch: "b".to_string(),
-            target: "main".to_string(),
-            worktree_dirty: true,
-            branch_merged: false,
-            dirty_check_failed: false,
-            merge_check_failed: false,
-        }
-        .message());
+        let msg = lines_to_strings(
+            ConfirmType::ArchiveConfirm {
+                task_name: "T".to_string(),
+                branch: "b".to_string(),
+                target: "main".to_string(),
+                worktree_dirty: true,
+                branch_merged: false,
+                dirty_check_failed: false,
+                merge_check_failed: false,
+            }
+            .message(),
+        );
 
-        assert!(msg.iter().any(|l| l.contains("Worktree has uncommitted changes.")));
-        assert!(msg.iter().any(|l| l.contains("Branch not merged yet.")));
+        assert!(msg
+            .iter()
+            .any(|l| l.contains("Working tree contains uncommitted changes.")));
+        assert!(msg
+            .iter()
+            .any(|l| l.contains("Branch has not been merged into target.")));
     }
 }

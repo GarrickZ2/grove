@@ -29,28 +29,13 @@ import {
   getBranches as apiGetBranches,
 } from "../../api";
 import type { ApiError } from "../../api/client";
+import type { ArchiveConfirmData } from "../../api/types";
 import type { Task, TaskFilter } from "../../data/types";
 import { convertTaskResponse } from "../../utils/taskConvert";
+import type { PendingArchiveConfirm } from "../../utils/archiveHelpers";
+import { handleArchiveError } from "../../utils/archiveHelpers";
 
 type ViewMode = "list" | "info" | "terminal";
-
-type ArchiveConfirmData = {
-  code?: string;
-  task_name?: string;
-  branch?: string;
-  target?: string;
-  worktree_dirty?: boolean;
-  branch_merged?: boolean;
-  dirty_check_failed?: boolean;
-  merge_check_failed?: boolean;
-};
-
-type PendingArchiveConfirm = {
-  projectId: string;
-  taskId: string;
-  message: React.ReactNode;
-  context: "normal" | "after-merge";
-};
 
 interface TasksPageProps {
   /** Initial task ID to select (from navigation) */
@@ -130,22 +115,22 @@ export function TasksPage({ initialTaskId, initialViewMode, onNavigationConsumed
             <div className="flex items-start gap-2">
               <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />
               <div className="space-y-1">
-                {data.dirty_check_failed && <p>Cannot check worktree status.</p>}
+                {data.dirty_check_failed && <p>Unable to verify working tree status.</p>}
                 {data.worktree_dirty && (
                   <>
-                    <p className="font-medium">Worktree has uncommitted changes.</p>
-                    <p>They will be LOST after archive.</p>
+                    <p className="font-medium">Working tree contains uncommitted changes.</p>
+                    <p>These changes will be permanently lost upon archiving.</p>
                   </>
                 )}
-                {data.merge_check_failed && <p>Cannot check merge status.</p>}
-                {data.branch_merged === false && <p>Branch not merged yet.</p>}
+                {data.merge_check_failed && <p>Unable to verify merge status.</p>}
+                {data.branch_merged === false && <p>Branch has not been merged into target.</p>}
               </div>
             </div>
           </div>
         )}
 
         <p className="text-sm text-[var(--color-text-muted)]">
-          Are you sure you want to archive this task?
+          Confirm task archiving?
         </p>
       </div>
     );
@@ -567,38 +552,41 @@ export function TasksPage({ initialTaskId, initialViewMode, onNavigationConsumed
   // Handle archive after merge (TUI: PendingAction::MergeArchive)
   const handleArchiveAfterMerge = useCallback(async () => {
     if (!selectedProject || !mergedTaskId) return;
-    let shouldCleanup = true;
     try {
       await apiArchiveTask(selectedProject.id, mergedTaskId);
       await refreshSelectedProject();
       showMessage("Task archived");
+      cleanupAfterMerge();
     } catch (err) {
-      const e = err as ApiError;
-      const data = (e.data || {}) as ArchiveConfirmData;
-      if (e?.status === 409 && data.code === "ARCHIVE_CONFIRM_REQUIRED") {
-        setPendingArchiveConfirm({
-          projectId: selectedProject.id,
-          taskId: mergedTaskId,
-          message: buildArchiveConfirmMessage(data, mergedTaskName),
-          context: "after-merge",
-        });
+      const needsConfirm = handleArchiveError(
+        err,
+        selectedProject.id,
+        mergedTaskId,
+        mergedTaskName,
+        "after-merge",
+        buildArchiveConfirmMessage,
+        setPendingArchiveConfirm,
+        showMessage
+      );
+
+      if (needsConfirm) {
         setShowArchiveAfterMerge(false);
-        shouldCleanup = false;
         return;
       }
 
       console.error("Failed to archive task:", err);
-      showMessage(e?.message || "Failed to archive task");
-    } finally {
-      if (shouldCleanup) {
-        setShowArchiveAfterMerge(false);
-        setMergedTaskId(null);
-        setMergedTaskName("");
-        setSelectedTask(null);
-        setViewMode("list");
-      }
+      cleanupAfterMerge();
     }
   }, [selectedProject, mergedTaskId, mergedTaskName, refreshSelectedProject]);
+
+  // Helper to cleanup after merge
+  const cleanupAfterMerge = useCallback(() => {
+    setShowArchiveAfterMerge(false);
+    setMergedTaskId(null);
+    setMergedTaskName("");
+    setSelectedTask(null);
+    setViewMode("list");
+  }, []);
 
   const handleSkipArchive = useCallback(() => {
     setShowArchiveAfterMerge(false);
@@ -616,22 +604,22 @@ export function TasksPage({ initialTaskId, initialViewMode, onNavigationConsumed
       setSelectedTask(null);
       setViewMode("list");
     } catch (err) {
-      const e = err as ApiError;
-      const data = (e.data || {}) as ArchiveConfirmData;
-      if (e?.status === 409 && data.code === "ARCHIVE_CONFIRM_REQUIRED") {
-        setPendingArchiveConfirm({
-          projectId: selectedProject.id,
-          taskId: selectedTask.id,
-          message: buildArchiveConfirmMessage(data, selectedTask.name),
-          context: "normal",
-        });
-        return;
-      }
+      const needsConfirm = handleArchiveError(
+        err,
+        selectedProject.id,
+        selectedTask.id,
+        selectedTask.name,
+        "normal",
+        buildArchiveConfirmMessage,
+        setPendingArchiveConfirm,
+        showMessage
+      );
 
-      console.error("Failed to archive task:", err);
-      showMessage(e?.message || "Failed to archive task");
+      if (!needsConfirm) {
+        console.error("Failed to archive task:", err);
+      }
     }
-  }, [selectedProject, selectedTask, refreshSelectedProject]);
+  }, [selectedProject, selectedTask, refreshSelectedProject, buildArchiveConfirmMessage]);
 
   const handleArchiveConfirm = useCallback(async () => {
     if (!pendingArchiveConfirm) return;
@@ -1099,7 +1087,7 @@ export function TasksPage({ initialTaskId, initialViewMode, onNavigationConsumed
       {/* Archive after Merge Confirm Dialog (TUI: ConfirmType::MergeSuccess) */}
       <ConfirmDialog
         isOpen={showArchiveAfterMerge}
-        title="Merge Successful"
+        title="Merge Complete"
         message={
           <div className="flex flex-col gap-4">
             <div className="bg-[var(--color-bg-tertiary)] rounded-lg p-3">
@@ -1109,7 +1097,7 @@ export function TasksPage({ initialTaskId, initialViewMode, onNavigationConsumed
               </div>
             </div>
             <p className="text-sm text-[var(--color-text-muted)]">
-              Do you want to archive this task now?
+              Would you like to archive this task?
             </p>
           </div>
         }
