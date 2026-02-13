@@ -75,6 +75,9 @@ export function BlitzPage({ onSwitchToZen }: BlitzPageProps) {
   const [showResetConfirm, setShowResetConfirm] = useState(false);
   const [isResetting, setIsResetting] = useState(false);
 
+  // Archive confirm
+  const [showArchiveConfirm, setShowArchiveConfirm] = useState(false);
+
   // Rebase dialog
   const [showRebaseDialog, setShowRebaseDialog] = useState(false);
   const [isRebasing, setIsRebasing] = useState(false);
@@ -443,15 +446,22 @@ export function BlitzPage({ onSwitchToZen }: BlitzPageProps) {
     setViewMode("list");
   }, []);
 
-  const handleArchive = useCallback(async () => {
+  const handleArchive = () => {
+    setShowArchiveConfirm(true);
+  };
+
+  const handleArchiveConfirm = useCallback(async () => {
     if (!activeProjectId || !selectedTask) return;
     try {
       await apiArchiveTask(activeProjectId, selectedTask.id);
       await refresh();
       setSelectedBlitzTask(null);
       setViewMode("list");
+      showMessage("Task archived");
     } catch {
       showMessage("Failed to archive task");
+    } finally {
+      setShowArchiveConfirm(false);
     }
   }, [activeProjectId, selectedTask, refresh]);
 
@@ -603,7 +613,7 @@ export function BlitzPage({ onSwitchToZen }: BlitzPageProps) {
       { key: "s", handler: handleSync, options: { enabled: canOperate } },
       { key: "m", handler: handleMerge, options: { enabled: canOperate } },
       { key: "b", handler: handleRebase, options: { enabled: canOperate } },
-      { key: "a", handler: handleArchive, options: { enabled: isActive && selectedTask?.status !== "broken" } },
+      // Archive removed from hotkeys - too dangerous for accidental press
       { key: "x", handler: handleClean, options: { enabled: hasTask } },
       {
         key: "r",
@@ -938,6 +948,17 @@ export function BlitzPage({ onSwitchToZen }: BlitzPageProps) {
         variant="danger"
         onConfirm={handleResetConfirm}
         onCancel={() => setShowResetConfirm(false)}
+      />
+
+      <ConfirmDialog
+        isOpen={showArchiveConfirm}
+        title="Archive Task"
+        message={`Are you sure you want to archive "${selectedTask?.name}"? This will mark the task as completed and hide it from the active task list.`}
+        confirmLabel="Archive"
+        cancelLabel="Cancel"
+        variant="warning"
+        onConfirm={handleArchiveConfirm}
+        onCancel={() => setShowArchiveConfirm(false)}
       />
 
       <RebaseDialog

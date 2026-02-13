@@ -84,6 +84,9 @@ export function TasksPage({ initialTaskId, initialViewMode, onNavigationConsumed
   const [showResetConfirm, setShowResetConfirm] = useState(false);
   const [isResetting, setIsResetting] = useState(false);
 
+  // Archive confirm dialog state
+  const [showArchiveConfirm, setShowArchiveConfirm] = useState(false);
+
   // Rebase dialog state
   const [showRebaseDialog, setShowRebaseDialog] = useState(false);
   const [isRebasing, setIsRebasing] = useState(false);
@@ -512,7 +515,11 @@ export function TasksPage({ initialTaskId, initialViewMode, onNavigationConsumed
     setSelectedTask(null);
     setViewMode("list");
   }, []);
-  const handleArchive = useCallback(async () => {
+  const handleArchive = () => {
+    setShowArchiveConfirm(true);
+  };
+
+  const handleArchiveConfirm = useCallback(async () => {
     if (!selectedProject || !selectedTask) return;
     try {
       await apiArchiveTask(selectedProject.id, selectedTask.id);
@@ -521,6 +528,8 @@ export function TasksPage({ initialTaskId, initialViewMode, onNavigationConsumed
       setViewMode("list");
     } catch (err) {
       console.error("Failed to archive task:", err);
+    } finally {
+      setShowArchiveConfirm(false);
     }
   }, [selectedProject, selectedTask, refreshSelectedProject]);
   const handleClean = () => {
@@ -974,6 +983,18 @@ export function TasksPage({ initialTaskId, initialViewMode, onNavigationConsumed
         variant="danger"
         onConfirm={handleResetConfirm}
         onCancel={() => setShowResetConfirm(false)}
+      />
+
+      {/* Archive Confirm Dialog */}
+      <ConfirmDialog
+        isOpen={showArchiveConfirm}
+        title="Archive Task"
+        message={`Are you sure you want to archive "${selectedTask?.name}"? This will mark the task as completed and hide it from the active task list.`}
+        confirmLabel="Archive"
+        cancelLabel="Cancel"
+        variant="warning"
+        onConfirm={handleArchiveConfirm}
+        onCancel={() => setShowArchiveConfirm(false)}
       />
 
       {/* Rebase Dialog (Change Target Branch) */}
