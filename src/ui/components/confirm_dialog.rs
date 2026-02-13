@@ -14,8 +14,16 @@ use crate::ui::click_areas::{ClickAreas, DialogAction};
 /// 确认弹窗类型
 #[derive(Debug, Clone)]
 pub enum ConfirmType {
-    /// 弱确认 - Archive 未 merge 的分支
-    ArchiveUnmerged { task_name: String, branch: String },
+    /// 弱确认 - Archive 风险确认（方案 B：按命中条件展示风险条目）
+    ArchiveConfirm {
+        task_name: String,
+        branch: String,
+        target: String,
+        worktree_dirty: bool,
+        branch_merged: bool,
+        dirty_check_failed: bool,
+        merge_check_failed: bool,
+    },
     /// 弱确认 - Clean 已 merge 的分支
     CleanMerged { task_name: String, branch: String },
     /// 弱确认 - Recover 归档的任务
@@ -41,7 +49,7 @@ pub enum ConfirmType {
 impl ConfirmType {
     pub fn title(&self) -> &str {
         match self {
-            ConfirmType::ArchiveUnmerged { .. } => " Archive ",
+            ConfirmType::ArchiveConfirm { .. } => " Archive ",
             ConfirmType::CleanMerged { .. } => " Clean ",
             ConfirmType::Recover { .. } => " Recover ",
             ConfirmType::SyncUncommittedWorktree { .. } => " Sync ",
@@ -55,14 +63,38 @@ impl ConfirmType {
 
     pub fn message(&self) -> Vec<Line<'static>> {
         match self {
-            ConfirmType::ArchiveUnmerged { task_name, branch } => {
-                vec![
+            ConfirmType::ArchiveConfirm {
+                task_name,
+                branch,
+                target,
+                worktree_dirty,
+                branch_merged,
+                dirty_check_failed,
+                merge_check_failed,
+            } => {
+                let mut lines = vec![
                     Line::from(format!("Task: {}", task_name)),
                     Line::from(format!("Branch: {}", branch)),
+                    Line::from(format!("Target: {}", target)),
                     Line::from(""),
-                    Line::from("Branch not merged yet."),
-                    Line::from("Archive anyway?"),
-                ]
+                ];
+
+                if *dirty_check_failed {
+                    lines.push(Line::from("Cannot check worktree status."));
+                } else if *worktree_dirty {
+                    lines.push(Line::from("Worktree has uncommitted changes."));
+                    lines.push(Line::from("They will be LOST after archive."));
+                }
+
+                if *merge_check_failed {
+                    lines.push(Line::from("Cannot check merge status."));
+                } else if !*branch_merged {
+                    lines.push(Line::from("Branch not merged yet."));
+                }
+
+                lines.push(Line::from(""));
+                lines.push(Line::from("Archive anyway?"));
+                lines
             }
             ConfirmType::CleanMerged { task_name, branch } => {
                 vec![
@@ -243,4 +275,69 @@ pub fn render(
         Rect::new(hint_area.x + half, hint_area.y, hint_area.width - half, 1),
         DialogAction::Cancel,
     ));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ConfirmType;
+
+    fn lines_to_strings(lines: Vec<ratatui::text::Line<'static>>) -> Vec<String> {
+        lines.into_iter().map(|l| l.to_string()).collect()
+    }
+
+    #[test]
+    fn archive_confirm_dirty_only() {
+        let msg = lines_to_strings(ConfirmType::ArchiveConfirm {
+            task_name: "T".to_string(),
+            branch: "b".to_string(),
+            target: "main".to_string(),
+            worktree_dirty: true,
+            branch_merged: true,
+            dirty_check_failed: false,
+            merge_check_failed: false,
+        }
+        .message());
+
+        assert!(msg.iter().any(|l| l.contains("Worktree has uncommitted changes.")));
+        assert!(msg
+            .iter()
+            .any(|l| l.contains("They will be LOST after archive.")));
+        assert!(!msg.iter().any(|l| l.contains("Branch not merged yet.")));
+    }
+
+    #[test]
+    fn archive_confirm_unmerged_only() {
+        let msg = lines_to_strings(ConfirmType::ArchiveConfirm {
+            task_name: "T".to_string(),
+            branch: "b".to_string(),
+            target: "main".to_string(),
+            worktree_dirty: false,
+            branch_merged: false,
+            dirty_check_failed: false,
+            merge_check_failed: false,
+        }
+        .message());
+
+        assert!(msg.iter().any(|l| l.contains("Branch not merged yet.")));
+        assert!(!msg
+            .iter()
+            .any(|l| l.contains("Worktree has uncommitted changes.")));
+    }
+
+    #[test]
+    fn archive_confirm_dirty_and_unmerged() {
+        let msg = lines_to_strings(ConfirmType::ArchiveConfirm {
+            task_name: "T".to_string(),
+            branch: "b".to_string(),
+            target: "main".to_string(),
+            worktree_dirty: true,
+            branch_merged: false,
+            dirty_check_failed: false,
+            merge_check_failed: false,
+        }
+        .message());
+
+        assert!(msg.iter().any(|l| l.contains("Worktree has uncommitted changes.")));
+        assert!(msg.iter().any(|l| l.contains("Branch not merged yet.")));
+    }
 }

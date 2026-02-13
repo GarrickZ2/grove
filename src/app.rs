@@ -892,6 +892,20 @@ pub enum PendingAction {
     ExitSession,
 }
 
+#[derive(Debug, Clone, Copy, Default)]
+struct ArchivePreflight {
+    worktree_dirty: bool,
+    branch_merged: bool,
+    dirty_check_failed: bool,
+    merge_check_failed: bool,
+}
+
+impl ArchivePreflight {
+    fn needs_confirm(&self) -> bool {
+        self.worktree_dirty || !self.branch_merged || self.dirty_check_failed || self.merge_check_failed
+    }
+}
+
 /// 后台操作结果
 pub enum BgResult {
     MergeOk { task_id: String, task_name: String },
@@ -1624,6 +1638,77 @@ impl App {
 
     // ========== Archive 功能 ==========
 
+    fn start_archive_for_task(&mut self, task_id: &str) {
+        let task = match tasks::get_task(&self.project.project_key, task_id) {
+            Ok(Some(t)) => t,
+            _ => {
+                self.show_toast("Task not found");
+                return;
+            }
+        };
+
+        let repo_path = self.project.project_path.clone();
+
+        let preflight = self.archive_preflight(
+            &repo_path,
+            &task.worktree_path,
+            &task.branch,
+            &task.target,
+        );
+
+        if !preflight.needs_confirm() {
+            self.do_archive(task_id);
+            return;
+        }
+
+        self.async_ops.pending_action = Some(PendingAction::Archive {
+            task_id: task_id.to_string(),
+        });
+        self.dialogs.confirm_dialog = Some(ConfirmType::ArchiveConfirm {
+            task_name: task.name,
+            branch: task.branch,
+            target: task.target,
+            worktree_dirty: preflight.worktree_dirty,
+            branch_merged: preflight.branch_merged,
+            dirty_check_failed: preflight.dirty_check_failed,
+            merge_check_failed: preflight.merge_check_failed,
+        });
+    }
+
+    fn archive_preflight(
+        &mut self,
+        repo_path: &str,
+        worktree_path: &str,
+        branch: &str,
+        target: &str,
+    ) -> ArchivePreflight {
+        let mut result = ArchivePreflight {
+            // 默认认为 merged，避免误报“未合并”；当检查失败时通过 *_check_failed 引导进入确认
+            branch_merged: true,
+            ..Default::default()
+        };
+
+        result.worktree_dirty = match git::has_uncommitted_changes(worktree_path) {
+            Ok(v) => v,
+            Err(e) => {
+                result.dirty_check_failed = true;
+                self.show_toast(format!("Git error: {}", e));
+                false
+            }
+        };
+
+        result.branch_merged = match git::is_merged(repo_path, branch, target) {
+            Ok(v) => v,
+            Err(e) => {
+                result.merge_check_failed = true;
+                self.show_toast(format!("Git error: {}", e));
+                true
+            }
+        };
+
+        result
+    }
+
     /// 开始归档流程
     pub fn start_archive(&mut self) {
         // 获取当前选中的 worktree
@@ -1645,19 +1730,28 @@ impl App {
         let task_name = wt.task_name.clone();
         let branch = wt.branch.clone();
         let target = wt.target.clone();
+        let worktree_path = wt.path.clone();
 
-        // 检查是否已 merge
-        let is_merged =
-            git::is_merged(&self.project.project_path, &branch, &target).unwrap_or(false);
+        let repo_path = self.project.project_path.clone();
 
-        if is_merged {
-            // 已 merge，直接归档
+        let preflight =
+            self.archive_preflight(&repo_path, &worktree_path, &branch, &target);
+
+        if !preflight.needs_confirm() {
             self.do_archive(&task_id);
-        } else {
-            // 未 merge，显示确认弹窗
-            self.async_ops.pending_action = Some(PendingAction::Archive { task_id });
-            self.dialogs.confirm_dialog = Some(ConfirmType::ArchiveUnmerged { task_name, branch });
+            return;
         }
+
+        self.async_ops.pending_action = Some(PendingAction::Archive { task_id });
+        self.dialogs.confirm_dialog = Some(ConfirmType::ArchiveConfirm {
+            task_name,
+            branch,
+            target,
+            worktree_dirty: preflight.worktree_dirty,
+            branch_merged: preflight.branch_merged,
+            dirty_check_failed: preflight.dirty_check_failed,
+            merge_check_failed: preflight.merge_check_failed,
+        });
     }
 
     /// 执行归档
@@ -2000,7 +2094,7 @@ impl App {
                         self.open_merge_dialog(&task_id);
                     }
                 }
-                PendingAction::MergeArchive { task_id } => self.do_archive(&task_id),
+                PendingAction::MergeArchive { task_id } => self.start_archive_for_task(&task_id),
                 PendingAction::Reset { task_id } => self.do_reset(&task_id),
                 PendingAction::ExitSession => {
                     let task_session_name =
@@ -3511,17 +3605,32 @@ impl App {
                 let task_name = self.monitor.task_name.clone();
                 let branch = self.monitor.branch.clone();
                 let target = self.monitor.target.clone();
+                let worktree_path = self.monitor.worktree_path.clone();
 
-                let is_merged =
-                    git::is_merged(&self.monitor.project_path, &branch, &target).unwrap_or(false);
+                let repo_path = self.monitor.project_path.clone();
 
-                if is_merged {
+                let preflight = self.archive_preflight(
+                    &repo_path,
+                    &worktree_path,
+                    &branch,
+                    &target,
+                );
+
+                if !preflight.needs_confirm() {
                     self.do_archive(&task_id);
-                } else {
-                    self.async_ops.pending_action = Some(PendingAction::Archive { task_id });
-                    self.dialogs.confirm_dialog =
-                        Some(ConfirmType::ArchiveUnmerged { task_name, branch });
+                    return;
                 }
+
+                self.async_ops.pending_action = Some(PendingAction::Archive { task_id });
+                self.dialogs.confirm_dialog = Some(ConfirmType::ArchiveConfirm {
+                    task_name,
+                    branch,
+                    target,
+                    worktree_dirty: preflight.worktree_dirty,
+                    branch_merged: preflight.branch_merged,
+                    dirty_check_failed: preflight.dirty_check_failed,
+                    merge_check_failed: preflight.merge_check_failed,
+                });
             }
             MonitorAction::Clean => {
                 let task_name = self.monitor.task_name.clone();

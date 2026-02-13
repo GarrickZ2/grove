@@ -6,26 +6,33 @@ const API_BASE_URL = import.meta.env.VITE_API_URL || '';
 export interface ApiError {
   status: number;
   message: string;
+  // Parsed JSON body if available
+  data?: unknown;
 }
 
-// Try to extract error message from response body
-async function extractErrorMessage(response: Response): Promise<string> {
+type ErrorPayload = { message: string; data?: unknown };
+
+// Try to extract error message (and JSON body) from response
+async function extractErrorPayload(response: Response): Promise<ErrorPayload> {
   try {
     const text = await response.text();
     if (text) {
       try {
         const json = JSON.parse(text);
         // Check common error message fields
-        return json.message || json.error || json.detail || text;
+        return {
+          message: json.message || json.error || json.detail || text,
+          data: json,
+        };
       } catch {
         // Not JSON, return raw text
-        return text;
+        return { message: text };
       }
     }
   } catch {
     // Ignore extraction errors
   }
-  return response.statusText;
+  return { message: response.statusText };
 }
 
 export class ApiClient {
@@ -44,10 +51,11 @@ export class ApiClient {
     });
 
     if (!response.ok) {
-      const message = await extractErrorMessage(response);
+      const payload = await extractErrorPayload(response);
       throw {
         status: response.status,
-        message,
+        message: payload.message,
+        data: payload.data,
       } as ApiError;
     }
 
@@ -64,10 +72,11 @@ export class ApiClient {
     });
 
     if (!response.ok) {
-      const message = await extractErrorMessage(response);
+      const payload = await extractErrorPayload(response);
       throw {
         status: response.status,
-        message,
+        message: payload.message,
+        data: payload.data,
       } as ApiError;
     }
 
@@ -84,10 +93,11 @@ export class ApiClient {
     });
 
     if (!response.ok) {
-      const message = await extractErrorMessage(response);
+      const payload = await extractErrorPayload(response);
       throw {
         status: response.status,
-        message,
+        message: payload.message,
+        data: payload.data,
       } as ApiError;
     }
 
@@ -103,10 +113,11 @@ export class ApiClient {
     });
 
     if (!response.ok) {
-      const message = await extractErrorMessage(response);
+      const payload = await extractErrorPayload(response);
       throw {
         status: response.status,
-        message,
+        message: payload.message,
+        data: payload.data,
       } as ApiError;
     }
 
@@ -128,10 +139,11 @@ export class ApiClient {
     });
 
     if (!response.ok) {
-      const message = await extractErrorMessage(response);
+      const payload = await extractErrorPayload(response);
       throw {
         status: response.status,
-        message,
+        message: payload.message,
+        data: payload.data,
       } as ApiError;
     }
 

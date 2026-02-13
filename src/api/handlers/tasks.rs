@@ -30,6 +30,26 @@ pub struct TaskListQuery {
     pub filter: Option<String>, // "active" | "archived"
 }
 
+#[derive(Debug, Deserialize)]
+pub struct ArchiveQuery {
+    /// If true, skip safety checks and archive immediately.
+    #[serde(default)]
+    pub force: Option<bool>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ArchiveConfirmResponse {
+    pub error: String,
+    pub code: String,
+    pub task_name: String,
+    pub branch: String,
+    pub target: String,
+    pub worktree_dirty: bool,
+    pub branch_merged: bool,
+    pub dirty_check_failed: bool,
+    pub merge_check_failed: bool,
+}
+
 /// Task list response
 #[derive(Debug, Serialize)]
 pub struct TaskListResponse {
@@ -449,8 +469,87 @@ pub async fn create_task(
 /// Logic from TUI: app.rs do_archive()
 pub async fn archive_task(
     Path((id, task_id)): Path<(String, String)>,
-) -> Result<Json<TaskResponse>, StatusCode> {
-    let (project, project_key) = find_project_by_id(&id)?;
+    Query(query): Query<ArchiveQuery>,
+) -> Result<Json<TaskResponse>, (StatusCode, Json<ArchiveConfirmResponse>)> {
+    let (project, project_key) = find_project_by_id(&id)
+        .map_err(|s| {
+            (
+                s,
+                Json(ArchiveConfirmResponse {
+                    error: "Project not found".to_string(),
+                    code: "PROJECT_NOT_FOUND".to_string(),
+                    task_name: task_id.clone(),
+                    branch: "".to_string(),
+                    target: "".to_string(),
+                    worktree_dirty: false,
+                    branch_merged: true,
+                    dirty_check_failed: true,
+                    merge_check_failed: true,
+                }),
+            )
+        })?;
+
+    let force = query.force.unwrap_or(false);
+
+    // Safety checks (GUI needs a confirmation step like TUI)
+    if !force {
+        let task = match tasks::get_task(&project_key, &task_id).ok().flatten() {
+            Some(t) => t,
+            None => {
+                return Err((
+                    StatusCode::NOT_FOUND,
+                    Json(ArchiveConfirmResponse {
+                        error: "Task not found".to_string(),
+                        code: "TASK_NOT_FOUND".to_string(),
+                        task_name: task_id.clone(),
+                        branch: "".to_string(),
+                        target: "".to_string(),
+                        worktree_dirty: false,
+                        branch_merged: true,
+                        dirty_check_failed: true,
+                        merge_check_failed: true,
+                    }),
+                ));
+            }
+        };
+
+        let mut worktree_dirty = false;
+        let mut dirty_check_failed = false;
+        match git::has_uncommitted_changes(&task.worktree_path) {
+            Ok(v) => worktree_dirty = v,
+            Err(_) => {
+                dirty_check_failed = true;
+            }
+        }
+
+        let mut branch_merged = true;
+        let mut merge_check_failed = false;
+        match git::is_merged(&project.path, &task.branch, &task.target) {
+            Ok(v) => branch_merged = v,
+            Err(_) => {
+                merge_check_failed = true;
+            }
+        }
+
+        let needs_confirm =
+            worktree_dirty || !branch_merged || dirty_check_failed || merge_check_failed;
+        if needs_confirm {
+            return Err((
+                StatusCode::CONFLICT,
+                Json(ArchiveConfirmResponse {
+                    error: "Archive requires confirmation".to_string(),
+                    code: "ARCHIVE_CONFIRM_REQUIRED".to_string(),
+                    task_name: task.name,
+                    branch: task.branch,
+                    target: task.target,
+                    worktree_dirty,
+                    branch_merged,
+                    dirty_check_failed,
+                    merge_check_failed,
+                }),
+            ));
+        }
+    }
 
     // 1. Get task info (need multiplexer + session_name before archive moves it)
     let global_mux = storage::config::load_config().multiplexer;
@@ -473,7 +572,22 @@ pub async fn archive_task(
     }
 
     // 2. Move to archived.toml (TUI: do_archive step 2)
-    tasks::archive_task(&project_key, &task_id).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    tasks::archive_task(&project_key, &task_id).map_err(|_| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ArchiveConfirmResponse {
+                error: "Archive failed".to_string(),
+                code: "ARCHIVE_FAILED".to_string(),
+                task_name: task_id.clone(),
+                branch: "".to_string(),
+                target: "".to_string(),
+                worktree_dirty: false,
+                branch_merged: true,
+                dirty_check_failed: true,
+                merge_check_failed: true,
+            }),
+        )
+    })?;
 
     // 3. Remove hook notification (TUI: do_archive step 3)
     hooks::remove_task_hook(&project_key, &task_id);
@@ -490,7 +604,22 @@ pub async fn archive_task(
     let task = archived
         .iter()
         .find(|wt| wt.id == task_id)
-        .ok_or(StatusCode::NOT_FOUND)?;
+        .ok_or_else(|| {
+            (
+                StatusCode::NOT_FOUND,
+                Json(ArchiveConfirmResponse {
+                    error: "Archived task not found".to_string(),
+                    code: "ARCHIVED_TASK_NOT_FOUND".to_string(),
+                    task_name: task_id.clone(),
+                    branch: "".to_string(),
+                    target: "".to_string(),
+                    worktree_dirty: false,
+                    branch_merged: true,
+                    dirty_check_failed: true,
+                    merge_check_failed: true,
+                }),
+            )
+        })?;
 
     Ok(Json(worktree_to_response(task)))
 }

@@ -6,7 +6,7 @@ import { Button } from "../ui";
 interface ConfirmDialogProps {
   isOpen: boolean;
   title: string;
-  message: string;
+  message: React.ReactNode;
   confirmLabel?: string;
   cancelLabel?: string;
   variant?: "danger" | "warning" | "info";
@@ -96,7 +96,11 @@ export function ConfirmDialog({
 
               {/* Content */}
               <div className="px-5 py-4">
-                <p className="text-sm text-[var(--color-text-muted)]">{message}</p>
+                {typeof message === "string" ? (
+                  <p className="text-sm text-[var(--color-text-muted)] whitespace-pre-line">{message}</p>
+                ) : (
+                  <div className="text-sm text-[var(--color-text-muted)]">{message}</div>
+                )}
               </div>
 
               {/* Actions */}
