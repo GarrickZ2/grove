@@ -68,6 +68,42 @@ src/
         └── ...
 ```
 
+### Web Frontend Structure
+
+```
+grove-web/src/
+├── main.tsx                # Entry point
+├── App.tsx                 # Root component
+├── api/                    # Backend API clients
+│   ├── client.ts
+│   ├── config.ts
+│   └── index.ts
+├── components/             # React components
+│   ├── Blitz/              # Blitz mode (cross-project view)
+│   │   └── BlitzPage.tsx   # ~675 lines (refactored)
+│   ├── Tasks/              # Zen mode (single-project view)
+│   │   └── TasksPage.tsx   # ~610 lines (refactored)
+│   ├── Config/             # Settings page
+│   ├── Terminal/           # Terminal integration
+│   ├── Editor/             # Code editor integration
+│   └── ui/                 # Reusable UI components
+│       ├── ContextMenu.tsx
+│       ├── Dialog.tsx
+│       └── ...
+├── hooks/                  # Custom React hooks
+│   ├── index.ts
+│   ├── useHotkeys.ts       # Keyboard shortcuts
+│   ├── useTaskPageState.ts # Page state management (~250 lines)
+│   ├── useTaskNavigation.ts # j/k navigation (~70 lines)
+│   ├── usePostMergeArchive.ts # Post-merge workflow (~160 lines)
+│   └── useTaskOperations.ts # All task operations (~450 lines)
+├── utils/                  # Utility functions
+│   ├── archiveHelpers.tsx  # Archive confirmation builder
+│   └── taskOperationUtils.ts # Context menu builder
+└── data/
+    └── types.ts            # TypeScript type definitions
+```
+
 ## Core Concepts
 
 ### Hierarchy
@@ -132,6 +168,76 @@ When modifying the web frontend (`grove-web/`):
 cd grove-web
 npm run build  # Build frontend after changes
 ```
+
+### Web Frontend Hooks Architecture
+
+The web frontend uses a custom hooks architecture to eliminate code duplication between Blitz mode (`BlitzPage.tsx`) and Zen mode (`TasksPage.tsx`):
+
+**Core Hooks** (`grove-web/src/hooks/`):
+
+1. **`useTaskPageState`** (~250 lines) — Manages all page-level state:
+   - Task selection (`selectedTask`, `viewMode`)
+   - UI panels (`reviewOpen`, `editorOpen`, `showHelp`)
+   - Messages and search (`operationMessage`, `searchQuery`)
+   - Returns: `[TaskPageState, TaskPageHandlers]`
+
+2. **`useTaskNavigation`** (~70 lines) — Handles keyboard navigation:
+   - j/k navigation (`selectNextTask`, `selectPreviousTask`)
+   - Context menu positioning (`openContextMenuAtSelectedTask`)
+   - Requires: tasks array, selection state, view mode
+
+3. **`usePostMergeArchive`** (~160 lines) — Post-merge archive workflow:
+   - Archive dialog after successful merge
+   - Supports cross-project operations (Blitz mode)
+   - Handles archive confirmation and cleanup
+   - Returns: `[PostMergeArchiveState, PostMergeArchiveHandlers]`
+
+4. **`useTaskOperations`** (~450 lines) — All task Git operations:
+   - Commit, Merge, Archive, Sync, Rebase, Reset, Clean
+   - Dialog state management for each operation
+   - Loading states, error handling, API calls
+   - Returns: `[TaskOperationsState, TaskOperationsHandlers]`
+
+**Usage Pattern**:
+
+```typescript
+import {
+  useTaskPageState,
+  useTaskNavigation,
+  usePostMergeArchive,
+  useTaskOperations,
+} from "../../hooks";
+
+function TaskPage() {
+  const [pageState, pageHandlers] = useTaskPageState();
+  const [opsState, opsHandlers] = useTaskOperations({
+    projectId: selectedProject?.id ?? null,
+    selectedTask: pageState.selectedTask,
+    onRefresh: refreshSelectedProject,
+    onShowMessage: pageHandlers.showMessage,
+    onTaskArchived: () => { /* cleanup */ },
+    onTaskMerged: (taskId, taskName) => {
+      postMergeHandlers.triggerPostMergeArchive(taskId, taskName);
+    },
+  });
+  const [postMergeState, postMergeHandlers] = usePostMergeArchive({...});
+  const navHandlers = useTaskNavigation({...});
+
+  // Use state and handlers in JSX
+  return <div>{/* ... */}</div>;
+}
+```
+
+**Utility Functions** (`grove-web/src/utils/`):
+
+- **`archiveHelpers.tsx`** — Archive confirmation message builder, error handling
+- **`taskOperationUtils.ts`** — Context menu builder, task state checkers
+
+**Benefits**:
+- Eliminated ~850 lines of duplicate code between Blitz and Zen modes
+- Single source of truth for all task operations
+- Full TypeScript type safety and IDE autocomplete
+- Easier to add new operations or fix bugs (change once, apply everywhere)
 
 ### UI Component Pattern
 

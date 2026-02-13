@@ -1,37 +1,26 @@
 import { useState, useMemo, useCallback, useRef, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Terminal, GitCommit, GitBranchPlus, RefreshCw, GitMerge, Archive, RotateCcw, Trash2, Search } from "lucide-react";
+import { Search } from "lucide-react";
 import { TaskInfoPanel } from "../Tasks/TaskInfoPanel";
-import type { TabType } from "../Tasks/TaskInfoPanel";
 import { TaskView } from "../Tasks/TaskView";
 import { CommitDialog, ConfirmDialog, MergeDialog } from "../Dialogs";
-import type { ApiError } from "../../api/client";
 import { RebaseDialog } from "../Tasks/dialogs";
 import { HelpOverlay } from "../Tasks/HelpOverlay";
 import { ContextMenu } from "../ui/ContextMenu";
-import type { ContextMenuItem } from "../ui/ContextMenu";
 import { LogoBrand } from "../Layout/LogoBrand";
 import { useNotifications } from "../../context";
-import { useHotkeys } from "../../hooks";
+import {
+  useHotkeys,
+  useTaskPageState,
+  useTaskNavigation,
+  usePostMergeArchive,
+  useTaskOperations,
+} from "../../hooks";
 import { useBlitzTasks } from "./useBlitzTasks";
 import { BlitzTaskListItem } from "./BlitzTaskListItem";
-import {
-  archiveTask as apiArchiveTask,
-  deleteTask as apiDeleteTask,
-  syncTask as apiSyncTask,
-  commitTask as apiCommitTask,
-  mergeTask as apiMergeTask,
-  getCommits as apiGetCommits,
-  resetTask as apiResetTask,
-  rebaseToTask as apiRebaseToTask,
-  getBranches as apiGetBranches,
-} from "../../api";
-import type { ArchiveConfirmData } from "../../api/types";
-import type { Task, BlitzTask } from "../../data/types";
+import type { BlitzTask } from "../../data/types";
 import type { PendingArchiveConfirm } from "../../utils/archiveHelpers";
-import { handleArchiveError } from "../../utils/archiveHelpers";
-
-type ViewMode = "list" | "info" | "terminal";
+import { buildContextMenuItems, type TaskOperationHandlers } from "../../utils/taskOperationUtils";
 
 interface BlitzPageProps {
   onSwitchToZen: () => void;
@@ -41,114 +30,63 @@ export function BlitzPage({ onSwitchToZen }: BlitzPageProps) {
   const { blitzTasks, isLoading, refresh } = useBlitzTasks();
   const { getTaskNotification, dismissNotification } = useNotifications();
 
+  // Blitz-specific state
   const [selectedBlitzTask, setSelectedBlitzTask] = useState<BlitzTask | null>(null);
-  const [viewMode, setViewMode] = useState<ViewMode>("list");
-  const [searchQuery, setSearchQuery] = useState("");
-  const [reviewOpen, setReviewOpen] = useState(false);
-  const [editorOpen, setEditorOpen] = useState(false);
-
-  // Drag and drop state
   const [draggedIndex, setDraggedIndex] = useState<number | null>(null);
   const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
   const [taskOrder, setTaskOrder] = useState<string[]>([]);
-
-  // Commit dialog state
-  const [showCommitDialog, setShowCommitDialog] = useState(false);
-  const [isCommitting, setIsCommitting] = useState(false);
-  const [commitError, setCommitError] = useState<string | null>(null);
-
-  // Merge dialog state
-  const [showMergeDialog, setShowMergeDialog] = useState(false);
-  const [isMerging, setIsMerging] = useState(false);
-  const [mergeError, setMergeError] = useState<string | null>(null);
-
-  // Post-merge archive confirm
-  const [showArchiveAfterMerge, setShowArchiveAfterMerge] = useState(false);
-  const [mergedTaskId, setMergedTaskId] = useState<string | null>(null);
-  const [mergedTaskName, setMergedTaskName] = useState<string>("");
-  const [mergedProjectId, setMergedProjectId] = useState<string | null>(null);
-
-  const [pendingArchiveConfirm, setPendingArchiveConfirm] = useState<PendingArchiveConfirm | null>(null);
-
-  const buildArchiveConfirmMessage = useCallback((
-    data: ArchiveConfirmData,
-    fallbackTaskName: string
-  ): React.ReactNode => {
-    // Keep wording consistent with TUI ConfirmType::ArchiveConfirm
-    const taskName = data.task_name || fallbackTaskName;
-    const branch = data.branch || "";
-    const target = data.target || "";
-
-    const lines: string[] = [
-      `Task: ${taskName}`,
-      `Branch: ${branch}`,
-      `Target: ${target}`,
-      "",
-    ];
-
-    if (data.dirty_check_failed) {
-      lines.push("⚠ Unable to verify working tree status.");
-    } else if (data.worktree_dirty) {
-      lines.push("⚠ Working tree contains uncommitted changes.");
-      lines.push("  These changes will be permanently lost upon archiving.");
-    }
-
-    if (data.merge_check_failed) {
-      lines.push("⚠ Unable to verify merge status.");
-    } else if (data.branch_merged === false) {
-      lines.push("⚠ Branch has not been merged into target.");
-    }
-
-    lines.push("", "Proceed with archiving?");
-    return lines.join("\n");
-  }, []);
-
-  // Clean confirm
-  const [showCleanConfirm, setShowCleanConfirm] = useState(false);
-  const [isDeleting, setIsDeleting] = useState(false);
-
-  // Sync state
-  const [isSyncing, setIsSyncing] = useState(false);
-
-  // Reset confirm
-  const [showResetConfirm, setShowResetConfirm] = useState(false);
-  const [isResetting, setIsResetting] = useState(false);
-
-  // Rebase dialog
-  const [showRebaseDialog, setShowRebaseDialog] = useState(false);
-  const [isRebasing, setIsRebasing] = useState(false);
-  const [availableBranches, setAvailableBranches] = useState<string[]>([]);
-
-  // Toast
-  const [operationMessage, setOperationMessage] = useState<string | null>(null);
-
-  // Context menu
-  const [contextMenu, setContextMenu] = useState<{ task: Task; position: { x: number; y: number } } | null>(null);
-
-  // Help overlay
-  const [showHelp, setShowHelp] = useState(false);
-
-  // Info panel tab
-  const [infoPanelTab, setInfoPanelTab] = useState<TabType>("stats");
-
-  // Search input ref
   const searchInputRef = useRef<HTMLInputElement | null>(null);
+
+  // Archive confirmation state (shared between hooks)
+  const [pendingArchiveConfirm, setPendingArchiveConfirm] = useState<PendingArchiveConfirm | null>(null);
 
   // Derived helpers
   const activeProjectId = selectedBlitzTask?.projectId ?? null;
   const selectedTask = selectedBlitzTask?.task ?? null;
 
+  // Page state hook
+  const [pageState, pageHandlers] = useTaskPageState();
+
+  // Post-merge archive hook (with Blitz-specific projectId tracking)
+  const [postMergeState, postMergeHandlers] = usePostMergeArchive({
+    projectId: activeProjectId,
+    onRefresh: refresh,
+    onShowMessage: pageHandlers.showMessage,
+    onCleanup: () => {
+      setSelectedBlitzTask(null);
+      pageHandlers.setViewMode("list");
+    },
+    setPendingArchiveConfirm,
+  });
+
+  // Task operations hook
+  const [opsState, opsHandlers] = useTaskOperations({
+    projectId: activeProjectId,
+    selectedTask,
+    onRefresh: refresh,
+    onShowMessage: pageHandlers.showMessage,
+    onTaskArchived: () => {
+      setSelectedBlitzTask(null);
+      pageHandlers.setViewMode("list");
+    },
+    onTaskMerged: (taskId, taskName) => {
+      // Blitz: pass mergedProjectId for cross-project operations
+      postMergeHandlers.triggerPostMergeArchive(taskId, taskName, activeProjectId ?? undefined);
+    },
+    setPendingArchiveConfirm,
+  });
+
   // Filter tasks by search query (match task name, branch, or project name)
   const filteredTasks = useMemo(() => {
-    if (!searchQuery) return blitzTasks;
-    const q = searchQuery.toLowerCase();
+    if (!pageState.searchQuery) return blitzTasks;
+    const q = pageState.searchQuery.toLowerCase();
     return blitzTasks.filter(
       (bt) =>
         bt.task.name.toLowerCase().includes(q) ||
         bt.task.branch.toLowerCase().includes(q) ||
         bt.projectName.toLowerCase().includes(q)
     );
-  }, [blitzTasks, searchQuery]);
+  }, [blitzTasks, pageState.searchQuery]);
 
   // Keep selectedBlitzTask in sync with refreshed data
   const currentSelected = useMemo(() => {
@@ -227,30 +165,25 @@ export function BlitzPage({ onSwitchToZen }: BlitzPageProps) {
     };
   }, [displayTasks, getTaskNotification, dismissNotification]);
 
-  const showMessage = (message: string) => {
-    setOperationMessage(message);
-    setTimeout(() => setOperationMessage(null), 3000);
-  };
-
-  // --- Handlers ---
-  const handleSelectTask = (bt: BlitzTask) => {
+  // Task selection handlers (Blitz-specific: handle BlitzTask)
+  const handleSelectTask = useCallback((bt: BlitzTask) => {
     setSelectedBlitzTask(bt);
     if (bt.task.status !== "archived") {
-      setViewMode("terminal");
-      setReviewOpen(false);
-      setEditorOpen(false);
-    } else if (viewMode === "list") {
-      setViewMode("info");
+      pageHandlers.setViewMode("terminal");
+      pageHandlers.setReviewOpen(false);
+      pageHandlers.setEditorOpen(false);
+    } else if (pageState.viewMode === "list") {
+      pageHandlers.setViewMode("info");
     }
-  };
+  }, [pageHandlers, pageState.viewMode]);
 
-  const handleDoubleClickTask = (bt: BlitzTask) => {
+  const handleDoubleClickTask = useCallback((bt: BlitzTask) => {
     if (bt.task.status === "archived") return;
     setSelectedBlitzTask(bt);
-    setViewMode("terminal");
-    setReviewOpen(false);
-    setEditorOpen(false);
-  };
+    pageHandlers.setViewMode("terminal");
+    pageHandlers.setReviewOpen(false);
+    pageHandlers.setEditorOpen(false);
+  }, [pageHandlers]);
 
   // Drag and drop handlers
   const handleDragStart = (index: number) => {
@@ -282,482 +215,114 @@ export function BlitzPage({ onSwitchToZen }: BlitzPageProps) {
     setDragOverIndex(null);
   };
 
-  const handleCloseTask = () => {
-    if (viewMode === "terminal") {
-      setViewMode("info");
-      setReviewOpen(false);
-      setEditorOpen(false);
+  // Context menu handler (Blitz-specific: handle BlitzTask)
+  const handleContextMenu = useCallback((bt: BlitzTask, e: React.MouseEvent) => {
+    e.preventDefault();
+    setSelectedBlitzTask(bt);
+    pageHandlers.handleContextMenu(bt.task, e);
+  }, [pageHandlers]);
+
+  // Wrap page handlers to handle selectedBlitzTask
+  const handleCloseTask = useCallback(() => {
+    if (pageState.viewMode === "terminal") {
+      pageHandlers.handleCloseTask();
     } else {
       setSelectedBlitzTask(null);
-      setViewMode("list");
+      pageHandlers.setViewMode("list");
     }
-  };
+  }, [pageState.viewMode, pageHandlers]);
 
-  const handleEnterTerminal = () => {
-    if (selectedTask?.status === "archived") return;
-    setViewMode("terminal");
-  };
-
-  const handleToggleReview = () => {
-    if (!reviewOpen) setEditorOpen(false);
-    setReviewOpen(!reviewOpen);
-  };
-
-  const handleToggleEditor = () => {
-    if (!editorOpen) setReviewOpen(false);
-    setEditorOpen(!editorOpen);
-  };
-
-  const handleReviewFromInfo = () => {
-    setViewMode("terminal");
-    setReviewOpen(true);
-    setEditorOpen(false);
-  };
-
-  const handleEditorFromInfo = () => {
-    setViewMode("terminal");
-    setEditorOpen(true);
-    setReviewOpen(false);
-  };
-
-  const handleStartSession = () => {
-    setViewMode("terminal");
-  };
+  const handleStartSession = useCallback(() => {
+    pageHandlers.setViewMode("terminal");
+  }, [pageHandlers]);
 
   const handleTerminalConnected = useCallback(async () => {
     await refresh();
   }, [refresh]);
 
-  // Unified shortcut handlers for Review/Editor/Terminal
-  const handleReviewShortcut = () => {
-    if (viewMode === "terminal") {
-      handleToggleReview();
-    } else {
-      handleReviewFromInfo();
-    }
-  };
+  // Task navigation hook (for Blitz tasks)
+  const navHandlers = useTaskNavigation({
+    tasks: displayTasks.map(bt => bt.task),
+    selectedTask,
+    viewMode: pageState.viewMode,
+    onSelectTask: (task) => {
+      const bt = displayTasks.find(t => t.task.id === task.id);
+      if (bt) handleSelectTask(bt);
+    },
+    setViewMode: pageHandlers.setViewMode,
+    setContextMenu: pageHandlers.setContextMenu,
+  });
 
-  const handleEditorShortcut = () => {
-    if (viewMode === "terminal") {
-      handleToggleEditor();
-    } else {
-      handleEditorFromInfo();
-    }
-  };
-
-  const handleTerminalShortcut = () => {
-    if (viewMode === "terminal") {
-      // Close review/editor if open
-      if (reviewOpen) setReviewOpen(false);
-      if (editorOpen) setEditorOpen(false);
-    } else {
-      handleEnterTerminal();
-    }
-  };
-
-  // --- Actions ---
-  const handleCommit = () => {
-    setCommitError(null);
-    setShowCommitDialog(true);
-  };
-
-  const handleCommitSubmit = useCallback(async (message: string) => {
-    if (!activeProjectId || !selectedTask) return;
-    try {
-      setIsCommitting(true);
-      setCommitError(null);
-      const result = await apiCommitTask(activeProjectId, selectedTask.id, message);
-      if (result.success) {
-        showMessage("Changes committed successfully");
-        setShowCommitDialog(false);
-        await refresh();
-      } else {
-        setCommitError(result.message || "Commit failed");
-      }
-    } catch {
-      setCommitError("Failed to commit changes");
-    } finally {
-      setIsCommitting(false);
-    }
-  }, [activeProjectId, selectedTask, refresh]);
-
-  const handleRebase = useCallback(async () => {
-    if (!activeProjectId) return;
-    try {
-      const branchesRes = await apiGetBranches(activeProjectId);
-      setAvailableBranches(branchesRes.branches.map((b) => b.name));
-      setShowRebaseDialog(true);
-    } catch {
-      showMessage("Failed to load branches");
-    }
-  }, [activeProjectId]);
-
-  const handleRebaseSubmit = useCallback(async (newTarget: string) => {
-    if (!activeProjectId || !selectedTask || isRebasing) return;
-    try {
-      setIsRebasing(true);
-      const result = await apiRebaseToTask(activeProjectId, selectedTask.id, newTarget);
-      if (result.success) {
-        showMessage(result.message || "Target branch changed");
-        setShowRebaseDialog(false);
-        await refresh();
-        setSelectedBlitzTask((prev) =>
-          prev ? { ...prev, task: { ...prev.task, target: newTarget } } : null
-        );
-      } else {
-        showMessage(result.message || "Failed to change target branch");
-      }
-    } catch (err) {
-      const errorMessage = err instanceof Error ? err.message :
-        (err as { message?: string })?.message || "Failed to change target branch";
-      showMessage(errorMessage);
-    } finally {
-      setIsRebasing(false);
-    }
-  }, [activeProjectId, selectedTask, isRebasing, refresh]);
-
-  const handleSync = useCallback(async () => {
-    if (!activeProjectId || !selectedTask || isSyncing) return;
-    try {
-      setIsSyncing(true);
-      const result = await apiSyncTask(activeProjectId, selectedTask.id);
-      showMessage(result.message || (result.success ? "Synced successfully" : "Sync failed"));
-      if (result.success) await refresh();
-    } catch {
-      showMessage("Failed to sync task");
-    } finally {
-      setIsSyncing(false);
-    }
-  }, [activeProjectId, selectedTask, isSyncing, refresh]);
-
-  const handleMerge = useCallback(async () => {
-    if (!activeProjectId || !selectedTask || isMerging) return;
-    try {
-      const commitsRes = await apiGetCommits(activeProjectId, selectedTask.id);
-      if (commitsRes.total <= 1) {
-        setIsMerging(true);
-        const result = await apiMergeTask(activeProjectId, selectedTask.id, "merge-commit");
-        setIsMerging(false);
-        if (result.success) {
-          showMessage(result.message || "Merged successfully");
-          await refresh();
-          setMergedTaskId(selectedTask.id);
-          setMergedTaskName(selectedTask.name);
-          setMergedProjectId(activeProjectId);
-          setShowArchiveAfterMerge(true);
-        } else {
-          showMessage(result.message || "Merge failed");
-        }
-      } else {
-        setMergeError(null);
-        setShowMergeDialog(true);
-      }
-    } catch {
-      setMergeError(null);
-      setShowMergeDialog(true);
-    }
-  }, [activeProjectId, selectedTask, isMerging, refresh]);
-
-  const handleMergeSubmit = useCallback(async (method: "squash" | "merge-commit") => {
-    if (!activeProjectId || !selectedTask || isMerging) return;
-    try {
-      setIsMerging(true);
-      setMergeError(null);
-      const result = await apiMergeTask(activeProjectId, selectedTask.id, method);
-      if (result.success) {
-        showMessage(result.message || "Merged successfully");
-        setShowMergeDialog(false);
-        await refresh();
-        setMergedTaskId(selectedTask.id);
-        setMergedTaskName(selectedTask.name);
-        setMergedProjectId(activeProjectId);
-        setShowArchiveAfterMerge(true);
-      } else {
-        setMergeError(result.message || "Merge failed");
-      }
-    } catch {
-      setMergeError("Failed to merge task");
-    } finally {
-      setIsMerging(false);
-    }
-  }, [activeProjectId, selectedTask, isMerging, refresh]);
-
-  const handleArchiveAfterMerge = useCallback(async () => {
-    if (!mergedProjectId || !mergedTaskId) return;
-    try {
-      await apiArchiveTask(mergedProjectId, mergedTaskId);
-      await refresh();
-      showMessage("Task archived");
-      cleanupAfterMerge();
-    } catch (err) {
-      const needsConfirm = handleArchiveError(
-        err,
-        mergedProjectId,
-        mergedTaskId,
-        mergedTaskName,
-        "after-merge",
-        buildArchiveConfirmMessage,
-        setPendingArchiveConfirm,
-        showMessage
-      );
-
-      if (needsConfirm) {
-        setShowArchiveAfterMerge(false);
-        return;
-      }
-
-      cleanupAfterMerge();
-    }
-  }, [mergedProjectId, mergedTaskId, mergedTaskName, refresh]);
-
-  // Helper to cleanup after merge
-  const cleanupAfterMerge = useCallback(() => {
-    setShowArchiveAfterMerge(false);
-    setMergedTaskId(null);
-    setMergedTaskName("");
-    setMergedProjectId(null);
-    setSelectedBlitzTask(null);
-    setViewMode("list");
-  }, []);
-
-  const handleSkipArchive = useCallback(() => {
-    setShowArchiveAfterMerge(false);
-    setMergedTaskId(null);
-    setMergedTaskName("");
-    setMergedProjectId(null);
-    setSelectedBlitzTask(null);
-    setViewMode("list");
-  }, []);
-
-  const handleArchive = useCallback(async () => {
-    if (!activeProjectId || !selectedTask) return;
-    try {
-      await apiArchiveTask(activeProjectId, selectedTask.id);
-      await refresh();
-      setSelectedBlitzTask(null);
-      setViewMode("list");
-    } catch (err) {
-      handleArchiveError(
-        err,
-        activeProjectId,
-        selectedTask.id,
-        selectedTask.name,
-        "normal",
-        buildArchiveConfirmMessage,
-        setPendingArchiveConfirm,
-        showMessage
-      );
-    }
-  }, [activeProjectId, selectedTask, refresh, buildArchiveConfirmMessage]);
-
-  const handleArchiveConfirm = useCallback(async () => {
-    if (!pendingArchiveConfirm) return;
-    try {
-      await apiArchiveTask(pendingArchiveConfirm.projectId, pendingArchiveConfirm.taskId, {
-        force: true,
-      });
-      await refresh();
-      showMessage("Task archived");
-      setSelectedBlitzTask(null);
-      setViewMode("list");
-    } catch (err) {
-      const e = err as ApiError;
-      showMessage(e?.message || "Failed to archive task");
-    } finally {
-      const ctx = pendingArchiveConfirm.context;
-      setPendingArchiveConfirm(null);
-      if (ctx === "after-merge") {
-        setMergedTaskId(null);
-        setMergedTaskName("");
-        setMergedProjectId(null);
-      }
-    }
-  }, [pendingArchiveConfirm, refresh]);
-
-  const handleArchiveCancel = useCallback(() => {
-    const ctx = pendingArchiveConfirm?.context;
-    setPendingArchiveConfirm(null);
-    if (ctx === "after-merge") {
-      setMergedTaskId(null);
-      setMergedTaskName("");
-      setMergedProjectId(null);
-      setSelectedBlitzTask(null);
-      setViewMode("list");
-    }
-  }, [pendingArchiveConfirm]);
-
-  const handleClean = () => {
-    setShowCleanConfirm(true);
-  };
-
-  const handleCleanConfirm = useCallback(async () => {
-    if (!activeProjectId || !selectedTask || isDeleting) return;
-    try {
-      setIsDeleting(true);
-      await apiDeleteTask(activeProjectId, selectedTask.id);
-      await refresh();
-      showMessage("Task deleted successfully");
-      setSelectedBlitzTask(null);
-      setViewMode("list");
-    } catch {
-      showMessage("Failed to delete task");
-    } finally {
-      setIsDeleting(false);
-      setShowCleanConfirm(false);
-    }
-  }, [activeProjectId, selectedTask, isDeleting, refresh]);
-
-  const handleReset = () => {
-    setShowResetConfirm(true);
-  };
-
-  const handleResetConfirm = useCallback(async () => {
-    if (!activeProjectId || !selectedTask || isResetting) return;
-    try {
-      setIsResetting(true);
-      const result = await apiResetTask(activeProjectId, selectedTask.id);
-      if (result.success) {
-        showMessage(result.message || "Task reset successfully");
-        await refresh();
-      } else {
-        showMessage(result.message || "Reset failed");
-      }
-    } catch (err) {
-      const errorMessage = err instanceof Error ? err.message :
-        (err as { message?: string })?.message || "Failed to reset task";
-      showMessage(errorMessage);
-    } finally {
-      setIsResetting(false);
-      setShowResetConfirm(false);
-    }
-  }, [activeProjectId, selectedTask, isResetting, refresh]);
-
-  // Context menu
-  const handleContextMenu = useCallback((bt: BlitzTask, e: React.MouseEvent) => {
-    e.preventDefault();
-    setSelectedBlitzTask(bt);
-    setContextMenu({ task: bt.task, position: { x: e.clientX, y: e.clientY } });
-  }, []);
-
-  const closeContextMenu = useCallback(() => {
-    setContextMenu(null);
-  }, []);
-
-  const getContextMenuItems = (task: Task): ContextMenuItem[] => {
-    const canOperate = task.status !== "broken";
-    return [
-      { id: "terminal", label: "Enter Terminal", icon: Terminal, variant: "default", onClick: () => { if (currentSelected) handleDoubleClickTask(currentSelected); } },
-      { id: "div-1", label: "", divider: true, onClick: () => {} },
-      { id: "commit", label: "Commit", icon: GitCommit, variant: "default", onClick: handleCommit },
-      { id: "rebase", label: "Rebase", icon: GitBranchPlus, variant: "default", onClick: handleRebase, disabled: !canOperate },
-      { id: "sync", label: "Sync", icon: RefreshCw, variant: "default", onClick: handleSync, disabled: !canOperate },
-      { id: "merge", label: "Merge", icon: GitMerge, variant: "default", onClick: handleMerge, disabled: !canOperate },
-      { id: "div-2", label: "", divider: true, onClick: () => {} },
-      { id: "archive", label: "Archive", icon: Archive, variant: "warning", onClick: handleArchive, disabled: task.status === "broken" },
-      { id: "reset", label: "Reset", icon: RotateCcw, variant: "warning", onClick: handleReset },
-      { id: "clean", label: "Clean", icon: Trash2, variant: "danger", onClick: handleClean },
-    ];
-  };
-
-  // --- Hotkey helpers ---
-  const selectNextTask = useCallback(() => {
-    if (displayTasks.length === 0) return;
-    const currentIndex = currentSelected
-      ? displayTasks.findIndex((bt) => bt.task.id === currentSelected.task.id && bt.projectId === currentSelected.projectId)
-      : -1;
-    const nextIndex = currentIndex < displayTasks.length - 1 ? currentIndex + 1 : 0;
-    const next = displayTasks[nextIndex];
-    setSelectedBlitzTask(next);
-    if (viewMode === "list") setViewMode("info");
-    const el = document.querySelector(`[data-task-id="${next.task.id}"]`);
-    el?.scrollIntoView({ block: "nearest" });
-  }, [displayTasks, currentSelected, viewMode]);
-
-  const selectPreviousTask = useCallback(() => {
-    if (displayTasks.length === 0) return;
-    const currentIndex = currentSelected
-      ? displayTasks.findIndex((bt) => bt.task.id === currentSelected.task.id && bt.projectId === currentSelected.projectId)
-      : -1;
-    const prevIndex = currentIndex > 0 ? currentIndex - 1 : displayTasks.length - 1;
-    const prev = displayTasks[prevIndex];
-    setSelectedBlitzTask(prev);
-    if (viewMode === "list") setViewMode("info");
-    const el = document.querySelector(`[data-task-id="${prev.task.id}"]`);
-    el?.scrollIntoView({ block: "nearest" });
-  }, [displayTasks, currentSelected, viewMode]);
-
-  const openContextMenuAtSelectedTask = useCallback(() => {
-    if (!selectedTask) return;
-    const el = document.querySelector(`[data-task-id="${selectedTask.id}"]`);
-    if (el) {
-      const rect = el.getBoundingClientRect();
-      setContextMenu({
-        task: selectedTask,
-        position: { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 },
-      });
-    }
-  }, [selectedTask]);
+  // Build context menu items
+  const contextMenuItems = pageState.contextMenu
+    ? buildContextMenuItems(pageState.contextMenu.task, {
+        onEnterTerminal: () => {
+          if (currentSelected) handleDoubleClickTask(currentSelected);
+        },
+        onCommit: opsHandlers.handleCommit,
+        onRebase: opsHandlers.handleRebase,
+        onSync: opsHandlers.handleSync,
+        onMerge: opsHandlers.handleMerge,
+        onArchive: opsHandlers.handleArchive,
+        onReset: opsHandlers.handleReset,
+        onClean: opsHandlers.handleClean,
+      } as TaskOperationHandlers)
+    : [];
 
   const hasTask = !!selectedTask;
   const isActive = hasTask && selectedTask.status !== "archived";
   const canOperate = isActive && selectedTask.status !== "broken";
-  const notTerminal = viewMode !== "terminal";
+  const notTerminal = pageState.viewMode !== "terminal";
 
   useHotkeys(
     [
-      { key: "j", handler: selectNextTask, options: { enabled: notTerminal } },
-      { key: "ArrowDown", handler: selectNextTask, options: { enabled: notTerminal } },
-      { key: "k", handler: selectPreviousTask, options: { enabled: notTerminal } },
-      { key: "ArrowUp", handler: selectPreviousTask, options: { enabled: notTerminal } },
+      { key: "j", handler: navHandlers.selectNextTask, options: { enabled: notTerminal } },
+      { key: "ArrowDown", handler: navHandlers.selectNextTask, options: { enabled: notTerminal } },
+      { key: "k", handler: navHandlers.selectPreviousTask, options: { enabled: notTerminal } },
+      { key: "ArrowUp", handler: navHandlers.selectPreviousTask, options: { enabled: notTerminal } },
       {
         key: "Enter",
         handler: () => {
-          if (viewMode === "info" && selectedTask && selectedTask.status !== "archived") {
-            handleEnterTerminal();
-          } else if (viewMode === "list" && selectedTask) {
-            setViewMode("info");
+          if (pageState.viewMode === "info" && selectedTask && selectedTask.status !== "archived") {
+            pageHandlers.handleEnterTerminal();
+          } else if (pageState.viewMode === "list" && selectedTask) {
+            pageHandlers.setViewMode("info");
           }
         },
         options: { enabled: notTerminal && hasTask },
       },
-      { key: "Escape", handler: handleCloseTask, options: { enabled: viewMode !== "list" } },
+      { key: "Escape", handler: handleCloseTask, options: { enabled: pageState.viewMode !== "list" } },
 
       // Info panel tabs
-      { key: "1", handler: () => setInfoPanelTab("stats"), options: { enabled: notTerminal && hasTask } },
-      { key: "2", handler: () => setInfoPanelTab("git"), options: { enabled: notTerminal && hasTask } },
-      { key: "3", handler: () => setInfoPanelTab("notes"), options: { enabled: notTerminal && hasTask } },
-      { key: "4", handler: () => setInfoPanelTab("comments"), options: { enabled: notTerminal && hasTask } },
+      { key: "1", handler: () => pageHandlers.setInfoPanelTab("stats"), options: { enabled: notTerminal && hasTask } },
+      { key: "2", handler: () => pageHandlers.setInfoPanelTab("git"), options: { enabled: notTerminal && hasTask } },
+      { key: "3", handler: () => pageHandlers.setInfoPanelTab("notes"), options: { enabled: notTerminal && hasTask } },
+      { key: "4", handler: () => pageHandlers.setInfoPanelTab("comments"), options: { enabled: notTerminal && hasTask } },
 
       // Actions (no 'n' for new task)
-      { key: "Space", handler: openContextMenuAtSelectedTask, options: { enabled: hasTask && notTerminal } },
-      { key: "c", handler: handleCommit, options: { enabled: isActive } },
-      { key: "s", handler: handleSync, options: { enabled: canOperate } },
-      { key: "m", handler: handleMerge, options: { enabled: canOperate } },
-      { key: "b", handler: handleRebase, options: { enabled: canOperate } },
-      { key: "r", handler: handleReviewShortcut, options: { enabled: isActive } },
-      { key: "e", handler: handleEditorShortcut, options: { enabled: isActive } },
-      { key: "t", handler: handleTerminalShortcut, options: { enabled: isActive } },
-      // Dangerous operations removed from hotkeys - use menu instead
-      // Archive, Clean, Reset are too dangerous for accidental press
+      { key: "Space", handler: navHandlers.openContextMenuAtSelectedTask, options: { enabled: hasTask && notTerminal } },
+      { key: "c", handler: opsHandlers.handleCommit, options: { enabled: isActive } },
+      { key: "s", handler: opsHandlers.handleSync, options: { enabled: canOperate } },
+      { key: "m", handler: opsHandlers.handleMerge, options: { enabled: canOperate } },
+      { key: "b", handler: opsHandlers.handleRebase, options: { enabled: canOperate } },
+      { key: "r", handler: pageHandlers.handleReviewShortcut, options: { enabled: isActive } },
+      { key: "e", handler: pageHandlers.handleEditorShortcut, options: { enabled: isActive } },
+      { key: "t", handler: pageHandlers.handleTerminalShortcut, options: { enabled: isActive } },
 
       // Search
       { key: "/", handler: () => searchInputRef.current?.focus(), options: { enabled: notTerminal } },
 
       // Help
-      { key: "?", handler: () => setShowHelp((v) => !v) },
+      { key: "?", handler: () => pageHandlers.setShowHelp(!pageState.showHelp) },
     ],
     [
-      selectNextTask, selectPreviousTask, handleCloseTask,
-      handleEnterTerminal, openContextMenuAtSelectedTask,
-      handleCommit, handleSync, handleMerge, handleRebase,
-      handleReviewShortcut, handleEditorShortcut, handleTerminalShortcut,
-      viewMode, selectedTask, hasTask, isActive, canOperate, notTerminal,
-      reviewOpen, editorOpen,
+      navHandlers, pageHandlers, opsHandlers, handleCloseTask,
+      pageState.viewMode, pageState.showHelp, selectedTask, hasTask, isActive, canOperate, notTerminal,
     ]
   );
 
-  const isTerminalMode = viewMode === "terminal";
-  const isInfoMode = viewMode === "info";
+  const isTerminalMode = pageState.viewMode === "terminal";
+  const isInfoMode = pageState.viewMode === "info";
 
   return (
     <>
@@ -775,12 +340,12 @@ export function BlitzPage({ onSwitchToZen }: BlitzPageProps) {
             <input
               ref={searchInputRef}
               type="text"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
+              value={pageState.searchQuery}
+              onChange={(e) => pageHandlers.setSearchQuery(e.target.value)}
               onKeyDown={(e) => {
                 if (e.key === "Escape") {
                   e.preventDefault();
-                  setSearchQuery("");
+                  pageHandlers.setSearchQuery("");
                   (e.target as HTMLInputElement).blur();
                 }
               }}
@@ -880,7 +445,7 @@ export function BlitzPage({ onSwitchToZen }: BlitzPageProps) {
         {/* Help shortcut hint */}
         <div className="px-3 py-2 border-t border-[var(--color-border)]">
           <button
-            onClick={() => setShowHelp(true)}
+            onClick={() => pageHandlers.setShowHelp(true)}
             className="w-full text-center text-xs text-[var(--color-text-muted)] hover:text-[var(--color-text)] transition-colors"
           >
             Press <kbd className="px-1 py-0.5 text-[10px] font-mono rounded border bg-[var(--color-bg-secondary)] border-[var(--color-border)]">?</kbd> for shortcuts
@@ -926,18 +491,18 @@ export function BlitzPage({ onSwitchToZen }: BlitzPageProps) {
                       task={currentSelected.task}
                       projectName={currentSelected.projectName}
                       onClose={handleCloseTask}
-                      onEnterTerminal={currentSelected.task.status !== "archived" ? handleEnterTerminal : undefined}
-                      onClean={handleClean}
-                      onCommit={currentSelected.task.status !== "archived" ? handleCommit : undefined}
-                      onReview={currentSelected.task.status !== "archived" ? handleReviewFromInfo : undefined}
-                      onEditor={currentSelected.task.status !== "archived" ? handleEditorFromInfo : undefined}
-                      onRebase={currentSelected.task.status !== "archived" ? handleRebase : undefined}
-                      onSync={currentSelected.task.status !== "archived" ? handleSync : undefined}
-                      onMerge={currentSelected.task.status !== "archived" ? handleMerge : undefined}
-                      onArchive={currentSelected.task.status !== "archived" ? handleArchive : undefined}
-                      onReset={currentSelected.task.status !== "archived" ? handleReset : undefined}
-                      activeTab={infoPanelTab}
-                      onTabChange={setInfoPanelTab}
+                      onEnterTerminal={currentSelected.task.status !== "archived" ? pageHandlers.handleEnterTerminal : undefined}
+                      onClean={opsHandlers.handleClean}
+                      onCommit={currentSelected.task.status !== "archived" ? opsHandlers.handleCommit : undefined}
+                      onReview={currentSelected.task.status !== "archived" ? pageHandlers.handleReviewFromInfo : undefined}
+                      onEditor={currentSelected.task.status !== "archived" ? pageHandlers.handleEditorFromInfo : undefined}
+                      onRebase={currentSelected.task.status !== "archived" ? opsHandlers.handleRebase : undefined}
+                      onSync={currentSelected.task.status !== "archived" ? opsHandlers.handleSync : undefined}
+                      onMerge={currentSelected.task.status !== "archived" ? opsHandlers.handleMerge : undefined}
+                      onArchive={currentSelected.task.status !== "archived" ? opsHandlers.handleArchive : undefined}
+                      onReset={currentSelected.task.status !== "archived" ? opsHandlers.handleReset : undefined}
+                      activeTab={pageState.infoPanelTab}
+                      onTabChange={pageHandlers.setInfoPanelTab}
                     />
                   </motion.div>
                 ) : (
@@ -982,17 +547,17 @@ export function BlitzPage({ onSwitchToZen }: BlitzPageProps) {
                     projectId={currentSelected.projectId}
                     task={currentSelected.task}
                     projectName={currentSelected.projectName}
-                    reviewOpen={reviewOpen}
-                    editorOpen={editorOpen}
-                    onToggleReview={handleToggleReview}
-                    onToggleEditor={handleToggleEditor}
-                    onCommit={handleCommit}
-                    onRebase={handleRebase}
-                    onSync={handleSync}
-                    onMerge={handleMerge}
-                    onArchive={handleArchive}
-                    onClean={handleClean}
-                    onReset={handleReset}
+                    reviewOpen={pageState.reviewOpen}
+                    editorOpen={pageState.editorOpen}
+                    onToggleReview={pageHandlers.handleToggleReview}
+                    onToggleEditor={pageHandlers.handleToggleEditor}
+                    onCommit={opsHandlers.handleCommit}
+                    onRebase={opsHandlers.handleRebase}
+                    onSync={opsHandlers.handleSync}
+                    onMerge={opsHandlers.handleMerge}
+                    onArchive={opsHandlers.handleArchive}
+                    onClean={opsHandlers.handleClean}
+                    onReset={opsHandlers.handleReset}
                     onStartSession={handleStartSession}
                     onTerminalConnected={handleTerminalConnected}
                   />
@@ -1005,59 +570,69 @@ export function BlitzPage({ onSwitchToZen }: BlitzPageProps) {
 
       {/* Toast */}
       <AnimatePresence>
-        {operationMessage && (
+        {pageState.operationMessage && (
           <motion.div
             initial={{ opacity: 0, y: -20 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -20 }}
             className="fixed top-4 left-1/2 -translate-x-1/2 z-50 px-4 py-2 rounded-lg bg-[var(--color-bg-secondary)] border border-[var(--color-border)] shadow-lg"
           >
-            <span className="text-sm text-[var(--color-text)]">{operationMessage}</span>
+            <span className="text-sm text-[var(--color-text)]">{pageState.operationMessage}</span>
           </motion.div>
         )}
       </AnimatePresence>
 
       {/* Dialogs */}
       <CommitDialog
-        isOpen={showCommitDialog}
-        isLoading={isCommitting}
-        error={commitError}
-        onCommit={handleCommitSubmit}
-        onCancel={() => { setShowCommitDialog(false); setCommitError(null); }}
+        isOpen={opsState.showCommitDialog}
+        isLoading={opsState.isCommitting}
+        error={opsState.commitError}
+        onCommit={opsHandlers.handleCommitSubmit}
+        onCancel={opsHandlers.handleCommitCancel}
       />
 
       <MergeDialog
-        isOpen={showMergeDialog}
+        isOpen={opsState.showMergeDialog}
         taskName={selectedTask?.name || ""}
         branchName={selectedTask?.branch || ""}
         targetBranch={selectedTask?.target || ""}
-        isLoading={isMerging}
-        error={mergeError}
-        onMerge={handleMergeSubmit}
-        onCancel={() => { setShowMergeDialog(false); setMergeError(null); }}
+        isLoading={opsState.isMerging}
+        error={opsState.mergeError}
+        onMerge={opsHandlers.handleMergeSubmit}
+        onCancel={opsHandlers.handleMergeCancel}
       />
 
       <ConfirmDialog
-        isOpen={showCleanConfirm}
+        isOpen={opsState.showCleanConfirm}
         title="Delete Task"
         message={`Are you sure you want to delete "${selectedTask?.name}"? This will remove the worktree and all associated data. This action cannot be undone.`}
-        confirmLabel={isDeleting ? "Deleting..." : "Delete"}
+        confirmLabel={opsState.isDeleting ? "Deleting..." : "Delete"}
         variant="danger"
-        onConfirm={handleCleanConfirm}
-        onCancel={() => setShowCleanConfirm(false)}
+        onConfirm={opsHandlers.handleCleanConfirm}
+        onCancel={opsHandlers.handleCleanCancel}
       />
 
       <ConfirmDialog
-        isOpen={showArchiveAfterMerge}
+        isOpen={postMergeState.showArchiveAfterMerge}
         title="Merge Complete"
-        message={[
-          `Task: ${mergedTaskName}`,
-          "",
-          "Would you like to archive this task?",
-        ].join("\n")}
+        message={
+          <div className="flex flex-col gap-4">
+            <div className="bg-[var(--color-bg-tertiary)] rounded-lg p-3">
+              <div className="flex justify-between text-sm">
+                <span className="text-[var(--color-text-muted)]">Task</span>
+                <span className="text-[var(--color-text)] font-medium">{postMergeState.mergedTaskName}</span>
+              </div>
+            </div>
+            <p className="text-sm text-[var(--color-text-muted)]">
+              Would you like to archive this task?
+            </p>
+          </div>
+        }
         variant="info"
-        onConfirm={handleArchiveAfterMerge}
-        onCancel={handleSkipArchive}
+        confirmLabel="Archive"
+        cancelLabel="Later"
+        onConfirm={postMergeHandlers.handleArchiveAfterMerge}
+        onCancel={postMergeHandlers.handleSkipArchive}
       />
 
       <ConfirmDialog
@@ -1065,36 +640,36 @@ export function BlitzPage({ onSwitchToZen }: BlitzPageProps) {
         title="Archive"
         message={pendingArchiveConfirm?.message || ""}
         variant="warning"
-        onConfirm={handleArchiveConfirm}
-        onCancel={handleArchiveCancel}
+        onConfirm={() => opsHandlers.handleArchiveConfirm(pendingArchiveConfirm)}
+        onCancel={() => opsHandlers.handleArchiveCancel(pendingArchiveConfirm)}
       />
 
       <ConfirmDialog
-        isOpen={showResetConfirm}
+        isOpen={opsState.showResetConfirm}
         title="Reset Task"
         message={`Are you sure you want to reset "${selectedTask?.name}"? This will discard all changes and recreate the worktree from ${selectedTask?.target}. This action cannot be undone.`}
-        confirmLabel={isResetting ? "Resetting..." : "Reset"}
+        confirmLabel={opsState.isResetting ? "Resetting..." : "Reset"}
         variant="danger"
-        onConfirm={handleResetConfirm}
-        onCancel={() => setShowResetConfirm(false)}
+        onConfirm={opsHandlers.handleResetConfirm}
+        onCancel={opsHandlers.handleResetCancel}
       />
 
       <RebaseDialog
-        isOpen={showRebaseDialog}
+        isOpen={opsState.showRebaseDialog}
         taskName={selectedTask?.name}
         currentTarget={selectedTask?.target || ""}
-        availableBranches={availableBranches}
-        onClose={() => setShowRebaseDialog(false)}
-        onRebase={handleRebaseSubmit}
+        availableBranches={opsState.availableBranches}
+        onClose={opsHandlers.handleRebaseCancel}
+        onRebase={opsHandlers.handleRebaseSubmit}
       />
 
       <ContextMenu
-        items={contextMenu ? getContextMenuItems(contextMenu.task) : []}
-        position={contextMenu?.position ?? null}
-        onClose={closeContextMenu}
+        items={contextMenuItems}
+        position={pageState.contextMenu?.position ?? null}
+        onClose={pageHandlers.closeContextMenu}
       />
 
-      <HelpOverlay isOpen={showHelp} onClose={() => setShowHelp(false)} />
+      <HelpOverlay isOpen={pageState.showHelp} onClose={() => pageHandlers.setShowHelp(false)} />
     </>
   );
 }

@@ -1,9 +1,8 @@
 import { useState, useMemo, useCallback, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Plus, Terminal, GitCommit, GitBranchPlus, RefreshCw, GitMerge, Archive, RotateCcw, Trash2, AlertTriangle } from "lucide-react";
+import { Plus } from "lucide-react";
 import { TaskSidebar } from "./TaskSidebar/TaskSidebar";
 import { TaskInfoPanel } from "./TaskInfoPanel";
-import type { TabType } from "./TaskInfoPanel";
 import { TaskView } from "./TaskView";
 import { NewTaskDialog } from "./NewTaskDialog";
 import { CommitDialog, ConfirmDialog, MergeDialog } from "../Dialogs";
@@ -11,29 +10,23 @@ import { RebaseDialog } from "./dialogs";
 import { HelpOverlay } from "./HelpOverlay";
 import { Button } from "../ui";
 import { ContextMenu } from "../ui/ContextMenu";
-import type { ContextMenuItem } from "../ui/ContextMenu";
 import { useProject } from "../../context";
-import { useHotkeys } from "../../hooks";
+import {
+  useHotkeys,
+  useTaskPageState,
+  useTaskNavigation,
+  usePostMergeArchive,
+  useTaskOperations,
+} from "../../hooks";
 import {
   createTask as apiCreateTask,
-  archiveTask as apiArchiveTask,
   recoverTask as apiRecoverTask,
-  deleteTask as apiDeleteTask,
   listTasks as apiListTasks,
-  syncTask as apiSyncTask,
-  commitTask as apiCommitTask,
-  mergeTask as apiMergeTask,
-  getCommits as apiGetCommits,
-  resetTask as apiResetTask,
-  rebaseToTask as apiRebaseToTask,
-  getBranches as apiGetBranches,
 } from "../../api";
-import type { ApiError } from "../../api/client";
-import type { ArchiveConfirmData } from "../../api/types";
 import type { Task, TaskFilter } from "../../data/types";
 import { convertTaskResponse } from "../../utils/taskConvert";
 import type { PendingArchiveConfirm } from "../../utils/archiveHelpers";
-import { handleArchiveError } from "../../utils/archiveHelpers";
+import { buildContextMenuItems, type TaskOperationHandlers } from "../../utils/taskOperationUtils";
 
 type ViewMode = "list" | "info" | "terminal";
 
@@ -48,128 +41,50 @@ interface TasksPageProps {
 
 export function TasksPage({ initialTaskId, initialViewMode, onNavigationConsumed }: TasksPageProps) {
   const { selectedProject, refreshSelectedProject } = useProject();
-  const [selectedTask, setSelectedTask] = useState<Task | null>(null);
-  const [viewMode, setViewMode] = useState<ViewMode>("list");
-  const [filter, setFilter] = useState<TaskFilter>("active");
-  const [searchQuery, setSearchQuery] = useState("");
-  const [showNewTaskDialog, setShowNewTaskDialog] = useState(false);
-  const [reviewOpen, setReviewOpen] = useState(false);
-  const [editorOpen, setEditorOpen] = useState(false);
-  // Auto-start session for newly created tasks
-  const [autoStartSession, setAutoStartSession] = useState(false);
 
-  // Loading states
+  // Zen-specific state
+  const [filter, setFilter] = useState<TaskFilter>("active");
+  const [showNewTaskDialog, setShowNewTaskDialog] = useState(false);
+  const [autoStartSession, setAutoStartSession] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
-
-  // Commit dialog state
-  const [showCommitDialog, setShowCommitDialog] = useState(false);
-  const [isCommitting, setIsCommitting] = useState(false);
-  const [commitError, setCommitError] = useState<string | null>(null);
-
-  // Merge dialog state
-  const [showMergeDialog, setShowMergeDialog] = useState(false);
-  const [isMerging, setIsMerging] = useState(false);
-  const [mergeError, setMergeError] = useState<string | null>(null);
-
-  // Post-merge archive confirm dialog state (TUI: ConfirmType::MergeSuccess)
-  const [showArchiveAfterMerge, setShowArchiveAfterMerge] = useState(false);
-  const [mergedTaskId, setMergedTaskId] = useState<string | null>(null);
-  const [mergedTaskName, setMergedTaskName] = useState<string>("");
-
-  const [pendingArchiveConfirm, setPendingArchiveConfirm] =
-    useState<PendingArchiveConfirm | null>(null);
-
-  const buildArchiveConfirmMessage = useCallback((
-    data: ArchiveConfirmData,
-    fallbackTaskName: string
-  ): React.ReactNode => {
-    const taskName = data.task_name || fallbackTaskName;
-    const branch = data.branch || "";
-    const target = data.target || "";
-
-    const hasWarning = data.worktree_dirty || 
-                       data.branch_merged === false || 
-                       data.dirty_check_failed || 
-                       data.merge_check_failed;
-
-    return (
-      <div className="flex flex-col gap-4">
-        <div className="bg-[var(--color-bg-tertiary)] rounded-lg p-3 space-y-2">
-          <div className="flex justify-between text-sm">
-            <span className="text-[var(--color-text-muted)]">Task</span>
-            <span className="text-[var(--color-text)] font-medium">{taskName}</span>
-          </div>
-          <div className="flex justify-between text-sm">
-            <span className="text-[var(--color-text-muted)]">Branch</span>
-            <span className="text-[var(--color-text)] font-mono text-xs">{branch}</span>
-          </div>
-          <div className="flex justify-between text-sm">
-            <span className="text-[var(--color-text-muted)]">Target</span>
-            <span className="text-[var(--color-text)] font-mono text-xs">{target}</span>
-          </div>
-        </div>
-
-        {hasWarning && (
-          <div className="bg-[var(--color-warning)]/10 text-[var(--color-warning)] rounded-lg p-3 text-sm">
-            <div className="flex items-start gap-2">
-              <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />
-              <div className="space-y-1">
-                {data.dirty_check_failed && <p>Unable to verify working tree status.</p>}
-                {data.worktree_dirty && (
-                  <>
-                    <p className="font-medium">Working tree contains uncommitted changes.</p>
-                    <p>These changes will be permanently lost upon archiving.</p>
-                  </>
-                )}
-                {data.merge_check_failed && <p>Unable to verify merge status.</p>}
-                {data.branch_merged === false && <p>Branch has not been merged into target.</p>}
-              </div>
-            </div>
-          </div>
-        )}
-
-        <p className="text-sm text-[var(--color-text-muted)]">
-          Confirm task archiving?
-        </p>
-      </div>
-    );
-  }, []);
-
-  // Clean confirm dialog state
-  const [showCleanConfirm, setShowCleanConfirm] = useState(false);
-  const [isDeleting, setIsDeleting] = useState(false);
-
-  // Sync state
-  const [isSyncing, setIsSyncing] = useState(false);
-
-  // Reset confirm dialog state
-  const [showResetConfirm, setShowResetConfirm] = useState(false);
-  const [isResetting, setIsResetting] = useState(false);
-
-  // Rebase dialog state
-  const [showRebaseDialog, setShowRebaseDialog] = useState(false);
-  const [isRebasing, setIsRebasing] = useState(false);
-  const [availableBranches, setAvailableBranches] = useState<string[]>([]);
-
-  // Operation message toast
-  const [operationMessage, setOperationMessage] = useState<string | null>(null);
-
-  // Context menu state
-  const [contextMenu, setContextMenu] = useState<{ task: Task; position: { x: number; y: number } } | null>(null);
-
-  // Archived tasks (loaded separately)
   const [archivedTasks, setArchivedTasks] = useState<Task[]>([]);
   const [isLoadingArchived, setIsLoadingArchived] = useState(false);
-
-  // Help overlay state
-  const [showHelp, setShowHelp] = useState(false);
-
-  // Info panel tab state (lifted for hotkey control)
-  const [infoPanelTab, setInfoPanelTab] = useState<TabType>("stats");
-
-  // Search input ref for / hotkey
   const searchInputRef = useRef<HTMLInputElement | null>(null);
+
+  // Archive confirmation state (shared between hooks)
+  const [pendingArchiveConfirm, setPendingArchiveConfirm] = useState<PendingArchiveConfirm | null>(null);
+
+  // Page state hook
+  const [pageState, pageHandlers] = useTaskPageState();
+
+  // Post-merge archive hook
+  const [postMergeState, postMergeHandlers] = usePostMergeArchive({
+    projectId: selectedProject?.id ?? null,
+    onRefresh: refreshSelectedProject,
+    onShowMessage: pageHandlers.showMessage,
+    onCleanup: () => {
+      pageHandlers.setSelectedTask(null);
+      pageHandlers.setViewMode("list");
+    },
+    setPendingArchiveConfirm,
+  });
+
+  // Task operations hook
+  const [opsState, opsHandlers] = useTaskOperations({
+    projectId: selectedProject?.id ?? null,
+    selectedTask: pageState.selectedTask,
+    onRefresh: refreshSelectedProject,
+    onShowMessage: pageHandlers.showMessage,
+    onTaskArchived: () => {
+      pageHandlers.setSelectedTask(null);
+      pageHandlers.setViewMode("list");
+    },
+    onTaskMerged: (taskId, taskName) => {
+      postMergeHandlers.triggerPostMergeArchive(taskId, taskName);
+    },
+    setPendingArchiveConfirm,
+  });
 
   // Load archived tasks when filter changes to "archived"
   // Also filter by current branch
@@ -203,17 +118,17 @@ export function TasksPage({ initialTaskId, initialViewMode, onNavigationConsumed
 
   // Handle initial task selection from navigation
   useEffect(() => {
-    if (initialTaskId && activeTasks.length > 0 && !selectedTask) {
+    if (initialTaskId && activeTasks.length > 0 && !pageState.selectedTask) {
       const task = activeTasks.find((t) => t.id === initialTaskId);
       if (task) {
-        setSelectedTask(task);
+        pageHandlers.setSelectedTask(task);
         const targetMode = (initialViewMode === "terminal" || initialViewMode === "info") ? initialViewMode : "info";
-        setViewMode(targetMode as ViewMode);
+        pageHandlers.setViewMode(targetMode as ViewMode);
         // Consume the navigation data so it doesn't re-trigger
         onNavigationConsumed?.();
       }
     }
-  }, [initialTaskId, initialViewMode, activeTasks, selectedTask, onNavigationConsumed]);
+  }, [initialTaskId, initialViewMode, activeTasks, pageState.selectedTask, onNavigationConsumed, pageHandlers]);
 
   // Filter and search tasks
   const filteredTasks = useMemo(() => {
@@ -224,8 +139,8 @@ export function TasksPage({ initialTaskId, initialViewMode, onNavigationConsumed
       }
 
       // Apply search query
-      if (searchQuery) {
-        const query = searchQuery.toLowerCase();
+      if (pageState.searchQuery) {
+        const query = pageState.searchQuery.toLowerCase();
         return (
           task.name.toLowerCase().includes(query) ||
           task.branch.toLowerCase().includes(query)
@@ -234,82 +149,41 @@ export function TasksPage({ initialTaskId, initialViewMode, onNavigationConsumed
 
       return true;
     });
-  }, [tasks, filter, searchQuery]);
+  }, [tasks, filter, pageState.searchQuery]);
 
-  // Handle single click - show Info Panel
-  const handleSelectTask = (task: Task) => {
-    setSelectedTask(task);
-    setAutoStartSession(false); // Reset auto-start when manually selecting
-    setViewMode("info");
-    setReviewOpen(false);
-    setEditorOpen(false);
-  };
+  // Wrap page handlers to handle auto-start state
+  const handleSelectTask = useCallback((task: Task) => {
+    setAutoStartSession(false);
+    pageHandlers.handleSelectTask(task);
+  }, [pageHandlers]);
 
-  // Handle double click - enter Terminal mode (only for non-archived tasks)
-  const handleDoubleClickTask = (task: Task) => {
-    if (task.status === "archived") return;
-    setSelectedTask(task);
-    setAutoStartSession(false); // Reset auto-start when manually selecting
-    setViewMode("terminal");
-    setReviewOpen(false);
-    setEditorOpen(false);
-  };
+  const handleDoubleClickTask = useCallback((task: Task) => {
+    setAutoStartSession(false);
+    pageHandlers.handleDoubleClickTask(task);
+  }, [pageHandlers]);
 
-  // Handle closing task view - return to list mode
-  const handleCloseTask = () => {
-    if (viewMode === "terminal") {
-      // From terminal, go back to info mode
-      setViewMode("info");
-      setReviewOpen(false);
-      setEditorOpen(false);
-    } else {
-      // From info, go back to list mode
-      setSelectedTask(null);
-      setViewMode("list");
-    }
-  };
-
-  // Handle entering terminal mode from info panel (only for non-archived tasks)
-  const handleEnterTerminal = () => {
-    if (selectedTask?.status === "archived") return;
-    setViewMode("terminal");
-  };
-
-  // Handle recover archived task
+  // Handle recover archived task (Zen-only)
   const handleRecover = useCallback(async () => {
-    if (!selectedProject || !selectedTask) return;
+    if (!selectedProject || !pageState.selectedTask) return;
     try {
-      await apiRecoverTask(selectedProject.id, selectedTask.id);
+      await apiRecoverTask(selectedProject.id, pageState.selectedTask.id);
       await refreshSelectedProject();
       // Clear archived tasks cache so it reloads
-      setArchivedTasks((prev) => prev.filter((t) => t.id !== selectedTask.id));
+      setArchivedTasks((prev) => prev.filter((t) => t.id === pageState.selectedTask?.id));
       // Update local state to reflect the change
-      setSelectedTask(null);
-      setViewMode("list");
+      pageHandlers.setSelectedTask(null);
+      pageHandlers.setViewMode("list");
       // Switch to active filter to see the recovered task
       setFilter("active");
     } catch (err) {
       console.error("Failed to recover task:", err);
       const errorMessage = err instanceof Error ? err.message :
         (err as { message?: string })?.message || "Failed to recover task";
-      setOperationMessage(errorMessage);
-      setTimeout(() => setOperationMessage(null), 3000);
+      pageHandlers.showMessage(errorMessage);
     }
-  }, [selectedProject, selectedTask, refreshSelectedProject]);
+  }, [selectedProject, pageState.selectedTask, refreshSelectedProject, pageHandlers]);
 
-  // Handle toggle review (mutual exclusion with editor)
-  const handleToggleReview = () => {
-    if (!reviewOpen) setEditorOpen(false);
-    setReviewOpen(!reviewOpen);
-  };
-
-  // Handle toggle editor (mutual exclusion with review)
-  const handleToggleEditor = () => {
-    if (!editorOpen) setReviewOpen(false);
-    setEditorOpen(!editorOpen);
-  };
-
-  // Handle new task creation
+  // Handle new task creation (Zen-only)
   const handleCreateTask = useCallback(
     async (name: string, targetBranch: string, notes: string) => {
       if (!selectedProject) return;
@@ -323,9 +197,9 @@ export function TasksPage({ initialTaskId, initialViewMode, onNavigationConsumed
 
         // Auto-select the new task and enter terminal mode with auto-start
         const newTask = convertTaskResponse(taskResponse);
-        setSelectedTask(newTask);
+        pageHandlers.setSelectedTask(newTask);
         setAutoStartSession(true);
-        setViewMode("terminal");
+        pageHandlers.setViewMode("terminal");
       } catch (err: unknown) {
         console.error("Failed to create task:", err);
         if (err && typeof err === "object" && "status" in err) {
@@ -342,405 +216,12 @@ export function TasksPage({ initialTaskId, initialViewMode, onNavigationConsumed
         setIsCreating(false);
       }
     },
-    [selectedProject, refreshSelectedProject]
+    [selectedProject, refreshSelectedProject, pageHandlers]
   );
 
-  // Show toast message
-  const showMessage = (message: string) => {
-    setOperationMessage(message);
-    setTimeout(() => setOperationMessage(null), 3000);
-  };
-
-  // Handle task actions
-  const handleCommit = () => {
-    setCommitError(null);
-    setShowCommitDialog(true);
-  };
-
-  const handleCommitSubmit = useCallback(async (message: string) => {
-    if (!selectedProject || !selectedTask) return;
-    try {
-      setIsCommitting(true);
-      setCommitError(null);
-      const result = await apiCommitTask(selectedProject.id, selectedTask.id, message);
-      if (result.success) {
-        showMessage("Changes committed successfully");
-        setShowCommitDialog(false);
-        await refreshSelectedProject();
-      } else {
-        setCommitError(result.message || "Commit failed");
-      }
-    } catch (err) {
-      console.error("Failed to commit:", err);
-      setCommitError("Failed to commit changes");
-    } finally {
-      setIsCommitting(false);
-    }
-  }, [selectedProject, selectedTask, refreshSelectedProject]);
-
-  // Handle rebase - TUI: opens branch selector to change target branch
-  const handleRebase = useCallback(async () => {
-    if (!selectedProject) return;
-    try {
-      // Fetch available branches
-      const branchesRes = await apiGetBranches(selectedProject.id);
-      setAvailableBranches(branchesRes.branches.map((b) => b.name));
-      setShowRebaseDialog(true);
-    } catch (err) {
-      console.error("Failed to fetch branches:", err);
-      showMessage("Failed to load branches");
-    }
-  }, [selectedProject]);
-
-  // Handle rebase submit
-  const handleRebaseSubmit = useCallback(async (newTarget: string) => {
-    if (!selectedProject || !selectedTask || isRebasing) return;
-    try {
-      setIsRebasing(true);
-      const result = await apiRebaseToTask(selectedProject.id, selectedTask.id, newTarget);
-      if (result.success) {
-        showMessage(result.message || "Target branch changed");
-        setShowRebaseDialog(false);
-        await refreshSelectedProject();
-        // Update selected task with new target
-        setSelectedTask((prev) => prev ? { ...prev, target: newTarget } : null);
-      } else {
-        showMessage(result.message || "Failed to change target branch");
-      }
-    } catch (err) {
-      console.error("Failed to rebase:", err);
-      const errorMessage = err instanceof Error ? err.message :
-        (err as { message?: string })?.message || "Failed to change target branch";
-      showMessage(errorMessage);
-    } finally {
-      setIsRebasing(false);
-    }
-  }, [selectedProject, selectedTask, isRebasing, refreshSelectedProject]);
-
-  // Handle review from info mode - enter terminal mode with review panel open
-  const handleReviewFromInfo = () => {
-    setViewMode("terminal");
-    setReviewOpen(true);
-    setEditorOpen(false);
-  };
-
-  // Handle editor from info mode - enter terminal mode with editor panel open
-  const handleEditorFromInfo = () => {
-    setViewMode("terminal");
-    setEditorOpen(true);
-    setReviewOpen(false);
-  };
-
-  // Unified review handler - works in both info and terminal modes
-  const handleReviewShortcut = () => {
-    if (viewMode === "terminal") {
-      handleToggleReview();
-    } else {
-      handleReviewFromInfo();
-    }
-  };
-
-  // Unified editor handler - works in both info and terminal modes
-  const handleEditorShortcut = () => {
-    if (viewMode === "terminal") {
-      handleToggleEditor();
-    } else {
-      handleEditorFromInfo();
-    }
-  };
-
-  // Terminal shortcut - toggle between terminal and info modes
-  const handleTerminalShortcut = () => {
-    if (viewMode === "terminal") {
-      // If review or editor is open, close them
-      if (reviewOpen || editorOpen) {
-        setReviewOpen(false);
-        setEditorOpen(false);
-      } else {
-        // If pure terminal mode, go back to info mode
-        setViewMode("info");
-      }
-    } else {
-      // In other modes, switch to terminal mode
-      setViewMode("terminal");
-      setReviewOpen(false);
-      setEditorOpen(false);
-    }
-  };
-
-  const handleSync = useCallback(async () => {
-    if (!selectedProject || !selectedTask || isSyncing) return;
-    try {
-      setIsSyncing(true);
-      const result = await apiSyncTask(selectedProject.id, selectedTask.id);
-      showMessage(result.message || (result.success ? "Synced successfully" : "Sync failed"));
-      if (result.success) {
-        await refreshSelectedProject();
-      }
-    } catch (err) {
-      console.error("Failed to sync:", err);
-      showMessage("Failed to sync task");
-    } finally {
-      setIsSyncing(false);
-    }
-  }, [selectedProject, selectedTask, isSyncing, refreshSelectedProject]);
-
-  // Handle merge - TUI logic: check commit count first
-  // If commits <= 1, merge directly; if > 1, show dialog to choose method
-  const handleMerge = useCallback(async () => {
-    if (!selectedProject || !selectedTask || isMerging) return;
-
-    try {
-      // Get commit count (TUI: open_merge_dialog)
-      const commitsRes = await apiGetCommits(selectedProject.id, selectedTask.id);
-      const commitCount = commitsRes.total;
-
-      if (commitCount <= 1) {
-        // Only 1 commit, merge directly with merge-commit method (TUI logic)
-        setIsMerging(true);
-        const result = await apiMergeTask(selectedProject.id, selectedTask.id, "merge-commit");
-        setIsMerging(false);
-
-        if (result.success) {
-          showMessage(result.message || "Merged successfully");
-          await refreshSelectedProject();
-          // Show archive confirm dialog (TUI: ConfirmType::MergeSuccess)
-          setMergedTaskId(selectedTask.id);
-          setMergedTaskName(selectedTask.name);
-          setShowArchiveAfterMerge(true);
-        } else {
-          showMessage(result.message || "Merge failed");
-        }
-      } else {
-        // Multiple commits, show dialog to choose method
-        setMergeError(null);
-        setShowMergeDialog(true);
-      }
-    } catch (err) {
-      console.error("Failed to get commits:", err);
-      // Fallback: show merge dialog
-      setMergeError(null);
-      setShowMergeDialog(true);
-    }
-  }, [selectedProject, selectedTask, isMerging, refreshSelectedProject]);
-
-  const handleMergeSubmit = useCallback(async (method: "squash" | "merge-commit") => {
-    if (!selectedProject || !selectedTask || isMerging) return;
-    try {
-      setIsMerging(true);
-      setMergeError(null);
-      const result = await apiMergeTask(selectedProject.id, selectedTask.id, method);
-      if (result.success) {
-        showMessage(result.message || "Merged successfully");
-        setShowMergeDialog(false);
-        await refreshSelectedProject();
-        // Show archive confirm dialog (TUI: ConfirmType::MergeSuccess)
-        setMergedTaskId(selectedTask.id);
-        setMergedTaskName(selectedTask.name);
-        setShowArchiveAfterMerge(true);
-      } else {
-        setMergeError(result.message || "Merge failed");
-      }
-    } catch (err) {
-      console.error("Failed to merge:", err);
-      setMergeError("Failed to merge task");
-    } finally {
-      setIsMerging(false);
-    }
-  }, [selectedProject, selectedTask, isMerging, refreshSelectedProject]);
-
-  // Handle archive after merge (TUI: PendingAction::MergeArchive)
-  const handleArchiveAfterMerge = useCallback(async () => {
-    if (!selectedProject || !mergedTaskId) return;
-    try {
-      await apiArchiveTask(selectedProject.id, mergedTaskId);
-      await refreshSelectedProject();
-      showMessage("Task archived");
-      cleanupAfterMerge();
-    } catch (err) {
-      const needsConfirm = handleArchiveError(
-        err,
-        selectedProject.id,
-        mergedTaskId,
-        mergedTaskName,
-        "after-merge",
-        buildArchiveConfirmMessage,
-        setPendingArchiveConfirm,
-        showMessage
-      );
-
-      if (needsConfirm) {
-        setShowArchiveAfterMerge(false);
-        return;
-      }
-
-      console.error("Failed to archive task:", err);
-      cleanupAfterMerge();
-    }
-  }, [selectedProject, mergedTaskId, mergedTaskName, refreshSelectedProject]);
-
-  // Helper to cleanup after merge
-  const cleanupAfterMerge = useCallback(() => {
-    setShowArchiveAfterMerge(false);
-    setMergedTaskId(null);
-    setMergedTaskName("");
-    setSelectedTask(null);
-    setViewMode("list");
-  }, []);
-
-  const handleSkipArchive = useCallback(() => {
-    setShowArchiveAfterMerge(false);
-    setMergedTaskId(null);
-    setMergedTaskName("");
-    setSelectedTask(null);
-    setViewMode("list");
-  }, []);
-
-  const handleArchive = useCallback(async () => {
-    if (!selectedProject || !selectedTask) return;
-    try {
-      await apiArchiveTask(selectedProject.id, selectedTask.id);
-      await refreshSelectedProject();
-      setSelectedTask(null);
-      setViewMode("list");
-    } catch (err) {
-      const needsConfirm = handleArchiveError(
-        err,
-        selectedProject.id,
-        selectedTask.id,
-        selectedTask.name,
-        "normal",
-        buildArchiveConfirmMessage,
-        setPendingArchiveConfirm,
-        showMessage
-      );
-
-      if (!needsConfirm) {
-        console.error("Failed to archive task:", err);
-      }
-    }
-  }, [selectedProject, selectedTask, refreshSelectedProject, buildArchiveConfirmMessage]);
-
-  const handleArchiveConfirm = useCallback(async () => {
-    if (!pendingArchiveConfirm) return;
-    try {
-      await apiArchiveTask(pendingArchiveConfirm.projectId, pendingArchiveConfirm.taskId, {
-        force: true,
-      });
-      await refreshSelectedProject();
-      showMessage("Task archived");
-      setSelectedTask(null);
-      setViewMode("list");
-    } catch (err) {
-      const e = err as ApiError;
-      console.error("Failed to archive task:", err);
-      showMessage(e?.message || "Failed to archive task");
-    } finally {
-      if (pendingArchiveConfirm.context === "after-merge") {
-        setMergedTaskId(null);
-        setMergedTaskName("");
-      }
-      setPendingArchiveConfirm(null);
-    }
-  }, [pendingArchiveConfirm, refreshSelectedProject]);
-
-  const handleArchiveCancel = useCallback(() => {
-    if (!pendingArchiveConfirm) return;
-    if (pendingArchiveConfirm.context === "after-merge") {
-      setMergedTaskId(null);
-      setMergedTaskName("");
-      setSelectedTask(null);
-      setViewMode("list");
-    }
-    setPendingArchiveConfirm(null);
-  }, [pendingArchiveConfirm]);
-  const handleClean = () => {
-    setShowCleanConfirm(true);
-  };
-
-  const handleCleanConfirm = useCallback(async () => {
-    if (!selectedProject || !selectedTask || isDeleting) return;
-    try {
-      setIsDeleting(true);
-      await apiDeleteTask(selectedProject.id, selectedTask.id);
-      await refreshSelectedProject();
-      showMessage("Task deleted successfully");
-      setSelectedTask(null);
-      setViewMode("list");
-    } catch (err) {
-      console.error("Failed to delete task:", err);
-      showMessage("Failed to delete task");
-    } finally {
-      setIsDeleting(false);
-      setShowCleanConfirm(false);
-    }
-  }, [selectedProject, selectedTask, isDeleting, refreshSelectedProject]);
-  // Handle reset - TUI logic: show confirmation, then reset
-  const handleReset = () => {
-    setShowResetConfirm(true);
-  };
-
-  const handleResetConfirm = useCallback(async () => {
-    if (!selectedProject || !selectedTask || isResetting) return;
-    try {
-      setIsResetting(true);
-      const result = await apiResetTask(selectedProject.id, selectedTask.id);
-      if (result.success) {
-        showMessage(result.message || "Task reset successfully");
-        await refreshSelectedProject();
-        // Note: TUI auto-enters terminal after reset, but in web we stay in info mode
-      } else {
-        showMessage(result.message || "Reset failed");
-      }
-    } catch (err) {
-      console.error("Failed to reset task:", err);
-      const errorMessage = err instanceof Error ? err.message :
-        (err as { message?: string })?.message || "Failed to reset task";
-      showMessage(errorMessage);
-    } finally {
-      setIsResetting(false);
-      setShowResetConfirm(false);
-    }
-  }, [selectedProject, selectedTask, isResetting, refreshSelectedProject]);
-  // Context menu handlers
-  const handleContextMenu = useCallback((task: Task, e: React.MouseEvent) => {
-    e.preventDefault();
-    setSelectedTask(task);
-    setContextMenu({ task, position: { x: e.clientX, y: e.clientY } });
-  }, []);
-
-  const closeContextMenu = useCallback(() => {
-    setContextMenu(null);
-  }, []);
-
-  const getContextMenuItems = (task: Task): ContextMenuItem[] => {
-    if (task.status === "archived") {
-      return [
-        { id: "recover", label: "Recover", icon: RotateCcw, variant: "default", onClick: handleRecover },
-        { id: "div-1", label: "", divider: true, onClick: () => {} },
-        { id: "clean", label: "Clean", icon: Trash2, variant: "danger", onClick: handleClean },
-      ];
-    }
-
-    const canOperate = task.status !== "broken";
-    return [
-      { id: "terminal", label: "Enter Terminal", icon: Terminal, variant: "default", onClick: () => handleDoubleClickTask(task) },
-      { id: "div-1", label: "", divider: true, onClick: () => {} },
-      { id: "commit", label: "Commit", icon: GitCommit, variant: "default", onClick: handleCommit },
-      { id: "rebase", label: "Rebase", icon: GitBranchPlus, variant: "default", onClick: handleRebase, disabled: !canOperate },
-      { id: "sync", label: "Sync", icon: RefreshCw, variant: "default", onClick: handleSync, disabled: !canOperate },
-      { id: "merge", label: "Merge", icon: GitMerge, variant: "default", onClick: handleMerge, disabled: !canOperate },
-      { id: "div-2", label: "", divider: true, onClick: () => {} },
-      { id: "archive", label: "Archive", icon: Archive, variant: "warning", onClick: handleArchive, disabled: task.status === "broken" },
-      { id: "reset", label: "Reset", icon: RotateCcw, variant: "warning", onClick: handleReset },
-      { id: "clean", label: "Clean", icon: Trash2, variant: "danger", onClick: handleClean },
-    ];
-  };
-
-  const handleStartSession = () => {
-    // Start session and enter terminal mode
-    setViewMode("terminal");
-  };
+  const handleStartSession = useCallback(() => {
+    pageHandlers.setViewMode("terminal");
+  }, [pageHandlers]);
 
   // Handle terminal connected - refresh to update task status to "live"
   const handleTerminalConnected = useCallback(async () => {
@@ -748,93 +229,63 @@ export function TasksPage({ initialTaskId, initialViewMode, onNavigationConsumed
     setAutoStartSession(false);
   }, [refreshSelectedProject]);
 
-  // --- Hotkey helpers ---
-  const selectNextTask = useCallback(() => {
-    if (filteredTasks.length === 0) return;
-    const currentIndex = selectedTask
-      ? filteredTasks.findIndex((t) => t.id === selectedTask.id)
-      : -1;
-    const nextIndex = currentIndex < filteredTasks.length - 1 ? currentIndex + 1 : 0;
-    const nextTask = filteredTasks[nextIndex];
-    setSelectedTask(nextTask);
-    if (viewMode === "list") setViewMode("info");
-    // Scroll the task into view
-    const el = document.querySelector(`[data-task-id="${nextTask.id}"]`);
-    el?.scrollIntoView({ block: "nearest" });
-  }, [filteredTasks, selectedTask, viewMode]);
+  // Task navigation hook
+  const navHandlers = useTaskNavigation({
+    tasks: filteredTasks,
+    selectedTask: pageState.selectedTask,
+    viewMode: pageState.viewMode,
+    onSelectTask: handleSelectTask,
+    setViewMode: pageHandlers.setViewMode,
+    setContextMenu: pageHandlers.setContextMenu,
+  });
 
-  const selectPreviousTask = useCallback(() => {
-    if (filteredTasks.length === 0) return;
-    const currentIndex = selectedTask
-      ? filteredTasks.findIndex((t) => t.id === selectedTask.id)
-      : -1;
-    const prevIndex = currentIndex > 0 ? currentIndex - 1 : filteredTasks.length - 1;
-    const prevTask = filteredTasks[prevIndex];
-    setSelectedTask(prevTask);
-    if (viewMode === "list") setViewMode("info");
-    const el = document.querySelector(`[data-task-id="${prevTask.id}"]`);
-    el?.scrollIntoView({ block: "nearest" });
-  }, [filteredTasks, selectedTask, viewMode]);
-
-  const openContextMenuAtSelectedTask = useCallback(() => {
-    if (!selectedTask) return;
-    const el = document.querySelector(`[data-task-id="${selectedTask.id}"]`);
-    if (el) {
-      const rect = el.getBoundingClientRect();
-      setContextMenu({
-        task: selectedTask,
-        position: { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 },
-      });
-    }
-  }, [selectedTask]);
-
-  const hasTask = !!selectedTask;
-  const isActive = hasTask && selectedTask.status !== "archived";
-  const isArchived = hasTask && selectedTask.status === "archived";
-  const canOperate = isActive && selectedTask.status !== "broken";
-  const notTerminal = viewMode !== "terminal";
+  const hasTask = !!pageState.selectedTask;
+  const isActive = hasTask && pageState.selectedTask!.status !== "archived";
+  const isArchived = hasTask && pageState.selectedTask!.status === "archived";
+  const canOperate = isActive && pageState.selectedTask!.status !== "broken";
+  const notTerminal = pageState.viewMode !== "terminal";
 
   // --- Register all hotkeys ---
   useHotkeys(
     [
       // Navigation
-      { key: "j", handler: selectNextTask, options: { enabled: notTerminal } },
-      { key: "ArrowDown", handler: selectNextTask, options: { enabled: notTerminal } },
-      { key: "k", handler: selectPreviousTask, options: { enabled: notTerminal } },
-      { key: "ArrowUp", handler: selectPreviousTask, options: { enabled: notTerminal } },
+      { key: "j", handler: navHandlers.selectNextTask, options: { enabled: notTerminal } },
+      { key: "ArrowDown", handler: navHandlers.selectNextTask, options: { enabled: notTerminal } },
+      { key: "k", handler: navHandlers.selectPreviousTask, options: { enabled: notTerminal } },
+      { key: "ArrowUp", handler: navHandlers.selectPreviousTask, options: { enabled: notTerminal } },
       {
         key: "Enter",
         handler: () => {
-          if (viewMode === "info" && selectedTask && selectedTask.status !== "archived") {
-            handleEnterTerminal();
-          } else if (viewMode === "list" && selectedTask) {
-            setViewMode("info");
+          if (pageState.viewMode === "info" && pageState.selectedTask && pageState.selectedTask.status !== "archived") {
+            pageHandlers.handleEnterTerminal();
+          } else if (pageState.viewMode === "list" && pageState.selectedTask) {
+            pageHandlers.setViewMode("info");
           }
         },
         options: { enabled: notTerminal && hasTask },
       },
       {
         key: "Escape",
-        handler: handleCloseTask,
-        options: { enabled: viewMode !== "list" },
+        handler: pageHandlers.handleCloseTask,
+        options: { enabled: pageState.viewMode !== "list" },
       },
 
       // Info panel tabs
-      { key: "1", handler: () => setInfoPanelTab("stats"), options: { enabled: notTerminal && hasTask } },
-      { key: "2", handler: () => setInfoPanelTab("git"), options: { enabled: notTerminal && hasTask } },
-      { key: "3", handler: () => setInfoPanelTab("notes"), options: { enabled: notTerminal && hasTask } },
-      { key: "4", handler: () => setInfoPanelTab("comments"), options: { enabled: notTerminal && hasTask } },
+      { key: "1", handler: () => pageHandlers.setInfoPanelTab("stats"), options: { enabled: notTerminal && hasTask } },
+      { key: "2", handler: () => pageHandlers.setInfoPanelTab("git"), options: { enabled: notTerminal && hasTask } },
+      { key: "3", handler: () => pageHandlers.setInfoPanelTab("notes"), options: { enabled: notTerminal && hasTask } },
+      { key: "4", handler: () => pageHandlers.setInfoPanelTab("comments"), options: { enabled: notTerminal && hasTask } },
 
       // Actions (work in all modes; xterm focus auto-suppresses via useHotkeys)
       { key: "n", handler: () => setShowNewTaskDialog(true) },
-      { key: "Space", handler: openContextMenuAtSelectedTask, options: { enabled: hasTask && notTerminal } },
-      { key: "c", handler: handleCommit, options: { enabled: isActive } },
-      { key: "s", handler: handleSync, options: { enabled: canOperate } },
-      { key: "m", handler: handleMerge, options: { enabled: canOperate } },
-      { key: "b", handler: handleRebase, options: { enabled: canOperate } },
-      { key: "r", handler: handleReviewShortcut, options: { enabled: isActive } },
-      { key: "e", handler: handleEditorShortcut, options: { enabled: isActive } },
-      { key: "t", handler: handleTerminalShortcut, options: { enabled: isActive } },
+      { key: "Space", handler: navHandlers.openContextMenuAtSelectedTask, options: { enabled: hasTask && notTerminal } },
+      { key: "c", handler: opsHandlers.handleCommit, options: { enabled: isActive } },
+      { key: "s", handler: opsHandlers.handleSync, options: { enabled: canOperate } },
+      { key: "m", handler: opsHandlers.handleMerge, options: { enabled: canOperate } },
+      { key: "b", handler: opsHandlers.handleRebase, options: { enabled: canOperate } },
+      { key: "r", handler: pageHandlers.handleReviewShortcut, options: { enabled: isActive } },
+      { key: "e", handler: pageHandlers.handleEditorShortcut, options: { enabled: isActive } },
+      { key: "t", handler: pageHandlers.handleTerminalShortcut, options: { enabled: isActive } },
 
       // Search
       {
@@ -844,14 +295,11 @@ export function TasksPage({ initialTaskId, initialViewMode, onNavigationConsumed
       },
 
       // Help
-      { key: "?", handler: () => setShowHelp((v) => !v) },
+      { key: "?", handler: () => pageHandlers.setShowHelp(!pageState.showHelp) },
     ],
     [
-      selectNextTask, selectPreviousTask, handleCloseTask,
-      handleEnterTerminal, openContextMenuAtSelectedTask,
-      handleCommit, handleSync, handleMerge, handleRebase,
-      handleReviewShortcut, handleEditorShortcut, handleTerminalShortcut,
-      viewMode, selectedTask, hasTask, isActive, isArchived, canOperate, notTerminal,
+      navHandlers, pageHandlers, opsHandlers,
+      pageState.viewMode, pageState.selectedTask, hasTask, isActive, isArchived, canOperate, notTerminal,
     ]
   );
 
@@ -866,8 +314,23 @@ export function TasksPage({ initialTaskId, initialViewMode, onNavigationConsumed
     );
   }
 
-  const isTerminalMode = viewMode === "terminal";
-  const isInfoMode = viewMode === "info";
+  const isTerminalMode = pageState.viewMode === "terminal";
+  const isInfoMode = pageState.viewMode === "info";
+
+  // Build context menu items using utility function
+  const contextMenuItems = pageState.contextMenu
+    ? buildContextMenuItems(pageState.contextMenu.task, {
+        onEnterTerminal: () => handleDoubleClickTask(pageState.contextMenu!.task),
+        onCommit: opsHandlers.handleCommit,
+        onRebase: opsHandlers.handleRebase,
+        onSync: opsHandlers.handleSync,
+        onMerge: opsHandlers.handleMerge,
+        onArchive: opsHandlers.handleArchive,
+        onReset: opsHandlers.handleReset,
+        onClean: opsHandlers.handleClean,
+        onRecover: pageState.contextMenu.task.status === "archived" ? handleRecover : undefined,
+      } as TaskOperationHandlers)
+    : [];
 
   return (
     <motion.div
@@ -881,7 +344,7 @@ export function TasksPage({ initialTaskId, initialViewMode, onNavigationConsumed
         <h1 className="text-xl font-semibold text-[var(--color-text)]">Tasks</h1>
         <div className="flex items-center gap-2">
           <button
-            onClick={() => setShowHelp(true)}
+            onClick={() => pageHandlers.setShowHelp(true)}
             className="px-2 py-1 text-xs text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-bg-tertiary)] rounded-md transition-colors"
             title="Keyboard Shortcuts (?)"
           >
@@ -909,23 +372,23 @@ export function TasksPage({ initialTaskId, initialViewMode, onNavigationConsumed
           <div className="w-72 flex-shrink-0 h-full">
             <TaskSidebar
               tasks={filteredTasks}
-              selectedTask={selectedTask}
+              selectedTask={pageState.selectedTask}
               filter={filter}
-              searchQuery={searchQuery}
+              searchQuery={pageState.searchQuery}
               isLoading={filter === "archived" && isLoadingArchived}
               searchInputRef={searchInputRef}
               onSelectTask={handleSelectTask}
               onDoubleClickTask={handleDoubleClickTask}
-              onContextMenuTask={handleContextMenu}
+              onContextMenuTask={pageHandlers.handleContextMenu}
               onFilterChange={setFilter}
-              onSearchChange={setSearchQuery}
+              onSearchChange={pageHandlers.setSearchQuery}
             />
           </div>
 
           {/* Right Panel: Empty State or Info Panel */}
           <div className="flex-1 h-full">
             <AnimatePresence mode="wait">
-              {isInfoMode && selectedTask ? (
+              {isInfoMode && pageState.selectedTask ? (
                 <motion.div
                   key="info-panel"
                   initial={{ opacity: 0, x: 20 }}
@@ -936,22 +399,22 @@ export function TasksPage({ initialTaskId, initialViewMode, onNavigationConsumed
                 >
                   <TaskInfoPanel
                     projectId={selectedProject.id}
-                    task={selectedTask}
+                    task={pageState.selectedTask}
                     projectName={selectedProject.name}
-                    onClose={handleCloseTask}
-                    onEnterTerminal={selectedTask.status !== "archived" ? handleEnterTerminal : undefined}
-                    onRecover={selectedTask.status === "archived" ? handleRecover : undefined}
-                    onClean={handleClean}
-                    onCommit={selectedTask.status !== "archived" ? handleCommit : undefined}
-                    onReview={selectedTask.status !== "archived" ? handleReviewFromInfo : undefined}
-                    onEditor={selectedTask.status !== "archived" ? handleEditorFromInfo : undefined}
-                    onRebase={selectedTask.status !== "archived" ? handleRebase : undefined}
-                    onSync={selectedTask.status !== "archived" ? handleSync : undefined}
-                    onMerge={selectedTask.status !== "archived" ? handleMerge : undefined}
-                    onArchive={selectedTask.status !== "archived" ? handleArchive : undefined}
-                    onReset={selectedTask.status !== "archived" ? handleReset : undefined}
-                    activeTab={infoPanelTab}
-                    onTabChange={setInfoPanelTab}
+                    onClose={pageHandlers.handleCloseTask}
+                    onEnterTerminal={pageState.selectedTask.status !== "archived" ? pageHandlers.handleEnterTerminal : undefined}
+                    onRecover={pageState.selectedTask.status === "archived" ? handleRecover : undefined}
+                    onClean={opsHandlers.handleClean}
+                    onCommit={pageState.selectedTask.status !== "archived" ? opsHandlers.handleCommit : undefined}
+                    onReview={pageState.selectedTask.status !== "archived" ? pageHandlers.handleReviewFromInfo : undefined}
+                    onEditor={pageState.selectedTask.status !== "archived" ? pageHandlers.handleEditorFromInfo : undefined}
+                    onRebase={pageState.selectedTask.status !== "archived" ? opsHandlers.handleRebase : undefined}
+                    onSync={pageState.selectedTask.status !== "archived" ? opsHandlers.handleSync : undefined}
+                    onMerge={pageState.selectedTask.status !== "archived" ? opsHandlers.handleMerge : undefined}
+                    onArchive={pageState.selectedTask.status !== "archived" ? opsHandlers.handleArchive : undefined}
+                    onReset={pageState.selectedTask.status !== "archived" ? opsHandlers.handleReset : undefined}
+                    activeTab={pageState.infoPanelTab}
+                    onTabChange={pageHandlers.setInfoPanelTab}
                   />
                 </motion.div>
               ) : (
@@ -978,7 +441,7 @@ export function TasksPage({ initialTaskId, initialViewMode, onNavigationConsumed
 
         {/* Terminal Mode: Info Panel + TaskView */}
         <AnimatePresence>
-          {isTerminalMode && selectedTask && (
+          {isTerminalMode && pageState.selectedTask && (
             <motion.div
               initial={{ x: "100%", opacity: 0 }}
               animate={{ x: 0, opacity: 1 }}
@@ -989,29 +452,29 @@ export function TasksPage({ initialTaskId, initialViewMode, onNavigationConsumed
               {/* Info Panel (collapsible vertical bar in terminal mode) */}
               <TaskInfoPanel
                 projectId={selectedProject.id}
-                task={selectedTask}
+                task={pageState.selectedTask}
                 projectName={selectedProject.name}
-                onClose={handleCloseTask}
+                onClose={pageHandlers.handleCloseTask}
                 isTerminalMode
               />
 
               {/* TaskView (Terminal + optional Code Review / Editor) */}
               <TaskView
                 projectId={selectedProject.id}
-                task={selectedTask}
+                task={pageState.selectedTask}
                 projectName={selectedProject.name}
-                reviewOpen={reviewOpen}
-                editorOpen={editorOpen}
+                reviewOpen={pageState.reviewOpen}
+                editorOpen={pageState.editorOpen}
                 autoStartSession={autoStartSession}
-                onToggleReview={handleToggleReview}
-                onToggleEditor={handleToggleEditor}
-                onCommit={handleCommit}
-                onRebase={handleRebase}
-                onSync={handleSync}
-                onMerge={handleMerge}
-                onArchive={handleArchive}
-                onClean={handleClean}
-                onReset={handleReset}
+                onToggleReview={pageHandlers.handleToggleReview}
+                onToggleEditor={pageHandlers.handleToggleEditor}
+                onCommit={opsHandlers.handleCommit}
+                onRebase={opsHandlers.handleRebase}
+                onSync={opsHandlers.handleSync}
+                onMerge={opsHandlers.handleMerge}
+                onArchive={opsHandlers.handleArchive}
+                onClean={opsHandlers.handleClean}
+                onReset={opsHandlers.handleReset}
                 onStartSession={handleStartSession}
                 onTerminalConnected={handleTerminalConnected}
               />
@@ -1022,14 +485,14 @@ export function TasksPage({ initialTaskId, initialViewMode, onNavigationConsumed
 
       {/* Operation Message Toast */}
       <AnimatePresence>
-        {operationMessage && (
+        {pageState.operationMessage && (
           <motion.div
             initial={{ opacity: 0, y: -20 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -20 }}
             className="fixed top-4 left-1/2 -translate-x-1/2 z-50 px-4 py-2 rounded-lg bg-[var(--color-bg-secondary)] border border-[var(--color-border)] shadow-lg"
           >
-            <span className="text-sm text-[var(--color-text)]">{operationMessage}</span>
+            <span className="text-sm text-[var(--color-text)]">{pageState.operationMessage}</span>
           </motion.div>
         )}
       </AnimatePresence>
@@ -1048,52 +511,46 @@ export function TasksPage({ initialTaskId, initialViewMode, onNavigationConsumed
 
       {/* Commit Dialog */}
       <CommitDialog
-        isOpen={showCommitDialog}
-        isLoading={isCommitting}
-        error={commitError}
-        onCommit={handleCommitSubmit}
-        onCancel={() => {
-          setShowCommitDialog(false);
-          setCommitError(null);
-        }}
+        isOpen={opsState.showCommitDialog}
+        isLoading={opsState.isCommitting}
+        error={opsState.commitError}
+        onCommit={opsHandlers.handleCommitSubmit}
+        onCancel={opsHandlers.handleCommitCancel}
       />
 
       {/* Merge Dialog */}
       <MergeDialog
-        isOpen={showMergeDialog}
-        taskName={selectedTask?.name || ""}
-        branchName={selectedTask?.branch || ""}
-        targetBranch={selectedTask?.target || ""}
-        isLoading={isMerging}
-        error={mergeError}
-        onMerge={handleMergeSubmit}
-        onCancel={() => {
-          setShowMergeDialog(false);
-          setMergeError(null);
-        }}
+        isOpen={opsState.showMergeDialog}
+        taskName={pageState.selectedTask?.name || ""}
+        branchName={pageState.selectedTask?.branch || ""}
+        targetBranch={pageState.selectedTask?.target || ""}
+        isLoading={opsState.isMerging}
+        error={opsState.mergeError}
+        onMerge={opsHandlers.handleMergeSubmit}
+        onCancel={opsHandlers.handleMergeCancel}
       />
 
       {/* Clean Confirm Dialog */}
       <ConfirmDialog
-        isOpen={showCleanConfirm}
+        isOpen={opsState.showCleanConfirm}
         title="Delete Task"
-        message={`Are you sure you want to delete "${selectedTask?.name}"? This will remove the worktree and all associated data. This action cannot be undone.`}
-        confirmLabel={isDeleting ? "Deleting..." : "Delete"}
+        message={`Are you sure you want to delete "${pageState.selectedTask?.name}"? This will remove the worktree and all associated data. This action cannot be undone.`}
+        confirmLabel={opsState.isDeleting ? "Deleting..." : "Delete"}
         variant="danger"
-        onConfirm={handleCleanConfirm}
-        onCancel={() => setShowCleanConfirm(false)}
+        onConfirm={opsHandlers.handleCleanConfirm}
+        onCancel={opsHandlers.handleCleanCancel}
       />
 
       {/* Archive after Merge Confirm Dialog (TUI: ConfirmType::MergeSuccess) */}
       <ConfirmDialog
-        isOpen={showArchiveAfterMerge}
+        isOpen={postMergeState.showArchiveAfterMerge}
         title="Merge Complete"
         message={
           <div className="flex flex-col gap-4">
             <div className="bg-[var(--color-bg-tertiary)] rounded-lg p-3">
               <div className="flex justify-between text-sm">
                 <span className="text-[var(--color-text-muted)]">Task</span>
-                <span className="text-[var(--color-text)] font-medium">{mergedTaskName}</span>
+                <span className="text-[var(--color-text)] font-medium">{postMergeState.mergedTaskName}</span>
               </div>
             </div>
             <p className="text-sm text-[var(--color-text-muted)]">
@@ -1104,8 +561,8 @@ export function TasksPage({ initialTaskId, initialViewMode, onNavigationConsumed
         variant="info"
         confirmLabel="Archive"
         cancelLabel="Later"
-        onConfirm={handleArchiveAfterMerge}
-        onCancel={handleSkipArchive}
+        onConfirm={postMergeHandlers.handleArchiveAfterMerge}
+        onCancel={postMergeHandlers.handleSkipArchive}
       />
 
       {/* Archive Confirm Dialog (API preflight) */}
@@ -1114,40 +571,40 @@ export function TasksPage({ initialTaskId, initialViewMode, onNavigationConsumed
         title="Archive"
         message={pendingArchiveConfirm?.message || ""}
         variant="warning"
-        onConfirm={handleArchiveConfirm}
-        onCancel={handleArchiveCancel}
+        onConfirm={() => opsHandlers.handleArchiveConfirm(pendingArchiveConfirm)}
+        onCancel={() => opsHandlers.handleArchiveCancel(pendingArchiveConfirm)}
       />
 
       {/* Reset Confirm Dialog (TUI: ConfirmType::Reset) */}
       <ConfirmDialog
-        isOpen={showResetConfirm}
+        isOpen={opsState.showResetConfirm}
         title="Reset Task"
-        message={`Are you sure you want to reset "${selectedTask?.name}"? This will discard all changes and recreate the worktree from ${selectedTask?.target}. This action cannot be undone.`}
-        confirmLabel={isResetting ? "Resetting..." : "Reset"}
+        message={`Are you sure you want to reset "${pageState.selectedTask?.name}"? This will discard all changes and recreate the worktree from ${pageState.selectedTask?.target}. This action cannot be undone.`}
+        confirmLabel={opsState.isResetting ? "Resetting..." : "Reset"}
         variant="danger"
-        onConfirm={handleResetConfirm}
-        onCancel={() => setShowResetConfirm(false)}
+        onConfirm={opsHandlers.handleResetConfirm}
+        onCancel={opsHandlers.handleResetCancel}
       />
 
       {/* Rebase Dialog (Change Target Branch) */}
       <RebaseDialog
-        isOpen={showRebaseDialog}
-        taskName={selectedTask?.name}
-        currentTarget={selectedTask?.target || ""}
-        availableBranches={availableBranches}
-        onClose={() => setShowRebaseDialog(false)}
-        onRebase={handleRebaseSubmit}
+        isOpen={opsState.showRebaseDialog}
+        taskName={pageState.selectedTask?.name}
+        currentTarget={pageState.selectedTask?.target || ""}
+        availableBranches={opsState.availableBranches}
+        onClose={opsHandlers.handleRebaseCancel}
+        onRebase={opsHandlers.handleRebaseSubmit}
       />
 
       {/* Task Context Menu */}
       <ContextMenu
-        items={contextMenu ? getContextMenuItems(contextMenu.task) : []}
-        position={contextMenu?.position ?? null}
-        onClose={closeContextMenu}
+        items={contextMenuItems}
+        position={pageState.contextMenu?.position ?? null}
+        onClose={pageHandlers.closeContextMenu}
       />
 
       {/* Help Overlay */}
-      <HelpOverlay isOpen={showHelp} onClose={() => setShowHelp(false)} />
+      <HelpOverlay isOpen={pageState.showHelp} onClose={() => pageHandlers.setShowHelp(false)} />
     </motion.div>
   );
 }
