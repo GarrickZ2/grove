@@ -50,6 +50,48 @@ pub struct ArchiveConfirmResponse {
     pub merge_check_failed: bool,
 }
 
+impl ArchiveConfirmResponse {
+    /// Create an error response with default/safe values for status fields
+    fn error(code: &str, error: &str, task_name: String) -> Self {
+        Self {
+            error: error.to_string(),
+            code: code.to_string(),
+            task_name,
+            branch: String::new(),
+            target: String::new(),
+            worktree_dirty: false,
+            // Default to merged to avoid false "not merged" warnings
+            branch_merged: true,
+            // Mark checks as failed to indicate we couldn't verify
+            dirty_check_failed: true,
+            merge_check_failed: true,
+        }
+    }
+
+    /// Create a confirmation required response with actual check results
+    fn confirm_required(
+        task_name: String,
+        branch: String,
+        target: String,
+        worktree_dirty: bool,
+        branch_merged: bool,
+        dirty_check_failed: bool,
+        merge_check_failed: bool,
+    ) -> Self {
+        Self {
+            error: "Archive requires confirmation".to_string(),
+            code: "ARCHIVE_CONFIRM_REQUIRED".to_string(),
+            task_name,
+            branch,
+            target,
+            worktree_dirty,
+            branch_merged,
+            dirty_check_failed,
+            merge_check_failed,
+        }
+    }
+}
+
 /// Task list response
 #[derive(Debug, Serialize)]
 pub struct TaskListResponse {
@@ -471,23 +513,16 @@ pub async fn archive_task(
     Path((id, task_id)): Path<(String, String)>,
     Query(query): Query<ArchiveQuery>,
 ) -> Result<Json<TaskResponse>, (StatusCode, Json<ArchiveConfirmResponse>)> {
-    let (project, project_key) = find_project_by_id(&id)
-        .map_err(|s| {
-            (
-                s,
-                Json(ArchiveConfirmResponse {
-                    error: "Project not found".to_string(),
-                    code: "PROJECT_NOT_FOUND".to_string(),
-                    task_name: task_id.clone(),
-                    branch: "".to_string(),
-                    target: "".to_string(),
-                    worktree_dirty: false,
-                    branch_merged: true,
-                    dirty_check_failed: true,
-                    merge_check_failed: true,
-                }),
-            )
-        })?;
+    let (project, project_key) = find_project_by_id(&id).map_err(|s| {
+        (
+            s,
+            Json(ArchiveConfirmResponse::error(
+                "PROJECT_NOT_FOUND",
+                "Project not found",
+                task_id.clone(),
+            )),
+        )
+    })?;
 
     let force = query.force.unwrap_or(false);
 
@@ -498,17 +533,11 @@ pub async fn archive_task(
             None => {
                 return Err((
                     StatusCode::NOT_FOUND,
-                    Json(ArchiveConfirmResponse {
-                        error: "Task not found".to_string(),
-                        code: "TASK_NOT_FOUND".to_string(),
-                        task_name: task_id.clone(),
-                        branch: "".to_string(),
-                        target: "".to_string(),
-                        worktree_dirty: false,
-                        branch_merged: true,
-                        dirty_check_failed: true,
-                        merge_check_failed: true,
-                    }),
+                    Json(ArchiveConfirmResponse::error(
+                        "TASK_NOT_FOUND",
+                        "Task not found",
+                        task_id.clone(),
+                    )),
                 ));
             }
         };
@@ -536,17 +565,15 @@ pub async fn archive_task(
         if needs_confirm {
             return Err((
                 StatusCode::CONFLICT,
-                Json(ArchiveConfirmResponse {
-                    error: "Archive requires confirmation".to_string(),
-                    code: "ARCHIVE_CONFIRM_REQUIRED".to_string(),
-                    task_name: task.name,
-                    branch: task.branch,
-                    target: task.target,
+                Json(ArchiveConfirmResponse::confirm_required(
+                    task.name,
+                    task.branch,
+                    task.target,
                     worktree_dirty,
                     branch_merged,
                     dirty_check_failed,
                     merge_check_failed,
-                }),
+                )),
             ));
         }
     }
@@ -575,17 +602,11 @@ pub async fn archive_task(
     tasks::archive_task(&project_key, &task_id).map_err(|_| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ArchiveConfirmResponse {
-                error: "Archive failed".to_string(),
-                code: "ARCHIVE_FAILED".to_string(),
-                task_name: task_id.clone(),
-                branch: "".to_string(),
-                target: "".to_string(),
-                worktree_dirty: false,
-                branch_merged: true,
-                dirty_check_failed: true,
-                merge_check_failed: true,
-            }),
+            Json(ArchiveConfirmResponse::error(
+                "ARCHIVE_FAILED",
+                "Archive failed",
+                task_id.clone(),
+            )),
         )
     })?;
 
@@ -601,25 +622,16 @@ pub async fn archive_task(
 
     // Load the archived task to return
     let archived = loader::load_archived_worktrees(&project.path);
-    let task = archived
-        .iter()
-        .find(|wt| wt.id == task_id)
-        .ok_or_else(|| {
-            (
-                StatusCode::NOT_FOUND,
-                Json(ArchiveConfirmResponse {
-                    error: "Archived task not found".to_string(),
-                    code: "ARCHIVED_TASK_NOT_FOUND".to_string(),
-                    task_name: task_id.clone(),
-                    branch: "".to_string(),
-                    target: "".to_string(),
-                    worktree_dirty: false,
-                    branch_merged: true,
-                    dirty_check_failed: true,
-                    merge_check_failed: true,
-                }),
-            )
-        })?;
+    let task = archived.iter().find(|wt| wt.id == task_id).ok_or_else(|| {
+        (
+            StatusCode::NOT_FOUND,
+            Json(ArchiveConfirmResponse::error(
+                "ARCHIVED_TASK_NOT_FOUND",
+                "Archived task not found",
+                task_id.clone(),
+            )),
+        )
+    })?;
 
     Ok(Json(worktree_to_response(task)))
 }

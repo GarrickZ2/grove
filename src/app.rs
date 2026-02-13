@@ -902,7 +902,10 @@ struct ArchivePreflight {
 
 impl ArchivePreflight {
     fn needs_confirm(&self) -> bool {
-        self.worktree_dirty || !self.branch_merged || self.dirty_check_failed || self.merge_check_failed
+        self.worktree_dirty
+            || !self.branch_merged
+            || self.dirty_check_failed
+            || self.merge_check_failed
     }
 }
 
@@ -1649,12 +1652,8 @@ impl App {
 
         let repo_path = self.project.project_path.clone();
 
-        let preflight = self.archive_preflight(
-            &repo_path,
-            &task.worktree_path,
-            &task.branch,
-            &task.target,
-        );
+        let preflight =
+            self.archive_preflight(&repo_path, &task.worktree_path, &task.branch, &task.target);
 
         if !preflight.needs_confirm() {
             self.do_archive(task_id);
@@ -1734,8 +1733,7 @@ impl App {
 
         let repo_path = self.project.project_path.clone();
 
-        let preflight =
-            self.archive_preflight(&repo_path, &worktree_path, &branch, &target);
+        let preflight = self.archive_preflight(&repo_path, &worktree_path, &branch, &target);
 
         if !preflight.needs_confirm() {
             self.do_archive(&task_id);
@@ -3609,12 +3607,8 @@ impl App {
 
                 let repo_path = self.monitor.project_path.clone();
 
-                let preflight = self.archive_preflight(
-                    &repo_path,
-                    &worktree_path,
-                    &branch,
-                    &target,
-                );
+                let preflight =
+                    self.archive_preflight(&repo_path, &worktree_path, &branch, &target);
 
                 if !preflight.needs_confirm() {
                     self.do_archive(&task_id);

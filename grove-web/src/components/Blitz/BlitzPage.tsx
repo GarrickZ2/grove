@@ -26,7 +26,10 @@ import {
   rebaseToTask as apiRebaseToTask,
   getBranches as apiGetBranches,
 } from "../../api";
+import type { ArchiveConfirmData } from "../../api/types";
 import type { Task, BlitzTask } from "../../data/types";
+import type { PendingArchiveConfirm } from "../../utils/archiveHelpers";
+import { handleArchiveError } from "../../utils/archiveHelpers";
 
 type ViewMode = "list" | "info" | "terminal";
 
@@ -65,23 +68,10 @@ export function BlitzPage({ onSwitchToZen }: BlitzPageProps) {
   const [mergedTaskName, setMergedTaskName] = useState<string>("");
   const [mergedProjectId, setMergedProjectId] = useState<string | null>(null);
 
-  const [pendingArchiveConfirm, setPendingArchiveConfirm] = useState<{
-    projectId: string;
-    taskId: string;
-    message: React.ReactNode;
-    context: "normal" | "after-merge";
-  } | null>(null);
+  const [pendingArchiveConfirm, setPendingArchiveConfirm] = useState<PendingArchiveConfirm | null>(null);
 
   const buildArchiveConfirmMessage = useCallback((
-    data: {
-      task_name?: string;
-      branch?: string;
-      target?: string;
-      worktree_dirty?: boolean;
-      branch_merged?: boolean;
-      dirty_check_failed?: boolean;
-      merge_check_failed?: boolean;
-    },
+    data: ArchiveConfirmData,
     fallbackTaskName: string
   ): React.ReactNode => {
     // Keep wording consistent with TUI ConfirmType::ArchiveConfirm
@@ -97,19 +87,19 @@ export function BlitzPage({ onSwitchToZen }: BlitzPageProps) {
     ];
 
     if (data.dirty_check_failed) {
-      lines.push("Cannot check worktree status.");
+      lines.push("⚠ Unable to verify working tree status.");
     } else if (data.worktree_dirty) {
-      lines.push("Worktree has uncommitted changes.");
-      lines.push("They will be LOST after archive.");
+      lines.push("⚠ Working tree contains uncommitted changes.");
+      lines.push("  These changes will be permanently lost upon archiving.");
     }
 
     if (data.merge_check_failed) {
-      lines.push("Cannot check merge status.");
+      lines.push("⚠ Unable to verify merge status.");
     } else if (data.branch_merged === false) {
-      lines.push("Branch not merged yet.");
+      lines.push("⚠ Branch has not been merged into target.");
     }
 
-    lines.push("", "Archive anyway?");
+    lines.push("", "Proceed with archiving?");
     return lines.join("\n");
   }, []);
 
@@ -494,46 +484,41 @@ export function BlitzPage({ onSwitchToZen }: BlitzPageProps) {
 
   const handleArchiveAfterMerge = useCallback(async () => {
     if (!mergedProjectId || !mergedTaskId) return;
-    let shouldCleanup = true;
     try {
       await apiArchiveTask(mergedProjectId, mergedTaskId);
       await refresh();
       showMessage("Task archived");
+      cleanupAfterMerge();
     } catch (err) {
-      const e = err as ApiError;
-      const data = (e.data || {}) as {
-        code?: string;
-        task_name?: string;
-        branch?: string;
-        target?: string;
-        worktree_dirty?: boolean;
-        branch_merged?: boolean;
-        dirty_check_failed?: boolean;
-        merge_check_failed?: boolean;
-      };
-      if (e?.status === 409 && data.code === "ARCHIVE_CONFIRM_REQUIRED") {
-        setPendingArchiveConfirm({
-          projectId: mergedProjectId,
-          taskId: mergedTaskId,
-          message: buildArchiveConfirmMessage(data, mergedTaskName),
-          context: "after-merge",
-        });
+      const needsConfirm = handleArchiveError(
+        err,
+        mergedProjectId,
+        mergedTaskId,
+        mergedTaskName,
+        "after-merge",
+        buildArchiveConfirmMessage,
+        setPendingArchiveConfirm,
+        showMessage
+      );
+
+      if (needsConfirm) {
         setShowArchiveAfterMerge(false);
-        shouldCleanup = false;
         return;
       }
-      showMessage(e?.message || "Failed to archive task");
-    } finally {
-      if (shouldCleanup) {
-        setShowArchiveAfterMerge(false);
-        setMergedTaskId(null);
-        setMergedTaskName("");
-        setMergedProjectId(null);
-        setSelectedBlitzTask(null);
-        setViewMode("list");
-      }
+
+      cleanupAfterMerge();
     }
   }, [mergedProjectId, mergedTaskId, mergedTaskName, refresh]);
+
+  // Helper to cleanup after merge
+  const cleanupAfterMerge = useCallback(() => {
+    setShowArchiveAfterMerge(false);
+    setMergedTaskId(null);
+    setMergedTaskName("");
+    setMergedProjectId(null);
+    setSelectedBlitzTask(null);
+    setViewMode("list");
+  }, []);
 
   const handleSkipArchive = useCallback(() => {
     setShowArchiveAfterMerge(false);
@@ -552,29 +537,18 @@ export function BlitzPage({ onSwitchToZen }: BlitzPageProps) {
       setSelectedBlitzTask(null);
       setViewMode("list");
     } catch (err) {
-      const e = err as ApiError;
-      const data = (e.data || {}) as {
-        code?: string;
-        task_name?: string;
-        branch?: string;
-        target?: string;
-        worktree_dirty?: boolean;
-        branch_merged?: boolean;
-        dirty_check_failed?: boolean;
-        merge_check_failed?: boolean;
-      };
-      if (e?.status === 409 && data.code === "ARCHIVE_CONFIRM_REQUIRED") {
-        setPendingArchiveConfirm({
-          projectId: activeProjectId,
-          taskId: selectedTask.id,
-          message: buildArchiveConfirmMessage(data, selectedTask.name),
-          context: "normal",
-        });
-        return;
-      }
-      showMessage(e?.message || "Failed to archive task");
+      handleArchiveError(
+        err,
+        activeProjectId,
+        selectedTask.id,
+        selectedTask.name,
+        "normal",
+        buildArchiveConfirmMessage,
+        setPendingArchiveConfirm,
+        showMessage
+      );
     }
-  }, [activeProjectId, selectedTask, refresh]);
+  }, [activeProjectId, selectedTask, refresh, buildArchiveConfirmMessage]);
 
   const handleArchiveConfirm = useCallback(async () => {
     if (!pendingArchiveConfirm) return;
@@ -1075,13 +1049,11 @@ export function BlitzPage({ onSwitchToZen }: BlitzPageProps) {
 
       <ConfirmDialog
         isOpen={showArchiveAfterMerge}
-        title="Success"
+        title="Merge Complete"
         message={[
-          "Merged successfully!",
-          "",
           `Task: ${mergedTaskName}`,
           "",
-          "Archive this task?",
+          "Would you like to archive this task?",
         ].join("\n")}
         variant="info"
         onConfirm={handleArchiveAfterMerge}
