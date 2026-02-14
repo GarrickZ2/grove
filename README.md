@@ -9,7 +9,7 @@
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux-lightgrey.svg)]()
 
-![Grove Screenshot](docs/images/screenshot-hero.png)
+![Grove Screenshot](docs/images/screenshot-hero.jpg)
 
 Manage multiple AI coding tasks in parallel. Each task gets its own Git worktree and tmux/Zellij session—isolated, organized, always ready to resume.
 
@@ -38,7 +38,7 @@ Grove gives each task its own **isolated universe**:
 - Let AI agents run in parallel without stepping on each other
 
 <p align="center">
-  <img src="docs/images/demo.gif" alt="Grove Demo" width="720">
+  <img src="docs/images/work.gif" alt="Grove Demo" width="720">
 </p>
 
 ---
@@ -63,7 +63,7 @@ Grove gives each task its own **isolated universe**:
 
 **11 Themes** — Dracula, Nord, Gruvbox, Tokyo Night, Catppuccin, and more
 
-![Multiple agents running in parallel](docs/images/multiple-agent-support.png)
+![Multiple agents running in parallel](docs/images/agents.png)
 
 ---
 
@@ -95,7 +95,7 @@ grove gui --port 8080  # Custom API port
 
 **Create your first task:** Press `n` in TUI, or click "New Task" in Web/GUI.
 
-![New task dialog](docs/images/grove-tui-new-task.png)
+![New task dialog](docs/images/tui-grove.png)
 
 ---
 
@@ -105,7 +105,7 @@ grove gui --port 8080  # Custom API port
 
 A full-featured terminal interface built with Ratatui. Navigate tasks, preview Git diffs, read review comments, and manage your entire workflow without leaving the terminal.
 
-![Grove TUI](docs/images/tui-task.png)
+![Grove TUI](docs/images/tui-grove.png)
 
 | Key | Action |
 |-----|--------|
@@ -124,15 +124,15 @@ A full-featured terminal interface built with Ratatui. Navigate tasks, preview G
 
 A full-featured web interface embedded directly in the binary — no separate frontend deployment needed. Two modes: **Zen** (single-project focus) and **Blitz** (cross-project active task aggregation with notification-aware sorting).
 
-![Grove Web Dashboard](docs/images/web-dashboard.png)
+![Grove Web Dashboard](docs/images/grove-web.png)
 
 | | |
 |---|---|
-| ![Terminal](docs/images/web-task-terminal.png) | ![Editor](docs/images/web-editor.png) |
+| ![Terminal](docs/images/integrate-terminal.png) | ![Editor](docs/images/editor.png) |
 | **Integrated Terminal** — Full xterm.js terminal via WebSocket | **Monaco Editor** — In-browser code editing with file tree |
-| ![Code Review](docs/images/web-review-diff.png) | ![Notes](docs/images/web-task-notes.png) |
+| ![Code Review](docs/images/diff-review.png) | ![Notes](docs/images/task-notes.png) |
 | **Code Review** — Diff review with inline comments and multi-agent discussions | **Task Notes** — Context and requirements per task |
-| ![Stats](docs/images/web-task-stats.png) | ![Notifications](docs/images/web-task-notification.png) |
+| ![Stats](docs/images/stats.png) | ![Notifications](docs/images/notification-on-pending-action.png) |
 | **Activity Stats** — File edit heatmap and timeline | **Hook Notifications** — Real-time agent notification inbox |
 
 ```bash
@@ -145,7 +145,7 @@ grove web --host 0.0.0.0   # Expose to network
 
 A native desktop application powered by Tauri 2 WebView. Shares the same frontend as Grove Web, but runs in a native window instead of a browser.
 
-![Grove GUI](docs/images/gui-dashboard.png)
+![Grove GUI](docs/images/grove-gui.png)
 
 ```bash
 grove gui              # Launch desktop window
@@ -164,7 +164,7 @@ cargo install grove-rs --features gui
 
 Press `p` to toggle the side panel showing details for the selected task:
 
-![Preview Panel with Review tab](docs/images/tui-review.png)
+![Preview Panel with Review tab](docs/images/agent-review.png)
 
 - **Stats** — file edit heatmap and activity timeline
 - **Git** — recent commits, diff stats, uncommitted changes
@@ -179,7 +179,7 @@ Use `j/k` to scroll panel content, `1/2/3/4` to switch sub-tabs.
 
 11 built-in themes with auto dark/light detection. Press `t` to switch.
 
-![Theme showcase](docs/images/multiple-theme.png)
+![Theme showcase](docs/images/theme.png)
 
 Dracula · Nord · Gruvbox · Tokyo Night · Catppuccin · Catppuccin Latte · Rosé Pine Dawn · Solarized Light · GitHub Light · Light · Dark (default)
 

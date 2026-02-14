@@ -5,6 +5,70 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0] - 2026-02-14
+
+### Added
+
+- **AutoLink** — automatic symlink creation for worktrees
+  - Symlinks node_modules, IDE configs (.vscode, .idea), and build artifacts (target, dist) from main repo to worktrees
+  - Configurable glob patterns with gitignore checking for safety
+  - TUI and Web UI configuration panels with preset patterns
+  - Significantly reduces setup time for new tasks (no re-install, no re-build)
+- **Second reminder for unsubmitted tasks** — additional notification when task remains unsubmitted after archiving
+- **Remote branch lazy loading** — on-demand loading of remote branches in Web UI for better performance with large repositories
+  - Collapsible remote sections (origin, upstream) with automatic folder expansion
+  - Filters invalid remote branch names
+  - Auto-updates task target branches when switching in main repo
+- **Operation layer refactoring** — unified task operations (create/archive/recover/reset/merge/sync) eliminating TUI/Web duplication
+  - New `src/operations/tasks.rs` module as single source of truth
+  - 331 lines of duplicate code removed across TUI and Web API
+  - Type-safe error handling with existing GroveError/Result
+
+### Fixed
+
+- **Editor file tree refresh** — files now appear/disappear immediately after create/delete operations
+  - Includes untracked files (via `git ls-files --others`)
+  - Filters out deleted files still in git index
+- **Git push upstream** — auto-set upstream when pushing new branches (fixes "no upstream branch" error)
+- **Terminal performance** — XTerminal component properly unmounts when hidden, avoiding layout resize overhead
+- **Blitz keyboard shortcuts** — Command key state now handled via CSS to prevent text selection loss
+- **Archive confirmation UX** — professional wording and improved error messages
+  - "Worktree" → "Working tree", clearer warning symbols
+  - Unified wording between TUI and Web interfaces
+- **Dangerous hotkeys removed** — removed accidental Archive/Clean/Reset hotkeys in Blitz mode
+  - 'a' (Archive), 'x' (Clean), 'r' (Reset) removed; require menu access with confirmation
+  - Added proper 'r' (Review), 'e' (Editor), 't' (Terminal) shortcuts aligned with TasksPage
+- **Context menu positioning** — fixed overflow issues near viewport edges in Editor
+
+### Changed
+
+- **Hooks refactored** — custom hooks architecture in Web frontend eliminates code duplication
+  - `useTaskPageState` (~250 lines): page-level state management
+  - `useTaskNavigation` (~70 lines): j/k navigation logic
+  - `usePostMergeArchive` (~160 lines): post-merge archive workflow
+  - `useTaskOperations` (~450 lines): all task Git operations
+  - BlitzPage: 1100 → 675 lines (-39%), TasksPage: 1154 → 610 lines (-47%)
+- **AutoLink config simplified** — always enabled, always checks gitignore
+  - Moved to Development Tools section in Web UI
+  - Removed redundant enable/check_gitignore toggles
+
+### Performance
+
+- **Get Project API optimized** — 70% faster with data reuse and parallelization
+  - Get Project: 1600ms → 480ms (3.3x faster)
+  - Convert to response: 1200ms → 80ms (15x faster)
+  - FileChanges struct extended with `files_changed` field for zero-cost file counts
+  - Parallel worktree processing using rayon
+
+### Documentation
+
+- **CLAUDE.md** — added Web frontend build requirement documentation
+- **MCP config** — updated to `~/.claude.json` path, added CodeX example
+
+### Removed
+
+- **Dead code cleanup** — removed unused Dashboard and TaskDetail components from Web UI
+
 ## [0.4.13] - 2026-02-11
 
 ### Added
