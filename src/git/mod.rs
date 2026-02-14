@@ -215,6 +215,18 @@ pub fn list_branches(repo_path: &str) -> Result<Vec<String>> {
     })
 }
 
+/// 列出所有远端
+/// 执行: git remote
+pub fn list_remotes(repo_path: &str) -> Result<Vec<String>> {
+    git_cmd(repo_path, &["remote"]).map(|output| {
+        output
+            .lines()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect()
+    })
+}
+
 /// 检查分支是否已合并到 target
 /// 使用 git merge-base --is-ancestor 检查
 pub fn is_merged(repo_path: &str, branch: &str, target: &str) -> Result<bool> {

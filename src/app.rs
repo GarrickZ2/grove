@@ -2296,6 +2296,10 @@ impl App {
                         self.show_toast("Cannot checkout: uncommitted changes".to_string());
                     }
                     Ok(false) => {
+                        // 记录切换前的分支
+                        let old_branch =
+                            git::current_branch(&self.project.project_path).unwrap_or_default();
+
                         match git::checkout_branch(&self.project.project_path, &branch) {
                             Ok(_) => {
                                 // 使缓存失效
@@ -2303,8 +2307,34 @@ impl App {
                                     "branch:{}",
                                     self.project.project_path
                                 ));
+
+                                // 更新所有任务的 target branch (将 old_branch -> new_branch)
+                                if !old_branch.is_empty() && old_branch != branch {
+                                    match tasks::update_tasks_target_on_branch_switch(
+                                        &self.project.project_key,
+                                        &old_branch,
+                                        &branch,
+                                    ) {
+                                        Ok(count) if count > 0 => {
+                                            self.show_toast(format!(
+                                                "Switched to {} ({} tasks updated)",
+                                                branch, count
+                                            ));
+                                        }
+                                        Ok(_) => {
+                                            self.show_toast(format!("Switched to {}", branch));
+                                        }
+                                        Err(e) => {
+                                            // 即使更新失败，也继续刷新界面
+                                            eprintln!("Failed to update tasks target: {}", e);
+                                            self.show_toast(format!("Switched to {}", branch));
+                                        }
+                                    }
+                                } else {
+                                    self.show_toast(format!("Switched to {}", branch));
+                                }
+
                                 self.project.refresh();
-                                self.show_toast(format!("Switched to {}", branch));
                             }
                             Err(e) => {
                                 self.show_toast(format!("Checkout failed: {}", e));

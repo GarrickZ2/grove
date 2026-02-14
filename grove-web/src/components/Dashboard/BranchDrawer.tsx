@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   GitBranch,
@@ -17,8 +17,10 @@ import {
   ArrowDownToLine,
   ListTodo,
   Circle,
+  Cloud,
 } from "lucide-react";
 import type { Branch, Task } from "../../data/types";
+import { getRemotes, getBranches as apiGetBranches } from "../../api";
 
 // Branch with task info
 interface BranchWithTasks {
@@ -34,6 +36,7 @@ interface BranchDrawerProps {
   branches: Branch[];
   tasks?: Task[];
   isLoading?: boolean;
+  projectId: string | null;
   onClose: () => void;
   onCheckout: (branch: Branch) => void;
   onNewBranch: () => void;
@@ -118,6 +121,7 @@ export function BranchDrawer({
   branches,
   tasks = [],
   isLoading = false,
+  projectId,
   onClose,
   onCheckout,
   onNewBranch,
@@ -129,21 +133,137 @@ export function BranchDrawer({
   onTaskClick,
 }: BranchDrawerProps) {
   const [searchQuery, setSearchQuery] = useState("");
-  const [showRemote, setShowRemote] = useState(false);
   const [showWithTasks, setShowWithTasks] = useState(true);
+  const [showLocal, setShowLocal] = useState(true);
+  const [showRemote, setShowRemote] = useState(true);
+  const [showRemoteButtons, setShowRemoteButtons] = useState(true);
   const [selectedBranch, setSelectedBranch] = useState<Branch | null>(null);
   const [selectedTaskBranch, setSelectedTaskBranch] = useState<string | null>(null);
-  const [expandedFolders, setExpandedFolders] = useState<Set<string>>(
-    new Set(["grove", "feature", "origin", "origin/feature", "origin/grove"])
-  );
+  const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set());
+
+  // Remote loading state
+  const [remotes, setRemotes] = useState<string[]>([]);
+  const [loadedRemotes, setLoadedRemotes] = useState<Set<string>>(new Set());
+  const [loadedRemoteBranches, setLoadedRemoteBranches] = useState<Record<string, Branch[]>>({});
+  const [loadingRemote, setLoadingRemote] = useState<string | null>(null);
+
+  // Load remotes when drawer opens
+  useEffect(() => {
+    if (isOpen && projectId) {
+      getRemotes(projectId)
+        .then((res) => {
+          setRemotes(res.remotes);
+        })
+        .catch((err) => {
+          console.error("Failed to load remotes:", err);
+        });
+    }
+  }, [isOpen, projectId]);
+
+  // Reset remote state when drawer closes
+  useEffect(() => {
+    if (!isOpen) {
+      setLoadedRemotes(new Set());
+      setLoadedRemoteBranches({});
+      setLoadingRemote(null);
+    }
+  }, [isOpen]);
+
+  // Load branches from a specific remote
+  const loadRemoteBranches = async (remote: string) => {
+    if (!projectId || loadedRemotes.has(remote)) return;
+
+    setLoadingRemote(remote);
+    try {
+      const res = await apiGetBranches(projectId, remote);
+      // Filter: only keep branches in "remote/branch" format
+      const remoteBranches: Branch[] = res.branches
+        .filter(b => {
+          const parts = b.name.split('/');
+          // Must have at least "remote/branch" format (2 parts)
+          return parts.length >= 2 && parts[0] === remote;
+        })
+        .map(b => ({
+          name: b.name,
+          isCurrent: b.is_current,
+          isLocal: false,
+        }));
+
+      setLoadedRemoteBranches((prev) => ({
+        ...prev,
+        [remote]: remoteBranches,
+      }));
+      setLoadedRemotes((prev) => new Set(prev).add(remote));
+
+      // Auto-expand the remote folder and all its first-level subfolders
+      setExpandedFolders((prev) => {
+        const next = new Set(prev);
+        next.add(remote); // Expand remote root (e.g., "origin")
+
+        // Find all first-level folders under this remote
+        const firstLevelFolders = new Set<string>();
+        remoteBranches.forEach(branch => {
+          // Branch name format: "origin/feature/xxx" or "origin/master"
+          const parts = branch.name.split('/');
+          if (parts.length >= 2 && parts[0] === remote) {
+            // Add first-level folder path: "origin/feature"
+            firstLevelFolders.add(`${parts[0]}/${parts[1]}`);
+          }
+        });
+
+        // Expand all first-level folders
+        firstLevelFolders.forEach(folder => next.add(folder));
+        return next;
+      });
+    } catch (err) {
+      console.error(`Failed to load branches from ${remote}:`, err);
+    } finally {
+      setLoadingRemote(null);
+    }
+  };
 
   const localBranches = branches.filter(b => b.isLocal);
-  const remoteBranches = branches.filter(b => !b.isLocal);
+
+  // Combine all loaded remote branches
+  const allRemoteBranches: Branch[] = Object.values(loadedRemoteBranches).flat();
+
+  // Track if we've auto-expanded folders (reset when drawer closes)
+  const hasAutoExpandedRef = useRef(false);
+
+  // Reset auto-expand flag when drawer closes
+  useEffect(() => {
+    if (!isOpen) {
+      hasAutoExpandedRef.current = false;
+    }
+  }, [isOpen]);
+
+  // Auto-expand first-level folders for local branches (only once when drawer opens)
+  useEffect(() => {
+    if (!isOpen || localBranches.length === 0 || hasAutoExpandedRef.current) return;
+
+    const firstLevelFolders = new Set<string>();
+    localBranches.forEach(branch => {
+      const parts = branch.name.split('/');
+      if (parts.length >= 2) {
+        // Add first-level folder (e.g., "feature", "grove", "fix")
+        firstLevelFolders.add(parts[0]);
+      }
+    });
+
+    // Expand all first-level folders (only if not already in the set)
+    setExpandedFolders((prev) => {
+      const next = new Set(prev);
+      firstLevelFolders.forEach(folder => next.add(folder));
+      return next;
+    });
+
+    hasAutoExpandedRef.current = true;
+  }, [isOpen, localBranches]);
 
   const filteredLocal = localBranches.filter(b =>
     b.name.toLowerCase().includes(searchQuery.toLowerCase())
   );
-  const filteredRemote = remoteBranches.filter(b =>
+  const filteredRemote = allRemoteBranches.filter(b =>
     b.name.toLowerCase().includes(searchQuery.toLowerCase())
   );
 
@@ -320,35 +440,112 @@ export function BranchDrawer({
               )}
 
               {/* Local Branches */}
-              <div className="text-xs font-medium text-[var(--color-text-muted)] px-2 py-1.5 uppercase tracking-wider">
-                Local ({filteredLocal.length})
-              </div>
-              <div className="space-y-0.5">
-                <TreeView
-                  node={localTree}
-                  depth={0}
-                  expandedFolders={expandedFolders}
-                  selectedBranch={selectedBranch}
-                  folderColor="var(--color-warning)"
-                  onToggleFolder={toggleFolder}
-                  onBranchClick={handleBranchClick}
-                  onCheckout={onCheckout}
-                  onMerge={onMerge}
-                  onRename={onRename}
-                  onDelete={onDelete}
-                  onPullMerge={onPullMerge}
-                  onPullRebase={onPullRebase}
-                  onClose={onClose}
-                  isLocal={true}
-                />
+              <div>
+                <button
+                  onClick={() => setShowLocal(!showLocal)}
+                  className="w-full flex items-center gap-1 text-xs font-medium text-[var(--color-text-muted)] px-2 py-1.5 hover:text-[var(--color-text)] transition-colors uppercase tracking-wider"
+                >
+                  {showLocal ? (
+                    <ChevronDown className="w-3 h-3" />
+                  ) : (
+                    <ChevronRight className="w-3 h-3" />
+                  )}
+                  Local ({filteredLocal.length})
+                </button>
+                <AnimatePresence>
+                  {showLocal && (
+                    <motion.div
+                      initial={{ opacity: 0, height: 0 }}
+                      animate={{ opacity: 1, height: "auto" }}
+                      exit={{ opacity: 0, height: 0 }}
+                      className="space-y-0.5 overflow-hidden"
+                    >
+                      <TreeView
+                        node={localTree}
+                        depth={0}
+                        expandedFolders={expandedFolders}
+                        selectedBranch={selectedBranch}
+                        folderColor="var(--color-warning)"
+                        onToggleFolder={toggleFolder}
+                        onBranchClick={handleBranchClick}
+                        onCheckout={onCheckout}
+                        onMerge={onMerge}
+                        onRename={onRename}
+                        onDelete={onDelete}
+                        onPullMerge={onPullMerge}
+                        onPullRebase={onPullRebase}
+                        onClose={onClose}
+                        isLocal={true}
+                      />
+                    </motion.div>
+                  )}
+                </AnimatePresence>
               </div>
 
-              {/* Remote Branches */}
+              {/* Remote Loading Buttons - Only show unloaded remotes */}
+              {remotes.filter(r => !loadedRemotes.has(r)).length > 0 && (
+                <div className="mt-4">
+                  <button
+                    onClick={() => setShowRemoteButtons(!showRemoteButtons)}
+                    className="w-full flex items-center gap-1 text-xs font-medium text-[var(--color-text-muted)] px-2 py-1.5 hover:text-[var(--color-text)] transition-colors uppercase tracking-wider"
+                  >
+                    {showRemoteButtons ? (
+                      <ChevronDown className="w-3 h-3" />
+                    ) : (
+                      <ChevronRight className="w-3 h-3" />
+                    )}
+                    Remote ({remotes.filter(r => !loadedRemotes.has(r)).length})
+                  </button>
+                  <AnimatePresence>
+                    {showRemoteButtons && (
+                      <motion.div
+                        initial={{ opacity: 0, height: 0 }}
+                        animate={{ opacity: 1, height: "auto" }}
+                        exit={{ opacity: 0, height: 0 }}
+                        className="space-y-2 mt-2 px-2 overflow-hidden"
+                      >
+                        {remotes
+                          .filter(remote => !loadedRemotes.has(remote))
+                          .map((remote) => {
+                            const isLoading = loadingRemote === remote;
+
+                            return (
+                              <button
+                                key={remote}
+                                onClick={() => loadRemoteBranches(remote)}
+                                disabled={isLoading}
+                                className={`w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg text-sm font-medium transition-all ${
+                                  isLoading
+                                    ? "bg-[var(--color-bg-tertiary)] text-[var(--color-text-muted)] cursor-wait"
+                                    : "bg-[var(--color-bg-tertiary)] text-[var(--color-text)] hover:bg-[var(--color-highlight)]/10 hover:text-[var(--color-highlight)] border border-[var(--color-border)] hover:border-[var(--color-highlight)]/50"
+                                }`}
+                              >
+                                {isLoading ? (
+                                  <>
+                                    <Loader2 className="w-4 h-4 animate-spin" />
+                                    Loading {remote}...
+                                  </>
+                                ) : (
+                                  <>
+                                    <Cloud className="w-4 h-4" />
+                                    Load {remote}
+                                  </>
+                                )}
+                              </button>
+                            );
+                          })}
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
+                </div>
+              )}
+
+              {/* Loaded Remote Branches Tree */}
               {filteredRemote.length > 0 && (
                 <div className="mt-4">
                   <button
                     onClick={() => setShowRemote(!showRemote)}
-                    className="flex items-center gap-1 text-xs font-medium text-[var(--color-text-muted)] px-2 py-1.5 hover:text-[var(--color-text)] transition-colors uppercase tracking-wider"
+                    className="w-full flex items-center gap-1 text-xs font-medium text-[var(--color-text-muted)] px-2 py-1.5 hover:text-[var(--color-text)] transition-colors uppercase tracking-wider"
                   >
                     {showRemote ? (
                       <ChevronDown className="w-3 h-3" />

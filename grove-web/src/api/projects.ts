@@ -99,9 +99,22 @@ export async function getProjectStats(id: string): Promise<ProjectStatsResponse>
 
 /**
  * Get branches for a project
+ * @param id - Project ID
+ * @param remote - Remote name ("local", "origin", "upstream", etc.). Default: "local"
  */
-export async function getBranches(id: string): Promise<BranchesResponse> {
-  return apiClient.get<BranchesResponse>(`/api/v1/projects/${id}/branches`);
+export async function getBranches(id: string, remote: string = 'local'): Promise<BranchesResponse> {
+  return apiClient.get<BranchesResponse>(`/api/v1/projects/${id}/branches?remote=${encodeURIComponent(remote)}`);
+}
+
+export interface RemotesResponse {
+  remotes: string[];
+}
+
+/**
+ * Get all remotes for a project
+ */
+export async function getRemotes(id: string): Promise<RemotesResponse> {
+  return apiClient.get<RemotesResponse>(`/api/v1/projects/${id}/git/remotes`);
 }
 
 export interface OpenResponse {

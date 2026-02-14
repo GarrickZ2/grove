@@ -1,6 +1,10 @@
 //! Git API handlers for project-level git operations
 
-use axum::{extract::Path, http::StatusCode, Json};
+use axum::{
+    extract::{Path, Query},
+    http::StatusCode,
+    Json,
+};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 
@@ -200,20 +204,42 @@ pub async fn get_status(Path(id): Path<String>) -> Result<Json<RepoStatusRespons
     }))
 }
 
-/// GET /api/v1/projects/{id}/git/branches
-/// Get all branches with details
+/// Query parameters for branch listing
+#[derive(Debug, Deserialize)]
+pub struct BranchQueryParams {
+    /// Remote name to fetch branches from
+    /// - "local" or empty: only local branches (default)
+    /// - "origin": origin remote branches
+    /// - "upstream": upstream remote branches
+    /// - any other remote name
+    #[serde(default)]
+    pub remote: String,
+}
+
+impl Default for BranchQueryParams {
+    fn default() -> Self {
+        Self {
+            remote: "local".to_string(),
+        }
+    }
+}
+
+/// GET /api/v1/projects/{id}/git/branches?remote=local|origin|upstream|...
+/// Get branches with details
+///
+/// Examples:
+/// - `/branches` or `/branches?remote=local` - only local branches
+/// - `/branches?remote=origin` - only origin/* branches
+/// - `/branches?remote=upstream` - only upstream/* branches
 pub async fn get_branches(
     Path(id): Path<String>,
+    Query(params): Query<BranchQueryParams>,
 ) -> Result<Json<BranchesDetailResponse>, StatusCode> {
     let project_path = find_project_path(&id)?;
 
     let current_branch = git::current_branch(&project_path).unwrap_or_else(|_| "main".to_string());
 
-    // Get local branches
-    let local_branches =
-        git::list_branches(&project_path).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-
-    // Get Grove-managed branches from tasks
+    // Get Grove-managed branches from tasks (to filter them out)
     let project_key = workspace::project_hash(&project_path);
     let mut grove_branches = HashSet::new();
 
@@ -231,66 +257,103 @@ pub async fn get_branches(
         }
     }
 
-    // Get remote branches
-    let remote_output = git_cmd(
-        &project_path,
-        &["branch", "-r", "--format=%(refname:short)"],
-    )
-    .unwrap_or_default();
-    let remote_branches: Vec<String> = remote_output
-        .lines()
-        .map(|s| s.trim().to_string())
-        .filter(|s| {
-            !s.is_empty() && !s.contains("HEAD") && s.contains('/') // Must have format "remote/branch", filter out bare remote names like "origin"
-        })
-        .collect();
-
     let mut branches: Vec<BranchDetailInfo> = Vec::new();
 
-    // Add local branches (filter out Grove-managed branches)
-    for name in &local_branches {
-        if grove_branches.contains(name) {
-            continue;
+    // Determine what to fetch based on remote parameter
+    let remote = if params.remote.is_empty() {
+        "local"
+    } else {
+        &params.remote
+    };
+
+    if remote == "local" {
+        // Fetch only local branches
+        let local_branches =
+            git::list_branches(&project_path).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+        for name in &local_branches {
+            // Filter out Grove-managed branches
+            if grove_branches.contains(name) {
+                continue;
+            }
+
+            let is_current = name == &current_branch;
+            let last_commit = git_cmd(&project_path, &["rev-parse", "--short", name]).ok();
+            let (ahead, behind) = get_ahead_behind(&project_path, name);
+
+            branches.push(BranchDetailInfo {
+                name: name.clone(),
+                is_local: true,
+                is_current,
+                last_commit,
+                ahead,
+                behind,
+            });
         }
+    } else {
+        // Fetch branches from specific remote
+        let remote_output = git_cmd(
+            &project_path,
+            &[
+                "branch",
+                "-r",
+                "--format=%(refname:short)",
+                "--list",
+                &format!("{}/*", remote),
+            ],
+        )
+        .unwrap_or_default();
 
-        let is_current = name == &current_branch;
-        let last_commit = git_cmd(&project_path, &["rev-parse", "--short", name]).ok();
-        let (ahead, behind) = get_ahead_behind(&project_path, name);
+        let remote_branches: Vec<String> = remote_output
+            .lines()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty() && !s.contains("HEAD"))
+            .collect();
 
-        branches.push(BranchDetailInfo {
-            name: name.clone(),
-            is_local: true,
-            is_current,
-            last_commit,
-            ahead,
-            behind,
-        });
-    }
+        // Get local branches to check for duplicates
+        let local_branches = git::list_branches(&project_path).unwrap_or_default();
 
-    // Add remote branches (skip those that have local counterparts)
-    for name in &remote_branches {
-        // Check if local version exists
-        let local_name = name.strip_prefix("origin/").unwrap_or(name);
-        if local_branches.contains(&local_name.to_string()) {
-            continue;
+        for name in &remote_branches {
+            // Check if local version exists (strip remote prefix)
+            let local_name = name.strip_prefix(&format!("{}/", remote)).unwrap_or(name);
+            if local_branches.contains(&local_name.to_string()) {
+                continue;
+            }
+
+            let last_commit = git_cmd(&project_path, &["rev-parse", "--short", name]).ok();
+
+            branches.push(BranchDetailInfo {
+                name: name.clone(),
+                is_local: false,
+                is_current: false,
+                last_commit,
+                ahead: None,
+                behind: None,
+            });
         }
-
-        let last_commit = git_cmd(&project_path, &["rev-parse", "--short", name]).ok();
-
-        branches.push(BranchDetailInfo {
-            name: name.clone(),
-            is_local: false,
-            is_current: false,
-            last_commit,
-            ahead: None,
-            behind: None,
-        });
     }
 
     Ok(Json(BranchesDetailResponse {
         branches,
         current: current_branch,
     }))
+}
+
+/// Remotes list response
+#[derive(Debug, Serialize)]
+pub struct RemotesResponse {
+    pub remotes: Vec<String>,
+}
+
+/// GET /api/v1/projects/{id}/git/remotes
+/// Get all remote names
+pub async fn get_remotes(Path(id): Path<String>) -> Result<Json<RemotesResponse>, StatusCode> {
+    let project_path = find_project_path(&id)?;
+
+    let remotes =
+        git::list_remotes(&project_path).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    Ok(Json(RemotesResponse { remotes }))
 }
 
 /// GET /api/v1/projects/{id}/git/commits

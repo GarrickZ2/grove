@@ -1,11 +1,16 @@
 //! Project API handlers
 
-use axum::{extract::Path, http::StatusCode, Json};
+use axum::{
+    extract::{Path, Query},
+    http::StatusCode,
+    Json,
+};
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 
 use crate::git;
+use crate::git::git_cmd;
 use crate::model::loader;
 use crate::storage::{tasks, workspace};
 use crate::watcher;
@@ -405,19 +410,30 @@ pub async fn get_stats(Path(id): Path<String>) -> Result<Json<ProjectStatsRespon
     }))
 }
 
-/// GET /api/v1/projects/{id}/branches
+/// Query parameters for branch listing
+#[derive(Debug, Deserialize)]
+pub struct BranchQueryParams {
+    /// Remote name: "local" (default), "origin", "upstream", etc.
+    #[serde(default = "default_remote")]
+    pub remote: String,
+}
+
+fn default_remote() -> String {
+    "local".to_string()
+}
+
+/// GET /api/v1/projects/{id}/branches?remote=local|origin|upstream|...
 /// Get list of branches for a project
-pub async fn get_branches(Path(id): Path<String>) -> Result<Json<BranchesResponse>, StatusCode> {
+pub async fn get_branches(
+    Path(id): Path<String>,
+    Query(params): Query<BranchQueryParams>,
+) -> Result<Json<BranchesResponse>, StatusCode> {
     let project = find_project_by_id(&id)?;
 
     // Get current branch
     let current = git::current_branch(&project.path).unwrap_or_else(|_| "main".to_string());
 
-    // Get all local branches
-    let branch_names =
-        git::list_branches(&project.path).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-
-    // Get Grove-managed branches from tasks
+    // Get Grove-managed branches from tasks (to filter them out)
     let project_key = workspace::project_hash(&project.path);
     let mut grove_branches = HashSet::new();
 
@@ -435,9 +451,41 @@ pub async fn get_branches(Path(id): Path<String>) -> Result<Json<BranchesRespons
         }
     }
 
+    // Fetch branches based on remote parameter
+    let branch_names = if params.remote == "local" {
+        // Local branches only
+        git::list_branches(&project.path).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+    } else {
+        // Remote branches
+        let remote_output = git_cmd(
+            &project.path,
+            &[
+                "branch",
+                "-r",
+                "--format=%(refname:short)",
+                "--list",
+                &format!("{}/*", params.remote),
+            ],
+        )
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+        remote_output
+            .lines()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty() && !s.contains("HEAD"))
+            .collect()
+    };
+
     let branches: Vec<BranchInfo> = branch_names
         .into_iter()
-        .filter(|name| !grove_branches.contains(name))
+        .filter(|name| {
+            // Only filter out Grove branches for local branches
+            if params.remote == "local" {
+                !grove_branches.contains(name)
+            } else {
+                true
+            }
+        })
         .map(|name| {
             let is_current = name == current;
             BranchInfo { name, is_current }

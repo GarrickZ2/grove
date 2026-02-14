@@ -481,6 +481,7 @@ export function DashboardPage({ onNavigate }: DashboardPageProps) {
         branches={branches}
         tasks={selectedProject.tasks}
         isLoading={isBranchesLoading}
+        projectId={selectedProject.id}
         onClose={() => setShowBranchDrawer(false)}
         onCheckout={handleCheckout}
         onNewBranch={handleNewBranch}

@@ -209,6 +209,10 @@ pub fn create_api_router() -> Router {
             "/projects/{id}/git/commits",
             get(handlers::git::get_commits),
         )
+        .route(
+            "/projects/{id}/git/remotes",
+            get(handlers::git::get_remotes),
+        )
         .route("/projects/{id}/git/checkout", post(handlers::git::checkout))
         .route("/projects/{id}/git/pull", post(handlers::git::pull))
         .route("/projects/{id}/git/push", post(handlers::git::push))

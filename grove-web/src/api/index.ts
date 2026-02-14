@@ -9,7 +9,7 @@ export type { Config, ConfigPatch, ThemeConfig, LayoutConfig, WebConfig, AppInfo
 export { checkAllDependencies, checkDependency } from './env';
 export type { DependencyStatus, EnvCheckResponse } from './env';
 
-export { listProjects, getProject, addProject, deleteProject, getProjectStats, getBranches, openIDE, openTerminal } from './projects';
+export { listProjects, getProject, addProject, deleteProject, getProjectStats, getBranches, getRemotes, openIDE, openTerminal } from './projects';
 export type {
   ProjectListItem,
   ProjectListResponse,

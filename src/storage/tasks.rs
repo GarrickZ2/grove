@@ -198,6 +198,32 @@ pub fn update_task_target(project: &str, task_id: &str, new_target: &str) -> Res
     Ok(())
 }
 
+/// 批量更新任务的 target branch (当主仓库切换分支时使用)
+///
+/// 将所有 target 为 old_target 的任务更新为 new_target
+pub fn update_tasks_target_on_branch_switch(
+    project: &str,
+    old_target: &str,
+    new_target: &str,
+) -> Result<usize> {
+    let mut tasks = load_tasks(project)?;
+    let mut updated_count = 0;
+
+    for task in tasks.iter_mut() {
+        if task.target == old_target {
+            task.target = new_target.to_string();
+            task.updated_at = Utc::now();
+            updated_count += 1;
+        }
+    }
+
+    if updated_count > 0 {
+        save_tasks(project, &tasks)?;
+    }
+
+    Ok(updated_count)
+}
+
 /// 更新 task 的 updated_at 时间戳
 pub fn touch_task(project: &str, task_id: &str) -> Result<()> {
     let mut tasks = load_tasks(project)?;

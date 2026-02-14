@@ -81,9 +81,11 @@ export async function getGitStatus(projectId: string): Promise<RepoStatusRespons
 
 /**
  * Get all branches with details
+ * @param projectId - Project ID
+ * @param remote - Optional remote name ("local", "origin", "upstream", etc.). Defaults to "local".
  */
-export async function getGitBranches(projectId: string): Promise<BranchesDetailResponse> {
-  return apiClient.get<BranchesDetailResponse>(`/api/v1/projects/${projectId}/git/branches`);
+export async function getGitBranches(projectId: string, remote: string = 'local'): Promise<BranchesDetailResponse> {
+  return apiClient.get<BranchesDetailResponse>(`/api/v1/projects/${projectId}/git/branches?remote=${encodeURIComponent(remote)}`);
 }
 
 /**
