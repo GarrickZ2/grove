@@ -840,6 +840,23 @@ fn handle_config_panel_key(app: &mut App, key: KeyEvent) {
             KeyCode::Esc => app.config_panel_back(),
             _ => {}
         },
+        ConfigStep::AutoLinkConfig => match key.code {
+            KeyCode::Char('k') | KeyCode::Up => app.config_panel_prev(),
+            KeyCode::Char('j') | KeyCode::Down => app.config_panel_next(),
+            KeyCode::Enter => app.config_panel_confirm(),
+            KeyCode::Esc => app.config_panel_back(),
+            KeyCode::Char('a') => app.config_autolink_add(),
+            KeyCode::Char('e') => app.config_autolink_edit(),
+            KeyCode::Char('d') | KeyCode::Delete => app.config_autolink_delete(),
+            _ => {}
+        },
+        ConfigStep::AutoLinkEdit => match key.code {
+            KeyCode::Enter => app.config_panel_confirm(),
+            KeyCode::Esc => app.config_panel_back(),
+            KeyCode::Backspace => app.config_autolink_delete_char(),
+            KeyCode::Char(c) => app.config_autolink_input_char(c),
+            _ => {}
+        },
         ConfigStep::McpConfig => match key.code {
             KeyCode::Enter | KeyCode::Esc => app.config_panel_back(),
             _ => {}

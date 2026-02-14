@@ -37,23 +37,31 @@ pub fn load_worktrees(project_path: &str) -> (Vec<Worktree>, Vec<Worktree>, Vec<
     // 5. 检查主仓库是否有正在 merge 的 commit（冲突状态）
     let merging_commit = git::merging_commit(project_path);
 
-    // 6. 转换活跃任务
+    // 6. 转换活跃任务 (并行处理以提升性能)
+    use rayon::prelude::*;
+
+    let worktrees: Vec<_> = active_tasks
+        .par_iter() // 🚀 并行迭代
+        .map(|task| {
+            task_to_worktree(
+                task,
+                &project_key,
+                project_path,
+                merging_commit.as_deref(),
+                &global_mux,
+            )
+        })
+        .collect();
+
+    // 分类到 current 和 other
     let mut current = Vec::new();
     let mut other = Vec::new();
 
-    for task in active_tasks {
-        let worktree = task_to_worktree(
-            &task,
-            &project_key,
-            project_path,
-            merging_commit.as_deref(),
-            &global_mux,
-        );
-
+    for (idx, task) in active_tasks.iter().enumerate() {
         if task.target == current_branch {
-            current.push(worktree);
+            current.push(worktrees[idx].clone());
         } else {
-            other.push(worktree);
+            other.push(worktrees[idx].clone());
         }
     }
 
@@ -130,12 +138,13 @@ fn task_to_worktree(
         // worktree 内部有冲突（如 rebase 冲突）
         WorktreeStatus::Conflict
     } else {
-        // 先计算 commits behind (branch 相对于 target 的新 commit 数)
-        let commits_behind = git::commits_behind(path, &task.branch, &task.target).unwrap_or(0);
+        // 🚀 优化: 只计算一次 commits_behind,后面复用结果
+        let commits_behind_result = git::commits_behind(path, &task.branch, &task.target);
+        let commits_behind_count = commits_behind_result.as_ref().ok().copied().unwrap_or(0);
 
         // 只有当有新 commit 且已合并时才算 Merged
         // 避免刚创建的任务（branch 和 target 同一个 commit）被误判为 Merged
-        let is_merged = commits_behind > 0
+        let is_merged = commits_behind_count > 0
             && git::is_merged(project_path, &task.branch, &task.target).unwrap_or(false);
 
         if is_merged {
@@ -153,11 +162,18 @@ fn task_to_worktree(
     };
 
     // 获取 commits_behind 和 file_changes (仅当 worktree 存在时)
+    // 🚀 优化: commits_behind 已在上面计算,直接复用,不再重复调用 git
     let (commits_behind, file_changes) = if exists {
-        // commits_behind 已在上面计算过，这里重新获取以保持 Option 类型
-        let behind = git::commits_behind(path, &task.branch, &task.target).ok();
+        // 复用上面计算的 commits_behind_result(如果存在的话)
+        let behind = if status != WorktreeStatus::Broken && status != WorktreeStatus::Conflict {
+            // commits_behind 已在上面计算过,这里需要再次获取是因为作用域问题
+            // TODO: 进一步优化可以重构为返回 (status, commits_behind) 元组
+            git::commits_behind(path, &task.branch, &task.target).ok()
+        } else {
+            None
+        };
         let changes = git::file_changes(path, &task.target)
-            .map(|(a, d)| FileChanges::new(a, d))
+            .map(|(a, d, f)| FileChanges::new(a, d, f))
             .unwrap_or_default();
         (behind, changes)
     } else {

@@ -8,7 +8,7 @@ use ratatui::{
     Frame,
 };
 
-use crate::storage::config::{LayoutConfig, Multiplexer};
+use crate::storage::config::{AutoLinkConfig, LayoutConfig, Multiplexer};
 use crate::theme::ThemeColors;
 use crate::tmux::layout::{LayoutNode, PathSegment, SplitDirection, TaskLayout};
 use crate::ui::click_areas::{ClickAreas, DialogAction};
@@ -18,7 +18,7 @@ use super::hook_panel::HookConfigData;
 /// 配置面板步骤
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ConfigStep {
-    /// 主菜单 (0=Coding Agent, 1=Task Layout, 2=Multiplexer, 3=Hook Config, 4=MCP Config)
+    /// 主菜单 (0=Coding Agent, 1=Task Layout, 2=Multiplexer, 3=AutoLink, 4=Hook Config, 5=MCP Config)
     Main,
     /// 编辑 agent 命令（文本输入）
     EditAgentCommand,
@@ -26,6 +26,10 @@ pub enum ConfigStep {
     SelectLayout,
     /// 选择 Multiplexer (tmux / zellij)
     SelectMultiplexer,
+    /// AutoLink 配置页面（管理 glob patterns）
+    AutoLinkConfig,
+    /// AutoLink 编辑/添加模式（文本输入）
+    AutoLinkEdit,
     /// Hook 配置向导（复用现有逻辑）
     HookWizard,
     /// MCP 配置页面
@@ -40,7 +44,7 @@ pub enum ConfigStep {
 #[derive(Debug, Clone)]
 pub struct ConfigPanelData {
     pub step: ConfigStep,
-    /// 主菜单选中项 (0=Coding Agent, 1=Task Layout, 2=Multiplexer, 3=Hook Config, 4=MCP Config)
+    /// 主菜单选中项 (0=Coding Agent, 1=Task Layout, 2=Multiplexer, 3=AutoLink, 4=Hook Config, 5=MCP Config)
     pub main_selected: usize,
     /// Multiplexer 选中项 (0=tmux, 1=zellij)
     pub multiplexer_selected: usize,
@@ -52,6 +56,16 @@ pub struct ConfigPanelData {
     pub agent_cursor: usize,
     /// Hook 配置数据（子页面）
     pub hook_data: HookConfigData,
+    /// AutoLink patterns (glob patterns list)
+    pub autolink_patterns: Vec<String>,
+    /// AutoLink patterns selected index
+    pub autolink_selected: usize,
+    /// AutoLink pattern input buffer (for adding/editing)
+    pub autolink_input: String,
+    /// AutoLink input cursor position
+    pub autolink_cursor: usize,
+    /// AutoLink: editing existing pattern (Some(index)) or adding new (None)
+    pub autolink_editing: Option<usize>,
     /// Custom layout: 当前在树中的路径
     pub custom_build_path: Vec<PathSegment>,
     /// Custom layout: 正在构建的树
@@ -65,7 +79,11 @@ pub struct ConfigPanelData {
 }
 
 impl ConfigPanelData {
-    pub fn with_multiplexer(config: &LayoutConfig, mux: &Multiplexer) -> Self {
+    pub fn with_multiplexer(
+        config: &LayoutConfig,
+        mux: &Multiplexer,
+        autolink: &AutoLinkConfig,
+    ) -> Self {
         // 从 config 加载当前布局选中索引
         let layout_selected = TaskLayout::all()
             .iter()
@@ -94,6 +112,11 @@ impl ConfigPanelData {
             agent_input: agent_input.clone(),
             agent_cursor: agent_input.len(),
             hook_data: HookConfigData::new(),
+            autolink_patterns: autolink.patterns.clone(),
+            autolink_selected: 0,
+            autolink_input: String::new(),
+            autolink_cursor: 0,
+            autolink_editing: None,
             custom_build_path: Vec::new(),
             custom_build_root: None,
             custom_choose_selected: 3, // default to Agent
@@ -125,6 +148,8 @@ pub fn render(
         ConfigStep::SelectMultiplexer => {
             render_multiplexer_selector(frame, data, colors, click_areas)
         }
+        ConfigStep::AutoLinkConfig => render_autolink_config(frame, data, colors, click_areas),
+        ConfigStep::AutoLinkEdit => render_autolink_editor(frame, data, colors, click_areas),
         ConfigStep::HookWizard => {
             super::hook_panel::render(frame, &data.hook_data, colors, click_areas);
         }
@@ -176,7 +201,7 @@ fn render_main(
     ])
     .areas(inner_area);
 
-    // 菜单项（5 项）
+    // 菜单项（6 项）
     let agent_value = config
         .agent_command
         .as_deref()
@@ -190,11 +215,17 @@ fn render_main(
     } else {
         "tmux"
     };
+    let autolink_value = if data.autolink_patterns.is_empty() {
+        "(not set)"
+    } else {
+        &format!("{} patterns", data.autolink_patterns.len())
+    };
 
     let items: Vec<(&str, &str)> = vec![
         ("Coding Agent", agent_value),
         ("Task Layout", layout_value),
         ("Multiplexer", mux_value),
+        ("AutoLink", autolink_value),
         ("Hook Config", ""),
         ("MCP Server", ""),
     ];
@@ -569,6 +600,195 @@ fn render_multiplexer_selector(
         );
         click_areas.dialog_items.push((row_rect, i));
     }
+    let half = hint_area.width / 2;
+    click_areas.dialog_buttons.push((
+        Rect::new(hint_area.x, hint_area.y, half, 1),
+        DialogAction::Confirm,
+    ));
+    click_areas.dialog_buttons.push((
+        Rect::new(hint_area.x + half, hint_area.y, hint_area.width - half, 1),
+        DialogAction::Cancel,
+    ));
+}
+
+/// 渲染 AutoLink 配置页面
+fn render_autolink_config(
+    frame: &mut Frame,
+    data: &ConfigPanelData,
+    colors: &ThemeColors,
+    click_areas: &mut ClickAreas,
+) {
+    let area = frame.area();
+    let height: u16 = 16;
+
+    let x = area.width.saturating_sub(DIALOG_WIDTH) / 2;
+    let y = area.height.saturating_sub(height) / 2;
+    let dialog_area = Rect::new(x, y, DIALOG_WIDTH.min(area.width), height.min(area.height));
+
+    frame.render_widget(Clear, dialog_area);
+
+    let block = Block::default()
+        .title(" AutoLink Configuration ")
+        .title_alignment(Alignment::Center)
+        .title_style(
+            Style::default()
+                .fg(colors.highlight)
+                .add_modifier(Modifier::BOLD),
+        )
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(colors.border))
+        .style(Style::default().bg(colors.bg));
+
+    let inner_area = block.inner(dialog_area);
+    frame.render_widget(block, dialog_area);
+
+    let [_spacer1, label_area, _spacer2, content_area, _spacer3, hint_area] = Layout::vertical([
+        Constraint::Length(1),
+        Constraint::Length(1),
+        Constraint::Length(1),
+        Constraint::Length(8),
+        Constraint::Min(1),
+        Constraint::Length(1),
+    ])
+    .areas(inner_area);
+
+    frame.render_widget(
+        Paragraph::new(Line::from(Span::styled(
+            "  Glob patterns for auto-linking worktree files:",
+            Style::default().fg(colors.text),
+        ))),
+        label_area,
+    );
+
+    // 渲染模式列表
+    let mut lines: Vec<Line> = Vec::new();
+
+    if data.autolink_patterns.is_empty() {
+        lines.push(Line::from(Span::styled(
+            "    (No patterns configured)",
+            Style::default().fg(colors.muted),
+        )));
+    } else {
+        for (i, pattern) in data.autolink_patterns.iter().enumerate() {
+            let is_selected = i == data.autolink_selected;
+            let prefix = if is_selected { "  \u{276f} " } else { "    " };
+
+            let style = if is_selected {
+                Style::default()
+                    .fg(colors.highlight)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(colors.text)
+            };
+
+            lines.push(Line::from(vec![
+                Span::styled(prefix, style),
+                Span::styled(pattern, style),
+            ]));
+        }
+    }
+
+    frame.render_widget(Paragraph::new(lines), content_area);
+
+    render_hint(
+        frame,
+        hint_area,
+        "\u{2191}\u{2193} select   a add   e edit   d delete   Esc back",
+        colors,
+    );
+
+    // 注册点击区域
+    click_areas.dialog_area = Some(dialog_area);
+    for i in 0..data.autolink_patterns.len() {
+        let row_rect = Rect::new(
+            content_area.x,
+            content_area.y + i as u16,
+            content_area.width,
+            1,
+        );
+        click_areas.dialog_items.push((row_rect, i));
+    }
+    let half = hint_area.width / 2;
+    click_areas.dialog_buttons.push((
+        Rect::new(hint_area.x + half, hint_area.y, hint_area.width - half, 1),
+        DialogAction::Cancel,
+    ));
+}
+
+/// 渲染 AutoLink 编辑/添加对话框
+fn render_autolink_editor(
+    frame: &mut Frame,
+    data: &ConfigPanelData,
+    colors: &ThemeColors,
+    click_areas: &mut ClickAreas,
+) {
+    let area = frame.area();
+    let height: u16 = 11;
+
+    let x = area.width.saturating_sub(DIALOG_WIDTH) / 2;
+    let y = area.height.saturating_sub(height) / 2;
+    let dialog_area = Rect::new(x, y, DIALOG_WIDTH.min(area.width), height.min(area.height));
+
+    frame.render_widget(Clear, dialog_area);
+
+    let title = if data.autolink_editing.is_some() {
+        " Edit AutoLink Pattern "
+    } else {
+        " Add AutoLink Pattern "
+    };
+
+    let block = Block::default()
+        .title(title)
+        .title_alignment(Alignment::Center)
+        .title_style(
+            Style::default()
+                .fg(colors.highlight)
+                .add_modifier(Modifier::BOLD),
+        )
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(colors.border))
+        .style(Style::default().bg(colors.bg));
+
+    let inner_area = block.inner(dialog_area);
+    frame.render_widget(block, dialog_area);
+
+    let [_spacer1, label_area, _spacer2, input_area, _spacer3, hint_area] = Layout::vertical([
+        Constraint::Length(1),
+        Constraint::Length(1),
+        Constraint::Length(1),
+        Constraint::Length(3),
+        Constraint::Min(1),
+        Constraint::Length(1),
+    ])
+    .areas(inner_area);
+
+    let label = Paragraph::new(Line::from(Span::styled(
+        "  Glob pattern (e.g., node_modules or **/dist):",
+        Style::default().fg(colors.text),
+    )));
+    frame.render_widget(label, label_area);
+
+    let display_text = if data.autolink_input.is_empty() {
+        "\u{2588}".to_string()
+    } else {
+        format!("{}\u{2588}", data.autolink_input)
+    };
+
+    let input = Paragraph::new(Line::from(Span::styled(
+        format!(" {} ", display_text),
+        Style::default().fg(colors.highlight),
+    )))
+    .block(
+        Block::default()
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(colors.border)),
+    );
+    frame.render_widget(input, input_area);
+
+    render_hint(frame, hint_area, "Enter save   Esc cancel", colors);
+
+    // 注册点击区域
+    click_areas.dialog_area = Some(dialog_area);
     let half = hint_area.width / 2;
     click_areas.dialog_buttons.push((
         Rect::new(hint_area.x, hint_area.y, half, 1),

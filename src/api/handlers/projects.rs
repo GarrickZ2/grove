@@ -137,11 +137,6 @@ fn worktree_to_response(wt: &crate::model::Worktree) -> TaskResponse {
         })
         .collect();
 
-    // Count files changed
-    let files_changed = git::diff_stat(&wt.path, &wt.target)
-        .map(|stats| stats.len() as u32)
-        .unwrap_or(0);
-
     TaskResponse {
         id: wt.id.clone(),
         name: wt.task_name.clone(),
@@ -150,7 +145,7 @@ fn worktree_to_response(wt: &crate::model::Worktree) -> TaskResponse {
         status: status_to_string(&wt.status).to_string(),
         additions: wt.file_changes.additions,
         deletions: wt.file_changes.deletions,
-        files_changed,
+        files_changed: wt.file_changes.files_changed,
         commits,
         created_at: wt.created_at.to_rfc3339(),
         updated_at: wt.updated_at.to_rfc3339(),
@@ -275,11 +270,15 @@ pub async fn get_project(Path(id): Path<String>) -> Result<Json<ProjectResponse>
     // Load worktrees with status
     let (current, other, _archived) = loader::load_worktrees(&project.path);
 
-    // Combine current and other branch tasks
-    let mut all_tasks: Vec<TaskResponse> = Vec::new();
-    for wt in current.iter().chain(other.iter()) {
-        all_tasks.push(worktree_to_response(wt));
-    }
+    // Combine current and other branch tasks (parallel processing)
+    use rayon::prelude::*;
+    let mut all_tasks: Vec<TaskResponse> = current
+        .iter()
+        .chain(other.iter())
+        .collect::<Vec<_>>()
+        .par_iter()
+        .map(|wt| worktree_to_response(wt))
+        .collect();
 
     // Sort by updated_at descending (newest first)
     all_tasks.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
