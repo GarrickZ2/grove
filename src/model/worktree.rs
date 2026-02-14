@@ -54,13 +54,15 @@ impl WorktreeStatus {
 pub struct FileChanges {
     pub additions: u32,
     pub deletions: u32,
+    pub files_changed: u32,
 }
 
 impl FileChanges {
-    pub fn new(additions: u32, deletions: u32) -> Self {
+    pub fn new(additions: u32, deletions: u32, files_changed: u32) -> Self {
         Self {
             additions,
             deletions,
+            files_changed,
         }
     }
 }

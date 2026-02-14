@@ -40,18 +40,21 @@ fn git_cmd_check(path: &str, args: &[&str]) -> bool {
     git_cmd(path, args).is_ok()
 }
 
-/// 解析 git diff --numstat 输出为 (additions, deletions)
-fn parse_numstat(output: &str) -> (u32, u32) {
-    output.lines().fold((0, 0), |(add, del), line| {
-        let parts: Vec<&str> = line.split('\t').collect();
-        if parts.len() >= 2 {
-            let a = parts[0].parse::<u32>().unwrap_or(0);
-            let d = parts[1].parse::<u32>().unwrap_or(0);
-            (add + a, del + d)
-        } else {
-            (add, del)
-        }
-    })
+/// 解析 git diff --numstat 输出为 (additions, deletions, files_changed)
+fn parse_numstat(output: &str) -> (u32, u32, u32) {
+    output
+        .lines()
+        .filter(|l| !l.is_empty())
+        .fold((0, 0, 0), |(add, del, count), line| {
+            let parts: Vec<&str> = line.split('\t').collect();
+            if parts.len() >= 2 {
+                let a = parts[0].parse::<u32>().unwrap_or(0);
+                let d = parts[1].parse::<u32>().unwrap_or(0);
+                (add + a, del + d, count + 1)
+            } else {
+                (add, del, count)
+            }
+        })
 }
 
 /// Get `git config user.name` from the given repo path.
@@ -162,8 +165,8 @@ pub fn commits_behind(worktree_path: &str, branch: &str, target: &str) -> Result
 
 /// 获取文件变更统计 (相对于 target)
 /// 执行: git diff --numstat {target}
-/// 返回: (additions, deletions)
-pub fn file_changes(worktree_path: &str, target: &str) -> Result<(u32, u32)> {
+/// 返回: (additions, deletions, files_changed)
+pub fn file_changes(worktree_path: &str, target: &str) -> Result<(u32, u32, u32)> {
     git_cmd(worktree_path, &["diff", "--numstat", target]).map(|output| parse_numstat(&output))
 }
 
@@ -524,7 +527,10 @@ pub fn changes_from_origin(repo_path: &str) -> Result<(u32, u32)> {
     }
 
     git_cmd(repo_path, &["diff", "--numstat", &origin_ref])
-        .map(|output| parse_numstat(&output))
+        .map(|output| {
+            let (add, del, _) = parse_numstat(&output);
+            (add, del)
+        })
         .or(Ok((0, 0)))
 }
 
@@ -746,6 +752,7 @@ pub fn add_and_commit(worktree_path: &str, message: &str) -> Result<()> {
 /// * `Ok(true)` - 路径被 gitignore
 /// * `Ok(false)` - 路径被 git 追踪
 /// * `Err(_)` - git 命令执行失败
+#[allow(dead_code)]
 pub fn is_gitignored(repo_path: &str, file_path: &str) -> Result<bool> {
     let output = Command::new("git")
         .current_dir(repo_path)
@@ -781,16 +788,40 @@ pub fn create_worktree_symlinks(
     worktree_path: &Path,
     main_repo_path: &Path,
     patterns: &[String],
-    check_gitignore: bool,
+    _check_gitignore: bool,
 ) -> Result<Vec<String>> {
     use globset::{Glob, GlobSetBuilder};
-    use walkdir::WalkDir;
+    use std::collections::HashSet;
+    use std::process::Command;
 
     if patterns.is_empty() {
         return Ok(Vec::new());
     }
 
-    // 1. 构建 globset 匹配器
+    // 1. 使用 git 命令获取所有被 ignore 的路径(极快!)
+    let output = Command::new("git")
+        .arg("ls-files")
+        .arg("--others")
+        .arg("--ignored")
+        .arg("--exclude-standard")
+        .arg("--directory")
+        .current_dir(main_repo_path)
+        .output()
+        .map_err(|e| GroveError::git(format!("Failed to run git ls-files: {}", e)))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(GroveError::git(format!("git ls-files failed: {}", stderr)));
+    }
+
+    // 解析 git 输出,获取所有被 ignore 的路径
+    let ignored_paths: Vec<String> = String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .map(|s| s.trim_end_matches('/').to_string()) // 去除末尾的 /
+        .filter(|s| !s.is_empty())
+        .collect();
+
+    // 2. 构建 globset 匹配器
     let mut builder = GlobSetBuilder::new();
     for pattern in patterns {
         let glob = Glob::new(pattern).map_err(|e| {
@@ -802,66 +833,41 @@ pub fn create_worktree_symlinks(
         .build()
         .map_err(|e| GroveError::config(format!("Failed to build globset: {}", e)))?;
 
+    // 3. 匹配路径并创建符号链接
     let mut created_links = Vec::new();
+    let mut linked_paths: HashSet<String> = HashSet::new();
 
-    // 2. 递归遍历主仓库，查找匹配的路径
-    for entry in WalkDir::new(main_repo_path)
-        .follow_links(false) // 不跟随软链接
-        .into_iter()
-        .filter_entry(|e| {
-            // 跳过 .git 目录
-            let name = e.file_name().to_str().unwrap_or("");
-            name != ".git"
-        })
-    {
-        let entry = match entry {
-            Ok(e) => e,
-            Err(e) => {
-                eprintln!("Warning: Failed to read entry: {}", e);
-                continue;
-            }
-        };
-
-        // 获取相对路径
-        let rel_path = match entry.path().strip_prefix(main_repo_path) {
-            Ok(p) => p,
-            Err(_) => continue,
-        };
-
-        // 跳过空路径（根目录）
-        if rel_path.as_os_str().is_empty() {
+    for path_str in ignored_paths {
+        // 检查是否匹配 glob
+        if !globset.is_match(&path_str) {
             continue;
         }
 
-        // 3. 检查是否匹配 glob 模式
-        if !globset.is_match(rel_path) {
+        // 检查是否已经链接过
+        if linked_paths.contains(&path_str) {
             continue;
         }
 
-        // 4. 检查 gitignore 状态
-        if check_gitignore {
-            let rel_path_str = rel_path.to_str().unwrap_or("");
-            match is_gitignored(main_repo_path.to_str().unwrap(), rel_path_str) {
-                Ok(true) => {} // 被 ignore，继续处理
-                Ok(false) => {
-                    eprintln!("Warning: Skipping '{}' - tracked by git", rel_path_str);
-                    continue;
-                }
-                Err(e) => {
-                    eprintln!(
-                        "Warning: Failed to check gitignore for '{}': {}",
-                        rel_path_str, e
-                    );
-                    continue;
-                }
-            }
+        // 检查是否是已链接路径的子项
+        let is_under_linked = linked_paths.iter().any(|linked| {
+            path_str.starts_with(linked.as_str())
+                && path_str.len() > linked.len()
+                && path_str.as_bytes().get(linked.len()) == Some(&b'/')
+        });
+        if is_under_linked {
+            continue;
         }
 
-        // 5. 准备软链接路径
-        let source = entry.path();
-        let target = worktree_path.join(rel_path);
+        // 构建完整路径
+        let source = main_repo_path.join(&path_str);
+        let target = worktree_path.join(&path_str);
 
-        // 跳过已存在的路径
+        // 跳过不存在的路径
+        if !source.exists() {
+            continue;
+        }
+
+        // 跳过已存在的目标路径
         if target.exists() || target.is_symlink() {
             continue;
         }
@@ -872,39 +878,39 @@ pub fn create_worktree_symlinks(
                 if let Err(e) = std::fs::create_dir_all(parent) {
                     eprintln!(
                         "Warning: Failed to create parent dir for '{}': {}",
-                        rel_path.display(),
-                        e
+                        path_str, e
                     );
                     continue;
                 }
             }
         }
 
-        // 6. 创建软链接（跨平台）
+        // 创建符号链接
         let result = {
             #[cfg(unix)]
             {
-                std::os::unix::fs::symlink(source, &target)
+                std::os::unix::fs::symlink(&source, &target)
             }
             #[cfg(windows)]
             {
-                if source.is_dir() {
-                    std::os::windows::fs::symlink_dir(source, &target)
+                let is_dir = source.is_dir();
+                if is_dir {
+                    std::os::windows::fs::symlink_dir(&source, &target)
                 } else {
-                    std::os::windows::fs::symlink_file(source, &target)
+                    std::os::windows::fs::symlink_file(&source, &target)
                 }
             }
         };
 
         match result {
             Ok(_) => {
-                created_links.push(rel_path.to_string_lossy().to_string());
+                created_links.push(path_str.clone());
+                linked_paths.insert(path_str);
             }
             Err(e) => {
                 eprintln!(
                     "Warning: Failed to create symlink for '{}': {}",
-                    rel_path.display(),
-                    e
+                    path_str, e
                 );
             }
         }

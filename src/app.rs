@@ -2963,6 +2963,7 @@ impl App {
         self.dialogs.config_panel = Some(ConfigPanelData::with_multiplexer(
             &config.layout,
             &config.multiplexer,
+            &config.auto_link,
         ));
     }
 
@@ -2972,7 +2973,7 @@ impl App {
             match panel.step {
                 ConfigStep::Main => {
                     if panel.main_selected == 0 {
-                        panel.main_selected = 4;
+                        panel.main_selected = 5;
                     } else {
                         panel.main_selected -= 1;
                     }
@@ -3004,7 +3005,14 @@ impl App {
                 ConfigStep::HookWizard => {
                     panel.hook_data.select_prev();
                 }
+                ConfigStep::AutoLinkConfig => {
+                    // Navigate through pattern list
+                    if !panel.autolink_patterns.is_empty() && panel.autolink_selected > 0 {
+                        panel.autolink_selected -= 1;
+                    }
+                }
                 ConfigStep::EditAgentCommand
+                | ConfigStep::AutoLinkEdit
                 | ConfigStep::CustomPaneCommand
                 | ConfigStep::McpConfig => {}
             }
@@ -3016,7 +3024,7 @@ impl App {
         if let Some(ref mut panel) = self.dialogs.config_panel {
             match panel.step {
                 ConfigStep::Main => {
-                    panel.main_selected = (panel.main_selected + 1) % 5;
+                    panel.main_selected = (panel.main_selected + 1) % 6;
                 }
                 ConfigStep::SelectLayout => {
                     let count = TaskLayout::all().len() + 1;
@@ -3031,7 +3039,15 @@ impl App {
                 ConfigStep::HookWizard => {
                     panel.hook_data.select_next();
                 }
+                ConfigStep::AutoLinkConfig => {
+                    // Navigate through pattern list
+                    if !panel.autolink_patterns.is_empty() {
+                        panel.autolink_selected =
+                            (panel.autolink_selected + 1) % panel.autolink_patterns.len();
+                    }
+                }
                 ConfigStep::EditAgentCommand
+                | ConfigStep::AutoLinkEdit
                 | ConfigStep::CustomPaneCommand
                 | ConfigStep::McpConfig => {}
             }
@@ -3048,12 +3064,13 @@ impl App {
                         0 => panel.step = ConfigStep::EditAgentCommand,
                         1 => panel.step = ConfigStep::SelectLayout,
                         2 => panel.step = ConfigStep::SelectMultiplexer,
-                        3 => {
+                        3 => panel.step = ConfigStep::AutoLinkConfig,
+                        4 => {
                             panel.step = ConfigStep::HookWizard;
                             panel.hook_data =
                                 crate::ui::components::hook_panel::HookConfigData::new();
                         }
-                        4 => panel.step = ConfigStep::McpConfig,
+                        5 => panel.step = ConfigStep::McpConfig,
                         _ => {}
                     }
                 }
@@ -3063,6 +3080,16 @@ impl App {
                 if let Some(ref mut panel) = self.dialogs.config_panel {
                     panel.step = ConfigStep::Main;
                 }
+            }
+            Some(ConfigStep::AutoLinkConfig) => {
+                // AutoLink 配置页面 - Enter 返回主菜单
+                if let Some(ref mut panel) = self.dialogs.config_panel {
+                    panel.step = ConfigStep::Main;
+                }
+            }
+            Some(ConfigStep::AutoLinkEdit) => {
+                // AutoLink 编辑/添加页面 - 保存并返回
+                self.config_save_autolink_edit();
             }
             Some(ConfigStep::EditAgentCommand) => {
                 self.config_save_agent_command();
@@ -3134,7 +3161,8 @@ impl App {
             }
             Some(ConfigStep::SelectLayout)
             | Some(ConfigStep::EditAgentCommand)
-            | Some(ConfigStep::SelectMultiplexer) => {
+            | Some(ConfigStep::SelectMultiplexer)
+            | Some(ConfigStep::AutoLinkConfig) => {
                 if let Some(ref mut panel) = self.dialogs.config_panel {
                     panel.step = ConfigStep::Main;
                 }
@@ -3172,6 +3200,12 @@ impl App {
                     panel.custom_cmd_cursor = 0;
                 }
             }
+            Some(ConfigStep::AutoLinkEdit) => {
+                // 返回 AutoLink 配置页面
+                if let Some(ref mut panel) = self.dialogs.config_panel {
+                    panel.step = ConfigStep::AutoLinkConfig;
+                }
+            }
             Some(ConfigStep::HookWizard) => {
                 let hook_step = self.dialogs.config_panel.as_ref().map(|p| p.hook_data.step);
 
@@ -3206,6 +3240,62 @@ impl App {
         if let Some(ref mut panel) = self.dialogs.config_panel {
             panel.agent_input.pop();
             panel.agent_cursor = panel.agent_input.len();
+        }
+    }
+
+    /// Config Panel - AutoLink 添加新模式
+    pub fn config_autolink_add(&mut self) {
+        if let Some(ref mut panel) = self.dialogs.config_panel {
+            panel.autolink_input.clear();
+            panel.autolink_cursor = 0;
+            panel.autolink_editing = None;
+            panel.step = ConfigStep::AutoLinkEdit;
+        }
+    }
+
+    /// Config Panel - AutoLink 编辑选中的模式
+    pub fn config_autolink_edit(&mut self) {
+        if let Some(ref mut panel) = self.dialogs.config_panel {
+            let idx = panel.autolink_selected;
+            if idx < panel.autolink_patterns.len() {
+                panel.autolink_input = panel.autolink_patterns[idx].clone();
+                panel.autolink_cursor = panel.autolink_input.len();
+                panel.autolink_editing = Some(idx);
+                panel.step = ConfigStep::AutoLinkEdit;
+            }
+        }
+    }
+
+    /// Config Panel - AutoLink 删除选中的模式
+    pub fn config_autolink_delete(&mut self) {
+        if let Some(ref mut panel) = self.dialogs.config_panel {
+            let idx = panel.autolink_selected;
+            if idx < panel.autolink_patterns.len() {
+                panel.autolink_patterns.remove(idx);
+                if panel.autolink_selected >= panel.autolink_patterns.len()
+                    && panel.autolink_selected > 0
+                {
+                    panel.autolink_selected -= 1;
+                }
+                // 保存到配置
+                self.config_save_autolink();
+            }
+        }
+    }
+
+    /// Config Panel - AutoLink 输入字符
+    pub fn config_autolink_input_char(&mut self, c: char) {
+        if let Some(ref mut panel) = self.dialogs.config_panel {
+            panel.autolink_input.push(c);
+            panel.autolink_cursor = panel.autolink_input.len();
+        }
+    }
+
+    /// Config Panel - AutoLink 删除字符
+    pub fn config_autolink_delete_char(&mut self) {
+        if let Some(ref mut panel) = self.dialogs.config_panel {
+            panel.autolink_input.pop();
+            panel.autolink_cursor = panel.autolink_input.len();
         }
     }
 
@@ -3312,6 +3402,52 @@ impl App {
             panel.step = ConfigStep::Main;
         }
         self.show_toast(format!("Multiplexer: {}", mux));
+    }
+
+    /// Config Panel - 保存 AutoLink 配置
+    fn config_save_autolink(&mut self) {
+        let patterns = self
+            .dialogs
+            .config_panel
+            .as_ref()
+            .map(|p| p.autolink_patterns.clone())
+            .unwrap_or_default();
+
+        // 保存到文件
+        let mut config = storage::config::load_config();
+        config.auto_link.patterns = patterns;
+        let _ = storage::config::save_config(&config);
+
+        self.show_toast("AutoLink saved");
+    }
+
+    /// Config Panel - 保存 AutoLink 编辑并返回
+    fn config_save_autolink_edit(&mut self) {
+        if let Some(ref mut panel) = self.dialogs.config_panel {
+            let pattern = panel.autolink_input.trim().to_string();
+
+            if pattern.is_empty() {
+                // 空模式直接返回不保存
+                panel.step = ConfigStep::AutoLinkConfig;
+                return;
+            }
+
+            if let Some(idx) = panel.autolink_editing {
+                // 编辑现有模式
+                if idx < panel.autolink_patterns.len() {
+                    panel.autolink_patterns[idx] = pattern;
+                }
+            } else {
+                // 添加新模式
+                panel.autolink_patterns.push(pattern);
+            }
+
+            // 返回 AutoLink 配置页面
+            panel.step = ConfigStep::AutoLinkConfig;
+        }
+
+        // 保存到配置文件
+        self.config_save_autolink();
     }
 
     /// Custom Choose 确认选择

@@ -145,6 +145,23 @@ fn default_auto_link_patterns() -> Vec<String> {
     vec![]
 }
 
+impl AutoLinkConfig {
+    /// 规范化模式列表:去重、去除空白、过滤空模式
+    pub fn normalize(&mut self) {
+        // 去除首尾空白
+        self.patterns = self
+            .patterns
+            .iter()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
+
+        // 去重(保持顺序)
+        let mut seen = std::collections::HashSet::new();
+        self.patterns.retain(|pattern| seen.insert(pattern.clone()));
+    }
+}
+
 impl Default for AutoLinkConfig {
     fn default() -> Self {
         Self {
@@ -221,8 +238,12 @@ pub fn save_config(config: &Config) -> Result<()> {
     let dir = grove_dir();
     fs::create_dir_all(&dir)?;
 
+    // 规范化配置(去重、去空)
+    let mut normalized_config = config.clone();
+    normalized_config.auto_link.normalize();
+
     let path = config_path();
-    let content = toml::to_string_pretty(config)?;
+    let content = toml::to_string_pretty(&normalized_config)?;
     fs::write(path, content)?;
     Ok(())
 }

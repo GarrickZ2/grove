@@ -190,9 +190,10 @@ export function TasksPage({ initialTaskId, initialViewMode, onNavigationConsumed
       try {
         setIsCreating(true);
         setCreateError(null);
+
         // Create task and get the response
         const taskResponse = await apiCreateTask(selectedProject.id, name, targetBranch, notes || undefined);
-        await refreshSelectedProject();
+
         setShowNewTaskDialog(false);
 
         // Auto-select the new task and enter terminal mode with auto-start
@@ -200,6 +201,9 @@ export function TasksPage({ initialTaskId, initialViewMode, onNavigationConsumed
         pageHandlers.setSelectedTask(newTask);
         setAutoStartSession(true);
         pageHandlers.setViewMode("terminal");
+
+        // 🚀 优化: 异步刷新,不阻塞 UI
+        refreshSelectedProject();
       } catch (err: unknown) {
         console.error("Failed to create task:", err);
         if (err && typeof err === "object" && "status" in err) {
