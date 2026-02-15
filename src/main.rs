@@ -1,3 +1,4 @@
+mod acp;
 mod api;
 mod app;
 mod async_ops_state;
@@ -102,6 +103,15 @@ fn main() -> io::Result<()> {
                     eprintln!("  cargo install grove-rs --features gui");
                     std::process::exit(1);
                 }
+            }
+            Commands::Acp { agent, cwd } => {
+                // ACP requires tokio runtime with LocalSet (futures are !Send)
+                tokio::runtime::Runtime::new()
+                    .expect("Failed to create tokio runtime")
+                    .block_on(async {
+                        let local = tokio::task::LocalSet::new();
+                        local.run_until(cli::acp::execute(agent, cwd)).await;
+                    });
             }
         }
         return Ok(());

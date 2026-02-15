@@ -333,6 +333,7 @@ pub fn create_task(
         status: tasks::TaskStatus::Active,
         multiplexer: multiplexer.to_string(),
         session_name: session_name.clone(),
+        acp_session_id: None,
     };
 
     tasks::add_task(project_key, task.clone())?;

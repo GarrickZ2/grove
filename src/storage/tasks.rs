@@ -40,6 +40,9 @@ pub struct Task {
     /// 持久化的 session name（Zellij 有 40 字符限制）
     #[serde(default)]
     pub session_name: String,
+    /// ACP session ID（用于 load_session 恢复对话历史）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub acp_session_id: Option<String>,
 }
 
 fn default_multiplexer() -> String {
@@ -230,6 +233,18 @@ pub fn touch_task(project: &str, task_id: &str) -> Result<()> {
 
     if let Some(task) = tasks.iter_mut().find(|t| t.id == task_id) {
         task.updated_at = Utc::now();
+        save_tasks(project, &tasks)?;
+    }
+
+    Ok(())
+}
+
+/// 更新任务的 ACP session ID
+pub fn update_acp_session_id(project: &str, task_id: &str, session_id: &str) -> Result<()> {
+    let mut tasks = load_tasks(project)?;
+
+    if let Some(task) = tasks.iter_mut().find(|t| t.id == task_id) {
+        task.acp_session_id = Some(session_id.to_string());
         save_tasks(project, &tasks)?;
     }
 

@@ -54,6 +54,11 @@ pub fn create_api_router() -> Router {
             "/projects/{id}/tasks/{taskId}/terminal",
             get(handlers::terminal::task_terminal_handler),
         )
+        // ACP Chat WebSocket
+        .route(
+            "/projects/{id}/tasks/{taskId}/acp/ws",
+            get(handlers::acp::ws_handler),
+        )
         // Projects API
         .route("/projects", get(handlers::projects::list_projects))
         .route("/projects", post(handlers::projects::add_project))

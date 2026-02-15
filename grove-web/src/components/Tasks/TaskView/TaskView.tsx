@@ -3,6 +3,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { TaskHeader } from "./TaskHeader";
 import { TaskToolbar } from "./TaskToolbar";
 import { TaskTerminal } from "./TaskTerminal";
+import { TaskChat } from "./TaskChat";
 import { TaskCodeReview } from "./TaskCodeReview";
 import { TaskEditor } from "./TaskEditor";
 import { FileSearchBar } from "../FileSearchBar";
@@ -17,6 +18,8 @@ interface TaskViewProps {
   editorOpen: boolean;
   /** Auto-start terminal session on mount */
   autoStartSession?: boolean;
+  /** Global multiplexer mode ("tmux" | "zellij" | "acp") */
+  multiplexer?: string;
   onToggleReview: () => void;
   onToggleEditor: () => void;
   onCommit: () => void;
@@ -38,6 +41,7 @@ export function TaskView({
   reviewOpen,
   editorOpen,
   autoStartSession = false,
+  multiplexer,
   onToggleReview,
   onToggleEditor,
   onCommit,
@@ -115,19 +119,33 @@ export function TaskView({
 
       {/* Main Content Area */}
       <div className="flex-1 flex gap-3 mt-3 min-h-0">
-        {/* Terminal - collapses to vertical bar when review or editor is open */}
+        {/* Terminal/Chat - collapses to vertical bar when review or editor is open */}
         <div className={fullscreenPanel === 'terminal' ? 'fixed inset-0 z-50 flex flex-col bg-[var(--color-bg)]' : 'contents'}>
-          <TaskTerminal
-            projectId={projectId}
-            task={task}
-            collapsed={fullscreenPanel === 'terminal' ? false : (reviewOpen || editorOpen)}
-            onExpand={handleExpandTerminal}
-            onStartSession={onStartSession}
-            autoStart={autoStartSession}
-            onConnected={onTerminalConnected}
-            fullscreen={fullscreenPanel === 'terminal'}
-            onToggleFullscreen={() => setFullscreenPanel(fullscreenPanel === 'terminal' ? 'none' : 'terminal')}
-          />
+          {multiplexer === "acp" ? (
+            <TaskChat
+              projectId={projectId}
+              task={task}
+              collapsed={fullscreenPanel === 'terminal' ? false : (reviewOpen || editorOpen)}
+              onExpand={handleExpandTerminal}
+              onStartSession={onStartSession}
+              autoStart={autoStartSession}
+              onConnected={onTerminalConnected}
+              fullscreen={fullscreenPanel === 'terminal'}
+              onToggleFullscreen={() => setFullscreenPanel(fullscreenPanel === 'terminal' ? 'none' : 'terminal')}
+            />
+          ) : (
+            <TaskTerminal
+              projectId={projectId}
+              task={task}
+              collapsed={fullscreenPanel === 'terminal' ? false : (reviewOpen || editorOpen)}
+              onExpand={handleExpandTerminal}
+              onStartSession={onStartSession}
+              autoStart={autoStartSession}
+              onConnected={onTerminalConnected}
+              fullscreen={fullscreenPanel === 'terminal'}
+              onToggleFullscreen={() => setFullscreenPanel(fullscreenPanel === 'terminal' ? 'none' : 'terminal')}
+            />
+          )}
         </div>
 
         {/* Code Review Panel */}

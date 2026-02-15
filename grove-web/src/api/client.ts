@@ -153,3 +153,19 @@ export class ApiClient {
 
 // Default client instance
 export const apiClient = new ApiClient();
+
+/// Get the API host for WebSocket connections.
+/// In dev mode (VITE_API_URL set), extract host from that URL.
+/// In prod mode, use window.location.host.
+export function getApiHost(): string {
+  const envUrl = import.meta.env.VITE_API_URL;
+  if (envUrl) {
+    try {
+      const url = new URL(envUrl, window.location.origin);
+      return url.host;
+    } catch {
+      // fallback
+    }
+  }
+  return window.location.host;
+}

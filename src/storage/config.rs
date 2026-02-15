@@ -9,13 +9,14 @@ use std::str::FromStr;
 use super::grove_dir;
 use crate::error::Result;
 
-/// Terminal multiplexer 选择
+/// Terminal multiplexer / agent 交互模式选择
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Multiplexer {
     #[default]
     Tmux,
     Zellij,
+    Acp,
 }
 
 impl fmt::Display for Multiplexer {
@@ -23,6 +24,7 @@ impl fmt::Display for Multiplexer {
         match self {
             Multiplexer::Tmux => write!(f, "tmux"),
             Multiplexer::Zellij => write!(f, "zellij"),
+            Multiplexer::Acp => write!(f, "acp"),
         }
     }
 }
@@ -33,9 +35,21 @@ impl FromStr for Multiplexer {
         match s.to_lowercase().as_str() {
             "tmux" => Ok(Multiplexer::Tmux),
             "zellij" => Ok(Multiplexer::Zellij),
+            "acp" => Ok(Multiplexer::Acp),
             _ => Err(format!("unknown multiplexer: {}", s)),
         }
     }
+}
+
+/// ACP (Agent Client Protocol) 配置
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct AcpConfig {
+    /// Agent 命令 (e.g., "claude")
+    #[serde(default)]
+    pub agent_command: Option<String>,
+    /// Agent 额外参数
+    #[serde(default)]
+    pub agent_args: Vec<String>,
 }
 
 /// 应用配置
@@ -55,6 +69,8 @@ pub struct Config {
     pub multiplexer: Multiplexer,
     #[serde(default)]
     pub auto_link: AutoLinkConfig,
+    #[serde(default)]
+    pub acp: AcpConfig,
 }
 
 /// MCP Server 配置（预留扩展）
@@ -196,37 +212,36 @@ pub fn load_config() -> Config {
     };
 
     // 智能选择 multiplexer：根据实际安装情况自动调整
-    let tmux_installed = crate::check::check_tmux_available();
-    let zellij_installed = crate::check::check_zellij_available();
+    // ACP 模式不需要终端复用器检查，跳过自动切换
+    if config.multiplexer != Multiplexer::Acp {
+        let tmux_installed = crate::check::check_tmux_available();
+        let zellij_installed = crate::check::check_zellij_available();
 
-    // 检查当前配置的 multiplexer 是否已安装
-    let current_installed = match config.multiplexer {
-        Multiplexer::Tmux => tmux_installed,
-        Multiplexer::Zellij => zellij_installed,
-    };
-
-    // 如果当前选择的未安装，自动切换到已安装的
-    if !current_installed {
-        config.multiplexer = match config.multiplexer {
-            Multiplexer::Tmux => {
-                // tmux 未安装，尝试切换到 zellij
-                if zellij_installed {
-                    Multiplexer::Zellij
-                } else {
-                    // zellij 也没装，保持 tmux（启动不失败）
-                    Multiplexer::Tmux
-                }
-            }
-            Multiplexer::Zellij => {
-                // zellij 未安装，尝试切换到 tmux
-                if tmux_installed {
-                    Multiplexer::Tmux
-                } else {
-                    // tmux 也没装，保持 zellij（启动不失败）
-                    Multiplexer::Zellij
-                }
-            }
+        let current_installed = match config.multiplexer {
+            Multiplexer::Tmux => tmux_installed,
+            Multiplexer::Zellij => zellij_installed,
+            Multiplexer::Acp => true, // unreachable due to outer check
         };
+
+        if !current_installed {
+            config.multiplexer = match config.multiplexer {
+                Multiplexer::Tmux => {
+                    if zellij_installed {
+                        Multiplexer::Zellij
+                    } else {
+                        Multiplexer::Tmux
+                    }
+                }
+                Multiplexer::Zellij => {
+                    if tmux_installed {
+                        Multiplexer::Tmux
+                    } else {
+                        Multiplexer::Zellij
+                    }
+                }
+                Multiplexer::Acp => Multiplexer::Acp,
+            };
+        }
     }
 
     config

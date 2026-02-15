@@ -22,6 +22,7 @@ import {
   createTask as apiCreateTask,
   recoverTask as apiRecoverTask,
   listTasks as apiListTasks,
+  getConfig,
 } from "../../api";
 import type { Task, TaskFilter } from "../../data/types";
 import { convertTaskResponse } from "../../utils/taskConvert";
@@ -50,7 +51,13 @@ export function TasksPage({ initialTaskId, initialViewMode, onNavigationConsumed
   const [createError, setCreateError] = useState<string | null>(null);
   const [archivedTasks, setArchivedTasks] = useState<Task[]>([]);
   const [isLoadingArchived, setIsLoadingArchived] = useState(false);
+  const [multiplexer, setMultiplexer] = useState<string>("tmux");
   const searchInputRef = useRef<HTMLInputElement | null>(null);
+
+  // Load multiplexer config
+  useEffect(() => {
+    getConfig().then((cfg) => setMultiplexer(cfg.multiplexer)).catch(() => {});
+  }, []);
 
   // Archive confirmation state (shared between hooks)
   const [pendingArchiveConfirm, setPendingArchiveConfirm] = useState<PendingArchiveConfirm | null>(null);
@@ -470,6 +477,7 @@ export function TasksPage({ initialTaskId, initialViewMode, onNavigationConsumed
                 reviewOpen={pageState.reviewOpen}
                 editorOpen={pageState.editorOpen}
                 autoStartSession={autoStartSession}
+                multiplexer={multiplexer}
                 onToggleReview={pageHandlers.handleToggleReview}
                 onToggleEditor={pageHandlers.handleToggleEditor}
                 onCommit={opsHandlers.handleCommit}
