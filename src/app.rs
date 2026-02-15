@@ -1357,6 +1357,9 @@ impl App {
                     Err(e) => self.show_toast(format!("Layout: {}", e)),
                 }
             }
+            Multiplexer::Acp => {
+                // ACP: 不需要布局，通过 chat 界面交互
+            }
         }
 
         // 8. 添加到 FileWatcher 监控
@@ -1491,6 +1494,7 @@ impl App {
                         Err(e) => self.show_toast(format!("Layout: {}", e)),
                     }
                 }
+                Multiplexer::Acp => {} // ACP 不需要布局
             }
         }
 
@@ -3372,16 +3376,17 @@ impl App {
             .map(|p| p.multiplexer_selected)
             .unwrap_or(0);
 
-        let mux = if selected == 1 {
-            Multiplexer::Zellij
-        } else {
-            Multiplexer::Tmux
+        let mux = match selected {
+            1 => Multiplexer::Zellij,
+            2 => Multiplexer::Acp,
+            _ => Multiplexer::Tmux,
         };
 
-        // 检查是否已安装
+        // 检查是否已安装（ACP 跳过检查）
         let installed = match mux {
             Multiplexer::Tmux => crate::check::check_tmux_available(),
             Multiplexer::Zellij => crate::check::check_zellij_available(),
+            Multiplexer::Acp => true,
         };
 
         if !installed {
@@ -3716,6 +3721,9 @@ impl App {
                     Multiplexer::Zellij => {
                         // Zellij 没有编程式 detach 接口，提示用户手动脱离
                         self.show_toast("Use Ctrl+o → d to detach from Zellij session");
+                    }
+                    Multiplexer::Acp => {
+                        self.show_toast("ACP mode uses web chat interface");
                     }
                 }
             }

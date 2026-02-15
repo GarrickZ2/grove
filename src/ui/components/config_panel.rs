@@ -102,6 +102,7 @@ impl ConfigPanelData {
         let multiplexer_selected = match mux {
             Multiplexer::Tmux => 0,
             Multiplexer::Zellij => 1,
+            Multiplexer::Acp => 2,
         };
 
         Self {

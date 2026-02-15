@@ -167,6 +167,10 @@ fn ensure_task_session(
     // Apply layout
     let mut layout_path: Option<String> = None;
     match mux {
+        Multiplexer::Acp => {
+            // ACP tasks use chat interface, not terminal
+            return Ok(None);
+        }
         Multiplexer::Tmux => {
             if layout != TaskLayout::Single {
                 if let Err(e) = tmux::layout::apply_layout(
@@ -267,6 +271,9 @@ async fn handle_mux_terminal(socket: WebSocket, params: MuxTerminalParams) {
             }
 
             handle_pty_terminal(socket, cmd, cols, rows).await;
+        }
+        Multiplexer::Acp => {
+            // ACP tasks use chat interface, not terminal — should not reach here
         }
     }
 }

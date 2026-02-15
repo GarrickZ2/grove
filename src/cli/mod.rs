@@ -1,5 +1,6 @@
 //! CLI 模块
 
+pub mod acp;
 pub mod diff;
 pub mod fp;
 pub mod hooks;
@@ -56,5 +57,13 @@ pub enum Commands {
         /// Port for the internal API server
         #[arg(short, long, default_value_t = 3001)]
         port: u16,
+    },
+    /// Start an interactive ACP chat session with an AI agent
+    Acp {
+        /// Agent name (e.g., "claude")
+        agent: String,
+        /// Working directory
+        #[arg(long, default_value = ".")]
+        cwd: String,
     },
 }

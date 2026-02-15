@@ -107,12 +107,14 @@ pub fn create_session(
     match mux {
         Multiplexer::Tmux => tmux::create_session(name, working_dir, env),
         Multiplexer::Zellij => zellij::create_session(name, working_dir, env),
+        Multiplexer::Acp => Ok(()), // ACP session 按需通过 API 创建
     }
 }
 
 /// Attach 到 session（阻塞）
 /// tmux: tmux attach-session -t <name>
 /// zellij: zellij attach <name> --create（带可选 layout / working_dir / env）
+/// acp: no-op（ACP 没有终端 attach 概念）
 pub fn attach_session(
     mux: &Multiplexer,
     name: &str,
@@ -123,6 +125,7 @@ pub fn attach_session(
     match mux {
         Multiplexer::Tmux => tmux::attach_session(name),
         Multiplexer::Zellij => zellij::attach_session(name, working_dir, env, layout_path),
+        Multiplexer::Acp => Ok(()), // ACP 通过 chat 界面交互，不需要 attach
     }
 }
 
@@ -131,6 +134,7 @@ pub fn session_exists(mux: &Multiplexer, name: &str) -> bool {
     match mux {
         Multiplexer::Tmux => tmux::session_exists(name),
         Multiplexer::Zellij => zellij::session_exists(name),
+        Multiplexer::Acp => crate::acp::session_exists(name),
     }
 }
 
@@ -139,6 +143,7 @@ pub fn kill_session(mux: &Multiplexer, name: &str) -> Result<()> {
     match mux {
         Multiplexer::Tmux => tmux::kill_session(name),
         Multiplexer::Zellij => zellij::kill_session(name),
+        Multiplexer::Acp => crate::acp::kill_session(name),
     }
 }
 
@@ -148,6 +153,7 @@ pub fn resolve_multiplexer(task_mux: &str, global_mux: &Multiplexer) -> Multiple
     match task_mux.to_lowercase().as_str() {
         "tmux" => Multiplexer::Tmux,
         "zellij" => Multiplexer::Zellij,
+        "acp" => Multiplexer::Acp,
         _ => global_mux.clone(),
     }
 }

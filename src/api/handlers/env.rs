@@ -52,6 +52,12 @@ const DEPENDENCIES: &[DependencyDef] = &[
         check_args: &["--version"],
         install_command: "brew install fzf",
     },
+    DependencyDef {
+        name: "claude-code-acp",
+        check_cmd: "which",
+        check_args: &["claude-code-acp"],
+        install_command: "npm install -g @zed-industries/claude-code-acp",
+    },
 ];
 
 fn check_dependency(dep: &DependencyDef) -> DependencyStatus {
@@ -139,6 +145,10 @@ fn parse_version(name: &str, output: &str) -> String {
                 .next()
                 .unwrap_or(output)
                 .to_string()
+        }
+        "claude-code-acp" => {
+            // `which` returns path, not version — just confirm installed
+            "installed".to_string()
         }
         _ => output.to_string(),
     }

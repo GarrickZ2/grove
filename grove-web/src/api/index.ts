@@ -1,6 +1,6 @@
 // API exports
 
-export { apiClient, ApiClient } from './client';
+export { apiClient, ApiClient, getApiHost } from './client';
 export type { ApiError } from './client';
 
 export { getConfig, patchConfig, listApplications, getAppIconUrl } from './config';

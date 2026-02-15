@@ -186,6 +186,7 @@ const dependencyInfo: Record<string, { name: string; description: string; docsUr
   tmux: { name: "tmux", description: "Terminal multiplexer", docsUrl: "https://github.com/tmux/tmux/wiki" },
   zellij: { name: "Zellij", description: "Terminal multiplexer", docsUrl: "https://zellij.dev/documentation/" },
   fzf: { name: "fzf", description: "Fuzzy finder for file picker", docsUrl: "https://github.com/junegunn/fzf" },
+  "claude-code-acp": { name: "ACP Chat", description: "Agent Client Protocol — chat with AI agents", docsUrl: "https://agentclientprotocol.com" },
 };
 
 type DependencyStatusType = "checking" | "installed" | "not_installed" | "error";
@@ -671,17 +672,20 @@ env_vars = [
 
             {/* Dependency row renderer */}
             {(() => {
-              const allDeps = depKeys.length > 0 ? depKeys : ["git", "tmux", "zellij", "fzf"];
-              const baseDeps = allDeps.filter((d) => d !== "tmux" && d !== "zellij");
-              const muxDeps = allDeps.filter((d) => d === "tmux" || d === "zellij");
+              const allDeps = depKeys.length > 0 ? depKeys : ["git", "tmux", "zellij", "fzf", "claude-code-acp"];
+              const muxNames = ["tmux", "zellij", "claude-code-acp"];
+              const baseDeps = allDeps.filter((d) => !muxNames.includes(d));
+              const muxDeps = allDeps.filter((d) => muxNames.includes(d));
 
               const renderDepRow = (depName: string) => {
                 const state = depStates[depName] || { status: "checking" as DependencyStatusType, installCommand: "" };
                 const info = dependencyInfo[depName] || { name: depName, description: "" };
                 const isInstalled = state.status === "installed";
-                const isMux = depName === "tmux" || depName === "zellij";
+                const isMux = muxNames.includes(depName);
+                // ACP 的 config 值是 "acp"，tmux/zellij 直接用名字
+                const muxConfigValue = depName === "claude-code-acp" ? "acp" : depName;
                 // 只有在已安装时才显示为 Active
-                const isMuxActive = isMux && multiplexer === depName && isInstalled;
+                const isMuxActive = isMux && multiplexer === muxConfigValue && isInstalled;
                 const canSwitchMux = isMux && isInstalled && !isMuxActive;
 
                 return (
@@ -691,7 +695,7 @@ env_vars = [
                     animate={{ opacity: 1, y: 0 }}
                     whileHover={canSwitchMux ? { scale: 1.01 } : {}}
                     whileTap={canSwitchMux ? { scale: 0.98 } : {}}
-                    onClick={() => { if (canSwitchMux) setMultiplexer(depName); }}
+                    onClick={() => { if (canSwitchMux) setMultiplexer(depName === "claude-code-acp" ? "acp" : depName); }}
                     className={`flex items-center justify-between p-3 rounded-lg border transition-all duration-200
                       ${canSwitchMux ? "cursor-pointer hover:border-[var(--color-highlight)]/50" : ""}
                       ${isMuxActive
