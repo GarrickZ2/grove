@@ -9,7 +9,8 @@ use acp::Agent; // Required for .initialize(), .new_session(), .prompt(), .cance
 use agent_client_protocol as acp;
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, Mutex, RwLock};
+use tokio::io::AsyncReadExt;
 use tokio::sync::{broadcast, mpsc};
 use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
 
@@ -55,12 +56,17 @@ pub enum AcpUpdate {
     /// Agent 思考过程片段
     ThoughtChunk { text: String },
     /// 工具调用开始
-    ToolCall { id: String, title: String },
+    ToolCall {
+        id: String,
+        title: String,
+        locations: Vec<(String, Option<u32>)>,
+    },
     /// 工具调用更新
     ToolCallUpdate {
         id: String,
         status: String,
         content: Option<String>,
+        locations: Vec<(String, Option<u32>)>,
     },
     /// 权限请求（CLI 测试阶段自动允许）
     PermissionRequest { description: String },
@@ -76,6 +82,8 @@ pub enum AcpUpdate {
     ModeChanged { mode_id: String },
     /// Agent Plan 更新（结构化 TODO 列表）
     PlanUpdate { entries: Vec<PlanEntryData> },
+    /// 可用 Slash Commands 更新
+    AvailableCommands { commands: Vec<CommandInfo> },
     /// 会话结束
     SessionEnded,
 }
@@ -85,6 +93,14 @@ pub enum AcpUpdate {
 pub struct PlanEntryData {
     pub content: String,
     pub status: String,
+}
+
+/// Slash command 数据（从 ACP AvailableCommandsUpdate 提取）
+#[derive(Debug, Clone)]
+pub struct CommandInfo {
+    pub name: String,
+    pub description: String,
+    pub input_hint: Option<String>,
 }
 
 /// ACP 启动配置
@@ -99,9 +115,27 @@ pub struct AcpStartConfig {
     pub task_id: String,
 }
 
+/// 单个 terminal 实例的状态
+struct TerminalState {
+    /// Send to this channel to request process kill
+    kill_tx: mpsc::Sender<()>,
+    /// Accumulated stdout+stderr output
+    output: Vec<u8>,
+    /// Whether output was truncated due to byte limit
+    truncated: bool,
+    /// Maximum output bytes to retain (truncate from beginning)
+    output_byte_limit: Option<u64>,
+    /// Exit status once process completes
+    exit_status: Option<acp::TerminalExitStatus>,
+    /// Notified when process exits
+    exit_notify: Arc<tokio::sync::Notify>,
+}
+
 /// Grove 的 ACP Client 实现
 struct GroveAcpClient {
     handle: Arc<AcpSessionHandle>,
+    working_dir: PathBuf,
+    terminals: Arc<Mutex<HashMap<String, TerminalState>>>,
 }
 
 #[async_trait::async_trait(?Send)]
@@ -148,37 +182,136 @@ impl acp::Client for GroveAcpClient {
 
     async fn create_terminal(
         &self,
-        _args: acp::CreateTerminalRequest,
+        args: acp::CreateTerminalRequest,
     ) -> acp::Result<acp::CreateTerminalResponse> {
-        Err(acp::Error::method_not_found())
+        let id = format!(
+            "term_{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        );
+        let cwd = args.cwd.unwrap_or_else(|| self.working_dir.clone());
+
+        // Agent 发来的 command 可能是完整 shell 命令字符串（含 &&、|、;、空格参数等），
+        // 必须通过 sh -c 执行，否则 Command::new() 会把整个字符串当可执行文件路径。
+        let shell_cmd = if args.args.is_empty() {
+            args.command.clone()
+        } else {
+            format!("{} {}", args.command, args.args.join(" "))
+        };
+
+        let mut cmd = tokio::process::Command::new("sh");
+        cmd.arg("-c")
+            .arg(&shell_cmd)
+            .current_dir(&cwd)
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .kill_on_drop(true);
+
+        for env_var in &args.env {
+            cmd.env(&env_var.name, &env_var.value);
+        }
+
+        let child = cmd.spawn().map_err(|e| {
+            acp::Error::internal_error().data(format!("Failed to spawn '{}': {}", shell_cmd, e))
+        })?;
+
+        let exit_notify = Arc::new(tokio::sync::Notify::new());
+        let (kill_tx, kill_rx) = mpsc::channel(1);
+
+        let state = TerminalState {
+            kill_tx,
+            output: Vec::new(),
+            truncated: false,
+            output_byte_limit: args.output_byte_limit,
+            exit_status: None,
+            exit_notify: exit_notify.clone(),
+        };
+
+        self.terminals.lock().unwrap().insert(id.clone(), state);
+
+        let terminals = self.terminals.clone();
+        let term_id = id.clone();
+        tokio::task::spawn_local(async move {
+            drive_terminal(terminals, term_id, child, kill_rx, exit_notify).await;
+        });
+
+        Ok(acp::CreateTerminalResponse::new(id))
     }
 
     async fn terminal_output(
         &self,
-        _args: acp::TerminalOutputRequest,
+        args: acp::TerminalOutputRequest,
     ) -> acp::Result<acp::TerminalOutputResponse> {
-        Err(acp::Error::method_not_found())
+        let terms = self.terminals.lock().unwrap();
+        let tid = &*args.terminal_id.0;
+        let state = terms
+            .get(tid)
+            .ok_or_else(|| acp::Error::invalid_params().data("Unknown terminal ID"))?;
+
+        let resp = acp::TerminalOutputResponse::new(
+            String::from_utf8_lossy(&state.output),
+            state.truncated,
+        );
+        Ok(if let Some(ref es) = state.exit_status {
+            resp.exit_status(es.clone())
+        } else {
+            resp
+        })
     }
 
     async fn release_terminal(
         &self,
-        _args: acp::ReleaseTerminalRequest,
+        args: acp::ReleaseTerminalRequest,
     ) -> acp::Result<acp::ReleaseTerminalResponse> {
-        Err(acp::Error::method_not_found())
+        let mut terms = self.terminals.lock().unwrap();
+        let tid = &*args.terminal_id.0;
+        if let Some(state) = terms.remove(tid) {
+            let _ = state.kill_tx.try_send(());
+        }
+        Ok(acp::ReleaseTerminalResponse::default())
     }
 
     async fn wait_for_terminal_exit(
         &self,
-        _args: acp::WaitForTerminalExitRequest,
+        args: acp::WaitForTerminalExitRequest,
     ) -> acp::Result<acp::WaitForTerminalExitResponse> {
-        Err(acp::Error::method_not_found())
+        let notify = {
+            let terms = self.terminals.lock().unwrap();
+            let tid = &*args.terminal_id.0;
+            let state = terms
+                .get(tid)
+                .ok_or_else(|| acp::Error::invalid_params().data("Unknown terminal ID"))?;
+            if let Some(ref status) = state.exit_status {
+                return Ok(acp::WaitForTerminalExitResponse::new(status.clone()));
+            }
+            state.exit_notify.clone()
+        };
+        // Lock dropped before await
+        notify.notified().await;
+
+        let terms = self.terminals.lock().unwrap();
+        let tid = &*args.terminal_id.0;
+        let state = terms
+            .get(tid)
+            .ok_or_else(|| acp::Error::invalid_params().data("Unknown terminal ID"))?;
+        Ok(acp::WaitForTerminalExitResponse::new(
+            state.exit_status.clone().unwrap_or_default(),
+        ))
     }
 
     async fn kill_terminal_command(
         &self,
-        _args: acp::KillTerminalCommandRequest,
+        args: acp::KillTerminalCommandRequest,
     ) -> acp::Result<acp::KillTerminalCommandResponse> {
-        Err(acp::Error::method_not_found())
+        let terms = self.terminals.lock().unwrap();
+        let tid = &*args.terminal_id.0;
+        let state = terms
+            .get(tid)
+            .ok_or_else(|| acp::Error::invalid_params().data("Unknown terminal ID"))?;
+        let _ = state.kill_tx.try_send(());
+        Ok(acp::KillTerminalCommandResponse::default())
     }
 
     async fn session_notification(
@@ -195,9 +328,15 @@ impl acp::Client for GroveAcpClient {
                 self.handle.emit(AcpUpdate::ThoughtChunk { text });
             }
             acp::SessionUpdate::ToolCall(tool_call) => {
+                let locations = tool_call
+                    .locations
+                    .iter()
+                    .map(|l| (l.path.display().to_string(), l.line))
+                    .collect();
                 self.handle.emit(AcpUpdate::ToolCall {
                     id: tool_call.tool_call_id.to_string(),
                     title: tool_call.title.clone(),
+                    locations,
                 });
             }
             acp::SessionUpdate::ToolCallUpdate(update) => {
@@ -213,10 +352,21 @@ impl acp::Client for GroveAcpClient {
                     .as_ref()
                     .map(|s| format!("{:?}", s).to_lowercase())
                     .unwrap_or_default();
+                let locations = update
+                    .fields
+                    .locations
+                    .as_ref()
+                    .map(|locs| {
+                        locs.iter()
+                            .map(|l| (l.path.display().to_string(), l.line))
+                            .collect()
+                    })
+                    .unwrap_or_default();
                 self.handle.emit(AcpUpdate::ToolCallUpdate {
                     id: update.tool_call_id.to_string(),
                     status,
                     content,
+                    locations,
                 });
             }
             acp::SessionUpdate::UserMessageChunk(chunk) => {
@@ -238,6 +388,21 @@ impl acp::Client for GroveAcpClient {
                     })
                     .collect();
                 self.handle.emit(AcpUpdate::PlanUpdate { entries });
+            }
+            acp::SessionUpdate::AvailableCommandsUpdate(update) => {
+                let commands = update
+                    .available_commands
+                    .iter()
+                    .map(|cmd| CommandInfo {
+                        name: cmd.name.clone(),
+                        description: cmd.description.clone(),
+                        input_hint: cmd.input.as_ref().and_then(|input| match input {
+                            acp::AvailableCommandInput::Unstructured(u) => Some(u.hint.clone()),
+                            _ => None,
+                        }),
+                    })
+                    .collect();
+                self.handle.emit(AcpUpdate::AvailableCommands { commands });
             }
             _ => {}
         }
@@ -272,7 +437,92 @@ fn tool_call_content_to_text(tc: &acp::ToolCallContent) -> String {
         acp::ToolCallContent::Diff(diff) => {
             format!("diff: {}", diff.path.display())
         }
+        acp::ToolCallContent::Terminal(term) => {
+            format!("[Terminal: {}]", term.terminal_id.0)
+        }
         _ => "<unknown>".to_string(),
+    }
+}
+
+/// 后台任务：读取 terminal 进程的 stdout/stderr 输出，等待退出
+async fn drive_terminal(
+    terminals: Arc<Mutex<HashMap<String, TerminalState>>>,
+    id: String,
+    mut child: tokio::process::Child,
+    mut kill_rx: mpsc::Receiver<()>,
+    exit_notify: Arc<tokio::sync::Notify>,
+) {
+    let mut stdout = child.stdout.take().unwrap();
+    let mut stderr = child.stderr.take().unwrap();
+
+    let mut stdout_buf = [0u8; 4096];
+    let mut stderr_buf = [0u8; 4096];
+    let mut stdout_done = false;
+    let mut stderr_done = false;
+
+    loop {
+        tokio::select! {
+            result = stdout.read(&mut stdout_buf), if !stdout_done => {
+                match result {
+                    Ok(0) | Err(_) => stdout_done = true,
+                    Ok(n) => append_terminal_output(&terminals, &id, &stdout_buf[..n]),
+                }
+            }
+            result = stderr.read(&mut stderr_buf), if !stderr_done => {
+                match result {
+                    Ok(0) | Err(_) => stderr_done = true,
+                    Ok(n) => append_terminal_output(&terminals, &id, &stderr_buf[..n]),
+                }
+            }
+            _ = kill_rx.recv() => {
+                let _ = child.start_kill();
+                // Don't break — continue reading until EOF so output is captured
+            }
+        }
+
+        if stdout_done && stderr_done {
+            break;
+        }
+    }
+
+    // Wait for child to exit and capture status
+    let exit_status = match child.wait().await {
+        Ok(status) => {
+            let mut es = acp::TerminalExitStatus::new();
+            if let Some(code) = status.code() {
+                es = es.exit_code(code as u32);
+            }
+            es
+        }
+        Err(_) => acp::TerminalExitStatus::default(),
+    };
+
+    {
+        let mut terms = terminals.lock().unwrap();
+        if let Some(state) = terms.get_mut(&id) {
+            state.exit_status = Some(exit_status);
+        }
+    }
+    exit_notify.notify_waiters();
+}
+
+/// 追加输出到 terminal 缓冲区，应用字节数限制截断
+fn append_terminal_output(
+    terminals: &Arc<Mutex<HashMap<String, TerminalState>>>,
+    id: &str,
+    data: &[u8],
+) {
+    let mut terms = terminals.lock().unwrap();
+    if let Some(state) = terms.get_mut(id) {
+        state.output.extend_from_slice(data);
+        if let Some(limit) = state.output_byte_limit {
+            let limit = limit as usize;
+            if state.output.len() > limit {
+                let excess = state.output.len() - limit;
+                state.output.drain(..excess);
+                state.truncated = true;
+            }
+        }
     }
 }
 
@@ -372,6 +622,8 @@ async fn run_acp_session(
 
     let client = GroveAcpClient {
         handle: handle.clone(),
+        working_dir: config.working_dir.clone(),
+        terminals: Arc::new(Mutex::new(HashMap::new())),
     };
 
     // 创建 ACP 连接
@@ -386,7 +638,7 @@ async fn run_acp_session(
     let init_resp = conn
         .initialize(
             acp::InitializeRequest::new(acp::ProtocolVersion::V1)
-                .client_capabilities(acp::ClientCapabilities::default())
+                .client_capabilities(acp::ClientCapabilities::default().terminal(true))
                 .client_info(
                     acp::Implementation::new("grove", env!("CARGO_PKG_VERSION")).title("Grove"),
                 ),

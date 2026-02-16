@@ -57,11 +57,15 @@ enum ServerMessage {
     ToolCall {
         id: String,
         title: String,
+        #[serde(skip_serializing_if = "Vec::is_empty")]
+        locations: Vec<LocationMsg>,
     },
     ToolCallUpdate {
         id: String,
         status: String,
         content: Option<String>,
+        #[serde(skip_serializing_if = "Vec::is_empty")]
+        locations: Vec<LocationMsg>,
     },
     PermissionRequest {
         description: String,
@@ -84,6 +88,9 @@ enum ServerMessage {
     PlanUpdate {
         entries: Vec<PlanEntryMsg>,
     },
+    AvailableCommands {
+        commands: Vec<CommandMsg>,
+    },
     SessionEnded,
 }
 
@@ -103,6 +110,20 @@ struct ModelOption {
 struct PlanEntryMsg {
     content: String,
     status: String,
+}
+
+#[derive(Debug, Serialize, Clone)]
+struct CommandMsg {
+    name: String,
+    description: String,
+    input_hint: Option<String>,
+}
+
+#[derive(Debug, Serialize, Clone)]
+struct LocationMsg {
+    path: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    line: Option<u32>,
 }
 
 impl From<AcpUpdate> for ServerMessage {
@@ -133,15 +154,31 @@ impl From<AcpUpdate> for ServerMessage {
             },
             AcpUpdate::MessageChunk { text } => ServerMessage::MessageChunk { text },
             AcpUpdate::ThoughtChunk { text } => ServerMessage::ThoughtChunk { text },
-            AcpUpdate::ToolCall { id, title } => ServerMessage::ToolCall { id, title },
+            AcpUpdate::ToolCall {
+                id,
+                title,
+                locations,
+            } => ServerMessage::ToolCall {
+                id,
+                title,
+                locations: locations
+                    .into_iter()
+                    .map(|(path, line)| LocationMsg { path, line })
+                    .collect(),
+            },
             AcpUpdate::ToolCallUpdate {
                 id,
                 status,
                 content,
+                locations,
             } => ServerMessage::ToolCallUpdate {
                 id,
                 status,
                 content,
+                locations: locations
+                    .into_iter()
+                    .map(|(path, line)| LocationMsg { path, line })
+                    .collect(),
             },
             AcpUpdate::PermissionRequest { description } => {
                 ServerMessage::PermissionRequest { description }
@@ -157,6 +194,16 @@ impl From<AcpUpdate> for ServerMessage {
                     .map(|e| PlanEntryMsg {
                         content: e.content,
                         status: e.status,
+                    })
+                    .collect(),
+            },
+            AcpUpdate::AvailableCommands { commands } => ServerMessage::AvailableCommands {
+                commands: commands
+                    .into_iter()
+                    .map(|c| CommandMsg {
+                        name: c.name,
+                        description: c.description,
+                        input_hint: c.input_hint,
                     })
                     .collect(),
             },

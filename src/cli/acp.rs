@@ -119,13 +119,14 @@ pub async fn execute(agent: String, cwd: String) {
                     eprint!("\x1b[90m{}\x1b[0m", text);
                     io::stderr().flush().ok();
                 }
-                Ok(AcpUpdate::ToolCall { id: _, title }) => {
+                Ok(AcpUpdate::ToolCall { id: _, title, .. }) => {
                     eprintln!("\x1b[36m[Tool: {}]\x1b[0m", title);
                 }
                 Ok(AcpUpdate::ToolCallUpdate {
                     id: _,
                     status,
                     content,
+                    ..
                 }) => {
                     if let Some(c) = content {
                         eprintln!("\x1b[36m  {} — {}\x1b[0m", status, c);
@@ -148,7 +149,8 @@ pub async fn execute(agent: String, cwd: String) {
                     AcpUpdate::Busy(_)
                     | AcpUpdate::UserMessage { .. }
                     | AcpUpdate::ModeChanged { .. }
-                    | AcpUpdate::PlanUpdate { .. },
+                    | AcpUpdate::PlanUpdate { .. }
+                    | AcpUpdate::AvailableCommands { .. },
                 ) => continue,
                 Ok(AcpUpdate::SessionEnded) => {
                     eprintln!("Session ended.");

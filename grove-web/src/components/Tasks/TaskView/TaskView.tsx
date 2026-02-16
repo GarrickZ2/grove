@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { TaskHeader } from "./TaskHeader";
 import { TaskToolbar } from "./TaskToolbar";
@@ -56,10 +56,19 @@ export function TaskView({
 }: TaskViewProps) {
   const [headerCollapsed, setHeaderCollapsed] = useState(false);
   const [fullscreenPanel, setFullscreenPanel] = useState<'none' | 'terminal' | 'review' | 'editor'>('none');
+  const [chatMinimized, setChatMinimized] = useState(false);
+  const [chatWidthPercent, setChatWidthPercent] = useState(25);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const draggingRef = useRef(false);
 
   // Auto-sync header collapse with review/editor panel state
   useEffect(() => {
     setHeaderCollapsed(reviewOpen || editorOpen);
+  }, [reviewOpen, editorOpen]);
+
+  // Reset chatMinimized when all side panels close
+  useEffect(() => {
+    if (!reviewOpen && !editorOpen) setChatMinimized(false);
   }, [reviewOpen, editorOpen]);
 
   // Escape key exits fullscreen
@@ -74,11 +83,37 @@ export function TaskView({
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [fullscreenPanel]);
 
-  // When terminal expands, close review/editor
-  const handleExpandTerminal = () => {
-    if (reviewOpen) onToggleReview();
-    if (editorOpen) onToggleEditor();
-  };
+  // Drag-to-resize chat panel
+  const handleResizeStart = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    draggingRef.current = true;
+    const startX = e.clientX;
+    const startPercent = chatWidthPercent;
+
+    const onMouseMove = (ev: MouseEvent) => {
+      if (!draggingRef.current || !containerRef.current) return;
+      const containerWidth = containerRef.current.offsetWidth;
+      const dx = startX - ev.clientX; // dragging left = increase chat width
+      const newPercent = startPercent + (dx / containerWidth) * 100;
+      setChatWidthPercent(Math.min(50, Math.max(15, newPercent)));
+    };
+    const onMouseUp = () => {
+      draggingRef.current = false;
+      document.removeEventListener('mousemove', onMouseMove);
+      document.removeEventListener('mouseup', onMouseUp);
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+    };
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+    document.addEventListener('mousemove', onMouseMove);
+    document.addEventListener('mouseup', onMouseUp);
+  }, [chatWidthPercent]);
+
+  // Derived state for chat display mode
+  const sidePanelOpen = reviewOpen || editorOpen;
+  const chatVisible = sidePanelOpen && !chatMinimized && fullscreenPanel !== 'terminal';
+  const chatCollapsed = sidePanelOpen && chatMinimized && fullscreenPanel !== 'terminal';
 
 
   return (
@@ -118,35 +153,60 @@ export function TaskView({
       </div>
 
       {/* Main Content Area */}
-      <div className="flex-1 flex gap-3 mt-3 min-h-0">
-        {/* Terminal/Chat - collapses to vertical bar when review or editor is open */}
-        <div className={fullscreenPanel === 'terminal' ? 'fixed inset-0 z-50 flex flex-col bg-[var(--color-bg)]' : 'contents'}>
-          {multiplexer === "acp" ? (
+      <div ref={containerRef} className="flex-1 flex gap-3 mt-3 min-h-0">
+        {/* Terminal/Chat: fullscreen mode */}
+        {fullscreenPanel === 'terminal' && (
+          <div className="fixed inset-0 z-50 flex flex-col bg-[var(--color-bg)]">
+            {multiplexer === "acp" ? (
+              <TaskChat
+                projectId={projectId}
+                task={task}
+                collapsed={false}
+                onStartSession={onStartSession}
+                autoStart={autoStartSession}
+                onConnected={onTerminalConnected}
+                fullscreen
+                onToggleFullscreen={() => setFullscreenPanel('none')}
+              />
+            ) : (
+              <TaskTerminal
+                projectId={projectId}
+                task={task}
+                collapsed={false}
+                onStartSession={onStartSession}
+                autoStart={autoStartSession}
+                onConnected={onTerminalConnected}
+                fullscreen
+                onToggleFullscreen={() => setFullscreenPanel('none')}
+              />
+            )}
+          </div>
+        )}
+
+        {/* Collapsed bar on the LEFT (same position as original) */}
+        {fullscreenPanel !== 'terminal' && chatCollapsed && (
+          multiplexer === "acp" ? (
             <TaskChat
               projectId={projectId}
               task={task}
-              collapsed={fullscreenPanel === 'terminal' ? false : (reviewOpen || editorOpen)}
-              onExpand={handleExpandTerminal}
+              collapsed
+              onExpand={() => setChatMinimized(false)}
               onStartSession={onStartSession}
               autoStart={autoStartSession}
               onConnected={onTerminalConnected}
-              fullscreen={fullscreenPanel === 'terminal'}
-              onToggleFullscreen={() => setFullscreenPanel(fullscreenPanel === 'terminal' ? 'none' : 'terminal')}
             />
           ) : (
             <TaskTerminal
               projectId={projectId}
               task={task}
-              collapsed={fullscreenPanel === 'terminal' ? false : (reviewOpen || editorOpen)}
-              onExpand={handleExpandTerminal}
+              collapsed
+              onExpand={() => setChatMinimized(false)}
               onStartSession={onStartSession}
               autoStart={autoStartSession}
               onConnected={onTerminalConnected}
-              fullscreen={fullscreenPanel === 'terminal'}
-              onToggleFullscreen={() => setFullscreenPanel(fullscreenPanel === 'terminal' ? 'none' : 'terminal')}
             />
-          )}
-        </div>
+          )
+        )}
 
         {/* Code Review Panel */}
         <AnimatePresence mode="popLayout">
@@ -191,6 +251,69 @@ export function TaskView({
             </motion.div>
           )}
         </AnimatePresence>
+
+        {/* Resize handle + Chat on the RIGHT when side panel is open */}
+        {fullscreenPanel !== 'terminal' && chatVisible && (
+          <>
+            {/* Drag handle */}
+            <div
+              onMouseDown={handleResizeStart}
+              className="w-1 shrink-0 cursor-col-resize rounded-full hover:bg-[var(--color-highlight)] transition-colors bg-transparent self-stretch"
+              title="Drag to resize"
+            />
+            <div className="shrink-0 flex flex-col min-h-0" style={{ width: `${chatWidthPercent}%` }}>
+              {multiplexer === "acp" ? (
+                <TaskChat
+                  projectId={projectId}
+                  task={task}
+                  collapsed={false}
+                  onCollapse={() => setChatMinimized(true)}
+                  onStartSession={onStartSession}
+                  autoStart={autoStartSession}
+                  onConnected={onTerminalConnected}
+                  onToggleFullscreen={() => setFullscreenPanel('terminal')}
+                />
+              ) : (
+                <TaskTerminal
+                  projectId={projectId}
+                  task={task}
+                  collapsed={false}
+                  onStartSession={onStartSession}
+                  autoStart={autoStartSession}
+                  onConnected={onTerminalConnected}
+                  onToggleFullscreen={() => setFullscreenPanel('terminal')}
+                />
+              )}
+            </div>
+          </>
+        )}
+
+        {/* Normal full-width layout (no side panel) */}
+        {fullscreenPanel !== 'terminal' && !sidePanelOpen && (
+          <div className="contents">
+            {multiplexer === "acp" ? (
+              <TaskChat
+                projectId={projectId}
+                task={task}
+                collapsed={false}
+                onStartSession={onStartSession}
+                autoStart={autoStartSession}
+                onConnected={onTerminalConnected}
+                onToggleFullscreen={() => setFullscreenPanel('terminal')}
+              />
+            ) : (
+              <TaskTerminal
+                projectId={projectId}
+                task={task}
+                collapsed={false}
+                onStartSession={onStartSession}
+                autoStart={autoStartSession}
+                onConnected={onTerminalConnected}
+                onToggleFullscreen={() => setFullscreenPanel('terminal')}
+              />
+            )}
+          </div>
+        )}
       </div>
 
     </motion.div>
