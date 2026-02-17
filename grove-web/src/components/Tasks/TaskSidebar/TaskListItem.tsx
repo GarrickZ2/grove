@@ -1,5 +1,5 @@
 import { motion } from "framer-motion";
-import { Circle, CheckCircle, AlertTriangle, XCircle, Archive } from "lucide-react";
+import { Circle, CheckCircle, AlertTriangle, XCircle, Archive, Terminal, MessageSquare } from "lucide-react";
 import type { Task, TaskStatus } from "../../../data/types";
 
 interface TaskListItemProps {
@@ -142,8 +142,21 @@ export function TaskListItem({ task, isSelected, onClick, onDoubleClick, onConte
           </div>
 
           <div className="flex items-center gap-2 mt-1">
+            {/* Mode tag */}
+            {task.multiplexer === "acp" ? (
+              <span className="inline-flex items-center gap-0.5 text-[10px] font-medium px-1.5 py-0.5 rounded bg-[var(--color-info)]/10 text-[var(--color-info)]">
+                <MessageSquare className="w-2.5 h-2.5" />
+                Chat
+              </span>
+            ) : (
+              <span className="inline-flex items-center gap-0.5 text-[10px] font-medium px-1.5 py-0.5 rounded bg-[var(--color-accent)]/10 text-[var(--color-accent)]">
+                <Terminal className="w-2.5 h-2.5" />
+                Terminal
+              </span>
+            )}
+
             {/* Code changes */}
-            {task.status !== "archived" && (task.additions > 0 || task.deletions > 0) && (
+            {task.status !== "archived" && (
               <span className="text-xs">
                 <span className="text-[var(--color-success)]">+{task.additions}</span>
                 {" "}
@@ -151,13 +164,15 @@ export function TaskListItem({ task, isSelected, onClick, onDoubleClick, onConte
               </span>
             )}
 
-            {/* Status label */}
-            <span
-              className="text-xs font-medium"
-              style={{ color: statusConfig.color }}
-            >
-              {statusConfig.label}
-            </span>
+            {/* Status label (only for non-live/idle states) */}
+            {task.status !== "live" && task.status !== "idle" && (
+              <span
+                className="text-xs font-medium"
+                style={{ color: statusConfig.color }}
+              >
+                {statusConfig.label}
+              </span>
+            )}
           </div>
         </div>
       </div>

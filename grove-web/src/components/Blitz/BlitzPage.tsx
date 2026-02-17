@@ -21,7 +21,7 @@ import { BlitzTaskListItem } from "./BlitzTaskListItem";
 import type { BlitzTask } from "../../data/types";
 import type { PendingArchiveConfirm } from "../../utils/archiveHelpers";
 import { buildContextMenuItems, type TaskOperationHandlers } from "../../utils/taskOperationUtils";
-import { getConfig } from "../../api";
+
 
 interface BlitzPageProps {
   onSwitchToZen: () => void;
@@ -37,12 +37,6 @@ export function BlitzPage({ onSwitchToZen }: BlitzPageProps) {
   const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
   const [taskOrder, setTaskOrder] = useState<string[]>([]);
   const searchInputRef = useRef<HTMLInputElement | null>(null);
-  const [multiplexer, setMultiplexer] = useState<string>("tmux");
-
-  // Load multiplexer config
-  useEffect(() => {
-    getConfig().then((cfg) => setMultiplexer(cfg.multiplexer)).catch(() => {});
-  }, []);
 
   // Archive confirmation state (shared between hooks)
   const [pendingArchiveConfirm, setPendingArchiveConfirm] = useState<PendingArchiveConfirm | null>(null);
@@ -244,6 +238,10 @@ export function BlitzPage({ onSwitchToZen }: BlitzPageProps) {
   }, [pageHandlers]);
 
   const handleTerminalConnected = useCallback(async () => {
+    await refresh();
+  }, [refresh]);
+
+  const handleTerminalDisconnected = useCallback(async () => {
     await refresh();
   }, [refresh]);
 
@@ -556,7 +554,6 @@ export function BlitzPage({ onSwitchToZen }: BlitzPageProps) {
                     projectName={currentSelected.projectName}
                     reviewOpen={pageState.reviewOpen}
                     editorOpen={pageState.editorOpen}
-                    multiplexer={multiplexer}
                     onToggleReview={pageHandlers.handleToggleReview}
                     onToggleEditor={pageHandlers.handleToggleEditor}
                     onCommit={opsHandlers.handleCommit}
@@ -568,6 +565,7 @@ export function BlitzPage({ onSwitchToZen }: BlitzPageProps) {
                     onReset={opsHandlers.handleReset}
                     onStartSession={handleStartSession}
                     onTerminalConnected={handleTerminalConnected}
+                    onTerminalDisconnected={handleTerminalDisconnected}
                   />
                 </motion.div>
               )}

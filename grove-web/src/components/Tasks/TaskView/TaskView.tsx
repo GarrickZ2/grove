@@ -18,8 +18,6 @@ interface TaskViewProps {
   editorOpen: boolean;
   /** Auto-start terminal session on mount */
   autoStartSession?: boolean;
-  /** Global multiplexer mode ("tmux" | "zellij" | "acp") */
-  multiplexer?: string;
   onToggleReview: () => void;
   onToggleEditor: () => void;
   onCommit: () => void;
@@ -32,6 +30,8 @@ interface TaskViewProps {
   onStartSession: () => void;
   /** Called when terminal connects (session becomes live) */
   onTerminalConnected?: () => void;
+  /** Called when terminal/chat disconnects (session ended) */
+  onTerminalDisconnected?: () => void;
 }
 
 export function TaskView({
@@ -41,7 +41,6 @@ export function TaskView({
   reviewOpen,
   editorOpen,
   autoStartSession = false,
-  multiplexer,
   onToggleReview,
   onToggleEditor,
   onCommit,
@@ -53,6 +52,7 @@ export function TaskView({
   onReset,
   onStartSession,
   onTerminalConnected,
+  onTerminalDisconnected,
 }: TaskViewProps) {
   const [headerCollapsed, setHeaderCollapsed] = useState(false);
   const [fullscreenPanel, setFullscreenPanel] = useState<'none' | 'terminal' | 'review' | 'editor'>('none');
@@ -110,6 +110,9 @@ export function TaskView({
     document.addEventListener('mouseup', onMouseUp);
   }, [chatWidthPercent]);
 
+  // Per-task multiplexer (from task metadata)
+  const multiplexer = task.multiplexer || "tmux";
+
   // Derived state for chat display mode
   const sidePanelOpen = reviewOpen || editorOpen;
   const chatVisible = sidePanelOpen && !chatMinimized && fullscreenPanel !== 'terminal';
@@ -165,6 +168,7 @@ export function TaskView({
                 onStartSession={onStartSession}
                 autoStart={autoStartSession}
                 onConnected={onTerminalConnected}
+                onDisconnected={onTerminalDisconnected}
                 fullscreen
                 onToggleFullscreen={() => setFullscreenPanel('none')}
               />
@@ -176,6 +180,7 @@ export function TaskView({
                 onStartSession={onStartSession}
                 autoStart={autoStartSession}
                 onConnected={onTerminalConnected}
+                onDisconnected={onTerminalDisconnected}
                 fullscreen
                 onToggleFullscreen={() => setFullscreenPanel('none')}
               />
@@ -194,6 +199,7 @@ export function TaskView({
               onStartSession={onStartSession}
               autoStart={autoStartSession}
               onConnected={onTerminalConnected}
+                onDisconnected={onTerminalDisconnected}
             />
           ) : (
             <TaskTerminal
@@ -204,6 +210,7 @@ export function TaskView({
               onStartSession={onStartSession}
               autoStart={autoStartSession}
               onConnected={onTerminalConnected}
+                onDisconnected={onTerminalDisconnected}
             />
           )
         )}
@@ -271,6 +278,7 @@ export function TaskView({
                   onStartSession={onStartSession}
                   autoStart={autoStartSession}
                   onConnected={onTerminalConnected}
+                onDisconnected={onTerminalDisconnected}
                   onToggleFullscreen={() => setFullscreenPanel('terminal')}
                 />
               ) : (
@@ -281,6 +289,7 @@ export function TaskView({
                   onStartSession={onStartSession}
                   autoStart={autoStartSession}
                   onConnected={onTerminalConnected}
+                onDisconnected={onTerminalDisconnected}
                   onToggleFullscreen={() => setFullscreenPanel('terminal')}
                 />
               )}
@@ -299,6 +308,7 @@ export function TaskView({
                 onStartSession={onStartSession}
                 autoStart={autoStartSession}
                 onConnected={onTerminalConnected}
+                onDisconnected={onTerminalDisconnected}
                 onToggleFullscreen={() => setFullscreenPanel('terminal')}
               />
             ) : (
@@ -309,6 +319,7 @@ export function TaskView({
                 onStartSession={onStartSession}
                 autoStart={autoStartSession}
                 onConnected={onTerminalConnected}
+                onDisconnected={onTerminalDisconnected}
                 onToggleFullscreen={() => setFullscreenPanel('terminal')}
               />
             )}

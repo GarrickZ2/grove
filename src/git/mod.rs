@@ -164,10 +164,14 @@ pub fn commits_behind(worktree_path: &str, branch: &str, target: &str) -> Result
 }
 
 /// 获取文件变更统计 (相对于 target)
-/// 执行: git diff --numstat {target}
+/// 复用 diff_stat，保证和 diff API 的计算逻辑完全一致
 /// 返回: (additions, deletions, files_changed)
 pub fn file_changes(worktree_path: &str, target: &str) -> Result<(u32, u32, u32)> {
-    git_cmd(worktree_path, &["diff", "--numstat", target]).map(|output| parse_numstat(&output))
+    let entries = diff_stat(worktree_path, target)?;
+    let additions = entries.iter().map(|e| e.additions).sum();
+    let deletions = entries.iter().map(|e| e.deletions).sum();
+    let files_changed = entries.len() as u32;
+    Ok((additions, deletions, files_changed))
 }
 
 /// 删除 worktree（保留 branch）

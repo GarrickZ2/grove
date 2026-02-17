@@ -94,6 +94,15 @@ pub fn load_archived_worktrees(project_path: &str) -> Vec<Worktree> {
 
 /// 将 Archived Task 转换为 UI Worktree (直接标记为 Archived 状态)
 fn archived_task_to_worktree(task: Task) -> Worktree {
+    // Resolve multiplexer for archived tasks (use stored value or fall back to global)
+    let global_mux = crate::storage::config::load_config().multiplexer;
+    let resolved_mux = session::resolve_multiplexer(&task.multiplexer, &global_mux);
+    let mux_str = match resolved_mux {
+        Multiplexer::Tmux => "tmux",
+        Multiplexer::Zellij => "zellij",
+        Multiplexer::Acp => "acp",
+    };
+
     Worktree {
         id: task.id,
         task_name: task.name,
@@ -104,6 +113,7 @@ fn archived_task_to_worktree(task: Task) -> Worktree {
         file_changes: FileChanges::default(),
         archived: true,
         path: task.worktree_path,
+        multiplexer: mux_str.to_string(),
         created_at: task.created_at,
         updated_at: task.updated_at,
     }
@@ -119,6 +129,9 @@ fn task_to_worktree(
     global_mux: &Multiplexer,
 ) -> Worktree {
     let path = &task.worktree_path;
+
+    // 解析 multiplexer 类型（提前计算，status 判断和输出都需要）
+    let resolved_mux = session::resolve_multiplexer(&task.multiplexer, global_mux);
 
     // 检查 worktree 是否存在
     let exists = Path::new(path).exists();
@@ -150,13 +163,31 @@ fn task_to_worktree(
         if is_merged {
             WorktreeStatus::Merged
         } else {
-            // 再检查 session 是否运行
-            let resolved_mux = session::resolve_multiplexer(&task.multiplexer, global_mux);
-            let session = session::resolve_session_name(&task.session_name, project, &task.id);
-            if session::session_exists(&resolved_mux, &session) {
-                WorktreeStatus::Live
+            // 检查 session 是否运行
+            if matches!(resolved_mux, Multiplexer::Acp) {
+                // Multi-chat: 检查每个 chat 的 session，或旧的 task 级 key
+                let has_live = if task.chats.is_empty() {
+                    let key = format!("{}:{}", project, &task.id);
+                    session::session_exists(&resolved_mux, &key)
+                } else {
+                    task.chats.iter().any(|chat| {
+                        let key = format!("{}:{}:{}", project, &task.id, &chat.id);
+                        session::session_exists(&resolved_mux, &key)
+                    })
+                };
+                if has_live {
+                    WorktreeStatus::Live
+                } else {
+                    WorktreeStatus::Idle
+                }
             } else {
-                WorktreeStatus::Idle
+                let session_key =
+                    session::resolve_session_name(&task.session_name, project, &task.id);
+                if session::session_exists(&resolved_mux, &session_key) {
+                    WorktreeStatus::Live
+                } else {
+                    WorktreeStatus::Idle
+                }
             }
         }
     };
@@ -180,6 +211,12 @@ fn task_to_worktree(
         (None, FileChanges::default())
     };
 
+    let mux_str = match resolved_mux {
+        Multiplexer::Tmux => "tmux",
+        Multiplexer::Zellij => "zellij",
+        Multiplexer::Acp => "acp",
+    };
+
     Worktree {
         id: task.id.clone(),
         task_name: task.name.clone(),
@@ -190,6 +227,7 @@ fn task_to_worktree(
         file_changes,
         archived: task.status == TaskStatus::Archived,
         path: path.clone(),
+        multiplexer: mux_str.to_string(),
         created_at: task.created_at,
         updated_at: task.updated_at,
     }

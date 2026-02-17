@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Terminal,
@@ -24,8 +24,9 @@ import {
   Link,
   Plus,
   X,
+  MessageSquare,
 } from "lucide-react";
-import { Button, Combobox, AppPicker, AgentPicker, ideAppOptions, terminalAppOptions } from "../ui";
+import { Button, Combobox, AppPicker, AgentPicker, agentOptions, ideAppOptions, terminalAppOptions } from "../ui";
 import type { ComboboxOption } from "../ui";
 import { useTheme, themes, useTerminalTheme, terminalThemes } from "../../context";
 import {
@@ -186,7 +187,6 @@ const dependencyInfo: Record<string, { name: string; description: string; docsUr
   tmux: { name: "tmux", description: "Terminal multiplexer", docsUrl: "https://github.com/tmux/tmux/wiki" },
   zellij: { name: "Zellij", description: "Terminal multiplexer", docsUrl: "https://zellij.dev/documentation/" },
   fzf: { name: "fzf", description: "Fuzzy finder for file picker", docsUrl: "https://github.com/junegunn/fzf" },
-  "claude-code-acp": { name: "ACP Chat", description: "Agent Client Protocol — chat with AI agents", docsUrl: "https://agentclientprotocol.com" },
 };
 
 type DependencyStatusType = "checking" | "installed" | "not_installed" | "error";
@@ -227,6 +227,11 @@ export function SettingsPage({ config }: SettingsPageProps) {
 
   // Multiplexer state
   const [multiplexer, setMultiplexer] = useState("tmux");
+
+  // Mode derived from multiplexer
+  const mode: "terminal" | "chat" = multiplexer === "acp" ? "chat" : "terminal";
+  const lastTerminalMuxRef = useRef<string>("tmux");
+  const defaultAppliedRef = useRef(false);
 
   // Layout state
   const [selectedLayout, setSelectedLayout] = useState(config.layout.default);
@@ -283,6 +288,9 @@ export function SettingsPage({ config }: SettingsPageProps) {
       setTerminalCommand(cfg.web.terminal || "");
       setSelectedLayout(cfg.layout.default);
       setMultiplexer(cfg.multiplexer || "tmux");
+      if (cfg.multiplexer && cfg.multiplexer !== "acp") {
+        lastTerminalMuxRef.current = cfg.multiplexer;
+      }
 
       // Load theme - sync with context
       // API stores theme id (e.g., "dark", "tokyo-night")
@@ -359,6 +367,7 @@ export function SettingsPage({ config }: SettingsPageProps) {
       const newStates: Record<string, DependencyState> = {};
 
       for (const dep of response.dependencies) {
+        if (dep.name === "claude-code-acp") continue; // Managed via Mode Toggle, not shown here
         newStates[dep.name] = {
           status: dep.installed ? "installed" : "not_installed",
           version: dep.version || undefined,
@@ -393,7 +402,8 @@ export function SettingsPage({ config }: SettingsPageProps) {
         },
         layout: {
           default: selectedLayout,
-          agent_command: agentCommand || undefined,
+          // Chat 模式下不覆盖 agent_command，保留 terminal 的偏好
+          ...(mode === "terminal" ? { agent_command: agentCommand || undefined } : {}),
           // Only save custom layouts if they were loaded/created in Web format
           // This prevents overwriting TUI's custom layout format
           ...(customLayoutsLoaded ? {
@@ -457,6 +467,41 @@ export function SettingsPage({ config }: SettingsPageProps) {
     loadApplications();
   }, [loadConfig, checkDependencies, loadApplications]);
 
+  // Terminal availability
+  const tmuxInstalled = depStates["tmux"]?.status === "installed";
+  const zellijInstalled = depStates["zellij"]?.status === "installed";
+  const canUseTerminal = tmuxInstalled || zellijInstalled;
+
+  // Mode change handler
+  const handleModeChange = (newMode: "terminal" | "chat") => {
+    if (newMode === "chat") {
+      if (multiplexer !== "acp") lastTerminalMuxRef.current = multiplexer;
+      setMultiplexer("acp");
+    } else {
+      setMultiplexer(lastTerminalMuxRef.current);
+    }
+  };
+
+  // Default mode derivation: if current mux is unavailable, auto-correct on first load
+  useEffect(() => {
+    if (defaultAppliedRef.current || !isLoaded || isChecking) return;
+    if (Object.keys(depStates).length === 0) return;
+    defaultAppliedRef.current = true;
+
+    if (multiplexer === "tmux" && !tmuxInstalled && !zellijInstalled) {
+      setMultiplexer("acp");
+    } else if (multiplexer === "zellij" && !zellijInstalled) {
+      if (tmuxInstalled) setMultiplexer("tmux");
+      else setMultiplexer("acp");
+    }
+  }, [isLoaded, isChecking, depStates, multiplexer, tmuxInstalled, zellijInstalled]);
+
+  // ACP-compatible agents (for Chat mode filtering)
+  const acpCompatibleAgentIds = ["claude"];
+  const filteredAgentOptions = mode === "chat"
+    ? agentOptions.filter(a => acpCompatibleAgentIds.includes(a.id))
+    : agentOptions;
+
   const getStatusIcon = (status: DependencyStatusType) => {
     switch (status) {
       case "checking":
@@ -518,6 +563,65 @@ env_vars = [
       </div>
 
       <div className="space-y-3">
+        {/* Mode Toggle */}
+        <div className="grid grid-cols-2 gap-3 mb-1">
+          {/* Terminal Card */}
+          <motion.button
+            whileHover={canUseTerminal ? { scale: 1.01 } : {}}
+            whileTap={canUseTerminal ? { scale: 0.98 } : {}}
+            onClick={() => canUseTerminal && handleModeChange("terminal")}
+            disabled={!canUseTerminal}
+            className={`relative flex items-center gap-3 p-3.5 rounded-xl border-2 text-left transition-all
+              ${mode === "terminal"
+                ? "border-[var(--color-highlight)] bg-[var(--color-highlight)]/5"
+                : canUseTerminal
+                  ? "border-[var(--color-border)] hover:border-[var(--color-text-muted)] bg-[var(--color-bg-secondary)]"
+                  : "border-[var(--color-border)] bg-[var(--color-bg-secondary)] opacity-50 cursor-not-allowed"
+              }`}
+          >
+            <div className={`w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0 ${
+              mode === "terminal" ? "bg-[var(--color-highlight)]/10" : "bg-[var(--color-bg-tertiary)]"
+            }`}>
+              <Terminal className={`w-4.5 h-4.5 ${mode === "terminal" ? "text-[var(--color-highlight)]" : "text-[var(--color-text-muted)]"}`} />
+            </div>
+            <div className="flex-1 min-w-0">
+              <div className="text-sm font-medium text-[var(--color-text)]">Terminal</div>
+              {!canUseTerminal && (
+                <div className="text-[10px] text-[var(--color-warning)]">Requires tmux or zellij</div>
+              )}
+            </div>
+            {mode === "terminal" && (
+              <Check className="w-4 h-4 text-[var(--color-highlight)] flex-shrink-0" />
+            )}
+          </motion.button>
+
+          {/* Chat Card */}
+          <motion.button
+            whileHover={{ scale: 1.01 }}
+            whileTap={{ scale: 0.98 }}
+            onClick={() => handleModeChange("chat")}
+            className={`relative flex items-center gap-3 p-3.5 rounded-xl border-2 text-left transition-all
+              ${mode === "chat"
+                ? "border-[var(--color-highlight)] bg-[var(--color-highlight)]/5"
+                : "border-[var(--color-border)] hover:border-[var(--color-text-muted)] bg-[var(--color-bg-secondary)]"
+              }`}
+          >
+            <div className={`w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0 ${
+              mode === "chat" ? "bg-[var(--color-highlight)]/10" : "bg-[var(--color-bg-tertiary)]"
+            }`}>
+              <MessageSquare className={`w-4.5 h-4.5 ${mode === "chat" ? "text-[var(--color-highlight)]" : "text-[var(--color-text-muted)]"}`} />
+            </div>
+            <div className="flex-1 min-w-0">
+              <div className="text-sm font-medium text-[var(--color-text)]">
+                Chat <span className="ml-1 text-[10px] font-normal px-1.5 py-0.5 rounded-full bg-[var(--color-info)]/15 text-[var(--color-info)]">beta</span>
+              </div>
+            </div>
+            {mode === "chat" && (
+              <Check className="w-4 h-4 text-[var(--color-highlight)] flex-shrink-0" />
+            )}
+          </motion.button>
+        </div>
+
         {/* Appearance Section */}
         <Section
           id="appearance"
@@ -672,8 +776,8 @@ env_vars = [
 
             {/* Dependency row renderer */}
             {(() => {
-              const allDeps = depKeys.length > 0 ? depKeys : ["git", "tmux", "zellij", "fzf", "claude-code-acp"];
-              const muxNames = ["tmux", "zellij", "claude-code-acp"];
+              const allDeps = depKeys.length > 0 ? depKeys : ["git", "tmux", "zellij", "fzf"];
+              const muxNames = ["tmux", "zellij"];
               const baseDeps = allDeps.filter((d) => !muxNames.includes(d));
               const muxDeps = allDeps.filter((d) => muxNames.includes(d));
 
@@ -682,10 +786,7 @@ env_vars = [
                 const info = dependencyInfo[depName] || { name: depName, description: "" };
                 const isInstalled = state.status === "installed";
                 const isMux = muxNames.includes(depName);
-                // ACP 的 config 值是 "acp"，tmux/zellij 直接用名字
-                const muxConfigValue = depName === "claude-code-acp" ? "acp" : depName;
-                // 只有在已安装时才显示为 Active
-                const isMuxActive = isMux && multiplexer === muxConfigValue && isInstalled;
+                const isMuxActive = isMux && multiplexer === depName && isInstalled;
                 const canSwitchMux = isMux && isInstalled && !isMuxActive;
 
                 return (
@@ -695,7 +796,7 @@ env_vars = [
                     animate={{ opacity: 1, y: 0 }}
                     whileHover={canSwitchMux ? { scale: 1.01 } : {}}
                     whileTap={canSwitchMux ? { scale: 0.98 } : {}}
-                    onClick={() => { if (canSwitchMux) setMultiplexer(depName === "claude-code-acp" ? "acp" : depName); }}
+                    onClick={() => { if (canSwitchMux) setMultiplexer(depName); }}
                     className={`flex items-center justify-between p-3 rounded-lg border transition-all duration-200
                       ${canSwitchMux ? "cursor-pointer hover:border-[var(--color-highlight)]/50" : ""}
                       ${isMuxActive
@@ -803,8 +904,10 @@ env_vars = [
                 <span className="text-sm font-medium text-[var(--color-text)]">Coding Agent</span>
               </div>
               <AgentPicker
-                value={agentCommand}
-                onChange={setAgentCommand}
+                value={mode === "chat" ? "claude" : agentCommand}
+                onChange={mode === "chat" ? () => {} : setAgentCommand}
+                options={filteredAgentOptions}
+                allowCustom={mode !== "chat"}
                 placeholder="Select agent..."
                 customPlaceholder="Enter agent command (e.g., claude --yolo)"
               />
@@ -978,192 +1081,196 @@ env_vars = [
           </div>
         </Section>
 
-        {/* Task Layout Section */}
-        <Section
-          id="layout"
-          title="Task Layout"
-          description="Default pane layout for new tasks"
-          icon={LayoutGrid}
-          iconColor="var(--color-info)"
-          isOpen={openSections.layout}
-          onToggle={() => toggleSection("layout")}
-        >
-          <div className="grid grid-cols-3 gap-3">
-            {layoutPresets.map((preset) => {
-              const isCustom = preset.id === "custom";
-              const isSelected = selectedLayout === preset.id;
+        {/* Task Layout Section (Terminal mode only) */}
+        {mode === "terminal" && (
+          <>
+            <Section
+              id="layout"
+              title="Task Layout"
+              description="Default pane layout for new tasks"
+              icon={LayoutGrid}
+              iconColor="var(--color-info)"
+              isOpen={openSections.layout}
+              onToggle={() => toggleSection("layout")}
+            >
+              <div className="grid grid-cols-3 gap-3">
+                {layoutPresets.map((preset) => {
+                  const isCustom = preset.id === "custom";
+                  const isSelected = selectedLayout === preset.id;
 
-              // Render preview based on layout type
-              const renderPreview = () => {
-                if (isCustom) {
-                  // Custom layout preview based on tree structure
-                  const currentCustomLayout = customLayouts.find(l => l.id === selectedCustomLayoutId) || customLayouts[0];
+                  // Render preview based on layout type
+                  const renderPreview = () => {
+                    if (isCustom) {
+                      // Custom layout preview based on tree structure
+                      const currentCustomLayout = customLayouts.find(l => l.id === selectedCustomLayoutId) || customLayouts[0];
 
-                  if (!currentCustomLayout) {
-                    return (
-                      <div className="h-10 mb-2 bg-[var(--color-bg)] rounded border border-dashed border-[var(--color-border)] flex items-center justify-center">
-                        <span className="text-[10px] text-[var(--color-text-muted)]">Click to configure</span>
-                      </div>
-                    );
-                  }
+                      if (!currentCustomLayout) {
+                        return (
+                          <div className="h-10 mb-2 bg-[var(--color-bg)] rounded border border-dashed border-[var(--color-border)] flex items-center justify-center">
+                            <span className="text-[10px] text-[var(--color-text-muted)]">Click to configure</span>
+                          </div>
+                        );
+                      }
 
-                  // Recursive function to render LayoutNode tree
-                  const renderLayoutNode = (node: LayoutNode): React.ReactNode => {
-                    if (node.type === "pane") {
-                      const colors = paneTypeColors[node.paneType || "shell"] || paneTypeColors.shell;
+                      // Recursive function to render LayoutNode tree
+                      const renderLayoutNode = (node: LayoutNode): React.ReactNode => {
+                        if (node.type === "pane") {
+                          const colors = paneTypeColors[node.paneType || "shell"] || paneTypeColors.shell;
+                          return (
+                            <div
+                              key={node.id}
+                              className="flex-1 rounded text-[8px] flex items-center justify-center min-w-0 min-h-0"
+                              style={{ backgroundColor: `${colors.bg}20`, color: colors.text }}
+                            >
+                              {paneTypeLabels[node.paneType || "shell"] || node.paneType}
+                            </div>
+                          );
+                        }
+
+                        // Split node
+                        if (node.children) {
+                          const isHorizontal = node.direction === "horizontal";
+                          return (
+                            <div
+                              key={node.id}
+                              className={`flex ${isHorizontal ? "flex-row" : "flex-col"} gap-0.5 flex-1 min-w-0 min-h-0`}
+                            >
+                              {renderLayoutNode(node.children[0])}
+                              {renderLayoutNode(node.children[1])}
+                            </div>
+                          );
+                        }
+
+                        return null;
+                      };
+
+                      const paneCount = countPanes(currentCustomLayout.root);
+
                       return (
-                        <div
-                          key={node.id}
-                          className="flex-1 rounded text-[8px] flex items-center justify-center min-w-0 min-h-0"
-                          style={{ backgroundColor: `${colors.bg}20`, color: colors.text }}
-                        >
-                          {paneTypeLabels[node.paneType || "shell"] || node.paneType}
+                        <div className="h-10 mb-2 bg-[var(--color-bg)] rounded border border-[var(--color-border)] p-1 flex">
+                          {renderLayoutNode(currentCustomLayout.root)}
+                          {paneCount === 0 && (
+                            <span className="text-[10px] text-[var(--color-text-muted)] m-auto">Click to configure</span>
+                          )}
                         </div>
                       );
                     }
 
-                    // Split node
-                    if (node.children) {
-                      const isHorizontal = node.direction === "horizontal";
+                    // 3 Panes: Left + Right split (left one big, right two stacked)
+                    if (preset.layout === "left-right-split") {
                       return (
-                        <div
-                          key={node.id}
-                          className={`flex ${isHorizontal ? "flex-row" : "flex-col"} gap-0.5 flex-1 min-w-0 min-h-0`}
-                        >
-                          {renderLayoutNode(node.children[0])}
-                          {renderLayoutNode(node.children[1])}
-                        </div>
-                      );
-                    }
-
-                    return null;
-                  };
-
-                  const paneCount = countPanes(currentCustomLayout.root);
-
-                  return (
-                    <div className="h-10 mb-2 bg-[var(--color-bg)] rounded border border-[var(--color-border)] p-1 flex">
-                      {renderLayoutNode(currentCustomLayout.root)}
-                      {paneCount === 0 && (
-                        <span className="text-[10px] text-[var(--color-text-muted)] m-auto">Click to configure</span>
-                      )}
-                    </div>
-                  );
-                }
-
-                // 3 Panes: Left + Right split (left one big, right two stacked)
-                if (preset.layout === "left-right-split") {
-                  return (
-                    <div className="h-10 mb-2 bg-[var(--color-bg)] rounded border border-[var(--color-border)] p-1 flex gap-0.5">
-                      {/* Left pane (60%) */}
-                      <div
-                        className="w-[60%] rounded text-[8px] flex items-center justify-center"
-                        style={{
-                          backgroundColor: `${paneTypeColors[preset.panes[0]]?.bg || "var(--color-text-muted)"}20`,
-                          color: paneTypeColors[preset.panes[0]]?.text || "var(--color-text-muted)",
-                        }}
-                      >
-                        {preset.panes[0]}
-                      </div>
-                      {/* Right panes (40%, stacked) */}
-                      <div className="w-[40%] flex flex-col gap-0.5">
-                        {preset.panes.slice(1).map((pane, i) => (
+                        <div className="h-10 mb-2 bg-[var(--color-bg)] rounded border border-[var(--color-border)] p-1 flex gap-0.5">
+                          {/* Left pane (60%) */}
                           <div
-                            key={i}
-                            className="flex-1 rounded text-[8px] flex items-center justify-center"
+                            className="w-[60%] rounded text-[8px] flex items-center justify-center"
                             style={{
-                              backgroundColor: `${paneTypeColors[pane]?.bg || "var(--color-text-muted)"}20`,
-                              color: paneTypeColors[pane]?.text || "var(--color-text-muted)",
+                              backgroundColor: `${paneTypeColors[preset.panes[0]]?.bg || "var(--color-text-muted)"}20`,
+                              color: paneTypeColors[preset.panes[0]]?.text || "var(--color-text-muted)",
                             }}
                           >
-                            {pane}
+                            {preset.panes[0]}
                           </div>
-                        ))}
-                      </div>
-                    </div>
-                  );
-                }
-
-                // Default horizontal layout
-                return (
-                  <div className="h-10 mb-2 bg-[var(--color-bg)] rounded border border-[var(--color-border)] p-1 flex gap-0.5">
-                    {preset.panes.map((pane, i) => {
-                      const colors = paneTypeColors[pane] || paneTypeColors.shell;
-                      return (
-                        <div
-                          key={i}
-                          className="flex-1 rounded text-[8px] flex items-center justify-center"
-                          style={{ backgroundColor: `${colors.bg}20`, color: colors.text }}
-                        >
-                          {pane}
+                          {/* Right panes (40%, stacked) */}
+                          <div className="w-[40%] flex flex-col gap-0.5">
+                            {preset.panes.slice(1).map((pane, i) => (
+                              <div
+                                key={i}
+                                className="flex-1 rounded text-[8px] flex items-center justify-center"
+                                style={{
+                                  backgroundColor: `${paneTypeColors[pane]?.bg || "var(--color-text-muted)"}20`,
+                                  color: paneTypeColors[pane]?.text || "var(--color-text-muted)",
+                                }}
+                              >
+                                {pane}
+                              </div>
+                            ))}
+                          </div>
                         </div>
                       );
-                    })}
-                  </div>
-                );
-              };
-
-              return (
-                <motion.button
-                  key={preset.id}
-                  whileHover={{ scale: 1.02 }}
-                  whileTap={{ scale: 0.98 }}
-                  onClick={() => {
-                    setSelectedLayout(preset.id);
-                    if (isCustom) {
-                      setIsLayoutEditorOpen(true);
                     }
-                  }}
-                  className={`relative p-3 rounded-lg border text-left transition-all
-                    ${
-                      isSelected
-                        ? "border-[var(--color-highlight)] bg-[var(--color-highlight)]/5"
-                        : "border-[var(--color-border)] hover:border-[var(--color-text-muted)] bg-[var(--color-bg-secondary)]"
-                    }`}
-                >
-                  {isSelected && (
-                    <div className="absolute top-2 right-2 w-4 h-4 rounded-full bg-[var(--color-highlight)] flex items-center justify-center">
-                      <Check className="w-2.5 h-2.5 text-white" />
-                    </div>
-                  )}
-                  {renderPreview()}
-                  <div className="text-xs font-medium text-[var(--color-text)]">{preset.name}</div>
-                  <div className="text-[10px] text-[var(--color-text-muted)]">
-                    {isCustom && customLayouts.length > 0
-                      ? `${customLayouts.length} layout${customLayouts.length > 1 ? "s" : ""} configured`
-                      : preset.description}
-                  </div>
-                </motion.button>
-              );
-            })}
-          </div>
 
-          {/* Edit Custom Layout Button */}
-          {selectedLayout === "custom" && (
-            <div className="mt-3 flex justify-end">
-              <Button
-                variant="secondary"
-                size="sm"
-                onClick={() => setIsLayoutEditorOpen(true)}
-              >
-                Edit Custom Layout
-              </Button>
-            </div>
-          )}
-        </Section>
+                    // Default horizontal layout
+                    return (
+                      <div className="h-10 mb-2 bg-[var(--color-bg)] rounded border border-[var(--color-border)] p-1 flex gap-0.5">
+                        {preset.panes.map((pane, i) => {
+                          const colors = paneTypeColors[pane] || paneTypeColors.shell;
+                          return (
+                            <div
+                              key={i}
+                              className="flex-1 rounded text-[8px] flex items-center justify-center"
+                              style={{ backgroundColor: `${colors.bg}20`, color: colors.text }}
+                            >
+                              {pane}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    );
+                  };
 
-        {/* Layout Editor Dialog */}
-        <LayoutEditor
-          isOpen={isLayoutEditorOpen}
-          onClose={() => setIsLayoutEditorOpen(false)}
-          layouts={customLayouts}
-          onChange={(layouts) => {
-            setCustomLayouts(layouts);
-            setCustomLayoutsLoaded(true); // Mark as edited, so we can save
-          }}
-          selectedLayoutId={selectedCustomLayoutId}
-          onSelectLayout={setSelectedCustomLayoutId}
-        />
+                  return (
+                    <motion.button
+                      key={preset.id}
+                      whileHover={{ scale: 1.02 }}
+                      whileTap={{ scale: 0.98 }}
+                      onClick={() => {
+                        setSelectedLayout(preset.id);
+                        if (isCustom) {
+                          setIsLayoutEditorOpen(true);
+                        }
+                      }}
+                      className={`relative p-3 rounded-lg border text-left transition-all
+                        ${
+                          isSelected
+                            ? "border-[var(--color-highlight)] bg-[var(--color-highlight)]/5"
+                            : "border-[var(--color-border)] hover:border-[var(--color-text-muted)] bg-[var(--color-bg-secondary)]"
+                        }`}
+                    >
+                      {isSelected && (
+                        <div className="absolute top-2 right-2 w-4 h-4 rounded-full bg-[var(--color-highlight)] flex items-center justify-center">
+                          <Check className="w-2.5 h-2.5 text-white" />
+                        </div>
+                      )}
+                      {renderPreview()}
+                      <div className="text-xs font-medium text-[var(--color-text)]">{preset.name}</div>
+                      <div className="text-[10px] text-[var(--color-text-muted)]">
+                        {isCustom && customLayouts.length > 0
+                          ? `${customLayouts.length} layout${customLayouts.length > 1 ? "s" : ""} configured`
+                          : preset.description}
+                      </div>
+                    </motion.button>
+                  );
+                })}
+              </div>
+
+              {/* Edit Custom Layout Button */}
+              {selectedLayout === "custom" && (
+                <div className="mt-3 flex justify-end">
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    onClick={() => setIsLayoutEditorOpen(true)}
+                  >
+                    Edit Custom Layout
+                  </Button>
+                </div>
+              )}
+            </Section>
+
+            {/* Layout Editor Dialog */}
+            <LayoutEditor
+              isOpen={isLayoutEditorOpen}
+              onClose={() => setIsLayoutEditorOpen(false)}
+              layouts={customLayouts}
+              onChange={(layouts) => {
+                setCustomLayouts(layouts);
+                setCustomLayoutsLoaded(true); // Mark as edited, so we can save
+              }}
+              selectedLayoutId={selectedCustomLayoutId}
+              onSelectLayout={setSelectedCustomLayoutId}
+            />
+          </>
+        )}
 
         {/* Hooks Section */}
         <Section

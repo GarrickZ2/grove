@@ -22,6 +22,7 @@ export interface Task {
   commits: Commit[];
   createdAt: Date;
   updatedAt: Date;
+  multiplexer: string;
 }
 
 export interface Project {
@@ -125,6 +126,14 @@ export interface AIData {
   summary: string;
   todos: AITodo[];
   updatedAt: Date;
+}
+
+// Chat session within a task
+export interface ChatSession {
+  id: string;
+  title: string;
+  agent: string;
+  createdAt: Date;
 }
 
 // Task filter type

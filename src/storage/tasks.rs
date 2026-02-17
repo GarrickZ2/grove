@@ -6,6 +6,22 @@ use serde::{Deserialize, Serialize};
 use super::ensure_project_dir;
 use crate::error::Result;
 
+/// Chat 会话（一个 Task 下可以有多个 Chat）
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChatSession {
+    /// Chat ID ("chat-XXXXXX")
+    pub id: String,
+    /// 标题 ("New Chat 2025-02-16 14:30")
+    pub title: String,
+    /// Agent 名称 ("claude", "codex", etc.)
+    pub agent: String,
+    /// ACP session ID（用于 load_session 恢复对话历史）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub acp_session_id: Option<String>,
+    /// 创建时间
+    pub created_at: DateTime<Utc>,
+}
+
 /// 任务状态
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -40,9 +56,12 @@ pub struct Task {
     /// 持久化的 session name（Zellij 有 40 字符限制）
     #[serde(default)]
     pub session_name: String,
-    /// ACP session ID（用于 load_session 恢复对话历史）
+    /// ACP session ID（用于 load_session 恢复对话历史）— 保留向后兼容
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub acp_session_id: Option<String>,
+    /// Chat 会话列表（multi-chat 支持）
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub chats: Vec<ChatSession>,
 }
 
 fn default_multiplexer() -> String {
@@ -249,6 +268,74 @@ pub fn update_acp_session_id(project: &str, task_id: &str, session_id: &str) -> 
     }
 
     Ok(())
+}
+
+/// 生成 chat ID ("chat-XXXXXX")
+pub fn generate_chat_id() -> String {
+    format!("chat-{}", generate_time_hash())
+}
+
+/// 添加 ChatSession 到指定 task
+pub fn add_chat_session(project: &str, task_id: &str, chat: ChatSession) -> Result<()> {
+    let mut tasks = load_tasks(project)?;
+    if let Some(task) = tasks.iter_mut().find(|t| t.id == task_id) {
+        task.chats.push(chat);
+        task.updated_at = Utc::now();
+        save_tasks(project, &tasks)?;
+    }
+    Ok(())
+}
+
+/// 更新 ChatSession 的标题
+pub fn update_chat_title(project: &str, task_id: &str, chat_id: &str, title: &str) -> Result<()> {
+    let mut tasks = load_tasks(project)?;
+    if let Some(task) = tasks.iter_mut().find(|t| t.id == task_id) {
+        if let Some(chat) = task.chats.iter_mut().find(|c| c.id == chat_id) {
+            chat.title = title.to_string();
+            task.updated_at = Utc::now();
+            save_tasks(project, &tasks)?;
+        }
+    }
+    Ok(())
+}
+
+/// 更新 ChatSession 的 ACP session ID
+pub fn update_chat_acp_session_id(
+    project: &str,
+    task_id: &str,
+    chat_id: &str,
+    session_id: &str,
+) -> Result<()> {
+    let mut tasks = load_tasks(project)?;
+    if let Some(task) = tasks.iter_mut().find(|t| t.id == task_id) {
+        if let Some(chat) = task.chats.iter_mut().find(|c| c.id == chat_id) {
+            chat.acp_session_id = Some(session_id.to_string());
+            task.updated_at = Utc::now();
+            save_tasks(project, &tasks)?;
+        }
+    }
+    Ok(())
+}
+
+/// 删除 ChatSession
+pub fn delete_chat_session(project: &str, task_id: &str, chat_id: &str) -> Result<()> {
+    let mut tasks = load_tasks(project)?;
+    if let Some(task) = tasks.iter_mut().find(|t| t.id == task_id) {
+        task.chats.retain(|c| c.id != chat_id);
+        task.updated_at = Utc::now();
+        save_tasks(project, &tasks)?;
+    }
+    Ok(())
+}
+
+/// 获取 task 的某个 chat session
+pub fn get_chat_session(
+    project: &str,
+    task_id: &str,
+    chat_id: &str,
+) -> Result<Option<ChatSession>> {
+    let task = get_task(project, task_id)?;
+    Ok(task.and_then(|t| t.chats.into_iter().find(|c| c.id == chat_id)))
 }
 
 /// 根据 task_id 获取任务（从 tasks.toml）

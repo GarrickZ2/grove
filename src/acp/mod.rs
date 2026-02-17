@@ -27,6 +27,8 @@ pub struct AcpSessionHandle {
     pub agent_info: std::sync::RwLock<Option<(String, String, String)>>,
     /// 历史消息缓冲区（用于 WebSocket 重连时回放）
     history: RwLock<Vec<AcpUpdate>>,
+    /// 待处理的权限请求响应 channel
+    pending_permission: Mutex<Option<tokio::sync::oneshot::Sender<String>>>,
 }
 
 /// 发送给 ACP 后台任务的命令
@@ -68,8 +70,11 @@ pub enum AcpUpdate {
         content: Option<String>,
         locations: Vec<(String, Option<u32>)>,
     },
-    /// 权限请求（CLI 测试阶段自动允许）
-    PermissionRequest { description: String },
+    /// 权限请求（带选项，等待用户交互）
+    PermissionRequest {
+        description: String,
+        options: Vec<PermOptionData>,
+    },
     /// 本轮处理结束
     Complete { stop_reason: String },
     /// Agent busy 状态变化
@@ -86,6 +91,14 @@ pub enum AcpUpdate {
     AvailableCommands { commands: Vec<CommandInfo> },
     /// 会话结束
     SessionEnded,
+}
+
+/// 权限选项数据（从 ACP PermissionOption 提取，用于 WebSocket 传输）
+#[derive(Debug, Clone)]
+pub struct PermOptionData {
+    pub option_id: String,
+    pub name: String,
+    pub kind: String, // "allow_once" | "allow_always" | "reject_once" | "reject_always"
 }
 
 /// Plan entry 数据（从 ACP Plan 通知提取）
@@ -113,6 +126,8 @@ pub struct AcpStartConfig {
     pub project_key: String,
     /// 任务 ID（用于持久化 session_id）
     pub task_id: String,
+    /// Chat ID（multi-chat 支持，为空时使用旧的 task 级 session_id）
+    pub chat_id: Option<String>,
 }
 
 /// 单个 terminal 实例的状态
@@ -136,6 +151,9 @@ struct GroveAcpClient {
     handle: Arc<AcpSessionHandle>,
     working_dir: PathBuf,
     terminals: Arc<Mutex<HashMap<String, TerminalState>>>,
+    project_key: String,
+    task_id: String,
+    chat_id: Option<String>,
 }
 
 #[async_trait::async_trait(?Send)]
@@ -145,25 +163,52 @@ impl acp::Client for GroveAcpClient {
         args: acp::RequestPermissionRequest,
     ) -> acp::Result<acp::RequestPermissionResponse> {
         let desc = args.tool_call.fields.title.clone().unwrap_or_default();
-        self.handle
-            .emit(AcpUpdate::PermissionRequest { description: desc });
-
-        // CLI 测试阶段：自动选择第一个 AllowOnce 或 AllowAlways 选项
-        let option_id = args
+        let options: Vec<PermOptionData> = args
             .options
             .iter()
-            .find(|o| {
-                matches!(
-                    o.kind,
-                    acp::PermissionOptionKind::AllowOnce | acp::PermissionOptionKind::AllowAlways
-                )
+            .map(|o| PermOptionData {
+                option_id: o.option_id.to_string(),
+                name: o.name.clone(),
+                kind: match o.kind {
+                    acp::PermissionOptionKind::AllowOnce => "allow_once".to_string(),
+                    acp::PermissionOptionKind::AllowAlways => "allow_always".to_string(),
+                    acp::PermissionOptionKind::RejectOnce => "reject_once".to_string(),
+                    acp::PermissionOptionKind::RejectAlways => "reject_always".to_string(),
+                    _ => format!("{:?}", o.kind).to_lowercase(),
+                },
             })
-            .map(|o| o.option_id.clone())
-            .unwrap_or_else(|| args.options[0].option_id.clone());
+            .collect();
 
-        Ok(acp::RequestPermissionResponse::new(
-            acp::RequestPermissionOutcome::Selected(acp::SelectedPermissionOutcome::new(option_id)),
-        ))
+        // 创建 oneshot channel 等待用户响应
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        self.handle.pending_permission.lock().unwrap().replace(tx);
+
+        // 发送权限请求给前端
+        self.handle.emit(AcpUpdate::PermissionRequest {
+            description: desc.clone(),
+            options,
+        });
+
+        // 发送系统通知（声音 + 横幅 + hooks.toml）
+        notify_acp_event(
+            &self.project_key,
+            &self.task_id,
+            "Permission Required",
+            &desc,
+            "Purr",
+        );
+
+        // 等待用户选择
+        match rx.await {
+            Ok(option_id) => Ok(acp::RequestPermissionResponse::new(
+                acp::RequestPermissionOutcome::Selected(acp::SelectedPermissionOutcome::new(
+                    option_id,
+                )),
+            )),
+            Err(_) => Ok(acp::RequestPermissionResponse::new(
+                acp::RequestPermissionOutcome::Cancelled,
+            )),
+        }
     }
 
     async fn write_text_file(
@@ -564,6 +609,7 @@ pub async fn get_or_start_session(
                 cmd_tx,
                 agent_info: std::sync::RwLock::new(None),
                 history: RwLock::new(Vec::new()),
+                pending_permission: Mutex::new(None),
             });
 
             // 注册到全局表
@@ -624,6 +670,9 @@ async fn run_acp_session(
         handle: handle.clone(),
         working_dir: config.working_dir.clone(),
         terminals: Arc::new(Mutex::new(HashMap::new())),
+        project_key: config.project_key.clone(),
+        task_id: config.task_id.clone(),
+        chat_id: config.chat_id.clone(),
     };
 
     // 创建 ACP 连接
@@ -696,10 +745,36 @@ async fn run_acp_session(
     }
 
     // 查找保存的 session_id，尝试 load_session 或创建新会话
-    let saved_id = crate::storage::tasks::get_task(&config.project_key, &config.task_id)
-        .ok()
-        .flatten()
-        .and_then(|t| t.acp_session_id);
+    // 如果有 chat_id，从 chat session 读取；否则从 task 级读取（兼容旧数据）
+    let saved_id = if let Some(ref cid) = config.chat_id {
+        crate::storage::tasks::get_chat_session(&config.project_key, &config.task_id, cid)
+            .ok()
+            .flatten()
+            .and_then(|c| c.acp_session_id)
+    } else {
+        crate::storage::tasks::get_task(&config.project_key, &config.task_id)
+            .ok()
+            .flatten()
+            .and_then(|t| t.acp_session_id)
+    };
+
+    // Helper: persist session_id to per-chat or task-level storage
+    let persist_session_id = |sid: &str| {
+        if let Some(ref cid) = config.chat_id {
+            let _ = crate::storage::tasks::update_chat_acp_session_id(
+                &config.project_key,
+                &config.task_id,
+                cid,
+                sid,
+            );
+        } else {
+            let _ = crate::storage::tasks::update_acp_session_id(
+                &config.project_key,
+                &config.task_id,
+                sid,
+            );
+        }
+    };
 
     // Track modes/models from session response
     let available_modes;
@@ -733,11 +808,7 @@ async fn run_acp_session(
                             ))
                         })?;
                     let sid = resp.session_id.to_string();
-                    let _ = crate::storage::tasks::update_acp_session_id(
-                        &config.project_key,
-                        &config.task_id,
-                        &sid,
-                    );
+                    persist_session_id(&sid);
                     (available_modes, current_mode_id) = extract_modes(&resp.modes);
                     (available_models, current_model_id) = extract_models(&resp.models);
                     sid
@@ -751,11 +822,7 @@ async fn run_acp_session(
                     crate::error::GroveError::Session(format!("ACP new_session failed: {}", e))
                 })?;
             let sid = resp.session_id.to_string();
-            let _ = crate::storage::tasks::update_acp_session_id(
-                &config.project_key,
-                &config.task_id,
-                &sid,
-            );
+            persist_session_id(&sid);
             (available_modes, current_mode_id) = extract_modes(&resp.modes);
             (available_models, current_model_id) = extract_models(&resp.models);
             sid
@@ -768,11 +835,7 @@ async fn run_acp_session(
                 crate::error::GroveError::Session(format!("ACP new_session failed: {}", e))
             })?;
         let sid = resp.session_id.to_string();
-        let _ = crate::storage::tasks::update_acp_session_id(
-            &config.project_key,
-            &config.task_id,
-            &sid,
-        );
+        persist_session_id(&sid);
         (available_modes, current_mode_id) = extract_modes(&resp.modes);
         (available_models, current_model_id) = extract_models(&resp.models);
         sid
@@ -820,6 +883,14 @@ async fn run_acp_session(
                         handle.emit(AcpUpdate::Complete {
                             stop_reason: format!("{:?}", resp.stop_reason),
                         });
+                        // 通知用户 prompt 完成
+                        notify_acp_event(
+                            &config.project_key,
+                            &config.task_id,
+                            "Task Complete",
+                            "Agent finished responding",
+                            "Glass",
+                        );
                     }
                     Err(e) => {
                         handle.emit(AcpUpdate::Error {
@@ -864,6 +935,13 @@ async fn run_acp_session(
 // === 公开 API ===
 
 impl AcpSessionHandle {
+    /// 响应待处理的权限请求
+    pub fn respond_permission(&self, option_id: String) {
+        if let Some(tx) = self.pending_permission.lock().unwrap().take() {
+            let _ = tx.send(option_id);
+        }
+    }
+
     /// 发送更新并记录到 history buffer
     pub fn emit(&self, update: AcpUpdate) {
         if let Ok(mut h) = self.history.write() {
@@ -950,4 +1028,41 @@ pub fn resolve_agent_command(agent_name: &str) -> Option<(String, Vec<String>)> 
         "claude" => Some(("claude-code-acp".to_string(), vec![])),
         _ => None,
     }
+}
+
+/// 发送 ACP 事件通知（声音 + 横幅 + hooks.toml）
+fn notify_acp_event(
+    project_key: &str,
+    task_id: &str,
+    title_suffix: &str,
+    message: &str,
+    sound: &str,
+) {
+    use crate::hooks::{self, NotificationLevel};
+    use crate::storage::tasks as task_storage;
+
+    // 播放声音
+    hooks::play_sound(sound);
+
+    // 查询 task 名称用于横幅
+    let task_name = task_storage::get_task(project_key, task_id)
+        .ok()
+        .flatten()
+        .map(|t| t.name)
+        .unwrap_or_else(|| task_id.to_string());
+
+    // 发送系统横幅
+    let title = format!("Grove - {}", title_suffix);
+    let banner_msg = format!("{} — {}", task_name, message);
+    hooks::send_banner(&title, &banner_msg);
+
+    // 更新 hooks.toml（web 前端轮询会展示）
+    let level = if title_suffix.contains("Permission") {
+        NotificationLevel::Warn
+    } else {
+        NotificationLevel::Notice
+    };
+    let mut hooks_file = hooks::load_hooks(project_key);
+    hooks_file.update(task_id, level, Some(message.to_string()));
+    let _ = hooks::save_hooks(project_key, &hooks_file);
 }

@@ -2,7 +2,6 @@
 
 use clap::Subcommand;
 use std::env;
-use std::process::Command;
 
 use crate::hooks::{self, NotificationLevel};
 
@@ -129,7 +128,7 @@ pub fn execute(level: HookLevel) {
     // 播放声音
     let sound = level.sound();
     if sound.to_lowercase() != "none" {
-        play_sound(sound);
+        hooks::play_sound(sound);
     }
 
     // 发送系统通知横幅
@@ -140,35 +139,11 @@ pub fn execute(level: HookLevel) {
         } else {
             format!("[{}] {}", project_name, task_name)
         };
-        send_banner(&title, &banner_msg);
+        hooks::send_banner(&title, &banner_msg);
     }
 
     // 无条件记录到 hooks 文件（当用户 detach 回到 Grove 时会被清除）
     update_hooks_file(&project_path, &task_id, level.level(), message);
-}
-
-/// 播放提示音
-fn play_sound(sound: &str) {
-    let path = format!("/System/Library/Sounds/{}.aiff", sound);
-    Command::new("afplay").arg(&path).spawn().ok();
-}
-
-/// 发送 macOS 通知横幅
-fn send_banner(title: &str, message: &str) {
-    // 优先使用 terminal-notifier（点击后不会打开脚本编辑器）
-    let result = Command::new("terminal-notifier")
-        .args(["-title", title, "-message", message])
-        .spawn();
-
-    if result.is_err() {
-        // fallback 到 osascript
-        let script = format!(
-            r#"display notification "{}" with title "{}""#,
-            message.replace('"', "\\\""),
-            title.replace('"', "\\\"")
-        );
-        Command::new("osascript").args(["-e", &script]).spawn().ok();
-    }
 }
 
 /// 更新 hooks.toml 文件

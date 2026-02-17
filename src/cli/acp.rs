@@ -31,6 +31,7 @@ pub async fn execute(agent: String, cwd: String) {
         env_vars: HashMap::new(),
         project_key: String::new(),
         task_id: String::new(),
+        chat_id: None,
     };
 
     let (handle, mut update_rx) = match acp::get_or_start_session("cli".to_string(), config).await {
@@ -134,7 +135,7 @@ pub async fn execute(agent: String, cwd: String) {
                         eprintln!("\x1b[36m  {}\x1b[0m", status);
                     }
                 }
-                Ok(AcpUpdate::PermissionRequest { description }) => {
+                Ok(AcpUpdate::PermissionRequest { description, .. }) => {
                     eprintln!("\x1b[33m[Permission] {} (auto-allowed)\x1b[0m", description);
                 }
                 Ok(AcpUpdate::Complete { stop_reason: _ }) => {

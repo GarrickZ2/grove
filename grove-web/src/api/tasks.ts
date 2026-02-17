@@ -25,6 +25,7 @@ export interface TaskResponse {
   created_at: string;
   updated_at: string;
   path: string;
+  multiplexer: string;
 }
 
 export interface TaskListResponse {
@@ -376,6 +377,84 @@ export async function rebaseToTask(
   return apiClient.post<RebaseToRequest, GitOperationResponse>(
     `/api/v1/projects/${projectId}/tasks/${taskId}/rebase-to`,
     { target }
+  );
+}
+
+// ============================================================================
+// Chat Session API (Multi-Chat support)
+// ============================================================================
+
+export interface ChatSessionResponse {
+  id: string;
+  title: string;
+  agent: string;
+  created_at: string;
+}
+
+export interface ChatListResponse {
+  chats: ChatSessionResponse[];
+}
+
+export interface CreateChatRequest {
+  title?: string;
+}
+
+export interface UpdateChatTitleRequest {
+  title: string;
+}
+
+/**
+ * List all chats for a task
+ */
+export async function listChats(
+  projectId: string,
+  taskId: string
+): Promise<ChatSessionResponse[]> {
+  const response = await apiClient.get<ChatListResponse>(
+    `/api/v1/projects/${projectId}/tasks/${taskId}/chats`
+  );
+  return response.chats;
+}
+
+/**
+ * Create a new chat for a task
+ */
+export async function createChat(
+  projectId: string,
+  taskId: string,
+  title?: string
+): Promise<ChatSessionResponse> {
+  return apiClient.post<CreateChatRequest, ChatSessionResponse>(
+    `/api/v1/projects/${projectId}/tasks/${taskId}/chats`,
+    { title }
+  );
+}
+
+/**
+ * Update a chat's title
+ */
+export async function updateChatTitle(
+  projectId: string,
+  taskId: string,
+  chatId: string,
+  title: string
+): Promise<ChatSessionResponse> {
+  return apiClient.patch<UpdateChatTitleRequest, ChatSessionResponse>(
+    `/api/v1/projects/${projectId}/tasks/${taskId}/chats/${chatId}`,
+    { title }
+  );
+}
+
+/**
+ * Delete a chat
+ */
+export async function deleteChat(
+  projectId: string,
+  taskId: string,
+  chatId: string
+): Promise<void> {
+  return apiClient.delete(
+    `/api/v1/projects/${projectId}/tasks/${taskId}/chats/${chatId}`
   );
 }
 

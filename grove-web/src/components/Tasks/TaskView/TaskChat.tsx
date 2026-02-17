@@ -15,10 +15,16 @@ import {
   ListTodo,
   Slash,
   X,
+  ShieldCheck,
+  ShieldX,
+  Plus,
+  Trash2,
 } from "lucide-react";
-import { Button, MarkdownRenderer } from "../../ui";
+import { Button, MarkdownRenderer, agentOptions } from "../../ui";
 import type { Task } from "../../../data/types";
 import { getApiHost } from "../../../api/client";
+import { getConfig, listChats, createChat, updateChatTitle, deleteChat } from "../../../api";
+import type { ChatSessionResponse } from "../../../api";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -31,6 +37,7 @@ interface TaskChatProps {
   onStartSession: () => void;
   autoStart?: boolean;
   onConnected?: () => void;
+  onDisconnected?: () => void;
   fullscreen?: boolean;
   onToggleFullscreen?: () => void;
 }
@@ -45,12 +52,26 @@ type ToolMessage = {
   locations?: { path: string; line?: number }[];
 };
 
+interface PermOption {
+  option_id: string;
+  name: string;
+  kind: string; // "allow_once" | "allow_always" | "reject_once" | "reject_always"
+}
+
+type PermissionMessage = {
+  type: "permission";
+  description: string;
+  options: PermOption[];
+  resolved?: string; // selected option name when resolved
+};
+
 type ChatMessage =
   | { type: "user"; content: string }
   | { type: "assistant"; content: string; complete: boolean }
   | { type: "thinking"; content: string; collapsed: boolean }
   | ToolMessage
-  | { type: "system"; content: string };
+  | { type: "system"; content: string }
+  | PermissionMessage;
 
 interface PlanEntry {
   content: string;
@@ -61,6 +82,68 @@ interface SlashCommand {
   name: string;
   description: string;
   input_hint?: string;
+}
+
+/** Per-chat cached state (preserved across chat switches) */
+interface PerChatState {
+  messages: ChatMessage[];
+  isBusy: boolean;
+  selectedModel: string;
+  permissionLevel: string;
+  modelOptions: { label: string; value: string }[];
+  modeOptions: { label: string; value: string }[];
+  planEntries: PlanEntry[];
+  slashCommands: SlashCommand[];
+  isConnected: boolean;
+  agentLabel: string;
+  agentIcon: React.ComponentType<{ size?: number; className?: string }> | null;
+}
+
+function defaultPerChatState(): PerChatState {
+  return {
+    messages: [],
+    isBusy: false,
+    selectedModel: "",
+    permissionLevel: "",
+    modelOptions: [],
+    modeOptions: [],
+    planEntries: [],
+    slashCommands: [],
+    isConnected: false,
+    agentLabel: "Chat",
+    agentIcon: null,
+  };
+}
+
+// ─── Render grouping types ───────────────────────────────────────────────────
+
+type ToolSectionItem = { message: ToolMessage; index: number };
+type RenderItem =
+  | { kind: "single"; message: ChatMessage; index: number }
+  | { kind: "tool-section"; sectionId: string; tools: ToolSectionItem[] };
+
+/** Group consecutive tool messages into sections; everything else is a single item */
+function buildRenderItems(messages: ChatMessage[]): RenderItem[] {
+  const items: RenderItem[] = [];
+  let toolBuf: ToolSectionItem[] = [];
+
+  const flush = () => {
+    if (toolBuf.length > 0) {
+      items.push({ kind: "tool-section", sectionId: toolBuf[0].message.id, tools: [...toolBuf] });
+      toolBuf = [];
+    }
+  };
+
+  messages.forEach((msg, i) => {
+    if (msg.type === "tool") {
+      toolBuf.push({ message: msg, index: i });
+    } else {
+      flush();
+      items.push({ kind: "single", message: msg, index: i });
+    }
+  });
+  flush();
+  return items;
 }
 
 // ─── Constants ───────────────────────────────────────────────────────────────
@@ -128,9 +211,24 @@ export function TaskChat({
   onStartSession,
   autoStart = false,
   onConnected: onConnectedProp,
+  onDisconnected: onDisconnectedProp,
   fullscreen = false,
   onToggleFullscreen,
 }: TaskChatProps) {
+  // ─── Multi-chat state ───────────────────────────────────────────────────
+  const [chats, setChats] = useState<ChatSessionResponse[]>([]);
+  const [activeChatId, setActiveChatId] = useState<string | null>(null);
+  const [showChatMenu, setShowChatMenu] = useState(false);
+  const [editingTitle, setEditingTitle] = useState(false);
+  const [editTitleValue, setEditTitleValue] = useState("");
+  const chatMenuRef = useRef<HTMLDivElement>(null);
+
+  // Per-chat state cache (preserved across chat switches)
+  const perChatStateRef = useRef<Map<string, PerChatState>>(new Map());
+  // Per-chat WebSocket connections
+  const wsMapRef = useRef<Map<string, WebSocket>>(new Map());
+
+  // ─── Active chat's live state ─────────────────────────────────────────
   const [isConnected, setIsConnected] = useState(false);
   const [sessionStarted, setSessionStarted] = useState(true);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -149,6 +247,9 @@ export function TaskChat({
   const [slashFilter, setSlashFilter] = useState("");
   const [slashSelectedIdx, setSlashSelectedIdx] = useState(0);
   const [isTerminalMode, setIsTerminalMode] = useState(false);
+  const [expandedSections, setExpandedSections] = useState<Set<string>>(new Set());
+  const [agentLabel, setAgentLabel] = useState("Chat");
+  const [AgentIcon, setAgentIcon] = useState<React.ComponentType<{ size?: number; className?: string }> | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const editableRef = useRef<HTMLDivElement>(null);
@@ -158,6 +259,7 @@ export function TaskChat({
 
   const isLive = task.status === "live";
   const showChat = isLive || sessionStarted;
+  const activeChat = chats.find((c) => c.id === activeChatId);
 
   // Filtered slash commands based on current input
   const filteredSlashCommands = useMemo(() => {
@@ -167,6 +269,29 @@ export function TaskChat({
       (c) => c.name.toLowerCase().includes(lower) || c.description.toLowerCase().includes(lower),
     );
   }, [slashCommands, slashFilter]);
+
+  // Resolve agent label and icon from active chat's agent
+  useEffect(() => {
+    const resolve = (cmd: string) => {
+      const match = agentOptions.find((a) => a.value === cmd);
+      if (match) {
+        setAgentLabel(match.label);
+        if (match.icon) setAgentIcon(() => match.icon!);
+      } else {
+        setAgentLabel(cmd);
+      }
+    };
+
+    if (activeChat) {
+      resolve(activeChat.agent);
+    } else if (task.multiplexer === "acp") {
+      resolve("claude");
+    } else {
+      getConfig()
+        .then((cfg) => resolve(cfg.layout.agent_command || "claude"))
+        .catch(() => resolve("claude"));
+    }
+  }, [task.multiplexer, activeChat]);
 
   // Auto-start
   useEffect(() => {
@@ -187,14 +312,159 @@ export function TaskChat({
     const handleClick = (e: MouseEvent) => {
       if (modelMenuRef.current && !modelMenuRef.current.contains(e.target as Node)) setShowModelMenu(false);
       if (permMenuRef.current && !permMenuRef.current.contains(e.target as Node)) setShowPermMenu(false);
+      if (chatMenuRef.current && !chatMenuRef.current.contains(e.target as Node)) setShowChatMenu(false);
     };
     document.addEventListener("mousedown", handleClick);
     return () => document.removeEventListener("mousedown", handleClick);
   }, []);
 
-  // WebSocket connection
+  // ─── Save/Restore per-chat state on switch ─────────────────────────────
+
+  /** Save current active chat state to cache */
+  const saveCurrentChatState = useCallback(() => {
+    if (!activeChatId) return;
+    perChatStateRef.current.set(activeChatId, {
+      messages, isBusy, selectedModel, permissionLevel,
+      modelOptions, modeOptions, planEntries, slashCommands,
+      isConnected, agentLabel, agentIcon: AgentIcon,
+    });
+  }, [activeChatId, messages, isBusy, selectedModel, permissionLevel, modelOptions, modeOptions, planEntries, slashCommands, isConnected, agentLabel, AgentIcon]);
+
+  /** Restore chat state from cache */
+  const restoreChatState = useCallback((chatId: string) => {
+    const cached = perChatStateRef.current.get(chatId);
+    if (cached) {
+      setMessages(cached.messages);
+      setIsBusy(cached.isBusy);
+      setSelectedModel(cached.selectedModel);
+      setPermissionLevel(cached.permissionLevel);
+      setModelOptions(cached.modelOptions);
+      setModeOptions(cached.modeOptions);
+      setPlanEntries(cached.planEntries);
+      setSlashCommands(cached.slashCommands);
+      setIsConnected(cached.isConnected);
+      setAgentLabel(cached.agentLabel);
+      if (cached.agentIcon) setAgentIcon(() => cached.agentIcon);
+    } else {
+      // Fresh state for new chat
+      setMessages([]);
+      setIsBusy(false);
+      setSelectedModel("");
+      setPermissionLevel("");
+      setModelOptions([]);
+      setModeOptions([]);
+      setPlanEntries([]);
+      setSlashCommands([]);
+      setIsConnected(false);
+    }
+    // Point wsRef to this chat's WebSocket
+    wsRef.current = wsMapRef.current.get(chatId) ?? null;
+  }, []);
+
+  // ─── Load chats on mount ───────────────────────────────────────────────
+
   useEffect(() => {
-    if (!showChat) return;
+    if (!showChat || task.multiplexer !== "acp") return;
+    let cancelled = false;
+
+    const init = async () => {
+      try {
+        let chatList = await listChats(projectId, task.id);
+        if (chatList.length === 0) {
+          // Auto-create first chat
+          const newChat = await createChat(projectId, task.id);
+          chatList = [newChat];
+        }
+        if (cancelled) return;
+        setChats(chatList);
+        // Select last chat by default
+        const lastChat = chatList[chatList.length - 1];
+        setActiveChatId(lastChat.id);
+      } catch (err) {
+        console.error("Failed to load chats:", err);
+      }
+    };
+    init();
+    return () => { cancelled = true; };
+  }, [showChat, projectId, task.id, task.multiplexer]);
+
+  // ─── Per-chat WebSocket management ─────────────────────────────────────
+
+  /** Connect a WebSocket for a given chat ID (idempotent) */
+  const connectChatWs = useCallback((chatId: string) => {
+    if (wsMapRef.current.has(chatId)) return; // Already connected
+
+    const host = getApiHost();
+    const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+    const url = `${protocol}//${host}/api/v1/projects/${projectId}/tasks/${task.id}/chats/${chatId}/ws`;
+
+    const ws = new WebSocket(url);
+    wsMapRef.current.set(chatId, ws);
+
+    ws.onopen = () => {
+      // Update state only for active chat
+      if (chatId === activeChatIdRef.current) {
+        setMessages((prev) => [...prev, { type: "system", content: "Connecting..." }]);
+      } else {
+        const cached = perChatStateRef.current.get(chatId) ?? defaultPerChatState();
+        cached.messages = [...cached.messages, { type: "system", content: "Connecting..." }];
+        perChatStateRef.current.set(chatId, cached);
+      }
+    };
+
+    ws.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        if (chatId === activeChatIdRef.current) {
+          handleServerMessage(data);
+        } else {
+          // Buffer into per-chat cache
+          handleServerMessageForCache(chatId, data);
+        }
+      } catch { /* ignore */ }
+    };
+
+    ws.onclose = () => {
+      wsMapRef.current.delete(chatId);
+      if (chatId === activeChatIdRef.current) {
+        setIsConnected(false);
+        onDisconnectedProp?.();
+      } else {
+        const cached = perChatStateRef.current.get(chatId);
+        if (cached) cached.isConnected = false;
+      }
+    };
+
+    ws.onerror = () => {
+      if (chatId === activeChatIdRef.current) {
+        setMessages((prev) => [...prev, { type: "system", content: "Connection error." }]);
+      }
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectId, task.id]);
+
+  // Ref to track current activeChatId (for use in callbacks)
+  const activeChatIdRef = useRef<string | null>(null);
+  activeChatIdRef.current = activeChatId;
+
+  // Connect WebSocket when activeChatId changes
+  useEffect(() => {
+    if (!activeChatId || !showChat || task.multiplexer !== "acp") return;
+    connectChatWs(activeChatId);
+    wsRef.current = wsMapRef.current.get(activeChatId) ?? null;
+  }, [activeChatId, showChat, task.multiplexer, connectChatWs]);
+
+  // Cleanup all WebSockets on unmount
+  useEffect(() => {
+    return () => {
+      wsMapRef.current.forEach((ws) => ws.close());
+      wsMapRef.current.clear();
+    };
+  }, []);
+
+  // Legacy WebSocket for non-ACP tasks
+  useEffect(() => {
+    if (!showChat || task.multiplexer === "acp") return;
 
     const host = getApiHost();
     const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
@@ -209,15 +479,17 @@ export function TaskChat({
     ws.onmessage = (event) => {
       try { handleServerMessage(JSON.parse(event.data)); } catch { /* ignore */ }
     };
+    let intentionalClose = false;
     ws.onclose = () => {
       setIsConnected(false);
+      if (!intentionalClose) onDisconnectedProp?.();
     };
     ws.onerror = () => {
       setMessages((prev) => [...prev, { type: "system", content: "Connection error." }]);
     };
-    return () => { ws.close(); wsRef.current = null; };
+    return () => { intentionalClose = true; ws.close(); wsRef.current = null; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [showChat, projectId, task.id]);
+  }, [showChat, projectId, task.id, task.multiplexer]);
 
   // ─── WebSocket message handler ───────────────────────────────────────────
 
@@ -293,7 +565,9 @@ export function TaskChat({
           break;
         case "permission_request":
           setMessages((prev) => [...prev, {
-            type: "system", content: `Permission: ${msg.description} (auto-allowed)`,
+            type: "permission",
+            description: msg.description,
+            options: msg.options ?? [],
           }]);
           break;
         case "complete":
@@ -331,6 +605,134 @@ export function TaskChat({
     [onConnectedProp],
   );
 
+  /** Buffer a server message into the per-chat cache (for non-active chats) */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const handleServerMessageForCache = useCallback((chatId: string, msg: any) => {
+    const state = perChatStateRef.current.get(chatId) ?? defaultPerChatState();
+    switch (msg.type) {
+      case "session_ready":
+        state.isConnected = true;
+        if (msg.available_modes?.length)
+          state.modeOptions = msg.available_modes.map((m: { id: string; name: string }) => ({ label: m.name, value: m.id }));
+        if (msg.current_mode_id) state.permissionLevel = msg.current_mode_id;
+        if (msg.available_models?.length)
+          state.modelOptions = msg.available_models.map((m: { id: string; name: string }) => ({ label: m.name, value: m.id }));
+        if (msg.current_model_id) state.selectedModel = msg.current_model_id;
+        state.messages = [...state.messages.filter((m) => !(m.type === "system" && m.content === "Connecting...")),
+          { type: "system", content: "Connected to Claude Code" }];
+        break;
+      case "message_chunk": {
+        const msgs = state.messages;
+        let found = false;
+        for (let i = msgs.length - 1; i >= 0; i--) {
+          const m = msgs[i];
+          if (m.type === "assistant" && !m.complete) {
+            msgs[i] = { ...m, content: m.content + msg.text };
+            found = true;
+            break;
+          }
+          if (m.type === "user") break;
+        }
+        if (!found && msg.text.trim()) msgs.push({ type: "assistant", content: msg.text, complete: false });
+        state.messages = [...msgs];
+        break;
+      }
+      case "tool_call":
+        state.messages = [...state.messages, { type: "tool", id: msg.id, title: msg.title, status: "running", collapsed: false, locations: msg.locations }];
+        break;
+      case "tool_call_update":
+        state.messages = state.messages.map((m) =>
+          m.type === "tool" && m.id === msg.id ? { ...m, status: msg.status, content: msg.content, locations: msg.locations?.length ? msg.locations : m.locations } : m);
+        break;
+      case "complete":
+        state.messages = state.messages.map((m) => m.type === "assistant" && !m.complete ? { ...m, complete: true } : m);
+        state.isBusy = false;
+        break;
+      case "busy":
+        state.isBusy = msg.value;
+        break;
+      case "user_message":
+        state.messages = [...state.messages, { type: "user", content: msg.text }];
+        break;
+      case "plan_update":
+        state.planEntries = msg.entries ?? [];
+        break;
+      case "available_commands":
+        state.slashCommands = msg.commands ?? [];
+        break;
+      case "session_ended":
+        state.isConnected = false;
+        break;
+    }
+    perChatStateRef.current.set(chatId, state);
+  }, []);
+
+  // ─── Chat switching ────────────────────────────────────────────────────
+
+  const switchChat = useCallback((chatId: string) => {
+    if (chatId === activeChatId) return;
+    saveCurrentChatState();
+    setActiveChatId(chatId);
+    restoreChatState(chatId);
+    setShowChatMenu(false);
+    // Connect WS if needed
+    connectChatWs(chatId);
+    wsRef.current = wsMapRef.current.get(chatId) ?? null;
+  }, [activeChatId, saveCurrentChatState, restoreChatState, connectChatWs]);
+
+  // ─── New chat creation ─────────────────────────────────────────────────
+
+  const handleNewChat = useCallback(async () => {
+    try {
+      const newChat = await createChat(projectId, task.id);
+      setChats((prev) => [...prev, newChat]);
+      switchChat(newChat.id);
+    } catch (err) {
+      console.error("Failed to create chat:", err);
+    }
+  }, [projectId, task.id, switchChat]);
+
+  // ─── Chat title editing ─────────────────────────────────────────────────
+
+  const handleTitleSave = useCallback(async () => {
+    if (!activeChatId || !editTitleValue.trim()) {
+      setEditingTitle(false);
+      return;
+    }
+    try {
+      await updateChatTitle(projectId, task.id, activeChatId, editTitleValue.trim());
+      setChats((prev) => prev.map((c) => c.id === activeChatId ? { ...c, title: editTitleValue.trim() } : c));
+    } catch (err) {
+      console.error("Failed to update chat title:", err);
+    }
+    setEditingTitle(false);
+  }, [activeChatId, editTitleValue, projectId, task.id]);
+
+  // ─── Chat deletion ─────────────────────────────────────────────────────
+
+  const handleDeleteChat = useCallback(async (chatId: string) => {
+    if (chats.length <= 1) return; // Don't delete the last chat
+    try {
+      await deleteChat(projectId, task.id, chatId);
+      // Close WebSocket if connected
+      const ws = wsMapRef.current.get(chatId);
+      if (ws) { ws.close(); wsMapRef.current.delete(chatId); }
+      perChatStateRef.current.delete(chatId);
+      setChats((prev) => {
+        const updated = prev.filter((c) => c.id !== chatId);
+        if (chatId === activeChatId && updated.length > 0) {
+          const next = updated[updated.length - 1];
+          setActiveChatId(next.id);
+          restoreChatState(next.id);
+        }
+        return updated;
+      });
+    } catch (err) {
+      console.error("Failed to delete chat:", err);
+    }
+    setShowChatMenu(false);
+  }, [chats.length, projectId, task.id, activeChatId, restoreChatState]);
+
   // ─── User actions ────────────────────────────────────────────────────────
 
   /** Check if the editable has any content (text or chips) */
@@ -361,6 +763,20 @@ export function TaskChat({
     setIsBusy(true);
     el.focus();
   }, [isTerminalMode]);
+
+  /** Respond to a permission request */
+  const handlePermissionResponse = useCallback((optionId: string, optionName: string) => {
+    if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
+    wsRef.current.send(JSON.stringify({ type: "permission_response", option_id: optionId }));
+    // Mark the permission message as resolved
+    setMessages((prev) =>
+      prev.map((m) =>
+        m.type === "permission" && !m.resolved
+          ? { ...m, resolved: optionName }
+          : m,
+      ),
+    );
+  }, []);
 
   /** Detect /slash at cursor position in contentEditable */
   const handleInput = useCallback(() => {
@@ -509,6 +925,32 @@ export function TaskChat({
     setMessages((prev) => prev.map((m, i) => i === index && m.type === "thinking" ? { ...m, collapsed: !m.collapsed } : m));
   };
 
+  const renderItems = useMemo(() => buildRenderItems(messages), [messages]);
+
+  // Track the message index where the current busy turn started
+  const turnStartIndexRef = useRef(0);
+  const wasBusyRef = useRef(false);
+  if (isBusy && !wasBusyRef.current) {
+    turnStartIndexRef.current = messages.length;
+  }
+  wasBusyRef.current = isBusy;
+
+  const toggleSection = useCallback((sectionId: string, toolIds: string[]) => {
+    setExpandedSections((prev) => {
+      const next = new Set(prev);
+      if (next.has(sectionId)) {
+        next.delete(sectionId);
+      } else {
+        next.add(sectionId);
+        // When expanding: reset all tools in section to expanded
+        setMessages((pm) => pm.map((m) =>
+          m.type === "tool" && toolIds.includes(m.id) ? { ...m, collapsed: false } : m,
+        ));
+      }
+      return next;
+    });
+  }, []);
+
   // ─── Collapsed mode ──────────────────────────────────────────────────────
 
   if (collapsed) {
@@ -519,7 +961,7 @@ export function TaskChat({
         onClick={onExpand} title="Expand Chat (t)"
       >
         <div className="flex-1 flex flex-col items-center py-2">
-          <div className="p-3 text-[var(--color-text-muted)]"><MessageSquare className="w-5 h-5" /></div>
+          <div className="p-3 text-[var(--color-text-muted)]">{AgentIcon ? <AgentIcon size={20} /> : <MessageSquare className="w-5 h-5" />}</div>
           {isConnected && <div className="p-3"><div className="w-2.5 h-2.5 rounded-full bg-[var(--color-success)] animate-pulse" /></div>}
           <div className="flex-1" />
           <div className="p-3 text-[var(--color-text-muted)]"><ChevronRight className="w-5 h-5" /></div>
@@ -535,11 +977,11 @@ export function TaskChat({
       <motion.div layout className="flex-1 flex flex-col rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-tertiary)] overflow-hidden">
         <div className="flex items-center justify-between px-3 py-2 bg-[var(--color-bg)] border-b border-[var(--color-border)]">
           <div className="flex items-center gap-2 text-sm text-[var(--color-text-muted)]">
-            <MessageSquare className="w-4 h-4" /><span>ACP Chat</span>
+            {AgentIcon ? <AgentIcon size={16} /> : <MessageSquare className="w-4 h-4" />}<span>{agentLabel}</span>
           </div>
         </div>
         <div className="flex-1 flex flex-col items-center justify-center">
-          <MessageSquare className="w-10 h-10 text-[var(--color-text-muted)] mb-3" />
+          {AgentIcon ? <AgentIcon size={40} className="mb-3" /> : <MessageSquare className="w-10 h-10 text-[var(--color-text-muted)] mb-3" />}
           <p className="text-sm text-[var(--color-text-muted)] mb-3">Chat session not started</p>
           <Button variant="secondary" size="sm" onClick={handleStartSession}>
             <Play className="w-4 h-4 mr-1.5" />Start Chat
@@ -557,10 +999,98 @@ export function TaskChat({
     >
       {/* Header */}
       <div className="flex items-center justify-between px-3 py-2 bg-[var(--color-bg)] border-b border-[var(--color-border)]">
-        <div className="flex items-center gap-2 text-sm text-[var(--color-text-muted)]">
-          <MessageSquare className="w-4 h-4" /><span>ACP Chat</span>
+        <div className="flex items-center gap-2 text-sm min-w-0">
+          {AgentIcon ? <AgentIcon size={16} className="text-[var(--color-text-muted)] shrink-0" /> : <MessageSquare className="w-4 h-4 text-[var(--color-text-muted)] shrink-0" />}
+
+          {/* Chat title / dropdown (only for ACP multi-chat) */}
+          {task.multiplexer === "acp" && activeChat ? (
+            <div className="relative min-w-0" ref={chatMenuRef}>
+              {editingTitle ? (
+                <input
+                  autoFocus
+                  value={editTitleValue}
+                  onChange={(e) => setEditTitleValue(e.target.value)}
+                  onBlur={handleTitleSave}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") handleTitleSave();
+                    if (e.key === "Escape") setEditingTitle(false);
+                  }}
+                  className="text-sm text-[var(--color-text)] bg-transparent border-b border-[var(--color-highlight)] outline-none px-0 py-0 min-w-0 w-40"
+                />
+              ) : (
+                <button
+                  onClick={() => setShowChatMenu(!showChatMenu)}
+                  onDoubleClick={() => {
+                    setEditTitleValue(activeChat.title);
+                    setEditingTitle(true);
+                    setShowChatMenu(false);
+                  }}
+                  className="flex items-center gap-1 text-sm text-[var(--color-text)] hover:text-[var(--color-highlight)] transition-colors truncate max-w-48"
+                  title="Double-click to rename"
+                >
+                  <span className="truncate">{activeChat.title}</span>
+                  <ChevronDown className="w-3 h-3 shrink-0 text-[var(--color-text-muted)]" />
+                </button>
+              )}
+
+              {/* Chat dropdown menu */}
+              {showChatMenu && (
+                <div className="absolute top-full left-0 mt-1 min-w-56 max-h-64 overflow-y-auto rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] shadow-lg py-1 z-50">
+                  {[...chats].reverse().map((chat) => {
+                    const chatAgent = agentOptions.find((a) => a.value === chat.agent);
+                    const ChatIcon = chatAgent?.icon;
+                    return (
+                      <div
+                        key={chat.id}
+                        className={`flex items-center gap-2 px-3 py-2 text-sm cursor-pointer transition-colors group ${
+                          chat.id === activeChatId
+                            ? "bg-[var(--color-bg-tertiary)] text-[var(--color-text)]"
+                            : "text-[var(--color-text-muted)] hover:bg-[var(--color-bg-secondary)] hover:text-[var(--color-text)]"
+                        }`}
+                        onClick={() => switchChat(chat.id)}
+                      >
+                        {ChatIcon ? <ChatIcon size={14} className="shrink-0" /> : <MessageSquare className="w-3.5 h-3.5 shrink-0" />}
+                        <div className="flex-1 min-w-0">
+                          <div className="truncate">{chat.title}</div>
+                          <div className="text-[10px] text-[var(--color-text-muted)]">
+                            {new Date(chat.created_at).toLocaleDateString()}
+                          </div>
+                        </div>
+                        {chat.id === activeChatId && (
+                          <span className="text-[var(--color-highlight)] text-xs shrink-0">●</span>
+                        )}
+                        {chats.length > 1 && (
+                          <button
+                            onClick={(e) => { e.stopPropagation(); handleDeleteChat(chat.id); }}
+                            className="opacity-0 group-hover:opacity-100 p-0.5 text-[var(--color-text-muted)] hover:text-[var(--color-error)] transition-all shrink-0"
+                            title="Delete chat"
+                          >
+                            <Trash2 className="w-3 h-3" />
+                          </button>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          ) : (
+            <span className="text-[var(--color-text-muted)]">{agentLabel}</span>
+          )}
+
+          {/* New Chat button (ACP only) */}
+          {task.multiplexer === "acp" && (
+            <button
+              onClick={handleNewChat}
+              className="flex items-center gap-1 px-1.5 py-0.5 text-xs text-[var(--color-text-muted)] hover:text-[var(--color-highlight)] hover:bg-[var(--color-bg-tertiary)] rounded transition-colors shrink-0"
+              title="New Chat"
+            >
+              <Plus className="w-3.5 h-3.5" />
+            </button>
+          )}
         </div>
-        <div className="flex items-center gap-1.5">
+
+        <div className="flex items-center gap-1.5 shrink-0">
           <div className={`w-2.5 h-2.5 rounded-full ${isConnected ? "bg-[var(--color-success)] animate-pulse" : "bg-[var(--color-warning)]"}`} />
           <span className="text-xs text-[var(--color-text-muted)]">{isConnected ? "Connected" : "Connecting..."}</span>
           {onToggleFullscreen && (
@@ -582,10 +1112,22 @@ export function TaskChat({
 
       {/* Messages */}
       <div className="flex-1 overflow-y-auto px-4 py-3 space-y-3 min-h-0 bg-[var(--color-bg-secondary)]">
-        {messages.map((msg, i) => (
-          <MessageItem key={`m-${i}`} message={msg} index={i} isBusy={isBusy}
-            onToggleToolCollapse={toggleToolCollapse} onToggleThinkingCollapse={toggleThinkingCollapse} />
-        ))}
+        {renderItems.map((item) =>
+          item.kind === "single" ? (
+            <MessageItem key={`m-${item.index}`} message={item.message} index={item.index} isBusy={isBusy}
+              onToggleThinkingCollapse={toggleThinkingCollapse} onPermissionResponse={handlePermissionResponse} />
+          ) : (
+            <ToolSectionView
+              key={`ts-${item.sectionId}`}
+              sectionId={item.sectionId}
+              tools={item.tools}
+              expanded={(isBusy && item.tools[0].index >= turnStartIndexRef.current) || expandedSections.has(item.sectionId)}
+              forceExpanded={isBusy && item.tools[0].index >= turnStartIndexRef.current}
+              onToggleSection={toggleSection}
+              onToggleToolCollapse={toggleToolCollapse}
+            />
+          ),
+        )}
         {isBusy && messages[messages.length - 1]?.type !== "assistant" && (
           <div className="flex items-center gap-2 text-sm text-[var(--color-text-muted)] py-1">
             <Loader2 className="w-4 h-4 animate-spin" /><span>Thinking...</span>
@@ -774,10 +1316,10 @@ const DropdownSelect = ({ ref, label, options, value, open, onToggle, onSelect }
 );
 
 /** Individual message rendering */
-function MessageItem({ message, index, isBusy, onToggleToolCollapse, onToggleThinkingCollapse }: {
+function MessageItem({ message, index, isBusy, onToggleThinkingCollapse, onPermissionResponse }: {
   message: ChatMessage; index: number; isBusy: boolean;
-  onToggleToolCollapse: (id: string) => void;
   onToggleThinkingCollapse: (index: number) => void;
+  onPermissionResponse?: (optionId: string, optionName: string) => void;
 }) {
   switch (message.type) {
     case "user":
@@ -819,60 +1361,190 @@ function MessageItem({ message, index, isBusy, onToggleToolCollapse, onToggleThi
           </div>
         </div>
       );
-    case "tool": {
-      const isRunning = message.status === "running";
-      // Extract short file path from locations for display
-      const loc = message.locations?.[0];
-      const shortPath = loc?.path
-        ? loc.path.replace(/^.*\/worktrees\/[^/]+\//, "")  // strip worktree prefix
-        : "";
-      const locationLabel = shortPath
-        ? `\u2018${shortPath}\u2019${loc?.line ? `:${loc.line}` : ""}`
-        : "";
-      const hasContent = !!message.content;
-      const header = (
-        <div
-          role={hasContent ? "button" : undefined}
-          onClick={hasContent ? () => onToggleToolCollapse(message.id) : undefined}
-          className={`flex items-center gap-1.5 py-1 px-2 rounded-md text-xs w-full text-left min-w-0 ${
-            hasContent ? "hover:bg-[var(--color-bg-tertiary)] cursor-pointer" : ""
-          } transition-colors`}
-        >
-          {isRunning
-            ? <Loader2 className="w-3.5 h-3.5 text-[var(--color-highlight)] animate-spin shrink-0" />
-            : <CheckCircle2 className="w-3.5 h-3.5 text-[var(--color-success)] shrink-0" />}
-          {hasContent && (message.collapsed
-            ? <ChevronRight className="w-3 h-3 text-[var(--color-text-muted)] shrink-0" />
-            : <ChevronDown className="w-3 h-3 text-[var(--color-text-muted)] shrink-0" />)}
-          <span className={`shrink-0 ${isRunning ? "text-[var(--color-highlight)]" : "text-[var(--color-text-muted)]"}`}>
-            {message.title}
-          </span>
-          {locationLabel && (
-            <span className="text-[var(--color-text-muted)] opacity-60 truncate min-w-0">
-              {locationLabel}
-            </span>
-          )}
-          <span className="ml-auto text-[10px] text-[var(--color-text-muted)] shrink-0 capitalize">{message.status}</span>
-        </div>
-      );
-      return (
-        <div className="flex justify-start">
-          <div className="w-full">
-            {header}
-            {hasContent && !message.collapsed && (
-              <div className="ml-6 mt-1">
-                <ToolContentBlock content={message.content!} />
-              </div>
-            )}
-          </div>
-        </div>
-      );
-    }
+    case "permission":
+      return <PermissionCard message={message} onRespond={onPermissionResponse} />;
+    case "tool":
+      // Tools are rendered via ToolSectionView; skip here
+      return null;
     case "system":
       return (
         <div className="text-center text-xs text-[var(--color-text-muted)] py-1">{message.content}</div>
       );
   }
+}
+
+/** Permission request card with action buttons */
+function PermissionCard({ message, onRespond }: {
+  message: PermissionMessage;
+  onRespond?: (optionId: string, optionName: string) => void;
+}) {
+  const isResolved = !!message.resolved;
+  const isAllowed = isResolved && (message.resolved!.toLowerCase().includes("allow") || message.resolved!.toLowerCase().includes("yes"));
+
+  if (isResolved) {
+    return (
+      <div className="flex items-center gap-2 py-1.5 px-3 rounded-lg text-xs bg-[var(--color-bg-tertiary)] border border-[var(--color-border)]">
+        {isAllowed
+          ? <ShieldCheck className="w-3.5 h-3.5 text-[var(--color-success)] shrink-0" />
+          : <ShieldX className="w-3.5 h-3.5 text-[var(--color-error)] shrink-0" />}
+        <span className="text-[var(--color-text-muted)]">{message.description}</span>
+        <span className="ml-auto text-[10px] text-[var(--color-text-muted)] opacity-70">{message.resolved}</span>
+      </div>
+    );
+  }
+
+  const allowOptions = message.options.filter((o) => o.kind.startsWith("allow"));
+  const rejectOptions = message.options.filter((o) => o.kind.startsWith("reject"));
+
+  return (
+    <div className="rounded-lg border-l-3 border border-[var(--color-border)] bg-[var(--color-bg-tertiary)] overflow-hidden"
+      style={{ borderLeftColor: "var(--color-warning)", borderLeftWidth: 3 }}>
+      <div className="px-3 py-2.5">
+        <div className="flex items-center gap-2 mb-2">
+          <ShieldCheck className="w-4 h-4 text-[var(--color-warning)] shrink-0" />
+          <span className="text-sm text-[var(--color-text)]">Permission Required</span>
+        </div>
+        <p className="text-xs text-[var(--color-text-muted)] mb-3 ml-6">{message.description}</p>
+        <div className="flex items-center gap-2 ml-6 flex-wrap">
+          {allowOptions.map((opt) => (
+            <button key={opt.option_id} onClick={() => onRespond?.(opt.option_id, opt.name)}
+              className="px-3 py-1 rounded-md text-xs font-medium transition-colors bg-[var(--color-success)] text-white hover:opacity-80"
+              style={{ backgroundColor: "color-mix(in srgb, var(--color-success) 85%, white)" }}>
+              {opt.name}
+            </button>
+          ))}
+          {rejectOptions.map((opt) => (
+            <button key={opt.option_id} onClick={() => onRespond?.(opt.option_id, opt.name)}
+              className="px-3 py-1 rounded-md text-xs font-medium transition-colors border border-[var(--color-border)] text-[var(--color-text-muted)] hover:bg-[var(--color-bg)] hover:text-[var(--color-error)]">
+              {opt.name}
+            </button>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** Single tool row used inside ToolSectionView */
+function ToolItemRow({ message, onToggleCollapse }: {
+  message: ToolMessage;
+  onToggleCollapse: (id: string) => void;
+}) {
+  const isRunning = message.status === "running";
+  const loc = message.locations?.[0];
+  const shortPath = loc?.path
+    ? loc.path.replace(/^.*\/worktrees\/[^/]+\//, "")
+    : "";
+  const locationLabel = shortPath
+    ? `\u2018${shortPath}\u2019${loc?.line ? `:${loc.line}` : ""}`
+    : "";
+  const hasContent = !!message.content;
+
+  return (
+    <div>
+      <div
+        role={hasContent ? "button" : undefined}
+        onClick={hasContent ? () => onToggleCollapse(message.id) : undefined}
+        className={`flex items-center gap-1.5 py-1 px-2 rounded-md text-xs w-full text-left min-w-0 ${
+          hasContent ? "hover:bg-[var(--color-bg-tertiary)] cursor-pointer" : ""
+        } transition-colors`}
+      >
+        {isRunning
+          ? <Loader2 className="w-3.5 h-3.5 text-[var(--color-highlight)] animate-spin shrink-0" />
+          : <CheckCircle2 className="w-3.5 h-3.5 text-[var(--color-success)] shrink-0" />}
+        {hasContent && (message.collapsed
+          ? <ChevronRight className="w-3 h-3 text-[var(--color-text-muted)] shrink-0" />
+          : <ChevronDown className="w-3 h-3 text-[var(--color-text-muted)] shrink-0" />)}
+        <span className={`shrink-0 ${isRunning ? "text-[var(--color-highlight)]" : "text-[var(--color-text-muted)]"}`}>
+          {message.title}
+        </span>
+        {locationLabel && (
+          <span className="text-[var(--color-text-muted)] opacity-60 truncate min-w-0">
+            {locationLabel}
+          </span>
+        )}
+        <span className="ml-auto text-[10px] text-[var(--color-text-muted)] shrink-0 capitalize">{message.status}</span>
+      </div>
+      {hasContent && !message.collapsed && (
+        <div className="ml-6 mt-1">
+          <ToolContentBlock content={message.content!} />
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** Collapsible section that groups consecutive tool calls */
+function ToolSectionView({ sectionId, tools, expanded, forceExpanded, onToggleSection, onToggleToolCollapse }: {
+  sectionId: string;
+  tools: ToolSectionItem[];
+  expanded: boolean;
+  forceExpanded: boolean;
+  onToggleSection: (sectionId: string, toolIds: string[]) => void;
+  onToggleToolCollapse: (id: string) => void;
+}) {
+  const total = tools.length;
+  const running = tools.filter((t) => t.message.status === "running").length;
+  const failed = tools.filter((t) => t.message.status === "error").length;
+  const completed = total - running;
+
+  const toolIds = useMemo(() => tools.map((t) => t.message.id), [tools]);
+
+  // Summary label
+  let summaryText: string;
+  if (running > 0) {
+    summaryText = `Running ${running}/${total} tools\u2026`;
+  } else if (failed > 0) {
+    summaryText = `${completed - failed} completed, ${failed} failed`;
+  } else {
+    summaryText = `${total} tool${total > 1 ? "s" : ""} completed`;
+  }
+
+  // Icon
+  const SummaryIcon = running > 0
+    ? () => <Loader2 className="w-3.5 h-3.5 text-[var(--color-highlight)] animate-spin shrink-0" />
+    : failed > 0
+      ? () => <CheckCircle2 className="w-3.5 h-3.5 text-[var(--color-warning)] shrink-0" />
+      : () => <CheckCircle2 className="w-3.5 h-3.5 text-[var(--color-success)] shrink-0" />;
+
+  if (!expanded) {
+    // Collapsed: single summary row
+    return (
+      <div
+        role="button"
+        onClick={() => onToggleSection(sectionId, toolIds)}
+        className="flex items-center gap-1.5 py-1.5 px-2 rounded-md text-xs hover:bg-[var(--color-bg-tertiary)] cursor-pointer transition-colors"
+      >
+        <SummaryIcon />
+        <ChevronRight className="w-3 h-3 text-[var(--color-text-muted)] shrink-0" />
+        <span className="text-[var(--color-text-muted)]">{summaryText}</span>
+      </div>
+    );
+  }
+
+  // Expanded
+  return (
+    <div>
+      {/* Section header */}
+      <div
+        role="button"
+        onClick={forceExpanded ? undefined : () => onToggleSection(sectionId, toolIds)}
+        className={`flex items-center gap-1.5 py-1.5 px-2 rounded-md text-xs ${
+          forceExpanded ? "" : "hover:bg-[var(--color-bg-tertiary)] cursor-pointer"
+        } transition-colors`}
+      >
+        <SummaryIcon />
+        <ChevronDown className="w-3 h-3 text-[var(--color-text-muted)] shrink-0" />
+        <span className="text-[var(--color-text-muted)]">Tools ({total})</span>
+      </div>
+      {/* Tool items with left border indent */}
+      <div className="ml-2 pl-3 border-l-2 border-[var(--color-border)] space-y-0.5">
+        {tools.map((t) => (
+          <ToolItemRow key={t.message.id} message={t.message} onToggleCollapse={onToggleToolCollapse} />
+        ))}
+      </div>
+    </div>
+  );
 }
 
 /** Strip system-reminder tags from tool content */

@@ -353,6 +353,7 @@ fn worktree_to_response(wt: &crate::model::Worktree) -> TaskResponse {
         created_at: wt.created_at.to_rfc3339(),
         updated_at: wt.updated_at.to_rfc3339(),
         path: wt.path.clone(),
+        multiplexer: wt.multiplexer.clone(),
     }
 }
 
@@ -487,6 +488,7 @@ pub async fn create_task(
         created_at: result.task.created_at.to_rfc3339(),
         updated_at: result.task.updated_at.to_rfc3339(),
         path: result.worktree_path.clone(),
+        multiplexer: result.task.multiplexer.clone(),
     }))
 }
 

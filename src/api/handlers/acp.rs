@@ -7,6 +7,7 @@ use axum::{
     },
     http::StatusCode,
     response::{IntoResponse, Response},
+    Json,
 };
 use futures::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
@@ -32,6 +33,10 @@ enum ClientMessage {
     /// Switch agent model dynamically
     SetModel {
         model_id: String,
+    },
+    /// Respond to a permission request
+    PermissionResponse {
+        option_id: String,
     },
 }
 
@@ -69,6 +74,7 @@ enum ServerMessage {
     },
     PermissionRequest {
         description: String,
+        options: Vec<PermOptionMsg>,
     },
     Complete {
         stop_reason: String,
@@ -126,6 +132,13 @@ struct LocationMsg {
     line: Option<u32>,
 }
 
+#[derive(Debug, Serialize, Clone)]
+struct PermOptionMsg {
+    option_id: String,
+    name: String,
+    kind: String,
+}
+
 impl From<AcpUpdate> for ServerMessage {
     fn from(update: AcpUpdate) -> Self {
         match update {
@@ -180,9 +193,20 @@ impl From<AcpUpdate> for ServerMessage {
                     .map(|(path, line)| LocationMsg { path, line })
                     .collect(),
             },
-            AcpUpdate::PermissionRequest { description } => {
-                ServerMessage::PermissionRequest { description }
-            }
+            AcpUpdate::PermissionRequest {
+                description,
+                options,
+            } => ServerMessage::PermissionRequest {
+                description,
+                options: options
+                    .into_iter()
+                    .map(|o| PermOptionMsg {
+                        option_id: o.option_id,
+                        name: o.name,
+                        kind: o.kind,
+                    })
+                    .collect(),
+            },
             AcpUpdate::Complete { stop_reason } => ServerMessage::Complete { stop_reason },
             AcpUpdate::Busy(value) => ServerMessage::Busy { value },
             AcpUpdate::Error { message } => ServerMessage::Error { message },
@@ -253,6 +277,7 @@ pub async fn ws_handler(
         env_vars,
         project_key,
         task_id,
+        chat_id: None,
     };
 
     Ok(ws.on_upgrade(move |socket| handle_acp_ws(socket, session_key, config)))
@@ -338,6 +363,9 @@ async fn handle_acp_ws(socket: WebSocket, session_key: String, config: AcpStartC
                             ClientMessage::SetModel { model_id } => {
                                 let _ = handle_for_input.set_model(model_id).await;
                             }
+                            ClientMessage::PermissionResponse { option_id } => {
+                                handle_for_input.respond_permission(option_id);
+                            }
                         }
                     }
                 }
@@ -372,4 +400,196 @@ impl IntoResponse for AcpError {
             AcpError::Internal(msg) => (StatusCode::INTERNAL_SERVER_ERROR, msg).into_response(),
         }
     }
+}
+
+// ─── Chat CRUD DTOs ──────────────────────────────────────────────────────────
+
+#[derive(Serialize)]
+pub struct ChatSessionResponse {
+    pub id: String,
+    pub title: String,
+    pub agent: String,
+    pub created_at: String,
+}
+
+#[derive(Serialize)]
+pub struct ChatListResponse {
+    pub chats: Vec<ChatSessionResponse>,
+}
+
+#[derive(Deserialize)]
+pub struct CreateChatRequest {
+    pub title: Option<String>,
+}
+
+#[derive(Deserialize)]
+pub struct UpdateChatRequest {
+    pub title: String,
+}
+
+impl From<&tasks::ChatSession> for ChatSessionResponse {
+    fn from(chat: &tasks::ChatSession) -> Self {
+        Self {
+            id: chat.id.clone(),
+            title: chat.title.clone(),
+            agent: chat.agent.clone(),
+            created_at: chat.created_at.to_rfc3339(),
+        }
+    }
+}
+
+/// Helper: resolve project key from project_id path param
+fn resolve_project_key(project_id: &str) -> Result<(String, String), AcpError> {
+    let projects = workspace::load_projects()
+        .map_err(|e| AcpError::Internal(format!("Failed to load projects: {}", e)))?;
+    let project = projects
+        .iter()
+        .find(|p| workspace::project_hash(&p.path) == project_id)
+        .ok_or(AcpError::NotFound("Project not found".to_string()))?;
+    let project_key = workspace::project_hash(&project.path);
+    Ok((project_key, project.path.clone()))
+}
+
+// ─── Chat CRUD Handlers ─────────────────────────────────────────────────────
+
+/// List all chats for a task
+pub async fn list_chats(
+    Path((project_id, task_id)): Path<(String, String)>,
+) -> Result<Json<ChatListResponse>, AcpError> {
+    let (project_key, _) = resolve_project_key(&project_id)?;
+    let task = tasks::get_task(&project_key, &task_id)
+        .map_err(|e| AcpError::Internal(e.to_string()))?
+        .ok_or(AcpError::NotFound("Task not found".to_string()))?;
+
+    // Migration: if task has acp_session_id but no chats, create one
+    let chats = if task.acp_session_id.is_some() && task.chats.is_empty() {
+        let cfg = config::load_config();
+        let agent = cfg
+            .acp
+            .agent_command
+            .unwrap_or_else(|| "claude".to_string());
+        let chat = tasks::ChatSession {
+            id: tasks::generate_chat_id(),
+            title: format!("Chat {}", task.created_at.format("%Y-%m-%d %H:%M")),
+            agent,
+            acp_session_id: task.acp_session_id.clone(),
+            created_at: task.created_at,
+        };
+        let _ = tasks::add_chat_session(&project_key, &task_id, chat.clone());
+        vec![chat]
+    } else {
+        task.chats
+    };
+
+    Ok(Json(ChatListResponse {
+        chats: chats.iter().map(ChatSessionResponse::from).collect(),
+    }))
+}
+
+/// Create a new chat for a task
+pub async fn create_chat(
+    Path((project_id, task_id)): Path<(String, String)>,
+    Json(body): Json<CreateChatRequest>,
+) -> Result<Json<ChatSessionResponse>, AcpError> {
+    let (project_key, _) = resolve_project_key(&project_id)?;
+    let _ = tasks::get_task(&project_key, &task_id)
+        .map_err(|e| AcpError::Internal(e.to_string()))?
+        .ok_or(AcpError::NotFound("Task not found".to_string()))?;
+
+    let cfg = config::load_config();
+    let agent = cfg
+        .acp
+        .agent_command
+        .unwrap_or_else(|| "claude".to_string());
+    let now = chrono::Utc::now();
+    let title = body
+        .title
+        .unwrap_or_else(|| format!("New Chat {}", now.format("%Y-%m-%d %H:%M")));
+
+    let chat = tasks::ChatSession {
+        id: tasks::generate_chat_id(),
+        title,
+        agent,
+        acp_session_id: None,
+        created_at: now,
+    };
+
+    tasks::add_chat_session(&project_key, &task_id, chat.clone())
+        .map_err(|e| AcpError::Internal(e.to_string()))?;
+
+    Ok(Json(ChatSessionResponse::from(&chat)))
+}
+
+/// Update a chat's title
+pub async fn update_chat(
+    Path((project_id, task_id, chat_id)): Path<(String, String, String)>,
+    Json(body): Json<UpdateChatRequest>,
+) -> Result<Json<ChatSessionResponse>, AcpError> {
+    let (project_key, _) = resolve_project_key(&project_id)?;
+
+    tasks::update_chat_title(&project_key, &task_id, &chat_id, &body.title)
+        .map_err(|e| AcpError::Internal(e.to_string()))?;
+
+    let chat = tasks::get_chat_session(&project_key, &task_id, &chat_id)
+        .map_err(|e| AcpError::Internal(e.to_string()))?
+        .ok_or(AcpError::NotFound("Chat not found".to_string()))?;
+
+    Ok(Json(ChatSessionResponse::from(&chat)))
+}
+
+/// Delete a chat (and kill its ACP session if running)
+pub async fn delete_chat(
+    Path((project_id, task_id, chat_id)): Path<(String, String, String)>,
+) -> Result<StatusCode, AcpError> {
+    let (project_key, _) = resolve_project_key(&project_id)?;
+
+    // Kill the ACP session for this chat if running
+    let session_key = format!("{}:{}:{}", project_key, task_id, chat_id);
+    let _ = acp::kill_session(&session_key);
+
+    tasks::delete_chat_session(&project_key, &task_id, &chat_id)
+        .map_err(|e| AcpError::Internal(e.to_string()))?;
+
+    Ok(StatusCode::NO_CONTENT)
+}
+
+// ─── Chat WebSocket Handler ─────────────────────────────────────────────────
+
+/// WebSocket upgrade handler for per-chat ACP sessions
+pub async fn chat_ws_handler(
+    ws: WebSocketUpgrade,
+    Path((project_id, task_id, chat_id)): Path<(String, String, String)>,
+) -> Result<Response, AcpError> {
+    let (project_key, _) = resolve_project_key(&project_id)?;
+
+    let task = tasks::get_task(&project_key, &task_id)
+        .map_err(|e| AcpError::Internal(format!("Failed to get task: {}", e)))?
+        .ok_or(AcpError::NotFound("Task not found".to_string()))?;
+
+    // Find the chat session
+    let chat = task
+        .chats
+        .iter()
+        .find(|c| c.id == chat_id)
+        .ok_or(AcpError::NotFound("Chat not found".to_string()))?;
+
+    // Resolve agent command from the chat's stored agent
+    let (agent_cmd, agent_args) = acp::resolve_agent_command(&chat.agent)
+        .ok_or(AcpError::Internal(format!("Unknown agent: {}", chat.agent)))?;
+
+    let env_vars = HashMap::new();
+    let working_dir = std::path::PathBuf::from(&task.worktree_path);
+    let session_key = format!("{}:{}:{}", project_key, task_id, chat_id);
+
+    let config = AcpStartConfig {
+        agent_command: agent_cmd,
+        agent_args,
+        working_dir,
+        env_vars,
+        project_key,
+        task_id,
+        chat_id: Some(chat_id),
+    };
+
+    Ok(ws.on_upgrade(move |socket| handle_acp_ws(socket, session_key, config)))
 }

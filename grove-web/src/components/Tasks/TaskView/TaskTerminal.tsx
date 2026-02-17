@@ -18,6 +18,8 @@ interface TaskTerminalProps {
   autoStart?: boolean;
   /** Called when terminal connects successfully (session is now live) */
   onConnected?: () => void;
+  /** Called when terminal disconnects (session ended) */
+  onDisconnected?: () => void;
   /** Whether this panel is in fullscreen mode */
   fullscreen?: boolean;
   /** Toggle fullscreen mode */
@@ -32,6 +34,7 @@ export function TaskTerminal({
   onStartSession,
   autoStart = false,
   onConnected: onConnectedProp,
+  onDisconnected: onDisconnectedProp,
   fullscreen = false,
   onToggleFullscreen,
 }: TaskTerminalProps) {
@@ -167,7 +170,7 @@ export function TaskTerminal({
           projectId={projectId}
           taskId={task.id}
           onConnected={handleConnected}
-          onDisconnected={() => setIsConnected(false)}
+          onDisconnected={() => { setIsConnected(false); onDisconnectedProp?.(); }}
         />
       </div>
     </motion.div>

@@ -22,7 +22,6 @@ import {
   createTask as apiCreateTask,
   recoverTask as apiRecoverTask,
   listTasks as apiListTasks,
-  getConfig,
 } from "../../api";
 import type { Task, TaskFilter } from "../../data/types";
 import { convertTaskResponse } from "../../utils/taskConvert";
@@ -51,13 +50,7 @@ export function TasksPage({ initialTaskId, initialViewMode, onNavigationConsumed
   const [createError, setCreateError] = useState<string | null>(null);
   const [archivedTasks, setArchivedTasks] = useState<Task[]>([]);
   const [isLoadingArchived, setIsLoadingArchived] = useState(false);
-  const [multiplexer, setMultiplexer] = useState<string>("tmux");
   const searchInputRef = useRef<HTMLInputElement | null>(null);
-
-  // Load multiplexer config
-  useEffect(() => {
-    getConfig().then((cfg) => setMultiplexer(cfg.multiplexer)).catch(() => {});
-  }, []);
 
   // Archive confirmation state (shared between hooks)
   const [pendingArchiveConfirm, setPendingArchiveConfirm] = useState<PendingArchiveConfirm | null>(null);
@@ -136,6 +129,15 @@ export function TasksPage({ initialTaskId, initialViewMode, onNavigationConsumed
       }
     }
   }, [initialTaskId, initialViewMode, activeTasks, pageState.selectedTask, onNavigationConsumed, pageHandlers]);
+
+  // Sync selectedTask with latest project data after refresh
+  useEffect(() => {
+    if (!pageState.selectedTask || !selectedProject?.tasks) return;
+    const updated = selectedProject.tasks.find((t) => t.id === pageState.selectedTask!.id);
+    if (updated && updated.status !== pageState.selectedTask.status) {
+      pageHandlers.setSelectedTask(updated);
+    }
+  }, [selectedProject?.tasks, pageState.selectedTask, pageHandlers]);
 
   // Filter and search tasks
   const filteredTasks = useMemo(() => {
@@ -238,6 +240,11 @@ export function TasksPage({ initialTaskId, initialViewMode, onNavigationConsumed
   const handleTerminalConnected = useCallback(async () => {
     await refreshSelectedProject();
     setAutoStartSession(false);
+  }, [refreshSelectedProject]);
+
+  // Handle terminal disconnected - refresh to update task status to "idle"
+  const handleTerminalDisconnected = useCallback(async () => {
+    await refreshSelectedProject();
   }, [refreshSelectedProject]);
 
   // Task navigation hook
@@ -477,7 +484,6 @@ export function TasksPage({ initialTaskId, initialViewMode, onNavigationConsumed
                 reviewOpen={pageState.reviewOpen}
                 editorOpen={pageState.editorOpen}
                 autoStartSession={autoStartSession}
-                multiplexer={multiplexer}
                 onToggleReview={pageHandlers.handleToggleReview}
                 onToggleEditor={pageHandlers.handleToggleEditor}
                 onCommit={opsHandlers.handleCommit}
@@ -489,6 +495,7 @@ export function TasksPage({ initialTaskId, initialViewMode, onNavigationConsumed
                 onReset={opsHandlers.handleReset}
                 onStartSession={handleStartSession}
                 onTerminalConnected={handleTerminalConnected}
+                onTerminalDisconnected={handleTerminalDisconnected}
               />
             </motion.div>
           )}

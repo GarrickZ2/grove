@@ -334,6 +334,7 @@ pub fn create_task(
         multiplexer: multiplexer.to_string(),
         session_name: session_name.clone(),
         acp_session_id: None,
+        chats: Vec::new(),
     };
 
     tasks::add_task(project_key, task.clone())?;

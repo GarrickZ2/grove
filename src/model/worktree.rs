@@ -88,6 +88,8 @@ pub struct Worktree {
     pub archived: bool,
     /// Worktree 路径
     pub path: String,
+    /// 解析后的 multiplexer 类型 ("tmux" | "zellij" | "acp")
+    pub multiplexer: String,
     /// 创建时间
     // TODO: reserved for sorting/display in future UI
     #[allow(dead_code)]

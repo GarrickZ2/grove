@@ -5,6 +5,8 @@ use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::fs;
 
+use std::process::Command;
+
 use crate::error::Result;
 use crate::storage::{self, tasks, workspace::project_hash};
 
@@ -173,6 +175,32 @@ pub fn load_hooks_with_cleanup(project_path: &str) -> HooksFile {
     }
 
     hooks
+}
+
+// === Notification utilities (shared by CLI hooks and ACP) ===
+
+/// 播放 macOS 提示音
+pub fn play_sound(sound: &str) {
+    let path = format!("/System/Library/Sounds/{}.aiff", sound);
+    Command::new("afplay").arg(&path).spawn().ok();
+}
+
+/// 发送 macOS 通知横幅
+pub fn send_banner(title: &str, message: &str) {
+    // 优先使用 terminal-notifier（点击后不会打开脚本编辑器）
+    let result = Command::new("terminal-notifier")
+        .args(["-title", title, "-message", message])
+        .spawn();
+
+    if result.is_err() {
+        // fallback 到 osascript
+        let script = format!(
+            r#"display notification "{}" with title "{}""#,
+            message.replace('"', "\\\""),
+            title.replace('"', "\\\"")
+        );
+        Command::new("osascript").args(["-e", &script]).spawn().ok();
+    }
 }
 
 #[cfg(test)]

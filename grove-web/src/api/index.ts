@@ -47,6 +47,10 @@ export {
   createDirectory,
   deleteFileOrDir,
   copyFile,
+  listChats,
+  createChat,
+  updateChatTitle,
+  deleteChat,
 } from './tasks';
 export type {
   CommitResponse,
@@ -76,6 +80,8 @@ export type {
   CreateFileRequest,
   CreateDirectoryRequest,
   CopyFileRequest,
+  ChatSessionResponse,
+  ChatListResponse,
 } from './tasks';
 
 export {

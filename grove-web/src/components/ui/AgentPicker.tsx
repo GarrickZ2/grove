@@ -32,6 +32,7 @@ interface AgentPickerProps {
   placeholder?: string;
   allowCustom?: boolean;
   customPlaceholder?: string;
+  options?: AgentOption[];
 }
 
 interface DropdownPosition {
@@ -46,7 +47,9 @@ export function AgentPicker({
   placeholder = "Select agent...",
   allowCustom = true,
   customPlaceholder = "Enter agent command...",
+  options: externalOptions,
 }: AgentPickerProps) {
+  const displayOptions = externalOptions ?? agentOptions;
   const [isOpen, setIsOpen] = useState(false);
   const [isCustomMode, setIsCustomMode] = useState(false);
   const [customValue, setCustomValue] = useState("");
@@ -57,7 +60,7 @@ export function AgentPicker({
   const dropdownRef = useRef<HTMLDivElement>(null);
 
   // Check if current value matches any option
-  const selectedOption = agentOptions.find((opt) => opt.value === value);
+  const selectedOption = displayOptions.find((opt) => opt.value === value);
   const isCustomValue = value && !selectedOption;
 
   // Initialize custom value if current value is custom
@@ -173,7 +176,7 @@ export function AgentPicker({
           }}
           className="py-1 bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-lg shadow-lg max-h-[400px] overflow-y-auto"
         >
-          {agentOptions.map((option) => {
+          {displayOptions.map((option) => {
             const Icon = option.icon;
             return (
               <button
