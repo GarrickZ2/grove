@@ -29,6 +29,16 @@ pub struct AcpSessionHandle {
     history: RwLock<Vec<AcpUpdate>>,
     /// 待处理的权限请求响应 channel
     pending_permission: Mutex<Option<tokio::sync::oneshot::Sender<String>>>,
+    /// 项目 key（用于磁盘持久化路径）
+    project_key: String,
+    /// 任务 ID（用于磁盘持久化路径）
+    task_id: String,
+    /// Chat ID（磁盘持久化必需）
+    chat_id: Option<String>,
+    /// 当前 turn 的事件缓冲（Complete 时 flush 到磁盘）
+    turn_buffer: Mutex<Vec<AcpUpdate>>,
+    /// load_session 期间抑制 emit（只恢复 agent 内部状态，不转发回放通知）
+    suppress_emit: std::sync::atomic::AtomicBool,
 }
 
 /// 发送给 ACP 后台任务的命令
@@ -41,7 +51,8 @@ enum AcpCommand {
 }
 
 /// 从 agent 接收的流式更新
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
 pub enum AcpUpdate {
     /// Agent 初始化完成
     SessionReady {
@@ -75,10 +86,12 @@ pub enum AcpUpdate {
         description: String,
         options: Vec<PermOptionData>,
     },
+    /// 用户对权限请求的响应（记录到历史用于回放）
+    PermissionResponse { option_id: String },
     /// 本轮处理结束
     Complete { stop_reason: String },
     /// Agent busy 状态变化
-    Busy(bool),
+    Busy { value: bool },
     /// 错误
     Error { message: String },
     /// 用户消息（load_session 回放时由 agent 发送）
@@ -94,7 +107,7 @@ pub enum AcpUpdate {
 }
 
 /// 权限选项数据（从 ACP PermissionOption 提取，用于 WebSocket 传输）
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct PermOptionData {
     pub option_id: String,
     pub name: String,
@@ -102,14 +115,14 @@ pub struct PermOptionData {
 }
 
 /// Plan entry 数据（从 ACP Plan 通知提取）
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct PlanEntryData {
     pub content: String,
     pub status: String,
 }
 
 /// Slash command 数据（从 ACP AvailableCommandsUpdate 提取）
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct CommandInfo {
     pub name: String,
     pub description: String,
@@ -616,6 +629,11 @@ pub async fn get_or_start_session(
                 agent_info: std::sync::RwLock::new(None),
                 history: RwLock::new(Vec::new()),
                 pending_permission: Mutex::new(None),
+                project_key: config.project_key.clone(),
+                task_id: config.task_id.clone(),
+                chat_id: config.chat_id.clone(),
+                turn_buffer: Mutex::new(Vec::new()),
+                suppress_emit: std::sync::atomic::AtomicBool::new(false),
             });
 
             // 注册到全局表
@@ -727,12 +745,9 @@ async fn run_acp_session(
         .unwrap_or_else(|| "0.0.0".to_string());
 
     // 检查 agent 是否支持 load_session
-    let supports_load = init_resp.agent_capabilities.load_session;
-    eprintln!(
-        "[ACP] agent={} v={} load_session={}",
-        agent_name, agent_version, supports_load
-    );
-
+    // Trae 错误地标识了不支持 load_session 且不返回 agent_info，但实际可以调用
+    let is_trae = config.agent_command.contains("trae");
+    let supports_load = init_resp.agent_capabilities.load_session || is_trae;
     // Helper: extract modes/models from session response
     fn extract_modes(
         modes: &Option<acp::SessionModeState>,
@@ -768,33 +783,21 @@ async fn run_acp_session(
         }
     }
 
-    // 查找保存的 session_id，尝试 load_session 或创建新会话
-    // 如果有 chat_id，从 chat session 读取；否则从 task 级读取（兼容旧数据）
-    let saved_id = if let Some(ref cid) = config.chat_id {
+    // 查找保存的 session_id（从 chat session 读取）
+    let saved_id = config.chat_id.as_ref().and_then(|cid| {
         crate::storage::tasks::get_chat_session(&config.project_key, &config.task_id, cid)
             .ok()
             .flatten()
             .and_then(|c| c.acp_session_id)
-    } else {
-        crate::storage::tasks::get_task(&config.project_key, &config.task_id)
-            .ok()
-            .flatten()
-            .and_then(|t| t.acp_session_id)
-    };
+    });
 
-    // Helper: persist session_id to per-chat or task-level storage
+    // Helper: persist session_id to chat storage
     let persist_session_id = |sid: &str| {
         if let Some(ref cid) = config.chat_id {
             let _ = crate::storage::tasks::update_chat_acp_session_id(
                 &config.project_key,
                 &config.task_id,
                 cid,
-                sid,
-            );
-        } else {
-            let _ = crate::storage::tasks::update_acp_session_id(
-                &config.project_key,
-                &config.task_id,
                 sid,
             );
         }
@@ -806,48 +809,17 @@ async fn run_acp_session(
     let available_models;
     let current_model_id;
 
-    let session_id = if supports_load {
-        if let Some(saved_id) = saved_id {
-            eprintln!(
-                "[ACP] load_session: attempting to restore session {}",
-                saved_id
-            );
-            match conn
-                .load_session(acp::LoadSessionRequest::new(
-                    acp::SessionId::new(&*saved_id),
-                    &config.working_dir,
-                ))
-                .await
-            {
-                Ok(resp) => {
-                    eprintln!(
-                        "[ACP] load_session: success — session {} restored",
-                        saved_id
-                    );
-                    (available_modes, current_mode_id) = extract_modes(&resp.modes);
-                    (available_models, current_model_id) = extract_models(&resp.models);
-                    saved_id
-                }
-                Err(e) => {
-                    eprintln!("[ACP] load_session: failed — {}", e);
-                    // fallback: 创建新会话
-                    let resp = conn
-                        .new_session(acp::NewSessionRequest::new(&config.working_dir))
-                        .await
-                        .map_err(|e| {
-                            crate::error::GroveError::Session(format!(
-                                "ACP new_session failed: {}",
-                                e
-                            ))
-                        })?;
-                    let sid = resp.session_id.to_string();
-                    persist_session_id(&sid);
-                    (available_modes, current_mode_id) = extract_modes(&resp.modes);
-                    (available_models, current_model_id) = extract_models(&resp.models);
-                    sid
-                }
+    // Helper macro: new_session + persist + extract modes/models
+    macro_rules! create_new_session {
+        () => {{
+            // 清除旧的磁盘历史
+            if let Some(ref cid) = config.chat_id {
+                crate::storage::chat_history::clear_history(
+                    &config.project_key,
+                    &config.task_id,
+                    cid,
+                );
             }
-        } else {
             let resp = conn
                 .new_session(acp::NewSessionRequest::new(&config.working_dir))
                 .await
@@ -859,19 +831,47 @@ async fn run_acp_session(
             (available_modes, current_mode_id) = extract_modes(&resp.modes);
             (available_models, current_model_id) = extract_models(&resp.models);
             sid
+        }};
+    }
+
+    let session_id = if let (true, Some(saved_id)) = (supports_load, saved_id) {
+        // 抑制 agent 的回放通知（Grove 统一从磁盘回放）
+        handle
+            .suppress_emit
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+        let load_result = conn
+            .load_session(acp::LoadSessionRequest::new(
+                acp::SessionId::new(&*saved_id),
+                &config.working_dir,
+            ))
+            .await;
+        handle
+            .suppress_emit
+            .store(false, std::sync::atomic::Ordering::Relaxed);
+
+        match load_result {
+            Ok(resp) => {
+                (available_modes, current_mode_id) = extract_modes(&resp.modes);
+                (available_models, current_model_id) = extract_models(&resp.models);
+                // 填充内存历史（供 WS 重连回放），不 broadcast（WS handler 已先行发送）
+                if let Some(ref cid) = config.chat_id {
+                    let disk_history = crate::storage::chat_history::load_history(
+                        &config.project_key,
+                        &config.task_id,
+                        cid,
+                    );
+                    for update in disk_history {
+                        handle.push_to_history(update);
+                    }
+                }
+                saved_id
+            }
+            Err(_) => {
+                create_new_session!()
+            }
         }
     } else {
-        let resp = conn
-            .new_session(acp::NewSessionRequest::new(&config.working_dir))
-            .await
-            .map_err(|e| {
-                crate::error::GroveError::Session(format!("ACP new_session failed: {}", e))
-            })?;
-        let sid = resp.session_id.to_string();
-        persist_session_id(&sid);
-        (available_modes, current_mode_id) = extract_modes(&resp.modes);
-        (available_models, current_model_id) = extract_models(&resp.models);
-        sid
+        create_new_session!()
     };
 
     let session_id_arc = acp::SessionId::new(&*session_id);
@@ -902,14 +902,14 @@ async fn run_acp_session(
             AcpCommand::Prompt { text } => {
                 // 记录用户消息到 history（重连时回放）
                 handle.emit(AcpUpdate::UserMessage { text: text.clone() });
-                handle.emit(AcpUpdate::Busy(true));
+                handle.emit(AcpUpdate::Busy { value: true });
                 let result = conn
                     .prompt(acp::PromptRequest::new(
                         session_id_arc.clone(),
                         vec![text.into()],
                     ))
                     .await;
-                handle.emit(AcpUpdate::Busy(false));
+                handle.emit(AcpUpdate::Busy { value: false });
 
                 match result {
                     Ok(resp) => {
@@ -1056,16 +1056,54 @@ impl AcpSessionHandle {
     /// 响应待处理的权限请求
     pub fn respond_permission(&self, option_id: String) {
         if let Some(tx) = self.pending_permission.lock().unwrap().take() {
-            let _ = tx.send(option_id);
+            let _ = tx.send(option_id.clone());
         }
+        // 记录到历史（磁盘 + 内存），回放时前端可标记为已解决
+        self.emit(AcpUpdate::PermissionResponse { option_id });
     }
 
-    /// 发送更新并记录到 history buffer
+    /// 发送更新并记录到 history buffer（带磁盘持久化）
     pub fn emit(&self, update: AcpUpdate) {
+        // load_session 期间抑制所有 emit（agent 回放的通知不转发）
+        if self
+            .suppress_emit
+            .load(std::sync::atomic::Ordering::Relaxed)
+        {
+            return;
+        }
+        // Complete 时：flush turn_buffer 到磁盘（compacted）
+        if matches!(update, AcpUpdate::Complete { .. }) {
+            self.flush_turn_to_disk(&update);
+        } else if crate::storage::chat_history::should_persist(&update) {
+            self.turn_buffer.lock().unwrap().push(update.clone());
+        }
+        // 内存 history + broadcast
         if let Ok(mut h) = self.history.write() {
             h.push(update.clone());
         }
         let _ = self.update_tx.send(update);
+    }
+
+    /// 将 turn_buffer flush 到磁盘（compacted）
+    fn flush_turn_to_disk(&self, complete: &AcpUpdate) {
+        if let Some(ref chat_id) = self.chat_id {
+            let mut buf = self.turn_buffer.lock().unwrap();
+            buf.push(complete.clone());
+            crate::storage::chat_history::append_turn(
+                &self.project_key,
+                &self.task_id,
+                chat_id,
+                &buf,
+            );
+            buf.clear();
+        }
+    }
+
+    /// 仅写入内存 history（不 broadcast），用于预填充历史供重连回放
+    pub fn push_to_history(&self, update: AcpUpdate) {
+        if let Ok(mut h) = self.history.write() {
+            h.push(update);
+        }
     }
 
     /// 获取完整的历史消息

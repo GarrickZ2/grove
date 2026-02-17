@@ -56,12 +56,9 @@ pub struct Task {
     /// 持久化的 session name（Zellij 有 40 字符限制）
     #[serde(default)]
     pub session_name: String,
-    /// ACP session ID（用于 load_session 恢复对话历史）— 保留向后兼容
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub acp_session_id: Option<String>,
-    /// Chat 会话列表（multi-chat 支持）
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub chats: Vec<ChatSession>,
+    /// 旧版 chats 字段（仅用于反序列化迁移，不再写入 tasks.toml）
+    #[serde(default, skip_serializing)]
+    pub chats_legacy: Vec<ChatSession>,
 }
 
 fn default_multiplexer() -> String {
@@ -258,43 +255,69 @@ pub fn touch_task(project: &str, task_id: &str) -> Result<()> {
     Ok(())
 }
 
-/// 更新任务的 ACP session ID
-pub fn update_acp_session_id(project: &str, task_id: &str, session_id: &str) -> Result<()> {
-    let mut tasks = load_tasks(project)?;
-
-    if let Some(task) = tasks.iter_mut().find(|t| t.id == task_id) {
-        task.acp_session_id = Some(session_id.to_string());
-        save_tasks(project, &tasks)?;
-    }
-
-    Ok(())
-}
-
 /// 生成 chat ID ("chat-XXXXXX")
 pub fn generate_chat_id() -> String {
     format!("chat-{}", generate_time_hash())
 }
 
-/// 添加 ChatSession 到指定 task
-pub fn add_chat_session(project: &str, task_id: &str, chat: ChatSession) -> Result<()> {
-    let mut tasks = load_tasks(project)?;
-    if let Some(task) = tasks.iter_mut().find(|t| t.id == task_id) {
-        task.chats.push(chat);
-        task.updated_at = Utc::now();
-        save_tasks(project, &tasks)?;
+// ========== Chat Session 存储 (独立 chats.toml) ==========
+
+/// Chat 列表容器 (用于 TOML 序列化)
+#[derive(Debug, Default, Serialize, Deserialize)]
+struct ChatsFile {
+    #[serde(default)]
+    chats: Vec<ChatSession>,
+}
+
+/// 获取 chats.toml 路径: ~/.grove/projects/{project}/tasks/{task_id}/chats/chats.toml
+fn chats_file_path(project: &str, task_id: &str) -> Result<PathBuf> {
+    let dir = super::ensure_task_data_dir(project, task_id)?.join("chats");
+    std::fs::create_dir_all(&dir)?;
+    Ok(dir.join("chats.toml"))
+}
+
+/// 加载 task 的所有 chat sessions（含自动迁移）
+pub fn load_chat_sessions(project: &str, task_id: &str) -> Result<Vec<ChatSession>> {
+    let path = chats_file_path(project, task_id)?;
+    if path.exists() {
+        let file: ChatsFile = super::load_toml(&path)?;
+        return Ok(file.chats);
     }
-    Ok(())
+
+    // 自动迁移：检查 tasks.toml 中旧的 chats_legacy 字段
+    if let Some(task) = get_task(project, task_id)? {
+        if !task.chats_legacy.is_empty() {
+            let chats = task.chats_legacy;
+            save_chat_sessions(project, task_id, &chats)?;
+            return Ok(chats);
+        }
+    }
+
+    Ok(Vec::new())
+}
+
+/// 保存 chat sessions 到 chats.toml
+fn save_chat_sessions(project: &str, task_id: &str, chats: &[ChatSession]) -> Result<()> {
+    let path = chats_file_path(project, task_id)?;
+    let file = ChatsFile {
+        chats: chats.to_vec(),
+    };
+    super::save_toml(&path, &file)
+}
+
+/// 添加 ChatSession
+pub fn add_chat_session(project: &str, task_id: &str, chat: ChatSession) -> Result<()> {
+    let mut chats = load_chat_sessions(project, task_id)?;
+    chats.push(chat);
+    save_chat_sessions(project, task_id, &chats)
 }
 
 /// 更新 ChatSession 的标题
 pub fn update_chat_title(project: &str, task_id: &str, chat_id: &str, title: &str) -> Result<()> {
-    let mut tasks = load_tasks(project)?;
-    if let Some(task) = tasks.iter_mut().find(|t| t.id == task_id) {
-        if let Some(chat) = task.chats.iter_mut().find(|c| c.id == chat_id) {
-            chat.title = title.to_string();
-            task.updated_at = Utc::now();
-            save_tasks(project, &tasks)?;
-        }
+    let mut chats = load_chat_sessions(project, task_id)?;
+    if let Some(chat) = chats.iter_mut().find(|c| c.id == chat_id) {
+        chat.title = title.to_string();
+        save_chat_sessions(project, task_id, &chats)?;
     }
     Ok(())
 }
@@ -306,26 +329,19 @@ pub fn update_chat_acp_session_id(
     chat_id: &str,
     session_id: &str,
 ) -> Result<()> {
-    let mut tasks = load_tasks(project)?;
-    if let Some(task) = tasks.iter_mut().find(|t| t.id == task_id) {
-        if let Some(chat) = task.chats.iter_mut().find(|c| c.id == chat_id) {
-            chat.acp_session_id = Some(session_id.to_string());
-            task.updated_at = Utc::now();
-            save_tasks(project, &tasks)?;
-        }
+    let mut chats = load_chat_sessions(project, task_id)?;
+    if let Some(chat) = chats.iter_mut().find(|c| c.id == chat_id) {
+        chat.acp_session_id = Some(session_id.to_string());
+        save_chat_sessions(project, task_id, &chats)?;
     }
     Ok(())
 }
 
 /// 删除 ChatSession
 pub fn delete_chat_session(project: &str, task_id: &str, chat_id: &str) -> Result<()> {
-    let mut tasks = load_tasks(project)?;
-    if let Some(task) = tasks.iter_mut().find(|t| t.id == task_id) {
-        task.chats.retain(|c| c.id != chat_id);
-        task.updated_at = Utc::now();
-        save_tasks(project, &tasks)?;
-    }
-    Ok(())
+    let mut chats = load_chat_sessions(project, task_id)?;
+    chats.retain(|c| c.id != chat_id);
+    save_chat_sessions(project, task_id, &chats)
 }
 
 /// 获取 task 的某个 chat session
@@ -334,8 +350,8 @@ pub fn get_chat_session(
     task_id: &str,
     chat_id: &str,
 ) -> Result<Option<ChatSession>> {
-    let task = get_task(project, task_id)?;
-    Ok(task.and_then(|t| t.chats.into_iter().find(|c| c.id == chat_id)))
+    let chats = load_chat_sessions(project, task_id)?;
+    Ok(chats.into_iter().find(|c| c.id == chat_id))
 }
 
 /// 根据 task_id 获取任务（从 tasks.toml）

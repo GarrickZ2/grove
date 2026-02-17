@@ -76,6 +76,9 @@ enum ServerMessage {
         description: String,
         options: Vec<PermOptionMsg>,
     },
+    PermissionResponse {
+        option_id: String,
+    },
     Complete {
         stop_reason: String,
     },
@@ -207,8 +210,11 @@ impl From<AcpUpdate> for ServerMessage {
                     })
                     .collect(),
             },
+            AcpUpdate::PermissionResponse { option_id } => {
+                ServerMessage::PermissionResponse { option_id }
+            }
             AcpUpdate::Complete { stop_reason } => ServerMessage::Complete { stop_reason },
-            AcpUpdate::Busy(value) => ServerMessage::Busy { value },
+            AcpUpdate::Busy { value } => ServerMessage::Busy { value },
             AcpUpdate::Error { message } => ServerMessage::Error { message },
             AcpUpdate::UserMessage { text } => ServerMessage::UserMessage { text },
             AcpUpdate::ModeChanged { mode_id } => ServerMessage::ModeChanged { mode_id },
@@ -236,62 +242,29 @@ impl From<AcpUpdate> for ServerMessage {
     }
 }
 
-/// WebSocket upgrade handler for ACP chat
-pub async fn ws_handler(
-    ws: WebSocketUpgrade,
-    Path((project_id, task_id)): Path<(String, String)>,
-) -> Result<Response, AcpError> {
-    // 1. Find project and task
-    let projects = workspace::load_projects()
-        .map_err(|e| AcpError::Internal(format!("Failed to load projects: {}", e)))?;
-
-    let project = projects
-        .iter()
-        .find(|p| workspace::project_hash(&p.path) == project_id)
-        .ok_or(AcpError::NotFound("Project not found".to_string()))?;
-
-    let project_key = workspace::project_hash(&project.path);
-
-    let task = tasks::get_task(&project_key, &task_id)
-        .map_err(|e| AcpError::Internal(format!("Failed to get task: {}", e)))?
-        .ok_or(AcpError::NotFound("Task not found".to_string()))?;
-
-    // 2. Resolve agent command
-    let cfg = config::load_config();
-    let agent_name = cfg
-        .acp
-        .agent_command
-        .unwrap_or_else(|| "claude".to_string());
-    let resolved = acp::resolve_agent(&agent_name)
-        .ok_or(AcpError::Internal(format!("Unknown agent: {}", agent_name)))?;
-
-    let env_vars = HashMap::new();
-
-    let working_dir = std::path::PathBuf::from(&task.worktree_path);
-    let session_key = format!("{}:{}", project_key, task_id);
-
-    let config = AcpStartConfig {
-        agent_command: resolved.command,
-        agent_args: resolved.args,
-        working_dir,
-        env_vars,
-        project_key,
-        task_id,
-        chat_id: None,
-        agent_type: resolved.agent_type,
-        remote_url: resolved.url,
-        remote_auth: resolved.auth_header,
-    };
-
-    Ok(ws.on_upgrade(move |socket| handle_acp_ws(socket, session_key, config)))
-}
-
 /// Handle the ACP WebSocket connection
 async fn handle_acp_ws(socket: WebSocket, session_key: String, config: AcpStartConfig) {
     let (mut ws_sender, mut ws_receiver) = socket.split();
 
     // Check if we're reattaching to an existing session
     let is_existing = acp::session_exists(&session_key);
+
+    // For NEW sessions: send disk history immediately so frontend shows it while agent starts
+    if !is_existing {
+        if let Some(ref chat_id) = config.chat_id {
+            let disk_history = crate::storage::chat_history::load_history(
+                &config.project_key,
+                &config.task_id,
+                chat_id,
+            );
+            for update in disk_history {
+                let msg: ServerMessage = update.into();
+                let _ = ws_sender
+                    .send(Message::Text(serde_json::to_string(&msg).unwrap().into()))
+                    .await;
+            }
+        }
+    }
 
     // Get or start ACP session (thread managed by acp module)
     let (handle, mut update_rx) = match acp::get_or_start_session(session_key, config).await {
@@ -307,7 +280,7 @@ async fn handle_acp_ws(socket: WebSocket, session_key: String, config: AcpStartC
         }
     };
 
-    // For existing sessions, replay full history so frontend rebuilds UI
+    // For existing sessions, replay in-memory history so frontend rebuilds UI
     if is_existing {
         for update in handle.get_history() {
             let msg: ServerMessage = update.into();
@@ -442,8 +415,27 @@ impl From<&tasks::ChatSession> for ChatSessionResponse {
     }
 }
 
-/// Helper: resolve project key from project_id path param
-fn resolve_project_key(project_id: &str) -> Result<(String, String), AcpError> {
+/// 构建 GROVE_* 环境变量，注入 task 上下文给 ACP agent
+fn build_grove_env(
+    project_key: &str,
+    project_path: &str,
+    project_name: &str,
+    task: &tasks::Task,
+) -> HashMap<String, String> {
+    let mut env = HashMap::new();
+    env.insert("GROVE_TASK_ID".into(), task.id.clone());
+    env.insert("GROVE_TASK_NAME".into(), task.name.clone());
+    env.insert("GROVE_BRANCH".into(), task.branch.clone());
+    env.insert("GROVE_TARGET".into(), task.target.clone());
+    env.insert("GROVE_WORKTREE".into(), task.worktree_path.clone());
+    env.insert("GROVE_PROJECT_NAME".into(), project_name.into());
+    env.insert("GROVE_PROJECT".into(), project_path.into());
+    env.insert("GROVE_PROJECT_KEY".into(), project_key.into());
+    env
+}
+
+/// Helper: resolve project key, path, name from project_id path param
+fn resolve_project_key(project_id: &str) -> Result<(String, String, String), AcpError> {
     let projects = workspace::load_projects()
         .map_err(|e| AcpError::Internal(format!("Failed to load projects: {}", e)))?;
     let project = projects
@@ -451,7 +443,7 @@ fn resolve_project_key(project_id: &str) -> Result<(String, String), AcpError> {
         .find(|p| workspace::project_hash(&p.path) == project_id)
         .ok_or(AcpError::NotFound("Project not found".to_string()))?;
     let project_key = workspace::project_hash(&project.path);
-    Ok((project_key, project.path.clone()))
+    Ok((project_key, project.path.clone(), project.name.clone()))
 }
 
 // ─── Chat CRUD Handlers ─────────────────────────────────────────────────────
@@ -460,30 +452,13 @@ fn resolve_project_key(project_id: &str) -> Result<(String, String), AcpError> {
 pub async fn list_chats(
     Path((project_id, task_id)): Path<(String, String)>,
 ) -> Result<Json<ChatListResponse>, AcpError> {
-    let (project_key, _) = resolve_project_key(&project_id)?;
-    let task = tasks::get_task(&project_key, &task_id)
+    let (project_key, _, _) = resolve_project_key(&project_id)?;
+    let _ = tasks::get_task(&project_key, &task_id)
         .map_err(|e| AcpError::Internal(e.to_string()))?
         .ok_or(AcpError::NotFound("Task not found".to_string()))?;
 
-    // Migration: if task has acp_session_id but no chats, create one
-    let chats = if task.acp_session_id.is_some() && task.chats.is_empty() {
-        let cfg = config::load_config();
-        let agent = cfg
-            .acp
-            .agent_command
-            .unwrap_or_else(|| "claude".to_string());
-        let chat = tasks::ChatSession {
-            id: tasks::generate_chat_id(),
-            title: format!("Chat {}", task.created_at.format("%Y-%m-%d %H:%M")),
-            agent,
-            acp_session_id: task.acp_session_id.clone(),
-            created_at: task.created_at,
-        };
-        let _ = tasks::add_chat_session(&project_key, &task_id, chat.clone());
-        vec![chat]
-    } else {
-        task.chats
-    };
+    let chats = tasks::load_chat_sessions(&project_key, &task_id)
+        .map_err(|e| AcpError::Internal(e.to_string()))?;
 
     Ok(Json(ChatListResponse {
         chats: chats.iter().map(ChatSessionResponse::from).collect(),
@@ -495,7 +470,7 @@ pub async fn create_chat(
     Path((project_id, task_id)): Path<(String, String)>,
     Json(body): Json<CreateChatRequest>,
 ) -> Result<Json<ChatSessionResponse>, AcpError> {
-    let (project_key, _) = resolve_project_key(&project_id)?;
+    let (project_key, _, _) = resolve_project_key(&project_id)?;
     let _ = tasks::get_task(&project_key, &task_id)
         .map_err(|e| AcpError::Internal(e.to_string()))?
         .ok_or(AcpError::NotFound("Task not found".to_string()))?;
@@ -530,7 +505,7 @@ pub async fn update_chat(
     Path((project_id, task_id, chat_id)): Path<(String, String, String)>,
     Json(body): Json<UpdateChatRequest>,
 ) -> Result<Json<ChatSessionResponse>, AcpError> {
-    let (project_key, _) = resolve_project_key(&project_id)?;
+    let (project_key, _, _) = resolve_project_key(&project_id)?;
 
     tasks::update_chat_title(&project_key, &task_id, &chat_id, &body.title)
         .map_err(|e| AcpError::Internal(e.to_string()))?;
@@ -546,7 +521,7 @@ pub async fn update_chat(
 pub async fn delete_chat(
     Path((project_id, task_id, chat_id)): Path<(String, String, String)>,
 ) -> Result<StatusCode, AcpError> {
-    let (project_key, _) = resolve_project_key(&project_id)?;
+    let (project_key, _, _) = resolve_project_key(&project_id)?;
 
     // Kill the ACP session for this chat if running
     let session_key = format!("{}:{}:{}", project_key, task_id, chat_id);
@@ -565,24 +540,22 @@ pub async fn chat_ws_handler(
     ws: WebSocketUpgrade,
     Path((project_id, task_id, chat_id)): Path<(String, String, String)>,
 ) -> Result<Response, AcpError> {
-    let (project_key, _) = resolve_project_key(&project_id)?;
+    let (project_key, project_path, project_name) = resolve_project_key(&project_id)?;
 
     let task = tasks::get_task(&project_key, &task_id)
         .map_err(|e| AcpError::Internal(format!("Failed to get task: {}", e)))?
         .ok_or(AcpError::NotFound("Task not found".to_string()))?;
 
     // Find the chat session
-    let chat = task
-        .chats
-        .iter()
-        .find(|c| c.id == chat_id)
+    let chat = tasks::get_chat_session(&project_key, &task_id, &chat_id)
+        .map_err(|e| AcpError::Internal(e.to_string()))?
         .ok_or(AcpError::NotFound("Chat not found".to_string()))?;
 
     // Resolve agent command from the chat's stored agent
     let resolved = acp::resolve_agent(&chat.agent)
         .ok_or(AcpError::Internal(format!("Unknown agent: {}", chat.agent)))?;
 
-    let env_vars = HashMap::new();
+    let env_vars = build_grove_env(&project_key, &project_path, &project_name, &task);
     let working_dir = std::path::PathBuf::from(&task.worktree_path);
     let session_key = format!("{}:{}:{}", project_key, task_id, chat_id);
 

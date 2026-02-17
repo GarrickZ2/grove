@@ -654,19 +654,35 @@ export function TaskChat({
           });
           break;
         case "tool_call":
-          console.log('[tool_call]', JSON.stringify(msg, null, 2));
-          setMessages((prev) => [...prev, {
-            type: "tool", id: msg.id, title: msg.title, status: "running", collapsed: false,
-            locations: msg.locations,
-          }]);
+          setMessages((prev) => {
+            // Upsert: if a tool with same ID already exists, update it (some agents send duplicate ToolCall)
+            if (prev.some((m) => m.type === "tool" && m.id === msg.id)) {
+              return prev.map((m) =>
+                m.type === "tool" && m.id === msg.id
+                  ? { ...m, title: msg.title, locations: msg.locations?.length ? msg.locations : m.locations }
+                  : m,
+              );
+            }
+            return [...prev, {
+              type: "tool", id: msg.id, title: msg.title, status: "running", collapsed: false,
+              locations: msg.locations,
+            }];
+          });
           break;
         case "tool_call_update":
-          console.log('[tool_call_update]', JSON.stringify(msg, null, 2));
-          setMessages((prev) =>
-            prev.map((m) => m.type === "tool" && m.id === msg.id
-              ? { ...m, status: msg.status, content: msg.content,
-                  locations: msg.locations?.length ? msg.locations : m.locations } : m),
-          );
+          setMessages((prev) => {
+            const exists = prev.some((m) => m.type === "tool" && m.id === msg.id);
+            if (exists) {
+              return prev.map((m) => m.type === "tool" && m.id === msg.id
+                ? { ...m, status: msg.status, content: msg.content,
+                    locations: msg.locations?.length ? msg.locations : m.locations } : m);
+            }
+            // No preceding tool_call (e.g. compacted disk replay) — create entry
+            return [...prev, {
+              type: "tool", id: msg.id, title: msg.id, status: msg.status,
+              content: msg.content, collapsed: true, locations: msg.locations ?? [],
+            }];
+          });
           break;
         case "permission_request":
           setMessages((prev) => [...prev, {
@@ -674,6 +690,15 @@ export function TaskChat({
             description: msg.description,
             options: msg.options ?? [],
           }]);
+          break;
+        case "permission_response":
+          setMessages((prev) =>
+            prev.map((m) => {
+              if (m.type !== "permission" || m.resolved) return m;
+              const match = m.options?.find((o: { option_id: string }) => o.option_id === msg.option_id);
+              return { ...m, resolved: match?.name ?? msg.option_id };
+            }),
+          );
           break;
         case "complete":
           setMessages((prev) =>
@@ -742,9 +767,20 @@ export function TaskChat({
         state.messages = [...msgs];
         break;
       }
-      case "tool_call":
-        state.messages = [...state.messages, { type: "tool", id: msg.id, title: msg.title, status: "running", collapsed: false, locations: msg.locations }];
+      case "tool_call": {
+        // Upsert: if a tool with same ID already exists, update it (some agents send duplicate ToolCall)
+        const toolExists = state.messages.some((m) => m.type === "tool" && m.id === msg.id);
+        if (toolExists) {
+          state.messages = state.messages.map((m) =>
+            m.type === "tool" && m.id === msg.id
+              ? { ...m, title: msg.title, locations: msg.locations?.length ? msg.locations : m.locations }
+              : m,
+          );
+        } else {
+          state.messages = [...state.messages, { type: "tool", id: msg.id, title: msg.title, status: "running", collapsed: false, locations: msg.locations }];
+        }
         break;
+      }
       case "thought_chunk": {
         const msgs = state.messages;
         let found = false;
@@ -761,14 +797,30 @@ export function TaskChat({
         state.messages = [...msgs];
         break;
       }
-      case "tool_call_update":
-        state.messages = state.messages.map((m) =>
-          m.type === "tool" && m.id === msg.id ? { ...m, status: msg.status, content: msg.content, locations: msg.locations?.length ? msg.locations : m.locations } : m);
+      case "tool_call_update": {
+        const toolUpdateExists = state.messages.some((m) => m.type === "tool" && m.id === msg.id);
+        if (toolUpdateExists) {
+          state.messages = state.messages.map((m) =>
+            m.type === "tool" && m.id === msg.id ? { ...m, status: msg.status, content: msg.content, locations: msg.locations?.length ? msg.locations : m.locations } : m);
+        } else {
+          state.messages = [...state.messages, {
+            type: "tool", id: msg.id, title: msg.id, status: msg.status,
+            content: msg.content, collapsed: true, locations: msg.locations ?? [],
+          }];
+        }
         break;
+      }
       case "permission_request":
         state.messages = [...state.messages, {
           type: "permission", description: msg.description, options: msg.options ?? [],
         }];
+        break;
+      case "permission_response":
+        state.messages = state.messages.map((m) => {
+          if (m.type !== "permission" || m.resolved) return m;
+          const match = m.options?.find((o: { option_id: string }) => o.option_id === msg.option_id);
+          return { ...m, resolved: match?.name ?? msg.option_id };
+        });
         break;
       case "complete":
         state.messages = state.messages.map((m) => m.type === "assistant" && !m.complete ? { ...m, complete: true } : m);
@@ -1476,7 +1528,7 @@ export function TaskChat({
                   ? "Waiting for connection..."
                   : isTerminalMode
                     ? "Enter shell command\u2026"
-                    : "Message agent \u2014 type / for commands, @ for files, ! for shell"}
+                    : "Message agent\u2026"}
               </div>
             )}
             {/* Terminal mode indicator */}

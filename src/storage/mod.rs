@@ -1,3 +1,4 @@
+pub mod chat_history;
 pub mod comments;
 pub mod config;
 pub mod notes;

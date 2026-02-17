@@ -166,11 +166,12 @@ fn task_to_worktree(
             // 检查 session 是否运行
             if matches!(resolved_mux, Multiplexer::Acp) {
                 // Multi-chat: 检查每个 chat 的 session，或旧的 task 级 key
-                let has_live = if task.chats.is_empty() {
+                let chats = tasks::load_chat_sessions(project, &task.id).unwrap_or_default();
+                let has_live = if chats.is_empty() {
                     let key = format!("{}:{}", project, &task.id);
                     session::session_exists(&resolved_mux, &key)
                 } else {
-                    task.chats.iter().any(|chat| {
+                    chats.iter().any(|chat| {
                         let key = format!("{}:{}:{}", project, &task.id, &chat.id);
                         session::session_exists(&resolved_mux, &key)
                     })
