@@ -745,9 +745,30 @@ export function TaskChat({
       case "tool_call":
         state.messages = [...state.messages, { type: "tool", id: msg.id, title: msg.title, status: "running", collapsed: false, locations: msg.locations }];
         break;
+      case "thought_chunk": {
+        const msgs = state.messages;
+        let found = false;
+        for (let i = msgs.length - 1; i >= 0; i--) {
+          const m = msgs[i];
+          if (m.type === "thinking") {
+            msgs[i] = { ...m, content: m.content + msg.text };
+            found = true;
+            break;
+          }
+          if (m.type === "user" || m.type === "assistant") break;
+        }
+        if (!found) msgs.push({ type: "thinking", content: msg.text, collapsed: false });
+        state.messages = [...msgs];
+        break;
+      }
       case "tool_call_update":
         state.messages = state.messages.map((m) =>
           m.type === "tool" && m.id === msg.id ? { ...m, status: msg.status, content: msg.content, locations: msg.locations?.length ? msg.locations : m.locations } : m);
+        break;
+      case "permission_request":
+        state.messages = [...state.messages, {
+          type: "permission", description: msg.description, options: msg.options ?? [],
+        }];
         break;
       case "complete":
         state.messages = state.messages.map((m) => m.type === "assistant" && !m.complete ? { ...m, complete: true } : m);

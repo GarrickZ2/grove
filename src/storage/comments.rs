@@ -1,9 +1,8 @@
-use std::collections::HashMap;
 use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
-use super::ensure_project_dir;
+use super::ensure_task_data_dir;
 use crate::error::Result;
 
 /// Comment 类型
@@ -54,10 +53,6 @@ fn default_timestamp() -> String {
     chrono::Utc::now().to_rfc3339()
 }
 
-fn default_side() -> String {
-    "ADD".to_string()
-}
-
 /// 单条 Review Comment
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Comment {
@@ -106,48 +101,10 @@ pub struct Comment {
     /// 创建 comment 时锚定行的代码快照，用于自动 outdated 检测 (only for inline comments)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub anchor_text: Option<String>,
-
-    // --- 旧字段：仅用于反序列化旧格式，不再序列化 ---
-    /// 旧格式的位置字符串 (如 "src/main.rs:42")
-    #[serde(default, skip_serializing)]
-    location: Option<String>,
-    /// 旧格式的单条回复
-    #[serde(default, skip_serializing)]
-    reply: Option<String>,
 }
 
 impl Comment {
-    /// 将旧格式字段迁移到新格式字段
-    fn migrate_legacy(&mut self) {
-        // 迁移 location → file_path / start_line / end_line
-        if let Some(loc) = self.location.take() {
-            if self.file_path.is_none() {
-                let (file, (start, end)) = parse_location(&loc);
-                self.file_path = Some(file);
-                self.start_line = Some(start);
-                self.end_line = Some(end);
-            }
-        }
-
-        // 迁移 reply → replies[0]
-        if let Some(reply_text) = self.reply.take() {
-            if self.replies.is_empty() && !reply_text.is_empty() {
-                self.replies.push(CommentReply {
-                    id: 1,
-                    content: reply_text,
-                    author: "AI".to_string(),
-                    timestamp: default_timestamp(),
-                });
-            }
-        }
-
-        // 确保 end_line >= start_line (for inline comments)
-        if let (Some(start), None) = (self.start_line, self.end_line) {
-            self.end_line = Some(start);
-        }
-    }
-
-    /// 创建 inline comment (legacy behavior)
+    /// 创建 inline comment
     #[allow(clippy::too_many_arguments)]
     pub fn new_inline(
         id: u32,
@@ -172,8 +129,6 @@ impl Comment {
             status: CommentStatus::Open,
             replies: Vec::new(),
             anchor_text,
-            location: None,
-            reply: None,
         }
     }
 
@@ -192,8 +147,6 @@ impl Comment {
             status: CommentStatus::Open,
             replies: Vec::new(),
             anchor_text: None,
-            location: None,
-            reply: None,
         }
     }
 
@@ -212,8 +165,6 @@ impl Comment {
             status: CommentStatus::Open,
             replies: Vec::new(),
             anchor_text: None,
-            location: None,
-            reply: None,
         }
     }
 
@@ -252,7 +203,7 @@ impl Comment {
     }
 }
 
-/// 解析旧格式的 location 字符串
+/// 解析 location 字符串
 ///
 /// 支持格式:
 /// - "src/main.rs:42" → ("src/main.rs", (42, 42))
@@ -311,165 +262,36 @@ impl CommentsData {
     }
 }
 
-/// AI 回复数据（按 location 索引）— 旧格式
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-struct ReplyData {
-    pub status: CommentStatus,
-    pub reply: String,
-}
-
-/// replies.json 存储格式 — 旧格式
-type RepliesMap = HashMap<String, ReplyData>;
-
 // ============================================================================
 // Path helpers
 // ============================================================================
 
-/// 新路径: review/<task-id>.json
+/// review.json 路径: tasks/<task-id>/review.json
 fn review_path(project: &str, task_id: &str) -> Result<PathBuf> {
-    let dir = ensure_project_dir(project)?.join("review");
-    std::fs::create_dir_all(&dir)?;
-    Ok(dir.join(format!("{}.json", task_id)))
-}
-
-/// 旧路径: ai/<task-id>/comments.json (仅用于 fallback 读取，不创建目录)
-fn legacy_comments_json_path(project: &str, task_id: &str) -> Result<PathBuf> {
-    Ok(ensure_project_dir(project)?
-        .join("ai")
-        .join(task_id)
-        .join("comments.json"))
-}
-
-/// 获取 replies.json 存储路径 (旧格式 fallback，不创建目录)
-fn replies_path(project: &str, task_id: &str) -> Result<PathBuf> {
-    Ok(ensure_project_dir(project)?
-        .join("ai")
-        .join(task_id)
-        .join("replies.json"))
-}
-
-/// 获取 diff_comments.md 路径 (旧格式 fallback，不创建目录)
-fn diff_comments_path(project: &str, task_id: &str) -> Result<PathBuf> {
-    Ok(ensure_project_dir(project)?
-        .join("ai")
-        .join(task_id)
-        .join("diff_comments.md"))
+    Ok(ensure_task_data_dir(project, task_id)?.join("review.json"))
 }
 
 // ============================================================================
-// JSON format (new)
+// JSON persistence
 // ============================================================================
 
-/// 从 JSON 文件加载 CommentsData
-///
-/// 先查新路径 `review/<task-id>.json`，fallback 旧路径 `ai/<task-id>/comments.json`
+/// 从 review.json 加载 CommentsData
 fn load_comments_json(project: &str, task_id: &str) -> Result<Option<CommentsData>> {
-    // 1. 新路径
-    let new_path = review_path(project, task_id)?;
-    if new_path.exists() {
-        let content = std::fs::read_to_string(&new_path)?;
-        let mut data: CommentsData = serde_json::from_str(&content)?;
-        for comment in &mut data.comments {
-            comment.migrate_legacy();
-        }
+    let path = review_path(project, task_id)?;
+    if path.exists() {
+        let content = std::fs::read_to_string(&path)?;
+        let data: CommentsData = serde_json::from_str(&content)?;
         return Ok(Some(data));
     }
-
-    // 2. 旧路径 fallback
-    let legacy_path = legacy_comments_json_path(project, task_id)?;
-    if legacy_path.exists() {
-        let content = std::fs::read_to_string(&legacy_path)?;
-        let mut data: CommentsData = serde_json::from_str(&content)?;
-        for comment in &mut data.comments {
-            comment.migrate_legacy();
-        }
-        return Ok(Some(data));
-    }
-
     Ok(None)
 }
 
-/// 保存到 review/<task-id>.json (新路径)
+/// 保存到 review.json
 fn save_comments_json(project: &str, task_id: &str, data: &CommentsData) -> Result<()> {
     let path = review_path(project, task_id)?;
     let content = serde_json::to_string_pretty(data)?;
     std::fs::write(&path, content)?;
     Ok(())
-}
-
-// ============================================================================
-// Legacy format
-// ============================================================================
-
-/// 从 diff_comments.md 解析 comments
-///
-/// Legacy 格式:
-/// ```text
-/// src/main.rs:L42
-/// comment content here
-/// maybe multiple lines
-/// =====
-/// src/app.rs:L100
-/// another comment
-/// ```
-fn parse_diff_comments(content: &str) -> Vec<Comment> {
-    let mut comments = Vec::new();
-    let mut id = 1u32;
-
-    // 按 "=====" 分隔符切分
-    for block in content.split("\n=====\n") {
-        let block = block.trim();
-        if block.is_empty() {
-            continue;
-        }
-
-        // 第一行是 location，剩余是 content
-        let mut lines = block.lines();
-        if let Some(location) = lines.next() {
-            let location = location.trim().to_string();
-            if location.is_empty() {
-                continue;
-            }
-
-            let content: String = lines.collect::<Vec<_>>().join("\n").trim().to_string();
-            if content.is_empty() {
-                continue;
-            }
-
-            let (file_path, (start_line, end_line)) = parse_location(&location);
-
-            comments.push(Comment {
-                id,
-                comment_type: CommentType::Inline,
-                file_path: Some(file_path),
-                side: Some(default_side()),
-                start_line: Some(start_line),
-                end_line: Some(end_line),
-                content,
-                author: default_author(),
-                timestamp: default_timestamp(),
-                status: CommentStatus::Open,
-                replies: Vec::new(),
-                anchor_text: None,
-                location: None,
-                reply: None,
-            });
-            id += 1;
-        }
-    }
-
-    comments
-}
-
-/// 加载 AI 回复数据 — 旧格式
-fn load_replies(project: &str, task_id: &str) -> Result<RepliesMap> {
-    let path = replies_path(project, task_id)?;
-    if !path.exists() {
-        return Ok(HashMap::new());
-    }
-    let content = std::fs::read_to_string(&path)?;
-    let data = serde_json::from_str(&content)?;
-    Ok(data)
 }
 
 // ============================================================================
@@ -601,48 +423,14 @@ pub fn save_comments(project: &str, task_id: &str, data: &CommentsData) -> Resul
 // ============================================================================
 
 /// 读取 Review Comments
-///
-/// 策略：优先读取 comments.json（新格式），fallback 到 diff_comments.md + replies.json（旧格式）
 pub fn load_comments(project: &str, task_id: &str) -> Result<CommentsData> {
-    // 1. 优先读取新格式
     if let Some(data) = load_comments_json(project, task_id)? {
         return Ok(data);
     }
-
-    // 2. Fallback: 从 diff_comments.md + replies.json 读取旧格式
-    let diff_path = diff_comments_path(project, task_id)?;
-    let mut comments = if diff_path.exists() {
-        let content = std::fs::read_to_string(&diff_path)?;
-        parse_diff_comments(&content)
-    } else {
-        Vec::new()
-    };
-
-    // 从 replies.json 读取 AI 回复，合并到 comments (仅用于 inline comments)
-    let replies = load_replies(project, task_id)?;
-    for comment in &mut comments {
-        if let (Some(ref fp), Some(sl)) = (&comment.file_path, comment.start_line) {
-            let loc_key = format!("{}:{}", fp, sl);
-            if let Some(reply_data) = replies.get(&loc_key) {
-                comment.status = reply_data.status;
-                if !reply_data.reply.is_empty() {
-                    comment.replies.push(CommentReply {
-                        id: 1,
-                        content: reply_data.reply.clone(),
-                        author: "AI".to_string(),
-                        timestamp: default_timestamp(),
-                    });
-                }
-            }
-        }
-    }
-
-    Ok(CommentsData { comments })
+    Ok(CommentsData::default())
 }
 
 /// 回复 Comment（仅追加回复，不改变 status）
-///
-/// 向 replies Vec 追加新回复
 pub fn reply_comment(
     project: &str,
     task_id: &str,
@@ -652,7 +440,6 @@ pub fn reply_comment(
 ) -> Result<bool> {
     let mut data = load_comments(project, task_id)?;
     if let Some(comment) = data.comments.iter_mut().find(|c| c.id == comment_id) {
-        // 仅当 message 非空时才添加回复记录
         if !message.is_empty() {
             let reply_id = comment.replies.iter().map(|r| r.id).max().unwrap_or(0) + 1;
             comment.replies.push(CommentReply {
@@ -670,8 +457,6 @@ pub fn reply_comment(
 }
 
 /// 更新 Comment 状态（不添加回复）
-///
-/// 专门用于改变 comment 的 open/resolved 状态
 pub fn update_comment_status(
     project: &str,
     task_id: &str,
@@ -689,9 +474,6 @@ pub fn update_comment_status(
 }
 
 /// 添加新 Comment
-///
-/// 使用新的 comments.json 格式存储。自动分配 ID。
-/// `anchor_text`: 锚定行的代码快照，用于自动 outdated 检测（仅用于 inline）。
 #[allow(clippy::too_many_arguments)]
 pub fn add_comment(
     project: &str,
@@ -707,10 +489,8 @@ pub fn add_comment(
 ) -> Result<Comment> {
     let mut data = load_comments(project, task_id)?;
 
-    // 分配新 ID (最大 id + 1)
     let new_id = data.comments.iter().map(|c| c.id).max().unwrap_or(0) + 1;
 
-    // 创建 comment 基于类型
     let comment = match comment_type {
         CommentType::Inline => Comment::new_inline(
             new_id,
@@ -745,7 +525,6 @@ pub fn add_comment(
         }
     };
 
-    // 验证
     comment.validate()?;
 
     data.comments.push(comment.clone());
@@ -755,8 +534,6 @@ pub fn add_comment(
 }
 
 /// 删除 Comment
-///
-/// 从 comments.json 中删除。如果是旧格式，先迁移到新格式再删除。
 pub fn delete_comment(project: &str, task_id: &str, comment_id: u32) -> Result<bool> {
     let mut data = load_comments(project, task_id)?;
     let len_before = data.comments.len();
@@ -820,22 +597,6 @@ pub fn delete_reply(project: &str, task_id: &str, comment_id: u32, reply_id: u32
     Ok(false)
 }
 
-/// 删除 review 数据（新旧路径都清理）
-pub fn delete_review_data(project: &str, task_id: &str) -> Result<()> {
-    // 新路径: review/<task-id>.json
-    let new_path = review_path(project, task_id)?;
-    if new_path.exists() {
-        std::fs::remove_file(&new_path)?;
-    }
-
-    // 旧路径: ai/<task-id>/ (整个目录)
-    let legacy_dir = ensure_project_dir(project)?.join("ai").join(task_id);
-    if legacy_dir.exists() {
-        std::fs::remove_dir_all(&legacy_dir)?;
-    }
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -882,7 +643,6 @@ mod tests {
 
     #[test]
     fn test_find_anchor_shifted() {
-        // 模拟代码位移：原来在第2行，现在前面多了一行
         let content = "new_line\naaa\nbbb\nccc";
         assert_eq!(find_anchor(content, "aaa\nbbb", Some(1)), Some(2));
     }
@@ -895,12 +655,9 @@ mod tests {
 
     #[test]
     fn test_find_anchor_nearest_to_hint() {
-        // "bbb" 出现在第 2 行和第 4 行，hint=4 应选第 4 行
         let content = "aaa\nbbb\nccc\nbbb\neee";
         assert_eq!(find_anchor(content, "bbb", Some(4)), Some(4));
-        // hint=2 应选第 2 行
         assert_eq!(find_anchor(content, "bbb", Some(2)), Some(2));
-        // hint=3 有歧义（等距），选较近的其一即可
         let result = find_anchor(content, "bbb", Some(3));
         assert!(result == Some(2) || result == Some(4));
     }
@@ -921,12 +678,9 @@ mod tests {
                 status: CommentStatus::Open,
                 replies: Vec::new(),
                 anchor_text: Some("original_code".to_string()),
-                location: None,
-                reply: None,
             }],
         };
 
-        // 文件内容不包含 anchor_text → 标记 outdated
         apply_outdated_detection(&mut data, |_, _| {
             Some("different_code\nmore_code".to_string())
         });
@@ -950,12 +704,9 @@ mod tests {
                 status: CommentStatus::Open,
                 replies: Vec::new(),
                 anchor_text: Some("bbb\nccc".to_string()),
-                location: None,
-                reply: None,
             }],
         };
 
-        // 代码位移：anchor 现在从第5行开始
         let changed = apply_outdated_detection(&mut data, |_, _| {
             Some("xxx\nyyy\nzzz\naaa\nbbb\nccc\nddd".to_string())
         });
@@ -982,12 +733,9 @@ mod tests {
                 status: CommentStatus::Resolved,
                 replies: Vec::new(),
                 anchor_text: Some("old_code".to_string()),
-                location: None,
-                reply: None,
             }],
         };
 
-        // Resolved comment 不应被检测
         apply_outdated_detection(&mut data, |_, _| Some("different_code".to_string()));
 
         assert_eq!(data.comments[0].status, CommentStatus::Resolved);
@@ -1009,12 +757,9 @@ mod tests {
                 status: CommentStatus::Open,
                 replies: Vec::new(),
                 anchor_text: None,
-                location: None,
-                reply: None,
             }],
         };
 
-        // 无 anchor_text → 不参与检测，保持 Open
         apply_outdated_detection(&mut data, |_, _| Some("whatever".to_string()));
 
         assert_eq!(data.comments[0].status, CommentStatus::Open);
@@ -1036,12 +781,9 @@ mod tests {
                 status: CommentStatus::Open,
                 replies: Vec::new(),
                 anchor_text: Some("some_code".to_string()),
-                location: None,
-                reply: None,
             }],
         };
 
-        // 文件不存在 → outdated
         apply_outdated_detection(&mut data, |_, _| None);
 
         assert_eq!(data.comments[0].status, CommentStatus::Outdated);

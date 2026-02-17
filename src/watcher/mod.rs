@@ -20,7 +20,7 @@ use notify::{
     Config, Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher,
 };
 
-pub use storage::{clear_edit_history, load_edit_history, save_edit_history, EditEvent};
+pub use storage::{load_edit_history, save_edit_history, EditEvent};
 
 /// Debounce window in seconds - ignore duplicate events for same file within this window
 const DEBOUNCE_SECS: i64 = 2;
