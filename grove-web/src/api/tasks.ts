@@ -94,7 +94,7 @@ export type CommentType = 'inline' | 'file' | 'project';
 
 export interface ReviewCommentEntry {
   id: number;
-  comment_type?: CommentType; // defaults to 'inline' for backward compatibility
+  comment_type?: CommentType; // defaults to 'inline'
   file_path?: string; // optional (None for project-level)
   side?: 'ADD' | 'DELETE'; // optional (None for file/project-level)
   start_line?: number; // optional (None for file/project-level)

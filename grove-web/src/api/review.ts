@@ -85,7 +85,7 @@ export async function createComment(
   );
 }
 
-/** Create an inline comment (legacy helper) */
+/** Create an inline comment */
 export async function createInlineComment(
   projectId: string,
   taskId: string,

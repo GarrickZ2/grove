@@ -596,15 +596,5 @@ export function LayoutEditor({
   );
 }
 
-// Helper to convert old format to new format (for compatibility)
-export function migrateLayoutConfig(old: unknown): CustomLayoutConfig[] {
-  // If already in new format
-  if (Array.isArray(old)) {
-    return old as CustomLayoutConfig[];
-  }
-  // Create default
-  return [createDefaultLayout()];
-}
-
 // Export for use in SettingsPage
 export { createDefaultLayout, countPanes };

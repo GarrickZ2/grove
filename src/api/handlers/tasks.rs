@@ -202,7 +202,7 @@ pub struct ReviewCommentReplyEntry {
 pub struct ReviewCommentEntry {
     pub id: u32,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub comment_type: Option<String>, // "inline" | "file" | "project" (defaults to "inline" for backward compatibility)
+    pub comment_type: Option<String>, // "inline" | "file" | "project" (defaults to "inline")
     #[serde(skip_serializing_if = "Option::is_none")]
     pub file_path: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -292,8 +292,6 @@ pub struct CreateReviewCommentRequest {
     pub start_line: Option<u32>,
     pub end_line: Option<u32>,
     pub author: Option<String>,
-    /// 旧格式兼容：location string (如 "src/main.rs:42")
-    pub location: Option<String>,
 }
 
 // ============================================================================
@@ -881,7 +879,7 @@ pub async fn get_diff(
             });
         Ok(Json(result).into_response())
     } else {
-        // Return summary format (backward compatible)
+        // Return summary format
         let diff_entries = git::diff_stat(&task.worktree_path, &task.target).unwrap_or_default();
 
         let mut total_additions = 0u32;
@@ -1343,7 +1341,7 @@ pub async fn create_review_comment(
     let comment_type = match req.comment_type.as_deref() {
         Some("file") => comments::CommentType::File,
         Some("project") => comments::CommentType::Project,
-        _ => comments::CommentType::Inline, // default to inline for backward compatibility
+        _ => comments::CommentType::Inline, // default to inline
     };
 
     let default_name = get_git_user_name(&project_key, &task_id);
@@ -1356,15 +1354,11 @@ pub async fn create_review_comment(
     // Process based on comment type
     match comment_type {
         comments::CommentType::Inline => {
-            // Parse file_path, side, lines (fallback to location string for backward compat)
             let (file_path, side, start_line, end_line) = if let Some(ref fp) = req.file_path {
                 let side = req.side.as_deref().unwrap_or("ADD");
                 let start = req.start_line.unwrap_or(1);
                 let end = req.end_line.unwrap_or(start);
                 (fp.clone(), side.to_string(), start, end)
-            } else if let Some(ref loc) = req.location {
-                let (fp, (start, end)) = comments::parse_location(loc);
-                (fp, "ADD".to_string(), start, end)
             } else {
                 return Err(StatusCode::BAD_REQUEST);
             };
