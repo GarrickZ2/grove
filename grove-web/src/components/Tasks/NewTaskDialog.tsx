@@ -117,6 +117,7 @@ export function NewTaskDialog({ isOpen, onClose, onCreate, isLoading, externalEr
                     setError("");
                   }}
                   error={error || externalError || undefined}
+                  className="!bg-[var(--color-bg)]"
                 />
 
                 {/* Notes */}
@@ -133,7 +134,7 @@ export function NewTaskDialog({ isOpen, onClose, onCreate, isLoading, externalEr
                     onChange={(e) => setNotes(e.target.value)}
                     placeholder="Describe the task, requirements, or any relevant context..."
                     rows={4}
-                    className="w-full px-3 py-2 bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-lg
+                    className="w-full px-3 py-2 bg-[var(--color-bg)] border border-[var(--color-border)] rounded-lg
                       text-sm text-[var(--color-text)] placeholder:text-[var(--color-text-muted)] resize-none
                       focus:outline-none focus:border-[var(--color-highlight)] focus:ring-1 focus:ring-[var(--color-highlight)]
                       transition-all duration-200"
@@ -145,7 +146,7 @@ export function NewTaskDialog({ isOpen, onClose, onCreate, isLoading, externalEr
                   <label className="block text-sm font-medium text-[var(--color-text-muted)] mb-2">
                     Target Branch
                   </label>
-                  <div className="flex items-center gap-2 px-3 py-2 bg-[var(--color-bg)] border border-[var(--color-border)] rounded-lg">
+                  <div className="flex items-center gap-2 px-3 py-2 bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-lg">
                     <GitBranch className="w-4 h-4 text-[var(--color-text-muted)]" />
                     <span className="text-sm text-[var(--color-text)]">{targetBranch}</span>
                   </div>
@@ -155,7 +156,7 @@ export function NewTaskDialog({ isOpen, onClose, onCreate, isLoading, externalEr
                 </div>
 
                 {/* Info */}
-                <div className="p-3 rounded-lg bg-[var(--color-bg)] border border-[var(--color-border)]">
+                <div className="p-3 rounded-lg bg-[var(--color-bg-secondary)] border border-[var(--color-border)]">
                   <p className="text-xs text-[var(--color-text-muted)]">
                     A new worktree will be created with branch{" "}
                     <code className="text-[var(--color-highlight)]">
