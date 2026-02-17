@@ -15,7 +15,6 @@ use crate::hooks;
 use crate::model::loader;
 use crate::session;
 use crate::storage::{self, comments, config::Multiplexer, notes, tasks, workspace};
-use crate::watcher;
 
 use super::projects::{CommitResponse, TaskResponse};
 
@@ -702,9 +701,7 @@ pub async fn delete_task(
 
     // Clean all associated data
     hooks::remove_task_hook(&project_key, &task_id);
-    let _ = notes::delete_notes(&project_key, &task_id);
-    let _ = comments::delete_review_data(&project_key, &task_id);
-    let _ = watcher::clear_edit_history(&project_key, &task_id);
+    let _ = storage::delete_task_data(&project_key, &task_id);
 
     Ok(StatusCode::NO_CONTENT)
 }

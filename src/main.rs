@@ -39,6 +39,28 @@ use cli::{Cli, Commands};
 /// Auto-refresh interval in seconds
 const AUTO_REFRESH_INTERVAL_SECS: u64 = 5;
 
+/// Check storage version and auto-migrate if needed
+fn ensure_storage_version() {
+    let config = storage::config::load_config();
+    match config.storage_version.as_deref() {
+        Some("1.0") => {} // Up to date
+        None => {
+            // Legacy or fresh install
+            if storage::grove_dir().join("projects").exists() {
+                eprintln!("Migrating storage to v1.0...");
+                cli::migrate::execute(false);
+            }
+            let mut config = config;
+            config.storage_version = Some("1.0".to_string());
+            let _ = storage::config::save_config(&config);
+        }
+        Some(v) => {
+            eprintln!("Unknown storage version: {}. Expected 1.0.", v);
+            std::process::exit(1);
+        }
+    }
+}
+
 fn main() -> io::Result<()> {
     // Set up panic hook to restore terminal state on panic
     let original_hook = panic::take_hook();
@@ -59,6 +81,7 @@ fn main() -> io::Result<()> {
                 cli::hooks::execute(level);
             }
             Commands::Mcp => {
+                ensure_storage_version();
                 // MCP server requires tokio runtime
                 tokio::runtime::Runtime::new()
                     .expect("Failed to create tokio runtime")
@@ -73,6 +96,7 @@ fn main() -> io::Result<()> {
                 cli::fp::execute();
             }
             Commands::Web { port, no_open, dev } => {
+                ensure_storage_version();
                 tokio::runtime::Runtime::new()
                     .expect("Failed to create tokio runtime")
                     .block_on(async {
@@ -105,6 +129,7 @@ fn main() -> io::Result<()> {
                 }
             }
             Commands::Acp { agent, cwd } => {
+                ensure_storage_version();
                 // ACP requires tokio runtime with LocalSet (futures are !Send)
                 tokio::runtime::Runtime::new()
                     .expect("Failed to create tokio runtime")
@@ -113,11 +138,17 @@ fn main() -> io::Result<()> {
                         local.run_until(cli::acp::execute(agent, cwd)).await;
                     });
             }
+            Commands::Migrate { dry_run } => {
+                cli::migrate::execute(dry_run);
+            }
         }
         return Ok(());
     }
 
     // 否则启动 TUI
+    // 版本检查 & 自动迁移
+    ensure_storage_version();
+
     // 环境检查
     let result = check::check_environment();
     if !result.ok {

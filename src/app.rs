@@ -1883,9 +1883,7 @@ impl App {
         self.remove_notification(task_id);
 
         // 6.5 清理关联数据 (notes, review comments, activity)
-        let _ = notes::delete_notes(&self.project.project_key, task_id);
-        let _ = comments::delete_review_data(&self.project.project_key, task_id);
-        let _ = crate::watcher::clear_edit_history(&self.project.project_key, task_id);
+        let _ = storage::delete_task_data(&self.project.project_key, task_id);
 
         // 7. 刷新数据
         self.project.refresh();

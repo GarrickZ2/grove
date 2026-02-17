@@ -206,7 +206,7 @@ export function SettingsPage({ config }: SettingsPageProps) {
   const { terminalTheme, setTerminalTheme } = useTerminalTheme();
 
   const [openSections, setOpenSections] = useState<Record<string, boolean>>({
-    appearance: true,
+    appearance: false,
     environment: false,
     devtools: false,
     autolink: false,
@@ -614,14 +614,14 @@ env_vars = [
 
       <div className="space-y-3">
         {/* Mode Toggle */}
-        <div className="grid grid-cols-2 gap-3 mb-1">
+        <div className="grid grid-cols-2 gap-3 mb-2">
           {/* Terminal Card */}
           <motion.button
             whileHover={canUseTerminal ? { scale: 1.01 } : {}}
             whileTap={canUseTerminal ? { scale: 0.98 } : {}}
             onClick={() => canUseTerminal && handleModeChange("terminal")}
             disabled={!canUseTerminal}
-            className={`relative flex items-center gap-3 p-3.5 rounded-xl border-2 text-left transition-all
+            className={`relative flex flex-col items-center justify-center gap-2 py-5 rounded-xl border-2 text-center transition-all
               ${mode === "terminal"
                 ? "border-[var(--color-highlight)] bg-[var(--color-highlight)]/5"
                 : canUseTerminal
@@ -629,19 +629,19 @@ env_vars = [
                   : "border-[var(--color-border)] bg-[var(--color-bg-secondary)] opacity-50 cursor-not-allowed"
               }`}
           >
-            <div className={`w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0 ${
+            <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${
               mode === "terminal" ? "bg-[var(--color-highlight)]/10" : "bg-[var(--color-bg-tertiary)]"
             }`}>
-              <Terminal className={`w-4.5 h-4.5 ${mode === "terminal" ? "text-[var(--color-highlight)]" : "text-[var(--color-text-muted)]"}`} />
+              <Terminal className={`w-5 h-5 ${mode === "terminal" ? "text-[var(--color-highlight)]" : "text-[var(--color-text-muted)]"}`} />
             </div>
-            <div className="flex-1 min-w-0">
-              <div className="text-sm font-medium text-[var(--color-text)]">Terminal</div>
-              {!canUseTerminal && (
-                <div className="text-[10px] text-[var(--color-warning)]">Requires tmux or zellij</div>
-              )}
-            </div>
+            <div className="text-sm font-semibold text-[var(--color-text)]">Terminal</div>
+            {!canUseTerminal && (
+              <div className="text-[10px] text-[var(--color-warning)]">Requires tmux or zellij</div>
+            )}
             {mode === "terminal" && (
-              <Check className="w-4 h-4 text-[var(--color-highlight)] flex-shrink-0" />
+              <div className="absolute top-2.5 right-2.5 w-5 h-5 rounded-full bg-[var(--color-highlight)] flex items-center justify-center">
+                <Check className="w-3 h-3 text-white" />
+              </div>
             )}
           </motion.button>
 
@@ -650,24 +650,25 @@ env_vars = [
             whileHover={{ scale: 1.01 }}
             whileTap={{ scale: 0.98 }}
             onClick={() => handleModeChange("chat")}
-            className={`relative flex items-center gap-3 p-3.5 rounded-xl border-2 text-left transition-all
+            className={`relative flex flex-col items-center justify-center gap-2 py-5 rounded-xl border-2 text-center transition-all
               ${mode === "chat"
                 ? "border-[var(--color-highlight)] bg-[var(--color-highlight)]/5"
                 : "border-[var(--color-border)] hover:border-[var(--color-text-muted)] bg-[var(--color-bg-secondary)]"
               }`}
           >
-            <div className={`w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0 ${
+            <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${
               mode === "chat" ? "bg-[var(--color-highlight)]/10" : "bg-[var(--color-bg-tertiary)]"
             }`}>
-              <MessageSquare className={`w-4.5 h-4.5 ${mode === "chat" ? "text-[var(--color-highlight)]" : "text-[var(--color-text-muted)]"}`} />
+              <MessageSquare className={`w-5 h-5 ${mode === "chat" ? "text-[var(--color-highlight)]" : "text-[var(--color-text-muted)]"}`} />
             </div>
-            <div className="flex-1 min-w-0">
-              <div className="text-sm font-medium text-[var(--color-text)]">
-                Chat <span className="ml-1 text-[10px] font-normal px-1.5 py-0.5 rounded-full bg-[var(--color-info)]/15 text-[var(--color-info)]">beta</span>
-              </div>
+            <div className="flex items-center gap-1.5">
+              <span className="text-sm font-semibold text-[var(--color-text)]">Chat</span>
+              <span className="text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-[var(--color-info)]/15 text-[var(--color-info)]">beta</span>
             </div>
             {mode === "chat" && (
-              <Check className="w-4 h-4 text-[var(--color-highlight)] flex-shrink-0" />
+              <div className="absolute top-2.5 right-2.5 w-5 h-5 rounded-full bg-[var(--color-highlight)] flex items-center justify-center">
+                <Check className="w-3 h-3 text-white" />
+              </div>
             )}
           </motion.button>
         </div>

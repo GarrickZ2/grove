@@ -98,6 +98,9 @@ pub struct Config {
     pub auto_link: AutoLinkConfig,
     #[serde(default)]
     pub acp: AcpConfig,
+    /// Storage layout version (None = legacy, "1.0" = task-centric layout)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub storage_version: Option<String>,
 }
 
 /// MCP Server 配置（预留扩展）

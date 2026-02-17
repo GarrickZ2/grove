@@ -42,3 +42,27 @@ pub fn save_toml<T: serde::Serialize>(path: &Path, data: &T) -> Result<()> {
     std::fs::write(path, content)?;
     Ok(())
 }
+
+/// 确保 task 数据目录存在: ~/.grove/projects/{project}/tasks/{task_id}/
+pub fn ensure_task_data_dir(project: &str, task_id: &str) -> Result<PathBuf> {
+    let path = grove_dir()
+        .join("projects")
+        .join(project)
+        .join("tasks")
+        .join(task_id);
+    std::fs::create_dir_all(&path)?;
+    Ok(path)
+}
+
+/// 删除 task 数据目录: rm -rf tasks/{task_id}/
+pub fn delete_task_data(project: &str, task_id: &str) -> Result<()> {
+    let path = grove_dir()
+        .join("projects")
+        .join(project)
+        .join("tasks")
+        .join(task_id);
+    if path.exists() {
+        std::fs::remove_dir_all(&path)?;
+    }
+    Ok(())
+}

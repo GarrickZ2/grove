@@ -728,6 +728,10 @@ async fn run_acp_session(
 
     // 检查 agent 是否支持 load_session
     let supports_load = init_resp.agent_capabilities.load_session;
+    eprintln!(
+        "[ACP] agent={} v={} load_session={}",
+        agent_name, agent_version, supports_load
+    );
 
     // Helper: extract modes/models from session response
     fn extract_modes(
@@ -804,6 +808,10 @@ async fn run_acp_session(
 
     let session_id = if supports_load {
         if let Some(saved_id) = saved_id {
+            eprintln!(
+                "[ACP] load_session: attempting to restore session {}",
+                saved_id
+            );
             match conn
                 .load_session(acp::LoadSessionRequest::new(
                     acp::SessionId::new(&*saved_id),
@@ -812,11 +820,16 @@ async fn run_acp_session(
                 .await
             {
                 Ok(resp) => {
+                    eprintln!(
+                        "[ACP] load_session: success — session {} restored",
+                        saved_id
+                    );
                     (available_modes, current_mode_id) = extract_modes(&resp.modes);
                     (available_models, current_model_id) = extract_models(&resp.models);
                     saved_id
                 }
-                Err(_) => {
+                Err(e) => {
+                    eprintln!("[ACP] load_session: failed — {}", e);
                     // fallback: 创建新会话
                     let resp = conn
                         .new_session(acp::NewSessionRequest::new(&config.working_dir))

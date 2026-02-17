@@ -485,9 +485,7 @@ pub fn reset_task(
     }
 
     // 5. Clear all task-related data
-    let _ = notes::delete_notes(project_key, task_id);
-    let _ = crate::storage::comments::delete_review_data(project_key, task_id);
-    let _ = crate::watcher::clear_edit_history(project_key, task_id);
+    let _ = storage::delete_task_data(project_key, task_id);
 
     // 6. Recreate branch and worktree from target
     let worktree_path = std::path::Path::new(&task.worktree_path);

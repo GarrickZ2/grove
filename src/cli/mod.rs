@@ -5,6 +5,7 @@ pub mod diff;
 pub mod fp;
 pub mod hooks;
 pub mod mcp;
+pub mod migrate;
 pub mod web;
 
 #[cfg(feature = "gui")]
@@ -65,5 +66,11 @@ pub enum Commands {
         /// Working directory
         #[arg(long, default_value = ".")]
         cwd: String,
+    },
+    /// Migrate storage to the latest format (v1.0 task-centric layout)
+    Migrate {
+        /// Show what would be done without making changes
+        #[arg(long)]
+        dry_run: bool,
     },
 }
