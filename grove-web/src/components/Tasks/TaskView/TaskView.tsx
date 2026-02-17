@@ -150,7 +150,7 @@ export function TaskView({
           onClean={onClean}
           onReset={onReset}
         />
-        {!headerCollapsed && task.status !== "archived" && task.status !== "merged" && (
+        {!headerCollapsed && task.status !== "archived" && task.status !== "merged" && multiplexer !== "acp" && (
           <FileSearchBar projectId={projectId} taskId={task.id} />
         )}
       </div>

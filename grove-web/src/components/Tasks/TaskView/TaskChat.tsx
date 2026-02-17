@@ -14,6 +14,7 @@ import {
   Brain,
   ListTodo,
   Slash,
+  FileText,
   X,
   ShieldCheck,
   ShieldX,
@@ -23,7 +24,7 @@ import {
 import { Button, MarkdownRenderer, agentOptions } from "../../ui";
 import type { Task } from "../../../data/types";
 import { getApiHost } from "../../../api/client";
-import { getConfig, listChats, createChat, updateChatTitle, deleteChat } from "../../../api";
+import { getConfig, listChats, createChat, updateChatTitle, deleteChat, getTaskFiles } from "../../../api";
 import type { ChatSessionResponse, CustomAgent } from "../../../api";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -177,6 +178,74 @@ function createCommandChip(name: string): HTMLSpanElement {
   return chip;
 }
 
+/** Fuzzy match a query against a target string */
+function fuzzyMatch(
+  query: string,
+  target: string,
+): { match: boolean; score: number; indices: number[] } {
+  const q = query.toLowerCase();
+  const t = target.toLowerCase();
+  let qi = 0;
+  let score = 0;
+  let lastMatchIndex = -1;
+  const indices: number[] = [];
+
+  for (let ti = 0; ti < t.length && qi < q.length; ti++) {
+    if (t[ti] === q[qi]) {
+      score += ti === lastMatchIndex + 1 ? 2 : 1;
+      if (ti === 0 || t[ti - 1] === "/") score += 3;
+      lastMatchIndex = ti;
+      indices.push(ti);
+      qi++;
+    }
+  }
+
+  return { match: qi === q.length, score, indices };
+}
+
+/** Render a file path with fuzzy-matched characters highlighted */
+function HighlightedPath({ path, indices }: { path: string; indices: number[] }) {
+  const indexSet = new Set(indices);
+  return (
+    <span>
+      {Array.from(path).map((char, i) =>
+        indexSet.has(i) ? (
+          <span key={i} className="text-[var(--color-warning)] font-semibold">{char}</span>
+        ) : (
+          <span key={i}>{char}</span>
+        ),
+      )}
+    </span>
+  );
+}
+
+/** Create a non-editable file chip DOM element */
+function createFileChip(filePath: string): HTMLSpanElement {
+  const chip = document.createElement("span");
+  chip.contentEditable = "false";
+  chip.dataset.file = filePath;
+  chip.title = filePath;
+  chip.style.cssText =
+    "display:inline-flex;align-items:center;gap:4px;padding:1px 6px;border-radius:4px;" +
+    "background:color-mix(in srgb,var(--color-warning) 15%,transparent);" +
+    "border:1px solid color-mix(in srgb,var(--color-warning) 30%,transparent);" +
+    "font-size:12px;font-weight:500;color:var(--color-warning);" +
+    "margin:0 2px;user-select:none;vertical-align:baseline;line-height:1.5;";
+
+  const label = document.createElement("span");
+  label.textContent = filePath.split("/").pop() || filePath;
+  chip.appendChild(label);
+
+  const closeBtn = document.createElement("span");
+  closeBtn.dataset.chipClose = "true";
+  closeBtn.textContent = "\u00d7";
+  closeBtn.style.cssText =
+    "margin-left:2px;cursor:pointer;opacity:0.6;font-size:13px;line-height:1;";
+  chip.appendChild(closeBtn);
+
+  return chip;
+}
+
 /** Extract prompt text from a contentEditable element, converting chips to /command */
 function getPromptFromEditable(el: HTMLElement): string {
   const parts: string[] = [];
@@ -186,6 +255,8 @@ function getPromptFromEditable(el: HTMLElement): string {
     } else if (node instanceof HTMLElement) {
       if (node.dataset.command) {
         parts.push(`/${node.dataset.command}`);
+      } else if (node.dataset.file) {
+        parts.push(node.dataset.file);
       } else if (node.tagName === "BR") {
         parts.push("\n");
       } else if (node.tagName === "DIV" || node.tagName === "P") {
@@ -241,7 +312,7 @@ export function TaskChat({
   const [showModelMenu, setShowModelMenu] = useState(false);
   const [showPermMenu, setShowPermMenu] = useState(false);
   const [planEntries, setPlanEntries] = useState<PlanEntry[]>([]);
-  const [showPlan, setShowPlan] = useState(true);
+  const [showPlan, setShowPlan] = useState(false);
   const [slashCommands, setSlashCommands] = useState<SlashCommand[]>([]);
   const [showSlashMenu, setShowSlashMenu] = useState(false);
   const [slashFilter, setSlashFilter] = useState("");
@@ -256,6 +327,11 @@ export function TaskChat({
   const modelMenuRef = useRef<HTMLDivElement>(null);
   const permMenuRef = useRef<HTMLDivElement>(null);
   const slashMenuRef = useRef<HTMLDivElement>(null);
+  const [taskFiles, setTaskFiles] = useState<string[]>([]);
+  const [showFileMenu, setShowFileMenu] = useState(false);
+  const [fileFilter, setFileFilter] = useState("");
+  const [fileSelectedIdx, setFileSelectedIdx] = useState(0);
+  const fileMenuRef = useRef<HTMLDivElement>(null);
 
   const isLive = task.status === "live";
   const showChat = isLive || sessionStarted;
@@ -269,6 +345,19 @@ export function TaskChat({
       (c) => c.name.toLowerCase().includes(lower) || c.description.toLowerCase().includes(lower),
     );
   }, [slashCommands, slashFilter]);
+
+  // Filtered files based on @ input
+  const filteredFiles = useMemo(() => {
+    if (!fileFilter) return taskFiles.slice(0, 15);
+    return taskFiles
+      .map((path) => {
+        const { match, score, indices } = fuzzyMatch(fileFilter, path);
+        return { path, score, indices, match };
+      })
+      .filter((r) => r.match)
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 15);
+  }, [taskFiles, fileFilter]);
 
   // Resolve agent label and icon from active chat's agent
   useEffect(() => {
@@ -306,6 +395,13 @@ export function TaskChat({
   useEffect(() => {
     if (autoStart && !isLive) setSessionStarted(true);
   }, [autoStart, isLive]);
+
+  // Load task files for @ mention
+  useEffect(() => {
+    getTaskFiles(projectId, task.id)
+      .then((res) => setTaskFiles(res.files))
+      .catch(() => {});
+  }, [projectId, task.id]);
 
   // Auto-scroll to bottom — only when new messages arrive, not on collapse toggle
   const prevMsgCountRef = useRef(0);
@@ -749,7 +845,7 @@ export function TaskChat({
     const el = editableRef.current;
     if (!el) { setHasContent(false); return; }
     const text = el.textContent?.trim() || "";
-    const hasChips = el.querySelector("[data-command]") !== null;
+    const hasChips = el.querySelector("[data-command],[data-file]") !== null;
     setHasContent(text.length > 0 || hasChips);
   }, []);
 
@@ -768,6 +864,7 @@ export function TaskChat({
     el.innerHTML = "";
     setHasContent(false);
     setShowSlashMenu(false);
+    setShowFileMenu(false);
     setIsTerminalMode(false);
     setIsBusy(true);
     el.focus();
@@ -787,7 +884,7 @@ export function TaskChat({
     );
   }, []);
 
-  /** Detect /slash at cursor position in contentEditable */
+  /** Detect /slash or @file at cursor position in contentEditable */
   const handleInput = useCallback(() => {
     // Detect "!" typed into empty input → enter shell mode and clear the "!"
     const el = editableRef.current;
@@ -798,31 +895,50 @@ export function TaskChat({
       return;
     }
     checkContent();
-    if (slashCommands.length === 0) { setShowSlashMenu(false); return; }
     const sel = window.getSelection();
-    if (!sel || sel.rangeCount === 0 || !sel.isCollapsed) { setShowSlashMenu(false); return; }
+    if (!sel || sel.rangeCount === 0 || !sel.isCollapsed) {
+      setShowSlashMenu(false);
+      setShowFileMenu(false);
+      return;
+    }
     const range = sel.getRangeAt(0);
     const node = range.startContainer;
-    if (node.nodeType !== Node.TEXT_NODE) { setShowSlashMenu(false); return; }
+    if (node.nodeType !== Node.TEXT_NODE) {
+      setShowSlashMenu(false);
+      setShowFileMenu(false);
+      return;
+    }
     const text = node.textContent || "";
     const offset = range.startOffset;
-    // Scan backwards from cursor to find "/"
+    // Scan backwards from cursor to find "/" or "@"
     let slashIdx = -1;
+    let atIdx = -1;
     for (let i = offset - 1; i >= 0; i--) {
       if (text[i] === "/") {
         if (i === 0 || /\s/.test(text[i - 1])) slashIdx = i;
         break;
       }
+      if (text[i] === "@") {
+        if (i === 0 || /\s/.test(text[i - 1])) atIdx = i;
+        break;
+      }
       if (/\s/.test(text[i])) break;
     }
-    if (slashIdx >= 0) {
+    if (atIdx >= 0 && taskFiles.length > 0) {
+      setFileFilter(text.slice(atIdx + 1, offset));
+      setShowFileMenu(true);
+      setFileSelectedIdx(0);
+      setShowSlashMenu(false);
+    } else if (slashIdx >= 0 && slashCommands.length > 0) {
       setSlashFilter(text.slice(slashIdx + 1, offset));
       setShowSlashMenu(true);
       setSlashSelectedIdx(0);
+      setShowFileMenu(false);
     } else {
       setShowSlashMenu(false);
+      setShowFileMenu(false);
     }
-  }, [checkContent, isTerminalMode, slashCommands.length]);
+  }, [checkContent, isTerminalMode, slashCommands.length, taskFiles.length]);
 
   /** Insert a command chip at the current cursor position, replacing the /partial text */
   const insertCommandAtCursor = useCallback((name: string) => {
@@ -864,12 +980,50 @@ export function TaskChat({
     checkContent();
   }, [checkContent]);
 
+  /** Insert a file chip at the current cursor position, replacing the @partial text */
+  const insertFileAtCursor = useCallback((filePath: string) => {
+    const el = editableRef.current;
+    if (!el) return;
+    const sel = window.getSelection();
+    if (!sel || sel.rangeCount === 0) return;
+    const range = sel.getRangeAt(0);
+    const node = range.startContainer;
+    if (node.nodeType !== Node.TEXT_NODE) return;
+    const text = node.textContent || "";
+    const offset = range.startOffset;
+    // Find the "@" start
+    let atIdx = -1;
+    for (let i = offset - 1; i >= 0; i--) {
+      if (text[i] === "@") { if (i === 0 || /\s/.test(text[i - 1])) atIdx = i; break; }
+      if (/\s/.test(text[i])) break;
+    }
+    if (atIdx < 0) return;
+    const before = text.slice(0, atIdx);
+    const after = text.slice(offset);
+    const parent = node.parentNode;
+    if (!parent) return;
+    const chip = createFileChip(filePath);
+    const frag = document.createDocumentFragment();
+    if (before) frag.appendChild(document.createTextNode(before));
+    frag.appendChild(chip);
+    const afterNode = document.createTextNode(after || " ");
+    frag.appendChild(afterNode);
+    parent.replaceChild(frag, node);
+    const newRange = document.createRange();
+    newRange.setStart(afterNode, after ? 0 : 1);
+    newRange.collapse(true);
+    sel.removeAllRanges();
+    sel.addRange(newRange);
+    setShowFileMenu(false);
+    checkContent();
+  }, [checkContent]);
+
   /** Delegated click handler for chip close buttons */
   const handleEditableMouseDown = useCallback((e: React.MouseEvent) => {
     const target = e.target as HTMLElement;
     if (target.dataset.chipClose || target.closest("[data-chip-close]")) {
       e.preventDefault();
-      const chip = target.closest("[data-command]");
+      const chip = target.closest("[data-command],[data-file]");
       if (chip) { chip.remove(); checkContent(); }
     }
   }, [checkContent]);
@@ -921,8 +1075,32 @@ export function TaskChat({
         return;
       }
     }
+    // File menu navigation
+    if (showFileMenu && filteredFiles.length > 0) {
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        setFileSelectedIdx((prev) => (prev + 1) % filteredFiles.length);
+        return;
+      }
+      if (e.key === "ArrowUp") {
+        e.preventDefault();
+        setFileSelectedIdx((prev) => (prev - 1 + filteredFiles.length) % filteredFiles.length);
+        return;
+      }
+      if (e.key === "Tab" || (e.key === "Enter" && !e.shiftKey)) {
+        e.preventDefault();
+        const item = filteredFiles[fileSelectedIdx];
+        insertFileAtCursor(typeof item === "string" ? item : item.path);
+        return;
+      }
+      if (e.key === "Escape") {
+        e.preventDefault();
+        setShowFileMenu(false);
+        return;
+      }
+    }
     if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSend(); }
-  }, [handleSend, isTerminalMode, showSlashMenu, filteredSlashCommands, slashSelectedIdx, insertCommandAtCursor]);
+  }, [handleSend, isTerminalMode, showSlashMenu, filteredSlashCommands, slashSelectedIdx, insertCommandAtCursor, showFileMenu, filteredFiles, fileSelectedIdx, insertFileAtCursor]);
 
   const handleStartSession = () => { setSessionStarted(true); onStartSession(); };
 
@@ -1155,11 +1333,13 @@ export function TaskChat({
                 <ChevronRight className="w-3.5 h-3.5" />
               </motion.div>
               <ListTodo className="w-3.5 h-3.5" /><span>Plan</span>
+              <span className="text-xs text-[var(--color-text-muted)] opacity-60">
+                {planEntries.filter((e) => e.status === "completed").length}/{planEntries.length}
+              </span>
             </div>
-            <span className="text-xs text-[var(--color-text-muted)]">
-              {planEntries.filter((e) => e.status === "completed").length === planEntries.length
-                ? "All Done" : `${planEntries.filter((e) => e.status === "completed").length}/${planEntries.length}`}
-            </span>
+            {planEntries.filter((e) => e.status === "completed").length === planEntries.length && (
+              <span className="text-xs text-[var(--color-success)]">All Done</span>
+            )}
           </button>
           <AnimatePresence initial={false}>
             {showPlan && (
@@ -1227,6 +1407,41 @@ export function TaskChat({
           )}
         </AnimatePresence>
 
+        {/* File @ mention autocomplete popover */}
+        <AnimatePresence>
+          {showFileMenu && filteredFiles.length > 0 && (
+            <motion.div
+              ref={fileMenuRef}
+              initial={{ opacity: 0, y: 4 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: 4 }}
+              transition={{ duration: 0.12 }}
+              className="absolute bottom-full left-3 right-3 mb-1 max-h-56 overflow-y-auto rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] shadow-lg z-50"
+            >
+              {filteredFiles.map((item, i) => {
+                const filePath = typeof item === "string" ? item : item.path;
+                const indices = typeof item === "string" ? null : item.indices;
+                return (
+                  <button
+                    key={filePath}
+                    onMouseDown={(e) => e.preventDefault()}
+                    onClick={() => insertFileAtCursor(filePath)}
+                    onMouseEnter={() => setFileSelectedIdx(i)}
+                    className={`w-full text-left px-3 py-2 flex items-center gap-2.5 transition-colors ${
+                      i === fileSelectedIdx ? "bg-[var(--color-bg-tertiary)]" : "hover:bg-[var(--color-bg-secondary)]"
+                    }`}
+                  >
+                    <FileText className="w-3.5 h-3.5 text-[var(--color-warning)] shrink-0" />
+                    <span className="text-sm text-[var(--color-text)] font-mono truncate">
+                      {indices ? <HighlightedPath path={filePath} indices={indices} /> : filePath}
+                    </span>
+                  </button>
+                );
+              })}
+            </motion.div>
+          )}
+        </AnimatePresence>
+
         <div className="flex gap-2 items-end">
           <div className={`flex-1 relative min-w-0 rounded-lg border bg-[var(--color-bg-secondary)] transition-colors ${
             isTerminalMode
@@ -1240,7 +1455,7 @@ export function TaskChat({
                   ? "Waiting for connection..."
                   : isTerminalMode
                     ? "Enter shell command\u2026"
-                    : "Message agent \u2014 type / for commands, ! for shell"}
+                    : "Message agent \u2014 type / for commands, @ for files, ! for shell"}
               </div>
             )}
             {/* Terminal mode indicator */}
