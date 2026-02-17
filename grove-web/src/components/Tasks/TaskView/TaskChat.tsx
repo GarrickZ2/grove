@@ -19,7 +19,10 @@ import {
   ShieldCheck,
   ShieldX,
   Plus,
+  ListPlus,
   Trash2,
+  Pencil,
+  Square,
 } from "lucide-react";
 import { Button, MarkdownRenderer, agentOptions } from "../../ui";
 import type { Task } from "../../../data/types";
@@ -146,9 +149,6 @@ function buildRenderItems(messages: ChatMessage[]): RenderItem[] {
   flush();
   return items;
 }
-
-// ─── Constants ───────────────────────────────────────────────────────────────
-
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -319,6 +319,10 @@ export function TaskChat({
   const [slashSelectedIdx, setSlashSelectedIdx] = useState(0);
   const [isTerminalMode, setIsTerminalMode] = useState(false);
   const [expandedSections, setExpandedSections] = useState<Set<string>>(new Set());
+  const [pendingMessages, setPendingMessages] = useState<string[]>([]);
+  const [showPendingQueue, setShowPendingQueue] = useState(true);
+  const [editingPendingIdx, setEditingPendingIdx] = useState<number | null>(null);
+  const [editingPendingValue, setEditingPendingValue] = useState("");
   const [agentLabel, setAgentLabel] = useState("Chat");
   const [AgentIcon, setAgentIcon] = useState<React.ComponentType<{ size?: number; className?: string }> | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
@@ -462,6 +466,8 @@ export function TaskChat({
       setSlashCommands([]);
       setIsConnected(false);
     }
+    // Reset pending messages — server will send queue_update on reconnect
+    setPendingMessages([]);
     // Point wsRef to this chat's WebSocket
     wsRef.current = wsMapRef.current.get(chatId) ?? null;
   }, []);
@@ -727,6 +733,9 @@ export function TaskChat({
         case "available_commands":
           setSlashCommands(msg.commands ?? []);
           break;
+        case "queue_update":
+          setPendingMessages(msg.messages ?? []);
+          break;
         case "session_ended":
           setIsConnected(false);
           break;
@@ -825,6 +834,9 @@ export function TaskChat({
       case "complete":
         state.messages = state.messages.map((m) => m.type === "assistant" && !m.complete ? { ...m, complete: true } : m);
         state.isBusy = false;
+        break;
+      case "queue_update":
+        // Server manages queue — ignored for non-active chat cache
         break;
       case "busy":
         state.isBusy = msg.value;
@@ -933,15 +945,84 @@ export function TaskChat({
       ? `Run this command: \`${prompt}\``
       : prompt;
 
-    wsRef.current.send(JSON.stringify({ type: "prompt", text }));
-    el.innerHTML = "";
-    setHasContent(false);
-    setShowSlashMenu(false);
-    setShowFileMenu(false);
-    setIsTerminalMode(false);
-    setIsBusy(true);
-    el.focus();
-  }, [isTerminalMode]);
+    if (isBusy) {
+      // Queue message on server when agent is busy
+      wsRef.current.send(JSON.stringify({ type: "queue_message", text }));
+      el.innerHTML = "";
+      setHasContent(false);
+      setShowSlashMenu(false);
+      setShowFileMenu(false);
+      setIsTerminalMode(false);
+      setShowPendingQueue(true);
+      el.focus();
+    } else {
+      wsRef.current.send(JSON.stringify({ type: "prompt", text }));
+      el.innerHTML = "";
+      setHasContent(false);
+      setShowSlashMenu(false);
+      setShowFileMenu(false);
+      setIsTerminalMode(false);
+      setIsBusy(true);
+      el.focus();
+    }
+  }, [isTerminalMode, isBusy]);
+
+  /** Cancel current agent work — server auto-sends next queued message after Complete */
+  const handleSendNow = useCallback(() => {
+    if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
+    wsRef.current.send(JSON.stringify({ type: "cancel" }));
+  }, []);
+
+  /** Stop agent (only shown when no pending messages) */
+  const handleStopAgent = useCallback(() => {
+    if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
+    wsRef.current.send(JSON.stringify({ type: "cancel" }));
+  }, []);
+
+  const handleEditPending = useCallback((i: number) => {
+    setEditingPendingIdx(i);
+    setEditingPendingValue(pendingMessages[i]);
+    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({ type: "pause_queue" }));
+    }
+  }, [pendingMessages]);
+
+  const handleSavePendingEdit = useCallback(() => {
+    if (editingPendingIdx === null || !wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
+    const trimmed = editingPendingValue.trim();
+    if (!trimmed) {
+      wsRef.current.send(JSON.stringify({ type: "dequeue_message", index: editingPendingIdx }));
+    } else {
+      wsRef.current.send(JSON.stringify({ type: "update_queued_message", index: editingPendingIdx, text: trimmed }));
+    }
+    setEditingPendingIdx(null);
+    setEditingPendingValue("");
+    wsRef.current.send(JSON.stringify({ type: "resume_queue" }));
+  }, [editingPendingIdx, editingPendingValue]);
+
+  const handleCancelPendingEdit = useCallback(() => {
+    setEditingPendingIdx(null);
+    setEditingPendingValue("");
+    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({ type: "resume_queue" }));
+    }
+  }, []);
+
+  const handleDeletePending = useCallback((i: number) => {
+    if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
+    wsRef.current.send(JSON.stringify({ type: "dequeue_message", index: i }));
+    if (editingPendingIdx === i) {
+      setEditingPendingIdx(null);
+      setEditingPendingValue("");
+    }
+  }, [editingPendingIdx]);
+
+  const handleClearPending = useCallback(() => {
+    if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
+    wsRef.current.send(JSON.stringify({ type: "clear_queue" }));
+    setEditingPendingIdx(null);
+    setEditingPendingValue("");
+  }, []);
 
   /** Respond to a permission request */
   const handlePermissionResponse = useCallback((optionId: string, optionName: string) => {
@@ -1172,8 +1253,14 @@ export function TaskChat({
         return;
       }
     }
+    // Cmd+Option+Backspace → clear pending queue
+    if (e.key === "Backspace" && e.metaKey && e.altKey && pendingMessages.length > 0) {
+      e.preventDefault();
+      handleClearPending();
+      return;
+    }
     if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSend(); }
-  }, [handleSend, isTerminalMode, showSlashMenu, filteredSlashCommands, slashSelectedIdx, insertCommandAtCursor, showFileMenu, filteredFiles, fileSelectedIdx, insertFileAtCursor]);
+  }, [handleSend, isTerminalMode, showSlashMenu, filteredSlashCommands, slashSelectedIdx, insertCommandAtCursor, showFileMenu, filteredFiles, fileSelectedIdx, insertFileAtCursor, pendingMessages, handleClearPending]);
 
   const handleStartSession = () => { setSessionStarted(true); onStartSession(); };
 
@@ -1446,6 +1533,92 @@ export function TaskChat({
         </div>
       )}
 
+      {/* Pending Queue */}
+      {pendingMessages.length > 0 && (
+        <div className="border-t border-[var(--color-border)] bg-[var(--color-bg)]">
+          <button onClick={() => setShowPendingQueue(!showPendingQueue)}
+            className="w-full flex items-center justify-between px-4 py-2 text-sm hover:bg-[var(--color-bg-tertiary)] transition-colors">
+            <div className="flex items-center gap-2 text-[var(--color-text-muted)]">
+              <motion.div animate={{ rotate: showPendingQueue ? 90 : 0 }} transition={{ duration: 0.15 }}>
+                <ChevronRight className="w-3.5 h-3.5" />
+              </motion.div>
+              <span>{pendingMessages.length} Queued Message{pendingMessages.length > 1 ? "s" : ""}</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="text-[10px] text-[var(--color-text-muted)] opacity-50 font-mono">{"\u2318\u2325\u232B"}</span>
+              <button
+                onClick={(e) => { e.stopPropagation(); handleClearPending(); }}
+                className="text-xs text-[var(--color-text-muted)] hover:text-[var(--color-error)] transition-colors"
+              >
+                Clear All
+              </button>
+            </div>
+          </button>
+          <AnimatePresence initial={false}>
+            {showPendingQueue && (
+              <motion.div
+                initial={{ height: 0, opacity: 0 }}
+                animate={{ height: "auto", opacity: 1 }}
+                exit={{ height: 0, opacity: 0 }}
+                transition={{ duration: 0.2, ease: "easeInOut" }}
+                className="overflow-hidden"
+              >
+                <div className="px-4 pb-2 space-y-1">
+                  {pendingMessages.map((msg, i) => (
+                    <div key={i} className="flex items-center gap-2 py-1 text-sm">
+                      <span className="text-xs text-[var(--color-text-muted)] w-4 shrink-0 text-right">{i + 1}</span>
+                      {editingPendingIdx === i ? (
+                        <input
+                          autoFocus
+                          value={editingPendingValue}
+                          onChange={(e) => setEditingPendingValue(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") { e.preventDefault(); handleSavePendingEdit(); }
+                            if (e.key === "Escape") handleCancelPendingEdit();
+                          }}
+                          onBlur={handleSavePendingEdit}
+                          className="flex-1 min-w-0 text-sm text-[var(--color-text)] bg-[var(--color-bg-secondary)] border border-[var(--color-highlight)] rounded px-2 py-0.5 outline-none"
+                        />
+                      ) : (
+                        <>
+                          <span className="flex-1 min-w-0 truncate text-[var(--color-text)]">{msg}</span>
+                          <div className="flex items-center gap-1 shrink-0">
+                            {i === 0 && (
+                              <button
+                                onClick={() => handleSendNow()}
+                                className="flex items-center gap-1 px-1.5 py-0.5 text-xs text-[var(--color-highlight)] hover:bg-[var(--color-bg-tertiary)] rounded transition-colors"
+                                title="Send Now (cancels current, sends this)"
+                              >
+                                <Send className="w-3 h-3" />
+                                <span>Now</span>
+                              </button>
+                            )}
+                            <button
+                              onClick={() => handleEditPending(i)}
+                              className="p-1 text-[var(--color-text-muted)] hover:text-[var(--color-text)] rounded transition-colors"
+                              title="Edit"
+                            >
+                              <Pencil className="w-3 h-3" />
+                            </button>
+                            <button
+                              onClick={() => handleDeletePending(i)}
+                              className="p-1 text-[var(--color-text-muted)] hover:text-[var(--color-error)] rounded transition-colors"
+                              title="Delete"
+                            >
+                              <Trash2 className="w-3 h-3" />
+                            </button>
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </div>
+      )}
+
       {/* Input */}
       <div className="border-t border-[var(--color-border)] bg-[var(--color-bg)] px-3 pt-3 pb-2 relative">
         {/* Slash command autocomplete popover */}
@@ -1528,7 +1701,9 @@ export function TaskChat({
                   ? "Waiting for connection..."
                   : isTerminalMode
                     ? "Enter shell command\u2026"
-                    : "Message agent\u2026"}
+                    : isBusy
+                      ? "Queue a message\u2026"
+                      : "Message agent\u2026"}
               </div>
             )}
             {/* Terminal mode indicator */}
@@ -1539,21 +1714,41 @@ export function TaskChat({
             )}
             <div
               ref={editableRef}
-              contentEditable={isConnected && !isBusy}
+              contentEditable={isConnected}
               suppressContentEditableWarning
               onInput={handleInput}
               onKeyDown={handleKeyDown}
               onMouseDown={handleEditableMouseDown}
               onPaste={handlePaste}
               className={`min-h-[36px] max-h-32 overflow-y-auto px-3 py-2 text-sm text-[var(--color-text)] focus:outline-none ${
-                (!isConnected || isBusy) ? "opacity-50 cursor-not-allowed" : ""
+                !isConnected ? "opacity-50 cursor-not-allowed" : ""
               }`}
               style={{ wordBreak: "break-word", whiteSpace: "pre-wrap" }}
             />
           </div>
-          <Button variant="primary" size="sm" onClick={handleSend} disabled={!isConnected || isBusy || !hasContent}>
-            <Send className="w-4 h-4" />
-          </Button>
+          {!isBusy && hasContent ? (
+            <Button variant="primary" size="sm" className="h-9 w-9 !p-0" onClick={handleSend} disabled={!isConnected}>
+              <Send className="w-4 h-4" />
+            </Button>
+          ) : isBusy && hasContent ? (
+            <Button variant="primary" size="sm" className="h-9 w-9 !p-0" onClick={handleSend}>
+              <ListPlus className="w-4 h-4" />
+            </Button>
+          ) : isBusy && !hasContent ? (
+            pendingMessages.length > 0 ? (
+              <Button variant="secondary" size="sm" className="h-9 w-9 !p-0" onClick={handleSendNow}>
+                <Send className="w-4 h-4" />
+              </Button>
+            ) : (
+              <Button variant="secondary" size="sm" className="h-9 w-9 !p-0" onClick={handleStopAgent}>
+                <Square className="w-3.5 h-3.5" />
+              </Button>
+            )
+          ) : (
+            <Button variant="primary" size="sm" className="h-9 w-9 !p-0" disabled>
+              <Send className="w-4 h-4" />
+            </Button>
+          )}
         </div>
 
         {/* Bottom Toolbar */}

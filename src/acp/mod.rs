@@ -39,6 +39,10 @@ pub struct AcpSessionHandle {
     turn_buffer: Mutex<Vec<AcpUpdate>>,
     /// load_session 期间抑制 emit（只恢复 agent 内部状态，不转发回放通知）
     suppress_emit: std::sync::atomic::AtomicBool,
+    /// 待执行消息队列（agent 完成当前任务后自动发送下一条）
+    pending_queue: Mutex<Vec<String>>,
+    /// 队列暂停标志（用户正在编辑队列消息时暂停 auto-send）
+    queue_paused: std::sync::atomic::AtomicBool,
 }
 
 /// 发送给 ACP 后台任务的命令
@@ -102,6 +106,8 @@ pub enum AcpUpdate {
     PlanUpdate { entries: Vec<PlanEntryData> },
     /// 可用 Slash Commands 更新
     AvailableCommands { commands: Vec<CommandInfo> },
+    /// 待执行消息队列更新
+    QueueUpdate { messages: Vec<String> },
     /// 会话结束
     SessionEnded,
 }
@@ -634,6 +640,8 @@ pub async fn get_or_start_session(
                 chat_id: config.chat_id.clone(),
                 turn_buffer: Mutex::new(Vec::new()),
                 suppress_emit: std::sync::atomic::AtomicBool::new(false),
+                pending_queue: Mutex::new(Vec::new()),
+                queue_paused: std::sync::atomic::AtomicBool::new(false),
             });
 
             // 注册到全局表
@@ -903,12 +911,42 @@ async fn run_acp_session(
                 // 记录用户消息到 history（重连时回放）
                 handle.emit(AcpUpdate::UserMessage { text: text.clone() });
                 handle.emit(AcpUpdate::Busy { value: true });
-                let result = conn
-                    .prompt(acp::PromptRequest::new(
-                        session_id_arc.clone(),
-                        vec![text.into()],
-                    ))
-                    .await;
+
+                // 使用 select! 让 Cancel 等命令在 prompt 运行期间也能被处理
+                let prompt_fut = conn.prompt(acp::PromptRequest::new(
+                    session_id_arc.clone(),
+                    vec![text.into()],
+                ));
+                tokio::pin!(prompt_fut);
+
+                let result = loop {
+                    tokio::select! {
+                        res = &mut prompt_fut => break res,
+                        Some(inner_cmd) = cmd_rx.recv() => {
+                            match inner_cmd {
+                                AcpCommand::Cancel => {
+                                    let _ = conn.cancel(acp::CancelNotification::new(session_id_arc.clone())).await;
+                                }
+                                AcpCommand::SetMode { mode_id } => {
+                                    let _ = conn.set_session_mode(acp::SetSessionModeRequest::new(
+                                        session_id_arc.clone(),
+                                        acp::SessionModeId::new(mode_id),
+                                    )).await;
+                                }
+                                AcpCommand::SetModel { model_id } => {
+                                    let _ = conn.set_session_model(acp::SetSessionModelRequest::new(
+                                        session_id_arc.clone(),
+                                        acp::ModelId::new(model_id),
+                                    )).await;
+                                }
+                                AcpCommand::Prompt { .. } | AcpCommand::Kill => {
+                                    // Ignore stray prompts / kill while busy
+                                }
+                            }
+                        }
+                    }
+                };
+
                 handle.emit(AcpUpdate::Busy { value: false });
 
                 match result {
@@ -931,11 +969,21 @@ async fn run_acp_session(
                         });
                     }
                 }
+                // Auto-send next queued message (if any), unless queue is paused
+                if !handle
+                    .queue_paused
+                    .load(std::sync::atomic::Ordering::Relaxed)
+                {
+                    if let Some(next_text) = handle.pop_queue_front() {
+                        handle.emit(AcpUpdate::QueueUpdate {
+                            messages: handle.get_queue(),
+                        });
+                        handle.try_enqueue_prompt(next_text);
+                    }
+                }
             }
             AcpCommand::Cancel => {
-                let _ = conn
-                    .cancel(acp::CancelNotification::new(session_id_arc.clone()))
-                    .await;
+                // Agent 空闲时收到 Cancel，忽略
             }
             AcpCommand::SetMode { mode_id } => {
                 let _ = conn
@@ -1152,6 +1200,79 @@ impl AcpSessionHandle {
     /// 订阅更新流
     pub fn subscribe(&self) -> broadcast::Receiver<AcpUpdate> {
         self.update_tx.subscribe()
+    }
+
+    // ─── Pending queue management ────────────────────────────────────────
+
+    /// 添加消息到待执行队列，返回更新后的队列
+    pub fn queue_message(&self, text: String) -> Vec<String> {
+        let mut q = self.pending_queue.lock().unwrap();
+        q.push(text);
+        q.clone()
+    }
+
+    /// 删除队列中指定位置的消息，返回更新后的队列
+    pub fn dequeue_message(&self, index: usize) -> Vec<String> {
+        let mut q = self.pending_queue.lock().unwrap();
+        if index < q.len() {
+            q.remove(index);
+        }
+        q.clone()
+    }
+
+    /// 编辑队列中指定位置的消息，返回更新后的队列
+    pub fn update_queued_message(&self, index: usize, text: String) -> Vec<String> {
+        let mut q = self.pending_queue.lock().unwrap();
+        if index < q.len() {
+            q[index] = text;
+        }
+        q.clone()
+    }
+
+    /// 清空待执行队列，返回空队列
+    pub fn clear_queue(&self) -> Vec<String> {
+        let mut q = self.pending_queue.lock().unwrap();
+        q.clear();
+        q.clone()
+    }
+
+    /// 获取当前队列内容
+    pub fn get_queue(&self) -> Vec<String> {
+        self.pending_queue.lock().unwrap().clone()
+    }
+
+    /// 从队列头部取出一条消息（内部使用，auto-send）
+    fn pop_queue_front(&self) -> Option<String> {
+        let mut q = self.pending_queue.lock().unwrap();
+        if q.is_empty() {
+            None
+        } else {
+            Some(q.remove(0))
+        }
+    }
+
+    /// 非阻塞发送 prompt 命令（队列 auto-send 使用）
+    fn try_enqueue_prompt(&self, text: String) -> bool {
+        self.cmd_tx.try_send(AcpCommand::Prompt { text }).is_ok()
+    }
+
+    /// 暂停队列 auto-send（用户正在编辑队列消息）
+    pub fn pause_queue(&self) {
+        self.queue_paused
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// 恢复队列 auto-send，如果队列非空则立即尝试发送第一条
+    pub fn resume_queue(&self) {
+        self.queue_paused
+            .store(false, std::sync::atomic::Ordering::Relaxed);
+        // 尝试发送队列中的第一条消息（如果 agent 空闲会被处理）
+        if let Some(next_text) = self.pop_queue_front() {
+            self.emit(AcpUpdate::QueueUpdate {
+                messages: self.get_queue(),
+            });
+            self.try_enqueue_prompt(next_text);
+        }
     }
 }
 

@@ -38,6 +38,25 @@ enum ClientMessage {
     PermissionResponse {
         option_id: String,
     },
+    /// Add a message to the pending queue
+    QueueMessage {
+        text: String,
+    },
+    /// Remove a message from the pending queue by index
+    DequeueMessage {
+        index: usize,
+    },
+    /// Edit a queued message by index
+    UpdateQueuedMessage {
+        index: usize,
+        text: String,
+    },
+    /// Clear all pending messages
+    ClearQueue,
+    /// Pause queue auto-send (user is editing a queued message)
+    PauseQueue,
+    /// Resume queue auto-send (user finished editing)
+    ResumeQueue,
 }
 
 /// Server-to-client messages (serialized AcpUpdate)
@@ -99,6 +118,9 @@ enum ServerMessage {
     },
     AvailableCommands {
         commands: Vec<CommandMsg>,
+    },
+    QueueUpdate {
+        messages: Vec<String>,
     },
     SessionEnded,
 }
@@ -237,6 +259,7 @@ impl From<AcpUpdate> for ServerMessage {
                     })
                     .collect(),
             },
+            AcpUpdate::QueueUpdate { messages } => ServerMessage::QueueUpdate { messages },
             AcpUpdate::SessionEnded => ServerMessage::SessionEnded,
         }
     }
@@ -290,6 +313,15 @@ async fn handle_acp_ws(socket: WebSocket, session_key: String, config: AcpStartC
         }
     }
 
+    // Send current pending queue state on (re)connect
+    let queue = handle.get_queue();
+    if !queue.is_empty() {
+        let msg = ServerMessage::QueueUpdate { messages: queue };
+        let _ = ws_sender
+            .send(Message::Text(serde_json::to_string(&msg).unwrap().into()))
+            .await;
+    }
+
     let handle_for_input = handle.clone();
 
     // Task: Forward ACP updates to WebSocket
@@ -341,6 +373,28 @@ async fn handle_acp_ws(socket: WebSocket, session_key: String, config: AcpStartC
                             }
                             ClientMessage::PermissionResponse { option_id } => {
                                 handle_for_input.respond_permission(option_id);
+                            }
+                            ClientMessage::QueueMessage { text } => {
+                                let messages = handle_for_input.queue_message(text);
+                                handle_for_input.emit(AcpUpdate::QueueUpdate { messages });
+                            }
+                            ClientMessage::DequeueMessage { index } => {
+                                let messages = handle_for_input.dequeue_message(index);
+                                handle_for_input.emit(AcpUpdate::QueueUpdate { messages });
+                            }
+                            ClientMessage::UpdateQueuedMessage { index, text } => {
+                                let messages = handle_for_input.update_queued_message(index, text);
+                                handle_for_input.emit(AcpUpdate::QueueUpdate { messages });
+                            }
+                            ClientMessage::ClearQueue => {
+                                let messages = handle_for_input.clear_queue();
+                                handle_for_input.emit(AcpUpdate::QueueUpdate { messages });
+                            }
+                            ClientMessage::PauseQueue => {
+                                handle_for_input.pause_queue();
+                            }
+                            ClientMessage::ResumeQueue => {
+                                handle_for_input.resume_queue();
                             }
                         }
                     }

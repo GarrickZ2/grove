@@ -155,7 +155,8 @@ pub async fn execute(agent: String, cwd: String) {
                     | AcpUpdate::ModeChanged { .. }
                     | AcpUpdate::PlanUpdate { .. }
                     | AcpUpdate::AvailableCommands { .. }
-                    | AcpUpdate::PermissionResponse { .. },
+                    | AcpUpdate::PermissionResponse { .. }
+                    | AcpUpdate::QueueUpdate { .. },
                 ) => continue,
                 Ok(AcpUpdate::SessionEnded) => {
                     eprintln!("Session ended.");

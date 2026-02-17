@@ -37,6 +37,7 @@ pub fn should_persist(update: &AcpUpdate) -> bool {
             | AcpUpdate::SessionEnded
             | AcpUpdate::SessionReady { .. }
             | AcpUpdate::AvailableCommands { .. }
+            | AcpUpdate::QueueUpdate { .. }
     )
 }
 
