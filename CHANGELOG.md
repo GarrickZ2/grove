@@ -5,6 +5,59 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.0] - 2026-02-17
+
+### Added
+
+- **Agent Client Protocol (ACP)** — built-in chat interface for AI coding agents
+  - Full ACP client implementation with JSON-RPC over stdio (`src/acp/mod.rs`)
+  - Real-time streaming of agent messages, thoughts, tool calls, and plan updates
+  - WebSocket bridge for live chat in the Web UI (`TaskChat.tsx`)
+  - Permission request handling with approve/deny UI
+  - `grove acp` CLI for headless agent sessions
+- **Multi-chat support** — multiple chat sessions per task
+  - Create, rename, delete, and switch between chat sessions
+  - Each chat maintains independent conversation history with the agent
+  - Chat list sidebar with active session indicator
+- **Multi-agent support** — configure and switch between different AI agents
+  - Built-in agents: Claude Code, Codex, Aider, Amp, OpenCode
+  - Custom agent management: add local (command) or remote (URL) agents
+  - Per-chat agent selection with model/mode configuration
+  - `CustomAgentModal` for adding/editing/deleting custom agents
+- **@ file mentions** — reference files directly in chat input
+  - Type `@` to trigger file picker with fuzzy search
+  - Selected files are injected as context into the agent prompt
+- **Plan panel** — dedicated panel for viewing agent's implementation plan
+  - Collapsible plan view alongside chat messages
+  - Real-time plan updates during agent execution
+- **Chat history persistence** — conversations saved to disk
+  - JSONL format with turn-level compaction (merges chunk streams, tool call updates)
+  - Automatic replay on WebSocket reconnection
+  - Stored in `~/.grove/projects/{project}/tasks/{task_id}/chats/{chat_id}/history.jsonl`
+- **Server-side message queue** — pending message queue with pause/resume
+  - Messages queued during WebSocket disconnection, replayed on reconnect
+  - Concurrent prompt cancellation support
+- **Terminal protocol** — shell mode integration for ACP agents
+  - Shell mode shortcut for quick terminal access within chat
+
+### Changed
+
+- **Storage layout migrated to task-centric structure** — `grove migrate` command
+  - Per-task data consolidated into `tasks/<task-id>/` directories
+  - Notes: `notes/<id>.md` → `tasks/<id>/notes.md`
+  - Reviews: `review/<id>.json` → `tasks/<id>/review.json`
+  - Activity: `activity/<id>.jsonl` → `tasks/<id>/activity.jsonl`
+  - Automatic migration on first run, with `storage_version` tracking in config
+- **Legacy backward-compat code removed** — cleaned up obsolete compatibility layers
+  - Removed `chats_legacy` field and auto-migration from Task struct
+  - Removed `location` string fallback from review comment API
+  - Removed unused `migrateLayoutConfig` function
+  - Removed legacy uppercase pane type colors, unified presets to lowercase
+
+### Fixed
+
+- **New Task dialog field colors** — swapped editable/readonly field colors for correct visual hierarchy
+
 ## [0.5.0] - 2026-02-14
 
 ### Added
