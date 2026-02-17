@@ -26,12 +26,28 @@ export interface AutoLinkConfig {
   patterns: string[];
 }
 
+export interface CustomAgent {
+  id: string;
+  name: string;
+  type: 'local' | 'remote';
+  command?: string;
+  args?: string[];
+  url?: string;
+  auth_header?: string;
+}
+
+export interface AcpConfig {
+  agent_command?: string;
+  custom_agents: CustomAgent[];
+}
+
 export interface Config {
   theme: ThemeConfig;
   layout: LayoutConfig;
   web: WebConfig;
   multiplexer: string;
   auto_link: AutoLinkConfig;
+  acp: AcpConfig;
 }
 
 export interface ConfigPatch {
@@ -40,6 +56,7 @@ export interface ConfigPatch {
   web?: Partial<WebConfig>;
   multiplexer?: string;
   auto_link?: Partial<AutoLinkConfig>;
+  acp?: Partial<AcpConfig>;
 }
 
 // Application info for picker

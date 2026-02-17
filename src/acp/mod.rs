@@ -128,6 +128,12 @@ pub struct AcpStartConfig {
     pub task_id: String,
     /// Chat ID（multi-chat 支持，为空时使用旧的 task 级 session_id）
     pub chat_id: Option<String>,
+    /// Agent 类型: "local" | "remote"
+    pub agent_type: String,
+    /// Remote WebSocket URL
+    pub remote_url: Option<String>,
+    /// Remote Authorization header
+    pub remote_auth: Option<String>,
 }
 
 /// 单个 terminal 实例的状态
@@ -646,25 +652,39 @@ async fn run_acp_session(
     config: AcpStartConfig,
     mut cmd_rx: mpsc::Receiver<AcpCommand>,
 ) -> crate::error::Result<()> {
-    // 启动 agent 子进程
-    let mut child = tokio::process::Command::new(&config.agent_command)
-        .args(&config.agent_args)
-        .current_dir(&config.working_dir)
-        .stdin(std::process::Stdio::piped())
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::inherit())
-        .envs(&config.env_vars)
-        .kill_on_drop(true)
-        .spawn()
-        .map_err(|e| {
-            crate::error::GroveError::Session(format!(
-                "Failed to spawn ACP agent '{}': {}",
-                config.agent_command, e
-            ))
-        })?;
+    // 根据 agent_type 分支获取 reader/writer（使用 trait object 统一类型）
+    let child: Option<tokio::process::Child>;
+    let writer: Box<dyn futures::AsyncWrite + Unpin>;
+    let reader: Box<dyn futures::AsyncRead + Unpin>;
 
-    let stdin = child.stdin.take().unwrap().compat_write();
-    let stdout = child.stdout.take().unwrap().compat();
+    if config.agent_type == "remote" {
+        // Remote: WebSocket 连接（通过 duplex 管道桥接为 AsyncRead/AsyncWrite）
+        child = None;
+        let (r, w) = connect_remote_agent(&config).await?;
+        reader = Box::new(r);
+        writer = Box::new(w);
+    } else {
+        // Local: 子进程
+        let mut proc = tokio::process::Command::new(&config.agent_command)
+            .args(&config.agent_args)
+            .current_dir(&config.working_dir)
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::inherit())
+            .envs(&config.env_vars)
+            .kill_on_drop(true)
+            .spawn()
+            .map_err(|e| {
+                crate::error::GroveError::Session(format!(
+                    "Failed to spawn ACP agent '{}': {}",
+                    config.agent_command, e
+                ))
+            })?;
+
+        writer = Box::new(proc.stdin.take().unwrap().compat_write());
+        reader = Box::new(proc.stdout.take().unwrap().compat());
+        child = Some(proc);
+    }
 
     let client = GroveAcpClient {
         handle: handle.clone(),
@@ -676,7 +696,7 @@ async fn run_acp_session(
     };
 
     // 创建 ACP 连接
-    let (conn, handle_io) = acp::ClientSideConnection::new(client, stdin, stdout, |fut| {
+    let (conn, handle_io) = acp::ClientSideConnection::new(client, writer, reader, |fut| {
         tokio::task::spawn_local(fut);
     });
 
@@ -926,10 +946,95 @@ async fn run_acp_session(
         }
     }
 
-    // 清理子进程
+    // 清理子进程（如有）
     drop(child);
 
     Ok(())
+}
+
+/// Remote WebSocket agent: 通过 tokio-tungstenite 连接，桥接为 AsyncRead/AsyncWrite
+async fn connect_remote_agent(
+    config: &AcpStartConfig,
+) -> crate::error::Result<(
+    tokio_util::compat::Compat<tokio::io::DuplexStream>,
+    tokio_util::compat::Compat<tokio::io::DuplexStream>,
+)> {
+    use futures::StreamExt;
+    use tokio::io::AsyncWriteExt;
+    use tokio_tungstenite::tungstenite;
+
+    let url = config
+        .remote_url
+        .as_ref()
+        .ok_or_else(|| crate::error::GroveError::Session("Remote URL is required".into()))?;
+
+    use tungstenite::client::IntoClientRequest;
+    let mut request = url.as_str().into_client_request().map_err(|e| {
+        crate::error::GroveError::Session(format!("Failed to build WS request: {}", e))
+    })?;
+
+    if let Some(auth) = &config.remote_auth {
+        request.headers_mut().insert(
+            "Authorization",
+            auth.parse().map_err(|e| {
+                crate::error::GroveError::Session(format!("Invalid auth header: {}", e))
+            })?,
+        );
+    }
+
+    let (ws_stream, _) = tokio_tungstenite::connect_async(request)
+        .await
+        .map_err(|e| {
+            crate::error::GroveError::Session(format!("WebSocket connect failed: {}", e))
+        })?;
+
+    let (mut ws_write, mut ws_read) = ws_stream.split();
+
+    // duplex 管道：ACP 侧 <-> WebSocket 侧
+    let (agent_read, mut bridge_write) = tokio::io::duplex(64 * 1024);
+    let (bridge_read, agent_write) = tokio::io::duplex(64 * 1024);
+
+    // 后台任务: ws_read -> bridge_write (WebSocket text frames -> raw bytes)
+    tokio::task::spawn_local(async move {
+        while let Some(msg) = ws_read.next().await {
+            match msg {
+                Ok(tungstenite::Message::Text(text)) => {
+                    let line = format!("{}\n", text);
+                    if bridge_write.write_all(line.as_bytes()).await.is_err() {
+                        break;
+                    }
+                }
+                Ok(tungstenite::Message::Close(_)) | Err(_) => break,
+                _ => {}
+            }
+        }
+    });
+
+    // 后台任务: bridge_read -> ws_write (raw bytes newline-delimited -> WebSocket text frames)
+    tokio::task::spawn_local(async move {
+        use futures::SinkExt;
+        use tokio::io::AsyncBufReadExt;
+        let mut reader = tokio::io::BufReader::new(bridge_read);
+        let mut line = String::new();
+        loop {
+            line.clear();
+            match reader.read_line(&mut line).await {
+                Ok(0) | Err(_) => break,
+                Ok(_) => {
+                    let trimmed = line.trim_end().to_string();
+                    if ws_write
+                        .send(tungstenite::Message::Text(trimmed.into()))
+                        .await
+                        .is_err()
+                    {
+                        break;
+                    }
+                }
+            }
+        }
+    });
+
+    Ok((agent_read.compat(), agent_write.compat_write()))
 }
 
 // === 公开 API ===
@@ -1022,12 +1127,107 @@ pub fn kill_session(key: &str) -> crate::error::Result<()> {
     Ok(())
 }
 
-/// 解析 agent 名称到命令和参数
-pub fn resolve_agent_command(agent_name: &str) -> Option<(String, Vec<String>)> {
+/// 解析后的 Agent 信息
+pub struct ResolvedAgent {
+    pub agent_type: String,
+    pub command: String,
+    pub args: Vec<String>,
+    pub url: Option<String>,
+    pub auth_header: Option<String>,
+}
+
+/// 解析 agent 名称到完整 agent 信息（支持 built-in + custom）
+pub fn resolve_agent(agent_name: &str) -> Option<ResolvedAgent> {
+    // 1. Built-in agents
     match agent_name.to_lowercase().as_str() {
-        "claude" => Some(("claude-code-acp".to_string(), vec![])),
-        _ => None,
+        "claude" => {
+            return Some(ResolvedAgent {
+                agent_type: "local".into(),
+                command: "claude-code-acp".into(),
+                args: vec![],
+                url: None,
+                auth_header: None,
+            });
+        }
+        "traecli" => {
+            return Some(ResolvedAgent {
+                agent_type: "local".into(),
+                command: "traecli".into(),
+                args: vec!["acp".into(), "serve".into()],
+                url: None,
+                auth_header: None,
+            });
+        }
+        "codex" => {
+            return Some(ResolvedAgent {
+                agent_type: "local".into(),
+                command: "codex-acp".into(),
+                args: vec![],
+                url: None,
+                auth_header: None,
+            });
+        }
+        "kimi" => {
+            return Some(ResolvedAgent {
+                agent_type: "local".into(),
+                command: "kimi".into(),
+                args: vec!["acp".into()],
+                url: None,
+                auth_header: None,
+            });
+        }
+        "gemini" => {
+            return Some(ResolvedAgent {
+                agent_type: "local".into(),
+                command: "gemini".into(),
+                args: vec!["--experimental-acp".into()],
+                url: None,
+                auth_header: None,
+            });
+        }
+        "qwen" => {
+            return Some(ResolvedAgent {
+                agent_type: "local".into(),
+                command: "qwen".into(),
+                args: vec!["--experimental-acp".into()],
+                url: None,
+                auth_header: None,
+            });
+        }
+        "opencode" => {
+            return Some(ResolvedAgent {
+                agent_type: "local".into(),
+                command: "opencode".into(),
+                args: vec!["acp".into()],
+                url: None,
+                auth_header: None,
+            });
+        }
+        "copilot" | "gh copilot" | "gh-copilot" => {
+            return Some(ResolvedAgent {
+                agent_type: "local".into(),
+                command: "copilot".into(),
+                args: vec!["--acp".into()],
+                url: None,
+                auth_header: None,
+            });
+        }
+        _ => {}
     }
+    // 2. Custom agents from config
+    let config = crate::storage::config::load_config();
+    config
+        .acp
+        .custom_agents
+        .iter()
+        .find(|a| a.id == agent_name)
+        .map(|a| ResolvedAgent {
+            agent_type: a.agent_type.clone(),
+            command: a.command.clone().unwrap_or_default(),
+            args: a.args.clone(),
+            url: a.url.clone(),
+            auth_header: a.auth_header.clone(),
+        })
 }
 
 /// 发送 ACP 事件通知（声音 + 横幅 + hooks.toml）

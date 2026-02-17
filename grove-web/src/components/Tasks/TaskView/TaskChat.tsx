@@ -24,7 +24,7 @@ import { Button, MarkdownRenderer, agentOptions } from "../../ui";
 import type { Task } from "../../../data/types";
 import { getApiHost } from "../../../api/client";
 import { getConfig, listChats, createChat, updateChatTitle, deleteChat } from "../../../api";
-import type { ChatSessionResponse } from "../../../api";
+import type { ChatSessionResponse, CustomAgent } from "../../../api";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -272,23 +272,32 @@ export function TaskChat({
 
   // Resolve agent label and icon from active chat's agent
   useEffect(() => {
-    const resolve = (cmd: string) => {
+    const resolve = (cmd: string, customAgents?: CustomAgent[]) => {
       const match = agentOptions.find((a) => a.value === cmd);
       if (match) {
         setAgentLabel(match.label);
         if (match.icon) setAgentIcon(() => match.icon!);
       } else {
-        setAgentLabel(cmd);
+        // Check custom agents
+        const custom = customAgents?.find((a) => a.id === cmd);
+        if (custom) {
+          setAgentLabel(custom.name);
+        } else {
+          setAgentLabel(cmd);
+        }
       }
     };
 
     if (activeChat) {
-      resolve(activeChat.agent);
+      // Load config to get custom agents for resolution
+      getConfig()
+        .then((cfg) => resolve(activeChat.agent, cfg.acp?.custom_agents))
+        .catch(() => resolve(activeChat.agent));
     } else if (task.multiplexer === "acp") {
       resolve("claude");
     } else {
       getConfig()
-        .then((cfg) => resolve(cfg.layout.agent_command || "claude"))
+        .then((cfg) => resolve(cfg.layout.agent_command || "claude", cfg.acp?.custom_agents))
         .catch(() => resolve("claude"));
     }
   }, [task.multiplexer, activeChat]);
@@ -512,7 +521,7 @@ export function TaskChat({
           // Replace "Connecting..." with friendly connected message
           setMessages((prev) => {
             const filtered = prev.filter((m) => !(m.type === "system" && m.content === "Connecting..."));
-            return [...filtered, { type: "system", content: "Connected to Claude Code" }];
+            return [...filtered, { type: "system", content: "$$CONNECTED$$" }];
           });
           break;
         case "message_chunk":
@@ -619,7 +628,7 @@ export function TaskChat({
           state.modelOptions = msg.available_models.map((m: { id: string; name: string }) => ({ label: m.name, value: m.id }));
         if (msg.current_model_id) state.selectedModel = msg.current_model_id;
         state.messages = [...state.messages.filter((m) => !(m.type === "system" && m.content === "Connecting...")),
-          { type: "system", content: "Connected to Claude Code" }];
+          { type: "system", content: "$$CONNECTED$$" }];
         break;
       case "message_chunk": {
         const msgs = state.messages;
@@ -1004,7 +1013,7 @@ export function TaskChat({
 
           {/* Chat title / dropdown (only for ACP multi-chat) */}
           {task.multiplexer === "acp" && activeChat ? (
-            <div className="relative min-w-0" ref={chatMenuRef}>
+            <div className="relative min-w-0 flex-1" ref={chatMenuRef}>
               {editingTitle ? (
                 <input
                   autoFocus
@@ -1025,7 +1034,7 @@ export function TaskChat({
                     setEditingTitle(true);
                     setShowChatMenu(false);
                   }}
-                  className="flex items-center gap-1 text-sm text-[var(--color-text)] hover:text-[var(--color-highlight)] transition-colors truncate max-w-48"
+                  className="flex items-center gap-1 text-sm text-[var(--color-text)] hover:text-[var(--color-highlight)] transition-colors min-w-0"
                   title="Double-click to rename"
                 >
                   <span className="truncate">{activeChat.title}</span>
@@ -1114,7 +1123,7 @@ export function TaskChat({
       <div className="flex-1 overflow-y-auto px-4 py-3 space-y-3 min-h-0 bg-[var(--color-bg-secondary)]">
         {renderItems.map((item) =>
           item.kind === "single" ? (
-            <MessageItem key={`m-${item.index}`} message={item.message} index={item.index} isBusy={isBusy}
+            <MessageItem key={`m-${item.index}`} message={item.message} index={item.index} isBusy={isBusy} agentLabel={agentLabel}
               onToggleThinkingCollapse={toggleThinkingCollapse} onPermissionResponse={handlePermissionResponse} />
           ) : (
             <ToolSectionView
@@ -1301,7 +1310,7 @@ const DropdownSelect = ({ ref, label, options, value, open, onToggle, onSelect }
       <ChevronDown className="w-3 h-3" />
     </button>
     {open && (
-      <div className="absolute bottom-full right-0 mb-1 min-w-44 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] shadow-lg py-1 z-50">
+      <div className="absolute bottom-full right-0 mb-1 min-w-44 max-h-64 overflow-y-auto rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] shadow-lg py-1 z-50">
         {options.map((opt) => (
           <button key={opt.value} onClick={() => onSelect(opt.value)}
             className={`w-full text-left px-3 py-1.5 text-sm flex items-center justify-between hover:bg-[var(--color-bg-tertiary)] transition-colors ${
@@ -1316,8 +1325,8 @@ const DropdownSelect = ({ ref, label, options, value, open, onToggle, onSelect }
 );
 
 /** Individual message rendering */
-function MessageItem({ message, index, isBusy, onToggleThinkingCollapse, onPermissionResponse }: {
-  message: ChatMessage; index: number; isBusy: boolean;
+function MessageItem({ message, index, isBusy, agentLabel, onToggleThinkingCollapse, onPermissionResponse }: {
+  message: ChatMessage; index: number; isBusy: boolean; agentLabel?: string;
   onToggleThinkingCollapse: (index: number) => void;
   onPermissionResponse?: (optionId: string, optionName: string) => void;
 }) {
@@ -1366,10 +1375,14 @@ function MessageItem({ message, index, isBusy, onToggleThinkingCollapse, onPermi
     case "tool":
       // Tools are rendered via ToolSectionView; skip here
       return null;
-    case "system":
+    case "system": {
+      const displayContent = message.content === "$$CONNECTED$$"
+        ? `Connected to ${agentLabel || "Agent"}`
+        : message.content;
       return (
-        <div className="text-center text-xs text-[var(--color-text-muted)] py-1">{message.content}</div>
+        <div className="text-center text-xs text-[var(--color-text-muted)] py-1">{displayContent}</div>
       );
+    }
   }
 }
 

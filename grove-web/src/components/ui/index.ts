@@ -11,6 +11,7 @@ export { ContextMenu } from "./ContextMenu";
 export type { ContextMenuItem } from "./ContextMenu";
 export { AppPicker, ideAppOptions, terminalAppOptions } from "./AppPicker";
 export { AgentPicker, agentOptions } from "./AgentPicker";
+export { CustomAgentModal } from "./CustomAgentModal";
 export { MarkdownRenderer } from "./MarkdownRenderer";
 export { KeyBadge } from "./KeyBadge";
 export { VSCodeIcon } from "./VSCodeIcon";

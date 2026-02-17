@@ -1,38 +1,51 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "framer-motion";
-import { ChevronDown, Check, Bot } from "lucide-react";
+import { ChevronDown, Check, Bot, Globe, Terminal, Settings } from "lucide-react";
+import type { CustomAgent } from "../../api/config";
 
 // Import Lobe icons for AI agents
-import { Claude, Gemini, Copilot, Cursor, Trae, Aws, Qwen, Kimi, OpenAI } from "@lobehub/icons";
+import { Claude, Gemini, Copilot, Cursor, Trae, Qwen, Kimi, OpenAI } from "@lobehub/icons";
+import { OpenCodeIcon } from "./OpenCodeIcon";
 
 export interface AgentOption {
   id: string;
   label: string;
   value: string;
   icon?: React.ComponentType<{ size?: number; className?: string }>;
+  disabled?: boolean;
+  disabledReason?: string;
+  /** Command to check in terminal mode (defaults to first word of value) */
+  terminalCheck?: string;
+  /** Command to check in chat/ACP mode */
+  acpCheck?: string;
 }
 
 // Agent options with icons
 export const agentOptions: AgentOption[] = [
-  { id: "claude", label: "Claude Code", value: "claude", icon: Claude.Color },
-  { id: "cursor-agent", label: "Cursor Agent", value: "cursor-agent", icon: Cursor },
-  { id: "gh-copilot", label: "GitHub Copilot", value: "gh copilot", icon: Copilot.Color },
-  { id: "traecli", label: "Trae", value: "traecli", icon: Trae.Color },
-  { id: "gemini", label: "Gemini", value: "gemini", icon: Gemini.Color },
-  { id: "amazon-q", label: "Amazon Q", value: "q", icon: Aws.Color },
-  { id: "qwen", label: "Qwen", value: "qwen", icon: Qwen.Color },
-  { id: "kimi", label: "Kimi", value: "kimi", icon: Kimi.Color },
-  { id: "codex", label: "CodeX", value: "codex", icon: OpenAI },
+  { id: "claude", label: "Claude Code", value: "claude", icon: Claude.Color, terminalCheck: "claude", acpCheck: "claude-code-acp" },
+  { id: "codex", label: "CodeX", value: "codex", icon: OpenAI, terminalCheck: "codex", acpCheck: "codex-acp" },
+  { id: "gemini", label: "Gemini", value: "gemini", icon: Gemini.Color, terminalCheck: "gemini", acpCheck: "gemini" },
+  { id: "gh-copilot", label: "GitHub Copilot", value: "copilot", icon: Copilot.Color, terminalCheck: "copilot", acpCheck: "copilot" },
+  { id: "cursor-agent", label: "Cursor Agent", value: "cursor-agent", icon: Cursor, terminalCheck: "cursor-agent" },
+  { id: "opencode", label: "OpenCode", value: "opencode", icon: OpenCodeIcon, terminalCheck: "opencode", acpCheck: "opencode" },
+  { id: "qwen", label: "Qwen", value: "qwen", icon: Qwen.Color, terminalCheck: "qwen", acpCheck: "qwen" },
+  { id: "kimi", label: "Kimi", value: "kimi", icon: Kimi.Color, terminalCheck: "kimi", acpCheck: "kimi" },
+  { id: "traecli", label: "Trae", value: "traecli", icon: Trae.Color, terminalCheck: "traecli", acpCheck: "traecli" },
 ];
 
 interface AgentPickerProps {
   value: string;
   onChange: (value: string) => void;
   placeholder?: string;
+  /** Show "Custom command..." free-text input (Terminal mode) */
   allowCustom?: boolean;
   customPlaceholder?: string;
   options?: AgentOption[];
+  /** ACP custom agents shown in dropdown (Chat mode) */
+  customAgents?: CustomAgent[];
+  /** Open the custom agent management modal (Chat mode) */
+  onManageCustomAgents?: () => void;
 }
 
 interface DropdownPosition {
@@ -48,6 +61,8 @@ export function AgentPicker({
   allowCustom = true,
   customPlaceholder = "Enter agent command...",
   options: externalOptions,
+  customAgents = [],
+  onManageCustomAgents,
 }: AgentPickerProps) {
   const displayOptions = externalOptions ?? agentOptions;
   const [isOpen, setIsOpen] = useState(false);
@@ -59,13 +74,16 @@ export function AgentPicker({
   const inputRef = useRef<HTMLInputElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
 
-  // Check if current value matches any option
+  // Check if current value matches any built-in option or custom agent
   const selectedOption = displayOptions.find((opt) => opt.value === value);
-  const isCustomValue = value && !selectedOption;
+  const selectedCustomAgent = !selectedOption
+    ? customAgents.find((a) => a.id === value)
+    : null;
+  const isCustomValue = value && !selectedOption && !selectedCustomAgent;
 
-  // Initialize custom value if current value is custom
+  // Initialize custom value if current value is custom (Terminal mode)
   useEffect(() => {
-    if (isCustomValue) {
+    if (isCustomValue && allowCustom) {
       setCustomValue(value);
       setIsCustomMode(true);
     }
@@ -133,6 +151,12 @@ export function AgentPicker({
     }
   };
 
+  const handleSelectCustomAgent = (agentId: string) => {
+    setIsCustomMode(false);
+    onChange(agentId);
+    setIsOpen(false);
+  };
+
   const handleCustomSubmit = () => {
     if (customValue.trim()) {
       onChange(customValue.trim());
@@ -151,7 +175,7 @@ export function AgentPicker({
 
   const displayValue = isCustomMode
     ? customValue || customPlaceholder
-    : selectedOption?.label || (isCustomValue ? value : placeholder);
+    : selectedOption?.label || selectedCustomAgent?.name || (isCustomValue ? value : placeholder);
 
   const SelectedIcon = selectedOption?.icon;
 
@@ -176,16 +200,22 @@ export function AgentPicker({
           }}
           className="py-1 bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-lg shadow-lg max-h-[400px] overflow-y-auto"
         >
+          {/* Built-in agent options */}
           {displayOptions.map((option) => {
             const Icon = option.icon;
+            const isDisabled = !!option.disabled;
             return (
               <button
                 key={option.id}
-                onClick={() => handleSelect(option)}
+                onClick={() => !isDisabled && handleSelect(option)}
+                disabled={isDisabled}
+                title={isDisabled ? option.disabledReason : undefined}
                 className={`w-full flex items-center gap-3 px-3 py-2.5 text-sm transition-colors
-                  ${option.value === value
-                    ? "bg-[var(--color-highlight)]/10 text-[var(--color-highlight)]"
-                    : "text-[var(--color-text)] hover:bg-[var(--color-bg-tertiary)]"
+                  ${isDisabled
+                    ? "opacity-45 cursor-not-allowed"
+                    : option.value === value
+                      ? "bg-[var(--color-highlight)]/10 text-[var(--color-highlight)]"
+                      : "text-[var(--color-text)] hover:bg-[var(--color-bg-tertiary)]"
                   }`}
               >
                 <div className="w-6 h-6 flex items-center justify-center flex-shrink-0">
@@ -197,13 +227,51 @@ export function AgentPicker({
                 </div>
                 <div className="flex-1 text-left">
                   <div>{option.label}</div>
-                  <div className="text-xs text-[var(--color-text-muted)]">{option.value}</div>
+                  <div className="text-xs text-[var(--color-text-muted)]">
+                    {isDisabled ? option.disabledReason : option.value}
+                  </div>
                 </div>
-                {option.value === value && <Check className="w-4 h-4 flex-shrink-0" />}
+                {!isDisabled && option.value === value && <Check className="w-4 h-4 flex-shrink-0" />}
               </button>
             );
           })}
 
+          {/* ACP custom agents section (Chat mode) */}
+          {customAgents.length > 0 && (
+            <>
+              <div className="flex items-center gap-2 px-3 py-1.5 mt-1 border-t border-[var(--color-border)]">
+                <span className="text-[10px] uppercase tracking-wider text-[var(--color-text-muted)] font-medium">Custom</span>
+              </div>
+              {customAgents.map((agent) => (
+                <button
+                  key={agent.id}
+                  onClick={() => handleSelectCustomAgent(agent.id)}
+                  className={`w-full flex items-center gap-3 px-3 py-2.5 text-sm transition-colors
+                    ${agent.id === value
+                      ? "bg-[var(--color-highlight)]/10 text-[var(--color-highlight)]"
+                      : "text-[var(--color-text)] hover:bg-[var(--color-bg-tertiary)]"
+                    }`}
+                >
+                  <div className="w-6 h-6 flex items-center justify-center flex-shrink-0">
+                    {agent.type === "remote" ? (
+                      <Globe className="w-5 h-5 text-[var(--color-info)]" />
+                    ) : (
+                      <Terminal className="w-5 h-5 text-[var(--color-text-muted)]" />
+                    )}
+                  </div>
+                  <div className="flex-1 text-left">
+                    <div>{agent.name}</div>
+                    <div className="text-xs text-[var(--color-text-muted)]">
+                      {agent.type === "remote" ? agent.url : agent.command}
+                    </div>
+                  </div>
+                  {agent.id === value && <Check className="w-4 h-4 flex-shrink-0" />}
+                </button>
+              ))}
+            </>
+          )}
+
+          {/* Footer actions: "Custom command..." OR "Manage Custom Agents..." */}
           {allowCustom && (
             <button
               onClick={() => handleSelect("custom")}
@@ -215,6 +283,23 @@ export function AgentPicker({
               <span>Custom command...</span>
             </button>
           )}
+
+          {onManageCustomAgents && (
+            <button
+              onClick={() => {
+                setIsOpen(false);
+                onManageCustomAgents();
+              }}
+              className={`w-full flex items-center gap-3 px-3 py-2.5 text-sm text-[var(--color-text)] hover:bg-[var(--color-bg-tertiary)] ${
+                !allowCustom ? "border-t border-[var(--color-border)] mt-1" : ""
+              }`}
+            >
+              <div className="w-6 h-6 flex items-center justify-center flex-shrink-0">
+                <Settings className="w-5 h-5 text-[var(--color-text-muted)]" />
+              </div>
+              <span>Manage Custom Agents...</span>
+            </button>
+          )}
         </motion.div>
       </AnimatePresence>,
       document.body
@@ -224,7 +309,7 @@ export function AgentPicker({
   return (
     <div className="w-full" ref={containerRef}>
       <div className="relative">
-        {/* Trigger button or custom input */}
+        {/* Trigger button or custom input (Terminal mode free-text) */}
         {isCustomMode ? (
           <div className="flex gap-2">
             <input
@@ -266,11 +351,17 @@ export function AgentPicker({
             <div className="w-5 h-5 flex items-center justify-center flex-shrink-0">
               {SelectedIcon ? (
                 <SelectedIcon size={18} />
+              ) : selectedCustomAgent ? (
+                selectedCustomAgent.type === "remote" ? (
+                  <Globe className="w-4 h-4 text-[var(--color-info)]" />
+                ) : (
+                  <Terminal className="w-4 h-4 text-[var(--color-text-muted)]" />
+                )
               ) : (
                 <Bot className="w-4 h-4 text-[var(--color-text-muted)]" />
               )}
             </div>
-            <span className={`flex-1 text-left ${selectedOption || isCustomValue ? "text-[var(--color-text)]" : "text-[var(--color-text-muted)]"}`}>
+            <span className={`flex-1 text-left ${selectedOption || selectedCustomAgent || isCustomValue ? "text-[var(--color-text)]" : "text-[var(--color-text-muted)]"}`}>
               {displayValue}
             </span>
             <motion.div

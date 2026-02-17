@@ -1,7 +1,8 @@
 //! Environment check API handlers
 
 use axum::{extract::Path, Json};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::process::Command;
 
 /// Dependency status
@@ -57,6 +58,12 @@ const DEPENDENCIES: &[DependencyDef] = &[
         check_cmd: "which",
         check_args: &["claude-code-acp"],
         install_command: "npm install -g @zed-industries/claude-code-acp",
+    },
+    DependencyDef {
+        name: "codex-acp",
+        check_cmd: "which",
+        check_args: &["codex-acp"],
+        install_command: "npm install -g @zed-industries/codex-acp",
     },
 ];
 
@@ -146,7 +153,7 @@ fn parse_version(name: &str, output: &str) -> String {
                 .unwrap_or(output)
                 .to_string()
         }
-        "claude-code-acp" => {
+        "claude-code-acp" | "codex-acp" => {
             // `which` returns path, not version — just confirm installed
             "installed".to_string()
         }
@@ -166,4 +173,32 @@ pub async fn check_one(Path(name): Path<String>) -> Json<Option<DependencyStatus
     let dep = DEPENDENCIES.iter().find(|d| d.name == name);
 
     Json(dep.map(check_dependency))
+}
+
+/// POST /api/v1/env/check-commands — batch check if commands exist on PATH
+#[derive(Deserialize)]
+pub struct CheckCommandsRequest {
+    pub commands: Vec<String>,
+}
+
+#[derive(Serialize)]
+pub struct CheckCommandsResponse {
+    pub results: HashMap<String, bool>,
+}
+
+pub async fn check_commands(Json(body): Json<CheckCommandsRequest>) -> Json<CheckCommandsResponse> {
+    let results: HashMap<String, bool> = body
+        .commands
+        .iter()
+        .map(|cmd| {
+            let exists = Command::new("which")
+                .arg(cmd)
+                .output()
+                .map(|o| o.status.success())
+                .unwrap_or(false);
+            (cmd.clone(), exists)
+        })
+        .collect();
+
+    Json(CheckCommandsResponse { results })
 }

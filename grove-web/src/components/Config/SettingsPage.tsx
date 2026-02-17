@@ -26,15 +26,17 @@ import {
   X,
   MessageSquare,
 } from "lucide-react";
-import { Button, Combobox, AppPicker, AgentPicker, agentOptions, ideAppOptions, terminalAppOptions } from "../ui";
+import { Button, Combobox, AppPicker, AgentPicker, agentOptions, ideAppOptions, terminalAppOptions, CustomAgentModal } from "../ui";
 import type { ComboboxOption } from "../ui";
 import { useTheme, themes, useTerminalTheme, terminalThemes } from "../../context";
 import {
   getConfig,
   patchConfig,
   checkAllDependencies,
+  checkCommands,
   listApplications,
   type AppInfo,
+  type CustomAgent,
 } from "../../api";
 import { LayoutEditor, type CustomLayoutConfig, type PaneType, type LayoutNode, createDefaultLayout, countPanes } from "./LayoutEditor";
 
@@ -187,6 +189,8 @@ const dependencyInfo: Record<string, { name: string; description: string; docsUr
   tmux: { name: "tmux", description: "Terminal multiplexer", docsUrl: "https://github.com/tmux/tmux/wiki" },
   zellij: { name: "Zellij", description: "Terminal multiplexer", docsUrl: "https://zellij.dev/documentation/" },
   fzf: { name: "fzf", description: "Fuzzy finder for file picker", docsUrl: "https://github.com/junegunn/fzf" },
+  "claude-code-acp": { name: "Claude Code ACP", description: "ACP adapter for Claude Code", docsUrl: "https://github.com/anthropics/claude-code" },
+  "codex-acp": { name: "Codex ACP", description: "ACP adapter for OpenAI Codex", docsUrl: "https://github.com/zed-industries/codex-acp" },
 };
 
 type DependencyStatusType = "checking" | "installed" | "not_installed" | "error";
@@ -224,6 +228,14 @@ export function SettingsPage({ config }: SettingsPageProps) {
   const [terminalCommand, setTerminalCommand] = useState("");
   const [applications, setApplications] = useState<AppInfo[]>([]);
   const [isLoadingApps, setIsLoadingApps] = useState(false);
+
+  // ACP / Custom agents state
+  const [acpAgent, setAcpAgent] = useState("claude"); // Chat mode agent
+  const [customAgents, setCustomAgents] = useState<CustomAgent[]>([]);
+  const [showCustomAgentModal, setShowCustomAgentModal] = useState(false);
+
+  // Agent command availability: command name → exists on PATH
+  const [commandAvailability, setCommandAvailability] = useState<Record<string, boolean>>({});
 
   // Multiplexer state
   const [multiplexer, setMultiplexer] = useState("tmux");
@@ -335,6 +347,14 @@ export function SettingsPage({ config }: SettingsPageProps) {
       // Load AutoLink config
       setAutoLinkPatterns(cfg.auto_link.patterns);
 
+      // Load ACP config
+      if (cfg.acp?.agent_command) {
+        setAcpAgent(cfg.acp.agent_command);
+      }
+      if (cfg.acp?.custom_agents) {
+        setCustomAgents(cfg.acp.custom_agents);
+      }
+
       setIsLoaded(true);
     } catch {
       // API not available, use props config
@@ -367,7 +387,6 @@ export function SettingsPage({ config }: SettingsPageProps) {
       const newStates: Record<string, DependencyState> = {};
 
       for (const dep of response.dependencies) {
-        if (dep.name === "claude-code-acp") continue; // Managed via Mode Toggle, not shown here
         newStates[dep.name] = {
           status: dep.installed ? "installed" : "not_installed",
           version: dep.version || undefined,
@@ -387,6 +406,21 @@ export function SettingsPage({ config }: SettingsPageProps) {
       });
     } finally {
       setIsChecking(false);
+    }
+  }, []);
+
+  // Check agent command availability
+  const checkAgentCommands = useCallback(async () => {
+    const cmds = new Set<string>();
+    for (const opt of agentOptions) {
+      if (opt.terminalCheck) cmds.add(opt.terminalCheck);
+      if (opt.acpCheck) cmds.add(opt.acpCheck);
+    }
+    try {
+      const results = await checkCommands([...cmds]);
+      setCommandAvailability(results);
+    } catch {
+      // API not available, assume all available
     }
   }, []);
 
@@ -416,6 +450,9 @@ export function SettingsPage({ config }: SettingsPageProps) {
           terminal: terminalCommand || undefined,
         },
         multiplexer,
+        acp: {
+          agent_command: acpAgent || undefined,
+        },
         auto_link: {
           patterns: autoLinkPatterns,
         },
@@ -423,7 +460,7 @@ export function SettingsPage({ config }: SettingsPageProps) {
     } catch {
       console.error("Failed to save config");
     }
-  }, [isLoaded, theme.id, selectedLayout, agentCommand, customLayouts, selectedCustomLayoutId, customLayoutsLoaded, ideCommand, terminalCommand, multiplexer, autoLinkPatterns]);
+  }, [isLoaded, theme.id, selectedLayout, agentCommand, acpAgent, customLayouts, selectedCustomLayoutId, customLayoutsLoaded, ideCommand, terminalCommand, multiplexer, autoLinkPatterns]);
 
   // Handle theme change with immediate save
   const handleThemeChange = useCallback((newThemeId: string) => {
@@ -445,7 +482,7 @@ export function SettingsPage({ config }: SettingsPageProps) {
     }, 500); // 500ms debounce
 
     return () => clearTimeout(timer);
-  }, [theme.id, selectedLayout, agentCommand, customLayouts, selectedCustomLayoutId, customLayoutsLoaded, ideCommand, terminalCommand, multiplexer, autoLinkPatterns, isLoaded, saveConfig]);
+  }, [theme.id, selectedLayout, agentCommand, acpAgent, customLayouts, selectedCustomLayoutId, customLayoutsLoaded, ideCommand, terminalCommand, multiplexer, autoLinkPatterns, isLoaded, saveConfig]);
 
   // Load applications list
   const loadApplications = useCallback(async () => {
@@ -465,7 +502,8 @@ export function SettingsPage({ config }: SettingsPageProps) {
     loadConfig();
     checkDependencies();
     loadApplications();
-  }, [loadConfig, checkDependencies, loadApplications]);
+    checkAgentCommands();
+  }, [loadConfig, checkDependencies, loadApplications, checkAgentCommands]);
 
   // Terminal availability
   const tmuxInstalled = depStates["tmux"]?.status === "installed";
@@ -496,11 +534,20 @@ export function SettingsPage({ config }: SettingsPageProps) {
     }
   }, [isLoaded, isChecking, depStates, multiplexer, tmuxInstalled, zellijInstalled]);
 
-  // ACP-compatible agents (for Chat mode filtering)
-  const acpCompatibleAgentIds = ["claude"];
-  const filteredAgentOptions = mode === "chat"
+  // Filter and mark agent options based on mode + command availability
+  const acpCompatibleAgentIds = ["claude", "traecli", "codex", "kimi", "gh-copilot", "gemini", "qwen", "opencode", ...customAgents.map(a => a.id)];
+  const hasAvailability = Object.keys(commandAvailability).length > 0;
+  const filteredAgentOptions = (mode === "chat"
     ? agentOptions.filter(a => acpCompatibleAgentIds.includes(a.id))
-    : agentOptions;
+    : agentOptions
+  ).map(a => {
+    if (!hasAvailability) return a;
+    const cmd = mode === "chat" ? a.acpCheck : a.terminalCheck;
+    if (cmd && commandAvailability[cmd] === false) {
+      return { ...a, disabled: true, disabledReason: `${cmd} not found — install to enable` };
+    }
+    return a;
+  });
 
   const getStatusIcon = (status: DependencyStatusType) => {
     switch (status) {
@@ -515,8 +562,11 @@ export function SettingsPage({ config }: SettingsPageProps) {
     }
   };
 
-  const depKeys = Object.keys(depStates);
-  const installedCount = depKeys.filter((k) => depStates[k]?.status === "installed").length;
+  const muxNames = ["tmux", "zellij"];
+  const acpAdapterNames = ["claude-code-acp", "codex-acp"];
+  const hiddenInMode = mode === "chat" ? muxNames : acpAdapterNames;
+  const visibleDepKeys = Object.keys(depStates).filter((k) => !hiddenInMode.includes(k));
+  const installedCount = visibleDepKeys.filter((k) => depStates[k]?.status === "installed").length;
 
   const claudeCodeConfig = JSON.stringify(
     {
@@ -741,7 +791,7 @@ env_vars = [
         <Section
           id="environment"
           title="Environment"
-          description={`${installedCount}/${depKeys.length || 4} dependencies installed`}
+          description={`${installedCount}/${visibleDepKeys.length || 4} dependencies installed`}
           icon={Package}
           iconColor="var(--color-accent)"
           isOpen={openSections.environment}
@@ -751,7 +801,7 @@ env_vars = [
             {/* Status Summary */}
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
-                {installedCount === (depKeys.length || 4) ? (
+                {installedCount === (visibleDepKeys.length || 4) ? (
                   <>
                     <CheckCircle2 className="w-5 h-5 text-[var(--color-success)]" />
                     <span className="text-sm text-[var(--color-success)]">All dependencies installed</span>
@@ -766,7 +816,7 @@ env_vars = [
               <Button
                 variant="secondary"
                 size="sm"
-                onClick={checkDependencies}
+                onClick={() => { checkDependencies(); checkAgentCommands(); }}
                 disabled={isChecking}
               >
                 <RefreshCw className={`w-4 h-4 mr-2 ${isChecking ? "animate-spin" : ""}`} />
@@ -776,18 +826,18 @@ env_vars = [
 
             {/* Dependency row renderer */}
             {(() => {
-              const allDeps = depKeys.length > 0 ? depKeys : ["git", "tmux", "zellij", "fzf"];
-              const muxNames = ["tmux", "zellij"];
-              const baseDeps = allDeps.filter((d) => !muxNames.includes(d));
+              const allDeps = Object.keys(depStates).length > 0 ? Object.keys(depStates) : ["git", "tmux", "zellij", "fzf", "claude-code-acp", "codex-acp"];
+              const baseDeps = allDeps.filter((d) => !muxNames.includes(d) && !acpAdapterNames.includes(d));
               const muxDeps = allDeps.filter((d) => muxNames.includes(d));
+              const acpDeps = allDeps.filter((d) => acpAdapterNames.includes(d));
 
-              const renderDepRow = (depName: string) => {
+              const renderDepRow = (depName: string, opts?: { interactive?: boolean }) => {
                 const state = depStates[depName] || { status: "checking" as DependencyStatusType, installCommand: "" };
                 const info = dependencyInfo[depName] || { name: depName, description: "" };
                 const isInstalled = state.status === "installed";
                 const isMux = muxNames.includes(depName);
                 const isMuxActive = isMux && multiplexer === depName && isInstalled;
-                const canSwitchMux = isMux && isInstalled && !isMuxActive;
+                const canSwitchMux = (opts?.interactive ?? true) && isMux && isInstalled && !isMuxActive;
 
                 return (
                   <motion.div
@@ -828,7 +878,7 @@ env_vars = [
                         <span className="text-xs text-[var(--color-text-muted)]">Use</span>
                       )}
 
-                      {isInstalled && state.version && (
+                      {isInstalled && state.version && state.version !== "installed" && (
                         <span className="text-xs text-[var(--color-success)]">v{state.version}</span>
                       )}
 
@@ -868,18 +918,34 @@ env_vars = [
                 <>
                   {/* Base Dependencies */}
                   <div className="space-y-2">
-                    {baseDeps.map(renderDepRow)}
+                    {baseDeps.map((d) => renderDepRow(d))}
                   </div>
 
-                  {/* Multiplexer Divider + Section */}
-                  <div className="flex items-center gap-3 mt-4 mb-2">
-                    <div className="flex-1 h-px bg-[var(--color-border)]" />
-                    <span className="text-xs font-medium text-[var(--color-text-muted)] uppercase tracking-wider">Multiplexer</span>
-                    <div className="flex-1 h-px bg-[var(--color-border)]" />
-                  </div>
-                  <div className="space-y-2">
-                    {muxDeps.map(renderDepRow)}
-                  </div>
+                  {mode === "terminal" ? (
+                    <>
+                      {/* Multiplexer Divider + Section */}
+                      <div className="flex items-center gap-3 mt-4 mb-2">
+                        <div className="flex-1 h-px bg-[var(--color-border)]" />
+                        <span className="text-xs font-medium text-[var(--color-text-muted)] uppercase tracking-wider">Multiplexer</span>
+                        <div className="flex-1 h-px bg-[var(--color-border)]" />
+                      </div>
+                      <div className="space-y-2">
+                        {muxDeps.map((d) => renderDepRow(d))}
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      {/* ACP Adapter Divider + Section */}
+                      <div className="flex items-center gap-3 mt-4 mb-2">
+                        <div className="flex-1 h-px bg-[var(--color-border)]" />
+                        <span className="text-xs font-medium text-[var(--color-text-muted)] uppercase tracking-wider">ACP Adapter</span>
+                        <div className="flex-1 h-px bg-[var(--color-border)]" />
+                      </div>
+                      <div className="space-y-2">
+                        {acpDeps.map((d) => renderDepRow(d, { interactive: false }))}
+                      </div>
+                    </>
+                  )}
                 </>
               );
             })()}
@@ -904,12 +970,13 @@ env_vars = [
                 <span className="text-sm font-medium text-[var(--color-text)]">Coding Agent</span>
               </div>
               <AgentPicker
-                value={mode === "chat" ? "claude" : agentCommand}
-                onChange={mode === "chat" ? () => {} : setAgentCommand}
+                value={mode === "chat" ? acpAgent : agentCommand}
+                onChange={mode === "chat" ? setAcpAgent : setAgentCommand}
                 options={filteredAgentOptions}
-                allowCustom={mode !== "chat"}
+                allowCustom={mode === "terminal"}
                 placeholder="Select agent..."
-                customPlaceholder="Enter agent command (e.g., claude --yolo)"
+                customAgents={mode === "chat" ? customAgents : undefined}
+                onManageCustomAgents={mode === "chat" ? () => setShowCustomAgentModal(true) : undefined}
               />
             </div>
 
@@ -1482,6 +1549,21 @@ env_vars = [
         </Section>
 
       </div>
+
+      {/* Custom Agent Modal */}
+      <CustomAgentModal
+        isOpen={showCustomAgentModal}
+        onClose={() => setShowCustomAgentModal(false)}
+        agents={customAgents}
+        onSave={async (agents) => {
+          setCustomAgents(agents);
+          try {
+            await patchConfig({ acp: { custom_agents: agents } });
+          } catch {
+            console.error("Failed to save custom agents");
+          }
+        }}
+      />
     </motion.div>
   );
 }

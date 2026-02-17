@@ -89,23 +89,28 @@ export function TasksPage({ initialTaskId, initialViewMode, onNavigationConsumed
   // Load archived tasks when filter changes to "archived"
   // Also filter by current branch
   useEffect(() => {
+    let cancelled = false;
     if (filter === "archived" && selectedProject) {
       setIsLoadingArchived(true);
       const currentBranch = selectedProject.currentBranch || "main";
       apiListTasks(selectedProject.id, "archived")
         .then((tasks) => {
+          if (cancelled) return;
           const filtered = tasks
             .map(convertTaskResponse)
             .filter((t) => t.target === currentBranch);
           setArchivedTasks(filtered);
         })
         .catch((err) => {
+          if (cancelled) return;
           console.error("Failed to load archived tasks:", err);
         })
         .finally(() => {
+          if (cancelled) return;
           setIsLoadingArchived(false);
         });
     }
+    return () => { cancelled = true; };
   }, [filter, selectedProject]);
 
   // Get tasks for current project (combine active and archived)
@@ -139,9 +144,14 @@ export function TasksPage({ initialTaskId, initialViewMode, onNavigationConsumed
     }
   }, [selectedProject?.tasks, pageState.selectedTask, pageHandlers]);
 
-  // Filter and search tasks
+  // Filter, deduplicate, and search tasks
   const filteredTasks = useMemo(() => {
+    const seen = new Set<string>();
     return tasks.filter((task) => {
+      // Deduplicate by task ID (safety net against stale state accumulation)
+      if (seen.has(task.id)) return false;
+      seen.add(task.id);
+
       // For active filter, exclude archived status (in case API returns them)
       if (filter === "active" && task.status === "archived") {
         return false;
@@ -178,7 +188,7 @@ export function TasksPage({ initialTaskId, initialViewMode, onNavigationConsumed
       await apiRecoverTask(selectedProject.id, pageState.selectedTask.id);
       await refreshSelectedProject();
       // Clear archived tasks cache so it reloads
-      setArchivedTasks((prev) => prev.filter((t) => t.id === pageState.selectedTask?.id));
+      setArchivedTasks((prev) => prev.filter((t) => t.id !== pageState.selectedTask?.id));
       // Update local state to reflect the change
       pageHandlers.setSelectedTask(null);
       pageHandlers.setViewMode("list");

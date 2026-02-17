@@ -10,7 +10,7 @@ use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::path::Path;
 
-use crate::storage::config::{self, Config, CustomLayoutConfig, ThemeConfig};
+use crate::storage::config::{self, Config, CustomAgent, CustomLayoutConfig, ThemeConfig};
 
 /// GET /api/v1/config response
 #[derive(Debug, Serialize)]
@@ -20,6 +20,7 @@ pub struct ConfigResponse {
     pub web: WebConfigDto,
     pub multiplexer: String,
     pub auto_link: AutoLinkConfigDto,
+    pub acp: AcpConfigDto,
 }
 
 #[derive(Debug, Serialize)]
@@ -49,6 +50,28 @@ pub struct AutoLinkConfigDto {
     pub patterns: Vec<String>,
 }
 
+#[derive(Debug, Serialize)]
+pub struct AcpConfigDto {
+    pub agent_command: Option<String>,
+    pub custom_agents: Vec<CustomAgentDto>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct CustomAgentDto {
+    pub id: String,
+    pub name: String,
+    #[serde(rename = "type")]
+    pub agent_type: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub command: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub args: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auth_header: Option<String>,
+}
+
 impl From<&Config> for ConfigResponse {
     fn from(config: &Config) -> Self {
         Self {
@@ -70,6 +93,23 @@ impl From<&Config> for ConfigResponse {
             auto_link: AutoLinkConfigDto {
                 patterns: config.auto_link.patterns.clone(),
             },
+            acp: AcpConfigDto {
+                agent_command: config.acp.agent_command.clone(),
+                custom_agents: config
+                    .acp
+                    .custom_agents
+                    .iter()
+                    .map(|a| CustomAgentDto {
+                        id: a.id.clone(),
+                        name: a.name.clone(),
+                        agent_type: a.agent_type.clone(),
+                        command: a.command.clone(),
+                        args: a.args.clone(),
+                        url: a.url.clone(),
+                        auth_header: a.auth_header.clone(),
+                    })
+                    .collect(),
+            },
         }
     }
 }
@@ -82,6 +122,13 @@ pub struct ConfigPatchRequest {
     pub web: Option<WebConfigPatch>,
     pub multiplexer: Option<String>,
     pub auto_link: Option<AutoLinkConfigPatch>,
+    pub acp: Option<AcpConfigPatch>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct AcpConfigPatch {
+    pub agent_command: Option<String>,
+    pub custom_agents: Option<Vec<CustomAgentDto>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -176,6 +223,27 @@ pub async fn patch_config(
     if let Some(auto_link_patch) = patch.auto_link {
         if let Some(patterns) = auto_link_patch.patterns {
             config.auto_link.patterns = patterns;
+        }
+    }
+
+    // Apply acp patch
+    if let Some(acp_patch) = patch.acp {
+        if acp_patch.agent_command.is_some() {
+            config.acp.agent_command = acp_patch.agent_command;
+        }
+        if let Some(custom_agents) = acp_patch.custom_agents {
+            config.acp.custom_agents = custom_agents
+                .into_iter()
+                .map(|a| CustomAgent {
+                    id: a.id,
+                    name: a.name,
+                    agent_type: a.agent_type,
+                    command: a.command,
+                    args: a.args,
+                    url: a.url,
+                    auth_header: a.auth_header,
+                })
+                .collect();
         }
     }
 

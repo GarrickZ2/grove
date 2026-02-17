@@ -13,8 +13,8 @@ pub async fn execute(agent: String, cwd: String) {
         .unwrap_or_else(|_| PathBuf::from(&cwd));
 
     // 解析 agent 名称
-    let (command, args) = match acp::resolve_agent_command(&agent) {
-        Some(resolved) => resolved,
+    let resolved = match acp::resolve_agent(&agent) {
+        Some(r) => r,
         None => {
             eprintln!("Unknown agent: '{}'. Supported agents: claude", agent);
             std::process::exit(1);
@@ -25,13 +25,16 @@ pub async fn execute(agent: String, cwd: String) {
     eprintln!("Working directory: {}", working_dir.display());
 
     let config = AcpStartConfig {
-        agent_command: command,
-        agent_args: args,
+        agent_command: resolved.command,
+        agent_args: resolved.args,
         working_dir,
         env_vars: HashMap::new(),
         project_key: String::new(),
         task_id: String::new(),
         chat_id: None,
+        agent_type: resolved.agent_type,
+        remote_url: resolved.url,
+        remote_auth: resolved.auth_header,
     };
 
     let (handle, mut update_rx) = match acp::get_or_start_session("cli".to_string(), config).await {

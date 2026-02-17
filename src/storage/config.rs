@@ -41,6 +41,30 @@ impl FromStr for Multiplexer {
     }
 }
 
+/// 自定义 ACP Agent 配置
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CustomAgent {
+    /// 唯一标识 (e.g., "my-agent")
+    pub id: String,
+    /// 显示名 (e.g., "My Agent")
+    pub name: String,
+    /// "local" | "remote"
+    #[serde(rename = "type")]
+    pub agent_type: String,
+    /// Local: 命令路径
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub command: Option<String>,
+    /// Local: 额外参数
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub args: Vec<String>,
+    /// Remote: WebSocket URL
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+    /// Remote: Authorization header
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auth_header: Option<String>,
+}
+
 /// ACP (Agent Client Protocol) 配置
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct AcpConfig {
@@ -50,6 +74,9 @@ pub struct AcpConfig {
     /// Agent 额外参数
     #[serde(default)]
     pub agent_args: Vec<String>,
+    /// 自定义 Agents
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub custom_agents: Vec<CustomAgent>,
 }
 
 /// 应用配置

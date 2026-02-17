@@ -4,9 +4,9 @@ export { apiClient, ApiClient, getApiHost } from './client';
 export type { ApiError } from './client';
 
 export { getConfig, patchConfig, listApplications, getAppIconUrl } from './config';
-export type { Config, ConfigPatch, ThemeConfig, LayoutConfig, WebConfig, AppInfo } from './config';
+export type { Config, ConfigPatch, ThemeConfig, LayoutConfig, WebConfig, AppInfo, CustomAgent, AcpConfig } from './config';
 
-export { checkAllDependencies, checkDependency } from './env';
+export { checkAllDependencies, checkDependency, checkCommands } from './env';
 export type { DependencyStatus, EnvCheckResponse } from './env';
 
 export { listProjects, getProject, addProject, deleteProject, getProjectStats, getBranches, getRemotes, openIDE, openTerminal } from './projects';

@@ -67,6 +67,7 @@ agent-client-protocol = { version = "0.9", features = ["unstable_session_model"]
 tokio-util = { version = "0.7", features = ["compat"] }
 async-trait = "0.1"
 tokio-stream = "0.1"
+tokio-tungstenite = { version = "0.26", features = ["native-tls"] }
 
 # GUI (Tauri) - optional
 tauri = { version = "2", optional = true }

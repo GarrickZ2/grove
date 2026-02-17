@@ -397,6 +397,7 @@ export interface ChatListResponse {
 
 export interface CreateChatRequest {
   title?: string;
+  agent?: string;
 }
 
 export interface UpdateChatTitleRequest {
@@ -422,11 +423,12 @@ export async function listChats(
 export async function createChat(
   projectId: string,
   taskId: string,
-  title?: string
+  title?: string,
+  agent?: string,
 ): Promise<ChatSessionResponse> {
   return apiClient.post<CreateChatRequest, ChatSessionResponse>(
     `/api/v1/projects/${projectId}/tasks/${taskId}/chats`,
-    { title }
+    { title, agent }
   );
 }
 

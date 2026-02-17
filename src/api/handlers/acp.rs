@@ -262,7 +262,7 @@ pub async fn ws_handler(
         .acp
         .agent_command
         .unwrap_or_else(|| "claude".to_string());
-    let (agent_cmd, agent_args) = acp::resolve_agent_command(&agent_name)
+    let resolved = acp::resolve_agent(&agent_name)
         .ok_or(AcpError::Internal(format!("Unknown agent: {}", agent_name)))?;
 
     let env_vars = HashMap::new();
@@ -271,13 +271,16 @@ pub async fn ws_handler(
     let session_key = format!("{}:{}", project_key, task_id);
 
     let config = AcpStartConfig {
-        agent_command: agent_cmd,
-        agent_args,
+        agent_command: resolved.command,
+        agent_args: resolved.args,
         working_dir,
         env_vars,
         project_key,
         task_id,
         chat_id: None,
+        agent_type: resolved.agent_type,
+        remote_url: resolved.url,
+        remote_auth: resolved.auth_header,
     };
 
     Ok(ws.on_upgrade(move |socket| handle_acp_ws(socket, session_key, config)))
@@ -420,6 +423,7 @@ pub struct ChatListResponse {
 #[derive(Deserialize)]
 pub struct CreateChatRequest {
     pub title: Option<String>,
+    pub agent: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -497,10 +501,11 @@ pub async fn create_chat(
         .ok_or(AcpError::NotFound("Task not found".to_string()))?;
 
     let cfg = config::load_config();
-    let agent = cfg
-        .acp
-        .agent_command
-        .unwrap_or_else(|| "claude".to_string());
+    let agent = body.agent.unwrap_or_else(|| {
+        cfg.acp
+            .agent_command
+            .unwrap_or_else(|| "claude".to_string())
+    });
     let now = chrono::Utc::now();
     let title = body
         .title
@@ -574,7 +579,7 @@ pub async fn chat_ws_handler(
         .ok_or(AcpError::NotFound("Chat not found".to_string()))?;
 
     // Resolve agent command from the chat's stored agent
-    let (agent_cmd, agent_args) = acp::resolve_agent_command(&chat.agent)
+    let resolved = acp::resolve_agent(&chat.agent)
         .ok_or(AcpError::Internal(format!("Unknown agent: {}", chat.agent)))?;
 
     let env_vars = HashMap::new();
@@ -582,13 +587,16 @@ pub async fn chat_ws_handler(
     let session_key = format!("{}:{}:{}", project_key, task_id, chat_id);
 
     let config = AcpStartConfig {
-        agent_command: agent_cmd,
-        agent_args,
+        agent_command: resolved.command,
+        agent_args: resolved.args,
         working_dir,
         env_vars,
         project_key,
         task_id,
         chat_id: Some(chat_id),
+        agent_type: resolved.agent_type,
+        remote_url: resolved.url,
+        remote_auth: resolved.auth_header,
     };
 
     Ok(ws.on_upgrade(move |socket| handle_acp_ws(socket, session_key, config)))
