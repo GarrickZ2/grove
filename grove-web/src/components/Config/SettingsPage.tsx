@@ -121,11 +121,11 @@ interface LayoutPreset {
 }
 
 const layoutPresets: LayoutPreset[] = [
-  { id: "single", name: "Single", description: "Shell only", panes: ["Shell"] },
-  { id: "agent", name: "Agent", description: "Agent only", panes: ["Agent"] },
-  { id: "agent-shell", name: "Agent + Shell", description: "60% + 40%", panes: ["Agent", "Shell"] },
-  { id: "agent-grove-shell", name: "3 Panes", description: "Left + Right split", panes: ["Agent", "Grove", "Shell"], layout: "left-right-split" },
-  { id: "grove-agent", name: "Grove + Agent", description: "40% + 60%", panes: ["Grove", "Agent"] },
+  { id: "single", name: "Single", description: "Shell only", panes: ["shell"] },
+  { id: "agent", name: "Agent", description: "Agent only", panes: ["agent"] },
+  { id: "agent-shell", name: "Agent + Shell", description: "60% + 40%", panes: ["agent", "shell"] },
+  { id: "agent-grove-shell", name: "3 Panes", description: "Left + Right split", panes: ["agent", "grove", "shell"], layout: "left-right-split" },
+  { id: "grove-agent", name: "Grove + Agent", description: "40% + 60%", panes: ["grove", "agent"] },
   { id: "custom", name: "Custom", description: "Configure your own", panes: [] },
 ];
 
@@ -139,10 +139,6 @@ const paneTypeColors: Record<PaneType | string, { bg: string; text: string }> = 
   "file-picker": { bg: "var(--color-accent)", text: "var(--color-accent)" },
   shell: { bg: "var(--color-text-muted)", text: "var(--color-text-muted)" },
   custom: { bg: "var(--color-warning)", text: "var(--color-warning)" },
-  // Legacy string panes
-  Agent: { bg: "var(--color-highlight)", text: "var(--color-highlight)" },
-  Grove: { bg: "var(--color-info)", text: "var(--color-info)" },
-  Shell: { bg: "var(--color-text-muted)", text: "var(--color-text-muted)" },
 };
 
 const paneTypeLabels: Record<PaneType, string> = {
@@ -1236,7 +1232,7 @@ env_vars = [
                               color: paneTypeColors[preset.panes[0]]?.text || "var(--color-text-muted)",
                             }}
                           >
-                            {preset.panes[0]}
+                            {paneTypeLabels[preset.panes[0] as PaneType] || preset.panes[0]}
                           </div>
                           {/* Right panes (40%, stacked) */}
                           <div className="w-[40%] flex flex-col gap-0.5">
@@ -1249,7 +1245,7 @@ env_vars = [
                                   color: paneTypeColors[pane]?.text || "var(--color-text-muted)",
                                 }}
                               >
-                                {pane}
+                                {paneTypeLabels[pane as PaneType] || pane}
                               </div>
                             ))}
                           </div>
@@ -1268,7 +1264,7 @@ env_vars = [
                               className="flex-1 rounded text-[8px] flex items-center justify-center"
                               style={{ backgroundColor: `${colors.bg}20`, color: colors.text }}
                             >
-                              {pane}
+                              {paneTypeLabels[pane as PaneType] || pane}
                             </div>
                           );
                         })}

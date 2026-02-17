@@ -56,9 +56,6 @@ pub struct Task {
     /// 持久化的 session name（Zellij 有 40 字符限制）
     #[serde(default)]
     pub session_name: String,
-    /// 旧版 chats 字段（仅用于反序列化迁移，不再写入 tasks.toml）
-    #[serde(default, skip_serializing)]
-    pub chats_legacy: Vec<ChatSession>,
 }
 
 fn default_multiplexer() -> String {
@@ -282,15 +279,6 @@ pub fn load_chat_sessions(project: &str, task_id: &str) -> Result<Vec<ChatSessio
     if path.exists() {
         let file: ChatsFile = super::load_toml(&path)?;
         return Ok(file.chats);
-    }
-
-    // 自动迁移：检查 tasks.toml 中旧的 chats_legacy 字段
-    if let Some(task) = get_task(project, task_id)? {
-        if !task.chats_legacy.is_empty() {
-            let chats = task.chats_legacy;
-            save_chat_sessions(project, task_id, &chats)?;
-            return Ok(chats);
-        }
     }
 
     Ok(Vec::new())
