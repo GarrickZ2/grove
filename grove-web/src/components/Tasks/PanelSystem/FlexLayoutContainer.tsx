@@ -1,7 +1,7 @@
 import { useState, useRef, useCallback, forwardRef, useImperativeHandle } from 'react';
-import { Layout, Model, TabNode, Actions, DockLocation } from 'flexlayout-react';
-import type { IJsonModel, ITabRenderValues } from 'flexlayout-react';
-import { Terminal, MessageSquare, Code, FileCode, BarChart3, GitBranch, FileText, MessageSquare as CommentIcon, X, XCircle, Trash2 } from 'lucide-react';
+import { Layout, Model, TabNode, Actions, DockLocation, TabSetNode, BorderNode } from 'flexlayout-react';
+import type { IJsonModel, ITabRenderValues, ITabSetRenderValues } from 'flexlayout-react';
+import { Terminal, MessageSquare, Code, FileCode, BarChart3, GitBranch, FileText, MessageSquare as CommentIcon, X, XCircle, Trash2, Maximize } from 'lucide-react';
 import 'flexlayout-react/style/light.css';
 import './flexlayout-theme.css';
 import type { Task } from '../../../data/types';
@@ -18,6 +18,8 @@ interface FlexLayoutContainerProps {
   projectId: string;
   initialLayout?: IJsonModel;
   onLayoutChange?: (model: IJsonModel) => void;
+  fullscreen?: boolean;
+  onToggleFullscreen?: () => void;
 }
 
 export interface FlexLayoutContainerHandle {
@@ -28,7 +30,7 @@ export interface FlexLayoutContainerHandle {
 export const FlexLayoutContainer = forwardRef<
   FlexLayoutContainerHandle,
   FlexLayoutContainerProps
->(({ task, projectId, initialLayout, onLayoutChange }, ref) => {
+>(({ task, projectId, initialLayout, onLayoutChange, fullscreen = false, onToggleFullscreen }, ref) => {
   // Panel instance counters
   const instanceCounters = useRef<Record<PanelType, number>>({
     terminal: 0,
@@ -76,7 +78,7 @@ export const FlexLayoutContainer = forwardRef<
         tabSetEnableDrop: true,
         tabSetEnableDrag: true,
         tabSetEnableDivide: true,
-        tabSetEnableMaximize: true,
+        tabSetEnableMaximize: false, // 禁用原生最大化按钮，使用自定义按钮
         splitterSize: 4,
       },
       borders: [],
@@ -153,6 +155,9 @@ export const FlexLayoutContainer = forwardRef<
     position: { x: number; y: number };
     tabId: string;
   } | null>(null);
+
+  // Fullscreen panel state (记录哪个 panel/tabset 正在全屏)
+  const [fullscreenPanelId, setFullscreenPanelId] = useState<string | null>(null);
 
   // Add new panel
   const addPanel = useCallback((type: PanelType) => {
@@ -289,6 +294,57 @@ export const FlexLayoutContainer = forwardRef<
     );
   }, []);
 
+  // 自定义 TabSet 渲染（添加最大化按钮到 Panel）
+  const onRenderTabSet = useCallback((tabSetNode: TabSetNode | BorderNode, renderValues: ITabSetRenderValues) => {
+    const panelId = tabSetNode.getId();
+    const isFullscreen = fullscreenPanelId === panelId;
+
+    // 添加最大化按钮到 tabset header
+    renderValues.buttons = renderValues.buttons || [];
+    renderValues.buttons.push(
+      <button
+        key="maximize-panel"
+        onClick={(e) => {
+          e.stopPropagation();
+          if (isFullscreen) {
+            // 退出全屏：恢复 Layout + 恢复页面级 UI
+            model.doAction(Actions.maximizeToggle(panelId));
+            setFullscreenPanelId(null);
+            if (onToggleFullscreen) {
+              onToggleFullscreen();
+            }
+          } else {
+            // 进入全屏：最大化 Panel + 隐藏页面级 UI
+            model.doAction(Actions.maximizeToggle(panelId));
+            setFullscreenPanelId(panelId);
+            if (onToggleFullscreen) {
+              onToggleFullscreen();
+            }
+          }
+        }}
+        style={{
+          padding: '4px',
+          background: 'transparent',
+          border: 'none',
+          cursor: 'pointer',
+          color: 'var(--color-text-muted)',
+          display: 'flex',
+          alignItems: 'center',
+          borderRadius: '3px',
+        }}
+        onMouseEnter={(e) => {
+          e.currentTarget.style.background = 'var(--color-bg-tertiary)';
+        }}
+        onMouseLeave={(e) => {
+          e.currentTarget.style.background = 'transparent';
+        }}
+        title={isFullscreen ? "Exit Fullscreen" : "Fullscreen"}
+      >
+        <Maximize size={14} />
+      </button>
+    );
+  }, [model, fullscreenPanelId, onToggleFullscreen]);
+
   // Factory function: render panel components based on tab type
   const factory = useCallback((node: TabNode) => {
     const component = node.getComponent();
@@ -393,6 +449,25 @@ export const FlexLayoutContainer = forwardRef<
     }
   };
 
+
+  // 如果有 panel 正在全屏，只渲染该 panel
+  if (fullscreenPanelId && fullscreen) {
+    const fullscreenTabSet = model.getNodeById(fullscreenPanelId);
+    if (fullscreenTabSet && fullscreenTabSet.getType() === 'tabset') {
+      return (
+        <div className="absolute inset-0 bg-[var(--color-bg)]">
+          <Layout
+            model={model}
+            factory={factory}
+            onRenderTab={onRenderTab}
+            onRenderTabSet={onRenderTabSet}
+            onModelChange={handleModelChange}
+          />
+        </div>
+      );
+    }
+  }
+
   return (
     <>
       <div className="absolute inset-0">
@@ -400,6 +475,7 @@ export const FlexLayoutContainer = forwardRef<
           model={model}
           factory={factory}
           onRenderTab={onRenderTab}
+          onRenderTabSet={onRenderTabSet}
           onModelChange={handleModelChange}
         />
       </div>
