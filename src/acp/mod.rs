@@ -40,18 +40,25 @@ pub struct AcpSessionHandle {
     /// load_session 期间抑制 emit（只恢复 agent 内部状态，不转发回放通知）
     suppress_emit: std::sync::atomic::AtomicBool,
     /// 待执行消息队列（agent 完成当前任务后自动发送下一条）
-    pending_queue: Mutex<Vec<String>>,
+    pending_queue: Mutex<Vec<QueuedMessage>>,
     /// 队列暂停标志（用户正在编辑队列消息时暂停 auto-send）
     queue_paused: std::sync::atomic::AtomicBool,
 }
 
 /// 发送给 ACP 后台任务的命令
 enum AcpCommand {
-    Prompt { text: String },
+    Prompt {
+        text: String,
+        attachments: Vec<ContentBlockData>,
+    },
     Cancel,
     Kill,
-    SetMode { mode_id: String },
-    SetModel { model_id: String },
+    SetMode {
+        mode_id: String,
+    },
+    SetModel {
+        model_id: String,
+    },
 }
 
 /// 从 agent 接收的流式更新
@@ -67,6 +74,7 @@ pub enum AcpUpdate {
         current_mode_id: Option<String>,
         available_models: Vec<(String, String)>,
         current_model_id: Option<String>,
+        prompt_capabilities: PromptCapabilitiesData,
     },
     /// Agent 消息文本片段
     MessageChunk { text: String },
@@ -99,7 +107,11 @@ pub enum AcpUpdate {
     /// 错误
     Error { message: String },
     /// 用户消息（load_session 回放时由 agent 发送）
-    UserMessage { text: String },
+    UserMessage {
+        text: String,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        attachments: Vec<ContentBlockData>,
+    },
     /// Mode 变更通知
     ModeChanged { mode_id: String },
     /// Agent Plan 更新（结构化 TODO 列表）
@@ -107,7 +119,7 @@ pub enum AcpUpdate {
     /// 可用 Slash Commands 更新
     AvailableCommands { commands: Vec<CommandInfo> },
     /// 待执行消息队列更新
-    QueueUpdate { messages: Vec<String> },
+    QueueUpdate { messages: Vec<QueuedMessage> },
     /// 会话结束
     SessionEnded,
 }
@@ -133,6 +145,44 @@ pub struct CommandInfo {
     pub name: String,
     pub description: String,
     pub input_hint: Option<String>,
+}
+
+/// Agent 的 Prompt 能力声明（从 ACP InitializeResponse 提取）
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct PromptCapabilitiesData {
+    pub image: bool,
+    pub audio: bool,
+    pub embedded_context: bool,
+}
+
+/// 前端→后端的内容块类型（用于多媒体 prompt）
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum ContentBlockData {
+    Text {
+        text: String,
+    },
+    Image {
+        data: String,
+        mime_type: String,
+    },
+    Audio {
+        data: String,
+        mime_type: String,
+    },
+    Resource {
+        uri: String,
+        mime_type: Option<String>,
+        text: Option<String>,
+    },
+}
+
+/// 队列中的待发送消息（支持附件）
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct QueuedMessage {
+    pub text: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub attachments: Vec<ContentBlockData>,
 }
 
 /// ACP 启动配置
@@ -441,7 +491,10 @@ impl acp::Client for GroveAcpClient {
             }
             acp::SessionUpdate::UserMessageChunk(chunk) => {
                 let text = content_block_to_text(&chunk.content);
-                self.handle.emit(AcpUpdate::UserMessage { text });
+                self.handle.emit(AcpUpdate::UserMessage {
+                    text,
+                    attachments: vec![],
+                });
             }
             acp::SessionUpdate::CurrentModeUpdate(update) => {
                 self.handle.emit(AcpUpdate::ModeChanged {
@@ -497,6 +550,29 @@ fn content_block_to_text(block: &acp::ContentBlock) -> String {
         acp::ContentBlock::ResourceLink(r) => r.uri.clone(),
         acp::ContentBlock::Resource(_) => "<resource>".to_string(),
         _ => "<unknown>".to_string(),
+    }
+}
+
+/// 将 ContentBlockData 转换为 ACP ContentBlock
+fn to_acp_content_block(block: &ContentBlockData) -> acp::ContentBlock {
+    match block {
+        ContentBlockData::Text { text } => text.clone().into(),
+        ContentBlockData::Image { data, mime_type } => {
+            acp::ContentBlock::Image(acp::ImageContent::new(data, mime_type))
+        }
+        ContentBlockData::Audio { data, mime_type } => {
+            acp::ContentBlock::Audio(acp::AudioContent::new(data, mime_type))
+        }
+        ContentBlockData::Resource {
+            uri,
+            mime_type: _,
+            text,
+        } => acp::ContentBlock::Resource(acp::EmbeddedResource::new(
+            acp::EmbeddedResourceResource::TextResourceContents(acp::TextResourceContents::new(
+                text.clone().unwrap_or_default(),
+                uri,
+            )),
+        )),
     }
 }
 
@@ -884,6 +960,16 @@ async fn run_acp_session(
 
     let session_id_arc = acp::SessionId::new(&*session_id);
 
+    // 提取 prompt capabilities
+    let prompt_capabilities = PromptCapabilitiesData {
+        image: init_resp.agent_capabilities.prompt_capabilities.image,
+        audio: init_resp.agent_capabilities.prompt_capabilities.audio,
+        embedded_context: init_resp
+            .agent_capabilities
+            .prompt_capabilities
+            .embedded_context,
+    };
+
     // 存储 agent info（用于重连时回放历史）
     if let Ok(mut info) = handle.agent_info.write() {
         *info = Some((
@@ -902,20 +988,30 @@ async fn run_acp_session(
         current_mode_id,
         available_models,
         current_model_id,
+        prompt_capabilities,
     });
 
     // 处理命令循环
     while let Some(cmd) = cmd_rx.recv().await {
         match cmd {
-            AcpCommand::Prompt { text } => {
+            AcpCommand::Prompt { text, attachments } => {
                 // 记录用户消息到 history（重连时回放）
-                handle.emit(AcpUpdate::UserMessage { text: text.clone() });
+                handle.emit(AcpUpdate::UserMessage {
+                    text: text.clone(),
+                    attachments: attachments.clone(),
+                });
                 handle.emit(AcpUpdate::Busy { value: true });
+
+                // 构建 content blocks
+                let mut content_blocks: Vec<acp::ContentBlock> = vec![text.into()];
+                for block in &attachments {
+                    content_blocks.push(to_acp_content_block(block));
+                }
 
                 // 使用 select! 让 Cancel 等命令在 prompt 运行期间也能被处理
                 let prompt_fut = conn.prompt(acp::PromptRequest::new(
                     session_id_arc.clone(),
-                    vec![text.into()],
+                    content_blocks,
                 ));
                 tokio::pin!(prompt_fut);
 
@@ -940,7 +1036,7 @@ async fn run_acp_session(
                                     )).await;
                                 }
                                 AcpCommand::Prompt { .. } | AcpCommand::Kill => {
-                                    // Ignore stray prompts / kill while busy
+                                    // Ignore stray prompts/kill while busy
                                 }
                             }
                         }
@@ -974,11 +1070,11 @@ async fn run_acp_session(
                     .queue_paused
                     .load(std::sync::atomic::Ordering::Relaxed)
                 {
-                    if let Some(next_text) = handle.pop_queue_front() {
+                    if let Some(next_msg) = handle.pop_queue_front() {
                         handle.emit(AcpUpdate::QueueUpdate {
                             messages: handle.get_queue(),
                         });
-                        handle.try_enqueue_prompt(next_text);
+                        handle.try_enqueue_prompt(next_msg.text, next_msg.attachments);
                     }
                 }
             }
@@ -1160,9 +1256,13 @@ impl AcpSessionHandle {
     }
 
     /// 发送用户提示
-    pub async fn send_prompt(&self, text: String) -> crate::error::Result<()> {
+    pub async fn send_prompt(
+        &self,
+        text: String,
+        attachments: Vec<ContentBlockData>,
+    ) -> crate::error::Result<()> {
         self.cmd_tx
-            .send(AcpCommand::Prompt { text })
+            .send(AcpCommand::Prompt { text, attachments })
             .await
             .map_err(|_| crate::error::GroveError::Session("ACP session closed".to_string()))
     }
@@ -1205,14 +1305,14 @@ impl AcpSessionHandle {
     // ─── Pending queue management ────────────────────────────────────────
 
     /// 添加消息到待执行队列，返回更新后的队列
-    pub fn queue_message(&self, text: String) -> Vec<String> {
+    pub fn queue_message(&self, msg: QueuedMessage) -> Vec<QueuedMessage> {
         let mut q = self.pending_queue.lock().unwrap();
-        q.push(text);
+        q.push(msg);
         q.clone()
     }
 
     /// 删除队列中指定位置的消息，返回更新后的队列
-    pub fn dequeue_message(&self, index: usize) -> Vec<String> {
+    pub fn dequeue_message(&self, index: usize) -> Vec<QueuedMessage> {
         let mut q = self.pending_queue.lock().unwrap();
         if index < q.len() {
             q.remove(index);
@@ -1220,29 +1320,29 @@ impl AcpSessionHandle {
         q.clone()
     }
 
-    /// 编辑队列中指定位置的消息，返回更新后的队列
-    pub fn update_queued_message(&self, index: usize, text: String) -> Vec<String> {
+    /// 编辑队列中指定位置的消息文本，返回更新后的队列
+    pub fn update_queued_message(&self, index: usize, text: String) -> Vec<QueuedMessage> {
         let mut q = self.pending_queue.lock().unwrap();
         if index < q.len() {
-            q[index] = text;
+            q[index].text = text;
         }
         q.clone()
     }
 
     /// 清空待执行队列，返回空队列
-    pub fn clear_queue(&self) -> Vec<String> {
+    pub fn clear_queue(&self) -> Vec<QueuedMessage> {
         let mut q = self.pending_queue.lock().unwrap();
         q.clear();
         q.clone()
     }
 
     /// 获取当前队列内容
-    pub fn get_queue(&self) -> Vec<String> {
+    pub fn get_queue(&self) -> Vec<QueuedMessage> {
         self.pending_queue.lock().unwrap().clone()
     }
 
     /// 从队列头部取出一条消息（内部使用，auto-send）
-    fn pop_queue_front(&self) -> Option<String> {
+    fn pop_queue_front(&self) -> Option<QueuedMessage> {
         let mut q = self.pending_queue.lock().unwrap();
         if q.is_empty() {
             None
@@ -1252,8 +1352,10 @@ impl AcpSessionHandle {
     }
 
     /// 非阻塞发送 prompt 命令（队列 auto-send 使用）
-    fn try_enqueue_prompt(&self, text: String) -> bool {
-        self.cmd_tx.try_send(AcpCommand::Prompt { text }).is_ok()
+    fn try_enqueue_prompt(&self, text: String, attachments: Vec<ContentBlockData>) -> bool {
+        self.cmd_tx
+            .try_send(AcpCommand::Prompt { text, attachments })
+            .is_ok()
     }
 
     /// 暂停队列 auto-send（用户正在编辑队列消息）
@@ -1267,11 +1369,11 @@ impl AcpSessionHandle {
         self.queue_paused
             .store(false, std::sync::atomic::Ordering::Relaxed);
         // 尝试发送队列中的第一条消息（如果 agent 空闲会被处理）
-        if let Some(next_text) = self.pop_queue_front() {
+        if let Some(next_msg) = self.pop_queue_front() {
             self.emit(AcpUpdate::QueueUpdate {
                 messages: self.get_queue(),
             });
-            self.try_enqueue_prompt(next_text);
+            self.try_enqueue_prompt(next_msg.text, next_msg.attachments);
         }
     }
 }

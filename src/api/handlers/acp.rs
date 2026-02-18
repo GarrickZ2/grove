@@ -13,7 +13,9 @@ use futures::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-use crate::acp::{self, AcpStartConfig, AcpUpdate};
+use crate::acp::{
+    self, AcpStartConfig, AcpUpdate, ContentBlockData, PromptCapabilitiesData, QueuedMessage,
+};
 use crate::storage::{config, tasks, workspace};
 
 /// Client-to-server messages
@@ -22,6 +24,8 @@ use crate::storage::{config, tasks, workspace};
 enum ClientMessage {
     Prompt {
         text: String,
+        #[serde(default)]
+        attachments: Vec<ContentBlockData>,
     },
     Cancel,
     /// Explicitly kill the ACP session
@@ -41,6 +45,8 @@ enum ClientMessage {
     /// Add a message to the pending queue
     QueueMessage {
         text: String,
+        #[serde(default)]
+        attachments: Vec<ContentBlockData>,
     },
     /// Remove a message from the pending queue by index
     DequeueMessage {
@@ -71,6 +77,7 @@ enum ServerMessage {
         current_mode_id: Option<String>,
         available_models: Vec<ModelOption>,
         current_model_id: Option<String>,
+        prompt_capabilities: PromptCapabilitiesData,
     },
     MessageChunk {
         text: String,
@@ -109,6 +116,8 @@ enum ServerMessage {
     },
     UserMessage {
         text: String,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        attachments: Vec<ContentBlockData>,
     },
     ModeChanged {
         mode_id: String,
@@ -120,7 +129,7 @@ enum ServerMessage {
         commands: Vec<CommandMsg>,
     },
     QueueUpdate {
-        messages: Vec<String>,
+        messages: Vec<QueuedMessage>,
     },
     SessionEnded,
 }
@@ -175,6 +184,7 @@ impl From<AcpUpdate> for ServerMessage {
                 current_mode_id,
                 available_models,
                 current_model_id,
+                prompt_capabilities,
             } => ServerMessage::SessionReady {
                 session_id,
                 agent_name,
@@ -189,6 +199,7 @@ impl From<AcpUpdate> for ServerMessage {
                     .map(|(id, name)| ModelOption { id, name })
                     .collect(),
                 current_model_id,
+                prompt_capabilities,
             },
             AcpUpdate::MessageChunk { text } => ServerMessage::MessageChunk { text },
             AcpUpdate::ThoughtChunk { text } => ServerMessage::ThoughtChunk { text },
@@ -238,7 +249,9 @@ impl From<AcpUpdate> for ServerMessage {
             AcpUpdate::Complete { stop_reason } => ServerMessage::Complete { stop_reason },
             AcpUpdate::Busy { value } => ServerMessage::Busy { value },
             AcpUpdate::Error { message } => ServerMessage::Error { message },
-            AcpUpdate::UserMessage { text } => ServerMessage::UserMessage { text },
+            AcpUpdate::UserMessage { text, attachments } => {
+                ServerMessage::UserMessage { text, attachments }
+            }
             AcpUpdate::ModeChanged { mode_id } => ServerMessage::ModeChanged { mode_id },
             AcpUpdate::PlanUpdate { entries } => ServerMessage::PlanUpdate {
                 entries: entries
@@ -352,8 +365,10 @@ async fn handle_acp_ws(socket: WebSocket, session_key: String, config: AcpStartC
                 Ok(Message::Text(text)) => {
                     if let Ok(client_msg) = serde_json::from_str::<ClientMessage>(&text) {
                         match client_msg {
-                            ClientMessage::Prompt { text } => {
-                                if let Err(e) = handle_for_input.send_prompt(text).await {
+                            ClientMessage::Prompt { text, attachments } => {
+                                if let Err(e) =
+                                    handle_for_input.send_prompt(text, attachments).await
+                                {
                                     eprintln!("Failed to send prompt: {}", e);
                                     break;
                                 }
@@ -374,8 +389,9 @@ async fn handle_acp_ws(socket: WebSocket, session_key: String, config: AcpStartC
                             ClientMessage::PermissionResponse { option_id } => {
                                 handle_for_input.respond_permission(option_id);
                             }
-                            ClientMessage::QueueMessage { text } => {
-                                let messages = handle_for_input.queue_message(text);
+                            ClientMessage::QueueMessage { text, attachments } => {
+                                let messages = handle_for_input
+                                    .queue_message(QueuedMessage { text, attachments });
                                 handle_for_input.emit(AcpUpdate::QueueUpdate { messages });
                             }
                             ClientMessage::DequeueMessage { index } => {

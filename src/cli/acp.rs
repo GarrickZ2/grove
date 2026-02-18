@@ -106,7 +106,7 @@ pub async fn execute(agent: String, cwd: String) {
         }
 
         // 发送 prompt
-        if let Err(e) = handle_for_input.send_prompt(text).await {
+        if let Err(e) = handle_for_input.send_prompt(text, vec![]).await {
             eprintln!("Failed to send prompt: {}", e);
             break;
         }

@@ -23,6 +23,8 @@ import {
   Trash2,
   Pencil,
   Square,
+  Paperclip,
+  Mic,
 } from "lucide-react";
 import { Button, MarkdownRenderer, agentOptions } from "../../ui";
 import type { Task } from "../../../data/types";
@@ -70,8 +72,16 @@ type PermissionMessage = {
   resolved?: string; // selected option name when resolved
 };
 
+interface Attachment {
+  type: "image" | "audio" | "resource";
+  data: string;       // base64 for image/audio
+  mimeType: string;
+  name: string;       // display name
+  previewUrl?: string; // blob URL for image preview
+}
+
 type ChatMessage =
-  | { type: "user"; content: string }
+  | { type: "user"; content: string; attachments?: Attachment[] }
   | { type: "assistant"; content: string; complete: boolean }
   | { type: "thinking"; content: string; collapsed: boolean }
   | ToolMessage
@@ -89,6 +99,12 @@ interface SlashCommand {
   input_hint?: string;
 }
 
+interface PromptCaps {
+  image: boolean;
+  audio: boolean;
+  embeddedContext: boolean;
+}
+
 /** Per-chat cached state (preserved across chat switches) */
 interface PerChatState {
   messages: ChatMessage[];
@@ -102,6 +118,7 @@ interface PerChatState {
   isConnected: boolean;
   agentLabel: string;
   agentIcon: React.ComponentType<{ size?: number; className?: string }> | null;
+  promptCaps: PromptCaps;
 }
 
 function defaultPerChatState(): PerChatState {
@@ -117,6 +134,7 @@ function defaultPerChatState(): PerChatState {
     isConnected: false,
     agentLabel: "Chat",
     agentIcon: null,
+    promptCaps: { image: false, audio: false, embeddedContext: false },
   };
 }
 
@@ -338,6 +356,10 @@ export function TaskChat({
   const [fileFilter, setFileFilter] = useState("");
   const [fileSelectedIdx, setFileSelectedIdx] = useState(0);
   const fileMenuRef = useRef<HTMLDivElement>(null);
+  const [promptCaps, setPromptCaps] = useState<PromptCaps>({ image: false, audio: false, embeddedContext: false });
+  const [attachments, setAttachments] = useState<Attachment[]>([]);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [isDragging, setIsDragging] = useState(false);
 
   const isLive = task.status === "live";
   const showChat = isLive || sessionStarted;
@@ -438,9 +460,9 @@ export function TaskChat({
     perChatStateRef.current.set(activeChatId, {
       messages, isBusy, selectedModel, permissionLevel,
       modelOptions, modeOptions, planEntries, slashCommands,
-      isConnected, agentLabel, agentIcon: AgentIcon,
+      isConnected, agentLabel, agentIcon: AgentIcon, promptCaps,
     });
-  }, [activeChatId, messages, isBusy, selectedModel, permissionLevel, modelOptions, modeOptions, planEntries, slashCommands, isConnected, agentLabel, AgentIcon]);
+  }, [activeChatId, messages, isBusy, selectedModel, permissionLevel, modelOptions, modeOptions, planEntries, slashCommands, isConnected, agentLabel, AgentIcon, promptCaps]);
 
   /** Restore chat state from cache */
   const restoreChatState = useCallback((chatId: string) => {
@@ -457,6 +479,7 @@ export function TaskChat({
       setIsConnected(cached.isConnected);
       setAgentLabel(cached.agentLabel);
       if (cached.agentIcon) setAgentIcon(() => cached.agentIcon);
+      setPromptCaps(cached.promptCaps);
     } else {
       // Fresh state for new chat
       setMessages([]);
@@ -468,9 +491,12 @@ export function TaskChat({
       setPlanEntries([]);
       setSlashCommands([]);
       setIsConnected(false);
+      setPromptCaps({ image: false, audio: false, embeddedContext: false });
     }
     // Reset pending messages — server will send queue_update on reconnect
     setPendingMessages([]);
+    // Clear attachments on chat switch
+    setAttachments([]);
     // Point wsRef to this chat's WebSocket
     wsRef.current = wsMapRef.current.get(chatId) ?? null;
   }, []);
@@ -594,6 +620,14 @@ export function TaskChat({
             setModelOptions(msg.available_models.map((m: { id: string; name: string }) => ({ label: m.name, value: m.id })));
           }
           if (msg.current_model_id) setSelectedModel(msg.current_model_id);
+          // Extract prompt capabilities
+          if (msg.prompt_capabilities) {
+            setPromptCaps({
+              image: msg.prompt_capabilities.image ?? false,
+              audio: msg.prompt_capabilities.audio ?? false,
+              embeddedContext: msg.prompt_capabilities.embedded_context ?? false,
+            });
+          }
           // Replace "Connecting..." with friendly connected message
           setMessages((prev) => {
             const filtered = prev.filter((m) => !(m.type === "system" && m.content === "Connecting..."));
@@ -696,7 +730,17 @@ export function TaskChat({
           setIsBusy(false);
           break;
         case "user_message":
-          setMessages((prev) => [...prev, { type: "user", content: msg.text }]);
+          setMessages((prev) => [...prev, {
+            type: "user", content: msg.text,
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            attachments: msg.attachments?.map((a: any) => ({
+              type: a.type as "image" | "audio" | "resource",
+              data: a.data ?? "",
+              mimeType: a.mime_type ?? "",
+              name: "",
+              previewUrl: a.type === "image" ? `data:${a.mime_type};base64,${a.data}` : undefined,
+            })),
+          }]);
           break;
         case "mode_changed":
           setPermissionLevel(msg.mode_id);
@@ -708,7 +752,9 @@ export function TaskChat({
           setSlashCommands(msg.commands ?? []);
           break;
         case "queue_update":
-          setPendingMessages(msg.messages ?? []);
+          // Server sends QueuedMessage[]; extract text for display
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          setPendingMessages((msg.messages ?? []).map((m: any) => typeof m === "string" ? m : m.text));
           break;
         case "session_ended":
           setIsConnected(false);
@@ -731,6 +777,13 @@ export function TaskChat({
         if (msg.available_models?.length)
           state.modelOptions = msg.available_models.map((m: { id: string; name: string }) => ({ label: m.name, value: m.id }));
         if (msg.current_model_id) state.selectedModel = msg.current_model_id;
+        if (msg.prompt_capabilities) {
+          state.promptCaps = {
+            image: msg.prompt_capabilities.image ?? false,
+            audio: msg.prompt_capabilities.audio ?? false,
+            embeddedContext: msg.prompt_capabilities.embedded_context ?? false,
+          };
+        }
         state.messages = [...state.messages.filter((m) => !(m.type === "system" && m.content === "Connecting...")),
           { type: "system", content: "$$CONNECTED$$" }];
         break;
@@ -816,7 +869,17 @@ export function TaskChat({
         state.isBusy = msg.value;
         break;
       case "user_message":
-        state.messages = [...state.messages, { type: "user", content: msg.text }];
+        state.messages = [...state.messages, {
+          type: "user", content: msg.text,
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          attachments: msg.attachments?.map((a: any) => ({
+            type: a.type as "image" | "audio" | "resource",
+            data: a.data ?? "",
+            mimeType: a.mime_type ?? "",
+            name: "",
+            previewUrl: a.type === "image" ? `data:${a.mime_type};base64,${a.data}` : undefined,
+          })),
+        }];
         break;
       case "plan_update":
         state.planEntries = msg.entries ?? [];
@@ -899,47 +962,82 @@ export function TaskChat({
 
   // ─── User actions ────────────────────────────────────────────────────────
 
-  /** Check if the editable has any content (text or chips) */
+  /** Check if the editable has any content (text, chips, or attachments) */
   const checkContent = useCallback(() => {
     const el = editableRef.current;
-    if (!el) { setHasContent(false); return; }
+    if (!el) { setHasContent(attachments.length > 0); return; }
     const text = el.textContent?.trim() || "";
     const hasChips = el.querySelector("[data-command],[data-file]") !== null;
-    setHasContent(text.length > 0 || hasChips);
+    setHasContent(text.length > 0 || hasChips || attachments.length > 0);
+  }, [attachments.length]);
+
+  /** Convert a File to an Attachment and add to state */
+  const addFileAsAttachment = useCallback((file: File) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const dataUrl = reader.result as string;
+      const base64 = dataUrl.split(",")[1];
+      const previewUrl = file.type.startsWith("image/") ? URL.createObjectURL(file) : undefined;
+      setAttachments(prev => [...prev, {
+        type: file.type.startsWith("image/") ? "image" : "audio",
+        data: base64,
+        mimeType: file.type,
+        name: file.name,
+        previewUrl,
+      }]);
+    };
+    reader.readAsDataURL(file);
+  }, []);
+
+  const removeAttachment = useCallback((index: number) => {
+    setAttachments(prev => {
+      const att = prev[index];
+      if (att?.previewUrl) URL.revokeObjectURL(att.previewUrl);
+      return prev.filter((_, i) => i !== index);
+    });
   }, []);
 
   const handleSend = useCallback(() => {
     const el = editableRef.current;
     if (!el) return;
     const prompt = getPromptFromEditable(el);
-    if (!prompt || !wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
+    if ((!prompt && attachments.length === 0) || !wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
 
     // Shell mode → wrap as terminal command
     const text = isTerminalMode
       ? `Run this command: \`${prompt}\``
       : prompt;
 
+    // Build attachments payload for server
+    const contentAttachments = attachments.map(att => ({
+      type: att.type,
+      data: att.data,
+      mime_type: att.mimeType,
+    }));
+
     if (isBusy) {
       // Queue message on server when agent is busy
-      wsRef.current.send(JSON.stringify({ type: "queue_message", text }));
+      wsRef.current.send(JSON.stringify({ type: "queue_message", text, attachments: contentAttachments }));
       el.innerHTML = "";
       setHasContent(false);
+      setAttachments([]);
       setShowSlashMenu(false);
       setShowFileMenu(false);
       setIsTerminalMode(false);
       setShowPendingQueue(true);
       el.focus();
     } else {
-      wsRef.current.send(JSON.stringify({ type: "prompt", text }));
+      wsRef.current.send(JSON.stringify({ type: "prompt", text, attachments: contentAttachments }));
       el.innerHTML = "";
       setHasContent(false);
+      setAttachments([]);
       setShowSlashMenu(false);
       setShowFileMenu(false);
       setIsTerminalMode(false);
       setIsBusy(true);
       el.focus();
     }
-  }, [isTerminalMode, isBusy]);
+  }, [isTerminalMode, isBusy, attachments]);
 
   /** Cancel current agent work — server auto-sends next queued message after Complete */
   const handleSendNow = useCallback(() => {
@@ -1156,13 +1254,58 @@ export function TaskChat({
     }
   }, [checkContent]);
 
-  /** Strip HTML on paste — insert plain text only */
+  /** Strip HTML on paste — insert plain text or handle image paste */
   const handlePaste = useCallback((e: React.ClipboardEvent) => {
+    // Check for image paste
+    const items = Array.from(e.clipboardData.items);
+    const imageItem = items.find(i => i.type.startsWith("image/"));
+    if (imageItem && promptCaps.image) {
+      e.preventDefault();
+      const file = imageItem.getAsFile();
+      if (file) addFileAsAttachment(file);
+      return;
+    }
+    // Default: plain text paste
     e.preventDefault();
     const text = e.clipboardData.getData("text/plain");
     document.execCommand("insertText", false, text);
     checkContent();
-  }, [checkContent]);
+  }, [checkContent, promptCaps.image, addFileAsAttachment]);
+
+  /** Handle file input selection */
+  const handleFileSelect = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files ?? []);
+    files.forEach(file => {
+      if (file.type.startsWith("image/") && promptCaps.image) addFileAsAttachment(file);
+      else if (file.type.startsWith("audio/") && promptCaps.audio) addFileAsAttachment(file);
+    });
+    // Reset input so same file can be selected again
+    if (fileInputRef.current) fileInputRef.current.value = "";
+  }, [promptCaps.image, promptCaps.audio, addFileAsAttachment]);
+
+  /** Drag & drop handlers */
+  const handleDragOver = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    if (promptCaps.image || promptCaps.audio) setIsDragging(true);
+  }, [promptCaps.image, promptCaps.audio]);
+
+  const handleDragLeave = useCallback((e: React.DragEvent) => {
+    // Only set false when leaving the container (not entering a child)
+    if (!e.currentTarget.contains(e.relatedTarget as Node)) setIsDragging(false);
+  }, []);
+
+  const handleDrop = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragging(false);
+    const files = Array.from(e.dataTransfer.files);
+    files.forEach(file => {
+      if (file.type.startsWith("image/") && promptCaps.image) addFileAsAttachment(file);
+      else if (file.type.startsWith("audio/") && promptCaps.audio) addFileAsAttachment(file);
+    });
+  }, [promptCaps.image, promptCaps.audio, addFileAsAttachment]);
+
+  // Re-check hasContent when attachments change
+  useEffect(() => { checkContent(); }, [attachments.length, checkContent]);
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
     // Shell mode: Backspace on empty input → exit shell mode
@@ -1436,7 +1579,14 @@ export function TaskChat({
       )}
 
       {/* Messages */}
-      <div className="flex-1 overflow-y-auto px-4 py-3 space-y-3 min-h-0 bg-[var(--color-bg-secondary)]">
+      <div className="flex-1 overflow-y-auto px-4 py-3 space-y-3 min-h-0 bg-[var(--color-bg-secondary)] relative"
+        onDragOver={handleDragOver} onDragLeave={handleDragLeave} onDrop={handleDrop}>
+        {/* Drag overlay */}
+        {isDragging && (
+          <div className="absolute inset-0 bg-[color-mix(in_srgb,var(--color-highlight)_10%,transparent)] border-2 border-dashed border-[var(--color-highlight)] rounded-lg flex items-center justify-center z-50 pointer-events-none">
+            <span className="text-[var(--color-highlight)] font-medium text-sm">Drop files here</span>
+          </div>
+        )}
         {renderItems.map((item) =>
           item.kind === "single" ? (
             <MessageItem key={`m-${item.index}`} message={item.message} index={item.index} isBusy={isBusy} agentLabel={agentLabel}
@@ -1666,7 +1816,49 @@ export function TaskChat({
           )}
         </AnimatePresence>
 
+        {/* Attachment preview strip */}
+        {attachments.length > 0 && (
+          <div className="flex gap-2 px-1 pb-2 flex-wrap">
+            {attachments.map((att, i) => (
+              <div key={i} className="relative group">
+                {att.type === "image" && att.previewUrl ? (
+                  <img src={att.previewUrl} className="w-16 h-16 object-cover rounded border border-[var(--color-border)]" alt={att.name} />
+                ) : att.type === "audio" ? (
+                  <div className="w-16 h-16 rounded border border-[var(--color-border)] flex items-center justify-center bg-[var(--color-bg-tertiary)]">
+                    <Mic className="w-6 h-6 text-[var(--color-text-muted)]" />
+                  </div>
+                ) : null}
+                <button onClick={() => removeAttachment(i)}
+                  className="absolute -top-1.5 -right-1.5 w-4 h-4 rounded-full bg-[var(--color-error)] text-white flex items-center justify-center text-[10px] opacity-0 group-hover:opacity-100 transition-opacity">
+                  &times;
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* Hidden file input */}
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept={[promptCaps.image ? "image/*" : "", promptCaps.audio ? "audio/*" : ""].filter(Boolean).join(",")}
+          multiple
+          className="hidden"
+          onChange={handleFileSelect}
+        />
+
         <div className="flex gap-2 items-end">
+          {/* Attachment button */}
+          {(promptCaps.image || promptCaps.audio) && (
+            <button
+              onClick={() => fileInputRef.current?.click()}
+              className="h-9 w-9 flex items-center justify-center rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-secondary)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-bg-tertiary)] transition-colors shrink-0"
+              title="Attach file"
+            >
+              <Paperclip className="w-4 h-4" />
+            </button>
+          )}
+
           <div className={`flex-1 relative min-w-0 rounded-lg border bg-[var(--color-bg-secondary)] transition-colors ${
             isTerminalMode
               ? "border-[var(--color-warning)] focus-within:border-[var(--color-warning)]"
@@ -1795,8 +1987,16 @@ function MessageItem({ message, index, isBusy, agentLabel, onToggleThinkingColla
     case "user":
       return (
         <div className="flex justify-end">
-          <div className="max-w-[85%] rounded-lg px-3 py-2 bg-[var(--color-bg-tertiary)] border border-[var(--color-border)] text-sm text-[var(--color-text)] whitespace-pre-wrap">
-            {message.content}
+          <div className="max-w-[85%] rounded-lg px-3 py-2 bg-[var(--color-bg-tertiary)] border border-[var(--color-border)] text-sm text-[var(--color-text)]">
+            {message.attachments?.map((att, i) => (
+              att.type === "image" && att.previewUrl ? (
+                <img key={i} src={att.previewUrl} className="max-w-full max-h-48 rounded mb-2 cursor-pointer"
+                  onClick={() => window.open(att.previewUrl, '_blank')} alt="" />
+              ) : att.type === "audio" ? (
+                <audio key={i} controls src={`data:${att.mimeType};base64,${att.data}`} className="max-w-full mb-2" />
+              ) : null
+            ))}
+            {message.content && <div className="whitespace-pre-wrap">{message.content}</div>}
           </div>
         </div>
       );
