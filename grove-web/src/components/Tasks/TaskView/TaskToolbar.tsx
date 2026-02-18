@@ -13,26 +13,20 @@ import {
   MoreHorizontal,
   ChevronDown,
   ChevronUp,
-  Circle,
-  CheckCircle,
-  AlertTriangle,
-  XCircle,
+  Terminal,
+  MessageSquare,
 } from "lucide-react";
-import type { Task, TaskStatus } from "../../../data/types";
+import type { Task } from "../../../data/types";
 
 interface TaskToolbarProps {
   task: Task;
-  reviewOpen: boolean;
-  editorOpen: boolean;
-  compact?: boolean;
-  taskName?: string;
-  taskStatus?: TaskStatus;
-  projectName?: string;
   headerCollapsed?: boolean;
   onToggleHeaderCollapse?: () => void;
+  onAddTerminal: () => void;
+  onAddChat: () => void;
+  onAddReview: () => void;
+  onAddEditor: () => void;
   onCommit: () => void;
-  onToggleReview: () => void;
-  onToggleEditor: () => void;
   onRebase: () => void;
   onSync: () => void;
   onMerge: () => void;
@@ -182,40 +176,15 @@ function ActionsDropdown({ items }: { items: DropdownItem[] }) {
   );
 }
 
-function getCompactStatusConfig(status: TaskStatus): {
-  icon: typeof Circle;
-  color: string;
-  label: string;
-} {
-  switch (status) {
-    case "live":
-      return { icon: Circle, color: "var(--color-success)", label: "Live" };
-    case "idle":
-      return { icon: Circle, color: "var(--color-text-muted)", label: "Idle" };
-    case "merged":
-      return { icon: CheckCircle, color: "#a855f7", label: "Merged" };
-    case "conflict":
-      return { icon: AlertTriangle, color: "var(--color-error)", label: "Conflict" };
-    case "broken":
-      return { icon: XCircle, color: "var(--color-error)", label: "Broken" };
-    case "archived":
-      return { icon: Archive, color: "var(--color-text-muted)", label: "Archived" };
-  }
-}
-
 export function TaskToolbar({
   task,
-  reviewOpen,
-  editorOpen,
-  compact = false,
-  taskName,
-  taskStatus,
-  projectName,
   headerCollapsed,
   onToggleHeaderCollapse,
+  onAddTerminal,
+  onAddChat,
+  onAddReview,
+  onAddEditor,
   onCommit,
-  onToggleReview,
-  onToggleEditor,
   onRebase,
   onSync,
   onMerge,
@@ -254,52 +223,44 @@ export function TaskToolbar({
     },
   ];
 
-  const statusConfig = taskStatus ? getCompactStatusConfig(taskStatus) : null;
-  const CompactStatusIcon = statusConfig?.icon;
-
   return (
-    <div className="flex items-center justify-between px-4 py-2 border-b border-[var(--color-border)] bg-[var(--color-bg)]">
+    <div className="flex items-center justify-between px-4 py-2 border-b border-[var(--color-border)]">
       {/* Primary Actions */}
       <div className="flex items-center gap-1 min-w-0">
-        {compact && taskName && statusConfig && CompactStatusIcon && (
-          <>
-            <span className="text-sm font-medium text-[var(--color-text)] truncate max-w-[200px]">
-              {taskName}
-            </span>
-            {projectName && (
-              <span className="flex-shrink-0 px-1.5 py-0.5 text-[10px] font-medium text-[var(--color-text-muted)] bg-[var(--color-bg-tertiary)] rounded">
-                {projectName}
-              </span>
-            )}
-            <CompactStatusIcon
-              className="w-3 h-3 flex-shrink-0"
-              style={{
-                color: statusConfig.color,
-                fill: taskStatus === "live" ? statusConfig.color : "transparent",
-              }}
-            />
-            <span
-              className="text-xs flex-shrink-0"
-              style={{ color: statusConfig.color }}
-            >
-              {statusConfig.label}
-            </span>
-            <div className="w-px h-4 bg-[var(--color-border)] mx-1 flex-shrink-0" />
-          </>
+        {/* Chat Button - 放在 Terminal 前面 */}
+        {task.enableChat && (
+          <ToolbarButton
+            icon={MessageSquare}
+            label="Chat"
+            onClick={onAddChat}
+            disabled={isArchived}
+            shortcut="c"
+          />
+        )}
+        {/* Terminal Button */}
+        {task.enableTerminal && (
+          <ToolbarButton
+            icon={Terminal}
+            label="Terminal"
+            onClick={onAddTerminal}
+            disabled={isArchived}
+            shortcut="t"
+          />
+        )}
+        {(task.enableTerminal || task.enableChat) && (
+          <div className="w-px h-6 bg-[var(--color-border)] mx-1.5" />
         )}
         <ToolbarButton
           icon={Code}
           label="Review"
-          onClick={onToggleReview}
-          active={reviewOpen}
+          onClick={onAddReview}
           disabled={isArchived}
           shortcut="r"
         />
         <ToolbarButton
           icon={FileCode}
           label="Editor"
-          onClick={onToggleEditor}
-          active={editorOpen}
+          onClick={onAddEditor}
           disabled={isArchived}
           shortcut="e"
         />

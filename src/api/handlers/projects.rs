@@ -54,6 +54,10 @@ pub struct TaskResponse {
     pub updated_at: String,
     pub path: String,
     pub multiplexer: String,
+    #[serde(rename = "enableTerminal")]
+    pub enable_terminal: bool,
+    #[serde(rename = "enableChat")]
+    pub enable_chat: bool,
 }
 
 /// Commit response
@@ -126,7 +130,7 @@ fn status_to_string(status: &crate::model::WorktreeStatus) -> &'static str {
 }
 
 /// Convert Worktree to TaskResponse
-fn worktree_to_response(wt: &crate::model::Worktree) -> TaskResponse {
+fn worktree_to_response(wt: &crate::model::Worktree, project_key: &str) -> TaskResponse {
     // Get commits
     let commits = git::recent_log(&wt.path, &wt.target, 10)
         .unwrap_or_default()
@@ -137,6 +141,13 @@ fn worktree_to_response(wt: &crate::model::Worktree) -> TaskResponse {
             time_ago: log.time_ago,
         })
         .collect();
+
+    // Get enable_terminal/enable_chat from Task data
+    let (enable_terminal, enable_chat) = crate::storage::tasks::get_task(project_key, &wt.id)
+        .ok()
+        .flatten()
+        .map(|t| (t.enable_terminal, t.enable_chat))
+        .unwrap_or((true, false));
 
     TaskResponse {
         id: wt.id.clone(),
@@ -152,6 +163,8 @@ fn worktree_to_response(wt: &crate::model::Worktree) -> TaskResponse {
         updated_at: wt.updated_at.to_rfc3339(),
         path: wt.path.clone(),
         multiplexer: wt.multiplexer.clone(),
+        enable_terminal,
+        enable_chat,
     }
 }
 
@@ -172,11 +185,9 @@ fn count_project_tasks(project_key: &str) -> (u32, u32) {
     let mut live_count = 0u32;
     let total = active_tasks.len() as u32;
 
-    let global_mux = crate::storage::config::load_config().multiplexer;
-
     // Check which tasks have live sessions
     for task in &active_tasks {
-        let task_mux = crate::session::resolve_multiplexer(&task.multiplexer, &global_mux);
+        let task_mux = crate::session::resolve_session_type(&task.multiplexer);
         let session =
             crate::session::resolve_session_name(&task.session_name, project_key, &task.id);
         if crate::session::session_exists(&task_mux, &session) {
@@ -279,7 +290,7 @@ pub async fn get_project(Path(id): Path<String>) -> Result<Json<ProjectResponse>
         .chain(other.iter())
         .collect::<Vec<_>>()
         .par_iter()
-        .map(|wt| worktree_to_response(wt))
+        .map(|wt| worktree_to_response(wt, &id))
         .collect();
 
     // Sort by updated_at descending (newest first)

@@ -26,6 +26,8 @@ export interface TaskResponse {
   updated_at: string;
   path: string;
   multiplexer: string;
+  enableTerminal: boolean;
+  enableChat: boolean;
 }
 
 export interface TaskListResponse {

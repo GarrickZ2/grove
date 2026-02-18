@@ -142,13 +142,14 @@ export function TaskListItem({ task, isSelected, onClick, onDoubleClick, onConte
           </div>
 
           <div className="flex items-center gap-2 mt-1">
-            {/* Mode tag */}
-            {task.multiplexer === "acp" ? (
+            {/* Mode tags - show both if both are enabled */}
+            {task.enableChat && (
               <span className="inline-flex items-center gap-0.5 text-[10px] font-medium px-1.5 py-0.5 rounded bg-[var(--color-info)]/10 text-[var(--color-info)]">
                 <MessageSquare className="w-2.5 h-2.5" />
                 Chat
               </span>
-            ) : (
+            )}
+            {task.enableTerminal && (
               <span className="inline-flex items-center gap-0.5 text-[10px] font-medium px-1.5 py-0.5 rounded bg-[var(--color-accent)]/10 text-[var(--color-accent)]">
                 <Terminal className="w-2.5 h-2.5" />
                 Terminal

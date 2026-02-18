@@ -8,7 +8,7 @@ use ratatui::{
     Frame,
 };
 
-use crate::storage::config::{AutoLinkConfig, LayoutConfig, Multiplexer};
+use crate::storage::config::{AutoLinkConfig, LayoutConfig, TerminalMultiplexer};
 use crate::theme::ThemeColors;
 use crate::tmux::layout::{LayoutNode, PathSegment, SplitDirection, TaskLayout};
 use crate::ui::click_areas::{ClickAreas, DialogAction};
@@ -81,7 +81,7 @@ pub struct ConfigPanelData {
 impl ConfigPanelData {
     pub fn with_multiplexer(
         config: &LayoutConfig,
-        mux: &Multiplexer,
+        mux: &TerminalMultiplexer,
         autolink: &AutoLinkConfig,
     ) -> Self {
         // 从 config 加载当前布局选中索引
@@ -100,9 +100,8 @@ impl ConfigPanelData {
         };
 
         let multiplexer_selected = match mux {
-            Multiplexer::Tmux => 0,
-            Multiplexer::Zellij => 1,
-            Multiplexer::Acp => 2,
+            TerminalMultiplexer::Tmux => 0,
+            TerminalMultiplexer::Zellij => 1,
         };
 
         Self {

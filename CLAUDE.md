@@ -156,6 +156,27 @@ All data stored in `~/.grove/`:
 
 ## Development Guidelines
 
+### Completion Summary (IMPORTANT)
+
+**After completing any code modifications, ALWAYS provide a clear summary to the user:**
+
+1. **Frontend Changes** — If `grove-web/` was modified:
+   - Explicitly state: "✅ `npm run build` executed successfully" (if you ran it)
+   - OR state: "⚠️ You need to run `npm run build` in `grove-web/`" (if you didn't run it)
+
+2. **Backend Changes** — If Rust code (`src/`) was modified:
+   - Explicitly state: "⚠️ Rust backend needs rebuild - run `cargo build --release` and restart server"
+   - OR state: "✅ No backend changes - no need to restart Rust server"
+
+3. **Example Summary Format**:
+   ```
+   ## Build Status
+   - ✅ npm run build: Completed successfully
+   - ⚠️ Rust backend: Needs rebuild (modified src/api/handlers/tasks.rs)
+   ```
+
+This helps the user immediately know what actions they need to take without having to guess or re-read the entire conversation.
+
 ### Web Frontend Development
 
 When modifying the web frontend (`grove-web/`):

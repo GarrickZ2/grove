@@ -16,8 +16,8 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 
 use crate::api::state;
-use crate::session;
-use crate::storage::{config, config::Multiplexer, tasks, workspace};
+use crate::session::{self, SessionType};
+use crate::storage::{config, tasks, workspace};
 use crate::tmux;
 use crate::tmux::layout::{parse_custom_layout_tree, CustomLayout, TaskLayout};
 
@@ -68,16 +68,16 @@ pub async fn task_terminal_handler(
         .map_err(|e| TaskTerminalError::Internal(format!("Failed to get task: {}", e)))?
         .ok_or(TaskTerminalError::NotFound("Task not found".to_string()))?;
 
-    // 3. Resolve multiplexer and build session name
-    let global_mux = config::load_config().multiplexer;
-    let task_mux = session::resolve_multiplexer(&task.multiplexer, &global_mux);
+    // 3. Resolve session type and build session name
+    let task_session_type = session::resolve_session_type(&task.multiplexer);
     let session_name = session::resolve_session_name(&task.session_name, &project_key, &task_id);
 
     // 4. Ensure session exists (create if needed)
-    let session_created = !session::session_exists(&task_mux, &session_name);
+    let session_created = !session::session_exists(&task_session_type, &session_name);
     let mut zellij_layout_path: Option<String> = None;
     if session_created {
-        zellij_layout_path = ensure_task_session(&project, &project_key, &task, &task_mux)?;
+        zellij_layout_path =
+            ensure_task_session(&project, &project_key, &task, &task_session_type)?;
 
         // Register FileWatcher for this task's worktree
         state::watch_task(&project_key, &task.id, &task.worktree_path);
@@ -91,7 +91,7 @@ pub async fn task_terminal_handler(
             socket,
             MuxTerminalParams {
                 session_name,
-                mux: task_mux,
+                mux: task_session_type,
                 new_session: session_created,
                 working_dir,
                 zellij_layout_path,
@@ -125,7 +125,7 @@ fn ensure_task_session(
     project: &workspace::RegisteredProject,
     project_key: &str,
     task: &tasks::Task,
-    mux: &Multiplexer,
+    session_type: &SessionType,
 ) -> Result<Option<String>, TaskTerminalError> {
     let session_name = session::resolve_session_name(&task.session_name, project_key, &task.id);
 
@@ -146,8 +146,13 @@ fn ensure_task_session(
     };
 
     // Create session
-    session::create_session(mux, &session_name, &task.worktree_path, Some(&session_env))
-        .map_err(|e| TaskTerminalError::Internal(format!("Failed to create session: {}", e)))?;
+    session::create_session(
+        session_type,
+        &session_name,
+        &task.worktree_path,
+        Some(&session_env),
+    )
+    .map_err(|e| TaskTerminalError::Internal(format!("Failed to create session: {}", e)))?;
 
     // Load config and apply layout
     let cfg = config::load_config();
@@ -166,12 +171,12 @@ fn ensure_task_session(
 
     // Apply layout
     let mut layout_path: Option<String> = None;
-    match mux {
-        Multiplexer::Acp => {
+    match session_type {
+        SessionType::Acp => {
             // ACP tasks use chat interface, not terminal
             return Ok(None);
         }
-        Multiplexer::Tmux => {
+        SessionType::Tmux => {
             if layout != TaskLayout::Single {
                 if let Err(e) = tmux::layout::apply_layout(
                     &session_name,
@@ -184,7 +189,7 @@ fn ensure_task_session(
                 }
             }
         }
-        Multiplexer::Zellij => {
+        SessionType::Zellij => {
             // Zellij: 始终生成 KDL layout 以通过 pane 命令注入环境变量
             let kdl = crate::zellij::layout::generate_kdl(
                 &layout,
@@ -217,7 +222,7 @@ async fn handle_shell_terminal(socket: WebSocket, cwd: String, cols: u16, rows: 
 /// Parameters for multiplexer terminal connection
 struct MuxTerminalParams {
     session_name: String,
-    mux: Multiplexer,
+    mux: SessionType,
     new_session: bool,
     working_dir: String,
     zellij_layout_path: Option<String>,
@@ -237,14 +242,14 @@ async fn handle_mux_terminal(socket: WebSocket, params: MuxTerminalParams) {
         rows,
     } = params;
     match mux {
-        Multiplexer::Tmux => {
+        SessionType::Tmux => {
             let mut cmd = CommandBuilder::new("tmux");
             cmd.arg("attach-session");
             cmd.arg("-t");
             cmd.arg(&session_name);
             handle_pty_terminal(socket, cmd, cols, rows).await;
         }
-        Multiplexer::Zellij => {
+        SessionType::Zellij => {
             let mut cmd = CommandBuilder::new("zellij");
             // Remove ZELLIJ env vars to prevent nested session issues
             cmd.env_remove("ZELLIJ");
@@ -272,7 +277,7 @@ async fn handle_mux_terminal(socket: WebSocket, params: MuxTerminalParams) {
 
             handle_pty_terminal(socket, cmd, cols, rows).await;
         }
-        Multiplexer::Acp => {
+        SessionType::Acp => {
             // ACP tasks use chat interface, not terminal — should not reach here
         }
     }

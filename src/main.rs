@@ -43,19 +43,29 @@ const AUTO_REFRESH_INTERVAL_SECS: u64 = 5;
 fn ensure_storage_version() {
     let config = storage::config::load_config();
     match config.storage_version.as_deref() {
-        Some("1.0") => {} // Up to date
+        Some("1.1") => {} // Up to date
+        Some("1.0") => {
+            // Migrate from 1.0 to 1.1
+            eprintln!(
+                "Migrating storage from v1.0 to v1.1 (task_modes → enable_terminal/enable_chat)..."
+            );
+            cli::migrate::execute(false);
+        }
         None => {
-            // Legacy or fresh install
+            // Legacy or fresh install - run full migration
             if storage::grove_dir().join("projects").exists() {
-                eprintln!("Migrating storage to v1.0...");
+                eprintln!("Migrating storage to v1.1...");
                 cli::migrate::execute(false);
+            } else {
+                // Fresh install, set version directly
+                let mut config = config;
+                config.storage_version = Some("1.1".to_string());
+                let _ = storage::config::save_config(&config);
             }
-            let mut config = config;
-            config.storage_version = Some("1.0".to_string());
-            let _ = storage::config::save_config(&config);
         }
         Some(v) => {
-            eprintln!("Unknown storage version: {}. Expected 1.0.", v);
+            eprintln!("Unknown storage version: {}. Expected 1.1.", v);
+            eprintln!("Please run: grove migrate");
             std::process::exit(1);
         }
     }
@@ -193,7 +203,7 @@ fn run(terminal: &mut DefaultTerminal, app: &mut App) -> io::Result<()> {
 
             // attach 到 session（阻塞，直到用户 detach）
             let _ = session::attach_session(
-                &att.multiplexer,
+                &att.session_type,
                 &att.session,
                 Some(&att.working_dir),
                 Some(&att.env),
@@ -201,7 +211,7 @@ fn run(terminal: &mut DefaultTerminal, app: &mut App) -> io::Result<()> {
             );
 
             // 清除 tmux detach 消息（只清除一行，仅 tmux 需要）
-            if att.multiplexer == storage::config::Multiplexer::Tmux {
+            if matches!(att.session_type, session::SessionType::Tmux) {
                 print!("\x1b[1A\x1b[2K\r");
                 let _ = io::stdout().flush();
             }

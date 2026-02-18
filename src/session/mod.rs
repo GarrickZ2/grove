@@ -1,13 +1,33 @@
-//! 统一 session 调度层 — 根据 Multiplexer 类型分发到 tmux 或 zellij
+//! 统一 session 调度层 — 根据 SessionType 分发到 tmux、zellij 或 acp
 
 use std::process::Command;
+use std::str::FromStr;
 
 use once_cell::sync::Lazy;
 
 use crate::error::Result;
-use crate::storage::config::Multiplexer;
 use crate::tmux::{self, SessionEnv};
 use crate::zellij;
+
+/// Session 类型枚举（用于内部调度）
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SessionType {
+    Tmux,
+    Zellij,
+    Acp,
+}
+
+impl FromStr for SessionType {
+    type Err = String;
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "tmux" => Ok(SessionType::Tmux),
+            "zellij" => Ok(SessionType::Zellij),
+            "acp" => Ok(SessionType::Acp),
+            _ => Err(format!("unknown session type: {}", s)),
+        }
+    }
+}
 
 /// Zellij session 名称最大长度 — 动态计算。
 ///
@@ -99,15 +119,15 @@ pub fn resolve_session_name(task_session_name: &str, project: &str, task_id: &st
 /// tmux: 创建 detached session
 /// zellij: no-op（session 在 attach 时自动创建）
 pub fn create_session(
-    mux: &Multiplexer,
+    mux: &SessionType,
     name: &str,
     working_dir: &str,
     env: Option<&SessionEnv>,
 ) -> Result<()> {
     match mux {
-        Multiplexer::Tmux => tmux::create_session(name, working_dir, env),
-        Multiplexer::Zellij => zellij::create_session(name, working_dir, env),
-        Multiplexer::Acp => Ok(()), // ACP session 按需通过 API 创建
+        SessionType::Tmux => tmux::create_session(name, working_dir, env),
+        SessionType::Zellij => zellij::create_session(name, working_dir, env),
+        SessionType::Acp => Ok(()), // ACP session 按需通过 API 创建
     }
 }
 
@@ -116,46 +136,41 @@ pub fn create_session(
 /// zellij: zellij attach <name> --create（带可选 layout / working_dir / env）
 /// acp: no-op（ACP 没有终端 attach 概念）
 pub fn attach_session(
-    mux: &Multiplexer,
+    mux: &SessionType,
     name: &str,
     working_dir: Option<&str>,
     env: Option<&SessionEnv>,
     layout_path: Option<&str>,
 ) -> Result<()> {
     match mux {
-        Multiplexer::Tmux => tmux::attach_session(name),
-        Multiplexer::Zellij => zellij::attach_session(name, working_dir, env, layout_path),
-        Multiplexer::Acp => Ok(()), // ACP 通过 chat 界面交互，不需要 attach
+        SessionType::Tmux => tmux::attach_session(name),
+        SessionType::Zellij => zellij::attach_session(name, working_dir, env, layout_path),
+        SessionType::Acp => Ok(()), // ACP 通过 chat 界面交互，不需要 attach
     }
 }
 
 /// 检查 session 是否存在
-pub fn session_exists(mux: &Multiplexer, name: &str) -> bool {
+pub fn session_exists(mux: &SessionType, name: &str) -> bool {
     match mux {
-        Multiplexer::Tmux => tmux::session_exists(name),
-        Multiplexer::Zellij => zellij::session_exists(name),
-        Multiplexer::Acp => crate::acp::session_exists(name),
+        SessionType::Tmux => tmux::session_exists(name),
+        SessionType::Zellij => zellij::session_exists(name),
+        SessionType::Acp => crate::acp::session_exists(name),
     }
 }
 
 /// 关闭 session
-pub fn kill_session(mux: &Multiplexer, name: &str) -> Result<()> {
+pub fn kill_session(mux: &SessionType, name: &str) -> Result<()> {
     match mux {
-        Multiplexer::Tmux => tmux::kill_session(name),
-        Multiplexer::Zellij => zellij::kill_session(name),
-        Multiplexer::Acp => crate::acp::kill_session(name),
+        SessionType::Tmux => tmux::kill_session(name),
+        SessionType::Zellij => zellij::kill_session(name),
+        SessionType::Acp => crate::acp::kill_session(name),
     }
 }
 
-/// 从 task 记录的 multiplexer 字符串解析为 Multiplexer 枚举
-/// 如果 task 记录为空或未知值，回退到全局配置
-pub fn resolve_multiplexer(task_mux: &str, global_mux: &Multiplexer) -> Multiplexer {
-    match task_mux.to_lowercase().as_str() {
-        "tmux" => Multiplexer::Tmux,
-        "zellij" => Multiplexer::Zellij,
-        "acp" => Multiplexer::Acp,
-        _ => global_mux.clone(),
-    }
+/// 从 task 记录的 multiplexer 字符串解析为 SessionType 枚举
+/// 如果 task 记录为空或未知值，默认返回 Tmux
+pub fn resolve_session_type(task_mux: &str) -> SessionType {
+    task_mux.parse::<SessionType>().unwrap_or(SessionType::Tmux)
 }
 
 #[cfg(test)]

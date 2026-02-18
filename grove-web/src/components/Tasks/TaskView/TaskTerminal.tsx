@@ -24,6 +24,8 @@ interface TaskTerminalProps {
   fullscreen?: boolean;
   /** Toggle fullscreen mode */
   onToggleFullscreen?: () => void;
+  /** Hide the terminal header (for FlexLayout tabs) */
+  hideHeader?: boolean;
 }
 
 export function TaskTerminal({
@@ -37,6 +39,7 @@ export function TaskTerminal({
   onDisconnected: onDisconnectedProp,
   fullscreen = false,
   onToggleFullscreen,
+  hideHeader = false,
 }: TaskTerminalProps) {
   const { terminalTheme } = useTerminalTheme();
   const [isConnected, setIsConnected] = useState(false);
@@ -49,10 +52,11 @@ export function TaskTerminal({
 
   // Auto-start session on mount if requested
   useEffect(() => {
-    if (autoStart && !isLive) {
+    if (autoStart && !isLive && !sessionStarted) {
       setSessionStarted(true);
+      onStartSession();
     }
-  }, [autoStart, isLive]);
+  }, [autoStart, isLive, sessionStarted, onStartSession]);
 
   // Handle terminal connected
   const handleConnected = () => {
@@ -136,33 +140,35 @@ export function TaskTerminal({
       layout
       initial={{ opacity: 0, y: -10 }}
       animate={{ opacity: 1, y: 0 }}
-      className={`flex-1 flex flex-col overflow-hidden ${fullscreen ? '' : 'rounded-lg border border-[var(--color-border)]'}`}
+      className={`flex-1 flex flex-col overflow-hidden ${fullscreen || hideHeader ? '' : 'rounded-lg border border-[var(--color-border)]'}`}
       style={{ backgroundColor: terminalTheme.colors.background }}
     >
-      {/* Terminal Header */}
-      <div className="flex items-center justify-between px-3 py-2 bg-[var(--color-bg)] border-b border-[var(--color-border)]">
-        <div className="flex items-center gap-2 text-sm text-[var(--color-text-muted)]">
-          <TerminalIcon className="w-4 h-4" />
-          <span>Terminal</span>
+      {/* Terminal Header - 只在非 hideHeader 模式下显示 */}
+      {!hideHeader && (
+        <div className="flex items-center justify-between px-3 py-2 bg-[var(--color-bg)] border-b border-[var(--color-border)]">
+          <div className="flex items-center gap-2 text-sm text-[var(--color-text-muted)]">
+            <TerminalIcon className="w-4 h-4" />
+            <span>Terminal</span>
+          </div>
+          <div className="flex items-center gap-1.5">
+            <div
+              className={`w-2.5 h-2.5 rounded-full ${isConnected ? "bg-[var(--color-success)] animate-pulse" : "bg-[var(--color-warning)]"}`}
+            />
+            <span className="text-xs text-[var(--color-text-muted)]">
+              {isConnected ? "Connected" : "Connecting..."}
+            </span>
+            {onToggleFullscreen && (
+              <button
+                onClick={onToggleFullscreen}
+                className="ml-1 p-1 text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-bg-tertiary)] rounded transition-colors"
+                title={fullscreen ? "Exit Fullscreen" : "Fullscreen"}
+              >
+                {fullscreen ? <Minimize2 className="w-3.5 h-3.5" /> : <Maximize2 className="w-3.5 h-3.5" />}
+              </button>
+            )}
+          </div>
         </div>
-        <div className="flex items-center gap-1.5">
-          <div
-            className={`w-2.5 h-2.5 rounded-full ${isConnected ? "bg-[var(--color-success)] animate-pulse" : "bg-[var(--color-warning)]"}`}
-          />
-          <span className="text-xs text-[var(--color-text-muted)]">
-            {isConnected ? "Connected" : "Connecting..."}
-          </span>
-          {onToggleFullscreen && (
-            <button
-              onClick={onToggleFullscreen}
-              className="ml-1 p-1 text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-bg-tertiary)] rounded transition-colors"
-              title={fullscreen ? "Exit Fullscreen" : "Fullscreen"}
-            >
-              {fullscreen ? <Minimize2 className="w-3.5 h-3.5" /> : <Maximize2 className="w-3.5 h-3.5" />}
-            </button>
-          )}
-        </div>
-      </div>
+      )}
 
       {/* Terminal Content - Real xterm.js with tmux session */}
       <div className="flex-1 min-h-0">

@@ -217,7 +217,6 @@ pub fn archive_task(
     task_id: &str,
     task_multiplexer: &str,
     task_session_name: &str,
-    global_multiplexer: &storage::config::Multiplexer,
 ) -> Result<tasks::Task> {
     // 1. Get task info (before archival)
     let task_info = tasks::get_task(project_key, task_id)?;
@@ -236,12 +235,12 @@ pub fn archive_task(
     hooks::remove_task_hook(project_key, task_id);
 
     // 5. Kill session
-    let task_mux = session::resolve_multiplexer(task_multiplexer, global_multiplexer);
+    let task_session_type = session::resolve_session_type(task_multiplexer);
     let session_name = session::resolve_session_name(task_session_name, project_key, task_id);
-    let _ = session::kill_session(&task_mux, &session_name);
+    let _ = session::kill_session(&task_session_type, &session_name);
 
     // 6. Remove Zellij layout if applicable
-    if task_mux == storage::config::Multiplexer::Zellij {
+    if matches!(task_session_type, session::SessionType::Zellij) {
         crate::zellij::layout::remove_session_layout(&session_name);
     }
 
@@ -290,13 +289,16 @@ pub struct CreateTaskResult {
 ///     Err(e) => eprintln!("Failed: {}", e),
 /// }
 /// ```
+#[allow(clippy::too_many_arguments)]
 pub fn create_task(
     repo_path: &str,
     project_key: &str,
     task_name: String,
     target_branch: String,
-    multiplexer: &storage::config::Multiplexer,
+    session_type: &str,
     autolink_patterns: &[String],
+    enable_terminal: bool,
+    enable_chat: bool,
 ) -> Result<CreateTaskResult> {
     // 1. Generate identifiers
     let slug = tasks::to_slug(&task_name);
@@ -331,8 +333,10 @@ pub fn create_task(
         created_at: now,
         updated_at: now,
         status: tasks::TaskStatus::Active,
-        multiplexer: multiplexer.to_string(),
+        multiplexer: session_type.to_string(),
         session_name: session_name.clone(),
+        enable_terminal,
+        enable_chat,
     };
 
     tasks::add_task(project_key, task.clone())?;
@@ -458,17 +462,16 @@ pub fn reset_task(
     task_id: &str,
     task_multiplexer: &str,
     task_session_name: &str,
-    global_multiplexer: &storage::config::Multiplexer,
 ) -> Result<ResetTaskResult> {
     // 1. Get task info
     let task = tasks::get_task(project_key, task_id)?
         .ok_or_else(|| GroveError::not_found("Task not found"))?;
 
     // 2. Kill session
-    let task_mux = session::resolve_multiplexer(task_multiplexer, global_multiplexer);
+    let task_session_type = session::resolve_session_type(task_multiplexer);
     let session_name = session::resolve_session_name(task_session_name, project_key, task_id);
-    let _ = session::kill_session(&task_mux, &session_name);
-    if task_mux == storage::config::Multiplexer::Zellij {
+    let _ = session::kill_session(&task_session_type, &session_name);
+    if matches!(task_session_type, session::SessionType::Zellij) {
         crate::zellij::layout::remove_session_layout(&session_name);
     }
 

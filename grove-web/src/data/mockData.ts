@@ -22,6 +22,8 @@ const groveTasks: Task[] = [
     createdAt: daysAgo(2),
     updatedAt: hoursAgo(1),
     multiplexer: "tmux",
+    enableTerminal: true,
+    enableChat: false,
   },
   {
     id: "grove-2",
@@ -40,6 +42,8 @@ const groveTasks: Task[] = [
     createdAt: daysAgo(5),
     updatedAt: hoursAgo(3),
     multiplexer: "tmux",
+    enableTerminal: true,
+    enableChat: false,
   },
   {
     id: "grove-3",
@@ -56,6 +60,8 @@ const groveTasks: Task[] = [
     createdAt: daysAgo(7),
     updatedAt: daysAgo(1),
     multiplexer: "tmux",
+    enableTerminal: true,
+    enableChat: false,
   },
   {
     id: "grove-4",
@@ -70,6 +76,8 @@ const groveTasks: Task[] = [
     createdAt: daysAgo(30),
     updatedAt: daysAgo(14),
     multiplexer: "tmux",
+    enableTerminal: true,
+    enableChat: false,
   },
 ];
 
@@ -89,6 +97,8 @@ const myAppTasks: Task[] = [
     createdAt: daysAgo(3),
     updatedAt: hoursAgo(2),
     multiplexer: "tmux",
+    enableTerminal: true,
+    enableChat: false,
   },
   {
     id: "myapp-2",
@@ -105,6 +115,8 @@ const myAppTasks: Task[] = [
     createdAt: daysAgo(4),
     updatedAt: daysAgo(1),
     multiplexer: "tmux",
+    enableTerminal: true,
+    enableChat: false,
   },
 ];
 
@@ -124,6 +136,8 @@ const serverTasks: Task[] = [
     createdAt: daysAgo(6),
     updatedAt: daysAgo(2),
     multiplexer: "tmux",
+    enableTerminal: true,
+    enableChat: false,
   },
 ];
 

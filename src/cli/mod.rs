@@ -67,7 +67,7 @@ pub enum Commands {
         #[arg(long, default_value = ".")]
         cwd: String,
     },
-    /// Migrate storage to the latest format (v1.0 task-centric layout)
+    /// Migrate storage to the latest format (v1.1 with task_modes)
     Migrate {
         /// Show what would be done without making changes
         #[arg(long)]

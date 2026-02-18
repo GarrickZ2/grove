@@ -4,8 +4,8 @@
 use chrono::{DateTime, Utc};
 
 use crate::session;
+use crate::storage::tasks;
 use crate::storage::workspace::{self as storage, project_hash};
-use crate::storage::{config, tasks};
 
 /// 项目信息（带运行时统计）
 #[derive(Debug, Clone)]
@@ -254,13 +254,11 @@ fn count_tasks(project_key: &str) -> (usize, usize) {
     let active_tasks = tasks::load_tasks(project_key).unwrap_or_default();
     let task_count = active_tasks.len();
 
-    let global_mux = config::load_config().multiplexer;
-
     // 计算 live 数量（检查 session 是否运行）
     let live_count = active_tasks
         .iter()
         .filter(|t| {
-            let task_mux = session::resolve_multiplexer(&t.multiplexer, &global_mux);
+            let task_mux = session::resolve_session_type(&t.multiplexer);
             let sname = session::resolve_session_name(&t.session_name, project_key, &t.id);
             session::session_exists(&task_mux, &sname)
         })

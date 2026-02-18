@@ -9,7 +9,7 @@ use std::sync::RwLock;
 use once_cell::sync::Lazy;
 
 use crate::session;
-use crate::storage::{config, tasks, workspace};
+use crate::storage::{tasks, workspace};
 use crate::watcher::FileWatcher;
 
 /// Global state: one FileWatcher per project
@@ -47,12 +47,11 @@ pub fn init_file_watchers() {
         };
 
         // Check which tasks have active sessions
-        let global_mux = config::load_config().multiplexer;
         let mut has_live_tasks = false;
         let mut watcher = FileWatcher::new(&project_key);
 
         for task in &project_tasks {
-            let task_mux = session::resolve_multiplexer(&task.multiplexer, &global_mux);
+            let task_mux = session::resolve_session_type(&task.multiplexer);
             let sname = session::resolve_session_name(&task.session_name, &project_key, &task.id);
             if session::session_exists(&task_mux, &sname) {
                 // This task is live - start watching its worktree

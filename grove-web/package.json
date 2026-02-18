@@ -16,6 +16,7 @@
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/addon-web-links": "^0.12.0",
     "@xterm/xterm": "^6.0.0",
+    "flexlayout-react": "^0.8.18",
     "framer-motion": "^12.30.1",
     "highlight.js": "^11.11.1",
     "lucide-react": "^0.563.0",

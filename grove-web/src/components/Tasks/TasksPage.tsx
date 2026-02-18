@@ -28,7 +28,7 @@ import { convertTaskResponse } from "../../utils/taskConvert";
 import type { PendingArchiveConfirm } from "../../utils/archiveHelpers";
 import { buildContextMenuItems, type TaskOperationHandlers } from "../../utils/taskOperationUtils";
 
-type ViewMode = "list" | "info" | "terminal";
+type ViewMode = "list" | "info" | "terminal" | "chat";
 
 interface TasksPageProps {
   /** Initial task ID to select (from navigation) */
@@ -45,7 +45,7 @@ export function TasksPage({ initialTaskId, initialViewMode, onNavigationConsumed
   // Zen-specific state
   const [filter, setFilter] = useState<TaskFilter>("active");
   const [showNewTaskDialog, setShowNewTaskDialog] = useState(false);
-  const [autoStartSession, setAutoStartSession] = useState(false);
+  // const [autoStartSession, setAutoStartSession] = useState(false); // Deprecated
   const [isCreating, setIsCreating] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
   const [archivedTasks, setArchivedTasks] = useState<Task[]>([]);
@@ -172,12 +172,13 @@ export function TasksPage({ initialTaskId, initialViewMode, onNavigationConsumed
 
   // Wrap page handlers to handle auto-start state
   const handleSelectTask = useCallback((task: Task) => {
-    setAutoStartSession(false);
+    // setAutoStartSession(false); // Deprecated
     pageHandlers.handleSelectTask(task);
   }, [pageHandlers]);
 
   const handleDoubleClickTask = useCallback((task: Task) => {
-    setAutoStartSession(false);
+    // setAutoStartSession(false); // Deprecated
+    // Forward to page handlers (task modes are read from task.taskModes)
     pageHandlers.handleDoubleClickTask(task);
   }, [pageHandlers]);
 
@@ -218,7 +219,7 @@ export function TasksPage({ initialTaskId, initialViewMode, onNavigationConsumed
         // Auto-select the new task and enter terminal mode with auto-start
         const newTask = convertTaskResponse(taskResponse);
         pageHandlers.setSelectedTask(newTask);
-        setAutoStartSession(true);
+        // setAutoStartSession(true); // Deprecated
         pageHandlers.setViewMode("terminal");
 
         // 🚀 优化: 异步刷新,不阻塞 UI
@@ -242,20 +243,21 @@ export function TasksPage({ initialTaskId, initialViewMode, onNavigationConsumed
     [selectedProject, refreshSelectedProject, pageHandlers]
   );
 
-  const handleStartSession = useCallback(() => {
-    pageHandlers.setViewMode("terminal");
-  }, [pageHandlers]);
+  // Deprecated - page is no longer in use
+  // const handleStartSession = useCallback(() => {
+  //   pageHandlers.setViewMode("terminal");
+  // }, [pageHandlers]);
 
-  // Handle terminal connected - refresh to update task status to "live"
-  const handleTerminalConnected = useCallback(async () => {
-    await refreshSelectedProject();
-    setAutoStartSession(false);
-  }, [refreshSelectedProject]);
+  // // Handle terminal connected - refresh to update task status to "live"
+  // const handleTerminalConnected = useCallback(async () => {
+  //   await refreshSelectedProject();
+  //   setAutoStartSession(false);
+  // }, [refreshSelectedProject]);
 
-  // Handle terminal disconnected - refresh to update task status to "idle"
-  const handleTerminalDisconnected = useCallback(async () => {
-    await refreshSelectedProject();
-  }, [refreshSelectedProject]);
+  // // Handle terminal disconnected - refresh to update task status to "idle"
+  // const handleTerminalDisconnected = useCallback(async () => {
+  //   await refreshSelectedProject();
+  // }, [refreshSelectedProject]);
 
   // Task navigation hook
   const navHandlers = useTaskNavigation({
@@ -342,7 +344,7 @@ export function TasksPage({ initialTaskId, initialViewMode, onNavigationConsumed
     );
   }
 
-  const isTerminalMode = pageState.viewMode === "terminal";
+  const isTerminalMode = pageState.viewMode === "terminal" || pageState.viewMode === "chat";
   const isInfoMode = pageState.viewMode === "info";
 
   // Build context menu items using utility function
@@ -430,7 +432,9 @@ export function TasksPage({ initialTaskId, initialViewMode, onNavigationConsumed
                     task={pageState.selectedTask}
                     projectName={selectedProject.name}
                     onClose={pageHandlers.handleCloseTask}
-                    onEnterTerminal={pageState.selectedTask.status !== "archived" ? pageHandlers.handleEnterTerminal : undefined}
+                    onEnterMode={pageState.selectedTask.status !== "archived" ? pageHandlers.handleEnterMode : undefined}
+                    enableTerminal={pageState.selectedTask.enableTerminal}
+                    enableChat={pageState.selectedTask.enableChat}
                     onRecover={pageState.selectedTask.status === "archived" ? handleRecover : undefined}
                     onClean={opsHandlers.handleClean}
                     onCommit={pageState.selectedTask.status !== "archived" ? opsHandlers.handleCommit : undefined}
@@ -486,16 +490,11 @@ export function TasksPage({ initialTaskId, initialViewMode, onNavigationConsumed
                 isTerminalMode
               />
 
-              {/* TaskView (Terminal + optional Code Review / Editor) */}
               <TaskView
                 projectId={selectedProject.id}
                 task={pageState.selectedTask}
                 projectName={selectedProject.name}
-                reviewOpen={pageState.reviewOpen}
-                editorOpen={pageState.editorOpen}
-                autoStartSession={autoStartSession}
-                onToggleReview={pageHandlers.handleToggleReview}
-                onToggleEditor={pageHandlers.handleToggleEditor}
+                onAddPanel={() => {}}
                 onCommit={opsHandlers.handleCommit}
                 onRebase={opsHandlers.handleRebase}
                 onSync={opsHandlers.handleSync}
@@ -503,9 +502,6 @@ export function TasksPage({ initialTaskId, initialViewMode, onNavigationConsumed
                 onArchive={opsHandlers.handleArchive}
                 onClean={opsHandlers.handleClean}
                 onReset={opsHandlers.handleReset}
-                onStartSession={handleStartSession}
-                onTerminalConnected={handleTerminalConnected}
-                onTerminalDisconnected={handleTerminalDisconnected}
               />
             </motion.div>
           )}

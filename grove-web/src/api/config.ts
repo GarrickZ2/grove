@@ -45,7 +45,9 @@ export interface Config {
   theme: ThemeConfig;
   layout: LayoutConfig;
   web: WebConfig;
-  multiplexer: string;
+  enable_terminal: boolean;
+  enable_chat: boolean;
+  terminal_multiplexer: string; // "tmux" | "zellij"
   auto_link: AutoLinkConfig;
   acp: AcpConfig;
 }
@@ -54,7 +56,9 @@ export interface ConfigPatch {
   theme?: Partial<ThemeConfig>;
   layout?: Partial<LayoutConfig>;
   web?: Partial<WebConfig>;
-  multiplexer?: string;
+  enable_terminal?: boolean;
+  enable_chat?: boolean;
+  terminal_multiplexer?: string;
   auto_link?: Partial<AutoLinkConfig>;
   acp?: Partial<AcpConfig>;
 }

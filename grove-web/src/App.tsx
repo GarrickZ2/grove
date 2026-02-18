@@ -3,8 +3,8 @@ import { motion, AnimatePresence } from "framer-motion";
 import { Sidebar } from "./components/Layout/Sidebar";
 import { SettingsPage } from "./components/Config";
 import { DashboardPage } from "./components/Dashboard";
-import { TasksPage } from "./components/Tasks";
 import { BlitzPage } from "./components/Blitz";
+import { TasksPage } from "./components/Tasks/TasksPage";
 import { ProjectsPage } from "./components/Projects";
 import { AddProjectDialog } from "./components/Projects/AddProjectDialog";
 import { WelcomePage } from "./components/Welcome";
@@ -12,6 +12,8 @@ import { DiffReviewPage } from "./components/Review";
 import { UpdateBanner } from "./components/ui/UpdateBanner";
 import { ThemeProvider, ProjectProvider, TerminalThemeProvider, NotificationProvider, useProject } from "./context";
 import { mockConfig } from "./data/mockData";
+import { getConfig, patchConfig, checkCommands } from "./api";
+import { agentOptions } from "./components/ui";
 
 export type TasksMode = "zen" | "blitz";
 
@@ -25,6 +27,76 @@ function AppContent() {
   const [showAddProject, setShowAddProject] = useState(false);
   const [isAddingProject, setIsAddingProject] = useState(false);
   const [addProjectError, setAddProjectError] = useState<string | null>(null);
+
+  // Initialize agent configuration on app startup
+  useEffect(() => {
+    const initializeAgentConfig = async () => {
+      try {
+        // Load current config
+        const cfg = await getConfig();
+
+        // Check command availability
+        const cmds = new Set<string>();
+        for (const opt of agentOptions) {
+          if (opt.terminalCheck) cmds.add(opt.terminalCheck);
+          if (opt.acpCheck) cmds.add(opt.acpCheck);
+        }
+        const commandAvailability = await checkCommands([...cmds]);
+
+        let needsUpdate = false;
+        const updates: { layout?: { agent_command?: string }, acp?: { agent_command?: string } } = {};
+
+        // Check Terminal Agent (if enabled)
+        const isTerminalEnabled = cfg.enable_terminal;
+
+        if (isTerminalEnabled && cfg.layout?.agent_command) {
+          const currentAgent = agentOptions.find(a => a.id === cfg.layout.agent_command);
+          const cmd = currentAgent?.terminalCheck;
+          if (cmd && commandAvailability[cmd] === false) {
+            // Find first available terminal agent
+            const firstAvailable = agentOptions.find(a => {
+              const check = a.terminalCheck;
+              return check && commandAvailability[check] !== false;
+            });
+            if (firstAvailable) {
+              updates.layout = { agent_command: firstAvailable.id };
+              needsUpdate = true;
+            }
+          }
+        }
+
+        // Check Chat Agent (if enabled)
+        const acpCompatibleIds = ["claude", "traecli", "codex", "kimi", "gh-copilot", "gemini", "qwen", "opencode"];
+        const isChatEnabled = cfg.enable_chat;
+
+        if (isChatEnabled && cfg.acp?.agent_command) {
+          const currentAgent = agentOptions.find(a => a.id === cfg.acp.agent_command);
+          const cmd = currentAgent?.acpCheck;
+          if (cmd && commandAvailability[cmd] === false) {
+            // Find first available chat agent
+            const firstAvailable = agentOptions.find(a => {
+              const check = a.acpCheck;
+              return acpCompatibleIds.includes(a.id) && check && commandAvailability[check] !== false;
+            });
+            if (firstAvailable) {
+              updates.acp = { agent_command: firstAvailable.id };
+              needsUpdate = true;
+            }
+          }
+        }
+
+        // Save updated config if needed
+        if (needsUpdate) {
+          await patchConfig(updates);
+          console.log("Auto-corrected agent configuration:", updates);
+        }
+      } catch (err) {
+        console.error("Failed to initialize agent configuration:", err);
+      }
+    };
+
+    initializeAgentConfig();
+  }, []);
 
   const handleAddProject = async (path: string, name?: string) => {
     setIsAddingProject(true);

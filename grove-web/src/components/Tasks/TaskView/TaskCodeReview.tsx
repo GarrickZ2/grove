@@ -19,6 +19,8 @@ interface TaskCodeReviewProps {
   fullscreen?: boolean;
   /** Toggle fullscreen mode */
   onToggleFullscreen?: () => void;
+  /** Hide the review header (for FlexLayout tabs) */
+  hideHeader?: boolean;
 }
 
 export function TaskCodeReview({
@@ -27,6 +29,7 @@ export function TaskCodeReview({
   onClose,
   fullscreen = false,
   onToggleFullscreen,
+  hideHeader = false,
 }: TaskCodeReviewProps) {
   const containerClass = `flex-1 flex flex-col bg-[var(--color-bg-secondary)] overflow-hidden ${fullscreen ? '' : 'rounded-lg border border-[var(--color-border)]'}`;
 
@@ -38,7 +41,8 @@ export function TaskCodeReview({
       transition={{ type: "spring", damping: 25, stiffness: 200 }}
       className={containerClass}
     >
-      {/* Header */}
+      {/* Header - 只在非 hideHeader 模式下显示 */}
+      {!hideHeader && (
       <div className="flex items-center justify-between px-4 py-2 bg-[var(--color-bg)] border-b border-[var(--color-border)]">
         <div className="flex items-center gap-2 text-sm text-[var(--color-text)]">
           <Code className="w-4 h-4" />
@@ -60,6 +64,7 @@ export function TaskCodeReview({
           </Button>
         </div>
       </div>
+      )}
 
       {/* Embedded diff review */}
       <div className="flex-1 overflow-hidden">

@@ -233,6 +233,7 @@ pub fn execute(dry_run: bool) {
     };
 
     let mut total_stats = MigrationStats::new();
+    let mut task_modes_migrated = 0u32;
 
     for entry in entries.flatten() {
         let path = entry.path();
@@ -250,19 +251,30 @@ pub fn execute(dry_run: bool) {
         total_stats.activity_migrated += stats.activity_migrated;
         total_stats.orphans_cleaned += stats.orphans_cleaned;
         total_stats.dirs_cleaned += stats.dirs_cleaned;
+
+        // v1.0 → v1.1: Migrate task_modes field
+        task_modes_migrated += migrate_task_modes_v1_1(&project_key, dry_run);
+    }
+
+    // Update storage version to 1.1
+    if !dry_run && task_modes_migrated > 0 {
+        if let Err(e) = update_storage_version("1.1") {
+            eprintln!("Warning: failed to update storage version: {}", e);
+        }
     }
 
     // Summary
-    if total_stats.total() > 0 || total_stats.orphans_cleaned > 0 {
+    if total_stats.total() > 0 || total_stats.orphans_cleaned > 0 || task_modes_migrated > 0 {
         let prefix = if dry_run { "[dry-run] " } else { "" };
         eprintln!(
-            "{}Migration complete: {} notes, {} review, {} activity migrated. {} orphans cleaned. {} old dirs removed.",
+            "{}Migration complete: {} notes, {} review, {} activity migrated. {} orphans cleaned. {} old dirs removed. {} task_modes migrated.",
             prefix,
             total_stats.notes_migrated,
             total_stats.review_migrated,
             total_stats.activity_migrated,
             total_stats.orphans_cleaned,
             total_stats.dirs_cleaned,
+            task_modes_migrated,
         );
     } else {
         eprintln!("Nothing to migrate.");
@@ -741,4 +753,135 @@ fn is_dir_empty_or_has_no_files(dir: &Path) -> bool {
         }
         Err(_) => true,
     }
+}
+
+// ============================================================================
+// v1.0 → v1.1: task_modes migration
+// ============================================================================
+
+/// Migrate to enable_terminal/enable_chat fields for all tasks in a project
+/// For tasks without these fields, infer from multiplexer field:
+/// - "acp" → enable_terminal=false, enable_chat=true
+/// - "tmux" or "zellij" → enable_terminal=true, enable_chat=false
+fn migrate_task_modes_v1_1(project_key: &str, dry_run: bool) -> u32 {
+    let mut migrated_count = 0u32;
+
+    // Migrate active tasks
+    migrated_count += migrate_tasks_file(project_key, "tasks.toml", dry_run);
+
+    // Migrate archived tasks
+    migrated_count += migrate_tasks_file(project_key, "archived.toml", dry_run);
+
+    migrated_count
+}
+
+fn migrate_tasks_file(project_key: &str, filename: &str, dry_run: bool) -> u32 {
+    let project_dir = storage::grove_dir().join("projects").join(project_key);
+    let tasks_file = project_dir.join(filename);
+
+    if !tasks_file.exists() {
+        return 0;
+    }
+
+    let content = match fs::read_to_string(&tasks_file) {
+        Ok(c) => c,
+        Err(_) => return 0,
+    };
+
+    let mut data = match toml::from_str::<toml::Value>(&content) {
+        Ok(d) => d,
+        Err(_) => return 0,
+    };
+
+    let tasks_array = match data.get_mut("tasks").and_then(|t| t.as_array_mut()) {
+        Some(arr) => arr,
+        None => return 0,
+    };
+
+    let mut migrated_count = 0u32;
+
+    for task in tasks_array.iter_mut() {
+        let task_table = match task.as_table_mut() {
+            Some(t) => t,
+            None => continue,
+        };
+
+        // Check if already migrated
+        if task_table.contains_key("enable_terminal") && task_table.contains_key("enable_chat") {
+            // Remove old task_modes field if exists
+            task_table.remove("task_modes");
+            continue;
+        }
+
+        // Get multiplexer field
+        let multiplexer = task_table
+            .get("multiplexer")
+            .and_then(|m| m.as_str())
+            .unwrap_or("tmux");
+
+        // Infer from multiplexer
+        let (enable_terminal, enable_chat) = match multiplexer {
+            "acp" => (false, true),
+            _ => (true, false),
+        };
+
+        let task_id = task_table
+            .get("id")
+            .and_then(|id| id.as_str())
+            .unwrap_or("unknown");
+
+        if dry_run {
+            eprintln!(
+                "  [dry-run] Would add enable_terminal={}, enable_chat={} to task {} (multiplexer={})",
+                enable_terminal, enable_chat, task_id, multiplexer
+            );
+        } else {
+            // Remove old task_modes field if exists
+            task_table.remove("task_modes");
+            // Add new fields
+            task_table.insert(
+                "enable_terminal".to_string(),
+                toml::Value::Boolean(enable_terminal),
+            );
+            task_table.insert("enable_chat".to_string(), toml::Value::Boolean(enable_chat));
+        }
+
+        migrated_count += 1;
+    }
+
+    // Write back to file
+    if !dry_run && migrated_count > 0 {
+        if let Ok(new_content) = toml::to_string_pretty(&data) {
+            let _ = fs::write(&tasks_file, new_content);
+        }
+    }
+
+    migrated_count
+}
+
+fn update_storage_version(version: &str) -> std::io::Result<()> {
+    let config_path = storage::grove_dir().join("config.toml");
+
+    let content = if config_path.exists() {
+        fs::read_to_string(&config_path)?
+    } else {
+        String::new()
+    };
+
+    let mut data: toml::Value = if content.is_empty() {
+        toml::Value::Table(toml::map::Map::new())
+    } else {
+        toml::from_str(&content).unwrap_or_else(|_| toml::Value::Table(toml::map::Map::new()))
+    };
+
+    if let Some(table) = data.as_table_mut() {
+        table.insert(
+            "storage_version".to_string(),
+            toml::Value::String(version.to_string()),
+        );
+    }
+
+    let new_content = toml::to_string_pretty(&data).map_err(std::io::Error::other)?;
+
+    fs::write(&config_path, new_content)
 }

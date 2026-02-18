@@ -8,9 +8,9 @@ import type { ContextMenuState } from "./useTaskPageState";
 export interface TaskNavigationConfig {
   tasks: Task[];
   selectedTask: Task | null;
-  viewMode: "list" | "info" | "terminal";
+  viewMode: "list" | "info" | "terminal" | "chat";
   onSelectTask: (task: Task) => void;
-  setViewMode: (mode: "list" | "info" | "terminal") => void;
+  setViewMode: (mode: "list" | "info" | "terminal" | "chat") => void;
   setContextMenu: (menu: ContextMenuState | null) => void;
 }
 

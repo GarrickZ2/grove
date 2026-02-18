@@ -13,19 +13,16 @@ use crate::git;
 use crate::hooks::{self, HookEntry, HooksFile};
 use crate::model::{loader, ProjectInfo, ProjectTab, WorkspaceState, Worktree, WorktreeStatus};
 use crate::notification_state::NotificationState;
-use crate::session;
+use crate::session::{self, SessionType};
 use crate::storage::{
-    self, comments,
-    config::Multiplexer,
-    notes,
+    self, comments, notes,
     tasks::{self},
     workspace::project_hash,
 };
 use crate::theme::{detect_system_theme, get_theme_colors, Theme};
 use crate::tmux;
 use crate::tmux::layout::{
-    self as layout_mod, parse_custom_layout_tree, CustomLayout, LayoutNode, PaneRole,
-    SplitDirection, TaskLayout,
+    self as layout_mod, CustomLayout, LayoutNode, PaneRole, SplitDirection, TaskLayout,
 };
 use crate::ui::components::action_palette::{ActionPaletteData, ActionType};
 use crate::ui::components::add_project_dialog::AddProjectData;
@@ -126,6 +123,11 @@ impl ProjectState {
         // 从 Task 元数据加载真实数据
         let (current, other, archived) = loader::load_worktrees(project_path);
 
+        // TUI 过滤：移除只有 Chat 模式的任务（TUI 不支持）
+        let current = Self::filter_tui_tasks(current);
+        let other = Self::filter_tui_tasks(other);
+        let archived = Self::filter_tui_tasks(archived);
+
         let mut current_state = ListState::default();
         if !current.is_empty() {
             current_state.select(Some(0));
@@ -166,11 +168,37 @@ impl ProjectState {
         }
     }
 
+    /// TUI 过滤：移除只有 Chat 模式的任务（TUI 不支持 Chat）
+    fn filter_tui_tasks(tasks: Vec<Worktree>) -> Vec<Worktree> {
+        tasks
+            .into_iter()
+            .filter(|wt| {
+                // 使用 worktree path 推断 project key
+                // worktree path 格式: /path/to/.grove/worktrees/<project_hash>/<task_id>
+                let path_parts: Vec<&str> = wt.path.split('/').collect();
+                if let Some(idx) = path_parts.iter().position(|&s| s == "worktrees") {
+                    if let Some(&project_key) = path_parts.get(idx + 1) {
+                        if let Ok(Some(task)) = tasks::get_task(project_key, &wt.id) {
+                            // 过滤掉只有 Chat 的任务
+                            return !task.enable_chat || task.enable_terminal;
+                        }
+                    }
+                }
+                true // 如果读取失败，保留任务
+            })
+            .collect()
+    }
+
     /// 刷新数据
     pub fn refresh(&mut self) {
         git::cache::clear_all();
         let (current, other, _) = loader::load_worktrees(&self.project_path);
+
+        // TUI 过滤：移除只有 Chat 模式的任务
+        let current = Self::filter_tui_tasks(current);
+        let other = Self::filter_tui_tasks(other);
         let archived = loader::load_archived_worktrees(&self.project_path);
+        let archived = Self::filter_tui_tasks(archived);
         self.worktrees = [current, other, archived];
 
         // 清空搜索状态并重置过滤索引
@@ -622,8 +650,8 @@ pub struct MonitorState {
     pub project_key: String,
     /// 待打开外部编辑器的 notes 文件路径
     pub pending_notes_edit: Option<String>,
-    /// 当前 session 使用的 multiplexer
-    pub multiplexer: Multiplexer,
+    /// 当前 session 使用的 session type
+    pub session_type: SessionType,
 }
 
 impl Default for MonitorState {
@@ -647,7 +675,7 @@ impl Default for MonitorState {
             project_path: String::new(),
             project_key: String::new(),
             pending_notes_edit: None,
-            multiplexer: Multiplexer::default(),
+            session_type: SessionType::Tmux,
         }
     }
 }
@@ -670,9 +698,9 @@ impl MonitorState {
 
         // 检测当前 multiplexer：ZELLIJ 环境变量存在 → Zellij，否则 → Tmux
         let multiplexer = if std::env::var("ZELLIJ").is_ok() {
-            Multiplexer::Zellij
+            SessionType::Zellij
         } else {
-            Multiplexer::Tmux
+            SessionType::Tmux
         };
 
         let mut state = Self {
@@ -694,7 +722,7 @@ impl MonitorState {
             project_path,
             project_key,
             pending_notes_edit: None,
-            multiplexer,
+            session_type: multiplexer,
         };
 
         // 加载初始数据
@@ -819,7 +847,7 @@ impl MonitorState {
 #[derive(Debug, Clone)]
 pub struct PendingAttach {
     pub session: String,
-    pub multiplexer: Multiplexer,
+    pub session_type: SessionType,
     pub working_dir: String,
     pub env: tmux::SessionEnv,
     pub layout_path: Option<String>,
@@ -1063,23 +1091,7 @@ impl App {
                 ui_state
             },
             dialogs: DialogState::new(),
-            config: ConfigState {
-                multiplexer: config.multiplexer.clone(),
-                task_layout: TaskLayout::from_name(&config.layout.default)
-                    .unwrap_or(TaskLayout::Single),
-                agent_command: config.layout.agent_command.clone().unwrap_or_default(),
-                custom_layout: config
-                    .layout
-                    .custom
-                    .as_ref()
-                    .and_then(|c| {
-                        parse_custom_layout_tree(
-                            &c.tree,
-                            config.layout.selected_custom_id.as_deref(),
-                        )
-                    })
-                    .map(|root| CustomLayout { root }),
-            },
+            config: ConfigState::from_config(&config),
             async_ops: AsyncOpsState::with_target_branch(target_branch),
             notification,
             update_info: Some(update_info),
@@ -1289,8 +1301,10 @@ impl App {
             &project_key,
             name.clone(),
             self.async_ops.target_branch.clone(),
-            &self.config.multiplexer,
+            &self.config.default_session_type(),
             &autolink_patterns,
+            self.config.enable_terminal,
+            self.config.enable_chat,
         ) {
             Ok(r) => r,
             Err(e) => {
@@ -1317,8 +1331,12 @@ impl App {
             &result.task.target,
             &result.worktree_path,
         );
+
+        // Resolve session type from task
+        let task_session_type = session::resolve_session_type(&result.task.multiplexer);
+
         if let Err(e) = session::create_session(
-            &self.config.multiplexer,
+            &task_session_type,
             &session,
             &result.worktree_path,
             Some(&session_env),
@@ -1330,8 +1348,8 @@ impl App {
 
         // 7. 应用布局
         let mut layout_path: Option<String> = None;
-        match self.config.multiplexer {
-            Multiplexer::Tmux => {
+        match task_session_type {
+            SessionType::Tmux => {
                 if self.config.task_layout != TaskLayout::Single {
                     if let Err(e) = tmux::layout::apply_layout(
                         &session,
@@ -1344,7 +1362,7 @@ impl App {
                     }
                 }
             }
-            Multiplexer::Zellij => {
+            SessionType::Zellij => {
                 // Zellij: 始终生成 KDL layout 以注入环境变量
                 let kdl = crate::zellij::layout::generate_kdl(
                     &self.config.task_layout,
@@ -1357,7 +1375,7 @@ impl App {
                     Err(e) => self.show_toast(format!("Layout: {}", e)),
                 }
             }
-            Multiplexer::Acp => {
+            SessionType::Acp => {
                 // ACP: 不需要布局，通过 chat 界面交互
             }
         }
@@ -1375,7 +1393,7 @@ impl App {
         // 10. 标记需要 attach（主循环会暂停 TUI，attach 完成后恢复）
         self.async_ops.pending_attach = Some(PendingAttach {
             session,
-            multiplexer: self.config.multiplexer.clone(),
+            session_type: task_session_type,
             working_dir: wt_dir,
             env: session_env,
             layout_path,
@@ -1441,7 +1459,7 @@ impl App {
         let wt_path = wt.path.clone();
         let slug = slug_from_path(&wt_path);
 
-        // 从 task 记录获取 multiplexer 和 session_name
+        // 从 task 记录获取 multiplexer、session_name 和 task_modes
         let task_data = tasks::get_task(&self.project.project_key, &wt_id)
             .ok()
             .flatten();
@@ -1453,7 +1471,19 @@ impl App {
             .as_ref()
             .map(|t| t.session_name.clone())
             .unwrap_or_default();
-        let mux = session::resolve_multiplexer(&task_mux, &self.config.multiplexer);
+        let (_enable_terminal, enable_chat) = task_data
+            .as_ref()
+            .map(|t| (t.enable_terminal, t.enable_chat))
+            .unwrap_or((true, false));
+
+        // 根据 enable_terminal/enable_chat 决定打开方式：
+        // - 如果 enable_chat，优先使用 Chat 模式 (SessionType::Acp)
+        // - 否则使用 Terminal 模式（根据 task.multiplexer 决定 tmux/zellij）
+        let mux = if enable_chat {
+            SessionType::Acp
+        } else {
+            session::resolve_session_type(&task_mux)
+        };
         let session =
             session::resolve_session_name(&task_session_name, &self.project.project_key, &slug);
 
@@ -1469,7 +1499,7 @@ impl App {
 
             // 应用布局
             match mux {
-                Multiplexer::Tmux => {
+                SessionType::Tmux => {
                     if self.config.task_layout != TaskLayout::Single {
                         if let Err(e) = tmux::layout::apply_layout(
                             &session,
@@ -1482,7 +1512,7 @@ impl App {
                         }
                     }
                 }
-                Multiplexer::Zellij => {
+                SessionType::Zellij => {
                     let kdl = crate::zellij::layout::generate_kdl(
                         &self.config.task_layout,
                         &self.config.agent_command,
@@ -1494,7 +1524,7 @@ impl App {
                         Err(e) => self.show_toast(format!("Layout: {}", e)),
                     }
                 }
-                Multiplexer::Acp => {} // ACP 不需要布局
+                SessionType::Acp => {} // ACP 不需要布局
             }
         }
 
@@ -1506,7 +1536,7 @@ impl App {
             self.build_session_env(&wt_id, &wt_task_name, &wt_branch, &wt_target, &wt_path);
         self.async_ops.pending_attach = Some(PendingAttach {
             session,
-            multiplexer: mux,
+            session_type: mux,
             working_dir: wt_path,
             env: session_env,
             layout_path,
@@ -1762,7 +1792,6 @@ impl App {
             task_id,
             &task_mux_str,
             &task_session_name,
-            &self.config.multiplexer,
         ) {
             Ok(_) => {
                 // TUI-specific: remove notification
@@ -1837,11 +1866,11 @@ impl App {
             .as_ref()
             .map(|t| t.session_name.clone())
             .unwrap_or_default();
-        let task_mux = session::resolve_multiplexer(&task_mux_str, &self.config.multiplexer);
+        let task_mux = session::resolve_session_type(&task_mux_str);
         let session =
             session::resolve_session_name(&task_session_name, &self.project.project_key, task_id);
         let _ = session::kill_session(&task_mux, &session);
-        if task_mux == Multiplexer::Zellij {
+        if task_mux == SessionType::Zellij {
             crate::zellij::layout::remove_session_layout(&session);
         }
 
@@ -1941,7 +1970,6 @@ impl App {
             task_id,
             &task_info.multiplexer,
             &task_info.session_name,
-            &self.config.multiplexer,
         ) {
             Ok(r) => r,
             Err(e) => {
@@ -1963,8 +1991,12 @@ impl App {
             &result.task.target,
             &result.task.worktree_path,
         );
+
+        // Resolve session type from task
+        let task_session_type = session::resolve_session_type(&result.task.multiplexer);
+
         if let Err(e) = session::create_session(
-            &self.config.multiplexer,
+            &task_session_type,
             &session,
             &result.task.worktree_path,
             Some(&session_env),
@@ -1975,7 +2007,7 @@ impl App {
 
         // Generate zellij layout if applicable
         let mut layout_path: Option<String> = None;
-        if self.config.multiplexer == Multiplexer::Zellij {
+        if matches!(task_session_type, SessionType::Zellij) {
             let kdl = crate::zellij::layout::generate_kdl(
                 &self.config.task_layout,
                 &self.config.agent_command,
@@ -1992,7 +2024,7 @@ impl App {
         self.show_toast("Task reset");
         self.async_ops.pending_attach = Some(PendingAttach {
             session,
-            multiplexer: self.config.multiplexer.clone(),
+            session_type: task_session_type,
             working_dir: result.task.worktree_path.clone(),
             env: session_env,
             layout_path,
@@ -2048,7 +2080,7 @@ impl App {
                         &self.monitor.project_key,
                         &self.monitor.task_id,
                     );
-                    let _ = session::kill_session(&self.monitor.multiplexer, &session);
+                    let _ = session::kill_session(&self.monitor.session_type, &session);
                     self.should_quit = true;
                 }
             }
@@ -2156,8 +2188,12 @@ impl App {
             &result.task.target,
             &result.task.worktree_path,
         );
+
+        // Resolve session type from task
+        let task_session_type = session::resolve_session_type(&result.task.multiplexer);
+
         if let Err(e) = session::create_session(
-            &self.config.multiplexer,
+            &task_session_type,
             &session,
             result.task.worktree_path.as_str(),
             Some(&session_env),
@@ -2171,7 +2207,7 @@ impl App {
         self.show_toast("Task recovered");
         self.async_ops.pending_attach = Some(PendingAttach {
             session,
-            multiplexer: self.config.multiplexer.clone(),
+            session_type: task_session_type,
             working_dir: result.task.worktree_path.clone(),
             env: session_env,
             layout_path: None,
@@ -2760,12 +2796,11 @@ impl App {
         let archived_tasks = tasks::load_archived_tasks(&project_key).unwrap_or_default();
 
         // 2. 清理所有任务
-        let global_mux = storage::config::load_config().multiplexer;
         for task in active_tasks.iter().chain(archived_tasks.iter()) {
             // 关闭 session（根据 task 的 multiplexer 类型）
-            let task_mux = session::resolve_multiplexer(&task.multiplexer, &global_mux);
+            let task_session_type = session::resolve_session_type(&task.multiplexer);
             let session = session::resolve_session_name(&task.session_name, &project_key, &task.id);
-            let _ = session::kill_session(&task_mux, &session);
+            let _ = session::kill_session(&task_session_type, &session);
 
             // 删除 worktree (如果存在)
             if Path::new(&task.worktree_path).exists() {
@@ -2964,7 +2999,7 @@ impl App {
         let config = storage::config::load_config();
         self.dialogs.config_panel = Some(ConfigPanelData::with_multiplexer(
             &config.layout,
-            &config.multiplexer,
+            &config.terminal_multiplexer,
             &config.auto_link,
         ));
     }
@@ -3374,37 +3409,58 @@ impl App {
             .map(|p| p.multiplexer_selected)
             .unwrap_or(0);
 
-        let mux = match selected {
-            1 => Multiplexer::Zellij,
-            2 => Multiplexer::Acp,
-            _ => Multiplexer::Tmux,
-        };
-
-        // 检查是否已安装（ACP 跳过检查）
-        let installed = match mux {
-            Multiplexer::Tmux => crate::check::check_tmux_available(),
-            Multiplexer::Zellij => crate::check::check_zellij_available(),
-            Multiplexer::Acp => true,
-        };
-
-        if !installed {
-            self.show_toast(format!("{} is not installed", mux));
-            return;
-        }
-
-        // 更新内存状态
-        self.config.multiplexer = mux.clone();
-
         // 保存到文件
         let mut config = storage::config::load_config();
-        config.multiplexer = mux.clone();
+
+        match selected {
+            1 => {
+                // Zellij
+                if !crate::check::check_zellij_available() {
+                    self.show_toast("Zellij is not installed");
+                    return;
+                }
+                config.terminal_multiplexer = storage::config::TerminalMultiplexer::Zellij;
+                config.enable_terminal = true;
+                config.enable_chat = false;
+                self.config.terminal_multiplexer = storage::config::TerminalMultiplexer::Zellij;
+                self.config.enable_terminal = true;
+                self.config.enable_chat = false;
+            }
+            2 => {
+                // ACP (Chat)
+                config.enable_chat = true;
+                config.enable_terminal = false;
+                self.config.enable_chat = true;
+                self.config.enable_terminal = false;
+            }
+            _ => {
+                // Tmux
+                if !crate::check::check_tmux_available() {
+                    self.show_toast("Tmux is not installed");
+                    return;
+                }
+                config.terminal_multiplexer = storage::config::TerminalMultiplexer::Tmux;
+                config.enable_terminal = true;
+                config.enable_chat = false;
+                self.config.terminal_multiplexer = storage::config::TerminalMultiplexer::Tmux;
+                self.config.enable_terminal = true;
+                self.config.enable_chat = false;
+            }
+        }
+
         let _ = storage::config::save_config(&config);
 
         // 返回主菜单
         if let Some(ref mut panel) = self.dialogs.config_panel {
             panel.step = ConfigStep::Main;
         }
-        self.show_toast(format!("Multiplexer: {}", mux));
+
+        let mode_name = match selected {
+            1 => "Zellij",
+            2 => "Chat (ACP)",
+            _ => "Tmux",
+        };
+        self.show_toast(format!("Mode: {}", mode_name));
     }
 
     /// Config Panel - 保存 AutoLink 配置
@@ -3710,17 +3766,17 @@ impl App {
                 self.open_diff_review_monitor();
             }
             MonitorAction::Leave => {
-                match self.monitor.multiplexer {
-                    Multiplexer::Tmux => {
+                match self.monitor.session_type {
+                    SessionType::Tmux => {
                         let _ = std::process::Command::new("tmux")
                             .args(["detach-client"])
                             .status();
                     }
-                    Multiplexer::Zellij => {
+                    SessionType::Zellij => {
                         // Zellij 没有编程式 detach 接口，提示用户手动脱离
                         self.show_toast("Use Ctrl+o → d to detach from Zellij session");
                     }
-                    Multiplexer::Acp => {
+                    SessionType::Acp => {
                         self.show_toast("ACP mode uses web chat interface");
                     }
                 }

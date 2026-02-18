@@ -3,8 +3,7 @@
 use std::path::Path;
 
 use crate::git;
-use crate::session;
-use crate::storage::config::Multiplexer;
+use crate::session::{self, SessionType};
 use crate::storage::tasks::{self, Task, TaskStatus};
 use crate::storage::workspace::project_hash;
 
@@ -16,10 +15,7 @@ pub fn load_worktrees(project_path: &str) -> (Vec<Worktree>, Vec<Worktree>, Vec<
     // 1. 获取项目 key（路径的 hash）
     let project_key = project_hash(project_path);
 
-    // 2. 加载全局 multiplexer 配置
-    let global_mux = crate::storage::config::load_config().multiplexer;
-
-    // 3. 加载 tasks.toml (活跃任务)
+    // 2. 加载 tasks.toml (活跃任务)
     let active_tasks = match tasks::load_tasks(&project_key) {
         Ok(t) => t,
         Err(e) => {
@@ -31,26 +27,18 @@ pub fn load_worktrees(project_path: &str) -> (Vec<Worktree>, Vec<Worktree>, Vec<
         }
     };
 
-    // 4. 获取当前分支
+    // 3. 获取当前分支
     let current_branch = git::current_branch(project_path).unwrap_or_else(|_| "main".to_string());
 
-    // 5. 检查主仓库是否有正在 merge 的 commit（冲突状态）
+    // 4. 检查主仓库是否有正在 merge 的 commit（冲突状态）
     let merging_commit = git::merging_commit(project_path);
 
-    // 6. 转换活跃任务 (并行处理以提升性能)
+    // 5. 转换活跃任务 (并行处理以提升性能)
     use rayon::prelude::*;
 
     let worktrees: Vec<_> = active_tasks
         .par_iter() // 🚀 并行迭代
-        .map(|task| {
-            task_to_worktree(
-                task,
-                &project_key,
-                project_path,
-                merging_commit.as_deref(),
-                &global_mux,
-            )
-        })
+        .map(|task| task_to_worktree(task, &project_key, project_path, merging_commit.as_deref()))
         .collect();
 
     // 分类到 current 和 other
@@ -94,13 +82,12 @@ pub fn load_archived_worktrees(project_path: &str) -> Vec<Worktree> {
 
 /// 将 Archived Task 转换为 UI Worktree (直接标记为 Archived 状态)
 fn archived_task_to_worktree(task: Task) -> Worktree {
-    // Resolve multiplexer for archived tasks (use stored value or fall back to global)
-    let global_mux = crate::storage::config::load_config().multiplexer;
-    let resolved_mux = session::resolve_multiplexer(&task.multiplexer, &global_mux);
-    let mux_str = match resolved_mux {
-        Multiplexer::Tmux => "tmux",
-        Multiplexer::Zellij => "zellij",
-        Multiplexer::Acp => "acp",
+    // Resolve session type for archived tasks
+    let resolved_session_type = session::resolve_session_type(&task.multiplexer);
+    let mux_str = match resolved_session_type {
+        SessionType::Tmux => "tmux",
+        SessionType::Zellij => "zellij",
+        SessionType::Acp => "acp",
     };
 
     Worktree {
@@ -126,12 +113,11 @@ fn task_to_worktree(
     project: &str,
     project_path: &str,
     merging_commit: Option<&str>,
-    global_mux: &Multiplexer,
 ) -> Worktree {
     let path = &task.worktree_path;
 
-    // 解析 multiplexer 类型（提前计算，status 判断和输出都需要）
-    let resolved_mux = session::resolve_multiplexer(&task.multiplexer, global_mux);
+    // 解析 session 类型（提前计算，status 判断和输出都需要）
+    let resolved_session_type = session::resolve_session_type(&task.multiplexer);
 
     // 检查 worktree 是否存在
     let exists = Path::new(path).exists();
@@ -164,16 +150,16 @@ fn task_to_worktree(
             WorktreeStatus::Merged
         } else {
             // 检查 session 是否运行
-            if matches!(resolved_mux, Multiplexer::Acp) {
+            if matches!(resolved_session_type, SessionType::Acp) {
                 // Multi-chat: 检查每个 chat 的 session，或旧的 task 级 key
                 let chats = tasks::load_chat_sessions(project, &task.id).unwrap_or_default();
                 let has_live = if chats.is_empty() {
                     let key = format!("{}:{}", project, &task.id);
-                    session::session_exists(&resolved_mux, &key)
+                    session::session_exists(&resolved_session_type, &key)
                 } else {
                     chats.iter().any(|chat| {
                         let key = format!("{}:{}:{}", project, &task.id, &chat.id);
-                        session::session_exists(&resolved_mux, &key)
+                        session::session_exists(&resolved_session_type, &key)
                     })
                 };
                 if has_live {
@@ -184,7 +170,7 @@ fn task_to_worktree(
             } else {
                 let session_key =
                     session::resolve_session_name(&task.session_name, project, &task.id);
-                if session::session_exists(&resolved_mux, &session_key) {
+                if session::session_exists(&resolved_session_type, &session_key) {
                     WorktreeStatus::Live
                 } else {
                     WorktreeStatus::Idle
@@ -212,10 +198,10 @@ fn task_to_worktree(
         (None, FileChanges::default())
     };
 
-    let mux_str = match resolved_mux {
-        Multiplexer::Tmux => "tmux",
-        Multiplexer::Zellij => "zellij",
-        Multiplexer::Acp => "acp",
+    let mux_str = match resolved_session_type {
+        SessionType::Tmux => "tmux",
+        SessionType::Zellij => "zellij",
+        SessionType::Acp => "acp",
     };
 
     Worktree {
