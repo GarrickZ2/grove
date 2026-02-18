@@ -8,9 +8,8 @@ import type { ContextMenuState } from "./useTaskPageState";
 export interface TaskNavigationConfig {
   tasks: Task[];
   selectedTask: Task | null;
-  viewMode: "list" | "info" | "terminal" | "chat";
+  inWorkspace: boolean;
   onSelectTask: (task: Task) => void;
-  setViewMode: (mode: "list" | "info" | "terminal" | "chat") => void;
   setContextMenu: (menu: ContextMenuState | null) => void;
 }
 
@@ -30,30 +29,28 @@ export interface TaskNavigationHandlers {
  * @returns Navigation handlers
  */
 export function useTaskNavigation(config: TaskNavigationConfig): TaskNavigationHandlers {
-  const { tasks, selectedTask, viewMode, onSelectTask, setViewMode, setContextMenu } = config;
+  const { tasks, selectedTask, inWorkspace, onSelectTask, setContextMenu } = config;
 
   const selectNextTask = useCallback(() => {
-    if (tasks.length === 0) return;
+    if (tasks.length === 0 || inWorkspace) return;
     const currentIndex = selectedTask ? tasks.findIndex((t) => t.id === selectedTask.id) : -1;
     const nextIndex = currentIndex < tasks.length - 1 ? currentIndex + 1 : 0;
     const nextTask = tasks[nextIndex];
     onSelectTask(nextTask);
-    if (viewMode === "list") setViewMode("info");
     // Scroll the task into view
     const el = document.querySelector(`[data-task-id="${nextTask.id}"]`);
     el?.scrollIntoView({ block: "nearest" });
-  }, [tasks, selectedTask, viewMode, onSelectTask, setViewMode]);
+  }, [tasks, selectedTask, inWorkspace, onSelectTask]);
 
   const selectPreviousTask = useCallback(() => {
-    if (tasks.length === 0) return;
+    if (tasks.length === 0 || inWorkspace) return;
     const currentIndex = selectedTask ? tasks.findIndex((t) => t.id === selectedTask.id) : -1;
     const prevIndex = currentIndex > 0 ? currentIndex - 1 : tasks.length - 1;
     const prevTask = tasks[prevIndex];
     onSelectTask(prevTask);
-    if (viewMode === "list") setViewMode("info");
     const el = document.querySelector(`[data-task-id="${prevTask.id}"]`);
     el?.scrollIntoView({ block: "nearest" });
-  }, [tasks, selectedTask, viewMode, onSelectTask, setViewMode]);
+  }, [tasks, selectedTask, inWorkspace, onSelectTask]);
 
   const openContextMenuAtSelectedTask = useCallback(() => {
     if (!selectedTask) return;

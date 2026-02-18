@@ -320,7 +320,7 @@ fn get_git_user_name(project_key: &str, task_id: &str) -> Option<String> {
 }
 
 /// Convert Worktree to TaskResponse
-fn worktree_to_response(wt: &crate::model::Worktree, project_key: &str) -> TaskResponse {
+fn worktree_to_response(wt: &crate::model::Worktree, _project_key: &str) -> TaskResponse {
     // Get commits
     let commits = git::recent_log(&wt.path, &wt.target, 10)
         .unwrap_or_default()
@@ -337,13 +337,6 @@ fn worktree_to_response(wt: &crate::model::Worktree, project_key: &str) -> TaskR
         .map(|stats| stats.len() as u32)
         .unwrap_or(0);
 
-    // Get enable_terminal/enable_chat from Task data
-    let (enable_terminal, enable_chat) = tasks::get_task(project_key, &wt.id)
-        .ok()
-        .flatten()
-        .map(|t| (t.enable_terminal, t.enable_chat))
-        .unwrap_or((true, false));
-
     TaskResponse {
         id: wt.id.clone(),
         name: wt.task_name.clone(),
@@ -358,8 +351,6 @@ fn worktree_to_response(wt: &crate::model::Worktree, project_key: &str) -> TaskR
         updated_at: wt.updated_at.to_rfc3339(),
         path: wt.path.clone(),
         multiplexer: wt.multiplexer.clone(),
-        enable_terminal,
-        enable_chat,
     }
 }
 
@@ -468,8 +459,6 @@ pub async fn create_task(
         target.clone(),
         &full_config.default_session_type(),
         autolink_patterns,
-        full_config.enable_terminal,
-        full_config.enable_chat,
     )
     .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
@@ -500,8 +489,6 @@ pub async fn create_task(
         updated_at: result.task.updated_at.to_rfc3339(),
         path: result.worktree_path.clone(),
         multiplexer: result.task.multiplexer.clone(),
-        enable_terminal: result.task.enable_terminal,
-        enable_chat: result.task.enable_chat,
     }))
 }
 

@@ -168,25 +168,10 @@ impl ProjectState {
         }
     }
 
-    /// TUI 过滤：移除只有 Chat 模式的任务（TUI 不支持 Chat）
+    /// TUI 过滤：现在所有任务都支持 Terminal（通过 multiplexer 字段）
     fn filter_tui_tasks(tasks: Vec<Worktree>) -> Vec<Worktree> {
+        // 不再需要过滤，所有任务都可以在 TUI 中使用
         tasks
-            .into_iter()
-            .filter(|wt| {
-                // 使用 worktree path 推断 project key
-                // worktree path 格式: /path/to/.grove/worktrees/<project_hash>/<task_id>
-                let path_parts: Vec<&str> = wt.path.split('/').collect();
-                if let Some(idx) = path_parts.iter().position(|&s| s == "worktrees") {
-                    if let Some(&project_key) = path_parts.get(idx + 1) {
-                        if let Ok(Some(task)) = tasks::get_task(project_key, &wt.id) {
-                            // 过滤掉只有 Chat 的任务
-                            return !task.enable_chat || task.enable_terminal;
-                        }
-                    }
-                }
-                true // 如果读取失败，保留任务
-            })
-            .collect()
     }
 
     /// 刷新数据
@@ -1303,8 +1288,6 @@ impl App {
             self.async_ops.target_branch.clone(),
             &self.config.default_session_type(),
             &autolink_patterns,
-            self.config.enable_terminal,
-            self.config.enable_chat,
         ) {
             Ok(r) => r,
             Err(e) => {
@@ -1471,19 +1454,9 @@ impl App {
             .as_ref()
             .map(|t| t.session_name.clone())
             .unwrap_or_default();
-        let (_enable_terminal, enable_chat) = task_data
-            .as_ref()
-            .map(|t| (t.enable_terminal, t.enable_chat))
-            .unwrap_or((true, false));
 
-        // 根据 enable_terminal/enable_chat 决定打开方式：
-        // - 如果 enable_chat，优先使用 Chat 模式 (SessionType::Acp)
-        // - 否则使用 Terminal 模式（根据 task.multiplexer 决定 tmux/zellij）
-        let mux = if enable_chat {
-            SessionType::Acp
-        } else {
-            session::resolve_session_type(&task_mux)
-        };
+        // TUI always uses Terminal mode (根据 task.multiplexer 决定 tmux/zellij)
+        let mux = session::resolve_session_type(&task_mux);
         let session =
             session::resolve_session_name(&task_session_name, &self.project.project_key, &slug);
 

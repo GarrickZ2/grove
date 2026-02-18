@@ -47,8 +47,6 @@ function convertTask(task: TaskResponse): Task {
     createdAt: new Date(task.created_at),
     updatedAt: new Date(task.updated_at),
     multiplexer: task.multiplexer || "tmux",
-    enableTerminal: task.enableTerminal ?? true,
-    enableChat: task.enableChat ?? false,
   };
 }
 

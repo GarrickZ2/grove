@@ -12,6 +12,7 @@ import { TaskCodeReview } from '../TaskView/TaskCodeReview';
 import { TaskEditor } from '../TaskView/TaskEditor';
 import { StatsTab, GitTab, NotesTab, CommentsTab } from '../TaskInfoPanel/tabs';
 import { ContextMenu, type ContextMenuItem } from '../../ui/ContextMenu';
+import { useConfig } from '../../../context';
 
 interface FlexLayoutContainerProps {
   task: Task;
@@ -31,6 +32,8 @@ export const FlexLayoutContainer = forwardRef<
   FlexLayoutContainerHandle,
   FlexLayoutContainerProps
 >(({ task, projectId, initialLayout, onLayoutChange, fullscreen = false, onToggleFullscreen }, ref) => {
+  const { config } = useConfig();
+
   // Panel instance counters
   const instanceCounters = useRef<Record<PanelType, number>>({
     terminal: 0,
@@ -60,15 +63,17 @@ export const FlexLayoutContainer = forwardRef<
 
   // Create default layout
   const createDefaultLayout = (): IJsonModel => {
-    // Determine default panel based on task config
-    let defaultPanelType: PanelType = 'terminal';
-    if (task.enableChat) {
+    // Determine default panel based on global config
+    let defaultPanelType: PanelType | null = null;
+    if (config?.enable_chat) {
       defaultPanelType = 'chat';
-    } else if (task.enableTerminal) {
+    } else if (config?.enable_terminal) {
       defaultPanelType = 'terminal';
     }
 
-    instanceCounters.current[defaultPanelType] = 1;
+    if (defaultPanelType) {
+      instanceCounters.current[defaultPanelType] = 1;
+    }
 
     return {
       global: {
@@ -85,7 +90,7 @@ export const FlexLayoutContainer = forwardRef<
       layout: {
         type: 'row',
         weight: 100,
-        children: [
+        children: defaultPanelType ? [
           {
             type: 'tabset',
             weight: 100,
@@ -93,7 +98,7 @@ export const FlexLayoutContainer = forwardRef<
               createTabNode(defaultPanelType, 1),
             ],
           },
-        ],
+        ] : [], // 空布局
       },
     };
   };

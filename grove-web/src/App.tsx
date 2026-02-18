@@ -10,7 +10,7 @@ import { AddProjectDialog } from "./components/Projects/AddProjectDialog";
 import { WelcomePage } from "./components/Welcome";
 import { DiffReviewPage } from "./components/Review";
 import { UpdateBanner } from "./components/ui/UpdateBanner";
-import { ThemeProvider, ProjectProvider, TerminalThemeProvider, NotificationProvider, useProject } from "./context";
+import { ThemeProvider, ProjectProvider, TerminalThemeProvider, NotificationProvider, ConfigProvider, useProject } from "./context";
 import { mockConfig } from "./data/mockData";
 import { getConfig, patchConfig, checkCommands } from "./api";
 import { agentOptions } from "./components/ui";
@@ -273,13 +273,15 @@ function App() {
 
   return (
     <ThemeProvider>
-      <TerminalThemeProvider>
-        <ProjectProvider>
-          <NotificationProvider>
-            <AppContent />
-          </NotificationProvider>
-        </ProjectProvider>
-      </TerminalThemeProvider>
+      <ConfigProvider>
+        <TerminalThemeProvider>
+          <ProjectProvider>
+            <NotificationProvider>
+              <AppContent />
+            </NotificationProvider>
+          </ProjectProvider>
+        </TerminalThemeProvider>
+      </ConfigProvider>
     </ThemeProvider>
   );
 }

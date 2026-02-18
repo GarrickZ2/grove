@@ -54,10 +54,6 @@ pub struct TaskResponse {
     pub updated_at: String,
     pub path: String,
     pub multiplexer: String,
-    #[serde(rename = "enableTerminal")]
-    pub enable_terminal: bool,
-    #[serde(rename = "enableChat")]
-    pub enable_chat: bool,
 }
 
 /// Commit response
@@ -130,7 +126,7 @@ fn status_to_string(status: &crate::model::WorktreeStatus) -> &'static str {
 }
 
 /// Convert Worktree to TaskResponse
-fn worktree_to_response(wt: &crate::model::Worktree, project_key: &str) -> TaskResponse {
+fn worktree_to_response(wt: &crate::model::Worktree, _project_key: &str) -> TaskResponse {
     // Get commits
     let commits = git::recent_log(&wt.path, &wt.target, 10)
         .unwrap_or_default()
@@ -141,13 +137,6 @@ fn worktree_to_response(wt: &crate::model::Worktree, project_key: &str) -> TaskR
             time_ago: log.time_ago,
         })
         .collect();
-
-    // Get enable_terminal/enable_chat from Task data
-    let (enable_terminal, enable_chat) = crate::storage::tasks::get_task(project_key, &wt.id)
-        .ok()
-        .flatten()
-        .map(|t| (t.enable_terminal, t.enable_chat))
-        .unwrap_or((true, false));
 
     TaskResponse {
         id: wt.id.clone(),
@@ -163,8 +152,6 @@ fn worktree_to_response(wt: &crate::model::Worktree, project_key: &str) -> TaskR
         updated_at: wt.updated_at.to_rfc3339(),
         path: wt.path.clone(),
         multiplexer: wt.multiplexer.clone(),
-        enable_terminal,
-        enable_chat,
     }
 }
 

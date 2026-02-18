@@ -388,14 +388,12 @@ export function TaskChat({
       getConfig()
         .then((cfg) => resolve(activeChat.agent, cfg.acp?.custom_agents))
         .catch(() => resolve(activeChat.agent));
-    } else if (task.multiplexer === "acp") {
-      resolve("claude");
     } else {
       getConfig()
         .then((cfg) => resolve(cfg.layout.agent_command || "claude", cfg.acp?.custom_agents))
         .catch(() => resolve("claude"));
     }
-  }, [task.multiplexer, activeChat]);
+  }, [activeChat]);
 
   // Auto-start
   useEffect(() => {
@@ -480,7 +478,7 @@ export function TaskChat({
   // ─── Load chats on mount ───────────────────────────────────────────────
 
   useEffect(() => {
-    if (!showChat || task.multiplexer !== "acp") return;
+    if (!showChat) return;
     let cancelled = false;
 
     const init = async () => {
@@ -502,7 +500,7 @@ export function TaskChat({
     };
     init();
     return () => { cancelled = true; };
-  }, [showChat, projectId, task.id, task.multiplexer]);
+  }, [showChat, projectId, task.id]);
 
   // ─── Per-chat WebSocket management ─────────────────────────────────────
 
@@ -565,10 +563,10 @@ export function TaskChat({
 
   // Connect WebSocket when activeChatId changes
   useEffect(() => {
-    if (!activeChatId || !showChat || task.multiplexer !== "acp") return;
+    if (!activeChatId || !showChat) return;
     connectChatWs(activeChatId);
     wsRef.current = wsMapRef.current.get(activeChatId) ?? null;
-  }, [activeChatId, showChat, task.multiplexer, connectChatWs]);
+  }, [activeChatId, showChat, connectChatWs]);
 
   // Cleanup all WebSockets on unmount
   useEffect(() => {
@@ -577,35 +575,6 @@ export function TaskChat({
       wsMapRef.current.clear();
     };
   }, []);
-
-  // Legacy WebSocket for non-ACP tasks
-  useEffect(() => {
-    if (!showChat || task.multiplexer === "acp") return;
-
-    const host = getApiHost();
-    const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-    const url = `${protocol}//${host}/api/v1/projects/${projectId}/tasks/${task.id}/acp/ws`;
-
-    const ws = new WebSocket(url);
-    wsRef.current = ws;
-
-    ws.onopen = () => {
-      setMessages((prev) => [...prev, { type: "system", content: "Connecting..." }]);
-    };
-    ws.onmessage = (event) => {
-      try { handleServerMessage(JSON.parse(event.data)); } catch { /* ignore */ }
-    };
-    let intentionalClose = false;
-    ws.onclose = () => {
-      setIsConnected(false);
-      if (!intentionalClose) onDisconnectedProp?.();
-    };
-    ws.onerror = () => {
-      setMessages((prev) => [...prev, { type: "system", content: "Connection error." }]);
-    };
-    return () => { intentionalClose = true; ws.close(); wsRef.current = null; };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [showChat, projectId, task.id, task.multiplexer]);
 
   // ─── WebSocket message handler ───────────────────────────────────────────
 
@@ -1357,8 +1326,8 @@ export function TaskChat({
         <div className="flex items-center gap-2 text-sm min-w-0">
           {AgentIcon ? <AgentIcon size={16} className="text-[var(--color-text-muted)] shrink-0" /> : <MessageSquare className="w-4 h-4 text-[var(--color-text-muted)] shrink-0" />}
 
-          {/* Chat title / dropdown (only for ACP multi-chat) */}
-          {task.multiplexer === "acp" && activeChat ? (
+          {/* Chat title / dropdown */}
+          {activeChat ? (
             <div className="relative min-w-0 flex-1" ref={chatMenuRef}>
               {editingTitle ? (
                 <input
@@ -1433,8 +1402,8 @@ export function TaskChat({
             <span className="text-[var(--color-text-muted)]">{agentLabel}</span>
           )}
 
-          {/* New Chat button (ACP only) */}
-          {task.multiplexer === "acp" && (
+          {/* New Chat button */}
+          {(
             <button
               onClick={handleNewChat}
               className="flex items-center gap-1 px-1.5 py-0.5 text-xs text-[var(--color-text-muted)] hover:text-[var(--color-highlight)] hover:bg-[var(--color-bg-tertiary)] rounded transition-colors shrink-0"

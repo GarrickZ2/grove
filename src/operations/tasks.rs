@@ -289,7 +289,6 @@ pub struct CreateTaskResult {
 ///     Err(e) => eprintln!("Failed: {}", e),
 /// }
 /// ```
-#[allow(clippy::too_many_arguments)]
 pub fn create_task(
     repo_path: &str,
     project_key: &str,
@@ -297,8 +296,6 @@ pub fn create_task(
     target_branch: String,
     session_type: &str,
     autolink_patterns: &[String],
-    enable_terminal: bool,
-    enable_chat: bool,
 ) -> Result<CreateTaskResult> {
     // 1. Generate identifiers
     let slug = tasks::to_slug(&task_name);
@@ -335,8 +332,6 @@ pub fn create_task(
         status: tasks::TaskStatus::Active,
         multiplexer: session_type.to_string(),
         session_name: session_name.clone(),
-        enable_terminal,
-        enable_chat,
     };
 
     tasks::add_task(project_key, task.clone())?;

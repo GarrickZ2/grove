@@ -23,16 +23,14 @@ import {
 import { Button, DropdownMenu } from "../../ui";
 import type { Task } from "../../../data/types";
 import { StatsTab, GitTab, NotesTab, CommentsTab } from "./tabs";
+import { useConfig } from "../../../context";
+import type { PanelType } from "../PanelSystem/types";
 
 interface TaskInfoPanelProps {
   projectId: string;
   task: Task;
   projectName?: string;
   onClose: () => void;
-  onEnterTerminal?: () => void;
-  onEnterMode?: (mode: "terminal" | "chat") => void; // 通用模式切换
-  enableTerminal?: boolean; // Terminal 模式是否启用
-  enableChat?: boolean; // Chat 模式是否启用
   onRecover?: () => void;
   onClean?: () => void;
   isTerminalMode?: boolean;
@@ -41,15 +39,15 @@ interface TaskInfoPanelProps {
   onTabChange?: (tab: TabType) => void;
   // Action handlers for non-archived tasks
   onCommit?: () => void;
-  onReview?: () => void;
-  onEditor?: () => void;
   onRebase?: () => void;
   onSync?: () => void;
   onMerge?: () => void;
   onArchive?: () => void;
   onReset?: () => void;
-  // 新增：用于在 FlexLayout 中打开 panel（与 Terminal/Review/Editor/Chat 逻辑一致）
-  onAddPanel?: (type: 'stats' | 'git' | 'notes' | 'comments') => void;
+  // 新增：进入 Workspace (双击任务或点击 Workspace 按钮)
+  onEnterWorkspace?: () => void;
+  // 新增：在 FlexLayout 中打开 panel (Chat/Terminal/Review/Editor/Stats/Git/Notes/Comments)
+  onAddPanel?: (type: PanelType) => void;
 }
 
 export type TabType = "stats" | "git" | "notes" | "comments";
@@ -72,25 +70,21 @@ export function TaskInfoPanel({
   task,
   projectName,
   onClose,
-  onEnterTerminal,
-  onEnterMode,
-  enableTerminal,
-  enableChat,
   onRecover,
   onClean,
   isTerminalMode = false,
   activeTab: controlledTab,
   onTabChange,
   onCommit,
-  onReview,
-  onEditor,
   onRebase,
   onSync,
   onMerge,
   onArchive,
   onReset,
+  onEnterWorkspace,
   onAddPanel,
 }: TaskInfoPanelProps) {
+  const { config } = useConfig();
   const isArchived = task.status === "archived";
   const isBroken = task.status === "broken";
   const canOperate = !isArchived && !isBroken;
@@ -259,12 +253,7 @@ export function TaskInfoPanel({
       className="h-full flex flex-col rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-secondary)] overflow-hidden"
     >
       {/* Header */}
-      <div className="flex items-center justify-between gap-2 px-3 py-2 border-b border-[var(--color-border)] bg-[var(--color-bg)]">
-        <Button variant="ghost" size="sm" onClick={onClose}>
-          <X className="w-4 h-4 mr-1" />
-          Close
-        </Button>
-
+      <div className="flex items-center justify-end gap-2 px-3 py-2 border-b border-[var(--color-border)] bg-[var(--color-bg)]">
         {/* Action buttons based on task status */}
         <div className="flex items-center gap-1">
           {isArchived ? (
@@ -294,33 +283,68 @@ export function TaskInfoPanel({
             </>
           ) : (
             <>
-              {/* Panel actions first to avoid accidental commits */}
-              {onReview && (
+              {/* 按钮新顺序: Chat Terminal | Review Editor | Commit Rebase Sync Merge | ... (dropdown) | Workspace */}
+
+              {/* Chat 按钮（仅当全局启用 Chat 时显示） */}
+              {onAddPanel && config?.enable_chat && (
                 <Button
                   variant="ghost"
                   size="sm"
-                  onClick={onReview}
-                  disabled={isArchived}
+                  onClick={() => onAddPanel('chat')}
+                  className="text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-bg-tertiary)]"
+                >
+                  <MessageSquare className="w-4 h-4 mr-1" />
+                  Chat
+                </Button>
+              )}
+
+              {/* Terminal 按钮（仅当全局启用 Terminal 时显示） */}
+              {onAddPanel && config?.enable_terminal && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => onAddPanel('terminal')}
+                  className="text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-bg-tertiary)]"
+                >
+                  <Terminal className="w-4 h-4 mr-1" />
+                  Terminal
+                </Button>
+              )}
+
+              {/* Separator (仅当有 Chat 或 Terminal 时显示) */}
+              {onAddPanel && (config?.enable_chat || config?.enable_terminal) && (
+                <div className="w-px h-6 bg-[var(--color-border)] mx-1" />
+              )}
+
+              {/* Review 按钮 */}
+              {onAddPanel && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => onAddPanel('review')}
                   className="text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-bg-tertiary)]"
                 >
                   <Code className="w-4 h-4 mr-1" />
                   Review
                 </Button>
               )}
-              {onEditor && (
+
+              {/* Editor 按钮 */}
+              {onAddPanel && (
                 <Button
                   variant="ghost"
                   size="sm"
-                  onClick={onEditor}
-                  disabled={isArchived}
+                  onClick={() => onAddPanel('editor')}
                   className="text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-bg-tertiary)]"
                 >
                   <FileCode className="w-4 h-4 mr-1" />
                   Editor
                 </Button>
               )}
-              {/* Vertical separator */}
-              <div className="w-px h-6 bg-[var(--color-border)] mx-1" />
+
+              {/* Separator */}
+              {onAddPanel && <div className="w-px h-6 bg-[var(--color-border)] mx-1" />}
+
               {/* Git actions */}
               {onCommit && (
                 <Button
@@ -370,6 +394,7 @@ export function TaskInfoPanel({
                   Merge
                 </Button>
               )}
+
               {/* Dangerous actions in dropdown */}
               {(onArchive || onReset || onClean) && (
                 <DropdownMenu
@@ -401,32 +426,17 @@ export function TaskInfoPanel({
                   ]}
                 />
               )}
-              {/* 动态显示 Terminal/Chat 按钮（根据配置） */}
-              {onEnterMode ? (
-                <>
-                  {/* Terminal 按钮（仅当启用 Terminal 时显示） */}
-                  {enableTerminal && (
-                    <Button variant="secondary" size="sm" onClick={() => onEnterMode("terminal")}>
-                      <Terminal className="w-4 h-4 mr-1" />
-                      Terminal
-                    </Button>
-                  )}
-                  {/* Chat 按钮（仅当启用 Chat 时显示） */}
-                  {enableChat && (
-                    <Button variant="secondary" size="sm" onClick={() => onEnterMode("chat")}>
-                      <MessageSquare className="w-4 h-4 mr-1" />
-                      Chat
-                    </Button>
-                  )}
-                </>
-              ) : (
-                /* 向后兼容：使用旧的 onEnterTerminal prop */
-                onEnterTerminal && (
-                  <Button variant="secondary" size="sm" onClick={onEnterTerminal}>
-                    <Terminal className="w-4 h-4 mr-1" />
-                    Terminal
-                  </Button>
-                )
+
+              {/* Workspace 按钮 */}
+              {onEnterWorkspace && (
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={onEnterWorkspace}
+                >
+                  <ChevronRight className="w-4 h-4 mr-1" />
+                  Workspace
+                </Button>
               )}
             </>
           )}

@@ -8,3 +8,5 @@ export { terminalThemes, getTerminalTheme } from "./terminalThemes";
 export type { TerminalTheme, TerminalThemeColors } from "./terminalThemes";
 
 export { NotificationProvider, useNotifications } from "./NotificationContext";
+
+export { ConfigProvider, useConfig } from "./ConfigContext";

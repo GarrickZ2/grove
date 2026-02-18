@@ -17,6 +17,7 @@ import {
   MessageSquare,
 } from "lucide-react";
 import type { Task } from "../../../data/types";
+import { useConfig } from "../../../context";
 
 interface TaskToolbarProps {
   task: Task;
@@ -192,6 +193,7 @@ export function TaskToolbar({
   onClean,
   onReset,
 }: TaskToolbarProps) {
+  const { config } = useConfig();
   const isArchived = task.status === "archived";
   const isBroken = task.status === "broken";
   const canOperate = !isArchived && !isBroken;
@@ -228,7 +230,7 @@ export function TaskToolbar({
       {/* Primary Actions */}
       <div className="flex items-center gap-1 min-w-0">
         {/* Chat Button - 放在 Terminal 前面 */}
-        {task.enableChat && (
+        {config?.enable_chat && (
           <ToolbarButton
             icon={MessageSquare}
             label="Chat"
@@ -238,7 +240,7 @@ export function TaskToolbar({
           />
         )}
         {/* Terminal Button */}
-        {task.enableTerminal && (
+        {config?.enable_terminal && (
           <ToolbarButton
             icon={Terminal}
             label="Terminal"
@@ -247,7 +249,7 @@ export function TaskToolbar({
             shortcut="t"
           />
         )}
-        {(task.enableTerminal || task.enableChat) && (
+        {(config?.enable_terminal || config?.enable_chat) && (
           <div className="w-px h-6 bg-[var(--color-border)] mx-1.5" />
         )}
         <ToolbarButton

@@ -2,7 +2,7 @@ import { useState, useMemo, useCallback, useRef, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Search } from "lucide-react";
 import { TaskInfoPanel } from "../Tasks/TaskInfoPanel";
-import { TaskView } from "../Tasks/TaskView";
+import { TaskView, type TaskViewHandle } from "../Tasks/TaskView";
 import { CommitDialog, ConfirmDialog, MergeDialog } from "../Dialogs";
 import { RebaseDialog } from "../Tasks/dialogs";
 import { HelpOverlay } from "../Tasks/HelpOverlay";
@@ -20,6 +20,7 @@ import { useBlitzTasks } from "./useBlitzTasks";
 import { BlitzTaskListItem } from "./BlitzTaskListItem";
 import type { BlitzTask } from "../../data/types";
 import type { PendingArchiveConfirm } from "../../utils/archiveHelpers";
+import type { PanelType } from "../Tasks/PanelSystem/types";
 import { buildContextMenuItems, type TaskOperationHandlers } from "../../utils/taskOperationUtils";
 
 
@@ -37,6 +38,7 @@ export function BlitzPage({ onSwitchToZen }: BlitzPageProps) {
   const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
   const [taskOrder, setTaskOrder] = useState<string[]>([]);
   const searchInputRef = useRef<HTMLInputElement | null>(null);
+  const taskViewRef = useRef<TaskViewHandle | null>(null);
 
   // Archive confirmation state (shared between hooks)
   const [pendingArchiveConfirm, setPendingArchiveConfirm] = useState<PendingArchiveConfirm | null>(null);
@@ -55,7 +57,7 @@ export function BlitzPage({ onSwitchToZen }: BlitzPageProps) {
     onShowMessage: pageHandlers.showMessage,
     onCleanup: () => {
       setSelectedBlitzTask(null);
-      pageHandlers.setViewMode("list");
+      pageHandlers.setInWorkspace(false);
     },
     setPendingArchiveConfirm,
   });
@@ -68,7 +70,7 @@ export function BlitzPage({ onSwitchToZen }: BlitzPageProps) {
     onShowMessage: pageHandlers.showMessage,
     onTaskArchived: () => {
       setSelectedBlitzTask(null);
-      pageHandlers.setViewMode("list");
+      pageHandlers.setInWorkspace(false);
     },
     onTaskMerged: (taskId, taskName) => {
       // Blitz: pass mergedProjectId for cross-project operations
@@ -169,21 +171,13 @@ export function BlitzPage({ onSwitchToZen }: BlitzPageProps) {
   // Task selection handlers (Blitz-specific: handle BlitzTask)
   const handleSelectTask = useCallback((bt: BlitzTask) => {
     setSelectedBlitzTask(bt);
-    if (bt.task.status !== "archived") {
-      pageHandlers.setViewMode("terminal");
-      pageHandlers.setReviewOpen(false);
-      pageHandlers.setEditorOpen(false);
-    } else if (pageState.viewMode === "list") {
-      pageHandlers.setViewMode("info");
-    }
-  }, [pageHandlers, pageState.viewMode]);
+    // Stay in Task List page when selecting a task
+  }, []);
 
   const handleDoubleClickTask = useCallback((bt: BlitzTask) => {
     if (bt.task.status === "archived") return;
     setSelectedBlitzTask(bt);
-    pageHandlers.setViewMode("terminal");
-    pageHandlers.setReviewOpen(false);
-    pageHandlers.setEditorOpen(false);
+    pageHandlers.setInWorkspace(true);
   }, [pageHandlers]);
 
   // Drag and drop handlers
@@ -225,13 +219,33 @@ export function BlitzPage({ onSwitchToZen }: BlitzPageProps) {
 
   // Wrap page handlers to handle selectedBlitzTask
   const handleCloseTask = useCallback(() => {
-    if (pageState.viewMode === "terminal") {
+    if (pageState.inWorkspace) {
       pageHandlers.handleCloseTask();
     } else {
       setSelectedBlitzTask(null);
-      pageHandlers.setViewMode("list");
     }
-  }, [pageState.viewMode, pageHandlers]);
+  }, [pageState.inWorkspace, pageHandlers]);
+
+  // Handle adding panel to TaskView
+  const handleAddPanel = useCallback((type: PanelType) => {
+    if (taskViewRef.current) {
+      taskViewRef.current.addPanel(type);
+    }
+  }, []);
+
+  // Handle adding panel from Info Panel (方案 A)
+  const handleAddPanelFromInfo = useCallback((type: PanelType) => {
+    pageHandlers.setInWorkspace(true);
+    pageHandlers.setPendingPanel(type);
+  }, [pageHandlers]);
+
+  // 方案 A: 使用 useEffect 处理 pendingPanel
+  useEffect(() => {
+    if (pageState.inWorkspace && pageState.pendingPanel && taskViewRef.current) {
+      taskViewRef.current.addPanel(pageState.pendingPanel);
+      pageHandlers.setPendingPanel(null);
+    }
+  }, [pageState.inWorkspace, pageState.pendingPanel, pageHandlers]);
 
   // Deprecated - page is no longer in use
   // const handleStartSession = useCallback(() => {
@@ -250,12 +264,11 @@ export function BlitzPage({ onSwitchToZen }: BlitzPageProps) {
   const navHandlers = useTaskNavigation({
     tasks: displayTasks.map(bt => bt.task),
     selectedTask,
-    viewMode: pageState.viewMode,
+    inWorkspace: pageState.inWorkspace,
     onSelectTask: (task) => {
       const bt = displayTasks.find(t => t.task.id === task.id);
       if (bt) handleSelectTask(bt);
     },
-    setViewMode: pageHandlers.setViewMode,
     setContextMenu: pageHandlers.setContextMenu,
   });
 
@@ -278,57 +291,49 @@ export function BlitzPage({ onSwitchToZen }: BlitzPageProps) {
   const hasTask = !!selectedTask;
   const isActive = hasTask && selectedTask.status !== "archived";
   const canOperate = isActive && selectedTask.status !== "broken";
-  const notTerminal = pageState.viewMode !== "terminal";
+  const notInWorkspace = !pageState.inWorkspace;
 
   useHotkeys(
     [
-      { key: "j", handler: navHandlers.selectNextTask, options: { enabled: notTerminal } },
-      { key: "ArrowDown", handler: navHandlers.selectNextTask, options: { enabled: notTerminal } },
-      { key: "k", handler: navHandlers.selectPreviousTask, options: { enabled: notTerminal } },
-      { key: "ArrowUp", handler: navHandlers.selectPreviousTask, options: { enabled: notTerminal } },
+      { key: "j", handler: navHandlers.selectNextTask, options: { enabled: notInWorkspace } },
+      { key: "ArrowDown", handler: navHandlers.selectNextTask, options: { enabled: notInWorkspace } },
+      { key: "k", handler: navHandlers.selectPreviousTask, options: { enabled: notInWorkspace } },
+      { key: "ArrowUp", handler: navHandlers.selectPreviousTask, options: { enabled: notInWorkspace } },
       {
         key: "Enter",
         handler: () => {
-          if (pageState.viewMode === "info" && selectedTask && selectedTask.status !== "archived") {
-            pageHandlers.handleEnterTerminal();
-          } else if (pageState.viewMode === "list" && selectedTask) {
-            pageHandlers.setViewMode("info");
+          if (!pageState.inWorkspace && selectedTask && selectedTask.status !== "archived") {
+            pageHandlers.handleEnterWorkspace();
           }
         },
-        options: { enabled: notTerminal && hasTask },
+        options: { enabled: notInWorkspace && hasTask },
       },
-      { key: "Escape", handler: handleCloseTask, options: { enabled: pageState.viewMode !== "list" } },
+      { key: "Escape", handler: handleCloseTask, options: { enabled: pageState.inWorkspace || hasTask } },
 
-      // Info panel tabs
-      { key: "1", handler: () => pageHandlers.setInfoPanelTab("stats"), options: { enabled: notTerminal && hasTask } },
-      { key: "2", handler: () => pageHandlers.setInfoPanelTab("git"), options: { enabled: notTerminal && hasTask } },
-      { key: "3", handler: () => pageHandlers.setInfoPanelTab("notes"), options: { enabled: notTerminal && hasTask } },
-      { key: "4", handler: () => pageHandlers.setInfoPanelTab("comments"), options: { enabled: notTerminal && hasTask } },
+      // Info panel tabs (only in Task List page)
+      { key: "1", handler: () => pageHandlers.setInfoPanelTab("stats"), options: { enabled: notInWorkspace && hasTask } },
+      { key: "2", handler: () => pageHandlers.setInfoPanelTab("git"), options: { enabled: notInWorkspace && hasTask } },
+      { key: "3", handler: () => pageHandlers.setInfoPanelTab("notes"), options: { enabled: notInWorkspace && hasTask } },
+      { key: "4", handler: () => pageHandlers.setInfoPanelTab("comments"), options: { enabled: notInWorkspace && hasTask } },
 
       // Actions (no 'n' for new task)
-      { key: "Space", handler: navHandlers.openContextMenuAtSelectedTask, options: { enabled: hasTask && notTerminal } },
+      { key: "Space", handler: navHandlers.openContextMenuAtSelectedTask, options: { enabled: hasTask && notInWorkspace } },
       { key: "c", handler: opsHandlers.handleCommit, options: { enabled: isActive } },
       { key: "s", handler: opsHandlers.handleSync, options: { enabled: canOperate } },
       { key: "m", handler: opsHandlers.handleMerge, options: { enabled: canOperate } },
       { key: "b", handler: opsHandlers.handleRebase, options: { enabled: canOperate } },
-      { key: "r", handler: pageHandlers.handleReviewShortcut, options: { enabled: isActive } },
-      { key: "e", handler: pageHandlers.handleEditorShortcut, options: { enabled: isActive } },
-      { key: "t", handler: pageHandlers.handleTerminalShortcut, options: { enabled: isActive } },
 
       // Search
-      { key: "/", handler: () => searchInputRef.current?.focus(), options: { enabled: notTerminal } },
+      { key: "/", handler: () => searchInputRef.current?.focus(), options: { enabled: notInWorkspace } },
 
       // Help
       { key: "?", handler: () => pageHandlers.setShowHelp(!pageState.showHelp) },
     ],
     [
       navHandlers, pageHandlers, opsHandlers, handleCloseTask,
-      pageState.viewMode, pageState.showHelp, selectedTask, hasTask, isActive, canOperate, notTerminal,
+      pageState.inWorkspace, pageState.showHelp, selectedTask, hasTask, isActive, canOperate, notInWorkspace,
     ]
   );
-
-  const isTerminalMode = pageState.viewMode === "terminal";
-  const isInfoMode = pageState.viewMode === "info";
 
   return (
     <>
@@ -473,17 +478,17 @@ export function BlitzPage({ onSwitchToZen }: BlitzPageProps) {
         </div>
         <div className="h-full p-6 relative z-[1]">
           <div className="h-full relative">
-            {/* List + Info Mode */}
+            {/* Task List Page */}
             <motion.div
               animate={{
-                opacity: isTerminalMode ? 0 : 1,
-                x: isTerminalMode ? -20 : 0,
+                opacity: pageState.inWorkspace ? 0 : 1,
+                x: pageState.inWorkspace ? -20 : 0,
               }}
               transition={{ type: "spring", damping: 25, stiffness: 200 }}
-              className={`absolute inset-0 ${isTerminalMode ? "pointer-events-none" : ""}`}
+              className={`absolute inset-0 ${pageState.inWorkspace ? "pointer-events-none" : ""}`}
             >
               <AnimatePresence mode="wait">
-                {isInfoMode && currentSelected ? (
+                {!pageState.inWorkspace && currentSelected ? (
                   <motion.div
                     key="info-panel"
                     initial={{ opacity: 0, x: 20 }}
@@ -497,13 +502,10 @@ export function BlitzPage({ onSwitchToZen }: BlitzPageProps) {
                       task={currentSelected.task}
                       projectName={currentSelected.projectName}
                       onClose={handleCloseTask}
-                      onEnterMode={currentSelected.task.status !== "archived" ? pageHandlers.handleEnterMode : undefined}
-                      enableTerminal={currentSelected.task.enableTerminal}
-                      enableChat={currentSelected.task.enableChat}
+                      onEnterWorkspace={currentSelected.task.status !== "archived" ? pageHandlers.handleEnterWorkspace : undefined}
+                      onAddPanel={currentSelected.task.status !== "archived" ? handleAddPanelFromInfo : undefined}
                       onClean={opsHandlers.handleClean}
                       onCommit={currentSelected.task.status !== "archived" ? opsHandlers.handleCommit : undefined}
-                      onReview={currentSelected.task.status !== "archived" ? pageHandlers.handleReviewFromInfo : undefined}
-                      onEditor={currentSelected.task.status !== "archived" ? pageHandlers.handleEditorFromInfo : undefined}
                       onRebase={currentSelected.task.status !== "archived" ? opsHandlers.handleRebase : undefined}
                       onSync={currentSelected.task.status !== "archived" ? opsHandlers.handleSync : undefined}
                       onMerge={currentSelected.task.status !== "archived" ? opsHandlers.handleMerge : undefined}
@@ -534,9 +536,9 @@ export function BlitzPage({ onSwitchToZen }: BlitzPageProps) {
               </AnimatePresence>
             </motion.div>
 
-            {/* Terminal Mode */}
+            {/* Workspace Page */}
             <AnimatePresence>
-              {isTerminalMode && currentSelected && (
+              {pageState.inWorkspace && currentSelected && (
                 <motion.div
                   initial={{ x: "100%", opacity: 0 }}
                   animate={{ x: 0, opacity: 1 }}
@@ -550,8 +552,10 @@ export function BlitzPage({ onSwitchToZen }: BlitzPageProps) {
                     projectName={currentSelected.projectName}
                     onClose={handleCloseTask}
                     isTerminalMode
+                    onAddPanel={handleAddPanel}
                   />
                   <TaskView
+                    ref={taskViewRef}
                     projectId={currentSelected.projectId}
                     task={currentSelected.task}
                     projectName={currentSelected.projectName}

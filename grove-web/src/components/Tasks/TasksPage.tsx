@@ -29,8 +29,6 @@ import type { PendingArchiveConfirm } from "../../utils/archiveHelpers";
 import { buildContextMenuItems, type TaskOperationHandlers } from "../../utils/taskOperationUtils";
 import type { PanelType } from "./PanelSystem/types";
 
-type ViewMode = "list" | "info" | "terminal" | "chat";
-
 interface TasksPageProps {
   /** Initial task ID to select (from navigation) */
   initialTaskId?: string;
@@ -68,7 +66,7 @@ export function TasksPage({ initialTaskId, initialViewMode, onNavigationConsumed
     onShowMessage: pageHandlers.showMessage,
     onCleanup: () => {
       pageHandlers.setSelectedTask(null);
-      pageHandlers.setViewMode("list");
+      pageHandlers.setInWorkspace(false);
     },
     setPendingArchiveConfirm,
   });
@@ -81,7 +79,7 @@ export function TasksPage({ initialTaskId, initialViewMode, onNavigationConsumed
     onShowMessage: pageHandlers.showMessage,
     onTaskArchived: () => {
       pageHandlers.setSelectedTask(null);
-      pageHandlers.setViewMode("list");
+      pageHandlers.setInWorkspace(false);
     },
     onTaskMerged: (taskId, taskName) => {
       postMergeHandlers.triggerPostMergeArchive(taskId, taskName);
@@ -130,8 +128,10 @@ export function TasksPage({ initialTaskId, initialViewMode, onNavigationConsumed
       const task = activeTasks.find((t) => t.id === initialTaskId);
       if (task) {
         pageHandlers.setSelectedTask(task);
-        const targetMode = (initialViewMode === "terminal" || initialViewMode === "info") ? initialViewMode : "info";
-        pageHandlers.setViewMode(targetMode as ViewMode);
+        // If initialViewMode is "terminal", enter Workspace
+        if (initialViewMode === "terminal") {
+          pageHandlers.setInWorkspace(true);
+        }
         // Consume the navigation data so it doesn't re-trigger
         onNavigationConsumed?.();
       }
@@ -195,7 +195,7 @@ export function TasksPage({ initialTaskId, initialViewMode, onNavigationConsumed
       setArchivedTasks((prev) => prev.filter((t) => t.id !== pageState.selectedTask?.id));
       // Update local state to reflect the change
       pageHandlers.setSelectedTask(null);
-      pageHandlers.setViewMode("list");
+      pageHandlers.setInWorkspace(false);
       // Switch to active filter to see the recovered task
       setFilter("active");
     } catch (err) {
@@ -215,6 +215,20 @@ export function TasksPage({ initialTaskId, initialViewMode, onNavigationConsumed
     }
   }, []);
 
+  // Handle adding panel from Info Panel (方案 A)
+  const handleAddPanelFromInfo = useCallback((type: PanelType) => {
+    pageHandlers.setInWorkspace(true);
+    pageHandlers.setPendingPanel(type);
+  }, [pageHandlers]);
+
+  // 方案 A: 使用 useEffect 处理 pendingPanel
+  useEffect(() => {
+    if (pageState.inWorkspace && pageState.pendingPanel && taskViewRef.current) {
+      taskViewRef.current.addPanel(pageState.pendingPanel);
+      pageHandlers.setPendingPanel(null);
+    }
+  }, [pageState.inWorkspace, pageState.pendingPanel, pageHandlers]);
+
   // Handle new task creation (Zen-only)
   const handleCreateTask = useCallback(
     async (name: string, targetBranch: string, notes: string) => {
@@ -228,11 +242,11 @@ export function TasksPage({ initialTaskId, initialViewMode, onNavigationConsumed
 
         setShowNewTaskDialog(false);
 
-        // Auto-select the new task and enter terminal mode with auto-start
+        // Auto-select the new task and enter Workspace with terminal panel
         const newTask = convertTaskResponse(taskResponse);
         pageHandlers.setSelectedTask(newTask);
-        // setAutoStartSession(true); // Deprecated
-        pageHandlers.setViewMode("terminal");
+        pageHandlers.setInWorkspace(true);
+        pageHandlers.setPendingPanel('terminal');
 
         // 🚀 优化: 异步刷新,不阻塞 UI
         refreshSelectedProject();
@@ -275,9 +289,8 @@ export function TasksPage({ initialTaskId, initialViewMode, onNavigationConsumed
   const navHandlers = useTaskNavigation({
     tasks: filteredTasks,
     selectedTask: pageState.selectedTask,
-    viewMode: pageState.viewMode,
+    inWorkspace: pageState.inWorkspace,
     onSelectTask: handleSelectTask,
-    setViewMode: pageHandlers.setViewMode,
     setContextMenu: pageHandlers.setContextMenu,
   });
 
@@ -285,55 +298,50 @@ export function TasksPage({ initialTaskId, initialViewMode, onNavigationConsumed
   const isActive = hasTask && pageState.selectedTask!.status !== "archived";
   const isArchived = hasTask && pageState.selectedTask!.status === "archived";
   const canOperate = isActive && pageState.selectedTask!.status !== "broken";
-  const notTerminal = pageState.viewMode !== "terminal";
+  const notInWorkspace = !pageState.inWorkspace;
 
   // --- Register all hotkeys ---
   useHotkeys(
     [
       // Navigation
-      { key: "j", handler: navHandlers.selectNextTask, options: { enabled: notTerminal } },
-      { key: "ArrowDown", handler: navHandlers.selectNextTask, options: { enabled: notTerminal } },
-      { key: "k", handler: navHandlers.selectPreviousTask, options: { enabled: notTerminal } },
-      { key: "ArrowUp", handler: navHandlers.selectPreviousTask, options: { enabled: notTerminal } },
+      { key: "j", handler: navHandlers.selectNextTask, options: { enabled: notInWorkspace } },
+      { key: "ArrowDown", handler: navHandlers.selectNextTask, options: { enabled: notInWorkspace } },
+      { key: "k", handler: navHandlers.selectPreviousTask, options: { enabled: notInWorkspace } },
+      { key: "ArrowUp", handler: navHandlers.selectPreviousTask, options: { enabled: notInWorkspace } },
       {
         key: "Enter",
         handler: () => {
-          if (pageState.viewMode === "info" && pageState.selectedTask && pageState.selectedTask.status !== "archived") {
-            pageHandlers.handleEnterTerminal();
-          } else if (pageState.viewMode === "list" && pageState.selectedTask) {
-            pageHandlers.setViewMode("info");
+          if (!pageState.inWorkspace && pageState.selectedTask && pageState.selectedTask.status !== "archived") {
+            pageHandlers.handleEnterWorkspace();
           }
         },
-        options: { enabled: notTerminal && hasTask },
+        options: { enabled: notInWorkspace && hasTask },
       },
       {
         key: "Escape",
         handler: pageHandlers.handleCloseTask,
-        options: { enabled: pageState.viewMode !== "list" },
+        options: { enabled: pageState.inWorkspace || hasTask },
       },
 
-      // Info panel tabs
-      { key: "1", handler: () => pageHandlers.setInfoPanelTab("stats"), options: { enabled: notTerminal && hasTask } },
-      { key: "2", handler: () => pageHandlers.setInfoPanelTab("git"), options: { enabled: notTerminal && hasTask } },
-      { key: "3", handler: () => pageHandlers.setInfoPanelTab("notes"), options: { enabled: notTerminal && hasTask } },
-      { key: "4", handler: () => pageHandlers.setInfoPanelTab("comments"), options: { enabled: notTerminal && hasTask } },
+      // Info panel tabs (only in Task List page, not in Workspace)
+      { key: "1", handler: () => pageHandlers.setInfoPanelTab("stats"), options: { enabled: notInWorkspace && hasTask } },
+      { key: "2", handler: () => pageHandlers.setInfoPanelTab("git"), options: { enabled: notInWorkspace && hasTask } },
+      { key: "3", handler: () => pageHandlers.setInfoPanelTab("notes"), options: { enabled: notInWorkspace && hasTask } },
+      { key: "4", handler: () => pageHandlers.setInfoPanelTab("comments"), options: { enabled: notInWorkspace && hasTask } },
 
       // Actions (work in all modes; xterm focus auto-suppresses via useHotkeys)
       { key: "n", handler: () => setShowNewTaskDialog(true) },
-      { key: "Space", handler: navHandlers.openContextMenuAtSelectedTask, options: { enabled: hasTask && notTerminal } },
+      { key: "Space", handler: navHandlers.openContextMenuAtSelectedTask, options: { enabled: hasTask && notInWorkspace } },
       { key: "c", handler: opsHandlers.handleCommit, options: { enabled: isActive } },
       { key: "s", handler: opsHandlers.handleSync, options: { enabled: canOperate } },
       { key: "m", handler: opsHandlers.handleMerge, options: { enabled: canOperate } },
       { key: "b", handler: opsHandlers.handleRebase, options: { enabled: canOperate } },
-      { key: "r", handler: pageHandlers.handleReviewShortcut, options: { enabled: isActive } },
-      { key: "e", handler: pageHandlers.handleEditorShortcut, options: { enabled: isActive } },
-      { key: "t", handler: pageHandlers.handleTerminalShortcut, options: { enabled: isActive } },
 
       // Search
       {
         key: "/",
         handler: () => searchInputRef.current?.focus(),
-        options: { enabled: notTerminal },
+        options: { enabled: notInWorkspace },
       },
 
       // Help
@@ -341,7 +349,7 @@ export function TasksPage({ initialTaskId, initialViewMode, onNavigationConsumed
     ],
     [
       navHandlers, pageHandlers, opsHandlers,
-      pageState.viewMode, pageState.selectedTask, hasTask, isActive, isArchived, canOperate, notTerminal,
+      pageState.inWorkspace, pageState.selectedTask, hasTask, isActive, isArchived, canOperate, notInWorkspace,
     ]
   );
 
@@ -355,9 +363,6 @@ export function TasksPage({ initialTaskId, initialViewMode, onNavigationConsumed
       </div>
     );
   }
-
-  const isTerminalMode = pageState.viewMode === "terminal" || pageState.viewMode === "chat";
-  const isInfoMode = pageState.viewMode === "info";
 
   // Build context menu items using utility function
   const contextMenuItems = pageState.contextMenu
@@ -403,14 +408,14 @@ export function TasksPage({ initialTaskId, initialViewMode, onNavigationConsumed
 
       {/* Main Content */}
       <div className="flex-1 relative overflow-hidden">
-        {/* List Mode & Info Mode: Task List + Info Panel side by side */}
+        {/* Task List Page: Task List + Info Panel side by side */}
         <motion.div
           animate={{
-            opacity: isTerminalMode ? 0 : 1,
-            x: isTerminalMode ? -20 : 0,
+            opacity: pageState.inWorkspace ? 0 : 1,
+            x: pageState.inWorkspace ? -20 : 0,
           }}
           transition={{ type: "spring", damping: 25, stiffness: 200 }}
-          className={`absolute inset-0 flex gap-4 ${isTerminalMode ? "pointer-events-none" : ""}`}
+          className={`absolute inset-0 flex gap-4 ${pageState.inWorkspace ? "pointer-events-none" : ""}`}
         >
           {/* Task Sidebar */}
           <div className="w-72 flex-shrink-0 h-full">
@@ -432,7 +437,7 @@ export function TasksPage({ initialTaskId, initialViewMode, onNavigationConsumed
           {/* Right Panel: Empty State or Info Panel */}
           <div className="flex-1 h-full">
             <AnimatePresence mode="wait">
-              {isInfoMode && pageState.selectedTask ? (
+              {!pageState.inWorkspace && pageState.selectedTask ? (
                 <motion.div
                   key="info-panel"
                   initial={{ opacity: 0, x: 20 }}
@@ -446,14 +451,11 @@ export function TasksPage({ initialTaskId, initialViewMode, onNavigationConsumed
                     task={pageState.selectedTask}
                     projectName={selectedProject.name}
                     onClose={pageHandlers.handleCloseTask}
-                    onEnterMode={pageState.selectedTask.status !== "archived" ? pageHandlers.handleEnterMode : undefined}
-                    enableTerminal={pageState.selectedTask.enableTerminal}
-                    enableChat={pageState.selectedTask.enableChat}
+                    onEnterWorkspace={pageState.selectedTask.status !== "archived" ? pageHandlers.handleEnterWorkspace : undefined}
+                    onAddPanel={pageState.selectedTask.status !== "archived" ? handleAddPanelFromInfo : undefined}
                     onRecover={pageState.selectedTask.status === "archived" ? handleRecover : undefined}
                     onClean={opsHandlers.handleClean}
                     onCommit={pageState.selectedTask.status !== "archived" ? opsHandlers.handleCommit : undefined}
-                    onReview={pageState.selectedTask.status !== "archived" ? pageHandlers.handleReviewFromInfo : undefined}
-                    onEditor={pageState.selectedTask.status !== "archived" ? pageHandlers.handleEditorFromInfo : undefined}
                     onRebase={pageState.selectedTask.status !== "archived" ? opsHandlers.handleRebase : undefined}
                     onSync={pageState.selectedTask.status !== "archived" ? opsHandlers.handleSync : undefined}
                     onMerge={pageState.selectedTask.status !== "archived" ? opsHandlers.handleMerge : undefined}
@@ -485,9 +487,9 @@ export function TasksPage({ initialTaskId, initialViewMode, onNavigationConsumed
           </div>
         </motion.div>
 
-        {/* Terminal Mode: Info Panel + TaskView */}
+        {/* Workspace Page: Info Panel + TaskView */}
         <AnimatePresence>
-          {isTerminalMode && pageState.selectedTask && (
+          {pageState.inWorkspace && pageState.selectedTask && (
             <motion.div
               initial={{ x: "100%", opacity: 0 }}
               animate={{ x: 0, opacity: 1 }}
@@ -495,7 +497,7 @@ export function TasksPage({ initialTaskId, initialViewMode, onNavigationConsumed
               transition={{ type: "spring", damping: 25, stiffness: 200 }}
               className="absolute inset-0 flex gap-3"
             >
-              {/* Info Panel (collapsible vertical bar in terminal mode) - hidden in fullscreen */}
+              {/* Info Panel (collapsible vertical bar in Workspace) - hidden in fullscreen */}
               {!isFullscreen && (
                 <TaskInfoPanel
                   projectId={selectedProject.id}

@@ -23,8 +23,6 @@ export interface Task {
   createdAt: Date;
   updatedAt: Date;
   multiplexer: string;
-  enableTerminal: boolean;  // 是否启用 Terminal 模式
-  enableChat: boolean;      // 是否启用 Chat 模式
 }
 
 export interface Project {
