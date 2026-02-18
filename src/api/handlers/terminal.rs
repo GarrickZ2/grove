@@ -69,7 +69,29 @@ pub async fn task_terminal_handler(
         .ok_or(TaskTerminalError::NotFound("Task not found".to_string()))?;
 
     // 3. Resolve session type and build session name
-    let task_session_type = session::resolve_session_type(&task.multiplexer);
+    // For terminal endpoint: only use terminal multiplexer, never acp
+    // If task has enable_terminal=true, use the configured multiplexer (tmux/zellij)
+    // If task has enable_terminal=false, this endpoint shouldn't be called, but handle gracefully
+    let task_session_type = if task.enable_terminal {
+        // Use multiplexer field if it's tmux/zellij, otherwise use default from config
+        match task.multiplexer.as_str() {
+            "tmux" => SessionType::Tmux,
+            "zellij" => SessionType::Zellij,
+            _ => {
+                // Fallback to config default (handles legacy "acp" multiplexer with enable_terminal=true)
+                let cfg = config::load_config();
+                match cfg.terminal_multiplexer {
+                    config::TerminalMultiplexer::Tmux => SessionType::Tmux,
+                    config::TerminalMultiplexer::Zellij => SessionType::Zellij,
+                }
+            }
+        }
+    } else {
+        // Task doesn't have terminal enabled - shouldn't reach here but handle gracefully
+        return Err(TaskTerminalError::Internal(
+            "Terminal not enabled for this task".to_string(),
+        ));
+    };
     let session_name = session::resolve_session_name(&task.session_name, &project_key, &task_id);
 
     // 4. Ensure session exists (create if needed)
