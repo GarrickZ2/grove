@@ -3,7 +3,8 @@
  */
 
 // 面板类型枚举
-export type PanelType = 'terminal' | 'chat' | 'review' | 'editor';
+export type PanelType = 'terminal' | 'chat' | 'review' | 'editor'
+  | 'stats' | 'git' | 'notes' | 'comments';
 
 // 面板实例配置
 export interface PanelInstanceConfig {
@@ -27,4 +28,8 @@ export const PANEL_TYPE_LABELS: Record<PanelType, string> = {
   chat: 'Chat',
   review: 'Code Review',
   editor: 'Editor',
+  stats: 'Stats',
+  git: 'Git',
+  notes: 'Notes',
+  comments: 'Comments',
 };

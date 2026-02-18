@@ -1,7 +1,7 @@
 import { useState, useRef, useCallback, forwardRef, useImperativeHandle } from 'react';
 import { Layout, Model, TabNode, Actions, DockLocation } from 'flexlayout-react';
 import type { IJsonModel, ITabRenderValues } from 'flexlayout-react';
-import { Terminal, MessageSquare, Code, FileCode } from 'lucide-react';
+import { Terminal, MessageSquare, Code, FileCode, BarChart3, GitBranch, FileText, MessageSquare as CommentIcon, X, XCircle, Trash2 } from 'lucide-react';
 import 'flexlayout-react/style/light.css';
 import './flexlayout-theme.css';
 import type { Task } from '../../../data/types';
@@ -10,6 +10,8 @@ import { TaskTerminal } from '../TaskView/TaskTerminal';
 import { TaskChat } from '../TaskView/TaskChat';
 import { TaskCodeReview } from '../TaskView/TaskCodeReview';
 import { TaskEditor } from '../TaskView/TaskEditor';
+import { StatsTab, GitTab, NotesTab, CommentsTab } from '../TaskInfoPanel/tabs';
+import { ContextMenu, type ContextMenuItem } from '../../ui/ContextMenu';
 
 interface FlexLayoutContainerProps {
   task: Task;
@@ -33,6 +35,10 @@ export const FlexLayoutContainer = forwardRef<
     chat: 0,
     review: 0,
     editor: 0,
+    stats: 0,
+    git: 0,
+    notes: 0,
+    comments: 0,
   });
 
   // Get panel label
@@ -42,6 +48,10 @@ export const FlexLayoutContainer = forwardRef<
       chat: 'Chat',
       review: 'Code Review',
       editor: 'Editor',
+      stats: 'Stats',
+      git: 'Git',
+      notes: 'Notes',
+      comments: 'Comments',
     };
     return labels[type];
   };
@@ -138,6 +148,12 @@ export const FlexLayoutContainer = forwardRef<
     return Model.fromJson(layoutJson);
   });
 
+  // Context menu state
+  const [contextMenu, setContextMenu] = useState<{
+    position: { x: number; y: number };
+    tabId: string;
+  } | null>(null);
+
   // Add new panel
   const addPanel = useCallback((type: PanelType) => {
     instanceCounters.current[type]++;
@@ -158,6 +174,74 @@ export const FlexLayoutContainer = forwardRef<
     getModel: () => model,
   }), [addPanel, model]);
 
+  // Get all tabs in the model
+  const getAllTabs = useCallback(() => {
+    const tabs: TabNode[] = [];
+    const visit = (node: any) => {
+      if (node.getType() === 'tab') {
+        tabs.push(node as TabNode);
+      }
+      if (node.getChildren) {
+        node.getChildren().forEach(visit);
+      }
+    };
+    visit(model.getRoot());
+    return tabs;
+  }, [model]);
+
+  // Context menu handlers
+  const handleCloseTab = useCallback((tabId: string) => {
+    model.doAction(Actions.deleteTab(tabId));
+    setContextMenu(null);
+  }, [model]);
+
+  const handleCloseOthers = useCallback((tabId: string) => {
+    const allTabs = getAllTabs();
+    allTabs.forEach(tab => {
+      if (tab.getId() !== tabId) {
+        model.doAction(Actions.deleteTab(tab.getId()));
+      }
+    });
+    setContextMenu(null);
+  }, [model, getAllTabs]);
+
+  const handleCloseAll = useCallback(() => {
+    const allTabs = getAllTabs();
+    allTabs.forEach(tab => {
+      model.doAction(Actions.deleteTab(tab.getId()));
+    });
+    setContextMenu(null);
+  }, [model, getAllTabs]);
+
+  // Generate context menu items
+  const getContextMenuItems = useCallback((tabId: string): ContextMenuItem[] => {
+    const allTabs = getAllTabs();
+    const hasOtherTabs = allTabs.length > 1;
+
+    return [
+      {
+        id: 'close',
+        label: 'Close',
+        icon: X,
+        onClick: () => handleCloseTab(tabId),
+      },
+      {
+        id: 'close-others',
+        label: 'Close Others',
+        icon: XCircle,
+        onClick: () => handleCloseOthers(tabId),
+        disabled: !hasOtherTabs,
+      },
+      {
+        id: 'close-all',
+        label: 'Close All',
+        icon: Trash2,
+        onClick: handleCloseAll,
+        variant: 'danger' as const,
+      },
+    ];
+  }, [getAllTabs, handleCloseTab, handleCloseOthers, handleCloseAll]);
+
   // 获取面板类型的图标和颜色
   const getPanelIconAndColor = (type: string): { icon: typeof Terminal; color: string } => {
     switch (type) {
@@ -169,6 +253,14 @@ export const FlexLayoutContainer = forwardRef<
         return { icon: Code, color: '#a855f7' }; // 紫色
       case 'editor':
         return { icon: FileCode, color: '#f59e0b' }; // 橙色
+      case 'stats':
+        return { icon: BarChart3, color: '#06b6d4' }; // 青色
+      case 'git':
+        return { icon: GitBranch, color: '#10b981' }; // 翠绿色
+      case 'notes':
+        return { icon: FileText, color: '#8b5cf6' }; // 紫罗兰
+      case 'comments':
+        return { icon: CommentIcon, color: '#ec4899' }; // 粉色
       default:
         return { icon: Terminal, color: '#6b7280' }; // 灰色
     }
@@ -180,7 +272,17 @@ export const FlexLayoutContainer = forwardRef<
     const { icon: Icon, color } = getPanelIconAndColor(component);
 
     renderValues.content = (
-      <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+      <div
+        style={{ display: 'flex', alignItems: 'center', gap: '6px' }}
+        onContextMenu={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          setContextMenu({
+            position: { x: e.clientX, y: e.clientY },
+            tabId: node.getId(),
+          });
+        }}
+      >
         <Icon size={14} style={{ color, flexShrink: 0 }} />
         <span style={{ fontSize: '13px' }}>{node.getName()}</span>
       </div>
@@ -247,6 +349,34 @@ export const FlexLayoutContainer = forwardRef<
           </div>
         );
 
+      case 'stats':
+        return (
+          <div style={{ display: 'flex', flexDirection: 'column', width: '100%', height: '100%', padding: '16px', overflow: 'auto' }}>
+            <StatsTab projectId={projectId} task={task} />
+          </div>
+        );
+
+      case 'git':
+        return (
+          <div style={{ display: 'flex', flexDirection: 'column', width: '100%', height: '100%', padding: '16px', overflow: 'auto' }}>
+            <GitTab task={task} />
+          </div>
+        );
+
+      case 'notes':
+        return (
+          <div style={{ display: 'flex', flexDirection: 'column', width: '100%', height: '100%', padding: '16px', overflow: 'auto' }}>
+            <NotesTab task={task} />
+          </div>
+        );
+
+      case 'comments':
+        return (
+          <div style={{ display: 'flex', flexDirection: 'column', width: '100%', height: '100%', padding: '16px', overflow: 'auto' }}>
+            <CommentsTab task={task} />
+          </div>
+        );
+
       default:
         return <div className="p-4 text-[var(--color-text-muted)]">Unknown panel type: {component}</div>;
     }
@@ -264,14 +394,25 @@ export const FlexLayoutContainer = forwardRef<
   };
 
   return (
-    <div className="absolute inset-0">
-      <Layout
-        model={model}
-        factory={factory}
-        onRenderTab={onRenderTab}
-        onModelChange={handleModelChange}
-      />
-    </div>
+    <>
+      <div className="absolute inset-0">
+        <Layout
+          model={model}
+          factory={factory}
+          onRenderTab={onRenderTab}
+          onModelChange={handleModelChange}
+        />
+      </div>
+
+      {/* Context Menu */}
+      {contextMenu && (
+        <ContextMenu
+          items={getContextMenuItems(contextMenu.tabId)}
+          position={contextMenu.position}
+          onClose={() => setContextMenu(null)}
+        />
+      )}
+    </>
   );
 });
 

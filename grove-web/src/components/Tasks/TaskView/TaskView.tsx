@@ -1,4 +1,4 @@
-import { useState, useRef } from "react";
+import { useState, useRef, forwardRef, useImperativeHandle } from "react";
 import { motion } from "framer-motion";
 import { TaskHeader } from "./TaskHeader";
 import { TaskToolbar } from "./TaskToolbar";
@@ -12,8 +12,6 @@ interface TaskViewProps {
   projectId: string;
   task: Task;
   projectName?: string;
-  /** Callback to add a new panel */
-  onAddPanel: (type: PanelType) => void;
   /** Header collapsed state */
   headerCollapsed?: boolean;
   /** Callback when header collapsed state changes */
@@ -27,21 +25,25 @@ interface TaskViewProps {
   onReset: () => void;
 }
 
-export function TaskView({
-  projectId,
-  task,
-  projectName,
-  onAddPanel,
-  headerCollapsed: externalHeaderCollapsed = true,
-  onHeaderCollapsedChange,
-  onCommit,
-  onRebase,
-  onSync,
-  onMerge,
-  onArchive,
-  onClean,
-  onReset,
-}: TaskViewProps) {
+export interface TaskViewHandle {
+  addPanel: (type: PanelType) => void;
+}
+
+export const TaskView = forwardRef<TaskViewHandle, TaskViewProps>((props, ref) => {
+  const {
+    projectId,
+    task,
+    projectName,
+    headerCollapsed: externalHeaderCollapsed = true,
+    onHeaderCollapsedChange,
+    onCommit,
+    onRebase,
+    onSync,
+    onMerge,
+    onArchive,
+    onClean,
+    onReset,
+  } = props;
   const [internalHeaderCollapsed, setInternalHeaderCollapsed] = useState(true);
   const layoutRef = useRef<FlexLayoutContainerHandle>(null);
 
@@ -58,8 +60,14 @@ export function TaskView({
     if (layoutRef.current) {
       layoutRef.current.addPanel(type);
     }
-    onAddPanel(type);
+    // 注意: 不调用 onAddPanel(type) 避免无限循环
+    // onAddPanel 仅用于外部通知,这里已经完成添加工作
   };
+
+  // Expose addPanel method via ref
+  useImperativeHandle(ref, () => ({
+    addPanel: handleAddPanel,
+  }), [handleAddPanel]);
 
   return (
     <motion.div
@@ -103,4 +111,6 @@ export function TaskView({
       </div>
     </motion.div>
   );
-}
+});
+
+TaskView.displayName = 'TaskView';

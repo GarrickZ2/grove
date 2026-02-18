@@ -555,7 +555,6 @@ export function BlitzPage({ onSwitchToZen }: BlitzPageProps) {
                     projectId={currentSelected.projectId}
                     task={currentSelected.task}
                     projectName={currentSelected.projectName}
-                    onAddPanel={() => {}}
                     onCommit={opsHandlers.handleCommit}
                     onRebase={opsHandlers.handleRebase}
                     onSync={opsHandlers.handleSync}

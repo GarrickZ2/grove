@@ -1,4 +1,4 @@
-export { TaskView } from "./TaskView";
+export { TaskView, type TaskViewHandle } from "./TaskView";
 export { TaskHeader } from "./TaskHeader";
 export { TaskToolbar } from "./TaskToolbar";
 export { TaskTerminal } from "./TaskTerminal";

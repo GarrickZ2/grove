@@ -48,6 +48,8 @@ interface TaskInfoPanelProps {
   onMerge?: () => void;
   onArchive?: () => void;
   onReset?: () => void;
+  // 新增：用于在 FlexLayout 中打开 panel（与 Terminal/Review/Editor/Chat 逻辑一致）
+  onAddPanel?: (type: 'stats' | 'git' | 'notes' | 'comments') => void;
 }
 
 export type TabType = "stats" | "git" | "notes" | "comments";
@@ -87,6 +89,7 @@ export function TaskInfoPanel({
   onMerge,
   onArchive,
   onReset,
+  onAddPanel,
 }: TaskInfoPanelProps) {
   const isArchived = task.status === "archived";
   const isBroken = task.status === "broken";
@@ -142,13 +145,20 @@ export function TaskInfoPanel({
           <div className="flex-1 flex flex-col py-2">
             {TABS.map((tab) => {
               const Icon = tab.icon;
-              const isActive = activeTab === tab.id;
+              // 只在侧边栏模式（没有 onAddPanel）时显示 active 状态
+              const isActive = !onAddPanel && activeTab === tab.id;
               return (
                 <button
                   key={tab.id}
                   onClick={() => {
-                    handleTabChange(tab.id);
-                    if (!expanded) setExpanded(true);
+                    // 如果提供了 onAddPanel 回调，在 FlexLayout 中打开 panel
+                    if (onAddPanel) {
+                      onAddPanel(tab.id);
+                    } else {
+                      // 否则使用原有的展开侧边栏逻辑（向后兼容）
+                      handleTabChange(tab.id);
+                      if (!expanded) setExpanded(true);
+                    }
                   }}
                   className={`
                     p-3 transition-colors
@@ -166,19 +176,23 @@ export function TaskInfoPanel({
             })}
           </div>
 
-          {/* Expand/Collapse toggle */}
-          <div className="h-px bg-[var(--color-border)]" />
-          <button
-            onClick={() => setExpanded(!expanded)}
-            className="p-3 text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-bg-tertiary)] transition-colors"
-            title={expanded ? "Collapse" : "Expand"}
-          >
-            {expanded ? (
-              <ChevronLeft className="w-5 h-5" />
-            ) : (
-              <ChevronRight className="w-5 h-5" />
-            )}
-          </button>
+          {/* Expand/Collapse toggle - 只在侧边栏模式显示 */}
+          {!onAddPanel && (
+            <>
+              <div className="h-px bg-[var(--color-border)]" />
+              <button
+                onClick={() => setExpanded(!expanded)}
+                className="p-3 text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-bg-tertiary)] transition-colors"
+                title={expanded ? "Collapse" : "Expand"}
+              >
+                {expanded ? (
+                  <ChevronLeft className="w-5 h-5" />
+                ) : (
+                  <ChevronRight className="w-5 h-5" />
+                )}
+              </button>
+            </>
+          )}
         </div>
 
         {/* Expandable Content Panel */}
