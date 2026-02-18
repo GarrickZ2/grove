@@ -16,6 +16,10 @@ interface TaskViewProps {
   headerCollapsed?: boolean;
   /** Callback when header collapsed state changes */
   onHeaderCollapsedChange?: (collapsed: boolean) => void;
+  /** Fullscreen state (external control) */
+  fullscreen?: boolean;
+  /** Callback when fullscreen state changes */
+  onFullscreenChange?: (fullscreen: boolean) => void;
   onCommit: () => void;
   onRebase: () => void;
   onSync: () => void;
@@ -36,6 +40,8 @@ export const TaskView = forwardRef<TaskViewHandle, TaskViewProps>((props, ref) =
     projectName,
     headerCollapsed: externalHeaderCollapsed = true,
     onHeaderCollapsedChange,
+    fullscreen: externalFullscreen,
+    onFullscreenChange,
     onCommit,
     onRebase,
     onSync,
@@ -45,11 +51,17 @@ export const TaskView = forwardRef<TaskViewHandle, TaskViewProps>((props, ref) =
     onReset,
   } = props;
   const [internalHeaderCollapsed, setInternalHeaderCollapsed] = useState(true);
+  const [internalFullscreen, setInternalFullscreen] = useState(false);
   const layoutRef = useRef<FlexLayoutContainerHandle>(null);
 
   // Use external state if provided, otherwise use internal state
   const headerCollapsed = onHeaderCollapsedChange ? externalHeaderCollapsed : internalHeaderCollapsed;
   const setHeaderCollapsed = onHeaderCollapsedChange || setInternalHeaderCollapsed;
+
+  const fullscreen = externalFullscreen !== undefined ? externalFullscreen : internalFullscreen;
+  const setFullscreen = onFullscreenChange
+    ? (value: boolean) => onFullscreenChange(value)
+    : setInternalFullscreen;
 
   // Per-task multiplexer (from task metadata)
   const multiplexer = task.multiplexer || "tmux"; // 保留向后兼容
@@ -69,44 +81,56 @@ export const TaskView = forwardRef<TaskViewHandle, TaskViewProps>((props, ref) =
     addPanel: handleAddPanel,
   }), [handleAddPanel]);
 
+  // Toggle fullscreen
+  const toggleFullscreen = () => {
+    const newValue = !fullscreen;
+    setFullscreen(newValue);
+  };
+
   return (
     <motion.div
       initial={{ x: "100%", opacity: 0 }}
       animate={{ x: 0, opacity: 1 }}
       exit={{ x: "100%", opacity: 0 }}
       transition={{ type: "spring", damping: 25, stiffness: 200 }}
-      className="flex-1 flex flex-col h-full overflow-hidden rounded-l-lg"
+      className={`flex-1 flex flex-col h-full overflow-hidden rounded-l-lg ${
+        fullscreen ? 'fixed inset-0 z-50 rounded-none' : ''
+      }`}
     >
-      {/* Header */}
-      <div className="rounded-t-lg border border-[var(--color-border)] bg-[var(--color-bg)]">
-        {!headerCollapsed && <TaskHeader task={task} projectName={projectName} />}
-        <TaskToolbar
-          task={task}
-          headerCollapsed={headerCollapsed}
-          onToggleHeaderCollapse={() => setHeaderCollapsed(!headerCollapsed)}
-          onAddTerminal={() => handleAddPanel('terminal')}
-          onAddChat={() => handleAddPanel('chat')}
-          onAddReview={() => handleAddPanel('review')}
-          onAddEditor={() => handleAddPanel('editor')}
-          onCommit={onCommit}
-          onRebase={onRebase}
-          onSync={onSync}
-          onMerge={onMerge}
-          onArchive={onArchive}
-          onClean={onClean}
-          onReset={onReset}
-        />
-        {!headerCollapsed && task.status !== "archived" && task.status !== "merged" && multiplexer !== "acp" && (
-          <FileSearchBar projectId={projectId} taskId={task.id} />
-        )}
-      </div>
+      {/* Header - hidden in fullscreen */}
+      {!fullscreen && (
+        <div className="rounded-t-lg border border-[var(--color-border)] bg-[var(--color-bg)]">
+          {!headerCollapsed && <TaskHeader task={task} projectName={projectName} />}
+          <TaskToolbar
+            task={task}
+            headerCollapsed={headerCollapsed}
+            onToggleHeaderCollapse={() => setHeaderCollapsed(!headerCollapsed)}
+            onAddTerminal={() => handleAddPanel('terminal')}
+            onAddChat={() => handleAddPanel('chat')}
+            onAddReview={() => handleAddPanel('review')}
+            onAddEditor={() => handleAddPanel('editor')}
+            onCommit={onCommit}
+            onRebase={onRebase}
+            onSync={onSync}
+            onMerge={onMerge}
+            onArchive={onArchive}
+            onClean={onClean}
+            onReset={onReset}
+          />
+          {!headerCollapsed && task.status !== "archived" && task.status !== "merged" && multiplexer !== "acp" && (
+            <FileSearchBar projectId={projectId} taskId={task.id} />
+          )}
+        </div>
+      )}
 
       {/* FlexLayout Container */}
-      <div className="flex-1 mt-3 min-h-0 relative">
+      <div className={`flex-1 min-h-0 relative ${fullscreen ? '' : 'mt-3'}`}>
         <FlexLayoutContainer
           ref={layoutRef}
           task={task}
           projectId={projectId}
+          fullscreen={fullscreen}
+          onToggleFullscreen={toggleFullscreen}
         />
       </div>
     </motion.div>

@@ -51,6 +51,7 @@ export function TasksPage({ initialTaskId, initialViewMode, onNavigationConsumed
   const [createError, setCreateError] = useState<string | null>(null);
   const [archivedTasks, setArchivedTasks] = useState<Task[]>([]);
   const [isLoadingArchived, setIsLoadingArchived] = useState(false);
+  const [isFullscreen, setIsFullscreen] = useState(false);
   const searchInputRef = useRef<HTMLInputElement | null>(null);
   const taskViewRef = useRef<TaskViewHandle>(null);
 
@@ -380,23 +381,25 @@ export function TasksPage({ initialTaskId, initialViewMode, onNavigationConsumed
       transition={{ duration: 0.3 }}
       className="h-[calc(100vh-48px)] flex flex-col"
     >
-      {/* Header */}
-      <div className="flex items-center justify-between mb-4 flex-shrink-0">
-        <h1 className="text-xl font-semibold text-[var(--color-text)]">Tasks</h1>
-        <div className="flex items-center gap-2">
-          <button
-            onClick={() => pageHandlers.setShowHelp(true)}
-            className="px-2 py-1 text-xs text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-bg-tertiary)] rounded-md transition-colors"
-            title="Keyboard Shortcuts (?)"
-          >
-            <kbd className="px-1 py-0.5 text-[10px] font-mono rounded border bg-[var(--color-bg)] border-[var(--color-border)]">?</kbd>
-          </button>
-          <Button onClick={() => setShowNewTaskDialog(true)} size="sm">
-            <Plus className="w-4 h-4 mr-1.5" />
-            New Task
-          </Button>
+      {/* Header - hidden in fullscreen */}
+      {!isFullscreen && (
+        <div className="flex items-center justify-between mb-4 flex-shrink-0">
+          <h1 className="text-xl font-semibold text-[var(--color-text)]">Tasks</h1>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => pageHandlers.setShowHelp(true)}
+              className="px-2 py-1 text-xs text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-bg-tertiary)] rounded-md transition-colors"
+              title="Keyboard Shortcuts (?)"
+            >
+              <kbd className="px-1 py-0.5 text-[10px] font-mono rounded border bg-[var(--color-bg)] border-[var(--color-border)]">?</kbd>
+            </button>
+            <Button onClick={() => setShowNewTaskDialog(true)} size="sm">
+              <Plus className="w-4 h-4 mr-1.5" />
+              New Task
+            </Button>
+          </div>
         </div>
-      </div>
+      )}
 
       {/* Main Content */}
       <div className="flex-1 relative overflow-hidden">
@@ -492,21 +495,25 @@ export function TasksPage({ initialTaskId, initialViewMode, onNavigationConsumed
               transition={{ type: "spring", damping: 25, stiffness: 200 }}
               className="absolute inset-0 flex gap-3"
             >
-              {/* Info Panel (collapsible vertical bar in terminal mode) */}
-              <TaskInfoPanel
-                projectId={selectedProject.id}
-                task={pageState.selectedTask}
-                projectName={selectedProject.name}
-                onClose={pageHandlers.handleCloseTask}
-                isTerminalMode
-                onAddPanel={handleAddPanel}
-              />
+              {/* Info Panel (collapsible vertical bar in terminal mode) - hidden in fullscreen */}
+              {!isFullscreen && (
+                <TaskInfoPanel
+                  projectId={selectedProject.id}
+                  task={pageState.selectedTask}
+                  projectName={selectedProject.name}
+                  onClose={pageHandlers.handleCloseTask}
+                  isTerminalMode
+                  onAddPanel={handleAddPanel}
+                />
+              )}
 
               <TaskView
                 ref={taskViewRef}
                 projectId={selectedProject.id}
                 task={pageState.selectedTask}
                 projectName={selectedProject.name}
+                fullscreen={isFullscreen}
+                onFullscreenChange={setIsFullscreen}
                 onCommit={opsHandlers.handleCommit}
                 onRebase={opsHandlers.handleRebase}
                 onSync={opsHandlers.handleSync}
