@@ -9,36 +9,42 @@ use std::str::FromStr;
 use super::grove_dir;
 use crate::error::Result;
 
-/// Terminal multiplexer / agent 交互模式选择
+/// Terminal 复用器（只包含真正的 terminal multiplexer）
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
-pub enum Multiplexer {
+pub enum TerminalMultiplexer {
     #[default]
     Tmux,
     Zellij,
-    Acp,
 }
 
-impl fmt::Display for Multiplexer {
+impl fmt::Display for TerminalMultiplexer {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Multiplexer::Tmux => write!(f, "tmux"),
-            Multiplexer::Zellij => write!(f, "zellij"),
-            Multiplexer::Acp => write!(f, "acp"),
+            TerminalMultiplexer::Tmux => write!(f, "tmux"),
+            TerminalMultiplexer::Zellij => write!(f, "zellij"),
         }
     }
 }
 
-impl FromStr for Multiplexer {
+impl FromStr for TerminalMultiplexer {
     type Err = String;
     fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
         match s.to_lowercase().as_str() {
-            "tmux" => Ok(Multiplexer::Tmux),
-            "zellij" => Ok(Multiplexer::Zellij),
-            "acp" => Ok(Multiplexer::Acp),
-            _ => Err(format!("unknown multiplexer: {}", s)),
+            "tmux" => Ok(TerminalMultiplexer::Tmux),
+            "zellij" => Ok(TerminalMultiplexer::Zellij),
+            _ => Err(format!("unknown terminal multiplexer: {}", s)),
         }
     }
+}
+
+/// 旧的 Multiplexer enum（仅用于向后兼容的反序列化）
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+enum LegacyMultiplexer {
+    Tmux,
+    Zellij,
+    Acp,
 }
 
 /// 自定义 ACP Agent 配置
@@ -79,6 +85,11 @@ pub struct AcpConfig {
     pub custom_agents: Vec<CustomAgent>,
 }
 
+/// 默认启用 Terminal 模式
+fn default_enable_terminal() -> bool {
+    true
+}
+
 /// 应用配置
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Config {
@@ -93,14 +104,32 @@ pub struct Config {
     #[serde(default)]
     pub web: WebConfig,
     #[serde(default)]
-    pub multiplexer: Multiplexer,
-    #[serde(default)]
     pub auto_link: AutoLinkConfig,
     #[serde(default)]
     pub acp: AcpConfig,
+
     /// Storage layout version (None = legacy, "1.0" = task-centric layout)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub storage_version: Option<String>,
+
+    /// 是否启用 Terminal 模式
+    #[serde(default = "default_enable_terminal")]
+    pub enable_terminal: bool,
+
+    /// 是否启用 Chat 模式
+    #[serde(default)]
+    pub enable_chat: bool,
+
+    /// Terminal 模式使用的复用器
+    #[serde(default)]
+    pub terminal_multiplexer: TerminalMultiplexer,
+
+    // ===== 向后兼容字段（反序列化时使用，序列化时跳过） =====
+    #[serde(skip_serializing, default)]
+    multiplexer: Option<LegacyMultiplexer>,
+
+    #[serde(skip_serializing, default)]
+    enabled_modes: Vec<String>,
 }
 
 /// MCP Server 配置（预留扩展）
@@ -241,35 +270,70 @@ pub fn load_config() -> Config {
             .unwrap_or_default()
     };
 
-    // 智能选择 multiplexer：根据实际安装情况自动调整
-    // ACP 模式不需要终端复用器检查，跳过自动切换
-    if config.multiplexer != Multiplexer::Acp {
+    // ===== 向后兼容：从旧字段迁移到新字段 =====
+
+    // 优先从 enabled_modes 迁移（如果存在）
+    if !config.enabled_modes.is_empty() {
+        for mode_str in &config.enabled_modes {
+            match mode_str.as_str() {
+                "tmux" => {
+                    config.enable_terminal = true;
+                    config.terminal_multiplexer = TerminalMultiplexer::Tmux;
+                }
+                "zellij" => {
+                    config.enable_terminal = true;
+                    config.terminal_multiplexer = TerminalMultiplexer::Zellij;
+                }
+                "acp" => {
+                    config.enable_chat = true;
+                }
+                _ => {}
+            }
+        }
+    }
+    // 否则从 multiplexer 迁移
+    else if let Some(legacy_mux) = &config.multiplexer {
+        match legacy_mux {
+            LegacyMultiplexer::Tmux => {
+                config.enable_terminal = true;
+                config.terminal_multiplexer = TerminalMultiplexer::Tmux;
+            }
+            LegacyMultiplexer::Zellij => {
+                config.enable_terminal = true;
+                config.terminal_multiplexer = TerminalMultiplexer::Zellij;
+            }
+            LegacyMultiplexer::Acp => {
+                config.enable_chat = true;
+            }
+        }
+    }
+
+    // 智能选择 terminal_multiplexer：根据实际安装情况自动调整
+    if config.enable_terminal {
         let tmux_installed = crate::check::check_tmux_available();
         let zellij_installed = crate::check::check_zellij_available();
 
-        let current_installed = match config.multiplexer {
-            Multiplexer::Tmux => tmux_installed,
-            Multiplexer::Zellij => zellij_installed,
-            Multiplexer::Acp => true, // unreachable due to outer check
+        let current_installed = match config.terminal_multiplexer {
+            TerminalMultiplexer::Tmux => tmux_installed,
+            TerminalMultiplexer::Zellij => zellij_installed,
         };
 
         if !current_installed {
-            config.multiplexer = match config.multiplexer {
-                Multiplexer::Tmux => {
+            config.terminal_multiplexer = match config.terminal_multiplexer {
+                TerminalMultiplexer::Tmux => {
                     if zellij_installed {
-                        Multiplexer::Zellij
+                        TerminalMultiplexer::Zellij
                     } else {
-                        Multiplexer::Tmux
+                        TerminalMultiplexer::Tmux
                     }
                 }
-                Multiplexer::Zellij => {
+                TerminalMultiplexer::Zellij => {
                     if tmux_installed {
-                        Multiplexer::Tmux
+                        TerminalMultiplexer::Tmux
                     } else {
-                        Multiplexer::Zellij
+                        TerminalMultiplexer::Zellij
                     }
                 }
-                Multiplexer::Acp => Multiplexer::Acp,
             };
         }
     }
@@ -291,4 +355,22 @@ pub fn save_config(config: &Config) -> Result<()> {
     let content = toml::to_string_pretty(&normalized_config)?;
     fs::write(path, content)?;
     Ok(())
+}
+
+impl Config {
+    /// 获取默认的 Session 类型（用于新建 Task）
+    ///
+    /// 返回当前启用的第一个模式对应的 session 类型字符串：
+    /// - 如果启用 Chat → "acp"
+    /// - 否则如果启用 Terminal → terminal_multiplexer.to_string()
+    /// - 都未启用 → terminal_multiplexer.to_string() (兜底)
+    pub fn default_session_type(&self) -> String {
+        // 当 Terminal + Chat 同时启用时，使用 terminal multiplexer
+        // 这样 Terminal 可以连接 tmux/zellij，Chat 通过独立 ACP API 连接
+        if self.enable_chat && !self.enable_terminal {
+            "acp".to_string()
+        } else {
+            self.terminal_multiplexer.to_string()
+        }
+    }
 }

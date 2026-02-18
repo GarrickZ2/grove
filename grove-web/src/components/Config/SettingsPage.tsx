@@ -233,11 +233,15 @@ export function SettingsPage({ config }: SettingsPageProps) {
   // Agent command availability: command name → exists on PATH
   const [commandAvailability, setCommandAvailability] = useState<Record<string, boolean>>({});
 
-  // Multiplexer state
-  const [multiplexer, setMultiplexer] = useState("tmux");
+  // Mode state - 新的双模式设计
+  const [enableTerminal, setEnableTerminal] = useState(true);
+  const [enableChat, setEnableChat] = useState(false);
+  const [terminalMultiplexer, setTerminalMultiplexer] = useState("tmux");
 
-  // Mode derived from multiplexer
-  const mode: "terminal" | "chat" = multiplexer === "acp" ? "chat" : "terminal";
+  // Mode helpers - 简化为直接使用布尔值
+  const isTerminalEnabled = enableTerminal;
+  const isChatEnabled = enableChat;
+
   const lastTerminalMuxRef = useRef<string>("tmux");
   const defaultAppliedRef = useRef(false);
 
@@ -295,10 +299,12 @@ export function SettingsPage({ config }: SettingsPageProps) {
       setIdeCommand(cfg.web.ide || "");
       setTerminalCommand(cfg.web.terminal || "");
       setSelectedLayout(cfg.layout.default);
-      setMultiplexer(cfg.multiplexer || "tmux");
-      if (cfg.multiplexer && cfg.multiplexer !== "acp") {
-        lastTerminalMuxRef.current = cfg.multiplexer;
-      }
+
+      // Load mode settings from new API
+      setEnableTerminal(cfg.enable_terminal);
+      setEnableChat(cfg.enable_chat);
+      setTerminalMultiplexer(cfg.terminal_multiplexer || "tmux");
+      lastTerminalMuxRef.current = cfg.terminal_multiplexer || "tmux";
 
       // Load theme - sync with context
       // API stores theme id (e.g., "dark", "tokyo-night")
@@ -426,14 +432,16 @@ export function SettingsPage({ config }: SettingsPageProps) {
     if (!isLoaded) return; // Don't save during initial load
 
     try {
+      console.log("Saving config:", { enableTerminal, enableChat, terminalMultiplexer });
+
       await patchConfig({
         theme: {
           name: overrideThemeId || theme.id,
         },
         layout: {
           default: selectedLayout,
-          // Chat 模式下不覆盖 agent_command，保留 terminal 的偏好
-          ...(mode === "terminal" ? { agent_command: agentCommand || undefined } : {}),
+          // 仅当 Terminal 启用时保存 agent_command
+          ...(enableTerminal ? { agent_command: agentCommand || undefined } : {}),
           // Only save custom layouts if they were loaded/created in Web format
           // This prevents overwriting TUI's custom layout format
           ...(customLayoutsLoaded ? {
@@ -444,8 +452,11 @@ export function SettingsPage({ config }: SettingsPageProps) {
         web: {
           ide: ideCommand || undefined,
           terminal: terminalCommand || undefined,
+          terminal_theme: terminalTheme.id || undefined,
         },
-        multiplexer,
+        enable_terminal: enableTerminal,
+        enable_chat: enableChat,
+        terminal_multiplexer: terminalMultiplexer,
         acp: {
           agent_command: acpAgent || undefined,
         },
@@ -456,7 +467,7 @@ export function SettingsPage({ config }: SettingsPageProps) {
     } catch {
       console.error("Failed to save config");
     }
-  }, [isLoaded, theme.id, selectedLayout, agentCommand, acpAgent, customLayouts, selectedCustomLayoutId, customLayoutsLoaded, ideCommand, terminalCommand, multiplexer, autoLinkPatterns]);
+  }, [isLoaded, theme.id, selectedLayout, agentCommand, acpAgent, customLayouts, selectedCustomLayoutId, customLayoutsLoaded, ideCommand, terminalCommand, terminalTheme.id, enableTerminal, enableChat, terminalMultiplexer, autoLinkPatterns]);
 
   // Handle theme change with immediate save
   const handleThemeChange = useCallback((newThemeId: string) => {
@@ -478,7 +489,7 @@ export function SettingsPage({ config }: SettingsPageProps) {
     }, 500); // 500ms debounce
 
     return () => clearTimeout(timer);
-  }, [theme.id, selectedLayout, agentCommand, acpAgent, customLayouts, selectedCustomLayoutId, customLayoutsLoaded, ideCommand, terminalCommand, multiplexer, autoLinkPatterns, isLoaded, saveConfig]);
+  }, [theme.id, selectedLayout, agentCommand, acpAgent, customLayouts, selectedCustomLayoutId, customLayoutsLoaded, ideCommand, terminalCommand, terminalTheme.id, enableTerminal, enableChat, terminalMultiplexer, autoLinkPatterns, isLoaded, saveConfig]);
 
   // Load applications list
   const loadApplications = useCallback(async () => {
@@ -506,13 +517,30 @@ export function SettingsPage({ config }: SettingsPageProps) {
   const zellijInstalled = depStates["zellij"]?.status === "installed";
   const canUseTerminal = tmuxInstalled || zellijInstalled;
 
-  // Mode change handler
-  const handleModeChange = (newMode: "terminal" | "chat") => {
-    if (newMode === "chat") {
-      if (multiplexer !== "acp") lastTerminalMuxRef.current = multiplexer;
-      setMultiplexer("acp");
+  // Mode toggle handler (多选模式)
+  const toggleMode = (mode: "terminal" | "chat") => {
+    if (mode === "terminal") {
+      // 切换 Terminal 模式
+      const newValue = !enableTerminal;
+      console.log("Toggle Terminal:", enableTerminal, "→", newValue);
+
+      // 至少保留一个模式（Terminal 或 Chat）
+      if (!newValue && !enableChat) {
+        // 如果要禁用 Terminal 但 Chat 也未启用，自动启用 Chat
+        setEnableChat(true);
+      }
+      setEnableTerminal(newValue);
     } else {
-      setMultiplexer(lastTerminalMuxRef.current);
+      // 切换 Chat 模式
+      const newValue = !enableChat;
+      console.log("Toggle Chat:", enableChat, "→", newValue);
+
+      // 至少保留一个模式（Terminal 或 Chat）
+      if (!newValue && !enableTerminal) {
+        // 如果要禁用 Chat 但 Terminal 也未启用，自动启用 Terminal
+        setEnableTerminal(true);
+      }
+      setEnableChat(newValue);
     }
   };
 
@@ -522,28 +550,79 @@ export function SettingsPage({ config }: SettingsPageProps) {
     if (Object.keys(depStates).length === 0) return;
     defaultAppliedRef.current = true;
 
-    if (multiplexer === "tmux" && !tmuxInstalled && !zellijInstalled) {
-      setMultiplexer("acp");
-    } else if (multiplexer === "zellij" && !zellijInstalled) {
-      if (tmuxInstalled) setMultiplexer("tmux");
-      else setMultiplexer("acp");
+    // 如果 Terminal 启用但没有可用的 multiplexer，自动切换
+    if (enableTerminal && !tmuxInstalled && !zellijInstalled) {
+      console.log("No terminal multiplexer available, switching to Chat mode");
+      setEnableTerminal(false);
+      setEnableChat(true);
+    } else if (enableTerminal) {
+      // 确保 terminalMultiplexer 设置为可用的选项
+      if (terminalMultiplexer === "tmux" && !tmuxInstalled && zellijInstalled) {
+        setTerminalMultiplexer("zellij");
+        lastTerminalMuxRef.current = "zellij";
+      } else if (terminalMultiplexer === "zellij" && !zellijInstalled && tmuxInstalled) {
+        setTerminalMultiplexer("tmux");
+        lastTerminalMuxRef.current = "tmux";
+      }
     }
-  }, [isLoaded, isChecking, depStates, multiplexer, tmuxInstalled, zellijInstalled]);
+  }, [isLoaded, isChecking, depStates, enableTerminal, terminalMultiplexer, tmuxInstalled, zellijInstalled]);
 
   // Filter and mark agent options based on mode + command availability
   const acpCompatibleAgentIds = ["claude", "traecli", "codex", "kimi", "gh-copilot", "gemini", "qwen", "opencode", ...customAgents.map(a => a.id)];
   const hasAvailability = Object.keys(commandAvailability).length > 0;
-  const filteredAgentOptions = (mode === "chat"
-    ? agentOptions.filter(a => acpCompatibleAgentIds.includes(a.id))
-    : agentOptions
-  ).map(a => {
+
+  // Terminal Agent 选项（检测 terminalCheck 命令）
+  const terminalAgentOptions = agentOptions.map(a => {
     if (!hasAvailability) return a;
-    const cmd = mode === "chat" ? a.acpCheck : a.terminalCheck;
+    const cmd = a.terminalCheck;
     if (cmd && commandAvailability[cmd] === false) {
       return { ...a, disabled: true, disabledReason: `${cmd} not found — install to enable` };
     }
     return a;
   });
+
+  // Chat Agent 选项（仅 ACP 兼容 + 检测 acpCheck 命令）
+  const chatAgentOptions = agentOptions
+    .filter(a => acpCompatibleAgentIds.includes(a.id))
+    .map(a => {
+      if (!hasAvailability) return a;
+      const cmd = a.acpCheck;
+      if (cmd && commandAvailability[cmd] === false) {
+        return { ...a, disabled: true, disabledReason: `${cmd} not found — install to enable` };
+      }
+      return a;
+    });
+
+  // Auto-correct agent selection if current selection is unavailable
+  useEffect(() => {
+    if (!isLoaded || Object.keys(commandAvailability).length === 0) return;
+
+    // Check Terminal Agent
+    if (isTerminalEnabled && agentCommand) {
+      const currentAgent = agentOptions.find(a => a.id === agentCommand);
+      const cmd = currentAgent?.terminalCheck;
+      if (cmd && commandAvailability[cmd] === false) {
+        // Current agent is unavailable, find first available one
+        const firstAvailable = terminalAgentOptions.find(a => !a.disabled);
+        if (firstAvailable) {
+          setAgentCommand(firstAvailable.id);
+        }
+      }
+    }
+
+    // Check Chat Agent
+    if (isChatEnabled && acpAgent) {
+      const currentAgent = agentOptions.find(a => a.id === acpAgent);
+      const cmd = currentAgent?.acpCheck;
+      if (cmd && commandAvailability[cmd] === false) {
+        // Current agent is unavailable, find first available one
+        const firstAvailable = chatAgentOptions.find(a => !a.disabled);
+        if (firstAvailable) {
+          setAcpAgent(firstAvailable.id);
+        }
+      }
+    }
+  }, [isLoaded, commandAvailability, agentCommand, acpAgent, isTerminalEnabled, isChatEnabled, terminalAgentOptions, chatAgentOptions]);
 
   const getStatusIcon = (status: DependencyStatusType) => {
     switch (status) {
@@ -560,8 +639,17 @@ export function SettingsPage({ config }: SettingsPageProps) {
 
   const muxNames = ["tmux", "zellij"];
   const acpAdapterNames = ["claude-code-acp", "codex-acp"];
-  const hiddenInMode = mode === "chat" ? muxNames : acpAdapterNames;
-  const visibleDepKeys = Object.keys(depStates).filter((k) => !hiddenInMode.includes(k));
+
+  // 根据 enabled_modes 动态计算可见的依赖
+  const visibleDepKeys = Object.keys(depStates).filter((k) => {
+    // 基础依赖始终显示
+    if (!muxNames.includes(k) && !acpAdapterNames.includes(k)) return true;
+    // Terminal 依赖：仅当 Terminal 启用时显示
+    if (muxNames.includes(k)) return isTerminalEnabled;
+    // Chat 依赖：仅当 Chat 启用时显示
+    if (acpAdapterNames.includes(k)) return isChatEnabled;
+    return true;
+  });
   const installedCount = visibleDepKeys.filter((k) => depStates[k]?.status === "installed").length;
 
   const claudeCodeConfig = JSON.stringify(
@@ -609,16 +697,16 @@ env_vars = [
       </div>
 
       <div className="space-y-3">
-        {/* Mode Toggle */}
+        {/* Mode Toggle (多选) */}
         <div className="grid grid-cols-2 gap-3 mb-2">
           {/* Terminal Card */}
           <motion.button
             whileHover={canUseTerminal ? { scale: 1.01 } : {}}
             whileTap={canUseTerminal ? { scale: 0.98 } : {}}
-            onClick={() => canUseTerminal && handleModeChange("terminal")}
+            onClick={() => canUseTerminal && toggleMode("terminal")}
             disabled={!canUseTerminal}
             className={`relative flex flex-col items-center justify-center gap-2 py-5 rounded-xl border-2 text-center transition-all
-              ${mode === "terminal"
+              ${isTerminalEnabled
                 ? "border-[var(--color-highlight)] bg-[var(--color-highlight)]/5"
                 : canUseTerminal
                   ? "border-[var(--color-border)] hover:border-[var(--color-text-muted)] bg-[var(--color-bg-secondary)]"
@@ -626,15 +714,15 @@ env_vars = [
               }`}
           >
             <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${
-              mode === "terminal" ? "bg-[var(--color-highlight)]/10" : "bg-[var(--color-bg-tertiary)]"
+              isTerminalEnabled ? "bg-[var(--color-highlight)]/10" : "bg-[var(--color-bg-tertiary)]"
             }`}>
-              <Terminal className={`w-5 h-5 ${mode === "terminal" ? "text-[var(--color-highlight)]" : "text-[var(--color-text-muted)]"}`} />
+              <Terminal className={`w-5 h-5 ${isTerminalEnabled ? "text-[var(--color-highlight)]" : "text-[var(--color-text-muted)]"}`} />
             </div>
             <div className="text-sm font-semibold text-[var(--color-text)]">Terminal</div>
             {!canUseTerminal && (
               <div className="text-[10px] text-[var(--color-warning)]">Requires tmux or zellij</div>
             )}
-            {mode === "terminal" && (
+            {isTerminalEnabled && (
               <div className="absolute top-2.5 right-2.5 w-5 h-5 rounded-full bg-[var(--color-highlight)] flex items-center justify-center">
                 <Check className="w-3 h-3 text-white" />
               </div>
@@ -645,23 +733,23 @@ env_vars = [
           <motion.button
             whileHover={{ scale: 1.01 }}
             whileTap={{ scale: 0.98 }}
-            onClick={() => handleModeChange("chat")}
+            onClick={() => toggleMode("chat")}
             className={`relative flex flex-col items-center justify-center gap-2 py-5 rounded-xl border-2 text-center transition-all
-              ${mode === "chat"
+              ${isChatEnabled
                 ? "border-[var(--color-highlight)] bg-[var(--color-highlight)]/5"
                 : "border-[var(--color-border)] hover:border-[var(--color-text-muted)] bg-[var(--color-bg-secondary)]"
               }`}
           >
             <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${
-              mode === "chat" ? "bg-[var(--color-highlight)]/10" : "bg-[var(--color-bg-tertiary)]"
+              isChatEnabled ? "bg-[var(--color-highlight)]/10" : "bg-[var(--color-bg-tertiary)]"
             }`}>
-              <MessageSquare className={`w-5 h-5 ${mode === "chat" ? "text-[var(--color-highlight)]" : "text-[var(--color-text-muted)]"}`} />
+              <MessageSquare className={`w-5 h-5 ${isChatEnabled ? "text-[var(--color-highlight)]" : "text-[var(--color-text-muted)]"}`} />
             </div>
             <div className="flex items-center gap-1.5">
               <span className="text-sm font-semibold text-[var(--color-text)]">Chat</span>
               <span className="text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-[var(--color-info)]/15 text-[var(--color-info)]">beta</span>
             </div>
-            {mode === "chat" && (
+            {isChatEnabled && (
               <div className="absolute top-2.5 right-2.5 w-5 h-5 rounded-full bg-[var(--color-highlight)] flex items-center justify-center">
                 <Check className="w-3 h-3 text-white" />
               </div>
@@ -833,7 +921,7 @@ env_vars = [
                 const info = dependencyInfo[depName] || { name: depName, description: "" };
                 const isInstalled = state.status === "installed";
                 const isMux = muxNames.includes(depName);
-                const isMuxActive = isMux && multiplexer === depName && isInstalled;
+                const isMuxActive = isMux && terminalMultiplexer === depName && isInstalled;
                 const canSwitchMux = (opts?.interactive ?? true) && isMux && isInstalled && !isMuxActive;
 
                 return (
@@ -843,7 +931,12 @@ env_vars = [
                     animate={{ opacity: 1, y: 0 }}
                     whileHover={canSwitchMux ? { scale: 1.01 } : {}}
                     whileTap={canSwitchMux ? { scale: 0.98 } : {}}
-                    onClick={() => { if (canSwitchMux) setMultiplexer(depName); }}
+                    onClick={() => {
+                      if (canSwitchMux) {
+                        setTerminalMultiplexer(depName);
+                        lastTerminalMuxRef.current = depName;
+                      }
+                    }}
                     className={`flex items-center justify-between p-3 rounded-lg border transition-all duration-200
                       ${canSwitchMux ? "cursor-pointer hover:border-[var(--color-highlight)]/50" : ""}
                       ${isMuxActive
@@ -918,7 +1011,8 @@ env_vars = [
                     {baseDeps.map((d) => renderDepRow(d))}
                   </div>
 
-                  {mode === "terminal" ? (
+                  {/* Terminal Dependencies (仅当 Terminal 启用时显示) */}
+                  {isTerminalEnabled && (
                     <>
                       {/* Multiplexer Divider + Section */}
                       <div className="flex items-center gap-3 mt-4 mb-2">
@@ -930,7 +1024,10 @@ env_vars = [
                         {muxDeps.map((d) => renderDepRow(d))}
                       </div>
                     </>
-                  ) : (
+                  )}
+
+                  {/* Chat Dependencies (仅当 Chat 启用时显示) */}
+                  {isChatEnabled && (
                     <>
                       {/* ACP Adapter Divider + Section */}
                       <div className="flex items-center gap-3 mt-4 mb-2">
@@ -960,22 +1057,41 @@ env_vars = [
           onToggle={() => toggleSection("devtools")}
         >
           <div className="space-y-6">
-            {/* Coding Agent */}
-            <div>
-              <div className="flex items-center gap-2 mb-3">
-                <Sparkles className="w-4 h-4 text-[var(--color-warning)]" />
-                <span className="text-sm font-medium text-[var(--color-text)]">Coding Agent</span>
+            {/* Terminal Coding Agent (仅当 Terminal 启用时显示) */}
+            {isTerminalEnabled && (
+              <div>
+                <div className="flex items-center gap-2 mb-3">
+                  <Sparkles className="w-4 h-4 text-[var(--color-warning)]" />
+                  <span className="text-sm font-medium text-[var(--color-text)]">Terminal Coding Agent</span>
+                </div>
+                <AgentPicker
+                  value={agentCommand}
+                  onChange={setAgentCommand}
+                  options={terminalAgentOptions}
+                  allowCustom={true}
+                  placeholder="Select agent..."
+                />
               </div>
-              <AgentPicker
-                value={mode === "chat" ? acpAgent : agentCommand}
-                onChange={mode === "chat" ? setAcpAgent : setAgentCommand}
-                options={filteredAgentOptions}
-                allowCustom={mode === "terminal"}
-                placeholder="Select agent..."
-                customAgents={mode === "chat" ? customAgents : undefined}
-                onManageCustomAgents={mode === "chat" ? () => setShowCustomAgentModal(true) : undefined}
-              />
-            </div>
+            )}
+
+            {/* Chat Coding Agent (仅当 Chat 启用时显示) */}
+            {isChatEnabled && (
+              <div>
+                <div className="flex items-center gap-2 mb-3">
+                  <MessageSquare className="w-4 h-4 text-[var(--color-info)]" />
+                  <span className="text-sm font-medium text-[var(--color-text)]">Chat Coding Agent</span>
+                </div>
+                <AgentPicker
+                  value={acpAgent}
+                  onChange={setAcpAgent}
+                  options={chatAgentOptions}
+                  allowCustom={false}
+                  placeholder="Select agent..."
+                  customAgents={customAgents}
+                  onManageCustomAgents={() => setShowCustomAgentModal(true)}
+                />
+              </div>
+            )}
 
             {/* Default IDE */}
             <div>
@@ -1145,8 +1261,8 @@ env_vars = [
           </div>
         </Section>
 
-        {/* Task Layout Section (Terminal mode only) */}
-        {mode === "terminal" && (
+        {/* Task Layout Section (仅当 Terminal 启用时显示) */}
+        {isTerminalEnabled && (
           <>
             <Section
               id="layout"

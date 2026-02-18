@@ -56,10 +56,20 @@ pub struct Task {
     /// 持久化的 session name（Zellij 有 40 字符限制）
     #[serde(default)]
     pub session_name: String,
+    /// 是否启用 Terminal 模式
+    #[serde(default = "default_true")]
+    pub enable_terminal: bool,
+    /// 是否启用 Chat 模式
+    #[serde(default)]
+    pub enable_chat: bool,
 }
 
 fn default_multiplexer() -> String {
     "tmux".to_string()
+}
+
+fn default_true() -> bool {
+    true
 }
 
 fn default_updated_at() -> DateTime<Utc> {

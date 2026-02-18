@@ -30,6 +30,9 @@ interface TaskInfoPanelProps {
   projectName?: string;
   onClose: () => void;
   onEnterTerminal?: () => void;
+  onEnterMode?: (mode: "terminal" | "chat") => void; // 通用模式切换
+  enableTerminal?: boolean; // Terminal 模式是否启用
+  enableChat?: boolean; // Chat 模式是否启用
   onRecover?: () => void;
   onClean?: () => void;
   isTerminalMode?: boolean;
@@ -68,6 +71,9 @@ export function TaskInfoPanel({
   projectName,
   onClose,
   onEnterTerminal,
+  onEnterMode,
+  enableTerminal,
+  enableChat,
   onRecover,
   onClean,
   isTerminalMode = false,
@@ -381,11 +387,32 @@ export function TaskInfoPanel({
                   ]}
                 />
               )}
-              {onEnterTerminal && (
-                <Button variant="secondary" size="sm" onClick={onEnterTerminal}>
-                  <Terminal className="w-4 h-4 mr-1" />
-                  Terminal
-                </Button>
+              {/* 动态显示 Terminal/Chat 按钮（根据配置） */}
+              {onEnterMode ? (
+                <>
+                  {/* Terminal 按钮（仅当启用 Terminal 时显示） */}
+                  {enableTerminal && (
+                    <Button variant="secondary" size="sm" onClick={() => onEnterMode("terminal")}>
+                      <Terminal className="w-4 h-4 mr-1" />
+                      Terminal
+                    </Button>
+                  )}
+                  {/* Chat 按钮（仅当启用 Chat 时显示） */}
+                  {enableChat && (
+                    <Button variant="secondary" size="sm" onClick={() => onEnterMode("chat")}>
+                      <MessageSquare className="w-4 h-4 mr-1" />
+                      Chat
+                    </Button>
+                  )}
+                </>
+              ) : (
+                /* 向后兼容：使用旧的 onEnterTerminal prop */
+                onEnterTerminal && (
+                  <Button variant="secondary" size="sm" onClick={onEnterTerminal}>
+                    <Terminal className="w-4 h-4 mr-1" />
+                    Terminal
+                  </Button>
+                )
               )}
             </>
           )}

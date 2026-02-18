@@ -44,6 +44,7 @@ interface TaskChatProps {
   onDisconnected?: () => void;
   fullscreen?: boolean;
   onToggleFullscreen?: () => void;
+  hideHeader?: boolean;
 }
 
 type ToolMessage = {
@@ -285,6 +286,7 @@ export function TaskChat({
   onDisconnected: onDisconnectedProp,
   fullscreen = false,
   onToggleFullscreen,
+  hideHeader = false,
 }: TaskChatProps) {
   // ─── Multi-chat state ───────────────────────────────────────────────────
   const [chats, setChats] = useState<ChatSessionResponse[]>([]);
@@ -397,8 +399,11 @@ export function TaskChat({
 
   // Auto-start
   useEffect(() => {
-    if (autoStart && !isLive) setSessionStarted(true);
-  }, [autoStart, isLive]);
+    if (autoStart && !isLive && !sessionStarted) {
+      setSessionStarted(true);
+      onStartSession();
+    }
+  }, [autoStart, isLive, sessionStarted, onStartSession]);
 
   // Load task files for @ mention
   useEffect(() => {
@@ -1322,11 +1327,13 @@ export function TaskChat({
   if (!showChat) {
     return (
       <motion.div layout className="flex-1 flex flex-col rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-tertiary)] overflow-hidden">
-        <div className="flex items-center justify-between px-3 py-2 bg-[var(--color-bg)] border-b border-[var(--color-border)]">
-          <div className="flex items-center gap-2 text-sm text-[var(--color-text-muted)]">
-            {AgentIcon ? <AgentIcon size={16} /> : <MessageSquare className="w-4 h-4" />}<span>{agentLabel}</span>
+        {!hideHeader && (
+          <div className="flex items-center justify-between px-3 py-2 bg-[var(--color-bg)] border-b border-[var(--color-border)]">
+            <div className="flex items-center gap-2 text-sm text-[var(--color-text-muted)]">
+              {AgentIcon ? <AgentIcon size={16} /> : <MessageSquare className="w-4 h-4" />}<span>{agentLabel}</span>
+            </div>
           </div>
-        </div>
+        )}
         <div className="flex-1 flex flex-col items-center justify-center">
           {AgentIcon ? <AgentIcon size={40} className="mb-3" /> : <MessageSquare className="w-10 h-10 text-[var(--color-text-muted)] mb-3" />}
           <p className="text-sm text-[var(--color-text-muted)] mb-3">Chat session not started</p>
@@ -1345,7 +1352,8 @@ export function TaskChat({
       className={`flex-1 flex flex-col overflow-hidden ${fullscreen ? "" : "rounded-lg border border-[var(--color-border)]"}`}
     >
       {/* Header */}
-      <div className="flex items-center justify-between px-3 py-2 bg-[var(--color-bg)] border-b border-[var(--color-border)]">
+      {!hideHeader && (
+      <div className="flex items-center justify-between px-3 py-2 bg-[var(--color-bg-secondary)] border-b border-[var(--color-border)]">
         <div className="flex items-center gap-2 text-sm min-w-0">
           {AgentIcon ? <AgentIcon size={16} className="text-[var(--color-text-muted)] shrink-0" /> : <MessageSquare className="w-4 h-4 text-[var(--color-text-muted)] shrink-0" />}
 
@@ -1456,6 +1464,7 @@ export function TaskChat({
           )}
         </div>
       </div>
+      )}
 
       {/* Messages */}
       <div className="flex-1 overflow-y-auto px-4 py-3 space-y-3 min-h-0 bg-[var(--color-bg-secondary)]">

@@ -18,9 +18,14 @@ pub struct ConfigResponse {
     pub theme: ThemeConfigDto,
     pub layout: LayoutConfigDto,
     pub web: WebConfigDto,
-    pub multiplexer: String,
     pub auto_link: AutoLinkConfigDto,
     pub acp: AcpConfigDto,
+    /// 是否启用 Terminal 模式
+    pub enable_terminal: bool,
+    /// 是否启用 Chat 模式
+    pub enable_chat: bool,
+    /// Terminal 模式使用的复用器 ("tmux" | "zellij")
+    pub terminal_multiplexer: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -89,7 +94,6 @@ impl From<&Config> for ConfigResponse {
                 terminal: config.web.terminal.clone(),
                 terminal_theme: config.web.terminal_theme.clone(),
             },
-            multiplexer: config.multiplexer.to_string(),
             auto_link: AutoLinkConfigDto {
                 patterns: config.auto_link.patterns.clone(),
             },
@@ -110,6 +114,9 @@ impl From<&Config> for ConfigResponse {
                     })
                     .collect(),
             },
+            enable_terminal: config.enable_terminal,
+            enable_chat: config.enable_chat,
+            terminal_multiplexer: config.terminal_multiplexer.to_string(),
         }
     }
 }
@@ -120,9 +127,14 @@ pub struct ConfigPatchRequest {
     pub theme: Option<ThemeConfigPatch>,
     pub layout: Option<LayoutConfigPatch>,
     pub web: Option<WebConfigPatch>,
-    pub multiplexer: Option<String>,
     pub auto_link: Option<AutoLinkConfigPatch>,
     pub acp: Option<AcpConfigPatch>,
+    /// 是否启用 Terminal 模式
+    pub enable_terminal: Option<bool>,
+    /// 是否启用 Chat 模式
+    pub enable_chat: Option<bool>,
+    /// Terminal 模式使用的复用器 ("tmux" | "zellij")
+    pub terminal_multiplexer: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -199,10 +211,20 @@ pub async fn patch_config(
         }
     }
 
-    // Apply multiplexer patch
-    if let Some(mux_str) = patch.multiplexer {
-        if let Ok(mux) = mux_str.parse::<config::Multiplexer>() {
-            config.multiplexer = mux;
+    // Apply enable_terminal patch
+    if let Some(enable_terminal) = patch.enable_terminal {
+        config.enable_terminal = enable_terminal;
+    }
+
+    // Apply enable_chat patch
+    if let Some(enable_chat) = patch.enable_chat {
+        config.enable_chat = enable_chat;
+    }
+
+    // Apply terminal_multiplexer patch
+    if let Some(mux_str) = patch.terminal_multiplexer {
+        if let Ok(mux) = mux_str.parse::<config::TerminalMultiplexer>() {
+            config.terminal_multiplexer = mux;
         }
     }
 

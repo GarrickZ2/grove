@@ -23,6 +23,8 @@ interface TaskEditorProps {
   fullscreen?: boolean;
   /** Toggle fullscreen mode */
   onToggleFullscreen?: () => void;
+  /** Hide the editor header (for FlexLayout tabs) */
+  hideHeader?: boolean;
 }
 
 /** Map file extensions to Monaco language IDs */
@@ -74,7 +76,7 @@ function getLanguage(filePath: string): string {
   return map[ext] || 'plaintext';
 }
 
-export function TaskEditor({ projectId, taskId, onClose, fullscreen = false, onToggleFullscreen }: TaskEditorProps) {
+export function TaskEditor({ projectId, taskId, onClose, fullscreen = false, onToggleFullscreen, hideHeader = false }: TaskEditorProps) {
   const [files, setFiles] = useState<string[]>([]);
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
   const [fileContent, setFileContent] = useState<string>('');
@@ -294,7 +296,8 @@ export function TaskEditor({ projectId, taskId, onClose, fullscreen = false, onT
 
   return (
     <div className={`flex-1 flex flex-col bg-[var(--color-bg-secondary)] overflow-hidden ${fullscreen ? '' : 'rounded-lg border border-[var(--color-border)]'}`}>
-      {/* Header */}
+      {/* Header - 只在非 hideHeader 模式下显示 */}
+      {!hideHeader && (
       <div className="flex items-center justify-between px-4 py-2 bg-[var(--color-bg)] border-b border-[var(--color-border)]">
         <div className="flex items-center gap-2 text-sm text-[var(--color-text)] min-w-0">
           <FileCode className="w-4 h-4 flex-shrink-0" />
@@ -333,6 +336,7 @@ export function TaskEditor({ projectId, taskId, onClose, fullscreen = false, onT
           </Button>
         </div>
       </div>
+      )}
 
       {/* Main content: File tree + Editor */}
       <div className="flex-1 flex min-h-0">

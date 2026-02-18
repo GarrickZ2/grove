@@ -2,7 +2,7 @@ import { useState, useCallback } from "react";
 import type { Task } from "../data/types";
 import type { TabType } from "../components/Tasks/TaskInfoPanel";
 
-type ViewMode = "list" | "info" | "terminal";
+type ViewMode = "list" | "info" | "terminal" | "chat";
 
 /**
  * Context menu state
@@ -39,6 +39,7 @@ export interface TaskPageHandlers {
 
   // View mode
   handleEnterTerminal: () => void;
+  handleEnterMode: (mode: "terminal" | "chat") => void;
   setViewMode: (mode: ViewMode) => void;
 
   // Panels (Review/Editor)
@@ -92,11 +93,22 @@ export function useTaskPageState(): [TaskPageState, TaskPageHandlers] {
     setEditorOpen(false);
   }, []);
 
-  // Handle double click - enter Terminal mode (only for non-archived tasks)
+  // Handle double click - enter Terminal or Chat mode (only for non-archived tasks)
+  // 根据 Task 自身的 enable_terminal/enable_chat 决定打开方式（优先 Chat）
   const handleDoubleClickTask = useCallback((task: Task) => {
     if (task.status === "archived") return;
     setSelectedTask(task);
-    setViewMode("terminal");
+
+    // 根据 Task 的 enable_terminal/enable_chat 决定打开方式（优先 Chat）
+    if (task.enableChat) {
+      setViewMode("chat");
+    } else if (task.enableTerminal) {
+      setViewMode("terminal");
+    } else {
+      // 默认进入 Terminal 模式
+      setViewMode("terminal");
+    }
+
     setReviewOpen(false);
     setEditorOpen(false);
   }, []);
@@ -115,11 +127,16 @@ export function useTaskPageState(): [TaskPageState, TaskPageHandlers] {
     }
   }, [viewMode]);
 
-  // Handle entering terminal mode from info panel (only for non-archived tasks)
-  const handleEnterTerminal = useCallback(() => {
+  // Handle entering specific mode (terminal or chat) from info panel
+  const handleEnterMode = useCallback((mode: "terminal" | "chat") => {
     if (selectedTask?.status === "archived") return;
-    setViewMode("terminal");
+    setViewMode(mode);
   }, [selectedTask]);
+
+  // Handle entering terminal mode from info panel (向后兼容)
+  const handleEnterTerminal = useCallback(() => {
+    handleEnterMode("terminal");
+  }, [handleEnterMode]);
 
   // Handle toggle review (mutual exclusion with editor)
   const handleToggleReview = useCallback(() => {
@@ -219,6 +236,7 @@ export function useTaskPageState(): [TaskPageState, TaskPageHandlers] {
     handleCloseTask,
     setSelectedTask,
     handleEnterTerminal,
+    handleEnterMode,
     setViewMode,
     handleToggleReview,
     handleToggleEditor,

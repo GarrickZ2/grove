@@ -13,8 +13,8 @@ use std::path::Path as StdPath;
 use crate::git;
 use crate::hooks;
 use crate::model::loader;
-use crate::session;
-use crate::storage::{self, comments, config::Multiplexer, notes, tasks, workspace};
+use crate::session::{self, SessionType};
+use crate::storage::{self, comments, notes, tasks, workspace};
 
 use super::projects::{CommitResponse, TaskResponse};
 
@@ -320,7 +320,7 @@ fn get_git_user_name(project_key: &str, task_id: &str) -> Option<String> {
 }
 
 /// Convert Worktree to TaskResponse
-fn worktree_to_response(wt: &crate::model::Worktree) -> TaskResponse {
+fn worktree_to_response(wt: &crate::model::Worktree, project_key: &str) -> TaskResponse {
     // Get commits
     let commits = git::recent_log(&wt.path, &wt.target, 10)
         .unwrap_or_default()
@@ -337,6 +337,13 @@ fn worktree_to_response(wt: &crate::model::Worktree) -> TaskResponse {
         .map(|stats| stats.len() as u32)
         .unwrap_or(0);
 
+    // Get enable_terminal/enable_chat from Task data
+    let (enable_terminal, enable_chat) = tasks::get_task(project_key, &wt.id)
+        .ok()
+        .flatten()
+        .map(|t| (t.enable_terminal, t.enable_chat))
+        .unwrap_or((true, false));
+
     TaskResponse {
         id: wt.id.clone(),
         name: wt.task_name.clone(),
@@ -351,6 +358,8 @@ fn worktree_to_response(wt: &crate::model::Worktree) -> TaskResponse {
         updated_at: wt.updated_at.to_rfc3339(),
         path: wt.path.clone(),
         multiplexer: wt.multiplexer.clone(),
+        enable_terminal,
+        enable_chat,
     }
 }
 
@@ -377,21 +386,24 @@ pub async fn list_tasks(
     Path(id): Path<String>,
     Query(query): Query<TaskListQuery>,
 ) -> Result<Json<TaskListResponse>, StatusCode> {
-    let (project, _project_key) = find_project_by_id(&id)?;
+    let (project, project_key) = find_project_by_id(&id)?;
 
     let filter = query.filter.as_deref().unwrap_or("active");
 
     let mut tasks: Vec<TaskResponse> = if filter == "archived" {
         // Load archived tasks
         let archived = loader::load_archived_worktrees(&project.path);
-        archived.iter().map(worktree_to_response).collect()
+        archived
+            .iter()
+            .map(|wt| worktree_to_response(wt, &project_key))
+            .collect()
     } else {
         // Load active tasks
         let (current, other, _) = loader::load_worktrees(&project.path);
         current
             .iter()
             .chain(other.iter())
-            .map(worktree_to_response)
+            .map(|wt| worktree_to_response(wt, &project_key))
             .collect()
     };
 
@@ -406,7 +418,7 @@ pub async fn list_tasks(
 pub async fn get_task(
     Path((id, task_id)): Path<(String, String)>,
 ) -> Result<Json<TaskResponse>, StatusCode> {
-    let (project, _project_key) = find_project_by_id(&id)?;
+    let (project, project_key) = find_project_by_id(&id)?;
 
     // Load all worktrees and find the one with matching ID
     let (current, other, _) = loader::load_worktrees(&project.path);
@@ -417,7 +429,7 @@ pub async fn get_task(
         .find(|wt| wt.id == task_id);
 
     if let Some(wt) = task {
-        return Ok(Json(worktree_to_response(wt)));
+        return Ok(Json(worktree_to_response(wt, &project_key)));
     }
 
     // Check archived
@@ -425,7 +437,7 @@ pub async fn get_task(
     let task = archived.iter().find(|wt| wt.id == task_id);
 
     if let Some(wt) = task {
-        return Ok(Json(worktree_to_response(wt)));
+        return Ok(Json(worktree_to_response(wt, &project_key)));
     }
 
     Err(StatusCode::NOT_FOUND)
@@ -454,8 +466,10 @@ pub async fn create_task(
         &project_key,
         req.name.clone(),
         target.clone(),
-        &full_config.multiplexer,
+        &full_config.default_session_type(),
         autolink_patterns,
+        full_config.enable_terminal,
+        full_config.enable_chat,
     )
     .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
@@ -486,6 +500,8 @@ pub async fn create_task(
         updated_at: result.task.updated_at.to_rfc3339(),
         path: result.worktree_path.clone(),
         multiplexer: result.task.multiplexer.clone(),
+        enable_terminal: result.task.enable_terminal,
+        enable_chat: result.task.enable_chat,
     }))
 }
 
@@ -564,7 +580,6 @@ pub async fn archive_task(
     }
 
     // Get task info (need multiplexer + session_name before archive moves it)
-    let global_mux = storage::config::load_config().multiplexer;
     let task_info = tasks::get_task(&project_key, &task_id).ok().flatten();
     let task_mux_str = task_info
         .as_ref()
@@ -582,7 +597,6 @@ pub async fn archive_task(
         &task_id,
         &task_mux_str,
         &task_sname,
-        &global_mux,
     )
     .map_err(|_| {
         (
@@ -608,7 +622,7 @@ pub async fn archive_task(
         )
     })?;
 
-    Ok(Json(worktree_to_response(task)))
+    Ok(Json(worktree_to_response(task, &project_key)))
 }
 
 /// POST /api/v1/projects/{id}/tasks/{taskId}/recover
@@ -658,7 +672,7 @@ pub async fn recover_task(
             )
         })?;
 
-    Ok(Json(worktree_to_response(task)))
+    Ok(Json(worktree_to_response(task, &project_key)))
 }
 
 /// DELETE /api/v1/projects/{id}/tasks/{taskId}
@@ -679,11 +693,10 @@ pub async fn delete_task(
         .ok_or(StatusCode::NOT_FOUND)?;
 
     // Kill session
-    let global_mux = storage::config::load_config().multiplexer;
-    let task_mux = session::resolve_multiplexer(&task.multiplexer, &global_mux);
+    let task_session_type = session::resolve_session_type(&task.multiplexer);
     let session_name = session::resolve_session_name(&task.session_name, &project_key, &task_id);
-    let _ = session::kill_session(&task_mux, &session_name);
-    if task_mux == Multiplexer::Zellij {
+    let _ = session::kill_session(&task_session_type, &session_name);
+    if matches!(task_session_type, SessionType::Zellij) {
         crate::zellij::layout::remove_session_layout(&session_name);
     }
 
@@ -1132,9 +1145,6 @@ pub async fn reset_task(
             )
         })?;
 
-    // Get global multiplexer
-    let global_mux = storage::config::load_config().multiplexer;
-
     // Call shared operation
     match crate::operations::tasks::reset_task(
         &project.path,
@@ -1142,7 +1152,6 @@ pub async fn reset_task(
         &task_id,
         &task_info.multiplexer,
         &task_info.session_name,
-        &global_mux,
     ) {
         Ok(_) => Ok(Json(GitOperationResponse {
             success: true,

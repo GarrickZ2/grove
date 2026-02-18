@@ -233,17 +233,18 @@ export function BlitzPage({ onSwitchToZen }: BlitzPageProps) {
     }
   }, [pageState.viewMode, pageHandlers]);
 
-  const handleStartSession = useCallback(() => {
-    pageHandlers.setViewMode("terminal");
-  }, [pageHandlers]);
+  // Deprecated - page is no longer in use
+  // const handleStartSession = useCallback(() => {
+  //   pageHandlers.setViewMode("terminal");
+  // }, [pageHandlers]);
 
-  const handleTerminalConnected = useCallback(async () => {
-    await refresh();
-  }, [refresh]);
+  // const handleTerminalConnected = useCallback(async () => {
+  //   await refresh();
+  // }, [refresh]);
 
-  const handleTerminalDisconnected = useCallback(async () => {
-    await refresh();
-  }, [refresh]);
+  // const handleTerminalDisconnected = useCallback(async () => {
+  //   await refresh();
+  // }, [refresh]);
 
   // Task navigation hook (for Blitz tasks)
   const navHandlers = useTaskNavigation({
@@ -496,7 +497,9 @@ export function BlitzPage({ onSwitchToZen }: BlitzPageProps) {
                       task={currentSelected.task}
                       projectName={currentSelected.projectName}
                       onClose={handleCloseTask}
-                      onEnterTerminal={currentSelected.task.status !== "archived" ? pageHandlers.handleEnterTerminal : undefined}
+                      onEnterMode={currentSelected.task.status !== "archived" ? pageHandlers.handleEnterMode : undefined}
+                      enableTerminal={currentSelected.task.enableTerminal}
+                      enableChat={currentSelected.task.enableChat}
                       onClean={opsHandlers.handleClean}
                       onCommit={currentSelected.task.status !== "archived" ? opsHandlers.handleCommit : undefined}
                       onReview={currentSelected.task.status !== "archived" ? pageHandlers.handleReviewFromInfo : undefined}
@@ -552,10 +555,7 @@ export function BlitzPage({ onSwitchToZen }: BlitzPageProps) {
                     projectId={currentSelected.projectId}
                     task={currentSelected.task}
                     projectName={currentSelected.projectName}
-                    reviewOpen={pageState.reviewOpen}
-                    editorOpen={pageState.editorOpen}
-                    onToggleReview={pageHandlers.handleToggleReview}
-                    onToggleEditor={pageHandlers.handleToggleEditor}
+                    onAddPanel={() => {}}
                     onCommit={opsHandlers.handleCommit}
                     onRebase={opsHandlers.handleRebase}
                     onSync={opsHandlers.handleSync}
@@ -563,9 +563,6 @@ export function BlitzPage({ onSwitchToZen }: BlitzPageProps) {
                     onArchive={opsHandlers.handleArchive}
                     onClean={opsHandlers.handleClean}
                     onReset={opsHandlers.handleReset}
-                    onStartSession={handleStartSession}
-                    onTerminalConnected={handleTerminalConnected}
-                    onTerminalDisconnected={handleTerminalDisconnected}
                   />
                 </motion.div>
               )}
