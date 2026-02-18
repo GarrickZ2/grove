@@ -67,11 +67,26 @@ const DEPENDENCIES: &[DependencyDef] = &[
     },
 ];
 
+/// ACP adapter dependency names
+const ACP_DEP_NAMES: &[&str] = &["claude-code-acp", "codex-acp"];
+
 fn check_dependency(dep: &DependencyDef) -> DependencyStatus {
     // 对 tmux 和 zellij 使用 check.rs 中的函数（支持测试环境变量）
     let installed = match dep.name {
         "tmux" => crate::check::check_tmux_available(),
         "zellij" => crate::check::check_zellij_available(),
+        name if ACP_DEP_NAMES.contains(&name) => {
+            // 测试模式：GROVE_TEST_NO_ACP=1 模拟所有 ACP adapter 不存在
+            if std::env::var("GROVE_TEST_NO_ACP").is_ok() {
+                false
+            } else {
+                Command::new(dep.check_cmd)
+                    .args(dep.check_args)
+                    .output()
+                    .map(|o| o.status.success())
+                    .unwrap_or(false)
+            }
+        }
         _ => {
             // 其他依赖直接执行命令检查
             Command::new(dep.check_cmd)
@@ -186,11 +201,29 @@ pub struct CheckCommandsResponse {
     pub results: HashMap<String, bool>,
 }
 
+/// Known ACP agent commands — forced to false when GROVE_TEST_NO_ACP=1
+const ACP_AGENT_COMMANDS: &[&str] = &[
+    "claude-code-acp",
+    "codex-acp",
+    "gemini",
+    "copilot",
+    "opencode",
+    "qwen",
+    "kimi",
+    "traecli",
+];
+
 pub async fn check_commands(Json(body): Json<CheckCommandsRequest>) -> Json<CheckCommandsResponse> {
+    let test_no_acp = std::env::var("GROVE_TEST_NO_ACP").is_ok();
+
     let results: HashMap<String, bool> = body
         .commands
         .iter()
         .map(|cmd| {
+            // 测试模式：GROVE_TEST_NO_ACP=1 模拟所有 ACP agent 命令不存在
+            if test_no_acp && ACP_AGENT_COMMANDS.contains(&cmd.as_str()) {
+                return (cmd.clone(), false);
+            }
             let exists = Command::new("which")
                 .arg(cmd)
                 .output()

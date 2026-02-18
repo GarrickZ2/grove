@@ -9,6 +9,7 @@ interface ButtonProps {
   disabled?: boolean;
   className?: string;
   type?: "button" | "submit" | "reset";
+  title?: string;
 }
 
 export function Button({
@@ -19,6 +20,7 @@ export function Button({
   disabled = false,
   className = "",
   type = "button",
+  title,
 }: ButtonProps) {
   const baseStyles =
     "inline-flex items-center justify-center font-medium rounded-lg transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-[var(--color-bg)]";
@@ -45,6 +47,7 @@ export function Button({
       whileTap={{ scale: disabled ? 1 : 0.98 }}
       onClick={onClick}
       disabled={disabled}
+      title={title}
       className={`${baseStyles} ${variants[variant]} ${sizes[size]} ${
         disabled ? "opacity-50 cursor-not-allowed" : "cursor-pointer"
       } ${className}`}

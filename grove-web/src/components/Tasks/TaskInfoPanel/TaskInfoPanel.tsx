@@ -84,7 +84,7 @@ export function TaskInfoPanel({
   onEnterWorkspace,
   onAddPanel,
 }: TaskInfoPanelProps) {
-  const { config } = useConfig();
+  const { config, terminalAvailable, chatAvailable } = useConfig();
   const isArchived = task.status === "archived";
   const isBroken = task.status === "broken";
   const canOperate = !isArchived && !isBroken;
@@ -291,7 +291,9 @@ export function TaskInfoPanel({
                   variant="ghost"
                   size="sm"
                   onClick={() => onAddPanel('chat')}
-                  className="text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-bg-tertiary)]"
+                  disabled={!chatAvailable}
+                  title={!chatAvailable ? "No ACP agent available" : undefined}
+                  className={`text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-bg-tertiary)] ${!chatAvailable ? "opacity-50 cursor-not-allowed" : ""}`}
                 >
                   <MessageSquare className="w-4 h-4 mr-1" />
                   Chat
@@ -304,7 +306,9 @@ export function TaskInfoPanel({
                   variant="ghost"
                   size="sm"
                   onClick={() => onAddPanel('terminal')}
-                  className="text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-bg-tertiary)]"
+                  disabled={!terminalAvailable}
+                  title={!terminalAvailable ? "Requires tmux or zellij" : undefined}
+                  className={`text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-bg-tertiary)] ${!terminalAvailable ? "opacity-50 cursor-not-allowed" : ""}`}
                 >
                   <Terminal className="w-4 h-4 mr-1" />
                   Terminal

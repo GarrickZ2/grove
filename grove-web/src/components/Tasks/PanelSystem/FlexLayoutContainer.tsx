@@ -32,7 +32,7 @@ export const FlexLayoutContainer = forwardRef<
   FlexLayoutContainerHandle,
   FlexLayoutContainerProps
 >(({ task, projectId, initialLayout, onLayoutChange, fullscreen = false, onToggleFullscreen }, ref) => {
-  const { config } = useConfig();
+  const { config, terminalAvailable, chatAvailable } = useConfig();
 
   // Panel instance counters
   const instanceCounters = useRef<Record<PanelType, number>>({
@@ -63,11 +63,11 @@ export const FlexLayoutContainer = forwardRef<
 
   // Create default layout
   const createDefaultLayout = (): IJsonModel => {
-    // Determine default panel based on global config
+    // Determine default panel based on global config (only if enabled AND available)
     let defaultPanelType: PanelType | null = null;
-    if (config?.enable_chat) {
+    if (config?.enable_chat && chatAvailable) {
       defaultPanelType = 'chat';
-    } else if (config?.enable_terminal) {
+    } else if (config?.enable_terminal && terminalAvailable) {
       defaultPanelType = 'terminal';
     }
 

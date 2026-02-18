@@ -44,6 +44,7 @@ interface ToolbarButtonProps {
   variant?: "default" | "warning" | "danger";
   disabled?: boolean;
   shortcut?: string;
+  title?: string;
 }
 
 function ToolbarButton({
@@ -54,6 +55,7 @@ function ToolbarButton({
   variant = "default",
   disabled = false,
   shortcut,
+  title,
 }: ToolbarButtonProps) {
   const baseClass = "flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium rounded-md transition-colors";
 
@@ -77,6 +79,7 @@ function ToolbarButton({
       whileTap={{ scale: disabled ? 1 : 0.98 }}
       onClick={onClick}
       disabled={disabled}
+      title={title}
       className={`${baseClass} ${getVariantClass()} ${disabled ? "opacity-50 cursor-not-allowed" : ""}`}
     >
       <Icon className="w-3.5 h-3.5" />
@@ -193,7 +196,7 @@ export function TaskToolbar({
   onClean,
   onReset,
 }: TaskToolbarProps) {
-  const { config } = useConfig();
+  const { config, terminalAvailable, chatAvailable } = useConfig();
   const isArchived = task.status === "archived";
   const isBroken = task.status === "broken";
   const canOperate = !isArchived && !isBroken;
@@ -235,7 +238,8 @@ export function TaskToolbar({
             icon={MessageSquare}
             label="Chat"
             onClick={onAddChat}
-            disabled={isArchived}
+            disabled={isArchived || !chatAvailable}
+            title={!chatAvailable ? "No ACP agent available" : undefined}
             shortcut="c"
           />
         )}
@@ -245,7 +249,8 @@ export function TaskToolbar({
             icon={Terminal}
             label="Terminal"
             onClick={onAddTerminal}
-            disabled={isArchived}
+            disabled={isArchived || !terminalAvailable}
+            title={!terminalAvailable ? "Requires tmux or zellij" : undefined}
             shortcut="t"
           />
         )}

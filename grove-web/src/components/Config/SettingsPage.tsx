@@ -28,7 +28,7 @@ import {
 } from "lucide-react";
 import { Button, Combobox, AppPicker, AgentPicker, agentOptions, ideAppOptions, terminalAppOptions, CustomAgentModal } from "../ui";
 import type { ComboboxOption } from "../ui";
-import { useTheme, themes, useTerminalTheme, terminalThemes } from "../../context";
+import { useTheme, themes, useTerminalTheme, terminalThemes, useConfig } from "../../context";
 import {
   getConfig,
   patchConfig,
@@ -237,10 +237,6 @@ export function SettingsPage({ config }: SettingsPageProps) {
   const [enableTerminal, setEnableTerminal] = useState(true);
   const [enableChat, setEnableChat] = useState(false);
   const [terminalMultiplexer, setTerminalMultiplexer] = useState("tmux");
-
-  // Mode helpers - 简化为直接使用布尔值
-  const isTerminalEnabled = enableTerminal;
-  const isChatEnabled = enableChat;
 
   const lastTerminalMuxRef = useRef<string>("tmux");
   const defaultAppliedRef = useRef(false);
@@ -544,19 +540,13 @@ export function SettingsPage({ config }: SettingsPageProps) {
     }
   };
 
-  // Default mode derivation: if current mux is unavailable, auto-correct on first load
+  // Auto-correct multiplexer selection (not enable/disable state) on first load
   useEffect(() => {
     if (defaultAppliedRef.current || !isLoaded || isChecking) return;
     if (Object.keys(depStates).length === 0) return;
     defaultAppliedRef.current = true;
 
-    // 如果 Terminal 启用但没有可用的 multiplexer，自动切换
-    if (enableTerminal && !tmuxInstalled && !zellijInstalled) {
-      console.log("No terminal multiplexer available, switching to Chat mode");
-      setEnableTerminal(false);
-      setEnableChat(true);
-    } else if (enableTerminal) {
-      // 确保 terminalMultiplexer 设置为可用的选项
+    if (enableTerminal) {
       if (terminalMultiplexer === "tmux" && !tmuxInstalled && zellijInstalled) {
         setTerminalMultiplexer("zellij");
         lastTerminalMuxRef.current = "zellij";
@@ -593,36 +583,46 @@ export function SettingsPage({ config }: SettingsPageProps) {
       return a;
     });
 
-  // Auto-correct agent selection if current selection is unavailable
+  // Three-state feature availability
+  const isTerminalAvailable = canUseTerminal;
+  const isChatAvailable = chatAgentOptions.some(a => !a.disabled) || customAgents.length > 0;
+
+  type FeatureState = 'enabled' | 'unavailable' | 'disabled';
+  const terminalState: FeatureState = !enableTerminal ? 'disabled' : isTerminalAvailable ? 'enabled' : 'unavailable';
+  const chatState: FeatureState = !enableChat ? 'disabled' : isChatAvailable ? 'enabled' : 'unavailable';
+
+  // Sync availability to ConfigContext for Task panel components
+  const { updateAvailability } = useConfig();
+  useEffect(() => {
+    if (Object.keys(depStates).length > 0) {
+      updateAvailability(isTerminalAvailable, isChatAvailable);
+    }
+  }, [depStates, commandAvailability, isTerminalAvailable, isChatAvailable, updateAvailability]);
+
+  // Auto-correct agent selection: pick first available, or clear if none available
   useEffect(() => {
     if (!isLoaded || Object.keys(commandAvailability).length === 0) return;
 
-    // Check Terminal Agent
-    if (isTerminalEnabled && agentCommand) {
+    // Terminal Agent
+    if (agentCommand) {
       const currentAgent = agentOptions.find(a => a.id === agentCommand);
       const cmd = currentAgent?.terminalCheck;
       if (cmd && commandAvailability[cmd] === false) {
-        // Current agent is unavailable, find first available one
         const firstAvailable = terminalAgentOptions.find(a => !a.disabled);
-        if (firstAvailable) {
-          setAgentCommand(firstAvailable.id);
-        }
+        setAgentCommand(firstAvailable?.id ?? "");
       }
     }
 
-    // Check Chat Agent
-    if (isChatEnabled && acpAgent) {
+    // Chat Agent
+    if (acpAgent) {
       const currentAgent = agentOptions.find(a => a.id === acpAgent);
       const cmd = currentAgent?.acpCheck;
       if (cmd && commandAvailability[cmd] === false) {
-        // Current agent is unavailable, find first available one
         const firstAvailable = chatAgentOptions.find(a => !a.disabled);
-        if (firstAvailable) {
-          setAcpAgent(firstAvailable.id);
-        }
+        setAcpAgent(firstAvailable?.id ?? "");
       }
     }
-  }, [isLoaded, commandAvailability, agentCommand, acpAgent, isTerminalEnabled, isChatEnabled, terminalAgentOptions, chatAgentOptions]);
+  }, [isLoaded, commandAvailability, agentCommand, acpAgent, terminalAgentOptions, chatAgentOptions]);
 
   const getStatusIcon = (status: DependencyStatusType) => {
     switch (status) {
@@ -645,9 +645,9 @@ export function SettingsPage({ config }: SettingsPageProps) {
     // 基础依赖始终显示
     if (!muxNames.includes(k) && !acpAdapterNames.includes(k)) return true;
     // Terminal 依赖：仅当 Terminal 启用时显示
-    if (muxNames.includes(k)) return isTerminalEnabled;
+    if (muxNames.includes(k)) return enableTerminal;
     // Chat 依赖：仅当 Chat 启用时显示
-    if (acpAdapterNames.includes(k)) return isChatEnabled;
+    if (acpAdapterNames.includes(k)) return enableChat;
     return true;
   });
   const installedCount = visibleDepKeys.filter((k) => depStates[k]?.status === "installed").length;
@@ -701,30 +701,40 @@ env_vars = [
         <div className="grid grid-cols-2 gap-3 mb-2">
           {/* Terminal Card */}
           <motion.button
-            whileHover={canUseTerminal ? { scale: 1.01 } : {}}
-            whileTap={canUseTerminal ? { scale: 0.98 } : {}}
-            onClick={() => canUseTerminal && toggleMode("terminal")}
-            disabled={!canUseTerminal}
+            whileHover={{ scale: 1.01 }}
+            whileTap={{ scale: 0.98 }}
+            onClick={() => toggleMode("terminal")}
             className={`relative flex flex-col items-center justify-center gap-2 py-5 rounded-xl border-2 text-center transition-all
-              ${isTerminalEnabled
+              ${terminalState === 'enabled'
                 ? "border-[var(--color-highlight)] bg-[var(--color-highlight)]/5"
-                : canUseTerminal
-                  ? "border-[var(--color-border)] hover:border-[var(--color-text-muted)] bg-[var(--color-bg-secondary)]"
-                  : "border-[var(--color-border)] bg-[var(--color-bg-secondary)] opacity-50 cursor-not-allowed"
+                : terminalState === 'unavailable'
+                  ? "border-[var(--color-warning)] bg-[var(--color-warning)]/5"
+                  : "border-[var(--color-border)] hover:border-[var(--color-text-muted)] bg-[var(--color-bg-secondary)]"
               }`}
           >
             <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${
-              isTerminalEnabled ? "bg-[var(--color-highlight)]/10" : "bg-[var(--color-bg-tertiary)]"
+              terminalState === 'enabled' ? "bg-[var(--color-highlight)]/10"
+                : terminalState === 'unavailable' ? "bg-[var(--color-warning)]/10"
+                : "bg-[var(--color-bg-tertiary)]"
             }`}>
-              <Terminal className={`w-5 h-5 ${isTerminalEnabled ? "text-[var(--color-highlight)]" : "text-[var(--color-text-muted)]"}`} />
+              <Terminal className={`w-5 h-5 ${
+                terminalState === 'enabled' ? "text-[var(--color-highlight)]"
+                  : terminalState === 'unavailable' ? "text-[var(--color-warning)]"
+                  : "text-[var(--color-text-muted)]"
+              }`} />
             </div>
             <div className="text-sm font-semibold text-[var(--color-text)]">Terminal</div>
-            {!canUseTerminal && (
-              <div className="text-[10px] text-[var(--color-warning)]">Requires tmux or zellij</div>
+            {terminalState === 'unavailable' && (
+              <div className="text-[10px] text-[var(--color-warning)]">Missing dependencies</div>
             )}
-            {isTerminalEnabled && (
+            {terminalState === 'enabled' && (
               <div className="absolute top-2.5 right-2.5 w-5 h-5 rounded-full bg-[var(--color-highlight)] flex items-center justify-center">
                 <Check className="w-3 h-3 text-white" />
+              </div>
+            )}
+            {terminalState === 'unavailable' && (
+              <div className="absolute top-2.5 right-2.5 w-5 h-5 rounded-full bg-[var(--color-warning)] flex items-center justify-center">
+                <AlertTriangle className="w-3 h-3 text-white" />
               </div>
             )}
           </motion.button>
@@ -735,23 +745,39 @@ env_vars = [
             whileTap={{ scale: 0.98 }}
             onClick={() => toggleMode("chat")}
             className={`relative flex flex-col items-center justify-center gap-2 py-5 rounded-xl border-2 text-center transition-all
-              ${isChatEnabled
+              ${chatState === 'enabled'
                 ? "border-[var(--color-highlight)] bg-[var(--color-highlight)]/5"
-                : "border-[var(--color-border)] hover:border-[var(--color-text-muted)] bg-[var(--color-bg-secondary)]"
+                : chatState === 'unavailable'
+                  ? "border-[var(--color-warning)] bg-[var(--color-warning)]/5"
+                  : "border-[var(--color-border)] hover:border-[var(--color-text-muted)] bg-[var(--color-bg-secondary)]"
               }`}
           >
             <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${
-              isChatEnabled ? "bg-[var(--color-highlight)]/10" : "bg-[var(--color-bg-tertiary)]"
+              chatState === 'enabled' ? "bg-[var(--color-highlight)]/10"
+                : chatState === 'unavailable' ? "bg-[var(--color-warning)]/10"
+                : "bg-[var(--color-bg-tertiary)]"
             }`}>
-              <MessageSquare className={`w-5 h-5 ${isChatEnabled ? "text-[var(--color-highlight)]" : "text-[var(--color-text-muted)]"}`} />
+              <MessageSquare className={`w-5 h-5 ${
+                chatState === 'enabled' ? "text-[var(--color-highlight)]"
+                  : chatState === 'unavailable' ? "text-[var(--color-warning)]"
+                  : "text-[var(--color-text-muted)]"
+              }`} />
             </div>
             <div className="flex items-center gap-1.5">
               <span className="text-sm font-semibold text-[var(--color-text)]">Chat</span>
               <span className="text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-[var(--color-info)]/15 text-[var(--color-info)]">beta</span>
             </div>
-            {isChatEnabled && (
+            {chatState === 'unavailable' && (
+              <div className="text-[10px] text-[var(--color-warning)]">No ACP agent available</div>
+            )}
+            {chatState === 'enabled' && (
               <div className="absolute top-2.5 right-2.5 w-5 h-5 rounded-full bg-[var(--color-highlight)] flex items-center justify-center">
                 <Check className="w-3 h-3 text-white" />
+              </div>
+            )}
+            {chatState === 'unavailable' && (
+              <div className="absolute top-2.5 right-2.5 w-5 h-5 rounded-full bg-[var(--color-warning)] flex items-center justify-center">
+                <AlertTriangle className="w-3 h-3 text-white" />
               </div>
             )}
           </motion.button>
@@ -1012,7 +1038,7 @@ env_vars = [
                   </div>
 
                   {/* Terminal Dependencies (仅当 Terminal 启用时显示) */}
-                  {isTerminalEnabled && (
+                  {enableTerminal && (
                     <>
                       {/* Multiplexer Divider + Section */}
                       <div className="flex items-center gap-3 mt-4 mb-2">
@@ -1027,7 +1053,7 @@ env_vars = [
                   )}
 
                   {/* Chat Dependencies (仅当 Chat 启用时显示) */}
-                  {isChatEnabled && (
+                  {enableChat && (
                     <>
                       {/* ACP Adapter Divider + Section */}
                       <div className="flex items-center gap-3 mt-4 mb-2">
@@ -1058,7 +1084,7 @@ env_vars = [
         >
           <div className="space-y-6">
             {/* Terminal Coding Agent (仅当 Terminal 启用时显示) */}
-            {isTerminalEnabled && (
+            {enableTerminal && (
               <div>
                 <div className="flex items-center gap-2 mb-3">
                   <Sparkles className="w-4 h-4 text-[var(--color-warning)]" />
@@ -1075,7 +1101,7 @@ env_vars = [
             )}
 
             {/* Chat Coding Agent (仅当 Chat 启用时显示) */}
-            {isChatEnabled && (
+            {enableChat && (
               <div>
                 <div className="flex items-center gap-2 mb-3">
                   <MessageSquare className="w-4 h-4 text-[var(--color-info)]" />
@@ -1262,7 +1288,7 @@ env_vars = [
         </Section>
 
         {/* Task Layout Section (仅当 Terminal 启用时显示) */}
-        {isTerminalEnabled && (
+        {enableTerminal && (
           <>
             <Section
               id="layout"

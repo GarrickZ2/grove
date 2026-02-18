@@ -89,13 +89,13 @@ export function AgentPicker({
     }
   }, []);
 
-  // Calculate dropdown position
+  // Calculate dropdown position (fixed positioning, viewport-relative)
   const updateDropdownPosition = useCallback(() => {
     if (triggerRef.current) {
       const rect = triggerRef.current.getBoundingClientRect();
       setDropdownPosition({
-        top: rect.bottom + window.scrollY + 4,
-        left: rect.left + window.scrollX,
+        top: rect.bottom + 4,
+        left: rect.left,
         width: Math.max(rect.width, 280),
       });
     }
@@ -192,7 +192,7 @@ export function AgentPicker({
           exit={{ opacity: 0, y: -10 }}
           transition={{ duration: 0.15 }}
           style={{
-            position: "absolute",
+            position: "fixed",
             top: dropdownPosition.top,
             left: dropdownPosition.left,
             width: dropdownPosition.width,
