@@ -360,6 +360,7 @@ export function TaskChat({
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [isDragging, setIsDragging] = useState(false);
+  const [isInputExpanded, setIsInputExpanded] = useState(false);
 
   const isLive = task.status === "live";
   const showChat = isLive || sessionStarted;
@@ -1024,6 +1025,7 @@ export function TaskChat({
       setShowSlashMenu(false);
       setShowFileMenu(false);
       setIsTerminalMode(false);
+      setIsInputExpanded(false);
       setShowPendingQueue(true);
       el.focus();
     } else {
@@ -1034,6 +1036,7 @@ export function TaskChat({
       setShowSlashMenu(false);
       setShowFileMenu(false);
       setIsTerminalMode(false);
+      setIsInputExpanded(false);
       setIsBusy(true);
       el.focus();
     }
@@ -1323,6 +1326,12 @@ export function TaskChat({
       setIsTerminalMode(false);
       return;
     }
+    // Expanded input: Escape → collapse
+    if (isInputExpanded && e.key === "Escape") {
+      e.preventDefault();
+      setIsInputExpanded(false);
+      return;
+    }
     // Slash menu navigation
     if (showSlashMenu && filteredSlashCommands.length > 0) {
       if (e.key === "ArrowDown") {
@@ -1376,8 +1385,14 @@ export function TaskChat({
       handleClearPending();
       return;
     }
-    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSend(); }
-  }, [handleSend, isTerminalMode, showSlashMenu, filteredSlashCommands, slashSelectedIdx, insertCommandAtCursor, showFileMenu, filteredFiles, fileSelectedIdx, insertFileAtCursor, pendingMessages, handleClearPending]);
+    // Expanded mode: Cmd/Ctrl+Enter → send, plain Enter → newline
+    // Inline mode: Enter → send, Shift+Enter → newline
+    if (isInputExpanded) {
+      if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); handleSend(); }
+    } else {
+      if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSend(); }
+    }
+  }, [handleSend, isTerminalMode, isInputExpanded, showSlashMenu, filteredSlashCommands, slashSelectedIdx, insertCommandAtCursor, showFileMenu, filteredFiles, fileSelectedIdx, insertFileAtCursor, pendingMessages, handleClearPending]);
 
   const handleStartSession = () => { setSessionStarted(true); onStartSession(); };
 
@@ -1579,14 +1594,7 @@ export function TaskChat({
       )}
 
       {/* Messages */}
-      <div className="flex-1 overflow-y-auto px-4 py-3 space-y-3 min-h-0 bg-[var(--color-bg-secondary)] relative"
-        onDragOver={handleDragOver} onDragLeave={handleDragLeave} onDrop={handleDrop}>
-        {/* Drag overlay */}
-        {isDragging && (
-          <div className="absolute inset-0 bg-[color-mix(in_srgb,var(--color-highlight)_10%,transparent)] border-2 border-dashed border-[var(--color-highlight)] rounded-lg flex items-center justify-center z-50 pointer-events-none">
-            <span className="text-[var(--color-highlight)] font-medium text-sm">Drop files here</span>
-          </div>
-        )}
+      <div className="flex-1 overflow-y-auto px-4 py-3 space-y-3 min-h-0 bg-[var(--color-bg-secondary)]">
         {renderItems.map((item) =>
           item.kind === "single" ? (
             <MessageItem key={`m-${item.index}`} message={item.message} index={item.index} isBusy={isBusy} agentLabel={agentLabel}
@@ -1748,7 +1756,14 @@ export function TaskChat({
       )}
 
       {/* Input */}
-      <div className="border-t border-[var(--color-border)] bg-[var(--color-bg)] px-3 pt-3 pb-2 relative">
+      <div className="border-t border-[var(--color-border)] bg-[var(--color-bg)] px-3 pt-3 pb-2 relative"
+        onDragOver={handleDragOver} onDragLeave={handleDragLeave} onDrop={handleDrop}>
+        {/* Drag overlay for input area */}
+        {isDragging && !isInputExpanded && (
+          <div className="absolute inset-0 bg-[color-mix(in_srgb,var(--color-highlight)_10%,transparent)] border-2 border-dashed border-[var(--color-highlight)] rounded-lg flex items-center justify-center z-50 pointer-events-none">
+            <span className="text-[var(--color-highlight)] font-medium text-sm">Drop files here</span>
+          </div>
+        )}
         {/* Slash command autocomplete popover */}
         <AnimatePresence>
           {showSlashMenu && filteredSlashCommands.length > 0 && (
@@ -1859,27 +1874,53 @@ export function TaskChat({
             </button>
           )}
 
-          <div className={`flex-1 relative min-w-0 rounded-lg border bg-[var(--color-bg-secondary)] transition-colors ${
-            isTerminalMode
-              ? "border-[var(--color-warning)] focus-within:border-[var(--color-warning)]"
-              : "border-[var(--color-border)] focus-within:border-[var(--color-highlight)]"
-          }`}>
+          <div
+            className={`flex-1 relative min-w-0 rounded-lg border bg-[var(--color-bg-secondary)] transition-all ${
+              isTerminalMode
+                ? "border-[var(--color-warning)] focus-within:border-[var(--color-warning)]"
+                : "border-[var(--color-border)] focus-within:border-[var(--color-highlight)]"
+            }`}
+            onDragOver={isInputExpanded ? handleDragOver : undefined}
+            onDragLeave={isInputExpanded ? handleDragLeave : undefined}
+            onDrop={isInputExpanded ? handleDrop : undefined}
+          >
             {/* Placeholder overlay */}
             {!hasContent && (
-              <div className="absolute inset-0 flex items-center px-3 text-sm text-[var(--color-text-muted)] pointer-events-none select-none">
+              <div className={`absolute ${isInputExpanded ? "top-0 left-0 right-0 h-9" : "inset-0"} flex items-center px-3 text-sm text-[var(--color-text-muted)] pointer-events-none select-none`}>
                 {!isConnected
                   ? "Waiting for connection..."
                   : isTerminalMode
                     ? "Enter shell command\u2026"
                     : isBusy
                       ? "Queue a message\u2026"
-                      : "Message agent\u2026"}
+                      : isInputExpanded
+                        ? "Write your message\u2026 (\u2318\u21A9 to send)"
+                        : "Message agent\u2026"}
               </div>
             )}
             {/* Terminal mode indicator */}
-            {isTerminalMode && (
-              <div className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] font-medium text-[var(--color-warning)] bg-[color-mix(in_srgb,var(--color-warning)_10%,transparent)] px-1.5 py-0.5 rounded pointer-events-none select-none">
+            {isTerminalMode && !isInputExpanded && (
+              <div className="absolute right-8 top-1/2 -translate-y-1/2 text-[10px] font-medium text-[var(--color-warning)] bg-[color-mix(in_srgb,var(--color-warning)_10%,transparent)] px-1.5 py-0.5 rounded pointer-events-none select-none">
                 SHELL
+              </div>
+            )}
+            {/* Expand/Collapse toggle */}
+            <button
+              onClick={() => {
+                setIsInputExpanded(v => !v);
+                setTimeout(() => editableRef.current?.focus(), 0);
+              }}
+              className="absolute right-1.5 top-1.5 p-1 text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-bg-tertiary)] rounded transition-colors z-10"
+              title={isInputExpanded ? "Collapse input (Esc)" : "Expand input"}
+            >
+              {isInputExpanded
+                ? <Minimize2 className="w-3.5 h-3.5" />
+                : <Maximize2 className="w-3.5 h-3.5" />}
+            </button>
+            {/* Drag overlay for expanded mode */}
+            {isInputExpanded && isDragging && (
+              <div className="absolute inset-0 bg-[color-mix(in_srgb,var(--color-highlight)_10%,transparent)] border-2 border-dashed border-[var(--color-highlight)] rounded-lg flex items-center justify-center z-20 pointer-events-none">
+                <span className="text-[var(--color-highlight)] font-medium text-sm">Drop files here</span>
               </div>
             )}
             <div
@@ -1890,11 +1931,39 @@ export function TaskChat({
               onKeyDown={handleKeyDown}
               onMouseDown={handleEditableMouseDown}
               onPaste={handlePaste}
-              className={`min-h-[36px] max-h-32 overflow-y-auto px-3 py-2 text-sm text-[var(--color-text)] focus:outline-none ${
-                !isConnected ? "opacity-50 cursor-not-allowed" : ""
-              }`}
+              className={`overflow-y-auto px-3 py-2 pr-8 text-sm text-[var(--color-text)] focus:outline-none ${
+                isInputExpanded ? "min-h-[40vh] max-h-[60vh]" : "min-h-[36px] max-h-32"
+              } ${!isConnected ? "opacity-50 cursor-not-allowed" : ""}`}
               style={{ wordBreak: "break-word", whiteSpace: "pre-wrap" }}
             />
+            {/* Expanded mode: attachment preview + footer inside the box */}
+            {isInputExpanded && attachments.length > 0 && (
+              <div className="flex gap-2 px-3 pb-2 flex-wrap border-t border-[var(--color-border)]">
+                {attachments.map((att, i) => (
+                  <div key={i} className="relative group mt-2">
+                    {att.type === "image" && att.previewUrl ? (
+                      <img src={att.previewUrl} className="w-12 h-12 object-cover rounded border border-[var(--color-border)]" alt={att.name} />
+                    ) : att.type === "audio" ? (
+                      <div className="w-12 h-12 rounded border border-[var(--color-border)] flex items-center justify-center bg-[var(--color-bg-tertiary)]">
+                        <Mic className="w-4 h-4 text-[var(--color-text-muted)]" />
+                      </div>
+                    ) : null}
+                    <button onClick={() => removeAttachment(i)}
+                      className="absolute -top-1.5 -right-1.5 w-4 h-4 rounded-full bg-[var(--color-error)] text-white flex items-center justify-center text-[10px] opacity-0 group-hover:opacity-100 transition-opacity">
+                      &times;
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+            {/* Expanded mode footer: hints only */}
+            {isInputExpanded && (
+              <div className="flex items-center px-3 py-1.5 border-t border-[var(--color-border)]">
+                <span className="text-[10px] text-[var(--color-text-muted)] opacity-60">
+                  {"\u2318\u21A9"} send &middot; {"\u21A9"} newline &middot; Esc collapse
+                </span>
+              </div>
+            )}
           </div>
           {!isBusy && hasContent ? (
             <Button variant="primary" size="sm" className="h-9 w-9 !p-0" onClick={handleSend} disabled={!isConnected}>

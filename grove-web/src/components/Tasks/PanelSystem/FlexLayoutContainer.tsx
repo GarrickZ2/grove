@@ -155,6 +155,9 @@ export const FlexLayoutContainer = forwardRef<
     return Model.fromJson(layoutJson);
   });
 
+  // Tab rename state
+  const [editingTabId, setEditingTabId] = useState<string | null>(null);
+
   // Context menu state
   const [contextMenu, setContextMenu] = useState<{
     position: { x: number; y: number };
@@ -276,10 +279,13 @@ export const FlexLayoutContainer = forwardRef<
     }
   };
 
-  // 自定义 Tab 渲染
+  // 自定义 Tab 渲染（支持双击重命名）
+  const renameBlurTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
   const onRenderTab = useCallback((node: TabNode, renderValues: ITabRenderValues) => {
     const component = node.getComponent() || 'terminal';
     const { icon: Icon, color } = getPanelIconAndColor(component);
+    const tabId = node.getId();
+    const isEditing = editingTabId === tabId;
 
     renderValues.content = (
       <div
@@ -289,15 +295,61 @@ export const FlexLayoutContainer = forwardRef<
           e.stopPropagation();
           setContextMenu({
             position: { x: e.clientX, y: e.clientY },
-            tabId: node.getId(),
+            tabId,
           });
+        }}
+        onDoubleClick={(e) => {
+          e.stopPropagation();
+          e.preventDefault();
+          setEditingTabId(tabId);
         }}
       >
         <Icon size={14} style={{ color, flexShrink: 0 }} />
-        <span style={{ fontSize: '13px' }}>{node.getName()}</span>
+        {isEditing ? (
+          <input
+            autoFocus
+            defaultValue={node.getName()}
+            style={{
+              fontSize: '13px',
+              width: '100px',
+              padding: '0 4px',
+              border: '1px solid var(--color-highlight)',
+              borderRadius: '3px',
+              background: 'var(--color-bg)',
+              color: 'var(--color-text)',
+              outline: 'none',
+            }}
+            onClick={(e) => e.stopPropagation()}
+            onPointerDown={(e) => e.stopPropagation()}
+            onMouseDown={(e) => e.stopPropagation()}
+            onFocus={() => {
+              // 清除 blur timer，防止刚聚焦就被取消
+              if (renameBlurTimer.current) clearTimeout(renameBlurTimer.current);
+            }}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                const val = (e.target as HTMLInputElement).value.trim();
+                if (val) model.doAction(Actions.renameTab(tabId, val));
+                setEditingTabId(null);
+              } else if (e.key === 'Escape') {
+                setEditingTabId(null);
+              }
+            }}
+            onBlur={(e) => {
+              const val = e.target.value.trim();
+              // 延迟处理 blur，避免 flexlayout 内部抢焦点导致瞬间取消
+              renameBlurTimer.current = setTimeout(() => {
+                if (val) model.doAction(Actions.renameTab(tabId, val));
+                setEditingTabId(null);
+              }, 150);
+            }}
+          />
+        ) : (
+          <span style={{ fontSize: '13px' }}>{node.getName()}</span>
+        )}
       </div>
     );
-  }, []);
+  }, [editingTabId, model]);
 
   // 自定义 TabSet 渲染（添加最大化按钮到 Panel）
   const onRenderTabSet = useCallback((tabSetNode: TabSetNode | BorderNode, renderValues: ITabSetRenderValues) => {
