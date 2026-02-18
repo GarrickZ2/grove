@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { Plus } from "lucide-react";
 import { TaskSidebar } from "./TaskSidebar/TaskSidebar";
 import { TaskInfoPanel } from "./TaskInfoPanel";
-import { TaskView } from "./TaskView";
+import { TaskView, type TaskViewHandle } from "./TaskView";
 import { NewTaskDialog } from "./NewTaskDialog";
 import { CommitDialog, ConfirmDialog, MergeDialog } from "../Dialogs";
 import { RebaseDialog } from "./dialogs";
@@ -27,6 +27,7 @@ import type { Task, TaskFilter } from "../../data/types";
 import { convertTaskResponse } from "../../utils/taskConvert";
 import type { PendingArchiveConfirm } from "../../utils/archiveHelpers";
 import { buildContextMenuItems, type TaskOperationHandlers } from "../../utils/taskOperationUtils";
+import type { PanelType } from "./PanelSystem/types";
 
 type ViewMode = "list" | "info" | "terminal" | "chat";
 
@@ -51,6 +52,7 @@ export function TasksPage({ initialTaskId, initialViewMode, onNavigationConsumed
   const [archivedTasks, setArchivedTasks] = useState<Task[]>([]);
   const [isLoadingArchived, setIsLoadingArchived] = useState(false);
   const searchInputRef = useRef<HTMLInputElement | null>(null);
+  const taskViewRef = useRef<TaskViewHandle>(null);
 
   // Archive confirmation state (shared between hooks)
   const [pendingArchiveConfirm, setPendingArchiveConfirm] = useState<PendingArchiveConfirm | null>(null);
@@ -202,6 +204,15 @@ export function TasksPage({ initialTaskId, initialViewMode, onNavigationConsumed
       pageHandlers.showMessage(errorMessage);
     }
   }, [selectedProject, pageState.selectedTask, refreshSelectedProject, pageHandlers]);
+
+  // 统一的 panel 添加处理函数（用于 Terminal/Chat/Review/Editor/Stats/Git/Notes/Comments）
+  const handleAddPanel = useCallback((type: PanelType) => {
+    console.log(`Opening panel: ${type}`);
+    // 调用 TaskView 的 addPanel 方法
+    if (taskViewRef.current) {
+      taskViewRef.current.addPanel(type);
+    }
+  }, []);
 
   // Handle new task creation (Zen-only)
   const handleCreateTask = useCallback(
@@ -488,13 +499,14 @@ export function TasksPage({ initialTaskId, initialViewMode, onNavigationConsumed
                 projectName={selectedProject.name}
                 onClose={pageHandlers.handleCloseTask}
                 isTerminalMode
+                onAddPanel={handleAddPanel}
               />
 
               <TaskView
+                ref={taskViewRef}
                 projectId={selectedProject.id}
                 task={pageState.selectedTask}
                 projectName={selectedProject.name}
-                onAddPanel={() => {}}
                 onCommit={opsHandlers.handleCommit}
                 onRebase={opsHandlers.handleRebase}
                 onSync={opsHandlers.handleSync}
