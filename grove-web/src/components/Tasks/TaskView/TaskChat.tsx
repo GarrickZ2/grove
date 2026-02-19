@@ -25,11 +25,14 @@ import {
   Square,
   Paperclip,
   Mic,
+  Bot,
+  Globe,
+  Terminal,
 } from "lucide-react";
 import { Button, MarkdownRenderer, agentOptions } from "../../ui";
 import type { Task } from "../../../data/types";
 import { getApiHost } from "../../../api/client";
-import { getConfig, listChats, createChat, updateChatTitle, deleteChat, getTaskFiles } from "../../../api";
+import { getConfig, listChats, createChat, updateChatTitle, deleteChat, getTaskFiles, checkCommands } from "../../../api";
 import type { ChatSessionResponse, CustomAgent } from "../../../api";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -313,6 +316,11 @@ export function TaskChat({
   const [editingTitle, setEditingTitle] = useState(false);
   const [editTitleValue, setEditTitleValue] = useState("");
   const chatMenuRef = useRef<HTMLDivElement>(null);
+  const [showAgentPicker, setShowAgentPicker] = useState(false);
+  const [acpAgentAvailability, setAcpAgentAvailability] = useState<Record<string, boolean>>({});
+  const [acpAvailabilityLoaded, setAcpAvailabilityLoaded] = useState(false);
+  const [customAgents, setCustomAgents] = useState<CustomAgent[]>([]);
+  const agentPickerRef = useRef<HTMLDivElement>(null);
 
   // Per-chat state cache (preserved across chat switches)
   const perChatStateRef = useRef<Map<string, PerChatState>>(new Map());
@@ -388,6 +396,40 @@ export function TaskChat({
       .slice(0, 15);
   }, [taskFiles, fileFilter]);
 
+  // Check ACP agent availability on mount
+  useEffect(() => {
+    const checkAvailability = async () => {
+      try {
+        const acpCheckCmds = new Set<string>();
+        for (const opt of agentOptions) {
+          if (opt.acpCheck) acpCheckCmds.add(opt.acpCheck);
+        }
+        const [cmdResults, cfg] = await Promise.all([
+          checkCommands([...acpCheckCmds]),
+          getConfig(),
+        ]);
+        setAcpAgentAvailability(cmdResults);
+        setCustomAgents(cfg.acp?.custom_agents ?? []);
+      } catch { /* fail-open */ }
+      setAcpAvailabilityLoaded(true);
+    };
+    checkAvailability();
+  }, []);
+
+  // Compute available ACP agent options
+  const acpAgentOptions = useMemo(() => {
+    return agentOptions
+      .filter(opt => opt.acpCheck)
+      .map(opt => {
+        if (!acpAvailabilityLoaded) return opt;
+        const cmd = opt.acpCheck!;
+        if (acpAgentAvailability[cmd] === false) {
+          return { ...opt, disabled: true, disabledReason: `${cmd} not found` };
+        }
+        return opt;
+      });
+  }, [acpAgentAvailability, acpAvailabilityLoaded]);
+
   // Resolve agent label and icon from active chat's agent
   useEffect(() => {
     const resolve = (cmd: string, customAgents?: CustomAgent[]) => {
@@ -448,6 +490,7 @@ export function TaskChat({
       if (modelMenuRef.current && !modelMenuRef.current.contains(e.target as Node)) setShowModelMenu(false);
       if (permMenuRef.current && !permMenuRef.current.contains(e.target as Node)) setShowPermMenu(false);
       if (chatMenuRef.current && !chatMenuRef.current.contains(e.target as Node)) setShowChatMenu(false);
+      if (agentPickerRef.current && !agentPickerRef.current.contains(e.target as Node)) setShowAgentPicker(false);
     };
     document.addEventListener("mousedown", handleClick);
     return () => document.removeEventListener("mousedown", handleClick);
@@ -910,9 +953,10 @@ export function TaskChat({
 
   // ─── New chat creation ─────────────────────────────────────────────────
 
-  const handleNewChat = useCallback(async () => {
+  const handleNewChatWithAgent = useCallback(async (agent: string) => {
+    setShowAgentPicker(false);
     try {
-      const newChat = await createChat(projectId, task.id);
+      const newChat = await createChat(projectId, task.id, undefined, agent);
       setChats((prev) => [...prev, newChat]);
       switchChat(newChat.id);
     } catch (err) {
@@ -1560,16 +1604,57 @@ export function TaskChat({
             <span className="text-[var(--color-text-muted)]">{agentLabel}</span>
           )}
 
-          {/* New Chat button */}
-          {(
+          {/* New Chat button + Agent Picker */}
+          <div className="relative shrink-0" ref={agentPickerRef}>
             <button
-              onClick={handleNewChat}
-              className="flex items-center gap-1 px-1.5 py-0.5 text-xs text-[var(--color-text-muted)] hover:text-[var(--color-highlight)] hover:bg-[var(--color-bg-tertiary)] rounded transition-colors shrink-0"
+              onClick={() => { setShowChatMenu(false); setShowAgentPicker(!showAgentPicker); }}
+              className="flex items-center gap-1 px-1.5 py-0.5 text-xs text-[var(--color-text-muted)] hover:text-[var(--color-highlight)] hover:bg-[var(--color-bg-tertiary)] rounded transition-colors"
               title="New Chat"
             >
               <Plus className="w-3.5 h-3.5" />
             </button>
-          )}
+
+            {showAgentPicker && (
+              <div className="absolute top-full left-0 mt-1 min-w-48 max-h-64 overflow-y-auto rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] shadow-lg py-1 z-50">
+                {!acpAvailabilityLoaded && (
+                  <div className="flex items-center gap-2 px-3 py-2 text-sm text-[var(--color-text-muted)]">
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" /> Checking...
+                  </div>
+                )}
+                {acpAvailabilityLoaded && acpAgentOptions.filter(opt => !opt.disabled).map(opt => {
+                  const Icon = opt.icon;
+                  return (
+                    <button key={opt.id}
+                      onClick={() => handleNewChatWithAgent(opt.value)}
+                      className="w-full flex items-center gap-2 px-3 py-1.5 text-sm text-[var(--color-text)] hover:bg-[var(--color-bg-secondary)] transition-colors">
+                      <div className="w-4 h-4 flex items-center justify-center shrink-0">
+                        {Icon ? <Icon size={14} /> : <Bot className="w-3.5 h-3.5" />}
+                      </div>
+                      <span className="truncate">{opt.label}</span>
+                    </button>
+                  );
+                })}
+                {acpAvailabilityLoaded && customAgents.length > 0 && (
+                  <>
+                    <div className="my-1 border-t border-[var(--color-border)]" />
+                    <div className="px-3 py-1 text-[10px] uppercase tracking-wider text-[var(--color-text-muted)]">Custom</div>
+                    {customAgents.map(agent => (
+                      <button key={agent.id}
+                        onClick={() => handleNewChatWithAgent(agent.id)}
+                        className="w-full flex items-center gap-2 px-3 py-1.5 text-sm text-[var(--color-text)] hover:bg-[var(--color-bg-secondary)] transition-colors">
+                        <div className="w-4 h-4 flex items-center justify-center shrink-0">
+                          {agent.type === "remote"
+                            ? <Globe className="w-3.5 h-3.5 text-[var(--color-info)]" />
+                            : <Terminal className="w-3.5 h-3.5 text-[var(--color-text-muted)]" />}
+                        </div>
+                        <span className="truncate">{agent.name}</span>
+                      </button>
+                    ))}
+                  </>
+                )}
+              </div>
+            )}
+          </div>
         </div>
 
         <div className="flex items-center gap-1.5 shrink-0">
@@ -2290,11 +2375,6 @@ function ToolSectionView({ sectionId, tools, expanded, forceExpanded, onToggleSe
   );
 }
 
-/** Strip system-reminder tags from tool content */
-function stripSystemReminders(text: string): string {
-  return text.replace(/<system-reminder>[\s\S]*?<\/system-reminder>/g, "").trim();
-}
-
 /** Lightweight syntax highlighting via regex — returns React nodes with colored spans */
 const HL_RE =
   /(\/\/.*$|\/\*[\s\S]*?\*\/|#[^\n{[]*$|"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|`(?:[^`\\]|\\.)*`|\b(?:if|else|for|func|return|defer|var|const|let|type|struct|interface|import|package|range|switch|case|default|break|continue|go|select|chan|map|nil|true|false|fn|pub|mod|use|impl|trait|enum|match|self|class|def|async|await|yield|from|try|catch|throw|finally|new|delete|typeof|instanceof|int|string|bool|byte|error|float64|float32|int64|int32|uint|void|number|boolean)\b|\b\d+(?:\.\d+)?\b)/gm;
@@ -2353,7 +2433,7 @@ const PRE_CLASSES =
 
 /** Tool content renderer with format-aware rendering */
 function ToolContentBlock({ content }: { content: string }) {
-  const cleaned = stripSystemReminders(content);
+  const cleaned = content.trim();
   if (!cleaned) return null;
 
   const lines = cleaned.split("\n");

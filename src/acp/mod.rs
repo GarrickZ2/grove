@@ -5,6 +5,8 @@
 
 #![allow(dead_code)] // Public API — used by CLI now, Web frontend later
 
+pub mod adapter;
+
 use acp::Agent; // Required for .initialize(), .new_session(), .prompt(), .cancel()
 use agent_client_protocol as acp;
 use std::collections::HashMap;
@@ -229,6 +231,7 @@ struct GroveAcpClient {
     project_key: String,
     task_id: String,
     chat_id: Option<String>,
+    adapter: Box<dyn adapter::AgentContentAdapter>,
 }
 
 #[async_trait::async_trait(?Send)]
@@ -465,7 +468,7 @@ impl acp::Client for GroveAcpClient {
                     .content
                     .as_ref()
                     .and_then(|blocks| blocks.first())
-                    .map(tool_call_content_to_text);
+                    .map(|tc| self.adapter.tool_call_content_to_text(tc));
                 let status = update
                     .fields
                     .status
@@ -542,7 +545,7 @@ impl acp::Client for GroveAcpClient {
 }
 
 /// 将 ContentBlock 转换为文本
-fn content_block_to_text(block: &acp::ContentBlock) -> String {
+pub fn content_block_to_text(block: &acp::ContentBlock) -> String {
     match block {
         acp::ContentBlock::Text(t) => t.text.clone(),
         acp::ContentBlock::Image(_) => "<image>".to_string(),
@@ -573,20 +576,6 @@ fn to_acp_content_block(block: &ContentBlockData) -> acp::ContentBlock {
                 uri,
             )),
         )),
-    }
-}
-
-/// 将 ToolCallContent 转换为文本
-fn tool_call_content_to_text(tc: &acp::ToolCallContent) -> String {
-    match tc {
-        acp::ToolCallContent::Content(content) => content_block_to_text(&content.content),
-        acp::ToolCallContent::Diff(diff) => {
-            format!("diff: {}", diff.path.display())
-        }
-        acp::ToolCallContent::Terminal(term) => {
-            format!("[Terminal: {}]", term.terminal_id.0)
-        }
-        _ => "<unknown>".to_string(),
     }
 }
 
@@ -788,6 +777,8 @@ async fn run_acp_session(
         child = Some(proc);
     }
 
+    let adapter = adapter::resolve_adapter(&config.agent_command);
+
     let client = GroveAcpClient {
         handle: handle.clone(),
         working_dir: config.working_dir.clone(),
@@ -795,6 +786,7 @@ async fn run_acp_session(
         project_key: config.project_key.clone(),
         task_id: config.task_id.clone(),
         chat_id: config.chat_id.clone(),
+        adapter,
     };
 
     // 创建 ACP 连接
