@@ -170,7 +170,7 @@ export function detectLanguage(filePath: string): string | undefined {
  *
  * with proper open/close tag insertion so each line fragment is valid HTML.
  */
-export function splitHighlightedLines(html: string): string[] {
+function splitHighlightedLines(html: string): string[] {
   const lines: string[] = [];
   let currentLine = '';
   // Stack of currently open <span ...> tags (just the full opening tag string)

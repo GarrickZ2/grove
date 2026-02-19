@@ -25,7 +25,7 @@ import {
 } from "lucide-react";
 
 // Color palette for project icons
-export const PROJECT_COLORS = [
+const PROJECT_COLORS = [
   { bg: "#ef4444", fg: "#ffffff" }, // Red
   { bg: "#f97316", fg: "#ffffff" }, // Orange
   { bg: "#f59e0b", fg: "#ffffff" }, // Amber
@@ -46,7 +46,7 @@ export const PROJECT_COLORS = [
 ];
 
 // Icons for projects
-export const PROJECT_ICONS: LucideIcon[] = [
+const PROJECT_ICONS: LucideIcon[] = [
   Folder, Box, Code2, Cpu, Database, Flame, Gem, Globe,
   Heart, Hexagon, Layers, Leaf, Lightbulb, Mountain, Music,
   Palette, Rocket, Shield, Sparkles, Star, Sun, Zap,

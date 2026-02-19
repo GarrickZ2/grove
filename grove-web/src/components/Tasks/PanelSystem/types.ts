@@ -22,14 +22,3 @@ export interface TabNodeConfig {
   instanceConfig?: PanelInstanceConfig;
 }
 
-// Panel 标题映射
-export const PANEL_TYPE_LABELS: Record<PanelType, string> = {
-  terminal: 'Terminal',
-  chat: 'Chat',
-  review: 'Code Review',
-  editor: 'Editor',
-  stats: 'Stats',
-  git: 'Git',
-  notes: 'Notes',
-  comments: 'Comments',
-};

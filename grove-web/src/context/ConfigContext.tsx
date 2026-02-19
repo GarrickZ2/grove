@@ -74,9 +74,13 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const refresh = useCallback(async () => {
-    const cfg = await loadConfig();
-    await checkAvailability(cfg);
-  }, [checkAvailability]);
+    try {
+      const cfg = await getConfig();
+      setConfig(cfg);
+    } catch (error) {
+      console.error('Failed to refresh config:', error);
+    }
+  }, []);
 
   useEffect(() => {
     loadConfig().then(cfg => checkAvailability(cfg));

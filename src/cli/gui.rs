@@ -80,6 +80,7 @@ pub async fn execute(port: u16) {
             .inner_size(1440.0, 900.0)
             .min_inner_size(1280.0, 720.0)
             .center()
+            .disable_drag_drop_handler()
             .build()?;
             Ok(())
         })

@@ -11,7 +11,7 @@
  * @example "Add OAuth" → "add-oauth"
  * @example "Fix: header bug!" → "fix-header-bug"
  */
-export function toSlug(text: string): string {
+function toSlug(text: string): string {
   return text
     .toLowerCase()
     .replace(/[^a-z0-9]/g, '-')

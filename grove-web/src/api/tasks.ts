@@ -108,18 +108,6 @@ export interface ReviewCommentEntry {
   replies: CommentReply[];
 }
 
-/** Build a location key for matching: "file:SIDE:line" */
-export function commentLocationKey(c: ReviewCommentEntry): string {
-  const type = c.comment_type || 'inline';
-  if (type === 'inline' && c.file_path && c.side && c.end_line !== undefined) {
-    return `${c.file_path}:${c.side}:${c.end_line}`;
-  } else if (type === 'file' && c.file_path) {
-    return `file:${c.file_path}`;
-  } else {
-    return `project:${c.id}`;
-  }
-}
-
 export interface ReviewCommentsResponse {
   comments: ReviewCommentEntry[];
   open_count: number;
@@ -175,10 +163,6 @@ export async function listTasks(
 /**
  * Get a single task
  */
-export async function getTask(projectId: string, taskId: string): Promise<TaskResponse> {
-  return apiClient.get<TaskResponse>(`/api/v1/projects/${projectId}/tasks/${taskId}`);
-}
-
 /**
  * Create a new task
  */
@@ -310,22 +294,6 @@ export async function getReviewComments(
 ): Promise<ReviewCommentsResponse> {
   return apiClient.get<ReviewCommentsResponse>(
     `/api/v1/projects/${projectId}/tasks/${taskId}/review`
-  );
-}
-
-/**
- * Reply to a review comment
- */
-export async function replyReviewComment(
-  projectId: string,
-  taskId: string,
-  commentId: number,
-  status: 'resolved' | 'outdated',
-  message: string
-): Promise<ReviewCommentsResponse> {
-  return apiClient.post<ReplyCommentRequest, ReviewCommentsResponse>(
-    `/api/v1/projects/${projectId}/tasks/${taskId}/review`,
-    { comment_id: commentId, status, message }
   );
 }
 
@@ -568,17 +536,3 @@ export async function deleteFileOrDir(
   );
 }
 
-/**
- * Copy a file in a task's worktree
- */
-export async function copyFile(
-  projectId: string,
-  taskId: string,
-  source: string,
-  destination: string
-): Promise<FsOperationResponse> {
-  return apiClient.post<CopyFileRequest, FsOperationResponse>(
-    `/api/v1/projects/${projectId}/tasks/${taskId}/fs/copy`,
-    { source, destination }
-  );
-}

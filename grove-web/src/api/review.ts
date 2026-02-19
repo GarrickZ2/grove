@@ -58,7 +58,7 @@ export async function getFullDiff(
 }
 
 /** Create a new review comment (inline, file, or project level) */
-export async function createComment(
+async function createComment(
   projectId: string,
   taskId: string,
   params: {

@@ -1,12 +1,11 @@
 // API exports
 
-export { apiClient, ApiClient, getApiHost } from './client';
 export type { ApiError } from './client';
 
 export { getConfig, patchConfig, listApplications, getAppIconUrl } from './config';
 export type { Config, ConfigPatch, ThemeConfig, LayoutConfig, WebConfig, AppInfo, CustomAgent, AcpConfig } from './config';
 
-export { checkAllDependencies, checkDependency, checkCommands } from './env';
+export { checkAllDependencies, checkCommands } from './env';
 export type { DependencyStatus, EnvCheckResponse } from './env';
 
 export { listProjects, getProject, addProject, deleteProject, getProjectStats, getBranches, getRemotes, openIDE, openTerminal } from './projects';
@@ -23,7 +22,6 @@ export type {
 
 export {
   listTasks,
-  getTask,
   createTask,
   archiveTask,
   recoverTask,
@@ -38,7 +36,6 @@ export {
   getDiff,
   getCommits,
   getReviewComments,
-  replyReviewComment,
   getTaskStats,
   getTaskFiles,
   getFileContent,
@@ -46,7 +43,6 @@ export {
   createFile,
   createDirectory,
   deleteFileOrDir,
-  copyFile,
   listChats,
   createChat,
   updateChatTitle,
@@ -92,7 +88,6 @@ export {
   gitPull,
   gitPush,
   gitFetch,
-  gitStash,
   gitCommit,
   createBranch,
   deleteBranch,
@@ -107,10 +102,8 @@ export type {
   GitOpResponse,
 } from './git';
 
-export { getFullDiff, createComment, deleteComment } from './review';
 export type { DiffLine, DiffHunk, DiffFile, FullDiffResult } from './review';
 
-export { listAllHooks, dismissHook } from './hooks';
 export type { HookEntryResponse, HooksListResponse } from './hooks';
 
 export { getVersion, checkUpdate } from './version';

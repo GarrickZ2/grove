@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.2] - 2026-02-18
+
+### Fixed
+
+- **Tauri GUI drag-and-drop** — disabled native drag-drop handler on WebviewWindow so HTML5 DnD works correctly; fixes FlexLayout tab dragging and file/image drop into chat input
+- **Settings not syncing globally** — config changes in Settings page now refresh the global ConfigContext cache so other pages see updates immediately
+
+### Changed
+
+- **Dead code cleanup** — removed 11 unused files, 2 unused npm dependencies (`@vscode/codicons`, `react-file-icon`), ~30 dead function/component exports, and cleaned up barrel re-exports across the web frontend
+- **Version management** — added `scripts/bump-version.sh` to sync version across Cargo.toml, Tauri config, and docs from a single source
+
 ## [0.6.1] - 2026-02-18
 
 ### Added

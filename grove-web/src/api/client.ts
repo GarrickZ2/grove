@@ -35,7 +35,7 @@ async function extractErrorPayload(response: Response): Promise<ErrorPayload> {
   return { message: response.statusText };
 }
 
-export class ApiClient {
+class ApiClient {
   private baseUrl: string;
 
   constructor(baseUrl: string = API_BASE_URL) {

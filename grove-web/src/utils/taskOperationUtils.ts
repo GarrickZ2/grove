@@ -138,23 +138,3 @@ export function buildContextMenuItems(
     },
   ];
 }
-
-/**
- * Check if a task can be operated on (sync, rebase, merge)
- *
- * @param task - The task to check
- * @returns true if task can be operated on
- */
-export function canOperateOnTask(task: Task): boolean {
-  return task.status !== "broken" && task.status !== "archived";
-}
-
-/**
- * Check if a task is active (not archived)
- *
- * @param task - The task to check
- * @returns true if task is active
- */
-export function isTaskActive(task: Task): boolean {
-  return task.status !== "archived";
-}

@@ -8,7 +8,7 @@
  * @param maxLen - Maximum length
  * @returns Truncated string with "…" if needed
  */
-export function truncate(s: string, maxLen: number): string {
+function truncate(s: string, maxLen: number): string {
   if (s.length <= maxLen) {
     return s;
   }
@@ -20,7 +20,7 @@ export function truncate(s: string, maxLen: number): string {
  * @param path - Path to shorten
  * @returns Path with ~ prefix if applicable
  */
-export function shortenPath(path: string): string {
+function shortenPath(path: string): string {
   // Match /Users/<user>/ (macOS) or /home/<user>/ (Linux)
   const homeMatch = path.match(/^(\/(?:Users|home)\/[^/]+)/);
   if (homeMatch) {

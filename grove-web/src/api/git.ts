@@ -133,16 +133,6 @@ export async function gitFetch(projectId: string): Promise<GitOpResponse> {
 }
 
 /**
- * Stash changes
- */
-export async function gitStash(projectId: string, pop: boolean = false): Promise<GitOpResponse> {
-  return apiClient.post<StashRequest, GitOpResponse>(
-    `/api/v1/projects/${projectId}/git/stash`,
-    { pop }
-  );
-}
-
-/**
  * Create a new branch
  */
 export async function createBranch(

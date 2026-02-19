@@ -200,6 +200,7 @@ interface DependencyState {
 export function SettingsPage({ config }: SettingsPageProps) {
   const { theme, setTheme } = useTheme();
   const { terminalTheme, setTerminalTheme } = useTerminalTheme();
+  const { updateAvailability, refresh: refreshGlobalConfig } = useConfig();
 
   const [openSections, setOpenSections] = useState<Record<string, boolean>>({
     appearance: false,
@@ -430,7 +431,7 @@ export function SettingsPage({ config }: SettingsPageProps) {
     try {
       console.log("Saving config:", { enableTerminal, enableChat, terminalMultiplexer });
 
-      await patchConfig({
+      const patch = {
         theme: {
           name: overrideThemeId || theme.id,
         },
@@ -459,11 +460,14 @@ export function SettingsPage({ config }: SettingsPageProps) {
         auto_link: {
           patterns: autoLinkPatterns,
         },
-      });
+      };
+      await patchConfig(patch);
+      // Refresh the global config cache so other pages see the changes immediately
+      await refreshGlobalConfig();
     } catch {
       console.error("Failed to save config");
     }
-  }, [isLoaded, theme.id, selectedLayout, agentCommand, acpAgent, customLayouts, selectedCustomLayoutId, customLayoutsLoaded, ideCommand, terminalCommand, terminalTheme.id, enableTerminal, enableChat, terminalMultiplexer, autoLinkPatterns]);
+  }, [isLoaded, theme.id, selectedLayout, agentCommand, acpAgent, customLayouts, selectedCustomLayoutId, customLayoutsLoaded, ideCommand, terminalCommand, terminalTheme.id, enableTerminal, enableChat, terminalMultiplexer, autoLinkPatterns, refreshGlobalConfig]);
 
   // Handle theme change with immediate save
   const handleThemeChange = useCallback((newThemeId: string) => {
@@ -472,9 +476,9 @@ export function SettingsPage({ config }: SettingsPageProps) {
     if (isLoaded) {
       patchConfig({
         theme: { name: newThemeId },
-      }).catch(() => console.error("Failed to save theme"));
+      }).then(() => refreshGlobalConfig()).catch(() => console.error("Failed to save theme"));
     }
-  }, [setTheme, isLoaded]);
+  }, [setTheme, isLoaded, refreshGlobalConfig]);
 
   // Auto-save when any config value changes (debounced)
   useEffect(() => {
@@ -592,7 +596,6 @@ export function SettingsPage({ config }: SettingsPageProps) {
   const chatState: FeatureState = !enableChat ? 'disabled' : isChatAvailable ? 'enabled' : 'unavailable';
 
   // Sync availability to ConfigContext for Task panel components
-  const { updateAvailability } = useConfig();
   useEffect(() => {
     if (Object.keys(depStates).length > 0) {
       updateAvailability(isTerminalAvailable, isChatAvailable);
@@ -1698,6 +1701,7 @@ env_vars = [
           setCustomAgents(agents);
           try {
             await patchConfig({ acp: { custom_agents: agents } });
+            await refreshGlobalConfig();
           } catch {
             console.error("Failed to save custom agents");
           }
