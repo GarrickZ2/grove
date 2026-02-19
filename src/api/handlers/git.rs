@@ -411,7 +411,19 @@ pub async fn checkout(
 pub async fn pull(Path(id): Path<String>) -> Result<Json<GitOpResponse>, StatusCode> {
     let project_path = find_project_path(&id)?;
 
-    match git_cmd(&project_path, &["pull"]) {
+    // Get current branch name
+    let current_branch = match git::current_branch(&project_path) {
+        Ok(branch) => branch,
+        Err(e) => {
+            return Ok(Json(GitOpResponse {
+                success: false,
+                message: format!("Failed to get current branch: {}", e),
+            }));
+        }
+    };
+
+    // Pull with explicit remote and branch: git pull origin <current_branch>
+    match git_cmd(&project_path, &["pull", "origin", &current_branch]) {
         Ok(output) => Ok(Json(GitOpResponse {
             success: true,
             message: if output.is_empty() {
@@ -445,10 +457,7 @@ pub async fn push(Path(id): Path<String>) -> Result<Json<GitOpResponse>, StatusC
 
     // Push with explicit branch and --set-upstream to handle new branches
     // This is equivalent to: git push origin $(git_current_branch)
-    match git_cmd(
-        &project_path,
-        &["push", "--set-upstream", "origin", &current_branch],
-    ) {
+    match git_cmd(&project_path, &["push", "origin", &current_branch]) {
         Ok(output) => Ok(Json(GitOpResponse {
             success: true,
             message: if output.is_empty() {
