@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.1] - 2026-02-18
+
+### Added
+
+- **IDE-level FlexLayout workspace** — multi-panel drag-and-drop layout for the Web UI
+  - Integrated TaskInfoPanel tabs (Stats, Git, AI Summary, Notes, Review) into FlexLayout
+  - Panel-level fullscreen support
+- **Three-state Terminal/Chat UX** — Terminal and Chat panels with independent show/hide toggles and dropdown positioning fix
+- **Multimedia content support (ACP)** — image, audio, and resource content blocks in agent chat
+- **Agent content adapter** — per-agent tool call content rendering with system-reminder stripping for Claude
+- **Agent picker for new chat** — "+" button now opens a dropdown to select which agent to use, with ACP availability detection; unavailable agents are hidden
+- **Expandable chat input** — resizable text input area; tab double-click to rename chat
+
+### Fixed
+
+- **Chat connectivity and UI issues** — fixed WebSocket reconnection and various chat panel bugs
+- **Terminal session type resolution** — resolve session type from task config instead of multiplexer field
+
 ## [0.6.0] - 2026-02-17
 
 ### Added
