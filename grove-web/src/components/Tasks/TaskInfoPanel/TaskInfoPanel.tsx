@@ -48,6 +48,8 @@ interface TaskInfoPanelProps {
   onEnterWorkspace?: () => void;
   // 新增：在 FlexLayout 中打开 panel (Chat/Terminal/Review/Editor/Stats/Git/Notes/Comments)
   onAddPanel?: (type: PanelType) => void;
+  // Mobile mode
+  isMobile?: boolean;
 }
 
 export type TabType = "stats" | "git" | "notes" | "comments";
@@ -83,6 +85,7 @@ export function TaskInfoPanel({
   onReset,
   onEnterWorkspace,
   onAddPanel,
+  isMobile = false,
 }: TaskInfoPanelProps) {
   const { config, terminalAvailable, chatAvailable } = useConfig();
   const isArchived = task.status === "archived";
@@ -253,9 +256,9 @@ export function TaskInfoPanel({
       className="h-full flex flex-col rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-secondary)] overflow-hidden"
     >
       {/* Header */}
-      <div className="flex items-center justify-end gap-2 px-3 py-2 border-b border-[var(--color-border)] bg-[var(--color-bg)]">
+      <div className="flex flex-wrap items-center justify-end gap-2 px-3 py-2 border-b border-[var(--color-border)] bg-[var(--color-bg)]">
         {/* Action buttons based on task status */}
-        <div className="flex items-center gap-1">
+        <div className="flex flex-wrap items-center gap-1">
           {isArchived ? (
             <>
               {onRecover && (
@@ -265,8 +268,8 @@ export function TaskInfoPanel({
                   onClick={onRecover}
                   className="text-[var(--color-success)] hover:bg-[var(--color-success)]/10"
                 >
-                  <RotateCcw className="w-4 h-4 mr-1" />
-                  Recover
+                  <RotateCcw className="w-4 h-4 md:mr-1" />
+                  <span className="hidden md:inline">Recover</span>
                 </Button>
               )}
               {onClean && (
@@ -276,8 +279,8 @@ export function TaskInfoPanel({
                   onClick={onClean}
                   className="text-[var(--color-error)] hover:bg-[var(--color-error)]/10"
                 >
-                  <Trash2 className="w-4 h-4 mr-1" />
-                  Clean
+                  <Trash2 className="w-4 h-4 md:mr-1" />
+                  <span className="hidden md:inline">Clean</span>
                 </Button>
               )}
             </>
@@ -285,8 +288,8 @@ export function TaskInfoPanel({
             <>
               {/* 按钮新顺序: Chat Terminal | Review Editor | Commit Rebase Sync Merge | ... (dropdown) | Workspace */}
 
-              {/* Chat 按钮（仅当全局启用 Chat 时显示） */}
-              {onAddPanel && config?.enable_chat && (
+              {/* Chat 按钮（仅当全局启用 Chat 时显示） - hide on mobile for space */}
+              {onAddPanel && config?.enable_chat && !isMobile && (
                 <Button
                   variant="ghost"
                   size="sm"
@@ -300,8 +303,8 @@ export function TaskInfoPanel({
                 </Button>
               )}
 
-              {/* Terminal 按钮（仅当全局启用 Terminal 时显示） */}
-              {onAddPanel && config?.enable_terminal && (
+              {/* Terminal 按钮（仅当全局启用 Terminal 时显示） - hide on mobile for space */}
+              {onAddPanel && config?.enable_terminal && !isMobile && (
                 <Button
                   variant="ghost"
                   size="sm"
@@ -315,13 +318,13 @@ export function TaskInfoPanel({
                 </Button>
               )}
 
-              {/* Separator (仅当有 Chat 或 Terminal 时显示) */}
-              {onAddPanel && (config?.enable_chat || config?.enable_terminal) && (
-                <div className="w-px h-6 bg-[var(--color-border)] mx-1" />
+              {/* Separator (仅当有 Chat 或 Terminal 时显示) - hide on mobile */}
+              {onAddPanel && (config?.enable_chat || config?.enable_terminal) && !isMobile && (
+                <div className="w-px h-6 bg-[var(--color-border)] mx-1 hidden md:block" />
               )}
 
-              {/* Review 按钮 */}
-              {onAddPanel && (
+              {/* Review 按钮 - hide on mobile */}
+              {onAddPanel && !isMobile && (
                 <Button
                   variant="ghost"
                   size="sm"
@@ -333,8 +336,8 @@ export function TaskInfoPanel({
                 </Button>
               )}
 
-              {/* Editor 按钮 */}
-              {onAddPanel && (
+              {/* Editor 按钮 - hide on mobile */}
+              {onAddPanel && !isMobile && (
                 <Button
                   variant="ghost"
                   size="sm"
@@ -346,8 +349,8 @@ export function TaskInfoPanel({
                 </Button>
               )}
 
-              {/* Separator */}
-              {onAddPanel && <div className="w-px h-6 bg-[var(--color-border)] mx-1" />}
+              {/* Separator - hide on mobile */}
+              {onAddPanel && !isMobile && <div className="w-px h-6 bg-[var(--color-border)] mx-1 hidden md:block" />}
 
               {/* Git actions */}
               {onCommit && (
@@ -358,11 +361,11 @@ export function TaskInfoPanel({
                   disabled={isArchived}
                   className="text-[var(--color-highlight)] hover:bg-[var(--color-highlight)]/10"
                 >
-                  <GitCommit className="w-4 h-4 mr-1" />
-                  Commit
+                  <GitCommit className="w-4 h-4 md:mr-1" />
+                  <span className="hidden md:inline">Commit</span>
                 </Button>
               )}
-              {onRebase && (
+              {onRebase && !isMobile && (
                 <Button
                   variant="ghost"
                   size="sm"
@@ -382,8 +385,8 @@ export function TaskInfoPanel({
                   disabled={!canOperate}
                   className="text-[var(--color-info)] hover:bg-[var(--color-info)]/10"
                 >
-                  <RefreshCw className="w-4 h-4 mr-1" />
-                  Sync
+                  <RefreshCw className="w-4 h-4 md:mr-1" />
+                  <span className="hidden md:inline">Sync</span>
                 </Button>
               )}
               {onMerge && (
@@ -394,8 +397,8 @@ export function TaskInfoPanel({
                   disabled={!canOperate}
                   className="text-[var(--color-success)] hover:bg-[var(--color-success)]/10"
                 >
-                  <GitMerge className="w-4 h-4 mr-1" />
-                  Merge
+                  <GitMerge className="w-4 h-4 md:mr-1" />
+                  <span className="hidden md:inline">Merge</span>
                 </Button>
               )}
 
@@ -438,8 +441,8 @@ export function TaskInfoPanel({
                   size="sm"
                   onClick={onEnterWorkspace}
                 >
-                  <ChevronRight className="w-4 h-4 mr-1" />
-                  Workspace
+                  <ChevronRight className="w-4 h-4 md:mr-1" />
+                  <span className="hidden md:inline">Workspace</span>
                 </Button>
               )}
             </>

@@ -348,7 +348,7 @@ export function BranchDrawer({
             animate={{ x: 0 }}
             exit={{ x: "100%" }}
             transition={{ type: "spring", damping: 30, stiffness: 300 }}
-            className="fixed right-0 top-0 bottom-0 w-96 bg-[var(--color-bg-secondary)] border-l border-[var(--color-border)] shadow-xl z-50 flex flex-col"
+            className="fixed right-0 top-0 bottom-0 w-full md:w-96 bg-[var(--color-bg-secondary)] border-l border-[var(--color-border)] shadow-xl z-50 flex flex-col"
           >
             {/* Header */}
             <div className="flex items-center justify-between px-4 py-3 border-b border-[var(--color-border)]">

@@ -1,6 +1,6 @@
 import { useState, useMemo, useCallback, useRef, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Search } from "lucide-react";
+import { Search, Menu, X, ChevronLeft } from "lucide-react";
 import { TaskInfoPanel } from "../Tasks/TaskInfoPanel";
 import { TaskView, type TaskViewHandle } from "../Tasks/TaskView";
 import { CommitDialog, ConfirmDialog, MergeDialog } from "../Dialogs";
@@ -15,6 +15,7 @@ import {
   useTaskNavigation,
   usePostMergeArchive,
   useTaskOperations,
+  useMobile,
 } from "../../hooks";
 import { useBlitzTasks } from "./useBlitzTasks";
 import { BlitzTaskListItem } from "./BlitzTaskListItem";
@@ -31,12 +32,14 @@ interface BlitzPageProps {
 export function BlitzPage({ onSwitchToZen }: BlitzPageProps) {
   const { blitzTasks, isLoading, refresh } = useBlitzTasks();
   const { getTaskNotification, dismissNotification } = useNotifications();
+  const isMobile = useMobile();
 
   // Blitz-specific state
   const [selectedBlitzTask, setSelectedBlitzTask] = useState<BlitzTask | null>(null);
   const [draggedIndex, setDraggedIndex] = useState<number | null>(null);
   const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
   const [taskOrder, setTaskOrder] = useState<string[]>([]);
+  const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const searchInputRef = useRef<HTMLInputElement | null>(null);
   const taskViewRef = useRef<TaskViewHandle | null>(null);
 
@@ -337,8 +340,113 @@ export function BlitzPage({ onSwitchToZen }: BlitzPageProps) {
 
   return (
     <>
-      {/* Blitz Sidebar — replaces the normal app sidebar */}
-      <aside className="w-72 h-screen bg-[var(--color-bg)] border-r border-[var(--color-border)] flex flex-col flex-shrink-0">
+      {/* Mobile Header */}
+      {isMobile && (
+        <div className="fixed top-0 left-0 right-0 z-40 flex items-center justify-between px-4 py-3 bg-[var(--color-bg)] border-b border-[var(--color-border)]">
+          <button
+            onClick={() => setMobileSidebarOpen(true)}
+            className="p-2 rounded-lg hover:bg-[var(--color-bg-secondary)] text-[var(--color-text-muted)] transition-colors"
+          >
+            <Menu className="w-5 h-5" />
+          </button>
+          <div className="flex items-center gap-2">
+            <img src="/logo.png" alt="Grove" className="w-7 h-7 rounded-lg" />
+            <span className="text-sm font-semibold text-[var(--color-highlight)]">Blitz</span>
+          </div>
+          <button
+            onClick={onSwitchToZen}
+            className="px-2 py-1 text-xs text-[var(--color-text-muted)] hover:text-[var(--color-text)] transition-colors"
+          >
+            Zen
+          </button>
+        </div>
+      )}
+
+      {/* Mobile Sidebar Overlay */}
+      <AnimatePresence>
+        {isMobile && mobileSidebarOpen && (
+          <>
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setMobileSidebarOpen(false)}
+              className="fixed inset-0 bg-black/50 z-50"
+            />
+            <motion.aside
+              initial={{ x: "-100%" }}
+              animate={{ x: 0 }}
+              exit={{ x: "-100%" }}
+              transition={{ type: "spring", damping: 25, stiffness: 200 }}
+              className="fixed top-0 left-0 bottom-0 z-50 w-72 bg-[var(--color-bg)] border-r border-[var(--color-border)] flex flex-col"
+            >
+              {/* Logo + Mode Brand */}
+              <div className="p-4 flex items-center justify-between">
+                <LogoBrand mode="blitz" onToggle={onSwitchToZen} />
+                <button
+                  onClick={() => setMobileSidebarOpen(false)}
+                  className="p-2 rounded-lg hover:bg-[var(--color-bg-secondary)] text-[var(--color-text-muted)] transition-colors"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              {/* Search */}
+              <div className="p-3 border-b border-[var(--color-border)]">
+                <div className="relative">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[var(--color-text-muted)]" />
+                  <input
+                    type="text"
+                    value={pageState.searchQuery}
+                    onChange={(e) => pageHandlers.setSearchQuery(e.target.value)}
+                    placeholder="Search tasks..."
+                    className="w-full pl-9 pr-3 py-2 bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-lg
+                      text-sm text-[var(--color-text)] placeholder-[var(--color-text-muted)]
+                      focus:outline-none focus:border-[var(--color-highlight)] focus:ring-1 focus:ring-[var(--color-highlight)]
+                      transition-all duration-200"
+                  />
+                </div>
+              </div>
+
+              {/* Task List */}
+              <div className="flex-1 overflow-y-auto">
+                <div className="flex flex-col gap-1.5 px-2 py-1">
+                  {displayTasks.map((bt, index) => {
+                    const notif = getTaskNotification(bt.task.id);
+                    const isThisSelected =
+                      currentSelected?.task.id === bt.task.id &&
+                      currentSelected?.projectId === bt.projectId;
+                    return (
+                      <BlitzTaskListItem
+                        key={`${bt.projectId}-${bt.task.id}`}
+                        blitzTask={bt}
+                        isSelected={isThisSelected}
+                        onClick={() => {
+                          if (notif) {
+                            dismissNotification(notif.project_id, notif.task_id);
+                          }
+                          handleSelectTask(bt);
+                          setMobileSidebarOpen(false);
+                        }}
+                        onDoubleClick={() => {
+                          handleDoubleClickTask(bt);
+                          setMobileSidebarOpen(false);
+                        }}
+                        onContextMenu={(e) => handleContextMenu(bt, e)}
+                        notification={notif ? { level: notif.level } : undefined}
+                      />
+                    );
+                  })}
+                </div>
+              </div>
+            </motion.aside>
+          </>
+        )}
+      </AnimatePresence>
+
+      {/* Desktop Blitz Sidebar */}
+      {!isMobile && (
+        <aside className="w-72 h-screen bg-[var(--color-bg)] border-r border-[var(--color-border)] flex flex-col flex-shrink-0">
         {/* Logo + Mode Brand */}
         <div className="p-4">
           <LogoBrand mode="blitz" onToggle={onSwitchToZen} />
@@ -462,10 +570,11 @@ export function BlitzPage({ onSwitchToZen }: BlitzPageProps) {
             Press <kbd className="px-1 py-0.5 text-[10px] font-mono rounded border bg-[var(--color-bg-secondary)] border-[var(--color-border)]">?</kbd> for shortcuts
           </button>
         </div>
-      </aside>
+        </aside>
+      )}
 
       {/* Main Content */}
-      <main className="flex-1 overflow-hidden relative">
+      <main className={`flex-1 overflow-hidden relative ${isMobile ? "pt-14" : ""}`}>
         {/* Aurora background */}
         <div className="absolute inset-0 pointer-events-none overflow-hidden">
           <div
@@ -476,7 +585,7 @@ export function BlitzPage({ onSwitchToZen }: BlitzPageProps) {
             }}
           />
         </div>
-        <div className="h-full p-6 relative z-[1]">
+        <div className="h-full p-4 md:p-6 relative z-[1]">
           <div className="h-full relative">
             {/* Task List Page */}
             <motion.div
@@ -491,9 +600,9 @@ export function BlitzPage({ onSwitchToZen }: BlitzPageProps) {
                 {!pageState.inWorkspace && currentSelected ? (
                   <motion.div
                     key="info-panel"
-                    initial={{ opacity: 0, x: 20 }}
+                    initial={{ opacity: 0, x: isMobile ? 0 : 20 }}
                     animate={{ opacity: 1, x: 0 }}
-                    exit={{ opacity: 0, x: 20 }}
+                    exit={{ opacity: 0, x: isMobile ? 0 : 20 }}
                     transition={{ type: "spring", damping: 25, stiffness: 200 }}
                     className="h-full"
                   >
@@ -513,6 +622,7 @@ export function BlitzPage({ onSwitchToZen }: BlitzPageProps) {
                       onReset={currentSelected.task.status !== "archived" ? opsHandlers.handleReset : undefined}
                       activeTab={pageState.infoPanelTab}
                       onTabChange={pageHandlers.setInfoPanelTab}
+                      isMobile={isMobile}
                     />
                   </motion.div>
                 ) : (
@@ -523,13 +633,15 @@ export function BlitzPage({ onSwitchToZen }: BlitzPageProps) {
                     exit={{ opacity: 0 }}
                     className="h-full flex items-center justify-center rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)]"
                   >
-                    <div className="text-center">
+                    <div className="text-center px-4">
                       <p className="text-[var(--color-text-muted)] mb-2">
-                        Select a task to view details
+                        {isMobile ? "Tap menu to select a task" : "Select a task to view details"}
                       </p>
-                      <p className="text-sm text-[var(--color-text-muted)]">
-                        Press <kbd className="px-1 py-0.5 text-[10px] font-mono rounded border bg-[var(--color-bg)] border-[var(--color-border)]">?</kbd> for keyboard shortcuts
-                      </p>
+                      {!isMobile && (
+                        <p className="text-sm text-[var(--color-text-muted)]">
+                          Press <kbd className="px-1 py-0.5 text-[10px] font-mono rounded border bg-[var(--color-bg)] border-[var(--color-border)]">?</kbd> for keyboard shortcuts
+                        </p>
+                      )}
                     </div>
                   </motion.div>
                 )}
@@ -544,16 +656,19 @@ export function BlitzPage({ onSwitchToZen }: BlitzPageProps) {
                   animate={{ x: 0, opacity: 1 }}
                   exit={{ x: "100%", opacity: 0 }}
                   transition={{ type: "spring", damping: 25, stiffness: 200 }}
-                  className="absolute inset-0 flex gap-3"
+                  className="absolute inset-0 flex flex-col md:flex-row gap-3"
                 >
-                  <TaskInfoPanel
-                    projectId={currentSelected.projectId}
-                    task={currentSelected.task}
-                    projectName={currentSelected.projectName}
-                    onClose={handleCloseTask}
-                    isTerminalMode
-                    onAddPanel={handleAddPanel}
-                  />
+                  {/* Hide TaskInfoPanel on mobile in workspace mode */}
+                  {!isMobile && (
+                    <TaskInfoPanel
+                      projectId={currentSelected.projectId}
+                      task={currentSelected.task}
+                      projectName={currentSelected.projectName}
+                      onClose={handleCloseTask}
+                      isTerminalMode
+                      onAddPanel={handleAddPanel}
+                    />
+                  )}
                   <TaskView
                     ref={taskViewRef}
                     projectId={currentSelected.projectId}
@@ -566,6 +681,7 @@ export function BlitzPage({ onSwitchToZen }: BlitzPageProps) {
                     onArchive={opsHandlers.handleArchive}
                     onClean={opsHandlers.handleClean}
                     onReset={opsHandlers.handleReset}
+                    onClose={isMobile ? handleCloseTask : undefined}
                   />
                 </motion.div>
               )}

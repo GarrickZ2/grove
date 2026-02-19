@@ -20,6 +20,8 @@ interface TaskViewProps {
   fullscreen?: boolean;
   /** Callback when fullscreen state changes */
   onFullscreenChange?: (fullscreen: boolean) => void;
+  /** Close callback (mobile) */
+  onClose?: () => void;
   onCommit: () => void;
   onRebase: () => void;
   onSync: () => void;
@@ -42,6 +44,7 @@ export const TaskView = forwardRef<TaskViewHandle, TaskViewProps>((props, ref) =
     onHeaderCollapsedChange,
     fullscreen: externalFullscreen,
     onFullscreenChange,
+    onClose,
     onCommit,
     onRebase,
     onSync,
@@ -116,6 +119,7 @@ export const TaskView = forwardRef<TaskViewHandle, TaskViewProps>((props, ref) =
             onArchive={onArchive}
             onClean={onClean}
             onReset={onReset}
+            onClose={onClose}
           />
           {!headerCollapsed && task.status !== "archived" && task.status !== "merged" && multiplexer !== "acp" && (
             <FileSearchBar projectId={projectId} taskId={task.id} />

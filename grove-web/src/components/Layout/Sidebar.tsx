@@ -7,6 +7,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Bell,
+  X,
 } from "lucide-react";
 import { ProjectSelector } from "./ProjectSelector";
 import { NotificationPopover } from "./NotificationPopover";
@@ -36,22 +37,26 @@ interface SidebarProps {
   tasksMode: TasksMode;
   onTasksModeChange: (mode: TasksMode) => void;
   onProjectSwitch?: () => void;
+  /** Mobile mode - renders close button instead of collapse */
+  isMobile?: boolean;
+  /** Callback to close mobile sidebar */
+  onCloseMobile?: () => void;
 }
 
-export function Sidebar({ activeItem, onItemClick, collapsed, onToggleCollapse, onManageProjects, onAddProject, onNavigate, tasksMode, onTasksModeChange, onProjectSwitch }: SidebarProps) {
+export function Sidebar({ activeItem, onItemClick, collapsed, onToggleCollapse, onManageProjects, onAddProject, onNavigate, tasksMode, onTasksModeChange, onProjectSwitch, isMobile, onCloseMobile }: SidebarProps) {
   const [notifOpen, setNotifOpen] = useState(false);
   const { unreadCount } = useNotifications();
 
   return (
     <motion.aside
       initial={false}
-      animate={{ width: collapsed ? 72 : 256 }}
+      animate={{ width: isMobile ? 288 : (collapsed ? 72 : 256) }}
       transition={{ duration: 0.2, ease: "easeInOut" }}
       className="h-screen bg-[var(--color-bg)] border-r border-[var(--color-border)] flex flex-col flex-shrink-0"
     >
       {/* Logo + Mode Brand */}
-      <div className="p-4">
-        {collapsed ? (
+      <div className="p-4 flex items-center justify-between">
+        {collapsed && !isMobile ? (
           <button
             onClick={() => onTasksModeChange(tasksMode === "zen" ? "blitz" : "zen")}
             className="flex items-center justify-center"
@@ -64,6 +69,15 @@ export function Sidebar({ activeItem, onItemClick, collapsed, onToggleCollapse, 
             mode={tasksMode}
             onToggle={() => onTasksModeChange(tasksMode === "zen" ? "blitz" : "zen")}
           />
+        )}
+        {/* Mobile close button */}
+        {isMobile && onCloseMobile && (
+          <button
+            onClick={onCloseMobile}
+            className="p-2 rounded-lg hover:bg-[var(--color-bg-secondary)] text-[var(--color-text-muted)] transition-colors"
+          >
+            <X className="w-5 h-5" />
+          </button>
         )}
       </div>
 
@@ -128,22 +142,24 @@ export function Sidebar({ activeItem, onItemClick, collapsed, onToggleCollapse, 
           collapsed={collapsed}
         />
 
-        {/* Collapse Toggle */}
-        <motion.button
-          whileHover={{ scale: 1.02 }}
-          whileTap={{ scale: 0.98 }}
-          onClick={onToggleCollapse}
-          className="w-full flex items-center justify-center gap-3 px-3 py-2.5 mt-1 rounded-lg text-sm font-medium text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-bg-secondary)] transition-colors"
-        >
-          {collapsed ? (
-            <ChevronRight className="w-4 h-4" />
-          ) : (
-            <>
-              <ChevronLeft className="w-4 h-4" />
-              <span className="flex-1 text-left">Collapse</span>
-            </>
-          )}
-        </motion.button>
+        {/* Collapse Toggle - hide on mobile */}
+        {!isMobile && (
+          <motion.button
+            whileHover={{ scale: 1.02 }}
+            whileTap={{ scale: 0.98 }}
+            onClick={onToggleCollapse}
+            className="w-full flex items-center justify-center gap-3 px-3 py-2.5 mt-1 rounded-lg text-sm font-medium text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-bg-secondary)] transition-colors"
+          >
+            {collapsed ? (
+              <ChevronRight className="w-4 h-4" />
+            ) : (
+              <>
+                <ChevronLeft className="w-4 h-4" />
+                <span className="flex-1 text-left">Collapse</span>
+              </>
+            )}
+          </motion.button>
+        )}
       </div>
     </motion.aside>
   );
