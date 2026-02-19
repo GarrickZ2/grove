@@ -38,6 +38,9 @@ pub enum Commands {
         /// Port to listen on
         #[arg(short, long, default_value_t = web::DEFAULT_PORT)]
         port: u16,
+        /// Host to bind to
+        #[arg(long, default_value = "127.0.0.1")]
+        host: String,
         /// Don't automatically open browser
         #[arg(long)]
         no_open: bool,
