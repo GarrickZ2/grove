@@ -1355,6 +1355,9 @@ export function TaskChat({
   useEffect(() => { checkContent(); }, [attachments.length, checkContent]);
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
+    // Skip during IME composition (e.g. Chinese/Japanese input)
+    if (e.nativeEvent.isComposing || e.keyCode === 229) return;
+
     // Shell mode: Backspace on empty input → exit shell mode
     if (isTerminalMode && e.key === "Backspace") {
       const el = editableRef.current;
@@ -1538,6 +1541,7 @@ export function TaskChat({
                   onChange={(e) => setEditTitleValue(e.target.value)}
                   onBlur={handleTitleSave}
                   onKeyDown={(e) => {
+                    if (e.nativeEvent.isComposing || e.keyCode === 229) return;
                     if (e.key === "Enter") handleTitleSave();
                     if (e.key === "Escape") setEditingTitle(false);
                   }}
@@ -1794,6 +1798,7 @@ export function TaskChat({
                           value={editingPendingValue}
                           onChange={(e) => setEditingPendingValue(e.target.value)}
                           onKeyDown={(e) => {
+                            if (e.nativeEvent.isComposing || e.keyCode === 229) return;
                             if (e.key === "Enter") { e.preventDefault(); handleSavePendingEdit(); }
                             if (e.key === "Escape") handleCancelPendingEdit();
                           }}

@@ -274,10 +274,7 @@ pub fn create_api_router() -> Router {
             "/skills/explore/{source}/{skill}",
             get(handlers::skills::get_skill_detail),
         )
-        .route(
-            "/skills/installed",
-            get(handlers::skills::list_installed),
-        )
+        .route("/skills/installed", get(handlers::skills::list_installed))
         .route("/skills/install", post(handlers::skills::install_skill))
         .route(
             "/skills/installed/{repo_key}/{*repo_path}",

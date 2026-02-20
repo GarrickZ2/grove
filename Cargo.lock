@@ -1670,7 +1670,7 @@ dependencies = [
 
 [[package]]
 name = "grove-rs"
-version = "0.6.3"
+version = "0.7.0"
 dependencies = [
  "agent-client-protocol",
  "arboard",

@@ -290,6 +290,14 @@ export const FlexLayoutContainer = forwardRef<
     renderValues.content = (
       <div
         style={{ display: 'flex', alignItems: 'center', gap: '6px' }}
+        onMouseDown={(e) => {
+          // Middle-click to close tab
+          if (e.button === 1) {
+            e.preventDefault();
+            e.stopPropagation();
+            model.doAction(Actions.deleteTab(tabId));
+          }
+        }}
         onContextMenu={(e) => {
           e.preventDefault();
           e.stopPropagation();

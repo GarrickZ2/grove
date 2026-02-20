@@ -5,6 +5,27 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.0] - 2026-02-19
+
+### Added
+
+- **Skills management system** — full-stack skill marketplace for AI agents
+  - Backend: storage layer, operations module, and REST API handlers for agents, sources, and skill installation
+  - Frontend: SkillsPage with Agents, Sources, and Explore tabs
+  - Sidebar navigation entry for the Skills page
+- **Middle-click to close tabs** — FlexLayout panel tabs can now be closed with a middle mouse click, matching browser tab behavior
+
+### Fixed
+
+- **Notes editor Enter key** — pressing Enter in the Notes textarea now correctly inserts a newline instead of triggering Workspace navigation
+- **Notes content lost on refresh** — Notes editing state no longer resets when the project refreshes in the background
+- **IME composition conflicts** — Chinese/Japanese input method Enter key no longer triggers hotkeys or sends chat messages prematurely; fixed across global hotkeys, Chat input, chat title rename, and pending message edit
+- **Version bump script path** — `bump-version.sh` now correctly targets `tauri.conf.json` instead of the old `src-tauri/tauri.conf.json` path
+
+### Removed
+
+- **UPDATE_NOTIFICATION.md** — removed obsolete documentation file
+
 ## [0.6.2] - 2026-02-18
 
 ### Fixed

@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useRef } from "react";
 import { FileText, Edit3, Save, X, Loader2 } from "lucide-react";
 import { Button, MarkdownRenderer } from "../../../ui";
 import type { Task } from "../../../../data/types";
@@ -17,30 +17,37 @@ export function NotesTab({ task }: NotesTabProps) {
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const projectRef = useRef(selectedProject);
+  projectRef.current = selectedProject;
 
-  // Load notes from API
-  const loadNotes = useCallback(async () => {
-    if (!selectedProject) return;
-
-    try {
-      setIsLoading(true);
-      setError(null);
-      const response = await getNotes(selectedProject.id, task.id);
-      setContent(response.content);
-      setOriginalContent(response.content);
-    } catch (err) {
-      console.error("Failed to load notes:", err);
-      setContent("");
-      setOriginalContent("");
-    } finally {
-      setIsLoading(false);
-    }
-  }, [selectedProject, task.id]);
-
+  // Only reload when task.id changes — not on project refreshes
   useEffect(() => {
-    loadNotes();
+    const project = projectRef.current;
+    if (!project) return;
+
+    let cancelled = false;
+    setIsLoading(true);
+    setError(null);
     setIsEditing(false);
-  }, [loadNotes]);
+
+    getNotes(project.id, task.id)
+      .then((response) => {
+        if (cancelled) return;
+        setContent(response.content);
+        setOriginalContent(response.content);
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        console.error("Failed to load notes:", err);
+        setContent("");
+        setOriginalContent("");
+      })
+      .finally(() => {
+        if (!cancelled) setIsLoading(false);
+      });
+
+    return () => { cancelled = true; };
+  }, [task.id]);
 
   const handleSave = async () => {
     if (!selectedProject) return;
