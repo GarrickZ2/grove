@@ -15,6 +15,7 @@ import {
   ChevronUp,
   Terminal,
   MessageSquare,
+  ChevronLeft,
 } from "lucide-react";
 import type { Task } from "../../../data/types";
 import { useConfig } from "../../../context";
@@ -34,6 +35,8 @@ interface TaskToolbarProps {
   onArchive: () => void;
   onClean: () => void;
   onReset: () => void;
+  /** Mobile close callback */
+  onClose?: () => void;
 }
 
 interface ToolbarButtonProps {
@@ -57,7 +60,7 @@ function ToolbarButton({
   shortcut,
   title,
 }: ToolbarButtonProps) {
-  const baseClass = "flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium rounded-md transition-colors";
+  const baseClass = "flex items-center gap-1 md:gap-1.5 px-2 md:px-2.5 py-1.5 text-xs font-medium rounded-md transition-colors";
 
   const getVariantClass = () => {
     if (active) {
@@ -79,13 +82,13 @@ function ToolbarButton({
       whileTap={{ scale: disabled ? 1 : 0.98 }}
       onClick={onClick}
       disabled={disabled}
-      title={title}
+      title={title || label}
       className={`${baseClass} ${getVariantClass()} ${disabled ? "opacity-50 cursor-not-allowed" : ""}`}
     >
       <Icon className="w-3.5 h-3.5" />
-      <span>{label}</span>
+      <span className="hidden md:inline">{label}</span>
       {shortcut && (
-        <span className="ml-0.5 px-1 py-0 text-[10px] font-mono rounded border bg-[var(--color-bg)] border-[var(--color-border)] text-[var(--color-text-muted)] opacity-60 leading-tight">
+        <span className="hidden md:inline ml-0.5 px-1 py-0 text-[10px] font-mono rounded border bg-[var(--color-bg)] border-[var(--color-border)] text-[var(--color-text-muted)] opacity-60 leading-tight">
           {shortcut}
         </span>
       )}
@@ -195,6 +198,7 @@ export function TaskToolbar({
   onArchive,
   onClean,
   onReset,
+  onClose,
 }: TaskToolbarProps) {
   const { config, terminalAvailable, chatAvailable } = useConfig();
   const isArchived = task.status === "archived";
@@ -229,9 +233,22 @@ export function TaskToolbar({
   ];
 
   return (
-    <div className="flex items-center justify-between px-4 py-2 border-b border-[var(--color-border)]">
+    <div className="flex items-center justify-between px-2 md:px-4 py-2 border-b border-[var(--color-border)]">
+      {/* Mobile back button */}
+      {onClose && (
+        <motion.button
+          whileHover={{ scale: 1.05 }}
+          whileTap={{ scale: 0.95 }}
+          onClick={onClose}
+          className="flex items-center gap-1 mr-2 px-2 py-1.5 text-xs font-medium rounded-md text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-bg-tertiary)] transition-colors md:hidden"
+        >
+          <ChevronLeft className="w-4 h-4" />
+          <span>Back</span>
+        </motion.button>
+      )}
+
       {/* Primary Actions */}
-      <div className="flex items-center gap-1 min-w-0">
+      <div className="flex items-center gap-0.5 md:gap-1 min-w-0 overflow-x-auto">
         {/* Chat Button - 放在 Terminal 前面 */}
         {config?.enable_chat && (
           <ToolbarButton
@@ -255,7 +272,7 @@ export function TaskToolbar({
           />
         )}
         {(config?.enable_terminal || config?.enable_chat) && (
-          <div className="w-px h-6 bg-[var(--color-border)] mx-1.5" />
+          <div className="w-px h-6 bg-[var(--color-border)] mx-1 md:mx-1.5 hidden md:block" />
         )}
         <ToolbarButton
           icon={Code}
@@ -272,7 +289,7 @@ export function TaskToolbar({
           shortcut="e"
         />
         {/* Vertical separator */}
-        <div className="w-px h-6 bg-[var(--color-border)] mx-1.5" />
+        <div className="w-px h-6 bg-[var(--color-border)] mx-1 md:mx-1.5 hidden md:block" />
         <ToolbarButton
           icon={GitCommit}
           label="Commit"

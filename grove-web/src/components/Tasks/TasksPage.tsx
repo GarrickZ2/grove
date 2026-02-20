@@ -1,6 +1,6 @@
 import { useState, useMemo, useCallback, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Plus } from "lucide-react";
+import { Plus, ChevronLeft } from "lucide-react";
 import { TaskSidebar } from "./TaskSidebar/TaskSidebar";
 import { TaskInfoPanel } from "./TaskInfoPanel";
 import { TaskView, type TaskViewHandle } from "./TaskView";
@@ -17,6 +17,7 @@ import {
   useTaskNavigation,
   usePostMergeArchive,
   useTaskOperations,
+  useMobile,
 } from "../../hooks";
 import {
   createTask as apiCreateTask,
@@ -40,6 +41,7 @@ interface TasksPageProps {
 
 export function TasksPage({ initialTaskId, initialViewMode, onNavigationConsumed }: TasksPageProps) {
   const { selectedProject, refreshSelectedProject } = useProject();
+  const isMobile = useMobile();
 
   // Zen-specific state
   const [filter, setFilter] = useState<TaskFilter>("active");
@@ -384,23 +386,34 @@ export function TasksPage({ initialTaskId, initialViewMode, onNavigationConsumed
       initial={{ opacity: 0, y: 20 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.3 }}
-      className="h-[calc(100vh-48px)] flex flex-col"
+      className="h-[calc(100vh-48px)] md:h-[calc(100vh-48px)] flex flex-col"
     >
       {/* Header - hidden in fullscreen */}
       {!isFullscreen && (
         <div className="flex items-center justify-between mb-4 flex-shrink-0">
-          <h1 className="text-xl font-semibold text-[var(--color-text)]">Tasks</h1>
+          {/* Mobile back button when task is selected */}
+          {isMobile && pageState.selectedTask && !pageState.inWorkspace ? (
+            <button
+              onClick={pageHandlers.handleCloseTask}
+              className="flex items-center gap-1 text-sm text-[var(--color-text-muted)] hover:text-[var(--color-text)] transition-colors"
+            >
+              <ChevronLeft className="w-4 h-4" />
+              Back
+            </button>
+          ) : (
+            <h1 className="text-lg md:text-xl font-semibold text-[var(--color-text)]">Tasks</h1>
+          )}
           <div className="flex items-center gap-2">
             <button
               onClick={() => pageHandlers.setShowHelp(true)}
-              className="px-2 py-1 text-xs text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-bg-tertiary)] rounded-md transition-colors"
+              className="hidden md:block px-2 py-1 text-xs text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-bg-tertiary)] rounded-md transition-colors"
               title="Keyboard Shortcuts (?)"
             >
               <kbd className="px-1 py-0.5 text-[10px] font-mono rounded border bg-[var(--color-bg)] border-[var(--color-border)]">?</kbd>
             </button>
             <Button onClick={() => setShowNewTaskDialog(true)} size="sm">
-              <Plus className="w-4 h-4 mr-1.5" />
-              New Task
+              <Plus className="w-4 h-4 md:mr-1.5" />
+              <span className="hidden md:inline">New Task</span>
             </Button>
           </div>
         </div>
@@ -408,17 +421,17 @@ export function TasksPage({ initialTaskId, initialViewMode, onNavigationConsumed
 
       {/* Main Content */}
       <div className="flex-1 relative overflow-hidden">
-        {/* Task List Page: Task List + Info Panel side by side */}
+        {/* Task List Page: Task List + Info Panel side by side (desktop) or stacked (mobile) */}
         <motion.div
           animate={{
             opacity: pageState.inWorkspace ? 0 : 1,
             x: pageState.inWorkspace ? -20 : 0,
           }}
           transition={{ type: "spring", damping: 25, stiffness: 200 }}
-          className={`absolute inset-0 flex gap-4 ${pageState.inWorkspace ? "pointer-events-none" : ""}`}
+          className={`absolute inset-0 flex flex-col md:flex-row gap-4 ${pageState.inWorkspace ? "pointer-events-none" : ""}`}
         >
-          {/* Task Sidebar */}
-          <div className="w-72 flex-shrink-0 h-full">
+          {/* Task Sidebar - full width on mobile when no task selected, hidden when task selected */}
+          <div className={`${isMobile ? (pageState.selectedTask ? "hidden" : "flex-1") : "w-72 flex-shrink-0"} h-full`}>
             <TaskSidebar
               tasks={filteredTasks}
               selectedTask={pageState.selectedTask}
@@ -435,14 +448,14 @@ export function TasksPage({ initialTaskId, initialViewMode, onNavigationConsumed
           </div>
 
           {/* Right Panel: Empty State or Info Panel */}
-          <div className="flex-1 h-full">
+          <div className={`${isMobile ? (pageState.selectedTask ? "flex-1" : "hidden") : "flex-1"} h-full`}>
             <AnimatePresence mode="wait">
               {!pageState.inWorkspace && pageState.selectedTask ? (
                 <motion.div
                   key="info-panel"
-                  initial={{ opacity: 0, x: 20 }}
+                  initial={{ opacity: 0, x: isMobile ? 0 : 20 }}
                   animate={{ opacity: 1, x: 0 }}
-                  exit={{ opacity: 0, x: 20 }}
+                  exit={{ opacity: 0, x: isMobile ? 0 : 20 }}
                   transition={{ type: "spring", damping: 25, stiffness: 200 }}
                   className="h-full"
                 >
@@ -463,9 +476,10 @@ export function TasksPage({ initialTaskId, initialViewMode, onNavigationConsumed
                     onReset={pageState.selectedTask.status !== "archived" ? opsHandlers.handleReset : undefined}
                     activeTab={pageState.infoPanelTab}
                     onTabChange={pageHandlers.setInfoPanelTab}
+                    isMobile={isMobile}
                   />
                 </motion.div>
-              ) : (
+              ) : !isMobile ? (
                 <motion.div
                   key="empty-state"
                   initial={{ opacity: 0 }}
@@ -482,7 +496,7 @@ export function TasksPage({ initialTaskId, initialViewMode, onNavigationConsumed
                     </p>
                   </div>
                 </motion.div>
-              )}
+              ) : null}
             </AnimatePresence>
           </div>
         </motion.div>
@@ -495,10 +509,10 @@ export function TasksPage({ initialTaskId, initialViewMode, onNavigationConsumed
               animate={{ x: 0, opacity: 1 }}
               exit={{ x: "100%", opacity: 0 }}
               transition={{ type: "spring", damping: 25, stiffness: 200 }}
-              className="absolute inset-0 flex gap-3"
+              className="absolute inset-0 flex flex-col md:flex-row gap-3"
             >
-              {/* Info Panel (collapsible vertical bar in Workspace) - hidden in fullscreen */}
-              {!isFullscreen && (
+              {/* Info Panel (collapsible vertical bar in Workspace) - hidden in fullscreen and on mobile */}
+              {!isFullscreen && !isMobile && (
                 <TaskInfoPanel
                   projectId={selectedProject.id}
                   task={pageState.selectedTask}
@@ -523,6 +537,7 @@ export function TasksPage({ initialTaskId, initialViewMode, onNavigationConsumed
                 onArchive={opsHandlers.handleArchive}
                 onClean={opsHandlers.handleClean}
                 onReset={opsHandlers.handleReset}
+                onClose={isMobile ? pageHandlers.handleCloseTask : undefined}
               />
             </motion.div>
           )}

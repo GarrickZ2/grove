@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
+import { Menu } from "lucide-react";
 import { Sidebar } from "./components/Layout/Sidebar";
 import { SettingsPage } from "./components/Config";
 import { DashboardPage } from "./components/Dashboard";
@@ -15,6 +16,7 @@ import { ThemeProvider, ProjectProvider, TerminalThemeProvider, NotificationProv
 import { mockConfig } from "./data/mockData";
 import { getConfig, patchConfig, checkCommands } from "./api";
 import { agentOptions } from "./components/ui";
+import { useMobile } from "./hooks";
 
 export type TasksMode = "zen" | "blitz";
 
@@ -28,6 +30,8 @@ function AppContent() {
   const [showAddProject, setShowAddProject] = useState(false);
   const [isAddingProject, setIsAddingProject] = useState(false);
   const [addProjectError, setAddProjectError] = useState<string | null>(null);
+  const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
+  const isMobile = useMobile();
 
   // Initialize agent configuration on app startup
   useEffect(() => {
@@ -148,6 +152,8 @@ function AppContent() {
     }
     setActiveItem(page);
     setNavigationData(data ?? null);
+    // Close mobile sidebar after navigation
+    setMobileSidebarOpen(false);
   };
 
   // When project changes via sidebar ProjectSelector, go back to dashboard
@@ -229,20 +235,98 @@ function AppContent() {
             exit={{ opacity: 0, x: -40 }}
             transition={{ duration: 0.3, ease: [0.25, 1, 0.5, 1] }}
           >
-            <Sidebar
-              activeItem={activeItem}
-              onItemClick={setActiveItem}
-              collapsed={sidebarCollapsed}
-              onToggleCollapse={() => setSidebarCollapsed(!sidebarCollapsed)}
-              onManageProjects={() => setActiveItem("projects")}
-              onAddProject={() => setShowAddProject(true)}
-              onNavigate={handleNavigate}
-              tasksMode={tasksMode}
-              onTasksModeChange={setTasksMode}
-              onProjectSwitch={handleProjectSwitch}
-            />
-            <main className={`flex-1 ${isFullWidthPage ? "overflow-hidden" : "overflow-y-auto"}`}>
-              <div className={isFullWidthPage ? "h-full p-6" : "max-w-5xl mx-auto p-6"}>
+            {/* Mobile Header with hamburger menu */}
+            {isMobile && (
+              <div className="fixed top-0 left-0 right-0 z-40 flex items-center justify-between px-4 py-3 bg-[var(--color-bg)] border-b border-[var(--color-border)]">
+                <button
+                  onClick={() => setMobileSidebarOpen(true)}
+                  className="p-2 rounded-lg hover:bg-[var(--color-bg-secondary)] text-[var(--color-text-muted)] transition-colors"
+                >
+                  <Menu className="w-5 h-5" />
+                </button>
+                <div className="flex items-center gap-2">
+                  <img src="/logo.png" alt="Grove" className="w-7 h-7 rounded-lg" />
+                  <span className="text-sm font-semibold text-[var(--color-text)]">Grove</span>
+                </div>
+                <div className="w-9" /> {/* Spacer for centering */}
+              </div>
+            )}
+
+            {/* Desktop Sidebar */}
+            {!isMobile && (
+              <Sidebar
+                activeItem={activeItem}
+                onItemClick={(id) => {
+                  setActiveItem(id);
+                  setMobileSidebarOpen(false);
+                }}
+                collapsed={sidebarCollapsed}
+                onToggleCollapse={() => setSidebarCollapsed(!sidebarCollapsed)}
+                onManageProjects={() => setActiveItem("projects")}
+                onAddProject={() => setShowAddProject(true)}
+                onNavigate={handleNavigate}
+                tasksMode={tasksMode}
+                onTasksModeChange={setTasksMode}
+                onProjectSwitch={handleProjectSwitch}
+              />
+            )}
+
+            {/* Mobile Sidebar Overlay */}
+            <AnimatePresence>
+              {isMobile && mobileSidebarOpen && (
+                <>
+                  {/* Backdrop */}
+                  <motion.div
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    exit={{ opacity: 0 }}
+                    onClick={() => setMobileSidebarOpen(false)}
+                    className="fixed inset-0 bg-black/50 z-50"
+                  />
+                  {/* Slide-in Sidebar */}
+                  <motion.div
+                    initial={{ x: "-100%" }}
+                    animate={{ x: 0 }}
+                    exit={{ x: "-100%" }}
+                    transition={{ type: "spring", damping: 25, stiffness: 200 }}
+                    className="fixed top-0 left-0 bottom-0 z-50 w-72"
+                  >
+                    <Sidebar
+                      activeItem={activeItem}
+                      onItemClick={(id) => {
+                        setActiveItem(id);
+                        setMobileSidebarOpen(false);
+                      }}
+                      collapsed={false}
+                      onToggleCollapse={() => setMobileSidebarOpen(false)}
+                      onManageProjects={() => {
+                        setActiveItem("projects");
+                        setMobileSidebarOpen(false);
+                      }}
+                      onAddProject={() => {
+                        setShowAddProject(true);
+                        setMobileSidebarOpen(false);
+                      }}
+                      onNavigate={handleNavigate}
+                      tasksMode={tasksMode}
+                      onTasksModeChange={(mode) => {
+                        setTasksMode(mode);
+                        setMobileSidebarOpen(false);
+                      }}
+                      onProjectSwitch={() => {
+                        handleProjectSwitch();
+                        setMobileSidebarOpen(false);
+                      }}
+                      isMobile
+                      onCloseMobile={() => setMobileSidebarOpen(false)}
+                    />
+                  </motion.div>
+                </>
+              )}
+            </AnimatePresence>
+
+            <main className={`flex-1 ${isFullWidthPage ? "overflow-hidden" : "overflow-y-auto"} ${isMobile ? "pt-14" : ""}`}>
+              <div className={isFullWidthPage ? "h-full p-4 md:p-6" : "max-w-5xl mx-auto p-4 md:p-6"}>
                 {renderContent()}
               </div>
             </main>
