@@ -4,6 +4,7 @@ import {
   Settings,
   LayoutGrid,
   ListTodo,
+  Blocks,
   ChevronLeft,
   ChevronRight,
   Bell,
@@ -23,6 +24,7 @@ interface NavItem {
 const navItems: NavItem[] = [
   { id: "dashboard", label: "Dashboard", icon: LayoutGrid },
   { id: "tasks", label: "Tasks", icon: ListTodo },
+  { id: "skills", label: "Skills", icon: Blocks },
 ];
 
 interface SidebarProps {

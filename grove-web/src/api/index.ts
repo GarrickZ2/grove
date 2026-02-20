@@ -108,3 +108,35 @@ export type { HookEntryResponse, HooksListResponse } from './hooks';
 
 export { getVersion, checkUpdate } from './version';
 export type { VersionResponse, UpdateCheckResponse } from './version';
+
+export {
+  getAgentDefs,
+  toggleAgentEnabled,
+  addAgent,
+  updateAgent,
+  deleteAgent,
+  listSources,
+  addSource,
+  updateSource,
+  deleteSource,
+  syncSource,
+  syncAllSources,
+  exploreSkills,
+  getSkillDetail,
+  listInstalled,
+  installSkill,
+  uninstallSkill,
+  checkSourceUpdates,
+} from './skills';
+export type {
+  AgentDef,
+  AddAgentRequest,
+  SkillSource,
+  SkillSummary,
+  SkillMetadata,
+  SkillDetail,
+  AgentInstall,
+  InstalledSkill,
+  AddSourceRequest,
+  InstallSkillRequest,
+} from './skills';

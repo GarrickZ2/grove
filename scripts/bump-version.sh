@@ -21,8 +21,8 @@ else
 fi
 
 # Tauri config
-sed -i '' "s/\"version\": \".*\"/\"version\": \"$NEW_VERSION\"/" "$ROOT/src-tauri/tauri.conf.json"
-echo "src-tauri/tauri.conf.json -> $NEW_VERSION"
+sed -i '' "s/\"version\": \".*\"/\"version\": \"$NEW_VERSION\"/" "$ROOT/tauri.conf.json"
+echo "tauri.conf.json -> $NEW_VERSION"
 
 # docs/index.html - matches patterns like "v0.6.1" and "Grove v0.6.1"
 sed -i '' "s/v[0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*/v$NEW_VERSION/g" "$ROOT/docs/index.html"

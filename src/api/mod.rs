@@ -234,6 +234,55 @@ pub fn create_api_router() -> Router {
         .route("/projects/{id}/git/fetch", post(handlers::git::fetch))
         .route("/projects/{id}/git/stash", post(handlers::git::stash))
         .route("/projects/{id}/git/commit", post(handlers::git::commit))
+        // Skills API — Agents
+        .route(
+            "/skills/agents",
+            get(handlers::skills::list_agents).post(handlers::skills::add_agent),
+        )
+        .route(
+            "/skills/agents/{id}",
+            put(handlers::skills::update_agent).delete(handlers::skills::delete_agent),
+        )
+        .route(
+            "/skills/agents/{id}/toggle",
+            post(handlers::skills::toggle_agent),
+        )
+        // Skills API — Sources
+        .route(
+            "/skills/sources",
+            get(handlers::skills::list_sources).post(handlers::skills::add_source),
+        )
+        .route(
+            "/skills/sources/sync-all",
+            post(handlers::skills::sync_all_sources),
+        )
+        .route(
+            "/skills/sources/check-updates",
+            post(handlers::skills::check_updates),
+        )
+        .route(
+            "/skills/sources/{name}",
+            put(handlers::skills::update_source).delete(handlers::skills::delete_source),
+        )
+        .route(
+            "/skills/sources/{name}/sync",
+            post(handlers::skills::sync_source),
+        )
+        // Skills API — Explore & Install
+        .route("/skills/explore", get(handlers::skills::explore_skills))
+        .route(
+            "/skills/explore/{source}/{skill}",
+            get(handlers::skills::get_skill_detail),
+        )
+        .route(
+            "/skills/installed",
+            get(handlers::skills::list_installed),
+        )
+        .route("/skills/install", post(handlers::skills::install_skill))
+        .route(
+            "/skills/installed/{repo_key}/{*repo_path}",
+            delete(handlers::skills::uninstall_skill),
+        )
 }
 
 /// Serve embedded static files

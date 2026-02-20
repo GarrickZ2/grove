@@ -9,6 +9,7 @@ import { ProjectsPage } from "./components/Projects";
 import { AddProjectDialog } from "./components/Projects/AddProjectDialog";
 import { WelcomePage } from "./components/Welcome";
 import { DiffReviewPage } from "./components/Review";
+import { SkillsPage } from "./components/Skills";
 import { UpdateBanner } from "./components/ui/UpdateBanner";
 import { ThemeProvider, ProjectProvider, TerminalThemeProvider, NotificationProvider, ConfigProvider, useProject } from "./context";
 import { mockConfig } from "./data/mockData";
@@ -182,6 +183,8 @@ function AppContent() {
             onNavigationConsumed={() => setNavigationData(null)}
           />
         );
+      case "skills":
+        return <SkillsPage />;
       case "settings":
         return <SettingsPage config={mockConfig} />;
       default:
@@ -200,7 +203,7 @@ function AppContent() {
     }
   };
 
-  const isFullWidthPage = activeItem === "tasks";
+  const isFullWidthPage = activeItem === "tasks" || activeItem === "skills";
 
   return (
     <div className="flex h-screen bg-[var(--color-bg)] overflow-hidden">
