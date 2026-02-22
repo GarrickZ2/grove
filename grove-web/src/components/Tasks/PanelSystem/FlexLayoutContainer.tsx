@@ -94,6 +94,7 @@ export const FlexLayoutContainer = forwardRef<
           {
             type: 'tabset',
             weight: 100,
+            active: true,
             children: [
               createTabNode(defaultPanelType, 1),
             ],
@@ -167,13 +168,49 @@ export const FlexLayoutContainer = forwardRef<
   // Fullscreen panel state (记录哪个 panel/tabset 正在全屏)
   const [fullscreenPanelId, setFullscreenPanelId] = useState<string | null>(null);
 
-  // Add new panel
+  // Add new panel — replaces the active tab in the current tabset,
+  // or adds a new tab if there's nothing to replace.
   const addPanel = useCallback((type: PanelType) => {
+    const activeTabset = model.getActiveTabset();
+
+    if (activeTabset) {
+      const selectedNode = activeTabset.getSelectedNode();
+      if (selectedNode && selectedNode.getType() === 'tab') {
+        const currentConfig = (selectedNode as TabNode).getConfig() as TabNodeConfig | undefined;
+        // Already the requested type — do nothing
+        if (currentConfig?.panelType === type) {
+          return;
+        }
+        // Replace: remember position, delete old, add new at same spot
+        const tabsetId = activeTabset.getId();
+        const tabIndex = activeTabset.getChildren().indexOf(selectedNode);
+        const hasMultipleTabs = activeTabset.getChildren().length > 1;
+
+        instanceCounters.current[type]++;
+        const instanceNumber = instanceCounters.current[type];
+        const newTab = createTabNode(type, instanceNumber);
+
+        if (hasMultipleTabs) {
+          // Safe to delete — tabset won't disappear
+          model.doAction(Actions.deleteTab(selectedNode.getId()));
+          model.doAction(
+            Actions.addNode(newTab, tabsetId, DockLocation.CENTER, tabIndex >= 0 ? tabIndex : -1)
+          );
+        } else {
+          // Only one tab — add new first, then delete old to keep the tabset alive
+          model.doAction(
+            Actions.addNode(newTab, tabsetId, DockLocation.CENTER, -1)
+          );
+          model.doAction(Actions.deleteTab(selectedNode.getId()));
+        }
+        return;
+      }
+    }
+
+    // Fallback: no active tab to replace — add as new tab
     instanceCounters.current[type]++;
     const instanceNumber = instanceCounters.current[type];
     const newTab = createTabNode(type, instanceNumber);
-
-    const activeTabset = model.getActiveTabset();
     const targetTabsetId = activeTabset?.getId() ?? model.getRoot().getId();
 
     model.doAction(
