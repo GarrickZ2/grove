@@ -1,9 +1,9 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { X, Globe, FolderOpen, Link2, Info, AlertTriangle } from "lucide-react";
+import { X, Globe, FolderOpen, Link2, Info, AlertTriangle, Loader2 } from "lucide-react";
 import { Button } from "../ui";
 import { AgentIcon } from "./AgentIcon";
-import { installSkill, uninstallSkill } from "../../api";
+import { installSkill } from "../../api";
 import type { AgentDef, InstalledSkill, ApiError } from "../../api";
 
 interface InstallDialogProps {
@@ -34,15 +34,14 @@ export function InstallDialog({
   onInstalled,
 }: InstallDialogProps) {
   const [scope, setScope] = useState<"global" | "project">("global");
-  const [selectedAgents, setSelectedAgents] = useState<Set<string>>(new Set());
-  const [isWorking, setIsWorking] = useState(false);
+  const [workingAgentId, setWorkingAgentId] = useState<string | null>(null);
+  const [workingAll, setWorkingAll] = useState<"install" | "uninstall" | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [conflictInfo, setConflictInfo] = useState<{ source: string; skill: string } | null>(null);
+  const [conflictInfo, setConflictInfo] = useState<{ source: string; skill: string; force?: () => void } | null>(null);
 
-  const isManageMode = installedRecord !== null && installedRecord.agents.length > 0;
+  const isWorking = workingAgentId !== null || workingAll !== null;
 
   // Build path-based shared groups for the current scope
-  // Agents sharing the same directory path will be linked
   const pathGroups = useMemo(() => {
     const pathToAgents: Record<string, string[]> = {};
     for (const agent of agents) {
@@ -53,7 +52,7 @@ export function InstallDialog({
     return pathToAgents;
   }, [agents, scope]);
 
-  // Map: agentId → list of other agent IDs sharing the same path
+  // Map: agentId → list of all agent IDs sharing the same path (including self)
   const agentShareMap = useMemo(() => {
     const map: Record<string, string[]> = {};
     for (const ids of Object.values(pathGroups)) {
@@ -68,32 +67,30 @@ export function InstallDialog({
 
   const hasSharedPaths = Object.keys(agentShareMap).length > 0;
 
-  // Helper: get installed agent IDs for a given scope
-  const getInstalledForScope = (s: "global" | "project") =>
-    new Set(installedRecord?.agents.filter((a) => a.scope === s).map((a) => a.agent_id) ?? []);
+  // Derive installed agent IDs for current scope from installedRecord
+  const installedAgentIds = useMemo(
+    () => new Set(installedRecord?.agents.filter((a) => a.scope === scope).map((a) => a.agent_id) ?? []),
+    [installedRecord, scope],
+  );
 
+  const allInstalled = agents.length > 0 && agents.every((a) => installedAgentIds.has(a.id));
+  const noneInstalled = installedAgentIds.size === 0;
+
+  // Initialize scope only when the dialog opens (not on every data refresh)
   useEffect(() => {
     if (!isOpen) return;
     if (installedRecord && installedRecord.agents.length > 0) {
       const hasProject = installedRecord.agents.some((a) => a.scope === "project");
-      const initialScope = hasProject ? "project" : "global";
-      setScope(initialScope);
-      setSelectedAgents(getInstalledForScope(initialScope));
+      setScope(hasProject ? "project" : "global");
     } else {
-      setSelectedAgents(new Set());
       setScope("global");
     }
     setError(null);
-  }, [isOpen, installedRecord]);
+    setConflictInfo(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen]);
 
-  // When scope changes, update selected agents to match that scope's installs
-  const handleScopeChange = (newScope: "global" | "project") => {
-    setScope(newScope);
-    if (isManageMode) {
-      setSelectedAgents(getInstalledForScope(newScope));
-    }
-  };
-
+  // Escape to close
   useEffect(() => {
     if (!isOpen) return;
     const handler = (e: KeyboardEvent) => {
@@ -103,73 +100,109 @@ export function InstallDialog({
     return () => window.removeEventListener("keydown", handler);
   }, [isOpen, onClose]);
 
-  const toggleAgent = (agentId: string) => {
-    setSelectedAgents((prev) => {
-      const next = new Set(prev);
-      const siblings = agentShareMap[agentId];
+  // Common install params
+  const commonInstallParams = useCallback(
+    (agentIds: string[], force = false) => ({
+      repo_key: repoKey,
+      source_name: sourceName,
+      skill_name: skillName,
+      repo_path: repoPath,
+      relative_path: relativePath,
+      scope,
+      agents: agentIds.map((id) => ({ agent_id: id })),
+      project_path: scope === "project" && projectPath ? projectPath : undefined,
+      force,
+    }),
+    [repoKey, sourceName, skillName, repoPath, relativePath, scope, projectPath],
+  );
 
-      if (next.has(agentId)) {
-        next.delete(agentId);
-        if (siblings) {
-          for (const id of siblings) next.delete(id);
-        }
+  // Per-agent install/uninstall
+  const handleAgentAction = useCallback(
+    async (agentId: string, action: "install" | "uninstall", force = false) => {
+      setWorkingAgentId(agentId);
+      setError(null);
+      setConflictInfo(null);
+
+      // Expand to include shared-path siblings
+      const siblings = agentShareMap[agentId] ?? [agentId];
+      const siblingSet = new Set(siblings);
+
+      let targetIds: string[];
+      if (action === "install") {
+        targetIds = [...installedAgentIds, ...siblings.filter((id) => !installedAgentIds.has(id))];
       } else {
-        next.add(agentId);
-        if (siblings) {
-          for (const id of siblings) next.add(id);
-        }
+        targetIds = [...installedAgentIds].filter((id) => !siblingSet.has(id));
       }
-      return next;
-    });
-  };
 
-  const handleInstall = async (force = false) => {
-    // In fresh install mode, require at least one agent
-    if (selectedAgents.size === 0 && !isManageMode) {
-      setError("Select at least one agent");
-      return;
-    }
-    setIsWorking(true);
+      try {
+        // Always use installSkill with the target agent list for the current scope.
+        // This ensures only the current scope is affected (e.g. removing project agents
+        // won't touch global agents). uninstallSkill() removes ALL scopes.
+        await installSkill(commonInstallParams(targetIds, force));
+        onInstalled();
+      } catch (err) {
+        const apiErr = err as ApiError;
+        if (apiErr.status === 409 && (apiErr.data as Record<string, string>)?.error_type === "skill_conflict") {
+          const data = apiErr.data as Record<string, string>;
+          setConflictInfo({
+            source: data.conflict_source_name,
+            skill: data.conflict_skill_name,
+            force: () => handleAgentAction(agentId, action, true),
+          });
+        } else {
+          setError(apiErr.message || `${action} failed`);
+        }
+      } finally {
+        setWorkingAgentId(null);
+      }
+    },
+    [agentShareMap, installedAgentIds, repoKey, repoPath, commonInstallParams, onInstalled],
+  );
+
+  // Install All
+  const handleInstallAll = useCallback(
+    async (force = false) => {
+      setWorkingAll("install");
+      setError(null);
+      setConflictInfo(null);
+
+      const allAgentIds = agents.map((a) => a.id);
+      try {
+        await installSkill(commonInstallParams(allAgentIds, force));
+        onInstalled();
+      } catch (err) {
+        const apiErr = err as ApiError;
+        if (apiErr.status === 409 && (apiErr.data as Record<string, string>)?.error_type === "skill_conflict") {
+          const data = apiErr.data as Record<string, string>;
+          setConflictInfo({
+            source: data.conflict_source_name,
+            skill: data.conflict_skill_name,
+            force: () => handleInstallAll(true),
+          });
+        } else {
+          setError(apiErr.message || "Install failed");
+        }
+      } finally {
+        setWorkingAll(null);
+      }
+    },
+    [agents, commonInstallParams, onInstalled],
+  );
+
+  // Uninstall All — only for the current scope (send empty agents list)
+  const handleUninstallAll = useCallback(async () => {
+    setWorkingAll("uninstall");
     setError(null);
     setConflictInfo(null);
     try {
-      await installSkill({
-        repo_key: repoKey,
-        source_name: sourceName,
-        skill_name: skillName,
-        repo_path: repoPath,
-        relative_path: relativePath,
-        scope,
-        agents: Array.from(selectedAgents).map((id) => ({ agent_id: id })),
-        project_path: scope === "project" && projectPath ? projectPath : undefined,
-        force,
-      });
-      onInstalled();
-    } catch (err) {
-      const apiErr = err as ApiError;
-      if (apiErr.status === 409 && (apiErr.data as Record<string, string>)?.error_type === "skill_conflict") {
-        const data = apiErr.data as Record<string, string>;
-        setConflictInfo({ source: data.conflict_source_name, skill: data.conflict_skill_name });
-      } else {
-        setError(apiErr.message || "Install failed");
-      }
-    } finally {
-      setIsWorking(false);
-    }
-  };
-
-  const handleUninstall = async () => {
-    setIsWorking(true);
-    setError(null);
-    try {
-      await uninstallSkill(repoKey, repoPath);
+      await installSkill(commonInstallParams([], false));
       onInstalled();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Uninstall failed");
     } finally {
-      setIsWorking(false);
+      setWorkingAll(null);
     }
-  };
+  }, [commonInstallParams, onInstalled]);
 
   // Group agents for rendering: shared-path groups + independent agents
   const agentLayout = useMemo(() => {
@@ -219,7 +252,7 @@ export function InstallDialog({
               <div className="flex items-center justify-between px-5 py-4 border-b border-[var(--color-border)]">
                 <div>
                   <h2 className="text-lg font-semibold text-[var(--color-text)]">
-                    {isManageMode ? "Manage Skill" : "Install Skill"}
+                    Manage Skill
                   </h2>
                   <p className="text-xs text-[var(--color-text-muted)] mt-0.5">{skillName}</p>
                 </div>
@@ -239,7 +272,8 @@ export function InstallDialog({
                   </label>
                   <div className="flex gap-2">
                     <button
-                      onClick={() => handleScopeChange("global")}
+                      onClick={() => setScope("global")}
+                      disabled={isWorking}
                       className={`flex-1 flex items-center justify-center gap-2 px-3 py-2.5 text-sm rounded-lg border transition-colors ${
                         scope === "global"
                           ? "border-[var(--color-highlight)] bg-[var(--color-highlight)]/10 text-[var(--color-highlight)]"
@@ -250,7 +284,8 @@ export function InstallDialog({
                       Global
                     </button>
                     <button
-                      onClick={() => handleScopeChange("project")}
+                      onClick={() => setScope("project")}
+                      disabled={isWorking}
                       className={`flex-1 flex items-center justify-center gap-2 px-3 py-2.5 text-sm rounded-lg border transition-colors ${
                         scope === "project"
                           ? "border-[var(--color-highlight)] bg-[var(--color-highlight)]/10 text-[var(--color-highlight)]"
@@ -271,12 +306,14 @@ export function InstallDialog({
                   <div className="space-y-1">
                     {/* Independent agents (unique path) */}
                     {agentLayout.independent.map((agent) => (
-                      <AgentCheckRow
+                      <AgentActionRow
                         key={agent.id}
                         agent={agent}
                         scope={scope}
-                        isChecked={selectedAgents.has(agent.id)}
-                        onToggle={() => toggleAgent(agent.id)}
+                        isInstalled={installedAgentIds.has(agent.id)}
+                        isLoading={workingAgentId === agent.id}
+                        disabled={isWorking}
+                        onAction={(action) => handleAgentAction(agent.id, action)}
                       />
                     ))}
 
@@ -286,12 +323,14 @@ export function InstallDialog({
                         <div className="absolute left-0 top-0 bottom-0 w-0.5 bg-[var(--color-highlight)]/30 rounded-full ml-[7px]" />
                         <div className="pl-4 space-y-1">
                           {group.members.map((agent, idx) => (
-                            <AgentCheckRow
+                            <AgentActionRow
                               key={agent.id}
                               agent={agent}
                               scope={scope}
-                              isChecked={selectedAgents.has(agent.id)}
-                              onToggle={() => toggleAgent(agent.id)}
+                              isInstalled={installedAgentIds.has(agent.id)}
+                              isLoading={workingAgentId === agent.id || (workingAgentId !== null && (agentShareMap[workingAgentId] ?? []).includes(agent.id))}
+                              disabled={isWorking}
+                              onAction={(action) => handleAgentAction(agent.id, action)}
                               showLinkedHint={idx === 0}
                               sharedPath={group.path}
                             />
@@ -306,7 +345,6 @@ export function InstallDialog({
                       <Info className="w-3 h-3 text-[var(--color-text-muted)] flex-shrink-0 mt-0.5" />
                       <p className="text-[10px] text-[var(--color-text-muted)] leading-relaxed">
                         Agents with the same {scope === "global" ? "global" : "project"} directory share skills automatically.
-                        Selecting one auto-selects all that share the path.
                       </p>
                     </div>
                   )}
@@ -323,7 +361,7 @@ export function InstallDialog({
                         <p className="text-[var(--color-text-muted)] mb-2">
                           Installing will replace the existing skill.
                         </p>
-                        <Button variant="primary" size="sm" onClick={() => handleInstall(true)} disabled={isWorking}>
+                        <Button variant="primary" size="sm" onClick={conflictInfo.force} disabled={isWorking}>
                           {isWorking ? "Replacing..." : "Replace"}
                         </Button>
                       </div>
@@ -337,35 +375,28 @@ export function InstallDialog({
               </div>
 
               {/* Actions */}
-              <div className="flex justify-between gap-3 px-5 py-4 bg-[var(--color-bg)] border-t border-[var(--color-border)]">
-                {isManageMode ? (
-                  <>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={handleUninstall}
-                      disabled={isWorking}
-                      className="text-[var(--color-error)] hover:text-[var(--color-error)]"
-                    >
-                      Uninstall All
-                    </Button>
-                    <div className="flex gap-2">
-                      <Button variant="secondary" onClick={onClose}>Cancel</Button>
-                      <Button variant="primary" onClick={() => handleInstall()} disabled={isWorking}>
-                        {isWorking ? "Saving..." : "Save"}
-                      </Button>
-                    </div>
-                  </>
-                ) : (
-                  <>
-                    <div />
-                    <div className="flex gap-2">
-                      <Button variant="secondary" onClick={onClose}>Cancel</Button>
-                      <Button variant="primary" onClick={() => handleInstall()} disabled={isWorking || selectedAgents.size === 0}>
-                        {isWorking ? "Installing..." : "Install"}
-                      </Button>
-                    </div>
-                  </>
+              <div className="flex justify-end items-center gap-2 px-5 py-4 bg-[var(--color-bg)] border-t border-[var(--color-border)]">
+                {!noneInstalled && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={handleUninstallAll}
+                    disabled={isWorking}
+                    className="text-[var(--color-error)] hover:text-[var(--color-error)] mr-auto"
+                  >
+                    {workingAll === "uninstall" ? "Uninstalling..." : "Uninstall All"}
+                  </Button>
+                )}
+                {!allInstalled && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => handleInstallAll()}
+                    disabled={isWorking}
+                    className="text-[var(--color-highlight)] hover:text-[var(--color-highlight)]"
+                  >
+                    {workingAll === "install" ? "Installing..." : "Install All"}
+                  </Button>
                 )}
               </div>
             </div>
@@ -376,47 +407,38 @@ export function InstallDialog({
   );
 }
 
-function AgentCheckRow({
+function AgentActionRow({
   agent,
   scope,
-  isChecked,
-  onToggle,
+  isInstalled,
+  isLoading,
+  disabled,
+  onAction,
   showLinkedHint,
   sharedPath,
 }: {
   agent: AgentDef;
   scope: "global" | "project";
-  isChecked: boolean;
-  onToggle: () => void;
+  isInstalled: boolean;
+  isLoading: boolean;
+  disabled: boolean;
+  onAction: (action: "install" | "uninstall") => void;
   showLinkedHint?: boolean;
   sharedPath?: string;
 }) {
   const pathPreview = scope === "global" ? agent.global_skills_dir : agent.project_skills_dir;
 
   return (
-    <button
-      onClick={onToggle}
-      className="w-full flex items-center gap-2.5 px-2.5 py-2 rounded-lg hover:bg-[var(--color-bg-tertiary)] transition-colors"
-    >
-      <div
-        className={`w-4 h-4 rounded border flex-shrink-0 flex items-center justify-center transition-colors ${
-          isChecked
-            ? "bg-[var(--color-highlight)] border-[var(--color-highlight)]"
-            : "border-[var(--color-border)]"
-        }`}
-      >
-        {isChecked && (
-          <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
-            <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
-          </svg>
-        )}
-      </div>
-
+    <div className={`flex items-center gap-2.5 px-2.5 py-2 rounded-lg transition-colors ${
+      isInstalled
+        ? "bg-[var(--color-highlight)]/5 border border-[var(--color-highlight)]/15"
+        : "hover:bg-[var(--color-bg-tertiary)]"
+    }`}>
       <div className="w-5 h-5 flex items-center justify-center flex-shrink-0">
         <AgentIcon iconId={agent.icon_id} size={18} />
       </div>
 
-      <div className="flex-1 text-left min-w-0">
+      <div className="flex-1 min-w-0">
         <div className="flex items-center gap-1.5">
           <span className="text-sm font-medium text-[var(--color-text)]">{agent.display_name}</span>
           {showLinkedHint && sharedPath && (
@@ -429,6 +451,26 @@ function AgentCheckRow({
           {pathPreview}
         </p>
       </div>
-    </button>
+
+      <button
+        onClick={() => onAction(isInstalled ? "uninstall" : "install")}
+        disabled={disabled}
+        className={`flex-shrink-0 px-3 py-1 text-xs font-medium rounded-md transition-colors ${
+          isLoading
+            ? "text-[var(--color-text-muted)] cursor-wait"
+            : isInstalled
+              ? "text-[var(--color-error)] hover:bg-[var(--color-error)]/10"
+              : "text-[var(--color-highlight)] hover:bg-[var(--color-highlight)]/10"
+        } disabled:opacity-50`}
+      >
+        {isLoading ? (
+          <Loader2 className="w-3.5 h-3.5 animate-spin" />
+        ) : isInstalled ? (
+          "Uninstall"
+        ) : (
+          "Install"
+        )}
+      </button>
+    </div>
   );
 }

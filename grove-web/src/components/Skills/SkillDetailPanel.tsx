@@ -263,7 +263,6 @@ export function SkillDetailPanel({ selectedSkill, agents, installed, projectPath
                 projectPath={projectPath}
                 onClose={() => setShowInstall(false)}
                 onInstalled={async () => {
-                  setShowInstall(false);
                   await onInstalled();
                   // Reload detail
                   if (selectedSkill) {
