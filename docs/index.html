@@ -26,7 +26,7 @@
     <!-- Fonts -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 
     <!-- Tailwind CSS CDN -->
     <script src="https://cdn.tailwindcss.com"></script>
@@ -37,7 +37,7 @@
                 colors: {
                     grove: {
                         bg: '#0a0a0b',
-                        'bg-secondary': '#141416',
+                        'bg-secondary': '#111113',
                         'bg-tertiary': '#1c1c1f',
                         border: '#27272a',
                         text: '#fafafa',
@@ -59,232 +59,74 @@
     </script>
 
     <style>
-        .card-gradient-border {
-            position: relative;
-            background: #141416;
-            border-radius: 12px;
-        }
-        .card-gradient-border::before {
-            content: '';
-            position: absolute;
-            inset: 0;
-            border-radius: 12px;
-            padding: 1px;
-            background: linear-gradient(135deg, rgba(16,185,129,0.3), rgba(6,182,212,0.3));
-            -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
-            -webkit-mask-composite: xor;
-            mask-composite: exclude;
-        }
-        .card-gradient-border:hover::before {
-            background: linear-gradient(135deg, rgba(16,185,129,0.6), rgba(6,182,212,0.6));
-        }
+        * { box-sizing: border-box; }
+        html { background: #0a0a0b; }
+        body { background: transparent; overflow-x: hidden; }
 
-        .terminal-frame {
-            background: #0a0a0b;
-            border: 1px solid #27272a;
-            border-radius: 12px;
-            overflow: hidden;
-            box-shadow: 0 0 40px rgba(16,185,129,0.08), 0 0 80px rgba(6,182,212,0.04);
-        }
-        .terminal-titlebar {
-            background: #1c1c1f;
-            padding: 10px 16px;
-            display: flex;
-            align-items: center;
-            gap: 8px;
-        }
-        .terminal-dot {
-            width: 12px;
-            height: 12px;
-            border-radius: 50%;
-        }
-
-        @keyframes typewriter {
-            from { width: 0; }
-            to { width: 100%; }
-        }
-        @keyframes blink-caret {
-            0%, 100% { border-color: #10b981; }
-            50% { border-color: transparent; }
-        }
-        .typewriter-line {
-            overflow: hidden;
-            white-space: nowrap;
-            border-right: 2px solid #10b981;
-            width: 0;
-            animation: typewriter 2s steps(40, end) forwards, blink-caret 0.8s step-end infinite;
-        }
-        .typewriter-line-1 { animation-delay: 0.5s; }
-        .typewriter-line-3 { animation-delay: 4s; }
-
-        .fade-in {
+        /* ── Animation Engine ── */
+        [data-animate] {
             opacity: 0;
-            transform: translateY(24px);
-            transition: opacity 0.6s ease-out, transform 0.6s ease-out;
+            transform: translateY(50px);
+            filter: blur(6px);
+            transition:
+                opacity 0.9s cubic-bezier(0.16, 1, 0.3, 1),
+                transform 0.9s cubic-bezier(0.16, 1, 0.3, 1),
+                filter 0.9s cubic-bezier(0.16, 1, 0.3, 1);
         }
-        .fade-in.visible {
+        [data-animate].in-view {
             opacity: 1;
             transform: translateY(0);
+            filter: blur(0);
         }
 
-        .bg-gradient-section {
-            background: linear-gradient(180deg, #0a0a0b 0%, #141416 100%);
-        }
-        .bg-gradient-section-alt {
-            background: linear-gradient(180deg, #141416 0%, #0a0a0b 100%);
-        }
-
-        .btn-gradient {
-            background: linear-gradient(135deg, #10b981, #06b6d4);
-            transition: all 0.3s ease;
-        }
-        .btn-gradient:hover {
-            box-shadow: 0 0 24px rgba(16,185,129,0.4);
-            transform: translateY(-1px);
-        }
-
-        .nav-scrolled {
-            background: rgba(10,10,11,0.85);
-            backdrop-filter: blur(12px);
-            -webkit-backdrop-filter: blur(12px);
-            border-bottom: 1px solid rgba(39,39,42,0.5);
-        }
-
-        .install-tab.active {
-            color: #10b981;
-            border-bottom-color: #10b981;
-        }
-
-        /* Screenshot with glow effect */
-        .img-glow {
-            border-radius: 12px;
-            overflow: hidden;
-            box-shadow:
-                0 0 40px rgba(16,185,129,0.08),
-                0 0 80px rgba(6,182,212,0.04),
-                0 20px 60px rgba(0,0,0,0.5);
-            border: 1px solid rgba(39,39,42,0.8);
-            transition: box-shadow 0.4s ease, transform 0.4s ease;
-        }
-        .img-glow:hover {
-            box-shadow:
-                0 0 50px rgba(16,185,129,0.15),
-                0 0 100px rgba(6,182,212,0.08),
-                0 25px 70px rgba(0,0,0,0.6);
-            transform: translateY(-2px);
-        }
-        .img-glow img {
-            display: block;
-            width: 100%;
-        }
-
-        /* Step tab for How it Works */
-        .step-tab {
-            cursor: pointer;
-            transition: all 0.3s ease;
-            opacity: 0.5;
-        }
-        .step-tab.active {
-            opacity: 1;
-        }
-        .step-tab.active .step-circle {
-            box-shadow: 0 0 20px rgba(16,185,129,0.4);
-        }
-
-        /* MCP config code block */
-        .code-block {
-            background: #0a0a0b;
-            border: 1px solid #27272a;
-            border-radius: 8px;
-            overflow-x: auto;
-        }
-
-        /* Keyboard shortcut key */
-        kbd {
-            background: #1c1c1f;
-            border: 1px solid #27272a;
-            border-radius: 4px;
-            padding: 2px 8px;
-            font-family: 'JetBrains Mono', monospace;
-            font-size: 0.75rem;
-            box-shadow: 0 1px 2px rgba(0,0,0,0.3);
-        }
-
-
-        /* ── Side TOC ── */
-        #side-toc {
-            position: fixed;
-            left: 24px;
-            top: 50%;
-            transform: translateY(-50%);
-            z-index: 40;
-            display: flex;
-            flex-direction: column;
-            gap: 0;
+        /* Stagger children */
+        [data-animate-stagger] > * {
             opacity: 0;
-            pointer-events: none;
-            transition: opacity 0.4s ease;
+            transform: translateY(40px);
+            filter: blur(4px);
+            transition:
+                opacity 0.8s cubic-bezier(0.16, 1, 0.3, 1),
+                transform 0.8s cubic-bezier(0.16, 1, 0.3, 1),
+                filter 0.8s cubic-bezier(0.16, 1, 0.3, 1);
         }
-        #side-toc.visible {
-            opacity: 1;
-            pointer-events: auto;
+        [data-animate-stagger].in-view > *:nth-child(1) { transition-delay: 0s; opacity: 1; transform: translateY(0); filter: blur(0); }
+        [data-animate-stagger].in-view > *:nth-child(2) { transition-delay: 0.12s; opacity: 1; transform: translateY(0); filter: blur(0); }
+        [data-animate-stagger].in-view > *:nth-child(3) { transition-delay: 0.24s; opacity: 1; transform: translateY(0); filter: blur(0); }
+        [data-animate-stagger].in-view > *:nth-child(4) { transition-delay: 0.36s; opacity: 1; transform: translateY(0); filter: blur(0); }
+        [data-animate-stagger].in-view > *:nth-child(5) { transition-delay: 0.48s; opacity: 1; transform: translateY(0); filter: blur(0); }
+        [data-animate-stagger].in-view > *:nth-child(6) { transition-delay: 0.60s; opacity: 1; transform: translateY(0); filter: blur(0); }
+
+        /* Scale reveal (for images) */
+        [data-animate="scale"] {
+            transform: scale(0.88);
+            filter: blur(2px);
         }
-        .toc-item {
-            display: flex;
-            align-items: center;
-            gap: 10px;
-            padding: 7px 0;
-            cursor: pointer;
-        }
-        .toc-dot {
-            width: 8px;
-            height: 8px;
-            border-radius: 50%;
-            background: #3f3f46;
-            border: 1.5px solid #52525b;
-            transition: all 0.3s ease;
-            flex-shrink: 0;
-        }
-        .toc-item:hover .toc-dot {
-            background: #71717a;
-            border-color: #a1a1aa;
-            box-shadow: 0 0 6px rgba(113,113,122,0.4);
-        }
-        .toc-item.active .toc-dot {
-            background: #10b981;
-            border-color: #10b981;
-            box-shadow: 0 0 10px rgba(16,185,129,0.5);
-            width: 10px;
-            height: 10px;
-        }
-        .toc-label {
-            font-size: 12px;
-            font-weight: 500;
-            color: #52525b;
-            white-space: nowrap;
-            transition: all 0.25s ease;
-            user-select: none;
-        }
-        .toc-item:hover .toc-label {
-            color: #a1a1aa;
-        }
-        .toc-item.active .toc-label {
-            color: #10b981;
+        [data-animate="scale"].in-view {
+            transform: scale(1);
+            filter: blur(0);
         }
 
-        /* Hide TOC on small screens */
-        @media (max-width: 1279px) {
-            #side-toc { display: none; }
-        }
+        /* Slide from left / right */
+        [data-animate="slide-left"] { transform: translateX(-80px) translateY(0); }
+        [data-animate="slide-left"].in-view { transform: translateX(0) translateY(0); }
+        [data-animate="slide-right"] { transform: translateX(80px) translateY(0); }
+        [data-animate="slide-right"].in-view { transform: translateX(0) translateY(0); }
 
-        /* ── Hero Section (Portals.fi-inspired) ── */
+        /* ── Hero Section ── */
         .hero-section {
             position: relative;
             min-height: 100vh;
             display: flex;
             align-items: center;
             overflow: hidden;
-            background: #050506;
+            background: transparent;
+        }
+        /* Starfield canvas */
+        #starfield {
+            position: fixed;
+            inset: 0;
+            z-index: 1;
+            pointer-events: none;
         }
         .hero-inner {
             display: grid;
@@ -297,6 +139,7 @@
             padding: 8rem 2rem 4rem;
             position: relative;
             z-index: 2;
+            transition: opacity 0.1s linear, transform 0.1s linear, filter 0.1s linear;
         }
         @media (min-width: 768px) {
             .hero-inner {
@@ -304,8 +147,6 @@
                 padding: 0 3rem;
             }
         }
-
-        /* Hero title styling */
         .hero-title {
             font-size: clamp(2.5rem, 6vw, 4.5rem);
             font-weight: 800;
@@ -313,8 +154,6 @@
             letter-spacing: -0.03em;
             color: #ffffff;
         }
-
-        /* Badge */
         .hero-badge {
             display: inline-flex;
             align-items: center;
@@ -328,8 +167,7 @@
             backdrop-filter: blur(8px);
         }
         .hero-badge .dot {
-            width: 6px;
-            height: 6px;
+            width: 6px; height: 6px;
             border-radius: 50%;
             background: #10b981;
             box-shadow: 0 0 6px rgba(16,185,129,0.6);
@@ -339,8 +177,6 @@
             0%, 100% { opacity: 1; box-shadow: 0 0 6px rgba(16,185,129,0.6); }
             50% { opacity: 0.5; box-shadow: 0 0 12px rgba(16,185,129,0.3); }
         }
-
-        /* Hero CTA buttons */
         .btn-hero-primary {
             display: inline-flex;
             align-items: center;
@@ -370,18 +206,7 @@
             font-size: 15px;
             transition: all 0.25s ease;
         }
-        .btn-hero-secondary:hover {
-            color: #fafafa;
-        }
-
-        /* Agent logo bar */
-        .agent-bar {
-            display: flex;
-            align-items: center;
-            gap: 20px;
-            flex-wrap: wrap;
-            opacity: 0.5;
-        }
+        .btn-hero-secondary:hover { color: #fafafa; }
         .agent-bar-item {
             display: flex;
             align-items: center;
@@ -391,13 +216,9 @@
             color: #71717a;
             white-space: nowrap;
         }
-        .agent-bar-item svg {
-            width: 16px;
-            height: 16px;
-            opacity: 0.7;
-        }
+        .agent-bar-item svg { width: 16px; height: 16px; opacity: 0.7; }
 
-        /* ---- Hero abstract glow ---- */
+        /* Hero glow visuals */
         .hero-glow-container {
             position: relative;
             width: 100%;
@@ -468,7 +289,6 @@
         .hero-glow-dot-1 { width: 4px; height: 4px; top: 25%; left: 30%; animation-delay: 0s; }
         .hero-glow-dot-2 { width: 3px; height: 3px; top: 70%; left: 65%; animation-delay: 1.2s; background: #10b981; box-shadow: 0 0 10px rgba(16,185,129,0.6); }
         .hero-glow-dot-3 { width: 3px; height: 3px; top: 30%; left: 75%; animation-delay: 2.5s; background: #06b6d4; box-shadow: 0 0 10px rgba(6,182,212,0.6); }
-
         @keyframes float-1 {
             0%, 100% { transform: translate(-50%, -50%) rotate3d(1, 0.2, 0, 55deg); }
             50% { transform: translate(-50%, -55%) rotate3d(1, 0.2, 0, 60deg); }
@@ -498,23 +318,238 @@
             .hero-glow-orb-2 { width: 100px; height: 100px; }
             .hero-glow-orb-3 { width: 80px; height: 80px; }
         }
+
+        /* ── Navbar ── */
+
+        /* ── Section typography ── */
+        .section-label {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 13px;
+            font-weight: 600;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            margin-bottom: 20px;
+        }
+        .section-title {
+            font-size: clamp(2.2rem, 5vw, 3.8rem);
+            font-weight: 800;
+            line-height: 1.1;
+            letter-spacing: -0.03em;
+        }
+        .section-desc {
+            font-size: clamp(1rem, 1.5vw, 1.15rem);
+            color: #71717a;
+            line-height: 1.7;
+            max-width: 600px;
+        }
+
+        /* ── Image placeholder ── */
+        .img-placeholder {
+            position: relative;
+            border-radius: 16px;
+            overflow: hidden;
+            background: linear-gradient(135deg, #141416 0%, #1c1c1f 100%);
+            border: 1px solid rgba(255,255,255,0.06);
+            box-shadow: 0 20px 80px rgba(0,0,0,0.5), 0 0 40px rgba(16,185,129,0.04);
+            transition: box-shadow 0.6s ease, transform 0.6s ease;
+        }
+        .img-placeholder:hover {
+            box-shadow: 0 25px 90px rgba(0,0,0,0.6), 0 0 60px rgba(16,185,129,0.08);
+            transform: translateY(-2px);
+        }
+        .img-placeholder img {
+            display: block;
+            width: 100%;
+        }
+        .img-placeholder .placeholder-inner {
+            aspect-ratio: 16/9;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: #3f3f46;
+            font-size: 14px;
+        }
+
+        /* ── Feature card ── */
+        .feature-card {
+            background: rgba(255,255,255,0.02);
+            border: 1px solid rgba(255,255,255,0.06);
+            border-radius: 16px;
+            padding: 32px;
+            transition: all 0.4s ease;
+        }
+        .feature-card:hover {
+            background: rgba(255,255,255,0.04);
+            border-color: rgba(255,255,255,0.1);
+            transform: translateY(-2px);
+        }
+
+        /* ── Notification card ── */
+        .notif-card {
+            background: #1c1c1e;
+            border: 1px solid rgba(255,255,255,0.08);
+            border-radius: 16px;
+            padding: 16px 20px;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+            transition: transform 0.3s ease;
+        }
+        .notif-card:hover {
+            transform: translateY(-2px);
+        }
+
+        /* ── Sticky section ── */
+        .sticky-wrap {
+            position: relative;
+        }
+        .sticky-inner {
+            position: sticky;
+            top: 0;
+            height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            overflow: hidden;
+        }
+        .sticky-panel {
+            position: absolute;
+            inset: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            opacity: 0;
+            transform: translateY(30px);
+            transition: opacity 0.6s cubic-bezier(0.16, 1, 0.3, 1), transform 0.6s cubic-bezier(0.16, 1, 0.3, 1);
+            pointer-events: none;
+        }
+        .sticky-panel.active {
+            opacity: 1;
+            transform: translateY(0);
+            pointer-events: auto;
+        }
+
+        /* ── Explore list ── */
+        .explore-item {
+            cursor: pointer;
+            padding: 16px 20px;
+            border-left: 2px solid transparent;
+            border-radius: 0 12px 12px 0;
+            transition: all 0.35s cubic-bezier(0.16, 1, 0.3, 1);
+            opacity: 0.4;
+        }
+        .explore-item:hover { opacity: 0.7; }
+        .explore-item.active {
+            opacity: 1;
+            border-left-color: #10b981;
+            background: rgba(16,185,129,0.04);
+        }
+
+        /* ── Install tabs ── */
+        .install-tab.active {
+            color: #10b981;
+            border-bottom-color: #10b981;
+        }
+        .code-frame {
+            background: #0a0a0b;
+            border: 1px solid #27272a;
+            border-radius: 0 0 12px 12px;
+        }
+
+        /* ── Side TOC ── */
+        #side-toc {
+            position: fixed;
+            left: 24px;
+            top: 50%;
+            transform: translateY(-50%);
+            z-index: 40;
+            display: flex;
+            flex-direction: column;
+            gap: 0;
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.4s ease;
+        }
+        #side-toc.visible { opacity: 1; pointer-events: auto; }
+        .toc-item {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 7px 0;
+            cursor: pointer;
+        }
+        .toc-dot {
+            width: 8px; height: 8px;
+            border-radius: 50%;
+            background: #3f3f46;
+            border: 1.5px solid #52525b;
+            transition: all 0.3s ease;
+            flex-shrink: 0;
+        }
+        .toc-item:hover .toc-dot { background: #71717a; border-color: #a1a1aa; }
+        .toc-item.active .toc-dot {
+            background: #10b981;
+            border-color: #10b981;
+            box-shadow: 0 0 10px rgba(16,185,129,0.5);
+            width: 10px; height: 10px;
+        }
+        .toc-label {
+            font-size: 12px; font-weight: 500; color: #52525b;
+            white-space: nowrap; transition: all 0.25s ease; user-select: none;
+        }
+        .toc-item:hover .toc-label { color: #a1a1aa; }
+        .toc-item.active .toc-label { color: #10b981; }
+        @media (max-width: 1279px) { #side-toc { display: none; } }
+
+        /* ── Agent bar ── */
+        .agent-bar {
+            display: flex;
+            align-items: center;
+            gap: 20px;
+            flex-wrap: wrap;
+            opacity: 0.5;
+        }
+
+        /* ── Gradient accents ── */
+        .text-gradient {
+            background: linear-gradient(135deg, #10b981, #06b6d4);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        /* ── kbd ── */
+        kbd {
+            background: #1c1c1f;
+            border: 1px solid #27272a;
+            border-radius: 4px;
+            padding: 2px 8px;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.75rem;
+        }
+
+        /* ── Responsive ── */
     </style>
 </head>
-<body class="bg-grove-bg text-grove-text font-sans antialiased">
+<body class="text-grove-text font-sans antialiased">
+
+    <!-- Starfield -->
+    <canvas id="starfield"></canvas>
 
     <!-- ========== SIDE TOC ========== -->
     <nav id="side-toc" aria-label="Page sections">
-        <div class="toc-item" data-target="why-grove"><span class="toc-label">Why Grove</span><span class="toc-dot"></span></div>
-        <div class="toc-item" data-target="how-it-works"><span class="toc-label">Workflow</span><span class="toc-dot"></span></div>
+        <div class="toc-item" data-target="isolate"><span class="toc-label">Isolate</span><span class="toc-dot"></span></div>
         <div class="toc-item" data-target="develop"><span class="toc-label">Develop</span><span class="toc-dot"></span></div>
         <div class="toc-item" data-target="review"><span class="toc-label">Review</span><span class="toc-dot"></span></div>
+        <div class="toc-item" data-target="ship"><span class="toc-label">Ship</span><span class="toc-dot"></span></div>
         <div class="toc-item" data-target="skills"><span class="toc-label">Skills</span><span class="toc-dot"></span></div>
-        <div class="toc-item" data-target="monitor"><span class="toc-label">Monitor</span><span class="toc-dot"></span></div>
+        <div class="toc-item" data-target="tui"><span class="toc-label">TUI</span><span class="toc-dot"></span></div>
+        <div class="toc-item" data-target="explore"><span class="toc-label">Explore</span><span class="toc-dot"></span></div>
         <div class="toc-item" data-target="install"><span class="toc-label">Install</span><span class="toc-dot"></span></div>
     </nav>
 
     <!-- ========== NAVBAR ========== -->
-    <nav id="navbar" class="fixed top-0 left-0 right-0 z-50 transition-all duration-300">
+    <nav id="navbar" class="fixed top-0 left-0 right-0 z-50 transition-all duration-300" style="opacity:0;pointer-events:none;transform:translateY(-10px)">
         <div class="max-w-6xl mx-auto px-6 py-4 flex items-center justify-between">
             <a href="#" class="flex items-center gap-2 group">
                 <!-- GroveIcon (dark bg, 32px) -->
@@ -558,11 +593,11 @@
                 </svg>
             </a>
             <div class="hidden md:flex items-center gap-7">
-                <a href="#how-it-works" class="text-[#a1a1aa] hover:text-grove-text transition-colors text-sm">Workflow</a>
                 <a href="#develop" class="text-[#a1a1aa] hover:text-grove-text transition-colors text-sm">Develop</a>
                 <a href="#review" class="text-[#a1a1aa] hover:text-grove-text transition-colors text-sm">Review</a>
+                <a href="#skills" class="text-[#a1a1aa] hover:text-grove-text transition-colors text-sm">Skills</a>
                 <a href="https://github.com/GarrickZ2/grove" target="_blank" rel="noopener" class="text-[#a1a1aa] hover:text-grove-text transition-colors text-sm">GitHub</a>
-                <a href="#install" class="px-5 py-2 rounded-lg border border-white/15 text-sm font-medium text-grove-text hover:bg-white/5 hover:border-white/25 transition-all">Get Started</a>
+                <a href="#install" class="px-5 py-2 rounded-lg border border-white/15 text-sm font-medium text-grove-text hover:bg-white/5 hover:border-white/25 transition-all">Install</a>
             </div>
             <button id="mobile-menu-btn" class="md:hidden text-grove-muted hover:text-grove-text">
                 <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"/></svg>
@@ -570,9 +605,9 @@
         </div>
         <div id="mobile-menu" class="hidden md:hidden px-6 pb-4">
             <div class="flex flex-col gap-3 bg-grove-bg-secondary rounded-lg p-4 border border-grove-border">
-                <a href="#how-it-works" class="text-grove-muted hover:text-grove-text transition-colors text-sm">Workflow</a>
                 <a href="#develop" class="text-grove-muted hover:text-grove-text transition-colors text-sm">Develop</a>
                 <a href="#review" class="text-grove-muted hover:text-grove-text transition-colors text-sm">Review</a>
+                <a href="#skills" class="text-grove-muted hover:text-grove-text transition-colors text-sm">Skills</a>
                 <a href="#install" class="text-grove-muted hover:text-grove-text transition-colors text-sm">Install</a>
                 <a href="https://github.com/GarrickZ2/grove" target="_blank" rel="noopener" class="text-grove-muted hover:text-grove-text transition-colors text-sm">GitHub</a>
             </div>
@@ -581,12 +616,53 @@
 
     <!-- ========== HERO ========== -->
     <section class="hero-section">
-        <div class="hero-inner">
+        <div class="hero-inner" id="hero-inner">
             <!-- Left: Text content -->
             <div>
-                <div class="hero-badge mb-6">
+                <div class="hero-badge mb-8">
                     <span class="dot"></span>
                     The AI Development Workflow
+                </div>
+
+                <!-- Grove Icon + Wordmark -->
+                <div class="flex items-center gap-4 mb-8">
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="322 38 378 378" width="72" height="72" class="rounded-2xl flex-shrink-0">
+                  <defs>
+                    <linearGradient id="hero-g1" gradientUnits="userSpaceOnUse" x1="1168.07" y1="1244.61" x2="1232.46" y2="1201.7"><stop offset="0%" stop-color="rgb(153,93,164)"/><stop offset="100%" stop-color="rgb(88,129,181)"/></linearGradient>
+                    <linearGradient id="hero-g2" gradientUnits="userSpaceOnUse" x1="1071.47" y1="1185.72" x2="1138.92" y2="1144.27"><stop offset="0%" stop-color="rgb(172,99,162)"/><stop offset="100%" stop-color="rgb(89,137,184)"/></linearGradient>
+                    <linearGradient id="hero-g3" gradientUnits="userSpaceOnUse" x1="1060.98" y1="730.426" x2="1018.88" y2="629.632"><stop offset="0%" stop-color="rgb(255,191,79)"/><stop offset="100%" stop-color="rgb(235,215,108)"/></linearGradient>
+                    <linearGradient id="hero-g4" gradientUnits="userSpaceOnUse" x1="681.621" y1="866.66" x2="710.15" y2="969.513"><stop offset="0%" stop-color="rgb(55,203,170)"/><stop offset="100%" stop-color="rgb(42,182,196)"/></linearGradient>
+                  </defs>
+                  <rect x="322" y="38" width="378" height="378" rx="72" ry="72" fill="#1a1d2e"/>
+                  <g transform="matrix(1 0 0 1 512 227.6051)"><g>
+                    <g transform="matrix(0.3755 0 0 0.3755 -53.3649 32.8458)"><path fill="rgb(249,196,88)" transform="translate(-889.9884,-1128.4495)" d="M849.958 817.471C860.156 814.413 873.724 813.183 885.11 808.372 891.492 805.675 901.582 799.063 907.118 798.618L908.234 799.842C908.104 802.321 908.281 802.382 908.954 804.795 911.084 808.756 910.774 815.424 907.756 818.927 900.307 815.709 896.077 813.461 888.02 812.233 886.745 870.416 902.127 961.989 943.16 1005.36 958.011 1021.06 980.271 1028.18 995.935 1043.43 1017.71 1059.48 1044.17 1096.12 1054.48 1120.65L1053.61 1122.3 1054.26 1124.19C1056.84 1131.57 1059.94 1137.43 1062.48 1145.66 1064.86 1153.36 1068.2 1169.51 1071.61 1175.4 1076.88 1177.53 1089.61 1211.7 1088.38 1218.88 1084.66 1224.99 1069.83 1252.39 1066.67 1256 1062.72 1268.12 1056.09 1280.68 1051.76 1293.52 1036.38 1339.24 1031.95 1385.94 1032.49 1433.94 1032.57 1440.88 1035.53 1452.5 1030.22 1457.53 1025.14 1458.76 1000.29 1458.32 993.623 1457.35 992.025 1457.24 990.712 1454.88 990.539 1453.53 981.019 1378.27 1017.77 1293.67 980.04 1223.27 977.308 1218.17 970.879 1211.94 966.037 1208.64 946.507 1195.36 921.352 1206.81 901.926 1213.56 872.744 1223.71 824.846 1237.52 794.891 1231.03 789.367 1230.96 781.167 1229.3 775.695 1228.12 754.687 1223.73 738.873 1215.36 722.757 1201.8 676.527 1162.92 685.655 1102.43 723.704 1060.82 756.209 1025.27 802.035 1005.95 849.773 1000.35 862.283 998.886 874.58 998.879 887.242 998.159 857.552 932.278 854.249 904.613 847.701 833.503 849.04 827.9 849.4 823.157 849.958 817.471ZM1014.48 1134.31C1011.2 1129.19 1007.46 1120.71 1003.41 1114.39 992.163 1096.84 981.17 1086.02 966.138 1072.29 927.436 1044.76 896.776 1032.83 848.221 1040.28 808.5 1046.38 769.217 1066.25 745.144 1099.03 727.284 1123.36 727.778 1156.77 755.551 1173.67 782.531 1190.09 805.592 1188.48 835.357 1187.87 836.251 1187.32 864.592 1182.14 869.486 1180.58 892.955 1173.14 914.15 1162.38 939.06 1160.15 975.093 1156.92 1004.75 1179.66 1021.06 1210.3 1023.86 1215.44 1025.79 1228.88 1029.1 1231.56L1030.35 1230.72C1039.65 1206.64 1023.41 1158.11 1014.48 1134.31Z"/></g>
+                    <g transform="matrix(0.3755 0 0 0.3755 -33.9543 78.8128)"><path fill="rgb(218,91,136)" transform="translate(-941.6771,-1250.8555)" d="M995.935 1043.43C1017.71 1059.48 1044.17 1096.12 1054.48 1120.65L1053.61 1122.3 1054.26 1124.19C1056.84 1131.57 1059.94 1137.43 1062.48 1145.66 1064.86 1153.36 1068.2 1169.51 1071.61 1175.4 1076.88 1177.53 1089.61 1211.7 1088.38 1218.88 1084.66 1224.99 1069.83 1252.39 1066.67 1256 1062.72 1268.12 1056.09 1280.68 1051.76 1293.52 1036.38 1339.24 1031.95 1385.94 1032.49 1433.94 1032.57 1440.88 1035.53 1452.5 1030.22 1457.53 1025.14 1458.76 1000.29 1458.32 993.623 1457.35 992.025 1457.24 990.712 1454.88 990.539 1453.53 981.019 1378.27 1017.77 1293.67 980.04 1223.27 977.308 1218.17 970.879 1211.94 966.037 1208.64 946.507 1195.36 921.352 1206.81 901.926 1213.56 872.744 1223.71 824.846 1237.52 794.891 1231.03 798.99 1230.43 808.06 1230.57 813.195 1230.27 821.269 1223.14 856.288 1197.6 848.797 1187.42 844.87 1187.93 840.951 1188.51 837.042 1189.14L835.357 1187.87C836.251 1187.32 864.592 1182.14 869.486 1180.58 892.955 1173.14 914.15 1162.38 939.06 1160.15 975.093 1156.92 1004.75 1179.66 1021.06 1210.3 1023.86 1215.44 1025.79 1228.88 1029.1 1231.56L1030.35 1230.72C1039.65 1206.64 1023.41 1158.11 1014.48 1134.31 1011.2 1129.19 1007.46 1120.71 1003.41 1114.39 992.163 1096.84 981.17 1086.02 966.138 1072.29 976.898 1075.12 985.273 1091.55 993.827 1093.87 995.487 1092.78 1006.1 1081.08 1006.81 1079.56 1010.08 1072.55 1015.12 1073.07 1018.63 1068.25 1013.58 1062.78 997.791 1048.24 995.935 1043.43Z"/></g>
+                    <g transform="matrix(0.3755 0 0 0.3755 -8.1805 17.9873)"><path fill="rgb(218,140,126)" transform="translate(-1010.309,-1088.87)" d="M995.935 1043.43C1017.71 1059.48 1044.17 1096.12 1054.48 1120.65L1053.61 1122.3C1045.98 1107.19 1043.57 1102.56 1033.15 1088.9 1025.4 1086.77 1002.3 1091 998.952 1100.03 997.083 1105.07 1018.4 1129.59 1014.48 1134.31 1011.2 1129.19 1007.46 1120.71 1003.41 1114.39 992.163 1096.84 981.17 1086.02 966.138 1072.29 976.898 1075.12 985.273 1091.55 993.827 1093.87 995.487 1092.78 1006.1 1081.08 1006.81 1079.56 1010.08 1072.55 1015.12 1073.07 1018.63 1068.25 1013.58 1062.78 997.791 1048.24 995.935 1043.43Z"/></g>
+                    <g transform="matrix(0.3755 0 0 0.3755 17.0576 65.6139)"><path fill="rgb(195,69,157)" transform="translate(-1077.5172,-1215.7)" d="M1071.61 1175.4C1076.88 1177.53 1089.61 1211.7 1088.38 1218.88 1084.66 1224.99 1069.83 1252.39 1066.67 1256 1065 1246.81 1085.02 1224.9 1086.18 1217.63 1085.34 1222.94 1071.82 1176.29 1071.86 1176.47L1071.61 1175.4Z"/></g>
+                    <g transform="matrix(0.3755 0 0 0.3755 25.1372 -74.6008)"><path fill="rgb(249,196,88)" transform="translate(-1099.0403,-842.3116)" d="M1196.82 732.787C1197.21 714.457 1199.87 699.399 1213.98 685.908 1231.99 668.696 1262.7 669.785 1279.35 688.313 1287.11 696.998 1291.03 708.445 1290.22 720.06 1288 750.008 1264.56 757.663 1239.71 761.323 1234.39 784.313 1229.48 807.396 1224.99 830.561 1212.19 895.068 1187.74 1025.82 1090.41 1009.56 1068.39 1005.88 1047.67 985.82 1036.74 968.262 1021.19 947.623 1026.3 922.508 1020.12 908.108 1004.42 871.56 943.677 832.934 907.756 818.927 910.774 815.424 911.084 808.756 908.954 804.795 908.664 796.344 908.946 786.524 908.982 777.967 946.917 790.445 978.491 809.589 1009.28 834.93 1018.51 842.529 1026.93 850.923 1035.9 858.483 1068.36 807.487 1098.81 781.441 1152.65 752.836 1164.67 746.445 1186.98 738.796 1196.82 732.787ZM1076.16 954.797C1099.06 975.777 1120.61 972.439 1140.72 950.084 1148.42 941.5 1154.84 931.859 1159.8 921.454 1172.58 894.045 1179.33 863.858 1185.23 834.317 1188.02 820.334 1194.22 794.844 1193.91 780.871 1179.38 779.206 1140.8 805.447 1129.28 814.393 1099.56 837.473 1066.7 868.146 1061.85 907.56 1059.78 924.365 1064.33 942.352 1076.16 954.797Z"/></g>
+                    <g transform="matrix(0.3755 0 0 0.3755 83.8396 5.5719)"><path fill="rgb(41,176,193)" transform="translate(-1255.3658,-1055.8149)" d="M1325.24 916.329C1314.33 902.134 1307.98 888.958 1310.15 870.43 1311.73 856.998 1320.73 841.154 1331.55 833.043 1371.61 803.012 1432.22 837.562 1421.54 888.048 1418.62 902.375 1410.03 914.911 1397.72 922.799 1384.54 931.074 1373.22 932 1358.19 932.71 1338.78 967.692 1329.2 988.968 1332.11 1029.24 1347.87 1033.37 1359.15 1036.49 1374.52 1042.01 1379.31 1034.52 1381.21 1031.53 1387.6 1025.37 1410.42 1003.39 1452.39 1016.83 1456.82 1048.76 1458.05 1058.34 1455.49 1068.03 1449.67 1075.74 1443.93 1083.25 1432.13 1090.01 1422.79 1090.93 1406.93 1092.5 1396.84 1080.75 1388.96 1069.25 1379.84 1068.74 1357.35 1069.85 1348.68 1071.95 1356.51 1082.77 1364.54 1094.2 1372.66 1105.03 1402.78 1145.15 1380.24 1196.03 1337.15 1214.63 1333.13 1216.37 1326.79 1219.23 1322.5 1219.74 1306.16 1225.77 1292.13 1227.35 1274.93 1229.05 1208 1235.69 1183.68 1234.27 1144.46 1289.77 1143.7 1279.55 1170.58 1255.22 1179.46 1249.15L1180.61 1248.38C1169.22 1235.27 1163.97 1231.06 1150.61 1220.18 1147.14 1223.36 1143.61 1225.85 1140.01 1228.88 1134.63 1233.42 1130.51 1240.98 1124.34 1243.89 1145.57 1211.54 1188.5 1196.54 1225.01 1191.4 1254.65 1187.23 1283.67 1187.24 1312.32 1177.95 1322.45 1173.09 1336.27 1166.76 1340.56 1155.42 1349.29 1132.34 1327.66 1112.57 1316.54 1094.18 1309.59 1082.68 1307.03 1078.35 1301.6 1066.31 1252.12 1063.44 1219.71 1088.85 1183.1 1117.76 1175.2 1126.84 1159.56 1139.28 1150.49 1148.4 1129.35 1169.64 1104.97 1194.05 1088.38 1218.88 1089.61 1211.7 1076.88 1177.53 1071.61 1175.4 1068.2 1169.51 1064.86 1153.36 1062.48 1145.66 1059.94 1137.43 1056.84 1131.57 1054.26 1124.19L1053.61 1122.3 1054.48 1120.65C1059.1 1129.63 1062.79 1139.05 1065.49 1148.78 1066.96 1153.89 1069.81 1165.53 1071.9 1169.82L1074.21 1170.19C1076.42 1168.87 1076.15 1169.11 1077.55 1167.12 1096.82 1139.67 1128.08 1105.54 1154.6 1085.86 1177.69 1064.06 1220.8 1038.5 1251.04 1031.18 1264.21 1027.99 1277.56 1027.05 1290.73 1024.9L1290.93 1023.67C1292.31 1014.67 1292.35 1005.39 1293.78 995.878 1298.67 963.487 1307.82 943.177 1325.24 916.329Z"/></g>
+                    <g transform="matrix(0.3755 0 0 0.3755 71.845 72.4331)"><path fill="url(#hero-g1)" transform="translate(-1223.42,-1233.86)" d="M1312.32 1177.95C1302.82 1189.87 1231.72 1188.39 1228.24 1194.28 1230.03 1204.71 1247.19 1218.58 1248.65 1229.23 1269.12 1227.69 1290.49 1226.58 1310.5 1221.62 1315.58 1220.36 1317.32 1219.14 1322.5 1219.74 1306.16 1225.77 1292.13 1227.35 1274.93 1229.05 1208 1235.69 1183.68 1234.27 1144.46 1289.77 1143.7 1279.55 1170.58 1255.22 1179.46 1249.15L1180.61 1248.38C1169.22 1235.27 1163.97 1231.06 1150.61 1220.18 1147.14 1223.36 1143.61 1225.85 1140.01 1228.88 1134.63 1233.42 1130.51 1240.98 1124.34 1243.89 1145.57 1211.54 1188.5 1196.54 1225.01 1191.4 1254.65 1187.23 1283.67 1187.24 1312.32 1177.95Z"/></g>
+                    <g transform="matrix(0.3755 0 0 0.3755 32.392 41.8322)"><path fill="url(#hero-g2)" transform="translate(-1118.355,-1152.37)" d="M1154.6 1085.86C1152.57 1091.83 1128.54 1110.96 1122.7 1116.95 1125.83 1122.18 1127.57 1127.25 1130.61 1132.87 1134.36 1139.84 1139.6 1146.62 1143.11 1153.17 1154.42 1141.78 1168.3 1127.48 1180.92 1117.63L1183.1 1117.76C1175.2 1126.84 1159.56 1139.28 1150.49 1148.4 1129.35 1169.64 1104.97 1194.05 1088.38 1218.88 1089.61 1211.7 1076.88 1177.53 1071.61 1175.4 1068.2 1169.51 1064.86 1153.36 1062.48 1145.66 1059.94 1137.43 1056.84 1131.57 1054.26 1124.19L1053.61 1122.3 1054.48 1120.65C1059.1 1129.63 1062.79 1139.05 1065.49 1148.78 1066.96 1153.89 1069.81 1165.53 1071.9 1169.82L1074.21 1170.19C1076.42 1168.87 1076.15 1169.11 1077.55 1167.12 1096.82 1139.67 1128.08 1105.54 1154.6 1085.86Z"/></g>
+                    <g transform="matrix(0.3755 0 0 0.3755 -84.2734 -107.791)"><path fill="rgb(86,209,139)" transform="translate(-807.6749,-753.9222)" d="M722.865 811.639C713.596 805.926 701.06 794.858 708.764 783.682 718.761 769.179 752.155 766.132 768.263 764.408 781.526 762.988 793.211 765.045 806.413 762.088 805.532 759.451 804.258 759.562 802.577 757.395 794.109 746.475 789.099 732.853 790.142 718.925 791.125 705.922 797.254 693.848 807.171 685.38 816.69 677.26 829.099 673.353 841.553 674.555 854.525 675.834 866.456 682.22 874.715 692.305 892.182 713.709 888.516 742.854 886.239 769.483L886.666 771.748C891.259 774.351 902.45 775.828 908.982 777.967 908.946 786.524 908.664 796.344 908.954 804.795 908.281 802.382 908.104 802.321 908.234 799.842L907.118 798.618C901.582 799.063 891.492 805.675 885.11 808.372 873.724 813.183 860.156 814.413 849.958 817.471 849.4 823.157 849.04 827.9 847.701 833.503 846.317 823.646 846.573 812.358 846.5 802.302 838.705 801.517 829.419 799.916 821.499 798.803 800.974 796.132 777.924 799.341 757.704 802.902 746.039 804.957 734.624 809.098 722.865 811.639Z"/></g>
+                    <g transform="matrix(0.3755 0 0 0.3755 -63.9455 -94.022)"><path fill="rgb(143,204,124)" transform="translate(-861.8063,-790.588)" d="M821.499 798.803C819.192 796.621 817.856 796.778 814.873 796.378 814.68 794.545 814.197 792.665 815.562 791.219 824.891 781.339 875.218 749.399 885.188 747.673 885.893 755.465 886.12 761.643 886.239 769.483L886.666 771.748C891.259 774.351 902.45 775.828 908.982 777.967 908.946 786.524 908.664 796.344 908.954 804.795 908.281 802.382 908.104 802.321 908.234 799.842L907.118 798.618C901.582 799.063 891.492 805.675 885.11 808.372 873.724 813.183 860.156 814.413 849.958 817.471 849.4 823.157 849.04 827.9 847.701 833.503 846.317 823.646 846.573 812.358 846.5 802.302 838.705 801.517 829.419 799.916 821.499 798.803Z"/></g>
+                    <g transform="matrix(0.3755 0 0 0.3755 3.1952 -135.4105)"><path fill="url(#hero-g3)" transform="translate(-1040.6034,-680.3705)" d="M1037.9 623.72C1069.15 622.232 1095.71 646.328 1097.25 677.574 1098.79 708.821 1074.74 735.415 1043.5 737.011 1012.18 738.612 985.503 714.49 983.957 683.167 982.411 651.844 1006.58 625.212 1037.9 623.72Z"/></g>
+                    <g transform="matrix(0.3755 0 0 0.3755 36.0601 111.9959)"><path fill="rgb(195,69,157)" transform="translate(-1128.1226,-1339.2189)" d="M1124.34 1243.89C1130.51 1240.98 1134.63 1233.42 1140.01 1228.88 1143.61 1225.85 1147.14 1223.36 1150.61 1220.18 1163.97 1231.06 1169.22 1235.27 1180.61 1248.38L1179.46 1249.15C1170.58 1255.22 1143.7 1279.55 1144.46 1289.77 1143.57 1292.9 1138.37 1302.67 1136.68 1306.16 1120.23 1340.16 1117.95 1377.7 1116.84 1414.8 1116.44 1427.93 1118.1 1442.87 1116.41 1455.8 1110.2 1459.47 1085.3 1458.49 1078.06 1456.36 1076.23 1454.28 1076.05 1451.91 1075.97 1449.12 1074.27 1387.57 1078.17 1323.84 1108.29 1268.66 1113.29 1259.51 1117.5 1251.64 1124.34 1243.89Z"/></g>
+                    <g transform="matrix(0.3755 0 0 0.3755 -126.103 -45.9087)"><path fill="url(#hero-g4)" transform="translate(-696.2805,-918.7145)" d="M691.178 863.699C721.531 860.884 748.43 883.184 751.289 913.534 754.147 943.883 731.885 970.814 701.54 973.715 671.133 976.623 644.137 954.307 641.272 923.896 638.408 893.485 660.763 866.52 691.178 863.699Z"/></g>
+                    <g transform="matrix(0.3755 0 0 0.3755 -145.6873 15.0044)"><path fill="rgb(249,196,88)" transform="translate(-644.1264,-1080.9261)" d="M636.832 1044.59C649.909 1041.96 663.388 1046.57 672.127 1056.64 680.866 1066.72 683.516 1080.71 679.067 1093.29 674.617 1105.86 663.754 1115.07 650.622 1117.41 630.628 1120.97 611.495 1107.77 607.716 1087.82 603.938 1067.87 616.921 1048.59 636.832 1044.59Z"/></g>
+                  </g></g>
+                </svg>
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="-122 -25 244 50" width="180" height="42">
+                  <defs><linearGradient id="hero-wg" x1="0%" y1="0%" x2="100%" y2="0%"><stop offset="0%" stop-color="#fafafa"/><stop offset="100%" stop-color="#a1a1aa"/></linearGradient></defs>
+                  <g fill="url(#hero-wg)">
+                    <g transform="translate(-95.6954,0.0706)"><path transform="translate(-100,-100)" d="M98.9718 124.768C98.4924 124.7201 98.0597 124.6723 97.5802 124.5756 88.9875 123.184 81.5949 117.1352 78.4259 109.0224 75.258 100.8134 76.7463 91.2128 82.3146 84.3959 87.7394 77.7236 96.4279 74.267 104.9728 75.4672 112.6535 76.5234 119.3742 81.1796 123.214 87.8525L112.9416 92.893C110.3488 88.8124 105.6925 86.412 100.8439 86.6523 96.6681 86.8925 92.7794 89.1005 90.4269 92.5571 87.7394 96.541 87.4513 101.8217 89.6115 106.0942 91.4835 109.7905 94.9875 112.4306 98.9718 113.1987L98.9718 124.768Z"/></g>
+                    <g transform="translate(-84.6987,8.613)"><polygon fill="#71717a" opacity="0.5" points="12.0249,10.6572 0.6479,10.6572 0.6479,-0.5762 -12.0249,-0.5762 -12.0249,-10.6572 12.0249,-10.6572"/></g>
+                    <g transform="translate(-17.4617,-0.3925)"><path transform="translate(-101.085,-98.2336)" d="M123.9829 122.6079L92.0122 122.6079 92.0845 122.6797 79.0513 122.6797 70.2666 105.542 64.5781 105.542 64.5781 122.6797 53.2007 122.6797 53.2007 95.4614 74.1548 95.4614C77.7549 95.4614 80.2031 93.3731 80.2031 90.1328 80.2031 86.9649 77.8272 84.8042 74.1548 84.8042L53.2007 84.8042 53.2007 74.6514 75.667 74.6514C85.6758 74.6514 91.7964 81.2041 91.7964 90.1328 91.7964 98.6294 86.4678 103.2378 81.2832 104.3902L86.1079 112.5269 124.127 112.5269C131.5435 112.5269 137.52 106.3345 137.52 98.7017 137.52 91.2852 131.5435 85.3086 124.127 85.3086 116.7822 85.3086 110.7339 91.2852 110.7339 98.7017 110.7339 102.374 112.1021 105.6861 114.4063 108.2066L101.1572 108.2066C99.9331 105.2544 99.2847 102.0137 99.2847 98.6294 99.2847 84.9483 110.4458 73.7876 124.127 73.7876 137.8804 73.7876 148.9693 84.9482 148.9693 98.6294 148.9693 111.9507 137.8804 122.6079 124.1992 122.6079L123.9829 122.6079Z"/></g>
+                    <g transform="translate(62.5642,0.0755)"><polygon points="-6.3726,23.978 -24.9502,-23.978 -12.061,-23.978 0.0361,9.5049 12.061,-23.978 24.9502,-23.978 6.4448,23.978 -6.3726,23.978"/></g>
+                    <g transform="translate(97.8474,19.0130)"><polygon points="-17.1733,-5.0405 21.062,-5.0405 21.062,5.0405 -21.062,5.0405 -17.1733,-5.0405"/></g>
+                    <g transform="translate(101.1236,0.2913)"><polygon points="-13.2488,-5.0405 17.1375,-5.0405 17.1375,5.0405 -17.1375,5.0405 -13.2488,-5.0405"/></g>
+                    <g transform="translate(105.1201,-18.8622)"><polygon fill="#71717a" opacity="0.5" points="-9.9011,-5.0403 13.7893,-5.0403 13.7893,5.0403 -13.7893,5.0403 -9.9011,-5.0403"/></g>
+                  </g>
+                </svg>
                 </div>
 
                 <h1 class="hero-title mb-6">
@@ -598,7 +674,7 @@
                 </p>
 
                 <div class="flex flex-wrap items-center gap-4 mb-12">
-                    <a href="#install" class="btn-hero-primary">Get Started</a>
+                    <a href="#isolate" class="btn-hero-primary">Get Started</a>
                     <a href="https://github.com/GarrickZ2/grove" target="_blank" rel="noopener" class="btn-hero-secondary">
                         <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 24 24"><path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/></svg>
                         View on GitHub
@@ -612,7 +688,7 @@
                         Claude
                     </span>
                     <span class="agent-bar-item">
-                        <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" fill="currentColor" fill-rule="evenodd"><path d="M9.205 8.658v-2.26c0-.19.072-.333.238-.428l4.543-2.616c.619-.357 1.356-.523 2.117-.523 2.854 0 4.662 2.212 4.662 4.566 0 .167 0 .357-.024.547l-4.71-2.759a.797.797 0 00-.856 0l-5.97 3.473zm10.609 8.8V12.06c0-.333-.143-.57-.429-.737l-5.97-3.473 1.95-1.118a.433.433 0 01.476 0l4.543 2.617c1.309.76 2.189 2.378 2.189 3.948 0 1.808-1.07 3.473-2.76 4.163zM7.802 12.703l-1.95-1.142c-.167-.095-.239-.238-.239-.428V5.899c0-2.545 1.95-4.472 4.591-4.472 1 0 1.927.333 2.712.928L8.23 5.067c-.285.166-.428.404-.428.737v6.898zM12 15.128l-2.795-1.57v-3.33L12 8.658l2.795 1.57v3.33L12 15.128zm1.796 7.23c-1 0-1.927-.332-2.712-.927l4.686-2.712c.285-.166.428-.404.428-.737v-6.898l1.974 1.142c.167.095.238.238.238.428v5.233c0 2.545-1.974 4.472-4.614 4.472zm-5.637-5.303l-4.544-2.617c-1.308-.761-2.188-2.378-2.188-3.948A4.482 4.482 0 014.21 6.327v5.423c0 .333.143.571.428.738l5.947 3.449-1.95 1.118a.432.432 0 01-.476 0zm-.262 3.9c-2.688 0-4.662-2.021-4.662-4.519 0-.19.024-.38.047-.57l4.686 2.71c.286.167.571.167.856 0l5.97-3.448v2.26c0 .19-.07.333-.237.428l-4.543 2.616c-.619.357-1.356.523-2.117.523zm5.899 2.83a5.947 5.947 0 005.827-4.756C22.287 18.339 24 15.84 24 13.296c0-1.665-.713-3.282-1.998-4.448.119-.5.19-.999.19-1.498 0-3.401-2.759-5.947-5.946-5.947-.642 0-1.26.095-1.88.31A5.962 5.962 0 0010.205 0a5.947 5.947 0 00-5.827 4.757C1.713 5.447 0 7.945 0 10.49c0 1.666.713 3.283 1.998 4.448-.119.5-.19 1-.19 1.499 0 3.401 2.759 5.946 5.946 5.946.642 0 1.26-.095 1.88-.309a5.96 5.96 0 004.162 1.713z"/></svg>
+                        <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" fill="currentColor" fill-rule="evenodd"><path d="M9.205 8.658v-2.26c0-.19.072-.333.238-.428l4.543-2.616c.619-.357 1.356-.523 2.117-.523 2.854 0 4.662 2.212 4.662 4.566 0 .167 0 .357-.024.547l-4.71-2.759a.797.797 0 00-.856 0l-5.97 3.473zm10.609 8.8V12.06c0-.333-.143-.57-.429-.737l-5.97-3.473 1.95-1.118a.433.433 0 01.476 0l4.543 2.617c1.309.76 2.189 2.378 2.189 3.948 0 1.808-1.07 3.473-2.76 4.163zM7.802 12.703l-1.95-1.142c-.167-.095-.239-.238-.239-.428V5.899c0-2.545 1.95-4.472 4.591-4.472 1 0 1.927.333 2.712.928L8.23 5.067c-.285.166-.428.404-.428.737v6.898zM12 15.128l-2.795-1.57v-3.33L12 8.658l2.795 1.57v3.33L12 15.128zm1.796 7.23c-1 0-1.927-.332-2.712-.927l4.686-2.712c.285-.166.428-.404.428-.737v-6.898l1.974 1.142c.167.095.238.238.238.428v5.233c0 2.545-1.974 4.472-4.614 4.472zm-5.637-5.303l-4.544-2.617c-1.308-.761-2.188-2.378-2.188-3.948A4.482 4.482 0 014.21 6.327v5.423c0 .333.143.571.428.738l5.947 3.449-1.95 1.118a.432.432 0 01-.476 0zm-.262 3.9c-2.688 0-4.662-2.021-4.662-4.519 0-.19.024-.38.047-.57l4.686 2.71c.286.167.571.167.856 0l5.97-3.448v2.26c0 .19-.07.333-.237.428l-4.543 2.616c-.619.357-1.356.523-2.117.523zm5.899 2.83a5.947 5.947 0 005.827-4.756C22.287 18.339 24 15.84 24 13.296c0-1.665-.713-3.282-1.998-4.448.119-.5.19-.999.19-1.498 0-3.401-2.759-5.947-5.946-5.947-.642 0-1.26.095-1.88.31A5.962 5.962 0 0010.205 0a5.947 5.947 0 00-5.827 4.757C1.713 5.447 0 7.945 0 10.49c0 1.666.713 3.283 1.998 4.448-.119.5-.19 1 .19 1.499 0 3.401 2.759 5.946 5.946 5.946.642 0 1.26-.095 1.88-.309a5.96 5.96 0 004.162 1.713z"/></svg>
                         CodeX
                     </span>
                     <span class="agent-bar-item">
@@ -628,16 +704,16 @@
                         Trae
                     </span>
                     <span class="agent-bar-item">
-                        <svg viewBox="0 0 240 300" xmlns="http://www.w3.org/2000/svg"><path d="M180 240H60V120H180V240Z" fill="#CFCECD"/><path d="M180 60H60V240H180V60ZM240 300H0V0H240V300Z" fill="#71717a"/></svg>
-                        OpenCode
-                    </span>
-                    <span class="agent-bar-item">
                         <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M21.846 0a1.923 1.923 0 110 3.846H20.15a.226.226 0 01-.227-.226V1.923C19.923.861 20.784 0 21.846 0z" fill="#1783FF"/><path d="M11.065 11.199l7.257-7.2c.137-.136.06-.41-.116-.41H14.3a.164.164 0 00-.117.051l-7.82 7.756c-.122.12-.302.013-.302-.179V3.82c0-.127-.083-.23-.185-.23H3.186c-.103 0-.186.103-.186.23V19.77c0 .128.083.23.186.23h2.69c.103 0 .186-.102.186-.23v-3.25c0-.069.025-.135.069-.178l2.424-2.406a.158.158 0 01.205-.023l6.484 4.772a7.677 7.677 0 003.453 1.283c.108.012.2-.095.2-.23v-3.06c0-.117-.07-.212-.164-.227a5.028 5.028 0 01-2.027-.807l-5.613-4.064c-.117-.078-.132-.279-.028-.381z" fill="#fafafa"/></svg>
                         Kimi
                     </span>
                     <span class="agent-bar-item">
                         <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><defs><linearGradient id="qwen-g" x1="0%" y1="0%" x2="100%" y2="0%"><stop offset="0%" stop-color="#6336E7" stop-opacity=".84"/><stop offset="100%" stop-color="#6F69F7" stop-opacity=".84"/></linearGradient></defs><path d="M12.604 1.34c.393.69.784 1.382 1.174 2.075a.18.18 0 00.157.091h5.552c.174 0 .322.11.446.327l1.454 2.57c.19.337.24.478.024.837-.26.43-.513.864-.76 1.3l-.367.658c-.106.196-.223.28-.04.512l2.652 4.637c.172.301.111.494-.043.77-.437.785-.882 1.564-1.335 2.34-.159.272-.352.375-.68.37-.777-.016-1.552-.01-2.327.016a.099.099 0 00-.081.05 575.097 575.097 0 01-2.705 4.74c-.169.293-.38.363-.725.364-.997.003-2.002.004-3.017.002a.537.537 0 01-.465-.271l-1.335-2.323a.09.09 0 00-.083-.049H4.982c-.285.03-.553-.001-.805-.092l-1.603-2.77a.543.543 0 01-.002-.54l1.207-2.12a.198.198 0 000-.197 550.951 550.951 0 01-1.875-3.272l-.79-1.395c-.16-.31-.173-.496.095-.965.465-.813.927-1.625 1.387-2.436.132-.234.304-.334.584-.335a338.3 338.3 0 012.589-.001.124.124 0 00.107-.063l2.806-4.895a.488.488 0 01.422-.246c.524-.001 1.053 0 1.583-.006L11.704 1c.341-.003.724.032.9.34zm-3.432.403a.06.06 0 00-.052.03L6.254 6.788a.157.157 0 01-.135.078H3.253c-.056 0-.07.025-.041.074l5.81 10.156c.025.042.013.062-.034.063l-2.795.015a.218.218 0 00-.2.116l-1.32 2.31c-.044.078-.021.118.068.118l5.716.008c.046 0 .08.02.104.061l1.403 2.454c.046.081.092.082.139 0l5.006-8.76.783-1.382a.055.055 0 01.096 0l1.424 2.53a.122.122 0 00.107.062l2.763-.02a.04.04 0 00.035-.02.041.041 0 000-.04l-2.9-5.086a.108.108 0 010-.113l.293-.507 1.12-1.977c.024-.041.012-.062-.035-.062H9.2c-.059 0-.073-.026-.043-.077l1.434-2.505a.107.107 0 000-.114L9.225 1.774a.06.06 0 00-.053-.031zm6.29 8.02c.046 0 .058.02.034.06l-.832 1.465-2.613 4.585a.056.056 0 01-.05.029.058.058 0 01-.05-.029L8.498 9.841c-.02-.034-.01-.052.028-.054l.216-.012 6.722-.012z" fill="url(#qwen-g)" fill-rule="nonzero"/></svg>
                         Qwen
+                    </span>
+                    <span class="agent-bar-item">
+                        <svg viewBox="0 0 240 300" xmlns="http://www.w3.org/2000/svg"><path d="M180 240H60V120H180V240Z" fill="#CFCECD"/><path d="M180 60H60V240H180V60ZM240 300H0V0H240V300Z" fill="#71717a"/></svg>
+                        OpenCode
                     </span>
                 </div>
             </div>
@@ -659,295 +735,222 @@
         </div>
     </section>
 
-    <!-- ========== WHY GROVE ========== -->
-    <section id="why-grove" class="snap-section bg-gradient-section py-24 md:py-32">
-        <div class="max-w-4xl mx-auto px-6">
-            <h2 class="text-3xl md:text-4xl font-bold text-center mb-4 fade-in">
-                AI coding without a workflow is chaos
-            </h2>
-            <p class="text-grove-muted text-center max-w-lg mx-auto mb-14 fade-in">Sound familiar?</p>
 
-            <div class="space-y-4 mb-14">
-                <div class="rounded-xl border border-grove-red/15 bg-gradient-to-br from-grove-red/[0.04] to-transparent p-5 fade-in">
-                    <p class="text-sm md:text-base text-grove-muted leading-relaxed">
-                        <span class="text-grove-red/80 font-medium">&ldquo;</span>Your agents overwrite each other because they share the same branch.<span class="text-grove-red/80 font-medium">&rdquo;</span>
-                    </p>
+    <!-- ═══════════════════════════════════════════════════
+         SECTION 1 — ISOLATE
+         Sticky scroll: 3 panels crossfade as you scroll
+    ═══════════════════════════════════════════════════ -->
+    <section id="isolate">
+        <!-- Intro text -->
+        <div class="py-32 md:py-48 px-6 text-center">
+            <p class="section-label text-grove-green" data-animate>
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+                Isolation
+            </p>
+            <h2 class="section-title mb-6 max-w-3xl mx-auto" data-animate>
+                Every AI Gets<br>Its Own <span class="text-gradient">World</span>
+            </h2>
+            <p class="section-desc mx-auto" data-animate>
+                Each task lives in a fully isolated workspace — its own git branch,
+                its own terminal session, its own spec. Run multiple agents in parallel
+                without conflicts.
+            </p>
+        </div>
+
+        <!-- Sticky feature showcase -->
+        <div class="sticky-wrap" style="height: 300vh" id="isolate-sticky">
+            <div class="sticky-inner">
+                <!-- Panel 1: Worktree -->
+                <div class="sticky-panel active" data-panel="0">
+                    <div class="max-w-5xl mx-auto px-6 grid lg:grid-cols-2 gap-16 items-center">
+                        <div>
+                            <div class="w-12 h-12 rounded-2xl bg-grove-green/10 border border-grove-green/20 flex items-center justify-center mb-6">
+                                <svg class="w-6 h-6 text-grove-green" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+                            </div>
+                            <h3 class="text-2xl md:text-3xl font-bold mb-4">Own Branch, Own Worktree</h3>
+                            <p class="text-grove-muted text-base leading-relaxed">
+                                Every task gets a dedicated git worktree. Five agents writing code
+                                simultaneously? No problem — branches never collide, files never conflict.
+                            </p>
+                        </div>
+                        <div class="img-placeholder">
+                            <div class="placeholder-inner">
+                                <!-- Replace: screenshot of multiple worktrees / parallel tasks -->
+                                <span>worktree-isolation.png</span>
+                            </div>
+                        </div>
+                    </div>
                 </div>
-                <div class="rounded-xl border border-grove-red/15 bg-gradient-to-br from-grove-red/[0.04] to-transparent p-5 fade-in">
-                    <p class="text-sm md:text-base text-grove-muted leading-relaxed">
-                        <span class="text-grove-red/80 font-medium">&ldquo;</span>Switching tasks kills your terminal, your scrollback, your train of thought.<span class="text-grove-red/80 font-medium">&rdquo;</span>
-                    </p>
+
+                <!-- Panel 2: Terminal -->
+                <div class="sticky-panel" data-panel="1">
+                    <div class="max-w-5xl mx-auto px-6 grid lg:grid-cols-2 gap-16 items-center">
+                        <div>
+                            <div class="w-12 h-12 rounded-2xl bg-grove-cyan/10 border border-grove-cyan/20 flex items-center justify-center mb-6">
+                                <svg class="w-6 h-6 text-grove-cyan" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
+                            </div>
+                            <h3 class="text-2xl md:text-3xl font-bold mb-4">Own Terminal Session</h3>
+                            <p class="text-grove-muted text-base leading-relaxed">
+                                Each task launches its own tmux or Zellij session. Switch between agents
+                                instantly — your context, scrollback, and train of thought stay intact.
+                            </p>
+                        </div>
+                        <div class="img-placeholder">
+                            <div class="placeholder-inner">
+                                <!-- Replace: screenshot of tmux sessions / terminal view -->
+                                <span>terminal-session.png</span>
+                            </div>
+                        </div>
+                    </div>
                 </div>
-                <div class="rounded-xl border border-grove-red/15 bg-gradient-to-br from-grove-red/[0.04] to-transparent p-5 fade-in">
-                    <p class="text-sm md:text-base text-grove-muted leading-relaxed">
-                        <span class="text-grove-red/80 font-medium">&ldquo;</span>You&rsquo;re copy-pasting context between windows, hoping the AI stays on track.<span class="text-grove-red/80 font-medium">&rdquo;</span>
-                    </p>
+
+                <!-- Panel 3: Spec & Notes -->
+                <div class="sticky-panel" data-panel="2">
+                    <div class="max-w-5xl mx-auto px-6 grid lg:grid-cols-2 gap-16 items-center">
+                        <div>
+                            <div class="w-12 h-12 rounded-2xl bg-grove-purple/10 border border-grove-purple/20 flex items-center justify-center mb-6">
+                                <svg class="w-6 h-6 text-grove-purple" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg>
+                            </div>
+                            <h3 class="text-2xl md:text-3xl font-bold mb-4">Own Spec & Notes</h3>
+                            <p class="text-grove-muted text-base leading-relaxed">
+                                Write a spec before your agent starts. It reads the instructions and knows
+                                exactly what to build. Clear intent, focused output.
+                            </p>
+                        </div>
+                        <div class="img-placeholder">
+                            <div class="placeholder-inner">
+                                <!-- Replace: screenshot of task notes / spec editor -->
+                                <span>task-notes.png</span>
+                            </div>
+                        </div>
+                    </div>
                 </div>
-                <div class="rounded-xl border border-grove-red/15 bg-gradient-to-br from-grove-red/[0.04] to-transparent p-5 fade-in">
-                    <p class="text-sm md:text-base text-grove-muted leading-relaxed">
-                        <span class="text-grove-red/80 font-medium">&ldquo;</span>When an agent finishes, you have no idea &mdash; until you check manually.<span class="text-grove-red/80 font-medium">&rdquo;</span>
-                    </p>
+
+                <!-- Progress dots -->
+                <div class="absolute bottom-12 left-1/2 -translate-x-1/2 flex gap-3" id="isolate-dots">
+                    <div class="w-2 h-2 rounded-full bg-grove-green transition-all duration-300" data-dot="0"></div>
+                    <div class="w-2 h-2 rounded-full bg-white/20 transition-all duration-300" data-dot="1"></div>
+                    <div class="w-2 h-2 rounded-full bg-white/20 transition-all duration-300" data-dot="2"></div>
                 </div>
             </div>
-
-            <p class="text-center text-base md:text-lg text-grove-text font-medium fade-in">
-                Grove gives every task its own isolated world, and manages the entire journey &mdash; <span class="bg-gradient-to-r from-grove-green to-grove-cyan bg-clip-text text-transparent">from spec to merge</span>.
-            </p>
         </div>
     </section>
 
-    <!-- ========== THE WORKFLOW ========== -->
-    <section id="how-it-works" class="snap-section bg-gradient-section-alt py-24 md:py-32">
+
+    <!-- ═══════════════════════════════════════════════════
+         SECTION 2 — DEVELOP
+    ═══════════════════════════════════════════════════ -->
+    <section id="develop" class="py-32 md:py-48">
         <div class="max-w-6xl mx-auto px-6">
-            <h2 class="text-3xl md:text-4xl font-bold text-center mb-4 fade-in">
-                Four steps. <span class="bg-gradient-to-r from-grove-green to-grove-cyan bg-clip-text text-transparent">Start to ship.</span>
-            </h2>
-            <p class="text-grove-muted text-center max-w-2xl mx-auto mb-16 fade-in">
-                Every task follows the same journey &mdash; from idea to merged code.
-            </p>
-
-            <!-- GIF Showcase -->
-            <div class="max-w-3xl mx-auto mb-12 fade-in">
-                <div class="img-glow">
-                    <img id="step-gif" src="images/create.gif" alt="Grove workflow demo">
-                </div>
-            </div>
-
-            <!-- 4-Step Tabs -->
-            <div class="grid md:grid-cols-4 gap-6 max-w-5xl mx-auto">
-                <div class="step-tab active text-center fade-in" onclick="switchStep('create')" data-step="create">
-                    <div class="step-circle w-14 h-14 rounded-full bg-grove-green/10 border border-grove-green/20 flex items-center justify-center mx-auto mb-5 transition-all duration-300">
-                        <span class="text-grove-green font-bold text-lg">1</span>
-                    </div>
-                    <h3 class="font-semibold text-lg mb-2">Create &amp; Spec</h3>
-                    <p class="text-grove-muted text-sm leading-relaxed">
-                        Create a task in one keystroke. Write a spec in Notes so the AI knows exactly what to build.
-                    </p>
-                </div>
-                <div class="step-tab text-center fade-in" onclick="switchStep('work')" data-step="work" style="transition-delay: 0.1s">
-                    <div class="step-circle w-14 h-14 rounded-full bg-grove-cyan/10 border border-grove-cyan/20 flex items-center justify-center mx-auto mb-5 transition-all duration-300">
-                        <span class="text-grove-cyan font-bold text-lg">2</span>
-                    </div>
-                    <h3 class="font-semibold text-lg mb-2">Develop</h3>
-                    <p class="text-grove-muted text-sm leading-relaxed">
-                        Chat with your agent or let it run in the terminal. Edit code, run tests, watch the plan unfold.
-                    </p>
-                </div>
-                <div class="step-tab text-center fade-in" onclick="switchStep('review')" data-step="review" style="transition-delay: 0.2s">
-                    <div class="step-circle w-14 h-14 rounded-full bg-grove-purple/10 border border-grove-purple/20 flex items-center justify-center mx-auto mb-5 transition-all duration-300">
-                        <span class="text-grove-purple font-bold text-lg">3</span>
-                    </div>
-                    <h3 class="font-semibold text-lg mb-2">Review</h3>
-                    <p class="text-grove-muted text-sm leading-relaxed">
-                        Check the diff, leave inline comments. Your agents respond in threads &mdash; iterate until it&rsquo;s right.
-                    </p>
-                </div>
-                <div class="step-tab text-center fade-in" onclick="switchStep('complete')" data-step="complete" style="transition-delay: 0.3s">
-                    <div class="step-circle w-14 h-14 rounded-full bg-grove-green/10 border border-grove-green/20 flex items-center justify-center mx-auto mb-5 transition-all duration-300">
-                        <span class="text-grove-green font-bold text-lg">4</span>
-                    </div>
-                    <h3 class="font-semibold text-lg mb-2">Ship</h3>
-                    <p class="text-grove-muted text-sm leading-relaxed">
-                        One action to merge. Grove rebases, merges, cleans up. Done.
-                    </p>
-                </div>
-            </div>
-        </div>
-    </section>
-
-    <!-- ========== DEVELOP WITH AI ========== -->
-    <section id="develop" class="snap-section bg-gradient-section py-24 md:py-32">
-        <div class="max-w-6xl mx-auto px-6">
-            <h2 class="text-3xl md:text-4xl font-bold text-center mb-4 fade-in">
-                Two ways to work with AI
-            </h2>
-            <p class="text-grove-muted text-center max-w-2xl mx-auto mb-16 fade-in">
-                Chat for interactive sessions. Terminal for autonomous agents.
-            </p>
-
-            <div class="grid lg:grid-cols-2 gap-10 max-w-5xl mx-auto mb-16">
-                <!-- Chat Mode -->
-                <div class="fade-in">
-                    <div class="img-glow mb-6">
-                        <div class="rounded-xl overflow-hidden border border-white/5 bg-grove-bg-secondary flex items-center justify-center h-56 text-grove-muted text-sm">Chat mode screenshot</div>
-                    </div>
-                    <h3 class="text-xl font-bold mb-2">Chat Mode</h3>
-                    <p class="text-grove-muted text-sm leading-relaxed">
-                        Talk to any agent right inside your workspace. Share files with <code class="text-grove-text bg-grove-bg-tertiary px-1 py-0.5 rounded text-xs font-mono">@</code>, watch the plan update in real time.
-                    </p>
-                </div>
-                <!-- Terminal Mode -->
-                <div class="fade-in" style="transition-delay: 0.1s">
-                    <div class="img-glow mb-6">
-                        <div class="rounded-xl overflow-hidden border border-white/5 bg-grove-bg-secondary flex items-center justify-center h-56 text-grove-muted text-sm">Terminal mode screenshot</div>
-                    </div>
-                    <h3 class="text-xl font-bold mb-2">Terminal Mode</h3>
-                    <p class="text-grove-muted text-sm leading-relaxed">
-                        Let your agent run in a full terminal &mdash; the way it&rsquo;s designed. Check in whenever you want.
-                    </p>
-                </div>
-            </div>
-
-            <!-- Workspace -->
-            <div class="max-w-5xl mx-auto fade-in">
-                <div class="img-glow mb-6">
-                    <div class="rounded-xl overflow-hidden border border-white/5 bg-grove-bg-secondary flex items-center justify-center h-64 text-grove-muted text-sm">Multi-panel workspace screenshot</div>
-                </div>
-                <p class="text-center text-grove-muted text-sm">
-                    Arrange panels however you like &mdash; terminal, chat, editor, review, all side by side.
+            <!-- Header -->
+            <div class="text-center mb-20">
+                <p class="section-label text-grove-cyan" data-animate>
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4"/></svg>
+                    Development
+                </p>
+                <h2 class="section-title mb-6" data-animate>
+                    Work With AI,<br><span class="text-gradient">Your Way</span>
+                </h2>
+                <p class="section-desc mx-auto" data-animate>
+                    Chat interactively, run agents in the terminal, or edit code side-by-side.
+                    Grove supports every major AI coding agent.
                 </p>
             </div>
-        </div>
-    </section>
 
-    <!-- ========== REVIEW & ITERATE ========== -->
-    <section id="review" class="snap-section bg-gradient-section-alt py-24 md:py-32">
-        <div class="max-w-6xl mx-auto px-6">
-            <h2 class="text-3xl md:text-4xl font-bold text-center mb-4 fade-in">
-                Review together. Ship with confidence.
-            </h2>
-            <p class="text-grove-muted text-center max-w-2xl mx-auto mb-16 fade-in">
-                AI writes the code. You decide what merges.
+            <!-- 3 Mode cards -->
+            <div class="grid md:grid-cols-3 gap-6 mb-20" data-animate-stagger>
+                <div class="feature-card">
+                    <div class="w-10 h-10 rounded-xl bg-grove-green/10 flex items-center justify-center mb-5">
+                        <svg class="w-5 h-5 text-grove-green" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"/></svg>
+                    </div>
+                    <h3 class="text-lg font-bold mb-2">Chat Mode</h3>
+                    <p class="text-grove-muted text-sm leading-relaxed">
+                        Talk to any agent inside your workspace. Share files, iterate through conversation,
+                        watch the plan unfold in real time.
+                    </p>
+                </div>
+                <div class="feature-card">
+                    <div class="w-10 h-10 rounded-xl bg-grove-cyan/10 flex items-center justify-center mb-5">
+                        <svg class="w-5 h-5 text-grove-cyan" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
+                    </div>
+                    <h3 class="text-lg font-bold mb-2">Terminal Mode</h3>
+                    <p class="text-grove-muted text-sm leading-relaxed">
+                        Let autonomous agents run in a full terminal session — the way they're designed.
+                        Check in whenever you want.
+                    </p>
+                </div>
+                <div class="feature-card">
+                    <div class="w-10 h-10 rounded-xl bg-grove-purple/10 flex items-center justify-center mb-5">
+                        <svg class="w-5 h-5 text-grove-purple" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 4a2 2 0 114 0v1a1 1 0 001 1h3a1 1 0 011 1v3a1 1 0 01-1 1h-1a2 2 0 100 4h1a1 1 0 011 1v3a1 1 0 01-1 1h-3a1 1 0 01-1-1v-1a2 2 0 10-4 0v1a1 1 0 01-1 1H7a1 1 0 01-1-1v-3a1 1 0 00-1-1H4a2 2 0 110-4h1a1 1 0 001-1V7a1 1 0 011-1h3a1 1 0 001-1V4z"/></svg>
+                    </div>
+                    <h3 class="text-lg font-bold mb-2">Editor Mode</h3>
+                    <p class="text-grove-muted text-sm leading-relaxed">
+                        A built-in code editor with syntax highlighting. Edit files, browse the tree,
+                        review changes — all without leaving Grove.
+                    </p>
+                </div>
+            </div>
+
+            <!-- Workspace screenshot -->
+            <div class="max-w-5xl mx-auto mb-6" data-animate="scale">
+                <div class="img-placeholder">
+                    <div class="placeholder-inner" style="aspect-ratio: 16/9;">
+                        <!-- Replace: multi-panel workspace screenshot showing chat + terminal + editor -->
+                        <span>workspace-panels.png</span>
+                    </div>
+                </div>
+            </div>
+            <p class="text-center text-white/25 text-sm mb-24" data-animate>
+                Arrange panels however you like — terminal, chat, editor, review, all side by side.
             </p>
 
-            <!-- Review screenshot -->
-            <div class="max-w-4xl mx-auto mb-16 fade-in">
-                <div class="img-glow">
-                    <div class="rounded-xl overflow-hidden border border-white/5">
-                        <img src="images/agent-review.png" alt="Code review with AI agents"
-                             class="w-full"
-                             onerror="this.parentElement.innerHTML='<div class=\'bg-grove-bg-secondary flex items-center justify-center h-80 text-grove-muted text-sm\'>Review screenshot</div>'">
-                    </div>
-                </div>
-            </div>
+            <!-- Notifications sub-section -->
+            <div class="max-w-4xl mx-auto text-center">
+                <h3 class="text-2xl md:text-3xl font-bold mb-4" data-animate>
+                    Stay in the <span class="text-gradient">Loop</span>
+                </h3>
+                <p class="text-grove-muted max-w-md mx-auto mb-12" data-animate>
+                    Set your agents running and get notified when they finish, need input, or hit errors.
+                </p>
 
-            <div class="grid md:grid-cols-3 gap-8 max-w-4xl mx-auto fade-in">
-                <div class="text-center">
-                    <div class="w-12 h-12 rounded-xl bg-grove-green/10 border border-grove-green/20 flex items-center justify-center mx-auto mb-4">
-                        <svg class="w-5 h-5 text-grove-green" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 8h10M7 12h4m1 8l-4-4H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-3l-4 4z"/></svg>
-                    </div>
-                    <h3 class="font-semibold text-base mb-2">Comment on code</h3>
-                    <p class="text-grove-muted text-sm">Leave inline comments on any line. AI agents can comment too.</p>
-                </div>
-                <div class="text-center">
-                    <div class="w-12 h-12 rounded-xl bg-grove-cyan/10 border border-grove-cyan/20 flex items-center justify-center mx-auto mb-4">
-                        <svg class="w-5 h-5 text-grove-cyan" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 8h2a2 2 0 012 2v6a2 2 0 01-2 2h-2v4l-4-4H9a1.994 1.994 0 01-1.414-.586m0 0L11 14h4a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2v4l.586-.586z"/></svg>
-                    </div>
-                    <h3 class="font-semibold text-base mb-2">Discuss in threads</h3>
-                    <p class="text-grove-muted text-sm">Multiple agents reply in threads, sharing different perspectives.</p>
-                </div>
-                <div class="text-center">
-                    <div class="w-12 h-12 rounded-xl bg-grove-purple/10 border border-grove-purple/20 flex items-center justify-center mx-auto mb-4">
-                        <svg class="w-5 h-5 text-grove-purple" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
-                    </div>
-                    <h3 class="font-semibold text-base mb-2">You decide</h3>
-                    <p class="text-grove-muted text-sm">Resolve comments, accept or reject. You always have the final call.</p>
-                </div>
-            </div>
-        </div>
-    </section>
-
-    <!-- ========== SKILLS ========== -->
-    <section id="skills" class="snap-section bg-gradient-section py-24 md:py-32">
-        <div class="max-w-6xl mx-auto px-6">
-            <h2 class="text-3xl md:text-4xl font-bold text-center mb-4 fade-in">
-                Make your agents smarter
-            </h2>
-            <p class="text-grove-muted text-center max-w-2xl mx-auto mb-16 fade-in">
-                Browse skills, install in one click. Add your own agents &mdash; local commands or remote services.
-            </p>
-
-            <!-- Skills screenshot -->
-            <div class="max-w-4xl mx-auto mb-14 fade-in">
-                <div class="img-glow">
-                    <div class="rounded-xl overflow-hidden border border-white/5 bg-grove-bg-secondary flex items-center justify-center h-72 text-grove-muted text-sm">Skills page screenshot</div>
-            <div class="grid md:grid-cols-3 gap-8 max-w-4xl mx-auto fade-in">
-                <div class="card-gradient-border p-6 text-center">
-                    <div class="w-10 h-10 rounded-lg bg-grove-green/10 flex items-center justify-center mx-auto mb-4">
-                        <svg class="w-5 h-5 text-grove-green" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
-                    </div>
-                    <h3 class="font-semibold text-base mb-2">One-click install</h3>
-                    <p class="text-grove-muted text-sm">Browse the skill library and add capabilities instantly.</p>
-                </div>
-                <div class="card-gradient-border p-6 text-center">
-                    <div class="w-10 h-10 rounded-lg bg-grove-cyan/10 flex items-center justify-center mx-auto mb-4">
-                        <svg class="w-5 h-5 text-grove-cyan" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4"/></svg>
-                    </div>
-                    <h3 class="font-semibold text-base mb-2">Custom agents</h3>
-                    <p class="text-grove-muted text-sm">Add your own agents &mdash; local commands or remote MCP services.</p>
-                </div>
-                <div class="card-gradient-border p-6 text-center">
-                    <div class="w-10 h-10 rounded-lg bg-grove-purple/10 flex items-center justify-center mx-auto mb-4">
-                        <svg class="w-5 h-5 text-grove-purple" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
-                    </div>
-                    <h3 class="font-semibold text-base mb-2">MCP powered</h3>
-                    <p class="text-grove-muted text-sm">Agents read notes, review code, and complete tasks via structured tool calls.</p>
-                </div>
-            </div>
-        </div>
-    </section>
-
-    <!-- ========== STAY IN THE LOOP ========== -->
-    <section id="monitor" class="snap-section bg-gradient-section-alt py-24 md:py-32">
-        <div class="max-w-6xl mx-auto px-6">
-            <h2 class="text-3xl md:text-4xl font-bold text-center mb-4 fade-in">
-                Every agent. Every project. <span class="bg-gradient-to-r from-grove-green to-grove-cyan bg-clip-text text-transparent">One place.</span>
-            </h2>
-            <p class="text-grove-muted text-center max-w-2xl mx-auto mb-16 fade-in">
-                Know when agents finish, see all tasks across projects, and pick your favorite interface.
-            </p>
-            <div class="grid md:grid-cols-3 gap-8 fade-in">
-                <!-- Notifications -->
-                <div class="card-gradient-border p-6 text-center">
-                    <div class="w-10 h-10 rounded-lg bg-grove-amber/10 flex items-center justify-center mx-auto mb-4">
-                        <svg class="w-5 h-5 text-grove-amber" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9"/></svg>
-                    </div>
-                    <h3 class="font-semibold text-base mb-2">Notifications</h3>
-                    <p class="text-grove-muted text-sm">Get system alerts when agents finish, need review, or hit errors. Three severity levels with sound.</p>
-                </div>
-                <!-- All Tasks -->
-                <div class="card-gradient-border p-6 text-center">
-                    <div class="w-10 h-10 rounded-lg bg-grove-cyan/10 flex items-center justify-center mx-auto mb-4">
-                        <svg class="w-5 h-5 text-grove-cyan" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"/></svg>
-                    </div>
-                    <h3 class="font-semibold text-base mb-2">All Tasks (Blitz)</h3>
-                    <p class="text-grove-muted text-sm">See every task across every project in one view. Filter, search, and jump to any agent instantly.</p>
-                </div>
-                <!-- Your Interface -->
-                <div class="card-gradient-border p-6 text-center">
-                    <div class="w-10 h-10 rounded-lg bg-grove-green/10 flex items-center justify-center mx-auto mb-4">
-                        <svg class="w-5 h-5 text-grove-green" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/></svg>
-                    </div>
-                    <h3 class="font-semibold text-base mb-2">Your Interface</h3>
-                    <p class="text-grove-muted text-sm">TUI, Web, or native GUI &mdash; three interfaces, one backend. Pick the one that fits your workflow.</p>
-                </div>
-            </div>
-
-            <!-- Notification mockups -->
-            <div class="max-w-sm mx-auto mt-14 space-y-4 fade-in">
-                <div class="rounded-2xl bg-[#2c2c2e] border border-[#3a3a3c] p-4 shadow-2xl">
-                    <div class="flex items-start gap-3">
-                        <img src="favicon.svg" alt="Grove" class="w-10 h-10 rounded-lg flex-shrink-0">
-                        <div class="flex-1 min-w-0">
-                            <div class="flex items-center justify-between">
-                                <span class="text-xs font-semibold text-white/90">Grove</span>
-                                <span class="text-xs text-white/40">now</span>
+                <div class="max-w-sm mx-auto space-y-4" data-animate-stagger>
+                    <div class="notif-card">
+                        <div class="flex items-start gap-3">
+                            <img src="favicon.svg" alt="Grove" class="w-9 h-9 rounded-lg flex-shrink-0">
+                            <div class="flex-1 min-w-0 text-left">
+                                <div class="flex items-center justify-between">
+                                    <span class="text-xs font-semibold text-white/80">Grove</span>
+                                    <span class="text-[11px] text-white/30">now</span>
+                                </div>
+                                <p class="text-sm text-white/70 mt-0.5 font-medium">Task completed</p>
+                                <p class="text-xs text-white/35 mt-0.5">fix-auth-bug — All changes committed and ready to review.</p>
                             </div>
-                            <p class="text-sm text-white/80 mt-0.5 font-medium">Task completed</p>
-                            <p class="text-xs text-white/50 mt-0.5">fix-auth-bug &mdash; All changes committed and merged.</p>
                         </div>
                     </div>
-                </div>
-                <div class="rounded-2xl bg-[#2c2c2e] border border-grove-red/30 p-4 shadow-2xl">
-                    <div class="flex items-start gap-3">
-                        <img src="favicon.svg" alt="Grove" class="w-10 h-10 rounded-lg flex-shrink-0">
-                        <div class="flex-1 min-w-0">
-                            <div class="flex items-center justify-between">
-                                <span class="text-xs font-semibold text-white/90">Grove</span>
-                                <span class="text-xs text-white/40">5m ago</span>
+                    <div class="notif-card" style="border-color: rgba(245,158,11,0.2)">
+                        <div class="flex items-start gap-3">
+                            <img src="favicon.svg" alt="Grove" class="w-9 h-9 rounded-lg flex-shrink-0">
+                            <div class="flex-1 min-w-0 text-left">
+                                <div class="flex items-center justify-between">
+                                    <span class="text-xs font-semibold text-white/80">Grove</span>
+                                    <span class="text-[11px] text-white/30">2m ago</span>
+                                </div>
+                                <p class="text-sm text-grove-amber/80 mt-0.5 font-medium">Pending action</p>
+                                <p class="text-xs text-white/35 mt-0.5">refactor-db — Agent needs your input to continue.</p>
                             </div>
-                            <p class="text-sm text-grove-red/90 mt-0.5 font-medium">Build failed</p>
-                            <p class="text-xs text-white/50 mt-0.5">refactor-db &mdash; 3 tests failing after migration changes.</p>
+                        </div>
+                    </div>
+                    <div class="notif-card" style="border-color: rgba(239,68,68,0.2)">
+                        <div class="flex items-start gap-3">
+                            <img src="favicon.svg" alt="Grove" class="w-9 h-9 rounded-lg flex-shrink-0">
+                            <div class="flex-1 min-w-0 text-left">
+                                <div class="flex items-center justify-between">
+                                    <span class="text-xs font-semibold text-white/80">Grove</span>
+                                    <span class="text-[11px] text-white/30">5m ago</span>
+                                </div>
+                                <p class="text-sm text-grove-red/80 mt-0.5 font-medium">Build failed</p>
+                                <p class="text-xs text-white/35 mt-0.5">add-payments — 3 tests failing after migration changes.</p>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -955,19 +958,303 @@
         </div>
     </section>
 
-    <!-- ========== INSTALL ========== -->
-    <section id="install" class="snap-section bg-gradient-section py-24 md:py-32">
+
+    <!-- ═══════════════════════════════════════════════════
+         SECTION 3 — REVIEW
+    ═══════════════════════════════════════════════════ -->
+    <section id="review" class="py-32 md:py-48">
         <div class="max-w-6xl mx-auto px-6">
-            <h2 class="text-3xl md:text-4xl font-bold text-center mb-4 fade-in">
-                Install in <span class="bg-gradient-to-r from-grove-green to-grove-cyan bg-clip-text text-transparent">10 seconds</span>
+            <div class="grid lg:grid-cols-2 gap-20 items-center">
+                <!-- Left: text -->
+                <div>
+                    <p class="section-label text-grove-purple" data-animate>
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+                        Code Review
+                    </p>
+                    <h2 class="section-title mb-6" data-animate>
+                        Review Together.<br>
+                        <span class="text-gradient">Iterate Until<br>It's Right.</span>
+                    </h2>
+                    <div class="space-y-6 mt-10" data-animate-stagger>
+                        <div class="flex gap-4">
+                            <div class="w-8 h-8 rounded-lg bg-grove-green/10 flex items-center justify-center flex-shrink-0 mt-0.5">
+                                <svg class="w-4 h-4 text-grove-green" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 8h10M7 12h4m1 8l-4-4H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-3l-4 4z"/></svg>
+                            </div>
+                            <div>
+                                <h4 class="font-semibold mb-1">Comment on any line</h4>
+                                <p class="text-grove-muted text-sm">Point at the exact code. AI agents respond with explanations or fixes.</p>
+                            </div>
+                        </div>
+                        <div class="flex gap-4">
+                            <div class="w-8 h-8 rounded-lg bg-grove-cyan/10 flex items-center justify-center flex-shrink-0 mt-0.5">
+                                <svg class="w-4 h-4 text-grove-cyan" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 8h2a2 2 0 012 2v6a2 2 0 01-2 2h-2v4l-4-4H9a2 2 0 01-2-2v-1"/></svg>
+                            </div>
+                            <div>
+                                <h4 class="font-semibold mb-1">Discuss in threads</h4>
+                                <p class="text-grove-muted text-sm">Multiple agents reply with different perspectives. Conversations stay organized alongside the code.</p>
+                            </div>
+                        </div>
+                        <div class="flex gap-4">
+                            <div class="w-8 h-8 rounded-lg bg-grove-purple/10 flex items-center justify-center flex-shrink-0 mt-0.5">
+                                <svg class="w-4 h-4 text-grove-purple" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4"/></svg>
+                            </div>
+                            <div>
+                                <h4 class="font-semibold mb-1">You have the final call</h4>
+                                <p class="text-grove-muted text-sm">Approve, request rework, or reject. Every merge is a conscious decision.</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Right: image -->
+                <div data-animate="scale">
+                    <div class="img-placeholder">
+                        <div class="placeholder-inner">
+                            <!-- Replace: code review screenshot with inline comments and threads -->
+                            <span>code-review.png</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+
+    <!-- ═══════════════════════════════════════════════════
+         SECTION 4 — SHIP & RECOVER
+    ═══════════════════════════════════════════════════ -->
+    <section id="ship" class="py-32 md:py-48">
+        <div class="max-w-6xl mx-auto px-6">
+            <div class="text-center mb-20">
+                <p class="section-label text-grove-green" data-animate>
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
+                    Ship
+                </p>
+                <h2 class="section-title mb-6" data-animate>
+                    Ship With Confidence.<br>
+                    <span class="text-gradient">Recover in Seconds.</span>
+                </h2>
+                <p class="section-desc mx-auto" data-animate>
+                    One action to merge. And if something breaks later, reopen the task —
+                    all context is preserved for quick hotfixes and further iterations.
+                </p>
+            </div>
+
+            <!-- Ship image -->
+            <div class="max-w-4xl mx-auto mb-20" data-animate="scale">
+                <div class="img-placeholder">
+                    <div class="placeholder-inner" style="aspect-ratio: 16/9;">
+                        <!-- Replace: GIF/video of the merge workflow -->
+                        <span>ship-merge.mp4</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 3 Cards -->
+            <div class="grid md:grid-cols-3 gap-6 max-w-4xl mx-auto" data-animate-stagger>
+                <div class="feature-card text-center">
+                    <div class="w-10 h-10 rounded-xl bg-grove-green/10 flex items-center justify-center mx-auto mb-4">
+                        <svg class="w-5 h-5 text-grove-green" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
+                    </div>
+                    <h3 class="font-bold mb-2">Merge in one step</h3>
+                    <p class="text-grove-muted text-sm">Grove rebases, merges, and cleans up. No manual git gymnastics.</p>
+                </div>
+                <div class="feature-card text-center">
+                    <div class="w-10 h-10 rounded-xl bg-grove-cyan/10 flex items-center justify-center mx-auto mb-4">
+                        <svg class="w-5 h-5 text-grove-cyan" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+                    </div>
+                    <h3 class="font-bold mb-2">Instant recovery</h3>
+                    <p class="text-grove-muted text-sm">Reopen any task — all notes, context, and history are intact.</p>
+                </div>
+                <div class="feature-card text-center">
+                    <div class="w-10 h-10 rounded-xl bg-grove-amber/10 flex items-center justify-center mx-auto mb-4">
+                        <svg class="w-5 h-5 text-grove-amber" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
+                    </div>
+                    <h3 class="font-bold mb-2">Clean when done</h3>
+                    <p class="text-grove-muted text-sm">Archive or wipe completed tasks. No data left behind.</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+
+    <!-- ═══════════════════════════════════════════════════
+         SECTION 5 — SKILLS
+    ═══════════════════════════════════════════════════ -->
+    <section id="skills" class="py-32 md:py-48">
+        <div class="max-w-6xl mx-auto px-6">
+            <div class="grid lg:grid-cols-2 gap-20 items-center">
+                <!-- Left: image -->
+                <div data-animate="scale">
+                    <div class="img-placeholder">
+                        <div class="placeholder-inner">
+                            <!-- Replace: skills management page screenshot -->
+                            <span>skills-page.png</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Right: text -->
+                <div>
+                    <p class="section-label text-grove-amber" data-animate>
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+                        Skills
+                    </p>
+                    <h2 class="section-title mb-6" data-animate>
+                        Empower Every Agent<br>With <span class="text-gradient">Skills</span>
+                    </h2>
+                    <p class="section-desc mb-10" data-animate>
+                        Browse a library of skills, install with one click, and manage them at project
+                        or global level. Every agent gets smarter automatically.
+                    </p>
+
+                    <div class="space-y-5" data-animate-stagger>
+                        <div class="flex gap-4 items-start">
+                            <div class="w-8 h-8 rounded-lg bg-grove-green/10 flex items-center justify-center flex-shrink-0 mt-0.5">
+                                <svg class="w-4 h-4 text-grove-green" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
+                            </div>
+                            <div>
+                                <h4 class="font-semibold mb-1">Browse and install</h4>
+                                <p class="text-grove-muted text-sm">Explore the skill library and add capabilities instantly. No config files to edit.</p>
+                            </div>
+                        </div>
+                        <div class="flex gap-4 items-start">
+                            <div class="w-8 h-8 rounded-lg bg-grove-cyan/10 flex items-center justify-center flex-shrink-0 mt-0.5">
+                                <svg class="w-4 h-4 text-grove-cyan" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"/></svg>
+                            </div>
+                            <div>
+                                <h4 class="font-semibold mb-1">Global or project-level</h4>
+                                <p class="text-grove-muted text-sm">Scope skills globally or per project. Fine-grained control over what each agent can do.</p>
+                            </div>
+                        </div>
+                        <div class="flex gap-4 items-start">
+                            <div class="w-8 h-8 rounded-lg bg-grove-purple/10 flex items-center justify-center flex-shrink-0 mt-0.5">
+                                <svg class="w-4 h-4 text-grove-purple" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+                            </div>
+                            <div>
+                                <h4 class="font-semibold mb-1">Works with all agents</h4>
+                                <p class="text-grove-muted text-sm">Skills inject into every agent's config — Claude, Copilot, Gemini, and more. Powered by MCP.</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+
+    <!-- ═══════════════════════════════════════════════════
+         SECTION 6 — TUI
+    ═══════════════════════════════════════════════════ -->
+    <section id="tui" class="py-32 md:py-48">
+        <div class="max-w-6xl mx-auto px-6 text-center">
+            <p class="section-label text-grove-green" data-animate>
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
+                Terminal UI
+            </p>
+            <h2 class="section-title mb-6" data-animate>
+                Love the Terminal?<br><span class="text-gradient">So Do We.</span>
             </h2>
-            <p class="text-grove-muted text-center max-w-lg mx-auto mb-12 fade-in">
-                Single binary with embedded web frontend. No runtime dependencies beyond Git and a terminal multiplexer.
+            <p class="section-desc mx-auto mb-16" data-animate>
+                Everything Grove offers is available in a keyboard-driven TUI.
+                Navigate tasks, review diffs, manage skills — all without leaving your terminal.
             </p>
 
-            <div class="max-w-2xl mx-auto fade-in">
+            <!-- TUI screenshot -->
+            <div class="max-w-5xl mx-auto mb-16" data-animate="scale">
+                <div class="img-placeholder">
+                    <div class="placeholder-inner" style="aspect-ratio: 16/9;">
+                        <!-- Replace: TUI screenshot -->
+                        <span>tui-showcase.png</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="grid md:grid-cols-3 gap-6 max-w-3xl mx-auto" data-animate-stagger>
+                <div class="text-center">
+                    <p class="text-2xl font-bold mb-1">Vim-style</p>
+                    <p class="text-grove-muted text-sm">Full keyboard navigation</p>
+                </div>
+                <div class="text-center">
+                    <p class="text-2xl font-bold mb-1">8 Themes</p>
+                    <p class="text-grove-muted text-sm">Dark mode by default</p>
+                </div>
+                <div class="text-center">
+                    <p class="text-2xl font-bold mb-1">Same Backend</p>
+                    <p class="text-grove-muted text-sm">Switch interfaces freely</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+
+    <!-- ═══════════════════════════════════════════════════
+         SECTION 7 — EXPLORE MORE
+    ═══════════════════════════════════════════════════ -->
+    <section id="explore" class="py-32 md:py-48">
+        <div class="max-w-6xl mx-auto px-6">
+            <div class="text-center mb-20">
+                <h2 class="section-title mb-6" data-animate>
+                    And There's <span class="text-gradient">More</span>
+                </h2>
+                <p class="section-desc mx-auto" data-animate>
+                    A few more things that make Grove the complete AI development workflow.
+                </p>
+            </div>
+
+            <div class="grid lg:grid-cols-2 gap-12 max-w-5xl mx-auto items-center" data-animate>
+                <!-- Left: feature list -->
+                <div class="space-y-1">
+                    <div class="explore-item active" onclick="switchExploreItem('blitz')" data-explore="blitz">
+                        <h3 class="font-semibold text-base mb-1">Blitz View</h3>
+                        <p class="text-grove-muted text-sm">See every task across every project in one view. Filter, search, and jump to any agent.</p>
+                    </div>
+                    <div class="explore-item" onclick="switchExploreItem('desktop')" data-explore="desktop">
+                        <h3 class="font-semibold text-base mb-1">Desktop App</h3>
+                        <p class="text-grove-muted text-sm">Native macOS GUI via Tauri 2. Feels right at home on your desktop.</p>
+                    </div>
+                    <div class="explore-item" onclick="switchExploreItem('stats')" data-explore="stats">
+                        <h3 class="font-semibold text-base mb-1">Statistics</h3>
+                        <p class="text-grove-muted text-sm">Track tasks shipped, agent activity, and project health at a glance.</p>
+                    </div>
+                    <div class="explore-item" onclick="switchExploreItem('agents')" data-explore="agents">
+                        <h3 class="font-semibold text-base mb-1">Agent Dashboard</h3>
+                        <p class="text-grove-muted text-sm">Monitor all running agents across projects. See who's working, who's waiting.</p>
+                    </div>
+                </div>
+
+                <!-- Right: image preview -->
+                <div>
+                    <div class="img-placeholder">
+                        <div class="rounded-xl overflow-hidden">
+                            <img id="explore-img" src="images/grove-web.png" alt="Feature preview" class="w-full" loading="lazy"
+                                 style="transition: opacity 0.35s ease"
+                                 onerror="this.style.display='none'; this.parentElement.innerHTML='<div class=\'placeholder-inner\'><span>feature-preview.png</span></div>'">
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+
+    <!-- ═══════════════════════════════════════════════════
+         INSTALL
+    ═══════════════════════════════════════════════════ -->
+    <section id="install" class="py-32 md:py-48">
+        <div class="max-w-6xl mx-auto px-6">
+            <div class="text-center mb-16">
+                <h2 class="section-title mb-6" data-animate>
+                    Install in <span class="text-gradient">10 seconds</span>
+                </h2>
+                <p class="section-desc mx-auto" data-animate>
+                    Single binary with embedded web frontend. No runtime dependencies beyond Git and a terminal multiplexer.
+                </p>
+            </div>
+
+            <div class="max-w-2xl mx-auto" data-animate>
                 <!-- Tabs -->
-                <div class="flex gap-0 border-b border-grove-border mb-0">
+                <div class="flex gap-0 border-b border-white/10 mb-0">
                     <button onclick="switchTab('shell')" class="install-tab active px-5 py-3 text-sm font-medium border-b-2 border-transparent transition-colors" data-tab="shell">Shell</button>
                     <button onclick="switchTab('cargo')" class="install-tab px-5 py-3 text-sm font-medium border-b-2 border-transparent text-grove-muted hover:text-grove-text transition-colors" data-tab="cargo">Cargo</button>
                     <button onclick="switchTab('cargo-gui')" class="install-tab px-5 py-3 text-sm font-medium border-b-2 border-transparent text-grove-muted hover:text-grove-text transition-colors" data-tab="cargo-gui">Cargo + GUI</button>
@@ -975,71 +1262,67 @@
                 </div>
 
                 <!-- Code blocks -->
-                <div class="terminal-frame rounded-t-none border-t-0">
-                    <div class="p-6 font-mono text-sm">
-                        <div id="install-shell" class="install-content">
-                            <div class="flex items-start justify-between gap-4">
-                                <div>
-                                    <span class="text-grove-green">$</span>
-                                    <span class="text-grove-text"> curl -sSL https://raw.githubusercontent.com/GarrickZ2/grove/master/install.sh | sh</span>
-                                </div>
-                                <button onclick="copyCode('curl -sSL https://raw.githubusercontent.com/GarrickZ2/grove/master/install.sh | sh')" class="text-grove-muted hover:text-grove-text transition-colors flex-shrink-0" title="Copy">
-                                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>
-                                </button>
+                <div class="code-frame p-6 font-mono text-sm">
+                    <div id="install-shell" class="install-content">
+                        <div class="flex items-start justify-between gap-4">
+                            <div>
+                                <span class="text-grove-green">$</span>
+                                <span class="text-grove-text"> curl -sSL https://raw.githubusercontent.com/GarrickZ2/grove/master/install.sh | sh</span>
                             </div>
-                            <div class="text-grove-muted text-xs mt-3">Auto-detects platform (macOS/Linux) and architecture (x86_64/aarch64). GUI included on macOS.</div>
+                            <button onclick="copyCode('curl -sSL https://raw.githubusercontent.com/GarrickZ2/grove/master/install.sh | sh')" class="text-grove-muted hover:text-grove-text transition-colors flex-shrink-0" title="Copy">
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>
+                            </button>
                         </div>
-                        <div id="install-cargo" class="install-content hidden">
-                            <div class="flex items-start justify-between gap-4">
-                                <div>
-                                    <span class="text-grove-green">$</span>
-                                    <span class="text-grove-text"> cargo install grove-rs</span>
-                                </div>
-                                <button onclick="copyCode('cargo install grove-rs')" class="text-grove-muted hover:text-grove-text transition-colors flex-shrink-0" title="Copy">
-                                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>
-                                </button>
+                        <div class="text-white/25 text-xs mt-3">Auto-detects platform (macOS/Linux) and architecture. GUI included on macOS.</div>
+                    </div>
+                    <div id="install-cargo" class="install-content hidden">
+                        <div class="flex items-start justify-between gap-4">
+                            <div>
+                                <span class="text-grove-green">$</span>
+                                <span class="text-grove-text"> cargo install grove-rs</span>
                             </div>
-                            <div class="text-grove-muted text-xs mt-3">Installs TUI + Web UI. Does not include native GUI &mdash; use the "Cargo + GUI" tab for that.</div>
+                            <button onclick="copyCode('cargo install grove-rs')" class="text-grove-muted hover:text-grove-text transition-colors flex-shrink-0" title="Copy">
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>
+                            </button>
                         </div>
-                        <div id="install-cargo-gui" class="install-content hidden">
-                            <div class="flex items-start justify-between gap-4">
-                                <div>
-                                    <span class="text-grove-green">$</span>
-                                    <span class="text-grove-text"> cargo install grove-rs --features gui</span>
-                                </div>
-                                <button onclick="copyCode('cargo install grove-rs --features gui')" class="text-grove-muted hover:text-grove-text transition-colors flex-shrink-0" title="Copy">
-                                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>
-                                </button>
+                        <div class="text-white/25 text-xs mt-3">Installs TUI + Web UI. Does not include native GUI.</div>
+                    </div>
+                    <div id="install-cargo-gui" class="install-content hidden">
+                        <div class="flex items-start justify-between gap-4">
+                            <div>
+                                <span class="text-grove-green">$</span>
+                                <span class="text-grove-text"> cargo install grove-rs --features gui</span>
                             </div>
-                            <div class="text-grove-muted text-xs mt-3">Includes native macOS GUI via Tauri 2. Requires Xcode Command Line Tools on macOS. Run <code class="text-grove-text">grove gui</code> to launch.</div>
+                            <button onclick="copyCode('cargo install grove-rs --features gui')" class="text-grove-muted hover:text-grove-text transition-colors flex-shrink-0" title="Copy">
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>
+                            </button>
                         </div>
-                        <div id="install-source" class="install-content hidden">
-                            <div class="flex items-start justify-between gap-4">
-                                <div class="space-y-1">
-                                    <div><span class="text-grove-green">$</span><span class="text-grove-text"> git clone https://github.com/GarrickZ2/grove.git</span></div>
-                                    <div><span class="text-grove-green">$</span><span class="text-grove-text"> cd grove</span></div>
-                                    <div><span class="text-grove-green">$</span><span class="text-grove-text"> cargo build --release</span> <span class="text-grove-muted"># TUI + Web</span></div>
-                                    <div><span class="text-grove-green">$</span><span class="text-grove-text"> cargo build --release --features gui</span> <span class="text-grove-muted"># + GUI</span></div>
-                                    <div><span class="text-grove-green">$</span><span class="text-grove-text"> cp target/release/grove /usr/local/bin/</span></div>
-                                </div>
-                                <button onclick="copyCode('git clone https://github.com/GarrickZ2/grove.git\ncd grove\ncargo build --release\ncp target/release/grove /usr/local/bin/')" class="text-grove-muted hover:text-grove-text transition-colors flex-shrink-0" title="Copy">
-                                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>
-                                </button>
+                        <div class="text-white/25 text-xs mt-3">Includes native macOS GUI via Tauri 2. Run <code class="text-grove-text">grove gui</code> to launch.</div>
+                    </div>
+                    <div id="install-source" class="install-content hidden">
+                        <div class="flex items-start justify-between gap-4">
+                            <div class="space-y-1">
+                                <div><span class="text-grove-green">$</span><span class="text-grove-text"> git clone https://github.com/GarrickZ2/grove.git</span></div>
+                                <div><span class="text-grove-green">$</span><span class="text-grove-text"> cd grove && cargo build --release</span></div>
+                                <div><span class="text-grove-green">$</span><span class="text-grove-text"> cp target/release/grove /usr/local/bin/</span></div>
                             </div>
+                            <button onclick="copyCode('git clone https://github.com/GarrickZ2/grove.git\ncd grove && cargo build --release\ncp target/release/grove /usr/local/bin/')" class="text-grove-muted hover:text-grove-text transition-colors flex-shrink-0" title="Copy">
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>
+                            </button>
                         </div>
                     </div>
                 </div>
 
-                <div class="mt-6 text-center">
-                    <p class="text-grove-muted text-sm">Then just run:</p>
-                    <div class="mt-2 code-block inline-block p-3 font-mono text-sm">
-                        <span class="text-grove-green">$</span> cd your-project && grove <span class="text-grove-muted"># TUI</span><br>
-                        <span class="text-grove-green">$</span> cd your-project && grove web <span class="text-grove-muted"># Web UI</span><br>
-                        <span class="text-grove-green">$</span> cd your-project && grove gui <span class="text-grove-muted"># Desktop GUI</span>
+                <div class="mt-8 text-center">
+                    <p class="text-white/25 text-sm mb-2">Then just run:</p>
+                    <div class="inline-block bg-[#111113] border border-white/6 rounded-lg p-3 font-mono text-sm">
+                        <span class="text-grove-green">$</span> cd your-project && grove <span class="text-white/25"># TUI</span><br>
+                        <span class="text-grove-green">$</span> cd your-project && grove web <span class="text-white/25"># Web UI</span><br>
+                        <span class="text-grove-green">$</span> cd your-project && grove gui <span class="text-white/25"># Desktop GUI</span>
                     </div>
                 </div>
 
-                <div class="mt-8 flex flex-wrap items-center justify-center gap-4 text-xs text-grove-muted">
+                <div class="mt-8 flex flex-wrap items-center justify-center gap-5 text-xs text-white/30">
                     <span class="flex items-center gap-1.5">
                         <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
                         Git 2.20+
@@ -1057,74 +1340,162 @@
         </div>
     </section>
 
+
     <!-- ========== FOOTER ========== -->
-    <footer class="border-t border-grove-border bg-grove-bg py-16">
+    <footer class="border-t border-white/[0.04] py-16">
         <div class="max-w-6xl mx-auto px-6">
             <div class="grid md:grid-cols-3 gap-12">
                 <div>
                     <div class="flex items-center gap-2.5 mb-4">
                         <img src="favicon.svg" alt="Grove" class="w-8 h-8 rounded-lg">
-                        <!-- GroveWordmark (reuses nav-wg gradient from navbar) -->
-                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="-122 -25 244 50" width="86" height="20">
-                          <g fill="url(#nav-wg)">
-                            <g transform="translate(-95.6954,0.0706)"><path transform="translate(-100,-100)" d="M98.9718 124.768C98.4924 124.7201 98.0597 124.6723 97.5802 124.5756 88.9875 123.184 81.5949 117.1352 78.4259 109.0224 75.258 100.8134 76.7463 91.2128 82.3146 84.3959 87.7394 77.7236 96.4279 74.267 104.9728 75.4672 112.6535 76.5234 119.3742 81.1796 123.214 87.8525L112.9416 92.893C110.3488 88.8124 105.6925 86.412 100.8439 86.6523 96.6681 86.8925 92.7794 89.1005 90.4269 92.5571 87.7394 96.541 87.4513 101.8217 89.6115 106.0942 91.4835 109.7905 94.9875 112.4306 98.9718 113.1987L98.9718 124.768Z"/></g>
-                            <g transform="translate(-84.6987,8.613)"><polygon fill="#71717a" opacity="0.5" points="12.0249,10.6572 0.6479,10.6572 0.6479,-0.5762 -12.0249,-0.5762 -12.0249,-10.6572 12.0249,-10.6572"/></g>
-                            <g transform="translate(-17.4617,-0.3925)"><path transform="translate(-101.085,-98.2336)" d="M123.9829 122.6079L92.0122 122.6079 92.0845 122.6797 79.0513 122.6797 70.2666 105.542 64.5781 105.542 64.5781 122.6797 53.2007 122.6797 53.2007 95.4614 74.1548 95.4614C77.7549 95.4614 80.2031 93.3731 80.2031 90.1328 80.2031 86.9649 77.8272 84.8042 74.1548 84.8042L53.2007 84.8042 53.2007 74.6514 75.667 74.6514C85.6758 74.6514 91.7964 81.2041 91.7964 90.1328 91.7964 98.6294 86.4678 103.2378 81.2832 104.3902L86.1079 112.5269 124.127 112.5269C131.5435 112.5269 137.52 106.3345 137.52 98.7017 137.52 91.2852 131.5435 85.3086 124.127 85.3086 116.7822 85.3086 110.7339 91.2852 110.7339 98.7017 110.7339 102.374 112.1021 105.6861 114.4063 108.2066L101.1572 108.2066C99.9331 105.2544 99.2847 102.0137 99.2847 98.6294 99.2847 84.9483 110.4458 73.7876 124.127 73.7876 137.8804 73.7876 148.9693 84.9482 148.9693 98.6294 148.9693 111.9507 137.8804 122.6079 124.1992 122.6079L123.9829 122.6079Z"/></g>
-                            <g transform="translate(62.5642,0.0755)"><polygon points="-6.3726,23.978 -24.9502,-23.978 -12.061,-23.978 0.0361,9.5049 12.061,-23.978 24.9502,-23.978 6.4448,23.978 -6.3726,23.978"/></g>
-                            <g transform="translate(97.8474,19.0130)"><polygon points="-17.1733,-5.0405 21.062,-5.0405 21.062,5.0405 -21.062,5.0405 -17.1733,-5.0405"/></g>
-                            <g transform="translate(101.1236,0.2913)"><polygon points="-13.2488,-5.0405 17.1375,-5.0405 17.1375,5.0405 -17.1375,5.0405 -13.2488,-5.0405"/></g>
-                            <g transform="translate(105.1201,-18.8622)"><polygon fill="#71717a" opacity="0.5" points="-9.9011,-5.0403 13.7893,-5.0403 13.7893,5.0403 -13.7893,5.0403 -9.9011,-5.0403"/></g>
-                          </g>
-                        </svg>
+                        <span class="text-lg font-bold tracking-tight text-white/80">Grove</span>
                     </div>
-                    <p class="text-grove-muted text-sm leading-relaxed">
+                    <p class="text-white/30 text-sm leading-relaxed">
                         The complete AI development workflow.<br>
                         From spec to ship, all in one place.
                     </p>
                 </div>
                 <div>
-                    <h4 class="font-semibold text-sm mb-4 text-grove-muted uppercase tracking-wider">Resources</h4>
+                    <h4 class="font-semibold text-sm mb-4 text-white/30 uppercase tracking-wider">Resources</h4>
                     <ul class="space-y-2.5">
-                        <li><a href="https://github.com/GarrickZ2/grove" target="_blank" rel="noopener" class="text-grove-muted hover:text-grove-text transition-colors text-sm">GitHub Repository</a></li>
-                        <li><a href="https://crates.io/crates/grove-rs" target="_blank" rel="noopener" class="text-grove-muted hover:text-grove-text transition-colors text-sm">Crates.io</a></li>
-                        <li><a href="https://github.com/GarrickZ2/grove/releases" target="_blank" rel="noopener" class="text-grove-muted hover:text-grove-text transition-colors text-sm">Releases</a></li>
-                        <li><a href="https://github.com/GarrickZ2/grove/issues" target="_blank" rel="noopener" class="text-grove-muted hover:text-grove-text transition-colors text-sm">Issue Tracker</a></li>
+                        <li><a href="https://github.com/GarrickZ2/grove" target="_blank" rel="noopener" class="text-white/30 hover:text-white/60 transition-colors text-sm">GitHub Repository</a></li>
+                        <li><a href="https://crates.io/crates/grove-rs" target="_blank" rel="noopener" class="text-white/30 hover:text-white/60 transition-colors text-sm">Crates.io</a></li>
+                        <li><a href="https://github.com/GarrickZ2/grove/releases" target="_blank" rel="noopener" class="text-white/30 hover:text-white/60 transition-colors text-sm">Releases</a></li>
+                        <li><a href="https://github.com/GarrickZ2/grove/issues" target="_blank" rel="noopener" class="text-white/30 hover:text-white/60 transition-colors text-sm">Issue Tracker</a></li>
                     </ul>
                 </div>
                 <div>
-                    <h4 class="font-semibold text-sm mb-4 text-grove-muted uppercase tracking-wider">Community</h4>
+                    <h4 class="font-semibold text-sm mb-4 text-white/30 uppercase tracking-wider">Community</h4>
                     <ul class="space-y-2.5">
-                        <li><a href="https://github.com/GarrickZ2/grove/blob/master/CONTRIBUTING.md" target="_blank" rel="noopener" class="text-grove-muted hover:text-grove-text transition-colors text-sm">Contributing</a></li>
-                        <li><a href="https://github.com/GarrickZ2/grove/blob/master/LICENSE" target="_blank" rel="noopener" class="text-grove-muted hover:text-grove-text transition-colors text-sm">MIT License</a></li>
+                        <li><a href="https://github.com/GarrickZ2/grove/blob/master/CONTRIBUTING.md" target="_blank" rel="noopener" class="text-white/30 hover:text-white/60 transition-colors text-sm">Contributing</a></li>
+                        <li><a href="https://github.com/GarrickZ2/grove/blob/master/LICENSE" target="_blank" rel="noopener" class="text-white/30 hover:text-white/60 transition-colors text-sm">MIT License</a></li>
                     </ul>
                 </div>
-            </div>
-
-            <div class="mt-12 pt-8 border-t border-grove-border flex flex-col md:flex-row items-center justify-between gap-4">
-                <p class="text-grove-muted text-xs">Built with Rust. MIT License.</p>
-                <p class="text-grove-muted text-xs">Made with <span class="text-grove-green">&hearts;</span> for the AI coding community</p>
             </div>
         </div>
     </footer>
 
+
     <!-- ========== SCRIPTS ========== -->
     <script>
-        // Navbar scroll effect
-        const navbar = document.getElementById('navbar');
-        window.addEventListener('scroll', () => {
-            navbar.classList.toggle('nav-scrolled', window.scrollY > 50);
-        });
+    (function() {
+        'use strict';
 
-        // Mobile menu toggle
-        const mobileMenuBtn = document.getElementById('mobile-menu-btn');
+        // ── Scroll Animation Engine ──
+        // Tracks elements with data-animate and data-animate-stagger
+        // Adds 'in-view' class when element enters viewport
+        const animatedEls = document.querySelectorAll('[data-animate], [data-animate-stagger]');
+        const animObserver = new IntersectionObserver((entries) => {
+            entries.forEach(entry => {
+                if (entry.isIntersecting) {
+                    entry.target.classList.add('in-view');
+                }
+            });
+        }, {
+            threshold: 0.08,
+            rootMargin: '0px 0px -60px 0px'
+        });
+        animatedEls.forEach(el => animObserver.observe(el));
+
+
+        // ── Mobile menu toggle ──
+        const mobileBtn = document.getElementById('mobile-menu-btn');
         const mobileMenu = document.getElementById('mobile-menu');
-        mobileMenuBtn.addEventListener('click', () => mobileMenu.classList.toggle('hidden'));
-        mobileMenu.querySelectorAll('a').forEach(link => {
-            link.addEventListener('click', () => mobileMenu.classList.add('hidden'));
-        });
+        if (mobileBtn && mobileMenu) {
+            mobileBtn.addEventListener('click', () => {
+                mobileMenu.classList.toggle('hidden');
+            });
+        }
 
-        // Install tab switching
-        function switchTab(tab) {
+
+        // ── Hero Parallax ──
+        const heroInner = document.getElementById('hero-inner');
+        let ticking = false;
+
+        function updateHeroParallax() {
+            const scrollY = window.scrollY;
+            const vh = window.innerHeight;
+            const progress = Math.min(1, scrollY / (vh * 0.6));
+
+            if (heroInner) {
+                heroInner.style.opacity = 1 - progress;
+                heroInner.style.transform = `translateY(${-scrollY * 0.3}px)`;
+                heroInner.style.filter = `blur(${progress * 8}px)`;
+            }
+            ticking = false;
+        }
+
+        window.addEventListener('scroll', () => {
+            if (!ticking) {
+                requestAnimationFrame(updateHeroParallax);
+                ticking = true;
+            }
+        }, { passive: true });
+
+
+        // ── Sticky Section Controller (Isolate) ──
+        const stickyWrap = document.getElementById('isolate-sticky');
+        if (stickyWrap) {
+            const panels = stickyWrap.querySelectorAll('.sticky-panel');
+            const dots = stickyWrap.querySelectorAll('[data-dot]');
+            const totalPanels = panels.length;
+
+            function updateStickyPanels() {
+                const rect = stickyWrap.getBoundingClientRect();
+                const wrapHeight = stickyWrap.offsetHeight;
+                const vh = window.innerHeight;
+
+                // Progress through the sticky section (0 to 1)
+                const scrolled = -rect.top;
+                const scrollable = wrapHeight - vh;
+                const progress = Math.max(0, Math.min(1, scrolled / scrollable));
+
+                // Determine active panel
+                const step = Math.min(totalPanels - 1, Math.floor(progress * totalPanels));
+
+                panels.forEach((panel, i) => {
+                    panel.classList.toggle('active', i === step);
+                });
+                dots.forEach((dot, i) => {
+                    if (i === step) {
+                        dot.style.background = '#10b981';
+                        dot.style.width = '10px';
+                        dot.style.height = '10px';
+                    } else {
+                        dot.style.background = 'rgba(255,255,255,0.2)';
+                        dot.style.width = '8px';
+                        dot.style.height = '8px';
+                    }
+                });
+            }
+
+            window.addEventListener('scroll', () => {
+                requestAnimationFrame(updateStickyPanels);
+            }, { passive: true });
+        }
+
+
+        // ── Navbar: hidden in hero, visible after scroll ──
+        const navbar = document.getElementById('navbar');
+        const heroSection = document.querySelector('.hero-section');
+        function updateNavbar() {
+            const heroBottom = heroSection ? heroSection.offsetTop + heroSection.offsetHeight : 600;
+            const pastHero = window.scrollY > heroBottom - 100;
+            navbar.style.opacity = pastHero ? '1' : '0';
+            navbar.style.pointerEvents = pastHero ? 'auto' : 'none';
+            navbar.style.transform = pastHero ? 'translateY(0)' : 'translateY(-10px)';
+            if (pastHero) {
+                navbar.style.background = 'rgba(10,10,11,0.85)';
+                navbar.style.backdropFilter = 'blur(20px)';
+                navbar.style.webkitBackdropFilter = 'blur(20px)';
+                navbar.style.borderBottom = '1px solid rgba(255,255,255,0.06)';
+            }
+        }
+        window.addEventListener('scroll', updateNavbar, { passive: true });
+
+
+        // ── Install tab switching ──
+        window.switchTab = function(tab) {
             document.querySelectorAll('.install-content').forEach(el => el.classList.add('hidden'));
             document.querySelectorAll('.install-tab').forEach(el => {
                 el.classList.remove('active');
@@ -1134,170 +1505,211 @@
             const activeTab = document.querySelector(`[data-tab="${tab}"]`);
             activeTab.classList.add('active');
             activeTab.classList.remove('text-grove-muted');
-        }
-
-        // Copy code
-        function copyCode(text) {
-            navigator.clipboard.writeText(text).then(function() {
-                showCopyToast();
-            });
-        }
-
-        function showCopyToast() {
-            var existing = document.getElementById('copy-toast');
-            if (existing) existing.remove();
-            var toast = document.createElement('div');
-            toast.id = 'copy-toast';
-            toast.textContent = 'Copied to clipboard!';
-            toast.style.cssText = 'position:fixed;bottom:2rem;left:50%;transform:translateX(-50%);background:#1a1a2e;color:#4ade80;border:1px solid #4ade80;padding:0.75rem 1.5rem;border-radius:0.5rem;font-size:0.875rem;z-index:9999;opacity:0;transition:opacity 0.3s;';
-            document.body.appendChild(toast);
-            requestAnimationFrame(function() { toast.style.opacity = '1'; });
-            setTimeout(function() {
-                toast.style.opacity = '0';
-                setTimeout(function() { toast.remove(); }, 300);
-            }, 2000);
-        }
-        // Step GIF switching (Create / Work / Review / Complete)
-        const stepGifs = {
-            create: 'images/create.gif',
-            work: 'images/work.gif',
-            review: 'images/review.gif',
-            complete: 'images/complete.gif'
         };
-        function switchStep(step) {
-            const img = document.getElementById('step-gif');
-            // Force GIF restart by clearing src first
-            img.src = '';
-            requestAnimationFrame(() => { img.src = stepGifs[step]; });
-            document.querySelectorAll('.step-tab').forEach(el => el.classList.remove('active'));
-            document.querySelector(`[data-step="${step}"]`).classList.add('active');
-        }
 
-        // (Feature Gallery removed in content restructure)
 
-        // Terminal typewriter animation (if present)
-        const tl2 = document.getElementById('term-line-2');
-        if (tl2) {
-            setTimeout(() => { tl2.style.opacity = '1'; }, 3000);
-            setTimeout(() => { document.getElementById('term-line-3').style.opacity = '1'; }, 3800);
-            setTimeout(() => { document.getElementById('term-line-4').style.opacity = '1'; }, 6500);
-        }
-
-        // Intersection Observer for fade-in animations
-        const observer = new IntersectionObserver((entries) => {
-            entries.forEach(entry => {
-                if (entry.isIntersecting) entry.target.classList.add('visible');
+        // ── Copy code ──
+        window.copyCode = function(text) {
+            navigator.clipboard.writeText(text).then(() => {
+                const toast = document.createElement('div');
+                toast.textContent = 'Copied!';
+                toast.style.cssText = 'position:fixed;bottom:2rem;left:50%;transform:translateX(-50%);background:#111113;color:#10b981;border:1px solid rgba(16,185,129,0.3);padding:0.5rem 1.5rem;border-radius:999px;font-size:0.8rem;z-index:9999;opacity:0;transition:opacity 0.3s;';
+                document.body.appendChild(toast);
+                requestAnimationFrame(() => { toast.style.opacity = '1'; });
+                setTimeout(() => {
+                    toast.style.opacity = '0';
+                    setTimeout(() => toast.remove(), 300);
+                }, 1500);
             });
-        }, { threshold: 0.1, rootMargin: '0px 0px -50px 0px' });
+        };
 
-        document.querySelectorAll('.fade-in').forEach(el => observer.observe(el));
+
+        // ── Explore More: list + image switching ──
+        const exploreImages = {
+            blitz: 'images/grove-web.png',
+            desktop: 'images/grove-gui.png',
+            stats: 'images/stats.png',
+            agents: 'images/agents.png'
+        };
+        window.switchExploreItem = function(key) {
+            const img = document.getElementById('explore-img');
+            if (img) {
+                img.style.opacity = '0';
+                setTimeout(() => {
+                    img.src = exploreImages[key];
+                    img.style.opacity = '1';
+                }, 200);
+            }
+            document.querySelectorAll('.explore-item').forEach(el => el.classList.remove('active'));
+            const active = document.querySelector(`[data-explore="${key}"]`);
+            if (active) active.classList.add('active');
+        };
+
 
         // ── Side TOC ──
-        (function() {
-            const toc = document.getElementById('side-toc');
-            const tocItems = toc.querySelectorAll('.toc-item');
-            const sectionIds = Array.from(tocItems).map(item => item.dataset.target);
-            const sections = sectionIds.map(id => document.getElementById(id)).filter(Boolean);
+        const toc = document.getElementById('side-toc');
+        const tocItems = toc.querySelectorAll('.toc-item');
+        const sectionIds = Array.from(tocItems).map(item => item.dataset.target);
+        const sections = sectionIds.map(id => document.getElementById(id)).filter(Boolean);
 
-            // Click handler — smooth scroll to section
-            tocItems.forEach(item => {
-                item.addEventListener('click', () => {
-                    const target = document.getElementById(item.dataset.target);
-                    if (target) target.scrollIntoView({ behavior: 'smooth' });
-                });
+        tocItems.forEach(item => {
+            item.addEventListener('click', () => {
+                const target = document.getElementById(item.dataset.target);
+                if (target) target.scrollIntoView({ behavior: 'smooth' });
             });
+        });
 
-            // Show/hide TOC based on scroll position (hidden in hero area)
-            function updateTocVisibility() {
-                const scrollY = window.scrollY;
-                const heroHeight = document.getElementById('why-grove')?.offsetTop || 600;
-                toc.classList.toggle('visible', scrollY > heroHeight - 200);
-            }
+        function updateTocVisibility() {
+            const heroHeight = document.getElementById('isolate')?.offsetTop || 600;
+            toc.classList.toggle('visible', window.scrollY > heroHeight - 200);
+        }
 
-            // IntersectionObserver to track active section
-            let currentActive = null;
-            const tocObserver = new IntersectionObserver((entries) => {
-                entries.forEach(entry => {
-                    if (entry.isIntersecting) {
-                        const id = entry.target.id;
-                        if (currentActive !== id) {
-                            currentActive = id;
-                            tocItems.forEach(item => {
-                                item.classList.toggle('active', item.dataset.target === id);
-                            });
-                        }
+        let currentActive = null;
+        const tocObserver = new IntersectionObserver((entries) => {
+            entries.forEach(entry => {
+                if (entry.isIntersecting) {
+                    const id = entry.target.id;
+                    if (currentActive !== id) {
+                        currentActive = id;
+                        tocItems.forEach(item => {
+                            item.classList.toggle('active', item.dataset.target === id);
+                        });
                     }
+                }
+            });
+        }, { threshold: 0.15, rootMargin: '-10% 0px -70% 0px' });
+
+        sections.forEach(section => tocObserver.observe(section));
+        window.addEventListener('scroll', updateTocVisibility, { passive: true });
+        updateTocVisibility();
+
+    })();
+    </script>
+
+    <!-- Starfield renderer -->
+    <script>
+    (function() {
+        const canvas = document.getElementById('starfield');
+        if (!canvas) return;
+        const ctx = canvas.getContext('2d');
+        let w, h, dpr;
+
+        const STAR_COUNT = 45;
+        const stars = [];
+        let scrollOffset = 0;       // current smoothed scroll
+        let scrollTarget = 0;       // raw scroll value
+
+        const COLORS = [
+            [255, 255, 255],   // white
+            [255, 255, 255],   // white
+            [255, 255, 255],   // white
+            [167, 139, 250],   // purple
+            [16,  185, 129],   // green
+            [6,   182, 212],   // cyan
+        ];
+
+        function resize() {
+            dpr = window.devicePixelRatio || 1;
+            w = window.innerWidth;
+            h = window.innerHeight;
+            canvas.width = w * dpr;
+            canvas.height = h * dpr;
+            canvas.style.width = w + 'px';
+            canvas.style.height = h + 'px';
+            ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        }
+
+        function init() {
+            resize();
+            stars.length = 0;
+            for (let i = 0; i < STAR_COUNT; i++) {
+                const color = COLORS[Math.floor(Math.random() * COLORS.length)];
+                stars.push({
+                    x: Math.random() * w,
+                    y: Math.random() * h,
+                    baseX: 0,                               // set below
+                    baseY: 0,
+                    r: Math.random() * 1.2 + 0.4,          // radius 0.4 – 1.6
+                    baseAlpha: Math.random() * 0.5 + 0.2,   // 0.2 – 0.7
+                    phase: Math.random() * Math.PI * 2,
+                    speed: Math.random() * 0.3 + 0.1,       // twinkle speed
+                    // drift — each star orbits a tiny ellipse
+                    driftRx: Math.random() * 12 + 3,        // x radius 3 – 15 px
+                    driftRy: Math.random() * 8 + 2,         // y radius 2 – 10 px
+                    driftSpeed: Math.random() * 0.15 + 0.03, // very slow
+                    driftPhase: Math.random() * Math.PI * 2,
+                    // pulse — radius breathing
+                    pulseAmp: Math.random() * 0.35 + 0.05,  // 0.05 – 0.4
+                    pulseSpeed: Math.random() * 0.4 + 0.1,
+                    pulsePhase: Math.random() * Math.PI * 2,
+                    // scroll parallax — each star moves at its own depth
+                    parallaxX: (Math.random() - 0.5) * 0.12,  // horizontal shift factor
+                    parallaxY: (Math.random() * 0.06 + 0.02) * (Math.random() < 0.5 ? 1 : -1), // vertical
+                    color: color,
                 });
-            }, { threshold: 0.15, rootMargin: '-10% 0px -70% 0px' });
+            }
+            // store base positions
+            for (const s of stars) { s.baseX = s.x; s.baseY = s.y; }
+        }
 
-            sections.forEach(section => tocObserver.observe(section));
+        let raf;
+        window.addEventListener('scroll', () => { scrollTarget = window.scrollY; }, { passive: true });
 
-            window.addEventListener('scroll', updateTocVisibility, { passive: true });
-            updateTocVisibility();
-        })();
+        function draw(t) {
+            // smooth scroll interpolation for fluid motion
+            scrollOffset += (scrollTarget - scrollOffset) * 0.08;
 
-        // ── Section snap on overscroll ──
-        (function() {
-            const sections = Array.from(document.querySelectorAll('.snap-section'));
-            if (!sections.length) return;
+            ctx.clearRect(0, 0, w, h);
+            for (const s of stars) {
+                // breathing alpha
+                const flicker = Math.sin(t * 0.001 * s.speed + s.phase);
+                const alpha = s.baseAlpha + flicker * 0.3;
 
-            let snapping = false;
-            let delta = 0;
-            let lastWheel = 0;
-            const THRESHOLD = 80;
+                // slow ambient drift
+                const dx = Math.sin(t * 0.001 * s.driftSpeed + s.driftPhase) * s.driftRx;
+                const dy = Math.cos(t * 0.001 * s.driftSpeed * 0.7 + s.driftPhase) * s.driftRy;
 
-            window.addEventListener('wheel', (e) => {
-                if (snapping) return;
+                // scroll-driven parallax shift
+                const px = scrollOffset * s.parallaxX;
+                const py = scrollOffset * s.parallaxY;
 
-                const now = Date.now();
-                if (now - lastWheel > 300) delta = 0;
-                lastWheel = now;
+                // combine and wrap around edges
+                let sx = ((s.baseX + dx + px) % w + w) % w;
+                let sy = ((s.baseY + dy + py) % h + h) % h;
 
-                const scrollTop = window.scrollY;
-                const vh = window.innerHeight;
+                // radius pulse
+                const rPulse = s.r + Math.sin(t * 0.001 * s.pulseSpeed + s.pulsePhase) * s.pulseAmp;
+                const r = Math.max(0.2, rPulse);
 
-                // Find which section the viewport top is in
-                let idx = 0;
-                for (let i = sections.length - 1; i >= 0; i--) {
-                    if (scrollTop >= sections[i].offsetTop - 10) { idx = i; break; }
+                // star dot
+                ctx.beginPath();
+                ctx.arc(sx, sy, r, 0, Math.PI * 2);
+                ctx.fillStyle = `rgba(${s.color[0]},${s.color[1]},${s.color[2]},${Math.max(0.05, alpha)})`;
+                ctx.fill();
+
+                // soft glow halo for bigger stars
+                if (r > 0.9) {
+                    ctx.beginPath();
+                    ctx.arc(sx, sy, r * 3.5, 0, Math.PI * 2);
+                    ctx.fillStyle = `rgba(${s.color[0]},${s.color[1]},${s.color[2]},${Math.max(0, alpha * 0.12)})`;
+                    ctx.fill();
                 }
+            }
+            raf = requestAnimationFrame(draw);
+        }
 
-                const section = sections[idx];
-                const sectionBottom = section.offsetTop + section.offsetHeight;
-                const viewBottom = scrollTop + vh;
+        window.addEventListener('resize', () => {
+            const oldW = w, oldH = h;
+            resize();
+            for (const s of stars) {
+                s.baseX = (s.baseX / oldW) * w;
+                s.baseY = (s.baseY / oldH) * h;
+            }
+        });
 
-                if (e.deltaY > 0) {
-                    // Scrolling down — section bottom already in view?
-                    if (viewBottom >= sectionBottom - 30 && idx < sections.length - 1) {
-                        delta += e.deltaY;
-                        if (delta >= THRESHOLD) {
-                            snapping = true;
-                            delta = 0;
-                            sections[idx + 1].scrollIntoView({ behavior: 'smooth' });
-                            setTimeout(() => { snapping = false; }, 700);
-                        }
-                    } else {
-                        delta = 0;
-                    }
-                } else if (e.deltaY < 0) {
-                    // Scrolling up — at section top?
-                    if (scrollTop <= section.offsetTop + 30 && idx > 0) {
-                        delta += Math.abs(e.deltaY);
-                        if (delta >= THRESHOLD) {
-                            snapping = true;
-                            delta = 0;
-                            // Scroll to previous section so its bottom aligns with viewport bottom
-                            const prev = sections[idx - 1];
-                            const target = Math.max(0, prev.offsetTop + prev.offsetHeight - vh);
-                            window.scrollTo({ top: target, behavior: 'smooth' });
-                            setTimeout(() => { snapping = false; }, 700);
-                        }
-                    } else {
-                        delta = 0;
-                    }
-                }
-            }, { passive: true });
-        })();
+        init();
+        raf = requestAnimationFrame(draw);
+    })();
     </script>
 </body>
 </html>
