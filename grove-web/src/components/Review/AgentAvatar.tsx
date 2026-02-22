@@ -2,6 +2,7 @@
 // "You" → Grove logo, known agents → their SVG icon, fallback → initial letter
 
 import { type CSSProperties, type ReactElement } from 'react';
+import { GroveIcon } from '../Layout/GroveIcon';
 
 interface AgentAvatarProps {
   name: string;
@@ -16,13 +17,7 @@ function getAgentIcon(name: string, size: number): ReactElement | null {
 
   // "You" → Grove logo
   if (lower === 'you') {
-    return (
-      <img
-        src="/logo.png"
-        alt="Grove"
-        style={{ width: size, height: size, borderRadius: '50%', objectFit: 'cover' }}
-      />
-    );
+    return <GroveIcon size={size} className="rounded-full" />;
   }
 
   const s = size;

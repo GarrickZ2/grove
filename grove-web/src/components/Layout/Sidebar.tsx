@@ -12,6 +12,7 @@ import {
 import { ProjectSelector } from "./ProjectSelector";
 import { NotificationPopover } from "./NotificationPopover";
 import { LogoBrand } from "./LogoBrand";
+import { GroveIcon } from "./GroveIcon";
 import { useNotifications } from "../../context";
 import type { TasksMode } from "../../App";
 
@@ -59,7 +60,7 @@ export function Sidebar({ activeItem, onItemClick, collapsed, onToggleCollapse, 
             className="flex items-center justify-center"
             title={`Switch to ${tasksMode === "zen" ? "Blitz" : "Zen"} mode`}
           >
-            <img src="/logo.png" alt="Grove" className="w-10 h-10 rounded-xl" />
+            <GroveIcon size={35} shimmer background className="rounded-xl" />
           </button>
         ) : (
           <LogoBrand
@@ -98,7 +99,7 @@ export function Sidebar({ activeItem, onItemClick, collapsed, onToggleCollapse, 
             whileTap={{ scale: 0.98 }}
             onClick={() => setNotifOpen(!notifOpen)}
             title={collapsed ? "Notifications" : undefined}
-            className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors duration-150
+            className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-colors duration-150
               ${collapsed ? "justify-center" : ""}
               ${notifOpen
                 ? "bg-[var(--color-highlight)]/10 text-[var(--color-highlight)]"
@@ -135,7 +136,7 @@ export function Sidebar({ activeItem, onItemClick, collapsed, onToggleCollapse, 
           whileHover={{ scale: 1.02 }}
           whileTap={{ scale: 0.98 }}
           onClick={onToggleCollapse}
-          className="w-full flex items-center justify-center gap-3 px-3 py-2.5 mt-1 rounded-lg text-sm font-medium text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-bg-secondary)] transition-colors"
+          className="w-full flex items-center justify-center gap-3 px-3 py-2.5 mt-1 rounded-xl text-sm font-medium text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-bg-secondary)] transition-colors"
         >
           {collapsed ? (
             <ChevronRight className="w-4 h-4" />
@@ -167,7 +168,7 @@ function NavButton({ item, isActive, onClick, collapsed }: NavButtonProps) {
       whileTap={{ scale: 0.98 }}
       onClick={onClick}
       title={collapsed ? item.label : undefined}
-      className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors duration-150
+      className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-colors duration-150
         ${collapsed ? "justify-center" : ""}
         ${
           isActive

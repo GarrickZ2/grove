@@ -2,6 +2,8 @@ import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
 import { ArrowRight, GitBranch, Terminal, Layers } from "lucide-react";
 import { getVersion } from "../../api";
+import { GroveIcon } from "../Layout/GroveIcon";
+import { GroveWordmark } from "../Layout/GroveWordmark";
 
 interface WelcomePageProps {
   onGetStarted: () => void;
@@ -52,33 +54,46 @@ export function WelcomePage({ onGetStarted }: WelcomePageProps) {
 
       {/* Content */}
       <div className="relative z-10 flex flex-col items-center text-center px-6">
-        {/* Logo - Tree icon with glow effect */}
+        {/* Logo - Tree icon with draw-in entrance */}
         <motion.div
-          initial={{ scale: 0.8, opacity: 0 }}
+          initial={{ scale: 0.3, opacity: 0 }}
           animate={{ scale: 1, opacity: 1 }}
-          transition={{ delay: 0.1, duration: 0.5, ease: "easeOut" }}
+          transition={{ type: "spring", stiffness: 260, damping: 20 }}
           className="mb-8"
         >
-          <img src="/logo.png" alt="Grove" className="w-28 h-28 rounded-3xl" />
+          {/* Glow behind icon */}
+          <motion.div
+            className="relative"
+            initial={{ filter: "drop-shadow(0 0 0px transparent)" }}
+            animate={{ filter: "drop-shadow(0 0 24px var(--color-highlight))" }}
+            transition={{ delay: 1.2, duration: 1, ease: "easeOut" }}
+          >
+            {/* Circle-reveal from bottom center — "tree growing" feel */}
+            <motion.div
+              initial={{ clipPath: "circle(0% at 50% 100%)" }}
+              animate={{ clipPath: "circle(150% at 50% 100%)" }}
+              transition={{ delay: 0.15, duration: 1.4, ease: [0.16, 1, 0.3, 1] }}
+            >
+              <GroveIcon size={160} background shimmer className="rounded-3xl" />
+            </motion.div>
+          </motion.div>
         </motion.div>
 
         {/* Title with shimmer effect */}
         <motion.h1
           initial={{ y: 20, opacity: 0 }}
           animate={{ y: 0, opacity: 1 }}
-          transition={{ delay: 0.2, duration: 0.5 }}
+          transition={{ delay: 1.0, duration: 0.5 }}
           className="text-7xl font-black mb-4 tracking-tight relative"
         >
-          <span className="bg-gradient-to-r from-[var(--color-highlight)] via-[var(--color-accent)] to-[var(--color-highlight)] bg-clip-text text-transparent bg-[length:200%_100%] animate-shimmer">
-            GROVE
-          </span>
+          <GroveWordmark height={72} />
         </motion.h1>
 
         {/* Tagline */}
         <motion.p
           initial={{ y: 20, opacity: 0 }}
           animate={{ y: 0, opacity: 1 }}
-          transition={{ delay: 0.3, duration: 0.5 }}
+          transition={{ delay: 1.2, duration: 0.5 }}
           className="text-xl text-[var(--color-text-muted)] mb-8 max-w-md"
         >
           Parallel AI coding workflows with Git worktrees
@@ -88,19 +103,19 @@ export function WelcomePage({ onGetStarted }: WelcomePageProps) {
         <motion.div
           initial={{ y: 20, opacity: 0 }}
           animate={{ y: 0, opacity: 1 }}
-          transition={{ delay: 0.4, duration: 0.5 }}
+          transition={{ delay: 1.4, duration: 0.5 }}
           className="flex gap-8 mb-12"
         >
-          <Feature icon={GitBranch} label="Git Worktrees" delay={0.5} />
-          <Feature icon={Terminal} label="Tmux Sessions" delay={0.6} />
-          <Feature icon={Layers} label="Task Management" delay={0.7} />
+          <Feature icon={GitBranch} label="Git Worktrees" delay={1.5} />
+          <Feature icon={Terminal} label="Tmux Sessions" delay={1.6} />
+          <Feature icon={Layers} label="Task Management" delay={1.7} />
         </motion.div>
 
         {/* Get Started Button */}
         <motion.button
           initial={{ y: 20, opacity: 0 }}
           animate={{ y: 0, opacity: 1 }}
-          transition={{ delay: 0.5, duration: 0.5 }}
+          transition={{ delay: 1.8, duration: 0.5 }}
           whileHover={{ scale: 1.05 }}
           whileTap={{ scale: 0.95 }}
           onClick={onGetStarted}
@@ -117,7 +132,7 @@ export function WelcomePage({ onGetStarted }: WelcomePageProps) {
           <motion.p
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
-            transition={{ delay: 0.7, duration: 0.5 }}
+            transition={{ delay: 2.0, duration: 0.5 }}
             className="mt-8 text-sm text-[var(--color-text-muted)]"
           >
             v{version}
