@@ -1,8 +1,14 @@
 /* Grove FlexLayout Custom Theme */
 
-/* 全局容器 */
+/* Override flexlayout's built-in --color-text: black with our theme value.
+   flexlayout's light.css redefines --color-text on .flexlayout__layout,
+   which shadows :root --color-text, causing black text in dark themes.
+   We use --grove-text / --grove-bg aliases set by ThemeContext to break
+   the circular reference. */
 .flexlayout__layout,
 .grove-flex-flexlayout__layout {
+  --color-text: var(--grove-text);
+  --color-background: var(--grove-bg);
   background: var(--color-bg);
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
 }

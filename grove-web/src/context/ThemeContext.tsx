@@ -376,6 +376,9 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     root.style.setProperty("--color-border", colors.border);
     root.style.setProperty("--color-text", colors.text);
     root.style.setProperty("--color-text-muted", colors.textMuted);
+    // Alias for flexlayout override (flexlayout's light.css redefines --color-text on .flexlayout__layout)
+    root.style.setProperty("--grove-text", colors.text);
+    root.style.setProperty("--grove-bg", colors.bg);
     root.style.setProperty("--color-highlight", colors.highlight);
     root.style.setProperty("--color-accent", colors.accent);
     root.style.setProperty("--color-success", colors.success);
