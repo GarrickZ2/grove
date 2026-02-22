@@ -196,14 +196,19 @@ pub fn parse_skill_md(content: &str) -> Option<ParsedSkillMd> {
     let mut metadata = std::collections::BTreeMap::new();
 
     let mut in_metadata = false;
-    for line in frontmatter.lines() {
+    let lines: Vec<&str> = frontmatter.lines().collect();
+    let mut i = 0;
+    while i < lines.len() {
+        let line = lines[i];
         let trimmed_line = line.trim();
         if trimmed_line.is_empty() {
+            i += 1;
             continue;
         }
 
         if trimmed_line == "metadata:" {
             in_metadata = true;
+            i += 1;
             continue;
         }
 
@@ -218,28 +223,59 @@ pub fn parse_skill_md(content: &str) -> Option<ParsedSkillMd> {
                     if !key.is_empty() && !value.is_empty() {
                         metadata.insert(key.to_string(), value.to_string());
                     }
+                    i += 1;
                     continue;
                 }
                 // Not indented — leaving metadata block
                 in_metadata = false;
             }
 
+            // Handle YAML block scalars (> folded, | literal)
+            let resolved_value = if value == ">" || value == "|" {
+                let is_folded = value == ">";
+                let mut block_lines = Vec::new();
+                i += 1;
+                while i < lines.len() {
+                    let next = lines[i];
+                    // Block continues while lines are indented
+                    if next.starts_with(' ') || next.starts_with('\t') {
+                        block_lines.push(next.trim());
+                        i += 1;
+                    } else {
+                        break;
+                    }
+                }
+                if is_folded {
+                    block_lines.join(" ")
+                } else {
+                    block_lines.join("\n")
+                }
+            } else {
+                value.to_string()
+            };
+
             match key {
                 // Official required
-                "name" => name = Some(value.to_string()),
-                "description" => description = Some(value.to_string()),
+                "name" => name = Some(resolved_value),
+                "description" => description = Some(resolved_value),
                 // Official optional
-                "license" => license = Some(value.to_string()),
-                "compatibility" => compatibility = Some(value.to_string()),
-                "allowed-tools" => allowed_tools = Some(value.to_string()),
+                "license" => license = Some(resolved_value),
+                "compatibility" => compatibility = Some(resolved_value),
+                "allowed-tools" => allowed_tools = Some(resolved_value),
                 "metadata" => in_metadata = true,
                 // Non-standard → generic metadata
                 _ => {
-                    if !value.is_empty() {
-                        metadata.insert(key.to_string(), value.to_string());
+                    if !resolved_value.is_empty() {
+                        metadata.insert(key.to_string(), resolved_value);
                     }
                 }
             }
+            // If we consumed block scalar lines, don't increment i again
+            if !(value == ">" || value == "|") {
+                i += 1;
+            }
+        } else {
+            i += 1;
         }
     }
 
@@ -654,6 +690,45 @@ Body content here.
         );
         // Body
         assert_eq!(parsed.body, "Body content here.");
+    }
+
+    #[test]
+    fn test_parse_skill_md_block_scalar() {
+        let content = r#"---
+name: sql-helper
+description: >
+  SQL query optimization skill for relational databases.
+  Use when writing complex joins, indexing strategies,
+  or analyzing slow query performance.
+---
+
+# SQL Helper Skill
+"#;
+        let parsed = parse_skill_md(content).unwrap();
+        assert_eq!(parsed.name, "sql-helper");
+        assert!(
+            parsed.description.starts_with("SQL query optimization"),
+            "description should contain folded text, got: {}",
+            parsed.description
+        );
+        assert!(
+            parsed.description.contains("analyzing slow query"),
+            "folded scalar should join continuation lines"
+        );
+    }
+
+    #[test]
+    fn test_parse_skill_md_literal_block_scalar() {
+        let content = r#"---
+name: test
+description: |
+  Line one.
+  Line two.
+---
+"#;
+        let parsed = parse_skill_md(content).unwrap();
+        assert_eq!(parsed.name, "test");
+        assert!(parsed.description.contains("Line one.\nLine two."));
     }
 
     #[test]
