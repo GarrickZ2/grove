@@ -25,6 +25,10 @@ export function GroveWordmark({ height = 22, className }: GroveWordmarkProps) {
           <stop offset="0%" stopColor="var(--color-highlight)" />
           <stop offset="100%" stopColor="var(--color-accent)" />
         </linearGradient>
+        <linearGradient id={`${id}-wg-light`} x1="0%" y1="0%" x2="100%" y2="0%">
+          <stop offset="0%" stopColor="var(--color-highlight)" stopOpacity="0.3" />
+          <stop offset="100%" stopColor="var(--color-accent)" stopOpacity="0.3" />
+        </linearGradient>
       </defs>
 
       <g fill={`url(#${id}-wg)`}>
@@ -34,7 +38,7 @@ export function GroveWordmark({ height = 22, className }: GroveWordmarkProps) {
         </g>
         {/* G — accent corner piece */}
         <g transform="translate(-84.6987, 8.613)">
-          <polygon fill="var(--color-text-muted)" opacity="0.5" points="12.0249,10.6572 0.6479,10.6572 0.6479,-0.5762 -12.0249,-0.5762 -12.0249,-10.6572 12.0249,-10.6572" />
+          <polygon fill={`url(#${id}-wg-light)`} points="12.0249,10.6572 0.6479,10.6572 0.6479,-0.5762 -12.0249,-0.5762 -12.0249,-10.6572 12.0249,-10.6572" />
         </g>
 
         {/* R + O */}
@@ -59,7 +63,7 @@ export function GroveWordmark({ height = 22, className }: GroveWordmarkProps) {
 
         {/* E — top bar (accent, lighter) */}
         <g transform="translate(105.1201, -18.8622)">
-          <polygon fill="var(--color-text-muted)" opacity="0.5" points="-9.9011,-5.0403 13.7893,-5.0403 13.7893,5.0403 -13.7893,5.0403 -9.9011,-5.0403" />
+          <polygon fill={`url(#${id}-wg-light)`} points="-9.9011,-5.0403 13.7893,-5.0403 13.7893,5.0403 -13.7893,5.0403 -9.9011,-5.0403" />
         </g>
       </g>
     </svg>

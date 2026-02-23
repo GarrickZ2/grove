@@ -5,6 +5,28 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.1] - 2026-02-22
+
+### Added
+
+- **Homebrew tap** — `brew tap GarrickZ2/grove && brew install grove` now supported
+  - Homebrew formula for macOS (ARM/Intel) and Linux (x64/ARM)
+  - Release CI auto-updates formula with correct sha256 on each release
+- **New brandmark and logo** — redesigned Grove icon and wordmark with theme-aware gradients
+  - `GroveIcon` component with layered SVG design (trunk, canopy, accent dot)
+  - `GroveWordmark` vectorized "GROVE" text with themed gradient fill
+  - Shimmer animation on sidebar logo
+- **Skill dialog redesign** — per-agent install/uninstall buttons in Manage Skill dialog
+  - Each agent shows individual install state and action button
+  - Replaces previous bulk install/uninstall flow
+
+### Fixed
+
+- **YAML block scalars in SKILL.md** — frontmatter parser now handles `>` (folded) and `|` (literal) block scalar syntax correctly
+- **Dark theme text in FlexLayout** — overrode CSS variable collision (`--color-text`) that caused invisible text in dark themes
+- **Toolbar panel duplication** — toolbar buttons now replace the active tab instead of creating duplicate panels
+- **Logo accent not following theme** — G and E detail pieces in the wordmark now use a lighter variant of the theme gradient instead of a fixed gray color
+
 ## [0.7.0] - 2026-02-19
 
 ### Added
