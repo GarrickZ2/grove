@@ -1684,6 +1684,7 @@
                 <!-- Tabs -->
                 <div class="flex gap-0 border-b border-white/10 mb-0">
                     <button onclick="switchTab('shell')" class="install-tab active px-5 py-3 text-sm font-medium border-b-2 border-transparent transition-colors" data-tab="shell">Shell</button>
+                    <button onclick="switchTab('homebrew')" class="install-tab px-5 py-3 text-sm font-medium border-b-2 border-transparent text-grove-muted hover:text-grove-text transition-colors" data-tab="homebrew">Homebrew</button>
                     <button onclick="switchTab('cargo')" class="install-tab px-5 py-3 text-sm font-medium border-b-2 border-transparent text-grove-muted hover:text-grove-text transition-colors" data-tab="cargo">Cargo</button>
                     <button onclick="switchTab('cargo-gui')" class="install-tab px-5 py-3 text-sm font-medium border-b-2 border-transparent text-grove-muted hover:text-grove-text transition-colors" data-tab="cargo-gui">Cargo + GUI</button>
                     <button onclick="switchTab('source')" class="install-tab px-5 py-3 text-sm font-medium border-b-2 border-transparent text-grove-muted hover:text-grove-text transition-colors" data-tab="source">From Source</button>
@@ -1702,6 +1703,18 @@
                             </button>
                         </div>
                         <div class="text-white/25 text-xs mt-3">Auto-detects platform (macOS/Linux) and architecture. GUI included on macOS.</div>
+                    </div>
+                    <div id="install-homebrew" class="install-content hidden">
+                        <div class="flex items-start justify-between gap-4">
+                            <div class="space-y-1">
+                                <div><span class="text-grove-green">$</span><span class="text-grove-text"> brew tap GarrickZ2/grove</span></div>
+                                <div><span class="text-grove-green">$</span><span class="text-grove-text"> brew install grove</span></div>
+                            </div>
+                            <button onclick="copyCode('brew tap GarrickZ2/grove\nbrew install grove')" class="text-grove-muted hover:text-grove-text transition-colors flex-shrink-0" title="Copy">
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>
+                            </button>
+                        </div>
+                        <div class="text-white/25 text-xs mt-3">macOS and Linux. Upgrade with <code class="text-grove-text">brew upgrade grove</code>.</div>
                     </div>
                     <div id="install-cargo" class="install-content hidden">
                         <div class="flex items-start justify-between gap-4">
