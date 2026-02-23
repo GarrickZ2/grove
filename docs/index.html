@@ -372,6 +372,313 @@
             font-size: 14px;
         }
 
+        /* ── Develop mode grid + cards ── */
+        .dev-mode-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 1.5rem;
+            transition: grid-template-columns 0.6s cubic-bezier(0.16, 1, 0.3, 1);
+        }
+        .dev-mode-grid.focus-0 { grid-template-columns: 1fr 0fr; }
+        .dev-mode-grid.focus-1 { grid-template-columns: 0fr 1fr; }
+        @media (max-width: 767px) {
+            .dev-mode-grid { grid-template-columns: 1fr; }
+            .dev-mode-grid.focus-0,
+            .dev-mode-grid.focus-1 { grid-template-columns: 1fr; }
+        }
+        .dev-mode-card {
+            background: rgba(255,255,255,0.02);
+            border: 1px solid rgba(255,255,255,0.06);
+            border-radius: 20px;
+            padding: 24px;
+            cursor: pointer;
+            overflow: hidden;
+            min-width: 0;
+            transition: all 0.6s cubic-bezier(0.16, 1, 0.3, 1);
+        }
+        .dev-mode-card:hover {
+            background: rgba(255,255,255,0.04);
+            border-color: rgba(255,255,255,0.1);
+            transform: translateY(-3px);
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3), 0 0 40px rgba(6,182,212,0.06);
+        }
+        .dev-mode-card.dev-unfocused {
+            opacity: 0;
+            padding: 0;
+            border-color: transparent;
+            transform: scale(0.95);
+            pointer-events: none;
+        }
+        .dev-mode-img {
+            border-radius: 12px;
+            overflow: hidden;
+            background: linear-gradient(135deg, #0d0d0f 0%, #141416 100%);
+            border: 1px solid rgba(255,255,255,0.06);
+        }
+        .dev-mode-img img {
+            display: block;
+            width: 100%;
+        }
+        .dev-mode-img .placeholder-inner {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: #3f3f46;
+            font-size: 14px;
+            font-family: 'JetBrains Mono', monospace;
+        }
+
+        /* ── Review scrollable image ── */
+        .review-scroll-wrap {
+            position: relative;
+            width: calc(100% + 20vw);
+            height: 70vh;
+            min-height: 500px;
+            border-radius: 16px 0 0 16px;
+            overflow: hidden;
+            background: linear-gradient(135deg, #0d0d0f 0%, #141416 100%);
+            border: 1px solid rgba(255,255,255,0.06);
+            border-right: none;
+            box-shadow: -20px 0 80px rgba(0,0,0,0.4), 0 0 60px rgba(167,139,250,0.06);
+        }
+        .review-scroll-inner {
+            height: 100%;
+            overflow-y: auto;
+            scrollbar-width: none;
+        }
+        .review-scroll-inner::-webkit-scrollbar { display: none; }
+        .review-scroll-inner img {
+            display: block;
+            width: 100%;
+        }
+        /* Top & bottom fade masks */
+        .review-scroll-wrap::before,
+        .review-scroll-wrap::after {
+            content: '';
+            position: absolute;
+            left: 0; right: 0;
+            height: 60px;
+            z-index: 2;
+            pointer-events: none;
+        }
+        .review-scroll-wrap::before {
+            top: 0;
+            background: linear-gradient(to bottom, #0d0d0f 0%, transparent 100%);
+        }
+        .review-scroll-wrap::after {
+            bottom: 0;
+            background: linear-gradient(to top, #0d0d0f 0%, transparent 100%);
+        }
+        @media (max-width: 1023px) {
+            .review-scroll-wrap {
+                width: calc(100% + 2rem);
+                margin-right: -1rem;
+                height: 400px;
+            }
+        }
+
+        /* ── Ship image bleed (mirror of Review, bleeds LEFT) ── */
+        .ship-img-bleed {
+            position: relative;
+            width: calc(100% + 20vw);
+            margin-left: -20vw;
+        }
+        .ship-img-bleed .img-placeholder {
+            border-radius: 0 16px 16px 0;
+            box-shadow: 20px 0 80px rgba(0,0,0,0.4), 0 0 60px rgba(16,185,129,0.06);
+        }
+        @media (max-width: 1023px) {
+            .ship-img-bleed {
+                width: calc(100% + 2rem);
+                margin-left: -1rem;
+            }
+        }
+
+        /* ── Git graph animation ── */
+        .ship-git-graph svg {
+            filter: drop-shadow(0 0 8px rgba(16,185,129,0.15));
+        }
+        .git-line { stroke-dasharray: 1000; stroke-dashoffset: 1000; }
+        .git-dot { opacity: 0; }
+        .git-sync { opacity: 0; }
+        .ship-git-graph.animated .git-line-main { animation: git-draw 1s ease-out 0.2s forwards; }
+        .ship-git-graph.animated .git-line-1 { animation: git-draw 0.8s ease-out 0.6s forwards; }
+        .ship-git-graph.animated .git-line-2 { animation: git-draw 0.8s ease-out 0.8s forwards; }
+        .ship-git-graph.animated .git-line-3 { animation: git-draw 0.8s ease-out 1.0s forwards; }
+        .ship-git-graph.animated .git-dot { animation: git-pop 0.3s ease-out forwards; }
+        .ship-git-graph.animated .git-dot-1a { animation-delay: 1.0s; }
+        .ship-git-graph.animated .git-dot-1b { animation-delay: 1.2s; }
+        .ship-git-graph.animated .git-dot-merge { animation-delay: 1.6s; }
+        .ship-git-graph.animated .git-dot-2a { animation-delay: 1.1s; }
+        .ship-git-graph.animated .git-dot-2b { animation-delay: 1.3s; }
+        .ship-git-graph.animated .git-dot-3a { animation-delay: 1.2s; }
+        .ship-git-graph.animated .git-sync-2 { animation: git-pop 0.4s ease-out 2.0s forwards; }
+        .ship-git-graph.animated .git-sync-3 { animation: git-pop 0.4s ease-out 2.3s forwards; }
+        @keyframes git-draw { to { stroke-dashoffset: 0; } }
+        @keyframes git-pop { to { opacity: 1; } }
+
+        /* ── Skills showcase ── */
+        .skills-showcase {
+            position: relative;
+            max-width: 56rem;
+            margin: 0 auto;
+            padding: 0.5rem 0;
+        }
+        .skills-gif-wrap {
+            position: relative;
+            z-index: 2;
+            margin: 0 2%;
+        }
+        .skill-tag {
+            position: absolute;
+            z-index: 3;
+            padding: 6px 16px;
+            border-radius: 999px;
+            background: rgba(255,255,255,0.04);
+            border: 1px solid rgba(255,255,255,0.1);
+            font-size: 12px;
+            font-family: 'JetBrains Mono', monospace;
+            font-weight: 500;
+            color: #a1a1aa;
+            white-space: nowrap;
+            backdrop-filter: blur(8px);
+            -webkit-backdrop-filter: blur(8px);
+            opacity: 0;
+            transform: translateY(10px) scale(0.9);
+            transition: opacity 0.5s ease, transform 0.5s ease;
+            animation: skill-float 6s ease-in-out infinite;
+            animation-play-state: paused;
+        }
+        .skill-tag-green { color: #10b981; border-color: rgba(16,185,129,0.25); background: rgba(16,185,129,0.08); box-shadow: 0 0 12px rgba(16,185,129,0.1); }
+        .skill-tag-cyan { color: #06b6d4; border-color: rgba(6,182,212,0.25); background: rgba(6,182,212,0.08); box-shadow: 0 0 12px rgba(6,182,212,0.1); }
+        .skill-tag-purple { color: #a78bfa; border-color: rgba(167,139,250,0.25); background: rgba(167,139,250,0.08); box-shadow: 0 0 12px rgba(167,139,250,0.1); }
+        .skill-tag-amber { color: #f59e0b; border-color: rgba(245,158,11,0.25); background: rgba(245,158,11,0.08); box-shadow: 0 0 12px rgba(245,158,11,0.1); }
+        .skill-tag-red { color: #ef4444; border-color: rgba(239,68,68,0.25); background: rgba(239,68,68,0.08); box-shadow: 0 0 12px rgba(239,68,68,0.1); }
+        .skill-tag:nth-child(odd) { animation-duration: 7s; }
+        .skill-tag:nth-child(3n) { animation-duration: 8s; }
+        .skills-showcase.visible .skill-tag {
+            opacity: 1;
+            transform: translateY(0) scale(1);
+            animation-play-state: running;
+        }
+        .skills-showcase.visible .skill-tag:nth-child(1) { transition-delay: 0.1s; }
+        .skills-showcase.visible .skill-tag:nth-child(2) { transition-delay: 0.2s; }
+        .skills-showcase.visible .skill-tag:nth-child(3) { transition-delay: 0.3s; }
+        .skills-showcase.visible .skill-tag:nth-child(4) { transition-delay: 0.4s; }
+        .skills-showcase.visible .skill-tag:nth-child(5) { transition-delay: 0.5s; }
+        .skills-showcase.visible .skill-tag:nth-child(6) { transition-delay: 0.25s; }
+        .skills-showcase.visible .skill-tag:nth-child(7) { transition-delay: 0.35s; }
+        .skills-showcase.visible .skill-tag:nth-child(8) { transition-delay: 0.45s; }
+        .skills-showcase.visible .skill-tag:nth-child(9) { transition-delay: 0.55s; }
+        .skills-showcase.visible .skill-tag:nth-child(10) { transition-delay: 0.15s; }
+        @keyframes skill-float {
+            0%, 100% { transform: translateY(0); }
+            50% { transform: translateY(-8px); }
+        }
+        @media (max-width: 767px) {
+            .skill-tag { display: none; }
+            .skills-gif-wrap { margin: 0; }
+        }
+
+        /* ── TUI terminal window ── */
+        .tui-terminal {
+            position: relative;
+            max-width: 64rem;
+            margin: 0 auto;
+        }
+        /* Glow behind the terminal */
+        .tui-terminal::before {
+            content: '';
+            position: absolute;
+            inset: -2px;
+            border-radius: 14px;
+            background: linear-gradient(135deg, rgba(16,185,129,0.3), rgba(6,182,212,0.2), rgba(167,139,250,0.3));
+            filter: blur(30px);
+            opacity: 0.5;
+            z-index: -1;
+        }
+        .tui-terminal-frame {
+            background: #111113;
+            border: 1px solid rgba(255,255,255,0.1);
+            border-radius: 12px;
+            overflow: hidden;
+            box-shadow:
+                0 0 0 1px rgba(255,255,255,0.05),
+                0 20px 80px rgba(0,0,0,0.6),
+                0 0 60px rgba(16,185,129,0.08);
+        }
+        .tui-titlebar {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            padding: 6px 12px;
+            background: #0d0d0f;
+            border-bottom: 1px solid rgba(255,255,255,0.06);
+        }
+        .tui-titlebar-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+        }
+        .tui-titlebar-dot.red { background: #ff5f57; }
+        .tui-titlebar-dot.yellow { background: #febc2e; }
+        .tui-titlebar-dot.green { background: #28c840; }
+        .tui-titlebar-name {
+            flex: 1;
+            text-align: center;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 11px;
+            color: #3f3f46;
+            letter-spacing: 0.05em;
+            margin-right: 38px;
+        }
+        .tui-terminal-body {
+            position: relative;
+            line-height: 0;
+            max-height: 520px;
+            overflow: hidden;
+        }
+        .tui-terminal-body img {
+            width: 100%;
+            height: auto;
+            display: block;
+        }
+        .tui-terminal-body .placeholder-inner {
+            aspect-ratio: 16/9;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: #3f3f46;
+            font-size: 14px;
+            font-family: 'JetBrains Mono', monospace;
+        }
+        /* Bottom fade to hide empty space */
+        .tui-terminal-body::after {
+            content: '';
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            height: 80px;
+            background: linear-gradient(to top, #111113, transparent);
+            pointer-events: none;
+        }
+        .tui-feature {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            font-size: 15px;
+        }
+        .tui-feature-icon {
+            width: 32px;
+            height: 32px;
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-shrink: 0;
+        }
+
         /* ── Feature card ── */
         .feature-card {
             background: rgba(255,255,255,0.02);
@@ -400,49 +707,185 @@
         }
 
         /* ── Sticky section ── */
-        .sticky-wrap {
-            position: relative;
-        }
-        .sticky-inner {
+        /* ── Isolate scroll showcase ── */
+        .iso-sticky {
             position: sticky;
             top: 0;
             height: 100vh;
-            display: flex;
-            align-items: center;
-            justify-content: center;
             overflow: hidden;
         }
-        .sticky-panel {
+        .iso-title-layer {
             position: absolute;
             inset: 0;
             display: flex;
+            flex-direction: column;
             align-items: center;
             justify-content: center;
-            opacity: 0;
-            transform: translateY(30px);
-            transition: opacity 0.6s cubic-bezier(0.16, 1, 0.3, 1), transform 0.6s cubic-bezier(0.16, 1, 0.3, 1);
-            pointer-events: none;
+            z-index: 3;
+            text-align: center;
+            padding: 0 1.5rem;
         }
-        .sticky-panel.active {
-            opacity: 1;
-            transform: translateY(0);
-            pointer-events: auto;
+        .iso-demo {
+            position: absolute;
+            z-index: 2;
+            overflow: hidden;
+            background: linear-gradient(135deg, #0d0d0f 0%, #141416 100%);
+            border: 1px solid rgba(255,255,255,0.06);
+        }
+        .iso-demo img,
+        .iso-demo video {
+            width: 100%;
+            height: 100%;
+            object-fit: contain;
+        }
+        .iso-demo .placeholder-inner {
+            width: 100%;
+            height: 100%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: #3f3f46;
+            font-size: 14px;
+            font-family: 'JetBrains Mono', monospace;
+        }
+        .iso-features {
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            z-index: 4;
+        }
+        .iso-feature-card {
+            text-align: center;
+            padding: 16px 12px;
         }
 
-        /* ── Explore list ── */
-        .explore-item {
-            cursor: pointer;
-            padding: 16px 20px;
-            border-left: 2px solid transparent;
-            border-radius: 0 12px 12px 0;
-            transition: all 0.35s cubic-bezier(0.16, 1, 0.3, 1);
-            opacity: 0.4;
+        /* ── Explore section ── */
+        .explore-card {
+            background: #111113;
+            border: 1px solid rgba(255,255,255,0.06);
+            border-radius: 20px;
+            padding: 3.5rem 4rem;
+            display: grid;
+            grid-template-columns: 280px 1fr;
+            gap: 4rem;
+            align-items: center;
+            min-height: 560px;
         }
-        .explore-item:hover { opacity: 0.7; }
-        .explore-item.active {
+        @media (max-width: 767px) {
+            .explore-card {
+                grid-template-columns: 1fr;
+                padding: 2rem 1.5rem;
+                min-height: auto;
+            }
+        }
+        .explore-list {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+        .explore-pill {
+            display: flex;
+            align-items: flex-start;
+            gap: 10px;
+            padding: 12px 16px;
+            border-radius: 12px;
+            border: 1px solid transparent;
+            background: transparent;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            color: #71717a;
+        }
+        .explore-pill:hover {
+            color: #a1a1aa;
+        }
+        .explore-pill .pill-icon {
+            width: 18px;
+            height: 18px;
+            border-radius: 50%;
+            border: 1.5px solid #52525b;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-shrink: 0;
+            margin-top: 2px;
+            transition: all 0.3s ease;
+        }
+        .explore-pill .pill-icon svg {
+            width: 10px;
+            height: 10px;
+            color: #52525b;
+            transition: all 0.3s ease;
+        }
+        .explore-pill .pill-title {
+            font-size: 14px;
+            font-weight: 600;
+            color: inherit;
+            transition: color 0.3s ease;
+        }
+        .explore-pill .pill-desc {
+            font-size: 12px;
+            color: #52525b;
+            margin-top: 0;
+            line-height: 1.4;
+            max-height: 0;
+            overflow: hidden;
+            opacity: 0;
+            transition: max-height 0.35s ease, opacity 0.3s ease, margin-top 0.3s ease, color 0.3s ease;
+        }
+        .explore-pill.active .pill-desc {
+            max-height: 60px;
             opacity: 1;
-            border-left-color: #10b981;
+            margin-top: 4px;
+        }
+        .explore-pill.active {
+            border-color: rgba(16,185,129,0.15);
             background: rgba(16,185,129,0.04);
+            color: #fafafa;
+        }
+        .explore-pill.active .pill-desc {
+            color: #71717a;
+        }
+        .explore-pill.active .pill-icon {
+            border: none;
+            background: #10b981;
+        }
+        .explore-pill.active .pill-icon svg {
+            display: none;
+        }
+        .explore-img-area {
+            position: relative;
+            width: 100%;
+            height: 100%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .explore-img-area #explore-img-wrap {
+            width: 100%;
+            height: 100%;
+            transition: opacity 0.3s ease;
+        }
+        .explore-img-area img {
+            width: 100%;
+            height: 100%;
+            object-fit: contain;
+            border-radius: 12px;
+            transition: opacity 0.35s ease;
+        }
+        .explore-img-area .placeholder-inner {
+            width: 100%;
+            height: 100%;
+            min-height: 400px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: #3f3f46;
+            font-size: 14px;
+            font-family: 'JetBrains Mono', monospace;
+            background: rgba(255,255,255,0.02);
+            border: 1px dashed rgba(255,255,255,0.08);
+            border-radius: 12px;
         }
 
         /* ── Install tabs ── */
@@ -669,7 +1112,7 @@
                     AI Development,<br>Start to Ship.
                 </h1>
 
-                <p class="text-base md:text-lg text-[#71717a] max-w-lg mb-10 leading-relaxed">
+                <p class="text-base md:text-lg text-[#71717a] max-w-xl mb-10 leading-relaxed">
                     Write a spec, let AI code it, review together, merge with confidence.
                 </p>
 
@@ -740,97 +1183,62 @@
          SECTION 1 — ISOLATE
          Sticky scroll: 3 panels crossfade as you scroll
     ═══════════════════════════════════════════════════ -->
-    <section id="isolate">
-        <!-- Intro text -->
-        <div class="py-32 md:py-48 px-6 text-center">
-            <p class="section-label text-grove-green" data-animate>
-                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
-                Isolation
-            </p>
-            <h2 class="section-title mb-6 max-w-3xl mx-auto" data-animate>
-                Every AI Gets<br>Its Own <span class="text-gradient">World</span>
-            </h2>
-            <p class="section-desc mx-auto" data-animate>
-                Each task lives in a fully isolated workspace — its own git branch,
-                its own terminal session, its own spec. Run multiple agents in parallel
-                without conflicts.
-            </p>
-        </div>
+    <section id="isolate" style="height: 450vh; position: relative;">
+        <div class="iso-sticky">
+            <!-- Phase 1: Title (full screen) -->
+            <div class="iso-title-layer" id="iso-title">
+                <p class="section-label text-grove-green">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+                    Isolation
+                </p>
+                <h2 class="section-title mb-6 max-w-3xl">
+                    Every AI Gets<br>Its Own <span class="text-gradient">World</span>
+                </h2>
+                <p class="section-desc">
+                    Each task lives in a fully isolated workspace.
+                </p>
+                <p class="section-desc mt-2">
+                    Its own <span class="text-grove-green font-medium">git branch</span>,
+                    its own <span class="text-grove-cyan font-medium">session</span>,
+                    its own <span class="text-grove-purple font-medium">spec</span>.
+                </p>
+                <p class="section-desc mt-2">
+                    Run multiple agents in parallel without conflicts.
+                </p>
+            </div>
 
-        <!-- Sticky feature showcase -->
-        <div class="sticky-wrap" style="height: 300vh" id="isolate-sticky">
-            <div class="sticky-inner">
-                <!-- Panel 1: Worktree -->
-                <div class="sticky-panel active" data-panel="0">
-                    <div class="max-w-5xl mx-auto px-6 grid lg:grid-cols-2 gap-16 items-center">
-                        <div>
-                            <div class="w-12 h-12 rounded-2xl bg-grove-green/10 border border-grove-green/20 flex items-center justify-center mb-6">
-                                <svg class="w-6 h-6 text-grove-green" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
-                            </div>
-                            <h3 class="text-2xl md:text-3xl font-bold mb-4">Own Branch, Own Worktree</h3>
-                            <p class="text-grove-muted text-base leading-relaxed">
-                                Every task gets a dedicated git worktree. Five agents writing code
-                                simultaneously? No problem — branches never collide, files never conflict.
-                            </p>
+            <!-- Phase 2+3: Full-screen GIF → shrinks -->
+            <div class="iso-demo" id="iso-demo" style="opacity:0; top:0; left:0; right:0; bottom:0; border-radius:0;">
+                <img src="images/create.gif" loading="lazy" alt="Task creation demo">
+            </div>
+
+            <!-- Phase 3: Feature cards (appear when GIF shrinks) -->
+            <div class="iso-features" id="iso-features" style="opacity:0; transform:translateY(30px);">
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-4 md:gap-6 max-w-4xl mx-auto px-6 pb-8">
+                    <!-- Branch -->
+                    <div class="iso-feature-card">
+                        <div class="w-10 h-10 rounded-xl bg-grove-green/10 border border-grove-green/20 flex items-center justify-center mx-auto mb-3">
+                            <svg class="w-5 h-5 text-grove-green" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
                         </div>
-                        <div class="img-placeholder">
-                            <div class="placeholder-inner">
-                                <!-- Replace: screenshot of multiple worktrees / parallel tasks -->
-                                <span>worktree-isolation.png</span>
-                            </div>
-                        </div>
+                        <h4 class="font-semibold text-sm mb-1">Own Branch</h4>
+                        <p class="text-xs text-grove-muted leading-relaxed">Dedicated git worktree per task.<br>Branches never collide.</p>
                     </div>
-                </div>
-
-                <!-- Panel 2: Terminal -->
-                <div class="sticky-panel" data-panel="1">
-                    <div class="max-w-5xl mx-auto px-6 grid lg:grid-cols-2 gap-16 items-center">
-                        <div>
-                            <div class="w-12 h-12 rounded-2xl bg-grove-cyan/10 border border-grove-cyan/20 flex items-center justify-center mb-6">
-                                <svg class="w-6 h-6 text-grove-cyan" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
-                            </div>
-                            <h3 class="text-2xl md:text-3xl font-bold mb-4">Own Terminal Session</h3>
-                            <p class="text-grove-muted text-base leading-relaxed">
-                                Each task launches its own tmux or Zellij session. Switch between agents
-                                instantly — your context, scrollback, and train of thought stay intact.
-                            </p>
+                    <!-- Session -->
+                    <div class="iso-feature-card">
+                        <div class="w-10 h-10 rounded-xl bg-grove-cyan/10 border border-grove-cyan/20 flex items-center justify-center mx-auto mb-3">
+                            <svg class="w-5 h-5 text-grove-cyan" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
                         </div>
-                        <div class="img-placeholder">
-                            <div class="placeholder-inner">
-                                <!-- Replace: screenshot of tmux sessions / terminal view -->
-                                <span>terminal-session.png</span>
-                            </div>
-                        </div>
+                        <h4 class="font-semibold text-sm mb-1">Own Session</h4>
+                        <p class="text-xs text-grove-muted leading-relaxed">Each task in its own tmux or Zellij session.<br>Context stays intact.</p>
                     </div>
-                </div>
-
-                <!-- Panel 3: Spec & Notes -->
-                <div class="sticky-panel" data-panel="2">
-                    <div class="max-w-5xl mx-auto px-6 grid lg:grid-cols-2 gap-16 items-center">
-                        <div>
-                            <div class="w-12 h-12 rounded-2xl bg-grove-purple/10 border border-grove-purple/20 flex items-center justify-center mb-6">
-                                <svg class="w-6 h-6 text-grove-purple" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg>
-                            </div>
-                            <h3 class="text-2xl md:text-3xl font-bold mb-4">Own Spec & Notes</h3>
-                            <p class="text-grove-muted text-base leading-relaxed">
-                                Write a spec before your agent starts. It reads the instructions and knows
-                                exactly what to build. Clear intent, focused output.
-                            </p>
+                    <!-- Spec -->
+                    <div class="iso-feature-card">
+                        <div class="w-10 h-10 rounded-xl bg-grove-purple/10 border border-grove-purple/20 flex items-center justify-center mx-auto mb-3">
+                            <svg class="w-5 h-5 text-grove-purple" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg>
                         </div>
-                        <div class="img-placeholder">
-                            <div class="placeholder-inner">
-                                <!-- Replace: screenshot of task notes / spec editor -->
-                                <span>task-notes.png</span>
-                            </div>
-                        </div>
+                        <h4 class="font-semibold text-sm mb-1">Own Spec</h4>
+                        <p class="text-xs text-grove-muted leading-relaxed">Write instructions before the agent starts.<br>Clear intent, focused output.</p>
                     </div>
-                </div>
-
-                <!-- Progress dots -->
-                <div class="absolute bottom-12 left-1/2 -translate-x-1/2 flex gap-3" id="isolate-dots">
-                    <div class="w-2 h-2 rounded-full bg-grove-green transition-all duration-300" data-dot="0"></div>
-                    <div class="w-2 h-2 rounded-full bg-white/20 transition-all duration-300" data-dot="1"></div>
-                    <div class="w-2 h-2 rounded-full bg-white/20 transition-all duration-300" data-dot="2"></div>
                 </div>
             </div>
         </div>
@@ -843,7 +1251,7 @@
     <section id="develop" class="py-32 md:py-48">
         <div class="max-w-6xl mx-auto px-6">
             <!-- Header -->
-            <div class="text-center mb-20">
+            <div class="text-center mb-16 md:mb-20">
                 <p class="section-label text-grove-cyan" data-animate>
                     <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4"/></svg>
                     Development
@@ -852,107 +1260,48 @@
                     Work With AI,<br><span class="text-gradient">Your Way</span>
                 </h2>
                 <p class="section-desc mx-auto" data-animate>
-                    Chat interactively, run agents in the terminal, or edit code side-by-side.
-                    Grove supports every major AI coding agent.
+                    Two modes, one workspace.<br>Chat interactively or let agents run autonomously in the terminal.
                 </p>
             </div>
 
-            <!-- 3 Mode cards -->
-            <div class="grid md:grid-cols-3 gap-6 mb-20" data-animate-stagger>
-                <div class="feature-card">
-                    <div class="w-10 h-10 rounded-xl bg-grove-green/10 flex items-center justify-center mb-5">
-                        <svg class="w-5 h-5 text-grove-green" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"/></svg>
-                    </div>
-                    <h3 class="text-lg font-bold mb-2">Chat Mode</h3>
-                    <p class="text-grove-muted text-sm leading-relaxed">
-                        Talk to any agent inside your workspace. Share files, iterate through conversation,
-                        watch the plan unfold in real time.
-                    </p>
-                </div>
-                <div class="feature-card">
-                    <div class="w-10 h-10 rounded-xl bg-grove-cyan/10 flex items-center justify-center mb-5">
-                        <svg class="w-5 h-5 text-grove-cyan" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
-                    </div>
-                    <h3 class="text-lg font-bold mb-2">Terminal Mode</h3>
-                    <p class="text-grove-muted text-sm leading-relaxed">
-                        Let autonomous agents run in a full terminal session — the way they're designed.
-                        Check in whenever you want.
-                    </p>
-                </div>
-                <div class="feature-card">
-                    <div class="w-10 h-10 rounded-xl bg-grove-purple/10 flex items-center justify-center mb-5">
-                        <svg class="w-5 h-5 text-grove-purple" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 4a2 2 0 114 0v1a1 1 0 001 1h3a1 1 0 011 1v3a1 1 0 01-1 1h-1a2 2 0 100 4h1a1 1 0 011 1v3a1 1 0 01-1 1h-3a1 1 0 01-1-1v-1a2 2 0 10-4 0v1a1 1 0 01-1 1H7a1 1 0 01-1-1v-3a1 1 0 00-1-1H4a2 2 0 110-4h1a1 1 0 001-1V7a1 1 0 011-1h3a1 1 0 001-1V4z"/></svg>
-                    </div>
-                    <h3 class="text-lg font-bold mb-2">Editor Mode</h3>
-                    <p class="text-grove-muted text-sm leading-relaxed">
-                        A built-in code editor with syntax highlighting. Edit files, browse the tree,
-                        review changes — all without leaving Grove.
-                    </p>
-                </div>
-            </div>
-
-            <!-- Workspace screenshot -->
-            <div class="max-w-5xl mx-auto mb-6" data-animate="scale">
-                <div class="img-placeholder">
-                    <div class="placeholder-inner" style="aspect-ratio: 16/9;">
-                        <!-- Replace: multi-panel workspace screenshot showing chat + terminal + editor -->
-                        <span>workspace-panels.png</span>
-                    </div>
-                </div>
-            </div>
-            <p class="text-center text-white/25 text-sm mb-24" data-animate>
-                Arrange panels however you like — terminal, chat, editor, review, all side by side.
-            </p>
-
-            <!-- Notifications sub-section -->
-            <div class="max-w-4xl mx-auto text-center">
-                <h3 class="text-2xl md:text-3xl font-bold mb-4" data-animate>
-                    Stay in the <span class="text-gradient">Loop</span>
-                </h3>
-                <p class="text-grove-muted max-w-md mx-auto mb-12" data-animate>
-                    Set your agents running and get notified when they finish, need input, or hit errors.
-                </p>
-
-                <div class="max-w-sm mx-auto space-y-4" data-animate-stagger>
-                    <div class="notif-card">
-                        <div class="flex items-start gap-3">
-                            <img src="favicon.svg" alt="Grove" class="w-9 h-9 rounded-lg flex-shrink-0">
-                            <div class="flex-1 min-w-0 text-left">
-                                <div class="flex items-center justify-between">
-                                    <span class="text-xs font-semibold text-white/80">Grove</span>
-                                    <span class="text-[11px] text-white/30">now</span>
-                                </div>
-                                <p class="text-sm text-white/70 mt-0.5 font-medium">Task completed</p>
-                                <p class="text-xs text-white/35 mt-0.5">fix-auth-bug — All changes committed and ready to review.</p>
-                            </div>
+            <!-- Two-mode comparison -->
+            <div class="dev-mode-grid max-w-5xl mx-auto" id="dev-mode-grid">
+                <!-- Chat mode -->
+                <div class="dev-mode-card group" data-animate>
+                    <div class="flex items-center gap-3 mb-4">
+                        <div class="w-9 h-9 rounded-xl bg-grove-green/10 border border-grove-green/20 flex items-center justify-center flex-shrink-0">
+                            <svg class="w-4.5 h-4.5 text-grove-green" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"/></svg>
+                        </div>
+                        <div>
+                            <h3 class="text-lg font-bold leading-tight">Chat</h3>
+                            <p class="text-xs text-grove-muted">Conversational, unified</p>
                         </div>
                     </div>
-                    <div class="notif-card" style="border-color: rgba(245,158,11,0.2)">
-                        <div class="flex items-start gap-3">
-                            <img src="favicon.svg" alt="Grove" class="w-9 h-9 rounded-lg flex-shrink-0">
-                            <div class="flex-1 min-w-0 text-left">
-                                <div class="flex items-center justify-between">
-                                    <span class="text-xs font-semibold text-white/80">Grove</span>
-                                    <span class="text-[11px] text-white/30">2m ago</span>
-                                </div>
-                                <p class="text-sm text-grove-amber/80 mt-0.5 font-medium">Pending action</p>
-                                <p class="text-xs text-white/35 mt-0.5">refactor-db — Agent needs your input to continue.</p>
-                            </div>
+                    <div class="dev-mode-img">
+                        <img src="images/chat-mode.png" alt="Chat mode" loading="lazy">
+                    </div>
+                    <p class="text-grove-muted text-sm leading-relaxed mt-4">
+                        A familiar chat interface for every agent.<br>Different agents, same experience.
+                    </p>
+                </div>
+
+                <!-- CLI mode -->
+                <div class="dev-mode-card group" data-animate>
+                    <div class="flex items-center gap-3 mb-4">
+                        <div class="w-9 h-9 rounded-xl bg-grove-cyan/10 border border-grove-cyan/20 flex items-center justify-center flex-shrink-0">
+                            <svg class="w-4.5 h-4.5 text-grove-cyan" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
+                        </div>
+                        <div>
+                            <h3 class="text-lg font-bold leading-tight">CLI</h3>
+                            <p class="text-xs text-grove-muted">Traditional, native experience</p>
                         </div>
                     </div>
-                    <div class="notif-card" style="border-color: rgba(239,68,68,0.2)">
-                        <div class="flex items-start gap-3">
-                            <img src="favicon.svg" alt="Grove" class="w-9 h-9 rounded-lg flex-shrink-0">
-                            <div class="flex-1 min-w-0 text-left">
-                                <div class="flex items-center justify-between">
-                                    <span class="text-xs font-semibold text-white/80">Grove</span>
-                                    <span class="text-[11px] text-white/30">5m ago</span>
-                                </div>
-                                <p class="text-sm text-grove-red/80 mt-0.5 font-medium">Build failed</p>
-                                <p class="text-xs text-white/35 mt-0.5">add-payments — 3 tests failing after migration changes.</p>
-                            </div>
-                        </div>
+                    <div class="dev-mode-img">
+                        <img src="images/cli-mode.png" alt="CLI mode" loading="lazy">
                     </div>
+                    <p class="text-grove-muted text-sm leading-relaxed mt-4">
+                        The way coding agents were designed to run.<br>Full terminal, native experience.
+                    </p>
                 </div>
             </div>
         </div>
@@ -962,9 +1311,9 @@
     <!-- ═══════════════════════════════════════════════════
          SECTION 3 — REVIEW
     ═══════════════════════════════════════════════════ -->
-    <section id="review" class="py-32 md:py-48">
+    <section id="review" class="py-32 md:py-48 overflow-hidden">
         <div class="max-w-6xl mx-auto px-6">
-            <div class="grid lg:grid-cols-2 gap-20 items-center">
+            <div class="grid lg:grid-cols-[1fr_1.6fr] gap-8 lg:gap-12 items-center">
                 <!-- Left: text -->
                 <div>
                     <p class="section-label text-grove-purple" data-animate>
@@ -982,37 +1331,34 @@
                             </div>
                             <div>
                                 <h4 class="font-semibold mb-1">Comment on any line</h4>
-                                <p class="text-grove-muted text-sm">Point at the exact code. AI agents respond with explanations or fixes.</p>
+                                <p class="text-grove-muted text-sm">Point at the exact code.<br>AI agents respond with explanations or fixes.</p>
                             </div>
                         </div>
                         <div class="flex gap-4">
                             <div class="w-8 h-8 rounded-lg bg-grove-cyan/10 flex items-center justify-center flex-shrink-0 mt-0.5">
-                                <svg class="w-4 h-4 text-grove-cyan" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 8h2a2 2 0 012 2v6a2 2 0 01-2 2h-2v4l-4-4H9a2 2 0 01-2-2v-1"/></svg>
+                                <svg class="w-4 h-4 text-grove-cyan" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 8h2a2 2 0 012 2v6a2 2 0 01-2 2h-2v4l-4-4H9a1.994 1.994 0 01-1.414-.586m0 0L11 14h4a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2v4l.586-.586z"/></svg>
                             </div>
                             <div>
                                 <h4 class="font-semibold mb-1">Discuss in threads</h4>
-                                <p class="text-grove-muted text-sm">Multiple agents reply with different perspectives. Conversations stay organized alongside the code.</p>
+                                <p class="text-grove-muted text-sm">Multiple agents reply with different perspectives.<br>Conversations stay organized alongside the code.</p>
                             </div>
                         </div>
                         <div class="flex gap-4">
                             <div class="w-8 h-8 rounded-lg bg-grove-purple/10 flex items-center justify-center flex-shrink-0 mt-0.5">
-                                <svg class="w-4 h-4 text-grove-purple" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4"/></svg>
+                                <svg class="w-4 h-4 text-grove-purple" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
                             </div>
                             <div>
                                 <h4 class="font-semibold mb-1">You have the final call</h4>
-                                <p class="text-grove-muted text-sm">Approve, request rework, or reject. Every merge is a conscious decision.</p>
+                                <p class="text-grove-muted text-sm">Approve, request rework, or reject.<br>Every merge is a conscious decision.</p>
                             </div>
                         </div>
                     </div>
                 </div>
 
-                <!-- Right: image -->
-                <div data-animate="scale">
-                    <div class="img-placeholder">
-                        <div class="placeholder-inner">
-                            <!-- Replace: code review screenshot with inline comments and threads -->
-                            <span>code-review.png</span>
-                        </div>
+                <!-- Right: scrollable long image (bleeds off right edge) -->
+                <div class="review-scroll-wrap" data-animate="scale">
+                    <div class="review-scroll-inner">
+                        <img src="images/code-review-long.png" alt="Code review" loading="lazy">
                     </div>
                 </div>
             </div>
@@ -1023,55 +1369,97 @@
     <!-- ═══════════════════════════════════════════════════
          SECTION 4 — SHIP & RECOVER
     ═══════════════════════════════════════════════════ -->
-    <section id="ship" class="py-32 md:py-48">
+    <section id="ship" class="py-32 md:py-48 overflow-hidden">
         <div class="max-w-6xl mx-auto px-6">
-            <div class="text-center mb-20">
-                <p class="section-label text-grove-green" data-animate>
-                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
-                    Ship
-                </p>
-                <h2 class="section-title mb-6" data-animate>
-                    Ship With Confidence.<br>
-                    <span class="text-gradient">Recover in Seconds.</span>
-                </h2>
-                <p class="section-desc mx-auto" data-animate>
-                    One action to merge. And if something breaks later, reopen the task —
-                    all context is preserved for quick hotfixes and further iterations.
-                </p>
-            </div>
+            <div class="grid lg:grid-cols-[1.6fr_1fr] gap-8 lg:gap-12 items-center">
+                <!-- Left: image (bleeds off left edge) -->
+                <div class="ship-img-bleed" data-animate="scale">
+                    <div class="img-placeholder">
+                        <img src="images/ship-merge.png" alt="Merge workflow" loading="lazy">
+                    </div>
+                </div>
 
-            <!-- Ship image -->
-            <div class="max-w-4xl mx-auto mb-20" data-animate="scale">
-                <div class="img-placeholder">
-                    <div class="placeholder-inner" style="aspect-ratio: 16/9;">
-                        <!-- Replace: GIF/video of the merge workflow -->
-                        <span>ship-merge.mp4</span>
-                    </div>
-                </div>
-            </div>
+                <!-- Right: text + git graph -->
+                <div>
+                    <p class="section-label text-grove-green" data-animate>
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
+                        Ship
+                    </p>
+                    <h2 class="section-title mb-6" data-animate>
+                        Ship With<br>Confidence.<br>
+                        <span class="text-gradient">Recover in<br>Seconds.</span>
+                    </h2>
 
-            <!-- 3 Cards -->
-            <div class="grid md:grid-cols-3 gap-6 max-w-4xl mx-auto" data-animate-stagger>
-                <div class="feature-card text-center">
-                    <div class="w-10 h-10 rounded-xl bg-grove-green/10 flex items-center justify-center mx-auto mb-4">
-                        <svg class="w-5 h-5 text-grove-green" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
+                    <!-- Animated git graph -->
+                    <div class="ship-git-graph my-10" data-animate>
+                        <svg viewBox="0 0 360 200" fill="none" xmlns="http://www.w3.org/2000/svg" class="w-full">
+                            <!-- main branch -->
+                            <line x1="20" y1="100" x2="340" y2="100" stroke="#3f3f46" stroke-width="2" class="git-line git-line-main"/>
+                            <text x="8" y="104" fill="#71717a" font-size="11" font-family="JetBrains Mono, monospace">main</text>
+
+                            <!-- task-1 (green) - merges -->
+                            <path d="M80 100 Q80 50 100 50 L200 50 Q240 50 240 100" stroke="#10b981" stroke-width="2" fill="none" class="git-line git-line-1"/>
+                            <text x="120" y="42" fill="#10b981" font-size="10" font-family="JetBrains Mono, monospace">task-1</text>
+                            <!-- commits on task-1 -->
+                            <circle cx="130" cy="50" r="4" fill="#10b981" class="git-dot git-dot-1a"/>
+                            <circle cx="170" cy="50" r="4" fill="#10b981" class="git-dot git-dot-1b"/>
+                            <!-- merge commit -->
+                            <circle cx="240" cy="100" r="5" fill="#10b981" stroke="#0a0a0b" stroke-width="2" class="git-dot git-dot-merge"/>
+
+                            <!-- task-2 (cyan) - gets rebased -->
+                            <path d="M100 100 Q100 150 120 150 L300 150" stroke="#06b6d4" stroke-width="2" fill="none" class="git-line git-line-2"/>
+                            <text x="130" y="168" fill="#06b6d4" font-size="10" font-family="JetBrains Mono, monospace">task-2</text>
+                            <circle cx="160" cy="150" r="4" fill="#06b6d4" class="git-dot git-dot-2a"/>
+                            <circle cx="210" cy="150" r="4" fill="#06b6d4" class="git-dot git-dot-2b"/>
+                            <!-- sync arrow -->
+                            <line x1="250" y1="105" x2="250" y2="145" stroke="#06b6d4" stroke-width="1.5" stroke-dasharray="4 3" class="git-sync git-sync-2"/>
+                            <text x="256" y="130" fill="#06b6d4" font-size="9" font-family="JetBrains Mono, monospace" opacity="0.7" class="git-sync git-sync-2">sync</text>
+
+                            <!-- task-3 (purple) - gets rebased -->
+                            <path d="M140 100 Q140 180 160 180 L300 180" stroke="#a78bfa" stroke-width="2" fill="none" class="git-line git-line-3"/>
+                            <text x="170" y="198" fill="#a78bfa" font-size="10" font-family="JetBrains Mono, monospace">task-3</text>
+                            <circle cx="200" cy="180" r="4" fill="#a78bfa" class="git-dot git-dot-3a"/>
+                            <!-- sync arrow -->
+                            <line x1="260" y1="105" x2="260" y2="175" stroke="#a78bfa" stroke-width="1.5" stroke-dasharray="4 3" class="git-sync git-sync-3"/>
+                            <text x="266" y="148" fill="#a78bfa" font-size="9" font-family="JetBrains Mono, monospace" opacity="0.7" class="git-sync git-sync-3">sync</text>
+
+                            <!-- main branch commits -->
+                            <circle cx="60" cy="100" r="4" fill="#71717a" class="git-dot"/>
+                            <circle cx="240" cy="100" r="5" fill="#10b981" class="git-dot git-dot-merge"/>
+                            <circle cx="310" cy="100" r="4" fill="#71717a" class="git-dot"/>
+                        </svg>
                     </div>
-                    <h3 class="font-bold mb-2">Merge in one step</h3>
-                    <p class="text-grove-muted text-sm">Grove rebases, merges, and cleans up. No manual git gymnastics.</p>
-                </div>
-                <div class="feature-card text-center">
-                    <div class="w-10 h-10 rounded-xl bg-grove-cyan/10 flex items-center justify-center mx-auto mb-4">
-                        <svg class="w-5 h-5 text-grove-cyan" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+
+                    <!-- Feature list -->
+                    <div class="space-y-4 mt-8" data-animate-stagger>
+                        <div class="flex gap-3 items-start">
+                            <div class="w-7 h-7 rounded-lg bg-grove-green/10 flex items-center justify-center flex-shrink-0 mt-0.5">
+                                <svg class="w-3.5 h-3.5 text-grove-green" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
+                            </div>
+                            <div>
+                                <h4 class="font-semibold text-sm mb-0.5">Merge in one step</h4>
+                                <p class="text-grove-muted text-xs">Rebase, merge, and clean up — no manual git gymnastics.</p>
+                            </div>
+                        </div>
+                        <div class="flex gap-3 items-start">
+                            <div class="w-7 h-7 rounded-lg bg-grove-cyan/10 flex items-center justify-center flex-shrink-0 mt-0.5">
+                                <svg class="w-3.5 h-3.5 text-grove-cyan" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+                            </div>
+                            <div>
+                                <h4 class="font-semibold text-sm mb-0.5">Instant recovery</h4>
+                                <p class="text-grove-muted text-xs">Reopen any task — notes, context, and history are intact.</p>
+                            </div>
+                        </div>
+                        <div class="flex gap-3 items-start">
+                            <div class="w-7 h-7 rounded-lg bg-grove-amber/10 flex items-center justify-center flex-shrink-0 mt-0.5">
+                                <svg class="w-3.5 h-3.5 text-grove-amber" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
+                            </div>
+                            <div>
+                                <h4 class="font-semibold text-sm mb-0.5">Clean when done</h4>
+                                <p class="text-grove-muted text-xs">Archive or wipe completed tasks. No leftover branches.</p>
+                            </div>
+                        </div>
                     </div>
-                    <h3 class="font-bold mb-2">Instant recovery</h3>
-                    <p class="text-grove-muted text-sm">Reopen any task — all notes, context, and history are intact.</p>
-                </div>
-                <div class="feature-card text-center">
-                    <div class="w-10 h-10 rounded-xl bg-grove-amber/10 flex items-center justify-center mx-auto mb-4">
-                        <svg class="w-5 h-5 text-grove-amber" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
-                    </div>
-                    <h3 class="font-bold mb-2">Clean when done</h3>
-                    <p class="text-grove-muted text-sm">Archive or wipe completed tasks. No data left behind.</p>
                 </div>
             </div>
         </div>
@@ -1081,63 +1469,58 @@
     <!-- ═══════════════════════════════════════════════════
          SECTION 5 — SKILLS
     ═══════════════════════════════════════════════════ -->
-    <section id="skills" class="py-32 md:py-48">
+    <section id="skills" class="py-20 md:py-28">
         <div class="max-w-6xl mx-auto px-6">
-            <div class="grid lg:grid-cols-2 gap-20 items-center">
-                <!-- Left: image -->
-                <div data-animate="scale">
+            <!-- Header -->
+            <div class="text-center mb-8">
+                <p class="section-label text-grove-amber" data-animate>
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+                    Skills
+                </p>
+                <h2 class="section-title mb-6" data-animate>
+                    Empower Every Agent<br>With <span class="text-gradient">Skills</span>
+                </h2>
+                <p class="section-desc mx-auto" data-animate>
+                    Browse a library of skills, install with one click,<br>and every agent gets smarter automatically.
+                </p>
+            </div>
+
+            <!-- GIF + floating skill tags -->
+            <div class="skills-showcase" id="skills-showcase">
+                <!-- Floating skill tags (z above image) -->
+                <div class="skill-tag skill-tag-green" style="top: 5%; left: 5%;">commit</div>
+                <div class="skill-tag skill-tag-cyan" style="top: 3%; right: 8%;">review-pr</div>
+                <div class="skill-tag skill-tag-purple" style="top: 20%; left: -2%;">refactor</div>
+                <div class="skill-tag skill-tag-amber" style="bottom: 25%; left: 0%;">deploy</div>
+                <div class="skill-tag skill-tag-green" style="bottom: 8%; left: 12%;">test-runner</div>
+                <div class="skill-tag skill-tag-red" style="top: 15%; right: -1%;">docker</div>
+                <div class="skill-tag skill-tag-cyan" style="bottom: 18%; right: 2%;">api-docs</div>
+                <div class="skill-tag skill-tag-purple" style="bottom: 3%; right: 15%;">lint</div>
+                <div class="skill-tag skill-tag-amber" style="top: 40%; left: -3%;">migrate</div>
+                <div class="skill-tag skill-tag-green" style="top: 35%; right: -2%;">ci-cd</div>
+
+                <!-- Center GIF -->
+                <div class="skills-gif-wrap" data-animate="scale">
                     <div class="img-placeholder">
-                        <div class="placeholder-inner">
-                            <!-- Replace: skills management page screenshot -->
-                            <span>skills-page.png</span>
-                        </div>
+                        <img src="images/skills-demo.gif" loading="lazy" alt="Skills demo">
                     </div>
                 </div>
+            </div>
 
-                <!-- Right: text -->
-                <div>
-                    <p class="section-label text-grove-amber" data-animate>
-                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
-                        Skills
-                    </p>
-                    <h2 class="section-title mb-6" data-animate>
-                        Empower Every Agent<br>With <span class="text-gradient">Skills</span>
-                    </h2>
-                    <p class="section-desc mb-10" data-animate>
-                        Browse a library of skills, install with one click, and manage them at project
-                        or global level. Every agent gets smarter automatically.
-                    </p>
-
-                    <div class="space-y-5" data-animate-stagger>
-                        <div class="flex gap-4 items-start">
-                            <div class="w-8 h-8 rounded-lg bg-grove-green/10 flex items-center justify-center flex-shrink-0 mt-0.5">
-                                <svg class="w-4 h-4 text-grove-green" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
-                            </div>
-                            <div>
-                                <h4 class="font-semibold mb-1">Browse and install</h4>
-                                <p class="text-grove-muted text-sm">Explore the skill library and add capabilities instantly. No config files to edit.</p>
-                            </div>
-                        </div>
-                        <div class="flex gap-4 items-start">
-                            <div class="w-8 h-8 rounded-lg bg-grove-cyan/10 flex items-center justify-center flex-shrink-0 mt-0.5">
-                                <svg class="w-4 h-4 text-grove-cyan" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"/></svg>
-                            </div>
-                            <div>
-                                <h4 class="font-semibold mb-1">Global or project-level</h4>
-                                <p class="text-grove-muted text-sm">Scope skills globally or per project. Fine-grained control over what each agent can do.</p>
-                            </div>
-                        </div>
-                        <div class="flex gap-4 items-start">
-                            <div class="w-8 h-8 rounded-lg bg-grove-purple/10 flex items-center justify-center flex-shrink-0 mt-0.5">
-                                <svg class="w-4 h-4 text-grove-purple" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
-                            </div>
-                            <div>
-                                <h4 class="font-semibold mb-1">Works with all agents</h4>
-                                <p class="text-grove-muted text-sm">Skills inject into every agent's config — Claude, Copilot, Gemini, and more. Powered by MCP.</p>
-                            </div>
-                        </div>
-                    </div>
-                </div>
+            <!-- Inline features -->
+            <div class="flex flex-wrap items-center justify-center gap-x-8 gap-y-3 mt-8 text-sm text-grove-muted" data-animate>
+                <span class="flex items-center gap-2">
+                    <span class="w-1.5 h-1.5 rounded-full bg-grove-green"></span>
+                    Browse and install in one click
+                </span>
+                <span class="flex items-center gap-2">
+                    <span class="w-1.5 h-1.5 rounded-full bg-grove-cyan"></span>
+                    Global or project-level scope
+                </span>
+                <span class="flex items-center gap-2">
+                    <span class="w-1.5 h-1.5 rounded-full bg-grove-purple"></span>
+                    Works with all agents via MCP
+                </span>
             </div>
         </div>
     </section>
@@ -1146,42 +1529,63 @@
     <!-- ═══════════════════════════════════════════════════
          SECTION 6 — TUI
     ═══════════════════════════════════════════════════ -->
-    <section id="tui" class="py-32 md:py-48">
-        <div class="max-w-6xl mx-auto px-6 text-center">
-            <p class="section-label text-grove-green" data-animate>
-                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
-                Terminal UI
-            </p>
-            <h2 class="section-title mb-6" data-animate>
-                Love the Terminal?<br><span class="text-gradient">So Do We.</span>
-            </h2>
-            <p class="section-desc mx-auto mb-16" data-animate>
-                Everything Grove offers is available in a keyboard-driven TUI.
-                Navigate tasks, review diffs, manage skills — all without leaving your terminal.
-            </p>
+    <section id="tui" class="py-24 md:py-36">
+        <div class="max-w-6xl mx-auto px-6">
+            <div class="text-center mb-12" data-animate>
+                <p class="section-label text-grove-green">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
+                    Terminal UI
+                </p>
+                <h2 class="section-title mb-6">
+                    Love the Terminal?<br><span class="text-gradient">So Do We.</span>
+                </h2>
+                <p class="section-desc mx-auto">
+                    Create tasks, write specs, launch agents, and ship —<br>all without leaving your terminal.
+                </p>
+            </div>
 
-            <!-- TUI screenshot -->
-            <div class="max-w-5xl mx-auto mb-16" data-animate="scale">
-                <div class="img-placeholder">
-                    <div class="placeholder-inner" style="aspect-ratio: 16/9;">
-                        <!-- Replace: TUI screenshot -->
-                        <span>tui-showcase.png</span>
+            <!-- Terminal window frame -->
+            <div class="tui-terminal mb-12" data-animate="scale">
+                <div class="tui-terminal-frame">
+                    <div class="tui-titlebar">
+                        <div class="tui-titlebar-dot red"></div>
+                        <div class="tui-titlebar-dot yellow"></div>
+                        <div class="tui-titlebar-dot green"></div>
+                    </div>
+                    <div class="tui-terminal-body">
+                        <img src="images/tui-grove.png" loading="lazy" alt="Grove TUI interface">
                     </div>
                 </div>
             </div>
 
-            <div class="grid md:grid-cols-3 gap-6 max-w-3xl mx-auto" data-animate-stagger>
-                <div class="text-center">
-                    <p class="text-2xl font-bold mb-1">Vim-style</p>
-                    <p class="text-grove-muted text-sm">Full keyboard navigation</p>
+            <!-- Feature strip -->
+            <div class="grid md:grid-cols-3 gap-8 max-w-4xl mx-auto" data-animate-stagger>
+                <div class="tui-feature">
+                    <div class="tui-feature-icon" style="background: rgba(16,185,129,0.1);">
+                        <svg class="w-4 h-4 text-grove-green" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+                    </div>
+                    <div>
+                        <p class="font-semibold text-sm">Keyboard First</p>
+                        <p class="text-grove-muted text-xs">Vim-style navigation,<br>zero mouse needed</p>
+                    </div>
                 </div>
-                <div class="text-center">
-                    <p class="text-2xl font-bold mb-1">8 Themes</p>
-                    <p class="text-grove-muted text-sm">Dark mode by default</p>
+                <div class="tui-feature">
+                    <div class="tui-feature-icon" style="background: rgba(6,182,212,0.1);">
+                        <svg class="w-4 h-4 text-grove-cyan" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+                    </div>
+                    <div>
+                        <p class="font-semibold text-sm">Full Workflow</p>
+                        <p class="text-grove-muted text-xs">Create, develop, review, merge —<br>all in TUI</p>
+                    </div>
                 </div>
-                <div class="text-center">
-                    <p class="text-2xl font-bold mb-1">Same Backend</p>
-                    <p class="text-grove-muted text-sm">Switch interfaces freely</p>
+                <div class="tui-feature">
+                    <div class="tui-feature-icon" style="background: rgba(167,139,250,0.1);">
+                        <svg class="w-4 h-4 text-grove-purple" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 3v2m6-2v2M9 19v2m6-2v2M5 9H3m2 6H3m18-6h-2m2 6h-2M7 19h10a2 2 0 002-2V7a2 2 0 00-2-2H7a2 2 0 00-2 2v10a2 2 0 002 2z"/></svg>
+                    </div>
+                    <div>
+                        <p class="font-semibold text-sm">Lightweight</p>
+                        <p class="text-grove-muted text-xs">Fast startup, minimal resource usage</p>
+                    </div>
                 </div>
             </div>
         </div>
@@ -1191,46 +1595,70 @@
     <!-- ═══════════════════════════════════════════════════
          SECTION 7 — EXPLORE MORE
     ═══════════════════════════════════════════════════ -->
-    <section id="explore" class="py-32 md:py-48">
-        <div class="max-w-6xl mx-auto px-6">
-            <div class="text-center mb-20">
-                <h2 class="section-title mb-6" data-animate>
-                    And There's <span class="text-gradient">More</span>
-                </h2>
-                <p class="section-desc mx-auto" data-animate>
-                    A few more things that make Grove the complete AI development workflow.
-                </p>
-            </div>
+    <section id="explore" class="py-24 md:py-36">
+        <div class="max-w-[90rem] mx-auto px-6">
+            <h2 class="section-title mb-12" data-animate>
+                And There's <span class="text-gradient">More</span>
+            </h2>
 
-            <div class="grid lg:grid-cols-2 gap-12 max-w-5xl mx-auto items-center" data-animate>
-                <!-- Left: feature list -->
-                <div class="space-y-1">
-                    <div class="explore-item active" onclick="switchExploreItem('blitz')" data-explore="blitz">
-                        <h3 class="font-semibold text-base mb-1">Blitz View</h3>
-                        <p class="text-grove-muted text-sm">See every task across every project in one view. Filter, search, and jump to any agent.</p>
+            <div class="explore-card" data-animate>
+                <!-- Left: pill list -->
+                <div class="explore-list">
+                    <div class="explore-pill active" onclick="switchExploreItem('autolink')" data-explore="autolink">
+                        <span class="pill-icon"><svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg></span>
+                        <div>
+                            <div class="pill-title">AutoLink</div>
+                            <div class="pill-desc">Automatically symlink heavy dependencies across worktrees so every task is ready to run instantly.</div>
+                        </div>
                     </div>
-                    <div class="explore-item" onclick="switchExploreItem('desktop')" data-explore="desktop">
-                        <h3 class="font-semibold text-base mb-1">Desktop App</h3>
-                        <p class="text-grove-muted text-sm">Native macOS GUI via Tauri 2. Feels right at home on your desktop.</p>
+                    <div class="explore-pill" onclick="switchExploreItem('layout')" data-explore="layout">
+                        <span class="pill-icon"><svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg></span>
+                        <div>
+                            <div class="pill-title">Flexible Layout</div>
+                            <div class="pill-desc">Drag, split, and resize panels. Build the workspace that fits your flow.</div>
+                        </div>
                     </div>
-                    <div class="explore-item" onclick="switchExploreItem('stats')" data-explore="stats">
-                        <h3 class="font-semibold text-base mb-1">Statistics</h3>
-                        <p class="text-grove-muted text-sm">Track tasks shipped, agent activity, and project health at a glance.</p>
+                    <div class="explore-pill" onclick="switchExploreItem('blitz')" data-explore="blitz">
+                        <span class="pill-icon"><svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg></span>
+                        <div>
+                            <div class="pill-title">Blitz View</div>
+                            <div class="pill-desc">All tasks, all projects, one view. Switch between agents instantly and ship at lightning speed.</div>
+                        </div>
                     </div>
-                    <div class="explore-item" onclick="switchExploreItem('agents')" data-explore="agents">
-                        <h3 class="font-semibold text-base mb-1">Agent Dashboard</h3>
-                        <p class="text-grove-muted text-sm">Monitor all running agents across projects. See who's working, who's waiting.</p>
+                    <div class="explore-pill" onclick="switchExploreItem('notify')" data-explore="notify">
+                        <span class="pill-icon"><svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg></span>
+                        <div>
+                            <div class="pill-title">Stay Notified</div>
+                            <div class="pill-desc">Get alerts when agents finish, need review, or hit errors.</div>
+                        </div>
+                    </div>
+                    <div class="explore-pill" onclick="switchExploreItem('editor')" data-explore="editor">
+                        <span class="pill-icon"><svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg></span>
+                        <div>
+                            <div class="pill-title">Builtin Editor</div>
+                            <div class="pill-desc">Edit files, browse the tree, and manage code — all inside Grove's web interface.</div>
+                        </div>
+                    </div>
+                    <div class="explore-pill" onclick="switchExploreItem('stats')" data-explore="stats">
+                        <span class="pill-icon"><svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg></span>
+                        <div>
+                            <div class="pill-title">Statistics</div>
+                            <div class="pill-desc">Track tasks shipped, agent activity, and project health at a glance.</div>
+                        </div>
+                    </div>
+                    <div class="explore-pill" onclick="switchExploreItem('mcp')" data-explore="mcp">
+                        <span class="pill-icon"><svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg></span>
+                        <div>
+                            <div class="pill-title">MCP Server</div>
+                            <div class="pill-desc">Built-in MCP server. AI agents read notes, reply to reviews, and complete tasks autonomously.</div>
+                        </div>
                     </div>
                 </div>
 
-                <!-- Right: image preview -->
-                <div>
-                    <div class="img-placeholder">
-                        <div class="rounded-xl overflow-hidden">
-                            <img id="explore-img" src="images/grove-web.png" alt="Feature preview" class="w-full" loading="lazy"
-                                 style="transition: opacity 0.35s ease"
-                                 onerror="this.style.display='none'; this.parentElement.innerHTML='<div class=\'placeholder-inner\'><span>feature-preview.png</span></div>'">
-                        </div>
+                <!-- Right: image -->
+                <div class="explore-img-area">
+                    <div id="explore-img-wrap">
+                        <img id="explore-img" src="images/autolink.png" alt="Feature preview" loading="lazy">
                     </div>
                 </div>
             </div>
@@ -1248,7 +1676,7 @@
                     Install in <span class="text-gradient">10 seconds</span>
                 </h2>
                 <p class="section-desc mx-auto" data-animate>
-                    Single binary with embedded web frontend. No runtime dependencies beyond Git and a terminal multiplexer.
+                    Single binary with embedded web frontend.<br>No runtime dependencies beyond Git and a terminal multiplexer.
                 </p>
             </div>
 
@@ -1433,45 +1861,117 @@
         }, { passive: true });
 
 
-        // ── Sticky Section Controller (Isolate) ──
-        const stickyWrap = document.getElementById('isolate-sticky');
-        if (stickyWrap) {
-            const panels = stickyWrap.querySelectorAll('.sticky-panel');
-            const dots = stickyWrap.querySelectorAll('[data-dot]');
-            const totalPanels = panels.length;
+        // ── Isolate Section: 3-phase scroll (title → fullscreen GIF → shrink + cards) ──
+        const isoSection = document.getElementById('isolate');
+        const isoTitle = document.getElementById('iso-title');
+        const isoDemo = document.getElementById('iso-demo');
+        const isoFeatures = document.getElementById('iso-features');
 
-            function updateStickyPanels() {
-                const rect = stickyWrap.getBoundingClientRect();
-                const wrapHeight = stickyWrap.offsetHeight;
-                const vh = window.innerHeight;
+        if (isoSection && isoTitle && isoDemo && isoFeatures) {
+            const isoImg = isoDemo.querySelector('img');
+            let gifWasHidden = true; // track visibility to restart GIF
 
-                // Progress through the sticky section (0 to 1)
-                const scrolled = -rect.top;
-                const scrollable = wrapHeight - vh;
-                const progress = Math.max(0, Math.min(1, scrolled / scrollable));
+            function updateIsolate() {
+                const rect = isoSection.getBoundingClientRect();
+                const scrollable = isoSection.offsetHeight - window.innerHeight;
+                if (scrollable <= 0) return;
+                const progress = Math.max(0, Math.min(1, -rect.top / scrollable));
 
-                // Determine active panel
-                const step = Math.min(totalPanels - 1, Math.floor(progress * totalPanels));
+                // Phase 1: Title visible (0 → 0.2), fades out (0.15 → 0.25)
+                const titleOp = progress < 0.15 ? 1 : Math.max(0, 1 - (progress - 0.15) / 0.1);
+                isoTitle.style.opacity = titleOp;
+                isoTitle.style.pointerEvents = titleOp > 0.3 ? 'auto' : 'none';
 
-                panels.forEach((panel, i) => {
-                    panel.classList.toggle('active', i === step);
-                });
-                dots.forEach((dot, i) => {
-                    if (i === step) {
-                        dot.style.background = '#10b981';
-                        dot.style.width = '10px';
-                        dot.style.height = '10px';
-                    } else {
-                        dot.style.background = 'rgba(255,255,255,0.2)';
-                        dot.style.width = '8px';
-                        dot.style.height = '8px';
-                    }
-                });
+                // Phase 2: GIF fades in (0.15 → 0.28)
+                const gifOp = Math.max(0, Math.min(1, (progress - 0.15) / 0.13));
+
+                // Restart GIF when it becomes visible
+                if (isoImg && gifOp > 0 && gifWasHidden) {
+                    gifWasHidden = false;
+                    const src = isoImg.src;
+                    isoImg.src = '';
+                    isoImg.src = src;
+                }
+                if (gifOp === 0) gifWasHidden = true;
+
+                // Phase 3: GIF shrinks (0.35 → 0.65)
+                const shrink = Math.max(0, Math.min(1, (progress - 0.35) / 0.3));
+                const insetX = shrink * 10;      // % from sides
+                const insetTop = shrink * 8;     // vh from top
+                const insetBot = shrink * 24;    // vh from bottom (space for cards)
+                const radius = shrink * 16;      // px
+                const glowIntensity = shrink * 0.12;
+
+                isoDemo.style.opacity = gifOp;
+                isoDemo.style.top = insetTop + 'vh';
+                isoDemo.style.left = insetX + '%';
+                isoDemo.style.right = insetX + '%';
+                isoDemo.style.bottom = insetBot + 'vh';
+                isoDemo.style.borderRadius = radius + 'px';
+                if (shrink > 0) {
+                    isoDemo.style.boxShadow = `0 20px 80px rgba(0,0,0,${0.3 + shrink * 0.3}), 0 0 ${60 * shrink}px rgba(16,185,129,${glowIntensity})`;
+                } else {
+                    isoDemo.style.boxShadow = 'none';
+                }
+
+                // Phase 3b: Feature cards appear (0.5 → 0.7)
+                const cardsProg = Math.max(0, Math.min(1, (progress - 0.5) / 0.2));
+                isoFeatures.style.opacity = cardsProg;
+                isoFeatures.style.transform = 'translateY(' + ((1 - cardsProg) * 30) + 'px)';
             }
 
             window.addEventListener('scroll', () => {
-                requestAnimationFrame(updateStickyPanels);
+                requestAnimationFrame(updateIsolate);
             }, { passive: true });
+        }
+
+
+        // ── Develop: click-to-focus card toggle ──
+        const devGrid = document.getElementById('dev-mode-grid');
+        if (devGrid) {
+            const devCards = devGrid.querySelectorAll('.dev-mode-card');
+            devCards.forEach((card, idx) => {
+                card.addEventListener('click', () => {
+                    const isFocused = devGrid.classList.contains('focus-' + idx);
+                    // Reset all states
+                    devGrid.classList.remove('focus-0', 'focus-1');
+                    devCards.forEach(c => c.classList.remove('dev-unfocused'));
+
+                    if (!isFocused) {
+                        // Focus this card
+                        devGrid.classList.add('focus-' + idx);
+                        devCards.forEach((c, i) => {
+                            if (i !== idx) c.classList.add('dev-unfocused');
+                        });
+                    }
+                });
+            });
+        }
+
+
+        // ── Skills: floating tags appear on scroll ──
+        const skillsShowcase = document.getElementById('skills-showcase');
+        if (skillsShowcase) {
+            const skillsObs = new IntersectionObserver((entries) => {
+                entries.forEach(e => {
+                    if (e.isIntersecting) skillsShowcase.classList.add('visible');
+                    else skillsShowcase.classList.remove('visible');
+                });
+            }, { threshold: 0.2 });
+            skillsObs.observe(skillsShowcase);
+        }
+
+
+        // ── Git graph: trigger animation on scroll into view ──
+        const gitGraph = document.querySelector('.ship-git-graph');
+        if (gitGraph) {
+            const gitObs = new IntersectionObserver((entries) => {
+                entries.forEach(e => {
+                    if (e.isIntersecting) gitGraph.classList.add('animated');
+                    else gitGraph.classList.remove('animated');
+                });
+            }, { threshold: 0.3 });
+            gitObs.observe(gitGraph);
         }
 
 
@@ -1526,24 +2026,46 @@
 
         // ── Explore More: list + image switching ──
         const exploreImages = {
-            blitz: 'images/grove-web.png',
-            desktop: 'images/grove-gui.png',
-            stats: 'images/stats.png',
-            agents: 'images/agents.png'
+            autolink: 'images/autolink.png',
+            layout: 'images/layout.png',
+            blitz: 'images/blitz.png',
+            notify: 'images/notification-on-pending-action.png',
+            editor: 'images/editor.png',
+            stats: 'images/statistics.png',
+            mcp: 'images/mcp.png'
         };
-        window.switchExploreItem = function(key) {
+        const exploreKeys = Object.keys(exploreImages);
+        let exploreIndex = 0;
+        let exploreTimer = null;
+
+        window.switchExploreItem = function(key, fromAuto) {
+            const wrap = document.getElementById('explore-img-wrap');
             const img = document.getElementById('explore-img');
-            if (img) {
-                img.style.opacity = '0';
+            if (wrap && img) {
+                wrap.style.opacity = '0';
                 setTimeout(() => {
                     img.src = exploreImages[key];
-                    img.style.opacity = '1';
+                    wrap.style.opacity = '1';
                 }, 200);
             }
-            document.querySelectorAll('.explore-item').forEach(el => el.classList.remove('active'));
+            document.querySelectorAll('.explore-pill').forEach(el => el.classList.remove('active'));
             const active = document.querySelector(`[data-explore="${key}"]`);
             if (active) active.classList.add('active');
+
+            exploreIndex = exploreKeys.indexOf(key);
+            // Reset auto-rotate on manual click
+            if (!fromAuto) resetExploreTimer();
         };
+
+        function rotateExplore() {
+            exploreIndex = (exploreIndex + 1) % exploreKeys.length;
+            switchExploreItem(exploreKeys[exploreIndex], true);
+        }
+        function resetExploreTimer() {
+            clearInterval(exploreTimer);
+            exploreTimer = setInterval(rotateExplore, 3000);
+        }
+        resetExploreTimer();
 
 
         // ── Side TOC ──
@@ -1565,23 +2087,29 @@
         }
 
         let currentActive = null;
-        const tocObserver = new IntersectionObserver((entries) => {
-            entries.forEach(entry => {
-                if (entry.isIntersecting) {
-                    const id = entry.target.id;
-                    if (currentActive !== id) {
-                        currentActive = id;
-                        tocItems.forEach(item => {
-                            item.classList.toggle('active', item.dataset.target === id);
-                        });
-                    }
+        function updateActiveToc() {
+            const scrollY = window.scrollY + window.innerHeight * 0.3;
+            let activeId = null;
+            for (let i = sections.length - 1; i >= 0; i--) {
+                if (sections[i].offsetTop <= scrollY) {
+                    activeId = sections[i].id;
+                    break;
                 }
-            });
-        }, { threshold: 0.15, rootMargin: '-10% 0px -70% 0px' });
+            }
+            if (activeId && activeId !== currentActive) {
+                currentActive = activeId;
+                tocItems.forEach(item => {
+                    item.classList.toggle('active', item.dataset.target === activeId);
+                });
+            }
+        }
 
-        sections.forEach(section => tocObserver.observe(section));
-        window.addEventListener('scroll', updateTocVisibility, { passive: true });
+        window.addEventListener('scroll', () => {
+            updateTocVisibility();
+            updateActiveToc();
+        }, { passive: true });
         updateTocVisibility();
+        updateActiveToc();
 
     })();
     </script>

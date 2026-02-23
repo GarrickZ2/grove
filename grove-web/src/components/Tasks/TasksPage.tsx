@@ -242,11 +242,10 @@ export function TasksPage({ initialTaskId, initialViewMode, onNavigationConsumed
 
         setShowNewTaskDialog(false);
 
-        // Auto-select the new task and enter Workspace with terminal panel
+        // Auto-select the new task and enter Workspace (default panel chosen by FlexLayoutContainer)
         const newTask = convertTaskResponse(taskResponse);
         pageHandlers.setSelectedTask(newTask);
         pageHandlers.setInWorkspace(true);
-        pageHandlers.setPendingPanel('terminal');
 
         // 🚀 优化: 异步刷新,不阻塞 UI
         refreshSelectedProject();
