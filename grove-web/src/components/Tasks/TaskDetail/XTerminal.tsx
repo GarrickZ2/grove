@@ -138,6 +138,14 @@ export function XTerminal({
       terminal.writeln("\x1b[31mWebSocket error\x1b[0m");
     };
 
+    // Prevent Escape from bubbling up and causing terminal to lose focus
+    terminal.attachCustomKeyEventHandler((e) => {
+      if (e.type === "keydown" && e.key === "Escape") {
+        e.stopPropagation();
+      }
+      return true; // let xterm handle all keys
+    });
+
     // Handle terminal input
     terminal.onData((data) => {
       if (ws.readyState === WebSocket.OPEN) {
