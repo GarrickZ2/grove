@@ -14,7 +14,6 @@ import {
   Brain,
   ListTodo,
   Slash,
-  FileText,
   X,
   ShieldCheck,
   ShieldX,
@@ -29,7 +28,8 @@ import {
   Globe,
   Terminal,
 } from "lucide-react";
-import { Button, MarkdownRenderer, agentOptions } from "../../ui";
+import { Button, MarkdownRenderer, agentOptions, FileMentionDropdown } from "../../ui";
+import { buildMentionItems, filterMentionItems } from "../../../utils/fileMention";
 import type { Task } from "../../../data/types";
 import { getApiHost } from "../../../api/client";
 import { getConfig, listChats, createChat, updateChatTitle, deleteChat, getTaskFiles, checkCommands } from "../../../api";
@@ -200,49 +200,9 @@ function createCommandChip(name: string): HTMLSpanElement {
   return chip;
 }
 
-/** Fuzzy match a query against a target string */
-function fuzzyMatch(
-  query: string,
-  target: string,
-): { match: boolean; score: number; indices: number[] } {
-  const q = query.toLowerCase();
-  const t = target.toLowerCase();
-  let qi = 0;
-  let score = 0;
-  let lastMatchIndex = -1;
-  const indices: number[] = [];
-
-  for (let ti = 0; ti < t.length && qi < q.length; ti++) {
-    if (t[ti] === q[qi]) {
-      score += ti === lastMatchIndex + 1 ? 2 : 1;
-      if (ti === 0 || t[ti - 1] === "/") score += 3;
-      lastMatchIndex = ti;
-      indices.push(ti);
-      qi++;
-    }
-  }
-
-  return { match: qi === q.length, score, indices };
-}
-
-/** Render a file path with fuzzy-matched characters highlighted */
-function HighlightedPath({ path, indices }: { path: string; indices: number[] }) {
-  const indexSet = new Set(indices);
-  return (
-    <span>
-      {Array.from(path).map((char, i) =>
-        indexSet.has(i) ? (
-          <span key={i} className="text-[var(--color-warning)] font-semibold">{char}</span>
-        ) : (
-          <span key={i}>{char}</span>
-        ),
-      )}
-    </span>
-  );
-}
 
 /** Create a non-editable file chip DOM element */
-function createFileChip(filePath: string): HTMLSpanElement {
+function createFileChip(filePath: string, isDir = false): HTMLSpanElement {
   const chip = document.createElement("span");
   chip.contentEditable = "false";
   chip.dataset.file = filePath;
@@ -254,8 +214,33 @@ function createFileChip(filePath: string): HTMLSpanElement {
     "font-size:12px;font-weight:500;color:var(--color-warning);" +
     "margin:0 2px;user-select:none;vertical-align:baseline;line-height:1.5;";
 
+  // Icon (Folder or File)
+  const icon = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  icon.setAttribute("width", "12");
+  icon.setAttribute("height", "12");
+  icon.setAttribute("viewBox", "0 0 24 24");
+  icon.setAttribute("fill", "none");
+  icon.setAttribute("stroke", "currentColor");
+  icon.setAttribute("stroke-width", "2");
+  icon.setAttribute("stroke-linecap", "round");
+  icon.setAttribute("stroke-linejoin", "round");
+  icon.style.cssText = "flex-shrink:0;";
+  const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+  if (isDir) {
+    // Lucide Folder icon
+    path.setAttribute("d", "M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z");
+  } else {
+    // Lucide FileText icon
+    path.setAttribute("d", "M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z");
+    const poly = document.createElementNS("http://www.w3.org/2000/svg", "polyline");
+    poly.setAttribute("points", "14 2 14 8 20 8");
+    icon.appendChild(poly);
+  }
+  icon.appendChild(path);
+  chip.appendChild(icon);
+
   const label = document.createElement("span");
-  label.textContent = filePath.split("/").pop() || filePath;
+  label.textContent = isDir ? filePath : (filePath.split("/").pop() || filePath);
   chip.appendChild(label);
 
   const closeBtn = document.createElement("span");
@@ -383,18 +368,14 @@ export function TaskChat({
     );
   }, [slashCommands, slashFilter]);
 
+  // Build mention items (files + directories) from flat file list
+  const mentionItems = useMemo(() => buildMentionItems(taskFiles), [taskFiles]);
+
   // Filtered files based on @ input
-  const filteredFiles = useMemo(() => {
-    if (!fileFilter) return taskFiles.slice(0, 15);
-    return taskFiles
-      .map((path) => {
-        const { match, score, indices } = fuzzyMatch(fileFilter, path);
-        return { path, score, indices, match };
-      })
-      .filter((r) => r.match)
-      .sort((a, b) => b.score - a.score)
-      .slice(0, 15);
-  }, [taskFiles, fileFilter]);
+  const filteredFiles = useMemo(
+    () => filterMentionItems(mentionItems, fileFilter),
+    [mentionItems, fileFilter],
+  );
 
   // Check ACP agent availability on mount
   useEffect(() => {
@@ -1183,17 +1164,18 @@ export function TaskChat({
     }
     const text = node.textContent || "";
     const offset = range.startOffset;
-    // Scan backwards from cursor to find "/" or "@"
+    // Scan backwards from cursor to find "@" or "/" (@ takes priority over /)
     let slashIdx = -1;
     let atIdx = -1;
     for (let i = offset - 1; i >= 0; i--) {
-      if (text[i] === "/") {
-        if (i === 0 || /\s/.test(text[i - 1])) slashIdx = i;
-        break;
-      }
       if (text[i] === "@") {
         if (i === 0 || /\s/.test(text[i - 1])) atIdx = i;
         break;
+      }
+      if (text[i] === "/") {
+        // Record slash position for /commands, but don't break — paths like @src/main contain /
+        if (slashIdx < 0 && (i === 0 || /\s/.test(text[i - 1]))) slashIdx = i;
+        continue;
       }
       if (/\s/.test(text[i])) break;
     }
@@ -1254,7 +1236,7 @@ export function TaskChat({
   }, [checkContent]);
 
   /** Insert a file chip at the current cursor position, replacing the @partial text */
-  const insertFileAtCursor = useCallback((filePath: string) => {
+  const insertFileAtCursor = useCallback((filePath: string, isDir?: boolean) => {
     const el = editableRef.current;
     if (!el) return;
     const sel = window.getSelection();
@@ -1275,7 +1257,7 @@ export function TaskChat({
     const after = text.slice(offset);
     const parent = node.parentNode;
     if (!parent) return;
-    const chip = createFileChip(filePath);
+    const chip = createFileChip(filePath, isDir);
     const frag = document.createDocumentFragment();
     if (before) frag.appendChild(document.createTextNode(before));
     frag.appendChild(chip);
@@ -1416,8 +1398,8 @@ export function TaskChat({
       }
       if (e.key === "Tab" || (e.key === "Enter" && !e.shiftKey)) {
         e.preventDefault();
-        const item = filteredFiles[fileSelectedIdx];
-        insertFileAtCursor(typeof item === "string" ? item : item.path);
+        const sel_item = filteredFiles[fileSelectedIdx];
+        insertFileAtCursor(sel_item.path, sel_item.isDir);
         return;
       }
       if (e.key === "Escape") {
@@ -1425,6 +1407,18 @@ export function TaskChat({
         setShowFileMenu(false);
         return;
       }
+    }
+    // Shift+Tab → cycle permission mode
+    if (e.key === "Tab" && e.shiftKey && modeOptions.length > 0) {
+      e.preventDefault();
+      const currentIdx = modeOptions.findIndex((m) => m.value === permissionLevel);
+      const nextIdx = (currentIdx + 1) % modeOptions.length;
+      const next = modeOptions[nextIdx];
+      setPermissionLevel(next.value);
+      if (wsRef.current?.readyState === WebSocket.OPEN) {
+        wsRef.current.send(JSON.stringify({ type: "set_mode", mode_id: next.value }));
+      }
+      return;
     }
     // Cmd+Option+Backspace → clear pending queue
     if (e.key === "Backspace" && e.metaKey && e.altKey && pendingMessages.length > 0) {
@@ -1439,7 +1433,7 @@ export function TaskChat({
     } else {
       if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSend(); }
     }
-  }, [handleSend, isTerminalMode, isInputExpanded, showSlashMenu, filteredSlashCommands, slashSelectedIdx, insertCommandAtCursor, showFileMenu, filteredFiles, fileSelectedIdx, insertFileAtCursor, pendingMessages, handleClearPending]);
+  }, [handleSend, isTerminalMode, isInputExpanded, showSlashMenu, filteredSlashCommands, slashSelectedIdx, insertCommandAtCursor, showFileMenu, filteredFiles, fileSelectedIdx, insertFileAtCursor, pendingMessages, handleClearPending, modeOptions, permissionLevel]);
 
   const handleStartSession = () => { setSessionStarted(true); onStartSession(); };
 
@@ -1887,39 +1881,14 @@ export function TaskChat({
         </AnimatePresence>
 
         {/* File @ mention autocomplete popover */}
-        <AnimatePresence>
-          {showFileMenu && filteredFiles.length > 0 && (
-            <motion.div
-              ref={fileMenuRef}
-              initial={{ opacity: 0, y: 4 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: 4 }}
-              transition={{ duration: 0.12 }}
-              className="absolute bottom-full left-3 right-3 mb-1 max-h-56 overflow-y-auto rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] shadow-lg z-50"
-            >
-              {filteredFiles.map((item, i) => {
-                const filePath = typeof item === "string" ? item : item.path;
-                const indices = typeof item === "string" ? null : item.indices;
-                return (
-                  <button
-                    key={filePath}
-                    onMouseDown={(e) => e.preventDefault()}
-                    onClick={() => insertFileAtCursor(filePath)}
-                    onMouseEnter={() => setFileSelectedIdx(i)}
-                    className={`w-full text-left px-3 py-2 flex items-center gap-2.5 transition-colors ${
-                      i === fileSelectedIdx ? "bg-[var(--color-bg-tertiary)]" : "hover:bg-[var(--color-bg-secondary)]"
-                    }`}
-                  >
-                    <FileText className="w-3.5 h-3.5 text-[var(--color-warning)] shrink-0" />
-                    <span className="text-sm text-[var(--color-text)] font-mono truncate">
-                      {indices ? <HighlightedPath path={filePath} indices={indices} /> : filePath}
-                    </span>
-                  </button>
-                );
-              })}
-            </motion.div>
-          )}
-        </AnimatePresence>
+        <FileMentionDropdown
+          items={filteredFiles}
+          selectedIdx={fileSelectedIdx}
+          onSelect={insertFileAtCursor}
+          onMouseEnter={setFileSelectedIdx}
+          visible={showFileMenu}
+          menuRef={fileMenuRef}
+        />
 
         {/* Attachment preview strip */}
         {attachments.length > 0 && (

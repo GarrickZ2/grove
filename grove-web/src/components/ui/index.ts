@@ -10,3 +10,4 @@ export { CustomAgentModal } from "./CustomAgentModal";
 export { MarkdownRenderer } from "./MarkdownRenderer";
 export { KeyBadge } from "./KeyBadge";
 export { VSCodeIcon } from "./VSCodeIcon";
+export { FileMentionDropdown } from "./FileMentionDropdown";
