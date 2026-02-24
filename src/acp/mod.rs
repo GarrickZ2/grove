@@ -37,8 +37,6 @@ pub struct AcpSessionHandle {
     task_id: String,
     /// Chat ID（磁盘持久化必需）
     chat_id: Option<String>,
-    /// 当前 turn 的事件缓冲（Complete 时 flush 到磁盘）
-    turn_buffer: Mutex<Vec<AcpUpdate>>,
     /// load_session 期间抑制 emit（只恢复 agent 内部状态，不转发回放通知）
     suppress_emit: std::sync::atomic::AtomicBool,
     /// 待执行消息队列（agent 完成当前任务后自动发送下一条）
@@ -703,7 +701,6 @@ pub async fn get_or_start_session(
                 project_key: config.project_key.clone(),
                 task_id: config.task_id.clone(),
                 chat_id: config.chat_id.clone(),
-                turn_buffer: Mutex::new(Vec::new()),
                 suppress_emit: std::sync::atomic::AtomicBool::new(false),
                 pending_queue: Mutex::new(Vec::new()),
                 queue_paused: std::sync::atomic::AtomicBool::new(false),
@@ -1207,32 +1204,24 @@ impl AcpSessionHandle {
         {
             return;
         }
-        // Complete 时：flush turn_buffer 到磁盘（compacted）
-        if matches!(update, AcpUpdate::Complete { .. }) {
-            self.flush_turn_to_disk(&update);
-        } else if crate::storage::chat_history::should_persist(&update) {
-            self.turn_buffer.lock().unwrap().push(update.clone());
+
+        // 实时 append 到磁盘（替代 turn_buffer 缓存）
+        if crate::storage::chat_history::should_persist(&update) {
+            if let Some(ref chat_id) = self.chat_id {
+                crate::storage::chat_history::append_event(
+                    &self.project_key,
+                    &self.task_id,
+                    chat_id,
+                    &update,
+                );
+            }
         }
+
         // 内存 history + broadcast
         if let Ok(mut h) = self.history.write() {
             h.push(update.clone());
         }
         let _ = self.update_tx.send(update);
-    }
-
-    /// 将 turn_buffer flush 到磁盘（compacted）
-    fn flush_turn_to_disk(&self, complete: &AcpUpdate) {
-        if let Some(ref chat_id) = self.chat_id {
-            let mut buf = self.turn_buffer.lock().unwrap();
-            buf.push(complete.clone());
-            crate::storage::chat_history::append_turn(
-                &self.project_key,
-                &self.task_id,
-                chat_id,
-                &buf,
-            );
-            buf.clear();
-        }
     }
 
     /// 仅写入内存 history（不 broadcast），用于预填充历史供重连回放

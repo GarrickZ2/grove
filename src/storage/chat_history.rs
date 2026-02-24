@@ -1,14 +1,10 @@
-//! ACP Chat 历史持久化（JSONL 格式 + turn 级 compaction）
+//! ACP Chat 历史持久化（JSONL 格式，实时 append）
 //!
 //! 每个 chat 的历史存储在：
 //! `~/.grove/projects/{project}/tasks/{task_id}/chats/{chat_id}/history.jsonl`
 //!
-//! Compaction 策略：
-//! - 连续 `MessageChunk` 合并为一条
-//! - 连续 `ThoughtChunk` 合并为一条
-//! - `ToolCall` + 所有 `ToolCallUpdate` 合并为最终状态
-//! - `UserMessage`、`Complete`、`ModeChanged`、`PlanUpdate` 直接保留
-//! - `Busy`、`Error`、`SessionEnded`、`SessionReady`、`PermissionRequest`、`AvailableCommands` 不持久化
+//! 每条可持久化事件在 emit 时直接 append 到磁盘，避免 agent 中途断开丢失数据。
+//! - `Busy`、`Error`、`SessionEnded`、`SessionReady`、`AvailableCommands`、`QueueUpdate` 不持久化
 
 use std::fs;
 use std::io::{BufRead, Write};
@@ -41,119 +37,8 @@ pub fn should_persist(update: &AcpUpdate) -> bool {
     )
 }
 
-/// 对一个 turn 的事件流执行 compaction，返回压缩后的事件列表
-fn compact_turn(events: &[AcpUpdate]) -> Vec<AcpUpdate> {
-    let mut result: Vec<AcpUpdate> = Vec::new();
-    let mut pending_message: Option<String> = None;
-    let mut pending_thought: Option<String> = None;
-
-    // Flush accumulated message chunks
-    let flush_message = |pending: &mut Option<String>, out: &mut Vec<AcpUpdate>| {
-        if let Some(text) = pending.take() {
-            out.push(AcpUpdate::MessageChunk { text });
-        }
-    };
-    // Flush accumulated thought chunks
-    let flush_thought = |pending: &mut Option<String>, out: &mut Vec<AcpUpdate>| {
-        if let Some(text) = pending.take() {
-            out.push(AcpUpdate::ThoughtChunk { text });
-        }
-    };
-
-    for event in events {
-        if !should_persist(event) {
-            continue;
-        }
-        match event {
-            AcpUpdate::MessageChunk { text } => {
-                // Flush thought if switching type
-                flush_thought(&mut pending_thought, &mut result);
-                match &mut pending_message {
-                    Some(acc) => acc.push_str(text),
-                    None => pending_message = Some(text.clone()),
-                }
-            }
-            AcpUpdate::ThoughtChunk { text } => {
-                flush_message(&mut pending_message, &mut result);
-                match &mut pending_thought {
-                    Some(acc) => acc.push_str(text),
-                    None => pending_thought = Some(text.clone()),
-                }
-            }
-            AcpUpdate::ToolCall {
-                id,
-                title,
-                locations,
-            } => {
-                flush_message(&mut pending_message, &mut result);
-                flush_thought(&mut pending_thought, &mut result);
-                // Push ToolCall as-is; ToolCallUpdates will merge into it
-                result.push(AcpUpdate::ToolCall {
-                    id: id.clone(),
-                    title: title.clone(),
-                    locations: locations.clone(),
-                });
-            }
-            AcpUpdate::ToolCallUpdate {
-                id,
-                status,
-                content,
-                locations,
-            } => {
-                // Find matching entry by index (ToolCall or already-merged ToolCallUpdate)
-                let idx = result.iter().rposition(|u| match u {
-                    AcpUpdate::ToolCall { id: tid, .. }
-                    | AcpUpdate::ToolCallUpdate { id: tid, .. } => tid == id,
-                    _ => false,
-                });
-                if let Some(idx) = idx {
-                    let final_locs = if locations.is_empty() {
-                        match &result[idx] {
-                            AcpUpdate::ToolCall { locations: l, .. }
-                            | AcpUpdate::ToolCallUpdate { locations: l, .. } => l.clone(),
-                            _ => vec![],
-                        }
-                    } else {
-                        locations.clone()
-                    };
-                    let update = AcpUpdate::ToolCallUpdate {
-                        id: id.clone(),
-                        status: status.clone(),
-                        content: content.clone(),
-                        locations: final_locs,
-                    };
-                    if matches!(&result[idx], AcpUpdate::ToolCall { .. }) {
-                        // Keep the ToolCall (preserves title), insert ToolCallUpdate after it
-                        result.insert(idx + 1, update);
-                    } else {
-                        // Replace existing ToolCallUpdate with latest state
-                        result[idx] = update;
-                    }
-                }
-            }
-            // Directly preserved events
-            other => {
-                flush_message(&mut pending_message, &mut result);
-                flush_thought(&mut pending_thought, &mut result);
-                result.push(other.clone());
-            }
-        }
-    }
-
-    // Flush any remaining
-    flush_message(&mut pending_message, &mut result);
-    flush_thought(&mut pending_thought, &mut result);
-
-    result
-}
-
-/// 将一个 turn 的事件 compact 后追加到磁盘
-pub fn append_turn(project: &str, task_id: &str, chat_id: &str, turn: &[AcpUpdate]) {
-    let compacted = compact_turn(turn);
-    if compacted.is_empty() {
-        return;
-    }
-
+/// 实时追加单条事件到 history.jsonl
+pub fn append_event(project: &str, task_id: &str, chat_id: &str, event: &AcpUpdate) {
     let path = history_file_path(project, task_id, chat_id);
     if let Some(parent) = path.parent() {
         let _ = fs::create_dir_all(parent);
@@ -163,10 +48,8 @@ pub fn append_turn(project: &str, task_id: &str, chat_id: &str, turn: &[AcpUpdat
 
     match file {
         Ok(mut f) => {
-            for event in &compacted {
-                if let Ok(json) = serde_json::to_string(event) {
-                    let _ = writeln!(f, "{}", json);
-                }
+            if let Ok(json) = serde_json::to_string(event) {
+                let _ = writeln!(f, "{}", json);
             }
         }
         Err(e) => {
