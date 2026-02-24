@@ -152,8 +152,9 @@ export function XTerminal({
       resizeTimer = setTimeout(() => {
         if (!containerRef.current) return;
 
-        // Force layout flush before fit to ensure container has correct dimensions
-        void containerRef.current.offsetHeight;
+        // Skip resize when container is hidden (e.g. inactive FlexLayout tab)
+        const { offsetWidth, offsetHeight } = containerRef.current;
+        if (offsetWidth === 0 || offsetHeight === 0) return;
 
         fitAddon.fit();
 
