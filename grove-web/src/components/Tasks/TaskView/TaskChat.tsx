@@ -2,7 +2,6 @@ import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   MessageSquare,
-  Play,
   ChevronRight,
   ChevronDown,
   Maximize2,
@@ -43,8 +42,6 @@ interface TaskChatProps {
   collapsed?: boolean;
   onExpand?: () => void;
   onCollapse?: () => void;
-  onStartSession: () => void;
-  autoStart?: boolean;
   onConnected?: () => void;
   onDisconnected?: () => void;
   fullscreen?: boolean;
@@ -286,8 +283,6 @@ export function TaskChat({
   collapsed = false,
   onExpand,
   onCollapse,
-  onStartSession,
-  autoStart = false,
   onConnected: onConnectedProp,
   onDisconnected: onDisconnectedProp,
   fullscreen = false,
@@ -314,7 +309,6 @@ export function TaskChat({
 
   // ─── Active chat's live state ─────────────────────────────────────────
   const [isConnected, setIsConnected] = useState(false);
-  const [sessionStarted, setSessionStarted] = useState(true);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [hasContent, setHasContent] = useState(false);
   const [isBusy, setIsBusy] = useState(false);
@@ -356,8 +350,6 @@ export function TaskChat({
   const [isDragging, setIsDragging] = useState(false);
   const [isInputExpanded, setIsInputExpanded] = useState(false);
 
-  const isLive = task.status === "live";
-  const showChat = isLive || sessionStarted;
   const activeChat = chats.find((c) => c.id === activeChatId);
 
   // Filtered slash commands based on current input
@@ -441,14 +433,6 @@ export function TaskChat({
         .catch(() => resolve("claude"));
     }
   }, [activeChat]);
-
-  // Auto-start
-  useEffect(() => {
-    if (autoStart && !isLive && !sessionStarted) {
-      setSessionStarted(true);
-      onStartSession();
-    }
-  }, [autoStart, isLive, sessionStarted, onStartSession]);
 
   // Load task files for @ mention
   useEffect(() => {
@@ -535,7 +519,6 @@ export function TaskChat({
   // ─── Load chats on mount ───────────────────────────────────────────────
 
   useEffect(() => {
-    if (!showChat) return;
     let cancelled = false;
 
     const init = async () => {
@@ -557,7 +540,7 @@ export function TaskChat({
     };
     init();
     return () => { cancelled = true; };
-  }, [showChat, projectId, task.id]);
+  }, [projectId, task.id]);
 
   // ─── Per-chat WebSocket management ─────────────────────────────────────
 
@@ -620,10 +603,10 @@ export function TaskChat({
 
   // Connect WebSocket when activeChatId changes
   useEffect(() => {
-    if (!activeChatId || !showChat) return;
+    if (!activeChatId) return;
     connectChatWs(activeChatId);
     wsRef.current = wsMapRef.current.get(activeChatId) ?? null;
-  }, [activeChatId, showChat, connectChatWs]);
+  }, [activeChatId, connectChatWs]);
 
   // Cleanup all WebSockets on unmount
   useEffect(() => {
@@ -1452,8 +1435,6 @@ export function TaskChat({
     }
   }, [handleSend, isTerminalMode, isInputExpanded, showSlashMenu, filteredSlashCommands, slashSelectedIdx, insertCommandAtCursor, showFileMenu, filteredFiles, fileSelectedIdx, insertFileAtCursor, pendingMessages, handleClearPending, modeOptions, permissionLevel]);
 
-  const handleStartSession = () => { setSessionStarted(true); onStartSession(); };
-
   const toggleToolCollapse = (id: string) => {
     setMessages((prev) => prev.map((m) => m.type === "tool" && m.id === id ? { ...m, collapsed: !m.collapsed } : m));
   };
@@ -1509,28 +1490,7 @@ export function TaskChat({
     );
   }
 
-  // ─── Not started ─────────────────────────────────────────────────────────
 
-  if (!showChat) {
-    return (
-      <motion.div layout className="flex-1 flex flex-col rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-tertiary)] overflow-hidden">
-        {!hideHeader && (
-          <div className="flex items-center justify-between px-3 py-2 bg-[var(--color-bg)] border-b border-[var(--color-border)]">
-            <div className="flex items-center gap-2 text-sm text-[var(--color-text-muted)]">
-              {AgentIcon ? <AgentIcon size={16} /> : <MessageSquare className="w-4 h-4" />}<span>{agentLabel}</span>
-            </div>
-          </div>
-        )}
-        <div className="flex-1 flex flex-col items-center justify-center">
-          {AgentIcon ? <AgentIcon size={40} className="mb-3" /> : <MessageSquare className="w-10 h-10 text-[var(--color-text-muted)] mb-3" />}
-          <p className="text-sm text-[var(--color-text-muted)] mb-3">Chat session not started</p>
-          <Button variant="secondary" size="sm" onClick={handleStartSession}>
-            <Play className="w-4 h-4 mr-1.5" />Start Chat
-          </Button>
-        </div>
-      </motion.div>
-    );
-  }
 
   // ─── Full chat view ──────────────────────────────────────────────────────
 

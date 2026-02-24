@@ -422,7 +422,6 @@ export const FlexLayoutContainer = forwardRef<
             <TaskTerminal
               projectId={projectId}
               task={task}
-              onStartSession={() => {}}
               hideHeader={true}
               fullscreen={true}
             />
@@ -435,7 +434,6 @@ export const FlexLayoutContainer = forwardRef<
             <TaskChat
               projectId={projectId}
               task={task}
-              onStartSession={() => {}}
               fullscreen={true}
             />
           </div>

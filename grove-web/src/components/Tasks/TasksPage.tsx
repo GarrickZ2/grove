@@ -44,7 +44,6 @@ export function TasksPage({ initialTaskId, initialViewMode, onNavigationConsumed
   // Zen-specific state
   const [filter, setFilter] = useState<TaskFilter>("active");
   const [showNewTaskDialog, setShowNewTaskDialog] = useState(false);
-  // const [autoStartSession, setAutoStartSession] = useState(false); // Deprecated
   const [isCreating, setIsCreating] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
   const [archivedTasks, setArchivedTasks] = useState<Task[]>([]);
