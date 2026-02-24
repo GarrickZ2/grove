@@ -204,6 +204,7 @@
 /* Content area */
 .diff-content {
   flex: 1;
+  min-width: 0;
   overflow-y: auto;
   overflow-x: auto;
 }
@@ -1206,6 +1207,114 @@ td.diff-code.diff-line-highlighted::before {
 .diff-version-copy-btn:hover {
   opacity: 1 !important;
   background: var(--color-bg-secondary);
+}
+
+/* ============================================================================
+   Preview sidebar (split pane)
+   ============================================================================ */
+
+.preview-sidebar {
+  width: 420px;
+  min-width: 0;
+  background: var(--color-bg-secondary);
+  border-left: 1px solid var(--color-border);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  flex-shrink: 0;
+  position: relative;
+  transition: width 0.25s cubic-bezier(0.4, 0, 0.2, 1),
+              border-left-width 0.25s cubic-bezier(0.4, 0, 0.2, 1),
+              opacity 0.2s ease;
+  opacity: 1;
+}
+
+.preview-sidebar.no-transition {
+  transition: none !important;
+}
+
+.preview-sidebar.collapsed {
+  width: 0;
+  border-left-width: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.preview-sidebar-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px;
+  border-bottom: 1px solid var(--color-border);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.preview-sidebar-title {
+  white-space: nowrap;
+}
+
+.preview-sidebar-file {
+  margin-left: auto;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--color-text-muted);
+  max-width: 55%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.preview-toggle-raw {
+  margin-left: 8px;
+  padding: 2px 8px;
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--color-text-muted);
+  background: var(--color-bg-tertiary);
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.preview-toggle-raw:hover {
+  background: var(--color-bg);
+  color: var(--color-text);
+}
+
+/* Resizable splitter */
+.preview-resizer {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 8px;
+  cursor: col-resize;
+  background: transparent;
+  z-index: 10;
+  transition: background 0.15s;
+}
+
+.preview-resizer:hover,
+.preview-resizer.resizing {
+  background: var(--color-highlight);
+}
+
+.preview-sidebar-content {
+  flex: 1;
+  overflow: auto;
+}
+
+.preview-markdown {
+  padding: 12px;
+}
+
+.preview-loading {
+  padding: 12px;
+  color: var(--color-text-muted);
+  font-size: 12px;
 }
 
 /* ============================================================================

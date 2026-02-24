@@ -21,8 +21,9 @@ import { FileTreeSidebar } from './FileTreeSidebar';
 import { DiffFileView, resetGlobalMatchIndex } from './DiffFileView';
 import { ConversationSidebar } from './ConversationSidebar';
 import { CodeSearchBar } from './CodeSearchBar';
-import { MessageSquare, ChevronUp, ChevronDown, PanelLeftClose, PanelLeftOpen, Crosshair, GitCompare, FileText } from 'lucide-react';
+import { MessageSquare, ChevronUp, ChevronDown, PanelLeftClose, PanelLeftOpen, Crosshair, GitCompare, FileText, Eye } from 'lucide-react';
 import { VersionSelector } from './VersionSelector';
+import { MarkdownRenderer } from '../ui/MarkdownRenderer';
 import { useIsMobile } from '../../hooks';
 import './diffTheme.css';
 
@@ -71,6 +72,13 @@ export function DiffReviewPage({ projectId, taskId, embedded }: DiffReviewPagePr
   const [replyFormCommentId, setReplyFormCommentId] = useState<number | null>(null);
   const [sidebarVisible, setSidebarVisible] = useState(!isMobile);
   const [convSidebarVisible, setConvSidebarVisible] = useState(false);
+  const [previewSidebarVisible, setPreviewSidebarVisible] = useState(false);
+  const [contentVisible, setContentVisible] = useState(true);
+  // Preview panel width (for resizable splitter)
+  const [previewWidth, setPreviewWidth] = useState(() => {
+    const stored = localStorage.getItem('grove:preview-width');
+    return stored ? parseInt(stored, 10) : 420;
+  });
 
   // Mobile: force unified view and close sidebars when entering mobile mode
   useEffect(() => {
@@ -96,6 +104,78 @@ export function DiffReviewPage({ projectId, taskId, embedded }: DiffReviewPagePr
 
   // Git user name for authoring comments (fetched from API)
   const gitUserNameRef = useRef<string>('You');
+
+  // Resizer state
+  const [isResizing, setIsResizing] = useState(false);
+  const previewRef = useRef<HTMLDivElement>(null);
+  const dragStartX = useRef(0);
+  const dragStartWidth = useRef(0);
+  const rafId = useRef<number | null>(null);
+
+  // Handle resizer drag
+  const handleMouseDown = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    if (!previewRef.current) return;
+    const rect = previewRef.current.getBoundingClientRect();
+    dragStartX.current = e.clientX;
+    dragStartWidth.current = rect.width;
+    // 添加 no-transition 类禁用过渡效果
+    previewRef.current.classList.add('no-transition');
+    setIsResizing(true);
+  }, []);
+
+  useEffect(() => {
+    if (!isResizing) return;
+
+    const handleMouseMove = (e: MouseEvent) => {
+      if (!previewRef.current) return;
+      
+      // 使用 requestAnimationFrame 优化性能
+      if (rafId.current !== null) {
+        cancelAnimationFrame(rafId.current);
+      }
+      
+      rafId.current = requestAnimationFrame(() => {
+        // 左拖 = 拉伸（增加宽度），右拖 = 压缩（减少宽度）
+        const deltaX = e.clientX - dragStartX.current;
+        const newWidth = Math.max(200, Math.min(1200, dragStartWidth.current + deltaX));
+        
+        // 直接设置 DOM 宽度以获得即时反馈
+        previewRef.current!.style.width = `${newWidth}px`;
+        // 同时更新状态以便持久化
+        setPreviewWidth(newWidth);
+      });
+    };
+
+    const handleMouseUp = () => {
+      if (rafId.current !== null) {
+        cancelAnimationFrame(rafId.current);
+        rafId.current = null;
+      }
+      
+      // 移除 no-transition 类，恢复过渡效果
+      if (previewRef.current) {
+        previewRef.current.classList.remove('no-transition');
+        // 确保最终宽度与状态同步
+        previewRef.current.style.width = '';
+      }
+      
+      setIsResizing(false);
+    };
+
+    document.addEventListener('mousemove', handleMouseMove);
+    document.addEventListener('mouseup', handleMouseUp);
+
+    return () => {
+      document.removeEventListener('mousemove', handleMouseMove);
+      document.removeEventListener('mouseup', handleMouseUp);
+      
+      if (rafId.current !== null) {
+        cancelAnimationFrame(rafId.current);
+        rafId.current = null;
+      }
+    };
+  }, [isResizing]);
 
   // Temporary virtual files/directories created in current session
   const [temporaryVirtualPaths, setTemporaryVirtualPaths] = useState<Set<string>>(new Set());
@@ -163,6 +243,21 @@ export function DiffReviewPage({ projectId, taskId, embedded }: DiffReviewPagePr
     displayFilesRef.current = displayFiles;
   }, [displayFiles]);
 
+  const activeFilePath = useMemo(() => {
+    return displayFiles.find((f) => f.new_path === selectedFile)?.new_path || displayFiles[0]?.new_path || null;
+  }, [displayFiles, selectedFile]);
+
+  const isActiveFileMarkdown = useMemo(() => {
+    if (!activeFilePath) return false;
+    const lower = activeFilePath.toLowerCase();
+    return lower.endsWith('.md') || lower.endsWith('.markdown');
+  }, [activeFilePath]);
+
+  // Persist preview width to localStorage
+  useEffect(() => {
+    localStorage.setItem('grove:preview-width', String(previewWidth));
+  }, [previewWidth]);
+
   // Auto-detect iframe mode
   const isEmbedded = embedded ?? (typeof window !== 'undefined' && window !== window.parent);
 
@@ -208,6 +303,14 @@ export function DiffReviewPage({ projectId, taskId, embedded }: DiffReviewPagePr
 
     processQueue();
   }, [projectId, taskId, fullFileContents, loadingFiles]);
+
+  // Load latest file content on demand for Preview
+  useEffect(() => {
+    if (!previewSidebarVisible || !activeFilePath) return;
+    if (isActiveFileMarkdown || viewMode === 'full') {
+      loadFullFileContent(activeFilePath);
+    }
+  }, [previewSidebarVisible, activeFilePath, isActiveFileMarkdown, viewMode, loadFullFileContent]);
 
   // Compute per-file comment counts
   const fileCommentCounts = useMemo(() => {
@@ -318,7 +421,6 @@ export function DiffReviewPage({ projectId, taskId, embedded }: DiffReviewPagePr
       setLoading(true);
       setError(null);
       try {
-        let data: FullDiffResult;
         let reviewComments: ReviewCommentEntry[] = [];
 
         const [diffResult, reviewData, commitsData, filesData] = await Promise.all([
@@ -327,7 +429,7 @@ export function DiffReviewPage({ projectId, taskId, embedded }: DiffReviewPagePr
           getCommits(projectId, taskId).catch(() => null),
           getTaskFiles(projectId, taskId).catch(() => null),
         ]);
-        data = diffResult;
+        const data = diffResult;
         if (reviewData) {
           reviewComments = reviewData.comments;
           if (reviewData.git_user_name) {
@@ -855,7 +957,7 @@ export function DiffReviewPage({ projectId, taskId, embedded }: DiffReviewPagePr
   const isEmpty = displayFiles.length === 0;
 
   // Ensure selectedFile is valid - if not, use first file
-  const validSelectedFile = displayFiles.find((f) => f.new_path === selectedFile)?.new_path || displayFiles[0]?.new_path || null;
+  const validSelectedFile = activeFilePath;
 
   return (
     <div className={`diff-review-page ${isEmbedded ? 'embedded' : ''}`}>
@@ -956,6 +1058,13 @@ export function DiffReviewPage({ projectId, taskId, embedded }: DiffReviewPagePr
             <ChevronDown style={{ width: 14, height: 14 }} />
           </button>
           <button
+            className={`diff-toolbar-btn ${previewSidebarVisible ? 'active' : ''}`}
+            onClick={() => setPreviewSidebarVisible((v) => !v)}
+            title={previewSidebarVisible ? 'Hide preview' : 'Show preview'}
+          >
+            <Eye style={{ width: 14, height: 14 }} />
+          </button>
+          <button
             className={`diff-toolbar-btn ${convSidebarVisible ? 'active' : ''}`}
             onClick={() => setConvSidebarVisible((v) => !v)}
             title={convSidebarVisible ? 'Hide conversation' : 'Show conversation'}
@@ -1005,7 +1114,7 @@ export function DiffReviewPage({ projectId, taskId, embedded }: DiffReviewPagePr
             />
 
             {/* Diff content */}
-            <div className="diff-content" ref={contentRef}>
+            <div className="diff-content" ref={contentRef} style={{ display: contentVisible ? 'block' : 'none' }}>
               {(() => {
                 // Reset global match index before rendering
                 resetGlobalMatchIndex();
@@ -1057,6 +1166,79 @@ export function DiffReviewPage({ projectId, taskId, embedded }: DiffReviewPagePr
                   mentionItems={mentionItems}
                 />
               ))})()}
+            </div>
+
+            {/* Preview sidebar (split pane) */}
+            <div
+              ref={previewRef}
+              className={`preview-sidebar ${previewSidebarVisible ? '' : 'collapsed'}`}
+              style={{
+                width: previewSidebarVisible ? (contentVisible ? previewWidth : 'auto') : 0,
+                flex: previewSidebarVisible ? (contentVisible ? '0 0 auto' : '1 1 auto') : '0 0 auto',
+              }}
+            >
+              {/* Resizer handle */}
+              {previewSidebarVisible && (
+                <div
+                  className={`preview-resizer ${isResizing ? 'resizing' : ''}`}
+                  onMouseDown={handleMouseDown}
+                />
+              )}
+              <div className="preview-sidebar-header">
+                <Eye style={{ width: 14, height: 14 }} />
+                <span className="preview-sidebar-title">
+                  Preview{isActiveFileMarkdown ? ' (latest)' : ''}
+                </span>
+                {validSelectedFile && (
+                  <span className="preview-sidebar-file" title={validSelectedFile}>
+                    {validSelectedFile.split('/').pop() || validSelectedFile}
+                  </span>
+                )}
+                {/* Toggle Raw/Preview visibility */}
+                <button
+                  className="preview-toggle-raw"
+                  onClick={() => setContentVisible((v) => !v)}
+                  title={contentVisible ? 'Hide raw content' : 'Show raw content'}
+                >
+                  {contentVisible ? 'Hide' : 'Show'}
+                </button>
+              </div>
+
+              <div className="preview-sidebar-content">
+                {!previewSidebarVisible || !validSelectedFile ? null : isActiveFileMarkdown ? (
+                  <div className="preview-markdown">
+                    {loadingFiles.has(validSelectedFile) ? (
+                      <div className="preview-loading">Loading latest content…</div>
+                    ) : fullFileContents.get(validSelectedFile) ? (
+                      <MarkdownRenderer content={fullFileContents.get(validSelectedFile) ?? ''} />
+                    ) : (
+                      <div className="preview-loading">Failed to load file content</div>
+                    )}
+                  </div>
+                ) : (
+                  (() => {
+                    const previewFile = displayFiles.find((f) => f.new_path === validSelectedFile);
+                    if (!previewFile) return <div className="preview-loading">No file selected</div>;
+                    return (
+                      <DiffFileView
+                        key={`preview:${previewFile.new_path}`}
+                        file={previewFile}
+                        viewType={viewType}
+                        isActive={true}
+                        projectId={projectId}
+                        taskId={taskId}
+                        comments={getFileComments(previewFile.new_path)}
+                        viewMode={viewMode}
+                        fullFileContent={fullFileContents.get(previewFile.new_path)}
+                        isLoadingFullFile={loadingFiles.has(previewFile.new_path)}
+                        onRequestFullFile={loadFullFileContent}
+                        codeSearchQuery={codeSearchQuery}
+                        codeSearchCaseSensitive={codeSearchCaseSensitive}
+                      />
+                    );
+                  })()
+                )}
+              </div>
             </div>
 
             {/* Conversation sidebar */}
