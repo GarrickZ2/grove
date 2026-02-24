@@ -72,6 +72,7 @@ tokio-tungstenite = { version = "0.26", default-features = false, features = ["c
 # GUI (Tauri) - optional
 tauri = { version = "2", optional = true }
 tauri-plugin-shell = { version = "2", optional = true }
+similar = "2.7.0"
 
 [build-dependencies]
 tauri-build = { version = "2", features = [], optional = true }
