@@ -241,28 +241,40 @@ static ICON_ICNS: &[u8] = include_bytes!("../src-tauri/icons/icon.icns");
 #[cfg(target_os = "macos")]
 static NOTIFY_SWIFT_SRC: &str = r#"
 import Cocoa
+import UserNotifications
 
-class AppDelegate: NSObject, NSApplicationDelegate, NSUserNotificationCenterDelegate {
+class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
-        NSUserNotificationCenter.default.delegate = self
-
         let args = CommandLine.arguments
-        let notif = NSUserNotification()
-        notif.title = args.count > 1 ? args[1] : "Grove"
-        notif.informativeText = args.count > 2 ? args[2] : ""
+        let title = args.count > 1 ? args[1] : "Grove"
+        let body  = args.count > 2 ? args[2] : ""
 
-        NSUserNotificationCenter.default.deliver(notif)
+        let center = UNUserNotificationCenter.current()
+        center.delegate = self
 
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-            NSApp.terminate(nil)
+        center.requestAuthorization(options: [.alert, .sound]) { granted, _ in
+            guard granted else {
+                DispatchQueue.main.async { NSApp.terminate(nil) }
+                return
+            }
+            let content = UNMutableNotificationContent()
+            content.title = title
+            content.body  = body
+            let req = UNNotificationRequest(
+                identifier: UUID().uuidString, content: content, trigger: nil)
+            center.add(req) { _ in
+                DispatchQueue.main.async { NSApp.terminate(nil) }
+            }
         }
     }
 
-    // Always show banner even when app is frontmost
     func userNotificationCenter(
-        _ center: NSUserNotificationCenter,
-        shouldPresent notification: NSUserNotification
-    ) -> Bool { true }
+        _ center: UNUserNotificationCenter,
+        willPresent notification: UNNotification,
+        withCompletionHandler handler: @escaping (UNNotificationPresentationOptions) -> Void
+    ) {
+        handler([.banner, .sound])
+    }
 }
 
 let app = NSApplication.shared
@@ -332,6 +344,19 @@ pub fn ensure_grove_app() -> PathBuf {
     fs::remove_file(&swift_src).ok();
 
     if status.is_ok_and(|s| s.success()) {
+        // Ad-hoc sign so UNUserNotificationCenter works without developer account
+        let app_bundle = grove_dir.join("Grove.app");
+        Command::new("codesign")
+            .args([
+                "--force",
+                "--deep",
+                "-s",
+                "-",
+                &app_bundle.to_string_lossy(),
+            ])
+            .status()
+            .ok();
+
         // Register with Launch Services so macOS recognizes the bundle icon
         Command::new("/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister")
             .args(["-f", &grove_dir.join("Grove.app").to_string_lossy()])
