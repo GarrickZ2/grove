@@ -48,14 +48,14 @@ A Grove "task" represents an isolated development environment:
 
 ## Available Tools
 
-Available anytime (workspace-scoped):
+Available only when NOT in a Grove task (workspace-scoped, planning):
 
 1. **grove_add_project_by_path** - Register a project by local path (idempotent)
 2. **grove_list_projects** - List all registered projects
 3. **grove_create_task** - Create a task/worktree under a project
 4. **grove_list_tasks** - List active tasks under a project
 
-When inside a Grove task (task-scoped):
+When inside a Grove task (task-scoped, execution):
 
 1. **grove_status** - Get task context (task_id, branch, target_branch, project)
 2. **grove_read_notes** - Read user-written notes containing context and requirements
@@ -361,6 +361,7 @@ impl GroveMcpServer {
         &self,
         params: Parameters<AddProjectByPathParams>,
     ) -> Result<CallToolResult, McpError> {
+        ensure_not_in_grove_task()?;
         ok_json(add_project_by_path_json(
             &params.0.path,
             params.0.name.as_deref(),
@@ -373,6 +374,7 @@ impl GroveMcpServer {
         description = "List all registered projects. Returns an array of {project_id, path}."
     )]
     async fn grove_list_projects(&self) -> Result<CallToolResult, McpError> {
+        ensure_not_in_grove_task()?;
         ok_json(list_projects_json())
     }
 
@@ -385,6 +387,7 @@ impl GroveMcpServer {
         &self,
         params: Parameters<CreateTaskParams>,
     ) -> Result<CallToolResult, McpError> {
+        ensure_not_in_grove_task()?;
         ok_json(create_task_json(&params.0))
     }
 
@@ -397,6 +400,7 @@ impl GroveMcpServer {
         &self,
         params: Parameters<ListTasksParams>,
     ) -> Result<CallToolResult, McpError> {
+        ensure_not_in_grove_task()?;
         ok_json(list_tasks_json(&params.0.project_id))
     }
 
@@ -883,6 +887,16 @@ fn error_json(error: &str, message: impl Into<String>) -> serde_json::Value {
         "error": error,
         "message": message.into(),
     })
+}
+
+fn ensure_not_in_grove_task() -> Result<(), McpError> {
+    if get_task_context().is_some() {
+        return Err(McpError::invalid_request(
+            "This tool is only available outside a Grove task",
+            None,
+        ));
+    }
+    Ok(())
 }
 
 fn add_project_by_path_json(path: &str, name: Option<&str>) -> serde_json::Value {
@@ -1375,6 +1389,191 @@ mod tests {
             .expect("server task join failed")
             .expect("server returned error");
 
+        if let Some(v) = old_home {
+            std::env::set_var("HOME", v);
+        } else {
+            std::env::remove_var("HOME");
+        }
+        let _ = std::fs::remove_dir_all(&temp_home);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn mcp_planning_tools_rejected_inside_task_context() {
+        use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+
+        let _guard = TEST_LOCK
+            .get_or_init(|| Mutex::new(()))
+            .lock()
+            .expect("failed to lock test mutex");
+
+        let temp_home = unique_temp_dir("grove-mcp-home");
+        std::fs::create_dir_all(&temp_home).unwrap();
+
+        let old_home = std::env::var("HOME").ok();
+        std::env::set_var("HOME", &temp_home);
+
+        let repo = temp_home.join("repo");
+        init_git_repo(&repo);
+
+        let old_task_id = std::env::var("GROVE_TASK_ID").ok();
+        let old_project = std::env::var("GROVE_PROJECT").ok();
+        std::env::set_var("GROVE_TASK_ID", "task-1");
+        std::env::set_var("GROVE_PROJECT", repo.to_string_lossy().as_ref());
+
+        let (client_stream, server_stream) = tokio::io::duplex(64 * 1024);
+        let (server_read, server_write) = tokio::io::split(server_stream);
+
+        let server_task = tokio::spawn(async move {
+            let server = GroveMcpServer::new();
+            let service = server
+                .serve((server_read, server_write))
+                .await
+                .map_err(|e| e.to_string())?;
+            service.waiting().await.map_err(|e| e.to_string())?;
+            Ok::<(), String>(())
+        });
+
+        let (client_read, mut client_write) = tokio::io::split(client_stream);
+        let mut reader = BufReader::new(client_read);
+
+        async fn send(w: &mut (impl AsyncWriteExt + Unpin), v: serde_json::Value) {
+            let mut s = serde_json::to_string(&v).unwrap();
+            s.push('\n');
+            w.write_all(s.as_bytes()).await.unwrap();
+            w.flush().await.unwrap();
+        }
+
+        async fn recv_for_id(
+            reader: &mut BufReader<tokio::io::ReadHalf<tokio::io::DuplexStream>>,
+            id: i64,
+        ) -> serde_json::Value {
+            loop {
+                let mut line = String::new();
+                let n = reader.read_line(&mut line).await.unwrap();
+                assert!(n > 0, "server closed connection");
+                let v: serde_json::Value = serde_json::from_str(line.trim()).unwrap();
+                if v.get("id").and_then(|x| x.as_i64()) == Some(id) {
+                    return v;
+                }
+            }
+        }
+
+        fn assert_tool_rejected(resp: &serde_json::Value) {
+            assert!(
+                resp.get("error").is_some(),
+                "expected error, got: {}",
+                serde_json::to_string(resp).unwrap()
+            );
+            let err_json = serde_json::to_string(&resp["error"]).unwrap();
+            assert!(
+                err_json.contains("only available outside a Grove task"),
+                "unexpected error: {err_json}"
+            );
+        }
+
+        send(
+            &mut client_write,
+            json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "protocolVersion": "2025-03-26",
+                    "capabilities": {},
+                    "clientInfo": {"name": "grove-test", "version": "0"}
+                }
+            }),
+        )
+        .await;
+        let init_resp = recv_for_id(&mut reader, 1).await;
+        assert!(init_resp.get("result").is_some());
+
+        send(
+            &mut client_write,
+            json!({"jsonrpc": "2.0", "method": "notifications/initialized"}),
+        )
+        .await;
+
+        send(
+            &mut client_write,
+            json!({
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "tools/call",
+                "params": {
+                    "name": "grove_add_project_by_path",
+                    "arguments": {"path": repo.to_string_lossy()}
+                }
+            }),
+        )
+        .await;
+        let resp_2 = recv_for_id(&mut reader, 2).await;
+        assert_tool_rejected(&resp_2);
+
+        send(
+            &mut client_write,
+            json!({
+                "jsonrpc": "2.0",
+                "id": 3,
+                "method": "tools/call",
+                "params": {"name": "grove_list_projects", "arguments": {}}
+            }),
+        )
+        .await;
+        let resp_3 = recv_for_id(&mut reader, 3).await;
+        assert_tool_rejected(&resp_3);
+
+        send(
+            &mut client_write,
+            json!({
+                "jsonrpc": "2.0",
+                "id": 4,
+                "method": "tools/call",
+                "params": {
+                    "name": "grove_create_task",
+                    "arguments": {"project_id": "deadbeef", "name": "task"}
+                }
+            }),
+        )
+        .await;
+        let resp_4 = recv_for_id(&mut reader, 4).await;
+        assert_tool_rejected(&resp_4);
+
+        send(
+            &mut client_write,
+            json!({
+                "jsonrpc": "2.0",
+                "id": 5,
+                "method": "tools/call",
+                "params": {
+                    "name": "grove_list_tasks",
+                    "arguments": {"project_id": "deadbeef"}
+                }
+            }),
+        )
+        .await;
+        let resp_5 = recv_for_id(&mut reader, 5).await;
+        assert_tool_rejected(&resp_5);
+
+        client_write.shutdown().await.unwrap();
+        drop(client_write);
+        drop(reader);
+        let _ = tokio::time::timeout(std::time::Duration::from_secs(3), server_task)
+            .await
+            .expect("server did not exit")
+            .expect("server task join failed")
+            .expect("server returned error");
+
+        if let Some(v) = old_task_id {
+            std::env::set_var("GROVE_TASK_ID", v);
+        } else {
+            std::env::remove_var("GROVE_TASK_ID");
+        }
+        if let Some(v) = old_project {
+            std::env::set_var("GROVE_PROJECT", v);
+        } else {
+            std::env::remove_var("GROVE_PROJECT");
+        }
         if let Some(v) = old_home {
             std::env::set_var("HOME", v);
         } else {

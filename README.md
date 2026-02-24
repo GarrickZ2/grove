@@ -174,6 +174,17 @@ Add to your Claude Code MCP config (`~/.claude/config.json`):
 }
 ```
 
+Planning tools (only available when NOT in a Grove task):
+
+| Tool | Description |
+|------|-------------|
+| `grove_add_project_by_path` | Register a Git project by local path (idempotent) |
+| `grove_list_projects` | List all registered projects |
+| `grove_create_task` | Create a new task/worktree under a project |
+| `grove_list_tasks` | List active tasks under a project |
+
+Execution tools (only available inside a Grove task):
+
 | Tool | Description |
 |------|-------------|
 | `grove_status` | Check if running inside a Grove task, get context |
@@ -181,10 +192,6 @@ Add to your Claude Code MCP config (`~/.claude/config.json`):
 | `grove_read_review` | Read code review comments with status |
 | `grove_reply_review` | Reply to review comments (supports batch) |
 | `grove_add_comment` | Create review comments on specific code locations |
-| `grove_add_project_by_path` | Register a Git project by local path (idempotent) |
-| `grove_list_projects` | List all registered projects |
-| `grove_create_task` | Create a new task/worktree under a project |
-| `grove_list_tasks` | List active tasks under a project |
 | `grove_complete_task` | Complete task: commit → rebase → merge → archive |
 
 ---
