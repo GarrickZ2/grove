@@ -344,6 +344,7 @@ export function TaskChat({
   const modelMenuRef = useRef<HTMLDivElement>(null);
   const permMenuRef = useRef<HTMLDivElement>(null);
   const slashMenuRef = useRef<HTMLDivElement>(null);
+  const slashItemRefs = useRef<(HTMLButtonElement | null)[]>([]);
   const [taskFiles, setTaskFiles] = useState<string[]>([]);
   const [showFileMenu, setShowFileMenu] = useState(false);
   const [fileFilter, setFileFilter] = useState("");
@@ -464,6 +465,11 @@ export function TaskChat({
     }
     prevMsgCountRef.current = messages.length;
   }, [messages]);
+
+  // Auto-scroll slash menu to keep selected item visible
+  useEffect(() => {
+    slashItemRefs.current[slashSelectedIdx]?.scrollIntoView({ block: "nearest" });
+  }, [slashSelectedIdx]);
 
   // Close dropdown menus when clicking outside
   useEffect(() => {
@@ -661,7 +667,8 @@ export function TaskChat({
           break;
         case "message_chunk":
           setMessages((prev) => {
-            // Find last incomplete assistant message (may not be the very last)
+            // Find last incomplete assistant message, but stop at tool/user boundaries
+            // so that chunks after tools create a NEW assistant message segment
             for (let i = prev.length - 1; i >= 0; i--) {
               const m = prev[i];
               if (m.type === "assistant" && !m.complete) {
@@ -669,8 +676,8 @@ export function TaskChat({
                 updated[i] = { ...m, content: m.content + msg.text };
                 return updated;
               }
-              // Stop searching if we hit a user message (new turn)
-              if (m.type === "user") break;
+              // Stop searching at user or tool boundary
+              if (m.type === "user" || m.type === "tool") break;
             }
             // Don't create new message for whitespace-only chunks
             if (!msg.text.trim()) return prev;
@@ -702,7 +709,12 @@ export function TaskChat({
                   : m,
               );
             }
-            return [...prev, {
+            // Mark any preceding incomplete assistant messages as complete
+            // (agent has moved on to tool execution, text segment is done)
+            const updated = prev.map((m) =>
+              m.type === "assistant" && !m.complete ? { ...m, complete: true } : m,
+            );
+            return [...updated, {
               type: "tool", id: msg.id, title: msg.title, status: "running", collapsed: false,
               locations: msg.locations,
             }];
@@ -770,9 +782,14 @@ export function TaskChat({
         case "mode_changed":
           setPermissionLevel(msg.mode_id);
           break;
-        case "plan_update":
-          setPlanEntries(msg.entries ?? []);
+        case "plan_update": {
+          const entries: PlanEntry[] = msg.entries ?? [];
+          setPlanEntries(entries);
+          // Auto-expand while in progress, auto-collapse when all done
+          const allDone = entries.length > 0 && entries.every((e: PlanEntry) => e.status === "completed");
+          setShowPlan(!allDone);
           break;
+        }
         case "available_commands":
           setSlashCommands(msg.commands ?? []);
           break;
@@ -1462,9 +1479,11 @@ export function TaskChat({
         next.delete(sectionId);
       } else {
         next.add(sectionId);
-        // When expanding: reset all tools in section to expanded
+        // When expanding: only expand primary tools; keep secondary tools collapsed
         setMessages((pm) => pm.map((m) =>
-          m.type === "tool" && toolIds.includes(m.id) ? { ...m, collapsed: false } : m,
+          m.type === "tool" && toolIds.includes(m.id)
+            ? { ...m, collapsed: isSecondaryTool(m.title) }
+            : m,
         ));
       }
       return next;
@@ -1687,8 +1706,16 @@ export function TaskChat({
               key={`ts-${item.sectionId}`}
               sectionId={item.sectionId}
               tools={item.tools}
-              expanded={(isBusy && item.tools[0].index >= turnStartIndexRef.current) || expandedSections.has(item.sectionId)}
-              forceExpanded={isBusy && item.tools[0].index >= turnStartIndexRef.current}
+              expanded={
+                // Force-expand only sections with running tools; completed sections auto-collapse
+                (isBusy && item.tools[0].index >= turnStartIndexRef.current
+                  && item.tools.some((t) => t.message.status === "running"))
+                || expandedSections.has(item.sectionId)
+              }
+              forceExpanded={
+                isBusy && item.tools[0].index >= turnStartIndexRef.current
+                && item.tools.some((t) => t.message.status === "running")
+              }
               onToggleSection={toggleSection}
               onToggleToolCollapse={toggleToolCollapse}
             />
@@ -1862,6 +1889,7 @@ export function TaskChat({
               {filteredSlashCommands.map((cmd, i) => (
                 <button
                   key={cmd.name}
+                  ref={(el) => { slashItemRefs.current[i] = el; }}
                   onMouseDown={(e) => e.preventDefault()}
                   onClick={() => insertCommandAtCursor(cmd.name)}
                   onMouseEnter={() => setSlashSelectedIdx(i)}
@@ -2227,6 +2255,17 @@ function PermissionCard({ message, onRespond }: {
   );
 }
 
+/** Classify tool as secondary (exploration/search) — collapsed by default in tiered view */
+function isSecondaryTool(title: string): boolean {
+  const t = title.toLowerCase();
+  if (t === "read" || t === "read file" || t.startsWith("read ")) return true;
+  if (t === "glob" || t === "grep" || t === "webfetch" || t === "websearch") return true;
+  if (t.startsWith("find ") || t.startsWith("grep ") || t.startsWith("search ")) return true;
+  if (t.startsWith("bash") || title.startsWith("`")) return true;
+  if (t.startsWith("ls ") || t.startsWith("cat ") || t.startsWith("head ")) return true;
+  return false;
+}
+
 /** Single tool row used inside ToolSectionView */
 function ToolItemRow({ message, onToggleCollapse }: {
   message: ToolMessage;
@@ -2276,6 +2315,45 @@ function ToolItemRow({ message, onToggleCollapse }: {
   );
 }
 
+/** Collapsible sub-section for secondary (exploration) tools inside an expanded ToolSection */
+function SecondaryToolsRow({ tools, expanded, onToggle, onToggleToolCollapse }: {
+  tools: ToolSectionItem[];
+  expanded: boolean;
+  onToggle: () => void;
+  onToggleToolCollapse: (id: string) => void;
+}) {
+  const running = tools.filter((t) => t.message.status === "running").length;
+  const completed = tools.length - running;
+  const label = running > 0
+    ? `Running ${completed}/${tools.length} exploration tools\u2026`
+    : `${tools.length} exploration tool${tools.length > 1 ? "s" : ""} completed`;
+
+  return (
+    <div>
+      <div
+        role="button"
+        onClick={onToggle}
+        className="flex items-center gap-1.5 py-1 px-2 rounded-md text-xs hover:bg-[var(--color-bg-tertiary)] cursor-pointer transition-colors"
+      >
+        {running > 0
+          ? <Loader2 className="w-3.5 h-3.5 text-[var(--color-highlight)] animate-spin shrink-0" />
+          : <CheckCircle2 className="w-3.5 h-3.5 text-[var(--color-success)] shrink-0" />}
+        {expanded
+          ? <ChevronDown className="w-3 h-3 text-[var(--color-text-muted)] shrink-0" />
+          : <ChevronRight className="w-3 h-3 text-[var(--color-text-muted)] shrink-0" />}
+        <span className="text-[var(--color-text-muted)]">{label}</span>
+      </div>
+      {expanded && (
+        <div className="ml-2 pl-3 border-l border-[var(--color-border)] space-y-0.5">
+          {tools.map((t) => (
+            <ToolItemRow key={t.message.id} message={t.message} onToggleCollapse={onToggleToolCollapse} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 /** Collapsible section that groups consecutive tool calls */
 function ToolSectionView({ sectionId, tools, expanded, forceExpanded, onToggleSection, onToggleToolCollapse }: {
   sectionId: string;
@@ -2292,12 +2370,20 @@ function ToolSectionView({ sectionId, tools, expanded, forceExpanded, onToggleSe
 
   const toolIds = useMemo(() => tools.map((t) => t.message.id), [tools]);
 
+  // Classify tools into primary (actions) and secondary (exploration)
+  const primary = useMemo(() => tools.filter((t) => !isSecondaryTool(t.message.title)), [tools]);
+  const secondary = useMemo(() => tools.filter((t) => isSecondaryTool(t.message.title)), [tools]);
+  const [secondaryExpanded, setSecondaryExpanded] = useState(false);
+
   // Summary label
+  const primaryCount = primary.length;
   let summaryText: string;
   if (running > 0) {
-    summaryText = `Running ${running}/${total} tools\u2026`;
+    summaryText = `Running ${completed}/${total} tools\u2026`;
   } else if (failed > 0) {
     summaryText = `${completed - failed} completed, ${failed} failed`;
+  } else if (primaryCount > 0 && primaryCount < total) {
+    summaryText = `${primaryCount} action${primaryCount > 1 ? "s" : ""}, ${total - primaryCount} exploration tools`;
   } else {
     summaryText = `${total} tool${total > 1 ? "s" : ""} completed`;
   }
@@ -2339,11 +2425,19 @@ function ToolSectionView({ sectionId, tools, expanded, forceExpanded, onToggleSe
         <ChevronDown className="w-3 h-3 text-[var(--color-text-muted)] shrink-0" />
         <span className="text-[var(--color-text-muted)]">Tools ({total})</span>
       </div>
-      {/* Tool items with left border indent */}
+      {/* Tool items with left border indent — tiered: primary first, secondary collapsed */}
       <div className="ml-2 pl-3 border-l-2 border-[var(--color-border)] space-y-0.5">
-        {tools.map((t) => (
+        {primary.map((t) => (
           <ToolItemRow key={t.message.id} message={t.message} onToggleCollapse={onToggleToolCollapse} />
         ))}
+        {secondary.length > 0 && (
+          <SecondaryToolsRow
+            tools={secondary}
+            expanded={secondaryExpanded}
+            onToggle={() => setSecondaryExpanded((p) => !p)}
+            onToggleToolCollapse={onToggleToolCollapse}
+          />
+        )}
       </div>
     </div>
   );

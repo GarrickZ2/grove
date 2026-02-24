@@ -126,22 +126,41 @@ export function ExploreTab({ sources, agents, installed, projectPath, onInstalle
     });
   }, [skills, installed, agents, selectedAgentFilter, sourceUpdateMap, projectPath]);
 
-  // Apply status filter
+  // Apply agent + status filters
   const filteredSkills = useMemo(() => {
-    if (statusFilter === "all") return enrichedSkills;
-    return enrichedSkills.filter((skill) => {
-      switch (statusFilter) {
-        case "not_installed":
-          return skill.install_status === "not_installed";
-        case "installed":
-          return skill.install_status !== "not_installed";
-        case "update_available":
-          return skill.has_update;
-        default:
-          return true;
-      }
-    });
-  }, [enrichedSkills, statusFilter]);
+    let result = enrichedSkills;
+
+    // Agent filter: only show skills installed for at least one of the selected agents
+    if (selectedAgentFilter.length > 0) {
+      const agentIdSet = new Set(selectedAgentFilter);
+      result = result.filter((skill) => {
+        const inst = installed.find((i) => i.repo_key === skill.repo_key && i.repo_path === skill.repo_path);
+        if (!inst) return false;
+        return inst.agents.some((a) =>
+          agentIdSet.has(a.agent_id)
+          && (a.scope === "global" || (a.scope === "project" && a.project_path === projectPath))
+        );
+      });
+    }
+
+    // Status filter
+    if (statusFilter !== "all") {
+      result = result.filter((skill) => {
+        switch (statusFilter) {
+          case "not_installed":
+            return skill.install_status === "not_installed";
+          case "installed":
+            return skill.install_status !== "not_installed";
+          case "update_available":
+            return skill.has_update;
+          default:
+            return true;
+        }
+      });
+    }
+
+    return result;
+  }, [enrichedSkills, statusFilter, selectedAgentFilter, installed, projectPath]);
 
   // Pagination
   const totalItems = filteredSkills.length;
