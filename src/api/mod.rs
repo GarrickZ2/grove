@@ -417,6 +417,10 @@ pub async fn start_server(
     // Initialize FileWatchers for all live tasks
     init_file_watchers();
 
+    // Pre-build Grove.app notification bundle (macOS only, first run compiles Swift)
+    #[cfg(target_os = "macos")]
+    crate::hooks::ensure_grove_app();
+
     let has_ui = static_dir.is_some() || has_embedded_assets();
     let app = create_router(static_dir);
 

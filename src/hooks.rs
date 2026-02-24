@@ -4,7 +4,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::fs;
-
+use std::path::PathBuf;
 use std::process::Command;
 
 use crate::error::Result;
@@ -179,21 +179,42 @@ pub fn load_hooks_with_cleanup(project_path: &str) -> HooksFile {
 
 // === Notification utilities (shared by CLI hooks and ACP) ===
 
-/// 播放 macOS 提示音
+/// Play a system sound.
+#[cfg(target_os = "macos")]
 pub fn play_sound(sound: &str) {
     let path = format!("/System/Library/Sounds/{}.aiff", sound);
     Command::new("afplay").arg(&path).spawn().ok();
 }
 
-/// 发送 macOS 通知横幅
-pub fn send_banner(title: &str, message: &str) {
-    // 优先使用 terminal-notifier（点击后不会打开脚本编辑器）
-    let result = Command::new("terminal-notifier")
-        .args(["-title", title, "-message", message])
-        .spawn();
+#[cfg(not(target_os = "macos"))]
+pub fn play_sound(_sound: &str) {
+    // No-op on non-macOS platforms
+}
 
-    if result.is_err() {
-        // fallback 到 osascript
+/// Send a desktop notification banner.
+#[cfg(target_os = "macos")]
+pub fn send_banner(title: &str, message: &str) {
+    let notify_bin = ensure_grove_app();
+    if notify_bin.exists() {
+        let app_path = notify_bin
+            .parent() // MacOS/
+            .and_then(|p| p.parent()) // Contents/
+            .and_then(|p| p.parent()); // Grove.app/
+        if let Some(app) = app_path {
+            Command::new("open")
+                .args([
+                    "-n", // new instance each time
+                    "-a",
+                    &app.to_string_lossy(),
+                    "--args",
+                    title,
+                    message,
+                ])
+                .spawn()
+                .ok();
+        }
+    } else {
+        // Fallback to osascript (no custom icon)
         let script = format!(
             r#"display notification "{}" with title "{}""#,
             message.replace('"', "\\\""),
@@ -201,6 +222,124 @@ pub fn send_banner(title: &str, message: &str) {
         );
         Command::new("osascript").args(["-e", &script]).spawn().ok();
     }
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn send_banner(title: &str, message: &str) {
+    // Linux: use notify-send if available
+    Command::new("notify-send")
+        .args([title, message])
+        .spawn()
+        .ok();
+}
+
+// ─── macOS Grove.app bundle for native notifications with custom icon ────────
+
+#[cfg(target_os = "macos")]
+static ICON_ICNS: &[u8] = include_bytes!("../src-tauri/icons/icon.icns");
+
+#[cfg(target_os = "macos")]
+static NOTIFY_SWIFT_SRC: &str = r#"
+import Cocoa
+
+class AppDelegate: NSObject, NSApplicationDelegate, NSUserNotificationCenterDelegate {
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        NSUserNotificationCenter.default.delegate = self
+
+        let args = CommandLine.arguments
+        let notif = NSUserNotification()
+        notif.title = args.count > 1 ? args[1] : "Grove"
+        notif.informativeText = args.count > 2 ? args[2] : ""
+
+        NSUserNotificationCenter.default.deliver(notif)
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+            NSApp.terminate(nil)
+        }
+    }
+
+    // Always show banner even when app is frontmost
+    func userNotificationCenter(
+        _ center: NSUserNotificationCenter,
+        shouldPresent notification: NSUserNotification
+    ) -> Bool { true }
+}
+
+let app = NSApplication.shared
+let delegate = AppDelegate()
+app.delegate = delegate
+app.run()
+"#;
+
+/// Ensure `~/.grove/Grove.app` exists with icon and compiled Swift notifier.
+/// Returns the path to the `grove-notify` binary.
+#[cfg(target_os = "macos")]
+pub fn ensure_grove_app() -> PathBuf {
+    let grove_dir = crate::storage::grove_dir();
+    let app_dir = grove_dir.join("Grove.app").join("Contents");
+    let macos_dir = app_dir.join("MacOS");
+    let res_dir = app_dir.join("Resources");
+    let notify_bin = macos_dir.join("grove-notify");
+
+    // Already built — fast path
+    if notify_bin.exists() {
+        return notify_bin;
+    }
+
+    // Create directory structure
+    fs::create_dir_all(&macos_dir).ok();
+    fs::create_dir_all(&res_dir).ok();
+
+    // Write Info.plist
+    let plist = r#"<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleIdentifier</key>
+    <string>com.grove.app</string>
+    <key>CFBundleName</key>
+    <string>Grove</string>
+    <key>CFBundleExecutable</key>
+    <string>grove-notify</string>
+    <key>CFBundleIconFile</key>
+    <string>AppIcon</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>LSUIElement</key>
+    <true/>
+</dict>
+</plist>"#;
+    fs::write(app_dir.join("Info.plist"), plist).ok();
+
+    // Write icon
+    fs::write(res_dir.join("AppIcon.icns"), ICON_ICNS).ok();
+
+    // Write Swift source and compile
+    let swift_src = grove_dir.join("grove-notify.swift");
+    fs::write(&swift_src, NOTIFY_SWIFT_SRC).ok();
+
+    let status = Command::new("swiftc")
+        .args([
+            "-O",
+            "-suppress-warnings",
+            "-o",
+            &notify_bin.to_string_lossy(),
+            &swift_src.to_string_lossy(),
+        ])
+        .status();
+
+    // Clean up source file
+    fs::remove_file(&swift_src).ok();
+
+    if status.is_ok_and(|s| s.success()) {
+        // Register with Launch Services so macOS recognizes the bundle icon
+        Command::new("/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister")
+            .args(["-f", &grove_dir.join("Grove.app").to_string_lossy()])
+            .status()
+            .ok();
+    }
+
+    notify_bin
 }
 
 #[cfg(test)]
