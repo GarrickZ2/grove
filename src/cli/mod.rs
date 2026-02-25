@@ -13,6 +13,8 @@ pub mod gui;
 
 use clap::{Parser, Subcommand};
 
+use crate::storage::config::LastLaunch;
+
 #[derive(Parser)]
 #[command(name = "grove")]
 #[command(version)]
@@ -24,6 +26,8 @@ pub struct Cli {
 
 #[derive(Subcommand)]
 pub enum Commands {
+    /// Launch the terminal UI (same as running 'grove' with no arguments)
+    Tui,
     /// Send hook notifications
     Hooks {
         #[command(subcommand)]
@@ -97,4 +101,69 @@ pub enum Commands {
         #[arg(long)]
         dry_run: bool,
     },
+}
+
+impl Commands {
+    /// 将启动模式命令转换为 `LastLaunch`（非启动模式命令返回 None）
+    pub fn to_last_launch(&self) -> Option<LastLaunch> {
+        match self {
+            Commands::Tui => Some(LastLaunch::Tui),
+            Commands::Web { port, no_open, dev } => Some(LastLaunch::Web {
+                port: *port,
+                no_open: *no_open,
+                dev: *dev,
+            }),
+            Commands::Mobile {
+                port,
+                no_open,
+                tls,
+                cert,
+                key,
+                host,
+                public,
+            } => Some(LastLaunch::Mobile {
+                port: *port,
+                no_open: *no_open,
+                tls: *tls,
+                cert: cert.clone(),
+                key: key.clone(),
+                host: host.clone(),
+                public: *public,
+            }),
+            Commands::Gui { port } => Some(LastLaunch::Gui { port: *port }),
+            _ => None,
+        }
+    }
+}
+
+impl LastLaunch {
+    /// 将 `LastLaunch` 转换回 `Commands` 以便统一调度
+    pub fn to_command(&self) -> Commands {
+        match self {
+            LastLaunch::Tui => Commands::Tui,
+            LastLaunch::Web { port, no_open, dev } => Commands::Web {
+                port: *port,
+                no_open: *no_open,
+                dev: *dev,
+            },
+            LastLaunch::Mobile {
+                port,
+                no_open,
+                tls,
+                cert,
+                key,
+                host,
+                public,
+            } => Commands::Mobile {
+                port: *port,
+                no_open: *no_open,
+                tls: *tls,
+                cert: cert.clone(),
+                key: key.clone(),
+                host: host.clone(),
+                public: *public,
+            },
+            LastLaunch::Gui { port } => Commands::Gui { port: *port },
+        }
+    }
 }

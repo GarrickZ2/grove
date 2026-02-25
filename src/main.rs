@@ -71,108 +71,8 @@ fn ensure_storage_version() {
     }
 }
 
-fn main() -> io::Result<()> {
-    // Set up panic hook to restore terminal state on panic
-    let original_hook = panic::take_hook();
-    panic::set_hook(Box::new(move |panic_info| {
-        // Restore terminal state
-        let _ = execute!(io::stdout(), DisableMouseCapture);
-        ratatui::restore();
-        // Call the original panic hook
-        original_hook(panic_info);
-    }));
-    // 解析命令行参数
-    let cli = Cli::parse();
-
-    // 如果有子命令，执行 CLI 逻辑
-    if let Some(command) = cli.command {
-        match command {
-            Commands::Hooks { level } => {
-                cli::hooks::execute(level);
-            }
-            Commands::Mcp => {
-                ensure_storage_version();
-                // MCP server requires tokio runtime
-                tokio::runtime::Runtime::new()
-                    .expect("Failed to create tokio runtime")
-                    .block_on(async {
-                        if let Err(e) = cli::mcp::run_mcp_server().await {
-                            eprintln!("MCP server error: {}", e);
-                            std::process::exit(1);
-                        }
-                    });
-            }
-            Commands::Fp => {
-                cli::fp::execute();
-            }
-            Commands::Web { port, no_open, dev } => {
-                ensure_storage_version();
-                tokio::runtime::Runtime::new()
-                    .expect("Failed to create tokio runtime")
-                    .block_on(async {
-                        cli::web::execute(port, no_open, dev).await;
-                    });
-            }
-            Commands::Mobile {
-                port,
-                no_open,
-                tls,
-                cert,
-                key,
-                host,
-                public,
-            } => {
-                ensure_storage_version();
-                tokio::runtime::Runtime::new()
-                    .expect("Failed to create tokio runtime")
-                    .block_on(async {
-                        cli::web::execute_mobile(port, no_open, tls, cert, key, host, public).await;
-                    });
-            }
-            Commands::Diff { task_id, port } => {
-                cli::diff::execute(task_id, port);
-            }
-            Commands::Gui { port } => {
-                #[cfg(feature = "gui")]
-                {
-                    tokio::runtime::Runtime::new()
-                        .expect("Failed to create tokio runtime")
-                        .block_on(async {
-                            cli::gui::execute(port).await;
-                        });
-                }
-                #[cfg(not(feature = "gui"))]
-                {
-                    let _ = port; // suppress unused warning
-                    eprintln!("GUI mode is not available in this build.");
-                    eprintln!();
-                    eprintln!("To enable GUI support, rebuild with the 'gui' feature:");
-                    eprintln!("  cargo build --release --features gui");
-                    eprintln!();
-                    eprintln!("Or install with GUI support:");
-                    eprintln!("  cargo install grove-rs --features gui");
-                    std::process::exit(1);
-                }
-            }
-            Commands::Acp { agent, cwd } => {
-                ensure_storage_version();
-                // ACP requires tokio runtime with LocalSet (futures are !Send)
-                tokio::runtime::Runtime::new()
-                    .expect("Failed to create tokio runtime")
-                    .block_on(async {
-                        let local = tokio::task::LocalSet::new();
-                        local.run_until(cli::acp::execute(agent, cwd)).await;
-                    });
-            }
-            Commands::Migrate { dry_run } => {
-                cli::migrate::execute(dry_run);
-            }
-        }
-        return Ok(());
-    }
-
-    // 否则启动 TUI
-    // 版本检查 & 自动迁移
+/// 启动 TUI 界面
+fn run_tui() -> io::Result<()> {
     ensure_storage_version();
 
     // 环境检查
@@ -205,6 +105,136 @@ fn main() -> io::Result<()> {
     let _ = io::stdout().flush();
 
     result
+}
+
+fn main() -> io::Result<()> {
+    // Set up panic hook to restore terminal state on panic
+    let original_hook = panic::take_hook();
+    panic::set_hook(Box::new(move |panic_info| {
+        // Restore terminal state
+        let _ = execute!(io::stdout(), DisableMouseCapture);
+        ratatui::restore();
+        // Call the original panic hook
+        original_hook(panic_info);
+    }));
+
+    // 解析命令行参数
+    let cli = Cli::parse();
+
+    // 确定要执行的命令
+    let (command, from_replay) = match cli.command {
+        Some(cmd) => (cmd, false),
+        None => {
+            // 无子命令：重放上次启动模式，默认 TUI
+            let config = storage::config::load_config();
+            match config.last_launch {
+                Some(ref ll) => {
+                    let label = ll.display_label();
+                    if !matches!(ll, storage::config::LastLaunch::Tui) {
+                        eprintln!("grove → grove {}", label);
+                    }
+                    (ll.to_command(), true)
+                }
+                None => (Commands::Tui, true),
+            }
+        }
+    };
+
+    // 如果是新的启动模式命令（非重放），保存到配置
+    if !from_replay {
+        if let Some(last_launch) = command.to_last_launch() {
+            let mut config = storage::config::load_config();
+            config.last_launch = Some(last_launch);
+            let _ = storage::config::save_config(&config);
+        }
+    }
+
+    // 统一调度
+    match command {
+        Commands::Tui => {
+            run_tui()?;
+        }
+        Commands::Hooks { level } => {
+            cli::hooks::execute(level);
+        }
+        Commands::Mcp => {
+            ensure_storage_version();
+            tokio::runtime::Runtime::new()
+                .expect("Failed to create tokio runtime")
+                .block_on(async {
+                    if let Err(e) = cli::mcp::run_mcp_server().await {
+                        eprintln!("MCP server error: {}", e);
+                        std::process::exit(1);
+                    }
+                });
+        }
+        Commands::Fp => {
+            cli::fp::execute();
+        }
+        Commands::Web { port, no_open, dev } => {
+            ensure_storage_version();
+            tokio::runtime::Runtime::new()
+                .expect("Failed to create tokio runtime")
+                .block_on(async {
+                    cli::web::execute(port, no_open, dev).await;
+                });
+        }
+        Commands::Mobile {
+            port,
+            no_open,
+            tls,
+            cert,
+            key,
+            host,
+            public,
+        } => {
+            ensure_storage_version();
+            tokio::runtime::Runtime::new()
+                .expect("Failed to create tokio runtime")
+                .block_on(async {
+                    cli::web::execute_mobile(port, no_open, tls, cert, key, host, public).await;
+                });
+        }
+        Commands::Diff { task_id, port } => {
+            cli::diff::execute(task_id, port);
+        }
+        Commands::Gui { port } => {
+            #[cfg(feature = "gui")]
+            {
+                tokio::runtime::Runtime::new()
+                    .expect("Failed to create tokio runtime")
+                    .block_on(async {
+                        cli::gui::execute(port).await;
+                    });
+            }
+            #[cfg(not(feature = "gui"))]
+            {
+                let _ = port;
+                eprintln!("GUI mode is not available in this build.");
+                eprintln!();
+                eprintln!("To enable GUI support, rebuild with the 'gui' feature:");
+                eprintln!("  cargo build --release --features gui");
+                eprintln!();
+                eprintln!("Or install with GUI support:");
+                eprintln!("  cargo install grove-rs --features gui");
+                std::process::exit(1);
+            }
+        }
+        Commands::Acp { agent, cwd } => {
+            ensure_storage_version();
+            tokio::runtime::Runtime::new()
+                .expect("Failed to create tokio runtime")
+                .block_on(async {
+                    let local = tokio::task::LocalSet::new();
+                    local.run_until(cli::acp::execute(agent, cwd)).await;
+                });
+        }
+        Commands::Migrate { dry_run } => {
+            cli::migrate::execute(dry_run);
+        }
+    }
+
+    Ok(())
 }
 
 fn run(terminal: &mut DefaultTerminal, app: &mut App) -> io::Result<()> {
