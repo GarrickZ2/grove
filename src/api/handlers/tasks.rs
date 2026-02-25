@@ -479,11 +479,6 @@ pub async fn create_task(
         }
     })?;
 
-    // Log symlinks if any
-    if result.symlinks_created > 0 {
-        eprintln!("Info: Created {} symlink(s)", result.symlinks_created);
-    }
-
     // Save notes if provided
     if let Some(ref notes_content) = req.notes {
         if !notes_content.is_empty() {

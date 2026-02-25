@@ -45,9 +45,9 @@ pub enum GroveError {
     #[error("Not found: {0}")]
     NotFound(String),
 
-    /// 无效数据（预留，暂未使用）
+    /// 无效数据
     #[allow(dead_code)]
-    #[error("Invalid data: {0}")]
+    #[error("{0}")]
     InvalidData(String),
 }
 

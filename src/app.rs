@@ -1297,11 +1297,6 @@ impl App {
             }
         };
 
-        // Log symlinks if any
-        if result.symlinks_created > 0 {
-            eprintln!("Info: Created {} symlink(s)", result.symlinks_created);
-        }
-
         // Phase 2: TUI-specific session creation
         let slug = result.task.id.clone();
         let session = result.task.session_name.clone();

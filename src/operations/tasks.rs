@@ -253,7 +253,6 @@ pub fn archive_task(
 pub struct CreateTaskResult {
     pub task: tasks::Task,
     pub worktree_path: String,
-    pub symlinks_created: usize,
 }
 
 /// Create a new task (worktree + branch + metadata)
@@ -261,10 +260,11 @@ pub struct CreateTaskResult {
 /// # Steps
 ///
 /// 1. Generate identifiers (slug, branch name)
-/// 2. Ensure worktree directory
-/// 3. Create git worktree
-/// 4. Create AutoLink symlinks
-/// 5. Create task record
+/// 2. Check for duplicate task ID (active + archived)
+/// 3. Ensure worktree directory
+/// 4. Create git worktree
+/// 5. Create AutoLink symlinks
+/// 6. Create task record
 ///
 /// # Note
 ///
@@ -273,7 +273,7 @@ pub struct CreateTaskResult {
 ///
 /// # Returns
 ///
-/// `CreateTaskResult` containing task info and symlinks count
+/// `CreateTaskResult` containing task info
 ///
 /// # Example
 ///
@@ -303,10 +303,16 @@ pub fn create_task(
     // 2. Check for duplicate task ID (active + archived)
     let active_tasks = tasks::load_tasks(project_key).unwrap_or_default();
     let archived_tasks = tasks::load_archived_tasks(project_key).unwrap_or_default();
-    if active_tasks.iter().any(|t| t.id == slug) || archived_tasks.iter().any(|t| t.id == slug) {
+    if let Some(existing) = active_tasks.iter().find(|t| t.id == slug) {
         return Err(GroveError::invalid_data(format!(
-            "Task ID '{}' already exists. Please use a different name.",
-            slug
+            "Task '{}' (active) already exists. Please use a different name.",
+            existing.name
+        )));
+    }
+    if let Some(existing) = archived_tasks.iter().find(|t| t.id == slug) {
+        return Err(GroveError::invalid_data(format!(
+            "Task '{}' (archived) already exists. Please use a different name.",
+            existing.name
         )));
     }
 
@@ -332,13 +338,12 @@ pub fn create_task(
 
     // 5. Create AutoLink symlinks
     let main_repo = git::get_main_repo_path(repo_path).unwrap_or_else(|_| repo_path.to_string());
-    let symlinks = git::create_worktree_symlinks(
+    let _ = git::create_worktree_symlinks(
         &worktree_path,
         std::path::Path::new(&main_repo),
         autolink_patterns,
         true, // always check gitignore
-    )
-    .unwrap_or_default();
+    );
 
     // 6. Create task record
     let now = chrono::Utc::now();
@@ -361,7 +366,6 @@ pub fn create_task(
     Ok(CreateTaskResult {
         task,
         worktree_path: worktree_path.to_string_lossy().to_string(),
-        symlinks_created: symlinks.len(),
     })
 }
 
