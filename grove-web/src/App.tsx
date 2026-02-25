@@ -14,6 +14,7 @@ import { DiffReviewPage } from "./components/Review";
 import { SkillsPage } from "./components/Skills";
 import { UpdateBanner } from "./components/ui/UpdateBanner";
 import { ThemeProvider, ProjectProvider, TerminalThemeProvider, NotificationProvider, ConfigProvider, useProject } from "./context";
+import { AuthGate } from "./components/AuthGate";
 import { mockConfig } from "./data/mockData";
 import { getConfig, patchConfig, checkCommands } from "./api";
 import { agentOptions } from "./components/ui";
@@ -348,15 +349,17 @@ function App() {
 
   return (
     <ThemeProvider>
-      <ConfigProvider>
-        <TerminalThemeProvider>
-          <ProjectProvider>
-            <NotificationProvider>
-              <AppContent />
-            </NotificationProvider>
-          </ProjectProvider>
-        </TerminalThemeProvider>
-      </ConfigProvider>
+      <AuthGate>
+        <ConfigProvider>
+          <TerminalThemeProvider>
+            <ProjectProvider>
+              <NotificationProvider>
+                <AppContent />
+              </NotificationProvider>
+            </ProjectProvider>
+          </TerminalThemeProvider>
+        </ConfigProvider>
+      </AuthGate>
     </ThemeProvider>
   );
 }

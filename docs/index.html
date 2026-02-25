@@ -987,6 +987,7 @@
         <div class="toc-item" data-target="ship"><span class="toc-label">Ship</span><span class="toc-dot"></span></div>
         <div class="toc-item" data-target="skills"><span class="toc-label">Skills</span><span class="toc-dot"></span></div>
         <div class="toc-item" data-target="tui"><span class="toc-label">TUI</span><span class="toc-dot"></span></div>
+        <div class="toc-item" data-target="remote"><span class="toc-label">Remote</span><span class="toc-dot"></span></div>
         <div class="toc-item" data-target="explore"><span class="toc-label">Explore</span><span class="toc-dot"></span></div>
         <div class="toc-item" data-target="install"><span class="toc-label">Install</span><span class="toc-dot"></span></div>
     </nav>
@@ -1593,7 +1594,101 @@
 
 
     <!-- ═══════════════════════════════════════════════════
-         SECTION 7 — EXPLORE MORE
+         SECTION 7 — REMOTE ACCESS
+    ═══════════════════════════════════════════════════ -->
+    <section id="remote" class="py-24 md:py-36">
+        <div class="max-w-6xl mx-auto px-6">
+            <!-- Header -->
+            <div class="text-center mb-12">
+                <p class="section-label text-grove-cyan" data-animate>
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3.055 11H5a2 2 0 012 2v1a2 2 0 002 2 2 2 0 012 2v2.945M8 3.935V5.5A2.5 2.5 0 0010.5 8h.5a2 2 0 012 2 2 2 0 104 0 2 2 0 012-2h1.064M15 20.488V18a2 2 0 012-2h3.064M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+                    Remote Access
+                </p>
+                <h2 class="section-title mb-6" data-animate>
+                    Access Grove From<br><span class="text-gradient">Anywhere</span>
+                </h2>
+                <p class="section-desc mx-auto" data-animate>
+                    Run Grove on a Mac Mini at home, then manage your tasks from your phone, tablet, or laptop — anywhere on your network. A QR code is printed in the terminal — scan it to connect instantly.
+                </p>
+            </div>
+
+            <!-- Terminal code block -->
+            <div class="max-w-2xl mx-auto mb-12" data-animate>
+                <div style="background: #0a0a0b; border: 1px solid #27272a; border-radius: 12px; padding: 24px;" class="font-mono text-sm">
+                    <div class="space-y-2">
+                        <div><span class="text-grove-green">$</span><span class="text-grove-text"> grove mobile</span><span class="text-white/25 ml-6"># HMAC-SHA256 auth</span></div>
+                        <div><span class="text-grove-green">$</span><span class="text-grove-text"> grove mobile --tls</span><span class="text-white/25 ml-6"># + self-signed TLS</span></div>
+                        <div><span class="text-grove-green">$</span><span class="text-grove-text"> grove mobile --cert a.pem --key a.key</span><span class="text-white/25 ml-6"># your own certificate</span></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Three security mode cards -->
+            <div class="grid md:grid-cols-3 gap-6 mb-10" data-animate-stagger>
+                <!-- Card 1: HMAC -->
+                <div class="feature-card">
+                    <div class="flex items-center gap-3 mb-4">
+                        <div class="w-8 h-8 rounded-lg flex items-center justify-center" style="background: rgba(6,182,212,0.1);">
+                            <svg class="w-4 h-4 text-grove-cyan" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z"/></svg>
+                        </div>
+                        <h3 class="font-semibold text-grove-text">HMAC Signed</h3>
+                    </div>
+                    <p class="text-grove-muted text-sm leading-relaxed">
+                        The secret key never leaves your device. Every request is independently signed — captured traffic cannot forge new requests. Perfect for trusted home or office networks.
+                    </p>
+                    <div class="mt-4 text-xs font-mono text-grove-cyan/60">Default mode</div>
+                </div>
+
+                <!-- Card 2: Self-signed TLS -->
+                <div class="feature-card">
+                    <div class="flex items-center gap-3 mb-4">
+                        <div class="w-8 h-8 rounded-lg flex items-center justify-center" style="background: rgba(167,139,250,0.1);">
+                            <svg class="w-4 h-4 text-grove-purple" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/></svg>
+                        </div>
+                        <h3 class="font-semibold text-grove-text">TLS Encrypted</h3>
+                    </div>
+                    <p class="text-grove-muted text-sm leading-relaxed">
+                        Adds HTTPS encryption via a self-signed certificate. All traffic is encrypted — no one on the network can read or tamper with it. Use on untrusted networks like coffee shops or shared Wi-Fi.
+                    </p>
+                    <div class="mt-4 text-xs font-mono text-grove-purple/60">--tls flag</div>
+                </div>
+
+                <!-- Card 3: Custom cert -->
+                <div class="feature-card">
+                    <div class="flex items-center gap-3 mb-4">
+                        <div class="w-8 h-8 rounded-lg flex items-center justify-center" style="background: rgba(16,185,129,0.1);">
+                            <svg class="w-4 h-4 text-grove-green" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/></svg>
+                        </div>
+                        <h3 class="font-semibold text-grove-text">Custom Certificate</h3>
+                    </div>
+                    <p class="text-grove-muted text-sm leading-relaxed">
+                        Bring your own domain and CA-signed certificate for the smoothest and most secure experience — full HTTPS with zero browser warnings. Works great with Tailscale, Cloudflare Tunnel, or local DNS.
+                    </p>
+                    <div class="mt-4 text-xs font-mono text-grove-green/60">--cert & --key</div>
+                </div>
+            </div>
+
+            <!-- Inline security features -->
+            <div class="flex flex-wrap items-center justify-center gap-x-8 gap-y-3 text-sm text-grove-muted" data-animate>
+                <span class="flex items-center gap-2">
+                    <span class="w-1.5 h-1.5 rounded-full bg-grove-cyan"></span>
+                    QR Code Connect
+                </span>
+                <span class="flex items-center gap-2">
+                    <span class="w-1.5 h-1.5 rounded-full bg-grove-purple"></span>
+                    HMAC-SHA256 Signatures
+                </span>
+                <span class="flex items-center gap-2">
+                    <span class="w-1.5 h-1.5 rounded-full bg-grove-green"></span>
+                    Nonce Replay Protection
+                </span>
+            </div>
+        </div>
+    </section>
+
+
+    <!-- ═══════════════════════════════════════════════════
+         SECTION 8 — EXPLORE MORE
     ═══════════════════════════════════════════════════ -->
     <section id="explore" class="py-24 md:py-36">
         <div class="max-w-[90rem] mx-auto px-6">
@@ -1759,7 +1854,8 @@
                     <div class="inline-block bg-[#111113] border border-white/6 rounded-lg p-3 font-mono text-sm">
                         <span class="text-grove-green">$</span> cd your-project && grove <span class="text-white/25"># TUI</span><br>
                         <span class="text-grove-green">$</span> cd your-project && grove web <span class="text-white/25"># Web UI</span><br>
-                        <span class="text-grove-green">$</span> cd your-project && grove gui <span class="text-white/25"># Desktop GUI</span>
+                        <span class="text-grove-green">$</span> cd your-project && grove gui <span class="text-white/25"># Desktop GUI</span><br>
+                        <span class="text-grove-green">$</span> cd your-project && grove mobile <span class="text-white/25"># Remote access</span>
                     </div>
                 </div>
 

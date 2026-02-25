@@ -1,8 +1,15 @@
 //! Web server CLI command
 
 use crate::api;
+use crate::api::auth::{self, ServerAuth};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::Arc;
+
+/// Create a ServerAuth with no auth (grove web mode — no auth required)
+fn no_auth() -> Arc<ServerAuth> {
+    Arc::new(ServerAuth::no_auth())
+}
 
 /// Default port for the web server
 pub const DEFAULT_PORT: u16 = 3001;
@@ -95,6 +102,96 @@ pub async fn execute(port: u16, no_open: bool, dev: bool) {
     }
 }
 
+/// Resolve the bind host for `grove mobile`.
+///
+/// Priority: `--host` > `--public` (0.0.0.0) > auto-detected LAN IP > fallback 0.0.0.0
+fn resolve_mobile_host(host: Option<String>, public: bool) -> String {
+    if let Some(h) = host {
+        return h;
+    }
+    if public {
+        return "0.0.0.0".to_string();
+    }
+    // Default: bind to detected LAN IP (more secure than 0.0.0.0)
+    api::get_lan_ip().unwrap_or_else(|| {
+        eprintln!("Warning: could not detect LAN IP, falling back to 0.0.0.0");
+        "0.0.0.0".to_string()
+    })
+}
+
+/// TLS configuration for `start_server`.
+pub enum TlsMode {
+    /// No TLS.
+    Off,
+    /// Auto-generate a self-signed certificate.
+    SelfSigned,
+    /// Use user-provided certificate and key files.
+    Custom { cert: String, key: String },
+}
+
+/// Execute the mobile-friendly web server (LAN-accessible with HMAC-SHA256 auth)
+pub async fn execute_mobile(
+    port: u16,
+    no_open: bool,
+    tls: bool,
+    cert: Option<String>,
+    key: Option<String>,
+    host: Option<String>,
+    public: bool,
+) {
+    let bind_host = resolve_mobile_host(host, public);
+    let sk = auth::generate_secret_key();
+    let auth = Arc::new(ServerAuth::hmac(sk));
+
+    // Determine TLS mode: --cert/--key implies --tls
+    let tls_mode = match (cert, key) {
+        (Some(c), Some(k)) => TlsMode::Custom { cert: c, key: k },
+        _ if tls => TlsMode::SelfSigned,
+        _ => TlsMode::Off,
+    };
+
+    // Check for embedded assets first
+    let has_embedded = api::has_embedded_assets();
+    let static_dir = api::find_static_dir();
+
+    let open_browser = !no_open;
+
+    // If no embedded assets and no external files, try to build
+    if !has_embedded && static_dir.is_none() {
+        if let Some(project_dir) = find_project_dir() {
+            if build_frontend(&project_dir) {
+                let built_dir = project_dir.join("grove-web").join("dist");
+                if let Err(e) = api::start_server(
+                    &bind_host,
+                    port,
+                    Some(built_dir),
+                    open_browser,
+                    auth,
+                    tls_mode,
+                )
+                .await
+                {
+                    eprintln!("Server error: {}", e);
+                    std::process::exit(1);
+                }
+                return;
+            }
+        }
+
+        eprintln!("Could not find or build frontend files.");
+        eprintln!("Please build the frontend first:");
+        eprintln!("  cd grove-web && npm install && npm run build");
+        std::process::exit(1);
+    }
+
+    if let Err(e) =
+        api::start_server(&bind_host, port, static_dir, open_browser, auth, tls_mode).await
+    {
+        eprintln!("Server error: {}", e);
+        std::process::exit(1);
+    }
+}
+
 /// Run in development mode (Vite dev server + API)
 async fn execute_dev_mode(api_port: u16, no_open: bool) {
     let project_dir = find_project_dir();
@@ -154,7 +251,9 @@ async fn execute_dev_mode(api_port: u16, no_open: bool) {
     println!("\nPress Ctrl+C to stop");
 
     // Start API server (blocking) - don't open browser (Vite handles frontend)
-    if let Err(e) = api::start_server(api_port, None, false).await {
+    if let Err(e) =
+        api::start_server("127.0.0.1", api_port, None, false, no_auth(), TlsMode::Off).await
+    {
         eprintln!("API server error: {}", e);
     }
 
@@ -178,7 +277,16 @@ async fn execute_prod_mode(port: u16, no_open: bool) {
         if let Some(project_dir) = find_project_dir() {
             if build_frontend(&project_dir) {
                 let built_dir = project_dir.join("grove-web").join("dist");
-                if let Err(e) = api::start_server(port, Some(built_dir), open_browser).await {
+                if let Err(e) = api::start_server(
+                    "127.0.0.1",
+                    port,
+                    Some(built_dir),
+                    open_browser,
+                    no_auth(),
+                    TlsMode::Off,
+                )
+                .await
+                {
                     eprintln!("Server error: {}", e);
                     std::process::exit(1);
                 }
@@ -194,7 +302,16 @@ async fn execute_prod_mode(port: u16, no_open: bool) {
     }
 
     // Start the server (will use embedded assets if no external static_dir)
-    if let Err(e) = api::start_server(port, static_dir, open_browser).await {
+    if let Err(e) = api::start_server(
+        "127.0.0.1",
+        port,
+        static_dir,
+        open_browser,
+        no_auth(),
+        TlsMode::Off,
+    )
+    .await
+    {
         eprintln!("Server error: {}", e);
         std::process::exit(1);
     }

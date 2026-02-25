@@ -33,6 +33,7 @@ cargo install grove-rs
 cd your-project && grove          # TUI
 cd your-project && grove web      # Web UI (http://localhost:3001)
 cd your-project && grove gui      # Desktop GUI (macOS)
+cd your-project && grove mobile   # Remote access (phone/tablet via LAN)
 ```
 
 ---
@@ -116,8 +117,9 @@ Full-featured web interface embedded in the binary — no separate frontend depl
 ```bash
 grove web                  # Start on port 3001
 grove web --port 8080      # Custom port
-grove web --host 0.0.0.0   # Expose to network
 ```
+
+Binds to `localhost` only — designed for desktop use on the same machine, no authentication required. To access Grove from other devices, use `grove mobile` instead.
 
 ### GUI — `grove gui` (macOS)
 
@@ -140,6 +142,28 @@ Included by default in macOS release binaries. For `cargo install`, enable with 
 | **Builtin Editor** | Edit files, browse the tree, and manage code — all inside Grove's web interface. |
 | **Statistics** | Track tasks shipped, agent activity, and project health at a glance. |
 | **11 Themes** | Dracula, Nord, Gruvbox, Tokyo Night, Catppuccin, and more. Auto dark/light detection. |
+
+---
+
+## Access Grove Remotely
+
+Use `grove mobile` to access Grove from your phone, tablet, or any device on the network. Authentication uses HMAC-SHA256 signatures — the secret key never travels over the wire. Run Grove on a Mac Mini at home, then manage your tasks from anywhere — your laptop, phone, or tablet.
+
+```bash
+grove mobile                    # LAN IP, HMAC auth
+grove mobile --tls              # + self-signed TLS
+grove mobile --cert a.pem --key a.key  # + your own certificate
+grove mobile --public           # bind 0.0.0.0 (all interfaces)
+grove mobile --host 10.0.0.5    # bind specific IP
+```
+
+A QR code is printed in the terminal — scan it to connect instantly with the secret key embedded.
+
+**`grove mobile` (default)** — Every request is signed with HMAC-SHA256. The secret key stays on your devices and is never sent over the network, so captured traffic cannot be used to forge new requests. On a trusted home or office network this is secure and frictionless. However, traffic content is unencrypted (HTTP), meaning someone on the same network *could* see the data in transit. For most private LANs this is a non-issue.
+
+**`grove mobile --tls`** — Adds HTTPS encryption via a self-signed certificate. All traffic is encrypted — no one on the network can read or tamper with it, even on untrusted networks (coffee shops, shared Wi-Fi). The trade-off: your browser will show a certificate warning on first visit, and you'll need to manually trust it (especially painful on iOS). Use this when you don't fully trust the network.
+
+**`grove mobile --cert cert.pem --key key.pem`** — Bring your own domain and CA-signed certificate for the best experience: full HTTPS encryption with no browser warnings. If you have a domain pointing to your machine (e.g. via Tailscale, Cloudflare Tunnel, or local DNS), this is the smoothest and most secure way to access Grove remotely.
 
 ---
 

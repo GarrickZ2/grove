@@ -4,6 +4,7 @@ import { FitAddon } from "@xterm/addon-fit";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import "@xterm/xterm/css/xterm.css";
 import { useTerminalTheme } from "../../../context";
+import { appendHmacToUrl } from "../../../api/client";
 
 interface XTerminalProps {
   /** Task terminal mode: provide projectId and taskId to connect to tmux session */
@@ -51,6 +52,7 @@ export function XTerminal({
   // Initialize terminal and WebSocket
   useEffect(() => {
     if (!containerRef.current) return;
+    let cancelled = false;
 
     // Create terminal with theme from context
     const terminal = new Terminal({
@@ -94,49 +96,14 @@ export function XTerminal({
     let baseUrl: string;
     let isTaskMode = false;
     if (wsUrl) {
-      // Use provided wsUrl
       baseUrl = wsUrl;
     } else if (projectId && taskId) {
-      // Task terminal mode - connect to tmux session
       baseUrl = `${protocol}//${host}/api/v1/projects/${projectId}/tasks/${taskId}/terminal`;
       isTaskMode = true;
     } else {
-      // Simple terminal mode - plain shell
       baseUrl = `${protocol}//${host}/api/v1/terminal`;
       if (cwd) params.set("cwd", cwd);
     }
-
-    const url = `${baseUrl}?${params.toString()}`;
-
-    // Create WebSocket connection
-    const ws = new WebSocket(url);
-    wsRef.current = ws;
-
-    ws.onopen = () => {
-      if (isTaskMode) {
-        terminal.writeln("\x1b[32mConnected to session\x1b[0m");
-      } else {
-        terminal.writeln("\x1b[32mConnected to terminal\x1b[0m");
-      }
-      terminal.writeln("");
-      terminal.focus();
-      onConnectedRef.current?.();
-    };
-
-    ws.onmessage = (event) => {
-      terminal.write(event.data);
-    };
-
-    ws.onclose = () => {
-      terminal.writeln("");
-      terminal.writeln("\x1b[31mDisconnected from terminal\x1b[0m");
-      onDisconnectedRef.current?.();
-    };
-
-    ws.onerror = (error) => {
-      console.error("WebSocket error:", error);
-      terminal.writeln("\x1b[31mWebSocket error\x1b[0m");
-    };
 
     // Prevent Escape from bubbling up and causing terminal to lose focus
     terminal.attachCustomKeyEventHandler((e) => {
@@ -144,13 +111,6 @@ export function XTerminal({
         e.stopPropagation();
       }
       return true; // let xterm handle all keys
-    });
-
-    // Handle terminal input
-    terminal.onData((data) => {
-      if (ws.readyState === WebSocket.OPEN) {
-        ws.send(data);
-      }
     });
 
     // Handle resize with debounce to avoid excessive fits during animations
@@ -182,8 +142,52 @@ export function XTerminal({
     });
     resizeObserver.observe(containerRef.current);
 
+    // Sign the URL (async) then connect WebSocket
+    const connect = async () => {
+      const url = await appendHmacToUrl(`${baseUrl}?${params.toString()}`);
+      if (cancelled) return;
+
+      const ws = new WebSocket(url);
+      wsRef.current = ws;
+
+      ws.onopen = () => {
+        if (isTaskMode) {
+          terminal.writeln("\x1b[32mConnected to session\x1b[0m");
+        } else {
+          terminal.writeln("\x1b[32mConnected to terminal\x1b[0m");
+        }
+        terminal.writeln("");
+        terminal.focus();
+        onConnectedRef.current?.();
+      };
+
+      ws.onmessage = (event) => {
+        terminal.write(event.data);
+      };
+
+      ws.onclose = () => {
+        terminal.writeln("");
+        terminal.writeln("\x1b[31mDisconnected from terminal\x1b[0m");
+        onDisconnectedRef.current?.();
+      };
+
+      ws.onerror = (error) => {
+        console.error("WebSocket error:", error);
+        terminal.writeln("\x1b[31mWebSocket error\x1b[0m");
+      };
+
+      // Handle terminal input
+      terminal.onData((data) => {
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.send(data);
+        }
+      });
+    };
+    connect();
+
     // Cleanup
     return () => {
+      cancelled = true;
       resizeObserver.disconnect();
       if (wsRef.current) {
         wsRef.current.close();

@@ -67,6 +67,30 @@ pub enum Commands {
         #[arg(long, default_value = ".")]
         cwd: String,
     },
+    /// Start the mobile-friendly web server (LAN-accessible with HMAC-SHA256 auth)
+    Mobile {
+        /// Port to listen on
+        #[arg(short, long, default_value_t = web::DEFAULT_PORT)]
+        port: u16,
+        /// Don't automatically open browser
+        #[arg(long)]
+        no_open: bool,
+        /// Enable TLS (auto-generates self-signed cert if --cert/--key not provided)
+        #[arg(long)]
+        tls: bool,
+        /// Path to TLS certificate file (PEM). Implies --tls
+        #[arg(long, requires = "key")]
+        cert: Option<String>,
+        /// Path to TLS private key file (PEM). Implies --tls
+        #[arg(long, requires = "cert")]
+        key: Option<String>,
+        /// Bind to a specific host address (default: auto-detected LAN IP)
+        #[arg(long)]
+        host: Option<String>,
+        /// Bind to 0.0.0.0 (all interfaces)
+        #[arg(long)]
+        public: bool,
+    },
     /// Migrate storage to the latest format (v1.1 with task_modes)
     Migrate {
         /// Show what would be done without making changes
