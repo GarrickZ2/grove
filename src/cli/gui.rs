@@ -24,7 +24,7 @@ pub async fn execute(port: u16) {
     let server_ready_clone = server_ready.clone();
 
     // Bind to a port (with auto-fallback if in use)
-    let (listener, actual_port) = match api::bind_with_fallback(port, 10).await {
+    let (listener, actual_port) = match api::bind_with_fallback("127.0.0.1", port, 10).await {
         Ok(result) => result,
         Err(e) => {
             eprintln!("Failed to bind to port: {}", e);
@@ -43,7 +43,8 @@ pub async fn execute(port: u16) {
         // Initialize FileWatchers for all live tasks
         api::init_file_watchers();
 
-        let app = api::create_router(None);
+        let auth = std::sync::Arc::new(api::auth::ServerAuth::no_auth());
+        let app = api::create_router(None, auth);
 
         // Signal that server is ready
         server_ready_clone.store(true, Ordering::SeqCst);

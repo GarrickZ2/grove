@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.3] - 2026-02-25
+
+### Added
+
+- **Remote access (`grove mobile`)** — access Grove from your phone, tablet, or any device on the network
+  - HMAC-SHA256 request signing — secret key never travels over the wire, each request independently signed with timestamp + nonce
+  - Nonce-based replay prevention with ±60s timestamp window
+  - `--tls` flag for self-signed certificate HTTPS encryption
+  - `--cert`/`--key` flags for user-provided CA-signed certificates
+  - `--host` flag to bind to a specific address, `--public` to bind to all interfaces
+  - QR code printed in terminal — scan to connect instantly with embedded secret key
+  - AuthGate component for secret key extraction and HMAC verification
+  - Pure JS SHA-256 fallback for HTTP non-localhost contexts where Web Crypto API is unavailable
+- **Docs: "Access Remotely" section** — added to landing page and README with security mode explanations
+
 ## [0.7.2] - 2026-02-24
 
 ### Added
