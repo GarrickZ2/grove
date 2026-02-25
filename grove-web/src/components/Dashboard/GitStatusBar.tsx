@@ -10,6 +10,7 @@ import {
   ArrowUpDown,
 } from "lucide-react";
 import { Tooltip } from "../ui";
+import { useIsMobile } from "../../hooks";
 import type { RepoStatus } from "../../data/types";
 
 interface GitStatusBarProps {
@@ -33,6 +34,7 @@ export function GitStatusBar({
 }: GitStatusBarProps) {
   const hasChanges = status.staged + status.unstaged + status.untracked > 0;
   const hasStagedChanges = status.staged > 0 || status.unstaged > 0;
+  const { isMobile } = useIsMobile();
 
   // Determine sync status
   const getSyncColor = () => {
@@ -52,66 +54,106 @@ export function GitStatusBar({
 
   return (
     <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)] p-4">
-      <div className="flex items-center justify-between gap-4">
-        {/* Left: Status Cards */}
-        <div className="flex items-center gap-3">
+      <div className={`flex gap-4 ${isMobile ? "flex-col" : "items-center justify-between"}`}>
+        {/* Status Cards */}
+        <div className={`flex gap-3 ${isMobile ? "flex-col" : "items-center"}`}>
           {/* Branch Card */}
           <motion.button
             whileHover={{ scale: 1.02 }}
             whileTap={{ scale: 0.98 }}
             onClick={onSwitchBranch}
-            className="flex items-center gap-3 px-4 py-2.5 rounded-lg bg-[var(--color-bg)] border border-[var(--color-border)] hover:border-[var(--color-highlight)] transition-colors group"
+            className="flex items-center gap-3 px-4 py-2.5 rounded-lg bg-[var(--color-bg)] border border-[var(--color-border)] hover:border-[var(--color-highlight)] transition-colors group min-w-0"
           >
-            <div className="w-8 h-8 rounded-lg bg-[var(--color-highlight)]/15 flex items-center justify-center">
+            <div className="w-8 h-8 rounded-lg bg-[var(--color-highlight)]/15 flex items-center justify-center flex-shrink-0">
               <GitBranch className="w-4 h-4 text-[var(--color-highlight)]" />
             </div>
-            <div className="text-left">
-              <div className="text-sm font-semibold text-[var(--color-highlight)]">
+            <div className="text-left min-w-0">
+              <div className="text-sm font-semibold text-[var(--color-highlight)] truncate">
                 {status.currentBranch}
               </div>
               <div className="text-xs text-[var(--color-text-muted)]">Current</div>
             </div>
-            <ChevronRight className="w-4 h-4 text-[var(--color-text-muted)] group-hover:text-[var(--color-highlight)] transition-colors" />
+            <ChevronRight className="w-4 h-4 text-[var(--color-text-muted)] group-hover:text-[var(--color-highlight)] transition-colors flex-shrink-0" />
           </motion.button>
 
-          {/* Sync Status Card */}
-          <div className="flex items-center gap-3 px-4 py-2.5 rounded-lg bg-[var(--color-bg)] border border-[var(--color-border)]">
-            <div
-              className="w-8 h-8 rounded-lg flex items-center justify-center"
-              style={{ backgroundColor: `color-mix(in srgb, ${getSyncColor()} 15%, transparent)` }}
-            >
-              <ArrowUpDown className="w-4 h-4" style={{ color: getSyncColor() }} />
-            </div>
-            <div>
-              <div className="text-sm font-semibold flex items-center gap-1.5" style={{ color: getSyncColor() }}>
-                <span>↑{status.ahead}</span>
-                <span>↓{status.behind}</span>
-              </div>
-              <div className="text-xs text-[var(--color-text-muted)]">{getSyncLabel()}</div>
-            </div>
-          </div>
-
-          {/* Uncommitted Changes Card */}
-          {hasChanges && (
-            <div className="flex items-center gap-3 px-4 py-2.5 rounded-lg bg-[var(--color-bg)] border border-[var(--color-border)]">
-              <div
-                className="w-8 h-8 rounded-lg flex items-center justify-center"
-                style={{ backgroundColor: "color-mix(in srgb, var(--color-warning) 15%, transparent)" }}
-              >
-                <FileEdit className="w-4 h-4" style={{ color: "var(--color-warning)" }} />
-              </div>
-              <div>
-                <div className="text-sm font-semibold" style={{ color: "var(--color-warning)" }}>
-                  {status.unstaged} files
+          {/* Sync + Uncommitted row */}
+          {isMobile ? (
+            <div className="flex items-center gap-3">
+              {/* Sync Status Card */}
+              <div className="flex items-center gap-3 px-4 py-2.5 rounded-lg bg-[var(--color-bg)] border border-[var(--color-border)] flex-1">
+                <div
+                  className="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0"
+                  style={{ backgroundColor: `color-mix(in srgb, ${getSyncColor()} 15%, transparent)` }}
+                >
+                  <ArrowUpDown className="w-4 h-4" style={{ color: getSyncColor() }} />
                 </div>
-                <div className="text-xs text-[var(--color-text-muted)]">Uncommitted</div>
+                <div>
+                  <div className="text-sm font-semibold flex items-center gap-1.5" style={{ color: getSyncColor() }}>
+                    <span>↑{status.ahead}</span>
+                    <span>↓{status.behind}</span>
+                  </div>
+                  <div className="text-xs text-[var(--color-text-muted)]">{getSyncLabel()}</div>
+                </div>
               </div>
+              {/* Uncommitted Changes Card */}
+              {hasChanges && (
+                <div className="flex items-center gap-3 px-4 py-2.5 rounded-lg bg-[var(--color-bg)] border border-[var(--color-border)] flex-1">
+                  <div
+                    className="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0"
+                    style={{ backgroundColor: "color-mix(in srgb, var(--color-warning) 15%, transparent)" }}
+                  >
+                    <FileEdit className="w-4 h-4" style={{ color: "var(--color-warning)" }} />
+                  </div>
+                  <div>
+                    <div className="text-sm font-semibold" style={{ color: "var(--color-warning)" }}>
+                      {status.unstaged} files
+                    </div>
+                    <div className="text-xs text-[var(--color-text-muted)]">Uncommitted</div>
+                  </div>
+                </div>
+              )}
             </div>
+          ) : (
+            <>
+              {/* Sync Status Card */}
+              <div className="flex items-center gap-3 px-4 py-2.5 rounded-lg bg-[var(--color-bg)] border border-[var(--color-border)]">
+                <div
+                  className="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0"
+                  style={{ backgroundColor: `color-mix(in srgb, ${getSyncColor()} 15%, transparent)` }}
+                >
+                  <ArrowUpDown className="w-4 h-4" style={{ color: getSyncColor() }} />
+                </div>
+                <div>
+                  <div className="text-sm font-semibold flex items-center gap-1.5" style={{ color: getSyncColor() }}>
+                    <span>↑{status.ahead}</span>
+                    <span>↓{status.behind}</span>
+                  </div>
+                  <div className="text-xs text-[var(--color-text-muted)]">{getSyncLabel()}</div>
+                </div>
+              </div>
+              {/* Uncommitted Changes Card */}
+              {hasChanges && (
+                <div className="flex items-center gap-3 px-4 py-2.5 rounded-lg bg-[var(--color-bg)] border border-[var(--color-border)]">
+                  <div
+                    className="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0"
+                    style={{ backgroundColor: "color-mix(in srgb, var(--color-warning) 15%, transparent)" }}
+                  >
+                    <FileEdit className="w-4 h-4" style={{ color: "var(--color-warning)" }} />
+                  </div>
+                  <div>
+                    <div className="text-sm font-semibold" style={{ color: "var(--color-warning)" }}>
+                      {status.unstaged} files
+                    </div>
+                    <div className="text-xs text-[var(--color-text-muted)]">Uncommitted</div>
+                  </div>
+                </div>
+              )}
+            </>
           )}
         </div>
 
-        {/* Right: Actions */}
-        <div className="flex items-center gap-1.5">
+        {/* Actions */}
+        <div className={`flex items-center gap-1.5 ${isMobile ? "flex-wrap" : ""}`}>
           <ActionButton
             icon={ArrowDown}
             label="Pull"

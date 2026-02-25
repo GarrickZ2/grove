@@ -1,5 +1,6 @@
 import { motion } from "framer-motion";
-import { Circle, CheckCircle, AlertTriangle, XCircle, Archive } from "lucide-react";
+import { Circle, CheckCircle, AlertTriangle, XCircle, Archive, MoreVertical } from "lucide-react";
+import { useIsMobile } from "../../../hooks";
 import type { Task, TaskStatus } from "../../../data/types";
 
 interface TaskListItemProps {
@@ -85,15 +86,18 @@ function getStatusConfig(status: TaskStatus): {
 export function TaskListItem({ task, isSelected, onClick, onDoubleClick, onContextMenu, notification }: TaskListItemProps) {
   const statusConfig = getStatusConfig(task.status);
   const StatusIcon = statusConfig.icon;
+  const { isMobile, isTouchDevice } = useIsMobile();
 
   return (
     <motion.button
       data-task-id={task.id}
-      whileHover={{ backgroundColor: "var(--color-bg-tertiary)" }}
+      whileHover={isTouchDevice ? undefined : { backgroundColor: "var(--color-bg-tertiary)" }}
       onClick={onClick}
-      onDoubleClick={task.status !== "archived" ? onDoubleClick : undefined}
-      onContextMenu={onContextMenu}
+      onDoubleClick={!isMobile && task.status !== "archived" ? onDoubleClick : undefined}
+      onContextMenu={!isTouchDevice ? onContextMenu : undefined}
       className={`w-full text-left px-3 py-2.5 transition-colors ${
+        isMobile ? "py-3" : ""
+      } ${
         isSelected
           ? "bg-[var(--color-bg-tertiary)] border-l-2 border-l-[var(--color-highlight)]"
           : "border-l-2 border-l-transparent"
@@ -136,9 +140,24 @@ export function TaskListItem({ task, isSelected, onClick, onDoubleClick, onConte
                 />
               )}
             </div>
-            <span className="text-xs text-[var(--color-text-muted)] whitespace-nowrap flex-shrink-0">
-              {formatTimeAgo(task.updatedAt)}
-            </span>
+            <div className="flex items-center gap-1 flex-shrink-0">
+              <span className="text-xs text-[var(--color-text-muted)] whitespace-nowrap">
+                {formatTimeAgo(task.updatedAt)}
+              </span>
+              {/* Mobile: three-dot menu button */}
+              {isTouchDevice && onContextMenu && (
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onContextMenu(e);
+                  }}
+                  className="p-1 -mr-1 rounded text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-bg-secondary)] transition-colors"
+                  aria-label="Task actions"
+                >
+                  <MoreVertical className="w-4 h-4" />
+                </button>
+              )}
+            </div>
           </div>
 
           <div className="flex items-center gap-2 mt-1">

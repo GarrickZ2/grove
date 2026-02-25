@@ -29,6 +29,38 @@ body {
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  overscroll-behavior: contain;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* Non-desktop: prevent horizontal overflow */
+@media (max-width: 1199px) {
+  #root {
+    overflow-x: hidden;
+  }
+
+  /* Disable pull-to-refresh on mobile */
+  body {
+    overscroll-behavior-y: contain;
+  }
+
+  /* Better touch scrolling */
+  .overflow-y-auto,
+  .overflow-auto {
+    -webkit-overflow-scrolling: touch;
+  }
+
+  /* F1: Ensure minimum touch target size (44px) for standalone action buttons.
+     Only apply to buttons that are direct children of common action containers,
+     not to all buttons (which would bloat small icon buttons and toolbar items). */
+  button {
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  /* F2: Ensure minimum font size on mobile (prevent text-[10px]) */
+  .text-\[10px\] {
+    font-size: 11px;
+  }
 }
 
 #root {

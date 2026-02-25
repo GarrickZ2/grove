@@ -30,7 +30,7 @@ import {
 import { Button, MarkdownRenderer, agentOptions, FileMentionDropdown } from "../../ui";
 import { buildMentionItems, filterMentionItems } from "../../../utils/fileMention";
 import type { Task } from "../../../data/types";
-import { getApiHost } from "../../../api/client";
+import { getApiHost, appendHmacToUrl } from "../../../api/client";
 import { getConfig, listChats, createChat, updateChatTitle, deleteChat, getTaskFiles, checkCommands } from "../../../api";
 import type { ChatSessionResponse, CustomAgent } from "../../../api";
 
@@ -545,12 +545,12 @@ export function TaskChat({
   // ─── Per-chat WebSocket management ─────────────────────────────────────
 
   /** Connect a WebSocket for a given chat ID (idempotent) */
-  const connectChatWs = useCallback((chatId: string) => {
+  const connectChatWs = useCallback(async (chatId: string) => {
     if (wsMapRef.current.has(chatId)) return; // Already connected
 
     const host = getApiHost();
     const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-    const url = `${protocol}//${host}/api/v1/projects/${projectId}/tasks/${task.id}/chats/${chatId}/ws`;
+    const url = await appendHmacToUrl(`${protocol}//${host}/api/v1/projects/${projectId}/tasks/${task.id}/chats/${chatId}/ws`);
 
     const ws = new WebSocket(url);
     wsMapRef.current.set(chatId, ws);
@@ -604,8 +604,10 @@ export function TaskChat({
   // Connect WebSocket when activeChatId changes
   useEffect(() => {
     if (!activeChatId) return;
-    connectChatWs(activeChatId);
-    wsRef.current = wsMapRef.current.get(activeChatId) ?? null;
+    (async () => {
+      await connectChatWs(activeChatId);
+      wsRef.current = wsMapRef.current.get(activeChatId) ?? null;
+    })();
   }, [activeChatId, connectChatWs]);
 
   // Cleanup all WebSockets on unmount
@@ -921,14 +923,14 @@ export function TaskChat({
 
   // ─── Chat switching ────────────────────────────────────────────────────
 
-  const switchChat = useCallback((chatId: string) => {
+  const switchChat = useCallback(async (chatId: string) => {
     if (chatId === activeChatId) return;
     saveCurrentChatState();
     setActiveChatId(chatId);
     restoreChatState(chatId);
     setShowChatMenu(false);
     // Connect WS if needed
-    connectChatWs(chatId);
+    await connectChatWs(chatId);
     wsRef.current = wsMapRef.current.get(chatId) ?? null;
   }, [activeChatId, saveCurrentChatState, restoreChatState, connectChatWs]);
 

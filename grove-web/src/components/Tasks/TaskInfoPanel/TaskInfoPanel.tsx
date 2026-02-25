@@ -24,6 +24,7 @@ import { Button, DropdownMenu } from "../../ui";
 import type { Task } from "../../../data/types";
 import { StatsTab, GitTab, NotesTab, CommentsTab } from "./tabs";
 import { useConfig } from "../../../context";
+import { useIsMobile } from "../../../hooks";
 import type { PanelType } from "../PanelSystem/types";
 
 interface TaskInfoPanelProps {
@@ -85,6 +86,7 @@ export function TaskInfoPanel({
   onAddPanel,
 }: TaskInfoPanelProps) {
   const { config, terminalAvailable, chatAvailable } = useConfig();
+  const { isMobile } = useIsMobile();
   const isArchived = task.status === "archived";
   const isBroken = task.status === "broken";
   const canOperate = !isArchived && !isBroken;
@@ -281,9 +283,97 @@ export function TaskInfoPanel({
                 </Button>
               )}
             </>
+          ) : isMobile ? (
+            /* Mobile: dropdown + standalone Workspace button */
+            <>
+              <DropdownMenu
+                trigger={<MoreHorizontal className="w-4 h-4" />}
+                items={[
+                  ...(onAddPanel && config?.enable_chat ? [{
+                    id: "chat",
+                    label: "Chat",
+                    icon: MessageSquare,
+                    onClick: () => onAddPanel('chat'),
+                    disabled: !chatAvailable,
+                  }] : []),
+                  ...(onAddPanel && config?.enable_terminal ? [{
+                    id: "terminal",
+                    label: "Terminal",
+                    icon: Terminal,
+                    onClick: () => onAddPanel('terminal'),
+                    disabled: !terminalAvailable,
+                  }] : []),
+                  ...(onAddPanel ? [
+                    { id: "review", label: "Review", icon: Code, onClick: () => onAddPanel('review') },
+                    { id: "editor", label: "Editor", icon: FileCode, onClick: () => onAddPanel('editor') },
+                  ] : []),
+                  ...(onCommit ? [{
+                    id: "commit",
+                    label: "Commit",
+                    icon: GitCommit,
+                    onClick: onCommit,
+                    disabled: isArchived,
+                  }] : []),
+                  ...(onRebase ? [{
+                    id: "rebase",
+                    label: "Rebase",
+                    icon: GitBranchPlus,
+                    onClick: onRebase,
+                    disabled: !canOperate,
+                  }] : []),
+                  ...(onSync ? [{
+                    id: "sync",
+                    label: "Sync",
+                    icon: RefreshCw,
+                    onClick: onSync,
+                    disabled: !canOperate,
+                  }] : []),
+                  ...(onMerge ? [{
+                    id: "merge",
+                    label: "Merge",
+                    icon: GitMerge,
+                    onClick: onMerge,
+                    disabled: !canOperate,
+                  }] : []),
+                  ...(onArchive ? [{
+                    id: "archive",
+                    label: "Archive",
+                    icon: Archive,
+                    onClick: onArchive,
+                    variant: "warning" as const,
+                    disabled: isBroken,
+                  }] : []),
+                  ...(onReset ? [{
+                    id: "reset",
+                    label: "Reset",
+                    icon: RotateCcw,
+                    onClick: onReset,
+                    variant: "warning" as const,
+                    disabled: isArchived,
+                  }] : []),
+                  ...(onClean ? [{
+                    id: "clean",
+                    label: "Clean",
+                    icon: Trash2,
+                    onClick: onClean,
+                    variant: "danger" as const,
+                  }] : []),
+                ]}
+              />
+              {onEnterWorkspace && (
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={onEnterWorkspace}
+                >
+                  <ChevronRight className="w-4 h-4 mr-1" />
+                  Workspace
+                </Button>
+              )}
+            </>
           ) : (
             <>
-              {/* 按钮新顺序: Chat Terminal | Review Editor | Commit Rebase Sync Merge | ... (dropdown) | Workspace */}
+              {/* Desktop: 按钮新顺序: Chat Terminal | Review Editor | Commit Rebase Sync Merge | ... (dropdown) | Workspace */}
 
               {/* Chat 按钮（仅当全局启用 Chat 时显示） */}
               {onAddPanel && config?.enable_chat && (

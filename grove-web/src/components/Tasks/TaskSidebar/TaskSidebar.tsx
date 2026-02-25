@@ -17,6 +17,8 @@ interface TaskSidebarProps {
   onContextMenuTask?: (task: Task, e: React.MouseEvent) => void;
   onFilterChange: (filter: TaskFilter) => void;
   onSearchChange: (query: string) => void;
+  /** When true, take full width (mobile list view) */
+  fullWidth?: boolean;
 }
 
 export function TaskSidebar({
@@ -31,11 +33,12 @@ export function TaskSidebar({
   onContextMenuTask,
   onFilterChange,
   onSearchChange,
+  fullWidth,
 }: TaskSidebarProps) {
   const { getTaskNotification, dismissNotification } = useNotifications();
 
   return (
-    <div className="h-full flex flex-col rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)] overflow-hidden">
+    <div className={`h-full flex flex-col rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)] overflow-hidden ${fullWidth ? "w-full" : ""}`}>
       {/* Search */}
       <div className="p-3 border-b border-[var(--color-border)]">
         <TaskSearch value={searchQuery} onChange={onSearchChange} inputRef={searchInputRef} />

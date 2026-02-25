@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { X } from "lucide-react";
 import { KeyBadge } from "../ui";
+import { useIsMobile } from "../../hooks";
 
 interface HelpOverlayProps {
   isOpen: boolean;
@@ -61,6 +62,8 @@ const SHORTCUT_GROUPS: ShortcutGroup[] = [
 ];
 
 export function HelpOverlay({ isOpen, onClose }: HelpOverlayProps) {
+  const { isMobile } = useIsMobile();
+
   useEffect(() => {
     if (!isOpen) return;
     const handler = (e: KeyboardEvent) => {
@@ -88,13 +91,22 @@ export function HelpOverlay({ isOpen, onClose }: HelpOverlayProps) {
 
           {/* Card */}
           <motion.div
-            initial={{ opacity: 0, scale: 0.95, y: 20 }}
-            animate={{ opacity: 1, scale: 1, y: 0 }}
-            exit={{ opacity: 0, scale: 0.95, y: 20 }}
-            transition={{ duration: 0.2 }}
-            className="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-[100] w-full max-w-lg max-h-[80vh] overflow-y-auto"
+            initial={isMobile ? { y: "100%" } : { opacity: 0, scale: 0.95, y: 20 }}
+            animate={isMobile ? { y: 0 } : { opacity: 1, scale: 1, y: 0 }}
+            exit={isMobile ? { y: "100%" } : { opacity: 0, scale: 0.95, y: 20 }}
+            transition={isMobile ? { type: "spring", damping: 30, stiffness: 300 } : { duration: 0.2 }}
+            className={isMobile
+              ? "fixed inset-x-0 bottom-0 z-[100] max-h-[85vh] overflow-y-auto"
+              : "fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-[100] w-full max-w-lg max-h-[80vh] overflow-y-auto"
+            }
           >
-            <div className="bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-xl shadow-xl overflow-hidden">
+            <div className={`bg-[var(--color-bg-secondary)] border border-[var(--color-border)] ${isMobile ? "rounded-t-2xl" : "rounded-xl"} shadow-xl overflow-hidden`}>
+              {/* Mobile drag indicator */}
+              {isMobile && (
+                <div className="flex justify-center pt-3 pb-1">
+                  <div className="w-10 h-1 rounded-full bg-[var(--color-border)]" />
+                </div>
+              )}
               {/* Header */}
               <div className="flex items-center justify-between px-5 py-3 border-b border-[var(--color-border)] sticky top-0 bg-[var(--color-bg-secondary)] z-10">
                 <h2 className="text-base font-semibold text-[var(--color-text)]">

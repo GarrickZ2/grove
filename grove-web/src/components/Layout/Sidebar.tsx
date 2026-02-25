@@ -39,22 +39,28 @@ interface SidebarProps {
   tasksMode: TasksMode;
   onTasksModeChange: (mode: TasksMode) => void;
   onProjectSwitch?: () => void;
+  /** When true, renders sidebar content without the outer motion.aside wrapper (for use inside MobileDrawer) */
+  drawerMode?: boolean;
+  /** Called when an item is clicked in drawer mode so the drawer can close */
+  onDrawerClose?: () => void;
 }
 
-export function Sidebar({ activeItem, onItemClick, collapsed, onToggleCollapse, onManageProjects, onAddProject, onNavigate, tasksMode, onTasksModeChange, onProjectSwitch }: SidebarProps) {
+export function Sidebar({ activeItem, onItemClick, collapsed, onToggleCollapse, onManageProjects, onAddProject, onNavigate, tasksMode, onTasksModeChange, onProjectSwitch, drawerMode, onDrawerClose }: SidebarProps) {
   const [notifOpen, setNotifOpen] = useState(false);
   const { unreadCount } = useNotifications();
 
-  return (
-    <motion.aside
-      initial={false}
-      animate={{ width: collapsed ? 72 : 256 }}
-      transition={{ duration: 0.2, ease: "easeInOut" }}
-      className="h-screen bg-[var(--color-bg)] border-r border-[var(--color-border)] flex flex-col flex-shrink-0"
-    >
+  const isCollapsed = drawerMode ? false : collapsed;
+
+  const handleItemClick = (id: string) => {
+    onItemClick(id);
+    onDrawerClose?.();
+  };
+
+  const content = (
+    <>
       {/* Logo + Mode Brand */}
       <div className="p-4">
-        {collapsed ? (
+        {isCollapsed ? (
           <button
             onClick={() => onTasksModeChange(tasksMode === "zen" ? "blitz" : "zen")}
             className="flex items-center justify-center"
@@ -72,7 +78,7 @@ export function Sidebar({ activeItem, onItemClick, collapsed, onToggleCollapse, 
 
       {/* Project Selector */}
       <div className="relative border-b border-[var(--color-border)]">
-        <ProjectSelector collapsed={collapsed} onManageProjects={onManageProjects} onAddProject={onAddProject} onProjectSwitch={onProjectSwitch} />
+        <ProjectSelector collapsed={isCollapsed} onManageProjects={() => { onManageProjects(); onDrawerClose?.(); }} onAddProject={() => { onAddProject?.(); onDrawerClose?.(); }} onProjectSwitch={onProjectSwitch} />
       </div>
 
       {/* Navigation */}
@@ -83,8 +89,8 @@ export function Sidebar({ activeItem, onItemClick, collapsed, onToggleCollapse, 
               key={item.id}
               item={item}
               isActive={activeItem === item.id}
-              onClick={() => onItemClick(item.id)}
-              collapsed={collapsed}
+              onClick={() => handleItemClick(item.id)}
+              collapsed={isCollapsed}
             />
           ))}
         </div>
@@ -95,12 +101,12 @@ export function Sidebar({ activeItem, onItemClick, collapsed, onToggleCollapse, 
         {/* Notification Bell */}
         <div className="relative">
           <motion.button
-            whileHover={{ x: collapsed ? 0 : 2 }}
+            whileHover={{ x: isCollapsed ? 0 : 2 }}
             whileTap={{ scale: 0.98 }}
             onClick={() => setNotifOpen(!notifOpen)}
-            title={collapsed ? "Notifications" : undefined}
+            title={isCollapsed ? "Notifications" : undefined}
             className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-colors duration-150
-              ${collapsed ? "justify-center" : ""}
+              ${isCollapsed ? "justify-center" : ""}
               ${notifOpen
                 ? "bg-[var(--color-highlight)]/10 text-[var(--color-highlight)]"
                 : "text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-bg-secondary)]"
@@ -114,7 +120,7 @@ export function Sidebar({ activeItem, onItemClick, collapsed, onToggleCollapse, 
                 </span>
               )}
             </div>
-            {!collapsed && <span className="flex-1 text-left">Notifications</span>}
+            {!isCollapsed && <span className="flex-1 text-left">Notifications</span>}
           </motion.button>
 
           <NotificationPopover
@@ -127,27 +133,45 @@ export function Sidebar({ activeItem, onItemClick, collapsed, onToggleCollapse, 
         <NavButton
           item={{ id: "settings", label: "Settings", icon: Settings }}
           isActive={activeItem === "settings"}
-          onClick={() => onItemClick("settings")}
-          collapsed={collapsed}
+          onClick={() => handleItemClick("settings")}
+          collapsed={isCollapsed}
         />
 
-        {/* Collapse Toggle */}
-        <motion.button
-          whileHover={{ scale: 1.02 }}
-          whileTap={{ scale: 0.98 }}
-          onClick={onToggleCollapse}
-          className="w-full flex items-center justify-center gap-3 px-3 py-2.5 mt-1 rounded-xl text-sm font-medium text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-bg-secondary)] transition-colors"
-        >
-          {collapsed ? (
-            <ChevronRight className="w-4 h-4" />
-          ) : (
-            <>
-              <ChevronLeft className="w-4 h-4" />
-              <span className="flex-1 text-left">Collapse</span>
-            </>
-          )}
-        </motion.button>
+        {/* Collapse Toggle — hidden in drawer mode */}
+        {!drawerMode && (
+          <motion.button
+            whileHover={{ scale: 1.02 }}
+            whileTap={{ scale: 0.98 }}
+            onClick={onToggleCollapse}
+            className="w-full flex items-center justify-center gap-3 px-3 py-2.5 mt-1 rounded-xl text-sm font-medium text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-bg-secondary)] transition-colors"
+          >
+            {collapsed ? (
+              <ChevronRight className="w-4 h-4" />
+            ) : (
+              <>
+                <ChevronLeft className="w-4 h-4" />
+                <span className="flex-1 text-left">Collapse</span>
+              </>
+            )}
+          </motion.button>
+        )}
       </div>
+    </>
+  );
+
+  // In drawer mode, content is rendered inside MobileDrawer — no wrapper needed
+  if (drawerMode) {
+    return <>{content}</>;
+  }
+
+  return (
+    <motion.aside
+      initial={false}
+      animate={{ width: collapsed ? 72 : 256 }}
+      transition={{ duration: 0.2, ease: "easeInOut" }}
+      className="h-screen bg-[var(--color-bg)] border-r border-[var(--color-border)] flex flex-col flex-shrink-0"
+    >
+      {content}
     </motion.aside>
   );
 }
