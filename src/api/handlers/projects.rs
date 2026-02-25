@@ -284,7 +284,8 @@ pub async fn get_project(Path(id): Path<String>) -> Result<Json<ProjectResponse>
     all_tasks.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
 
     // Get current branch
-    let current_branch = git::current_branch(&project.path).unwrap_or_else(|_| "main".to_string());
+    let current_branch =
+        git::current_branch(&project.path).unwrap_or_else(|_| "unknown".to_string());
 
     Ok(Json(ProjectResponse {
         id,
@@ -334,7 +335,7 @@ pub async fn add_project(
 
     // Return the new project
     let id = workspace::project_hash(&repo_path);
-    let current_branch = git::current_branch(&repo_path).unwrap_or_else(|_| "main".to_string());
+    let current_branch = git::current_branch(&repo_path).unwrap_or_else(|_| "unknown".to_string());
 
     Ok(Json(ProjectResponse {
         id,
@@ -430,7 +431,7 @@ pub async fn get_branches(
     let project = find_project_by_id(&id)?;
 
     // Get current branch
-    let current = git::current_branch(&project.path).unwrap_or_else(|_| "main".to_string());
+    let current = git::current_branch(&project.path).unwrap_or_else(|_| "unknown".to_string());
 
     // Get Grove-managed branches from tasks (to filter them out)
     let project_key = workspace::project_hash(&project.path);
