@@ -30,11 +30,15 @@ cargo install grove-rs
 
 **Run:**
 ```bash
-cd your-project && grove          # TUI
-cd your-project && grove web      # Web UI (http://localhost:3001)
-cd your-project && grove gui      # Desktop GUI (macOS)
-cd your-project && grove mobile   # Remote access (phone/tablet via LAN)
+cd your-project
+grove          # Resumes last mode (TUI on first run)
+grove tui      # TUI
+grove web      # Web UI (http://localhost:3001)
+grove gui      # Desktop GUI (macOS)
+grove mobile   # Remote access (phone/tablet via LAN)
 ```
+
+Running `grove` without arguments launches the last mode you used. First time? It starts the TUI. After `grove web --port 8080`, the next `grove` reopens the web UI on port 8080.
 
 ---
 
@@ -89,7 +93,7 @@ Browse a library of skills, install with one click, and every agent gets smarter
 
 ## Three Interfaces
 
-### TUI — `grove`
+### TUI — `grove tui`
 
 Keyboard-first terminal interface. Create tasks, write specs, launch agents, and ship — all without leaving your terminal.
 

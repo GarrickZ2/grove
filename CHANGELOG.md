@@ -19,6 +19,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - AuthGate component for secret key extraction and HMAC verification
   - Pure JS SHA-256 fallback for HTTP non-localhost contexts where Web Crypto API is unavailable
 - **Docs: "Access Remotely" section** — added to landing page and README with security mode explanations
+- **`grove tui` subcommand** — explicit command to launch the TUI, same as previous `grove` (no args) behavior
+- **Smart launch mode resume** — `grove` (no args) now replays the last used launch mode (`tui`/`web`/`gui`/`mobile`) with all its arguments; defaults to TUI on first run
 
 ## [0.7.2] - 2026-02-24
 
