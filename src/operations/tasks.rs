@@ -317,7 +317,18 @@ pub fn create_task(
     let worktree_path = worktree_dir.join(&slug);
 
     // 4. Create git worktree
-    git::create_worktree(repo_path, &branch, &worktree_path, &target_branch)?;
+    git::create_worktree(repo_path, &branch, &worktree_path, &target_branch).map_err(|e| {
+        let msg = e.to_string();
+        if msg.contains("invalid reference") || msg.contains("not a valid object name") {
+            GroveError::git(format!(
+                "Branch '{}' does not exist. The repository may have no commits yet — \
+                 please create an initial commit first.",
+                target_branch
+            ))
+        } else {
+            e
+        }
+    })?;
 
     // 5. Create AutoLink symlinks
     let main_repo = git::get_main_repo_path(repo_path).unwrap_or_else(|_| repo_path.to_string());

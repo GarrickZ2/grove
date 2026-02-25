@@ -250,13 +250,9 @@ export function TasksPage({ initialTaskId, initialViewMode, onNavigationConsumed
         refreshSelectedProject();
       } catch (err: unknown) {
         console.error("Failed to create task:", err);
-        if (err && typeof err === "object" && "status" in err) {
-          const apiErr = err as { status: number; message: string };
-          if (apiErr.status === 400) {
-            setCreateError("Invalid task name or target branch");
-          } else {
-            setCreateError("Failed to create task");
-          }
+        if (err && typeof err === "object" && "message" in err) {
+          const apiErr = err as { message: string };
+          setCreateError(apiErr.message || "Failed to create task");
         } else {
           setCreateError("Failed to create task");
         }
