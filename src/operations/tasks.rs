@@ -299,16 +299,27 @@ pub fn create_task(
 ) -> Result<CreateTaskResult> {
     // 1. Generate identifiers
     let slug = tasks::to_slug(&task_name);
+
+    // 2. Check for duplicate task ID (active + archived)
+    let active_tasks = tasks::load_tasks(project_key).unwrap_or_default();
+    let archived_tasks = tasks::load_archived_tasks(project_key).unwrap_or_default();
+    if active_tasks.iter().any(|t| t.id == slug) || archived_tasks.iter().any(|t| t.id == slug) {
+        return Err(GroveError::invalid_data(format!(
+            "Task ID '{}' already exists. Please use a different name.",
+            slug
+        )));
+    }
+
     let branch = tasks::generate_branch_name(&task_name);
 
-    // 2. Ensure worktree directory
+    // 3. Ensure worktree directory
     let worktree_dir = storage::ensure_worktree_dir(project_key)?;
     let worktree_path = worktree_dir.join(&slug);
 
-    // 3. Create git worktree
+    // 4. Create git worktree
     git::create_worktree(repo_path, &branch, &worktree_path, &target_branch)?;
 
-    // 4. Create AutoLink symlinks
+    // 5. Create AutoLink symlinks
     let main_repo = git::get_main_repo_path(repo_path).unwrap_or_else(|_| repo_path.to_string());
     let symlinks = git::create_worktree_symlinks(
         &worktree_path,
@@ -318,7 +329,7 @@ pub fn create_task(
     )
     .unwrap_or_default();
 
-    // 5. Create task record
+    // 6. Create task record
     let now = chrono::Utc::now();
     let session_name = session::session_name(project_key, &slug);
     let task = tasks::Task {
