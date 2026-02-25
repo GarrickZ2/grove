@@ -5,6 +5,33 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.2] - 2026-02-24
+
+### Added
+
+- **Web: Project selector improvements** — better UX for projects with long or similar names
+  - Wider dropdown width (`w-72`/`max-w-sm`) to show more of long project names
+  - Middle truncation for project names: splits at separator near midpoint so both start and end are visible (e.g. `open_solu...video_sync`)
+  - Type-to-filter search input with auto-focus when dropdown opens
+  - Tooltip (`title` attribute) on project items to show full name on hover
+  - Applied to both expanded and collapsed sidebar states
+- **Web: @ file mention enhancements** — folders, path fixes, Notes support, and Shift+Tab mode cycling
+- **Native macOS notifications** — uses `UNUserNotificationCenter` with custom Grove icon, replacing deprecated `NSUserNotification`
+
+### Fixed
+
+- **ACP: Chat history real-time persistence** — write chat history to disk in real-time instead of buffering per turn
+- **ACP: Cancel timeout and history compact** — fixed cancel timeout, file snapshot diff, history compaction, and stderr redirect
+- **Web: Terminal resize when tab hidden** — skip terminal resize when FlexLayout tab is hidden, preventing layout issues
+- **Web: Tool progress display** — fixed tool progress display, slash menu scroll, and agent filter
+- **Web: Escape key in terminal** — prevent Escape key from losing focus in xterm terminal
+- **Web: Auto-start sessions** — auto-start terminal and chat sessions, removing the manual start step
+- **Web: Project dropdown in collapsed sidebar** — show project dropdown when sidebar is collapsed
+- **Duplicate task ID rejection** — reject duplicate task IDs against both active and archived tasks
+- **Empty repo error UX** — improved error message for empty repositories with no commits
+- **Duplicate task error message** — clearer duplicate task error message, removed symlink logs
+- **Squash merge detection** — detect squash merge via diff fallback and block re-merge
+
 ## [0.7.1] - 2026-02-22
 
 ### Added

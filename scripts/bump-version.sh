@@ -20,9 +20,13 @@ else
   echo "Syncing version $NEW_VERSION from Cargo.toml"
 fi
 
-# Tauri config
-sed -i '' "s/\"version\": \".*\"/\"version\": \"$NEW_VERSION\"/" "$ROOT/tauri.conf.json"
-echo "tauri.conf.json -> $NEW_VERSION"
+# Tauri configs
+for f in "$ROOT/tauri.conf.json" "$ROOT/src-tauri/tauri.conf.json"; do
+  if [ -f "$f" ]; then
+    sed -i '' "s/\"version\": \".*\"/\"version\": \"$NEW_VERSION\"/" "$f"
+    echo "$(basename "$(dirname "$f")")/$(basename "$f") -> $NEW_VERSION"
+  fi
+done
 
 # docs/index.html - matches patterns like "v0.6.1" and "Grove v0.6.1"
 sed -i '' "s/v[0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*/v$NEW_VERSION/g" "$ROOT/docs/index.html"
