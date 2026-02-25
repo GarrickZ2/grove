@@ -4,6 +4,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::fs;
+#[cfg(target_os = "macos")]
 use std::path::PathBuf;
 use std::process::Command;
 
