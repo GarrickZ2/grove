@@ -439,8 +439,15 @@ pub async fn get_task(
 pub async fn create_task(
     Path(id): Path<String>,
     Json(req): Json<CreateTaskRequest>,
-) -> Result<Json<TaskResponse>, StatusCode> {
-    let (project, project_key) = find_project_by_id(&id)?;
+) -> Result<Json<TaskResponse>, (StatusCode, Json<ApiErrorResponse>)> {
+    let (project, project_key) = find_project_by_id(&id).map_err(|s| {
+        (
+            s,
+            Json(ApiErrorResponse {
+                error: "Project not found".to_string(),
+            }),
+        )
+    })?;
 
     // Determine target branch
     let target = req.target.unwrap_or_else(|| {
@@ -460,7 +467,17 @@ pub async fn create_task(
         &full_config.default_session_type(),
         autolink_patterns,
     )
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    .map_err(|e| {
+        let msg = e.to_string();
+        if msg.contains("already exists") {
+            (StatusCode::CONFLICT, Json(ApiErrorResponse { error: msg }))
+        } else {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResponse { error: msg }),
+            )
+        }
+    })?;
 
     // Log symlinks if any
     if result.symlinks_created > 0 {
