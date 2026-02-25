@@ -39,6 +39,7 @@ import {
   type CustomAgent,
 } from "../../api";
 import { LayoutEditor, type CustomLayoutConfig, type PaneType, type LayoutNode, createDefaultLayout, countPanes } from "./LayoutEditor";
+import { useIsMobile } from "../../hooks";
 
 interface SettingsPageProps {
   config: {
@@ -201,6 +202,7 @@ export function SettingsPage({ config }: SettingsPageProps) {
   const { theme, setTheme } = useTheme();
   const { terminalTheme, setTerminalTheme } = useTerminalTheme();
   const { updateAvailability, refresh: refreshGlobalConfig } = useConfig();
+  const { isMobile } = useIsMobile();
 
   const [openSections, setOpenSections] = useState<Record<string, boolean>>({
     appearance: false,
@@ -707,7 +709,7 @@ env_vars = [
             whileHover={{ scale: 1.01 }}
             whileTap={{ scale: 0.98 }}
             onClick={() => toggleMode("terminal")}
-            className={`relative flex flex-col items-center justify-center gap-2 py-5 rounded-xl border-2 text-center transition-all
+            className={`relative flex ${isMobile ? "flex-row items-center gap-3 px-4 py-3" : "flex-col items-center justify-center gap-2 py-5"} rounded-xl border-2 text-center transition-all
               ${terminalState === 'enabled'
                 ? "border-[var(--color-highlight)] bg-[var(--color-highlight)]/5"
                 : terminalState === 'unavailable'
@@ -715,7 +717,7 @@ env_vars = [
                   : "border-[var(--color-border)] hover:border-[var(--color-text-muted)] bg-[var(--color-bg-secondary)]"
               }`}
           >
-            <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${
+            <div className={`${isMobile ? "w-9 h-9" : "w-10 h-10"} rounded-lg flex items-center justify-center flex-shrink-0 ${
               terminalState === 'enabled' ? "bg-[var(--color-highlight)]/10"
                 : terminalState === 'unavailable' ? "bg-[var(--color-warning)]/10"
                 : "bg-[var(--color-bg-tertiary)]"
@@ -726,10 +728,12 @@ env_vars = [
                   : "text-[var(--color-text-muted)]"
               }`} />
             </div>
-            <div className="text-sm font-semibold text-[var(--color-text)]">Terminal</div>
-            {terminalState === 'unavailable' && (
-              <div className="text-[10px] text-[var(--color-warning)]">Missing dependencies</div>
-            )}
+            <div className={isMobile ? "text-left" : ""}>
+              <div className="text-sm font-semibold text-[var(--color-text)]">Terminal</div>
+              {terminalState === 'unavailable' && (
+                <div className="text-[10px] text-[var(--color-warning)]">Missing dependencies</div>
+              )}
+            </div>
             {terminalState === 'enabled' && (
               <div className="absolute top-2.5 right-2.5 w-5 h-5 rounded-full bg-[var(--color-highlight)] flex items-center justify-center">
                 <Check className="w-3 h-3 text-white" />
@@ -747,7 +751,7 @@ env_vars = [
             whileHover={{ scale: 1.01 }}
             whileTap={{ scale: 0.98 }}
             onClick={() => toggleMode("chat")}
-            className={`relative flex flex-col items-center justify-center gap-2 py-5 rounded-xl border-2 text-center transition-all
+            className={`relative flex ${isMobile ? "flex-row items-center gap-3 px-4 py-3" : "flex-col items-center justify-center gap-2 py-5"} rounded-xl border-2 text-center transition-all
               ${chatState === 'enabled'
                 ? "border-[var(--color-highlight)] bg-[var(--color-highlight)]/5"
                 : chatState === 'unavailable'
@@ -755,7 +759,7 @@ env_vars = [
                   : "border-[var(--color-border)] hover:border-[var(--color-text-muted)] bg-[var(--color-bg-secondary)]"
               }`}
           >
-            <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${
+            <div className={`${isMobile ? "w-9 h-9" : "w-10 h-10"} rounded-lg flex items-center justify-center flex-shrink-0 ${
               chatState === 'enabled' ? "bg-[var(--color-highlight)]/10"
                 : chatState === 'unavailable' ? "bg-[var(--color-warning)]/10"
                 : "bg-[var(--color-bg-tertiary)]"
@@ -766,13 +770,15 @@ env_vars = [
                   : "text-[var(--color-text-muted)]"
               }`} />
             </div>
-            <div className="flex items-center gap-1.5">
-              <span className="text-sm font-semibold text-[var(--color-text)]">Chat</span>
-              <span className="text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-[var(--color-info)]/15 text-[var(--color-info)]">beta</span>
+            <div className={isMobile ? "text-left" : ""}>
+              <div className="flex items-center gap-1.5">
+                <span className="text-sm font-semibold text-[var(--color-text)]">Chat</span>
+                <span className="text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-[var(--color-info)]/15 text-[var(--color-info)]">beta</span>
+              </div>
+              {chatState === 'unavailable' && (
+                <div className="text-[10px] text-[var(--color-warning)]">No ACP agent available</div>
+              )}
             </div>
-            {chatState === 'unavailable' && (
-              <div className="text-[10px] text-[var(--color-warning)]">No ACP agent available</div>
-            )}
             {chatState === 'enabled' && (
               <div className="absolute top-2.5 right-2.5 w-5 h-5 rounded-full bg-[var(--color-highlight)] flex items-center justify-center">
                 <Check className="w-3 h-3 text-white" />
@@ -798,7 +804,7 @@ env_vars = [
         >
           <div className="space-y-3">
             <div className="text-sm font-medium text-[var(--color-text-muted)] mb-2">Select Theme</div>
-            <div className="grid grid-cols-4 gap-2">
+            <div className={`grid ${isMobile ? "grid-cols-3" : "grid-cols-4"} gap-2`}>
               {themes.map((t) => {
                 const isAuto = t.id === "auto";
                 // For Auto theme, show half dark / half light preview
@@ -858,7 +864,7 @@ env_vars = [
           {/* Terminal Color Scheme */}
           <div className="space-y-3 mt-6 pt-6 border-t border-[var(--color-border)]">
             <div className="text-sm font-medium text-[var(--color-text-muted)] mb-2">Terminal Color Scheme</div>
-            <div className="grid grid-cols-5 gap-2">
+            <div className={`grid ${isMobile ? "grid-cols-3" : "grid-cols-5"} gap-2`}>
               {terminalThemes.map((tt) => {
                 const isSelected = terminalTheme.id === tt.id;
                 const previewColors = [tt.colors.red, tt.colors.green, tt.colors.yellow, tt.colors.blue, tt.colors.magenta, tt.colors.cyan];

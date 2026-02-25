@@ -1,7 +1,8 @@
 import { useState } from "react";
-import { motion, AnimatePresence } from "framer-motion";
+import { AnimatePresence, motion } from "framer-motion";
 import { GitBranch, X, ChevronDown, Check } from "lucide-react";
 import { Button, Input } from "../ui";
+import { DialogShell } from "../ui/DialogShell";
 import type { Branch } from "../../data/types";
 
 interface NewBranchDialogProps {
@@ -43,27 +44,8 @@ export function NewBranchDialog({
   };
 
   return (
-    <AnimatePresence>
-      {isOpen && (
-        <>
-          {/* Backdrop */}
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            onClick={handleClose}
-            className="fixed inset-0 bg-black/50 z-50"
-          />
-
-          {/* Dialog */}
-          <motion.div
-            initial={{ opacity: 0, scale: 0.95, y: 20 }}
-            animate={{ opacity: 1, scale: 1, y: 0 }}
-            exit={{ opacity: 0, scale: 0.95, y: 20 }}
-            transition={{ duration: 0.2 }}
-            className="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-50 w-full max-w-md"
-          >
-            <div className="bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-xl shadow-xl overflow-hidden">
+    <DialogShell isOpen={isOpen} onClose={handleClose}>
+      <div className="bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-xl shadow-xl overflow-hidden">
               {/* Header */}
               <div className="flex items-center justify-between px-5 py-4 border-b border-[var(--color-border)]">
                 <div className="flex items-center gap-3">
@@ -183,10 +165,7 @@ export function NewBranchDialog({
                   Create Branch
                 </Button>
               </div>
-            </div>
-          </motion.div>
-        </>
-      )}
-    </AnimatePresence>
+      </div>
+    </DialogShell>
   );
 }

@@ -16,6 +16,7 @@ import {
   Check,
 } from "lucide-react";
 import { Button } from "../ui";
+import { useIsMobile } from "../../hooks";
 
 // Pane types
 export type PaneType = "agent" | "grove" | "file-picker" | "shell" | "custom";
@@ -394,6 +395,7 @@ export function LayoutEditor({
   const [localLayouts, setLocalLayouts] = useState<CustomLayoutConfig[]>(layouts);
   const [editingNameId, setEditingNameId] = useState<string | null>(null);
   const [editingName, setEditingName] = useState("");
+  const { isMobile } = useIsMobile();
 
   // Sync with external value when opening
   useEffect(() => {
@@ -450,7 +452,7 @@ export function LayoutEditor({
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
         exit={{ opacity: 0 }}
-        className="fixed inset-0 z-[9999] flex items-center justify-center p-4"
+        className="fixed inset-0 z-[9999] flex items-end sm:items-center justify-center sm:p-4"
       >
         {/* Backdrop */}
         <div
@@ -460,15 +462,20 @@ export function LayoutEditor({
 
         {/* Dialog */}
         <motion.div
-          initial={{ scale: 0.95, opacity: 0 }}
-          animate={{ scale: 1, opacity: 1 }}
-          exit={{ scale: 0.95, opacity: 0 }}
-          className="relative w-full max-w-4xl bg-[var(--color-bg)] border border-[var(--color-border)] rounded-xl shadow-2xl overflow-hidden"
+          initial={isMobile ? { y: "100%" } : { scale: 0.95, opacity: 0 }}
+          animate={isMobile ? { y: 0 } : { scale: 1, opacity: 1 }}
+          exit={isMobile ? { y: "100%" } : { scale: 0.95, opacity: 0 }}
+          transition={isMobile ? { type: "spring", damping: 30, stiffness: 300 } : undefined}
+          className={`relative w-full bg-[var(--color-bg)] border border-[var(--color-border)] shadow-2xl overflow-hidden ${
+            isMobile
+              ? "max-h-[90vh] rounded-t-2xl"
+              : "max-w-4xl rounded-xl"
+          }`}
         >
           {/* Header */}
-          <div className="flex items-center justify-between px-6 py-4 border-b border-[var(--color-border)]">
+          <div className={`flex items-center justify-between ${isMobile ? "px-4 py-3" : "px-6 py-4"} border-b border-[var(--color-border)]`}>
             <div>
-              <h2 className="text-lg font-semibold text-[var(--color-text)]">Custom Layouts</h2>
+              <h2 className={`${isMobile ? "text-base" : "text-lg"} font-semibold text-[var(--color-text)]`}>Custom Layouts</h2>
               <p className="text-xs text-[var(--color-text-muted)]">
                 Click on a pane to split or change its type (max 8 panes)
               </p>
@@ -482,17 +489,11 @@ export function LayoutEditor({
           </div>
 
           {/* Content */}
-          <div className="flex h-[500px]">
-            {/* Left: Layout List */}
-            <div className="w-64 border-r border-[var(--color-border)] p-4 flex flex-col">
-              <div className="flex items-center justify-between mb-3">
-                <span className="text-sm font-medium text-[var(--color-text-muted)]">Layouts</span>
-                <Button variant="ghost" size="sm" onClick={addLayout}>
-                  <Plus className="w-4 h-4" />
-                </Button>
-              </div>
-
-              <div className="flex-1 space-y-2 overflow-y-auto">
+          {isMobile ? (
+            /* Mobile: stacked layout */
+            <div className="flex flex-col" style={{ height: "calc(90vh - 130px)" }}>
+              {/* Top: horizontal layout tabs */}
+              <div className="flex items-center gap-2 px-4 py-3 border-b border-[var(--color-border)] overflow-x-auto flex-shrink-0">
                 {localLayouts.map((layout) => {
                   const isSelected = layout.id === (selectedLayoutId || localLayouts[0]?.id);
                   const isEditing = editingNameId === layout.id;
@@ -502,86 +503,188 @@ export function LayoutEditor({
                     <div
                       key={layout.id}
                       onClick={() => !isEditing && onSelectLayout(layout.id)}
-                      className={`p-3 rounded-lg cursor-pointer transition-all
+                      className={`flex items-center gap-2 px-3 py-2 rounded-lg cursor-pointer transition-all whitespace-nowrap flex-shrink-0
                         ${isSelected
                           ? "bg-[var(--color-highlight)]/10 border border-[var(--color-highlight)]"
-                          : "bg-[var(--color-bg-secondary)] border border-transparent hover:border-[var(--color-border)]"
+                          : "bg-[var(--color-bg-secondary)] border border-transparent"
                         }`}
                     >
-                      <div className="flex items-center gap-2">
-                        {isEditing ? (
-                          <input
-                            type="text"
-                            value={editingName}
-                            onChange={(e) => setEditingName(e.target.value)}
-                            onBlur={finishEditName}
-                            onKeyDown={(e) => e.key === "Enter" && finishEditName()}
-                            autoFocus
-                            className="flex-1 px-2 py-1 text-sm bg-[var(--color-bg)] border border-[var(--color-highlight)] rounded
-                              text-[var(--color-text)] focus:outline-none"
-                            onClick={(e) => e.stopPropagation()}
-                          />
-                        ) : (
-                          <>
-                            <span className={`flex-1 text-sm font-medium truncate ${isSelected ? "text-[var(--color-highlight)]" : "text-[var(--color-text)]"}`}>
-                              {layout.name}
-                            </span>
+                      {isEditing ? (
+                        <input
+                          type="text"
+                          value={editingName}
+                          onChange={(e) => setEditingName(e.target.value)}
+                          onBlur={finishEditName}
+                          onKeyDown={(e) => e.key === "Enter" && finishEditName()}
+                          autoFocus
+                          className="w-24 px-2 py-0.5 text-sm bg-[var(--color-bg)] border border-[var(--color-highlight)] rounded
+                            text-[var(--color-text)] focus:outline-none"
+                          onClick={(e) => e.stopPropagation()}
+                        />
+                      ) : (
+                        <>
+                          <span className={`text-sm font-medium ${isSelected ? "text-[var(--color-highlight)]" : "text-[var(--color-text)]"}`}>
+                            {layout.name}
+                          </span>
+                          <span className="text-[10px] text-[var(--color-text-muted)]">
+                            {count}p
+                          </span>
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              startEditName(layout);
+                            }}
+                            className="p-0.5 rounded hover:bg-[var(--color-bg-tertiary)] transition-colors"
+                          >
+                            <Pencil className="w-3 h-3 text-[var(--color-text-muted)]" />
+                          </button>
+                          {localLayouts.length > 1 && (
                             <button
                               onClick={(e) => {
                                 e.stopPropagation();
-                                startEditName(layout);
+                                deleteLayout(layout.id);
                               }}
-                              className="p-1 rounded hover:bg-[var(--color-bg-tertiary)] transition-colors"
+                              className="p-0.5 rounded hover:bg-[var(--color-error)]/10 transition-colors"
                             >
-                              <Pencil className="w-3 h-3 text-[var(--color-text-muted)]" />
+                              <Trash2 className="w-3 h-3 text-[var(--color-error)]" />
                             </button>
-                            {localLayouts.length > 1 && (
-                              <button
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  deleteLayout(layout.id);
-                                }}
-                                className="p-1 rounded hover:bg-[var(--color-error)]/10 transition-colors"
-                              >
-                                <Trash2 className="w-3 h-3 text-[var(--color-error)]" />
-                              </button>
-                            )}
-                          </>
-                        )}
-                      </div>
-                      <div className="text-[10px] text-[var(--color-text-muted)] mt-1">
-                        {count} pane{count !== 1 ? "s" : ""}
-                      </div>
+                          )}
+                        </>
+                      )}
                     </div>
                   );
                 })}
+                <button
+                  onClick={addLayout}
+                  className="flex items-center justify-center w-8 h-8 rounded-lg bg-[var(--color-bg-secondary)] border border-[var(--color-border)] flex-shrink-0"
+                >
+                  <Plus className="w-4 h-4 text-[var(--color-text-muted)]" />
+                </button>
+              </div>
+
+              {/* Bottom: Layout Editor */}
+              <div className="flex-1 p-4 flex flex-col min-h-0">
+                <div className="flex items-center justify-between mb-3">
+                  <div className="text-sm text-[var(--color-text-muted)]">
+                    <span className="font-medium text-[var(--color-text)]">{currentLayout?.name}</span>
+                    <span className="ml-2">({paneCount}/8 panes)</span>
+                  </div>
+                </div>
+
+                <div className="flex-1 bg-[var(--color-bg-secondary)] rounded-xl border border-[var(--color-border)] p-3 min-h-0">
+                  {currentLayout && (
+                    <LayoutPreview
+                      node={currentLayout.root}
+                      onUpdate={(root) => updateLayout(currentLayout.id, { root })}
+                      totalPanes={paneCount}
+                    />
+                  )}
+                </div>
               </div>
             </div>
+          ) : (
+            /* Desktop: side-by-side layout */
+            <div className="flex h-[500px]">
+              {/* Left: Layout List */}
+              <div className="w-64 border-r border-[var(--color-border)] p-4 flex flex-col">
+                <div className="flex items-center justify-between mb-3">
+                  <span className="text-sm font-medium text-[var(--color-text-muted)]">Layouts</span>
+                  <Button variant="ghost" size="sm" onClick={addLayout}>
+                    <Plus className="w-4 h-4" />
+                  </Button>
+                </div>
 
-            {/* Right: Layout Editor */}
-            <div className="flex-1 p-6 flex flex-col">
-              <div className="flex items-center justify-between mb-4">
-                <div className="text-sm text-[var(--color-text-muted)]">
-                  <span className="font-medium text-[var(--color-text)]">{currentLayout?.name}</span>
-                  <span className="ml-2">({paneCount}/8 panes)</span>
+                <div className="flex-1 space-y-2 overflow-y-auto">
+                  {localLayouts.map((layout) => {
+                    const isSelected = layout.id === (selectedLayoutId || localLayouts[0]?.id);
+                    const isEditing = editingNameId === layout.id;
+                    const count = countPanes(layout.root);
+
+                    return (
+                      <div
+                        key={layout.id}
+                        onClick={() => !isEditing && onSelectLayout(layout.id)}
+                        className={`p-3 rounded-lg cursor-pointer transition-all
+                          ${isSelected
+                            ? "bg-[var(--color-highlight)]/10 border border-[var(--color-highlight)]"
+                            : "bg-[var(--color-bg-secondary)] border border-transparent hover:border-[var(--color-border)]"
+                          }`}
+                      >
+                        <div className="flex items-center gap-2">
+                          {isEditing ? (
+                            <input
+                              type="text"
+                              value={editingName}
+                              onChange={(e) => setEditingName(e.target.value)}
+                              onBlur={finishEditName}
+                              onKeyDown={(e) => e.key === "Enter" && finishEditName()}
+                              autoFocus
+                              className="flex-1 px-2 py-1 text-sm bg-[var(--color-bg)] border border-[var(--color-highlight)] rounded
+                                text-[var(--color-text)] focus:outline-none"
+                              onClick={(e) => e.stopPropagation()}
+                            />
+                          ) : (
+                            <>
+                              <span className={`flex-1 text-sm font-medium truncate ${isSelected ? "text-[var(--color-highlight)]" : "text-[var(--color-text)]"}`}>
+                                {layout.name}
+                              </span>
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  startEditName(layout);
+                                }}
+                                className="p-1 rounded hover:bg-[var(--color-bg-tertiary)] transition-colors"
+                              >
+                                <Pencil className="w-3 h-3 text-[var(--color-text-muted)]" />
+                              </button>
+                              {localLayouts.length > 1 && (
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    deleteLayout(layout.id);
+                                  }}
+                                  className="p-1 rounded hover:bg-[var(--color-error)]/10 transition-colors"
+                                >
+                                  <Trash2 className="w-3 h-3 text-[var(--color-error)]" />
+                                </button>
+                              )}
+                            </>
+                          )}
+                        </div>
+                        <div className="text-[10px] text-[var(--color-text-muted)] mt-1">
+                          {count} pane{count !== 1 ? "s" : ""}
+                        </div>
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
 
-              {/* Layout Preview */}
-              <div className="flex-1 bg-[var(--color-bg-secondary)] rounded-xl border border-[var(--color-border)] p-3">
-                {currentLayout && (
-                  <LayoutPreview
-                    node={currentLayout.root}
-                    onUpdate={(root) => updateLayout(currentLayout.id, { root })}
-                    totalPanes={paneCount}
-                  />
-                )}
+              {/* Right: Layout Editor */}
+              <div className="flex-1 p-6 flex flex-col">
+                <div className="flex items-center justify-between mb-4">
+                  <div className="text-sm text-[var(--color-text-muted)]">
+                    <span className="font-medium text-[var(--color-text)]">{currentLayout?.name}</span>
+                    <span className="ml-2">({paneCount}/8 panes)</span>
+                  </div>
+                </div>
+
+                {/* Layout Preview */}
+                <div className="flex-1 bg-[var(--color-bg-secondary)] rounded-xl border border-[var(--color-border)] p-3">
+                  {currentLayout && (
+                    <LayoutPreview
+                      node={currentLayout.root}
+                      onUpdate={(root) => updateLayout(currentLayout.id, { root })}
+                      totalPanes={paneCount}
+                    />
+                  )}
+                </div>
               </div>
             </div>
-          </div>
+          )}
 
           {/* Footer */}
-          <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-[var(--color-border)] bg-[var(--color-bg-secondary)]">
+          <div className={`flex items-center justify-end gap-3 ${isMobile ? "px-4 py-3" : "px-6 py-4"} border-t border-[var(--color-border)] bg-[var(--color-bg-secondary)]`}>
             <Button variant="secondary" onClick={onClose}>
               Cancel
             </Button>

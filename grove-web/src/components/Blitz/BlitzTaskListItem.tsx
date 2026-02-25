@@ -1,6 +1,7 @@
-import { Circle, CheckCircle, AlertTriangle, XCircle, Terminal, MessageSquare } from "lucide-react";
+import { Circle, CheckCircle, AlertTriangle, XCircle, Terminal, MessageSquare, ChevronUp, ChevronDown } from "lucide-react";
 import type { BlitzTask } from "../../data/types";
 import type { TaskStatus } from "../../data/types";
+import { useIsMobile } from "../../hooks";
 
 interface BlitzTaskListItemProps {
   blitzTask: BlitzTask;
@@ -16,6 +17,10 @@ interface BlitzTaskListItemProps {
   onDragLeave?: () => void;
   isDragging?: boolean;
   isDragOver?: boolean;
+  onMoveUp?: () => void;
+  onMoveDown?: () => void;
+  isFirst?: boolean;
+  isLast?: boolean;
 }
 
 function formatTimeAgo(date: Date): string {
@@ -77,34 +82,40 @@ export function BlitzTaskListItem({
   onDragLeave,
   isDragging,
   isDragOver,
+  onMoveUp,
+  onMoveDown,
+  isFirst,
+  isLast,
 }: BlitzTaskListItemProps) {
   const { task, projectName } = blitzTask;
   const statusConfig = getStatusConfig(task.status);
   const StatusIcon = statusConfig.icon;
+  const { isTouchDevice } = useIsMobile();
 
   return (
+    <div className="flex items-stretch gap-0">
     <button
       data-task-id={task.id}
       onClick={onClick}
       onDoubleClick={task.status !== "archived" ? onDoubleClick : undefined}
       onContextMenu={onContextMenu}
-      draggable
-      onDragStart={(e) => {
+      draggable={!isTouchDevice}
+      onDragStart={isTouchDevice ? undefined : (e) => {
         e.dataTransfer.effectAllowed = 'move';
         onDragStart?.();
       }}
-      onDragOver={(e) => {
+      onDragOver={isTouchDevice ? undefined : (e) => {
         e.preventDefault();
         e.dataTransfer.dropEffect = 'move';
         onDragOver?.();
       }}
-      onDragEnd={onDragEnd}
-      onDragLeave={onDragLeave}
-      className={`relative w-full text-left rounded-lg transition-all duration-150 overflow-hidden ${
+      onDragEnd={isTouchDevice ? undefined : onDragEnd}
+      onDragLeave={isTouchDevice ? undefined : onDragLeave}
+      className={`relative flex-1 min-w-0 text-left rounded-lg transition-all duration-150 overflow-hidden ${
         isSelected
           ? "px-4 py-3 bg-[var(--color-highlight)]/5"
           : "px-3 py-2.5 bg-[var(--color-bg-secondary)] hover:bg-[var(--color-bg-tertiary)]"
-      } ${isDragging ? "opacity-40 cursor-grabbing" : "cursor-grab"} ${
+      } ${!isTouchDevice && isDragging ? "opacity-40 cursor-grabbing" : !isTouchDevice ? "cursor-grab" : ""} ${
         isDragOver ? "border-t-2 border-t-[var(--color-highlight)]" : ""
       }`}
       style={isSelected ? {
@@ -206,5 +217,27 @@ export function BlitzTaskListItem({
         </div>
       </div>
     </button>
+    {/* Mobile: up/down move buttons instead of drag */}
+    {isTouchDevice && (
+      <div className="flex flex-col justify-center gap-0.5 ml-1">
+        <button
+          onClick={(e) => { e.stopPropagation(); onMoveUp?.(); }}
+          disabled={isFirst}
+          className="p-1 rounded text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-bg-tertiary)] transition-colors disabled:opacity-30 disabled:pointer-events-none"
+          aria-label="Move up"
+        >
+          <ChevronUp className="w-4 h-4" />
+        </button>
+        <button
+          onClick={(e) => { e.stopPropagation(); onMoveDown?.(); }}
+          disabled={isLast}
+          className="p-1 rounded text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-bg-tertiary)] transition-colors disabled:opacity-30 disabled:pointer-events-none"
+          aria-label="Move down"
+        >
+          <ChevronDown className="w-4 h-4" />
+        </button>
+      </div>
+    )}
+    </div>
   );
 }

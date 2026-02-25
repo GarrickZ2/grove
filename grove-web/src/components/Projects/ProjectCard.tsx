@@ -11,9 +11,10 @@ interface ProjectCardProps {
   onSelect: () => void;
   onDoubleClick?: () => void;
   onDelete: () => void;
+  compact?: boolean;
 }
 
-export function ProjectCard({ project, isSelected, onSelect, onDoubleClick, onDelete }: ProjectCardProps) {
+export function ProjectCard({ project, isSelected, onSelect, onDoubleClick, onDelete, compact }: ProjectCardProps) {
   const { theme } = useTheme();
   // Use taskCount/liveCount from list response, fallback to calculating from tasks array
   const taskCount = project.taskCount ?? project.tasks.length;
@@ -27,7 +28,8 @@ export function ProjectCard({ project, isSelected, onSelect, onDoubleClick, onDe
       onClick={onSelect}
       onDoubleClick={onDoubleClick}
       className={`
-        relative p-4 rounded-xl border cursor-pointer transition-colors
+        relative rounded-xl border cursor-pointer transition-colors
+        ${compact ? "p-3" : "p-4"}
         ${
           isSelected
             ? "border-[var(--color-highlight)] bg-[var(--color-highlight)]/5"
@@ -43,12 +45,12 @@ export function ProjectCard({ project, isSelected, onSelect, onDoubleClick, onDe
       )}
 
       {/* Project icon and name */}
-      <div className="flex items-start gap-3 mb-3">
+      <div className={`flex items-start gap-3 ${compact ? "mb-2" : "mb-3"}`}>
         <div
-          className="w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0"
+          className={`${compact ? "w-8 h-8" : "w-10 h-10"} rounded-lg flex items-center justify-center flex-shrink-0`}
           style={{ backgroundColor: color.bg }}
         >
-          <Icon className="w-5 h-5" style={{ color: color.fg }} />
+          <Icon className={compact ? "w-4 h-4" : "w-5 h-5"} style={{ color: color.fg }} />
         </div>
         <div className="flex-1 min-w-0">
           <h3 className="text-sm font-semibold text-[var(--color-text)] truncate">

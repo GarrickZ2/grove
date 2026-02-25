@@ -22,6 +22,7 @@ import { ConversationSidebar } from './ConversationSidebar';
 import { CodeSearchBar } from './CodeSearchBar';
 import { MessageSquare, ChevronUp, ChevronDown, PanelLeftClose, PanelLeftOpen, Crosshair, GitCompare, FileText } from 'lucide-react';
 import { VersionSelector } from './VersionSelector';
+import { useIsMobile } from '../../hooks';
 import './diffTheme.css';
 
 interface DiffReviewPageProps {
@@ -31,6 +32,7 @@ interface DiffReviewPageProps {
 }
 
 export function DiffReviewPage({ projectId, taskId, embedded }: DiffReviewPageProps) {
+  const { isMobile } = useIsMobile();
   const [diffData, setDiffData] = useState<FullDiffResult | null>(null);
   const [allFiles, setAllFiles] = useState<string[]>([]); // All git-tracked files for File Mode
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
@@ -66,8 +68,17 @@ export function DiffReviewPage({ projectId, taskId, embedded }: DiffReviewPagePr
   const [sidebarSearch, setSidebarSearch] = useState('');
   const [collapsedFiles, setCollapsedFiles] = useState<Set<string>>(new Set());
   const [replyFormCommentId, setReplyFormCommentId] = useState<number | null>(null);
-  const [sidebarVisible, setSidebarVisible] = useState(true);
+  const [sidebarVisible, setSidebarVisible] = useState(!isMobile);
   const [convSidebarVisible, setConvSidebarVisible] = useState(false);
+
+  // Mobile: force unified view and close sidebars when entering mobile mode
+  useEffect(() => {
+    if (isMobile) {
+      setViewType('unified');
+      setSidebarVisible(false);
+      setConvSidebarVisible(false);
+    }
+  }, [isMobile]);
   const [focusMode, setFocusMode] = useState(true); // Default to true for better performance
   const [fromVersion, setFromVersion] = useState('target');
   const [toVersion, setToVersion] = useState('latest');
@@ -478,8 +489,11 @@ export function DiffReviewPage({ projectId, taskId, embedded }: DiffReviewPagePr
     if (el) {
       el.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }
-    // Update file index - use displayFiles length for now, will be updated by parent
-  }, []);
+    // On mobile, close sidebar after selecting a file
+    if (isMobile) {
+      setSidebarVisible(false);
+    }
+  }, [isMobile]);
 
   // Track visible file on scroll
   const handleFileVisible = useCallback((path: string) => {
@@ -858,12 +872,14 @@ export function DiffReviewPage({ projectId, taskId, embedded }: DiffReviewPagePr
               >
                 Unified
               </button>
-              <button
-                className={viewType === 'split' ? 'active' : ''}
-                onClick={() => setViewType('split')}
-              >
-                Split
-              </button>
+              {!isMobile && (
+                <button
+                  className={viewType === 'split' ? 'active' : ''}
+                  onClick={() => setViewType('split')}
+                >
+                  Split
+                </button>
+              )}
             </div>
           )}
           {viewMode === 'diff' && fromOptions.length > 0 && toOptions.length > 0 && (
@@ -920,6 +936,22 @@ export function DiffReviewPage({ projectId, taskId, embedded }: DiffReviewPagePr
           </div>
         ) : (
           <>
+            {/* Mobile overlay backdrop */}
+            {isMobile && (sidebarVisible || convSidebarVisible) && (
+              <div
+                style={{
+                  position: 'fixed',
+                  inset: 0,
+                  background: 'rgba(0,0,0,0.4)',
+                  zIndex: 15,
+                }}
+                onClick={() => {
+                  setSidebarVisible(false);
+                  setConvSidebarVisible(false);
+                }}
+              />
+            )}
+
             {/* Sidebar */}
             <FileTreeSidebar
               files={displayFiles}
