@@ -244,6 +244,15 @@ pub fn is_merged(repo_path: &str, branch: &str, target: &str) -> Result<bool> {
     ))
 }
 
+/// 检查 branch 和 target 之间是否没有代码差异（用于检测 squash merge）
+/// 执行: git diff --quiet branch target
+pub fn is_diff_empty(repo_path: &str, branch: &str, target: &str) -> Result<bool> {
+    Ok(git_cmd_check(
+        repo_path,
+        &["diff", "--quiet", branch, target],
+    ))
+}
+
 /// 检查是否有未提交的改动
 /// 执行: git status --porcelain
 pub fn has_uncommitted_changes(path: &str) -> Result<bool> {

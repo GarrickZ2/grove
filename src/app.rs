@@ -1674,7 +1674,10 @@ impl App {
         };
 
         result.branch_merged = match git::is_merged(repo_path, branch, target) {
-            Ok(v) => v,
+            Ok(v) => {
+                // Fallback: if is-ancestor says not merged, check diff for squash merge
+                v || git::is_diff_empty(repo_path, branch, target).unwrap_or(false)
+            }
             Err(e) => {
                 result.merge_check_failed = true;
                 self.show_toast(format!("Git error: {}", e));
@@ -1798,9 +1801,10 @@ impl App {
         let target = wt.target.clone();
         let is_archived = wt.archived;
 
-        // 检查是否已 merge
-        let is_merged =
-            git::is_merged(&self.project.project_path, &branch, &target).unwrap_or(false);
+        // 检查是否已 merge (含 squash merge 兜底)
+        let is_merged = git::is_merged(&self.project.project_path, &branch, &target)
+            .unwrap_or(false)
+            || git::is_diff_empty(&self.project.project_path, &branch, &target).unwrap_or(false);
 
         self.async_ops.pending_action = Some(PendingAction::Clean {
             task_id,

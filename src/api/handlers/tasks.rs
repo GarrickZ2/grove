@@ -554,7 +554,12 @@ pub async fn archive_task(
         let mut branch_merged = true;
         let mut merge_check_failed = false;
         match git::is_merged(&project.path, &task.branch, &task.target) {
-            Ok(v) => branch_merged = v,
+            Ok(v) => {
+                // Fallback: if is-ancestor says not merged, check diff for squash merge
+                branch_merged = v
+                    || git::is_diff_empty(&project.path, &task.branch, &task.target)
+                        .unwrap_or(false);
+            }
             Err(_) => {
                 merge_check_failed = true;
             }

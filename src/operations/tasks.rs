@@ -90,6 +90,16 @@ pub fn merge_task(
         )));
     }
 
+    // 3.5. Check if already merged
+    let already_merged = git::is_merged(repo_path, &task.branch, &task.target).unwrap_or(false)
+        || git::is_diff_empty(repo_path, &task.branch, &task.target).unwrap_or(false);
+    if already_merged {
+        return Err(GroveError::git(format!(
+            "Branch '{}' has already been merged into '{}'. Nothing to merge.",
+            task.branch, task.target
+        )));
+    }
+
     // 4. Checkout target
     git::checkout(repo_path, &task.target)?;
 
