@@ -1,6 +1,6 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { ChevronDown, Check, Plus, Settings2 } from "lucide-react";
+import { ChevronDown, Check, Plus, Settings2, Search } from "lucide-react";
 import { useProject, useTheme } from "../../context";
 import type { Project } from "../../data/types";
 import { getProjectStyle } from "../../utils/projectStyle";
@@ -16,7 +16,15 @@ export function ProjectSelector({ collapsed, onManageProjects, onAddProject, onP
   const { selectedProject, projects, selectProject } = useProject();
   const { theme } = useTheme();
   const [isOpen, setIsOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
   const dropdownRef = useRef<HTMLDivElement>(null);
+  const searchInputRef = useRef<HTMLInputElement>(null);
+
+  const filteredProjects = useMemo(() => {
+    if (!searchQuery) return projects;
+    const q = searchQuery.toLowerCase();
+    return projects.filter((p) => p.name.toLowerCase().includes(q));
+  }, [projects, searchQuery]);
 
   // Close dropdown when clicking outside
   useEffect(() => {
@@ -29,6 +37,18 @@ export function ProjectSelector({ collapsed, onManageProjects, onAddProject, onP
     document.addEventListener("mousedown", handleClickOutside);
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
+
+  // Reset search when dropdown closes, auto-focus when opens
+  useEffect(() => {
+    if (!isOpen) {
+      setSearchQuery("");
+    } else {
+      // Small delay to let the dropdown render before focusing
+      requestAnimationFrame(() => {
+        searchInputRef.current?.focus();
+      });
+    }
+  }, [isOpen]);
 
   const handleSelectProject = (project: Project) => {
     const switched = selectedProject?.id !== project.id;
@@ -64,10 +84,34 @@ export function ProjectSelector({ collapsed, onManageProjects, onAddProject, onP
               animate={{ opacity: 1, x: 0 }}
               exit={{ opacity: 0, x: -8 }}
               transition={{ duration: 0.15 }}
-              className="absolute left-full top-0 ml-2 z-50 w-64 bg-[var(--color-bg)] border border-[var(--color-border)] rounded-lg shadow-lg overflow-hidden"
+              className="absolute left-full top-0 ml-2 z-50 w-72 max-w-sm bg-[var(--color-bg)] border border-[var(--color-border)] rounded-lg shadow-lg overflow-hidden"
             >
+              {/* Search Input */}
+              <div className="p-2 border-b border-[var(--color-border)]">
+                <div className="flex items-center gap-2 px-2 py-1.5 rounded-md bg-[var(--color-bg-secondary)]">
+                  <Search className="w-3.5 h-3.5 text-[var(--color-text-muted)] flex-shrink-0" />
+                  <input
+                    ref={searchInputRef}
+                    type="text"
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Escape") {
+                        if (searchQuery) {
+                          setSearchQuery("");
+                        } else {
+                          setIsOpen(false);
+                        }
+                        e.stopPropagation();
+                      }
+                    }}
+                    placeholder="Filter projects..."
+                    className="flex-1 bg-transparent text-sm text-[var(--color-text)] placeholder-[var(--color-text-muted)] outline-none min-w-0"
+                  />
+                </div>
+              </div>
               <div className="max-h-64 overflow-y-auto">
-                {projects.map((project) => (
+                {filteredProjects.map((project) => (
                   <ProjectItem
                     key={project.id}
                     project={project}
@@ -122,9 +166,10 @@ export function ProjectSelector({ collapsed, onManageProjects, onAddProject, onP
         ) : (
           <div className="w-6 h-6 rounded bg-[var(--color-bg-tertiary)] flex-shrink-0" />
         )}
-        <span className="flex-1 text-left text-sm font-medium text-[var(--color-text)] truncate">
-          {selectedProject?.name || "Select Project"}
-        </span>
+        <MiddleTruncatedText
+          text={selectedProject?.name || "Select Project"}
+          className="flex-1 text-left text-sm font-medium text-[var(--color-text)]"
+        />
         <ChevronDown
           className={`w-4 h-4 text-[var(--color-text-muted)] transition-transform duration-200 ${
             isOpen ? "rotate-180" : ""
@@ -139,11 +184,35 @@ export function ProjectSelector({ collapsed, onManageProjects, onAddProject, onP
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -10 }}
             transition={{ duration: 0.15 }}
-            className="absolute left-3 right-3 mt-1 z-50 bg-[var(--color-bg)] border border-[var(--color-border)] rounded-lg shadow-lg overflow-hidden"
+            className="absolute left-3 mt-1 z-50 w-72 max-w-sm min-w-[calc(100%-1.5rem)] bg-[var(--color-bg)] border border-[var(--color-border)] rounded-lg shadow-lg overflow-hidden"
           >
+            {/* Search Input */}
+            <div className="p-2 border-b border-[var(--color-border)]">
+              <div className="flex items-center gap-2 px-2 py-1.5 rounded-md bg-[var(--color-bg-secondary)]">
+                <Search className="w-3.5 h-3.5 text-[var(--color-text-muted)] flex-shrink-0" />
+                <input
+                  ref={searchInputRef}
+                  type="text"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Escape") {
+                      if (searchQuery) {
+                        setSearchQuery("");
+                      } else {
+                        setIsOpen(false);
+                      }
+                      e.stopPropagation();
+                    }
+                  }}
+                  placeholder="Filter projects..."
+                  className="flex-1 bg-transparent text-sm text-[var(--color-text)] placeholder-[var(--color-text-muted)] outline-none min-w-0"
+                />
+              </div>
+            </div>
             {/* Project List */}
             <div className="max-h-64 overflow-y-auto">
-              {projects.map((project) => (
+              {filteredProjects.map((project) => (
                 <ProjectItem
                   key={project.id}
                   project={project}
@@ -187,6 +256,46 @@ export function ProjectSelector({ collapsed, onManageProjects, onAddProject, onP
   );
 }
 
+/** Split text into two halves for middle truncation.
+ *  When the container overflows, the first half gets "..." while the second half stays visible.
+ *  e.g. `open_solution_video_sync` → `open_solu...video_sync` */
+function MiddleTruncatedText({ text, className }: { text: string; className?: string }) {
+  const { firstHalf, secondHalf } = useMemo(() => {
+    if (text.length <= 8) return { firstHalf: text, secondHalf: "" };
+
+    const mid = Math.ceil(text.length * 0.5);
+    const range = Math.ceil(text.length * 0.2);
+    const separators = new Set(["_", "-", "/", ".", " "]);
+
+    let best = mid;
+    let bestDist = range + 1;
+
+    for (let i = Math.max(1, mid - range); i <= Math.min(text.length - 2, mid + range); i++) {
+      if (separators.has(text[i])) {
+        const splitAt = i + 1; // split right after the separator
+        const dist = Math.abs(splitAt - mid);
+        if (dist < bestDist) {
+          bestDist = dist;
+          best = splitAt;
+        }
+      }
+    }
+
+    return { firstHalf: text.slice(0, best), secondHalf: text.slice(best) };
+  }, [text]);
+
+  if (!secondHalf) {
+    return <span className={`truncate ${className ?? ""}`}>{text}</span>;
+  }
+
+  return (
+    <span className={`flex overflow-hidden min-w-0 ${className ?? ""}`} title={text}>
+      <span className="truncate">{firstHalf}</span>
+      <span className="flex-shrink-0">{secondHalf}</span>
+    </span>
+  );
+}
+
 interface ProjectItemProps {
   project: Project;
   isSelected: boolean;
@@ -203,6 +312,7 @@ function ProjectItem({ project, isSelected, onClick, accentPalette }: ProjectIte
   return (
     <button
       onClick={onClick}
+      title={project.name}
       className={`w-full flex items-start gap-3 px-3 py-2.5 hover:bg-[var(--color-bg-secondary)] transition-colors ${
         isSelected ? "bg-[var(--color-highlight)]/5" : ""
       }`}
@@ -215,9 +325,10 @@ function ProjectItem({ project, isSelected, onClick, accentPalette }: ProjectIte
       </div>
       <div className="flex-1 min-w-0 text-left">
         <div className="flex items-center gap-2">
-          <span className="text-sm font-medium text-[var(--color-text)] truncate">
-            {project.name}
-          </span>
+          <MiddleTruncatedText
+            text={project.name}
+            className="text-sm font-medium text-[var(--color-text)]"
+          />
           {isSelected && (
             <Check className="w-4 h-4 text-[var(--color-highlight)] flex-shrink-0" />
           )}
