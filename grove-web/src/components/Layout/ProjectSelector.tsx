@@ -41,7 +41,7 @@ export function ProjectSelector({ collapsed, onManageProjects, onAddProject, onP
     const style = selectedProject ? getProjectStyle(selectedProject.id, theme.accentPalette) : null;
     const Icon = style?.Icon;
     return (
-      <div className="px-2 py-2">
+      <div className="px-2 py-2 relative" ref={dropdownRef}>
         <motion.button
           whileHover={{ scale: 1.05 }}
           whileTap={{ scale: 0.95 }}
@@ -56,6 +56,47 @@ export function ProjectSelector({ collapsed, onManageProjects, onAddProject, onP
             <div className="w-5 h-5" />
           )}
         </motion.button>
+
+        <AnimatePresence>
+          {isOpen && (
+            <motion.div
+              initial={{ opacity: 0, x: -8 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: -8 }}
+              transition={{ duration: 0.15 }}
+              className="absolute left-full top-0 ml-2 z-50 w-64 bg-[var(--color-bg)] border border-[var(--color-border)] rounded-lg shadow-lg overflow-hidden"
+            >
+              <div className="max-h-64 overflow-y-auto">
+                {projects.map((project) => (
+                  <ProjectItem
+                    key={project.id}
+                    project={project}
+                    isSelected={selectedProject?.id === project.id}
+                    onClick={() => handleSelectProject(project)}
+                    accentPalette={theme.accentPalette}
+                  />
+                ))}
+              </div>
+              <div className="border-t border-[var(--color-border)]" />
+              <div className="p-1">
+                <button
+                  onClick={() => { setIsOpen(false); onAddProject?.(); }}
+                  className="w-full flex items-center gap-2 px-3 py-2 text-sm text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-bg-secondary)] rounded-md transition-colors"
+                >
+                  <Plus className="w-4 h-4" />
+                  <span>Add Project</span>
+                </button>
+                <button
+                  onClick={() => { setIsOpen(false); onManageProjects?.(); }}
+                  className="w-full flex items-center gap-2 px-3 py-2 text-sm text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-bg-secondary)] rounded-md transition-colors"
+                >
+                  <Settings2 className="w-4 h-4" />
+                  <span>Manage Projects</span>
+                </button>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
       </div>
     );
   }
