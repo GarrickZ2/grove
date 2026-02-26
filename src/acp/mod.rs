@@ -722,54 +722,66 @@ pub async fn get_or_start_session(
     let (result_tx, result_rx) = tokio::sync::oneshot::channel();
 
     std::thread::spawn(move || {
-        let rt = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .expect("Failed to create ACP runtime");
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("Failed to create ACP runtime");
 
-        let local = tokio::task::LocalSet::new();
-        rt.block_on(local.run_until(async move {
-            let key_clone = key.clone();
+            let local = tokio::task::LocalSet::new();
+            rt.block_on(local.run_until(async move {
+                let key_clone = key.clone();
 
-            let (update_tx, update_rx) = broadcast::channel::<AcpUpdate>(256);
-            let (cmd_tx, cmd_rx) = mpsc::channel::<AcpCommand>(32);
+                let (update_tx, update_rx) = broadcast::channel::<AcpUpdate>(256);
+                let (cmd_tx, cmd_rx) = mpsc::channel::<AcpCommand>(32);
 
-            let handle = Arc::new(AcpSessionHandle {
-                key: key.clone(),
-                update_tx: update_tx.clone(),
-                cmd_tx,
-                agent_info: std::sync::RwLock::new(None),
-                history: RwLock::new(Vec::new()),
-                pending_permission: Mutex::new(None),
-                project_key: config.project_key.clone(),
-                task_id: config.task_id.clone(),
-                chat_id: config.chat_id.clone(),
-                suppress_emit: std::sync::atomic::AtomicBool::new(false),
-                pending_queue: Mutex::new(Vec::new()),
-                queue_paused: std::sync::atomic::AtomicBool::new(false),
-            });
-
-            // 注册到全局表
-            if let Ok(mut sessions) = ACP_SESSIONS.write() {
-                sessions.insert(key.clone(), handle.clone());
-            }
-
-            // 发送 handle 给调用方（在启动会话循环之前）
-            let _ = result_tx.send(Ok((handle.clone(), update_rx)));
-
-            // 运行会话循环（阻塞直到 Kill 或错误）
-            if let Err(e) = run_acp_session(handle, config, cmd_rx).await {
-                let _ = update_tx.send(AcpUpdate::Error {
-                    message: format!("ACP session error: {}", e),
+                let handle = Arc::new(AcpSessionHandle {
+                    key: key.clone(),
+                    update_tx: update_tx.clone(),
+                    cmd_tx,
+                    agent_info: std::sync::RwLock::new(None),
+                    history: RwLock::new(Vec::new()),
+                    pending_permission: Mutex::new(None),
+                    project_key: config.project_key.clone(),
+                    task_id: config.task_id.clone(),
+                    chat_id: config.chat_id.clone(),
+                    suppress_emit: std::sync::atomic::AtomicBool::new(false),
+                    pending_queue: Mutex::new(Vec::new()),
+                    queue_paused: std::sync::atomic::AtomicBool::new(false),
                 });
-            }
-            let _ = update_tx.send(AcpUpdate::SessionEnded);
 
-            // 清理：从全局表移除
-            if let Ok(mut sessions) = ACP_SESSIONS.write() {
-                sessions.remove(&key_clone);
-            }
+                // 注册到全局表
+                if let Ok(mut sessions) = ACP_SESSIONS.write() {
+                    sessions.insert(key.clone(), handle.clone());
+                }
+
+                // 发送 handle 给调用方（在启动会话循环之前）
+                let _ = result_tx.send(Ok((handle.clone(), update_rx)));
+
+                // 运行会话循环（阻塞直到 Kill 或错误）
+                if let Err(e) = run_acp_session(handle, config, cmd_rx).await {
+                    let _ = update_tx.send(AcpUpdate::Error {
+                        message: format!("ACP session error: {}", e),
+                    });
+                }
+                let _ = update_tx.send(AcpUpdate::SessionEnded);
+
+                // 清理：从全局表移除
+                if let Ok(mut sessions) = ACP_SESSIONS.write() {
+                    sessions.remove(&key_clone);
+                }
+            }));
         }));
+        if let Err(e) = result {
+            let msg = if let Some(s) = e.downcast_ref::<&str>() {
+                s.to_string()
+            } else if let Some(s) = e.downcast_ref::<String>() {
+                s.clone()
+            } else {
+                "unknown panic".to_string()
+            };
+            eprintln!("[Grove] ACP session thread panicked: {}", msg);
+        }
     });
 
     result_rx.await.map_err(|_| {

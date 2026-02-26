@@ -84,7 +84,7 @@ impl ServerAuth {
 
         // 2. Nonce replay check
         {
-            let mut nonces = self.used_nonces.lock().unwrap();
+            let mut nonces = self.used_nonces.lock().expect("nonce lock poisoned");
 
             if nonces.contains_key(nonce) {
                 return false; // replay
