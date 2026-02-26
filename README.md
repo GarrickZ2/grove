@@ -159,7 +159,7 @@ Press `h` in Grove to configure sound and notification settings.
 
 ## MCP Server
 
-Built-in MCP server. AI agents read notes, reply to reviews, and complete tasks autonomously.
+Built-in MCP server. AI agents can manage projects and tasks, read notes, reply to reviews, and complete tasks autonomously.
 
 Add to your Claude Code MCP config (`~/.claude/config.json`):
 

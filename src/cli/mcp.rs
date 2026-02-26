@@ -7,14 +7,14 @@
 //! - grove_reply_review: Reply to review comments
 //! - grove_complete_task: Complete task (commit, sync, merge)
 
-use std::env;
+use std::{collections::HashSet, env};
 
 use rmcp::{
     handler::server::{tool::ToolRouter, wrapper::Parameters},
     model::*,
     schemars,
     schemars::JsonSchema,
-    tool, tool_handler, tool_router, ErrorData as McpError, ServerHandler, ServiceExt,
+    tool, tool_router, ErrorData as McpError, ServerHandler, ServiceExt,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -27,7 +27,26 @@ use crate::storage::{comments, config, notes, tasks, workspace};
 // Grove Instructions for AI
 // ============================================================================
 
-const GROVE_INSTRUCTIONS: &str = r#"
+const MANAGEMENT_INSTRUCTIONS: &str = r#"
+# Grove - Project & Task Management
+
+Use these tools when you are NOT inside a Grove task. They manage projects and create tasks from the workspace scope.
+
+## Available Tools
+1. **grove_list_projects** - List registered projects (supports query)
+2. **grove_add_project_by_path** - Register a project by local path (idempotent)
+3. **grove_create_task** - Create a task/worktree under a project
+4. **grove_list_tasks** - List active tasks under a project (supports query)
+
+## Recommended Workflow
+1. Call `grove_list_projects` to find the target project
+2. If missing, call `grove_add_project_by_path` to register it
+3. Call `grove_create_task` to create a task for the project
+4. Call `grove_list_tasks` to confirm the task is active
+
+"#;
+
+const EXECUTION_INSTRUCTIONS: &str = r#"
 # Grove - Git Worktree Task Manager
 
 Grove is a TUI application that manages parallel development tasks using Git worktrees and tmux sessions.
@@ -41,21 +60,14 @@ A Grove "task" represents an isolated development environment:
 
 ## How to Detect Grove Environment
 
-**IMPORTANT**: Before using task-scoped tools, first call `grove_status` to check if you are running inside a Grove task.
+**IMPORTANT**: Before using any Grove tools, first call `grove_status` to check if you are running inside a Grove task.
 
 - If `in_grove_task` is `true`: You are in a Grove task, and you can use all Grove tools.
 - If `in_grove_task` is `false`: You are NOT in a Grove task. Do NOT use other Grove tools as they will fail.
 
 ## Available Tools
 
-Available only when NOT in a Grove task (workspace-scoped, planning):
-
-1. **grove_add_project_by_path** - Register a project by local path (idempotent)
-2. **grove_list_projects** - List all registered projects
-3. **grove_create_task** - Create a task/worktree under a project
-4. **grove_list_tasks** - List active tasks under a project
-
-When inside a Grove task (task-scoped, execution):
+When inside a Grove task:
 
 1. **grove_status** - Get task context (task_id, branch, target_branch, project)
 2. **grove_read_notes** - Read user-written notes containing context and requirements
@@ -70,9 +82,11 @@ When inside a Grove task (task-scoped, execution):
 
 ## Recommended Workflow
 
-1. If you need to manage projects/tasks globally, use the workspace-scoped tools.
-2. If you need task notes/review/complete, call `grove_status` first to verify you are in a Grove task.
-3. When the user explicitly requests, call `grove_complete_task` to finalize.
+1. Call `grove_status` first to verify you are in a Grove task
+2. Call `grove_read_notes` to understand user requirements and context
+3. Call `grove_read_review` to check for code review feedback
+4. After addressing review comments, use `grove_reply_review` to respond
+5. When the user explicitly requests, call `grove_complete_task` to finalize
 
 ## Completing a Task
 
@@ -84,8 +98,36 @@ When inside a Grove task (task-scoped, execution):
 ## When NOT in Grove
 
 If `grove_status` returns `in_grove_task: false`, inform the user:
-"I'm not running inside a Grove task environment. Task-scoped Grove tools are only available when working within a Grove-managed session. You can still use workspace-scoped project/task management tools."
+"I'm not running inside a Grove task environment. Grove tools are only available when working within a Grove-managed tmux session. Please start a task from the Grove TUI."
 "#;
+
+fn get_instructions() -> &'static str {
+    if get_task_context().is_some() {
+        EXECUTION_INSTRUCTIONS
+    } else {
+        MANAGEMENT_INSTRUCTIONS
+    }
+}
+
+fn filter_tools(all: Vec<Tool>) -> Vec<Tool> {
+    let task_scoped_tools: HashSet<&'static str> = HashSet::from([
+        "grove_status",
+        "grove_read_notes",
+        "grove_read_review",
+        "grove_reply_review",
+        "grove_add_comment",
+        "grove_complete_task",
+    ]);
+    if get_task_context().is_some() {
+        all.into_iter()
+            .filter(|t| task_scoped_tools.contains(t.name.as_ref()))
+            .collect()
+    } else {
+        all.into_iter()
+            .filter(|t| !task_scoped_tools.contains(t.name.as_ref()))
+            .collect()
+    }
+}
 
 /// Grove MCP Server
 #[derive(Clone)]
@@ -108,7 +150,6 @@ impl Default for GroveMcpServer {
     }
 }
 
-#[tool_handler(router = self.tool_router)]
 impl ServerHandler for GroveMcpServer {
     fn get_info(&self) -> ServerInfo {
         ServerInfo {
@@ -121,8 +162,29 @@ impl ServerHandler for GroveMcpServer {
                 website_url: Some("https://github.com/GarrickZ2/grove".to_string()),
                 icons: None,
             },
-            instructions: Some(GROVE_INSTRUCTIONS.to_string()),
+            instructions: Some(get_instructions().to_string()),
         }
+    }
+
+    async fn call_tool(
+        &self,
+        request: CallToolRequestParams,
+        context: rmcp::service::RequestContext<rmcp::RoleServer>,
+    ) -> Result<CallToolResult, McpError> {
+        let tcc = rmcp::handler::server::tool::ToolCallContext::new(self, request, context);
+        self.tool_router.call(tcc).await
+    }
+
+    async fn list_tools(
+        &self,
+        _request: Option<PaginatedRequestParams>,
+        _context: rmcp::service::RequestContext<rmcp::RoleServer>,
+    ) -> Result<ListToolsResult, McpError> {
+        Ok(ListToolsResult {
+            tools: filter_tools(self.tool_router.list_all()),
+            meta: None,
+            next_cursor: None,
+        })
     }
 }
 
@@ -188,8 +250,13 @@ pub struct CompleteTaskParams {
 pub struct AddProjectByPathParams {
     /// Local filesystem path to a git repository (or a subdirectory within it)
     pub path: String,
-    /// Optional display name for the project
-    pub name: Option<String>,
+}
+
+/// List registered projects (workspace-scoped)
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+pub struct ListProjectsParams {
+    /// Optional fuzzy query for filtering by project path
+    pub query: Option<String>,
 }
 
 /// Create task under a project (workspace-scoped)
@@ -199,8 +266,6 @@ pub struct CreateTaskParams {
     pub project_id: String,
     /// Human-readable task name
     pub name: String,
-    /// Optional target branch (defaults to current branch)
-    pub target: Option<String>,
 }
 
 /// List active tasks under a project (workspace-scoped)
@@ -208,6 +273,8 @@ pub struct CreateTaskParams {
 pub struct ListTasksParams {
     /// Project ID (hash)
     pub project_id: String,
+    /// Optional fuzzy query for filtering tasks
+    pub query: Option<String>,
 }
 
 // ============================================================================
@@ -362,20 +429,20 @@ impl GroveMcpServer {
         params: Parameters<AddProjectByPathParams>,
     ) -> Result<CallToolResult, McpError> {
         ensure_not_in_grove_task()?;
-        ok_json(add_project_by_path_json(
-            &params.0.path,
-            params.0.name.as_deref(),
-        ))
+        ok_json(add_project_by_path_json(&params.0.path))
     }
 
     /// List all registered projects
     #[tool(
         name = "grove_list_projects",
-        description = "List all registered projects. Returns an array of {project_id, path}."
+        description = "List all registered projects. Returns an array of {project_id, path}. Optional fuzzy filter by query."
     )]
-    async fn grove_list_projects(&self) -> Result<CallToolResult, McpError> {
+    async fn grove_list_projects(
+        &self,
+        params: Parameters<ListProjectsParams>,
+    ) -> Result<CallToolResult, McpError> {
         ensure_not_in_grove_task()?;
-        ok_json(list_projects_json())
+        ok_json(list_projects_json(params.0.query.as_deref()))
     }
 
     /// Create a task/worktree under a project (does NOT start tmux/zellij session)
@@ -401,7 +468,10 @@ impl GroveMcpServer {
         params: Parameters<ListTasksParams>,
     ) -> Result<CallToolResult, McpError> {
         ensure_not_in_grove_task()?;
-        ok_json(list_tasks_json(&params.0.project_id))
+        ok_json(list_tasks_json(
+            &params.0.project_id,
+            params.0.query.as_deref(),
+        ))
     }
 
     /// Read user-written notes for the current task
@@ -899,7 +969,7 @@ fn ensure_not_in_grove_task() -> Result<(), McpError> {
     Ok(())
 }
 
-fn add_project_by_path_json(path: &str, name: Option<&str>) -> serde_json::Value {
+fn add_project_by_path_json(path: &str) -> serde_json::Value {
     let p = std::path::Path::new(path);
     if !p.exists() {
         return error_json("invalid_path", "Path does not exist");
@@ -914,16 +984,11 @@ fn add_project_by_path_json(path: &str, name: Option<&str>) -> serde_json::Value
         Err(e) => return error_json("not_git_repo", format!("Failed to resolve repo root: {e}")),
     };
 
-    // Determine display name for storage (even if we don't return it)
-    let default_name = std::path::Path::new(&repo_path)
+    let project_name = std::path::Path::new(&repo_path)
         .file_name()
         .and_then(|n| n.to_str())
         .unwrap_or("unknown")
         .to_string();
-    let project_name = name
-        .map(|s| s.to_string())
-        .filter(|s| !s.trim().is_empty())
-        .unwrap_or(default_name);
 
     match workspace::add_project(&project_name, &repo_path) {
         Ok(_) => {}
@@ -937,29 +1002,33 @@ fn add_project_by_path_json(path: &str, name: Option<&str>) -> serde_json::Value
 
     let project_id = workspace::project_hash(&repo_path);
 
-    // Prefer returning the persisted project name (idempotency may mean the input name isn't used)
-    let persisted_name = find_project_by_id(&project_id)
-        .ok()
-        .map(|p| p.name)
-        .unwrap_or(project_name);
     json!({
         "success": true,
         "project_id": project_id,
         "path": repo_path,
-        "name": persisted_name,
     })
 }
 
-fn list_projects_json() -> serde_json::Value {
+fn list_projects_json(query: Option<&str>) -> serde_json::Value {
     match workspace::load_projects() {
         Ok(projects) => {
+            let q = query.map(|s| s.trim().to_lowercase());
             let items: Vec<serde_json::Value> = projects
                 .into_iter()
+                .filter(|p| {
+                    if let Some(ref q) = q {
+                        if q.is_empty() {
+                            return true;
+                        }
+                        p.path.to_lowercase().contains(q)
+                    } else {
+                        true
+                    }
+                })
                 .map(|p| {
                     json!({
                         "project_id": workspace::project_hash(&p.path),
                         "path": p.path,
-                        "name": p.name,
                     })
                 })
                 .collect();
@@ -989,9 +1058,7 @@ fn create_task_json(params: &CreateTaskParams) -> serde_json::Value {
         Err(e) => return error_json("internal_error", format!("Failed to load projects: {e}")),
     };
 
-    let target = params.target.clone().unwrap_or_else(|| {
-        git::current_branch(&project.path).unwrap_or_else(|_| "main".to_string())
-    });
+    let target = git::current_branch(&project.path).unwrap_or_else(|_| "main".to_string());
 
     let full_config = config::load_config();
     let autolink_patterns = &full_config.auto_link.patterns;
@@ -1012,14 +1079,13 @@ fn create_task_json(params: &CreateTaskParams) -> serde_json::Value {
                 "branch": result.task.branch,
                 "target": result.task.target,
                 "worktree_path": result.worktree_path,
-                "multiplexer": result.task.multiplexer,
             }
         }),
         Err(e) => error_json("task_create_failed", format!("Failed to create task: {e}")),
     }
 }
 
-fn list_tasks_json(project_id: &str) -> serde_json::Value {
+fn list_tasks_json(project_id: &str, query: Option<&str>) -> serde_json::Value {
     match find_project_by_id(project_id) {
         Ok(_project) => {}
         Err(code) if code == "project_not_found" => {
@@ -1030,8 +1096,22 @@ fn list_tasks_json(project_id: &str) -> serde_json::Value {
 
     match tasks::load_tasks(project_id) {
         Ok(list) => {
+            let q = query.map(|s| s.trim().to_lowercase());
             let items: Vec<serde_json::Value> = list
                 .into_iter()
+                .filter(|t| {
+                    if let Some(ref q) = q {
+                        if q.is_empty() {
+                            return true;
+                        }
+                        t.id.to_lowercase().contains(q)
+                            || t.name.to_lowercase().contains(q)
+                            || t.branch.to_lowercase().contains(q)
+                            || t.target.to_lowercase().contains(q)
+                    } else {
+                        true
+                    }
+                })
                 .map(|t| {
                     json!({
                         "task_id": t.id,
@@ -1039,7 +1119,6 @@ fn list_tasks_json(project_id: &str) -> serde_json::Value {
                         "branch": t.branch,
                         "target": t.target,
                         "worktree_path": t.worktree_path,
-                        "multiplexer": t.multiplexer,
                     })
                 })
                 .collect();
@@ -1084,7 +1163,8 @@ mod tests {
     use super::*;
     use std::path::{Path, PathBuf};
     use std::process::Command;
-    use std::sync::{Mutex, OnceLock};
+    use std::sync::OnceLock;
+    use tokio::sync::Mutex;
 
     static TEST_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 
@@ -1119,10 +1199,7 @@ mod tests {
     }
 
     fn with_isolated_home<T>(f: impl FnOnce(&Path) -> T) -> T {
-        let _guard = TEST_LOCK
-            .get_or_init(|| Mutex::new(()))
-            .lock()
-            .expect("failed to lock test mutex");
+        let _guard = TEST_LOCK.get_or_init(|| Mutex::new(())).blocking_lock();
 
         let temp_home = unique_temp_dir("grove-mcp-home");
         std::fs::create_dir_all(&temp_home).unwrap();
@@ -1146,7 +1223,7 @@ mod tests {
     fn add_project_invalid_path_returns_success_false() {
         with_isolated_home(|home| {
             let missing = home.join("does-not-exist");
-            let v = add_project_by_path_json(missing.to_string_lossy().as_ref(), None);
+            let v = add_project_by_path_json(missing.to_string_lossy().as_ref());
             assert_eq!(v["success"].as_bool(), Some(false));
             assert_eq!(v["error"].as_str(), Some("invalid_path"));
         })
@@ -1158,12 +1235,12 @@ mod tests {
             let repo = home.join("repo");
             init_git_repo(&repo);
 
-            let v1 = add_project_by_path_json(repo.to_string_lossy().as_ref(), Some("Demo"));
+            let v1 = add_project_by_path_json(repo.to_string_lossy().as_ref());
             assert_eq!(v1["success"].as_bool(), Some(true));
             let project_id = v1["project_id"].as_str().unwrap().to_string();
             let repo_path = v1["path"].as_str().unwrap().to_string();
 
-            let v2 = add_project_by_path_json(repo.to_string_lossy().as_ref(), Some("OtherName"));
+            let v2 = add_project_by_path_json(repo.to_string_lossy().as_ref());
             assert_eq!(v2["success"].as_bool(), Some(true));
             assert_eq!(v2["project_id"].as_str(), Some(project_id.as_str()));
 
@@ -1178,10 +1255,10 @@ mod tests {
             let repo = home.join("repo");
             init_git_repo(&repo);
 
-            let v = add_project_by_path_json(repo.to_string_lossy().as_ref(), None);
+            let v = add_project_by_path_json(repo.to_string_lossy().as_ref());
             let project_id = v["project_id"].as_str().unwrap().to_string();
 
-            let list = list_projects_json();
+            let list = list_projects_json(None);
             assert_eq!(list["success"].as_bool(), Some(true));
             let projects = list["projects"].as_array().unwrap();
             assert!(projects
@@ -1196,7 +1273,7 @@ mod tests {
             let dir = home.join("not-a-repo");
             std::fs::create_dir_all(&dir).unwrap();
 
-            let v = add_project_by_path_json(dir.to_string_lossy().as_ref(), None);
+            let v = add_project_by_path_json(dir.to_string_lossy().as_ref());
             assert_eq!(v["success"].as_bool(), Some(false));
             assert_eq!(v["error"].as_str(), Some("not_git_repo"));
         })
@@ -1208,7 +1285,6 @@ mod tests {
             let v = create_task_json(&CreateTaskParams {
                 project_id: "deadbeef".to_string(),
                 name: "task".to_string(),
-                target: None,
             });
             assert_eq!(v["success"].as_bool(), Some(false));
             assert_eq!(v["error"].as_str(), Some("project_not_found"));
@@ -1221,13 +1297,12 @@ mod tests {
             let repo = home.join("repo");
             init_git_repo(&repo);
 
-            let add = add_project_by_path_json(repo.to_string_lossy().as_ref(), None);
+            let add = add_project_by_path_json(repo.to_string_lossy().as_ref());
             let project_id = add["project_id"].as_str().unwrap().to_string();
 
             let created = create_task_json(&CreateTaskParams {
                 project_id: project_id.clone(),
                 name: "MCP Task".to_string(),
-                target: None,
             });
             assert_eq!(created["success"].as_bool(), Some(true));
             let task_id = created["task"]["task_id"].as_str().unwrap().to_string();
@@ -1237,7 +1312,7 @@ mod tests {
                 .to_string();
             assert!(std::path::Path::new(&worktree_path).exists());
 
-            let list = list_tasks_json(&project_id);
+            let list = list_tasks_json(&project_id, None);
             assert_eq!(list["success"].as_bool(), Some(true));
             let tasks_arr = list["tasks"].as_array().unwrap();
             assert!(tasks_arr
@@ -1246,7 +1321,7 @@ mod tests {
 
             // Archive task and ensure list_tasks_json doesn't include it (active only)
             tasks::archive_task(&project_id, &task_id).unwrap();
-            let list2 = list_tasks_json(&project_id);
+            let list2 = list_tasks_json(&project_id, None);
             assert_eq!(list2["success"].as_bool(), Some(true));
             let tasks_arr2 = list2["tasks"].as_array().unwrap();
             assert!(!tasks_arr2
@@ -1255,15 +1330,96 @@ mod tests {
         })
     }
 
+    #[test]
+    fn filter_tools_outside_task_scoped_returns_complement() {
+        let _guard = TEST_LOCK.get_or_init(|| Mutex::new(())).blocking_lock();
+
+        let old_task_id = std::env::var("GROVE_TASK_ID").ok();
+        let old_project = std::env::var("GROVE_PROJECT").ok();
+        std::env::remove_var("GROVE_TASK_ID");
+        std::env::remove_var("GROVE_PROJECT");
+
+        let server = GroveMcpServer::new();
+        let tools = filter_tools(server.tool_router.list_all());
+        let names: HashSet<String> = tools.into_iter().map(|t| t.name.to_string()).collect();
+
+        for name in [
+            "grove_add_project_by_path",
+            "grove_list_projects",
+            "grove_create_task",
+            "grove_list_tasks",
+        ] {
+            assert!(names.contains(name));
+        }
+        for name in [
+            "grove_status",
+            "grove_read_notes",
+            "grove_read_review",
+            "grove_reply_review",
+            "grove_add_comment",
+            "grove_complete_task",
+        ] {
+            assert!(!names.contains(name));
+        }
+
+        if let Some(v) = old_task_id {
+            std::env::set_var("GROVE_TASK_ID", v);
+        }
+        if let Some(v) = old_project {
+            std::env::set_var("GROVE_PROJECT", v);
+        }
+    }
+
+    #[test]
+    fn filter_tools_inside_task_scoped_returns_only_task_scoped() {
+        let _guard = TEST_LOCK.get_or_init(|| Mutex::new(())).blocking_lock();
+
+        let old_task_id = std::env::var("GROVE_TASK_ID").ok();
+        let old_project = std::env::var("GROVE_PROJECT").ok();
+        std::env::set_var("GROVE_TASK_ID", "task-1");
+        std::env::set_var("GROVE_PROJECT", "/tmp/repo");
+
+        let server = GroveMcpServer::new();
+        let tools = filter_tools(server.tool_router.list_all());
+        let names: HashSet<String> = tools.into_iter().map(|t| t.name.to_string()).collect();
+
+        for name in [
+            "grove_status",
+            "grove_read_notes",
+            "grove_read_review",
+            "grove_reply_review",
+            "grove_add_comment",
+            "grove_complete_task",
+        ] {
+            assert!(names.contains(name));
+        }
+        for name in [
+            "grove_add_project_by_path",
+            "grove_list_projects",
+            "grove_create_task",
+            "grove_list_tasks",
+        ] {
+            assert!(!names.contains(name));
+        }
+
+        if let Some(v) = old_task_id {
+            std::env::set_var("GROVE_TASK_ID", v);
+        } else {
+            std::env::remove_var("GROVE_TASK_ID");
+        }
+        if let Some(v) = old_project {
+            std::env::set_var("GROVE_PROJECT", v);
+        } else {
+            std::env::remove_var("GROVE_PROJECT");
+        }
+    }
+
     #[tokio::test(flavor = "current_thread")]
     async fn mcp_newline_protocol_smoke_test() {
         use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
         // Ensure tests that mutate HOME don't run concurrently.
-        let _guard = TEST_LOCK
-            .get_or_init(|| Mutex::new(()))
-            .lock()
-            .expect("failed to lock test mutex");
+        let _guard = TEST_LOCK.get_or_init(|| Mutex::new(())).lock().await;
 
         let temp_home = unique_temp_dir("grove-mcp-home");
         std::fs::create_dir_all(&temp_home).unwrap();
@@ -1383,7 +1539,7 @@ mod tests {
         client_write.shutdown().await.unwrap();
         drop(client_write);
         drop(reader);
-        let _ = tokio::time::timeout(std::time::Duration::from_secs(3), server_task)
+        tokio::time::timeout(std::time::Duration::from_secs(3), server_task)
             .await
             .expect("server did not exit")
             .expect("server task join failed")
@@ -1401,10 +1557,7 @@ mod tests {
     async fn mcp_planning_tools_rejected_inside_task_context() {
         use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
-        let _guard = TEST_LOCK
-            .get_or_init(|| Mutex::new(()))
-            .lock()
-            .expect("failed to lock test mutex");
+        let _guard = TEST_LOCK.get_or_init(|| Mutex::new(())).lock().await;
 
         let temp_home = unique_temp_dir("grove-mcp-home");
         std::fs::create_dir_all(&temp_home).unwrap();
@@ -1558,7 +1711,7 @@ mod tests {
         client_write.shutdown().await.unwrap();
         drop(client_write);
         drop(reader);
-        let _ = tokio::time::timeout(std::time::Duration::from_secs(3), server_task)
+        tokio::time::timeout(std::time::Duration::from_secs(3), server_task)
             .await
             .expect("server did not exit")
             .expect("server task join failed")
