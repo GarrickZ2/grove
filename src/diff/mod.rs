@@ -281,7 +281,24 @@ pub fn get_diff_range(
     to_ref: Option<&str>,
 ) -> Result<DiffResult> {
     let raw = git::get_raw_diff_range(worktree_path, from_ref, to_ref)?;
-    Ok(parse_diff(&raw))
+    let mut result = parse_diff(&raw);
+
+    // Filter out symlinks (autolink creates symlinks to main repo)
+    let wt_base = std::path::Path::new(worktree_path);
+    result.files.retain(|file| {
+        let path = if file.new_path.is_empty() || file.new_path == "/dev/null" {
+            &file.old_path
+        } else {
+            &file.new_path
+        };
+        !wt_base.join(path).is_symlink()
+    });
+
+    // Recalculate totals after filtering
+    result.total_additions = result.files.iter().map(|f| f.additions).sum();
+    result.total_deletions = result.files.iter().map(|f| f.deletions).sum();
+
+    Ok(result)
 }
 
 #[cfg(test)]
