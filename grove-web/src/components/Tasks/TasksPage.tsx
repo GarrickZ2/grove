@@ -536,7 +536,7 @@ export function TasksPage({ initialTaskId, initialViewMode, onNavigationConsumed
               </div>
 
               {/* Right Panel: Empty State or Info Panel */}
-              <div className="flex-1 h-full">
+              <div className="flex-1 h-full min-w-0">
                 <AnimatePresence mode="wait">
                   {!pageState.inWorkspace && pageState.selectedTask ? (
                     <motion.div
