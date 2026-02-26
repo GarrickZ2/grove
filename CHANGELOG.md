@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.4] - 2026-02-26
+
+### Added
+
+- **Web: @ file mention in Review comments** — type `@` to reference files in code review comments, with autocomplete dropdown
+- **Web: Chat chip UX improvements** — better interaction for ACP Chat tool content chips
+
+### Fixed
+
+- **Web: Info Panel overflow** — long commit messages and branch names no longer stretch the panel beyond its container; added `min-w-0` to flex parent containers in Zen and Blitz modes
+- **Web: Info Panel header simplified** — removed Chat/Terminal/Review/Editor buttons from header (both desktop and mobile); Workspace button is the entry point
+- **Web: commit messages wrap** — Git tab commit messages now wrap instead of truncating, showing full content
+- **Web: ACP Chat tool content rendering** — improved display of tool use results in Chat panel
+- **Web: Code Review file ordering** — consistent file ordering and scroll position tracking when switching between files
+- **Web: smooth crossfade on task switch** — Blitz/Zen mode now uses smooth crossfade animation when switching between tasks
+- **Autolink symlinks** — excluded from git tracking, Editor file tree, and Code Review
+- **Panic handling** — spawned threads (ACP session, merge, file watcher) wrapped with `catch_unwind` to log panics instead of silently crashing; bare `unwrap()` replaced with descriptive `expect()` messages; `RUST_BACKTRACE=1` enabled by default
+
 ## [0.7.3] - 2026-02-25
 
 ### Added

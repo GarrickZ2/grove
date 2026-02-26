@@ -2,7 +2,9 @@ import { useState, useEffect, useRef } from 'react';
 import { X, CheckCircle, RotateCcw, Reply, Send, Trash2, Pencil } from 'lucide-react';
 import type { ReviewCommentEntry } from '../../api/tasks';
 import { AgentAvatar } from './AgentAvatar';
-import { MarkdownRenderer } from '../ui';
+import { MarkdownRenderer, FileMentionDropdown } from '../ui';
+import { useFileMention } from '../../hooks';
+import type { MentionItem } from '../../utils/fileMention';
 
 /** Format ISO timestamp to human-readable local time, e.g. "2026-02-10 08:37:24" */
 function formatTime(ts: string): string {
@@ -26,6 +28,7 @@ interface CommentDetailModalProps {
   onEdit?: (id: number, content: string) => void;
   onEditReply?: (commentId: number, replyId: number, content: string) => void;
   onDeleteReply?: (commentId: number, replyId: number) => void;
+  mentionItems?: MentionItem[] | null;
 }
 
 export function CommentDetailModal({
@@ -38,6 +41,7 @@ export function CommentDetailModal({
   onEdit,
   onEditReply,
   onDeleteReply,
+  mentionItems,
 }: CommentDetailModalProps) {
   const [replyText, setReplyText] = useState('');
   const [showReplyForm, setShowReplyForm] = useState(false);
@@ -51,6 +55,10 @@ export function CommentDetailModal({
   showReplyFormRef.current = showReplyForm;
   editingCommentRef.current = editingComment;
   editingReplyIdRef.current = editingReplyId;
+
+  const replyMention = useFileMention({ mentionItems: mentionItems ?? null });
+  const editCommentMention = useFileMention({ mentionItems: mentionItems ?? null });
+  const editReplyMention = useFileMention({ mentionItems: mentionItems ?? null });
 
   // Layered Escape: edit forms → reply form → modal, and always stop propagation
   useEffect(() => {
@@ -233,10 +241,12 @@ export function CommentDetailModal({
           {editingComment ? (
             <div>
               <textarea
+                ref={editCommentMention.textareaRef}
                 value={editCommentText}
-                onChange={(e) => setEditCommentText(e.target.value)}
+                onChange={(e) => { setEditCommentText(e.target.value); editCommentMention.handleChange(e.target.value); }}
                 autoFocus
                 onKeyDown={(e) => {
+                  if (editCommentMention.handleKeyDown(e, setEditCommentText)) return;
                   if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) handleSaveEditComment();
                 }}
                 style={{
@@ -251,6 +261,15 @@ export function CommentDetailModal({
                   fontFamily: 'inherit',
                   resize: 'vertical',
                 }}
+              />
+              <FileMentionDropdown
+                items={editCommentMention.filteredItems}
+                selectedIdx={editCommentMention.selectedIdx}
+                onSelect={(path) => { const v = editCommentMention.handleSelect(path); if (v !== null) setEditCommentText(v); }}
+                onMouseEnter={editCommentMention.setSelectedIdx}
+                visible={editCommentMention.showDropdown}
+                anchorRef={editCommentMention.textareaRef}
+                cursorIdx={editCommentMention.atCharIdx}
               />
               <div style={{ display: 'flex', gap: 8, marginTop: 8, justifyContent: 'flex-end' }}>
                 <button
@@ -370,10 +389,12 @@ export function CommentDetailModal({
                   {editingReplyId === reply.id ? (
                     <div>
                       <textarea
+                        ref={editReplyMention.textareaRef}
                         value={editReplyText}
-                        onChange={(e) => setEditReplyText(e.target.value)}
+                        onChange={(e) => { setEditReplyText(e.target.value); editReplyMention.handleChange(e.target.value); }}
                         autoFocus
                         onKeyDown={(e) => {
+                          if (editReplyMention.handleKeyDown(e, setEditReplyText)) return;
                           if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) handleSaveEditReply();
                         }}
                         style={{
@@ -388,6 +409,15 @@ export function CommentDetailModal({
                           fontFamily: 'inherit',
                           resize: 'vertical',
                         }}
+                      />
+                      <FileMentionDropdown
+                        items={editReplyMention.filteredItems}
+                        selectedIdx={editReplyMention.selectedIdx}
+                        onSelect={(path) => { const v = editReplyMention.handleSelect(path); if (v !== null) setEditReplyText(v); }}
+                        onMouseEnter={editReplyMention.setSelectedIdx}
+                        visible={editReplyMention.showDropdown}
+                        anchorRef={editReplyMention.textareaRef}
+                        cursorIdx={editReplyMention.atCharIdx}
                       />
                       <div style={{ display: 'flex', gap: 8, marginTop: 6, justifyContent: 'flex-end' }}>
                         <button
@@ -566,11 +596,13 @@ export function CommentDetailModal({
             }}
           >
             <textarea
+              ref={replyMention.textareaRef}
               value={replyText}
-              onChange={(e) => setReplyText(e.target.value)}
-              placeholder="Write a reply... (Markdown supported)"
+              onChange={(e) => { setReplyText(e.target.value); replyMention.handleChange(e.target.value); }}
+              placeholder="Write a reply... (Markdown supported, type @ to mention files)"
               autoFocus
               onKeyDown={(e) => {
+                if (replyMention.handleKeyDown(e, setReplyText)) return;
                 if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) handleSubmitReply();
               }}
               style={{
@@ -585,6 +617,15 @@ export function CommentDetailModal({
                 fontFamily: 'inherit',
                 resize: 'vertical',
               }}
+            />
+            <FileMentionDropdown
+              items={replyMention.filteredItems}
+              selectedIdx={replyMention.selectedIdx}
+              onSelect={(path) => { const v = replyMention.handleSelect(path); if (v !== null) setReplyText(v); }}
+              onMouseEnter={replyMention.setSelectedIdx}
+              visible={replyMention.showDropdown}
+              anchorRef={replyMention.textareaRef}
+              cursorIdx={replyMention.atCharIdx}
             />
             <div style={{ display: 'flex', gap: 8, marginTop: 8, justifyContent: 'flex-end' }}>
               <button
