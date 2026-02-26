@@ -30,7 +30,7 @@ use crate::storage::{comments, config, notes, tasks, workspace};
 const MANAGEMENT_INSTRUCTIONS: &str = r#"
 # Grove - Project & Task Management
 
-Use these tools when you are NOT inside a Grove task. They manage projects and create tasks from the workspace scope.
+Use these tools for workspace-level project/task management before starting a Grove task (register/list projects, create/list tasks).
 
 ## Available Tools
 1. **grove_list_projects** - List registered projects (supports query)
@@ -990,17 +990,22 @@ fn add_project_by_path_json(path: &str) -> serde_json::Value {
         .unwrap_or("unknown")
         .to_string();
 
-    match workspace::add_project(&project_name, &repo_path) {
-        Ok(_) => {}
-        Err(e) => {
-            // Idempotent behavior: already registered is considered success
-            if !e.to_string().contains("already registered") {
-                return error_json("internal_error", format!("Failed to add project: {e}"));
-            }
+    let project_id = workspace::project_hash(&repo_path);
+    match workspace::is_project_registered(&repo_path) {
+        Ok(true) => {
+            return json!({
+                "success": true,
+                "project_id": project_id,
+                "path": repo_path,
+            })
         }
+        Ok(false) => {}
+        Err(e) => return error_json("internal_error", format!("Failed to check project: {e}")),
     }
 
-    let project_id = workspace::project_hash(&repo_path);
+    if let Err(e) = workspace::add_project(&project_name, &repo_path) {
+        return error_json("internal_error", format!("Failed to add project: {e}"));
+    }
 
     json!({
         "success": true,
@@ -1041,21 +1046,18 @@ fn list_projects_json(query: Option<&str>) -> serde_json::Value {
     }
 }
 
-fn find_project_by_id(project_id: &str) -> Result<workspace::RegisteredProject, String> {
-    let projects = workspace::load_projects().map_err(|e| e.to_string())?;
-    projects
-        .into_iter()
-        .find(|p| workspace::project_hash(&p.path) == project_id)
-        .ok_or_else(|| "project_not_found".to_string())
+fn load_project_by_id(project_id: &str) -> Result<Option<workspace::RegisteredProject>, String> {
+    match workspace::load_project_by_hash(project_id).map_err(|e| e.to_string())? {
+        Some(p) if std::path::Path::new(&p.path).exists() => Ok(Some(p)),
+        _ => Ok(None),
+    }
 }
 
 fn create_task_json(params: &CreateTaskParams) -> serde_json::Value {
-    let project = match find_project_by_id(&params.project_id) {
-        Ok(p) => p,
-        Err(code) if code == "project_not_found" => {
-            return error_json("project_not_found", "Project not found")
-        }
-        Err(e) => return error_json("internal_error", format!("Failed to load projects: {e}")),
+    let project = match load_project_by_id(&params.project_id) {
+        Ok(Some(p)) => p,
+        Ok(None) => return error_json("project_not_found", "Project not found"),
+        Err(e) => return error_json("internal_error", format!("Failed to load project: {e}")),
     };
 
     let target = git::current_branch(&project.path).unwrap_or_else(|_| "main".to_string());
@@ -1086,12 +1088,10 @@ fn create_task_json(params: &CreateTaskParams) -> serde_json::Value {
 }
 
 fn list_tasks_json(project_id: &str, query: Option<&str>) -> serde_json::Value {
-    match find_project_by_id(project_id) {
-        Ok(_project) => {}
-        Err(code) if code == "project_not_found" => {
-            return error_json("project_not_found", "Project not found")
-        }
-        Err(e) => return error_json("internal_error", format!("Failed to load projects: {e}")),
+    match load_project_by_id(project_id) {
+        Ok(Some(_project)) => {}
+        Ok(None) => return error_json("project_not_found", "Project not found"),
+        Err(e) => return error_json("internal_error", format!("Failed to load project: {e}")),
     }
 
     match tasks::load_tasks(project_id) {
@@ -1244,7 +1244,9 @@ mod tests {
             assert_eq!(v2["success"].as_bool(), Some(true));
             assert_eq!(v2["project_id"].as_str(), Some(project_id.as_str()));
 
-            let p = find_project_by_id(&project_id).expect("project should resolve");
+            let p = load_project_by_id(&project_id)
+                .expect("project should resolve")
+                .expect("project should resolve");
             assert_eq!(p.path, repo_path);
         })
     }
@@ -1554,7 +1556,7 @@ mod tests {
     }
 
     #[tokio::test(flavor = "current_thread")]
-    async fn mcp_planning_tools_rejected_inside_task_context() {
+    async fn mcp_management_tools_rejected_inside_task_context() {
         use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
         let _guard = TEST_LOCK.get_or_init(|| Mutex::new(())).lock().await;

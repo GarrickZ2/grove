@@ -174,7 +174,7 @@ Add to your Claude Code MCP config (`~/.claude/config.json`):
 }
 ```
 
-Planning tools (only available when NOT in a Grove task):
+Management tools (only available when NOT in a Grove task):
 
 | Tool | Description |
 |------|-------------|

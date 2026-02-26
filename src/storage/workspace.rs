@@ -64,6 +64,10 @@ fn load_project_metadata(project_hash: &str) -> Result<Option<RegisteredProject>
     Ok(Some(project))
 }
 
+pub fn load_project_by_hash(project_hash: &str) -> Result<Option<RegisteredProject>> {
+    load_project_metadata(project_hash)
+}
+
 /// 保存项目元数据
 fn save_project_metadata(project_hash: &str, project: &RegisteredProject) -> Result<()> {
     ensure_project_dir(project_hash)?;
