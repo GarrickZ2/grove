@@ -519,7 +519,7 @@ fn print_qr_code(content: &str) {
 /// - If bound to a concrete IP (not `0.0.0.0`), use that directly.
 /// - If bound to `0.0.0.0`, prefer the detected LAN IP, else `"localhost"`.
 fn display_host_for(bind_host: &str, lan_ip: Option<&str>) -> String {
-    if bind_host != "0.0.0.0" {
+    if bind_host != "0.0.0.0" && bind_host != "::" {
         return bind_host.to_string();
     }
     lan_ip

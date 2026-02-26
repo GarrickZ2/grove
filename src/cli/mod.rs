@@ -12,6 +12,7 @@ pub mod web;
 pub mod gui;
 
 use clap::{Parser, Subcommand};
+use std::net::IpAddr;
 
 use crate::storage::config::LastLaunch;
 
@@ -42,6 +43,9 @@ pub enum Commands {
         /// Port to listen on
         #[arg(short, long, default_value_t = web::DEFAULT_PORT)]
         port: u16,
+        /// Host to bind to
+        #[arg(long, default_value = "127.0.0.1")]
+        host: IpAddr,
         /// Don't automatically open browser
         #[arg(long)]
         no_open: bool,
@@ -108,7 +112,7 @@ impl Commands {
     pub fn to_last_launch(&self) -> Option<LastLaunch> {
         match self {
             Commands::Tui => Some(LastLaunch::Tui),
-            Commands::Web { port, no_open, dev } => Some(LastLaunch::Web {
+            Commands::Web { port, no_open, dev, .. } => Some(LastLaunch::Web {
                 port: *port,
                 no_open: *no_open,
                 dev: *dev,
@@ -143,6 +147,7 @@ impl LastLaunch {
             LastLaunch::Tui => Commands::Tui,
             LastLaunch::Web { port, no_open, dev } => Commands::Web {
                 port: *port,
+                host: "127.0.0.1".parse().unwrap(),
                 no_open: *no_open,
                 dev: *dev,
             },
