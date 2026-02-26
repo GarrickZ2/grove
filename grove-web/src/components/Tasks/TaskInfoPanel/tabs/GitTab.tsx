@@ -132,7 +132,7 @@ export function GitTab({ task }: GitTabProps) {
                     </code>
                   )}
                   <div className="flex-1 min-w-0">
-                    <p className="text-sm text-[var(--color-text)] truncate">
+                    <p className="text-sm text-[var(--color-text)] break-words">
                       {commit.message}
                     </p>
                     <div className="flex items-center gap-2 mt-0.5 text-xs text-[var(--color-text-muted)]">
