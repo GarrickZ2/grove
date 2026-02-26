@@ -1342,6 +1342,100 @@ export function TaskChat({
     // Skip during IME composition (e.g. Chinese/Japanese input)
     if (e.nativeEvent.isComposing || e.keyCode === 229) return;
 
+    // Backspace: robust chip deletion for contentEditable
+    if (e.key === "Backspace" && !e.metaKey && !e.altKey) {
+      const sel = window.getSelection();
+      if (sel && sel.isCollapsed && sel.anchorNode) {
+        const anchor = sel.anchorNode;
+        const offset = sel.anchorOffset;
+        const isChipEl = (n: Node): n is HTMLElement =>
+          n instanceof HTMLElement && (n.dataset.command !== undefined || n.dataset.file !== undefined);
+
+        // Case A: Cursor at start of text node — chip is previous sibling → delete chip
+        if (anchor.nodeType === Node.TEXT_NODE && offset === 0) {
+          const prev = anchor.previousSibling;
+          if (prev && isChipEl(prev)) {
+            e.preventDefault();
+            const before = prev.previousSibling;
+            prev.remove();
+            // Position cursor at end of preceding text, or start of container
+            if (before && before.nodeType === Node.TEXT_NODE) {
+              const r = document.createRange();
+              r.setStart(before, (before.textContent || "").length);
+              r.collapse(true);
+              sel.removeAllRanges();
+              sel.addRange(r);
+            }
+            checkContent();
+            return;
+          }
+        }
+
+        // Case B: Cursor in element node — previous child is chip → delete chip
+        if (anchor.nodeType === Node.ELEMENT_NODE && offset > 0) {
+          const prevChild = anchor.childNodes[offset - 1];
+          if (isChipEl(prevChild)) {
+            e.preventDefault();
+            const before = prevChild.previousSibling;
+            prevChild.remove();
+            if (before && before.nodeType === Node.TEXT_NODE) {
+              const r = document.createRange();
+              r.setStart(before, (before.textContent || "").length);
+              r.collapse(true);
+              sel.removeAllRanges();
+              sel.addRange(r);
+            }
+            checkContent();
+            return;
+          }
+        }
+
+        // Case C: Cursor in a whitespace-only text node right after a chip
+        // (the trailing " " inserted as cursor placeholder after chip creation)
+        // Handle deletion ourselves to prevent browser from mangling the DOM
+        if (anchor.nodeType === Node.TEXT_NODE && offset > 0) {
+          const text = anchor.textContent || "";
+          const prev = anchor.previousSibling;
+          if (prev && isChipEl(prev) && text.trimEnd().length === 0) {
+            e.preventDefault();
+            if (text.length <= 1) {
+              // Last whitespace char — delete both the padding text node and the chip
+              const beforeChip = prev.previousSibling;
+              prev.remove();
+              anchor.parentNode?.removeChild(anchor);
+              if (beforeChip && beforeChip.nodeType === Node.TEXT_NODE) {
+                const r = document.createRange();
+                r.setStart(beforeChip, (beforeChip.textContent || "").length);
+                r.collapse(true);
+                sel.removeAllRanges();
+                sel.addRange(r);
+              } else {
+                // No text before chip — position at end of remaining content
+                const el = editableRef.current;
+                if (el) {
+                  const r = document.createRange();
+                  r.selectNodeContents(el);
+                  r.collapse(false);
+                  sel.removeAllRanges();
+                  sel.addRange(r);
+                }
+              }
+            } else {
+              // Multiple whitespace chars — delete one manually
+              anchor.textContent = text.slice(0, offset - 1) + text.slice(offset);
+              const r = document.createRange();
+              r.setStart(anchor, offset - 1);
+              r.collapse(true);
+              sel.removeAllRanges();
+              sel.addRange(r);
+            }
+            checkContent();
+            return;
+          }
+        }
+      }
+    }
+
     // Shell mode: Backspace on empty input → exit shell mode
     if (isTerminalMode && e.key === "Backspace") {
       const el = editableRef.current;
@@ -1435,7 +1529,7 @@ export function TaskChat({
     } else {
       if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSend(); }
     }
-  }, [handleSend, isTerminalMode, isInputExpanded, showSlashMenu, filteredSlashCommands, slashSelectedIdx, insertCommandAtCursor, showFileMenu, filteredFiles, fileSelectedIdx, insertFileAtCursor, pendingMessages, handleClearPending, modeOptions, permissionLevel]);
+  }, [handleSend, isTerminalMode, isInputExpanded, showSlashMenu, filteredSlashCommands, slashSelectedIdx, insertCommandAtCursor, showFileMenu, filteredFiles, fileSelectedIdx, insertFileAtCursor, pendingMessages, handleClearPending, modeOptions, permissionLevel, checkContent]);
 
   const toggleToolCollapse = (id: string) => {
     setMessages((prev) => prev.map((m) => m.type === "tool" && m.id === id ? { ...m, collapsed: !m.collapsed } : m));

@@ -7,6 +7,8 @@ import { CommentCard, CommentForm, ReplyForm } from './InlineComment';
 import { ChevronRight, ChevronDown, ChevronUp, Copy, Check, MessageSquare, ChevronsUpDown } from 'lucide-react';
 import { detectLanguage, highlightLines } from './syntaxHighlight';
 import { GutterAvatar } from './AgentAvatar';
+import { useFileMention } from '../../hooks';
+import { FileMentionDropdown } from '../ui';
 
 // ============================================================================
 // Types for context line expansion
@@ -202,6 +204,7 @@ interface DiffFileViewProps {
   codeSearchQuery?: string;
   codeSearchCaseSensitive?: boolean;
   scrollToLine?: number; // Line number to scroll to and expand if in collapsed gap
+  mentionItems?: import('../../utils/fileMention').MentionItem[] | null;
 }
 
 export function DiffFileView({
@@ -245,9 +248,12 @@ export function DiffFileView({
   codeSearchQuery = '',
   codeSearchCaseSensitive = false,
   scrollToLine,
+  mentionItems,
 }: DiffFileViewProps) {
   const ref = useRef<HTMLDivElement>(null);
   const [copied, setCopied] = useState(false);
+  const [fileCommentText, setFileCommentText] = useState('');
+  const fileCommentMention = useFileMention({ mentionItems: mentionItems ?? null });
 
   // Selection-based comment button
   const [selectionAnchor, setSelectionAnchor] = useState<{
@@ -634,6 +640,7 @@ export function DiffFileView({
     onEditComment,
     onEditReply,
     onDeleteReply,
+    mentionItems,
   };
 
   return (
@@ -730,6 +737,7 @@ export function DiffFileView({
                     onEdit={onEditComment}
                     onEditReply={onEditReply}
                     onDeleteReply={onDeleteReply}
+                    mentionItems={mentionItems}
                   />
                   {replyFormCommentId === comment.id && onReplyComment && onCancelReply && (
                     <div className="diff-comment-reply-form">
@@ -737,6 +745,7 @@ export function DiffFileView({
                         commentId={comment.id}
                         onSubmit={onReplyComment}
                         onCancel={onCancelReply}
+                        mentionItems={mentionItems}
                       />
                     </div>
                   )}
@@ -760,25 +769,37 @@ export function DiffFileView({
                     <span style={{ color: 'var(--color-text-muted)', fontSize: 11 }}>Comment on {file.new_path}</span>
                   </div>
                   <textarea
-                    placeholder="Leave a comment about this file..."
+                    ref={fileCommentMention.textareaRef}
+                    value={fileCommentText}
+                    onChange={(e) => { setFileCommentText(e.target.value); fileCommentMention.handleChange(e.target.value); }}
+                    placeholder="Leave a comment about this file... (type @ to mention files)"
                     autoFocus
                     onKeyDown={(e) => {
+                      if (fileCommentMention.handleKeyDown(e, setFileCommentText)) return;
                       if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
-                        const textarea = e.target as HTMLTextAreaElement;
-                        if (textarea.value.trim()) {
-                          onSubmitFileComment(file.new_path, textarea.value.trim());
+                        if (fileCommentText.trim()) {
+                          onSubmitFileComment(file.new_path, fileCommentText.trim());
+                          setFileCommentText('');
                         }
                       }
                       if (e.key === 'Escape') {
                         onCancelFileComment();
                       }
                     }}
-                    id={`file-comment-textarea-${file.new_path}`}
                     className="diff-reply-textarea"
+                  />
+                  <FileMentionDropdown
+                    items={fileCommentMention.filteredItems}
+                    selectedIdx={fileCommentMention.selectedIdx}
+                    onSelect={(path) => { const v = fileCommentMention.handleSelect(path); if (v !== null) setFileCommentText(v); }}
+                    onMouseEnter={fileCommentMention.setSelectedIdx}
+                    visible={fileCommentMention.showDropdown}
+                    anchorRef={fileCommentMention.textareaRef}
+                    cursorIdx={fileCommentMention.atCharIdx}
                   />
                   <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 6, marginTop: 6 }}>
                     <button
-                      onClick={onCancelFileComment}
+                      onClick={() => { onCancelFileComment(); setFileCommentText(''); }}
                       style={{
                         display: 'flex',
                         alignItems: 'center',
@@ -796,11 +817,12 @@ export function DiffFileView({
                     </button>
                     <button
                       onClick={() => {
-                        const textarea = document.getElementById(`file-comment-textarea-${file.new_path}`) as HTMLTextAreaElement;
-                        if (textarea && textarea.value.trim()) {
-                          onSubmitFileComment(file.new_path, textarea.value.trim());
+                        if (fileCommentText.trim()) {
+                          onSubmitFileComment(file.new_path, fileCommentText.trim());
+                          setFileCommentText('');
                         }
                       }}
+                      disabled={!fileCommentText.trim()}
                       style={{
                         display: 'flex',
                         alignItems: 'center',
@@ -920,6 +942,7 @@ interface CommentProps {
   onEditComment?: (id: number, content: string) => void;
   onEditReply?: (commentId: number, replyId: number, content: string) => void;
   onDeleteReply?: (commentId: number, replyId: number) => void;
+  mentionItems?: import('../../utils/fileMention').MentionItem[] | null;
 }
 
 // ============================================================================
@@ -1034,6 +1057,7 @@ function ExpandedContextRows({
   onEditComment,
   onEditReply,
   onDeleteReply,
+  mentionItems,
   codeSearchQuery,
   codeSearchCaseSensitive,
 }: {
@@ -1164,6 +1188,7 @@ function ExpandedContextRows({
                           onEdit={onEditComment}
                           onEditReply={onEditReply}
                           onDeleteReply={onDeleteReply}
+                          mentionItems={mentionItems}
                         />
                         {replyFormCommentId === c.id && onReplyComment && onCancelReply && (
                           <div style={{ margin: '-2px 8px 6px 8px' }}>
@@ -1172,6 +1197,7 @@ function ExpandedContextRows({
                                 commentId={c.id}
                                 onSubmit={onReplyComment}
                                 onCancel={onCancelReply}
+                                mentionItems={mentionItems}
                               />
                             </div>
                           </div>
@@ -1183,6 +1209,7 @@ function ExpandedContextRows({
                         anchor={commentFormAnchor!}
                         onSubmit={onAddComment}
                         onCancel={onCancelComment}
+                        mentionItems={mentionItems}
                       />
                     )}
                   </td>
@@ -1201,6 +1228,7 @@ function ExpandedContextRows({
                           onEdit={onEditComment}
                           onEditReply={onEditReply}
                           onDeleteReply={onDeleteReply}
+                          mentionItems={mentionItems}
                         />
                         {replyFormCommentId === c.id && onReplyComment && onCancelReply && (
                           <div style={{ margin: '-2px 8px 6px 8px' }}>
@@ -1209,6 +1237,7 @@ function ExpandedContextRows({
                                 commentId={c.id}
                                 onSubmit={onReplyComment}
                                 onCancel={onCancelReply}
+                                mentionItems={mentionItems}
                               />
                             </div>
                           </div>
@@ -1220,6 +1249,7 @@ function ExpandedContextRows({
                         anchor={commentFormAnchor!}
                         onSubmit={onAddComment}
                         onCancel={onCancelComment}
+                        mentionItems={mentionItems}
                       />
                     )}
                   </td>
@@ -1297,6 +1327,7 @@ function ExpandedContextRows({
                         onEdit={onEditComment}
                         onEditReply={onEditReply}
                         onDeleteReply={onDeleteReply}
+                        mentionItems={mentionItems}
                       />
                       {replyFormCommentId === c.id && onReplyComment && onCancelReply && (
                         <div style={{ margin: '-2px 16px 6px 60px' }}>
@@ -1305,6 +1336,7 @@ function ExpandedContextRows({
                               commentId={c.id}
                               onSubmit={onReplyComment}
                               onCancel={onCancelReply}
+                              mentionItems={mentionItems}
                             />
                           </div>
                         </div>
@@ -1325,6 +1357,7 @@ function ExpandedContextRows({
                         onEdit={onEditComment}
                         onEditReply={onEditReply}
                         onDeleteReply={onDeleteReply}
+                        mentionItems={mentionItems}
                       />
                       {replyFormCommentId === c.id && onReplyComment && onCancelReply && (
                         <div style={{ margin: '-2px 16px 6px 60px' }}>
@@ -1333,6 +1366,7 @@ function ExpandedContextRows({
                               commentId={c.id}
                               onSubmit={onReplyComment}
                               onCancel={onCancelReply}
+                              mentionItems={mentionItems}
                             />
                           </div>
                         </div>
@@ -1344,6 +1378,7 @@ function ExpandedContextRows({
                       anchor={commentFormAnchor!}
                       onSubmit={onAddComment}
                       onCancel={onCancelComment}
+                      mentionItems={mentionItems}
                     />
                   )}
                   {showRightForm && onAddComment && onCancelComment && (
@@ -1351,6 +1386,7 @@ function ExpandedContextRows({
                       anchor={commentFormAnchor!}
                       onSubmit={onAddComment}
                       onCancel={onCancelComment}
+                      mentionItems={mentionItems}
                     />
                   )}
                 </td>
@@ -1539,6 +1575,7 @@ function HunkRows({
   onEditComment,
   onEditReply,
   onDeleteReply,
+  mentionItems,
   gap,
   expansion,
   expandRangeBottom,
@@ -1601,6 +1638,10 @@ function HunkRows({
           collapsedCommentIds={collapsedCommentIds}
           onCollapseComment={onCollapseComment}
           onExpandComment={onExpandComment}
+          onEditComment={onEditComment}
+          onEditReply={onEditReply}
+          onDeleteReply={onDeleteReply}
+          mentionItems={mentionItems}
           codeSearchQuery={codeSearchQuery}
           codeSearchCaseSensitive={codeSearchCaseSensitive}
         />
@@ -1705,6 +1746,7 @@ function HunkRows({
                             commentId={c.id}
                             onSubmit={onReplyComment}
                             onCancel={onCancelReply}
+                            mentionItems={mentionItems}
                           />
                         </div>
                       </div>
@@ -1720,6 +1762,7 @@ function HunkRows({
                     anchor={commentFormAnchor!}
                     onSubmit={onAddComment}
                     onCancel={onCancelComment}
+                    mentionItems={mentionItems}
                   />
                 </td>
               </tr>
@@ -1898,6 +1941,7 @@ function SplitHunkRows({
   onEditComment,
   onEditReply,
   onDeleteReply,
+  mentionItems,
   gap,
   expansion,
   expandRangeBottom,
@@ -1960,6 +2004,10 @@ function SplitHunkRows({
           collapsedCommentIds={collapsedCommentIds}
           onCollapseComment={onCollapseComment}
           onExpandComment={onExpandComment}
+          onEditComment={onEditComment}
+          onEditReply={onEditReply}
+          onDeleteReply={onDeleteReply}
+          mentionItems={mentionItems}
           codeSearchQuery={codeSearchQuery}
           codeSearchCaseSensitive={codeSearchCaseSensitive}
         />
@@ -2095,6 +2143,7 @@ function SplitHunkRows({
                         onEdit={onEditComment}
                         onEditReply={onEditReply}
                         onDeleteReply={onDeleteReply}
+                        mentionItems={mentionItems}
                       />
                       {replyFormCommentId === c.id && onReplyComment && onCancelReply && (
                         <div style={{ margin: '-2px 8px 6px 8px' }}>
@@ -2103,6 +2152,7 @@ function SplitHunkRows({
                               commentId={c.id}
                               onSubmit={onReplyComment}
                               onCancel={onCancelReply}
+                              mentionItems={mentionItems}
                             />
                           </div>
                         </div>
@@ -2114,6 +2164,7 @@ function SplitHunkRows({
                       anchor={commentFormAnchor!}
                       onSubmit={onAddComment}
                       onCancel={onCancelComment}
+                      mentionItems={mentionItems}
                     />
                   )}
                 </td>
@@ -2132,6 +2183,7 @@ function SplitHunkRows({
                         onEdit={onEditComment}
                         onEditReply={onEditReply}
                         onDeleteReply={onDeleteReply}
+                        mentionItems={mentionItems}
                       />
                       {replyFormCommentId === c.id && onReplyComment && onCancelReply && (
                         <div style={{ margin: '-2px 8px 6px 8px' }}>
@@ -2140,6 +2192,7 @@ function SplitHunkRows({
                               commentId={c.id}
                               onSubmit={onReplyComment}
                               onCancel={onCancelReply}
+                              mentionItems={mentionItems}
                             />
                           </div>
                         </div>
@@ -2151,6 +2204,7 @@ function SplitHunkRows({
                       anchor={commentFormAnchor!}
                       onSubmit={onAddComment}
                       onCancel={onCancelComment}
+                      mentionItems={mentionItems}
                     />
                   )}
                 </td>
@@ -2299,18 +2353,18 @@ function FullFileView({
                   <td colSpan={2} style={{ padding: 0 }}>
                     {expandedComments.map((c) => (
                       <Fragment key={`comment-${c.id}`}>
-                        <CommentCard comment={c} onDelete={commentProps.onDeleteComment} onReply={commentProps.onOpenReplyForm} onResolve={commentProps.onResolveComment} onReopen={commentProps.onReopenComment} onCollapse={commentProps.onCollapseComment} onExpand={commentProps.onExpandComment} isCollapsed={commentProps.collapsedCommentIds?.has(c.id)} onEdit={commentProps.onEditComment} onEditReply={commentProps.onEditReply} onDeleteReply={commentProps.onDeleteReply} />
+                        <CommentCard comment={c} onDelete={commentProps.onDeleteComment} onReply={commentProps.onOpenReplyForm} onResolve={commentProps.onResolveComment} onReopen={commentProps.onReopenComment} onCollapse={commentProps.onCollapseComment} onExpand={commentProps.onExpandComment} isCollapsed={commentProps.collapsedCommentIds?.has(c.id)} onEdit={commentProps.onEditComment} onEditReply={commentProps.onEditReply} onDeleteReply={commentProps.onDeleteReply} mentionItems={commentProps.mentionItems} />
                         {commentProps.replyFormCommentId === c.id && commentProps.onReplyComment && commentProps.onCancelReply && (
                           <div style={{ margin: '-2px 16px 6px 60px' }}>
                             <div className="diff-comment-card" style={{ marginLeft: 0, marginRight: 0 }}>
-                              <ReplyForm commentId={c.id} onSubmit={commentProps.onReplyComment} onCancel={commentProps.onCancelReply} />
+                              <ReplyForm commentId={c.id} onSubmit={commentProps.onReplyComment} onCancel={commentProps.onCancelReply} mentionItems={commentProps.mentionItems} />
                             </div>
                           </div>
                         )}
                       </Fragment>
                     ))}
                     {showForm && commentProps.onAddComment && commentProps.onCancelComment && (
-                      <CommentForm anchor={commentProps.commentFormAnchor!} onSubmit={commentProps.onAddComment} onCancel={commentProps.onCancelComment} />
+                      <CommentForm anchor={commentProps.commentFormAnchor!} onSubmit={commentProps.onAddComment} onCancel={commentProps.onCancelComment} mentionItems={commentProps.mentionItems} />
                     )}
                   </td>
                 </tr>

@@ -3,6 +3,7 @@ import { getFullDiff, createInlineComment, createFileComment, createProjectComme
 import { getReviewComments, getCommits, getTaskFiles } from '../../api/tasks';
 import type { FullDiffResult, DiffFile } from '../../api/review';
 import type { ReviewCommentEntry, ReviewCommentsResponse } from '../../api/tasks';
+import { buildMentionItems } from '../../utils/fileMention';
 
 export interface VersionOption {
   id: string;
@@ -101,6 +102,9 @@ export function DiffReviewPage({ projectId, taskId, embedded }: DiffReviewPagePr
 
   // Scroll to line state for auto-expanding collapsed gaps
   const [scrollToLine, setScrollToLine] = useState<{file: string; line: number} | null>(null);
+
+  // Build mention items from allFiles for @ mention in comment textareas
+  const mentionItems = useMemo(() => buildMentionItems(allFiles), [allFiles]);
 
   // Filter files based on view mode
   const displayFiles = useMemo(() => {
@@ -1017,6 +1021,7 @@ export function DiffReviewPage({ projectId, taskId, embedded }: DiffReviewPagePr
                   codeSearchQuery={codeSearchQuery}
                   codeSearchCaseSensitive={codeSearchCaseSensitive}
                   scrollToLine={scrollToLine?.file === file.new_path ? scrollToLine.line : undefined}
+                  mentionItems={mentionItems}
                 />
               ))})()}
             </div>
@@ -1037,6 +1042,7 @@ export function DiffReviewPage({ projectId, taskId, embedded }: DiffReviewPagePr
               onEditComment={handleEditComment}
               onEditReply={handleEditReply}
               onDeleteReply={handleDeleteReply}
+              mentionItems={mentionItems}
             />
           </>
         )}

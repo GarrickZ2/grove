@@ -187,7 +187,7 @@ export function FileMentionDropdown({
   anchorRef,
   cursorIdx,
 }: FileMentionDropdownProps) {
-  const [portalStyle, setPortalStyle] = useState<React.CSSProperties>({});
+  const [portalStyle, setPortalStyle] = useState<React.CSSProperties>({ position: "fixed", top: -9999, left: -9999 });
 
   const updatePosition = useCallback(() => {
     if (!anchorRef?.current || cursorIdx == null) return;
