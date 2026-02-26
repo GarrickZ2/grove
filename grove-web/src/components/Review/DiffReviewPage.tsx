@@ -3,6 +3,7 @@ import { getFullDiff, createInlineComment, createFileComment, createProjectComme
 import { getReviewComments, getCommits, getTaskFiles } from '../../api/tasks';
 import type { FullDiffResult, DiffFile } from '../../api/review';
 import type { ReviewCommentEntry, ReviewCommentsResponse } from '../../api/tasks';
+import { buildMentionItems } from '../../utils/fileMention';
 
 export interface VersionOption {
   id: string;
@@ -22,6 +23,7 @@ import { ConversationSidebar } from './ConversationSidebar';
 import { CodeSearchBar } from './CodeSearchBar';
 import { MessageSquare, ChevronUp, ChevronDown, PanelLeftClose, PanelLeftOpen, Crosshair, GitCompare, FileText } from 'lucide-react';
 import { VersionSelector } from './VersionSelector';
+import { useIsMobile } from '../../hooks';
 import './diffTheme.css';
 
 interface DiffReviewPageProps {
@@ -31,6 +33,7 @@ interface DiffReviewPageProps {
 }
 
 export function DiffReviewPage({ projectId, taskId, embedded }: DiffReviewPageProps) {
+  const { isMobile } = useIsMobile();
   const [diffData, setDiffData] = useState<FullDiffResult | null>(null);
   const [allFiles, setAllFiles] = useState<string[]>([]); // All git-tracked files for File Mode
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
@@ -66,8 +69,17 @@ export function DiffReviewPage({ projectId, taskId, embedded }: DiffReviewPagePr
   const [sidebarSearch, setSidebarSearch] = useState('');
   const [collapsedFiles, setCollapsedFiles] = useState<Set<string>>(new Set());
   const [replyFormCommentId, setReplyFormCommentId] = useState<number | null>(null);
-  const [sidebarVisible, setSidebarVisible] = useState(true);
+  const [sidebarVisible, setSidebarVisible] = useState(!isMobile);
   const [convSidebarVisible, setConvSidebarVisible] = useState(false);
+
+  // Mobile: force unified view and close sidebars when entering mobile mode
+  useEffect(() => {
+    if (isMobile) {
+      setViewType('unified');
+      setSidebarVisible(false);
+      setConvSidebarVisible(false);
+    }
+  }, [isMobile]);
   const [focusMode, setFocusMode] = useState(true); // Default to true for better performance
   const [fromVersion, setFromVersion] = useState('target');
   const [toVersion, setToVersion] = useState('latest');
@@ -90,6 +102,9 @@ export function DiffReviewPage({ projectId, taskId, embedded }: DiffReviewPagePr
 
   // Scroll to line state for auto-expanding collapsed gaps
   const [scrollToLine, setScrollToLine] = useState<{file: string; line: number} | null>(null);
+
+  // Build mention items from allFiles for @ mention in comment textareas
+  const mentionItems = useMemo(() => buildMentionItems(allFiles), [allFiles]);
 
   // Filter files based on view mode
   const displayFiles = useMemo(() => {
@@ -130,11 +145,15 @@ export function DiffReviewPage({ projectId, taskId, embedded }: DiffReviewPagePr
       // Only add virtual files that don't already exist as real files
       const uniqueVirtualFiles = allVirtualFiles.filter(vf => !existingPaths.has(vf.new_path));
 
-      return [...allFileDiffFiles, ...uniqueVirtualFiles];
+      return [...allFileDiffFiles, ...uniqueVirtualFiles].sort((a, b) =>
+        a.new_path.localeCompare(b.new_path)
+      );
     }
     // In Changes Mode (Diff Mode): only show real diff files, NO virtual files
     if (!diffData) return [];
-    return diffData.files.filter(f => !f.is_virtual);
+    return [...diffData.files.filter(f => !f.is_virtual)].sort((a, b) =>
+      a.new_path.localeCompare(b.new_path)
+    );
   }, [viewMode, allFiles, diffData, temporaryVirtualPaths]);
 
   // Use ref to access displayFiles in callbacks without dependency issues
@@ -147,11 +166,10 @@ export function DiffReviewPage({ projectId, taskId, embedded }: DiffReviewPagePr
   // Auto-detect iframe mode
   const isEmbedded = embedded ?? (typeof window !== 'undefined' && window !== window.parent);
 
-  // When switching modes, ensure selectedFile is valid
+  // When switching modes or on initial load, ensure selectedFile is valid
   useEffect(() => {
     if (displayFiles.length === 0) return;
-    const isValid = displayFiles.some((f) => f.new_path === selectedFile);
-    if (!isValid) {
+    if (!selectedFile || !displayFiles.some((f) => f.new_path === selectedFile)) {
       setSelectedFile(displayFiles[0].new_path);
       setCurrentFileIndex(0);
     }
@@ -268,9 +286,8 @@ export function DiffReviewPage({ projectId, taskId, embedded }: DiffReviewPagePr
     try {
       const data = await getFullDiff(projectId, taskId, fromRef, toRef);
       setDiffData(data);
-      if (data.files.length > 0) {
-        setSelectedFile(data.files[0].new_path);
-      }
+      // Reset selectedFile so the validation effect picks the first sorted file
+      setSelectedFile(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to load diff');
     }
@@ -366,9 +383,7 @@ export function DiffReviewPage({ projectId, taskId, embedded }: DiffReviewPagePr
           if (filesData) {
             setAllFiles(filesData.files);
           }
-          if (allDiffFiles.length > 0) {
-            setSelectedFile(allDiffFiles[0].new_path);
-          }
+          // selectedFile will be set by the displayFiles validation effect (sorted order)
           setComments(reviewComments);
         }
       } catch (e) {
@@ -478,13 +493,50 @@ export function DiffReviewPage({ projectId, taskId, embedded }: DiffReviewPagePr
     if (el) {
       el.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }
-    // Update file index - use displayFiles length for now, will be updated by parent
-  }, []);
+    // On mobile, close sidebar after selecting a file
+    if (isMobile) {
+      setSidebarVisible(false);
+    }
+  }, [isMobile]);
 
-  // Track visible file on scroll
-  const handleFileVisible = useCallback((path: string) => {
-    setSelectedFile(path);
-  }, []);
+  // Track topmost visible file on scroll (non-focus mode)
+  useEffect(() => {
+    const container = contentRef.current;
+    if (!container || focusMode) return;
+
+    let rafId: number | null = null;
+
+    const handleScroll = () => {
+      if (rafId) return;
+      rafId = requestAnimationFrame(() => {
+        rafId = null;
+        const files = displayFilesRef.current;
+        if (files.length === 0) return;
+
+        const containerTop = container.getBoundingClientRect().top;
+        let bestFile = files[0].new_path;
+
+        for (const file of files) {
+          const el = document.getElementById(`diff-file-${encodeURIComponent(file.new_path)}`);
+          if (!el) continue;
+          if (el.getBoundingClientRect().top <= containerTop + 10) {
+            bestFile = file.new_path;
+          }
+        }
+
+        setSelectedFile(bestFile);
+      });
+    };
+
+    container.addEventListener('scroll', handleScroll, { passive: true });
+    // Set initial selection
+    handleScroll();
+
+    return () => {
+      container.removeEventListener('scroll', handleScroll);
+      if (rafId) cancelAnimationFrame(rafId);
+    };
+  }, [focusMode, displayFiles]); // re-attach when files change
 
   // File navigation using refs to avoid dependency issues
   const goToNextFile = useCallback(() => {
@@ -858,12 +910,14 @@ export function DiffReviewPage({ projectId, taskId, embedded }: DiffReviewPagePr
               >
                 Unified
               </button>
-              <button
-                className={viewType === 'split' ? 'active' : ''}
-                onClick={() => setViewType('split')}
-              >
-                Split
-              </button>
+              {!isMobile && (
+                <button
+                  className={viewType === 'split' ? 'active' : ''}
+                  onClick={() => setViewType('split')}
+                >
+                  Split
+                </button>
+              )}
             </div>
           )}
           {viewMode === 'diff' && fromOptions.length > 0 && toOptions.length > 0 && (
@@ -920,6 +974,22 @@ export function DiffReviewPage({ projectId, taskId, embedded }: DiffReviewPagePr
           </div>
         ) : (
           <>
+            {/* Mobile overlay backdrop */}
+            {isMobile && (sidebarVisible || convSidebarVisible) && (
+              <div
+                style={{
+                  position: 'fixed',
+                  inset: 0,
+                  background: 'rgba(0,0,0,0.4)',
+                  zIndex: 15,
+                }}
+                onClick={() => {
+                  setSidebarVisible(false);
+                  setConvSidebarVisible(false);
+                }}
+              />
+            )}
+
             {/* Sidebar */}
             <FileTreeSidebar
               files={displayFiles}
@@ -950,7 +1020,6 @@ export function DiffReviewPage({ projectId, taskId, embedded }: DiffReviewPagePr
                   isActive={validSelectedFile === file.new_path}
                   projectId={projectId}
                   taskId={taskId}
-                  onVisible={() => handleFileVisible(file.new_path)}
                   comments={getFileComments(file.new_path)}
                   commentFormAnchor={commentFormAnchor}
                   onGutterClick={handleGutterClick}
@@ -985,6 +1054,7 @@ export function DiffReviewPage({ projectId, taskId, embedded }: DiffReviewPagePr
                   codeSearchQuery={codeSearchQuery}
                   codeSearchCaseSensitive={codeSearchCaseSensitive}
                   scrollToLine={scrollToLine?.file === file.new_path ? scrollToLine.line : undefined}
+                  mentionItems={mentionItems}
                 />
               ))})()}
             </div>
@@ -1005,6 +1075,7 @@ export function DiffReviewPage({ projectId, taskId, embedded }: DiffReviewPagePr
               onEditComment={handleEditComment}
               onEditReply={handleEditReply}
               onDeleteReply={handleDeleteReply}
+              mentionItems={mentionItems}
             />
           </>
         )}

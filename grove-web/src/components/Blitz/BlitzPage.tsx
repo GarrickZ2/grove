@@ -1,6 +1,6 @@
 import { useState, useMemo, useCallback, useRef, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Search } from "lucide-react";
+import { Search, ArrowLeft } from "lucide-react";
 import { TaskInfoPanel } from "../Tasks/TaskInfoPanel";
 import { TaskView, type TaskViewHandle } from "../Tasks/TaskView";
 import { CommitDialog, ConfirmDialog, MergeDialog } from "../Dialogs";
@@ -10,6 +10,7 @@ import { ContextMenu } from "../ui/ContextMenu";
 import { LogoBrand } from "../Layout/LogoBrand";
 import { useNotifications } from "../../context";
 import {
+  useIsMobile,
   useHotkeys,
   useTaskPageState,
   useTaskNavigation,
@@ -31,9 +32,11 @@ interface BlitzPageProps {
 export function BlitzPage({ onSwitchToZen }: BlitzPageProps) {
   const { blitzTasks, isLoading, refresh } = useBlitzTasks();
   const { getTaskNotification, dismissNotification } = useNotifications();
+  const { isMobile } = useIsMobile();
 
   // Blitz-specific state
   const [selectedBlitzTask, setSelectedBlitzTask] = useState<BlitzTask | null>(null);
+  const [mobileShowDetail, setMobileShowDetail] = useState(false);
   const [draggedIndex, setDraggedIndex] = useState<number | null>(null);
   const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
   const [taskOrder, setTaskOrder] = useState<string[]>([]);
@@ -171,8 +174,10 @@ export function BlitzPage({ onSwitchToZen }: BlitzPageProps) {
   // Task selection handlers (Blitz-specific: handle BlitzTask)
   const handleSelectTask = useCallback((bt: BlitzTask) => {
     setSelectedBlitzTask(bt);
-    // Stay in Task List page when selecting a task
-  }, []);
+    if (isMobile) {
+      setMobileShowDetail(true);
+    }
+  }, [isMobile]);
 
   const handleDoubleClickTask = useCallback((bt: BlitzTask) => {
     if (bt.task.status === "archived") return;
@@ -209,6 +214,15 @@ export function BlitzPage({ onSwitchToZen }: BlitzPageProps) {
   const handleDragLeave = () => {
     setDragOverIndex(null);
   };
+
+  // Mobile: manual move up/down (replaces drag on touch devices)
+  const handleMoveTask = useCallback((index: number, direction: "up" | "down") => {
+    const targetIndex = direction === "up" ? index - 1 : index + 1;
+    if (targetIndex < 0 || targetIndex >= taskOrder.length) return;
+    const newOrder = [...taskOrder];
+    [newOrder[index], newOrder[targetIndex]] = [newOrder[targetIndex], newOrder[index]];
+    setTaskOrder(newOrder);
+  }, [taskOrder]);
 
   // Context menu handler (Blitz-specific: handle BlitzTask)
   const handleContextMenu = useCallback((bt: BlitzTask, e: React.MouseEvent) => {
@@ -335,10 +349,18 @@ export function BlitzPage({ onSwitchToZen }: BlitzPageProps) {
     ]
   );
 
+  const handleMobileBack = useCallback(() => {
+    if (pageState.inWorkspace) {
+      pageHandlers.setInWorkspace(false);
+    } else {
+      setMobileShowDetail(false);
+    }
+  }, [pageState.inWorkspace, pageHandlers]);
+
   return (
     <>
       {/* Blitz Sidebar — replaces the normal app sidebar */}
-      <aside className="w-72 h-screen bg-[var(--color-bg)] border-r border-[var(--color-border)] flex flex-col flex-shrink-0">
+      <aside className={`${isMobile ? (mobileShowDetail ? "hidden" : "w-full h-full") : "w-72 h-screen"} bg-[var(--color-bg)] ${isMobile ? "" : "border-r border-[var(--color-border)]"} flex flex-col flex-shrink-0`}>
         {/* Logo + Mode Brand */}
         <div className="p-4">
           <LogoBrand mode="blitz" onToggle={onSwitchToZen} />
@@ -445,6 +467,10 @@ export function BlitzPage({ onSwitchToZen }: BlitzPageProps) {
                       onDragLeave={handleDragLeave}
                       isDragging={draggedIndex === index}
                       isDragOver={dragOverIndex === index}
+                      onMoveUp={() => handleMoveTask(index, "up")}
+                      onMoveDown={() => handleMoveTask(index, "down")}
+                      isFirst={index === 0}
+                      isLast={index === displayTasks.length - 1}
                     />
                   </motion.div>
                 );
@@ -465,7 +491,19 @@ export function BlitzPage({ onSwitchToZen }: BlitzPageProps) {
       </aside>
 
       {/* Main Content */}
-      <main className="flex-1 overflow-hidden relative">
+      <main className={`flex-1 overflow-hidden relative ${isMobile && !mobileShowDetail ? "hidden" : ""}`}>
+        {/* Mobile back button */}
+        {isMobile && mobileShowDetail && (
+          <div className="absolute top-2 left-2 z-10">
+            <button
+              onClick={handleMobileBack}
+              className="flex items-center gap-1 px-2 py-1 text-sm text-[var(--color-text-muted)] hover:text-[var(--color-text)] bg-[var(--color-bg)]/80 backdrop-blur rounded-lg transition-colors"
+            >
+              <ArrowLeft className="w-4 h-4" />
+              Back
+            </button>
+          </div>
+        )}
         {/* Aurora background */}
         <div className="absolute inset-0 pointer-events-none overflow-hidden">
           <div
@@ -495,7 +533,7 @@ export function BlitzPage({ onSwitchToZen }: BlitzPageProps) {
                     animate={{ opacity: 1, x: 0 }}
                     exit={{ opacity: 0, x: 20 }}
                     transition={{ type: "spring", damping: 25, stiffness: 200 }}
-                    className="h-full"
+                    className="h-full min-w-0"
                   >
                     <TaskInfoPanel
                       projectId={currentSelected.projectId}
@@ -537,13 +575,14 @@ export function BlitzPage({ onSwitchToZen }: BlitzPageProps) {
             </motion.div>
 
             {/* Workspace Page */}
-            <AnimatePresence>
+            <AnimatePresence mode="popLayout">
               {pageState.inWorkspace && currentSelected && (
                 <motion.div
-                  initial={{ x: "100%", opacity: 0 }}
-                  animate={{ x: 0, opacity: 1 }}
-                  exit={{ x: "100%", opacity: 0 }}
-                  transition={{ type: "spring", damping: 25, stiffness: 200 }}
+                  key={currentSelected.task.id}
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                  transition={{ duration: 0.15 }}
                   className="absolute inset-0 flex gap-3"
                 >
                   <TaskInfoPanel

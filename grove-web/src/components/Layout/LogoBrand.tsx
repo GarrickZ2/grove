@@ -1,6 +1,8 @@
 import { motion, AnimatePresence } from "framer-motion";
 import { Zap, Leaf } from "lucide-react";
 import type { TasksMode } from "../../App";
+import { GroveIcon } from "./GroveIcon";
+import { GroveWordmark } from "./GroveWordmark";
 
 interface LogoBrandProps {
   mode: TasksMode;
@@ -13,45 +15,16 @@ export function LogoBrand({ mode, onToggle }: LogoBrandProps) {
   return (
     <button
       onClick={onToggle}
-      className="flex items-center gap-3 group cursor-pointer"
+      className="flex items-center gap-1 group cursor-pointer"
       title={`Switch to ${isBlitz ? "Zen" : "Blitz"} mode`}
     >
       <div className="relative flex-shrink-0">
-        <img src="/logo.png" alt="Grove" className="w-10 h-10 rounded-xl" />
-        {/* Blitz mode: tiny lightning badge on logo corner */}
-        <AnimatePresence>
-          {isBlitz && (
-            <motion.div
-              initial={{ scale: 0, opacity: 0 }}
-              animate={{ scale: 1, opacity: 1 }}
-              exit={{ scale: 0, opacity: 0 }}
-              transition={{ type: "spring", stiffness: 500, damping: 25 }}
-              className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-amber-500 flex items-center justify-center shadow-lg shadow-amber-500/30"
-            >
-              <Zap className="w-2.5 h-2.5 text-white fill-white" />
-            </motion.div>
-          )}
-        </AnimatePresence>
+        <GroveIcon size={35} shimmer background className="rounded-xl" />
       </div>
 
       <div className="flex flex-col items-start -space-y-0.5">
-        {/* GROVE title — gradient shifts with mode */}
-        <motion.span
-          animate={{
-            backgroundImage: isBlitz
-              ? "linear-gradient(to right, var(--color-highlight), #f59e0b)"
-              : "linear-gradient(to right, var(--color-highlight), var(--color-accent))",
-          }}
-          transition={{ duration: 0.6, ease: "easeInOut" }}
-          className="text-lg font-bold leading-none bg-clip-text text-transparent"
-          style={{
-            backgroundImage: isBlitz
-              ? "linear-gradient(to right, var(--color-highlight), #f59e0b)"
-              : "linear-gradient(to right, var(--color-highlight), var(--color-accent))",
-          }}
-        >
-          GROVE
-        </motion.span>
+        {/* GROVE title — vectorized wordmark */}
+        <GroveWordmark height={16} />
 
         {/* Mode label — different personality & transition */}
         <AnimatePresence mode="wait">

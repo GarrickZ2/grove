@@ -185,7 +185,19 @@ impl FileWatcher {
         let project_key = self.project_key.clone();
 
         thread::spawn(move || {
-            run_watcher_thread(control_rx, histories, pending_events, project_key);
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                run_watcher_thread(control_rx, histories, pending_events, project_key);
+            }));
+            if let Err(e) = result {
+                let msg = if let Some(s) = e.downcast_ref::<&str>() {
+                    s.to_string()
+                } else if let Some(s) = e.downcast_ref::<String>() {
+                    s.clone()
+                } else {
+                    "unknown panic".to_string()
+                };
+                eprintln!("[Grove] File watcher thread panicked: {}", msg);
+            }
         });
 
         self.control_tx = Some(control_tx);

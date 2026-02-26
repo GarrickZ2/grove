@@ -85,6 +85,73 @@ pub struct AcpConfig {
     pub custom_agents: Vec<CustomAgent>,
 }
 
+/// 上次使用的启动模式命令（用于 `grove` 无参数时重放）
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "command", rename_all = "lowercase")]
+pub enum LastLaunch {
+    Tui,
+    Web {
+        #[serde(default = "default_web_port")]
+        port: u16,
+        #[serde(default)]
+        no_open: bool,
+        #[serde(default)]
+        dev: bool,
+    },
+    Mobile {
+        #[serde(default = "default_web_port")]
+        port: u16,
+        #[serde(default)]
+        no_open: bool,
+        #[serde(default)]
+        tls: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        cert: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        key: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        host: Option<String>,
+        #[serde(default)]
+        public: bool,
+    },
+    Gui {
+        #[serde(default = "default_gui_port")]
+        port: u16,
+    },
+}
+
+fn default_web_port() -> u16 {
+    3001
+}
+
+fn default_gui_port() -> u16 {
+    3001
+}
+
+impl LastLaunch {
+    /// 获取用于显示的描述文本
+    pub fn display_label(&self) -> String {
+        match self {
+            LastLaunch::Tui => "tui".to_string(),
+            LastLaunch::Web { port, dev, .. } => {
+                if *dev {
+                    format!("web --dev (port {})", port)
+                } else {
+                    format!("web (port {})", port)
+                }
+            }
+            LastLaunch::Mobile { port, tls, .. } => {
+                if *tls {
+                    format!("mobile --tls (port {})", port)
+                } else {
+                    format!("mobile (port {})", port)
+                }
+            }
+            LastLaunch::Gui { port } => format!("gui (port {})", port),
+        }
+    }
+}
+
 /// 默认启用 Terminal 模式
 fn default_enable_terminal() -> bool {
     true
@@ -123,6 +190,10 @@ pub struct Config {
     /// Terminal 模式使用的复用器
     #[serde(default)]
     pub terminal_multiplexer: TerminalMultiplexer,
+
+    /// 上次使用的启动模式（用于 `grove` 无参数时重放）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_launch: Option<LastLaunch>,
 
     // ===== 向后兼容字段（反序列化时使用，序列化时跳过） =====
     #[serde(skip_serializing, default)]

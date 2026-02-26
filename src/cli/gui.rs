@@ -43,7 +43,8 @@ pub async fn execute(port: u16) {
         // Initialize FileWatchers for all live tasks
         api::init_file_watchers();
 
-        let app = api::create_router(None);
+        let auth = std::sync::Arc::new(api::auth::ServerAuth::no_auth());
+        let app = api::create_router(None, auth);
 
         // Signal that server is ready
         server_ready_clone.store(true, Ordering::SeqCst);
@@ -96,6 +97,22 @@ pub async fn execute(port: u16) {
         }
     }
 
-    // Abort the server task when Tauri exits
+    // Abort the server task when Tauri exits and check for panic
     server_handle.abort();
+    match server_handle.await {
+        Ok(()) => {}
+        Err(ref e) if e.is_cancelled() => {}
+        Err(e) if e.is_panic() => {
+            let panic = e.into_panic();
+            let msg = if let Some(s) = panic.downcast_ref::<&str>() {
+                s.to_string()
+            } else if let Some(s) = panic.downcast_ref::<String>() {
+                s.clone()
+            } else {
+                "unknown panic".to_string()
+            };
+            eprintln!("[Grove] API server panicked: {}", msg);
+        }
+        Err(e) => eprintln!("[Grove] API server error: {}", e),
+    }
 }

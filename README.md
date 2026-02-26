@@ -1,6 +1,6 @@
 # Grove
 
-**Run 10 AI agents. Zero context switching.**
+**AI Development, Start to Ship.**
 
 [![Website](https://img.shields.io/badge/website-grove-10b981?style=flat&logo=github)](https://garrickz2.github.io/grove/)
 [![Crates.io](https://img.shields.io/crates/v/grove-rs.svg)](https://crates.io/crates/grove-rs)
@@ -9,61 +9,11 @@
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux-lightgrey.svg)]()
 
-![Grove Screenshot](docs/images/screenshot-hero.jpg)
+![Grove](docs/images/hero.png)
 
-Manage multiple AI coding tasks in parallel. Each task gets its own Git worktree and tmux/Zellij session—isolated, organized, always ready to resume.
+Write a spec, let AI code it, review together, merge with confidence. Each task gets its own Git worktree and tmux/Zellij session — isolated, organized, always ready to resume.
 
-**Works with:** Claude Code · Cursor · GitHub Copilot · CodeX · Trae · Gemini · Amazon Q · Qwen · Kimi · any AI agent
-
----
-
-## The Problem
-
-You're juggling Claude Code on feature A, Cursor fixing bug B, and reviewing PR C.
-
-With traditional Git, this means:
-- Constant `git stash` / `git stash pop` gymnastics
-- Branch switching that kills your terminal state
-- "Wait, what was I working on?" moments
-- AI agents losing context mid-task
-
-**Your workflow shouldn't fight your tools.**
-
-## The Solution
-
-Grove gives each task its own **isolated universe**:
-
-- Switch between tasks **instantly** — no stashing, no rebuilding
-- Resume exactly where you left off — terminal state preserved
-- Let AI agents run in parallel without stepping on each other
-
-<p align="center">
-  <img src="docs/images/work.gif" alt="Grove Demo" width="720">
-</p>
-
----
-
-## Features
-
-**Three Interfaces** — TUI for keyboard warriors, Web UI for visual workflows, native GUI for macOS
-
-**Task Dashboard** — See all tasks at a glance with live status
-
-**True Isolation** — Each task = own branch + worktree + terminal
-
-**Session Persistence** — Close Grove, reopen tomorrow, everything's still there
-
-**One-Key Actions** — Create, switch, sync, merge, archive with single keystrokes
-
-**Agent Hooks** — Get notified when AI finishes (sound + system notification)
-
-**MCP Server** — Model Context Protocol integration for AI agents (Claude Code, etc.)
-
-**Preview Panel** — Side panel with Git info, code review, and notes per task
-
-**11 Themes** — Dracula, Nord, Gruvbox, Tokyo Night, Catppuccin, and more
-
-![Multiple agents running in parallel](docs/images/agents.png)
+**Works with:** Claude Code · CodeX · Gemini · Copilot · Trae · Kimi · Qwen · OpenCode · any agent via MCP
 
 ---
 
@@ -73,37 +23,79 @@ Grove gives each task its own **isolated universe**:
 ```bash
 curl -sSL https://raw.githubusercontent.com/GarrickZ2/grove/master/install.sh | sh
 # or
+brew tap GarrickZ2/grove && brew install grove
+# or
 cargo install grove-rs
 ```
 
-**Run TUI:**
+**Run:**
 ```bash
-cd your-project && grove
+cd your-project
+grove          # Resumes last mode (TUI on first run)
+grove tui      # TUI
+grove web      # Web UI (http://localhost:3001)
+grove gui      # Desktop GUI (macOS)
+grove mobile   # Remote access (phone/tablet via LAN)
 ```
 
-**Run Web UI:**
-```bash
-grove web              # Open http://localhost:3001
-grove web --port 8080  # Custom port
-```
+Running `grove` without arguments launches the last mode you used. First time? It starts the TUI. After `grove web --port 8080`, the next `grove` reopens the web UI on port 8080.
 
-**Run GUI (macOS):**
-```bash
-grove gui              # Launch native desktop window
-grove gui --port 8080  # Custom API port
-```
+---
 
-**Create your first task:** Press `n` in TUI, or click "New Task" in Web/GUI.
+## Every AI Gets Its Own World
 
-![New task dialog](docs/images/tui-grove.png)
+Each task lives in a fully isolated workspace — its own git branch, its own session, its own spec. Run multiple agents in parallel without conflicts.
+
+<p align="center">
+  <img src="docs/images/create.gif" alt="Create a task" width="720">
+</p>
+
+- **Own Branch** — Dedicated git worktree per task. Branches never collide.
+- **Own Session** — Each task in its own tmux or Zellij session. Context stays intact.
+- **Own Spec** — Write instructions before the agent starts. Clear intent, focused output.
+
+---
+
+## Work With AI, Your Way
+
+Two modes, one workspace. Chat interactively or let agents run autonomously in the terminal.
+
+| | |
+|---|---|
+| ![Chat Mode](docs/images/chat-mode.png) | ![CLI Mode](docs/images/cli-mode.png) |
+| **Chat** — A familiar chat interface for every agent. Different agents, same experience. | **CLI** — The way coding agents were designed to run. Full terminal, native experience. |
+
+---
+
+## Review Together. Ship With Confidence.
+
+Comment on any line, discuss in threads, approve or reject — every merge is a conscious decision. Then merge in one step: rebase, merge, and clean up with no manual git gymnastics.
+
+![Code Review](docs/images/diff-review.png)
+
+![Merge and Ship](docs/images/ship-merge.png)
+
+---
+
+## Skills
+
+Browse a library of skills, install with one click, and every agent gets smarter automatically.
+
+<p align="center">
+  <img src="docs/images/skills-demo.gif" alt="Skills" width="720">
+</p>
+
+- Browse and install in one click
+- Global or project-level scope
+- Works with all agents via MCP
 
 ---
 
 ## Three Interfaces
 
-### TUI — `grove`
+### TUI — `grove tui`
 
-A full-featured terminal interface built with Ratatui. Navigate tasks, preview Git diffs, read review comments, and manage your entire workflow without leaving the terminal.
+Keyboard-first terminal interface. Create tasks, write specs, launch agents, and ship — all without leaving your terminal.
 
 ![Grove TUI](docs/images/tui-grove.png)
 
@@ -122,74 +114,66 @@ A full-featured terminal interface built with Ratatui. Navigate tasks, preview G
 
 ### Web UI — `grove web`
 
-A full-featured web interface embedded directly in the binary — no separate frontend deployment needed. Two modes: **Zen** (single-project focus) and **Blitz** (cross-project active task aggregation with notification-aware sorting).
+Full-featured web interface embedded in the binary — no separate frontend deployment. Two modes: **Zen** (single-project focus) and **Blitz** (cross-project task aggregation).
 
-![Grove Web Dashboard](docs/images/grove-web.png)
-
-| | |
-|---|---|
-| ![Terminal](docs/images/integrate-terminal.png) | ![Editor](docs/images/editor.png) |
-| **Integrated Terminal** — Full xterm.js terminal via WebSocket | **Monaco Editor** — In-browser code editing with file tree |
-| ![Code Review](docs/images/diff-review.png) | ![Notes](docs/images/task-notes.png) |
-| **Code Review** — Diff review with inline comments and multi-agent discussions | **Task Notes** — Context and requirements per task |
-| ![Stats](docs/images/stats.png) | ![Notifications](docs/images/notification-on-pending-action.png) |
-| **Activity Stats** — File edit heatmap and timeline | **Hook Notifications** — Real-time agent notification inbox |
+![Grove Web](docs/images/grove-web.png)
 
 ```bash
-grove web                  # Start server on port 3001
+grove web                  # Start on port 3001
 grove web --port 8080      # Custom port
-grove web --host 0.0.0.0   # Expose to network
 ```
+
+Binds to `localhost` only — designed for desktop use on the same machine, no authentication required. To access Grove from other devices, use `grove mobile` instead.
 
 ### GUI — `grove gui` (macOS)
 
-A native desktop application powered by Tauri 2 WebView. Shares the same frontend as Grove Web, but runs in a native window instead of a browser.
+Native desktop app powered by Tauri 2 WebView. Same frontend as Grove Web, runs in a native window.
 
 ![Grove GUI](docs/images/grove-gui.png)
 
-```bash
-grove gui              # Launch desktop window
-grove gui --port 8080  # Custom API port
-```
-
-**Included by default** in macOS release binaries (GitHub Releases / install.sh). For `cargo install`, enable with:
-
-```bash
-cargo install grove-rs --features gui
-```
+Included by default in macOS release binaries. For `cargo install`, enable with `cargo install grove-rs --features gui`.
 
 ---
 
-## Preview Panel
+## And There's More
 
-Press `p` to toggle the side panel showing details for the selected task:
-
-![Preview Panel with Review tab](docs/images/agent-review.png)
-
-- **Stats** — file edit heatmap and activity timeline
-- **Git** — recent commits, diff stats, uncommitted changes
-- **Notes** — user-provided context and requirements (editable with `e`)
-- **Review** — code review comments with threaded discussions
-
-Use `j/k` to scroll panel content, `1/2/3/4` to switch sub-tabs.
+| Feature | |
+|---------|---|
+| **AutoLink** | Automatically symlink heavy dependencies across worktrees so every task is ready to run instantly. |
+| **Flexible Layout** | Drag, split, and resize panels. Build the workspace that fits your flow. |
+| **Blitz View** | All tasks, all projects, one view. Switch between agents instantly. |
+| **Stay Notified** | Get alerts when agents finish, need review, or hit errors. |
+| **Builtin Editor** | Edit files, browse the tree, and manage code — all inside Grove's web interface. |
+| **Statistics** | Track tasks shipped, agent activity, and project health at a glance. |
+| **11 Themes** | Dracula, Nord, Gruvbox, Tokyo Night, Catppuccin, and more. Auto dark/light detection. |
 
 ---
 
-## Themes
+## Access Grove Remotely
 
-11 built-in themes with auto dark/light detection. Press `t` to switch.
+Use `grove mobile` to access Grove from your phone, tablet, or any device on the network. Authentication uses HMAC-SHA256 signatures — the secret key never travels over the wire. Run Grove on a Mac Mini at home, then manage your tasks from anywhere — your laptop, phone, or tablet.
 
-![Theme showcase](docs/images/theme.png)
+```bash
+grove mobile                    # LAN IP, HMAC auth
+grove mobile --tls              # + self-signed TLS
+grove mobile --cert a.pem --key a.key  # + your own certificate
+grove mobile --public           # bind 0.0.0.0 (all interfaces)
+grove mobile --host 10.0.0.5    # bind specific IP
+```
 
-Dracula · Nord · Gruvbox · Tokyo Night · Catppuccin · Catppuccin Latte · Rosé Pine Dawn · Solarized Light · GitHub Light · Light · Dark (default)
+A QR code is printed in the terminal — scan it to connect instantly with the secret key embedded.
+
+**`grove mobile` (default)** — Every request is signed with HMAC-SHA256. The secret key stays on your devices and is never sent over the network, so captured traffic cannot be used to forge new requests. On a trusted home or office network this is secure and frictionless. However, traffic content is unencrypted (HTTP), meaning someone on the same network *could* see the data in transit. For most private LANs this is a non-issue.
+
+**`grove mobile --tls`** — Adds HTTPS encryption via a self-signed certificate. All traffic is encrypted — no one on the network can read or tamper with it, even on untrusted networks (coffee shops, shared Wi-Fi). The trade-off: your browser will show a certificate warning on first visit, and you'll need to manually trust it (especially painful on iOS). Use this when you don't fully trust the network.
+
+**`grove mobile --cert cert.pem --key key.pem`** — Bring your own domain and CA-signed certificate for the best experience: full HTTPS encryption with no browser warnings. If you have a domain pointing to your machine (e.g. via Tailscale, Cloudflare Tunnel, or local DNS), this is the smoothest and most secure way to access Grove remotely.
 
 ---
 
 ## Agent Hooks
 
-Let Grove watch your AI agents so you don't have to.
-
-When your AI agent finishes a task, trigger notifications:
+Get notified when AI agents finish, need attention, or hit errors.
 
 ```bash
 grove hooks notice    # Task completed
@@ -199,9 +183,11 @@ grove hooks critical  # Something's wrong
 
 Press `h` in Grove to configure sound and notification settings.
 
+---
+
 ## MCP Server
 
-Grove provides a Model Context Protocol (MCP) server for AI agent integration.
+Built-in MCP server. AI agents read notes, reply to reviews, and complete tasks autonomously.
 
 Add to your Claude Code MCP config (`~/.claude/config.json`):
 
@@ -216,35 +202,46 @@ Add to your Claude Code MCP config (`~/.claude/config.json`):
 }
 ```
 
-**Available Tools:**
-
 | Tool | Description |
 |------|-------------|
 | `grove_status` | Check if running inside a Grove task, get context |
 | `grove_read_notes` | Read user-provided task notes |
 | `grove_read_review` | Read code review comments with status |
 | `grove_reply_review` | Reply to review comments (supports batch) |
-| `grove_add_comment` | Create a code review comment on specific code locations |
+| `grove_add_comment` | Create review comments on specific code locations |
 | `grove_complete_task` | Complete task: commit → rebase → merge → archive |
-
-When inside a Grove task, the agent can read notes, respond to code review feedback, add review comments, and complete the task with a single tool call.
 
 ---
 
-## Changelog
+## Install
 
-### v0.4.9
+Single binary with embedded web frontend. No runtime dependencies beyond Git and a terminal multiplexer.
 
-**Review: File Mode, Multi-Level Comments & Virtual Files**
+**Shell** (auto-detect platform):
+```bash
+curl -sSL https://raw.githubusercontent.com/GarrickZ2/grove/master/install.sh | sh
 
-- **File Mode** — View all repository files in review, not just changed files. Segmented control with sliding animation to switch between Changes and All Files modes
-- **File-Level & Project-Level Comments** — Comment on entire files or at project level, in addition to inline code comments. New `CommentType` (inline/file/project) in backend and MCP tools
-- **Virtual Files** — Files referenced in comments but not in the diff are shown as virtual entries in All Files Mode. Right-click to create virtual file placeholders in the file tree
-- **Selection Commenting** — Select multiple lines of code to reveal a floating Comment button for quick multi-line comments
-- **Markdown in Comments** — Inline comments and CommentsTab now render markdown content
-- **Comment Detail Modal** — Expand button in Conversation Sidebar opens full comment detail view
-- **Focus Mode Default** — Focus Mode enabled by default in both modes; auto-collapse files when marked as viewed
-- **UI Polish** — Icon-only action buttons to prevent overflow, improved mode selector design
+# Custom install path (default: /usr/local/bin)
+INSTALL_DIR=~/.local/bin curl -sSL https://raw.githubusercontent.com/GarrickZ2/grove/master/install.sh | sh
+```
+
+**Homebrew**:
+```bash
+brew tap GarrickZ2/grove && brew install grove
+```
+
+**Cargo**:
+```bash
+cargo install grove-rs                   # TUI + Web UI
+cargo install grove-rs --features gui    # + native macOS GUI
+```
+
+**From Source**:
+```bash
+git clone https://github.com/GarrickZ2/grove.git
+cd grove && cargo build --release
+cp target/release/grove /usr/local/bin/
+```
 
 ---
 

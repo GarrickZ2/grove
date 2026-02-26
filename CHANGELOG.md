@@ -5,6 +5,111 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.4] - 2026-02-26
+
+### Added
+
+- **Web: @ file mention in Review comments** — type `@` to reference files in code review comments, with autocomplete dropdown
+- **Web: Chat chip UX improvements** — better interaction for ACP Chat tool content chips
+
+### Fixed
+
+- **Web: Info Panel overflow** — long commit messages and branch names no longer stretch the panel beyond its container; added `min-w-0` to flex parent containers in Zen and Blitz modes
+- **Web: Info Panel header simplified** — removed Chat/Terminal/Review/Editor buttons from header (both desktop and mobile); Workspace button is the entry point
+- **Web: commit messages wrap** — Git tab commit messages now wrap instead of truncating, showing full content
+- **Web: ACP Chat tool content rendering** — improved display of tool use results in Chat panel
+- **Web: Code Review file ordering** — consistent file ordering and scroll position tracking when switching between files
+- **Web: smooth crossfade on task switch** — Blitz/Zen mode now uses smooth crossfade animation when switching between tasks
+- **Autolink symlinks** — excluded from git tracking, Editor file tree, and Code Review
+- **Panic handling** — spawned threads (ACP session, merge, file watcher) wrapped with `catch_unwind` to log panics instead of silently crashing; bare `unwrap()` replaced with descriptive `expect()` messages; `RUST_BACKTRACE=1` enabled by default
+
+## [0.7.3] - 2026-02-25
+
+### Added
+
+- **Remote access (`grove mobile`)** — access Grove from your phone, tablet, or any device on the network
+  - HMAC-SHA256 request signing — secret key never travels over the wire, each request independently signed with timestamp + nonce
+  - Nonce-based replay prevention with ±60s timestamp window
+  - `--tls` flag for self-signed certificate HTTPS encryption
+  - `--cert`/`--key` flags for user-provided CA-signed certificates
+  - `--host` flag to bind to a specific address, `--public` to bind to all interfaces
+  - QR code printed in terminal — scan to connect instantly with embedded secret key
+  - AuthGate component for secret key extraction and HMAC verification
+  - Pure JS SHA-256 fallback for HTTP non-localhost contexts where Web Crypto API is unavailable
+- **Docs: "Access Remotely" section** — added to landing page and README with security mode explanations
+- **`grove tui` subcommand** — explicit command to launch the TUI, same as previous `grove` (no args) behavior
+- **Smart launch mode resume** — `grove` (no args) now replays the last used launch mode (`tui`/`web`/`gui`/`mobile`) with all its arguments; defaults to TUI on first run
+
+## [0.7.2] - 2026-02-24
+
+### Added
+
+- **Web: Project selector improvements** — better UX for projects with long or similar names
+  - Wider dropdown width (`w-72`/`max-w-sm`) to show more of long project names
+  - Middle truncation for project names: splits at separator near midpoint so both start and end are visible (e.g. `open_solu...video_sync`)
+  - Type-to-filter search input with auto-focus when dropdown opens
+  - Tooltip (`title` attribute) on project items to show full name on hover
+  - Applied to both expanded and collapsed sidebar states
+- **Web: @ file mention enhancements** — folders, path fixes, Notes support, and Shift+Tab mode cycling
+- **Native macOS notifications** — uses `UNUserNotificationCenter` with custom Grove icon, replacing deprecated `NSUserNotification`
+
+### Fixed
+
+- **ACP: Chat history real-time persistence** — write chat history to disk in real-time instead of buffering per turn
+- **ACP: Cancel timeout and history compact** — fixed cancel timeout, file snapshot diff, history compaction, and stderr redirect
+- **Web: Terminal resize when tab hidden** — skip terminal resize when FlexLayout tab is hidden, preventing layout issues
+- **Web: Tool progress display** — fixed tool progress display, slash menu scroll, and agent filter
+- **Web: Escape key in terminal** — prevent Escape key from losing focus in xterm terminal
+- **Web: Auto-start sessions** — auto-start terminal and chat sessions, removing the manual start step
+- **Web: Project dropdown in collapsed sidebar** — show project dropdown when sidebar is collapsed
+- **Duplicate task ID rejection** — reject duplicate task IDs against both active and archived tasks
+- **Empty repo error UX** — improved error message for empty repositories with no commits
+- **Duplicate task error message** — clearer duplicate task error message, removed symlink logs
+- **Squash merge detection** — detect squash merge via diff fallback and block re-merge
+
+## [0.7.1] - 2026-02-22
+
+### Added
+
+- **Homebrew tap** — `brew tap GarrickZ2/grove && brew install grove` now supported
+  - Homebrew formula for macOS (ARM/Intel) and Linux (x64/ARM)
+  - Release CI auto-updates formula with correct sha256 on each release
+- **New brandmark and logo** — redesigned Grove icon and wordmark with theme-aware gradients
+  - `GroveIcon` component with layered SVG design (trunk, canopy, accent dot)
+  - `GroveWordmark` vectorized "GROVE" text with themed gradient fill
+  - Shimmer animation on sidebar logo
+- **Skill dialog redesign** — per-agent install/uninstall buttons in Manage Skill dialog
+  - Each agent shows individual install state and action button
+  - Replaces previous bulk install/uninstall flow
+
+### Fixed
+
+- **YAML block scalars in SKILL.md** — frontmatter parser now handles `>` (folded) and `|` (literal) block scalar syntax correctly
+- **Dark theme text in FlexLayout** — overrode CSS variable collision (`--color-text`) that caused invisible text in dark themes
+- **Toolbar panel duplication** — toolbar buttons now replace the active tab instead of creating duplicate panels
+- **Logo accent not following theme** — G and E detail pieces in the wordmark now use a lighter variant of the theme gradient instead of a fixed gray color
+
+## [0.7.0] - 2026-02-19
+
+### Added
+
+- **Skills management system** — full-stack skill marketplace for AI agents
+  - Backend: storage layer, operations module, and REST API handlers for agents, sources, and skill installation
+  - Frontend: SkillsPage with Agents, Sources, and Explore tabs
+  - Sidebar navigation entry for the Skills page
+- **Middle-click to close tabs** — FlexLayout panel tabs can now be closed with a middle mouse click, matching browser tab behavior
+
+### Fixed
+
+- **Notes editor Enter key** — pressing Enter in the Notes textarea now correctly inserts a newline instead of triggering Workspace navigation
+- **Notes content lost on refresh** — Notes editing state no longer resets when the project refreshes in the background
+- **IME composition conflicts** — Chinese/Japanese input method Enter key no longer triggers hotkeys or sends chat messages prematurely; fixed across global hotkeys, Chat input, chat title rename, and pending message edit
+- **Version bump script path** — `bump-version.sh` now correctly targets `tauri.conf.json` instead of the old `src-tauri/tauri.conf.json` path
+
+### Removed
+
+- **UPDATE_NOTIFICATION.md** — removed obsolete documentation file
+
 ## [0.6.2] - 2026-02-18
 
 ### Fixed

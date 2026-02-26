@@ -2086,3 +2086,106 @@ td.diff-code.diff-line-highlighted::before {
   outline: 2px solid orange;
   outline-offset: -1px;
 }
+
+/* ============================================================================
+   Mobile / Tablet — max-width: 1199px
+   ============================================================================ */
+
+@media (max-width: 1199px) {
+  /* --- Page header --- */
+  .diff-page-header {
+    gap: 8px;
+    padding: 6px 12px;
+  }
+  .diff-page-title {
+    font-size: 14px;
+  }
+
+  /* --- Toolbar --- */
+  .diff-toolbar {
+    flex-wrap: wrap;
+    gap: 8px;
+    padding: 6px 12px;
+  }
+  .diff-toolbar-left {
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+
+  /* --- File tree sidebar → fixed overlay --- */
+  .diff-sidebar {
+    position: fixed;
+    z-index: 20;
+    top: 0;
+    left: 0;
+    height: 100%;
+    width: 280px;
+    box-shadow: 4px 0 16px rgba(0, 0, 0, 0.25);
+    transition: transform 0.25s cubic-bezier(0.4, 0, 0.2, 1),
+                opacity 0.2s ease;
+  }
+  .diff-sidebar.collapsed {
+    width: 280px;
+    transform: translateX(-100%);
+    opacity: 0;
+    pointer-events: none;
+  }
+
+  /* --- Conversation sidebar → fixed overlay --- */
+  .conv-sidebar {
+    position: fixed;
+    z-index: 20;
+    top: 0;
+    right: 0;
+    height: 100%;
+    width: 300px;
+    box-shadow: -4px 0 16px rgba(0, 0, 0, 0.25);
+    transition: transform 0.25s cubic-bezier(0.4, 0, 0.2, 1),
+                opacity 0.2s ease;
+  }
+  .conv-sidebar.collapsed {
+    width: 300px;
+    transform: translateX(100%);
+    opacity: 0;
+    pointer-events: none;
+  }
+
+  /* --- Diff gutter compact --- */
+  .diff-gutter {
+    width: 36px;
+    min-width: 36px;
+    padding: 0 4px;
+  }
+  .diff-code {
+    padding: 0 6px;
+  }
+
+  /* --- File header --- */
+  .diff-file-header {
+    padding: 6px 10px;
+    gap: 6px;
+    flex-wrap: wrap;
+  }
+  .diff-file-header-right {
+    gap: 8px;
+  }
+  .diff-file-comment-btn span {
+    display: none;
+  }
+
+  /* --- Comment card compact --- */
+  .diff-comment-card {
+    margin: 6px 8px;
+  }
+
+  /* --- Version range --- */
+  .diff-version-range {
+    gap: 4px;
+  }
+
+  /* --- Split view gutter (shouldn't show on mobile, but just in case) --- */
+  .diff-split .diff-gutter {
+    width: 32px;
+    min-width: 32px;
+  }
+}

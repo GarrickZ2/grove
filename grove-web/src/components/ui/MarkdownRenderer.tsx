@@ -75,7 +75,7 @@ export function MarkdownRenderer({ content }: MarkdownRendererProps) {
           );
         },
         pre: ({ children }) => (
-          <pre className="rounded-lg bg-[var(--color-bg-tertiary)] border border-[var(--color-border)] p-3 my-2 overflow-x-auto text-xs font-mono text-[var(--color-text)]">
+          <pre className="rounded-lg bg-[var(--color-bg-tertiary)] border border-[var(--color-border)] p-3 my-2 whitespace-pre-wrap break-words text-xs font-mono text-[var(--color-text)]">
             {children}
           </pre>
         ),

@@ -2,6 +2,7 @@ import { useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { X, Info, AlertTriangle, AlertCircle } from "lucide-react";
 import { useNotifications } from "../../context";
+import { useIsMobile } from "../../hooks";
 import type { HookEntryResponse } from "../../api/hooks";
 
 interface NotificationPopoverProps {
@@ -83,6 +84,7 @@ function NotificationItem({
 export function NotificationPopover({ isOpen, onClose, onNavigate }: NotificationPopoverProps) {
   const { notifications, dismissNotification } = useNotifications();
   const popoverRef = useRef<HTMLDivElement>(null);
+  const { isMobile } = useIsMobile();
 
   // Close on click outside
   useEffect(() => {
@@ -101,20 +103,41 @@ export function NotificationPopover({ isOpen, onClose, onNavigate }: Notificatio
   return (
     <AnimatePresence>
       {isOpen && (
-        <motion.div
-          ref={popoverRef}
-          initial={{ opacity: 0, x: -8 }}
-          animate={{ opacity: 1, x: 0 }}
-          exit={{ opacity: 0, x: -8 }}
-          transition={{ duration: 0.15 }}
-          className="fixed z-50 bg-[var(--color-bg)] border border-[var(--color-border)] rounded-xl shadow-xl"
-          style={{
-            left: 72,
-            bottom: 80,
-            width: 360,
-            maxHeight: 480,
-          }}
-        >
+        <>
+          {/* Mobile backdrop */}
+          {isMobile && (
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={onClose}
+              className="fixed inset-0 z-40 bg-black/50"
+            />
+          )}
+          <motion.div
+            ref={popoverRef}
+            initial={isMobile ? { y: "100%" } : { opacity: 0, x: -8 }}
+            animate={isMobile ? { y: 0 } : { opacity: 1, x: 0 }}
+            exit={isMobile ? { y: "100%" } : { opacity: 0, x: -8 }}
+            transition={isMobile ? { type: "spring", damping: 30, stiffness: 300 } : { duration: 0.15 }}
+            className={isMobile
+              ? "fixed inset-x-0 bottom-0 z-50 bg-[var(--color-bg)] border-t border-[var(--color-border)] rounded-t-2xl shadow-xl"
+              : "fixed z-50 bg-[var(--color-bg)] border border-[var(--color-border)] rounded-xl shadow-xl"
+            }
+            style={isMobile ? { maxHeight: "70vh" } : {
+              left: 72,
+              bottom: 80,
+              width: 360,
+              maxHeight: 480,
+            }}
+          >
+          {/* Mobile drag indicator */}
+          {isMobile && (
+            <div className="flex justify-center pt-3 pb-1">
+              <div className="w-10 h-1 rounded-full bg-[var(--color-border)]" />
+            </div>
+          )}
+
           {/* Header */}
           <div className="flex items-center justify-between px-4 py-3 border-b border-[var(--color-border)]">
             <span className="text-sm font-semibold text-[var(--color-text)]">
@@ -149,6 +172,7 @@ export function NotificationPopover({ isOpen, onClose, onNavigate }: Notificatio
             )}
           </div>
         </motion.div>
+        </>
       )}
     </AnimatePresence>
   );

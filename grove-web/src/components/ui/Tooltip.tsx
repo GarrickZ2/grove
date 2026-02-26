@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
+import { useIsMobile } from "../../hooks";
 
 interface TooltipProps {
   content: string;
@@ -11,6 +12,7 @@ interface TooltipProps {
 export function Tooltip({ content, children, position = "top", delay = 200 }: TooltipProps) {
   const [isVisible, setIsVisible] = useState(false);
   const timeoutRef = useRef<number | null>(null);
+  const { isTouchDevice } = useIsMobile();
 
   const showTooltip = () => {
     timeoutRef.current = window.setTimeout(() => {
@@ -25,6 +27,25 @@ export function Tooltip({ content, children, position = "top", delay = 200 }: To
     }
     setIsVisible(false);
   };
+
+  // Touch: tap to toggle
+  const handleTouchToggle = () => {
+    setIsVisible((v) => !v);
+  };
+
+  // Touch: dismiss on outside tap
+  useEffect(() => {
+    if (!isTouchDevice || !isVisible) return;
+    const handler = () => setIsVisible(false);
+    // Delay to avoid immediate dismissal from the same tap
+    const id = window.setTimeout(() => {
+      document.addEventListener("touchstart", handler, { once: true });
+    }, 100);
+    return () => {
+      clearTimeout(id);
+      document.removeEventListener("touchstart", handler);
+    };
+  }, [isTouchDevice, isVisible]);
 
   useEffect(() => {
     return () => {
@@ -51,8 +72,9 @@ export function Tooltip({ content, children, position = "top", delay = 200 }: To
   return (
     <div
       className="relative inline-flex"
-      onMouseEnter={showTooltip}
-      onMouseLeave={hideTooltip}
+      onMouseEnter={isTouchDevice ? undefined : showTooltip}
+      onMouseLeave={isTouchDevice ? undefined : hideTooltip}
+      onClick={isTouchDevice ? handleTouchToggle : undefined}
     >
       {children}
       <AnimatePresence>

@@ -8,7 +8,7 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 
-use std::path::Path as StdPath;
+use std::path::PathBuf;
 
 use crate::git;
 use crate::hooks;
@@ -439,8 +439,15 @@ pub async fn get_task(
 pub async fn create_task(
     Path(id): Path<String>,
     Json(req): Json<CreateTaskRequest>,
-) -> Result<Json<TaskResponse>, StatusCode> {
-    let (project, project_key) = find_project_by_id(&id)?;
+) -> Result<Json<TaskResponse>, (StatusCode, Json<ApiErrorResponse>)> {
+    let (project, project_key) = find_project_by_id(&id).map_err(|s| {
+        (
+            s,
+            Json(ApiErrorResponse {
+                error: "Project not found".to_string(),
+            }),
+        )
+    })?;
 
     // Determine target branch
     let target = req.target.unwrap_or_else(|| {
@@ -460,12 +467,17 @@ pub async fn create_task(
         &full_config.default_session_type(),
         autolink_patterns,
     )
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-
-    // Log symlinks if any
-    if result.symlinks_created > 0 {
-        eprintln!("Info: Created {} symlink(s)", result.symlinks_created);
-    }
+    .map_err(|e| {
+        let msg = e.to_string();
+        if msg.contains("already exists") {
+            (StatusCode::CONFLICT, Json(ApiErrorResponse { error: msg }))
+        } else {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResponse { error: msg }),
+            )
+        }
+    })?;
 
     // Save notes if provided
     if let Some(ref notes_content) = req.notes {
@@ -542,7 +554,12 @@ pub async fn archive_task(
         let mut branch_merged = true;
         let mut merge_check_failed = false;
         match git::is_merged(&project.path, &task.branch, &task.target) {
-            Ok(v) => branch_merged = v,
+            Ok(v) => {
+                // Fallback: if is-ancestor says not merged, check diff for squash merge
+                branch_merged = v
+                    || git::is_diff_empty(&project.path, &task.branch, &task.target)
+                        .unwrap_or(false);
+            }
             Err(_) => {
                 merge_check_failed = true;
             }
@@ -1502,6 +1519,84 @@ pub async fn delete_review_reply(
 // File System Operations API
 // ============================================================================
 
+/// Resolve a relative path within a worktree, preventing path traversal attacks.
+/// Returns the full canonicalized path, or an error if the path escapes the worktree.
+fn resolve_safe_path(
+    worktree_path: &str,
+    relative_path: &str,
+) -> Result<PathBuf, (StatusCode, Json<ApiErrorResponse>)> {
+    // Quick reject: paths containing ".."
+    if relative_path.contains("..") {
+        return Err((
+            StatusCode::FORBIDDEN,
+            Json(ApiErrorResponse {
+                error: "Path traversal not allowed".to_string(),
+            }),
+        ));
+    }
+
+    let base = std::fs::canonicalize(worktree_path).map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ApiErrorResponse {
+                error: format!("Failed to resolve worktree path: {}", e),
+            }),
+        )
+    })?;
+
+    let target = base.join(relative_path);
+
+    // If target exists, canonicalize and check prefix
+    if target.exists() {
+        let canonical = std::fs::canonicalize(&target).map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResponse {
+                    error: format!("Failed to resolve path: {}", e),
+                }),
+            )
+        })?;
+        if !canonical.starts_with(&base) {
+            return Err((
+                StatusCode::FORBIDDEN,
+                Json(ApiErrorResponse {
+                    error: "Path traversal not allowed".to_string(),
+                }),
+            ));
+        }
+        return Ok(canonical);
+    }
+
+    // Target doesn't exist yet (create operations):
+    // Canonicalize the nearest existing ancestor and verify it's inside base.
+    let mut ancestor = target.clone();
+    while !ancestor.exists() {
+        if !ancestor.pop() {
+            break;
+        }
+    }
+    if ancestor.exists() {
+        let canonical_ancestor = std::fs::canonicalize(&ancestor).map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResponse {
+                    error: format!("Failed to resolve path: {}", e),
+                }),
+            )
+        })?;
+        if !canonical_ancestor.starts_with(&base) {
+            return Err((
+                StatusCode::FORBIDDEN,
+                Json(ApiErrorResponse {
+                    error: "Path traversal not allowed".to_string(),
+                }),
+            ));
+        }
+    }
+
+    Ok(target)
+}
+
 /// Create file request
 #[derive(Debug, Deserialize)]
 pub struct CreateFileRequest {
@@ -1569,8 +1664,8 @@ pub async fn create_file(
             )
         })?;
 
-    // Construct full path in worktree
-    let full_path = StdPath::new(&task.worktree_path).join(&req.path);
+    // Resolve and validate path (prevents path traversal)
+    let full_path = resolve_safe_path(&task.worktree_path, &req.path)?;
 
     // Check if file already exists
     if full_path.exists() {
@@ -1644,8 +1739,8 @@ pub async fn create_directory(
             )
         })?;
 
-    // Construct full path in worktree
-    let full_path = StdPath::new(&task.worktree_path).join(&req.path);
+    // Resolve and validate path (prevents path traversal)
+    let full_path = resolve_safe_path(&task.worktree_path, &req.path)?;
 
     // Check if directory already exists
     if full_path.exists() {
@@ -1706,8 +1801,8 @@ pub async fn delete_path(
             )
         })?;
 
-    // Construct full path in worktree
-    let full_path = StdPath::new(&task.worktree_path).join(&params.path);
+    // Resolve and validate path (prevents path traversal)
+    let full_path = resolve_safe_path(&task.worktree_path, &params.path)?;
 
     // Check if path exists
     if !full_path.exists() {
@@ -1779,9 +1874,9 @@ pub async fn copy_file(
             )
         })?;
 
-    // Construct full paths
-    let source_path = StdPath::new(&task.worktree_path).join(&req.source);
-    let dest_path = StdPath::new(&task.worktree_path).join(&req.destination);
+    // Resolve and validate paths (prevents path traversal)
+    let source_path = resolve_safe_path(&task.worktree_path, &req.source)?;
+    let dest_path = resolve_safe_path(&task.worktree_path, &req.destination)?;
 
     // Check if source exists and is a file
     if !source_path.exists() {

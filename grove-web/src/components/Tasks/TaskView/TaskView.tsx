@@ -1,5 +1,4 @@
 import { useState, useRef, forwardRef, useImperativeHandle } from "react";
-import { motion } from "framer-motion";
 import { TaskHeader } from "./TaskHeader";
 import { TaskToolbar } from "./TaskToolbar";
 import { FileSearchBar } from "../FileSearchBar";
@@ -88,11 +87,7 @@ export const TaskView = forwardRef<TaskViewHandle, TaskViewProps>((props, ref) =
   };
 
   return (
-    <motion.div
-      initial={{ x: "100%", opacity: 0 }}
-      animate={{ x: 0, opacity: 1 }}
-      exit={{ x: "100%", opacity: 0 }}
-      transition={{ type: "spring", damping: 25, stiffness: 200 }}
+    <div
       className={`flex-1 flex flex-col h-full overflow-hidden rounded-l-lg ${
         fullscreen ? 'fixed inset-0 z-50 rounded-none' : ''
       }`}
@@ -133,7 +128,7 @@ export const TaskView = forwardRef<TaskViewHandle, TaskViewProps>((props, ref) =
           onToggleFullscreen={toggleFullscreen}
         />
       </div>
-    </motion.div>
+    </div>
   );
 });
 

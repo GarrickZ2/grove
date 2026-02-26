@@ -2,6 +2,7 @@ pub mod chat_history;
 pub mod comments;
 pub mod config;
 pub mod notes;
+pub mod skills;
 pub mod tasks;
 pub mod workspace;
 

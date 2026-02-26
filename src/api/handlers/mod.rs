@@ -7,6 +7,7 @@ pub mod folder;
 pub mod git;
 pub mod hooks;
 pub mod projects;
+pub mod skills;
 pub mod stats;
 pub mod tasks;
 pub mod terminal;

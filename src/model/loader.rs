@@ -144,7 +144,8 @@ fn task_to_worktree(
         // 只有当有新 commit 且已合并时才算 Merged
         // 避免刚创建的任务（branch 和 target 同一个 commit）被误判为 Merged
         let is_merged = commits_behind_count > 0
-            && git::is_merged(project_path, &task.branch, &task.target).unwrap_or(false);
+            && (git::is_merged(project_path, &task.branch, &task.target).unwrap_or(false)
+                || git::is_diff_empty(project_path, &task.branch, &task.target).unwrap_or(false));
 
         if is_merged {
             WorktreeStatus::Merged

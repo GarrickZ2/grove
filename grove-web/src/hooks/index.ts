@@ -1,3 +1,5 @@
+export { useIsMobile } from "./useIsMobile";
+
 export { useHotkeys } from "./useHotkeys";
 export type { HotkeyDefinition } from "./useHotkeys";
 
@@ -20,3 +22,6 @@ export type {
   TaskOperationsState,
   TaskOperationsHandlers,
 } from "./useTaskOperations";
+
+export { useFileMention } from "./useFileMention";
+export type { UseFileMentionConfig, UseFileMentionReturn } from "./useFileMention";

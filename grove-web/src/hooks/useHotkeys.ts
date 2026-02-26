@@ -84,13 +84,13 @@ function shouldSuppress(_e: KeyboardEvent): "all" | "alpha" | false {
   // 3. Dialog open — suppress all
   if (document.querySelector("[data-hotkeys-dialog]")) return "all";
 
-  // 4. Input/textarea focused — suppress alpha keys, allow arrows/escape/alt combos
-  if (
-    active instanceof HTMLInputElement ||
-    active instanceof HTMLTextAreaElement ||
-    active instanceof HTMLSelectElement ||
-    (active as HTMLElement)?.isContentEditable
-  ) {
+  // 4. Textarea focused — suppress all (needs Enter for newlines)
+  if (active instanceof HTMLTextAreaElement || (active as HTMLElement)?.isContentEditable) {
+    return "all";
+  }
+
+  // 5. Input/select focused — suppress alpha keys, allow arrows/escape/alt combos
+  if (active instanceof HTMLInputElement || active instanceof HTMLSelectElement) {
     return "alpha";
   }
 
@@ -113,6 +113,9 @@ export function useHotkeys(
     const handler = (e: KeyboardEvent) => {
       // Skip if already handled
       if (e.defaultPrevented) return;
+
+      // Skip during IME composition (e.g. Chinese/Japanese input)
+      if (e.isComposing || e.keyCode === 229) return;
 
       const suppression = shouldSuppress(e);
       if (suppression === "all") return;

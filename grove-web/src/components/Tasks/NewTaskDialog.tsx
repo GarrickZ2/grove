@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
-import { motion, AnimatePresence } from "framer-motion";
 import { X, GitBranch, Plus, FileText } from "lucide-react";
 import { Button, Input } from "../ui";
+import { DialogShell } from "../ui/DialogShell";
 import { useProject } from "../../context";
 import { previewBranchName } from "../../utils/branch";
 
@@ -28,6 +28,8 @@ export function NewTaskDialog({ isOpen, onClose, onCreate, isLoading, externalEr
   }, [isOpen, selectedProject]);
 
   const handleSubmit = async () => {
+    if (!hasValidBranch) return;
+
     // Validate task name
     if (!taskName.trim()) {
       setError("Task name is required");
@@ -62,32 +64,15 @@ export function NewTaskDialog({ isOpen, onClose, onCreate, isLoading, externalEr
     return () => window.removeEventListener("keydown", handler);
   });
 
+  // Detect empty repo (no commits → currentBranch is "unknown")
+  const hasValidBranch = !!selectedProject?.currentBranch && selectedProject.currentBranch !== "unknown";
+
   // Generate branch preview
   const branchPreview = previewBranchName(taskName);
 
   return (
-    <AnimatePresence>
-      {isOpen && (
-        <>
-          {/* Backdrop */}
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            onClick={handleClose}
-            className="fixed inset-0 bg-black/50 z-50"
-            data-hotkeys-dialog
-          />
-
-          {/* Dialog */}
-          <motion.div
-            initial={{ opacity: 0, scale: 0.95, y: 20 }}
-            animate={{ opacity: 1, scale: 1, y: 0 }}
-            exit={{ opacity: 0, scale: 0.95, y: 20 }}
-            transition={{ duration: 0.2 }}
-            className="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-50 w-full max-w-md"
-          >
-            <div className="bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-xl shadow-xl overflow-hidden">
+    <DialogShell isOpen={isOpen} onClose={handleClose}>
+      <div className="bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-xl shadow-xl overflow-hidden">
               {/* Header */}
               <div className="flex items-center justify-between px-5 py-4 border-b border-[var(--color-border)]">
                 <div className="flex items-center gap-3">
@@ -146,25 +131,42 @@ export function NewTaskDialog({ isOpen, onClose, onCreate, isLoading, externalEr
                   <label className="block text-sm font-medium text-[var(--color-text-muted)] mb-2">
                     Target Branch
                   </label>
-                  <div className="flex items-center gap-2 px-3 py-2 bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-lg">
-                    <GitBranch className="w-4 h-4 text-[var(--color-text-muted)]" />
-                    <span className="text-sm text-[var(--color-text)]">{targetBranch}</span>
-                  </div>
-                  <p className="text-xs text-[var(--color-text-muted)] mt-1.5">
-                    New branch will be created from this branch
-                  </p>
+                  {hasValidBranch ? (
+                    <>
+                      <div className="flex items-center gap-2 px-3 py-2 bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-lg">
+                        <GitBranch className="w-4 h-4 text-[var(--color-text-muted)]" />
+                        <span className="text-sm text-[var(--color-text)]">{targetBranch}</span>
+                      </div>
+                      <p className="text-xs text-[var(--color-text-muted)] mt-1.5">
+                        New branch will be created from this branch
+                      </p>
+                    </>
+                  ) : (
+                    <div className="flex items-center gap-2 px-3 py-2 bg-red-500/5 border border-red-500/30 rounded-lg">
+                      <GitBranch className="w-4 h-4 text-red-400" />
+                      <span className="text-sm text-red-400">No valid branch found</span>
+                    </div>
+                  )}
                 </div>
 
                 {/* Info */}
-                <div className="p-3 rounded-lg bg-[var(--color-bg-secondary)] border border-[var(--color-border)]">
-                  <p className="text-xs text-[var(--color-text-muted)]">
-                    A new worktree will be created with branch{" "}
-                    <code className="text-[var(--color-highlight)]">
-                      {branchPreview}
-                    </code>{" "}
-                    based on <code className="text-[var(--color-highlight)]">{targetBranch}</code>.
-                  </p>
-                </div>
+                {hasValidBranch ? (
+                  <div className="p-3 rounded-lg bg-[var(--color-bg-secondary)] border border-[var(--color-border)]">
+                    <p className="text-xs text-[var(--color-text-muted)]">
+                      A new worktree will be created with branch{" "}
+                      <code className="text-[var(--color-highlight)]">
+                        {branchPreview}
+                      </code>{" "}
+                      based on <code className="text-[var(--color-highlight)]">{targetBranch}</code>.
+                    </p>
+                  </div>
+                ) : (
+                  <div className="p-3 rounded-lg bg-red-500/5 border border-red-500/30">
+                    <p className="text-xs text-red-400">
+                      This repository has no commits yet. Please create an initial commit before creating tasks.
+                    </p>
+                  </div>
+                )}
               </div>
 
               {/* Actions */}
@@ -179,16 +181,13 @@ export function NewTaskDialog({ isOpen, onClose, onCreate, isLoading, externalEr
                   <Button variant="secondary" onClick={handleClose} disabled={isLoading}>
                     Cancel
                   </Button>
-                  <Button onClick={handleSubmit} disabled={isLoading}>
+                  <Button onClick={handleSubmit} disabled={isLoading || !hasValidBranch}>
                     <Plus className="w-4 h-4 mr-1.5" />
                     {isLoading ? "Creating..." : "Create Task"}
                   </Button>
                 </div>
               </div>
-            </div>
-          </motion.div>
-        </>
-      )}
-    </AnimatePresence>
+      </div>
+    </DialogShell>
   );
 }

@@ -12,7 +12,7 @@ use agent_client_protocol as acp;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, RwLock};
-use tokio::io::AsyncReadExt;
+use tokio::io::{AsyncBufReadExt, AsyncReadExt};
 use tokio::sync::{broadcast, mpsc};
 use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
 
@@ -37,8 +37,6 @@ pub struct AcpSessionHandle {
     task_id: String,
     /// Chat ID（磁盘持久化必需）
     chat_id: Option<String>,
-    /// 当前 turn 的事件缓冲（Complete 时 flush 到磁盘）
-    turn_buffer: Mutex<Vec<AcpUpdate>>,
     /// load_session 期间抑制 emit（只恢复 agent 内部状态，不转发回放通知）
     suppress_emit: std::sync::atomic::AtomicBool,
     /// 待执行消息队列（agent 完成当前任务后自动发送下一条）
@@ -232,6 +230,9 @@ struct GroveAcpClient {
     task_id: String,
     chat_id: Option<String>,
     adapter: Box<dyn adapter::AgentContentAdapter>,
+    /// 文件快照缓存：tool_call_id → (abs_path, old_content_or_none)
+    /// 用于 Write/Edit 工具调用时生成 diff（agent 不提供 content 时的 fallback）
+    file_snapshots: Mutex<HashMap<String, (PathBuf, Option<String>)>>,
 }
 
 #[async_trait::async_trait(?Send)]
@@ -461,9 +462,24 @@ impl acp::Client for GroveAcpClient {
                     title: tool_call.title.clone(),
                     locations,
                 });
+
+                // 缓存 Write/Edit 文件快照（locations 在第二个 ToolCall 事件才有路径）
+                let title = &tool_call.title;
+                if title.starts_with("Write") || title.starts_with("Edit") {
+                    if let Some(loc) = tool_call.locations.first() {
+                        let id_str = tool_call.tool_call_id.to_string();
+                        let mut snapshots = self.file_snapshots.lock().unwrap();
+                        // 只在尚未缓存时缓存（第一个 ToolCall 可能 locations 为空）
+                        snapshots.entry(id_str).or_insert_with(|| {
+                            let abs_path = loc.path.clone();
+                            let old_content = std::fs::read_to_string(&abs_path).ok();
+                            (abs_path, old_content)
+                        });
+                    }
+                }
             }
             acp::SessionUpdate::ToolCallUpdate(update) => {
-                let content = update
+                let mut content = update
                     .fields
                     .content
                     .as_ref()
@@ -485,6 +501,31 @@ impl acp::Client for GroveAcpClient {
                             .collect()
                     })
                     .unwrap_or_default();
+
+                // 如果 ACP 没提供 content 且状态为 completed，从文件快照生成 diff
+                let is_completed = update
+                    .fields
+                    .status
+                    .as_ref()
+                    .is_some_and(|s| matches!(s, acp::ToolCallStatus::Completed));
+
+                if content.is_none() && is_completed {
+                    let snapshot = self
+                        .file_snapshots
+                        .lock()
+                        .unwrap()
+                        .remove(&update.tool_call_id.to_string());
+                    if let Some((abs_path, old_content)) = snapshot {
+                        if let Ok(new_text) = std::fs::read_to_string(&abs_path) {
+                            content = Some(adapter::generate_file_diff(
+                                &abs_path,
+                                old_content.as_deref(),
+                                &new_text,
+                            ));
+                        }
+                    }
+                }
+
                 self.handle.emit(AcpUpdate::ToolCallUpdate {
                     id: update.tool_call_id.to_string(),
                     status,
@@ -505,7 +546,7 @@ impl acp::Client for GroveAcpClient {
                 });
             }
             acp::SessionUpdate::Plan(plan) => {
-                let entries = plan
+                let entries: Vec<PlanEntryData> = plan
                     .entries
                     .iter()
                     .map(|e| PlanEntryData {
@@ -681,55 +722,66 @@ pub async fn get_or_start_session(
     let (result_tx, result_rx) = tokio::sync::oneshot::channel();
 
     std::thread::spawn(move || {
-        let rt = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .expect("Failed to create ACP runtime");
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("Failed to create ACP runtime");
 
-        let local = tokio::task::LocalSet::new();
-        rt.block_on(local.run_until(async move {
-            let key_clone = key.clone();
+            let local = tokio::task::LocalSet::new();
+            rt.block_on(local.run_until(async move {
+                let key_clone = key.clone();
 
-            let (update_tx, update_rx) = broadcast::channel::<AcpUpdate>(256);
-            let (cmd_tx, cmd_rx) = mpsc::channel::<AcpCommand>(32);
+                let (update_tx, update_rx) = broadcast::channel::<AcpUpdate>(256);
+                let (cmd_tx, cmd_rx) = mpsc::channel::<AcpCommand>(32);
 
-            let handle = Arc::new(AcpSessionHandle {
-                key: key.clone(),
-                update_tx: update_tx.clone(),
-                cmd_tx,
-                agent_info: std::sync::RwLock::new(None),
-                history: RwLock::new(Vec::new()),
-                pending_permission: Mutex::new(None),
-                project_key: config.project_key.clone(),
-                task_id: config.task_id.clone(),
-                chat_id: config.chat_id.clone(),
-                turn_buffer: Mutex::new(Vec::new()),
-                suppress_emit: std::sync::atomic::AtomicBool::new(false),
-                pending_queue: Mutex::new(Vec::new()),
-                queue_paused: std::sync::atomic::AtomicBool::new(false),
-            });
-
-            // 注册到全局表
-            if let Ok(mut sessions) = ACP_SESSIONS.write() {
-                sessions.insert(key.clone(), handle.clone());
-            }
-
-            // 发送 handle 给调用方（在启动会话循环之前）
-            let _ = result_tx.send(Ok((handle.clone(), update_rx)));
-
-            // 运行会话循环（阻塞直到 Kill 或错误）
-            if let Err(e) = run_acp_session(handle, config, cmd_rx).await {
-                let _ = update_tx.send(AcpUpdate::Error {
-                    message: format!("ACP session error: {}", e),
+                let handle = Arc::new(AcpSessionHandle {
+                    key: key.clone(),
+                    update_tx: update_tx.clone(),
+                    cmd_tx,
+                    agent_info: std::sync::RwLock::new(None),
+                    history: RwLock::new(Vec::new()),
+                    pending_permission: Mutex::new(None),
+                    project_key: config.project_key.clone(),
+                    task_id: config.task_id.clone(),
+                    chat_id: config.chat_id.clone(),
+                    suppress_emit: std::sync::atomic::AtomicBool::new(false),
+                    pending_queue: Mutex::new(Vec::new()),
+                    queue_paused: std::sync::atomic::AtomicBool::new(false),
                 });
-            }
-            let _ = update_tx.send(AcpUpdate::SessionEnded);
 
-            // 清理：从全局表移除
-            if let Ok(mut sessions) = ACP_SESSIONS.write() {
-                sessions.remove(&key_clone);
-            }
+                // 注册到全局表
+                if let Ok(mut sessions) = ACP_SESSIONS.write() {
+                    sessions.insert(key.clone(), handle.clone());
+                }
+
+                // 发送 handle 给调用方（在启动会话循环之前）
+                let _ = result_tx.send(Ok((handle.clone(), update_rx)));
+
+                // 运行会话循环（阻塞直到 Kill 或错误）
+                if let Err(e) = run_acp_session(handle, config, cmd_rx).await {
+                    let _ = update_tx.send(AcpUpdate::Error {
+                        message: format!("ACP session error: {}", e),
+                    });
+                }
+                let _ = update_tx.send(AcpUpdate::SessionEnded);
+
+                // 清理：从全局表移除
+                if let Ok(mut sessions) = ACP_SESSIONS.write() {
+                    sessions.remove(&key_clone);
+                }
+            }));
         }));
+        if let Err(e) = result {
+            let msg = if let Some(s) = e.downcast_ref::<&str>() {
+                s.to_string()
+            } else if let Some(s) = e.downcast_ref::<String>() {
+                s.clone()
+            } else {
+                "unknown panic".to_string()
+            };
+            eprintln!("[Grove] ACP session thread panicked: {}", msg);
+        }
     });
 
     result_rx.await.map_err(|_| {
@@ -761,7 +813,7 @@ async fn run_acp_session(
             .current_dir(&config.working_dir)
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::inherit())
+            .stderr(std::process::Stdio::piped())
             .envs(&config.env_vars)
             .kill_on_drop(true)
             .spawn()
@@ -771,6 +823,16 @@ async fn run_acp_session(
                     config.agent_command, e
                 ))
             })?;
+
+        // Redirect agent stderr to log file instead of inheriting parent's stderr
+        if let Some(stderr) = proc.stderr.take() {
+            let log_path = agent_log_path(
+                &config.project_key,
+                &config.task_id,
+                config.chat_id.as_deref(),
+            );
+            tokio::task::spawn_local(drain_stderr_to_file(stderr, log_path));
+        }
 
         writer = Box::new(proc.stdin.take().unwrap().compat_write());
         reader = Box::new(proc.stdout.take().unwrap().compat());
@@ -787,6 +849,7 @@ async fn run_acp_session(
         task_id: config.task_id.clone(),
         chat_id: config.chat_id.clone(),
         adapter,
+        file_snapshots: Mutex::new(HashMap::new()),
     };
 
     // 创建 ACP 连接
@@ -1007,13 +1070,29 @@ async fn run_acp_session(
                 ));
                 tokio::pin!(prompt_fut);
 
+                // Cancel 超时：发送 cancel 后若 agent 无响应，超时强制退出
+                let cancel_deadline: std::cell::Cell<Option<tokio::time::Instant>> =
+                    std::cell::Cell::new(None);
+                // 新 prompt 到达时暂存，等当前 prompt 结束后立即处理
+                let mut next_prompt: Option<(String, Vec<ContentBlockData>)> = None;
+                let mut got_kill = false;
+
                 let result = loop {
+                    // 计算超时 future
+                    let deadline = cancel_deadline.get();
                     tokio::select! {
                         res = &mut prompt_fut => break res,
+                        _ = tokio::time::sleep_until(deadline.unwrap_or_else(|| tokio::time::Instant::now() + std::time::Duration::from_secs(86400))), if deadline.is_some() => {
+                            // Cancel 超时：agent 无响应，强制退出
+                            eprintln!("[ACP] Cancel timeout — agent unresponsive, forcing exit");
+                            break Err(acp::Error::internal_error());
+                        }
                         Some(inner_cmd) = cmd_rx.recv() => {
                             match inner_cmd {
                                 AcpCommand::Cancel => {
                                     let _ = conn.cancel(acp::CancelNotification::new(session_id_arc.clone())).await;
+                                    // 10 秒超时：如果 agent 不响应 cancel，强制退出内循环
+                                    cancel_deadline.set(Some(tokio::time::Instant::now() + std::time::Duration::from_secs(10)));
                                 }
                                 AcpCommand::SetMode { mode_id } => {
                                     let _ = conn.set_session_mode(acp::SetSessionModeRequest::new(
@@ -1027,8 +1106,15 @@ async fn run_acp_session(
                                         acp::ModelId::new(model_id),
                                     )).await;
                                 }
-                                AcpCommand::Prompt { .. } | AcpCommand::Kill => {
-                                    // Ignore stray prompts/kill while busy
+                                AcpCommand::Prompt { text, attachments } => {
+                                    // 新 prompt 到达：cancel 当前，保存新 prompt 待处理
+                                    let _ = conn.cancel(acp::CancelNotification::new(session_id_arc.clone())).await;
+                                    cancel_deadline.set(Some(tokio::time::Instant::now() + std::time::Duration::from_secs(10)));
+                                    next_prompt = Some((text, attachments));
+                                }
+                                AcpCommand::Kill => {
+                                    got_kill = true;
+                                    break Err(acp::Error::internal_error());
                                 }
                             }
                         }
@@ -1037,36 +1123,56 @@ async fn run_acp_session(
 
                 handle.emit(AcpUpdate::Busy { value: false });
 
+                // Kill 命令：跳出外层循环
+                if got_kill {
+                    handle.emit(AcpUpdate::Error {
+                        message: "Session killed".to_string(),
+                    });
+                    break;
+                }
+
                 match result {
                     Ok(resp) => {
-                        handle.emit(AcpUpdate::Complete {
-                            stop_reason: format!("{:?}", resp.stop_reason),
-                        });
-                        // 通知用户 prompt 完成
-                        notify_acp_event(
-                            &config.project_key,
-                            &config.task_id,
-                            "Task Complete",
-                            "Agent finished responding",
-                            "Glass",
-                        );
+                        // 有 next_prompt 时不发 Complete 通知（即将开始新 prompt）
+                        if next_prompt.is_none() {
+                            handle.emit(AcpUpdate::Complete {
+                                stop_reason: format!("{:?}", resp.stop_reason),
+                            });
+                            notify_acp_event(
+                                &config.project_key,
+                                &config.task_id,
+                                "Task Complete",
+                                "Agent finished responding",
+                                "Glass",
+                            );
+                        }
                     }
                     Err(e) => {
-                        handle.emit(AcpUpdate::Error {
-                            message: format!("Prompt error: {}", e),
-                        });
+                        if next_prompt.is_none() {
+                            handle.emit(AcpUpdate::Error {
+                                message: format!("Prompt error: {}", e),
+                            });
+                        }
                     }
                 }
-                // Auto-send next queued message (if any), unless queue is paused
-                if !handle
-                    .queue_paused
-                    .load(std::sync::atomic::Ordering::Relaxed)
-                {
-                    if let Some(next_msg) = handle.pop_queue_front() {
-                        handle.emit(AcpUpdate::QueueUpdate {
-                            messages: handle.get_queue(),
-                        });
-                        handle.try_enqueue_prompt(next_msg.text, next_msg.attachments);
+
+                // 有暂存的新 prompt → 回注到命令 channel 优先处理
+                if let Some((text, attachments)) = next_prompt {
+                    let _ = handle
+                        .cmd_tx
+                        .try_send(AcpCommand::Prompt { text, attachments });
+                } else {
+                    // Auto-send next queued message (if any), unless queue is paused
+                    if !handle
+                        .queue_paused
+                        .load(std::sync::atomic::Ordering::Relaxed)
+                    {
+                        if let Some(next_msg) = handle.pop_queue_front() {
+                            handle.emit(AcpUpdate::QueueUpdate {
+                                messages: handle.get_queue(),
+                            });
+                            handle.try_enqueue_prompt(next_msg.text, next_msg.attachments);
+                        }
                     }
                 }
             }
@@ -1207,31 +1313,36 @@ impl AcpSessionHandle {
         {
             return;
         }
-        // Complete 时：flush turn_buffer 到磁盘（compacted）
-        if matches!(update, AcpUpdate::Complete { .. }) {
-            self.flush_turn_to_disk(&update);
-        } else if crate::storage::chat_history::should_persist(&update) {
-            self.turn_buffer.lock().unwrap().push(update.clone());
+
+        // 实时 append 到磁盘（替代 turn_buffer 缓存）
+        if crate::storage::chat_history::should_persist(&update) {
+            if let Some(ref chat_id) = self.chat_id {
+                crate::storage::chat_history::append_event(
+                    &self.project_key,
+                    &self.task_id,
+                    chat_id,
+                    &update,
+                );
+            }
         }
+
+        // Turn 结束时 compact 磁盘历史（合并 chunk 碎片）
+        let should_compact = matches!(&update, AcpUpdate::Complete { .. });
+
         // 内存 history + broadcast
         if let Ok(mut h) = self.history.write() {
             h.push(update.clone());
         }
         let _ = self.update_tx.send(update);
-    }
 
-    /// 将 turn_buffer flush 到磁盘（compacted）
-    fn flush_turn_to_disk(&self, complete: &AcpUpdate) {
-        if let Some(ref chat_id) = self.chat_id {
-            let mut buf = self.turn_buffer.lock().unwrap();
-            buf.push(complete.clone());
-            crate::storage::chat_history::append_turn(
-                &self.project_key,
-                &self.task_id,
-                chat_id,
-                &buf,
-            );
-            buf.clear();
+        if should_compact {
+            if let Some(ref chat_id) = self.chat_id {
+                crate::storage::chat_history::compact_history(
+                    &self.project_key,
+                    &self.task_id,
+                    chat_id,
+                );
+            }
         }
     }
 
@@ -1531,4 +1642,48 @@ fn notify_acp_event(
     let mut hooks_file = hooks::load_hooks(project_key);
     hooks_file.update(task_id, level, Some(message.to_string()));
     let _ = hooks::save_hooks(project_key, &hooks_file);
+}
+
+/// Build log file path for agent stderr:
+/// `~/.grove/projects/{project}/tasks/{task_id}/chats/{chat_id}/agent.log`
+/// Falls back to `~/.grove/projects/{project}/tasks/{task_id}/agent.log` if no chat_id.
+fn agent_log_path(project: &str, task_id: &str, chat_id: Option<&str>) -> PathBuf {
+    let base = crate::storage::grove_dir()
+        .join("projects")
+        .join(project)
+        .join("tasks")
+        .join(task_id);
+    match chat_id {
+        Some(cid) => base.join("chats").join(cid).join("agent.log"),
+        None => base.join("agent.log"),
+    }
+}
+
+/// Drain agent stderr line-by-line into a log file (append mode).
+async fn drain_stderr_to_file(stderr: tokio::process::ChildStderr, path: PathBuf) {
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let file = match std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+    {
+        Ok(f) => f,
+        Err(_) => return, // silently give up if we can't open
+    };
+    let mut writer = std::io::BufWriter::new(file);
+    let mut reader = tokio::io::BufReader::new(stderr);
+    let mut line = String::new();
+    loop {
+        line.clear();
+        match reader.read_line(&mut line).await {
+            Ok(0) | Err(_) => break,
+            Ok(_) => {
+                use std::io::Write;
+                let _ = writer.write_all(line.as_bytes());
+                let _ = writer.flush();
+            }
+        }
+    }
 }

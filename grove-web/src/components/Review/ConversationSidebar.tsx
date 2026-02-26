@@ -3,6 +3,9 @@ import { MessageSquare, CheckCircle, RotateCcw, Reply, Send, FileCode, ChevronDo
 import type { ReviewCommentEntry } from '../../api/tasks';
 import { AgentAvatar } from './AgentAvatar';
 import { CommentDetailModal } from './CommentDetailModal';
+import { useFileMention } from '../../hooks';
+import { FileMentionDropdown } from '../ui';
+import type { MentionItem } from '../../utils/fileMention';
 
 type StatusFilter = 'all' | 'open' | 'resolved' | 'outdated';
 
@@ -18,6 +21,7 @@ interface ConversationSidebarProps {
   onEditComment?: (id: number, content: string) => void;
   onEditReply?: (commentId: number, replyId: number, content: string) => void;
   onDeleteReply?: (commentId: number, replyId: number) => void;
+  mentionItems?: MentionItem[] | null;
 }
 
 export function ConversationSidebar({
@@ -32,11 +36,14 @@ export function ConversationSidebar({
   onEditComment,
   onEditReply,
   onDeleteReply,
+  mentionItems,
 }: ConversationSidebarProps) {
   const [filter, setFilter] = useState<StatusFilter>('all');
   const [collapsedFiles, setCollapsedFiles] = useState<Set<string>>(new Set());
   const [projectCommentContent, setProjectCommentContent] = useState('');
   const [expandedCommentId, setExpandedCommentId] = useState<number | null>(null);
+
+  const projectMention = useFileMention({ mentionItems: mentionItems ?? null });
 
   // Derive expanded comment from latest comments array so it stays in sync after reply/resolve
   const expandedComment = expandedCommentId !== null
@@ -177,6 +184,7 @@ export function ConversationSidebar({
                 onReply={onReplyComment}
                 onDelete={onDeleteComment}
                 onExpand={() => setExpandedCommentId(comment.id)}
+                mentionItems={mentionItems}
               />
             ))}
           </div>
@@ -215,6 +223,7 @@ export function ConversationSidebar({
                       onReply={onReplyComment}
                       onDelete={onDeleteComment}
                       onExpand={() => setExpandedCommentId(comment.id)}
+                      mentionItems={mentionItems}
                     />
                   ))}
                 </div>
@@ -256,6 +265,7 @@ export function ConversationSidebar({
                       onReply={onReplyComment}
                       onDelete={onDeleteComment}
                       onExpand={() => setExpandedCommentId(comment.id)}
+                      mentionItems={mentionItems}
                     />
                   ))}
                 </div>
@@ -270,15 +280,26 @@ export function ConversationSidebar({
         <div className="conv-sidebar-footer">
           <div className="project-comment-form">
             <textarea
+              ref={projectMention.textareaRef}
               value={projectCommentContent}
-              onChange={(e) => setProjectCommentContent(e.target.value)}
-              placeholder="Add a project-level comment..."
+              onChange={(e) => { setProjectCommentContent(e.target.value); projectMention.handleChange(e.target.value); }}
+              placeholder="Add a project-level comment... (type @ to mention files)"
               rows={2}
               onKeyDown={(e) => {
+                if (projectMention.handleKeyDown(e, setProjectCommentContent)) return;
                 if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
                   handleSubmitProjectComment();
                 }
               }}
+            />
+            <FileMentionDropdown
+              items={projectMention.filteredItems}
+              selectedIdx={projectMention.selectedIdx}
+              onSelect={(path) => { const v = projectMention.handleSelect(path); if (v !== null) setProjectCommentContent(v); }}
+              onMouseEnter={projectMention.setSelectedIdx}
+              visible={projectMention.showDropdown}
+              anchorRef={projectMention.textareaRef}
+              cursorIdx={projectMention.atCharIdx}
             />
             <button
               onClick={handleSubmitProjectComment}
@@ -304,6 +325,7 @@ export function ConversationSidebar({
           onEdit={onEditComment}
           onEditReply={onEditReply}
           onDeleteReply={onDeleteReply}
+          mentionItems={mentionItems}
         />
       )}
     </div>
@@ -318,6 +340,7 @@ function ConversationItem({
   onReply,
   onDelete,
   onExpand,
+  mentionItems,
 }: {
   comment: ReviewCommentEntry;
   onClick: () => void;
@@ -326,9 +349,11 @@ function ConversationItem({
   onReply?: (commentId: number, status: string, message: string) => void;
   onDelete?: (id: number) => void;
   onExpand?: () => void;
+  mentionItems?: MentionItem[] | null;
 }) {
   const [showReplyForm, setShowReplyForm] = useState(false);
   const [replyText, setReplyText] = useState('');
+  const replyMention = useFileMention({ mentionItems: mentionItems ?? null });
 
   // Truncate content for preview (show first 3 lines or 120 chars)
   const isLongContent = comment.content.length > 120 || comment.content.split('\n').length > 3;
@@ -500,15 +525,26 @@ function ConversationItem({
       {showReplyForm && (
         <div className="conv-item-reply-form" onClick={(e) => e.stopPropagation()}>
           <textarea
+            ref={replyMention.textareaRef}
             className="conv-reply-textarea"
             value={replyText}
-            onChange={(e) => setReplyText(e.target.value)}
-            placeholder="Write a reply..."
+            onChange={(e) => { setReplyText(e.target.value); replyMention.handleChange(e.target.value); }}
+            placeholder="Write a reply... (type @ to mention files)"
             autoFocus
             onKeyDown={(e) => {
+              if (replyMention.handleKeyDown(e, setReplyText)) return;
               if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) handleSubmitReply();
               if (e.key === 'Escape') { setShowReplyForm(false); setReplyText(''); }
             }}
+          />
+          <FileMentionDropdown
+            items={replyMention.filteredItems}
+            selectedIdx={replyMention.selectedIdx}
+            onSelect={(path) => { const v = replyMention.handleSelect(path); if (v !== null) setReplyText(v); }}
+            onMouseEnter={replyMention.setSelectedIdx}
+            visible={replyMention.showDropdown}
+            anchorRef={replyMention.textareaRef}
+            cursorIdx={replyMention.atCharIdx}
           />
           <div className="conv-reply-actions">
             <button

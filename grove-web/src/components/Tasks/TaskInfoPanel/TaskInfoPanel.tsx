@@ -6,7 +6,7 @@ import {
   GitBranch,
   FileText,
   MessageSquare,
-  Terminal,
+
   ChevronRight,
   ChevronLeft,
   RotateCcw,
@@ -15,15 +15,15 @@ import {
   RefreshCw,
   GitMerge,
   Archive,
-  Code,
-  FileCode,
+
   GitBranchPlus,
   MoreHorizontal,
 } from "lucide-react";
 import { Button, DropdownMenu } from "../../ui";
 import type { Task } from "../../../data/types";
 import { StatsTab, GitTab, NotesTab, CommentsTab } from "./tabs";
-import { useConfig } from "../../../context";
+
+import { useIsMobile } from "../../../hooks";
 import type { PanelType } from "../PanelSystem/types";
 
 interface TaskInfoPanelProps {
@@ -84,7 +84,8 @@ export function TaskInfoPanel({
   onEnterWorkspace,
   onAddPanel,
 }: TaskInfoPanelProps) {
-  const { config, terminalAvailable, chatAvailable } = useConfig();
+
+  const { isMobile } = useIsMobile();
   const isArchived = task.status === "archived";
   const isBroken = task.status === "broken";
   const canOperate = !isArchived && !isBroken;
@@ -281,73 +282,79 @@ export function TaskInfoPanel({
                 </Button>
               )}
             </>
+          ) : isMobile ? (
+            /* Mobile: dropdown + standalone Workspace button */
+            <>
+              <DropdownMenu
+                trigger={<MoreHorizontal className="w-4 h-4" />}
+                items={[
+                  ...(onCommit ? [{
+                    id: "commit",
+                    label: "Commit",
+                    icon: GitCommit,
+                    onClick: onCommit,
+                    disabled: isArchived,
+                  }] : []),
+                  ...(onRebase ? [{
+                    id: "rebase",
+                    label: "Rebase",
+                    icon: GitBranchPlus,
+                    onClick: onRebase,
+                    disabled: !canOperate,
+                  }] : []),
+                  ...(onSync ? [{
+                    id: "sync",
+                    label: "Sync",
+                    icon: RefreshCw,
+                    onClick: onSync,
+                    disabled: !canOperate,
+                  }] : []),
+                  ...(onMerge ? [{
+                    id: "merge",
+                    label: "Merge",
+                    icon: GitMerge,
+                    onClick: onMerge,
+                    disabled: !canOperate,
+                  }] : []),
+                  ...(onArchive ? [{
+                    id: "archive",
+                    label: "Archive",
+                    icon: Archive,
+                    onClick: onArchive,
+                    variant: "warning" as const,
+                    disabled: isBroken,
+                  }] : []),
+                  ...(onReset ? [{
+                    id: "reset",
+                    label: "Reset",
+                    icon: RotateCcw,
+                    onClick: onReset,
+                    variant: "warning" as const,
+                    disabled: isArchived,
+                  }] : []),
+                  ...(onClean ? [{
+                    id: "clean",
+                    label: "Clean",
+                    icon: Trash2,
+                    onClick: onClean,
+                    variant: "danger" as const,
+                  }] : []),
+                ]}
+              />
+              {onEnterWorkspace && (
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={onEnterWorkspace}
+                >
+                  <ChevronRight className="w-4 h-4 mr-1" />
+                  Workspace
+                </Button>
+              )}
+            </>
           ) : (
             <>
-              {/* 按钮新顺序: Chat Terminal | Review Editor | Commit Rebase Sync Merge | ... (dropdown) | Workspace */}
-
-              {/* Chat 按钮（仅当全局启用 Chat 时显示） */}
-              {onAddPanel && config?.enable_chat && (
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => onAddPanel('chat')}
-                  disabled={!chatAvailable}
-                  title={!chatAvailable ? "No ACP agent available" : undefined}
-                  className={`text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-bg-tertiary)] ${!chatAvailable ? "opacity-50 cursor-not-allowed" : ""}`}
-                >
-                  <MessageSquare className="w-4 h-4 mr-1" />
-                  Chat
-                </Button>
-              )}
-
-              {/* Terminal 按钮（仅当全局启用 Terminal 时显示） */}
-              {onAddPanel && config?.enable_terminal && (
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => onAddPanel('terminal')}
-                  disabled={!terminalAvailable}
-                  title={!terminalAvailable ? "Requires tmux or zellij" : undefined}
-                  className={`text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-bg-tertiary)] ${!terminalAvailable ? "opacity-50 cursor-not-allowed" : ""}`}
-                >
-                  <Terminal className="w-4 h-4 mr-1" />
-                  Terminal
-                </Button>
-              )}
-
-              {/* Separator (仅当有 Chat 或 Terminal 时显示) */}
-              {onAddPanel && (config?.enable_chat || config?.enable_terminal) && (
-                <div className="w-px h-6 bg-[var(--color-border)] mx-1" />
-              )}
-
-              {/* Review 按钮 */}
-              {onAddPanel && (
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => onAddPanel('review')}
-                  className="text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-bg-tertiary)]"
-                >
-                  <Code className="w-4 h-4 mr-1" />
-                  Review
-                </Button>
-              )}
-
-              {/* Editor 按钮 */}
-              {onAddPanel && (
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => onAddPanel('editor')}
-                  className="text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-bg-tertiary)]"
-                >
-                  <FileCode className="w-4 h-4 mr-1" />
-                  Editor
-                </Button>
-              )}
-
-              {/* Separator */}
-              {onAddPanel && <div className="w-px h-6 bg-[var(--color-border)] mx-1" />}
+              {/* Desktop: Commit Rebase Sync Merge | ... (dropdown) | Workspace */}
 
               {/* Git actions */}
               {onCommit && (

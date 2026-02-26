@@ -18,6 +18,7 @@ import {
 } from "lucide-react";
 import type { Task } from "../../../data/types";
 import { useConfig } from "../../../context";
+import { useIsMobile } from "../../../hooks";
 
 interface TaskToolbarProps {
   task: Task;
@@ -197,6 +198,7 @@ export function TaskToolbar({
   onReset,
 }: TaskToolbarProps) {
   const { config, terminalAvailable, chatAvailable } = useConfig();
+  const { isMobile } = useIsMobile();
   const isArchived = task.status === "archived";
   const isBroken = task.status === "broken";
   const canOperate = !isArchived && !isBroken;
@@ -227,6 +229,92 @@ export function TaskToolbar({
       variant: "danger",
     },
   ];
+
+  // Mobile: all actions in a single dropdown
+  const mobileAllActions: DropdownItem[] = [
+    ...(config?.enable_chat ? [{
+      id: "chat",
+      label: "Chat",
+      icon: MessageSquare,
+      onClick: onAddChat,
+      disabled: isArchived || !chatAvailable,
+    }] : []),
+    ...(config?.enable_terminal ? [{
+      id: "terminal",
+      label: "Terminal",
+      icon: Terminal,
+      onClick: onAddTerminal,
+      disabled: isArchived || !terminalAvailable,
+    }] : []),
+    {
+      id: "review",
+      label: "Review",
+      icon: Code,
+      onClick: onAddReview,
+      disabled: isArchived,
+    },
+    {
+      id: "editor",
+      label: "Editor",
+      icon: FileCode,
+      onClick: onAddEditor,
+      disabled: isArchived,
+    },
+    {
+      id: "commit",
+      label: "Commit",
+      icon: GitCommit,
+      onClick: onCommit,
+      disabled: isArchived,
+    },
+    {
+      id: "rebase",
+      label: "Rebase",
+      icon: GitBranchPlus,
+      onClick: onRebase,
+      disabled: !canOperate,
+    },
+    {
+      id: "sync",
+      label: "Sync",
+      icon: RefreshCw,
+      onClick: onSync,
+      disabled: !canOperate,
+    },
+    {
+      id: "merge",
+      label: "Merge",
+      icon: GitMerge,
+      onClick: onMerge,
+      disabled: !canOperate,
+    },
+    ...dangerousActions,
+  ];
+
+  if (isMobile) {
+    return (
+      <div className="flex items-center justify-end px-4 py-2 border-b border-[var(--color-border)]">
+        <div className="flex items-center gap-1">
+          <ActionsDropdown items={mobileAllActions} />
+          {onToggleHeaderCollapse && (
+            <motion.button
+              whileHover={{ scale: 1.05 }}
+              whileTap={{ scale: 0.95 }}
+              onClick={onToggleHeaderCollapse}
+              className="flex items-center justify-center w-7 h-7 rounded-md text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-bg-tertiary)] transition-colors"
+              title={headerCollapsed ? "Expand header" : "Collapse header"}
+            >
+              {headerCollapsed ? (
+                <ChevronDown className="w-3.5 h-3.5" />
+              ) : (
+                <ChevronUp className="w-3.5 h-3.5" />
+              )}
+            </motion.button>
+          )}
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="flex items-center justify-between px-4 py-2 border-b border-[var(--color-border)]">
@@ -304,6 +392,8 @@ export function TaskToolbar({
       </div>
 
       <div className="flex items-center gap-1">
+        {/* Dangerous Actions in Dropdown */}
+        <ActionsDropdown items={dangerousActions} />
         {/* Header collapse/expand toggle */}
         {onToggleHeaderCollapse && (
           <motion.button
@@ -320,8 +410,6 @@ export function TaskToolbar({
             )}
           </motion.button>
         )}
-        {/* Dangerous Actions in Dropdown */}
-        <ActionsDropdown items={dangerousActions} />
       </div>
     </div>
   );

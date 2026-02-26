@@ -94,6 +94,7 @@ export const FlexLayoutContainer = forwardRef<
           {
             type: 'tabset',
             weight: 100,
+            active: true,
             children: [
               createTabNode(defaultPanelType, 1),
             ],
@@ -167,13 +168,13 @@ export const FlexLayoutContainer = forwardRef<
   // Fullscreen panel state (记录哪个 panel/tabset 正在全屏)
   const [fullscreenPanelId, setFullscreenPanelId] = useState<string | null>(null);
 
-  // Add new panel
+  // Add new panel — always creates a new tab in the active tabset.
   const addPanel = useCallback((type: PanelType) => {
+    const activeTabset = model.getActiveTabset();
+
     instanceCounters.current[type]++;
     const instanceNumber = instanceCounters.current[type];
     const newTab = createTabNode(type, instanceNumber);
-
-    const activeTabset = model.getActiveTabset();
     const targetTabsetId = activeTabset?.getId() ?? model.getRoot().getId();
 
     model.doAction(
@@ -290,6 +291,14 @@ export const FlexLayoutContainer = forwardRef<
     renderValues.content = (
       <div
         style={{ display: 'flex', alignItems: 'center', gap: '6px' }}
+        onMouseDown={(e) => {
+          // Middle-click to close tab
+          if (e.button === 1) {
+            e.preventDefault();
+            e.stopPropagation();
+            model.doAction(Actions.deleteTab(tabId));
+          }
+        }}
         onContextMenu={(e) => {
           e.preventDefault();
           e.stopPropagation();
@@ -413,7 +422,6 @@ export const FlexLayoutContainer = forwardRef<
             <TaskTerminal
               projectId={projectId}
               task={task}
-              onStartSession={() => {}}
               hideHeader={true}
               fullscreen={true}
             />
@@ -426,7 +434,6 @@ export const FlexLayoutContainer = forwardRef<
             <TaskChat
               projectId={projectId}
               task={task}
-              onStartSession={() => {}}
               fullscreen={true}
             />
           </div>

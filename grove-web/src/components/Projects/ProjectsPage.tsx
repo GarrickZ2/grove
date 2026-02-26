@@ -6,6 +6,7 @@ import { ProjectCard } from "./ProjectCard";
 import { AddProjectDialog } from "./AddProjectDialog";
 import { DeleteProjectDialog } from "./DeleteProjectDialog";
 import { useProject } from "../../context";
+import { useIsMobile } from "../../hooks";
 import type { Project } from "../../data/types";
 
 interface ProjectsPageProps {
@@ -14,6 +15,7 @@ interface ProjectsPageProps {
 
 export function ProjectsPage({ onNavigate }: ProjectsPageProps) {
   const { projects, selectedProject, selectProject, addProject, deleteProject, refreshProjects } = useProject();
+  const { isMobile } = useIsMobile();
 
   // Refresh project list when navigating to this page
   useEffect(() => {
@@ -84,10 +86,12 @@ export function ProjectsPage({ onNavigate }: ProjectsPageProps) {
       {/* Header */}
       <div className="flex items-center justify-between mb-6">
         <h1 className="text-xl font-semibold text-[var(--color-text)]">Projects</h1>
-        <Button onClick={() => setShowAddDialog(true)} size="sm">
-          <Plus className="w-4 h-4 mr-1.5" />
-          Add Project
-        </Button>
+        {!isMobile && (
+          <Button onClick={() => setShowAddDialog(true)} size="sm">
+            <Plus className="w-4 h-4 mr-1.5" />
+            Add Project
+          </Button>
+        )}
       </div>
 
       {/* Projects Grid */}
@@ -101,7 +105,7 @@ export function ProjectsPage({ onNavigate }: ProjectsPageProps) {
           </Button>
         </div>
       ) : (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+        <div className={`grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 ${isMobile ? "gap-2" : "gap-4"}`}>
           {projects.map((project, index) => (
             <motion.div
               key={project.id}
@@ -115,23 +119,26 @@ export function ProjectsPage({ onNavigate }: ProjectsPageProps) {
                 onSelect={() => handleSelectProject(project)}
                 onDoubleClick={() => handleDoubleClick(project)}
                 onDelete={() => setProjectToDelete(project)}
+                compact={isMobile}
               />
             </motion.div>
           ))}
 
-          {/* Add Project Card */}
-          <motion.button
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: projects.length * 0.05 }}
-            whileHover={{ scale: 1.02 }}
-            whileTap={{ scale: 0.98 }}
-            onClick={() => setShowAddDialog(true)}
-            className="p-4 rounded-xl border-2 border-dashed border-[var(--color-border)] hover:border-[var(--color-highlight)] bg-transparent hover:bg-[var(--color-bg-secondary)] transition-colors flex items-center justify-center gap-2"
-          >
-            <Plus className="w-5 h-5 text-[var(--color-text-muted)]" />
-            <span className="text-sm text-[var(--color-text-muted)]">Add Project</span>
-          </motion.button>
+          {/* Add Project Card — hidden on mobile */}
+          {!isMobile && (
+            <motion.button
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: projects.length * 0.05 }}
+              whileHover={{ scale: 1.02 }}
+              whileTap={{ scale: 0.98 }}
+              onClick={() => setShowAddDialog(true)}
+              className="p-4 rounded-xl border-2 border-dashed border-[var(--color-border)] hover:border-[var(--color-highlight)] bg-transparent hover:bg-[var(--color-bg-secondary)] transition-colors flex items-center justify-center gap-2"
+            >
+              <Plus className="w-5 h-5 text-[var(--color-text-muted)]" />
+              <span className="text-sm text-[var(--color-text-muted)]">Add Project</span>
+            </motion.button>
+          )}
         </div>
       )}
 

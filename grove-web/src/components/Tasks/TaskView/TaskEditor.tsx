@@ -1,9 +1,10 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import Editor from "@monaco-editor/react";
-import { X, FileCode, Loader2, Save, Maximize2, Minimize2 } from "lucide-react";
+import { X, FileCode, Loader2, Save, Maximize2, Minimize2, PanelLeftOpen, PanelLeftClose } from "lucide-react";
 import { Button } from "../../ui";
 import { FileTree } from "./FileTree";
 import { buildFileTree } from "../../../utils/fileTree";
+import { useIsMobile } from "../../../hooks";
 import {
   getTaskFiles,
   getFileContent,
@@ -77,8 +78,10 @@ function getLanguage(filePath: string): string {
 }
 
 export function TaskEditor({ projectId, taskId, onClose, fullscreen = false, onToggleFullscreen, hideHeader = false }: TaskEditorProps) {
+  const { isMobile } = useIsMobile();
   const [files, setFiles] = useState<string[]>([]);
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
+  const [fileTreeVisible, setFileTreeVisible] = useState(true);
   const [fileContent, setFileContent] = useState<string>('');
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -97,6 +100,11 @@ export function TaskEditor({ projectId, taskId, onClose, fullscreen = false, onT
   // Delete confirmation
   const [confirmDialogOpen, setConfirmDialogOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
+
+  // Hide file tree by default on mobile
+  useEffect(() => {
+    if (isMobile) setFileTreeVisible(false);
+  }, [isMobile]);
 
   // Load file list on mount
   useEffect(() => {
@@ -117,6 +125,9 @@ export function TaskEditor({ projectId, taskId, onClose, fullscreen = false, onT
     setModified(false);
     setError(null);
 
+    // On mobile, close file tree after selecting
+    if (isMobile) setFileTreeVisible(false);
+
     try {
       const res = await getFileContent(projectId, taskId, path);
       setFileContent(res.content);
@@ -129,7 +140,7 @@ export function TaskEditor({ projectId, taskId, onClose, fullscreen = false, onT
     } finally {
       setLoading(false);
     }
-  }, [projectId, taskId, selectedFile]);
+  }, [projectId, taskId, selectedFile, isMobile]);
 
   // Handle editor content change
   const handleEditorChange = useCallback((value: string | undefined) => {
@@ -300,6 +311,13 @@ export function TaskEditor({ projectId, taskId, onClose, fullscreen = false, onT
       {!hideHeader && (
       <div className="flex items-center justify-between px-4 py-2 bg-[var(--color-bg)] border-b border-[var(--color-border)]">
         <div className="flex items-center gap-2 text-sm text-[var(--color-text)] min-w-0">
+          <button
+            onClick={() => setFileTreeVisible(v => !v)}
+            className="p-1 text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-bg-tertiary)] rounded transition-colors flex-shrink-0"
+            title={fileTreeVisible ? 'Hide file tree' : 'Show file tree'}
+          >
+            {fileTreeVisible ? <PanelLeftClose className="w-3.5 h-3.5" /> : <PanelLeftOpen className="w-3.5 h-3.5" />}
+          </button>
           <FileCode className="w-4 h-4 flex-shrink-0" />
           <span className="font-medium flex-shrink-0">Editor</span>
           {breadcrumb.length > 0 && (
@@ -339,19 +357,69 @@ export function TaskEditor({ projectId, taskId, onClose, fullscreen = false, onT
       )}
 
       {/* Main content: File tree + Editor */}
-      <div className="flex-1 flex min-h-0">
-        {/* File tree sidebar */}
-        <div className="w-[250px] flex-shrink-0 border-r border-[var(--color-border)] bg-[var(--color-bg)] overflow-hidden">
-          <FileTree
-            nodes={fileTree}
-            selectedFile={selectedFile}
-            onSelectFile={handleSelectFile}
-            onContextMenu={handleContextMenu}
-            creatingPath={creatingPath}
-            onSubmitPath={handleSubmitPath}
-            onCancelPath={handleCancelPath}
+      <div className="flex-1 flex min-h-0 relative">
+        {/* Mobile backdrop */}
+        {isMobile && fileTreeVisible && (
+          <div
+            className="fixed inset-0 bg-black/40 z-[15]"
+            onClick={() => setFileTreeVisible(false)}
           />
-        </div>
+        )}
+
+        {/* Collapsed sidebar strip — shown when file tree is hidden */}
+        {!fileTreeVisible && (
+          <div
+            className="flex-shrink-0 flex flex-col items-center pt-2 bg-[var(--color-bg)] border-r border-[var(--color-border)]"
+            style={{ width: 36 }}
+          >
+            <button
+              onClick={() => setFileTreeVisible(true)}
+              className="flex items-center justify-center w-7 h-7 rounded-md text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-bg-tertiary)] transition-colors"
+              title="Show file tree"
+            >
+              <PanelLeftOpen className="w-4 h-4" />
+            </button>
+          </div>
+        )}
+
+        {/* File tree sidebar */}
+        {fileTreeVisible && (
+          <div
+            className="flex-shrink-0 border-r border-[var(--color-border)] bg-[var(--color-bg)] overflow-hidden flex flex-col"
+            style={isMobile ? {
+              position: 'fixed',
+              top: 0,
+              left: 0,
+              height: '100%',
+              width: 280,
+              zIndex: 20,
+              boxShadow: '4px 0 16px rgba(0,0,0,0.25)',
+            } : {
+              width: 250,
+            }}
+          >
+            {/* Collapse button inside sidebar header */}
+            <div className="flex items-center justify-between px-2 py-1.5 border-b border-[var(--color-border)]">
+              <span className="text-xs font-medium text-[var(--color-text-muted)] uppercase tracking-wider pl-1">Files</span>
+              <button
+                onClick={() => setFileTreeVisible(false)}
+                className="flex items-center justify-center w-6 h-6 rounded text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-bg-tertiary)] transition-colors"
+                title="Hide file tree"
+              >
+                <PanelLeftClose className="w-3.5 h-3.5" />
+              </button>
+            </div>
+            <FileTree
+              nodes={fileTree}
+              selectedFile={selectedFile}
+              onSelectFile={handleSelectFile}
+              onContextMenu={handleContextMenu}
+              creatingPath={creatingPath}
+              onSubmitPath={handleSubmitPath}
+              onCancelPath={handleCancelPath}
+            />
+          </div>
+        )}
 
         {/* Editor area */}
         <div className="flex-1 flex flex-col min-w-0">

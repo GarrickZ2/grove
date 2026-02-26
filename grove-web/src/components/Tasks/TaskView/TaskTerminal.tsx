@@ -1,7 +1,6 @@
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { motion } from "framer-motion";
-import { Terminal as TerminalIcon, Play, ChevronRight, Maximize2, Minimize2 } from "lucide-react";
-import { Button } from "../../ui";
+import { Terminal as TerminalIcon, ChevronRight, Maximize2, Minimize2 } from "lucide-react";
 import type { Task } from "../../../data/types";
 import { XTerminal } from "../TaskDetail/XTerminal";
 import { useTerminalTheme } from "../../../context";
@@ -13,9 +12,6 @@ interface TaskTerminalProps {
   task: Task;
   collapsed?: boolean;
   onExpand?: () => void;
-  onStartSession: () => void;
-  /** Auto-start session on mount */
-  autoStart?: boolean;
   /** Called when terminal connects successfully (session is now live) */
   onConnected?: () => void;
   /** Called when terminal disconnects (session ended) */
@@ -33,8 +29,6 @@ export function TaskTerminal({
   task,
   collapsed = false,
   onExpand,
-  onStartSession,
-  autoStart = false,
   onConnected: onConnectedProp,
   onDisconnected: onDisconnectedProp,
   fullscreen = false,
@@ -43,31 +37,11 @@ export function TaskTerminal({
 }: TaskTerminalProps) {
   const { terminalTheme } = useTerminalTheme();
   const [isConnected, setIsConnected] = useState(false);
-  // Local state to track if user has started session
-  const [sessionStarted, setSessionStarted] = useState(false);
-
-  const isLive = task.status === "live";
-  // Show terminal if task is live OR user has manually started session
-  const showTerminal = isLive || sessionStarted;
-
-  // Auto-start session on mount if requested
-  useEffect(() => {
-    if (autoStart && !isLive && !sessionStarted) {
-      setSessionStarted(true);
-      onStartSession();
-    }
-  }, [autoStart, isLive, sessionStarted, onStartSession]);
 
   // Handle terminal connected
   const handleConnected = () => {
     setIsConnected(true);
     onConnectedProp?.();
-  };
-
-  // Handle start session click
-  const handleStartSession = () => {
-    setSessionStarted(true);
-    onStartSession();
   };
 
   // Collapsed mode: vertical bar
@@ -102,36 +76,6 @@ export function TaskTerminal({
           <div className="p-3 text-[var(--color-text-muted)]">
             <ChevronRight className="w-5 h-5" />
           </div>
-        </div>
-      </motion.div>
-    );
-  }
-
-  // Not started: show start session prompt
-  if (!showTerminal) {
-    return (
-      <motion.div
-        layout
-        className={`flex-1 flex flex-col overflow-hidden ${hideHeader ? '' : 'rounded-lg border border-[var(--color-border)]'} bg-[var(--color-bg-tertiary)]`}
-      >
-        {/* Header - 只在非 hideHeader 模式下显示 */}
-        {!hideHeader && (
-          <div className="flex items-center justify-between px-3 py-2 bg-[var(--color-bg)] border-b border-[var(--color-border)]">
-            <div className="flex items-center gap-2 text-sm text-[var(--color-text-muted)]">
-              <TerminalIcon className="w-4 h-4" />
-              <span>Terminal</span>
-            </div>
-          </div>
-        )}
-        <div className="flex-1 flex flex-col items-center justify-center">
-          <TerminalIcon className="w-10 h-10 text-[var(--color-text-muted)] mb-3" />
-          <p className="text-sm text-[var(--color-text-muted)] mb-3">
-            Session not running
-          </p>
-          <Button variant="secondary" size="sm" onClick={handleStartSession}>
-            <Play className="w-4 h-4 mr-1.5" />
-            Start Session
-          </Button>
         </div>
       </motion.div>
     );

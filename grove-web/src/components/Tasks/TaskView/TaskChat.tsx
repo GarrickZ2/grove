@@ -2,7 +2,6 @@ import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   MessageSquare,
-  Play,
   ChevronRight,
   ChevronDown,
   Maximize2,
@@ -14,7 +13,6 @@ import {
   Brain,
   ListTodo,
   Slash,
-  FileText,
   X,
   ShieldCheck,
   ShieldX,
@@ -29,9 +27,10 @@ import {
   Globe,
   Terminal,
 } from "lucide-react";
-import { Button, MarkdownRenderer, agentOptions } from "../../ui";
+import { Button, MarkdownRenderer, agentOptions, FileMentionDropdown } from "../../ui";
+import { buildMentionItems, filterMentionItems } from "../../../utils/fileMention";
 import type { Task } from "../../../data/types";
-import { getApiHost } from "../../../api/client";
+import { getApiHost, appendHmacToUrl } from "../../../api/client";
 import { getConfig, listChats, createChat, updateChatTitle, deleteChat, getTaskFiles, checkCommands } from "../../../api";
 import type { ChatSessionResponse, CustomAgent } from "../../../api";
 
@@ -43,8 +42,6 @@ interface TaskChatProps {
   collapsed?: boolean;
   onExpand?: () => void;
   onCollapse?: () => void;
-  onStartSession: () => void;
-  autoStart?: boolean;
   onConnected?: () => void;
   onDisconnected?: () => void;
   fullscreen?: boolean;
@@ -200,49 +197,9 @@ function createCommandChip(name: string): HTMLSpanElement {
   return chip;
 }
 
-/** Fuzzy match a query against a target string */
-function fuzzyMatch(
-  query: string,
-  target: string,
-): { match: boolean; score: number; indices: number[] } {
-  const q = query.toLowerCase();
-  const t = target.toLowerCase();
-  let qi = 0;
-  let score = 0;
-  let lastMatchIndex = -1;
-  const indices: number[] = [];
-
-  for (let ti = 0; ti < t.length && qi < q.length; ti++) {
-    if (t[ti] === q[qi]) {
-      score += ti === lastMatchIndex + 1 ? 2 : 1;
-      if (ti === 0 || t[ti - 1] === "/") score += 3;
-      lastMatchIndex = ti;
-      indices.push(ti);
-      qi++;
-    }
-  }
-
-  return { match: qi === q.length, score, indices };
-}
-
-/** Render a file path with fuzzy-matched characters highlighted */
-function HighlightedPath({ path, indices }: { path: string; indices: number[] }) {
-  const indexSet = new Set(indices);
-  return (
-    <span>
-      {Array.from(path).map((char, i) =>
-        indexSet.has(i) ? (
-          <span key={i} className="text-[var(--color-warning)] font-semibold">{char}</span>
-        ) : (
-          <span key={i}>{char}</span>
-        ),
-      )}
-    </span>
-  );
-}
 
 /** Create a non-editable file chip DOM element */
-function createFileChip(filePath: string): HTMLSpanElement {
+function createFileChip(filePath: string, isDir = false): HTMLSpanElement {
   const chip = document.createElement("span");
   chip.contentEditable = "false";
   chip.dataset.file = filePath;
@@ -254,8 +211,33 @@ function createFileChip(filePath: string): HTMLSpanElement {
     "font-size:12px;font-weight:500;color:var(--color-warning);" +
     "margin:0 2px;user-select:none;vertical-align:baseline;line-height:1.5;";
 
+  // Icon (Folder or File)
+  const icon = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  icon.setAttribute("width", "12");
+  icon.setAttribute("height", "12");
+  icon.setAttribute("viewBox", "0 0 24 24");
+  icon.setAttribute("fill", "none");
+  icon.setAttribute("stroke", "currentColor");
+  icon.setAttribute("stroke-width", "2");
+  icon.setAttribute("stroke-linecap", "round");
+  icon.setAttribute("stroke-linejoin", "round");
+  icon.style.cssText = "flex-shrink:0;";
+  const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+  if (isDir) {
+    // Lucide Folder icon
+    path.setAttribute("d", "M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z");
+  } else {
+    // Lucide FileText icon
+    path.setAttribute("d", "M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z");
+    const poly = document.createElementNS("http://www.w3.org/2000/svg", "polyline");
+    poly.setAttribute("points", "14 2 14 8 20 8");
+    icon.appendChild(poly);
+  }
+  icon.appendChild(path);
+  chip.appendChild(icon);
+
   const label = document.createElement("span");
-  label.textContent = filePath.split("/").pop() || filePath;
+  label.textContent = isDir ? filePath : (filePath.split("/").pop() || filePath);
   chip.appendChild(label);
 
   const closeBtn = document.createElement("span");
@@ -301,8 +283,6 @@ export function TaskChat({
   collapsed = false,
   onExpand,
   onCollapse,
-  onStartSession,
-  autoStart = false,
   onConnected: onConnectedProp,
   onDisconnected: onDisconnectedProp,
   fullscreen = false,
@@ -329,7 +309,6 @@ export function TaskChat({
 
   // ─── Active chat's live state ─────────────────────────────────────────
   const [isConnected, setIsConnected] = useState(false);
-  const [sessionStarted, setSessionStarted] = useState(true);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [hasContent, setHasContent] = useState(false);
   const [isBusy, setIsBusy] = useState(false);
@@ -359,6 +338,7 @@ export function TaskChat({
   const modelMenuRef = useRef<HTMLDivElement>(null);
   const permMenuRef = useRef<HTMLDivElement>(null);
   const slashMenuRef = useRef<HTMLDivElement>(null);
+  const slashItemRefs = useRef<(HTMLButtonElement | null)[]>([]);
   const [taskFiles, setTaskFiles] = useState<string[]>([]);
   const [showFileMenu, setShowFileMenu] = useState(false);
   const [fileFilter, setFileFilter] = useState("");
@@ -370,8 +350,6 @@ export function TaskChat({
   const [isDragging, setIsDragging] = useState(false);
   const [isInputExpanded, setIsInputExpanded] = useState(false);
 
-  const isLive = task.status === "live";
-  const showChat = isLive || sessionStarted;
   const activeChat = chats.find((c) => c.id === activeChatId);
 
   // Filtered slash commands based on current input
@@ -383,18 +361,14 @@ export function TaskChat({
     );
   }, [slashCommands, slashFilter]);
 
+  // Build mention items (files + directories) from flat file list
+  const mentionItems = useMemo(() => buildMentionItems(taskFiles), [taskFiles]);
+
   // Filtered files based on @ input
-  const filteredFiles = useMemo(() => {
-    if (!fileFilter) return taskFiles.slice(0, 15);
-    return taskFiles
-      .map((path) => {
-        const { match, score, indices } = fuzzyMatch(fileFilter, path);
-        return { path, score, indices, match };
-      })
-      .filter((r) => r.match)
-      .sort((a, b) => b.score - a.score)
-      .slice(0, 15);
-  }, [taskFiles, fileFilter]);
+  const filteredFiles = useMemo(
+    () => filterMentionItems(mentionItems, fileFilter),
+    [mentionItems, fileFilter],
+  );
 
   // Check ACP agent availability on mount
   useEffect(() => {
@@ -460,14 +434,6 @@ export function TaskChat({
     }
   }, [activeChat]);
 
-  // Auto-start
-  useEffect(() => {
-    if (autoStart && !isLive && !sessionStarted) {
-      setSessionStarted(true);
-      onStartSession();
-    }
-  }, [autoStart, isLive, sessionStarted, onStartSession]);
-
   // Load task files for @ mention
   useEffect(() => {
     getTaskFiles(projectId, task.id)
@@ -483,6 +449,11 @@ export function TaskChat({
     }
     prevMsgCountRef.current = messages.length;
   }, [messages]);
+
+  // Auto-scroll slash menu to keep selected item visible
+  useEffect(() => {
+    slashItemRefs.current[slashSelectedIdx]?.scrollIntoView({ block: "nearest" });
+  }, [slashSelectedIdx]);
 
   // Close dropdown menus when clicking outside
   useEffect(() => {
@@ -548,7 +519,6 @@ export function TaskChat({
   // ─── Load chats on mount ───────────────────────────────────────────────
 
   useEffect(() => {
-    if (!showChat) return;
     let cancelled = false;
 
     const init = async () => {
@@ -570,17 +540,17 @@ export function TaskChat({
     };
     init();
     return () => { cancelled = true; };
-  }, [showChat, projectId, task.id]);
+  }, [projectId, task.id]);
 
   // ─── Per-chat WebSocket management ─────────────────────────────────────
 
   /** Connect a WebSocket for a given chat ID (idempotent) */
-  const connectChatWs = useCallback((chatId: string) => {
+  const connectChatWs = useCallback(async (chatId: string) => {
     if (wsMapRef.current.has(chatId)) return; // Already connected
 
     const host = getApiHost();
     const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-    const url = `${protocol}//${host}/api/v1/projects/${projectId}/tasks/${task.id}/chats/${chatId}/ws`;
+    const url = await appendHmacToUrl(`${protocol}//${host}/api/v1/projects/${projectId}/tasks/${task.id}/chats/${chatId}/ws`);
 
     const ws = new WebSocket(url);
     wsMapRef.current.set(chatId, ws);
@@ -633,10 +603,12 @@ export function TaskChat({
 
   // Connect WebSocket when activeChatId changes
   useEffect(() => {
-    if (!activeChatId || !showChat) return;
-    connectChatWs(activeChatId);
-    wsRef.current = wsMapRef.current.get(activeChatId) ?? null;
-  }, [activeChatId, showChat, connectChatWs]);
+    if (!activeChatId) return;
+    (async () => {
+      await connectChatWs(activeChatId);
+      wsRef.current = wsMapRef.current.get(activeChatId) ?? null;
+    })();
+  }, [activeChatId, connectChatWs]);
 
   // Cleanup all WebSockets on unmount
   useEffect(() => {
@@ -680,7 +652,8 @@ export function TaskChat({
           break;
         case "message_chunk":
           setMessages((prev) => {
-            // Find last incomplete assistant message (may not be the very last)
+            // Find last incomplete assistant message, but stop at tool/user boundaries
+            // so that chunks after tools create a NEW assistant message segment
             for (let i = prev.length - 1; i >= 0; i--) {
               const m = prev[i];
               if (m.type === "assistant" && !m.complete) {
@@ -688,8 +661,8 @@ export function TaskChat({
                 updated[i] = { ...m, content: m.content + msg.text };
                 return updated;
               }
-              // Stop searching if we hit a user message (new turn)
-              if (m.type === "user") break;
+              // Stop searching at user or tool boundary
+              if (m.type === "user" || m.type === "tool") break;
             }
             // Don't create new message for whitespace-only chunks
             if (!msg.text.trim()) return prev;
@@ -721,7 +694,12 @@ export function TaskChat({
                   : m,
               );
             }
-            return [...prev, {
+            // Mark any preceding incomplete assistant messages as complete
+            // (agent has moved on to tool execution, text segment is done)
+            const updated = prev.map((m) =>
+              m.type === "assistant" && !m.complete ? { ...m, complete: true } : m,
+            );
+            return [...updated, {
               type: "tool", id: msg.id, title: msg.title, status: "running", collapsed: false,
               locations: msg.locations,
             }];
@@ -789,9 +767,14 @@ export function TaskChat({
         case "mode_changed":
           setPermissionLevel(msg.mode_id);
           break;
-        case "plan_update":
-          setPlanEntries(msg.entries ?? []);
+        case "plan_update": {
+          const entries: PlanEntry[] = msg.entries ?? [];
+          setPlanEntries(entries);
+          // Auto-expand while in progress, auto-collapse when all done
+          const allDone = entries.length > 0 && entries.every((e: PlanEntry) => e.status === "completed");
+          setShowPlan(!allDone);
           break;
+        }
         case "available_commands":
           setSlashCommands(msg.commands ?? []);
           break;
@@ -940,14 +923,14 @@ export function TaskChat({
 
   // ─── Chat switching ────────────────────────────────────────────────────
 
-  const switchChat = useCallback((chatId: string) => {
+  const switchChat = useCallback(async (chatId: string) => {
     if (chatId === activeChatId) return;
     saveCurrentChatState();
     setActiveChatId(chatId);
     restoreChatState(chatId);
     setShowChatMenu(false);
     // Connect WS if needed
-    connectChatWs(chatId);
+    await connectChatWs(chatId);
     wsRef.current = wsMapRef.current.get(chatId) ?? null;
   }, [activeChatId, saveCurrentChatState, restoreChatState, connectChatWs]);
 
@@ -1183,17 +1166,18 @@ export function TaskChat({
     }
     const text = node.textContent || "";
     const offset = range.startOffset;
-    // Scan backwards from cursor to find "/" or "@"
+    // Scan backwards from cursor to find "@" or "/" (@ takes priority over /)
     let slashIdx = -1;
     let atIdx = -1;
     for (let i = offset - 1; i >= 0; i--) {
-      if (text[i] === "/") {
-        if (i === 0 || /\s/.test(text[i - 1])) slashIdx = i;
-        break;
-      }
       if (text[i] === "@") {
         if (i === 0 || /\s/.test(text[i - 1])) atIdx = i;
         break;
+      }
+      if (text[i] === "/") {
+        // Record slash position for /commands, but don't break — paths like @src/main contain /
+        if (slashIdx < 0 && (i === 0 || /\s/.test(text[i - 1]))) slashIdx = i;
+        continue;
       }
       if (/\s/.test(text[i])) break;
     }
@@ -1254,7 +1238,7 @@ export function TaskChat({
   }, [checkContent]);
 
   /** Insert a file chip at the current cursor position, replacing the @partial text */
-  const insertFileAtCursor = useCallback((filePath: string) => {
+  const insertFileAtCursor = useCallback((filePath: string, isDir?: boolean) => {
     const el = editableRef.current;
     if (!el) return;
     const sel = window.getSelection();
@@ -1275,7 +1259,7 @@ export function TaskChat({
     const after = text.slice(offset);
     const parent = node.parentNode;
     if (!parent) return;
-    const chip = createFileChip(filePath);
+    const chip = createFileChip(filePath, isDir);
     const frag = document.createDocumentFragment();
     if (before) frag.appendChild(document.createTextNode(before));
     frag.appendChild(chip);
@@ -1355,6 +1339,103 @@ export function TaskChat({
   useEffect(() => { checkContent(); }, [attachments.length, checkContent]);
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
+    // Skip during IME composition (e.g. Chinese/Japanese input)
+    if (e.nativeEvent.isComposing || e.keyCode === 229) return;
+
+    // Backspace: robust chip deletion for contentEditable
+    if (e.key === "Backspace" && !e.metaKey && !e.altKey) {
+      const sel = window.getSelection();
+      if (sel && sel.isCollapsed && sel.anchorNode) {
+        const anchor = sel.anchorNode;
+        const offset = sel.anchorOffset;
+        const isChipEl = (n: Node): n is HTMLElement =>
+          n instanceof HTMLElement && (n.dataset.command !== undefined || n.dataset.file !== undefined);
+
+        // Case A: Cursor at start of text node — chip is previous sibling → delete chip
+        if (anchor.nodeType === Node.TEXT_NODE && offset === 0) {
+          const prev = anchor.previousSibling;
+          if (prev && isChipEl(prev)) {
+            e.preventDefault();
+            const before = prev.previousSibling;
+            prev.remove();
+            // Position cursor at end of preceding text, or start of container
+            if (before && before.nodeType === Node.TEXT_NODE) {
+              const r = document.createRange();
+              r.setStart(before, (before.textContent || "").length);
+              r.collapse(true);
+              sel.removeAllRanges();
+              sel.addRange(r);
+            }
+            checkContent();
+            return;
+          }
+        }
+
+        // Case B: Cursor in element node — previous child is chip → delete chip
+        if (anchor.nodeType === Node.ELEMENT_NODE && offset > 0) {
+          const prevChild = anchor.childNodes[offset - 1];
+          if (isChipEl(prevChild)) {
+            e.preventDefault();
+            const before = prevChild.previousSibling;
+            prevChild.remove();
+            if (before && before.nodeType === Node.TEXT_NODE) {
+              const r = document.createRange();
+              r.setStart(before, (before.textContent || "").length);
+              r.collapse(true);
+              sel.removeAllRanges();
+              sel.addRange(r);
+            }
+            checkContent();
+            return;
+          }
+        }
+
+        // Case C: Cursor in a whitespace-only text node right after a chip
+        // (the trailing " " inserted as cursor placeholder after chip creation)
+        // Handle deletion ourselves to prevent browser from mangling the DOM
+        if (anchor.nodeType === Node.TEXT_NODE && offset > 0) {
+          const text = anchor.textContent || "";
+          const prev = anchor.previousSibling;
+          if (prev && isChipEl(prev) && text.trimEnd().length === 0) {
+            e.preventDefault();
+            if (text.length <= 1) {
+              // Last whitespace char — delete both the padding text node and the chip
+              const beforeChip = prev.previousSibling;
+              prev.remove();
+              anchor.parentNode?.removeChild(anchor);
+              if (beforeChip && beforeChip.nodeType === Node.TEXT_NODE) {
+                const r = document.createRange();
+                r.setStart(beforeChip, (beforeChip.textContent || "").length);
+                r.collapse(true);
+                sel.removeAllRanges();
+                sel.addRange(r);
+              } else {
+                // No text before chip — position at end of remaining content
+                const el = editableRef.current;
+                if (el) {
+                  const r = document.createRange();
+                  r.selectNodeContents(el);
+                  r.collapse(false);
+                  sel.removeAllRanges();
+                  sel.addRange(r);
+                }
+              }
+            } else {
+              // Multiple whitespace chars — delete one manually
+              anchor.textContent = text.slice(0, offset - 1) + text.slice(offset);
+              const r = document.createRange();
+              r.setStart(anchor, offset - 1);
+              r.collapse(true);
+              sel.removeAllRanges();
+              sel.addRange(r);
+            }
+            checkContent();
+            return;
+          }
+        }
+      }
+    }
+
     // Shell mode: Backspace on empty input → exit shell mode
     if (isTerminalMode && e.key === "Backspace") {
       const el = editableRef.current;
@@ -1413,8 +1494,8 @@ export function TaskChat({
       }
       if (e.key === "Tab" || (e.key === "Enter" && !e.shiftKey)) {
         e.preventDefault();
-        const item = filteredFiles[fileSelectedIdx];
-        insertFileAtCursor(typeof item === "string" ? item : item.path);
+        const sel_item = filteredFiles[fileSelectedIdx];
+        insertFileAtCursor(sel_item.path, sel_item.isDir);
         return;
       }
       if (e.key === "Escape") {
@@ -1422,6 +1503,18 @@ export function TaskChat({
         setShowFileMenu(false);
         return;
       }
+    }
+    // Shift+Tab → cycle permission mode
+    if (e.key === "Tab" && e.shiftKey && modeOptions.length > 0) {
+      e.preventDefault();
+      const currentIdx = modeOptions.findIndex((m) => m.value === permissionLevel);
+      const nextIdx = (currentIdx + 1) % modeOptions.length;
+      const next = modeOptions[nextIdx];
+      setPermissionLevel(next.value);
+      if (wsRef.current?.readyState === WebSocket.OPEN) {
+        wsRef.current.send(JSON.stringify({ type: "set_mode", mode_id: next.value }));
+      }
+      return;
     }
     // Cmd+Option+Backspace → clear pending queue
     if (e.key === "Backspace" && e.metaKey && e.altKey && pendingMessages.length > 0) {
@@ -1436,9 +1529,7 @@ export function TaskChat({
     } else {
       if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSend(); }
     }
-  }, [handleSend, isTerminalMode, isInputExpanded, showSlashMenu, filteredSlashCommands, slashSelectedIdx, insertCommandAtCursor, showFileMenu, filteredFiles, fileSelectedIdx, insertFileAtCursor, pendingMessages, handleClearPending]);
-
-  const handleStartSession = () => { setSessionStarted(true); onStartSession(); };
+  }, [handleSend, isTerminalMode, isInputExpanded, showSlashMenu, filteredSlashCommands, slashSelectedIdx, insertCommandAtCursor, showFileMenu, filteredFiles, fileSelectedIdx, insertFileAtCursor, pendingMessages, handleClearPending, modeOptions, permissionLevel, checkContent]);
 
   const toggleToolCollapse = (id: string) => {
     setMessages((prev) => prev.map((m) => m.type === "tool" && m.id === id ? { ...m, collapsed: !m.collapsed } : m));
@@ -1465,9 +1556,11 @@ export function TaskChat({
         next.delete(sectionId);
       } else {
         next.add(sectionId);
-        // When expanding: reset all tools in section to expanded
+        // When expanding: only expand primary tools; keep secondary tools collapsed
         setMessages((pm) => pm.map((m) =>
-          m.type === "tool" && toolIds.includes(m.id) ? { ...m, collapsed: false } : m,
+          m.type === "tool" && toolIds.includes(m.id)
+            ? { ...m, collapsed: isSecondaryTool(m.title) }
+            : m,
         ));
       }
       return next;
@@ -1493,28 +1586,7 @@ export function TaskChat({
     );
   }
 
-  // ─── Not started ─────────────────────────────────────────────────────────
 
-  if (!showChat) {
-    return (
-      <motion.div layout className="flex-1 flex flex-col rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-tertiary)] overflow-hidden">
-        {!hideHeader && (
-          <div className="flex items-center justify-between px-3 py-2 bg-[var(--color-bg)] border-b border-[var(--color-border)]">
-            <div className="flex items-center gap-2 text-sm text-[var(--color-text-muted)]">
-              {AgentIcon ? <AgentIcon size={16} /> : <MessageSquare className="w-4 h-4" />}<span>{agentLabel}</span>
-            </div>
-          </div>
-        )}
-        <div className="flex-1 flex flex-col items-center justify-center">
-          {AgentIcon ? <AgentIcon size={40} className="mb-3" /> : <MessageSquare className="w-10 h-10 text-[var(--color-text-muted)] mb-3" />}
-          <p className="text-sm text-[var(--color-text-muted)] mb-3">Chat session not started</p>
-          <Button variant="secondary" size="sm" onClick={handleStartSession}>
-            <Play className="w-4 h-4 mr-1.5" />Start Chat
-          </Button>
-        </div>
-      </motion.div>
-    );
-  }
 
   // ─── Full chat view ──────────────────────────────────────────────────────
 
@@ -1538,6 +1610,7 @@ export function TaskChat({
                   onChange={(e) => setEditTitleValue(e.target.value)}
                   onBlur={handleTitleSave}
                   onKeyDown={(e) => {
+                    if (e.nativeEvent.isComposing || e.keyCode === 229) return;
                     if (e.key === "Enter") handleTitleSave();
                     if (e.key === "Escape") setEditingTitle(false);
                   }}
@@ -1689,8 +1762,16 @@ export function TaskChat({
               key={`ts-${item.sectionId}`}
               sectionId={item.sectionId}
               tools={item.tools}
-              expanded={(isBusy && item.tools[0].index >= turnStartIndexRef.current) || expandedSections.has(item.sectionId)}
-              forceExpanded={isBusy && item.tools[0].index >= turnStartIndexRef.current}
+              expanded={
+                // Force-expand only sections with running tools; completed sections auto-collapse
+                (isBusy && item.tools[0].index >= turnStartIndexRef.current
+                  && item.tools.some((t) => t.message.status === "running"))
+                || expandedSections.has(item.sectionId)
+              }
+              forceExpanded={
+                isBusy && item.tools[0].index >= turnStartIndexRef.current
+                && item.tools.some((t) => t.message.status === "running")
+              }
               onToggleSection={toggleSection}
               onToggleToolCollapse={toggleToolCollapse}
             />
@@ -1794,6 +1875,7 @@ export function TaskChat({
                           value={editingPendingValue}
                           onChange={(e) => setEditingPendingValue(e.target.value)}
                           onKeyDown={(e) => {
+                            if (e.nativeEvent.isComposing || e.keyCode === 229) return;
                             if (e.key === "Enter") { e.preventDefault(); handleSavePendingEdit(); }
                             if (e.key === "Escape") handleCancelPendingEdit();
                           }}
@@ -1863,6 +1945,7 @@ export function TaskChat({
               {filteredSlashCommands.map((cmd, i) => (
                 <button
                   key={cmd.name}
+                  ref={(el) => { slashItemRefs.current[i] = el; }}
                   onMouseDown={(e) => e.preventDefault()}
                   onClick={() => insertCommandAtCursor(cmd.name)}
                   onMouseEnter={() => setSlashSelectedIdx(i)}
@@ -1882,39 +1965,14 @@ export function TaskChat({
         </AnimatePresence>
 
         {/* File @ mention autocomplete popover */}
-        <AnimatePresence>
-          {showFileMenu && filteredFiles.length > 0 && (
-            <motion.div
-              ref={fileMenuRef}
-              initial={{ opacity: 0, y: 4 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: 4 }}
-              transition={{ duration: 0.12 }}
-              className="absolute bottom-full left-3 right-3 mb-1 max-h-56 overflow-y-auto rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] shadow-lg z-50"
-            >
-              {filteredFiles.map((item, i) => {
-                const filePath = typeof item === "string" ? item : item.path;
-                const indices = typeof item === "string" ? null : item.indices;
-                return (
-                  <button
-                    key={filePath}
-                    onMouseDown={(e) => e.preventDefault()}
-                    onClick={() => insertFileAtCursor(filePath)}
-                    onMouseEnter={() => setFileSelectedIdx(i)}
-                    className={`w-full text-left px-3 py-2 flex items-center gap-2.5 transition-colors ${
-                      i === fileSelectedIdx ? "bg-[var(--color-bg-tertiary)]" : "hover:bg-[var(--color-bg-secondary)]"
-                    }`}
-                  >
-                    <FileText className="w-3.5 h-3.5 text-[var(--color-warning)] shrink-0" />
-                    <span className="text-sm text-[var(--color-text)] font-mono truncate">
-                      {indices ? <HighlightedPath path={filePath} indices={indices} /> : filePath}
-                    </span>
-                  </button>
-                );
-              })}
-            </motion.div>
-          )}
-        </AnimatePresence>
+        <FileMentionDropdown
+          items={filteredFiles}
+          selectedIdx={fileSelectedIdx}
+          onSelect={insertFileAtCursor}
+          onMouseEnter={setFileSelectedIdx}
+          visible={showFileMenu}
+          menuRef={fileMenuRef}
+        />
 
         {/* Attachment preview strip */}
         {attachments.length > 0 && (
@@ -2253,6 +2311,17 @@ function PermissionCard({ message, onRespond }: {
   );
 }
 
+/** Classify tool as secondary (exploration/search) — collapsed by default in tiered view */
+function isSecondaryTool(title: string): boolean {
+  const t = title.toLowerCase();
+  if (t === "read" || t === "read file" || t.startsWith("read ")) return true;
+  if (t === "glob" || t === "grep" || t === "webfetch" || t === "websearch") return true;
+  if (t.startsWith("find ") || t.startsWith("grep ") || t.startsWith("search ")) return true;
+  if (t.startsWith("bash") || title.startsWith("`")) return true;
+  if (t.startsWith("ls ") || t.startsWith("cat ") || t.startsWith("head ")) return true;
+  return false;
+}
+
 /** Single tool row used inside ToolSectionView */
 function ToolItemRow({ message, onToggleCollapse }: {
   message: ToolMessage;
@@ -2267,6 +2336,9 @@ function ToolItemRow({ message, onToggleCollapse }: {
     ? `\u2018${shortPath}\u2019${loc?.line ? `:${loc.line}` : ""}`
     : "";
   const hasContent = !!message.content;
+  // Write tool targeting a .md file → render as markdown instead of code block
+  const isWriteMarkdown = message.title.startsWith("Write") &&
+    (message.locations?.[0]?.path?.endsWith(".md") || /\.md['"\s]/i.test(message.title));
 
   return (
     <div>
@@ -2295,7 +2367,52 @@ function ToolItemRow({ message, onToggleCollapse }: {
       </div>
       {hasContent && !message.collapsed && (
         <div className="ml-6 mt-1">
-          <ToolContentBlock content={message.content!} />
+          {isWriteMarkdown ? (
+            <div className="text-xs max-h-64 overflow-y-auto">
+              <MarkdownRenderer content={stripWrappingFence(message.content!.trim())} />
+            </div>
+          ) : (
+            <ToolContentBlock content={message.content!} />
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** Collapsible sub-section for secondary (exploration) tools inside an expanded ToolSection */
+function SecondaryToolsRow({ tools, expanded, onToggle, onToggleToolCollapse }: {
+  tools: ToolSectionItem[];
+  expanded: boolean;
+  onToggle: () => void;
+  onToggleToolCollapse: (id: string) => void;
+}) {
+  const running = tools.filter((t) => t.message.status === "running").length;
+  const completed = tools.length - running;
+  const label = running > 0
+    ? `Running ${completed}/${tools.length} exploration tools\u2026`
+    : `${tools.length} exploration tool${tools.length > 1 ? "s" : ""} completed`;
+
+  return (
+    <div>
+      <div
+        role="button"
+        onClick={onToggle}
+        className="flex items-center gap-1.5 py-1 px-2 rounded-md text-xs hover:bg-[var(--color-bg-tertiary)] cursor-pointer transition-colors"
+      >
+        {running > 0
+          ? <Loader2 className="w-3.5 h-3.5 text-[var(--color-highlight)] animate-spin shrink-0" />
+          : <CheckCircle2 className="w-3.5 h-3.5 text-[var(--color-success)] shrink-0" />}
+        {expanded
+          ? <ChevronDown className="w-3 h-3 text-[var(--color-text-muted)] shrink-0" />
+          : <ChevronRight className="w-3 h-3 text-[var(--color-text-muted)] shrink-0" />}
+        <span className="text-[var(--color-text-muted)]">{label}</span>
+      </div>
+      {expanded && (
+        <div className="ml-2 pl-3 border-l border-[var(--color-border)] space-y-0.5">
+          {tools.map((t) => (
+            <ToolItemRow key={t.message.id} message={t.message} onToggleCollapse={onToggleToolCollapse} />
+          ))}
         </div>
       )}
     </div>
@@ -2318,12 +2435,20 @@ function ToolSectionView({ sectionId, tools, expanded, forceExpanded, onToggleSe
 
   const toolIds = useMemo(() => tools.map((t) => t.message.id), [tools]);
 
+  // Classify tools into primary (actions) and secondary (exploration)
+  const primary = useMemo(() => tools.filter((t) => !isSecondaryTool(t.message.title)), [tools]);
+  const secondary = useMemo(() => tools.filter((t) => isSecondaryTool(t.message.title)), [tools]);
+  const [secondaryExpanded, setSecondaryExpanded] = useState(false);
+
   // Summary label
+  const primaryCount = primary.length;
   let summaryText: string;
   if (running > 0) {
-    summaryText = `Running ${running}/${total} tools\u2026`;
+    summaryText = `Running ${completed}/${total} tools\u2026`;
   } else if (failed > 0) {
     summaryText = `${completed - failed} completed, ${failed} failed`;
+  } else if (primaryCount > 0 && primaryCount < total) {
+    summaryText = `${primaryCount} action${primaryCount > 1 ? "s" : ""}, ${total - primaryCount} exploration tools`;
   } else {
     summaryText = `${total} tool${total > 1 ? "s" : ""} completed`;
   }
@@ -2365,11 +2490,19 @@ function ToolSectionView({ sectionId, tools, expanded, forceExpanded, onToggleSe
         <ChevronDown className="w-3 h-3 text-[var(--color-text-muted)] shrink-0" />
         <span className="text-[var(--color-text-muted)]">Tools ({total})</span>
       </div>
-      {/* Tool items with left border indent */}
+      {/* Tool items with left border indent — tiered: primary first, secondary collapsed */}
       <div className="ml-2 pl-3 border-l-2 border-[var(--color-border)] space-y-0.5">
-        {tools.map((t) => (
+        {primary.map((t) => (
           <ToolItemRow key={t.message.id} message={t.message} onToggleCollapse={onToggleToolCollapse} />
         ))}
+        {secondary.length > 0 && (
+          <SecondaryToolsRow
+            tools={secondary}
+            expanded={secondaryExpanded}
+            onToggle={() => setSecondaryExpanded((p) => !p)}
+            onToggleToolCollapse={onToggleToolCollapse}
+          />
+        )}
       </div>
     </div>
   );
@@ -2429,7 +2562,20 @@ function isMetaLine(line: string): boolean {
 }
 
 const PRE_CLASSES =
-  "rounded-lg bg-[var(--color-bg-tertiary)] border border-[var(--color-border)] p-3 overflow-x-auto text-xs font-mono text-[var(--color-text)] max-h-64 overflow-y-auto";
+  "rounded-lg bg-[var(--color-bg-tertiary)] border border-[var(--color-border)] p-3 text-xs font-mono text-[var(--color-text)] max-h-64 overflow-y-auto break-words";
+
+/** Strip outermost code fence wrapper (```lang\n...\n```) if present */
+function stripWrappingFence(raw: string): string {
+  const lines = raw.split("\n");
+  if (
+    lines.length >= 3 &&
+    /^```\w*$/.test(lines[0].trim()) &&
+    lines[lines.length - 1].trim() === "```"
+  ) {
+    return lines.slice(1, -1).join("\n");
+  }
+  return raw;
+}
 
 /** Tool content renderer with format-aware rendering */
 function ToolContentBlock({ content }: { content: string }) {
@@ -2443,7 +2589,7 @@ function ToolContentBlock({ content }: { content: string }) {
   if (type === "markdown") {
     return (
       <div className="text-xs">
-        <MarkdownRenderer content={cleaned} />
+        <MarkdownRenderer content={stripWrappingFence(cleaned)} />
       </div>
     );
   }
@@ -2498,9 +2644,12 @@ function ToolContentBlock({ content }: { content: string }) {
           const isAdd = line.startsWith("+");
           const isDel = line.startsWith("-");
           const isHunk = line.startsWith("@@");
+          const prefix = isAdd ? "+" : isDel ? "−" : isHunk ? "" : " ";
+          const body = (isAdd || isDel) ? line.slice(1) : line;
           return (
             <div
               key={i}
+              className="flex"
               style={
                 isAdd
                   ? { background: "color-mix(in srgb, var(--color-success) 15%, transparent)", margin: "0 -12px", padding: "0 12px" }
@@ -2511,7 +2660,15 @@ function ToolContentBlock({ content }: { content: string }) {
                   : undefined
               }
             >
-              {line || " "}
+              {!isHunk && (
+                <span
+                  className="select-none shrink-0 w-4 text-center font-bold"
+                  style={{ color: isAdd ? "var(--color-success)" : isDel ? "var(--color-error)" : "transparent" }}
+                >
+                  {prefix}
+                </span>
+              )}
+              <span className="whitespace-pre-wrap break-words min-w-0">{isHunk ? line : (body || " ")}</span>
             </div>
           );
         })}

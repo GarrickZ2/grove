@@ -462,7 +462,7 @@ fn png_response(data: Vec<u8>) -> Response<Body> {
         .header(header::CACHE_CONTROL, "public, max-age=300") // 5 minutes instead of 24 hours
         .header(header::ETAG, etag)
         .body(Body::from(data))
-        .unwrap()
+        .expect("build icon PNG response")
 }
 
 /// Extract app icon and write directly to the target file path
@@ -563,7 +563,7 @@ fn convert_icns_to_png(icns_path: &Path, output_path: &Path) -> Option<Vec<u8>> 
     // This ensures no conflicts even with parallel requests for the same app
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .unwrap();
+        .expect("system time before UNIX epoch");
     let temp_path = output_path.with_extension(format!(
         "tmp.{}.{}.{}",
         std::process::id(),

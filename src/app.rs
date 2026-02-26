@@ -1297,11 +1297,6 @@ impl App {
             }
         };
 
-        // Log symlinks if any
-        if result.symlinks_created > 0 {
-            eprintln!("Info: Created {} symlink(s)", result.symlinks_created);
-        }
-
         // Phase 2: TUI-specific session creation
         let slug = result.task.id.clone();
         let session = result.task.session_name.clone();
@@ -1679,7 +1674,10 @@ impl App {
         };
 
         result.branch_merged = match git::is_merged(repo_path, branch, target) {
-            Ok(v) => v,
+            Ok(v) => {
+                // Fallback: if is-ancestor says not merged, check diff for squash merge
+                v || git::is_diff_empty(repo_path, branch, target).unwrap_or(false)
+            }
             Err(e) => {
                 result.merge_check_failed = true;
                 self.show_toast(format!("Git error: {}", e));
@@ -1803,9 +1801,10 @@ impl App {
         let target = wt.target.clone();
         let is_archived = wt.archived;
 
-        // 检查是否已 merge
-        let is_merged =
-            git::is_merged(&self.project.project_path, &branch, &target).unwrap_or(false);
+        // 检查是否已 merge (含 squash merge 兜底)
+        let is_merged = git::is_merged(&self.project.project_path, &branch, &target)
+            .unwrap_or(false)
+            || git::is_diff_empty(&self.project.project_path, &branch, &target).unwrap_or(false);
 
         self.async_ops.pending_action = Some(PendingAction::Clean {
             task_id,
@@ -2605,20 +2604,32 @@ impl App {
         self.async_ops.bg_result_rx = Some(rx);
 
         std::thread::spawn(move || {
-            // Call shared operation
-            let bg_result = match crate::operations::tasks::merge_task(
-                &repo_path,
-                &project_key,
-                &task_id,
-                ops_method,
-            ) {
-                Ok(result) => BgResult::MergeOk {
-                    task_id: result.task_id,
-                    task_name: result.task_name,
-                },
-                Err(e) => BgResult::MergeErr(e.to_string()),
-            };
-            let _ = tx.send(bg_result);
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                // Call shared operation
+                let bg_result = match crate::operations::tasks::merge_task(
+                    &repo_path,
+                    &project_key,
+                    &task_id,
+                    ops_method,
+                ) {
+                    Ok(result) => BgResult::MergeOk {
+                        task_id: result.task_id,
+                        task_name: result.task_name,
+                    },
+                    Err(e) => BgResult::MergeErr(e.to_string()),
+                };
+                let _ = tx.send(bg_result);
+            }));
+            if let Err(e) = result {
+                let msg = if let Some(s) = e.downcast_ref::<&str>() {
+                    s.to_string()
+                } else if let Some(s) = e.downcast_ref::<String>() {
+                    s.clone()
+                } else {
+                    "unknown panic".to_string()
+                };
+                eprintln!("[Grove] Merge thread panicked: {}", msg);
+            }
         });
     }
 

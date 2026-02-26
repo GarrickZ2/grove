@@ -90,6 +90,16 @@ pub fn merge_task(
         )));
     }
 
+    // 3.5. Check if already merged
+    let already_merged = git::is_merged(repo_path, &task.branch, &task.target).unwrap_or(false)
+        || git::is_diff_empty(repo_path, &task.branch, &task.target).unwrap_or(false);
+    if already_merged {
+        return Err(GroveError::git(format!(
+            "Branch '{}' has already been merged into '{}'. Nothing to merge.",
+            task.branch, task.target
+        )));
+    }
+
     // 4. Checkout target
     git::checkout(repo_path, &task.target)?;
 
@@ -253,7 +263,6 @@ pub fn archive_task(
 pub struct CreateTaskResult {
     pub task: tasks::Task,
     pub worktree_path: String,
-    pub symlinks_created: usize,
 }
 
 /// Create a new task (worktree + branch + metadata)
@@ -261,10 +270,11 @@ pub struct CreateTaskResult {
 /// # Steps
 ///
 /// 1. Generate identifiers (slug, branch name)
-/// 2. Ensure worktree directory
-/// 3. Create git worktree
-/// 4. Create AutoLink symlinks
-/// 5. Create task record
+/// 2. Check for duplicate task ID (active + archived)
+/// 3. Ensure worktree directory
+/// 4. Create git worktree
+/// 5. Create AutoLink symlinks
+/// 6. Create task record
 ///
 /// # Note
 ///
@@ -273,7 +283,7 @@ pub struct CreateTaskResult {
 ///
 /// # Returns
 ///
-/// `CreateTaskResult` containing task info and symlinks count
+/// `CreateTaskResult` containing task info
 ///
 /// # Example
 ///
@@ -299,26 +309,53 @@ pub fn create_task(
 ) -> Result<CreateTaskResult> {
     // 1. Generate identifiers
     let slug = tasks::to_slug(&task_name);
+
+    // 2. Check for duplicate task ID (active + archived)
+    let active_tasks = tasks::load_tasks(project_key).unwrap_or_default();
+    let archived_tasks = tasks::load_archived_tasks(project_key).unwrap_or_default();
+    if let Some(existing) = active_tasks.iter().find(|t| t.id == slug) {
+        return Err(GroveError::invalid_data(format!(
+            "Task '{}' (active) already exists. Please use a different name.",
+            existing.name
+        )));
+    }
+    if let Some(existing) = archived_tasks.iter().find(|t| t.id == slug) {
+        return Err(GroveError::invalid_data(format!(
+            "Task '{}' (archived) already exists. Please use a different name.",
+            existing.name
+        )));
+    }
+
     let branch = tasks::generate_branch_name(&task_name);
 
-    // 2. Ensure worktree directory
+    // 3. Ensure worktree directory
     let worktree_dir = storage::ensure_worktree_dir(project_key)?;
     let worktree_path = worktree_dir.join(&slug);
 
-    // 3. Create git worktree
-    git::create_worktree(repo_path, &branch, &worktree_path, &target_branch)?;
+    // 4. Create git worktree
+    git::create_worktree(repo_path, &branch, &worktree_path, &target_branch).map_err(|e| {
+        let msg = e.to_string();
+        if msg.contains("invalid reference") || msg.contains("not a valid object name") {
+            GroveError::git(format!(
+                "Branch '{}' does not exist. The repository may have no commits yet — \
+                 please create an initial commit first.",
+                target_branch
+            ))
+        } else {
+            e
+        }
+    })?;
 
-    // 4. Create AutoLink symlinks
+    // 5. Create AutoLink symlinks
     let main_repo = git::get_main_repo_path(repo_path).unwrap_or_else(|_| repo_path.to_string());
-    let symlinks = git::create_worktree_symlinks(
+    let _ = git::create_worktree_symlinks(
         &worktree_path,
         std::path::Path::new(&main_repo),
         autolink_patterns,
         true, // always check gitignore
-    )
-    .unwrap_or_default();
+    );
 
-    // 5. Create task record
+    // 6. Create task record
     let now = chrono::Utc::now();
     let session_name = session::session_name(project_key, &slug);
     let task = tasks::Task {
@@ -339,7 +376,6 @@ pub fn create_task(
     Ok(CreateTaskResult {
         task,
         worktree_path: worktree_path.to_string_lossy().to_string(),
-        symlinks_created: symlinks.len(),
     })
 }
 
