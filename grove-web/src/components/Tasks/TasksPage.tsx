@@ -589,13 +589,14 @@ export function TasksPage({ initialTaskId, initialViewMode, onNavigationConsumed
             </motion.div>
 
             {/* Workspace Page: Info Panel + TaskView */}
-            <AnimatePresence>
+            <AnimatePresence mode="popLayout">
               {pageState.inWorkspace && pageState.selectedTask && (
                 <motion.div
-                  initial={{ x: "100%", opacity: 0 }}
-                  animate={{ x: 0, opacity: 1 }}
-                  exit={{ x: "100%", opacity: 0 }}
-                  transition={{ type: "spring", damping: 25, stiffness: 200 }}
+                  key={pageState.selectedTask.id}
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                  transition={{ duration: 0.15 }}
                   className="absolute inset-0 flex gap-3"
                 >
                   {/* Info Panel (collapsible vertical bar in Workspace) - hidden in fullscreen */}

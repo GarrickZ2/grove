@@ -575,13 +575,14 @@ export function BlitzPage({ onSwitchToZen }: BlitzPageProps) {
             </motion.div>
 
             {/* Workspace Page */}
-            <AnimatePresence>
+            <AnimatePresence mode="popLayout">
               {pageState.inWorkspace && currentSelected && (
                 <motion.div
-                  initial={{ x: "100%", opacity: 0 }}
-                  animate={{ x: 0, opacity: 1 }}
-                  exit={{ x: "100%", opacity: 0 }}
-                  transition={{ type: "spring", damping: 25, stiffness: 200 }}
+                  key={currentSelected.task.id}
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                  transition={{ duration: 0.15 }}
                   className="absolute inset-0 flex gap-3"
                 >
                   <TaskInfoPanel
