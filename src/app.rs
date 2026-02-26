@@ -2604,20 +2604,32 @@ impl App {
         self.async_ops.bg_result_rx = Some(rx);
 
         std::thread::spawn(move || {
-            // Call shared operation
-            let bg_result = match crate::operations::tasks::merge_task(
-                &repo_path,
-                &project_key,
-                &task_id,
-                ops_method,
-            ) {
-                Ok(result) => BgResult::MergeOk {
-                    task_id: result.task_id,
-                    task_name: result.task_name,
-                },
-                Err(e) => BgResult::MergeErr(e.to_string()),
-            };
-            let _ = tx.send(bg_result);
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                // Call shared operation
+                let bg_result = match crate::operations::tasks::merge_task(
+                    &repo_path,
+                    &project_key,
+                    &task_id,
+                    ops_method,
+                ) {
+                    Ok(result) => BgResult::MergeOk {
+                        task_id: result.task_id,
+                        task_name: result.task_name,
+                    },
+                    Err(e) => BgResult::MergeErr(e.to_string()),
+                };
+                let _ = tx.send(bg_result);
+            }));
+            if let Err(e) = result {
+                let msg = if let Some(s) = e.downcast_ref::<&str>() {
+                    s.to_string()
+                } else if let Some(s) = e.downcast_ref::<String>() {
+                    s.clone()
+                } else {
+                    "unknown panic".to_string()
+                };
+                eprintln!("[Grove] Merge thread panicked: {}", msg);
+            }
         });
     }
 

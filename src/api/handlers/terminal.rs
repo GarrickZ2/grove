@@ -351,7 +351,7 @@ async fn handle_pty_terminal(socket: WebSocket, cmd: CommandBuilder, cols: u16, 
         let mut buf = [0u8; 4096];
         loop {
             let n = {
-                let mut reader = reader_clone.lock().unwrap();
+                let mut reader = reader_clone.lock().expect("PTY reader mutex poisoned");
                 match reader.read(&mut buf) {
                     Ok(0) => break, // EOF
                     Ok(n) => n,
@@ -386,7 +386,7 @@ async fn handle_pty_terminal(socket: WebSocket, cmd: CommandBuilder, cols: u16, 
             // Check for resize message (JSON format)
             if let Ok(resize) = serde_json::from_slice::<ResizeMessage>(&data) {
                 if resize.msg_type == "resize" {
-                    let master = master_clone.lock().unwrap();
+                    let master = master_clone.lock().expect("PTY master mutex poisoned");
                     let _ = master.resize(PtySize {
                         rows: resize.rows,
                         cols: resize.cols,
@@ -397,7 +397,7 @@ async fn handle_pty_terminal(socket: WebSocket, cmd: CommandBuilder, cols: u16, 
                 }
             }
 
-            let mut writer = writer_clone.lock().unwrap();
+            let mut writer = writer_clone.lock().expect("PTY writer mutex poisoned");
             if writer.write_all(&data).is_err() {
                 break;
             }
@@ -426,12 +426,20 @@ async fn handle_pty_terminal(socket: WebSocket, cmd: CommandBuilder, cols: u16, 
         }
     });
 
-    // Wait for any task to complete
+    // Wait for any task to complete, detect panics
     tokio::select! {
-        _ = pty_reader_task => {},
-        _ = pty_to_ws => {},
-        _ = pty_writer_task => {},
-        _ = ws_to_pty => {},
+        result = pty_reader_task => {
+            if let Err(ref e) = result { if e.is_panic() { eprintln!("[Grove] PTY reader task panicked"); } }
+        },
+        result = pty_to_ws => {
+            if let Err(ref e) = result { if e.is_panic() { eprintln!("[Grove] PTY-to-WS task panicked"); } }
+        },
+        result = pty_writer_task => {
+            if let Err(ref e) = result { if e.is_panic() { eprintln!("[Grove] PTY writer task panicked"); } }
+        },
+        result = ws_to_pty => {
+            if let Err(ref e) = result { if e.is_panic() { eprintln!("[Grove] WS-to-PTY task panicked"); } }
+        },
     }
 
     // Cleanup: kill the child process

@@ -100,7 +100,14 @@ pub fn session_name(project: &str, task_slug: &str) -> String {
     let suffix = format!("{:04x}", hash & 0xffff);
     // 1 for '-' separator between truncated slug and hash suffix
     let avail = max_len.saturating_sub(prefix.len() + 1 + suffix.len());
-    let truncated = &task_slug[..avail.min(task_slug.len())];
+    // Find the last char boundary that fits within `avail` bytes
+    let end = task_slug
+        .char_indices()
+        .take_while(|&(i, c)| i + c.len_utf8() <= avail)
+        .last()
+        .map_or(0, |(i, c)| i + c.len_utf8())
+        .min(task_slug.len());
+    let truncated = &task_slug[..end];
     // Trim trailing hyphens from truncation point
     let truncated = truncated.trim_end_matches('-');
     format!("{}{}-{}", prefix, truncated, suffix)
@@ -220,6 +227,16 @@ mod tests {
         let max = *MAX_SESSION_NAME_LEN;
         assert!(a.len() <= max);
         assert!(b.len() <= max);
+    }
+
+    #[test]
+    fn test_session_name_unicode() {
+        // Chinese characters (3 bytes each in UTF-8) must not panic
+        let name = session_name("1bb5b3564b3ae517", "开发任务一");
+        let max = *MAX_SESSION_NAME_LEN;
+        assert!(name.len() <= max, "len={} > max={}", name.len(), max);
+        assert!(name.starts_with("grove-1bb5b3564b3ae517-"));
+        // Verify the result is valid UTF-8 (implicit — it's a String)
     }
 
     #[test]

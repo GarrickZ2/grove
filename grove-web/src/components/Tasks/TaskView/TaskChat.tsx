@@ -1342,6 +1342,100 @@ export function TaskChat({
     // Skip during IME composition (e.g. Chinese/Japanese input)
     if (e.nativeEvent.isComposing || e.keyCode === 229) return;
 
+    // Backspace: robust chip deletion for contentEditable
+    if (e.key === "Backspace" && !e.metaKey && !e.altKey) {
+      const sel = window.getSelection();
+      if (sel && sel.isCollapsed && sel.anchorNode) {
+        const anchor = sel.anchorNode;
+        const offset = sel.anchorOffset;
+        const isChipEl = (n: Node): n is HTMLElement =>
+          n instanceof HTMLElement && (n.dataset.command !== undefined || n.dataset.file !== undefined);
+
+        // Case A: Cursor at start of text node — chip is previous sibling → delete chip
+        if (anchor.nodeType === Node.TEXT_NODE && offset === 0) {
+          const prev = anchor.previousSibling;
+          if (prev && isChipEl(prev)) {
+            e.preventDefault();
+            const before = prev.previousSibling;
+            prev.remove();
+            // Position cursor at end of preceding text, or start of container
+            if (before && before.nodeType === Node.TEXT_NODE) {
+              const r = document.createRange();
+              r.setStart(before, (before.textContent || "").length);
+              r.collapse(true);
+              sel.removeAllRanges();
+              sel.addRange(r);
+            }
+            checkContent();
+            return;
+          }
+        }
+
+        // Case B: Cursor in element node — previous child is chip → delete chip
+        if (anchor.nodeType === Node.ELEMENT_NODE && offset > 0) {
+          const prevChild = anchor.childNodes[offset - 1];
+          if (isChipEl(prevChild)) {
+            e.preventDefault();
+            const before = prevChild.previousSibling;
+            prevChild.remove();
+            if (before && before.nodeType === Node.TEXT_NODE) {
+              const r = document.createRange();
+              r.setStart(before, (before.textContent || "").length);
+              r.collapse(true);
+              sel.removeAllRanges();
+              sel.addRange(r);
+            }
+            checkContent();
+            return;
+          }
+        }
+
+        // Case C: Cursor in a whitespace-only text node right after a chip
+        // (the trailing " " inserted as cursor placeholder after chip creation)
+        // Handle deletion ourselves to prevent browser from mangling the DOM
+        if (anchor.nodeType === Node.TEXT_NODE && offset > 0) {
+          const text = anchor.textContent || "";
+          const prev = anchor.previousSibling;
+          if (prev && isChipEl(prev) && text.trimEnd().length === 0) {
+            e.preventDefault();
+            if (text.length <= 1) {
+              // Last whitespace char — delete both the padding text node and the chip
+              const beforeChip = prev.previousSibling;
+              prev.remove();
+              anchor.parentNode?.removeChild(anchor);
+              if (beforeChip && beforeChip.nodeType === Node.TEXT_NODE) {
+                const r = document.createRange();
+                r.setStart(beforeChip, (beforeChip.textContent || "").length);
+                r.collapse(true);
+                sel.removeAllRanges();
+                sel.addRange(r);
+              } else {
+                // No text before chip — position at end of remaining content
+                const el = editableRef.current;
+                if (el) {
+                  const r = document.createRange();
+                  r.selectNodeContents(el);
+                  r.collapse(false);
+                  sel.removeAllRanges();
+                  sel.addRange(r);
+                }
+              }
+            } else {
+              // Multiple whitespace chars — delete one manually
+              anchor.textContent = text.slice(0, offset - 1) + text.slice(offset);
+              const r = document.createRange();
+              r.setStart(anchor, offset - 1);
+              r.collapse(true);
+              sel.removeAllRanges();
+              sel.addRange(r);
+            }
+            checkContent();
+            return;
+          }
+        }
+      }
+    }
+
     // Shell mode: Backspace on empty input → exit shell mode
     if (isTerminalMode && e.key === "Backspace") {
       const el = editableRef.current;
@@ -1435,7 +1529,7 @@ export function TaskChat({
     } else {
       if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSend(); }
     }
-  }, [handleSend, isTerminalMode, isInputExpanded, showSlashMenu, filteredSlashCommands, slashSelectedIdx, insertCommandAtCursor, showFileMenu, filteredFiles, fileSelectedIdx, insertFileAtCursor, pendingMessages, handleClearPending, modeOptions, permissionLevel]);
+  }, [handleSend, isTerminalMode, isInputExpanded, showSlashMenu, filteredSlashCommands, slashSelectedIdx, insertCommandAtCursor, showFileMenu, filteredFiles, fileSelectedIdx, insertFileAtCursor, pendingMessages, handleClearPending, modeOptions, permissionLevel, checkContent]);
 
   const toggleToolCollapse = (id: string) => {
     setMessages((prev) => prev.map((m) => m.type === "tool" && m.id === id ? { ...m, collapsed: !m.collapsed } : m));
@@ -2242,6 +2336,9 @@ function ToolItemRow({ message, onToggleCollapse }: {
     ? `\u2018${shortPath}\u2019${loc?.line ? `:${loc.line}` : ""}`
     : "";
   const hasContent = !!message.content;
+  // Write tool targeting a .md file → render as markdown instead of code block
+  const isWriteMarkdown = message.title.startsWith("Write") &&
+    (message.locations?.[0]?.path?.endsWith(".md") || /\.md['"\s]/i.test(message.title));
 
   return (
     <div>
@@ -2270,7 +2367,13 @@ function ToolItemRow({ message, onToggleCollapse }: {
       </div>
       {hasContent && !message.collapsed && (
         <div className="ml-6 mt-1">
-          <ToolContentBlock content={message.content!} />
+          {isWriteMarkdown ? (
+            <div className="text-xs max-h-64 overflow-y-auto">
+              <MarkdownRenderer content={stripWrappingFence(message.content!.trim())} />
+            </div>
+          ) : (
+            <ToolContentBlock content={message.content!} />
+          )}
         </div>
       )}
     </div>
@@ -2459,7 +2562,20 @@ function isMetaLine(line: string): boolean {
 }
 
 const PRE_CLASSES =
-  "rounded-lg bg-[var(--color-bg-tertiary)] border border-[var(--color-border)] p-3 overflow-x-auto text-xs font-mono text-[var(--color-text)] max-h-64 overflow-y-auto";
+  "rounded-lg bg-[var(--color-bg-tertiary)] border border-[var(--color-border)] p-3 text-xs font-mono text-[var(--color-text)] max-h-64 overflow-y-auto break-words";
+
+/** Strip outermost code fence wrapper (```lang\n...\n```) if present */
+function stripWrappingFence(raw: string): string {
+  const lines = raw.split("\n");
+  if (
+    lines.length >= 3 &&
+    /^```\w*$/.test(lines[0].trim()) &&
+    lines[lines.length - 1].trim() === "```"
+  ) {
+    return lines.slice(1, -1).join("\n");
+  }
+  return raw;
+}
 
 /** Tool content renderer with format-aware rendering */
 function ToolContentBlock({ content }: { content: string }) {
@@ -2473,7 +2589,7 @@ function ToolContentBlock({ content }: { content: string }) {
   if (type === "markdown") {
     return (
       <div className="text-xs">
-        <MarkdownRenderer content={cleaned} />
+        <MarkdownRenderer content={stripWrappingFence(cleaned)} />
       </div>
     );
   }
@@ -2528,9 +2644,12 @@ function ToolContentBlock({ content }: { content: string }) {
           const isAdd = line.startsWith("+");
           const isDel = line.startsWith("-");
           const isHunk = line.startsWith("@@");
+          const prefix = isAdd ? "+" : isDel ? "−" : isHunk ? "" : " ";
+          const body = (isAdd || isDel) ? line.slice(1) : line;
           return (
             <div
               key={i}
+              className="flex"
               style={
                 isAdd
                   ? { background: "color-mix(in srgb, var(--color-success) 15%, transparent)", margin: "0 -12px", padding: "0 12px" }
@@ -2541,7 +2660,15 @@ function ToolContentBlock({ content }: { content: string }) {
                   : undefined
               }
             >
-              {line || " "}
+              {!isHunk && (
+                <span
+                  className="select-none shrink-0 w-4 text-center font-bold"
+                  style={{ color: isAdd ? "var(--color-success)" : isDel ? "var(--color-error)" : "transparent" }}
+                >
+                  {prefix}
+                </span>
+              )}
+              <span className="whitespace-pre-wrap break-words min-w-0">{isHunk ? line : (body || " ")}</span>
             </div>
           );
         })}

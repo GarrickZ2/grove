@@ -309,7 +309,7 @@ async fn serve_embedded(uri: Uri) -> impl IntoResponse {
                 .status(StatusCode::OK)
                 .header(header::CONTENT_TYPE, mime.as_ref())
                 .body(Body::from(content.data.into_owned()))
-                .unwrap()
+                .expect("build static file HTTP response")
         }
         None => {
             // Final fallback to index.html
@@ -318,12 +318,12 @@ async fn serve_embedded(uri: Uri) -> impl IntoResponse {
                     .status(StatusCode::OK)
                     .header(header::CONTENT_TYPE, "text/html; charset=utf-8")
                     .body(Body::from(index.data.into_owned()))
-                    .unwrap()
+                    .expect("build index.html HTTP response")
             } else {
                 Response::builder()
                     .status(StatusCode::NOT_FOUND)
                     .body(Body::from("Not Found"))
-                    .unwrap()
+                    .expect("build 404 HTTP response")
             }
         }
     }

@@ -533,7 +533,7 @@ export function BlitzPage({ onSwitchToZen }: BlitzPageProps) {
                     animate={{ opacity: 1, x: 0 }}
                     exit={{ opacity: 0, x: 20 }}
                     transition={{ type: "spring", damping: 25, stiffness: 200 }}
-                    className="h-full"
+                    className="h-full min-w-0"
                   >
                     <TaskInfoPanel
                       projectId={currentSelected.projectId}
@@ -575,13 +575,14 @@ export function BlitzPage({ onSwitchToZen }: BlitzPageProps) {
             </motion.div>
 
             {/* Workspace Page */}
-            <AnimatePresence>
+            <AnimatePresence mode="popLayout">
               {pageState.inWorkspace && currentSelected && (
                 <motion.div
-                  initial={{ x: "100%", opacity: 0 }}
-                  animate={{ x: 0, opacity: 1 }}
-                  exit={{ x: "100%", opacity: 0 }}
-                  transition={{ type: "spring", damping: 25, stiffness: 200 }}
+                  key={currentSelected.task.id}
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                  transition={{ duration: 0.15 }}
                   className="absolute inset-0 flex gap-3"
                 >
                   <TaskInfoPanel

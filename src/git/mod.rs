@@ -437,11 +437,14 @@ pub fn list_files(repo_path: &str) -> Result<Vec<String>> {
     all_files.sort();
     all_files.dedup();
 
-    // Filter out files that don't actually exist in the filesystem
-    // (e.g., files that were git-added but then deleted without git rm)
+    // Filter out files that don't actually exist or are symlinks (autolink)
     let repo_path_base = Path::new(repo_path);
     all_files.retain(|file| {
         let full_path = repo_path_base.join(file);
+        // Skip symlinks (autolink creates symlinks to main repo)
+        if full_path.is_symlink() {
+            return false;
+        }
         full_path.exists()
     });
 
@@ -456,52 +459,117 @@ pub fn show_file(repo_path: &str, git_ref: &str, file_path: &str) -> Result<Stri
     git_cmd(repo_path, &["show", &object])
 }
 
+/// 纯逻辑判断路径是否在基础目录内（不解析符号链接）
+///
+/// 遍历 `path` 相对于 `base` 的各组件，遇到 `..` 时深度 -1，
+/// 遇到正常组件时深度 +1。深度一旦 < 0 即判定为路径逃逸。
+fn logical_path_within(path: &Path, base: &Path) -> bool {
+    use std::path::Component;
+
+    let suffix = match path.strip_prefix(base) {
+        Ok(s) => s,
+        Err(_) => return false,
+    };
+
+    let mut depth: i32 = 0;
+    for component in suffix.components() {
+        match component {
+            Component::ParentDir => {
+                depth -= 1;
+                if depth < 0 {
+                    return false;
+                }
+            }
+            Component::Normal(_) => {
+                depth += 1;
+            }
+            // CurDir (`.`) 不影响深度
+            _ => {}
+        }
+    }
+    true
+}
+
 /// 读取 worktree 中的文件内容
-/// 包含路径穿越保护
+/// 包含路径穿越保护，支持 autolink 符号链接
 pub fn read_file(repo_path: &str, file_path: &str) -> Result<String> {
     let base = Path::new(repo_path)
         .canonicalize()
         .map_err(|e| GroveError::git(format!("Invalid repo path: {}", e)))?;
-    let full = base
-        .join(file_path)
-        .canonicalize()
-        .map_err(|e| GroveError::git(format!("Invalid file path: {}", e)))?;
+    let logical = base.join(file_path);
 
-    if !full.starts_with(&base) {
+    // 逻辑路径检查（不解析符号链接，阻止 .. 逃逸）
+    if !logical_path_within(&logical, &base) {
         return Err(GroveError::git("Path traversal detected"));
     }
 
-    std::fs::read_to_string(&full)
-        .map_err(|e| GroveError::git(format!("Failed to read file: {}", e)))
+    let full = logical
+        .canonicalize()
+        .map_err(|e| GroveError::git(format!("Invalid file path: {}", e)))?;
+
+    // 快速路径：解析后仍在 worktree 内
+    if full.starts_with(&base) {
+        return std::fs::read_to_string(&full)
+            .map_err(|e| GroveError::git(format!("Failed to read file: {}", e)));
+    }
+
+    // Fallback：autolink 符号链接可能指向主仓库
+    if let Ok(main_repo) = get_main_repo_path(repo_path) {
+        let main_base = Path::new(&main_repo)
+            .canonicalize()
+            .map_err(|e| GroveError::git(format!("Invalid main repo path: {}", e)))?;
+        if full.starts_with(&main_base) {
+            return std::fs::read_to_string(&full)
+                .map_err(|e| GroveError::git(format!("Failed to read file: {}", e)));
+        }
+    }
+
+    Err(GroveError::git("Path traversal detected"))
 }
 
 /// 写入 worktree 中的文件
-/// 包含路径穿越保护
+/// 包含路径穿越保护，支持 autolink 符号链接
 pub fn write_file(repo_path: &str, file_path: &str, content: &str) -> Result<()> {
     let base = Path::new(repo_path)
         .canonicalize()
         .map_err(|e| GroveError::git(format!("Invalid repo path: {}", e)))?;
+    let logical = base.join(file_path);
+
+    // 逻辑路径检查（不解析符号链接，阻止 .. 逃逸）
+    if !logical_path_within(&logical, &base) {
+        return Err(GroveError::git("Path traversal detected"));
+    }
+
     // For write, the file might not exist yet, so canonicalize the parent
-    let target = base.join(file_path);
-    let parent = target
+    let parent = logical
         .parent()
         .ok_or_else(|| GroveError::git("Invalid file path"))?;
     let parent_canonical = parent
         .canonicalize()
         .map_err(|e| GroveError::git(format!("Invalid parent path: {}", e)))?;
-
-    if !parent_canonical.starts_with(&base) {
-        return Err(GroveError::git("Path traversal detected"));
-    }
-
-    // Reconstruct the full path using canonical parent + filename
-    let file_name = target
+    let file_name = logical
         .file_name()
         .ok_or_else(|| GroveError::git("Invalid file name"))?;
     let final_path = parent_canonical.join(file_name);
 
-    std::fs::write(&final_path, content)
-        .map_err(|e| GroveError::git(format!("Failed to write file: {}", e)))
+    // 快速路径：父目录在 worktree 内
+    if parent_canonical.starts_with(&base) {
+        return std::fs::write(&final_path, content)
+            .map_err(|e| GroveError::git(format!("Failed to write file: {}", e)));
+    }
+
+    // Fallback：autolink 符号链接可能指向主仓库
+    if let Ok(main_repo) = get_main_repo_path(repo_path) {
+        let main_base = Path::new(&main_repo)
+            .canonicalize()
+            .map_err(|e| GroveError::git(format!("Invalid main repo path: {}", e)))?;
+        if parent_canonical.starts_with(&main_base) {
+            return std::fs::write(&final_path, content)
+                .map_err(|e| GroveError::git(format!("Failed to write file: {}", e)));
+        }
+    }
+
+    Err(GroveError::git("Path traversal detected"))
 }
 
 /// 获取相对于 origin 的 commits ahead 数量
@@ -640,27 +708,32 @@ pub fn diff_stat(worktree_path: &str, target: &str) -> Result<Vec<DiffStatEntry>
         })
         .collect();
 
+    let wt_base = Path::new(worktree_path);
     Ok(numstat
         .lines()
         .filter(|l| !l.is_empty())
-        .map(|line| {
+        .filter_map(|line| {
             let parts: Vec<&str> = line.split('\t').collect();
             if parts.len() >= 3 {
                 let path = parts[2].to_string();
+                // Skip symlinks (autolink creates symlinks to main repo)
+                if wt_base.join(&path).is_symlink() {
+                    return None;
+                }
                 let status = status_map.get(path.as_str()).copied().unwrap_or('M');
-                DiffStatEntry {
+                Some(DiffStatEntry {
                     status,
                     path,
                     additions: parts[0].parse().unwrap_or(0),
                     deletions: parts[1].parse().unwrap_or(0),
-                }
+                })
             } else {
-                DiffStatEntry {
+                Some(DiffStatEntry {
                     status: '?',
                     path: line.to_string(),
                     additions: 0,
                     deletions: 0,
-                }
+                })
             }
         })
         .collect())
@@ -929,7 +1002,86 @@ pub fn create_worktree_symlinks(
         }
     }
 
+    // 将符号链接写入 worktree 的 git exclude，防止被 git 追踪
+    if !created_links.is_empty() {
+        if let Err(e) = add_to_worktree_exclude(worktree_path, &created_links) {
+            eprintln!("Warning: Failed to update git exclude: {}", e);
+        }
+    }
+
     Ok(created_links)
+}
+
+/// 将 autolink 创建的符号链接路径写入共享的 git exclude 文件
+///
+/// 写入 `<git-common-dir>/info/exclude`，该文件不会被提交。
+/// 必须使用 `--git-common-dir` 而非 `--git-dir`，因为 git 只从
+/// common dir 读取 `info/exclude`，per-worktree 的 `info/exclude` 不生效。
+/// 路径不带尾斜线，这样同时匹配文件和目录（即符号链接）。
+fn add_to_worktree_exclude(worktree_path: &Path, paths: &[String]) -> Result<()> {
+    use std::io::Write;
+
+    if paths.is_empty() {
+        return Ok(());
+    }
+
+    let wt_str = worktree_path.to_str().unwrap_or_default();
+
+    // git-common-dir 指向主仓库的 .git 目录（所有 worktree 共享）
+    // git 只从 common dir 的 info/exclude 读取排除规则
+    let git_dir = git_cmd(wt_str, &["rev-parse", "--git-common-dir"])?;
+    let git_dir_path = if Path::new(&git_dir).is_absolute() {
+        std::path::PathBuf::from(&git_dir)
+    } else {
+        worktree_path.join(&git_dir)
+    };
+
+    let info_dir = git_dir_path.join("info");
+    if !info_dir.exists() {
+        std::fs::create_dir_all(&info_dir)
+            .map_err(|e| GroveError::git(format!("Failed to create info dir: {}", e)))?;
+    }
+
+    let exclude_path = info_dir.join("exclude");
+
+    // 读取已有内容，用于去重
+    let existing = std::fs::read_to_string(&exclude_path).unwrap_or_default();
+    let existing_lines: std::collections::HashSet<&str> = existing.lines().collect();
+
+    // 筛选出需要新增的路径
+    let new_entries: Vec<&String> = paths
+        .iter()
+        .filter(|p| !existing_lines.contains(p.as_str()))
+        .collect();
+
+    if new_entries.is_empty() {
+        return Ok(());
+    }
+
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&exclude_path)
+        .map_err(|e| GroveError::git(format!("Failed to open exclude file: {}", e)))?;
+
+    // 如果文件非空且不以换行结尾，先写一个换行
+    if !existing.is_empty() && !existing.ends_with('\n') {
+        writeln!(file).map_err(|e| GroveError::git(format!("Failed to write exclude: {}", e)))?;
+    }
+
+    // 写入标记注释（仅当之前没有时）
+    let marker = "# Grove AutoLink excludes";
+    if !existing.contains(marker) {
+        writeln!(file, "{}", marker)
+            .map_err(|e| GroveError::git(format!("Failed to write exclude: {}", e)))?;
+    }
+
+    for path in &new_entries {
+        writeln!(file, "{}", path)
+            .map_err(|e| GroveError::git(format!("Failed to write exclude: {}", e)))?;
+    }
+
+    Ok(())
 }
 
 #[cfg(test)]

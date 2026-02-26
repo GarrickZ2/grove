@@ -296,7 +296,11 @@ async fn handle_acp_ws(socket: WebSocket, session_key: String, config: AcpStartC
             for update in disk_history {
                 let msg: ServerMessage = update.into();
                 let _ = ws_sender
-                    .send(Message::Text(serde_json::to_string(&msg).unwrap().into()))
+                    .send(Message::Text(
+                        serde_json::to_string(&msg)
+                            .expect("serialize WS message")
+                            .into(),
+                    ))
                     .await;
             }
         }
@@ -310,7 +314,11 @@ async fn handle_acp_ws(socket: WebSocket, session_key: String, config: AcpStartC
                 message: format!("Failed to start ACP session: {}", e),
             };
             let _ = ws_sender
-                .send(Message::Text(serde_json::to_string(&msg).unwrap().into()))
+                .send(Message::Text(
+                    serde_json::to_string(&msg)
+                        .expect("serialize WS message")
+                        .into(),
+                ))
                 .await;
             return;
         }
@@ -321,7 +329,11 @@ async fn handle_acp_ws(socket: WebSocket, session_key: String, config: AcpStartC
         for update in handle.get_history() {
             let msg: ServerMessage = update.into();
             let _ = ws_sender
-                .send(Message::Text(serde_json::to_string(&msg).unwrap().into()))
+                .send(Message::Text(
+                    serde_json::to_string(&msg)
+                        .expect("serialize WS message")
+                        .into(),
+                ))
                 .await;
         }
     }
@@ -331,7 +343,11 @@ async fn handle_acp_ws(socket: WebSocket, session_key: String, config: AcpStartC
     if !queue.is_empty() {
         let msg = ServerMessage::QueueUpdate { messages: queue };
         let _ = ws_sender
-            .send(Message::Text(serde_json::to_string(&msg).unwrap().into()))
+            .send(Message::Text(
+                serde_json::to_string(&msg)
+                    .expect("serialize WS message")
+                    .into(),
+            ))
             .await;
     }
 
@@ -344,7 +360,7 @@ async fn handle_acp_ws(socket: WebSocket, session_key: String, config: AcpStartC
                 Ok(update) => {
                     let is_ended = matches!(update, AcpUpdate::SessionEnded);
                     let msg: ServerMessage = update.into();
-                    let json = serde_json::to_string(&msg).unwrap();
+                    let json = serde_json::to_string(&msg).expect("serialize WS message");
                     if ws_sender.send(Message::Text(json.into())).await.is_err() {
                         break;
                     }
@@ -422,10 +438,14 @@ async fn handle_acp_ws(socket: WebSocket, session_key: String, config: AcpStartC
         }
     });
 
-    // Wait for either task to finish
+    // Wait for either task to finish, detect panics
     tokio::select! {
-        _ = updates_to_ws => {},
-        _ = ws_to_acp => {},
+        result = updates_to_ws => {
+            if let Err(ref e) = result { if e.is_panic() { eprintln!("[Grove] ACP updates-to-WS task panicked"); } }
+        },
+        result = ws_to_acp => {
+            if let Err(ref e) = result { if e.is_panic() { eprintln!("[Grove] ACP WS-to-ACP task panicked"); } }
+        },
     }
 
     // Note: we do NOT kill the session here.

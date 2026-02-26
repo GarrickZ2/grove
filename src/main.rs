@@ -108,6 +108,14 @@ fn run_tui() -> io::Result<()> {
 }
 
 fn main() -> io::Result<()> {
+    // Enable backtraces by default so panics show call stacks
+    if std::env::var("RUST_BACKTRACE").is_err() {
+        // SAFETY: called at the very start of main, before any other threads
+        unsafe {
+            std::env::set_var("RUST_BACKTRACE", "1");
+        }
+    }
+
     // Set up panic hook to restore terminal state on panic
     let original_hook = panic::take_hook();
     panic::set_hook(Box::new(move |panic_info| {
