@@ -145,11 +145,15 @@ export function DiffReviewPage({ projectId, taskId, embedded }: DiffReviewPagePr
       // Only add virtual files that don't already exist as real files
       const uniqueVirtualFiles = allVirtualFiles.filter(vf => !existingPaths.has(vf.new_path));
 
-      return [...allFileDiffFiles, ...uniqueVirtualFiles];
+      return [...allFileDiffFiles, ...uniqueVirtualFiles].sort((a, b) =>
+        a.new_path.localeCompare(b.new_path)
+      );
     }
     // In Changes Mode (Diff Mode): only show real diff files, NO virtual files
     if (!diffData) return [];
-    return diffData.files.filter(f => !f.is_virtual);
+    return [...diffData.files.filter(f => !f.is_virtual)].sort((a, b) =>
+      a.new_path.localeCompare(b.new_path)
+    );
   }, [viewMode, allFiles, diffData, temporaryVirtualPaths]);
 
   // Use ref to access displayFiles in callbacks without dependency issues
@@ -162,11 +166,10 @@ export function DiffReviewPage({ projectId, taskId, embedded }: DiffReviewPagePr
   // Auto-detect iframe mode
   const isEmbedded = embedded ?? (typeof window !== 'undefined' && window !== window.parent);
 
-  // When switching modes, ensure selectedFile is valid
+  // When switching modes or on initial load, ensure selectedFile is valid
   useEffect(() => {
     if (displayFiles.length === 0) return;
-    const isValid = displayFiles.some((f) => f.new_path === selectedFile);
-    if (!isValid) {
+    if (!selectedFile || !displayFiles.some((f) => f.new_path === selectedFile)) {
       setSelectedFile(displayFiles[0].new_path);
       setCurrentFileIndex(0);
     }
@@ -283,9 +286,8 @@ export function DiffReviewPage({ projectId, taskId, embedded }: DiffReviewPagePr
     try {
       const data = await getFullDiff(projectId, taskId, fromRef, toRef);
       setDiffData(data);
-      if (data.files.length > 0) {
-        setSelectedFile(data.files[0].new_path);
-      }
+      // Reset selectedFile so the validation effect picks the first sorted file
+      setSelectedFile(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to load diff');
     }
@@ -381,9 +383,7 @@ export function DiffReviewPage({ projectId, taskId, embedded }: DiffReviewPagePr
           if (filesData) {
             setAllFiles(filesData.files);
           }
-          if (allDiffFiles.length > 0) {
-            setSelectedFile(allDiffFiles[0].new_path);
-          }
+          // selectedFile will be set by the displayFiles validation effect (sorted order)
           setComments(reviewComments);
         }
       } catch (e) {
@@ -499,10 +499,44 @@ export function DiffReviewPage({ projectId, taskId, embedded }: DiffReviewPagePr
     }
   }, [isMobile]);
 
-  // Track visible file on scroll
-  const handleFileVisible = useCallback((path: string) => {
-    setSelectedFile(path);
-  }, []);
+  // Track topmost visible file on scroll (non-focus mode)
+  useEffect(() => {
+    const container = contentRef.current;
+    if (!container || focusMode) return;
+
+    let rafId: number | null = null;
+
+    const handleScroll = () => {
+      if (rafId) return;
+      rafId = requestAnimationFrame(() => {
+        rafId = null;
+        const files = displayFilesRef.current;
+        if (files.length === 0) return;
+
+        const containerTop = container.getBoundingClientRect().top;
+        let bestFile = files[0].new_path;
+
+        for (const file of files) {
+          const el = document.getElementById(`diff-file-${encodeURIComponent(file.new_path)}`);
+          if (!el) continue;
+          if (el.getBoundingClientRect().top <= containerTop + 10) {
+            bestFile = file.new_path;
+          }
+        }
+
+        setSelectedFile(bestFile);
+      });
+    };
+
+    container.addEventListener('scroll', handleScroll, { passive: true });
+    // Set initial selection
+    handleScroll();
+
+    return () => {
+      container.removeEventListener('scroll', handleScroll);
+      if (rafId) cancelAnimationFrame(rafId);
+    };
+  }, [focusMode, displayFiles]); // re-attach when files change
 
   // File navigation using refs to avoid dependency issues
   const goToNextFile = useCallback(() => {
@@ -986,7 +1020,6 @@ export function DiffReviewPage({ projectId, taskId, embedded }: DiffReviewPagePr
                   isActive={validSelectedFile === file.new_path}
                   projectId={projectId}
                   taskId={taskId}
-                  onVisible={() => handleFileVisible(file.new_path)}
                   comments={getFileComments(file.new_path)}
                   commentFormAnchor={commentFormAnchor}
                   onGutterClick={handleGutterClick}

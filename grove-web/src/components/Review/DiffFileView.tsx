@@ -361,11 +361,11 @@ export function DiffFileView({
   }, []);
 
   useEffect(() => {
-    if (!ref.current || !onVisible) return;
+    if (!ref.current) return;
     const observer = new IntersectionObserver(
       (entries) => {
         if (entries[0].isIntersecting) {
-          onVisible();
+          onVisible?.();
           // Trigger full file load when in full mode
           if (viewMode === 'full' && !fullFileContent && !isLoadingFullFile && onRequestFullFile) {
             onRequestFullFile(file.new_path);
