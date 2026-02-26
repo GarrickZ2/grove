@@ -105,12 +105,12 @@ fn main() -> io::Result<()> {
             Commands::Fp => {
                 cli::fp::execute();
             }
-            Commands::Web { port, no_open, dev } => {
+            Commands::Web { port, host, no_open, dev } => {
                 ensure_storage_version();
                 tokio::runtime::Runtime::new()
                     .expect("Failed to create tokio runtime")
                     .block_on(async {
-                        cli::web::execute(port, no_open, dev).await;
+                        cli::web::execute(port, &host.to_string(), no_open, dev).await;
                     });
             }
             Commands::Diff { task_id, port } => {

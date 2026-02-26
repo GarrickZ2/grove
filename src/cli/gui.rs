@@ -24,7 +24,7 @@ pub async fn execute(port: u16) {
     let server_ready_clone = server_ready.clone();
 
     // Bind to a port (with auto-fallback if in use)
-    let (listener, actual_port) = match api::bind_with_fallback(port, 10).await {
+    let (listener, actual_port) = match api::bind_with_fallback("127.0.0.1", port, 10).await {
         Ok(result) => result,
         Err(e) => {
             eprintln!("Failed to bind to port: {}", e);

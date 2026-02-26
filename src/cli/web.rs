@@ -85,18 +85,18 @@ fn find_project_dir() -> Option<PathBuf> {
 }
 
 /// Execute the web server
-pub async fn execute(port: u16, no_open: bool, dev: bool) {
+pub async fn execute(port: u16, host: &str, no_open: bool, dev: bool) {
     if dev {
         // Development mode: run vite dev server + API server
-        execute_dev_mode(port, no_open).await;
+        execute_dev_mode(port, host, no_open).await;
     } else {
         // Production mode: serve static files
-        execute_prod_mode(port, no_open).await;
+        execute_prod_mode(port, host, no_open).await;
     }
 }
 
 /// Run in development mode (Vite dev server + API)
-async fn execute_dev_mode(api_port: u16, no_open: bool) {
+async fn execute_dev_mode(api_port: u16, host: &str, no_open: bool) {
     let project_dir = find_project_dir();
 
     if project_dir.is_none() {
@@ -154,7 +154,7 @@ async fn execute_dev_mode(api_port: u16, no_open: bool) {
     println!("\nPress Ctrl+C to stop");
 
     // Start API server (blocking) - don't open browser (Vite handles frontend)
-    if let Err(e) = api::start_server(api_port, None, false).await {
+    if let Err(e) = api::start_server(api_port, host, None, false).await {
         eprintln!("API server error: {}", e);
     }
 
@@ -164,7 +164,7 @@ async fn execute_dev_mode(api_port: u16, no_open: bool) {
 }
 
 /// Run in production mode (static files + API)
-async fn execute_prod_mode(port: u16, no_open: bool) {
+async fn execute_prod_mode(port: u16, host: &str, no_open: bool) {
     // Check for embedded assets first
     let has_embedded = api::has_embedded_assets();
 
@@ -178,7 +178,7 @@ async fn execute_prod_mode(port: u16, no_open: bool) {
         if let Some(project_dir) = find_project_dir() {
             if build_frontend(&project_dir) {
                 let built_dir = project_dir.join("grove-web").join("dist");
-                if let Err(e) = api::start_server(port, Some(built_dir), open_browser).await {
+                if let Err(e) = api::start_server(port, host, Some(built_dir), open_browser).await {
                     eprintln!("Server error: {}", e);
                     std::process::exit(1);
                 }
@@ -194,7 +194,7 @@ async fn execute_prod_mode(port: u16, no_open: bool) {
     }
 
     // Start the server (will use embedded assets if no external static_dir)
-    if let Err(e) = api::start_server(port, static_dir, open_browser).await {
+    if let Err(e) = api::start_server(port, host, static_dir, open_browser).await {
         eprintln!("Server error: {}", e);
         std::process::exit(1);
     }

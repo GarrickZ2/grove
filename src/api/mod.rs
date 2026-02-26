@@ -344,12 +344,13 @@ pub fn find_static_dir() -> Option<PathBuf> {
 /// Try binding to a port, automatically incrementing if already in use.
 /// Tries up to `max_attempts` ports starting from `start_port`.
 pub async fn bind_with_fallback(
+    host: &str,
     start_port: u16,
     max_attempts: u16,
 ) -> std::io::Result<(tokio::net::TcpListener, u16)> {
     for offset in 0..max_attempts {
         let port = start_port + offset;
-        let addr = format!("0.0.0.0:{}", port);
+        let addr = format!("{}:{}", host, port);
         match tokio::net::TcpListener::bind(&addr).await {
             Ok(listener) => return Ok((listener, port)),
             Err(e) if e.kind() == std::io::ErrorKind::AddrInUse && offset + 1 < max_attempts => {
@@ -365,6 +366,7 @@ pub async fn bind_with_fallback(
 /// Start the web server (API + static files)
 pub async fn start_server(
     port: u16,
+    host: &str,
     static_dir: Option<PathBuf>,
     open_browser: bool,
 ) -> std::io::Result<()> {
@@ -374,18 +376,24 @@ pub async fn start_server(
     let has_ui = static_dir.is_some() || has_embedded_assets();
     let app = create_router(static_dir);
 
-    let (listener, actual_port) = bind_with_fallback(port, 10).await?;
+    let (listener, actual_port) = bind_with_fallback(host, port, 10).await?;
+
+    let display_host = if host == "0.0.0.0" || host == "::" {
+        "localhost"
+    } else {
+        host
+    };
 
     if has_ui {
-        println!("Grove Web UI: http://localhost:{}", actual_port);
+        println!("Grove Web UI: http://{}:{}", display_host, actual_port);
     } else {
-        println!("Grove API server: http://localhost:{}/api/v1", actual_port);
+        println!("Grove API server: http://{}:{}/api/v1", display_host, actual_port);
         println!("(No static files found, API only mode)");
     }
 
     // Open browser with the actual bound port
     if open_browser && has_ui {
-        let url = format!("http://localhost:{}", actual_port);
+        let url = format!("http://{}:{}", display_host, actual_port);
         tokio::spawn(async move {
             tokio::time::sleep(tokio::time::Duration::from_millis(300)).await;
             println!("Opening browser: {}", url);
