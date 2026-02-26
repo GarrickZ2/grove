@@ -2336,6 +2336,9 @@ function ToolItemRow({ message, onToggleCollapse }: {
     ? `\u2018${shortPath}\u2019${loc?.line ? `:${loc.line}` : ""}`
     : "";
   const hasContent = !!message.content;
+  // Write tool targeting a .md file → render as markdown instead of code block
+  const isWriteMarkdown = message.title.startsWith("Write") &&
+    (message.locations?.[0]?.path?.endsWith(".md") || /\.md['"\s]/i.test(message.title));
 
   return (
     <div>
@@ -2364,7 +2367,13 @@ function ToolItemRow({ message, onToggleCollapse }: {
       </div>
       {hasContent && !message.collapsed && (
         <div className="ml-6 mt-1">
-          <ToolContentBlock content={message.content!} />
+          {isWriteMarkdown ? (
+            <div className="text-xs max-h-64 overflow-y-auto">
+              <MarkdownRenderer content={stripWrappingFence(message.content!.trim())} />
+            </div>
+          ) : (
+            <ToolContentBlock content={message.content!} />
+          )}
         </div>
       )}
     </div>
@@ -2553,7 +2562,20 @@ function isMetaLine(line: string): boolean {
 }
 
 const PRE_CLASSES =
-  "rounded-lg bg-[var(--color-bg-tertiary)] border border-[var(--color-border)] p-3 overflow-x-auto text-xs font-mono text-[var(--color-text)] max-h-64 overflow-y-auto";
+  "rounded-lg bg-[var(--color-bg-tertiary)] border border-[var(--color-border)] p-3 text-xs font-mono text-[var(--color-text)] max-h-64 overflow-y-auto break-words";
+
+/** Strip outermost code fence wrapper (```lang\n...\n```) if present */
+function stripWrappingFence(raw: string): string {
+  const lines = raw.split("\n");
+  if (
+    lines.length >= 3 &&
+    /^```\w*$/.test(lines[0].trim()) &&
+    lines[lines.length - 1].trim() === "```"
+  ) {
+    return lines.slice(1, -1).join("\n");
+  }
+  return raw;
+}
 
 /** Tool content renderer with format-aware rendering */
 function ToolContentBlock({ content }: { content: string }) {
@@ -2567,7 +2589,7 @@ function ToolContentBlock({ content }: { content: string }) {
   if (type === "markdown") {
     return (
       <div className="text-xs">
-        <MarkdownRenderer content={cleaned} />
+        <MarkdownRenderer content={stripWrappingFence(cleaned)} />
       </div>
     );
   }
@@ -2622,9 +2644,12 @@ function ToolContentBlock({ content }: { content: string }) {
           const isAdd = line.startsWith("+");
           const isDel = line.startsWith("-");
           const isHunk = line.startsWith("@@");
+          const prefix = isAdd ? "+" : isDel ? "−" : isHunk ? "" : " ";
+          const body = (isAdd || isDel) ? line.slice(1) : line;
           return (
             <div
               key={i}
+              className="flex"
               style={
                 isAdd
                   ? { background: "color-mix(in srgb, var(--color-success) 15%, transparent)", margin: "0 -12px", padding: "0 12px" }
@@ -2635,7 +2660,15 @@ function ToolContentBlock({ content }: { content: string }) {
                   : undefined
               }
             >
-              {line || " "}
+              {!isHunk && (
+                <span
+                  className="select-none shrink-0 w-4 text-center font-bold"
+                  style={{ color: isAdd ? "var(--color-success)" : isDel ? "var(--color-error)" : "transparent" }}
+                >
+                  {prefix}
+                </span>
+              )}
+              <span className="whitespace-pre-wrap break-words min-w-0">{isHunk ? line : (body || " ")}</span>
             </div>
           );
         })}
