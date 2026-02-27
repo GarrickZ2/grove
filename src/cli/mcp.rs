@@ -28,21 +28,25 @@ use crate::storage::{comments, config, notes, tasks, workspace};
 // ============================================================================
 
 const MANAGEMENT_INSTRUCTIONS: &str = r#"
-# Grove - Project & Task Management
+# Grove - Parallel Task Orchestration
 
-Use these tools for workspace-level project/task management before starting a Grove task (register/list projects, create/list tasks).
+Grove lets you break down work into isolated, parallel tasks under a project.
+Each task provides an independent working directory where work can proceed
+without affecting other tasks or the main codebase.
 
 ## Available Tools
-1. **grove_list_projects** - List registered projects (supports query)
-2. **grove_add_project_by_path** - Register a project by local path (idempotent)
-3. **grove_create_task** - Create a task/worktree under a project
-4. **grove_list_tasks** - List active tasks under a project (supports query)
+1. **grove_list_projects** — Find a registered project
+2. **grove_add_project_by_path** — Register a project (idempotent)
+3. **grove_create_task** — Spawn an isolated subtask for parallel work
+4. **grove_list_tasks** — Query existing active tasks
+5. **grove_edit_note** — Write task notes (spec, context, instructions)
 
-## Recommended Workflow
-1. Call `grove_list_projects` to find the target project
-2. If missing, call `grove_add_project_by_path` to register it
-3. Call `grove_create_task` to create a task for the project
-4. Call `grove_list_tasks` to confirm the task is active
+## Orchestration Workflow
+1. Find or register the target project
+2. Break down the work into independent subtasks
+3. Call `grove_create_task` for each subtask
+4. Call `grove_edit_note` to write task spec and context
+5. Use `grove_list_tasks` to monitor active tasks
 
 "#;
 
@@ -277,6 +281,17 @@ pub struct ListTasksParams {
     pub query: Option<String>,
 }
 
+/// Edit notes for a task (workspace-scoped, for orchestrator agents)
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+pub struct EditNoteParams {
+    /// Project ID (hash)
+    pub project_id: String,
+    /// Task ID
+    pub task_id: String,
+    /// New note content (markdown). Replaces entire note. Pass empty string to clear.
+    pub content: String,
+}
+
 // ============================================================================
 // Tool Response Types
 // ============================================================================
@@ -422,7 +437,7 @@ impl GroveMcpServer {
     /// Register a project by local path (idempotent)
     #[tool(
         name = "grove_add_project_by_path",
-        description = "Register a Git project by local path. Path can be a repo root or a subdirectory. Returns project_id and normalized repo path. If the project already exists, this tool succeeds idempotently."
+        description = "Register a Git project by its local filesystem path. Idempotent — safe to call repeatedly."
     )]
     async fn grove_add_project_by_path(
         &self,
@@ -436,7 +451,7 @@ impl GroveMcpServer {
     /// List all registered projects
     #[tool(
         name = "grove_list_projects",
-        description = "List all registered projects. Returns an array of {project_id, path}. Optional fuzzy filter by query."
+        description = "List registered projects. Use `query` to fuzzy-filter by path."
     )]
     async fn grove_list_projects(
         &self,
@@ -450,7 +465,7 @@ impl GroveMcpServer {
     /// Create a task/worktree under a project (does NOT start tmux/zellij session)
     #[tool(
         name = "grove_create_task",
-        description = "Create a new task (git worktree + metadata) under a project. Does NOT create a tmux/zellij session."
+        description = "Create an isolated subtask under a project. Tasks run in parallel without interfering with each other."
     )]
     async fn grove_create_task(
         &self,
@@ -464,7 +479,7 @@ impl GroveMcpServer {
     /// List active tasks under a project
     #[tool(
         name = "grove_list_tasks",
-        description = "List active tasks under a project. Returns task metadata only (no expensive git status computation)."
+        description = "List active tasks under a project. Use `query` to fuzzy-filter by name or branch."
     )]
     async fn grove_list_tasks(
         &self,
@@ -474,6 +489,20 @@ impl GroveMcpServer {
         let project_id = params.0.project_id;
         let query = params.0.query;
         blocking_json(move || list_tasks_json(&project_id, query.as_deref())).await
+    }
+
+    /// Write or update notes for a task (management tool for orchestrator agents)
+    #[tool(
+        name = "grove_edit_note",
+        description = "Write or update notes for a task. Used to set task spec, context, and instructions before the task agent starts working."
+    )]
+    async fn grove_edit_note(
+        &self,
+        params: Parameters<EditNoteParams>,
+    ) -> Result<CallToolResult, McpError> {
+        ensure_not_in_grove_task()?;
+        let p = params.0;
+        blocking_json(move || edit_note_json(&p)).await
     }
 
     /// Read user-written notes for the current task
@@ -1118,6 +1147,7 @@ fn create_task_json(params: &CreateTaskParams) -> serde_json::Value {
         target.clone(),
         &full_config.default_session_type(),
         autolink_patterns,
+        "agent",
     ) {
         Ok(result) => json!({
             "success": true,
@@ -1175,6 +1205,30 @@ fn list_tasks_json(project_id: &str, query: Option<&str>) -> serde_json::Value {
         }
         Err(e) => error_json("internal_error", format!("Failed to load tasks: {e}")),
     }
+}
+
+fn edit_note_json(params: &EditNoteParams) -> serde_json::Value {
+    match load_project_by_id(&params.project_id) {
+        Ok(Some(_)) => {}
+        Ok(None) => return error_json("project_not_found", "Project not found"),
+        Err(e) => return error_json("internal_error", format!("Failed to load project: {e}")),
+    }
+
+    match tasks::get_task(&params.project_id, &params.task_id) {
+        Ok(Some(_)) => {}
+        Ok(None) => return error_json("task_not_found", "Task not found"),
+        Err(e) => return error_json("internal_error", format!("Failed to verify task: {e}")),
+    }
+
+    if let Err(e) = notes::save_notes(&params.project_id, &params.task_id, &params.content) {
+        return error_json("save_failed", format!("Failed to save notes: {e}"));
+    }
+
+    json!({
+        "success": true,
+        "task_id": params.task_id,
+        "content_length": params.content.len(),
+    })
 }
 
 /// Get task context from environment variables
@@ -1659,6 +1713,7 @@ mod tests {
             "grove_list_projects",
             "grove_create_task",
             "grove_list_tasks",
+            "grove_edit_note",
         ] {
             assert!(names.contains(name));
         }
@@ -1701,6 +1756,7 @@ mod tests {
             "grove_list_projects",
             "grove_create_task",
             "grove_list_tasks",
+            "grove_edit_note",
         ] {
             assert!(!names.contains(name));
         }
@@ -1717,7 +1773,7 @@ mod tests {
             env.remove("GROVE_PROJECT");
             let instr = get_instructions();
             assert!(
-                instr.contains("Project & Task Management"),
+                instr.contains("Parallel Task Orchestration"),
                 "expected management instructions outside task"
             );
         }
@@ -1843,6 +1899,15 @@ mod tests {
             .call_tool(5, "grove_list_tasks", json!({"project_id": "deadbeef"}))
             .await;
         assert_tool_rejected(&resp_5);
+
+        let resp_6 = client
+            .call_tool(
+                6,
+                "grove_edit_note",
+                json!({"project_id": "deadbeef", "task_id": "t1", "content": "hello"}),
+            )
+            .await;
+        assert_tool_rejected(&resp_6);
 
         client.shutdown().await;
         drop(env);
@@ -2119,6 +2184,103 @@ mod tests {
             )
             .await;
         assert_error_contains(&resp, "Task not found");
+
+        client.shutdown().await;
+        drop(env);
+        let _ = std::fs::remove_dir_all(&temp_home);
+    }
+
+    /// grove_edit_note: management tool roundtrip — write notes, read back via worker context.
+    #[tokio::test(flavor = "current_thread")]
+    async fn mcp_edit_note_roundtrip() {
+        let _guard = TEST_LOCK.get_or_init(|| Mutex::new(())).lock().await;
+
+        let temp_home = unique_temp_dir("grove-mcp-home");
+        std::fs::create_dir_all(&temp_home).unwrap();
+
+        let mut env = EnvGuard::new();
+        env.set("HOME", temp_home.to_string_lossy().as_ref());
+        clear_git_env(&mut env);
+
+        let repo = temp_home.join("repo");
+        init_git_repo(&repo);
+
+        // --- Management phase: outside task context ---
+        env.remove("GROVE_TASK_ID");
+        env.remove("GROVE_PROJECT");
+
+        // Register project and create task
+        let add = add_project_by_path_json(repo.to_string_lossy().as_ref());
+        assert_eq!(add["success"].as_bool(), Some(true));
+        let project_id = add["project_id"].as_str().unwrap().to_string();
+        let canonical_repo = add["path"].as_str().unwrap().to_string();
+
+        let created = create_task_json(&CreateTaskParams {
+            project_id: project_id.clone(),
+            name: "Note Test Task".to_string(),
+        });
+        assert_eq!(created["success"].as_bool(), Some(true));
+        let task_id = created["task"]["task_id"].as_str().unwrap().to_string();
+
+        let mut client = McpTestClient::start().await;
+        client.handshake().await;
+
+        // edit_note: project not found → error
+        let resp = client
+            .call_tool(
+                2,
+                "grove_edit_note",
+                json!({"project_id": "nonexistent", "task_id": &task_id, "content": "x"}),
+            )
+            .await;
+        let text = resp["result"]["content"][0]["text"].as_str().unwrap();
+        let result: serde_json::Value = serde_json::from_str(text).unwrap();
+        assert_eq!(result["success"].as_bool(), Some(false));
+        assert_eq!(result["error"].as_str(), Some("project_not_found"));
+
+        // edit_note: task not found → error
+        let resp = client
+            .call_tool(
+                3,
+                "grove_edit_note",
+                json!({"project_id": &project_id, "task_id": "ghost", "content": "x"}),
+            )
+            .await;
+        let text = resp["result"]["content"][0]["text"].as_str().unwrap();
+        let result: serde_json::Value = serde_json::from_str(text).unwrap();
+        assert_eq!(result["success"].as_bool(), Some(false));
+        assert_eq!(result["error"].as_str(), Some("task_not_found"));
+
+        // edit_note: success
+        let resp = client
+            .call_tool(
+                4,
+                "grove_edit_note",
+                json!({
+                    "project_id": &project_id,
+                    "task_id": &task_id,
+                    "content": "## Task Spec\nImplement feature X"
+                }),
+            )
+            .await;
+        let text = resp["result"]["content"][0]["text"].as_str().unwrap();
+        let result: serde_json::Value = serde_json::from_str(text).unwrap();
+        assert_eq!(result["success"].as_bool(), Some(true));
+        assert_eq!(result["task_id"].as_str(), Some(task_id.as_str()));
+        assert_eq!(result["content_length"].as_u64(), Some(32));
+
+        client.shutdown().await;
+
+        // --- Worker phase: switch to task context, read back ---
+        env.set("GROVE_TASK_ID", &task_id);
+        env.set("GROVE_PROJECT", &canonical_repo);
+
+        let mut client = McpTestClient::start().await;
+        client.handshake().await;
+
+        let resp = client.call_tool(2, "grove_read_notes", json!({})).await;
+        let text = resp["result"]["content"][0]["text"].as_str().unwrap();
+        assert_eq!(text, "## Task Spec\nImplement feature X");
 
         client.shutdown().await;
         drop(env);
