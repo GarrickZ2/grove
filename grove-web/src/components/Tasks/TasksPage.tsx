@@ -5,7 +5,7 @@ import { TaskSidebar } from "./TaskSidebar/TaskSidebar";
 import { TaskInfoPanel } from "./TaskInfoPanel";
 import { TaskView, type TaskViewHandle } from "./TaskView";
 import { NewTaskDialog } from "./NewTaskDialog";
-import { CommitDialog, ConfirmDialog, MergeDialog } from "../Dialogs";
+import { CommitDialog, ConfirmDialog, DirtyBranchDialog, MergeDialog } from "../Dialogs";
 import { RebaseDialog } from "./dialogs";
 import { HelpOverlay } from "./HelpOverlay";
 import { Button } from "../ui";
@@ -751,6 +751,11 @@ export function TasksPage({ initialTaskId, initialViewMode, onNavigationConsumed
         items={contextMenuItems}
         position={pageState.contextMenu?.position ?? null}
         onClose={pageHandlers.closeContextMenu}
+      />
+
+      <DirtyBranchDialog
+        error={opsState.dirtyBranchError}
+        onClose={opsHandlers.handleDirtyBranchErrorClose}
       />
 
       {/* Help Overlay */}

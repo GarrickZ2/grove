@@ -76,9 +76,9 @@ export function NotesTab({ projectId, task }: NotesTabProps) {
       cancelled = true;
       // Auto-save on navigate away (task switch or unmount)
       if (isEditingRef.current && contentRef.current !== originalContentRef.current) {
-        const proj = projectRef.current;
-        if (proj) {
-          updateNotes(proj.id, task.id, contentRef.current).catch(() => {});
+        const pid = resolvedProjectIdRef.current;
+        if (pid) {
+          updateNotes(pid, task.id, contentRef.current).catch(() => {});
         }
       }
     };
