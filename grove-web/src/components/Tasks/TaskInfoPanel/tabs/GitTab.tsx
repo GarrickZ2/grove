@@ -6,25 +6,27 @@ import { useProject } from "../../../../context/ProjectContext";
 import { getDiff, getCommits, type DiffResponse, type CommitsResponse } from "../../../../api";
 
 interface GitTabProps {
+  projectId?: string;
   task: Task;
 }
 
-export function GitTab({ task }: GitTabProps) {
+export function GitTab({ projectId, task }: GitTabProps) {
   const { selectedProject } = useProject();
+  const resolvedProjectId = projectId || selectedProject?.id;
   const [diffData, setDiffData] = useState<DiffResponse | null>(null);
   const [commitsData, setCommitsData] = useState<CommitsResponse | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   const loadGitData = useCallback(async () => {
-    if (!selectedProject) return;
+    if (!resolvedProjectId) return;
 
     try {
       setIsLoading(true);
       setError(null);
       const [diff, commits] = await Promise.all([
-        getDiff(selectedProject.id, task.id),
-        getCommits(selectedProject.id, task.id),
+        getDiff(resolvedProjectId, task.id),
+        getCommits(resolvedProjectId, task.id),
       ]);
       setDiffData(diff);
       setCommitsData(commits);
@@ -34,7 +36,7 @@ export function GitTab({ task }: GitTabProps) {
     } finally {
       setIsLoading(false);
     }
-  }, [selectedProject, task.id]);
+  }, [resolvedProjectId, task.id]);
 
   useEffect(() => {
     loadGitData();
