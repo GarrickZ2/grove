@@ -177,6 +177,14 @@ All data stored in `~/.grove/`:
 
 This helps the user immediately know what actions they need to take without having to guess or re-read the entire conversation.
 
+### Rust Source Code Checks (REQUIRED)
+
+When modifying Rust source files, always run:
+
+```bash
+cargo fmt --all
+```
+
 ### Web Frontend Development
 
 When modifying the web frontend (`grove-web/`):

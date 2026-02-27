@@ -187,7 +187,7 @@ Press `h` in Grove to configure sound and notification settings.
 
 ## MCP Server
 
-Built-in MCP server. AI agents read notes, reply to reviews, and complete tasks autonomously.
+Built-in MCP server. AI agents can manage projects and tasks, read notes, reply to reviews, and complete tasks autonomously.
 
 Add to your Claude Code MCP config (`~/.claude/config.json`):
 
@@ -201,6 +201,17 @@ Add to your Claude Code MCP config (`~/.claude/config.json`):
   }
 }
 ```
+
+Management tools (only available when NOT in a Grove task):
+
+| Tool | Description |
+|------|-------------|
+| `grove_add_project_by_path` | Register a Git project by local path (idempotent) |
+| `grove_list_projects` | List all registered projects |
+| `grove_create_task` | Create a new task/worktree under a project |
+| `grove_list_tasks` | List active tasks under a project |
+
+Execution tools (only available inside a Grove task):
 
 | Tool | Description |
 |------|-------------|
