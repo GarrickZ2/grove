@@ -306,6 +306,8 @@ export function TaskChat({
   const perChatStateRef = useRef<Map<string, PerChatState>>(new Map());
   // Per-chat WebSocket connections
   const wsMapRef = useRef<Map<string, WebSocket>>(new Map());
+  // Track in-flight connection attempts to prevent async TOCTOU race
+  const connectingRef = useRef<Set<string>>(new Set());
 
   // ─── Active chat's live state ─────────────────────────────────────────
   const [isConnected, setIsConnected] = useState(false);
@@ -547,10 +549,16 @@ export function TaskChat({
   /** Connect a WebSocket for a given chat ID (idempotent) */
   const connectChatWs = useCallback(async (chatId: string) => {
     if (wsMapRef.current.has(chatId)) return; // Already connected
+    if (connectingRef.current.has(chatId)) return; // Connection already in-flight
+    connectingRef.current.add(chatId);
 
     const host = getApiHost();
     const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
     const url = await appendHmacToUrl(`${protocol}//${host}/api/v1/projects/${projectId}/tasks/${task.id}/chats/${chatId}/ws`);
+
+    connectingRef.current.delete(chatId);
+    // Re-check after async gap: another call may have connected while we awaited
+    if (wsMapRef.current.has(chatId)) return;
 
     const ws = new WebSocket(url);
     wsMapRef.current.set(chatId, ws);

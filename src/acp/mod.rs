@@ -533,12 +533,10 @@ impl acp::Client for GroveAcpClient {
                     locations,
                 });
             }
-            acp::SessionUpdate::UserMessageChunk(chunk) => {
-                let text = content_block_to_text(&chunk.content);
-                self.handle.emit(AcpUpdate::UserMessage {
-                    text,
-                    attachments: vec![],
-                });
+            acp::SessionUpdate::UserMessageChunk(_) => {
+                // Intentionally ignored: Grove already emits UserMessage
+                // when AcpCommand::Prompt is received (run_acp_session line ~1054).
+                // Processing this agent echo would duplicate every user message.
             }
             acp::SessionUpdate::CurrentModeUpdate(update) => {
                 self.handle.emit(AcpUpdate::ModeChanged {

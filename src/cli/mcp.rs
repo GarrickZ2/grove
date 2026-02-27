@@ -429,7 +429,8 @@ impl GroveMcpServer {
         params: Parameters<AddProjectByPathParams>,
     ) -> Result<CallToolResult, McpError> {
         ensure_not_in_grove_task()?;
-        ok_json(add_project_by_path_json(&params.0.path))
+        let path = params.0.path;
+        blocking_json(move || add_project_by_path_json(&path)).await
     }
 
     /// List all registered projects
@@ -442,7 +443,8 @@ impl GroveMcpServer {
         params: Parameters<ListProjectsParams>,
     ) -> Result<CallToolResult, McpError> {
         ensure_not_in_grove_task()?;
-        ok_json(list_projects_json(params.0.query.as_deref()))
+        let query = params.0.query;
+        blocking_json(move || list_projects_json(query.as_deref())).await
     }
 
     /// Create a task/worktree under a project (does NOT start tmux/zellij session)
@@ -455,7 +457,8 @@ impl GroveMcpServer {
         params: Parameters<CreateTaskParams>,
     ) -> Result<CallToolResult, McpError> {
         ensure_not_in_grove_task()?;
-        ok_json(create_task_json(&params.0))
+        let p = params.0;
+        blocking_json(move || create_task_json(&p)).await
     }
 
     /// List active tasks under a project
@@ -468,10 +471,9 @@ impl GroveMcpServer {
         params: Parameters<ListTasksParams>,
     ) -> Result<CallToolResult, McpError> {
         ensure_not_in_grove_task()?;
-        ok_json(list_tasks_json(
-            &params.0.project_id,
-            params.0.query.as_deref(),
-        ))
+        let project_id = params.0.project_id;
+        let query = params.0.query;
+        blocking_json(move || list_tasks_json(&project_id, query.as_deref())).await
     }
 
     /// Read user-written notes for the current task
@@ -590,6 +592,7 @@ impl GroveMcpServer {
             .ok_or_else(|| McpError::invalid_request("Not in a Grove task", None))?;
 
         let project_key = workspace::project_hash(&project_path);
+        validate_task_exists(&project_key, &task_id)?;
 
         if params.0.replies.is_empty() {
             return Err(McpError::invalid_params(
@@ -669,6 +672,7 @@ impl GroveMcpServer {
             .ok_or_else(|| McpError::invalid_request("Not in a Grove task", None))?;
 
         let project_key = workspace::project_hash(&project_path);
+        validate_task_exists(&project_key, &task_id)?;
         let worktree = env::var("GROVE_WORKTREE").unwrap_or_default();
 
         // Build author string: "agent_name (role)"
@@ -951,6 +955,15 @@ fn ok_json(value: serde_json::Value) -> Result<CallToolResult, McpError> {
     Ok(CallToolResult::success(vec![Content::text(json)]))
 }
 
+async fn blocking_json(
+    f: impl FnOnce() -> serde_json::Value + Send + 'static,
+) -> Result<CallToolResult, McpError> {
+    let value = tokio::task::spawn_blocking(f)
+        .await
+        .map_err(|e| McpError::internal_error(e.to_string(), None))?;
+    ok_json(value)
+}
+
 fn error_json(error: &str, message: impl Into<String>) -> serde_json::Value {
     json!({
         "success": false,
@@ -967,6 +980,39 @@ fn ensure_not_in_grove_task() -> Result<(), McpError> {
         ));
     }
     Ok(())
+}
+
+/// Validate that the project is registered and the task exists in storage.
+/// Catches misconfigured GROVE_PROJECT / GROVE_TASK_ID env vars before
+/// any data is written to disk.
+fn validate_task_exists(project_key: &str, task_id: &str) -> Result<(), McpError> {
+    match workspace::load_project_by_hash(project_key) {
+        Ok(Some(_)) => {}
+        Ok(None) => {
+            return Err(McpError::invalid_request(
+                "Project not found. GROVE_PROJECT may be misconfigured.",
+                None,
+            ));
+        }
+        Err(e) => {
+            return Err(McpError::internal_error(
+                format!("Failed to verify project: {}", e),
+                None,
+            ));
+        }
+    }
+
+    match tasks::get_task(project_key, task_id) {
+        Ok(Some(_)) => Ok(()),
+        Ok(None) => Err(McpError::invalid_request(
+            "Task not found. GROVE_TASK_ID may be misconfigured.",
+            None,
+        )),
+        Err(e) => Err(McpError::internal_error(
+            format!("Failed to verify task: {}", e),
+            None,
+        )),
+    }
 }
 
 fn add_project_by_path_json(path: &str) -> serde_json::Value {
@@ -1164,9 +1210,153 @@ mod tests {
     use std::path::{Path, PathBuf};
     use std::process::Command;
     use std::sync::OnceLock;
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
     use tokio::sync::Mutex;
 
     static TEST_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+
+    // ---- EnvGuard: RAII env-var restore (panic-safe) ----
+
+    struct EnvGuard {
+        saved: Vec<(String, Option<String>)>,
+    }
+
+    impl EnvGuard {
+        fn new() -> Self {
+            Self { saved: Vec::new() }
+        }
+
+        fn set(&mut self, key: &str, value: &str) {
+            if !self.saved.iter().any(|(k, _)| k == key) {
+                self.saved.push((key.to_string(), std::env::var(key).ok()));
+            }
+            std::env::set_var(key, value);
+        }
+
+        fn remove(&mut self, key: &str) {
+            if !self.saved.iter().any(|(k, _)| k == key) {
+                self.saved.push((key.to_string(), std::env::var(key).ok()));
+            }
+            std::env::remove_var(key);
+        }
+    }
+
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            for (key, value) in &self.saved {
+                match value {
+                    Some(v) => std::env::set_var(key, v),
+                    None => std::env::remove_var(key),
+                }
+            }
+        }
+    }
+
+    // ---- McpTestClient: MCP protocol test harness ----
+
+    struct McpTestClient {
+        writer: tokio::io::WriteHalf<tokio::io::DuplexStream>,
+        reader: BufReader<tokio::io::ReadHalf<tokio::io::DuplexStream>>,
+        server_task: tokio::task::JoinHandle<Result<(), String>>,
+    }
+
+    impl McpTestClient {
+        async fn start() -> Self {
+            let (client_stream, server_stream) = tokio::io::duplex(64 * 1024);
+            let (server_read, server_write) = tokio::io::split(server_stream);
+
+            let server_task = tokio::spawn(async move {
+                let server = GroveMcpServer::new();
+                let service = server
+                    .serve((server_read, server_write))
+                    .await
+                    .map_err(|e| e.to_string())?;
+                service.waiting().await.map_err(|e| e.to_string())?;
+                Ok::<(), String>(())
+            });
+
+            let (client_read, writer) = tokio::io::split(client_stream);
+            let reader = BufReader::new(client_read);
+
+            Self {
+                writer,
+                reader,
+                server_task,
+            }
+        }
+
+        async fn send(&mut self, v: serde_json::Value) {
+            let mut s = serde_json::to_string(&v).unwrap();
+            s.push('\n');
+            self.writer.write_all(s.as_bytes()).await.unwrap();
+            self.writer.flush().await.unwrap();
+        }
+
+        async fn recv_for_id(&mut self, id: i64) -> serde_json::Value {
+            loop {
+                let mut line = String::new();
+                let n = self.reader.read_line(&mut line).await.unwrap();
+                assert!(n > 0, "server closed connection");
+                let v: serde_json::Value = serde_json::from_str(line.trim()).unwrap();
+                if v.get("id").and_then(|x| x.as_i64()) == Some(id) {
+                    return v;
+                }
+            }
+        }
+
+        async fn handshake(&mut self) {
+            self.send(json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "protocolVersion": "2025-03-26",
+                    "capabilities": {},
+                    "clientInfo": {"name": "grove-test", "version": "0"}
+                }
+            }))
+            .await;
+            let init_resp = self.recv_for_id(1).await;
+            assert!(init_resp.get("result").is_some());
+
+            self.send(json!({"jsonrpc": "2.0", "method": "notifications/initialized"}))
+                .await;
+        }
+
+        async fn call_tool(
+            &mut self,
+            id: i64,
+            name: &str,
+            args: serde_json::Value,
+        ) -> serde_json::Value {
+            self.send(json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "method": "tools/call",
+                "params": {"name": name, "arguments": args}
+            }))
+            .await;
+            self.recv_for_id(id).await
+        }
+
+        async fn shutdown(self) {
+            let Self {
+                mut writer,
+                reader,
+                server_task,
+            } = self;
+            writer.shutdown().await.unwrap();
+            drop(writer);
+            drop(reader);
+            tokio::time::timeout(std::time::Duration::from_secs(3), server_task)
+                .await
+                .expect("server did not exit")
+                .expect("server task join failed")
+                .expect("server returned error");
+        }
+    }
+
+    // ---- Test helpers ----
 
     fn unique_temp_dir(prefix: &str) -> PathBuf {
         let mut p = std::env::temp_dir();
@@ -1198,26 +1388,37 @@ mod tests {
         git(repo, &["commit", "-m", "init"]);
     }
 
+    /// Remove git env vars that leak from pre-commit hooks into test subprocesses.
+    fn clear_git_env(env: &mut EnvGuard) {
+        for key in &[
+            "GIT_DIR",
+            "GIT_WORK_TREE",
+            "GIT_INDEX_FILE",
+            "GIT_OBJECT_DIRECTORY",
+            "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+        ] {
+            env.remove(key);
+        }
+    }
+
     fn with_isolated_home<T>(f: impl FnOnce(&Path) -> T) -> T {
         let _guard = TEST_LOCK.get_or_init(|| Mutex::new(())).blocking_lock();
 
         let temp_home = unique_temp_dir("grove-mcp-home");
         std::fs::create_dir_all(&temp_home).unwrap();
 
-        let old_home = std::env::var("HOME").ok();
-        std::env::set_var("HOME", &temp_home);
+        let mut env = EnvGuard::new();
+        env.set("HOME", temp_home.to_string_lossy().as_ref());
+        clear_git_env(&mut env);
 
         let out = f(&temp_home);
 
-        if let Some(v) = old_home {
-            std::env::set_var("HOME", v);
-        } else {
-            std::env::remove_var("HOME");
-        }
-
+        drop(env);
         let _ = std::fs::remove_dir_all(&temp_home);
         out
     }
+
+    // ---- Sync tests ----
 
     #[test]
     fn add_project_invalid_path_returns_success_false() {
@@ -1333,13 +1534,121 @@ mod tests {
     }
 
     #[test]
+    fn list_projects_query_filters_correctly() {
+        with_isolated_home(|home| {
+            let repo_alpha = home.join("alpha-project");
+            init_git_repo(&repo_alpha);
+            let repo_beta = home.join("beta-service");
+            init_git_repo(&repo_beta);
+
+            add_project_by_path_json(repo_alpha.to_string_lossy().as_ref());
+            add_project_by_path_json(repo_beta.to_string_lossy().as_ref());
+
+            // No filter → both projects
+            let all = list_projects_json(None);
+            assert_eq!(all["projects"].as_array().unwrap().len(), 2);
+
+            // Filter "alpha" → only alpha
+            let filtered = list_projects_json(Some("alpha"));
+            let projects = filtered["projects"].as_array().unwrap();
+            assert_eq!(projects.len(), 1);
+            assert!(projects[0]["path"].as_str().unwrap().contains("alpha"));
+
+            // Case-insensitive: "BETA" → only beta
+            let filtered = list_projects_json(Some("BETA"));
+            let projects = filtered["projects"].as_array().unwrap();
+            assert_eq!(projects.len(), 1);
+            assert!(projects[0]["path"].as_str().unwrap().contains("beta"));
+
+            // No match → empty
+            let filtered = list_projects_json(Some("nonexistent"));
+            assert_eq!(filtered["projects"].as_array().unwrap().len(), 0);
+        })
+    }
+
+    #[test]
+    fn list_tasks_returns_error_for_unknown_project() {
+        with_isolated_home(|_home| {
+            let v = list_tasks_json("nonexistent-hash", None);
+            assert_eq!(v["success"].as_bool(), Some(false));
+            assert_eq!(v["error"].as_str(), Some("project_not_found"));
+        })
+    }
+
+    #[test]
+    fn list_tasks_query_filters_by_name() {
+        with_isolated_home(|home| {
+            let repo = home.join("repo");
+            init_git_repo(&repo);
+
+            let add = add_project_by_path_json(repo.to_string_lossy().as_ref());
+            let project_id = add["project_id"].as_str().unwrap().to_string();
+
+            create_task_json(&CreateTaskParams {
+                project_id: project_id.clone(),
+                name: "Auth Login".to_string(),
+            });
+            create_task_json(&CreateTaskParams {
+                project_id: project_id.clone(),
+                name: "Dashboard UI".to_string(),
+            });
+
+            // No filter → both tasks
+            let all = list_tasks_json(&project_id, None);
+            assert_eq!(all["tasks"].as_array().unwrap().len(), 2);
+
+            // Filter "dashboard" → only dashboard task
+            let filtered = list_tasks_json(&project_id, Some("dashboard"));
+            let tasks = filtered["tasks"].as_array().unwrap();
+            assert_eq!(tasks.len(), 1);
+            assert_eq!(tasks[0]["name"].as_str(), Some("Dashboard UI"));
+
+            // Case-insensitive: "AUTH" → only auth task
+            let filtered = list_tasks_json(&project_id, Some("AUTH"));
+            let tasks = filtered["tasks"].as_array().unwrap();
+            assert_eq!(tasks.len(), 1);
+            assert_eq!(tasks[0]["name"].as_str(), Some("Auth Login"));
+
+            // No match → empty
+            let filtered = list_tasks_json(&project_id, Some("nonexistent"));
+            assert_eq!(filtered["tasks"].as_array().unwrap().len(), 0);
+        })
+    }
+
+    #[test]
+    fn add_project_from_subdirectory_resolves_to_root() {
+        with_isolated_home(|home| {
+            let repo = home.join("my-repo");
+            init_git_repo(&repo);
+
+            let subdir = repo.join("src").join("lib");
+            std::fs::create_dir_all(&subdir).unwrap();
+
+            // Register via subdirectory path
+            let v = add_project_by_path_json(subdir.to_string_lossy().as_ref());
+            assert_eq!(v["success"].as_bool(), Some(true));
+
+            // Returned path should be repo root, not subdirectory
+            let returned_path = v["path"].as_str().unwrap();
+            assert!(
+                !returned_path.ends_with("src/lib"),
+                "expected repo root, got subdirectory: {}",
+                returned_path
+            );
+
+            // Register via root path → same project_id (idempotent)
+            let v2 = add_project_by_path_json(repo.to_string_lossy().as_ref());
+            assert_eq!(v2["project_id"].as_str(), v["project_id"].as_str());
+        })
+    }
+
+    #[test]
     fn filter_tools_outside_task_scoped_returns_complement() {
         let _guard = TEST_LOCK.get_or_init(|| Mutex::new(())).blocking_lock();
 
-        let old_task_id = std::env::var("GROVE_TASK_ID").ok();
-        let old_project = std::env::var("GROVE_PROJECT").ok();
-        std::env::remove_var("GROVE_TASK_ID");
-        std::env::remove_var("GROVE_PROJECT");
+        let mut env = EnvGuard::new();
+        env.remove("GROVE_TASK_ID");
+        env.remove("GROVE_PROJECT");
 
         let server = GroveMcpServer::new();
         let tools = filter_tools(server.tool_router.list_all());
@@ -1362,13 +1671,6 @@ mod tests {
             "grove_complete_task",
         ] {
             assert!(!names.contains(name));
-        }
-
-        if let Some(v) = old_task_id {
-            std::env::set_var("GROVE_TASK_ID", v);
-        }
-        if let Some(v) = old_project {
-            std::env::set_var("GROVE_PROJECT", v);
         }
     }
 
@@ -1376,10 +1678,9 @@ mod tests {
     fn filter_tools_inside_task_scoped_returns_only_task_scoped() {
         let _guard = TEST_LOCK.get_or_init(|| Mutex::new(())).blocking_lock();
 
-        let old_task_id = std::env::var("GROVE_TASK_ID").ok();
-        let old_project = std::env::var("GROVE_PROJECT").ok();
-        std::env::set_var("GROVE_TASK_ID", "task-1");
-        std::env::set_var("GROVE_PROJECT", "/tmp/repo");
+        let mut env = EnvGuard::new();
+        env.set("GROVE_TASK_ID", "task-1");
+        env.set("GROVE_PROJECT", "/tmp/repo");
 
         let server = GroveMcpServer::new();
         let tools = filter_tools(server.tool_router.list_all());
@@ -1403,133 +1704,75 @@ mod tests {
         ] {
             assert!(!names.contains(name));
         }
+    }
 
-        if let Some(v) = old_task_id {
-            std::env::set_var("GROVE_TASK_ID", v);
-        } else {
-            std::env::remove_var("GROVE_TASK_ID");
+    #[test]
+    fn get_instructions_switches_on_task_context() {
+        let _guard = TEST_LOCK.get_or_init(|| Mutex::new(())).blocking_lock();
+
+        // Outside task → management instructions
+        {
+            let mut env = EnvGuard::new();
+            env.remove("GROVE_TASK_ID");
+            env.remove("GROVE_PROJECT");
+            let instr = get_instructions();
+            assert!(
+                instr.contains("Project & Task Management"),
+                "expected management instructions outside task"
+            );
         }
-        if let Some(v) = old_project {
-            std::env::set_var("GROVE_PROJECT", v);
-        } else {
-            std::env::remove_var("GROVE_PROJECT");
+
+        // Inside task → execution instructions
+        {
+            let mut env = EnvGuard::new();
+            env.set("GROVE_TASK_ID", "task-1");
+            env.set("GROVE_PROJECT", "/tmp/repo");
+            let instr = get_instructions();
+            assert!(
+                instr.contains("Git Worktree Task Manager"),
+                "expected execution instructions inside task"
+            );
         }
     }
 
+    // ---- Async integration tests ----
+
     #[tokio::test(flavor = "current_thread")]
     async fn mcp_newline_protocol_smoke_test() {
-        use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-
-        // Ensure tests that mutate HOME don't run concurrently.
         let _guard = TEST_LOCK.get_or_init(|| Mutex::new(())).lock().await;
 
         let temp_home = unique_temp_dir("grove-mcp-home");
         std::fs::create_dir_all(&temp_home).unwrap();
 
-        let old_home = std::env::var("HOME").ok();
-        std::env::set_var("HOME", &temp_home);
+        let mut env = EnvGuard::new();
+        env.set("HOME", temp_home.to_string_lossy().as_ref());
+        clear_git_env(&mut env);
 
         let repo = temp_home.join("repo");
         init_git_repo(&repo);
 
-        let (client_stream, server_stream) = tokio::io::duplex(64 * 1024);
-        let (server_read, server_write) = tokio::io::split(server_stream);
+        let mut client = McpTestClient::start().await;
+        client.handshake().await;
 
-        let server_task = tokio::spawn(async move {
-            let server = GroveMcpServer::new();
-            let service = server
-                .serve((server_read, server_write))
-                .await
-                .map_err(|e| e.to_string())?;
-            service.waiting().await.map_err(|e| e.to_string())?;
-            Ok::<(), String>(())
-        });
-
-        let (client_read, mut client_write) = tokio::io::split(client_stream);
-        let mut reader = BufReader::new(client_read);
-
-        async fn send(w: &mut (impl AsyncWriteExt + Unpin), v: serde_json::Value) {
-            let mut s = serde_json::to_string(&v).unwrap();
-            s.push('\n');
-            w.write_all(s.as_bytes()).await.unwrap();
-            w.flush().await.unwrap();
-        }
-
-        async fn recv_for_id(
-            reader: &mut BufReader<tokio::io::ReadHalf<tokio::io::DuplexStream>>,
-            id: i64,
-        ) -> serde_json::Value {
-            loop {
-                let mut line = String::new();
-                let n = reader.read_line(&mut line).await.unwrap();
-                assert!(n > 0, "server closed connection");
-                let v: serde_json::Value = serde_json::from_str(line.trim()).unwrap();
-                if v.get("id").and_then(|x| x.as_i64()) == Some(id) {
-                    return v;
-                }
-            }
-        }
-
-        // initialize
-        send(
-            &mut client_write,
-            json!({
-                "jsonrpc": "2.0",
-                "id": 1,
-                "method": "initialize",
-                "params": {
-                    "protocolVersion": "2025-03-26",
-                    "capabilities": {},
-                    "clientInfo": {"name": "grove-test", "version": "0"}
-                }
-            }),
-        )
-        .await;
-        let init_resp = recv_for_id(&mut reader, 1).await;
-        assert!(init_resp.get("result").is_some());
-
-        // notifications/initialized
-        send(
-            &mut client_write,
-            json!({"jsonrpc": "2.0", "method": "notifications/initialized"}),
-        )
-        .await;
-
-        // tools/call: grove_add_project_by_path
-        send(
-            &mut client_write,
-            json!({
-                "jsonrpc": "2.0",
-                "id": 2,
-                "method": "tools/call",
-                "params": {
-                    "name": "grove_add_project_by_path",
-                    "arguments": {"path": repo.to_string_lossy()}
-                }
-            }),
-        )
-        .await;
-        let add_resp = recv_for_id(&mut reader, 2).await;
+        let add_resp = client
+            .call_tool(
+                2,
+                "grove_add_project_by_path",
+                json!({"path": repo.to_string_lossy()}),
+            )
+            .await;
         let add_text = add_resp["result"]["content"][0]["text"].as_str().unwrap();
         let add_json: serde_json::Value = serde_json::from_str(add_text).unwrap();
         assert_eq!(add_json["success"].as_bool(), Some(true));
         let project_id = add_json["project_id"].as_str().unwrap().to_string();
 
-        // tools/call: grove_create_task
-        send(
-            &mut client_write,
-            json!({
-                "jsonrpc": "2.0",
-                "id": 3,
-                "method": "tools/call",
-                "params": {
-                    "name": "grove_create_task",
-                    "arguments": {"project_id": project_id, "name": "mcp smoke task"}
-                }
-            }),
-        )
-        .await;
-        let create_resp = recv_for_id(&mut reader, 3).await;
+        let create_resp = client
+            .call_tool(
+                3,
+                "grove_create_task",
+                json!({"project_id": project_id, "name": "mcp smoke task"}),
+            )
+            .await;
         let create_text = create_resp["result"]["content"][0]["text"]
             .as_str()
             .unwrap();
@@ -1537,81 +1780,27 @@ mod tests {
         assert_eq!(create_json["success"].as_bool(), Some(true));
         assert!(create_json["task"]["task_id"].as_str().is_some());
 
-        // Close client; server should exit.
-        client_write.shutdown().await.unwrap();
-        drop(client_write);
-        drop(reader);
-        tokio::time::timeout(std::time::Duration::from_secs(3), server_task)
-            .await
-            .expect("server did not exit")
-            .expect("server task join failed")
-            .expect("server returned error");
-
-        if let Some(v) = old_home {
-            std::env::set_var("HOME", v);
-        } else {
-            std::env::remove_var("HOME");
-        }
+        client.shutdown().await;
+        drop(env);
         let _ = std::fs::remove_dir_all(&temp_home);
     }
 
     #[tokio::test(flavor = "current_thread")]
     async fn mcp_management_tools_rejected_inside_task_context() {
-        use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-
         let _guard = TEST_LOCK.get_or_init(|| Mutex::new(())).lock().await;
 
         let temp_home = unique_temp_dir("grove-mcp-home");
         std::fs::create_dir_all(&temp_home).unwrap();
 
-        let old_home = std::env::var("HOME").ok();
-        std::env::set_var("HOME", &temp_home);
+        let mut env = EnvGuard::new();
+        env.set("HOME", temp_home.to_string_lossy().as_ref());
+        clear_git_env(&mut env);
 
         let repo = temp_home.join("repo");
         init_git_repo(&repo);
 
-        let old_task_id = std::env::var("GROVE_TASK_ID").ok();
-        let old_project = std::env::var("GROVE_PROJECT").ok();
-        std::env::set_var("GROVE_TASK_ID", "task-1");
-        std::env::set_var("GROVE_PROJECT", repo.to_string_lossy().as_ref());
-
-        let (client_stream, server_stream) = tokio::io::duplex(64 * 1024);
-        let (server_read, server_write) = tokio::io::split(server_stream);
-
-        let server_task = tokio::spawn(async move {
-            let server = GroveMcpServer::new();
-            let service = server
-                .serve((server_read, server_write))
-                .await
-                .map_err(|e| e.to_string())?;
-            service.waiting().await.map_err(|e| e.to_string())?;
-            Ok::<(), String>(())
-        });
-
-        let (client_read, mut client_write) = tokio::io::split(client_stream);
-        let mut reader = BufReader::new(client_read);
-
-        async fn send(w: &mut (impl AsyncWriteExt + Unpin), v: serde_json::Value) {
-            let mut s = serde_json::to_string(&v).unwrap();
-            s.push('\n');
-            w.write_all(s.as_bytes()).await.unwrap();
-            w.flush().await.unwrap();
-        }
-
-        async fn recv_for_id(
-            reader: &mut BufReader<tokio::io::ReadHalf<tokio::io::DuplexStream>>,
-            id: i64,
-        ) -> serde_json::Value {
-            loop {
-                let mut line = String::new();
-                let n = reader.read_line(&mut line).await.unwrap();
-                assert!(n > 0, "server closed connection");
-                let v: serde_json::Value = serde_json::from_str(line.trim()).unwrap();
-                if v.get("id").and_then(|x| x.as_i64()) == Some(id) {
-                    return v;
-                }
-            }
-        }
+        env.set("GROVE_TASK_ID", "task-1");
+        env.set("GROVE_PROJECT", repo.to_string_lossy().as_ref());
 
         fn assert_tool_rejected(resp: &serde_json::Value) {
             assert!(
@@ -1626,114 +1815,313 @@ mod tests {
             );
         }
 
-        send(
-            &mut client_write,
-            json!({
-                "jsonrpc": "2.0",
-                "id": 1,
-                "method": "initialize",
-                "params": {
-                    "protocolVersion": "2025-03-26",
-                    "capabilities": {},
-                    "clientInfo": {"name": "grove-test", "version": "0"}
-                }
-            }),
-        )
-        .await;
-        let init_resp = recv_for_id(&mut reader, 1).await;
-        assert!(init_resp.get("result").is_some());
+        let mut client = McpTestClient::start().await;
+        client.handshake().await;
 
-        send(
-            &mut client_write,
-            json!({"jsonrpc": "2.0", "method": "notifications/initialized"}),
-        )
-        .await;
-
-        send(
-            &mut client_write,
-            json!({
-                "jsonrpc": "2.0",
-                "id": 2,
-                "method": "tools/call",
-                "params": {
-                    "name": "grove_add_project_by_path",
-                    "arguments": {"path": repo.to_string_lossy()}
-                }
-            }),
-        )
-        .await;
-        let resp_2 = recv_for_id(&mut reader, 2).await;
+        let resp_2 = client
+            .call_tool(
+                2,
+                "grove_add_project_by_path",
+                json!({"path": repo.to_string_lossy()}),
+            )
+            .await;
         assert_tool_rejected(&resp_2);
 
-        send(
-            &mut client_write,
-            json!({
-                "jsonrpc": "2.0",
-                "id": 3,
-                "method": "tools/call",
-                "params": {"name": "grove_list_projects", "arguments": {}}
-            }),
-        )
-        .await;
-        let resp_3 = recv_for_id(&mut reader, 3).await;
+        let resp_3 = client.call_tool(3, "grove_list_projects", json!({})).await;
         assert_tool_rejected(&resp_3);
 
-        send(
-            &mut client_write,
-            json!({
-                "jsonrpc": "2.0",
-                "id": 4,
-                "method": "tools/call",
-                "params": {
-                    "name": "grove_create_task",
-                    "arguments": {"project_id": "deadbeef", "name": "task"}
-                }
-            }),
-        )
-        .await;
-        let resp_4 = recv_for_id(&mut reader, 4).await;
+        let resp_4 = client
+            .call_tool(
+                4,
+                "grove_create_task",
+                json!({"project_id": "deadbeef", "name": "task"}),
+            )
+            .await;
         assert_tool_rejected(&resp_4);
 
-        send(
-            &mut client_write,
-            json!({
-                "jsonrpc": "2.0",
-                "id": 5,
-                "method": "tools/call",
-                "params": {
-                    "name": "grove_list_tasks",
-                    "arguments": {"project_id": "deadbeef"}
-                }
-            }),
-        )
-        .await;
-        let resp_5 = recv_for_id(&mut reader, 5).await;
+        let resp_5 = client
+            .call_tool(5, "grove_list_tasks", json!({"project_id": "deadbeef"}))
+            .await;
         assert_tool_rejected(&resp_5);
 
-        client_write.shutdown().await.unwrap();
-        drop(client_write);
-        drop(reader);
-        tokio::time::timeout(std::time::Duration::from_secs(3), server_task)
-            .await
-            .expect("server did not exit")
-            .expect("server task join failed")
-            .expect("server returned error");
+        client.shutdown().await;
+        drop(env);
+        let _ = std::fs::remove_dir_all(&temp_home);
+    }
 
-        if let Some(v) = old_task_id {
-            std::env::set_var("GROVE_TASK_ID", v);
-        } else {
-            std::env::remove_var("GROVE_TASK_ID");
+    #[tokio::test(flavor = "current_thread")]
+    async fn mcp_grove_status_returns_full_context() {
+        let _guard = TEST_LOCK.get_or_init(|| Mutex::new(())).lock().await;
+
+        let temp_home = unique_temp_dir("grove-mcp-home");
+        std::fs::create_dir_all(&temp_home).unwrap();
+
+        let mut env = EnvGuard::new();
+        env.set("HOME", temp_home.to_string_lossy().as_ref());
+        clear_git_env(&mut env);
+
+        let repo = temp_home.join("repo");
+        init_git_repo(&repo);
+
+        env.set("GROVE_TASK_ID", "my-task");
+        env.set("GROVE_PROJECT", repo.to_string_lossy().as_ref());
+        env.set("GROVE_TASK_NAME", "My Task");
+        env.set("GROVE_BRANCH", "feature/my-task");
+        env.set("GROVE_TARGET", "main");
+        env.set("GROVE_PROJECT_NAME", "test-project");
+
+        let mut client = McpTestClient::start().await;
+        client.handshake().await;
+
+        // grove_status should return all task context fields
+        let resp = client.call_tool(2, "grove_status", json!({})).await;
+        let text = resp["result"]["content"][0]["text"].as_str().unwrap();
+        let status: serde_json::Value = serde_json::from_str(text).unwrap();
+
+        assert_eq!(status["in_grove_task"].as_bool(), Some(true));
+        assert_eq!(status["task_id"].as_str(), Some("my-task"));
+        assert_eq!(status["task_name"].as_str(), Some("My Task"));
+        assert_eq!(status["branch"].as_str(), Some("feature/my-task"));
+        assert_eq!(status["target"].as_str(), Some("main"));
+        assert_eq!(status["project"].as_str(), Some("test-project"));
+
+        client.shutdown().await;
+        drop(env);
+        let _ = std::fs::remove_dir_all(&temp_home);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn mcp_execution_tools_roundtrip() {
+        let _guard = TEST_LOCK.get_or_init(|| Mutex::new(())).lock().await;
+
+        let temp_home = unique_temp_dir("grove-mcp-home");
+        std::fs::create_dir_all(&temp_home).unwrap();
+
+        let mut env = EnvGuard::new();
+        env.set("HOME", temp_home.to_string_lossy().as_ref());
+        clear_git_env(&mut env);
+
+        let repo = temp_home.join("repo");
+        init_git_repo(&repo);
+
+        // Register project — use the canonical path returned by git
+        let add = add_project_by_path_json(repo.to_string_lossy().as_ref());
+        assert_eq!(add["success"].as_bool(), Some(true));
+        let project_id = add["project_id"].as_str().unwrap().to_string();
+        let canonical_repo = add["path"].as_str().unwrap().to_string();
+        let project_key = workspace::project_hash(&canonical_repo);
+
+        let created = create_task_json(&CreateTaskParams {
+            project_id,
+            name: "Roundtrip Task".to_string(),
+        });
+        assert_eq!(created["success"].as_bool(), Some(true));
+        let task_id = created["task"]["task_id"].as_str().unwrap().to_string();
+
+        env.set("GROVE_TASK_ID", &task_id);
+        env.set("GROVE_PROJECT", &canonical_repo);
+
+        let mut client = McpTestClient::start().await;
+        client.handshake().await;
+
+        // --- grove_read_notes: no notes exist → friendly message ---
+        let resp = client.call_tool(2, "grove_read_notes", json!({})).await;
+        let text = resp["result"]["content"][0]["text"].as_str().unwrap();
+        assert_eq!(text, "No notes yet.");
+
+        // --- grove_read_notes: save notes, then read back ---
+        notes::save_notes(&project_key, &task_id, "Remember to add tests").unwrap();
+        let resp = client.call_tool(3, "grove_read_notes", json!({})).await;
+        let text = resp["result"]["content"][0]["text"].as_str().unwrap();
+        assert_eq!(text, "Remember to add tests");
+
+        // --- grove_add_comment: project-level → success ---
+        let resp = client
+            .call_tool(
+                4,
+                "grove_add_comment",
+                json!({
+                    "comments": [{"comment_type": "project", "content": "Needs more tests"}]
+                }),
+            )
+            .await;
+        let text = resp["result"]["content"][0]["text"].as_str().unwrap();
+        let add_result: serde_json::Value = serde_json::from_str(text).unwrap();
+        assert_eq!(add_result["created"].as_array().unwrap().len(), 1);
+        let comment_id = add_result["created"][0]["comment_id"].as_u64().unwrap();
+        assert_eq!(add_result["created"][0]["type"].as_str(), Some("project"));
+
+        // --- grove_add_comment: inline missing file_path → error ---
+        let resp = client
+            .call_tool(
+                5,
+                "grove_add_comment",
+                json!({
+                    "comments": [{"comment_type": "inline", "content": "fix this", "start_line": 1}]
+                }),
+            )
+            .await;
+        assert!(
+            resp.get("error").is_some(),
+            "expected error for inline comment without file_path, got: {}",
+            serde_json::to_string(&resp).unwrap()
+        );
+
+        // --- grove_read_review: returns the created comment ---
+        let resp = client.call_tool(6, "grove_read_review", json!({})).await;
+        let text = resp["result"]["content"][0]["text"].as_str().unwrap();
+        let review: serde_json::Value = serde_json::from_str(text).unwrap();
+        assert_eq!(review["open_count"].as_u64(), Some(1));
+        assert_eq!(
+            review["comments"][0]["content"].as_str(),
+            Some("Needs more tests")
+        );
+        assert_eq!(review["comments"][0]["type"].as_str(), Some("project"));
+
+        // --- grove_reply_review: reply to existing comment → success ---
+        let resp = client
+            .call_tool(
+                7,
+                "grove_reply_review",
+                json!({
+                    "replies": [{"comment_id": comment_id, "message": "Done, added tests"}]
+                }),
+            )
+            .await;
+        let text = resp["result"]["content"][0]["text"].as_str().unwrap();
+        let reply_result: serde_json::Value = serde_json::from_str(text).unwrap();
+        assert_eq!(reply_result["replies"][0]["success"].as_bool(), Some(true));
+
+        // --- grove_reply_review: empty replies → error ---
+        let resp = client
+            .call_tool(8, "grove_reply_review", json!({"replies": []}))
+            .await;
+        assert!(
+            resp.get("error").is_some(),
+            "expected error for empty replies array"
+        );
+
+        // --- grove_reply_review: nonexistent comment → error ---
+        let resp = client
+            .call_tool(
+                9,
+                "grove_reply_review",
+                json!({"replies": [{"comment_id": 9999, "message": "hello"}]}),
+            )
+            .await;
+        assert!(
+            resp.get("error").is_some(),
+            "expected error for reply to nonexistent comment"
+        );
+
+        client.shutdown().await;
+        drop(env);
+        let _ = std::fs::remove_dir_all(&temp_home);
+    }
+
+    /// Env vars point to a project/task that was never registered or created.
+    /// Write operations (add_comment, reply_review) must reject with clear errors.
+    /// Read operations (read_notes, read_review) degrade gracefully.
+    #[tokio::test(flavor = "current_thread")]
+    async fn mcp_execution_tools_with_nonexistent_task() {
+        let _guard = TEST_LOCK.get_or_init(|| Mutex::new(())).lock().await;
+
+        let temp_home = unique_temp_dir("grove-mcp-home");
+        std::fs::create_dir_all(&temp_home).unwrap();
+
+        let mut env = EnvGuard::new();
+        env.set("HOME", temp_home.to_string_lossy().as_ref());
+        clear_git_env(&mut env);
+
+        // Point to a directory that exists but was never registered as a project.
+        // GROVE_TASK_ID refers to a task that was never created.
+        let fake_project = temp_home.join("not-a-project");
+        std::fs::create_dir_all(&fake_project).unwrap();
+        env.set("GROVE_TASK_ID", "ghost-task");
+        env.set("GROVE_PROJECT", fake_project.to_string_lossy().as_ref());
+
+        let mut client = McpTestClient::start().await;
+        client.handshake().await;
+
+        fn assert_error_contains(resp: &serde_json::Value, expected: &str) {
+            assert!(
+                resp.get("error").is_some(),
+                "expected error, got: {}",
+                serde_json::to_string(resp).unwrap()
+            );
+            let err_json = serde_json::to_string(&resp["error"]).unwrap();
+            assert!(
+                err_json.contains(expected),
+                "expected error containing '{}', got: {}",
+                expected,
+                err_json
+            );
         }
-        if let Some(v) = old_project {
-            std::env::set_var("GROVE_PROJECT", v);
-        } else {
-            std::env::remove_var("GROVE_PROJECT");
-        }
-        if let Some(v) = old_home {
-            std::env::set_var("HOME", v);
-        } else {
-            std::env::remove_var("HOME");
-        }
+
+        // grove_read_notes: no data on disk → graceful message, not a crash
+        let resp = client.call_tool(2, "grove_read_notes", json!({})).await;
+        let text = resp["result"]["content"][0]["text"].as_str().unwrap();
+        assert_eq!(text, "No notes yet.");
+
+        // grove_read_review: no data on disk → graceful message
+        let resp = client.call_tool(3, "grove_read_review", json!({})).await;
+        let text = resp["result"]["content"][0]["text"].as_str().unwrap();
+        assert_eq!(text, "No code review comments yet.");
+
+        // grove_reply_review: project not registered → rejected
+        let resp = client
+            .call_tool(
+                4,
+                "grove_reply_review",
+                json!({"replies": [{"comment_id": 1, "message": "hi"}]}),
+            )
+            .await;
+        assert_error_contains(&resp, "Project not found");
+
+        // grove_add_comment: project not registered → rejected (no orphan data)
+        let resp = client
+            .call_tool(
+                5,
+                "grove_add_comment",
+                json!({
+                    "comments": [{"comment_type": "project", "content": "orphan comment"}]
+                }),
+            )
+            .await;
+        assert_error_contains(&resp, "Project not found");
+
+        // --- Now register project but DON'T create the task ---
+        let repo = temp_home.join("real-repo");
+        init_git_repo(&repo);
+        let add = add_project_by_path_json(repo.to_string_lossy().as_ref());
+        let canonical_repo = add["path"].as_str().unwrap().to_string();
+        env.set("GROVE_PROJECT", &canonical_repo);
+        // GROVE_TASK_ID still points to "ghost-task" which doesn't exist
+
+        // grove_add_comment: project exists but task doesn't → rejected
+        let resp = client
+            .call_tool(
+                6,
+                "grove_add_comment",
+                json!({
+                    "comments": [{"comment_type": "project", "content": "orphan comment"}]
+                }),
+            )
+            .await;
+        assert_error_contains(&resp, "Task not found");
+
+        // grove_reply_review: project exists but task doesn't → rejected
+        let resp = client
+            .call_tool(
+                7,
+                "grove_reply_review",
+                json!({"replies": [{"comment_id": 1, "message": "hi"}]}),
+            )
+            .await;
+        assert_error_contains(&resp, "Task not found");
+
+        client.shutdown().await;
+        drop(env);
         let _ = std::fs::remove_dir_all(&temp_home);
     }
 }
