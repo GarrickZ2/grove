@@ -11,6 +11,7 @@ import { AgentAvatar } from "../../../Review/AgentAvatar";
 type ReviewStatus = "open" | "resolved" | "outdated";
 
 interface CommentsTabProps {
+  projectId?: string;
   task: Task;
 }
 
@@ -141,8 +142,9 @@ function ReviewCommentCard({ comment }: { comment: ReviewCommentEntry }) {
 
 type FilterType = "all" | "open" | "resolved";
 
-export function CommentsTab({ task }: CommentsTabProps) {
+export function CommentsTab({ projectId, task }: CommentsTabProps) {
   const { selectedProject } = useProject();
+  const resolvedProjectId = projectId || selectedProject?.id;
   const [comments, setComments] = useState<ReviewCommentEntry[]>([]);
   const [openCount, setOpenCount] = useState(0);
   const [resolvedCount, setResolvedCount] = useState(0);
@@ -151,11 +153,11 @@ export function CommentsTab({ task }: CommentsTabProps) {
   const [filter, setFilter] = useState<FilterType>("all");
 
   const loadComments = useCallback(async () => {
-    if (!selectedProject) return;
+    if (!resolvedProjectId) return;
 
     try {
       setIsLoading(true);
-      const response = await getReviewComments(selectedProject.id, task.id);
+      const response = await getReviewComments(resolvedProjectId, task.id);
       setComments(response.comments);
       setOpenCount(response.open_count);
       setResolvedCount(response.resolved_count);
@@ -166,7 +168,7 @@ export function CommentsTab({ task }: CommentsTabProps) {
     } finally {
       setIsLoading(false);
     }
-  }, [selectedProject, task.id]);
+  }, [resolvedProjectId, task.id]);
 
   useEffect(() => {
     loadComments();

@@ -104,11 +104,11 @@ export function TaskInfoPanel({
       case "stats":
         return <StatsTab projectId={projectId} task={task} />;
       case "git":
-        return <GitTab task={task} />;
+        return <GitTab projectId={projectId} task={task} />;
       case "notes":
-        return <NotesTab task={task} />;
+        return <NotesTab projectId={projectId} task={task} />;
       case "comments":
-        return <CommentsTab task={task} />;
+        return <CommentsTab projectId={projectId} task={task} />;
     }
   };
 
