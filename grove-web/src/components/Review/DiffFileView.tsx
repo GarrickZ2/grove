@@ -4,11 +4,21 @@ import { getFileContent } from '../../api/review';
 import type { ReviewCommentEntry } from '../../api/tasks';
 import type { CommentAnchor } from './DiffReviewPage';
 import { CommentCard, CommentForm, ReplyForm } from './InlineComment';
-import { ChevronRight, ChevronDown, ChevronUp, Copy, Check, MessageSquare, ChevronsUpDown } from 'lucide-react';
+import { ChevronRight, ChevronDown, ChevronUp, Copy, Check, MessageSquare, ChevronsUpDown, Eye, FileDiff } from 'lucide-react';
 import { detectLanguage, highlightLines } from './syntaxHighlight';
 import { GutterAvatar } from './AgentAvatar';
 import { useFileMention } from '../../hooks';
 import { FileMentionDropdown } from '../ui';
+import { MarkdownRenderer } from '../ui/MarkdownRenderer';
+import { KeyBadge } from '../ui/KeyBadge';
+
+type MarkdownPreviewMode = 'diff' | 'diff-preview' | 'full-preview';
+type MarkdownPreviewBlock = {
+  id: string;
+  kind: 'insert' | 'delete' | 'context';
+  content: string;
+  hunkHeader: string;
+};
 
 // ============================================================================
 // Types for context line expansion
@@ -167,6 +177,8 @@ interface DiffFileViewProps {
   file: DiffFile;
   viewType: 'unified' | 'split';
   isActive: boolean;
+  markdownPreviewMode?: MarkdownPreviewMode;
+  onMarkdownPreviewModeChange?: (filePath: string, mode: MarkdownPreviewMode) => void;
   onVisible?: () => void;
   comments?: ReviewCommentEntry[];
   commentFormAnchor?: CommentAnchor | null;
@@ -211,6 +223,8 @@ export function DiffFileView({
   file,
   viewType,
   isActive,
+  markdownPreviewMode,
+  onMarkdownPreviewModeChange,
   onVisible,
   comments = [],
   commentFormAnchor,
@@ -378,6 +392,13 @@ export function DiffFileView({
     return () => observer.disconnect();
   }, [onVisible, viewMode, fullFileContent, isLoadingFullFile, onRequestFullFile, file.new_path]);
 
+  useEffect(() => {
+    if (markdownPreviewMode !== 'full-preview') return;
+    if (file.is_binary) return;
+    if (fullFileContent || isLoadingFullFile || !onRequestFullFile) return;
+    onRequestFullFile(file.new_path);
+  }, [markdownPreviewMode, file.is_binary, fullFileContent, isLoadingFullFile, onRequestFullFile, file.new_path]);
+
   const badgeClass = `diff-file-badge ${file.change_type}`;
 
   const language = useMemo(() => detectLanguage(file.new_path), [file.new_path]);
@@ -388,6 +409,42 @@ export function DiffFileView({
       return highlightLines(rawLines, language);
     });
   }, [file.hunks, language]);
+
+  const markdownPreviewBlocks = useMemo<MarkdownPreviewBlock[]>(() => {
+    if (!markdownPreviewMode || markdownPreviewMode !== 'diff-preview' || file.is_binary) return [];
+    const blocks: MarkdownPreviewBlock[] = [];
+    file.hunks.forEach((hunk, hunkIndex) => {
+      let currentKind: MarkdownPreviewBlock['kind'] | null = null;
+      let currentLines: string[] = [];
+      const pushCurrent = () => {
+        if (!currentKind) return;
+        const content = currentLines.join('\n');
+        if (!content.trim()) return;
+        blocks.push({
+          id: `${hunkIndex}-${blocks.length}`,
+          kind: currentKind,
+          content,
+          hunkHeader: hunk.header,
+        });
+      };
+      for (const line of hunk.lines) {
+        const kind: MarkdownPreviewBlock['kind'] = line.line_type === 'insert'
+          ? 'insert'
+          : line.line_type === 'delete'
+            ? 'delete'
+            : 'context';
+        if (currentKind === kind) {
+          currentLines.push(line.content);
+        } else {
+          pushCurrent();
+          currentKind = kind;
+          currentLines = [line.content];
+        }
+      }
+      pushCurrent();
+    });
+    return blocks;
+  }, [markdownPreviewMode, file.hunks, file.is_binary]);
 
   // Filter file-level comments for this file
   const fileComments = useMemo(() => {
@@ -645,73 +702,103 @@ export function DiffFileView({
 
   return (
     <div ref={ref} className="diff-file-section" id={`diff-file-${encodeURIComponent(file.new_path)}`} onMouseDown={handleMouseDown} onMouseUp={handleMouseUp}>
-      {/* File header */}
       <div className={`diff-file-header ${isActive ? 'ring-1 ring-[var(--color-highlight)]' : ''}`}>
-        {onToggleCollapse && (
-          <button
-            className="diff-file-collapse-btn"
-            onClick={() => onToggleCollapse(file.new_path)}
-            title={isCollapsed ? 'Expand file' : 'Collapse file'}
-          >
-            {isCollapsed ? (
-              <ChevronRight style={{ width: 14, height: 14 }} />
-            ) : (
-              <ChevronDown style={{ width: 14, height: 14 }} />
-            )}
-          </button>
-        )}
-        <span className={badgeClass}>
-          {file.change_type === 'added' ? 'A' : file.change_type === 'deleted' ? 'D' : file.change_type === 'renamed' ? 'R' : 'M'}
-        </span>
-        <span className="diff-file-path">{file.new_path}</span>
-        <button className="diff-file-copy-btn" onClick={handleCopyPath} title="Copy file path">
-          {copied ? (
-            <Check style={{ width: 12, height: 12, color: 'var(--color-success)' }} />
-          ) : (
-            <Copy style={{ width: 12, height: 12 }} />
-          )}
-        </button>
-        <span className="diff-file-header-right">
-          {onAddFileComment && (
+        <div className="diff-file-header-top">
+          {onToggleCollapse && (
             <button
-              className="diff-file-comment-btn"
-              onClick={() => onAddFileComment(file.new_path)}
-              title="Add comment on file"
+              className="diff-file-collapse-btn"
+              onClick={() => onToggleCollapse(file.new_path)}
+              title={isCollapsed ? 'Expand file' : 'Collapse file'}
             >
-              <MessageSquare style={{ width: 14, height: 14 }} />
-              <span>Comment on file</span>
+              {isCollapsed ? (
+                <ChevronRight style={{ width: 14, height: 14 }} />
+              ) : (
+                <ChevronDown style={{ width: 14, height: 14 }} />
+              )}
             </button>
           )}
-          {commentCount && commentCount.total > 0 && (
-            <span className="diff-file-comment-count">
-              <MessageSquare style={{ width: 12, height: 12 }} />
-              {commentCount.unresolved > 0 ? (
-                <span className="diff-file-unresolved">{commentCount.unresolved} unresolved</span>
-              ) : (
-                <span>{commentCount.total} resolved</span>
-              )}
-            </span>
-          )}
-          <span className="diff-sidebar-item-stats">
-            {file.additions > 0 && <span className="stat-add">+{file.additions}</span>}
-            {file.deletions > 0 && <span className="stat-del">-{file.deletions}</span>}
+          <span className={badgeClass}>
+            {file.change_type === 'added' ? 'A' : file.change_type === 'deleted' ? 'D' : file.change_type === 'renamed' ? 'R' : 'M'}
           </span>
-          {onToggleViewed && (
-            <label className="diff-file-viewed-label">
-              <input
-                type="checkbox"
-                className="diff-file-viewed-checkbox"
-                checked={viewedStatus !== 'none'}
-                onChange={() => onToggleViewed(file.new_path)}
-              />
-              {viewedStatus === 'updated' ? (
-                <span className="diff-file-viewed-updated">Updated</span>
-              ) : (
-                'Viewed'
-              )}
-            </label>
-          )}
-        </span>
+          <span className="diff-file-path">{file.new_path}</span>
+          <button className="diff-file-copy-btn" onClick={handleCopyPath} title="Copy file path">
+            {copied ? (
+              <Check style={{ width: 12, height: 12, color: 'var(--color-success)' }} />
+            ) : (
+              <Copy style={{ width: 12, height: 12 }} />
+            )}
+          </button>
+          <span className="diff-file-header-right">
+            {onAddFileComment && (
+              <button
+                className="diff-file-comment-btn"
+                onClick={() => onAddFileComment(file.new_path)}
+                title="Add comment on file"
+              >
+                <MessageSquare style={{ width: 14, height: 14 }} />
+                <span>Comment on file</span>
+              </button>
+            )}
+            {commentCount && commentCount.total > 0 && (
+              <span className="diff-file-comment-count">
+                <MessageSquare style={{ width: 12, height: 12 }} />
+                {commentCount.unresolved > 0 ? (
+                  <span className="diff-file-unresolved">{commentCount.unresolved} unresolved</span>
+                ) : (
+                  <span>{commentCount.total} resolved</span>
+                )}
+              </span>
+            )}
+            <span className="diff-sidebar-item-stats">
+              {file.additions > 0 && <span className="stat-add">+{file.additions}</span>}
+              {file.deletions > 0 && <span className="stat-del">-{file.deletions}</span>}
+            </span>
+            {onToggleViewed && (
+              <label className="diff-file-viewed-label">
+                <input
+                  type="checkbox"
+                  className="diff-file-viewed-checkbox"
+                  checked={viewedStatus !== 'none'}
+                  onChange={() => onToggleViewed(file.new_path)}
+                />
+                {viewedStatus === 'updated' ? (
+                  <span className="diff-file-viewed-updated">Updated</span>
+                ) : (
+                  'Viewed'
+                )}
+              </label>
+            )}
+          </span>
+        </div>
+
+        {markdownPreviewMode && onMarkdownPreviewModeChange ? (
+          <div className="diff-file-preview-mode">
+            <button
+              className={markdownPreviewMode === 'diff' ? 'active' : ''}
+              onClick={() => onMarkdownPreviewModeChange(file.new_path, 'diff')}
+            >
+              <FileDiff style={{ width: 14, height: 14 }} />
+              <span>Diff</span>
+              <KeyBadge className="ml-1 opacity-70">V</KeyBadge>
+            </button>
+            <button
+              className={markdownPreviewMode === 'diff-preview' ? 'active' : ''}
+              onClick={() => onMarkdownPreviewModeChange(file.new_path, 'diff-preview')}
+            >
+              <Eye style={{ width: 14, height: 14 }} />
+              <span>Diff Preview</span>
+              <KeyBadge className="ml-1 opacity-70">V</KeyBadge>
+            </button>
+            <button
+              className={markdownPreviewMode === 'full-preview' ? 'active' : ''}
+              onClick={() => onMarkdownPreviewModeChange(file.new_path, 'full-preview')}
+            >
+              <Eye style={{ width: 14, height: 14 }} />
+              <span>Full Preview</span>
+              <KeyBadge className="ml-1 opacity-70">V</KeyBadge>
+            </button>
+          </div>
+        ) : null}
       </div>
 
       {isCollapsed ? null : (
@@ -872,6 +959,36 @@ export function DiffFileView({
               />
             ) : (
               <div className="diff-error">Failed to load file content</div>
+            )
+          ) : markdownPreviewMode === 'full-preview' ? (
+            <div className="preview-markdown">
+              {isLoadingFullFile ? (
+                <div className="preview-loading">Loading latest content…</div>
+              ) : fullFileContent ? (
+                <MarkdownRenderer content={fullFileContent ?? ''} />
+              ) : (
+                <div className="preview-loading">Failed to load file content</div>
+              )}
+            </div>
+          ) : markdownPreviewMode === 'diff-preview' ? (
+            file.is_binary ? (
+              <div className="preview-loading">Binary file — preview unavailable</div>
+            ) : markdownPreviewBlocks.length > 0 ? (
+              <div className="preview-diff-blocks">
+                {markdownPreviewBlocks.map((block) => (
+                  <div key={block.id} className={`preview-diff-block ${block.kind}`}>
+                    <div className="preview-diff-block-header">
+                      <span className={`preview-diff-badge ${block.kind}`}>
+                        {block.kind === 'insert' ? 'Added' : block.kind === 'delete' ? 'Removed' : 'Context'}
+                      </span>
+                      <span className="preview-diff-hunk">{block.hunkHeader}</span>
+                    </div>
+                    <MarkdownRenderer content={block.content} />
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="preview-loading">No previewable changes</div>
             )
           ) : file.hunks.length === 0 ? (
             <div className="diff-binary">No content changes (mode/permissions only)</div>
@@ -2376,4 +2493,3 @@ function FullFileView({
     </table>
   );
 }
-
