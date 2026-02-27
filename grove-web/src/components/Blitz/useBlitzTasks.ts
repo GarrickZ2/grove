@@ -4,13 +4,11 @@ import { useNotifications } from "../../context";
 import { convertTaskResponse } from "../../utils/taskConvert";
 import type { BlitzTask } from "../../data/types";
 
-const POLL_INTERVAL = 10_000; // 10 seconds
-
 export function useBlitzTasks() {
   const [blitzTasks, setBlitzTasks] = useState<BlitzTask[]>([]);
   const [isLoading, setIsLoading] = useState(true);
-  const { getTaskNotification } = useNotifications();
-  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const { notifications, getTaskNotification } = useNotifications();
+  const initializedRef = useRef(false);
 
   const fetchAll = useCallback(async () => {
     try {
@@ -53,13 +51,19 @@ export function useBlitzTasks() {
     return b.task.updatedAt.getTime() - a.task.updatedAt.getTime();
   });
 
+  // Initial fetch
   useEffect(() => {
     fetchAll();
-    intervalRef.current = setInterval(fetchAll, POLL_INTERVAL);
-    return () => {
-      if (intervalRef.current) clearInterval(intervalRef.current);
-    };
   }, [fetchAll]);
+
+  // Refresh when notifications change (notifications already poll every 5s)
+  useEffect(() => {
+    if (!initializedRef.current) {
+      initializedRef.current = true;
+      return;
+    }
+    fetchAll();
+  }, [notifications, fetchAll]);
 
   return { blitzTasks: sortedTasks, isLoading, refresh: fetchAll };
 }

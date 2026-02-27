@@ -59,6 +59,34 @@ export interface TaskOperationsConfig {
 }
 
 /**
+ * Dirty branch error info for modal display
+ */
+export interface DirtyBranchError {
+  operation: "Sync" | "Merge";
+  branch: string;
+  isWorktree: boolean;
+}
+
+/**
+ * Parse backend error message into a structured DirtyBranchError, or null if not a dirty-branch error.
+ */
+function parseDirtyBranchError(
+  message: string,
+  operation: "Sync" | "Merge",
+  taskBranch: string,
+): DirtyBranchError | null {
+  if (message.includes("Worktree has uncommitted changes")) {
+    return { operation, branch: taskBranch, isWorktree: true };
+  }
+  // "Target branch 'main' has uncommitted changes" or "Cannot merge: 'main' has uncommitted changes"
+  const targetMatch = message.match(/['']([^'']+)[''].*has uncommitted changes/);
+  if (targetMatch) {
+    return { operation, branch: targetMatch[1], isWorktree: false };
+  }
+  return null;
+}
+
+/**
  * Task operations state
  */
 export interface TaskOperationsState {
@@ -89,6 +117,9 @@ export interface TaskOperationsState {
   // Clean
   showCleanConfirm: boolean;
   isDeleting: boolean;
+
+  // Dirty branch error
+  dirtyBranchError: DirtyBranchError | null;
 }
 
 /**
@@ -127,6 +158,9 @@ export interface TaskOperationsHandlers {
   handleClean: () => void;
   handleCleanConfirm: () => Promise<void>;
   handleCleanCancel: () => void;
+
+  // Dirty branch error
+  handleDirtyBranchErrorClose: () => void;
 }
 
 /**
@@ -173,6 +207,9 @@ export function useTaskOperations(
   // Clean state
   const [showCleanConfirm, setShowCleanConfirm] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
+
+  // Dirty branch error state
+  const [dirtyBranchError, setDirtyBranchError] = useState<DirtyBranchError | null>(null);
 
   // --- Commit handlers ---
   const handleCommit = useCallback(() => {
@@ -230,7 +267,12 @@ export function useTaskOperations(
           // Trigger post-merge archive
           onTaskMerged?.(selectedTask.id, selectedTask.name);
         } else {
-          onShowMessage(result.message || "Merge failed");
+          const dirty = parseDirtyBranchError(result.message || "", "Merge", selectedTask.branch);
+          if (dirty) {
+            setDirtyBranchError(dirty);
+          } else {
+            onShowMessage(result.message || "Merge failed");
+          }
         }
       } else {
         // Multiple commits, show dialog to choose method
@@ -259,7 +301,13 @@ export function useTaskOperations(
           // Trigger post-merge archive
           onTaskMerged?.(selectedTask.id, selectedTask.name);
         } else {
-          setMergeError(result.message || "Merge failed");
+          const dirty = parseDirtyBranchError(result.message || "", "Merge", selectedTask.branch);
+          if (dirty) {
+            setShowMergeDialog(false);
+            setDirtyBranchError(dirty);
+          } else {
+            setMergeError(result.message || "Merge failed");
+          }
         }
       } catch (err) {
         console.error("Failed to merge:", err);
@@ -343,9 +391,16 @@ export function useTaskOperations(
     try {
       setIsSyncing(true);
       const result = await apiSyncTask(projectId, selectedTask.id);
-      onShowMessage(result.message || (result.success ? "Synced successfully" : "Sync failed"));
       if (result.success) {
+        onShowMessage(result.message || "Synced successfully");
         await onRefresh();
+      } else {
+        const dirty = parseDirtyBranchError(result.message || "", "Sync", selectedTask.branch);
+        if (dirty) {
+          setDirtyBranchError(dirty);
+        } else {
+          onShowMessage(result.message || "Sync failed");
+        }
       }
     } catch (err) {
       console.error("Failed to sync:", err);
@@ -459,6 +514,11 @@ export function useTaskOperations(
     setShowCleanConfirm(false);
   }, []);
 
+  // --- Dirty branch error handler ---
+  const handleDirtyBranchErrorClose = useCallback(() => {
+    setDirtyBranchError(null);
+  }, []);
+
   const state: TaskOperationsState = {
     showCommitDialog,
     isCommitting,
@@ -474,6 +534,7 @@ export function useTaskOperations(
     isResetting,
     showCleanConfirm,
     isDeleting,
+    dirtyBranchError,
   };
 
   const handlers: TaskOperationsHandlers = {
@@ -496,6 +557,7 @@ export function useTaskOperations(
     handleClean,
     handleCleanConfirm,
     handleCleanCancel,
+    handleDirtyBranchErrorClose,
   };
 
   return [state, handlers];

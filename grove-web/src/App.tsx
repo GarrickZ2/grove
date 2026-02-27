@@ -28,12 +28,18 @@ function AppContent() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [hasExitedWelcome, setHasExitedWelcome] = useState(false);
   const [navigationData, setNavigationData] = useState<Record<string, unknown> | null>(null);
-  const { selectedProject, currentProjectId, isLoading, selectProject, projects, addProject } = useProject();
+  const { selectedProject, currentProjectId, isLoading, selectProject, projects, addProject, refreshProjects, refreshSelectedProject } = useProject();
   const [showAddProject, setShowAddProject] = useState(false);
   const [isAddingProject, setIsAddingProject] = useState(false);
   const [addProjectError, setAddProjectError] = useState<string | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const { isMobile } = useIsMobile();
+
+  const handleSwitchToZen = useCallback(() => {
+    setTasksMode("zen");
+    refreshProjects();
+    refreshSelectedProject();
+  }, [refreshProjects, refreshSelectedProject]);
 
   // Initialize agent configuration on app startup
   useEffect(() => {
@@ -256,7 +262,7 @@ function AppContent() {
                   exit={{ opacity: 0 }}
                   transition={{ duration: 0.2 }}
                 >
-                  <BlitzPage onSwitchToZen={() => setTasksMode("zen")} />
+                  <BlitzPage onSwitchToZen={handleSwitchToZen} />
                 </motion.div>
               ) : (
                 <motion.div
@@ -302,7 +308,7 @@ function AppContent() {
             exit={{ opacity: 0, x: 40 }}
             transition={{ duration: 0.3, ease: [0.25, 1, 0.5, 1] }}
           >
-            <BlitzPage onSwitchToZen={() => setTasksMode("zen")} />
+            <BlitzPage onSwitchToZen={handleSwitchToZen} />
           </motion.div>
         ) : (
           <motion.div
