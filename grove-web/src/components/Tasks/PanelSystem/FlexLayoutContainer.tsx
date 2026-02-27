@@ -479,21 +479,21 @@ export const FlexLayoutContainer = forwardRef<
       case 'git':
         return (
           <div style={{ display: 'flex', flexDirection: 'column', width: '100%', height: '100%', padding: '16px', overflow: 'auto' }}>
-            <GitTab task={task} />
+            <GitTab projectId={projectId} task={task} />
           </div>
         );
 
       case 'notes':
         return (
           <div style={{ display: 'flex', flexDirection: 'column', width: '100%', height: '100%', padding: '16px', overflow: 'auto' }}>
-            <NotesTab task={task} />
+            <NotesTab projectId={projectId} task={task} />
           </div>
         );
 
       case 'comments':
         return (
           <div style={{ display: 'flex', flexDirection: 'column', width: '100%', height: '100%', padding: '16px', overflow: 'auto' }}>
-            <CommentsTab task={task} />
+            <CommentsTab projectId={projectId} task={task} />
           </div>
         );
 

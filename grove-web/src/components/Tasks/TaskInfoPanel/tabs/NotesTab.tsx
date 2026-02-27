@@ -7,19 +7,21 @@ import { getNotes, updateNotes, getTaskFiles } from "../../../../api";
 import { buildMentionItems, filterMentionItems } from "../../../../utils/fileMention";
 
 interface NotesTabProps {
+  projectId?: string;
   task: Task;
 }
 
-export function NotesTab({ task }: NotesTabProps) {
+export function NotesTab({ projectId, task }: NotesTabProps) {
   const { selectedProject } = useProject();
+  const resolvedProjectId = projectId || selectedProject?.id;
   const [isEditing, setIsEditing] = useState(false);
   const [content, setContent] = useState("");
   const [originalContent, setOriginalContent] = useState("");
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const projectRef = useRef(selectedProject);
-  projectRef.current = selectedProject;
+  const resolvedProjectIdRef = useRef(resolvedProjectId);
+  resolvedProjectIdRef.current = resolvedProjectId;
 
   // @ mention state
   const [taskFiles, setTaskFiles] = useState<string[]>([]);
@@ -38,15 +40,15 @@ export function NotesTab({ task }: NotesTabProps) {
 
   // Only reload when task.id changes — not on project refreshes
   useEffect(() => {
-    const project = projectRef.current;
-    if (!project) return;
+    const pid = resolvedProjectIdRef.current;
+    if (!pid) return;
 
     let cancelled = false;
     setIsLoading(true);
     setError(null);
     setIsEditing(false);
 
-    getNotes(project.id, task.id)
+    getNotes(pid, task.id)
       .then((response) => {
         if (cancelled) return;
         setContent(response.content);
@@ -67,9 +69,9 @@ export function NotesTab({ task }: NotesTabProps) {
 
   // Load task files for @ mention
   useEffect(() => {
-    const project = projectRef.current;
-    if (!project) return;
-    getTaskFiles(project.id, task.id)
+    const pid = resolvedProjectIdRef.current;
+    if (!pid) return;
+    getTaskFiles(pid, task.id)
       .then((res) => setTaskFiles(res.files))
       .catch(() => {});
   }, [task.id]);
@@ -87,12 +89,12 @@ export function NotesTab({ task }: NotesTabProps) {
   }, [showFileMenu]);
 
   const handleSave = async () => {
-    if (!selectedProject) return;
+    if (!resolvedProjectId) return;
 
     try {
       setIsSaving(true);
       setError(null);
-      await updateNotes(selectedProject.id, task.id, content);
+      await updateNotes(resolvedProjectId, task.id, content);
       setOriginalContent(content);
       setIsEditing(false);
     } catch (err) {
