@@ -96,6 +96,8 @@ pub struct Worktree {
     pub created_at: DateTime<Utc>,
     /// 更新时间
     pub updated_at: DateTime<Utc>,
+    /// 创建来源: "agent" | "user" | ""
+    pub created_by: String,
 }
 
 /// 格式化相对时间

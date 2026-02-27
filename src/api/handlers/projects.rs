@@ -54,6 +54,7 @@ pub struct TaskResponse {
     pub updated_at: String,
     pub path: String,
     pub multiplexer: String,
+    pub created_by: String,
 }
 
 /// Commit response
@@ -152,6 +153,7 @@ fn worktree_to_response(wt: &crate::model::Worktree, _project_key: &str) -> Task
         updated_at: wt.updated_at.to_rfc3339(),
         path: wt.path.clone(),
         multiplexer: wt.multiplexer.clone(),
+        created_by: wt.created_by.clone(),
     }
 }
 

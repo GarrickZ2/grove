@@ -28,6 +28,7 @@ export interface TaskResponse {
   multiplexer: string;
   enableTerminal: boolean;
   enableChat: boolean;
+  created_by: string;
 }
 
 export interface TaskListResponse {
