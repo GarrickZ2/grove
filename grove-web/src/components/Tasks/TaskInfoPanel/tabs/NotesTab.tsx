@@ -21,6 +21,14 @@ export function NotesTab({ task }: NotesTabProps) {
   const projectRef = useRef(selectedProject);
   projectRef.current = selectedProject;
 
+  // Refs for auto-save on navigate away
+  const isEditingRef = useRef(isEditing);
+  isEditingRef.current = isEditing;
+  const contentRef = useRef(content);
+  contentRef.current = content;
+  const originalContentRef = useRef(originalContent);
+  originalContentRef.current = originalContent;
+
   // @ mention state
   const [taskFiles, setTaskFiles] = useState<string[]>([]);
   const [showFileMenu, setShowFileMenu] = useState(false);
@@ -62,7 +70,16 @@ export function NotesTab({ task }: NotesTabProps) {
         if (!cancelled) setIsLoading(false);
       });
 
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+      // Auto-save on navigate away (task switch or unmount)
+      if (isEditingRef.current && contentRef.current !== originalContentRef.current) {
+        const proj = projectRef.current;
+        if (proj) {
+          updateNotes(proj.id, task.id, contentRef.current).catch(() => {});
+        }
+      }
+    };
   }, [task.id]);
 
   // Load task files for @ mention
