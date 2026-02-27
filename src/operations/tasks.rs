@@ -306,6 +306,7 @@ pub fn create_task(
     target_branch: String,
     session_type: &str,
     autolink_patterns: &[String],
+    created_by: &str,
 ) -> Result<CreateTaskResult> {
     // 1. Generate identifiers
     let slug = tasks::to_slug(&task_name);
@@ -369,6 +370,7 @@ pub fn create_task(
         status: tasks::TaskStatus::Active,
         multiplexer: session_type.to_string(),
         session_name: session_name.clone(),
+        created_by: created_by.to_string(),
     };
 
     tasks::add_task(project_key, task.clone())?;

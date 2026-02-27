@@ -1288,6 +1288,7 @@ impl App {
             self.async_ops.target_branch.clone(),
             &self.config.default_session_type(),
             &autolink_patterns,
+            "user",
         ) {
             Ok(r) => r,
             Err(e) => {

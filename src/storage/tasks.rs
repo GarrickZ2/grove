@@ -56,6 +56,9 @@ pub struct Task {
     /// 持久化的 session name（Zellij 有 40 字符限制）
     #[serde(default)]
     pub session_name: String,
+    /// 创建来源: "agent" (MCP 创建) | "user" (TUI/Web 创建) | "" (旧数据)
+    #[serde(default)]
+    pub created_by: String,
 }
 
 fn default_multiplexer() -> String {
