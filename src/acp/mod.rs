@@ -43,6 +43,8 @@ pub struct AcpSessionHandle {
     pending_queue: Mutex<Vec<QueuedMessage>>,
     /// 队列暂停标志（用户正在编辑队列消息时暂停 auto-send）
     queue_paused: std::sync::atomic::AtomicBool,
+    /// 当前 agent mode id（用于 PlanFileUpdate 检测）
+    current_mode_id: Mutex<Option<String>>,
 }
 
 /// 发送给 ACP 后台任务的命令
@@ -123,6 +125,8 @@ pub enum AcpUpdate {
     AvailableCommands { commands: Vec<CommandInfo> },
     /// 待执行消息队列更新
     QueueUpdate { messages: Vec<QueuedMessage> },
+    /// Plan file 路径更新（Write 工具在 plan mode 下写入 .md 文件时触发）
+    PlanFileUpdate { path: String },
     /// 会话结束
     SessionEnded,
 }
@@ -294,6 +298,8 @@ struct GroveAcpClient {
     /// 文件快照缓存：tool_call_id → (abs_path, old_content_or_none)
     /// 用于 Write/Edit 工具调用时生成 diff（agent 不提供 content 时的 fallback）
     file_snapshots: Mutex<HashMap<String, (PathBuf, Option<String>)>>,
+    /// Write 工具的 tool_call_id → file_path（用于 PlanFileUpdate 检测）
+    write_tool_paths: Mutex<HashMap<String, String>>,
 }
 
 #[async_trait::async_trait(?Send)]
@@ -524,6 +530,24 @@ impl acp::Client for GroveAcpClient {
                     locations,
                 });
 
+                // 记录 Write 工具的 tool_call_id → file_path（用于 PlanFileUpdate 检测）
+                // 路径可能在第二个 ToolCall 事件才出现，所以每次有 locations 时更新
+                if tool_call.title.starts_with("Write") {
+                    if let Some(loc) = tool_call.locations.first() {
+                        self.write_tool_paths.lock().unwrap().insert(
+                            tool_call.tool_call_id.to_string(),
+                            loc.path.display().to_string(),
+                        );
+                    } else {
+                        // 第一个 ToolCall 可能没有 locations，先插入空路径占位
+                        self.write_tool_paths
+                            .lock()
+                            .unwrap()
+                            .entry(tool_call.tool_call_id.to_string())
+                            .or_default();
+                    }
+                }
+
                 // 缓存 Write/Edit 文件快照（locations 在第二个 ToolCall 事件才有路径）
                 let title = &tool_call.title;
                 if title.starts_with("Write") || title.starts_with("Edit") {
@@ -552,7 +576,7 @@ impl acp::Client for GroveAcpClient {
                     .as_ref()
                     .map(|s| format!("{:?}", s).to_lowercase())
                     .unwrap_or_default();
-                let locations = update
+                let locations: Vec<(String, Option<u32>)> = update
                     .fields
                     .locations
                     .as_ref()
@@ -589,10 +613,27 @@ impl acp::Client for GroveAcpClient {
 
                 self.handle.emit(AcpUpdate::ToolCallUpdate {
                     id: update.tool_call_id.to_string(),
-                    status,
+                    status: status.clone(),
                     content,
-                    locations,
+                    locations: locations.clone(),
                 });
+
+                // 检测 Plan File：Write 工具 completed 且在 plan mode 下写入 .md 文件
+                if is_completed {
+                    let tc_id = update.tool_call_id.to_string();
+                    let write_path = self.write_tool_paths.lock().unwrap().remove(&tc_id);
+                    if let Some(path) = write_path {
+                        if path.ends_with(".md") {
+                            let mode = self.handle.current_mode_id.lock().unwrap().clone();
+                            if mode
+                                .as_ref()
+                                .is_some_and(|m| m.to_lowercase().contains("plan"))
+                            {
+                                self.handle.emit(AcpUpdate::PlanFileUpdate { path });
+                            }
+                        }
+                    }
+                }
             }
             acp::SessionUpdate::UserMessageChunk(_) => {
                 // Intentionally ignored: Grove already emits UserMessage
@@ -600,9 +641,9 @@ impl acp::Client for GroveAcpClient {
                 // Processing this agent echo would duplicate every user message.
             }
             acp::SessionUpdate::CurrentModeUpdate(update) => {
-                self.handle.emit(AcpUpdate::ModeChanged {
-                    mode_id: update.current_mode_id.to_string(),
-                });
+                let mode_id = update.current_mode_id.to_string();
+                *self.handle.current_mode_id.lock().unwrap() = Some(mode_id.clone());
+                self.handle.emit(AcpUpdate::ModeChanged { mode_id });
             }
             acp::SessionUpdate::Plan(plan) => {
                 let entries: Vec<PlanEntryData> = plan
@@ -807,6 +848,7 @@ pub async fn get_or_start_session(
                     suppress_emit: std::sync::atomic::AtomicBool::new(false),
                     pending_queue: Mutex::new(Vec::new()),
                     queue_paused: std::sync::atomic::AtomicBool::new(false),
+                    current_mode_id: Mutex::new(None),
                 });
 
                 // 注册到全局表
@@ -922,6 +964,7 @@ async fn run_acp_session(
         chat_id: config.chat_id.clone(),
         adapter,
         file_snapshots: Mutex::new(HashMap::new()),
+        write_tool_paths: Mutex::new(HashMap::new()),
     };
 
     // 创建 ACP 连接
@@ -1106,6 +1149,9 @@ async fn run_acp_session(
         ));
     }
 
+    // 初始化 current_mode_id（用于 PlanFileUpdate 检测）
+    *handle.current_mode_id.lock().unwrap() = current_mode_id.clone();
+
     // 通知会话就绪
     handle.emit(AcpUpdate::SessionReady {
         session_id,
@@ -1172,6 +1218,8 @@ async fn run_acp_session(
                                     cancel_deadline.set(Some(tokio::time::Instant::now() + std::time::Duration::from_secs(10)));
                                 }
                                 AcpCommand::SetMode { mode_id } => {
+                                    *handle.current_mode_id.lock().unwrap() = Some(mode_id.clone());
+                                    handle.emit(AcpUpdate::ModeChanged { mode_id: mode_id.clone() });
                                     let _ = conn.set_session_mode(acp::SetSessionModeRequest::new(
                                         session_id_arc.clone(),
                                         acp::SessionModeId::new(mode_id),
@@ -1259,6 +1307,10 @@ async fn run_acp_session(
                 // Agent 空闲时收到 Cancel，忽略
             }
             AcpCommand::SetMode { mode_id } => {
+                *handle.current_mode_id.lock().unwrap() = Some(mode_id.clone());
+                handle.emit(AcpUpdate::ModeChanged {
+                    mode_id: mode_id.clone(),
+                });
                 let _ = conn
                     .set_session_mode(acp::SetSessionModeRequest::new(
                         session_id_arc.clone(),

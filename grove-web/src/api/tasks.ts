@@ -573,6 +573,13 @@ export async function getChatHistory(
 }
 
 /**
+ * Read a file by absolute path (for Plan File rendering)
+ */
+export async function readFile(path: string): Promise<{ path: string; content: string }> {
+  return apiClient.get(`/api/v1/read-file?path=${encodeURIComponent(path)}`);
+}
+
+/**
  * Take control of a remote session (kill the current owner)
  */
 export async function takeControl(

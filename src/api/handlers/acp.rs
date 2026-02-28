@@ -140,6 +140,9 @@ enum ServerMessage {
     QueueUpdate {
         messages: Vec<QueuedMessage>,
     },
+    PlanFileUpdate {
+        path: String,
+    },
     SessionEnded,
 }
 
@@ -288,6 +291,7 @@ impl From<AcpUpdate> for ServerMessage {
                     .collect(),
             },
             AcpUpdate::QueueUpdate { messages } => ServerMessage::QueueUpdate { messages },
+            AcpUpdate::PlanFileUpdate { path } => ServerMessage::PlanFileUpdate { path },
             AcpUpdate::SessionEnded => ServerMessage::SessionEnded,
         }
     }
@@ -670,8 +674,22 @@ pub async fn delete_chat(
     let session_key = format!("{}:{}:{}", project_key, task_id, chat_id);
     let _ = acp::kill_session(&session_key);
 
+    // Remove chat entry from chats.toml
     tasks::delete_chat_session(&project_key, &task_id, &chat_id)
         .map_err(|e| AcpError::Internal(e.to_string()))?;
+
+    // Clean up per-chat data directory (history.jsonl, session.json, etc.)
+    let chat_dir = crate::storage::grove_dir()
+        .join("projects")
+        .join(&project_key)
+        .join("tasks")
+        .join(&task_id)
+        .join("chats")
+        .join(&chat_id);
+    let _ = std::fs::remove_dir_all(&chat_dir);
+
+    // Clean up socket file
+    let _ = std::fs::remove_file(acp::sock_path(&project_key, &task_id, &chat_id));
 
     Ok(StatusCode::NO_CONTENT)
 }

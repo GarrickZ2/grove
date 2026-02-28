@@ -27,12 +27,13 @@ import {
   Globe,
   Terminal,
   Eye,
+  BookOpen,
 } from "lucide-react";
 import { Button, MarkdownRenderer, agentOptions, FileMentionDropdown } from "../../ui";
 import { buildMentionItems, filterMentionItems } from "../../../utils/fileMention";
 import type { Task } from "../../../data/types";
 import { getApiHost, appendHmacToUrl } from "../../../api/client";
-import { getConfig, listChats, createChat, updateChatTitle, deleteChat, getTaskFiles, checkCommands, getChatHistory, takeControl } from "../../../api";
+import { getConfig, listChats, createChat, updateChatTitle, deleteChat, getTaskFiles, checkCommands, getChatHistory, takeControl, readFile } from "../../../api";
 import type { ChatSessionResponse, CustomAgent } from "../../../api";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -120,6 +121,8 @@ interface PerChatState {
   agentLabel: string;
   agentIcon: React.ComponentType<{ size?: number; className?: string }> | null;
   promptCaps: PromptCaps;
+  planFilePath: string;
+  planFileContent: string;
 }
 
 function defaultPerChatState(): PerChatState {
@@ -136,6 +139,8 @@ function defaultPerChatState(): PerChatState {
     agentLabel: "Chat",
     agentIcon: null,
     promptCaps: { image: false, audio: false, embeddedContext: false },
+    planFilePath: "",
+    planFileContent: "",
   };
 }
 
@@ -323,6 +328,9 @@ export function TaskChat({
   const [showPermMenu, setShowPermMenu] = useState(false);
   const [planEntries, setPlanEntries] = useState<PlanEntry[]>([]);
   const [showPlan, setShowPlan] = useState(false);
+  const [planFilePath, setPlanFilePath] = useState("");
+  const [planFileContent, setPlanFileContent] = useState("");
+  const [showPlanFile, setShowPlanFile] = useState(false);
   const [slashCommands, setSlashCommands] = useState<SlashCommand[]>([]);
   const [showSlashMenu, setShowSlashMenu] = useState(false);
   const [slashFilter, setSlashFilter] = useState("");
@@ -352,6 +360,8 @@ export function TaskChat({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [isDragging, setIsDragging] = useState(false);
   const [isInputExpanded, setIsInputExpanded] = useState(false);
+  const planFilePathRef = useRef("");
+  const planFileToolIdsRef = useRef<Set<string>>(new Set());
 
   // ─── Read-only observation mode state ──────────────────────────────────
   const [isRemoteSession, setIsRemoteSession] = useState(false);
@@ -486,8 +496,9 @@ export function TaskChat({
       messages, isBusy, selectedModel, permissionLevel,
       modelOptions, modeOptions, planEntries, slashCommands,
       isConnected, agentLabel, agentIcon: AgentIcon, promptCaps,
+      planFilePath, planFileContent,
     });
-  }, [activeChatId, messages, isBusy, selectedModel, permissionLevel, modelOptions, modeOptions, planEntries, slashCommands, isConnected, agentLabel, AgentIcon, promptCaps]);
+  }, [activeChatId, messages, isBusy, selectedModel, permissionLevel, modelOptions, modeOptions, planEntries, slashCommands, isConnected, agentLabel, AgentIcon, promptCaps, planFilePath, planFileContent]);
 
   /** Restore chat state from cache */
   const restoreChatState = useCallback((chatId: string) => {
@@ -505,6 +516,10 @@ export function TaskChat({
       setAgentLabel(cached.agentLabel);
       if (cached.agentIcon) setAgentIcon(() => cached.agentIcon);
       setPromptCaps(cached.promptCaps);
+      setPlanFilePath(cached.planFilePath);
+      setPlanFileContent(cached.planFileContent);
+      planFilePathRef.current = cached.planFilePath;
+      setShowPlanFile(!!cached.planFileContent);
     } else {
       // Fresh state for new chat
       setMessages([]);
@@ -517,6 +532,10 @@ export function TaskChat({
       setSlashCommands([]);
       setIsConnected(false);
       setPromptCaps({ image: false, audio: false, embeddedContext: false });
+      setPlanFilePath("");
+      setPlanFileContent("");
+      planFilePathRef.current = "";
+      setShowPlanFile(false);
     }
     // Reset pending messages — server will send queue_update on reconnect
     setPendingMessages([]);
@@ -720,6 +739,12 @@ export function TaskChat({
               locations: msg.locations,
             }];
           });
+          // Track tool_call IDs that touch the plan file (for re-fetch on completion)
+          if (planFilePathRef.current && msg.locations?.some(
+            (l: { path: string }) => l.path === planFilePathRef.current
+          )) {
+            planFileToolIdsRef.current.add(msg.id);
+          }
           break;
         case "tool_call_update":
           setMessages((prev) => {
@@ -735,6 +760,11 @@ export function TaskChat({
               content: msg.content, collapsed: true, locations: msg.locations ?? [],
             }];
           });
+          // Re-fetch plan file content if a completed tool touches the plan file
+          if (msg.status === "completed" && planFilePathRef.current && planFileToolIdsRef.current.has(msg.id)) {
+            planFileToolIdsRef.current.delete(msg.id);
+            readFile(planFilePathRef.current).then((res) => setPlanFileContent(res.content)).catch(() => {});
+          }
           break;
         case "permission_request":
           setMessages((prev) => [...prev, {
@@ -792,6 +822,14 @@ export function TaskChat({
           setShowPlan(!allDone);
           break;
         }
+        case "plan_file_update":
+          setPlanFilePath(msg.path);
+          planFilePathRef.current = msg.path;
+          readFile(msg.path).then((res) => {
+            setPlanFileContent(res.content);
+            setShowPlanFile(true);
+          }).catch(() => {});
+          break;
         case "available_commands":
           setSlashCommands(msg.commands ?? []);
           break;
@@ -937,6 +975,10 @@ export function TaskChat({
         break;
       case "plan_update":
         state.planEntries = msg.entries ?? [];
+        break;
+      case "plan_file_update":
+        state.planFilePath = msg.path;
+        // Don't fetch content in cache mode; will re-fetch when switching back
         break;
       case "available_commands":
         state.slashCommands = msg.commands ?? [];
@@ -1882,7 +1924,7 @@ export function TaskChat({
         <div ref={messagesEndRef} />
       </div>
 
-      {/* Plan Section (from ACP Plan notifications) */}
+      {/* Todo Section (from ACP Plan notifications) */}
       {planEntries.length > 0 && (
         <div className="border-t border-[var(--color-border)] bg-[var(--color-bg)]">
           <button onClick={() => setShowPlan(!showPlan)}
@@ -1891,7 +1933,7 @@ export function TaskChat({
               <motion.div animate={{ rotate: showPlan ? 90 : 0 }} transition={{ duration: 0.15 }}>
                 <ChevronRight className="w-3.5 h-3.5" />
               </motion.div>
-              <ListTodo className="w-3.5 h-3.5" /><span>Plan</span>
+              <ListTodo className="w-3.5 h-3.5" /><span>Todo</span>
               <span className="text-xs text-[var(--color-text-muted)] opacity-60">
                 {planEntries.filter((e) => e.status === "completed").length}/{planEntries.length}
               </span>
@@ -1925,6 +1967,38 @@ export function TaskChat({
                       </span>
                     </div>
                   ))}
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </div>
+      )}
+
+      {/* Plan Section (markdown plan file) */}
+      {planFileContent && (
+        <div className="border-t border-[var(--color-border)] bg-[var(--color-bg)]">
+          <button onClick={() => setShowPlanFile(!showPlanFile)}
+            className="w-full flex items-center justify-between px-4 py-2 text-sm hover:bg-[var(--color-bg-tertiary)] transition-colors">
+            <div className="flex items-center gap-2 text-[var(--color-text-muted)]">
+              <motion.div animate={{ rotate: showPlanFile ? 90 : 0 }} transition={{ duration: 0.15 }}>
+                <ChevronRight className="w-3.5 h-3.5" />
+              </motion.div>
+              <BookOpen className="w-3.5 h-3.5" />
+              <span>Plan</span>
+              <span className="text-xs opacity-60">{planFilePath.split("/").pop()}</span>
+            </div>
+          </button>
+          <AnimatePresence initial={false}>
+            {showPlanFile && (
+              <motion.div
+                initial={{ height: 0, opacity: 0 }}
+                animate={{ height: "auto", opacity: 1 }}
+                exit={{ height: 0, opacity: 0 }}
+                transition={{ duration: 0.2, ease: "easeInOut" }}
+                className="overflow-hidden"
+              >
+                <div className="px-4 pb-3 max-h-96 overflow-y-auto">
+                  <MarkdownRenderer content={planFileContent} />
                 </div>
               </motion.div>
             )}

@@ -1,6 +1,6 @@
-//! Folder selection API handler
+//! Folder selection and file reading API handlers
 
-use axum::Json;
+use axum::{extract::Query, http::StatusCode, Json};
 use serde::{Deserialize, Serialize};
 use std::process::Command;
 
@@ -72,4 +72,64 @@ pub async fn browse_folder() -> Json<BrowseFolderResponse> {
 
     // User cancelled or command failed
     Json(BrowseFolderResponse { path: None })
+}
+
+// ─── Read File Handler ───────────────────────────────────────────────────────
+
+#[derive(Debug, Deserialize)]
+pub struct ReadFileQuery {
+    pub path: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ReadFileResponse {
+    pub path: String,
+    pub content: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ReadFileError {
+    error: String,
+}
+
+/// GET /api/v1/read-file?path=/absolute/path/to/file.md
+///
+/// Reads a .md file by absolute path. Used for Plan File rendering.
+pub async fn read_file(
+    Query(params): Query<ReadFileQuery>,
+) -> Result<Json<ReadFileResponse>, (StatusCode, Json<ReadFileError>)> {
+    let path = &params.path;
+
+    // Validate: path must end with .md
+    if !path.ends_with(".md") {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ReadFileError {
+                error: "Only .md files are supported".to_string(),
+            }),
+        ));
+    }
+
+    // Validate: path must be absolute
+    if !path.starts_with('/') {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ReadFileError {
+                error: "Path must be absolute".to_string(),
+            }),
+        ));
+    }
+
+    match std::fs::read_to_string(path) {
+        Ok(content) => Ok(Json(ReadFileResponse {
+            path: path.clone(),
+            content,
+        })),
+        Err(e) => Err((
+            StatusCode::NOT_FOUND,
+            Json(ReadFileError {
+                error: format!("Failed to read file: {}", e),
+            }),
+        )),
+    }
 }

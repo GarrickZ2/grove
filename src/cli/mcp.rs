@@ -1925,7 +1925,19 @@ fn build_chat_status_json(
         result["permission"] = perm;
     }
 
+    if let Some(plan_file) = extract_last_plan_file(compacted) {
+        result["plan_file"] = json!(plan_file);
+    }
+
     ok_json(result)
+}
+
+/// Extract the last plan file path from events
+fn extract_last_plan_file(events: &[acp::AcpUpdate]) -> Option<String> {
+    events.iter().rev().find_map(|e| match e {
+        acp::AcpUpdate::PlanFileUpdate { path } => Some(path.clone()),
+        _ => None,
+    })
 }
 
 async fn list_chats_impl(p: ListChatsParams) -> Result<CallToolResult, McpError> {

@@ -49,6 +49,7 @@ export {
   deleteChat,
   getChatHistory,
   takeControl,
+  readFile,
 } from './tasks';
 export type {
   CommitResponse,
