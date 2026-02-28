@@ -21,7 +21,7 @@ import { FileTreeSidebar } from './FileTreeSidebar';
 import { DiffFileView, resetGlobalMatchIndex } from './DiffFileView';
 import { ConversationSidebar } from './ConversationSidebar';
 import { CodeSearchBar } from './CodeSearchBar';
-import { MessageSquare, ChevronUp, ChevronDown, PanelLeftClose, PanelLeftOpen, Crosshair, GitCompare, FileText } from 'lucide-react';
+import { MessageSquare, ChevronUp, ChevronDown, PanelLeftClose, PanelLeftOpen, Crosshair, GitCompare, FileText, RefreshCw } from 'lucide-react';
 import { VersionSelector } from './VersionSelector';
 import { useIsMobile } from '../../hooks';
 import { useHotkeys } from '../../hooks/useHotkeys';
@@ -295,12 +295,14 @@ export function DiffReviewPage({ projectId, taskId, embedded }: DiffReviewPagePr
   );
 
   // Refetch diff for a given from/to ref pair
-  const refetchDiff = useCallback(async (fromRef?: string, toRef?: string) => {
+  const refetchDiff = useCallback(async (fromRef?: string, toRef?: string, keepSelection?: boolean) => {
     try {
       const data = await getFullDiff(projectId, taskId, fromRef, toRef);
       setDiffData(data);
-      // Reset selectedFile so the validation effect picks the first sorted file
-      setSelectedFile(null);
+      if (!keepSelection) {
+        // Reset selectedFile so the validation effect picks the first sorted file
+        setSelectedFile(null);
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to load diff');
     }
@@ -322,6 +324,15 @@ export function DiffReviewPage({ projectId, taskId, embedded }: DiffReviewPagePr
     const toOpt = versions.find((v) => v.id === id);
     refetchDiff(fromOpt?.ref, toOpt?.ref);
   }, [versions, fromVersion, refetchDiff]);
+
+  const [refreshing, setRefreshing] = useState(false);
+  const handleRefresh = useCallback(async () => {
+    setRefreshing(true);
+    const fromOpt = versions.find((v) => v.id === fromVersion);
+    const toOpt = versions.find((v) => v.id === toVersion);
+    await refetchDiff(fromOpt?.ref, toOpt?.ref, true);
+    setRefreshing(false);
+  }, [versions, fromVersion, toVersion, refetchDiff]);
 
   // Initial load: diff + comments + commits (builds version list)
   useEffect(() => {
@@ -911,6 +922,14 @@ export function DiffReviewPage({ projectId, taskId, embedded }: DiffReviewPagePr
             <span>All Files</span>
           </button>
         </div>
+        <button
+          className="diff-refresh-btn"
+          onClick={handleRefresh}
+          disabled={refreshing}
+          title="Refresh diff"
+        >
+          <RefreshCw size={14} className={refreshing ? 'spin' : ''} />
+        </button>
       </div>
 
       {/* Toolbar */}
