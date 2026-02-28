@@ -1479,6 +1479,14 @@ impl AcpSessionHandle {
     }
 }
 
+/// 获取已存在的 ACP 会话句柄（不启动新会话）
+pub fn get_session_handle(key: &str) -> Option<Arc<AcpSessionHandle>> {
+    ACP_SESSIONS
+        .read()
+        .ok()
+        .and_then(|sessions| sessions.get(key).cloned())
+}
+
 /// 检查 ACP 会话是否存在
 pub fn session_exists(key: &str) -> bool {
     ACP_SESSIONS
