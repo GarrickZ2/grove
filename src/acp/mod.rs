@@ -815,12 +815,8 @@ pub async fn get_or_start_session(
                 }
 
                 // 启动 socket listener（在 LocalSet 内 spawn_local）
-                if config.chat_id.is_some() {
-                    let sp = sock_path(
-                        &config.project_key,
-                        &config.task_id,
-                        config.chat_id.as_ref().unwrap(),
-                    );
+                if let Some(chat_id) = &config.chat_id {
+                    let sp = sock_path(&config.project_key, &config.task_id, chat_id);
                     tokio::task::spawn_local(run_socket_listener(sp, handle.clone()));
                 }
 
