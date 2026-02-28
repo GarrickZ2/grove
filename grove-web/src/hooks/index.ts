@@ -21,6 +21,7 @@ export type {
   TaskOperationsConfig,
   TaskOperationsState,
   TaskOperationsHandlers,
+  DirtyBranchError,
 } from "./useTaskOperations";
 
 export { useFileMention } from "./useFileMention";

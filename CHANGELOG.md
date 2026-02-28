@@ -5,6 +5,28 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.5] - 2026-02-27
+
+### Added
+
+- **MCP: ACP Chat management tools** — orchestrator agents can now create chats, send prompts, and read chat history via `grove_create_chat`, `grove_send_prompt`, `grove_list_chats`, `grove_read_chat_history` MCP tools
+- **MCP: `grove_edit_note` tool** — orchestrator agents can programmatically edit task notes
+- **MCP: Context-aware tool filtering** — tools are dynamically filtered by task context; orchestrator agents see management tools, worker agents see execution tools
+- **MCP: Fuzzy search for query parameters** — `grove_list_projects`, `grove_list_tasks`, and `grove_list_chats` now support fuzzy matching (substring, word-prefix, and initials) instead of strict contains
+- **Web: Read-only observation mode** — when a chat session is owned by another process (e.g., MCP agent), the Web UI enters read-only mode with 5s polling instead of showing an error
+- **Web: Take Control button** — reclaim chat ownership from a remote agent directly in the Web UI
+- **Web: Message sender labels** — messages sent by orchestrator agents display a sender badge (e.g., "Claude Code (Orchestrator)") to distinguish from user messages
+- **`created_by` field for tasks** — tracks whether a task was created by an agent or a user
+
+### Fixed
+
+- **Web: Blitz mode UX** — removed unnecessary polling, fixed mode switch issues, added dirty branch confirmation dialog
+- **Web: auto-save notes on navigation** — notes are now saved automatically when navigating away during editing
+- **Web: Blitz mode projectId passthrough** — GitTab, NotesTab, and CommentsTab now receive correct projectId in Blitz mode
+- **MCP+ACP: chat message duplication** — fixed flaky MCP tests and ACP chat message duplication bug
+- **MCP: planning vs execution tool clarity** — improved tool descriptions and categorization for task context filtering
+- **Code Review fixer** — fixed review comment resolution workflow
+
 ## [0.7.4] - 2026-02-26
 
 ### Added

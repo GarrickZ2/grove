@@ -1,4 +1,4 @@
-import { Circle, CheckCircle, AlertTriangle, XCircle, Terminal, MessageSquare, ChevronUp, ChevronDown } from "lucide-react";
+import { Circle, CheckCircle, AlertTriangle, XCircle, ChevronUp, ChevronDown } from "lucide-react";
 import type { BlitzTask } from "../../data/types";
 import type { TaskStatus } from "../../data/types";
 import { useIsMobile } from "../../hooks";
@@ -169,6 +169,11 @@ export function BlitzTaskListItem({
               <span className={`text-sm font-medium truncate ${isSelected ? "text-[var(--color-highlight)]" : "text-[var(--color-text)]"}`}>
                 {task.name}
               </span>
+              {task.createdBy === "agent" && (
+                <span className="flex-shrink-0 text-[10px] font-medium px-1.5 py-0.5 rounded bg-[var(--color-info)]/15 text-[var(--color-info)]">
+                  Agent
+                </span>
+              )}
               {notification && (
                 <span
                   className="w-2 h-2 rounded-full flex-shrink-0"
@@ -186,19 +191,6 @@ export function BlitzTaskListItem({
             <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-[var(--color-highlight)]/10 text-[var(--color-highlight)] truncate max-w-[120px]">
               {projectName}
             </span>
-
-            {/* Mode tag */}
-            {task.multiplexer === "acp" ? (
-              <span className="inline-flex items-center gap-0.5 text-[10px] font-medium px-1.5 py-0.5 rounded bg-[var(--color-info)]/10 text-[var(--color-info)]">
-                <MessageSquare className="w-2.5 h-2.5" />
-                Chat
-              </span>
-            ) : (
-              <span className="inline-flex items-center gap-0.5 text-[10px] font-medium px-1.5 py-0.5 rounded bg-[var(--color-accent)]/10 text-[var(--color-accent)]">
-                <Terminal className="w-2.5 h-2.5" />
-                Terminal
-              </span>
-            )}
 
             {/* Code changes */}
             <span className="text-xs">

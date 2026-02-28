@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { Search, ArrowLeft } from "lucide-react";
 import { TaskInfoPanel } from "../Tasks/TaskInfoPanel";
 import { TaskView, type TaskViewHandle } from "../Tasks/TaskView";
-import { CommitDialog, ConfirmDialog, MergeDialog } from "../Dialogs";
+import { CommitDialog, ConfirmDialog, DirtyBranchDialog, MergeDialog } from "../Dialogs";
 import { RebaseDialog } from "../Tasks/dialogs";
 import { HelpOverlay } from "../Tasks/HelpOverlay";
 import { ContextMenu } from "../ui/ContextMenu";
@@ -712,6 +712,11 @@ export function BlitzPage({ onSwitchToZen }: BlitzPageProps) {
         items={contextMenuItems}
         position={pageState.contextMenu?.position ?? null}
         onClose={pageHandlers.closeContextMenu}
+      />
+
+      <DirtyBranchDialog
+        error={opsState.dirtyBranchError}
+        onClose={opsHandlers.handleDirtyBranchErrorClose}
       />
 
       <HelpOverlay isOpen={pageState.showHelp} onClose={() => pageHandlers.setShowHelp(false)} />

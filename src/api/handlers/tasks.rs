@@ -351,6 +351,7 @@ fn worktree_to_response(wt: &crate::model::Worktree, _project_key: &str) -> Task
         updated_at: wt.updated_at.to_rfc3339(),
         path: wt.path.clone(),
         multiplexer: wt.multiplexer.clone(),
+        created_by: wt.created_by.clone(),
     }
 }
 
@@ -466,6 +467,7 @@ pub async fn create_task(
         target.clone(),
         &full_config.default_session_type(),
         autolink_patterns,
+        "user",
     )
     .map_err(|e| {
         let msg = e.to_string();
@@ -501,6 +503,7 @@ pub async fn create_task(
         updated_at: result.task.updated_at.to_rfc3339(),
         path: result.worktree_path.clone(),
         multiplexer: result.task.multiplexer.clone(),
+        created_by: result.task.created_by.clone(),
     }))
 }
 

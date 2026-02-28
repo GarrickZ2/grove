@@ -133,6 +133,11 @@ export function TaskListItem({ task, isSelected, onClick, onDoubleClick, onConte
               <span className="text-sm font-medium text-[var(--color-text)] truncate">
                 {task.name}
               </span>
+              {task.createdBy === "agent" && (
+                <span className="flex-shrink-0 text-[10px] font-medium px-1.5 py-0.5 rounded bg-[var(--color-info)]/15 text-[var(--color-info)]">
+                  Agent
+                </span>
+              )}
               {notification && (
                 <span
                   className="w-2 h-2 rounded-full flex-shrink-0"

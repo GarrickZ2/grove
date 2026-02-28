@@ -103,6 +103,7 @@ fn archived_task_to_worktree(task: Task) -> Worktree {
         multiplexer: mux_str.to_string(),
         created_at: task.created_at,
         updated_at: task.updated_at,
+        created_by: task.created_by,
     }
 }
 
@@ -218,5 +219,6 @@ fn task_to_worktree(
         multiplexer: mux_str.to_string(),
         created_at: task.created_at,
         updated_at: task.updated_at,
+        created_by: task.created_by.clone(),
     }
 }

@@ -28,6 +28,7 @@ export interface TaskResponse {
   multiplexer: string;
   enableTerminal: boolean;
   enableChat: boolean;
+  created_by: string;
 }
 
 export interface TaskListResponse {
@@ -533,6 +534,54 @@ export async function deleteFileOrDir(
 ): Promise<FsOperationResponse> {
   return apiClient.delete<FsOperationResponse>(
     `/api/v1/projects/${projectId}/tasks/${taskId}/fs/delete?path=${encodeURIComponent(path)}`
+  );
+}
+
+// ============================================================================
+// Chat History & Take Control API (read-only observation mode)
+// ============================================================================
+
+export interface SessionMetadata {
+  pid: number;
+  agent_name: string;
+  agent_version: string;
+}
+
+export interface ChatHistoryResponse {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  events: any[];
+  total: number;
+  session: SessionMetadata | null;
+}
+
+export interface TakeControlResponse {
+  success: boolean;
+}
+
+/**
+ * Get incremental chat history (for read-only polling mode)
+ */
+export async function getChatHistory(
+  projectId: string,
+  taskId: string,
+  chatId: string,
+  offset: number = 0
+): Promise<ChatHistoryResponse> {
+  return apiClient.get<ChatHistoryResponse>(
+    `/api/v1/projects/${projectId}/tasks/${taskId}/chats/${chatId}/history?offset=${offset}`
+  );
+}
+
+/**
+ * Take control of a remote session (kill the current owner)
+ */
+export async function takeControl(
+  projectId: string,
+  taskId: string,
+  chatId: string
+): Promise<TakeControlResponse> {
+  return apiClient.post<undefined, TakeControlResponse>(
+    `/api/v1/projects/${projectId}/tasks/${taskId}/chats/${chatId}/take-control`
   );
 }
 

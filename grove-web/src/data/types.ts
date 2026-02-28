@@ -23,6 +23,7 @@ export interface Task {
   createdAt: Date;
   updatedAt: Date;
   multiplexer: string;
+  createdBy?: string;
 }
 
 export interface Project {

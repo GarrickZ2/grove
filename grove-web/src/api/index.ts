@@ -47,6 +47,8 @@ export {
   createChat,
   updateChatTitle,
   deleteChat,
+  getChatHistory,
+  takeControl,
 } from './tasks';
 export type {
   CommitResponse,
@@ -78,6 +80,9 @@ export type {
   CopyFileRequest,
   ChatSessionResponse,
   ChatListResponse,
+  ChatHistoryResponse,
+  TakeControlResponse,
+  SessionMetadata,
 } from './tasks';
 
 export {

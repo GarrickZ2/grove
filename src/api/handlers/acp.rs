@@ -3,7 +3,7 @@
 use axum::{
     extract::{
         ws::{Message, WebSocket, WebSocketUpgrade},
-        Path,
+        Path, Query,
     },
     http::StatusCode,
     response::{IntoResponse, Response},
@@ -16,7 +16,7 @@ use std::collections::HashMap;
 use crate::acp::{
     self, AcpStartConfig, AcpUpdate, ContentBlockData, PromptCapabilitiesData, QueuedMessage,
 };
-use crate::storage::{config, tasks, workspace};
+use crate::storage::{chat_history, config, tasks, workspace};
 
 /// Client-to-server messages
 #[derive(Debug, Deserialize)]
@@ -26,6 +26,8 @@ enum ClientMessage {
         text: String,
         #[serde(default)]
         attachments: Vec<ContentBlockData>,
+        #[serde(default)]
+        sender: Option<String>,
     },
     Cancel,
     /// Explicitly kill the ACP session
@@ -118,6 +120,13 @@ enum ServerMessage {
         text: String,
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         attachments: Vec<ContentBlockData>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        sender: Option<String>,
+    },
+    /// Session is owned by another process (read-only observation mode)
+    RemoteSession {
+        owner_pid: u32,
+        agent_name: String,
     },
     ModeChanged {
         mode_id: String,
@@ -249,9 +258,15 @@ impl From<AcpUpdate> for ServerMessage {
             AcpUpdate::Complete { stop_reason } => ServerMessage::Complete { stop_reason },
             AcpUpdate::Busy { value } => ServerMessage::Busy { value },
             AcpUpdate::Error { message } => ServerMessage::Error { message },
-            AcpUpdate::UserMessage { text, attachments } => {
-                ServerMessage::UserMessage { text, attachments }
-            }
+            AcpUpdate::UserMessage {
+                text,
+                attachments,
+                sender,
+            } => ServerMessage::UserMessage {
+                text,
+                attachments,
+                sender,
+            },
             AcpUpdate::ModeChanged { mode_id } => ServerMessage::ModeChanged { mode_id },
             AcpUpdate::PlanUpdate { entries } => ServerMessage::PlanUpdate {
                 entries: entries
@@ -284,6 +299,39 @@ async fn handle_acp_ws(socket: WebSocket, session_key: String, config: AcpStartC
 
     // Check if we're reattaching to an existing session
     let is_existing = acp::session_exists(&session_key);
+
+    // Guard: if session is owned by another process, notify frontend for read-only mode
+    if !is_existing {
+        if let Some(ref chat_id) = config.chat_id {
+            let session_key_check =
+                format!("{}:{}:{}", config.project_key, config.task_id, chat_id);
+            if let Some(acp::SessionAccess::Remote { .. }) = acp::discover_session(
+                &config.project_key,
+                &config.task_id,
+                chat_id,
+                &session_key_check,
+            ) {
+                // Read session metadata for owner info
+                let metadata =
+                    acp::read_session_metadata(&config.project_key, &config.task_id, chat_id);
+                let msg = ServerMessage::RemoteSession {
+                    owner_pid: metadata.as_ref().map(|m| m.pid).unwrap_or(0),
+                    agent_name: metadata
+                        .as_ref()
+                        .map(|m| m.agent_name.clone())
+                        .unwrap_or_else(|| "Unknown".to_string()),
+                };
+                let _ = ws_sender
+                    .send(Message::Text(
+                        serde_json::to_string(&msg)
+                            .expect("serialize WS message")
+                            .into(),
+                    ))
+                    .await;
+                return;
+            }
+        }
+    }
 
     // For NEW sessions: send disk history immediately so frontend shows it while agent starts
     if !is_existing {
@@ -381,9 +429,14 @@ async fn handle_acp_ws(socket: WebSocket, session_key: String, config: AcpStartC
                 Ok(Message::Text(text)) => {
                     if let Ok(client_msg) = serde_json::from_str::<ClientMessage>(&text) {
                         match client_msg {
-                            ClientMessage::Prompt { text, attachments } => {
-                                if let Err(e) =
-                                    handle_for_input.send_prompt(text, attachments).await
+                            ClientMessage::Prompt {
+                                text,
+                                attachments,
+                                sender,
+                            } => {
+                                if let Err(e) = handle_for_input
+                                    .send_prompt(text, attachments, sender)
+                                    .await
                                 {
                                     eprintln!("Failed to send prompt: {}", e);
                                     break;
@@ -663,4 +716,79 @@ pub async fn chat_ws_handler(
     };
 
     Ok(ws.on_upgrade(move |socket| handle_acp_ws(socket, session_key, config)))
+}
+
+// ─── History & Take Control Handlers ─────────────────────────────────────────
+
+#[derive(Deserialize)]
+pub struct HistoryQuery {
+    pub offset: Option<usize>,
+}
+
+#[derive(Serialize)]
+pub struct HistoryResponse {
+    pub events: Vec<AcpUpdate>,
+    pub total: usize,
+    pub session: Option<acp::SessionMetadata>,
+}
+
+/// GET /api/v1/projects/{id}/tasks/{taskId}/chats/{chatId}/history?offset=N
+///
+/// Returns incremental chat history from the given offset.
+/// Used by read-only observation mode to poll for updates.
+pub async fn get_chat_history(
+    Path((project_id, task_id, chat_id)): Path<(String, String, String)>,
+    Query(params): Query<HistoryQuery>,
+) -> Result<Json<HistoryResponse>, AcpError> {
+    let (project_key, _, _) = resolve_project_key(&project_id)?;
+
+    // Load full history from disk
+    let history = chat_history::load_history(&project_key, &task_id, &chat_id);
+    let total = history.len();
+    let offset = params.offset.unwrap_or(0).min(total);
+    let events = history[offset..].to_vec();
+
+    // Also read session metadata to let frontend know if owner is still alive
+    let session = acp::read_session_metadata(&project_key, &task_id, &chat_id);
+
+    Ok(Json(HistoryResponse {
+        events,
+        total,
+        session,
+    }))
+}
+
+#[derive(Serialize)]
+pub struct TakeControlResponse {
+    pub success: bool,
+}
+
+/// POST /api/v1/projects/{id}/tasks/{taskId}/chats/{chatId}/take-control
+///
+/// Kill the remote session owner so the Web frontend can take over.
+pub async fn take_control(
+    Path((project_id, task_id, chat_id)): Path<(String, String, String)>,
+) -> Result<Json<TakeControlResponse>, AcpError> {
+    let (project_key, _, _) = resolve_project_key(&project_id)?;
+
+    let session_key = format!("{}:{}:{}", project_key, task_id, chat_id);
+
+    match acp::discover_session(&project_key, &task_id, &chat_id, &session_key) {
+        Some(acp::SessionAccess::Remote { sock_path, .. }) => {
+            // Send Kill command to the remote owner
+            let kill_cmd = acp::SocketCommand::Kill;
+            let _ = acp::send_socket_command(&sock_path, &kill_cmd)
+                .await
+                .map_err(|e| AcpError::Internal(format!("Failed to kill remote session: {}", e)))?;
+
+            // Brief wait for the socket to become stale
+            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+
+            Ok(Json(TakeControlResponse { success: true }))
+        }
+        Some(acp::SessionAccess::Local(_)) | None => {
+            // Already local or no session — success
+            Ok(Json(TakeControlResponse { success: true }))
+        }
+    }
 }
