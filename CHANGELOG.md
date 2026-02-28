@@ -5,27 +5,41 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.7.5] - 2026-02-27
+## [0.7.5] - 2026-02-28
 
 ### Added
 
+- **Web: Plan panel** — detect when an ACP agent writes a `.md` file via the Write tool in Plan Mode and render it in a collapsible panel with Markdown; auto-refreshes on subsequent Write or Edit operations to the same file
+- **Web: Diff review refresh button** — added a refresh button to the diff review page header for manual reload
+- **Web: Markdown preview** — added preview mode for `.md` files with hotkey toggle
+- **Web: Full-window file drop zone** — drag-and-drop area now covers the entire Chat window instead of just the input area
 - **MCP: ACP Chat management tools** — orchestrator agents can now create chats, send prompts, and read chat history via `grove_create_chat`, `grove_send_prompt`, `grove_list_chats`, `grove_read_chat_history` MCP tools
 - **MCP: `grove_edit_note` tool** — orchestrator agents can programmatically edit task notes
 - **MCP: Context-aware tool filtering** — tools are dynamically filtered by task context; orchestrator agents see management tools, worker agents see execution tools
 - **MCP: Fuzzy search for query parameters** — `grove_list_projects`, `grove_list_tasks`, and `grove_list_chats` now support fuzzy matching (substring, word-prefix, and initials) instead of strict contains
+- **MCP: `plan_file` in chat status** — `grove_chat_status` now returns the plan file path for orchestrator agents
 - **Web: Read-only observation mode** — when a chat session is owned by another process (e.g., MCP agent), the Web UI enters read-only mode with 5s polling instead of showing an error
 - **Web: Take Control button** — reclaim chat ownership from a remote agent directly in the Web UI
 - **Web: Message sender labels** — messages sent by orchestrator agents display a sender badge (e.g., "Claude Code (Orchestrator)") to distinguish from user messages
 - **`created_by` field for tasks** — tracks whether a task was created by an agent or a user
+- **API: `/api/v1/read-file`** — new endpoint for reading `.md` files by absolute path (used by Plan panel)
 
 ### Fixed
 
+- **Web: code block splitting in diff preview** — prevented code blocks from being split across chunks; unified line-level coloring
+- **Web: auto-collapse panels on input expand** — Todo and Plan panels automatically collapse when the input area is expanded to keep bottom buttons visible
+- **Web: chat deletion cleanup** — deleting a chat now removes the per-chat data directory and socket file, not just the `chats.toml` entry
 - **Web: Blitz mode UX** — removed unnecessary polling, fixed mode switch issues, added dirty branch confirmation dialog
 - **Web: auto-save notes on navigation** — notes are now saved automatically when navigating away during editing
 - **Web: Blitz mode projectId passthrough** — GitTab, NotesTab, and CommentsTab now receive correct projectId in Blitz mode
 - **MCP+ACP: chat message duplication** — fixed flaky MCP tests and ACP chat message duplication bug
 - **MCP: planning vs execution tool clarity** — improved tool descriptions and categorization for task context filtering
+- **ACP: mode tracking from SetMode commands** — `current_mode_id` is now updated from user SetMode commands (not just agent notifications) and emits `ModeChanged` events for frontend/history consistency
 - **Code Review fixer** — fixed review comment resolution workflow
+
+### Changed
+
+- **Web: renamed Plan → Todo, Plan File → Plan** — the structured checklist from ACP Plan notifications is now called "Todo"; the new markdown plan file panel is called "Plan" with a `BookOpen` icon
 
 ## [0.7.4] - 2026-02-26
 
