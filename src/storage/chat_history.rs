@@ -420,6 +420,7 @@ mod tests {
             AcpUpdate::UserMessage {
                 text: "hello".into(),
                 attachments: vec![],
+                sender: None,
             },
             AcpUpdate::MessageChunk { text: "hi".into() },
             AcpUpdate::Complete {

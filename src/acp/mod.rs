@@ -50,6 +50,7 @@ enum AcpCommand {
     Prompt {
         text: String,
         attachments: Vec<ContentBlockData>,
+        sender: Option<String>,
     },
     Cancel,
     Kill,
@@ -111,6 +112,8 @@ pub enum AcpUpdate {
         text: String,
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         attachments: Vec<ContentBlockData>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        sender: Option<String>,
     },
     /// Mode 变更通知
     ModeChanged { mode_id: String },
@@ -183,6 +186,64 @@ pub struct QueuedMessage {
     pub text: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub attachments: Vec<ContentBlockData>,
+}
+
+/// Session 元数据（写入 session.json，供其他进程发现）
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct SessionMetadata {
+    pub pid: u32,
+    pub agent_name: String,
+    pub agent_version: String,
+    pub available_modes: Vec<(String, String)>,
+    pub current_mode_id: Option<String>,
+    pub available_models: Vec<(String, String)>,
+    pub current_model_id: Option<String>,
+}
+
+/// Unix socket 命令（JSONL，每连接一条）
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "action", rename_all = "snake_case")]
+pub enum SocketCommand {
+    Prompt {
+        text: String,
+        #[serde(default)]
+        attachments: Vec<ContentBlockData>,
+        #[serde(default)]
+        sender: Option<String>,
+    },
+    Cancel,
+    SetMode {
+        mode_id: String,
+    },
+    SetModel {
+        model_id: String,
+    },
+    RespondPermission {
+        option_id: String,
+    },
+    Kill,
+}
+
+/// Unix socket 响应
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum SocketResponse {
+    Ok,
+    Error { message: String },
+}
+
+/// Session 访问方式（本地进程内 vs 远程 socket）
+pub enum SessionAccess {
+    /// 本进程内的 session handle
+    Local(Arc<AcpSessionHandle>),
+    /// 另一个进程持有，通过 socket 通信
+    Remote {
+        sock_path: PathBuf,
+        chat_dir: PathBuf,
+        project_key: String,
+        task_id: String,
+        chat_id: String,
+    },
 }
 
 /// ACP 启动配置
@@ -753,10 +814,24 @@ pub async fn get_or_start_session(
                     sessions.insert(key.clone(), handle.clone());
                 }
 
+                // 启动 socket listener（在 LocalSet 内 spawn_local）
+                if config.chat_id.is_some() {
+                    let sp = sock_path(
+                        &config.project_key,
+                        &config.task_id,
+                        config.chat_id.as_ref().unwrap(),
+                    );
+                    tokio::task::spawn_local(run_socket_listener(sp, handle.clone()));
+                }
+
                 // 发送 handle 给调用方（在启动会话循环之前）
                 let _ = result_tx.send(Ok((handle.clone(), update_rx)));
 
                 // 运行会话循环（阻塞直到 Kill 或错误）
+                let session_project_key = config.project_key.clone();
+                let session_task_id = config.task_id.clone();
+                let session_chat_id = config.chat_id.clone();
+
                 if let Err(e) = run_acp_session(handle, config, cmd_rx).await {
                     let _ = update_tx.send(AcpUpdate::Error {
                         message: format!("ACP session error: {}", e),
@@ -764,9 +839,12 @@ pub async fn get_or_start_session(
                 }
                 let _ = update_tx.send(AcpUpdate::SessionEnded);
 
-                // 清理：从全局表移除
+                // 清理：从全局表移除 + 删除 socket 文件
                 if let Ok(mut sessions) = ACP_SESSIONS.write() {
                     sessions.remove(&key_clone);
+                }
+                if let Some(ref cid) = session_chat_id {
+                    cleanup_socket_files(&session_project_key, &session_task_id, cid);
                 }
             }));
         }));
@@ -1047,11 +1125,16 @@ async fn run_acp_session(
     // 处理命令循环
     while let Some(cmd) = cmd_rx.recv().await {
         match cmd {
-            AcpCommand::Prompt { text, attachments } => {
+            AcpCommand::Prompt {
+                text,
+                attachments,
+                sender,
+            } => {
                 // 记录用户消息到 history（重连时回放）
                 handle.emit(AcpUpdate::UserMessage {
                     text: text.clone(),
                     attachments: attachments.clone(),
+                    sender,
                 });
                 handle.emit(AcpUpdate::Busy { value: true });
 
@@ -1104,7 +1187,7 @@ async fn run_acp_session(
                                         acp::ModelId::new(model_id),
                                     )).await;
                                 }
-                                AcpCommand::Prompt { text, attachments } => {
+                                AcpCommand::Prompt { text, attachments, .. } => {
                                     // 新 prompt 到达：cancel 当前，保存新 prompt 待处理
                                     let _ = conn.cancel(acp::CancelNotification::new(session_id_arc.clone())).await;
                                     cancel_deadline.set(Some(tokio::time::Instant::now() + std::time::Duration::from_secs(10)));
@@ -1156,9 +1239,11 @@ async fn run_acp_session(
 
                 // 有暂存的新 prompt → 回注到命令 channel 优先处理
                 if let Some((text, attachments)) = next_prompt {
-                    let _ = handle
-                        .cmd_tx
-                        .try_send(AcpCommand::Prompt { text, attachments });
+                    let _ = handle.cmd_tx.try_send(AcpCommand::Prompt {
+                        text,
+                        attachments,
+                        sender: None,
+                    });
                 } else {
                     // Auto-send next queued message (if any), unless queue is paused
                     if !handle
@@ -1312,6 +1397,35 @@ impl AcpSessionHandle {
             return;
         }
 
+        // SessionReady 时写 session.json（供其他进程发现）
+        if let AcpUpdate::SessionReady {
+            ref agent_name,
+            ref agent_version,
+            ref available_modes,
+            ref current_mode_id,
+            ref available_models,
+            ref current_model_id,
+            ..
+        } = update
+        {
+            if let Some(ref chat_id) = self.chat_id {
+                write_session_metadata(
+                    &self.project_key,
+                    &self.task_id,
+                    chat_id,
+                    &SessionMetadata {
+                        pid: std::process::id(),
+                        agent_name: agent_name.clone(),
+                        agent_version: agent_version.clone(),
+                        available_modes: available_modes.clone(),
+                        current_mode_id: current_mode_id.clone(),
+                        available_models: available_models.clone(),
+                        current_model_id: current_model_id.clone(),
+                    },
+                );
+            }
+        }
+
         // 实时 append 到磁盘（替代 turn_buffer 缓存）
         if crate::storage::chat_history::should_persist(&update) {
             if let Some(ref chat_id) = self.chat_id {
@@ -1361,9 +1475,14 @@ impl AcpSessionHandle {
         &self,
         text: String,
         attachments: Vec<ContentBlockData>,
+        sender: Option<String>,
     ) -> crate::error::Result<()> {
         self.cmd_tx
-            .send(AcpCommand::Prompt { text, attachments })
+            .send(AcpCommand::Prompt {
+                text,
+                attachments,
+                sender,
+            })
             .await
             .map_err(|_| crate::error::GroveError::Session("ACP session closed".to_string()))
     }
@@ -1455,7 +1574,11 @@ impl AcpSessionHandle {
     /// 非阻塞发送 prompt 命令（队列 auto-send 使用）
     fn try_enqueue_prompt(&self, text: String, attachments: Vec<ContentBlockData>) -> bool {
         self.cmd_tx
-            .try_send(AcpCommand::Prompt { text, attachments })
+            .try_send(AcpCommand::Prompt {
+                text,
+                attachments,
+                sender: None,
+            })
             .is_ok()
     }
 
@@ -1508,6 +1631,275 @@ pub fn kill_session(key: &str) -> crate::error::Result<()> {
         let _ = h.cmd_tx.try_send(AcpCommand::Kill);
     }
     Ok(())
+}
+
+// ============================================================================
+// Unix Socket 跨进程 Session 共享
+// ============================================================================
+
+/// 获取 chat 目录路径
+fn chat_dir(project_key: &str, task_id: &str, chat_id: &str) -> PathBuf {
+    crate::storage::grove_dir()
+        .join("projects")
+        .join(project_key)
+        .join("tasks")
+        .join(task_id)
+        .join("chats")
+        .join(chat_id)
+}
+
+/// 获取 Unix socket 路径
+///
+/// macOS `sun_path` 限制 104 字节，chat 目录路径可能含中文任务名（UTF-8 长），
+/// 因此 socket 放在 `/tmp/grove-acp/` 下，用短 hash 命名。
+pub fn sock_path(project_key: &str, task_id: &str, chat_id: &str) -> PathBuf {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    project_key.hash(&mut hasher);
+    task_id.hash(&mut hasher);
+    chat_id.hash(&mut hasher);
+    let hash = hasher.finish();
+    // e.g. /tmp/grove-acp/a1b2c3d4e5f6.sock  (~40 bytes, well under 104)
+    PathBuf::from(format!("/tmp/grove-acp/{:016x}.sock", hash))
+}
+
+/// 获取 session.json 路径
+pub fn session_json_path(project_key: &str, task_id: &str, chat_id: &str) -> PathBuf {
+    chat_dir(project_key, task_id, chat_id).join("session.json")
+}
+
+/// 从磁盘读取 session 元数据
+pub fn read_session_metadata(
+    project_key: &str,
+    task_id: &str,
+    chat_id: &str,
+) -> Option<SessionMetadata> {
+    let path = session_json_path(project_key, task_id, chat_id);
+    let data = std::fs::read_to_string(&path).ok()?;
+    serde_json::from_str(&data).ok()
+}
+
+/// 原子写 session.json（先写 tmp 再 rename）
+fn write_session_metadata(project_key: &str, task_id: &str, chat_id: &str, meta: &SessionMetadata) {
+    let path = session_json_path(project_key, task_id, chat_id);
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let tmp = path.with_extension("json.tmp");
+    if let Ok(data) = serde_json::to_string_pretty(meta) {
+        if std::fs::write(&tmp, data).is_ok() {
+            let _ = std::fs::rename(&tmp, &path);
+        }
+    }
+}
+
+/// 清理 socket 和 session.json 文件
+fn cleanup_socket_files(project_key: &str, task_id: &str, chat_id: &str) {
+    let _ = std::fs::remove_file(sock_path(project_key, task_id, chat_id));
+    let _ = std::fs::remove_file(session_json_path(project_key, task_id, chat_id));
+}
+
+/// Socket listener：接受连接，分发命令到 session handle
+async fn run_socket_listener(path: PathBuf, handle: Arc<AcpSessionHandle>) {
+    // 清理可能残留的旧 sock 文件
+    let _ = std::fs::remove_file(&path);
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+
+    let listener = match tokio::net::UnixListener::bind(&path) {
+        Ok(l) => l,
+        Err(e) => {
+            eprintln!("[ACP] Failed to bind socket {}: {}", path.display(), e);
+            return;
+        }
+    };
+
+    loop {
+        match listener.accept().await {
+            Ok((stream, _)) => {
+                let handle = handle.clone();
+                tokio::task::spawn_local(async move {
+                    if let Err(e) = handle_socket_connection(stream, &handle).await {
+                        // BrokenPipe = client disconnected early, benign
+                        if e.kind() != std::io::ErrorKind::BrokenPipe {
+                            eprintln!("[ACP] Socket connection error: {}", e);
+                        }
+                    }
+                });
+            }
+            Err(e) => {
+                // Listener closed
+                eprintln!("[ACP] Socket accept error: {}", e);
+                break;
+            }
+        }
+    }
+
+    // 退出时清理 sock 文件
+    let _ = std::fs::remove_file(&path);
+}
+
+/// 处理单个 socket 连接：读一行命令，执行，写一行响应
+async fn handle_socket_connection(
+    stream: tokio::net::UnixStream,
+    handle: &AcpSessionHandle,
+) -> std::io::Result<()> {
+    use tokio::io::{AsyncBufReadExt as _, AsyncWriteExt};
+
+    let (reader, mut writer) = stream.into_split();
+    let mut buf_reader = tokio::io::BufReader::new(reader);
+    let mut line = String::new();
+    let n = buf_reader.read_line(&mut line).await?;
+
+    // 0 字节 = 探测连接（discover_session 存活检测），直接关闭
+    if n == 0 || line.trim().is_empty() {
+        return Ok(());
+    }
+
+    let response = match serde_json::from_str::<SocketCommand>(line.trim()) {
+        Ok(cmd) => dispatch_socket_command(handle, cmd).await,
+        Err(e) => SocketResponse::Error {
+            message: format!("Invalid command: {}", e),
+        },
+    };
+
+    let resp_json = serde_json::to_string(&response)
+        .unwrap_or_else(|_| r#"{"type":"error","message":"serialize error"}"#.to_string());
+    writer.write_all(resp_json.as_bytes()).await?;
+    writer.write_all(b"\n").await?;
+    writer.shutdown().await?;
+
+    Ok(())
+}
+
+/// 将 SocketCommand 分发到 session handle 的对应方法
+async fn dispatch_socket_command(handle: &AcpSessionHandle, cmd: SocketCommand) -> SocketResponse {
+    match cmd {
+        SocketCommand::Prompt {
+            text,
+            attachments,
+            sender,
+        } => match handle.send_prompt(text, attachments, sender).await {
+            Ok(()) => SocketResponse::Ok,
+            Err(e) => SocketResponse::Error {
+                message: e.to_string(),
+            },
+        },
+        SocketCommand::Cancel => match handle.cancel().await {
+            Ok(()) => SocketResponse::Ok,
+            Err(e) => SocketResponse::Error {
+                message: e.to_string(),
+            },
+        },
+        SocketCommand::SetMode { mode_id } => match handle.set_mode(mode_id).await {
+            Ok(()) => SocketResponse::Ok,
+            Err(e) => SocketResponse::Error {
+                message: e.to_string(),
+            },
+        },
+        SocketCommand::SetModel { model_id } => match handle.set_model(model_id).await {
+            Ok(()) => SocketResponse::Ok,
+            Err(e) => SocketResponse::Error {
+                message: e.to_string(),
+            },
+        },
+        SocketCommand::RespondPermission { option_id } => {
+            handle.respond_permission(option_id);
+            SocketResponse::Ok
+        }
+        SocketCommand::Kill => match handle.kill().await {
+            Ok(()) => SocketResponse::Ok,
+            Err(e) => SocketResponse::Error {
+                message: e.to_string(),
+            },
+        },
+    }
+}
+
+/// 发现 session：3 步算法
+///
+/// 1. 查 ACP_SESSIONS（进程内 HashMap）→ Local
+/// 2. 查 acp.sock → connect() 成功 → Remote；失败 → stale，删 sock
+/// 3. 都没有 → None（调用方可启动新 session）
+pub fn discover_session(
+    project_key: &str,
+    task_id: &str,
+    chat_id: &str,
+    session_key: &str,
+) -> Option<SessionAccess> {
+    // Step 1: 进程内 HashMap
+    if let Some(handle) = get_session_handle(session_key) {
+        return Some(SessionAccess::Local(handle));
+    }
+
+    // Step 2: 检查 sock 文件
+    let sp = sock_path(project_key, task_id, chat_id);
+    if sp.exists() {
+        // 尝试同步 connect 探测 socket 是否存活
+        match std::os::unix::net::UnixStream::connect(&sp) {
+            Ok(_conn) => {
+                // Socket 存活，另一个进程持有
+                drop(_conn);
+                return Some(SessionAccess::Remote {
+                    sock_path: sp,
+                    chat_dir: chat_dir(project_key, task_id, chat_id),
+                    project_key: project_key.to_string(),
+                    task_id: task_id.to_string(),
+                    chat_id: chat_id.to_string(),
+                });
+            }
+            Err(_) => {
+                // Stale socket，清理
+                let _ = std::fs::remove_file(&sp);
+                let _ = std::fs::remove_file(session_json_path(project_key, task_id, chat_id));
+            }
+        }
+    }
+
+    // Step 3: 没找到
+    None
+}
+
+/// 通过 Unix socket 发送命令到远程 session owner
+pub async fn send_socket_command(
+    sock: &std::path::Path,
+    cmd: &SocketCommand,
+) -> crate::error::Result<SocketResponse> {
+    use tokio::io::{AsyncBufReadExt as _, AsyncWriteExt};
+
+    let stream = tokio::net::UnixStream::connect(sock)
+        .await
+        .map_err(|e| crate::error::GroveError::Session(format!("Socket connect failed: {}", e)))?;
+
+    let (reader, mut writer) = stream.into_split();
+
+    let cmd_json = serde_json::to_string(cmd).map_err(|e| {
+        crate::error::GroveError::Session(format!("Failed to serialize command: {}", e))
+    })?;
+
+    writer
+        .write_all(cmd_json.as_bytes())
+        .await
+        .map_err(|e| crate::error::GroveError::Session(format!("Socket write failed: {}", e)))?;
+    writer
+        .write_all(b"\n")
+        .await
+        .map_err(|e| crate::error::GroveError::Session(format!("Socket write failed: {}", e)))?;
+    writer
+        .shutdown()
+        .await
+        .map_err(|e| crate::error::GroveError::Session(format!("Socket shutdown failed: {}", e)))?;
+
+    let mut buf_reader = tokio::io::BufReader::new(reader);
+    let mut resp_line = String::new();
+    buf_reader
+        .read_line(&mut resp_line)
+        .await
+        .map_err(|e| crate::error::GroveError::Session(format!("Socket read failed: {}", e)))?;
+
+    serde_json::from_str(resp_line.trim())
+        .map_err(|e| crate::error::GroveError::Session(format!("Invalid socket response: {}", e)))
 }
 
 /// 解析后的 Agent 信息
@@ -1691,5 +2083,105 @@ async fn drain_stderr_to_file(stderr: tokio::process::ChildStderr, path: PathBuf
                 let _ = writer.flush();
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn socket_command_serde_roundtrip() {
+        let commands = vec![
+            SocketCommand::Prompt {
+                text: "hello".into(),
+                attachments: vec![],
+                sender: None,
+            },
+            SocketCommand::Cancel,
+            SocketCommand::SetMode {
+                mode_id: "plan".into(),
+            },
+            SocketCommand::SetModel {
+                model_id: "opus".into(),
+            },
+            SocketCommand::RespondPermission {
+                option_id: "allow_once".into(),
+            },
+            SocketCommand::Kill,
+        ];
+
+        for cmd in &commands {
+            let json = serde_json::to_string(cmd).expect("serialize");
+            let parsed: SocketCommand = serde_json::from_str(&json).expect("deserialize");
+            let json2 = serde_json::to_string(&parsed).expect("re-serialize");
+            assert_eq!(json, json2);
+        }
+    }
+
+    #[test]
+    fn socket_command_tagged_format() {
+        let cmd = SocketCommand::Prompt {
+            text: "do it".into(),
+            attachments: vec![],
+            sender: None,
+        };
+        let json = serde_json::to_string(&cmd).unwrap();
+        assert!(json.contains(r#""action":"prompt""#));
+
+        let cmd = SocketCommand::Cancel;
+        let json = serde_json::to_string(&cmd).unwrap();
+        assert!(json.contains(r#""action":"cancel""#));
+    }
+
+    #[test]
+    fn socket_response_serde_roundtrip() {
+        let ok = SocketResponse::Ok;
+        let json = serde_json::to_string(&ok).unwrap();
+        assert!(json.contains(r#""type":"ok""#));
+        let parsed: SocketResponse = serde_json::from_str(&json).unwrap();
+        assert!(matches!(parsed, SocketResponse::Ok));
+
+        let err = SocketResponse::Error {
+            message: "bad thing".into(),
+        };
+        let json = serde_json::to_string(&err).unwrap();
+        assert!(json.contains(r#""type":"error""#));
+        let parsed: SocketResponse = serde_json::from_str(&json).unwrap();
+        assert!(matches!(parsed, SocketResponse::Error { .. }));
+    }
+
+    #[test]
+    fn session_metadata_serde_roundtrip() {
+        let meta = SessionMetadata {
+            pid: 12345,
+            agent_name: "claude".into(),
+            agent_version: "1.0.0".into(),
+            available_modes: vec![
+                ("code".into(), "Code".into()),
+                ("plan".into(), "Plan".into()),
+            ],
+            current_mode_id: Some("code".into()),
+            available_models: vec![("opus".into(), "Opus".into())],
+            current_model_id: Some("opus".into()),
+        };
+
+        let json = serde_json::to_string_pretty(&meta).expect("serialize");
+        let parsed: SessionMetadata = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(parsed.pid, 12345);
+        assert_eq!(parsed.agent_name, "claude");
+        assert_eq!(parsed.available_modes.len(), 2);
+    }
+
+    #[test]
+    fn discover_session_returns_none_when_no_session() {
+        // Using bogus keys that won't match anything
+        let result = discover_session(
+            "nonexistent_project",
+            "nonexistent_task",
+            "nonexistent_chat",
+            "nonexistent:key",
+        );
+        assert!(result.is_none());
     }
 }

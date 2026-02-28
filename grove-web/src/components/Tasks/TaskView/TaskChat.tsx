@@ -26,12 +26,13 @@ import {
   Bot,
   Globe,
   Terminal,
+  Eye,
 } from "lucide-react";
 import { Button, MarkdownRenderer, agentOptions, FileMentionDropdown } from "../../ui";
 import { buildMentionItems, filterMentionItems } from "../../../utils/fileMention";
 import type { Task } from "../../../data/types";
 import { getApiHost, appendHmacToUrl } from "../../../api/client";
-import { getConfig, listChats, createChat, updateChatTitle, deleteChat, getTaskFiles, checkCommands } from "../../../api";
+import { getConfig, listChats, createChat, updateChatTitle, deleteChat, getTaskFiles, checkCommands, getChatHistory, takeControl } from "../../../api";
 import type { ChatSessionResponse, CustomAgent } from "../../../api";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -81,7 +82,7 @@ interface Attachment {
 }
 
 type ChatMessage =
-  | { type: "user"; content: string; attachments?: Attachment[] }
+  | { type: "user"; content: string; sender?: string; attachments?: Attachment[] }
   | { type: "assistant"; content: string; complete: boolean }
   | { type: "thinking"; content: string; collapsed: boolean }
   | ToolMessage
@@ -351,6 +352,13 @@ export function TaskChat({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [isDragging, setIsDragging] = useState(false);
   const [isInputExpanded, setIsInputExpanded] = useState(false);
+
+  // ─── Read-only observation mode state ──────────────────────────────────
+  const [isRemoteSession, setIsRemoteSession] = useState(false);
+  const [remoteOwnerName, setRemoteOwnerName] = useState("");
+  const [isTakingControl, setIsTakingControl] = useState(false);
+  const pollingOffsetRef = useRef(0);
+  const pollingTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const activeChat = chats.find((c) => c.id === activeChatId);
 
@@ -762,6 +770,7 @@ export function TaskChat({
         case "user_message":
           setMessages((prev) => [...prev, {
             type: "user", content: msg.text,
+            sender: msg.sender || undefined,
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             attachments: msg.attachments?.map((a: any) => ({
               type: a.type as "image" | "audio" | "resource",
@@ -790,6 +799,15 @@ export function TaskChat({
           // Server sends QueuedMessage[]; extract text for display
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           setPendingMessages((msg.messages ?? []).map((m: any) => typeof m === "string" ? m : m.text));
+          break;
+        case "remote_session":
+          // Session is owned by another process — enter read-only observation mode
+          setIsRemoteSession(true);
+          setRemoteOwnerName(msg.agent_name || "Unknown");
+          setMessages((prev) => [...prev, {
+            type: "system",
+            content: `This chat is controlled by another process (${msg.agent_name || "Unknown"})`,
+          }]);
           break;
         case "session_ended":
           setIsConnected(false);
@@ -906,6 +924,7 @@ export function TaskChat({
       case "user_message":
         state.messages = [...state.messages, {
           type: "user", content: msg.text,
+          sender: msg.sender || undefined,
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           attachments: msg.attachments?.map((a: any) => ({
             type: a.type as "image" | "audio" | "resource",
@@ -928,6 +947,54 @@ export function TaskChat({
     }
     perChatStateRef.current.set(chatId, state);
   }, []);
+
+  // ─── Read-only observation polling ─────────────────────────────────────
+  useEffect(() => {
+    if (!isRemoteSession || !activeChatId) {
+      if (pollingTimerRef.current) {
+        clearInterval(pollingTimerRef.current);
+        pollingTimerRef.current = null;
+      }
+      return;
+    }
+
+    // Load initial history
+    const chatId = activeChatId;
+    getChatHistory(projectId, task.id, chatId, 0)
+      .then((res) => {
+        if (res.events.length > 0) {
+          for (const evt of res.events) {
+            handleServerMessage(evt);
+          }
+          pollingOffsetRef.current = res.total;
+        }
+      })
+      .catch(() => {});
+
+    // Poll every 5 seconds for incremental updates
+    const timer = setInterval(async () => {
+      try {
+        const res = await getChatHistory(projectId, task.id, chatId, pollingOffsetRef.current);
+        if (res.events.length > 0) {
+          for (const evt of res.events) {
+            handleServerMessage(evt);
+          }
+          pollingOffsetRef.current = res.total;
+        }
+        // If session is gone, auto-exit read-only mode
+        if (!res.session) {
+          setIsRemoteSession(false);
+          setRemoteOwnerName("");
+        }
+      } catch { /* ignore polling errors */ }
+    }, 5000);
+    pollingTimerRef.current = timer;
+
+    return () => {
+      clearInterval(timer);
+      pollingTimerRef.current = null;
+    };
+  }, [isRemoteSession, activeChatId, projectId, task.id, handleServerMessage]);
 
   // ─── Chat switching ────────────────────────────────────────────────────
 
@@ -1032,6 +1099,28 @@ export function TaskChat({
       return prev.filter((_, i) => i !== index);
     });
   }, []);
+
+  /** Take control of a remote session */
+  const handleTakeControl = useCallback(async () => {
+    if (!activeChatId || isTakingControl) return;
+    setIsTakingControl(true);
+    try {
+      await takeControl(projectId, task.id, activeChatId);
+      // Clear polling and remote state
+      setIsRemoteSession(false);
+      setRemoteOwnerName("");
+      pollingOffsetRef.current = 0;
+      // Reconnect via WebSocket (normal flow)
+      wsMapRef.current.get(activeChatId)?.close();
+      wsMapRef.current.delete(activeChatId);
+      await connectChatWs(activeChatId);
+      wsRef.current = wsMapRef.current.get(activeChatId) ?? null;
+    } catch {
+      setMessages((prev) => [...prev, { type: "system", content: "Failed to take control. Please try again." }]);
+    } finally {
+      setIsTakingControl(false);
+    }
+  }, [activeChatId, isTakingControl, projectId, task.id, connectChatWs]);
 
   const handleSend = useCallback(() => {
     const el = editableRef.current;
@@ -1930,6 +2019,26 @@ export function TaskChat({
         </div>
       )}
 
+      {/* Read-only observation mode banner */}
+      {isRemoteSession && (
+        <div className="flex items-center justify-between px-3 py-2 bg-[color-mix(in_srgb,var(--color-warning)_12%,var(--color-bg))] border-t border-[var(--color-warning)]">
+          <div className="flex items-center gap-2 text-xs text-[var(--color-warning)]">
+            <Eye className="w-3.5 h-3.5" />
+            <span>Read-only — controlled by <strong>{remoteOwnerName}</strong></span>
+          </div>
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={handleTakeControl}
+            disabled={isTakingControl}
+            className="text-xs h-6 px-2 text-[var(--color-warning)] hover:text-[var(--color-text)] hover:bg-[var(--color-bg-tertiary)]"
+          >
+            {isTakingControl ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : null}
+            Take Control
+          </Button>
+        </div>
+      )}
+
       {/* Input */}
       <div className="border-t border-[var(--color-border)] bg-[var(--color-bg)] px-3 pt-3 pb-2 relative"
         onDragOver={handleDragOver} onDragLeave={handleDragLeave} onDrop={handleDrop}>
@@ -2076,7 +2185,7 @@ export function TaskChat({
             )}
             <div
               ref={editableRef}
-              contentEditable={isConnected}
+              contentEditable={isConnected && !isRemoteSession}
               suppressContentEditableWarning
               onInput={handleInput}
               onKeyDown={handleKeyDown}
@@ -2084,7 +2193,7 @@ export function TaskChat({
               onPaste={handlePaste}
               className={`overflow-y-auto px-3 py-2 pr-8 text-sm text-[var(--color-text)] focus:outline-none ${
                 isInputExpanded ? "min-h-[40vh] max-h-[60vh]" : "min-h-[36px] max-h-32"
-              } ${!isConnected ? "opacity-50 cursor-not-allowed" : ""}`}
+              } ${!isConnected || isRemoteSession ? "opacity-50 cursor-not-allowed" : ""}`}
               style={{ wordBreak: "break-word", whiteSpace: "pre-wrap" }}
             />
             {/* Expanded mode: attachment preview + footer inside the box */}
@@ -2207,16 +2316,24 @@ function MessageItem({ message, index, isBusy, agentLabel, onToggleThinkingColla
     case "user":
       return (
         <div className="flex justify-end">
-          <div className="max-w-[85%] rounded-lg px-3 py-2 bg-[var(--color-bg-tertiary)] border border-[var(--color-border)] text-sm text-[var(--color-text)]">
-            {message.attachments?.map((att, i) => (
-              att.type === "image" && att.previewUrl ? (
-                <img key={i} src={att.previewUrl} className="max-w-full max-h-48 rounded mb-2 cursor-pointer"
-                  onClick={() => window.open(att.previewUrl, '_blank')} alt="" />
-              ) : att.type === "audio" ? (
-                <audio key={i} controls src={`data:${att.mimeType};base64,${att.data}`} className="max-w-full mb-2" />
-              ) : null
-            ))}
-            {message.content && <div className="whitespace-pre-wrap">{message.content}</div>}
+          <div className="max-w-[85%]">
+            {message.sender && (
+              <div className="text-[10px] text-[var(--color-text-muted)] text-right mb-0.5 px-1 flex items-center justify-end gap-1">
+                <Bot className="w-2.5 h-2.5" />
+                {message.sender}
+              </div>
+            )}
+            <div className="rounded-lg px-3 py-2 bg-[var(--color-bg-tertiary)] border border-[var(--color-border)] text-sm text-[var(--color-text)]">
+              {message.attachments?.map((att, i) => (
+                att.type === "image" && att.previewUrl ? (
+                  <img key={i} src={att.previewUrl} className="max-w-full max-h-48 rounded mb-2 cursor-pointer"
+                    onClick={() => window.open(att.previewUrl, '_blank')} alt="" />
+                ) : att.type === "audio" ? (
+                  <audio key={i} controls src={`data:${att.mimeType};base64,${att.data}`} className="max-w-full mb-2" />
+                ) : null
+              ))}
+              {message.content && <div className="whitespace-pre-wrap">{message.content}</div>}
+            </div>
           </div>
         </div>
       );

@@ -75,6 +75,16 @@ pub fn create_api_router() -> Router {
             "/projects/{id}/tasks/{taskId}/chats/{chatId}/ws",
             get(handlers::acp::chat_ws_handler),
         )
+        // Chat History (read-only observation mode)
+        .route(
+            "/projects/{id}/tasks/{taskId}/chats/{chatId}/history",
+            get(handlers::acp::get_chat_history),
+        )
+        // Take Control (kill remote session owner)
+        .route(
+            "/projects/{id}/tasks/{taskId}/chats/{chatId}/take-control",
+            post(handlers::acp::take_control),
+        )
         // Projects API
         .route("/projects", get(handlers::projects::list_projects))
         .route("/projects", post(handlers::projects::add_project))

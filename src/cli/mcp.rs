@@ -346,6 +346,8 @@ pub struct SendPromptParams {
     /// Set to true to cancel the current agent turn. Mutually exclusive with text and permission_option_id.
     #[serde(default)]
     pub cancel: bool,
+    /// Sender name (e.g., "Claude Code (Orchestrator)"). Shown in chat UI to identify who sent the message.
+    pub sender: Option<String>,
 }
 
 /// Query chat status (management tool)
@@ -1233,21 +1235,64 @@ fn add_project_by_path_json(path: &str) -> serde_json::Value {
     })
 }
 
+/// Fuzzy match: checks if `query` matches `haystack` with flexible matching.
+///
+/// Strategy (all case-insensitive):
+///
+/// 1. Split query into whitespace-separated tokens
+/// 2. Each token must match via at least one of:
+///   - Substring match (e.g., "auth" in "authentication")
+///   - Word-prefix match — split haystack on separators and check if any
+///     word starts with the token (e.g., "lg" matches "login")
+///   - Initials match — token characters match the first letters of
+///     consecutive words (e.g., "al" matches "auth-login")
+fn fuzzy_matches(haystack: &str, query: &str) -> bool {
+    let h = haystack.to_lowercase();
+    let q = query.trim().to_lowercase();
+    if q.is_empty() {
+        return true;
+    }
+
+    // Split haystack into "words" on common separators
+    let words: Vec<&str> = h
+        .split(['/', '-', '_', '.', ' '])
+        .filter(|w| !w.is_empty())
+        .collect();
+
+    q.split_whitespace().all(|token| {
+        // (a) Substring match
+        if h.contains(token) {
+            return true;
+        }
+        // (b) Any word starts with token
+        if words.iter().any(|w| w.starts_with(token)) {
+            return true;
+        }
+        // (c) Initials match: each char of token matches the start of a consecutive word
+        if token.len() >= 2 && token.len() <= words.len() {
+            let token_chars: Vec<char> = token.chars().collect();
+            // Sliding window over words
+            'outer: for start in 0..=words.len() - token_chars.len() {
+                for (i, &tc) in token_chars.iter().enumerate() {
+                    if !words[start + i].starts_with(tc) {
+                        continue 'outer;
+                    }
+                }
+                return true;
+            }
+        }
+        false
+    })
+}
+
 fn list_projects_json(query: Option<&str>) -> serde_json::Value {
     match workspace::load_projects() {
         Ok(projects) => {
-            let q = query.map(|s| s.trim().to_lowercase());
             let items: Vec<serde_json::Value> = projects
                 .into_iter()
-                .filter(|p| {
-                    if let Some(ref q) = q {
-                        if q.is_empty() {
-                            return true;
-                        }
-                        p.path.to_lowercase().contains(q)
-                    } else {
-                        true
-                    }
+                .filter(|p| match query {
+                    Some(q) => fuzzy_matches(&p.path, q) || fuzzy_matches(&p.name, q),
+                    None => true,
                 })
                 .map(|p| {
                     json!({
@@ -1316,21 +1361,16 @@ fn list_tasks_json(project_id: &str, query: Option<&str>) -> serde_json::Value {
 
     match tasks::load_tasks(project_id) {
         Ok(list) => {
-            let q = query.map(|s| s.trim().to_lowercase());
             let items: Vec<serde_json::Value> = list
                 .into_iter()
-                .filter(|t| {
-                    if let Some(ref q) = q {
-                        if q.is_empty() {
-                            return true;
-                        }
-                        t.id.to_lowercase().contains(q)
-                            || t.name.to_lowercase().contains(q)
-                            || t.branch.to_lowercase().contains(q)
-                            || t.target.to_lowercase().contains(q)
-                    } else {
-                        true
+                .filter(|t| match query {
+                    Some(q) => {
+                        fuzzy_matches(&t.id, q)
+                            || fuzzy_matches(&t.name, q)
+                            || fuzzy_matches(&t.branch, q)
+                            || fuzzy_matches(&t.target, q)
                     }
+                    None => true,
                 })
                 .map(|t| {
                     json!({
@@ -1543,21 +1583,22 @@ async fn start_chat_impl(p: StartChatParams) -> Result<CallToolResult, McpError>
 }
 
 /// Get an existing session handle, or auto-start one if the chat exists in storage.
-async fn ensure_session_handle(
+/// Resolve session access: discover existing (local or remote), or auto-start a new one.
+async fn resolve_session_access(
     project_key: &str,
     project_path: &str,
     project_name: &str,
     task: &tasks::Task,
     chat_id: &str,
-) -> Result<std::sync::Arc<acp::AcpSessionHandle>, McpError> {
+) -> Result<acp::SessionAccess, McpError> {
     let session_key = build_session_key(project_key, &task.id, chat_id);
 
-    // Already running — return existing handle
-    if let Some(handle) = acp::get_session_handle(&session_key) {
-        return Ok(handle);
+    // Try discover (in-process HashMap → socket probe)
+    if let Some(access) = acp::discover_session(project_key, &task.id, chat_id, &session_key) {
+        return Ok(access);
     }
 
-    // Not running — look up chat in storage and auto-start
+    // Not found anywhere — look up chat in storage and auto-start
     let chat = tasks::get_chat_session(project_key, &task.id, chat_id)
         .map_err(|e| McpError::internal_error(format!("Failed to load chat: {e}"), None))?
         .ok_or_else(|| McpError::invalid_params("Chat not found", None))?;
@@ -1581,11 +1622,14 @@ async fn ensure_session_handle(
         remote_auth: resolved.auth_header,
     };
 
+    // Start session — may race with another process. If bind() fails (AddrInUse),
+    // the socket listener inside get_or_start_session will log and skip, which is fine.
+    // A subsequent discover_session would find the remote.
     let (handle, _rx) = acp::get_or_start_session(session_key, config)
         .await
         .map_err(|e| McpError::internal_error(format!("Failed to start ACP session: {e}"), None))?;
 
-    Ok(handle)
+    Ok(acp::SessionAccess::Local(handle))
 }
 
 async fn send_prompt_impl(p: SendPromptParams) -> Result<CallToolResult, McpError> {
@@ -1608,7 +1652,7 @@ async fn send_prompt_impl(p: SendPromptParams) -> Result<CallToolResult, McpErro
     let (project_key, project_path, project_name) = resolve_project_for_mcp(&p.project_id)?;
     let task = resolve_task_for_mcp(&project_key, &p.task_id)?;
 
-    let handle = ensure_session_handle(
+    let access = resolve_session_access(
         &project_key,
         &project_path,
         &project_name,
@@ -1617,6 +1661,17 @@ async fn send_prompt_impl(p: SendPromptParams) -> Result<CallToolResult, McpErro
     )
     .await?;
 
+    match access {
+        acp::SessionAccess::Local(handle) => send_prompt_local(&handle, p).await,
+        acp::SessionAccess::Remote { sock_path, .. } => send_prompt_remote(&sock_path, p).await,
+    }
+}
+
+/// Send prompt via local in-process handle
+async fn send_prompt_local(
+    handle: &acp::AcpSessionHandle,
+    p: SendPromptParams,
+) -> Result<CallToolResult, McpError> {
     // Action: cancel
     if p.cancel {
         handle
@@ -1652,19 +1707,89 @@ async fn send_prompt_impl(p: SendPromptParams) -> Result<CallToolResult, McpErro
     }
 
     handle
-        .send_prompt(text, vec![])
+        .send_prompt(text, vec![], p.sender)
         .await
         .map_err(|e| McpError::internal_error(format!("Failed to send prompt: {e}"), None))?;
 
     ok_json(json!({ "action": "prompt_sent" }))
 }
 
+/// Send prompt via Unix socket to remote session owner
+async fn send_prompt_remote(
+    sock_path: &std::path::Path,
+    p: SendPromptParams,
+) -> Result<CallToolResult, McpError> {
+    let cmd = if p.cancel {
+        acp::SocketCommand::Cancel
+    } else if let Some(option_id) = p.permission_option_id {
+        acp::SocketCommand::RespondPermission { option_id }
+    } else {
+        let text = p.text.unwrap(); // safe: validated above
+
+        // Set mode first if requested
+        if let Some(mode_id) = p.mode_id {
+            let mode_cmd = acp::SocketCommand::SetMode { mode_id };
+            let resp = acp::send_socket_command(sock_path, &mode_cmd)
+                .await
+                .map_err(|e| {
+                    McpError::internal_error(format!("Socket set_mode failed: {e}"), None)
+                })?;
+            if let acp::SocketResponse::Error { message } = resp {
+                return Err(McpError::internal_error(
+                    format!("Remote set_mode failed: {}", message),
+                    None,
+                ));
+            }
+        }
+
+        // Set model if requested
+        if let Some(model_id) = p.model_id {
+            let model_cmd = acp::SocketCommand::SetModel { model_id };
+            let resp = acp::send_socket_command(sock_path, &model_cmd)
+                .await
+                .map_err(|e| {
+                    McpError::internal_error(format!("Socket set_model failed: {e}"), None)
+                })?;
+            if let acp::SocketResponse::Error { message } = resp {
+                return Err(McpError::internal_error(
+                    format!("Remote set_model failed: {}", message),
+                    None,
+                ));
+            }
+        }
+
+        acp::SocketCommand::Prompt {
+            text,
+            attachments: vec![],
+            sender: p.sender,
+        }
+    };
+
+    let action_name = match &cmd {
+        acp::SocketCommand::Cancel => "cancelled",
+        acp::SocketCommand::RespondPermission { .. } => "permission_responded",
+        _ => "prompt_sent",
+    };
+
+    let resp = acp::send_socket_command(sock_path, &cmd)
+        .await
+        .map_err(|e| McpError::internal_error(format!("Socket command failed: {e}"), None))?;
+
+    match resp {
+        acp::SocketResponse::Ok => ok_json(json!({ "action": action_name })),
+        acp::SocketResponse::Error { message } => Err(McpError::internal_error(
+            format!("Remote command failed: {}", message),
+            None,
+        )),
+    }
+}
+
 async fn chat_status_impl(p: ChatStatusParams) -> Result<CallToolResult, McpError> {
     let (project_key, project_path, project_name) = resolve_project_for_mcp(&p.project_id)?;
     let task = resolve_task_for_mcp(&project_key, &p.task_id)?;
 
-    // Auto-connect: ensure session is running (blocks until SessionReady if just started)
-    let handle = ensure_session_handle(
+    // Auto-connect: resolve session (local, remote, or start new)
+    let access = resolve_session_access(
         &project_key,
         &project_path,
         &project_name,
@@ -1673,9 +1798,22 @@ async fn chat_status_impl(p: ChatStatusParams) -> Result<CallToolResult, McpErro
     )
     .await?;
 
+    match access {
+        acp::SessionAccess::Local(handle) => chat_status_from_handle(&handle).await,
+        acp::SessionAccess::Remote {
+            project_key,
+            task_id,
+            chat_id,
+            ..
+        } => chat_status_from_disk(&project_key, &task_id, &chat_id).await,
+    }
+}
+
+/// Build chat status from local in-process handle
+async fn chat_status_from_handle(
+    handle: &acp::AcpSessionHandle,
+) -> Result<CallToolResult, McpError> {
     // Wait briefly for SessionReady if the session was just started
-    // (ensure_session_handle returns after get_or_start_session, but SessionReady
-    // may not have arrived yet in history)
     let timeout = tokio::time::Duration::from_secs(60);
     let modes_models = tokio::time::timeout(timeout, async {
         loop {
@@ -1701,13 +1839,54 @@ async fn chat_status_impl(p: ChatStatusParams) -> Result<CallToolResult, McpErro
     let history = handle.get_history();
     let compacted = chat_history::compact_events(history);
 
-    let last_message = extract_last_message(&compacted);
-    let plan = extract_last_plan(&compacted);
+    build_chat_status_json(&compacted, &available_modes, &available_models)
+}
+
+/// Build chat status from disk (for remote sessions owned by another process)
+async fn chat_status_from_disk(
+    project_key: &str,
+    task_id: &str,
+    chat_id: &str,
+) -> Result<CallToolResult, McpError> {
+    // Poll session.json for modes/models (may not be written yet if agent just started)
+    let timeout = tokio::time::Duration::from_secs(60);
+    let metadata = tokio::time::timeout(timeout, async {
+        loop {
+            if let Some(meta) = acp::read_session_metadata(project_key, task_id, chat_id) {
+                return meta;
+            }
+            tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+        }
+    })
+    .await
+    .map_err(|_| {
+        McpError::internal_error("Timeout waiting for remote session metadata (60s)", None)
+    })?;
+
+    // Load history from disk and compact
+    let history = chat_history::load_history(project_key, task_id, chat_id);
+    let compacted = chat_history::compact_events(history);
+
+    build_chat_status_json(
+        &compacted,
+        &metadata.available_modes,
+        &metadata.available_models,
+    )
+}
+
+/// Build the chat status JSON response from compacted events and mode/model info
+fn build_chat_status_json(
+    compacted: &[acp::AcpUpdate],
+    available_modes: &[(String, String)],
+    available_models: &[(String, String)],
+) -> Result<CallToolResult, McpError> {
+    let last_message = extract_last_message(compacted);
+    let plan = extract_last_plan(compacted);
     let turn_count = compacted
         .iter()
         .filter(|e| matches!(e, acp::AcpUpdate::Complete { .. }))
         .count();
-    let permission = extract_pending_permission(&compacted);
+    let permission = extract_pending_permission(compacted);
 
     let state = if permission.is_some() {
         "permission_needed"
@@ -1756,19 +1935,11 @@ async fn list_chats_impl(p: ListChatsParams) -> Result<CallToolResult, McpError>
     let chats = tasks::load_chat_sessions(&project_key, &p.task_id)
         .map_err(|e| McpError::internal_error(format!("Failed to load chats: {e}"), None))?;
 
-    let q = p.query.map(|s| s.trim().to_lowercase());
-
     let items: Vec<serde_json::Value> = chats
         .iter()
-        .filter(|c| {
-            if let Some(ref q) = q {
-                if q.is_empty() {
-                    return true;
-                }
-                c.title.to_lowercase().contains(q)
-            } else {
-                true
-            }
+        .filter(|c| match &p.query {
+            Some(q) => fuzzy_matches(&c.title, q) || fuzzy_matches(&c.agent, q),
+            None => true,
         })
         .map(|c| {
             json!({
