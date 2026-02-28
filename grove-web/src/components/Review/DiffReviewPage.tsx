@@ -24,6 +24,7 @@ import { CodeSearchBar } from './CodeSearchBar';
 import { MessageSquare, ChevronUp, ChevronDown, PanelLeftClose, PanelLeftOpen, Crosshair, GitCompare, FileText } from 'lucide-react';
 import { VersionSelector } from './VersionSelector';
 import { useIsMobile } from '../../hooks';
+import { useHotkeys } from '../../hooks/useHotkeys';
 import './diffTheme.css';
 
 interface DiffReviewPageProps {
@@ -32,6 +33,8 @@ interface DiffReviewPageProps {
   embedded?: boolean;
 }
 
+type MarkdownPreviewMode = 'diff' | 'diff-preview' | 'full-preview';
+
 export function DiffReviewPage({ projectId, taskId, embedded }: DiffReviewPageProps) {
   const { isMobile } = useIsMobile();
   const [diffData, setDiffData] = useState<FullDiffResult | null>(null);
@@ -39,6 +42,7 @@ export function DiffReviewPage({ projectId, taskId, embedded }: DiffReviewPagePr
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
   const [viewType, setViewType] = useState<'unified' | 'split'>('unified');
   const [viewMode, setViewMode] = useState<'diff' | 'full'>('diff');
+  const [previewMode, setPreviewMode] = useState<MarkdownPreviewMode>('diff-preview');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [comments, setComments] = useState<ReviewCommentEntry[]>([]);
@@ -162,6 +166,24 @@ export function DiffReviewPage({ projectId, taskId, embedded }: DiffReviewPagePr
   useEffect(() => {
     displayFilesRef.current = displayFiles;
   }, [displayFiles]);
+
+  const activeFilePath = useMemo(() => {
+    return displayFiles.find((f) => f.new_path === selectedFile)?.new_path || displayFiles[0]?.new_path || null;
+  }, [displayFiles, selectedFile]);
+
+  const isMarkdownPath = useCallback((path: string | null | undefined) => {
+    if (!path) return false;
+    const lower = path.toLowerCase();
+    return lower.endsWith('.md') || lower.endsWith('.markdown');
+  }, []);
+
+  const isActiveFileMarkdown = useMemo(() => isMarkdownPath(activeFilePath), [activeFilePath, isMarkdownPath]);
+
+  useEffect(() => {
+    if (!isActiveFileMarkdown && previewMode !== 'diff') {
+      setPreviewMode('diff');
+    }
+  }, [isActiveFileMarkdown, previewMode]);
 
   // Auto-detect iframe mode
   const isEmbedded = embedded ?? (typeof window !== 'undefined' && window !== window.parent);
@@ -318,7 +340,6 @@ export function DiffReviewPage({ projectId, taskId, embedded }: DiffReviewPagePr
       setLoading(true);
       setError(null);
       try {
-        let data: FullDiffResult;
         let reviewComments: ReviewCommentEntry[] = [];
 
         const [diffResult, reviewData, commitsData, filesData] = await Promise.all([
@@ -327,7 +348,7 @@ export function DiffReviewPage({ projectId, taskId, embedded }: DiffReviewPagePr
           getCommits(projectId, taskId).catch(() => null),
           getTaskFiles(projectId, taskId).catch(() => null),
         ]);
-        data = diffResult;
+        const data = diffResult;
         if (reviewData) {
           reviewComments = reviewData.comments;
           if (reviewData.git_user_name) {
@@ -499,6 +520,28 @@ export function DiffReviewPage({ projectId, taskId, embedded }: DiffReviewPagePr
     }
   }, [isMobile]);
 
+  const handleMarkdownPreviewModeChange = useCallback((path: string, mode: MarkdownPreviewMode) => {
+    setPreviewMode(mode);
+    if (path !== selectedFile) {
+      handleSelectFile(path);
+    }
+  }, [handleSelectFile, selectedFile]);
+
+  const handleCyclePreviewMode = useCallback(() => {
+    if (!activeFilePath || !isMarkdownPath(activeFilePath)) return;
+    const order: MarkdownPreviewMode[] = ['diff', 'diff-preview', 'full-preview'];
+    const currentIndex = order.indexOf(previewMode);
+    const nextMode = order[(currentIndex + 1) % order.length] ?? 'diff';
+    handleMarkdownPreviewModeChange(activeFilePath, nextMode);
+  }, [activeFilePath, isMarkdownPath, previewMode, handleMarkdownPreviewModeChange]);
+
+  useHotkeys(
+    [
+      { key: 'v', handler: handleCyclePreviewMode },
+    ],
+    [handleCyclePreviewMode]
+  );
+
   // Track topmost visible file on scroll (non-focus mode)
   useEffect(() => {
     const container = contentRef.current;
@@ -537,6 +580,11 @@ export function DiffReviewPage({ projectId, taskId, embedded }: DiffReviewPagePr
       if (rafId) cancelAnimationFrame(rafId);
     };
   }, [focusMode, displayFiles]); // re-attach when files change
+
+  // Track visible file on scroll
+  const handleFileVisible = useCallback((path: string) => {
+    setSelectedFile(path);
+  }, []);
 
   // File navigation using refs to avoid dependency issues
   const goToNextFile = useCallback(() => {
@@ -855,7 +903,7 @@ export function DiffReviewPage({ projectId, taskId, embedded }: DiffReviewPagePr
   const isEmpty = displayFiles.length === 0;
 
   // Ensure selectedFile is valid - if not, use first file
-  const validSelectedFile = displayFiles.find((f) => f.new_path === selectedFile)?.new_path || displayFiles[0]?.new_path || null;
+  const validSelectedFile = activeFilePath;
 
   return (
     <div className={`diff-review-page ${isEmbedded ? 'embedded' : ''}`}>
@@ -1012,51 +1060,58 @@ export function DiffReviewPage({ projectId, taskId, embedded }: DiffReviewPagePr
                 return (focusMode
                   ? displayFiles.filter((f) => f.new_path === validSelectedFile)
                   : displayFiles
-                ).map((file) => (
-                <DiffFileView
-                  key={file.new_path}
-                  file={file}
-                  viewType={viewType}
-                  isActive={validSelectedFile === file.new_path}
-                  projectId={projectId}
-                  taskId={taskId}
-                  comments={getFileComments(file.new_path)}
-                  commentFormAnchor={commentFormAnchor}
-                  onGutterClick={handleGutterClick}
-                  onAddComment={handleAddComment}
-                  onDeleteComment={handleDeleteComment}
-                  onCancelComment={handleCancelComment}
-                  isCollapsed={collapsedFiles.has(file.new_path)}
-                  onToggleCollapse={handleToggleCollapse}
-                  viewedStatus={getFileViewedStatus(file.new_path)}
-                  onToggleViewed={handleToggleViewed}
-                  commentCount={fileCommentCounts.get(file.new_path)}
-                  replyFormCommentId={replyFormCommentId}
-                  onOpenReplyForm={handleOpenReplyForm}
-                  onReplyComment={handleReplyComment}
-                  onCancelReply={handleCancelReply}
-                  onResolveComment={handleResolveComment}
-                  onReopenComment={handleReopenComment}
-                  collapsedCommentIds={collapsedCommentIds}
-                  onCollapseComment={handleCollapseComment}
-                  onExpandComment={handleExpandComment}
-                  viewMode={viewMode}
-                  fullFileContent={fullFileContents.get(file.new_path)}
-                  isLoadingFullFile={loadingFiles.has(file.new_path)}
-                  onRequestFullFile={loadFullFileContent}
-                  onAddFileComment={handleAddFileComment}
-                  fileCommentFormPath={fileCommentFormPath}
-                  onCancelFileComment={handleCancelFileComment}
-                  onSubmitFileComment={handleSubmitFileComment}
-                  onEditComment={handleEditComment}
-                  onEditReply={handleEditReply}
-                  onDeleteReply={handleDeleteReply}
-                  codeSearchQuery={codeSearchQuery}
-                  codeSearchCaseSensitive={codeSearchCaseSensitive}
-                  scrollToLine={scrollToLine?.file === file.new_path ? scrollToLine.line : undefined}
-                  mentionItems={mentionItems}
-                />
-              ))})()}
+                ).map((file) => {
+                  const isMarkdownFile = isMarkdownPath(file.new_path);
+                  return (
+                    <DiffFileView
+                      key={file.new_path}
+                      file={file}
+                      viewType={viewType}
+                      isActive={validSelectedFile === file.new_path}
+                      markdownPreviewMode={isMarkdownFile ? previewMode : undefined}
+                      onMarkdownPreviewModeChange={isMarkdownFile ? handleMarkdownPreviewModeChange : undefined}
+                      projectId={projectId}
+                      taskId={taskId}
+                      onVisible={() => handleFileVisible(file.new_path)}
+                      comments={getFileComments(file.new_path)}
+                      commentFormAnchor={commentFormAnchor}
+                      onGutterClick={handleGutterClick}
+                      onAddComment={handleAddComment}
+                      onDeleteComment={handleDeleteComment}
+                      onCancelComment={handleCancelComment}
+                      isCollapsed={collapsedFiles.has(file.new_path)}
+                      onToggleCollapse={handleToggleCollapse}
+                      viewedStatus={getFileViewedStatus(file.new_path)}
+                      onToggleViewed={handleToggleViewed}
+                      commentCount={fileCommentCounts.get(file.new_path)}
+                      replyFormCommentId={replyFormCommentId}
+                      onOpenReplyForm={handleOpenReplyForm}
+                      onReplyComment={handleReplyComment}
+                      onCancelReply={handleCancelReply}
+                      onResolveComment={handleResolveComment}
+                      onReopenComment={handleReopenComment}
+                      collapsedCommentIds={collapsedCommentIds}
+                      onCollapseComment={handleCollapseComment}
+                      onExpandComment={handleExpandComment}
+                      viewMode={viewMode}
+                      fullFileContent={fullFileContents.get(file.new_path)}
+                      isLoadingFullFile={loadingFiles.has(file.new_path)}
+                      onRequestFullFile={loadFullFileContent}
+                      onAddFileComment={handleAddFileComment}
+                      fileCommentFormPath={fileCommentFormPath}
+                      onCancelFileComment={handleCancelFileComment}
+                      onSubmitFileComment={handleSubmitFileComment}
+                      onEditComment={handleEditComment}
+                      onEditReply={handleEditReply}
+                      onDeleteReply={handleDeleteReply}
+                      codeSearchQuery={codeSearchQuery}
+                      codeSearchCaseSensitive={codeSearchCaseSensitive}
+                      scrollToLine={scrollToLine?.file === file.new_path ? scrollToLine.line : undefined}
+                      mentionItems={mentionItems}
+                    />
+                  );
+                });
+              })()}
             </div>
 
             {/* Conversation sidebar */}
