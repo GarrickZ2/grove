@@ -235,35 +235,36 @@
   padding: 8px 16px;
 }
 
-.diff-file-preview-mode {
+/* Preview button (Eye icon in header) */
+.diff-file-preview-btn {
+  width: 20px;
+  height: 20px;
   display: flex;
   align-items: center;
-  gap: 14px;
-  padding: 8px 16px;
-  border-top: 1px solid var(--color-border);
-  background: color-mix(in srgb, var(--color-bg-secondary) 92%, var(--color-bg) 8%);
-}
-
-.diff-file-preview-mode button {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 4px 0;
+  justify-content: center;
   border: none;
-  background: transparent;
+  background: none;
   color: var(--color-text-muted);
   cursor: pointer;
-  font-size: 12px;
-  font-weight: 600;
-  transition: color 0.15s;
+  border-radius: 4px;
+  opacity: 0;
+  transition: opacity 0.15s, color 0.15s;
+  flex-shrink: 0;
 }
 
-.diff-file-preview-mode button:hover {
-  color: var(--color-text);
+.diff-file-header:hover .diff-file-preview-btn {
+  opacity: 0.6;
 }
 
-.diff-file-preview-mode button.active {
-  color: var(--color-text);
+.diff-file-preview-btn:hover {
+  opacity: 1 !important;
+  color: var(--color-highlight);
+  background: var(--color-bg-tertiary);
+}
+
+.diff-file-preview-btn.active {
+  opacity: 1 !important;
+  color: var(--color-highlight);
 }
 
 .diff-file-path {
@@ -1246,189 +1247,146 @@ td.diff-code.diff-line-highlighted::before {
   background: var(--color-bg-secondary);
 }
 
-/* ============================================================================
-   Preview sidebar (split pane)
-   ============================================================================ */
+/* File body — flex layout for drawer */
+.diff-file-body {
+  display: flex;
+  overflow: hidden;
+}
 
-.preview-sidebar {
-  width: 420px;
+.diff-file-body-main {
+  flex: 1;
   min-width: 0;
-  background: var(--color-bg-secondary);
+  overflow-x: auto;
+}
+
+.diff-file-body-main.hidden {
+  width: 0;
+  min-width: 0;
+  flex: 0;
+  overflow: hidden;
+}
+
+/* Preview drawer */
+.preview-drawer {
+  position: relative;
+  width: 0;
+  min-width: 0;
+  overflow: hidden;
   border-left: 1px solid var(--color-border);
   display: flex;
   flex-direction: column;
-  overflow: hidden;
-  flex-shrink: 0;
-  position: relative;
+  background: var(--color-bg);
   transition: width 0.25s cubic-bezier(0.4, 0, 0.2, 1),
-              border-left-width 0.25s cubic-bezier(0.4, 0, 0.2, 1),
+              min-width 0.25s cubic-bezier(0.4, 0, 0.2, 1),
               opacity 0.2s ease;
+  opacity: 0;
+}
+
+.preview-drawer.open {
+  width: 50%;
+  min-width: 300px;
   opacity: 1;
 }
 
-.preview-sidebar.no-transition {
-  transition: none !important;
+.preview-drawer.expanded {
+  width: 100%;
+  flex: 1;
 }
 
-.preview-sidebar.collapsed {
-  width: 0;
-  border-left-width: 0;
-  opacity: 0;
-  pointer-events: none;
+/* Resize handle on left edge of drawer */
+.preview-drawer-resize {
+  position: absolute;
+  top: 0;
+  left: -2px;
+  width: 5px;
+  height: 100%;
+  cursor: col-resize;
+  z-index: 10;
 }
 
-.preview-sidebar-header {
+.preview-drawer-resize:hover,
+.preview-drawer-resize:active {
+  background: var(--color-highlight);
+  opacity: 0.4;
+}
+
+.preview-drawer-header {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 12px;
+  padding: 6px 12px;
   border-bottom: 1px solid var(--color-border);
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--color-text);
+  background: var(--color-bg-secondary);
+  font-size: 12px;
+  gap: 8px;
+  flex-shrink: 0;
 }
 
-.preview-sidebar-title {
-  white-space: nowrap;
+.preview-drawer-header .diff-file-preview-btn {
+  opacity: 0.6;
 }
 
-.preview-sidebar-file {
-  margin-left: auto;
-  font-size: 11px;
-  font-weight: 500;
-  color: var(--color-text-muted);
-  max-width: 55%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.preview-drawer-header .diff-file-preview-btn:hover {
+  opacity: 1 !important;
 }
 
-.preview-toggle-raw {
-  margin-left: 8px;
-  padding: 2px 8px;
-  font-size: 10px;
-  font-weight: 500;
-  color: var(--color-text-muted);
-  background: var(--color-bg-tertiary);
-  border: 1px solid var(--color-border);
-  border-radius: 4px;
-  cursor: pointer;
-  transition: all 0.15s;
-}
-
-.preview-toggle-raw:hover {
-  background: var(--color-bg);
-  color: var(--color-text);
-}
-
-/* Resizable splitter */
-.preview-resizer {
-  position: absolute;
-  left: 0;
-  top: 0;
-  bottom: 0;
-  width: 8px;
-  cursor: col-resize;
-  background: transparent;
-  z-index: 10;
-  transition: background 0.15s;
-}
-
-.preview-resizer:hover,
-.preview-resizer.resizing {
-  background: var(--color-highlight);
-}
-
-.preview-sidebar-content {
+.preview-drawer-content {
   flex: 1;
   overflow: auto;
+  padding: 12px;
 }
 
-.preview-markdown {
+/* Diff preview hunk markers (inside drawer) — non-code blocks */
+.preview-block-insert {
+  background: color-mix(in srgb, var(--color-success) 18%, transparent);
+  border-radius: 4px;
+  padding: 2px 6px;
+  margin: 2px 0;
+}
+
+.preview-block-delete {
+  background: color-mix(in srgb, var(--color-error) 15%, transparent);
+  border-radius: 4px;
+  padding: 2px 6px;
+  margin: 2px 0;
+}
+
+.preview-block-context {
+  padding: 2px 6px;
+  margin: 2px 0;
+}
+
+/* Diff preview code blocks — per-line coloring */
+.preview-code-block {
+  margin: 4px 0;
   padding: 12px;
+  background: var(--color-bg-tertiary);
+  border-radius: 6px;
+  overflow-x: auto;
+}
+
+.preview-code-block code {
+  font-family: ui-monospace, 'SF Mono', 'Fira Code', 'Fira Mono', 'Roboto Mono', monospace;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.preview-code-line {
+  padding: 1px 4px;
+  border-radius: 2px;
+}
+
+.preview-code-line-insert {
+  background: color-mix(in srgb, var(--color-success) 18%, transparent);
+}
+
+.preview-code-line-delete {
+  background: color-mix(in srgb, var(--color-error) 15%, transparent);
 }
 
 .preview-loading {
   padding: 12px;
   color: var(--color-text-muted);
   font-size: 12px;
-}
-
-.preview-diff-blocks {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-
-.preview-diff-block {
-  border: 1px solid var(--color-border);
-  border-radius: 10px;
-  overflow: hidden;
-  background: var(--color-bg-secondary);
-}
-
-.preview-diff-block.context {
-  border-left: 4px solid var(--color-border);
-}
-
-.preview-diff-block.insert {
-  border-left: 4px solid var(--color-success);
-}
-
-.preview-diff-block.delete {
-  border-left: 4px solid var(--color-error);
-}
-
-.preview-diff-block-header {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 8px 10px;
-  border-bottom: 1px solid var(--color-border);
-  background: var(--color-bg-tertiary);
-}
-
-.preview-diff-badge {
-  font-size: 10px;
-  font-weight: 700;
-  padding: 2px 6px;
-  border-radius: 999px;
-  border: 1px solid var(--color-border);
-  color: var(--color-text-muted);
-  background: var(--color-bg);
-  flex-shrink: 0;
-}
-
-.preview-diff-badge.insert {
-  color: var(--color-success);
-  border-color: color-mix(in srgb, var(--color-success) 40%, var(--color-border));
-}
-
-.preview-diff-badge.delete {
-  color: var(--color-error);
-  border-color: color-mix(in srgb, var(--color-error) 40%, var(--color-border));
-}
-
-.preview-diff-hunk {
-  font-size: 11px;
-  color: var(--color-text-muted);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.preview-diff-block.delete .markdown-content,
-.preview-diff-block.delete h1,
-.preview-diff-block.delete h2,
-.preview-diff-block.delete h3,
-.preview-diff-block.delete h4,
-.preview-diff-block.delete h5,
-.preview-diff-block.delete h6,
-.preview-diff-block.delete p,
-.preview-diff-block.delete li,
-.preview-diff-block.delete code {
-  color: var(--color-text-muted) !important;
-  text-decoration: line-through;
 }
 
 /* ============================================================================

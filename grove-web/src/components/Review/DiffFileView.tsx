@@ -4,21 +4,12 @@ import { getFileContent } from '../../api/review';
 import type { ReviewCommentEntry } from '../../api/tasks';
 import type { CommentAnchor } from './DiffReviewPage';
 import { CommentCard, CommentForm, ReplyForm } from './InlineComment';
-import { ChevronRight, ChevronDown, ChevronUp, Copy, Check, MessageSquare, ChevronsUpDown, Eye, FileDiff } from 'lucide-react';
+import { ChevronRight, ChevronDown, ChevronUp, Copy, Check, MessageSquare, ChevronsUpDown, Eye, Maximize2, Minimize2, X } from 'lucide-react';
 import { detectLanguage, highlightLines } from './syntaxHighlight';
 import { GutterAvatar } from './AgentAvatar';
 import { useFileMention } from '../../hooks';
 import { FileMentionDropdown } from '../ui';
 import { MarkdownRenderer } from '../ui/MarkdownRenderer';
-import { KeyBadge } from '../ui/KeyBadge';
-
-type MarkdownPreviewMode = 'diff' | 'diff-preview' | 'full-preview';
-type MarkdownPreviewBlock = {
-  id: string;
-  kind: 'insert' | 'delete' | 'context';
-  content: string;
-  hunkHeader: string;
-};
 
 // ============================================================================
 // Types for context line expansion
@@ -177,8 +168,8 @@ interface DiffFileViewProps {
   file: DiffFile;
   viewType: 'unified' | 'split';
   isActive: boolean;
-  markdownPreviewMode?: MarkdownPreviewMode;
-  onMarkdownPreviewModeChange?: (filePath: string, mode: MarkdownPreviewMode) => void;
+  isPreviewOpen?: boolean;
+  onTogglePreview?: (path: string) => void;
   onVisible?: () => void;
   comments?: ReviewCommentEntry[];
   commentFormAnchor?: CommentAnchor | null;
@@ -223,8 +214,8 @@ export function DiffFileView({
   file,
   viewType,
   isActive,
-  markdownPreviewMode,
-  onMarkdownPreviewModeChange,
+  isPreviewOpen = false,
+  onTogglePreview,
   onVisible,
   comments = [],
   commentFormAnchor,
@@ -392,12 +383,13 @@ export function DiffFileView({
     return () => observer.disconnect();
   }, [onVisible, viewMode, fullFileContent, isLoadingFullFile, onRequestFullFile, file.new_path]);
 
+  // Load full file content when preview drawer is open in full mode
   useEffect(() => {
-    if (markdownPreviewMode !== 'full-preview') return;
+    if (!isPreviewOpen || viewMode !== 'full') return;
     if (file.is_binary) return;
     if (fullFileContent || isLoadingFullFile || !onRequestFullFile) return;
     onRequestFullFile(file.new_path);
-  }, [markdownPreviewMode, file.is_binary, fullFileContent, isLoadingFullFile, onRequestFullFile, file.new_path]);
+  }, [isPreviewOpen, viewMode, file.is_binary, fullFileContent, isLoadingFullFile, onRequestFullFile, file.new_path]);
 
   const badgeClass = `diff-file-badge ${file.change_type}`;
 
@@ -410,41 +402,53 @@ export function DiffFileView({
     });
   }, [file.hunks, language]);
 
-  const markdownPreviewBlocks = useMemo<MarkdownPreviewBlock[]>(() => {
-    if (!markdownPreviewMode || markdownPreviewMode !== 'diff-preview' || file.is_binary) return [];
-    const blocks: MarkdownPreviewBlock[] = [];
-    file.hunks.forEach((hunk, hunkIndex) => {
-      let currentKind: MarkdownPreviewBlock['kind'] | null = null;
-      let currentLines: string[] = [];
-      const pushCurrent = () => {
-        if (!currentKind) return;
-        const content = currentLines.join('\n');
-        if (!content.trim()) return;
-        blocks.push({
-          id: `${hunkIndex}-${blocks.length}`,
-          kind: currentKind,
-          content,
-          hunkHeader: hunk.header,
-        });
-      };
-      for (const line of hunk.lines) {
-        const kind: MarkdownPreviewBlock['kind'] = line.line_type === 'insert'
-          ? 'insert'
-          : line.line_type === 'delete'
-            ? 'delete'
-            : 'context';
-        if (currentKind === kind) {
-          currentLines.push(line.content);
-        } else {
-          pushCurrent();
-          currentKind = kind;
-          currentLines = [line.content];
-        }
-      }
-      pushCurrent();
-    });
-    return blocks;
-  }, [markdownPreviewMode, file.hunks, file.is_binary]);
+  // Drawer expand state
+  const [drawerExpanded, setDrawerExpanded] = useState(false);
+  // Drawer width as fraction (0..1), null = default 50%
+  const [drawerWidthFraction, setDrawerWidthFraction] = useState<number | null>(null);
+  const draggingRef = useRef(false);
+  const bodyRef = useRef<HTMLDivElement>(null);
+
+  // Reset drawer state when preview closes
+  useEffect(() => {
+    if (!isPreviewOpen) {
+      setDrawerExpanded(false);
+      setDrawerWidthFraction(null);
+    }
+  }, [isPreviewOpen]);
+
+  // Drag-to-resize handler
+  const handleResizeStart = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    draggingRef.current = true;
+    const container = bodyRef.current;
+    if (!container) return;
+    const containerRect = container.getBoundingClientRect();
+    const containerWidth = containerRect.width;
+
+    const onMouseMove = (ev: MouseEvent) => {
+      if (!draggingRef.current) return;
+      const dx = ev.clientX - containerRect.left;
+      // drawer is on the right, so drawer width = container width - mouse x
+      const fraction = Math.max(0.2, Math.min(0.8, (containerWidth - dx) / containerWidth));
+      setDrawerWidthFraction(fraction);
+      setDrawerExpanded(false);
+    };
+
+    const onMouseUp = () => {
+      draggingRef.current = false;
+      document.removeEventListener('mousemove', onMouseMove);
+      document.removeEventListener('mouseup', onMouseUp);
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+    };
+
+    document.addEventListener('mousemove', onMouseMove);
+    document.addEventListener('mouseup', onMouseUp);
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+  }, []);
+
 
   // Filter file-level comments for this file
   const fileComments = useMemo(() => {
@@ -570,6 +574,125 @@ export function DiffFileView({
   }, [gaps]);
 
   const [expansions, setExpansions] = useState<Map<number, GapExpansion>>(new Map());
+
+  // Compute preview segments for diff mode drawer.
+  // Code-fence-aware: code blocks render as single units with per-line coloring,
+  // non-code content renders with MarkdownRenderer per block.
+  const previewSegments = useMemo(() => {
+    type LineKind = 'insert' | 'delete' | 'context';
+    type PLine = { content: string; kind: LineKind };
+    type MdSeg = { type: 'markdown'; id: string; kind: LineKind; content: string };
+    type CodeSeg = { type: 'code'; id: string; language: string; lines: PLine[] };
+    type Seg = MdSeg | CodeSeg;
+
+    if (!isPreviewOpen || viewMode !== 'diff' || file.is_binary) return [] as Seg[];
+
+    const allLines: PLine[] = [];
+
+    // Helper: push expanded gap lines as context
+    const pushGapLines = (gapIndex: number) => {
+      const gap = gapsByHunkIndex.get(gapIndex);
+      const exp = expansions.get(gapIndex);
+      if (!gap || !exp || !fileLines) return;
+
+      if (exp.full) {
+        for (let ln = gap.startLine; ln <= gap.endLine; ln++) {
+          allLines.push({ content: fileLines[ln - 1] ?? '', kind: 'context' });
+        }
+        return;
+      }
+      // Top portion
+      for (let i = 0; i < exp.fromTop; i++) {
+        const ln = gap.startLine + i;
+        if (ln <= gap.endLine) {
+          allLines.push({ content: fileLines[ln - 1] ?? '', kind: 'context' });
+        }
+      }
+      // Bottom portion
+      for (let i = 0; i < exp.fromBottom; i++) {
+        const ln = gap.endLine - exp.fromBottom + 1 + i;
+        if (ln >= gap.startLine) {
+          allLines.push({ content: fileLines[ln - 1] ?? '', kind: 'context' });
+        }
+      }
+    };
+
+    // Gap before first hunk
+    pushGapLines(0);
+
+    // Walk hunks + gaps between them
+    for (let hi = 0; hi < file.hunks.length; hi++) {
+      const hunk = file.hunks[hi];
+      for (const line of hunk.lines) {
+        allLines.push({
+          content: line.content,
+          kind: line.line_type === 'insert' ? 'insert' : line.line_type === 'delete' ? 'delete' : 'context',
+        });
+      }
+      // Gap after this hunk
+      pushGapLines(hi + 1);
+    }
+
+    // Build segments with code-fence awareness
+    const segments: Seg[] = [];
+    let segId = 0;
+    let inCodeFence = false;
+    let codeFenceLang = '';
+    let codeLines: PLine[] = [];
+    let curKind: LineKind | null = null;
+    let curLines: string[] = [];
+
+    const flushMd = () => {
+      if (!curKind || curLines.length === 0) return;
+      const content = curLines.join('\n');
+      if (content.trim()) {
+        segments.push({ type: 'markdown', id: `seg-${segId++}`, kind: curKind, content });
+      }
+      curKind = null;
+      curLines = [];
+    };
+
+    const flushCode = () => {
+      if (codeLines.length === 0) return;
+      segments.push({ type: 'code', id: `seg-${segId++}`, language: codeFenceLang, lines: [...codeLines] });
+      codeLines = [];
+      codeFenceLang = '';
+    };
+
+    for (const pl of allLines) {
+      const trimmed = pl.content.trimStart();
+
+      if (!inCodeFence && trimmed.startsWith('```')) {
+        flushMd();
+        inCodeFence = true;
+        codeFenceLang = trimmed.slice(3).trim();
+        continue;
+      }
+
+      if (inCodeFence && trimmed.startsWith('```')) {
+        flushCode();
+        inCodeFence = false;
+        continue;
+      }
+
+      if (inCodeFence) {
+        codeLines.push({ content: pl.content, kind: pl.kind });
+      } else {
+        if (pl.kind === curKind) {
+          curLines.push(pl.content);
+        } else {
+          flushMd();
+          curKind = pl.kind;
+          curLines = [pl.content];
+        }
+      }
+    }
+
+    if (inCodeFence) flushCode();
+    else flushMd();
+
+    return segments;
+  }, [isPreviewOpen, viewMode, file.is_binary, file.hunks, gapsByHunkIndex, expansions, fileLines]);
 
   const ensureFileLines = useCallback(() => {
     if (fileLines || fileLinesLoadingRef.current) return;
@@ -721,6 +844,15 @@ export function DiffFileView({
             {file.change_type === 'added' ? 'A' : file.change_type === 'deleted' ? 'D' : file.change_type === 'renamed' ? 'R' : 'M'}
           </span>
           <span className="diff-file-path">{file.new_path}</span>
+          {onTogglePreview && (
+            <button
+              className={`diff-file-preview-btn${isPreviewOpen ? ' active' : ''}`}
+              onClick={() => onTogglePreview(file.new_path)}
+              title={isPreviewOpen ? 'Close preview' : 'Preview markdown'}
+            >
+              <Eye style={{ width: 14, height: 14 }} />
+            </button>
+          )}
           <button className="diff-file-copy-btn" onClick={handleCopyPath} title="Copy file path">
             {copied ? (
               <Check style={{ width: 12, height: 12, color: 'var(--color-success)' }} />
@@ -771,34 +903,6 @@ export function DiffFileView({
           </span>
         </div>
 
-        {markdownPreviewMode && onMarkdownPreviewModeChange ? (
-          <div className="diff-file-preview-mode">
-            <button
-              className={markdownPreviewMode === 'diff' ? 'active' : ''}
-              onClick={() => onMarkdownPreviewModeChange(file.new_path, 'diff')}
-            >
-              <FileDiff style={{ width: 14, height: 14 }} />
-              <span>Diff</span>
-              <KeyBadge className="ml-1 opacity-70">V</KeyBadge>
-            </button>
-            <button
-              className={markdownPreviewMode === 'diff-preview' ? 'active' : ''}
-              onClick={() => onMarkdownPreviewModeChange(file.new_path, 'diff-preview')}
-            >
-              <Eye style={{ width: 14, height: 14 }} />
-              <span>Diff Preview</span>
-              <KeyBadge className="ml-1 opacity-70">V</KeyBadge>
-            </button>
-            <button
-              className={markdownPreviewMode === 'full-preview' ? 'active' : ''}
-              onClick={() => onMarkdownPreviewModeChange(file.new_path, 'full-preview')}
-            >
-              <Eye style={{ width: 14, height: 14 }} />
-              <span>Full Preview</span>
-              <KeyBadge className="ml-1 opacity-70">V</KeyBadge>
-            </button>
-          </div>
-        ) : null}
       </div>
 
       {isCollapsed ? null : (
@@ -932,71 +1036,118 @@ export function DiffFileView({
             </div>
           )}
 
-          {file.is_virtual ? (
-            <div className="diff-virtual-placeholder">
-              <div className="diff-virtual-icon">📝</div>
-              <div className="diff-virtual-text">
-                <strong>Planned File</strong>
-                <p>This file is planned to be created but doesn't exist yet in the current branch.</p>
-              </div>
-            </div>
-          ) : file.is_binary ? (
-            <div className="diff-binary">
-              {viewMode === 'full'
-                ? 'Binary file — cannot display in Full Files mode'
-                : 'Binary file changed'}
-            </div>
-          ) : viewMode === 'full' ? (
-            isLoadingFullFile ? (
-              <div className="diff-loading">Loading full file...</div>
-            ) : fullFileContent ? (
-              <FullFileView
-                file={file}
-                content={fullFileContent}
-                language={language}
-                viewType={viewType}
-                {...commonCommentProps}
-              />
-            ) : (
-              <div className="diff-error">Failed to load file content</div>
-            )
-          ) : markdownPreviewMode === 'full-preview' ? (
-            <div className="preview-markdown">
-              {isLoadingFullFile ? (
-                <div className="preview-loading">Loading latest content…</div>
-              ) : fullFileContent ? (
-                <MarkdownRenderer content={fullFileContent ?? ''} />
+          <div className="diff-file-body" ref={bodyRef}>
+            {/* Main diff content (left side when drawer is open) */}
+            <div className={`diff-file-body-main${isPreviewOpen && drawerExpanded ? ' hidden' : ''}`}>
+              {file.is_virtual ? (
+                <div className="diff-virtual-placeholder">
+                  <div className="diff-virtual-icon">📝</div>
+                  <div className="diff-virtual-text">
+                    <strong>Planned File</strong>
+                    <p>This file is planned to be created but doesn't exist yet in the current branch.</p>
+                  </div>
+                </div>
+              ) : file.is_binary ? (
+                <div className="diff-binary">
+                  {viewMode === 'full'
+                    ? 'Binary file — cannot display in Full Files mode'
+                    : 'Binary file changed'}
+                </div>
+              ) : viewMode === 'full' ? (
+                isLoadingFullFile ? (
+                  <div className="diff-loading">Loading full file...</div>
+                ) : fullFileContent ? (
+                  <FullFileView
+                    file={file}
+                    content={fullFileContent}
+                    language={language}
+                    viewType={viewType}
+                    {...commonCommentProps}
+                  />
+                ) : (
+                  <div className="diff-error">Failed to load file content</div>
+                )
+              ) : file.hunks.length === 0 ? (
+                <div className="diff-binary">No content changes (mode/permissions only)</div>
+              ) : viewType === 'unified' ? (
+                <UnifiedView file={file} highlightedHunks={highlightedHunks} {...expandProps} {...commonCommentProps} codeSearchQuery={codeSearchQuery} codeSearchCaseSensitive={codeSearchCaseSensitive} />
               ) : (
-                <div className="preview-loading">Failed to load file content</div>
+                <SplitView file={file} highlightedHunks={highlightedHunks} {...expandProps} {...commonCommentProps} codeSearchQuery={codeSearchQuery} codeSearchCaseSensitive={codeSearchCaseSensitive} />
               )}
             </div>
-          ) : markdownPreviewMode === 'diff-preview' ? (
-            file.is_binary ? (
-              <div className="preview-loading">Binary file — preview unavailable</div>
-            ) : markdownPreviewBlocks.length > 0 ? (
-              <div className="preview-diff-blocks">
-                {markdownPreviewBlocks.map((block) => (
-                  <div key={block.id} className={`preview-diff-block ${block.kind}`}>
-                    <div className="preview-diff-block-header">
-                      <span className={`preview-diff-badge ${block.kind}`}>
-                        {block.kind === 'insert' ? 'Added' : block.kind === 'delete' ? 'Removed' : 'Context'}
-                      </span>
-                      <span className="preview-diff-hunk">{block.hunkHeader}</span>
-                    </div>
-                    <MarkdownRenderer content={block.content} />
-                  </div>
-                ))}
+
+            {/* Preview drawer (right side) */}
+            {onTogglePreview && (
+              <div
+                className={`preview-drawer${isPreviewOpen ? ' open' : ''}${drawerExpanded ? ' expanded' : ''}`}
+                style={isPreviewOpen && !drawerExpanded && drawerWidthFraction != null
+                  ? { width: `${drawerWidthFraction * 100}%`, minWidth: 200, transition: 'none' }
+                  : undefined
+                }
+              >
+                {/* Resize handle */}
+                {isPreviewOpen && !drawerExpanded && (
+                  <div className="preview-drawer-resize" onMouseDown={handleResizeStart} />
+                )}
+                <div className="preview-drawer-header">
+                  <Eye style={{ width: 14, height: 14, opacity: 0.6 }} />
+                  <span style={{ flex: 1, fontWeight: 600 }}>Preview</span>
+                  <button
+                    className="diff-file-preview-btn"
+                    onClick={() => setDrawerExpanded((v) => !v)}
+                    title={drawerExpanded ? 'Collapse to split view' : 'Expand to full width'}
+                  >
+                    {drawerExpanded ? (
+                      <Minimize2 style={{ width: 13, height: 13 }} />
+                    ) : (
+                      <Maximize2 style={{ width: 13, height: 13 }} />
+                    )}
+                  </button>
+                  <button
+                    className="diff-file-preview-btn"
+                    onClick={() => onTogglePreview(file.new_path)}
+                    title="Close preview"
+                  >
+                    <X style={{ width: 14, height: 14 }} />
+                  </button>
+                </div>
+                <div className="preview-drawer-content">
+                  {viewMode === 'full' ? (
+                    isLoadingFullFile ? (
+                      <div className="preview-loading">Loading content...</div>
+                    ) : fullFileContent ? (
+                      <MarkdownRenderer content={fullFileContent} />
+                    ) : (
+                      <div className="preview-loading">Failed to load file content</div>
+                    )
+                  ) : previewSegments.length > 0 ? (
+                    previewSegments.map((seg) =>
+                      seg.type === 'markdown' ? (
+                        <div key={seg.id} className={`preview-block-${seg.kind}`}>
+                          <MarkdownRenderer content={seg.content} />
+                        </div>
+                      ) : (
+                        <pre key={seg.id} className="preview-code-block">
+                          <code>
+                            {seg.lines.map((line, i) => (
+                              <div
+                                key={i}
+                                className={`preview-code-line${line.kind !== 'context' ? ` preview-code-line-${line.kind}` : ''}`}
+                              >
+                                {line.content || ' '}
+                              </div>
+                            ))}
+                          </code>
+                        </pre>
+                      )
+                    )
+                  ) : (
+                    <div className="preview-loading">No previewable changes</div>
+                  )}
+                </div>
               </div>
-            ) : (
-              <div className="preview-loading">No previewable changes</div>
-            )
-          ) : file.hunks.length === 0 ? (
-            <div className="diff-binary">No content changes (mode/permissions only)</div>
-          ) : viewType === 'unified' ? (
-            <UnifiedView file={file} highlightedHunks={highlightedHunks} {...expandProps} {...commonCommentProps} codeSearchQuery={codeSearchQuery} codeSearchCaseSensitive={codeSearchCaseSensitive} />
-          ) : (
-            <SplitView file={file} highlightedHunks={highlightedHunks} {...expandProps} {...commonCommentProps} codeSearchQuery={codeSearchQuery} codeSearchCaseSensitive={codeSearchCaseSensitive} />
-          )}
+            )}
+          </div>
         </>
       )}
 

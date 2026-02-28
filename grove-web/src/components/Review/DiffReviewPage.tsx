@@ -33,7 +33,11 @@ interface DiffReviewPageProps {
   embedded?: boolean;
 }
 
-type MarkdownPreviewMode = 'diff' | 'diff-preview' | 'full-preview';
+function isMarkdownPath(path: string | null | undefined): boolean {
+  if (!path) return false;
+  const lower = path.toLowerCase();
+  return lower.endsWith('.md') || lower.endsWith('.markdown');
+}
 
 export function DiffReviewPage({ projectId, taskId, embedded }: DiffReviewPageProps) {
   const { isMobile } = useIsMobile();
@@ -42,7 +46,7 @@ export function DiffReviewPage({ projectId, taskId, embedded }: DiffReviewPagePr
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
   const [viewType, setViewType] = useState<'unified' | 'split'>('unified');
   const [viewMode, setViewMode] = useState<'diff' | 'full'>('diff');
-  const [previewMode, setPreviewMode] = useState<MarkdownPreviewMode>('diff-preview');
+  const [previewOpenFiles, setPreviewOpenFiles] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [comments, setComments] = useState<ReviewCommentEntry[]>([]);
@@ -171,19 +175,6 @@ export function DiffReviewPage({ projectId, taskId, embedded }: DiffReviewPagePr
     return displayFiles.find((f) => f.new_path === selectedFile)?.new_path || displayFiles[0]?.new_path || null;
   }, [displayFiles, selectedFile]);
 
-  const isMarkdownPath = useCallback((path: string | null | undefined) => {
-    if (!path) return false;
-    const lower = path.toLowerCase();
-    return lower.endsWith('.md') || lower.endsWith('.markdown');
-  }, []);
-
-  const isActiveFileMarkdown = useMemo(() => isMarkdownPath(activeFilePath), [activeFilePath, isMarkdownPath]);
-
-  useEffect(() => {
-    if (!isActiveFileMarkdown && previewMode !== 'diff') {
-      setPreviewMode('diff');
-    }
-  }, [isActiveFileMarkdown, previewMode]);
 
   // Auto-detect iframe mode
   const isEmbedded = embedded ?? (typeof window !== 'undefined' && window !== window.parent);
@@ -520,26 +511,25 @@ export function DiffReviewPage({ projectId, taskId, embedded }: DiffReviewPagePr
     }
   }, [isMobile]);
 
-  const handleMarkdownPreviewModeChange = useCallback((path: string, mode: MarkdownPreviewMode) => {
-    setPreviewMode(mode);
-    if (path !== selectedFile) {
-      handleSelectFile(path);
-    }
-  }, [handleSelectFile, selectedFile]);
+  const handleTogglePreview = useCallback((path: string) => {
+    setPreviewOpenFiles((prev) => {
+      const next = new Set(prev);
+      if (next.has(path)) next.delete(path);
+      else next.add(path);
+      return next;
+    });
+  }, []);
 
-  const handleCyclePreviewMode = useCallback(() => {
+  const handleToggleActivePreview = useCallback(() => {
     if (!activeFilePath || !isMarkdownPath(activeFilePath)) return;
-    const order: MarkdownPreviewMode[] = ['diff', 'diff-preview', 'full-preview'];
-    const currentIndex = order.indexOf(previewMode);
-    const nextMode = order[(currentIndex + 1) % order.length] ?? 'diff';
-    handleMarkdownPreviewModeChange(activeFilePath, nextMode);
-  }, [activeFilePath, isMarkdownPath, previewMode, handleMarkdownPreviewModeChange]);
+    handleTogglePreview(activeFilePath);
+  }, [activeFilePath, handleTogglePreview]);
 
   useHotkeys(
     [
-      { key: 'v', handler: handleCyclePreviewMode },
+      { key: 'v', handler: handleToggleActivePreview },
     ],
-    [handleCyclePreviewMode]
+    [handleToggleActivePreview]
   );
 
   // Track topmost visible file on scroll (non-focus mode)
@@ -580,11 +570,6 @@ export function DiffReviewPage({ projectId, taskId, embedded }: DiffReviewPagePr
       if (rafId) cancelAnimationFrame(rafId);
     };
   }, [focusMode, displayFiles]); // re-attach when files change
-
-  // Track visible file on scroll
-  const handleFileVisible = useCallback((path: string) => {
-    setSelectedFile(path);
-  }, []);
 
   // File navigation using refs to avoid dependency issues
   const goToNextFile = useCallback(() => {
@@ -1068,11 +1053,10 @@ export function DiffReviewPage({ projectId, taskId, embedded }: DiffReviewPagePr
                       file={file}
                       viewType={viewType}
                       isActive={validSelectedFile === file.new_path}
-                      markdownPreviewMode={isMarkdownFile ? previewMode : undefined}
-                      onMarkdownPreviewModeChange={isMarkdownFile ? handleMarkdownPreviewModeChange : undefined}
+                      isPreviewOpen={previewOpenFiles.has(file.new_path)}
+                      onTogglePreview={isMarkdownFile ? handleTogglePreview : undefined}
                       projectId={projectId}
                       taskId={taskId}
-                      onVisible={() => handleFileVisible(file.new_path)}
                       comments={getFileComments(file.new_path)}
                       commentFormAnchor={commentFormAnchor}
                       onGutterClick={handleGutterClick}
