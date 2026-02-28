@@ -19,9 +19,10 @@ use rmcp::{
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
+use crate::acp;
 use crate::git;
 use crate::operations;
-use crate::storage::{comments, config, notes, tasks, workspace};
+use crate::storage::{chat_history, comments, config, notes, tasks, workspace};
 
 // ============================================================================
 // Grove Instructions for AI
@@ -35,18 +36,33 @@ Each task provides an independent working directory where work can proceed
 without affecting other tasks or the main codebase.
 
 ## Available Tools
+
+### Task Management
 1. **grove_list_projects** — Find a registered project
 2. **grove_add_project_by_path** — Register a project (idempotent)
 3. **grove_create_task** — Spawn an isolated subtask for parallel work
 4. **grove_list_tasks** — Query existing active tasks
 5. **grove_edit_note** — Write task notes (spec, context, instructions)
 
+### Agent Chat Control
+6. **grove_list_agents** — List available worker agents
+7. **grove_start_chat** — Create and start a chat session (returns chat_id)
+8. **grove_chat_status** — Get chat state, auto-connects if needed, returns available modes/models
+9. **grove_send_prompt** — Send prompt / respond to permission / cancel turn
+10. **grove_list_chats** — List chat sessions for a task
+
 ## Orchestration Workflow
 1. Find or register the target project
-2. Break down the work into independent subtasks
+2. Call `grove_list_agents` to see available worker agents
 3. Call `grove_create_task` for each subtask
 4. Call `grove_edit_note` to write task spec and context
-5. Use `grove_list_tasks` to monitor active tasks
+5. Call `grove_start_chat` to launch a worker agent
+6. Call `grove_chat_status` to wait for agent ready and get available modes/models
+7. Call `grove_send_prompt` to instruct the worker (always call `grove_chat_status` first!)
+8. Poll with `grove_chat_status` until idle
+   - If `permission_needed`: use `grove_send_prompt` with `permission_option_id`
+   - If stuck: use `grove_send_prompt` with `cancel: true`
+9. Review results in `last_message` / `plan`, send follow-ups as needed
 
 "#;
 
@@ -292,6 +308,68 @@ pub struct EditNoteParams {
     pub content: String,
 }
 
+/// Start a chat session for a task (management tool)
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+pub struct StartChatParams {
+    /// Project ID (hash)
+    pub project_id: String,
+    /// Task ID
+    pub task_id: String,
+    /// Chat name (default: "New Chat {timestamp}")
+    pub name: Option<String>,
+    /// Agent to use (default: config default). Use grove_list_agents to see available agents.
+    pub agent: Option<String>,
+}
+
+/// Send a prompt, respond to permission, or cancel a chat turn (management tool).
+///
+/// Exactly one of `text`, `permission_option_id`, or `cancel` must be provided:
+/// - `text` → send a prompt (optionally switch mode/model first)
+/// - `permission_option_id` → respond to a pending permission request
+/// - `cancel: true` → cancel the current agent turn
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+pub struct SendPromptParams {
+    /// Project ID (hash)
+    pub project_id: String,
+    /// Task ID
+    pub task_id: String,
+    /// Chat ID
+    pub chat_id: String,
+    /// Prompt text to send. Mutually exclusive with permission_option_id and cancel.
+    pub text: Option<String>,
+    /// Switch agent mode before sending prompt (e.g., "plan", "code"). Only used with text.
+    pub mode_id: Option<String>,
+    /// Switch agent model before sending prompt (e.g., "opus", "sonnet"). Only used with text.
+    pub model_id: Option<String>,
+    /// Respond to a pending permission request with this option ID. Mutually exclusive with text and cancel.
+    pub permission_option_id: Option<String>,
+    /// Set to true to cancel the current agent turn. Mutually exclusive with text and permission_option_id.
+    #[serde(default)]
+    pub cancel: bool,
+}
+
+/// Query chat status (management tool)
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+pub struct ChatStatusParams {
+    /// Project ID (hash)
+    pub project_id: String,
+    /// Task ID
+    pub task_id: String,
+    /// Chat ID
+    pub chat_id: String,
+}
+
+/// List chats for a task (management tool)
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+pub struct ListChatsParams {
+    /// Project ID (hash)
+    pub project_id: String,
+    /// Task ID
+    pub task_id: String,
+    /// Optional fuzzy query for filtering by chat name
+    pub query: Option<String>,
+}
+
 // ============================================================================
 // Tool Response Types
 // ============================================================================
@@ -503,6 +581,72 @@ impl GroveMcpServer {
         ensure_not_in_grove_task()?;
         let p = params.0;
         blocking_json(move || edit_note_json(&p)).await
+    }
+
+    /// List available agents
+    #[tool(
+        name = "grove_list_agents",
+        description = "List available agents that can be used to start chat sessions. Returns built-in and custom agents with their capabilities."
+    )]
+    async fn grove_list_agents(&self) -> Result<CallToolResult, McpError> {
+        ensure_not_in_grove_task()?;
+        blocking_json(list_agents_json).await
+    }
+
+    /// Start a new chat session for a task
+    #[tool(
+        name = "grove_start_chat",
+        description = "Create and start a chat session for a task. Spawns the agent process. Returns chat_id, name, and agent. After calling this, use grove_chat_status to wait for the agent to be ready and get available modes/models."
+    )]
+    async fn grove_start_chat(
+        &self,
+        params: Parameters<StartChatParams>,
+    ) -> Result<CallToolResult, McpError> {
+        ensure_not_in_grove_task()?;
+        let p = params.0;
+        start_chat_impl(p).await
+    }
+
+    /// Send a prompt, respond to permission, or cancel a chat turn
+    #[tool(
+        name = "grove_send_prompt",
+        description = "Interact with a chat session. Three mutually exclusive actions: (1) `text` — send a prompt (optionally set mode_id/model_id). (2) `permission_option_id` — respond to a pending permission request. (3) `cancel: true` — cancel the current turn. Returns immediately. IMPORTANT: Always call grove_chat_status first to check the session state and available modes/models before sending."
+    )]
+    async fn grove_send_prompt(
+        &self,
+        params: Parameters<SendPromptParams>,
+    ) -> Result<CallToolResult, McpError> {
+        ensure_not_in_grove_task()?;
+        let p = params.0;
+        send_prompt_impl(p).await
+    }
+
+    /// Query chat status (auto-connects the session if not running)
+    #[tool(
+        name = "grove_chat_status",
+        description = "Get the current state of a chat session. Auto-connects the agent if not already running. Returns: state (idle/busy/permission_needed), available_modes, available_models, turn_count, last_message, plan, and permission details. Always call this before grove_send_prompt to know the session state and what modes/models are available."
+    )]
+    async fn grove_chat_status(
+        &self,
+        params: Parameters<ChatStatusParams>,
+    ) -> Result<CallToolResult, McpError> {
+        ensure_not_in_grove_task()?;
+        let p = params.0;
+        chat_status_impl(p).await
+    }
+
+    /// List chats for a task
+    #[tool(
+        name = "grove_list_chats",
+        description = "List all chat sessions under a task. Returns id, title, agent, and creation time for each chat."
+    )]
+    async fn grove_list_chats(
+        &self,
+        params: Parameters<ListChatsParams>,
+    ) -> Result<CallToolResult, McpError> {
+        ensure_not_in_grove_task()?;
+        let p = params.0;
+        list_chats_impl(p).await
     }
 
     /// Read user-written notes for the current task
@@ -1231,6 +1375,521 @@ fn edit_note_json(params: &EditNoteParams) -> serde_json::Value {
     })
 }
 
+// ============================================================================
+// ACP Chat Management Helpers (async — used by management MCP tools)
+// ============================================================================
+
+/// Built-in agent definitions (id, name)
+const BUILTIN_AGENTS: &[(&str, &str)] = &[
+    ("claude", "Claude Code"),
+    ("codex", "Codex"),
+    ("traecli", "Trae CLI"),
+    ("kimi", "Kimi"),
+    ("gemini", "Gemini CLI"),
+    ("qwen", "Qwen"),
+    ("opencode", "OpenCode"),
+    ("copilot", "GitHub Copilot"),
+];
+
+fn list_agents_json() -> serde_json::Value {
+    let cfg = config::load_config();
+    let default_agent = cfg
+        .acp
+        .agent_command
+        .clone()
+        .unwrap_or_else(|| "claude".to_string());
+
+    let mut agents: Vec<serde_json::Value> = BUILTIN_AGENTS
+        .iter()
+        .map(|(id, name)| {
+            json!({
+                "id": id,
+                "name": name,
+                "type": "builtin",
+                "agent_type": "local",
+            })
+        })
+        .collect();
+
+    for custom in &cfg.acp.custom_agents {
+        agents.push(json!({
+            "id": custom.id,
+            "name": custom.name,
+            "type": "custom",
+            "agent_type": custom.agent_type,
+        }));
+    }
+
+    json!({
+        "default_agent": default_agent,
+        "agents": agents,
+    })
+}
+
+/// Resolve project → (project_key, project_path, project_name) with MCP error handling
+fn resolve_project_for_mcp(project_id: &str) -> Result<(String, String, String), McpError> {
+    let project = match load_project_by_id(project_id) {
+        Ok(Some(p)) => p,
+        Ok(None) => return Err(McpError::invalid_params("Project not found", None)),
+        Err(e) => {
+            return Err(McpError::internal_error(
+                format!("Failed to load project: {e}"),
+                None,
+            ))
+        }
+    };
+    let project_key = workspace::project_hash(&project.path);
+    Ok((project_key, project.path, project.name))
+}
+
+/// Resolve task with MCP error handling
+fn resolve_task_for_mcp(project_key: &str, task_id: &str) -> Result<tasks::Task, McpError> {
+    match tasks::get_task(project_key, task_id) {
+        Ok(Some(t)) => Ok(t),
+        Ok(None) => Err(McpError::invalid_params("Task not found", None)),
+        Err(e) => Err(McpError::internal_error(
+            format!("Failed to load task: {e}"),
+            None,
+        )),
+    }
+}
+
+/// Build session key for ACP
+fn build_session_key(project_key: &str, task_id: &str, chat_id: &str) -> String {
+    format!("{}:{}:{}", project_key, task_id, chat_id)
+}
+
+/// Build GROVE_* env vars for ACP agent
+fn build_grove_env(
+    project_key: &str,
+    project_path: &str,
+    project_name: &str,
+    task: &tasks::Task,
+) -> std::collections::HashMap<String, String> {
+    let mut env = std::collections::HashMap::new();
+    env.insert("GROVE_TASK_ID".into(), task.id.clone());
+    env.insert("GROVE_TASK_NAME".into(), task.name.clone());
+    env.insert("GROVE_BRANCH".into(), task.branch.clone());
+    env.insert("GROVE_TARGET".into(), task.target.clone());
+    env.insert("GROVE_WORKTREE".into(), task.worktree_path.clone());
+    env.insert("GROVE_PROJECT_NAME".into(), project_name.into());
+    env.insert("GROVE_PROJECT".into(), project_path.into());
+    env.insert("GROVE_PROJECT_KEY".into(), project_key.into());
+    env
+}
+
+async fn start_chat_impl(p: StartChatParams) -> Result<CallToolResult, McpError> {
+    let (project_key, project_path, project_name) = resolve_project_for_mcp(&p.project_id)?;
+    let task = resolve_task_for_mcp(&project_key, &p.task_id)?;
+
+    let cfg = config::load_config();
+    let agent_name = p.agent.unwrap_or_else(|| {
+        cfg.acp
+            .agent_command
+            .clone()
+            .unwrap_or_else(|| "claude".to_string())
+    });
+
+    // Resolve agent
+    let resolved = acp::resolve_agent(&agent_name)
+        .ok_or_else(|| McpError::invalid_params(format!("Unknown agent: {}", agent_name), None))?;
+
+    // Create chat session in storage
+    let now = chrono::Utc::now();
+    let title = p
+        .name
+        .unwrap_or_else(|| format!("New Chat {}", now.format("%Y-%m-%d %H:%M")));
+    let chat_id = tasks::generate_chat_id();
+
+    let chat = tasks::ChatSession {
+        id: chat_id.clone(),
+        title: title.clone(),
+        agent: agent_name.clone(),
+        acp_session_id: None,
+        created_at: now,
+    };
+
+    tasks::add_chat_session(&project_key, &p.task_id, chat)
+        .map_err(|e| McpError::internal_error(format!("Failed to save chat: {e}"), None))?;
+
+    // Build ACP start config
+    let env_vars = build_grove_env(&project_key, &project_path, &project_name, &task);
+    let session_key = build_session_key(&project_key, &p.task_id, &chat_id);
+    let working_dir = std::path::PathBuf::from(&task.worktree_path);
+
+    let acp_config = acp::AcpStartConfig {
+        agent_command: resolved.command,
+        agent_args: resolved.args,
+        working_dir,
+        env_vars,
+        project_key: project_key.clone(),
+        task_id: p.task_id.clone(),
+        chat_id: Some(chat_id.clone()),
+        agent_type: resolved.agent_type,
+        remote_url: resolved.url,
+        remote_auth: resolved.auth_header,
+    };
+
+    // Start session (non-blocking — caller should use grove_chat_status to wait for ready)
+    let (_handle, _rx) = acp::get_or_start_session(session_key, acp_config)
+        .await
+        .map_err(|e| McpError::internal_error(format!("Failed to start ACP session: {e}"), None))?;
+
+    ok_json(json!({
+        "chat_id": chat_id,
+        "name": title,
+        "agent": agent_name,
+    }))
+}
+
+/// Get an existing session handle, or auto-start one if the chat exists in storage.
+async fn ensure_session_handle(
+    project_key: &str,
+    project_path: &str,
+    project_name: &str,
+    task: &tasks::Task,
+    chat_id: &str,
+) -> Result<std::sync::Arc<acp::AcpSessionHandle>, McpError> {
+    let session_key = build_session_key(project_key, &task.id, chat_id);
+
+    // Already running — return existing handle
+    if let Some(handle) = acp::get_session_handle(&session_key) {
+        return Ok(handle);
+    }
+
+    // Not running — look up chat in storage and auto-start
+    let chat = tasks::get_chat_session(project_key, &task.id, chat_id)
+        .map_err(|e| McpError::internal_error(format!("Failed to load chat: {e}"), None))?
+        .ok_or_else(|| McpError::invalid_params("Chat not found", None))?;
+
+    let resolved = acp::resolve_agent(&chat.agent)
+        .ok_or_else(|| McpError::internal_error(format!("Unknown agent: {}", chat.agent), None))?;
+
+    let env_vars = build_grove_env(project_key, project_path, project_name, task);
+    let working_dir = std::path::PathBuf::from(&task.worktree_path);
+
+    let config = acp::AcpStartConfig {
+        agent_command: resolved.command,
+        agent_args: resolved.args,
+        working_dir,
+        env_vars,
+        project_key: project_key.to_string(),
+        task_id: task.id.clone(),
+        chat_id: Some(chat_id.to_string()),
+        agent_type: resolved.agent_type,
+        remote_url: resolved.url,
+        remote_auth: resolved.auth_header,
+    };
+
+    let (handle, _rx) = acp::get_or_start_session(session_key, config)
+        .await
+        .map_err(|e| McpError::internal_error(format!("Failed to start ACP session: {e}"), None))?;
+
+    Ok(handle)
+}
+
+async fn send_prompt_impl(p: SendPromptParams) -> Result<CallToolResult, McpError> {
+    // Validate mutual exclusivity
+    let action_count =
+        p.text.is_some() as u8 + p.permission_option_id.is_some() as u8 + p.cancel as u8;
+    if action_count == 0 {
+        return Err(McpError::invalid_params(
+            "Exactly one of `text`, `permission_option_id`, or `cancel` must be provided",
+            None,
+        ));
+    }
+    if action_count > 1 {
+        return Err(McpError::invalid_params(
+            "`text`, `permission_option_id`, and `cancel` are mutually exclusive",
+            None,
+        ));
+    }
+
+    let (project_key, project_path, project_name) = resolve_project_for_mcp(&p.project_id)?;
+    let task = resolve_task_for_mcp(&project_key, &p.task_id)?;
+
+    let handle = ensure_session_handle(
+        &project_key,
+        &project_path,
+        &project_name,
+        &task,
+        &p.chat_id,
+    )
+    .await?;
+
+    // Action: cancel
+    if p.cancel {
+        handle
+            .cancel()
+            .await
+            .map_err(|e| McpError::internal_error(format!("Failed to cancel: {e}"), None))?;
+        return ok_json(json!({ "action": "cancelled" }));
+    }
+
+    // Action: respond to permission
+    if let Some(option_id) = p.permission_option_id {
+        handle.respond_permission(option_id);
+        return ok_json(json!({ "action": "permission_responded" }));
+    }
+
+    // Action: send prompt
+    let text = p.text.unwrap(); // safe: validated above
+
+    // Set mode if requested
+    if let Some(mode_id) = p.mode_id {
+        handle
+            .set_mode(mode_id)
+            .await
+            .map_err(|e| McpError::internal_error(format!("Failed to set mode: {e}"), None))?;
+    }
+
+    // Set model if requested
+    if let Some(model_id) = p.model_id {
+        handle
+            .set_model(model_id)
+            .await
+            .map_err(|e| McpError::internal_error(format!("Failed to set model: {e}"), None))?;
+    }
+
+    handle
+        .send_prompt(text, vec![])
+        .await
+        .map_err(|e| McpError::internal_error(format!("Failed to send prompt: {e}"), None))?;
+
+    ok_json(json!({ "action": "prompt_sent" }))
+}
+
+async fn chat_status_impl(p: ChatStatusParams) -> Result<CallToolResult, McpError> {
+    let (project_key, project_path, project_name) = resolve_project_for_mcp(&p.project_id)?;
+    let task = resolve_task_for_mcp(&project_key, &p.task_id)?;
+
+    // Auto-connect: ensure session is running (blocks until SessionReady if just started)
+    let handle = ensure_session_handle(
+        &project_key,
+        &project_path,
+        &project_name,
+        &task,
+        &p.chat_id,
+    )
+    .await?;
+
+    // Wait briefly for SessionReady if the session was just started
+    // (ensure_session_handle returns after get_or_start_session, but SessionReady
+    // may not have arrived yet in history)
+    let timeout = tokio::time::Duration::from_secs(60);
+    let modes_models = tokio::time::timeout(timeout, async {
+        loop {
+            let history = handle.get_history();
+            for event in &history {
+                if let acp::AcpUpdate::SessionReady {
+                    available_modes,
+                    available_models,
+                    ..
+                } = event
+                {
+                    return (available_modes.clone(), available_models.clone());
+                }
+            }
+            tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+        }
+    })
+    .await
+    .map_err(|_| McpError::internal_error("Timeout waiting for agent to initialize (60s)", None))?;
+
+    let (available_modes, available_models) = modes_models;
+
+    let history = handle.get_history();
+    let compacted = chat_history::compact_events(history);
+
+    let last_message = extract_last_message(&compacted);
+    let plan = extract_last_plan(&compacted);
+    let turn_count = compacted
+        .iter()
+        .filter(|e| matches!(e, acp::AcpUpdate::Complete { .. }))
+        .count();
+    let permission = extract_pending_permission(&compacted);
+
+    let state = if permission.is_some() {
+        "permission_needed"
+    } else {
+        let last_significant = compacted.iter().rev().find(|e| {
+            matches!(
+                e,
+                acp::AcpUpdate::Complete { .. }
+                    | acp::AcpUpdate::UserMessage { .. }
+                    | acp::AcpUpdate::MessageChunk { .. }
+                    | acp::AcpUpdate::ToolCall { .. }
+                    | acp::AcpUpdate::ThoughtChunk { .. }
+            )
+        });
+
+        match last_significant {
+            Some(acp::AcpUpdate::Complete { .. }) => "idle",
+            Some(_) => "busy",
+            None => "idle",
+        }
+    };
+
+    let mut result = json!({
+        "state": state,
+        "turn_count": turn_count,
+        "last_message": last_message,
+        "available_modes": available_modes.iter().map(|(id, name)| json!({"id": id, "name": name})).collect::<Vec<_>>(),
+        "available_models": available_models.iter().map(|(id, name)| json!({"id": id, "name": name})).collect::<Vec<_>>(),
+    });
+
+    if let Some(plan_entries) = plan {
+        result["plan"] = plan_entries;
+    }
+
+    if let Some(perm) = permission {
+        result["permission"] = perm;
+    }
+
+    ok_json(result)
+}
+
+async fn list_chats_impl(p: ListChatsParams) -> Result<CallToolResult, McpError> {
+    let (project_key, _, _) = resolve_project_for_mcp(&p.project_id)?;
+    let _ = resolve_task_for_mcp(&project_key, &p.task_id)?;
+
+    let chats = tasks::load_chat_sessions(&project_key, &p.task_id)
+        .map_err(|e| McpError::internal_error(format!("Failed to load chats: {e}"), None))?;
+
+    let q = p.query.map(|s| s.trim().to_lowercase());
+
+    let items: Vec<serde_json::Value> = chats
+        .iter()
+        .filter(|c| {
+            if let Some(ref q) = q {
+                if q.is_empty() {
+                    return true;
+                }
+                c.title.to_lowercase().contains(q)
+            } else {
+                true
+            }
+        })
+        .map(|c| {
+            json!({
+                "id": c.id,
+                "title": c.title,
+                "agent": c.agent,
+                "created_at": c.created_at.to_rfc3339(),
+            })
+        })
+        .collect();
+
+    ok_json(json!({ "chats": items }))
+}
+
+/// Extract the last assistant message from compacted history.
+/// Finds all MessageChunk events after the last Complete, or the last MessageChunk before
+/// the most recent Complete if the agent is idle.
+fn extract_last_message(events: &[acp::AcpUpdate]) -> Option<String> {
+    // Find the position of the last Complete
+    let last_complete_pos = events
+        .iter()
+        .rposition(|e| matches!(e, acp::AcpUpdate::Complete { .. }));
+
+    // If there's a Complete, get the MessageChunk right before it (after previous Complete/start)
+    if let Some(complete_pos) = last_complete_pos {
+        // Find the previous Complete (or start of events)
+        let prev_complete_pos = events[..complete_pos]
+            .iter()
+            .rposition(|e| matches!(e, acp::AcpUpdate::Complete { .. }))
+            .map(|p| p + 1)
+            .unwrap_or(0);
+
+        // Collect all MessageChunk text in this turn
+        let text: String = events[prev_complete_pos..complete_pos]
+            .iter()
+            .filter_map(|e| match e {
+                acp::AcpUpdate::MessageChunk { text } => Some(text.as_str()),
+                _ => None,
+            })
+            .collect();
+
+        if !text.is_empty() {
+            return Some(text);
+        }
+    }
+
+    // Also check for MessageChunk after last Complete (agent currently working)
+    let start = last_complete_pos.map(|p| p + 1).unwrap_or(0);
+    let text: String = events[start..]
+        .iter()
+        .filter_map(|e| match e {
+            acp::AcpUpdate::MessageChunk { text } => Some(text.as_str()),
+            _ => None,
+        })
+        .collect();
+
+    if !text.is_empty() {
+        Some(text)
+    } else {
+        None
+    }
+}
+
+/// Extract the last PlanUpdate entries from history
+fn extract_last_plan(events: &[acp::AcpUpdate]) -> Option<serde_json::Value> {
+    events.iter().rev().find_map(|e| match e {
+        acp::AcpUpdate::PlanUpdate { entries } => Some(json!(entries
+            .iter()
+            .map(|entry| json!({
+                "content": entry.content,
+                "status": entry.status,
+            }))
+            .collect::<Vec<_>>())),
+        _ => None,
+    })
+}
+
+/// Extract pending permission request (last PermissionRequest without a matching PermissionResponse)
+fn extract_pending_permission(events: &[acp::AcpUpdate]) -> Option<serde_json::Value> {
+    // Walk backwards to find the last PermissionRequest
+    let mut last_perm_req = None;
+    let mut last_perm_resp_pos = None;
+    let mut last_perm_req_pos = None;
+
+    for (i, e) in events.iter().enumerate().rev() {
+        match e {
+            acp::AcpUpdate::PermissionResponse { .. } if last_perm_resp_pos.is_none() => {
+                last_perm_resp_pos = Some(i);
+            }
+            acp::AcpUpdate::PermissionRequest {
+                description,
+                options,
+            } if last_perm_req.is_none() => {
+                last_perm_req = Some((description.clone(), options.clone()));
+                last_perm_req_pos = Some(i);
+            }
+            _ => {}
+        }
+        if last_perm_req.is_some() {
+            break;
+        }
+    }
+
+    // Only return if PermissionRequest comes after PermissionResponse (or no response exists)
+    if let (Some((desc, opts)), Some(req_pos)) = (last_perm_req, last_perm_req_pos) {
+        let is_resolved = last_perm_resp_pos.is_some_and(|resp_pos| resp_pos > req_pos);
+        if !is_resolved {
+            return Some(json!({
+                "description": desc,
+                "options": opts.iter().map(|o| json!({
+                    "option_id": o.option_id,
+                    "name": o.name,
+                    "kind": o.kind,
+                })).collect::<Vec<_>>(),
+            }));
+        }
+    }
+
+    None
+}
+
 /// Get task context from environment variables
 fn get_task_context() -> Option<(String, String)> {
     let task_id = env::var("GROVE_TASK_ID").ok()?;
@@ -1714,8 +2373,17 @@ mod tests {
             "grove_create_task",
             "grove_list_tasks",
             "grove_edit_note",
+            "grove_list_agents",
+            "grove_start_chat",
+            "grove_send_prompt",
+            "grove_chat_status",
+            "grove_list_chats",
         ] {
-            assert!(names.contains(name));
+            assert!(
+                names.contains(name),
+                "expected tool '{}' outside task",
+                name
+            );
         }
         for name in [
             "grove_status",
@@ -1757,6 +2425,11 @@ mod tests {
             "grove_create_task",
             "grove_list_tasks",
             "grove_edit_note",
+            "grove_list_agents",
+            "grove_start_chat",
+            "grove_send_prompt",
+            "grove_chat_status",
+            "grove_list_chats",
         ] {
             assert!(!names.contains(name));
         }
@@ -1908,6 +2581,46 @@ mod tests {
             )
             .await;
         assert_tool_rejected(&resp_6);
+
+        // New ACP management tools should also be rejected inside task context
+        let resp_7 = client.call_tool(7, "grove_list_agents", json!({})).await;
+        assert_tool_rejected(&resp_7);
+
+        let resp_8 = client
+            .call_tool(
+                8,
+                "grove_start_chat",
+                json!({"project_id": "x", "task_id": "y"}),
+            )
+            .await;
+        assert_tool_rejected(&resp_8);
+
+        let resp_9 = client
+            .call_tool(
+                9,
+                "grove_send_prompt",
+                json!({"project_id": "x", "task_id": "y", "chat_id": "z", "text": "hi"}),
+            )
+            .await;
+        assert_tool_rejected(&resp_9);
+
+        let resp_10 = client
+            .call_tool(
+                10,
+                "grove_chat_status",
+                json!({"project_id": "x", "task_id": "y", "chat_id": "z"}),
+            )
+            .await;
+        assert_tool_rejected(&resp_10);
+
+        let resp_11 = client
+            .call_tool(
+                11,
+                "grove_list_chats",
+                json!({"project_id": "x", "task_id": "y"}),
+            )
+            .await;
+        assert_tool_rejected(&resp_11);
 
         client.shutdown().await;
         drop(env);

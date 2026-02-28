@@ -148,7 +148,7 @@ struct ToolCompactState {
 }
 
 /// Compact 事件列表：合并连续 chunk，合并同 id 的 tool 事件
-fn compact_events(events: Vec<AcpUpdate>) -> Vec<AcpUpdate> {
+pub fn compact_events(events: Vec<AcpUpdate>) -> Vec<AcpUpdate> {
     let mut result: Vec<AcpUpdate> = Vec::new();
     let mut msg_buf = String::new();
     let mut thought_buf = String::new();
