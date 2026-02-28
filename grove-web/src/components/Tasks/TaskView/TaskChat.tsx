@@ -1731,8 +1731,15 @@ export function TaskChat({
 
   return (
     <motion.div layout initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }}
-      className={`flex-1 flex flex-col overflow-hidden ${fullscreen ? "" : "rounded-lg border border-[var(--color-border)]"}`}
+      className={`flex-1 flex flex-col overflow-hidden relative ${fullscreen ? "" : "rounded-lg border border-[var(--color-border)]"}`}
+      onDragOver={handleDragOver} onDragLeave={handleDragLeave} onDrop={handleDrop}
     >
+      {/* Full-window drag overlay */}
+      {isDragging && (
+        <div className="absolute inset-0 bg-[color-mix(in_srgb,var(--color-highlight)_8%,transparent)] border-2 border-dashed border-[var(--color-highlight)] rounded-lg flex items-center justify-center z-50 pointer-events-none">
+          <span className="text-[var(--color-highlight)] font-medium text-sm">Drop files here</span>
+        </div>
+      )}
       {/* Header */}
       {!hideHeader && (
       <div className="flex items-center justify-between px-3 py-2 bg-[var(--color-bg-secondary)] border-b border-[var(--color-border)]">
@@ -2114,14 +2121,7 @@ export function TaskChat({
       )}
 
       {/* Input */}
-      <div className="border-t border-[var(--color-border)] bg-[var(--color-bg)] px-3 pt-3 pb-2 relative"
-        onDragOver={handleDragOver} onDragLeave={handleDragLeave} onDrop={handleDrop}>
-        {/* Drag overlay for input area */}
-        {isDragging && !isInputExpanded && (
-          <div className="absolute inset-0 bg-[color-mix(in_srgb,var(--color-highlight)_10%,transparent)] border-2 border-dashed border-[var(--color-highlight)] rounded-lg flex items-center justify-center z-50 pointer-events-none">
-            <span className="text-[var(--color-highlight)] font-medium text-sm">Drop files here</span>
-          </div>
-        )}
+      <div className="border-t border-[var(--color-border)] bg-[var(--color-bg)] px-3 pt-3 pb-2 relative">
         {/* Slash command autocomplete popover */}
         <AnimatePresence>
           {showSlashMenu && filteredSlashCommands.length > 0 && (
@@ -2214,9 +2214,6 @@ export function TaskChat({
                 ? "border-[var(--color-warning)] focus-within:border-[var(--color-warning)]"
                 : "border-[var(--color-border)] focus-within:border-[var(--color-highlight)]"
             }`}
-            onDragOver={isInputExpanded ? handleDragOver : undefined}
-            onDragLeave={isInputExpanded ? handleDragLeave : undefined}
-            onDrop={isInputExpanded ? handleDrop : undefined}
           >
             {/* Placeholder overlay */}
             {!hasContent && (
@@ -2241,7 +2238,10 @@ export function TaskChat({
             {/* Expand/Collapse toggle */}
             <button
               onClick={() => {
-                setIsInputExpanded(v => !v);
+                setIsInputExpanded(v => {
+                  if (!v) { setShowPlan(false); setShowPlanFile(false); }
+                  return !v;
+                });
                 setTimeout(() => editableRef.current?.focus(), 0);
               }}
               className="absolute right-1.5 top-1.5 p-1 text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-bg-tertiary)] rounded transition-colors z-10"
@@ -2251,12 +2251,6 @@ export function TaskChat({
                 ? <Minimize2 className="w-3.5 h-3.5" />
                 : <Maximize2 className="w-3.5 h-3.5" />}
             </button>
-            {/* Drag overlay for expanded mode */}
-            {isInputExpanded && isDragging && (
-              <div className="absolute inset-0 bg-[color-mix(in_srgb,var(--color-highlight)_10%,transparent)] border-2 border-dashed border-[var(--color-highlight)] rounded-lg flex items-center justify-center z-20 pointer-events-none">
-                <span className="text-[var(--color-highlight)] font-medium text-sm">Drop files here</span>
-              </div>
-            )}
             <div
               ref={editableRef}
               contentEditable={isConnected && !isRemoteSession}
