@@ -18,6 +18,9 @@ import {
   ListTodo,
   Circle,
   Cloud,
+  ExternalLink,
+  RefreshCw,
+  Archive,
 } from "lucide-react";
 import type { Branch, Task } from "../../data/types";
 import { getRemotes, getBranches as apiGetBranches } from "../../api";
@@ -46,6 +49,10 @@ interface BranchDrawerProps {
   onPullMerge?: (branch: Branch) => void;
   onPullRebase?: (branch: Branch) => void;
   onTaskClick?: (task: Task) => void;
+  onTaskRebase?: (task: Task) => void;
+  onTaskArchive?: (task: Task) => void;
+  onTaskClean?: (task: Task) => void;
+  onTaskRecover?: (task: Task) => void;
 }
 
 // Tree node for nested folder structure
@@ -131,6 +138,10 @@ export function BranchDrawer({
   onPullMerge,
   onPullRebase,
   onTaskClick,
+  onTaskRebase,
+  onTaskArchive,
+  onTaskClean,
+  onTaskRecover,
 }: BranchDrawerProps) {
   const [searchQuery, setSearchQuery] = useState("");
   const [showWithTasks, setShowWithTasks] = useState(true);
@@ -267,12 +278,11 @@ export function BranchDrawer({
     b.name.toLowerCase().includes(searchQuery.toLowerCase())
   );
 
-  // Group active tasks by target branch
+  // Group tasks by target branch (include all statuses for display inside panel)
   const branchesWithTasks = useMemo(() => {
-    const activeTasks = tasks.filter(t => t.status !== "archived");
     const branchMap = new Map<string, Task[]>();
 
-    activeTasks.forEach(task => {
+    tasks.forEach(task => {
       const existing = branchMap.get(task.target) || [];
       existing.push(task);
       branchMap.set(task.target, existing);
@@ -284,16 +294,19 @@ export function BranchDrawer({
       if (searchQuery && !branchName.toLowerCase().includes(searchQuery.toLowerCase())) {
         return;
       }
+      const nonArchived = branchTasks.filter(t => t.status !== "archived");
+      // Only show section if there are non-archived tasks
+      if (nonArchived.length === 0) return;
       result.push({
         name: branchName,
-        taskCount: branchTasks.length,
-        liveTasks: branchTasks.filter(t => t.status === "live").length,
-        idleTasks: branchTasks.filter(t => t.status === "idle").length,
-        tasks: branchTasks,
+        taskCount: nonArchived.length,
+        liveTasks: nonArchived.filter(t => t.status === "live").length,
+        idleTasks: nonArchived.filter(t => t.status === "idle").length,
+        tasks: branchTasks, // all tasks including archived
       });
     });
 
-    // Sort by task count descending
+    // Sort by active task count descending
     return result.sort((a, b) => b.taskCount - a.taskCount);
   }, [tasks, searchQuery]);
 
@@ -339,7 +352,7 @@ export function BranchDrawer({
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             onClick={onClose}
-            className="fixed inset-0 bg-black/30 z-40"
+            className="fixed inset-0 m-0 bg-black/30 z-40"
           />
 
           {/* Drawer */}
@@ -431,6 +444,10 @@ export function BranchDrawer({
                                 onClose();
                               }
                             }}
+                            onTaskRebase={onTaskRebase}
+                            onTaskArchive={onTaskArchive}
+                            onTaskClean={onTaskClean}
+                            onTaskRecover={onTaskRecover}
                           />
                         ))}
                       </motion.div>
@@ -616,6 +633,10 @@ interface TaskBranchItemProps {
   onBranchClick: () => void;
   onCheckout: () => void;
   onTaskClick: (task: Task) => void;
+  onTaskRebase?: (task: Task) => void;
+  onTaskArchive?: (task: Task) => void;
+  onTaskClean?: (task: Task) => void;
+  onTaskRecover?: (task: Task) => void;
 }
 
 function TaskBranchItem({
@@ -625,7 +646,21 @@ function TaskBranchItem({
   onBranchClick,
   onCheckout,
   onTaskClick,
+  onTaskRebase,
+  onTaskArchive,
+  onTaskClean,
+  onTaskRecover,
 }: TaskBranchItemProps) {
+  const [expandedTaskId, setExpandedTaskId] = useState<string | null>(null);
+  const [showArchived, setShowArchived] = useState(false);
+
+  const activeTasks = branchWithTasks.tasks.filter(t => t.status !== "archived");
+  const archivedTasks = branchWithTasks.tasks.filter(t => t.status === "archived");
+
+  const handleTaskRowClick = (taskId: string) => {
+    setExpandedTaskId(expandedTaskId === taskId ? null : taskId);
+  };
+
   return (
     <div>
       <button
@@ -692,43 +727,200 @@ function TaskBranchItem({
               )}
 
               {/* Task list */}
-              <div className="border-t border-[var(--color-border)] pt-2 mt-2">
-                <div className="text-xs text-[var(--color-text-muted)] mb-1.5">
-                  Tasks ({branchWithTasks.taskCount})
+              <div className="border-t border-[var(--color-border)] pt-2 mt-2 space-y-2">
+                {/* Active Tasks */}
+                <div>
+                  <div className="text-xs text-[var(--color-text-muted)] mb-1.5">
+                    Active Tasks ({activeTasks.length})
+                  </div>
+                  <div className="space-y-1">
+                    {activeTasks.map(task => (
+                      <TaskRow
+                        key={task.id}
+                        task={task}
+                        isExpanded={expandedTaskId === task.id}
+                        isCurrent={isCurrent}
+                        onToggle={() => handleTaskRowClick(task.id)}
+                        onTaskClick={onTaskClick}
+                        onTaskRebase={onTaskRebase}
+                        onTaskArchive={onTaskArchive}
+                        onTaskClean={onTaskClean}
+                      />
+                    ))}
+                  </div>
                 </div>
-                {/* Hint: checkout required before accessing tasks */}
-                {!isCurrent && (
-                  <div className="text-xs text-[var(--color-warning)] mb-2 px-2">
-                    Checkout this branch to access tasks
+
+                {/* Archived Tasks */}
+                {archivedTasks.length > 0 && (
+                  <div className="border-t border-[var(--color-border)] pt-2">
+                    <button
+                      onClick={() => setShowArchived(v => !v)}
+                      className="flex items-center gap-1 text-xs text-[var(--color-text-muted)] hover:text-[var(--color-text)] transition-colors mb-1"
+                    >
+                      {showArchived ? (
+                        <ChevronDown className="w-3 h-3" />
+                      ) : (
+                        <ChevronRight className="w-3 h-3" />
+                      )}
+                      Archived ({archivedTasks.length})
+                    </button>
+                    <AnimatePresence>
+                      {showArchived && (
+                        <motion.div
+                          initial={{ height: 0, opacity: 0 }}
+                          animate={{ height: "auto", opacity: 1 }}
+                          exit={{ height: 0, opacity: 0 }}
+                          className="overflow-hidden space-y-1"
+                        >
+                          {archivedTasks.map(task => (
+                            <ArchivedTaskRow
+                              key={task.id}
+                              task={task}
+                              isExpanded={expandedTaskId === task.id}
+                              onToggle={() => handleTaskRowClick(task.id)}
+                              onTaskRecover={onTaskRecover}
+                              onTaskClean={onTaskClean}
+                            />
+                          ))}
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
                   </div>
                 )}
-                <div className="space-y-1">
-                  {branchWithTasks.tasks.map(task => (
-                    <button
-                      key={task.id}
-                      onClick={() => isCurrent && onTaskClick(task)}
-                      disabled={!isCurrent}
-                      className={`w-full flex items-center gap-2 px-2 py-1.5 text-sm rounded-md transition-colors text-left
-                        ${isCurrent
-                          ? "text-[var(--color-text)] hover:bg-[var(--color-bg)] cursor-pointer"
-                          : "text-[var(--color-text-muted)] cursor-not-allowed opacity-60"
-                        }`}
-                    >
-                      <Circle className={`w-2.5 h-2.5 flex-shrink-0 ${
-                        task.status === "live"
-                          ? "fill-[var(--color-success)] text-[var(--color-success)]"
-                          : "text-[var(--color-text-muted)]"
-                      }`} />
-                      <span className="truncate">{task.name}</span>
-                      {task.filesChanged > 0 && (
-                        <span className="text-xs text-[var(--color-text-muted)] ml-auto flex-shrink-0">
-                          {task.filesChanged} files
-                        </span>
-                      )}
-                    </button>
-                  ))}
-                </div>
               </div>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+}
+
+// Active task row with expandable action menu
+interface TaskRowProps {
+  task: Task;
+  isExpanded: boolean;
+  isCurrent: boolean;
+  onToggle: () => void;
+  onTaskClick: (task: Task) => void;
+  onTaskRebase?: (task: Task) => void;
+  onTaskArchive?: (task: Task) => void;
+  onTaskClean?: (task: Task) => void;
+}
+
+function TaskRow({ task, isExpanded, isCurrent, onToggle, onTaskClick, onTaskRebase, onTaskArchive, onTaskClean }: TaskRowProps) {
+  return (
+    <div>
+      <button
+        onClick={onToggle}
+        className="w-full flex items-center gap-2 px-2 py-1.5 text-sm rounded-md transition-colors text-left text-[var(--color-text)] hover:bg-[var(--color-bg)] cursor-pointer"
+      >
+        <Circle className={`w-2.5 h-2.5 flex-shrink-0 ${
+          task.status === "live"
+            ? "fill-[var(--color-success)] text-[var(--color-success)]"
+            : "text-[var(--color-text-muted)]"
+        }`} />
+        <span className="truncate flex-1">{task.name}</span>
+        {isExpanded ? (
+          <ChevronDown className="w-3.5 h-3.5 text-[var(--color-text-muted)] flex-shrink-0" />
+        ) : (
+          <ChevronRight className="w-3.5 h-3.5 text-[var(--color-text-muted)] flex-shrink-0" />
+        )}
+      </button>
+      <AnimatePresence>
+        {isExpanded && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: "auto", opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            className="overflow-hidden"
+          >
+            <div className="pl-6 pr-1 pb-1 space-y-0.5">
+              {isCurrent && (
+                <button
+                  onClick={() => onTaskClick(task)}
+                  className="w-full flex items-center gap-2 px-3 py-1.5 text-sm text-[var(--color-highlight)] hover:bg-[var(--color-bg)] rounded-md transition-colors"
+                >
+                  <ExternalLink className="w-3.5 h-3.5" />
+                  Go To Task
+                </button>
+              )}
+              <button
+                onClick={() => onTaskRebase?.(task)}
+                className="w-full flex items-center gap-2 px-3 py-1.5 text-sm text-[var(--color-text)] hover:bg-[var(--color-bg)] rounded-md transition-colors"
+              >
+                <RefreshCw className="w-3.5 h-3.5" />
+                Rebase
+              </button>
+              <button
+                onClick={() => onTaskArchive?.(task)}
+                className="w-full flex items-center gap-2 px-3 py-1.5 text-sm text-[var(--color-text)] hover:bg-[var(--color-bg)] rounded-md transition-colors"
+              >
+                <Archive className="w-3.5 h-3.5" />
+                Archive
+              </button>
+              <button
+                onClick={() => onTaskClean?.(task)}
+                className="w-full flex items-center gap-2 px-3 py-1.5 text-sm text-[var(--color-error)] hover:bg-[var(--color-error)]/10 rounded-md transition-colors"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                Clean
+              </button>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+}
+
+// Archived task row with Recover / Clean actions
+interface ArchivedTaskRowProps {
+  task: Task;
+  isExpanded: boolean;
+  onToggle: () => void;
+  onTaskRecover?: (task: Task) => void;
+  onTaskClean?: (task: Task) => void;
+}
+
+function ArchivedTaskRow({ task, isExpanded, onToggle, onTaskRecover, onTaskClean }: ArchivedTaskRowProps) {
+  return (
+    <div>
+      <button
+        onClick={onToggle}
+        className="w-full flex items-center gap-2 px-2 py-1.5 text-sm rounded-md transition-colors text-left text-[var(--color-text-muted)] hover:bg-[var(--color-bg)] cursor-pointer"
+      >
+        <Archive className="w-3 h-3 flex-shrink-0 text-[var(--color-text-muted)]" />
+        <span className="truncate flex-1">{task.name}</span>
+        {isExpanded ? (
+          <ChevronDown className="w-3.5 h-3.5 text-[var(--color-text-muted)] flex-shrink-0" />
+        ) : (
+          <ChevronRight className="w-3.5 h-3.5 text-[var(--color-text-muted)] flex-shrink-0" />
+        )}
+      </button>
+      <AnimatePresence>
+        {isExpanded && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: "auto", opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            className="overflow-hidden"
+          >
+            <div className="pl-6 pr-1 pb-1 space-y-0.5">
+              <button
+                onClick={() => onTaskRecover?.(task)}
+                className="w-full flex items-center gap-2 px-3 py-1.5 text-sm text-[var(--color-text)] hover:bg-[var(--color-bg)] rounded-md transition-colors"
+              >
+                <RefreshCw className="w-3.5 h-3.5" />
+                Recover
+              </button>
+              <button
+                onClick={() => onTaskClean?.(task)}
+                className="w-full flex items-center gap-2 px-3 py-1.5 text-sm text-[var(--color-error)] hover:bg-[var(--color-error)]/10 rounded-md transition-colors"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                Clean
+              </button>
             </div>
           </motion.div>
         )}
