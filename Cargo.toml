@@ -1,6 +1,6 @@
 [package]
 name = "grove-rs"
-version = "0.7.5"
+version = "0.7.6"
 edition = "2021"
 description = "A Kanban-style TUI for parallel AI coding. Manage Git worktrees as tasks, run multiple agents in isolated tmux sessions, get notified via hooks."
 license = "MIT"
@@ -70,7 +70,7 @@ tokio-stream = "0.1"
 tokio-tungstenite = { version = "0.26", default-features = false, features = ["connect", "rustls-tls-native-roots"] }
 
 # GUI (Tauri) - optional
-tauri = { version = "2", optional = true }
+tauri = { version = "2", optional = true , features = [] }
 tauri-plugin-shell = { version = "2", optional = true }
 similar = "2.7.0"
 getrandom = "0.2"

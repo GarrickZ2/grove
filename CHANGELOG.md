@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.6] - 2026-03-02
+
+### Added
+
+- **GUI: macOS app bundle support** — detects `.app/Contents/MacOS/` launch path and forces GUI mode; expands `PATH` from login shell on startup so `tmux`, `claude`, and `fzf` are found correctly inside the bundle
+- **GUI: In-app updates** — download progress bar and restart dialog for AppBundle installs; new `/api/v1/app-update/{start,progress,install}` endpoints; CI now produces a universal (arm64 + x86_64) DMG via `build-macos-dmg` job
+- **Web: Branch drawer task actions** — all tasks in the branch drawer are now clickable and expand an action menu; active tasks support Go To Task (current branch only), Rebase (reuses `RebaseDialog` with branch picker), Archive, and Clean; archived tasks section (collapsed by default) supports Recover and Clean; dialogs open without closing the drawer
+
+### Fixed
+
+- **Web: Branch drawer shows archived tasks** — backend `get_project` now explicitly loads archived worktrees so they appear in the Active/Archived sections of the branch drawer
+- **Web: Sidebar task counts update after mutations** — `refreshSelectedProject` now also refreshes the project list so the "x tasks • y live" counts in the project selector stay in sync after Archive, Clean, Recover, and New Task operations
+- **Web: Diff review refresh reloads comments** — clicking the refresh button on the review page now reloads both the diff and the review comments simultaneously
+- **Web: Branch drawer backdrop gap** — fixed a white strip at the bottom of the backdrop caused by Tailwind v4 `space-y-6` adding `margin-bottom` to the fixed overlay; resolved with `m-0`
+
 ## [0.7.5] - 2026-02-28
 
 ### Added
