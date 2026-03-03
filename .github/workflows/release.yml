@@ -25,10 +25,19 @@ jobs:
       - name: Get tag
         id: tag
         run: echo "tag=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
-      - name: Create Release
+      - name: Create or reset Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh release create ${{ steps.tag.outputs.tag }} --draft --title ${{ steps.tag.outputs.tag }}
+        run: |
+          TAG="${{ steps.tag.outputs.tag }}"
+          if gh release view "$TAG" &>/dev/null; then
+            # Release already exists — delete all assets so re-upload won't conflict
+            gh release edit "$TAG" --draft
+            gh release view "$TAG" --json assets --jq '.assets[].name' \
+              | xargs -I{} gh release delete-asset "$TAG" "{}" --yes || true
+          else
+            gh release create "$TAG" --draft --title "$TAG"
+          fi
 
   # Build for macOS (Apple Silicon)
   build-macos-arm:
@@ -63,7 +72,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release upload ${{ needs.create-release.outputs.tag }} \
+          gh release upload ${{ needs.create-release.outputs.tag }} --clobber \
             target/aarch64-apple-darwin/release/grove-${{ needs.create-release.outputs.tag }}-aarch64-apple-darwin.tar.gz
 
   # Build for macOS (Intel)
@@ -99,7 +108,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release upload ${{ needs.create-release.outputs.tag }} \
+          gh release upload ${{ needs.create-release.outputs.tag }} --clobber \
             target/x86_64-apple-darwin/release/grove-${{ needs.create-release.outputs.tag }}-x86_64-apple-darwin.tar.gz
 
   # Build for Linux (x86_64) - using musl for maximum compatibility
@@ -137,7 +146,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release upload ${{ needs.create-release.outputs.tag }} \
+          gh release upload ${{ needs.create-release.outputs.tag }} --clobber \
             target/x86_64-unknown-linux-musl/release/grove-${{ needs.create-release.outputs.tag }}-x86_64-unknown-linux-musl.tar.gz
 
   # Build for Linux (ARM64) - using cross for reliable cross-compilation
@@ -173,7 +182,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release upload ${{ needs.create-release.outputs.tag }} \
+          gh release upload ${{ needs.create-release.outputs.tag }} --clobber \
             target/aarch64-unknown-linux-musl/release/grove-${{ needs.create-release.outputs.tag }}-aarch64-unknown-linux-musl.tar.gz
 
   # Build macOS universal .app + DMG (arm64 + x86_64 combined)
@@ -202,7 +211,7 @@ jobs:
       - name: Install Tauri CLI
         run: cargo install tauri-cli --version "^2" --locked
       - name: Build universal DMG
-        run: cargo tauri build --target universal-apple-darwin
+        run: cargo tauri build --target universal-apple-darwin --features gui
       - name: Rename and upload DMG
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -210,7 +219,7 @@ jobs:
           TAG="${{ needs.create-release.outputs.tag }}"
           DMG=$(find target/universal-apple-darwin/release/bundle/dmg -name "*.dmg" | head -1)
           cp "$DMG" "grove-${TAG}-universal-apple-darwin.dmg"
-          gh release upload "${TAG}" "grove-${TAG}-universal-apple-darwin.dmg"
+          gh release upload "${TAG}" "grove-${TAG}-universal-apple-darwin.dmg" --clobber
 
   # Publish the release
   publish-release:
