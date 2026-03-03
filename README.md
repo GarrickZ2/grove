@@ -21,12 +21,14 @@ Write a spec, let AI code it, review together, merge with confidence. Each task 
 
 **Install:**
 ```bash
-curl -sSL https://raw.githubusercontent.com/GarrickZ2/grove/master/install.sh | sh
-# or
 brew tap GarrickZ2/grove && brew install grove
+# or
+curl -sSL https://raw.githubusercontent.com/GarrickZ2/grove/master/install.sh | sh
 # or
 cargo install grove-rs
 ```
+
+**macOS App:** [Download .dmg](https://github.com/GarrickZ2/grove/releases/latest) — drag to Applications, includes GUI + Web UI + TUI.
 
 **Run:**
 ```bash
@@ -228,6 +230,11 @@ Execution tools (only available inside a Grove task):
 
 Single binary with embedded web frontend. No runtime dependencies beyond Git and a terminal multiplexer.
 
+**Homebrew**:
+```bash
+brew tap GarrickZ2/grove && brew install grove
+```
+
 **Shell** (auto-detect platform):
 ```bash
 curl -sSL https://raw.githubusercontent.com/GarrickZ2/grove/master/install.sh | sh
@@ -236,10 +243,9 @@ curl -sSL https://raw.githubusercontent.com/GarrickZ2/grove/master/install.sh | 
 INSTALL_DIR=~/.local/bin curl -sSL https://raw.githubusercontent.com/GarrickZ2/grove/master/install.sh | sh
 ```
 
-**Homebrew**:
-```bash
-brew tap GarrickZ2/grove && brew install grove
-```
+**macOS App**:
+
+Download the `.dmg` from [GitHub Releases](https://github.com/GarrickZ2/grove/releases/latest), open it, and drag Grove to Applications. Universal binary — runs natively on Apple Silicon and Intel Macs.
 
 **Cargo**:
 ```bash
