@@ -219,12 +219,15 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
 
   const refreshSelectedProject = useCallback(async () => {
     if (selectedProject) {
-      const fullProject = await loadProjectDetails(selectedProject.id);
+      const [fullProject] = await Promise.all([
+        loadProjectDetails(selectedProject.id),
+        loadProjects(),
+      ]);
       if (fullProject) {
         setSelectedProject(fullProject);
       }
     }
-  }, [selectedProject, loadProjectDetails]);
+  }, [selectedProject, loadProjectDetails, loadProjects]);
 
   return (
     <ProjectContext.Provider

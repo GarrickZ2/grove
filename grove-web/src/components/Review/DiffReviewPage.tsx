@@ -330,9 +330,15 @@ export function DiffReviewPage({ projectId, taskId, embedded }: DiffReviewPagePr
     setRefreshing(true);
     const fromOpt = versions.find((v) => v.id === fromVersion);
     const toOpt = versions.find((v) => v.id === toVersion);
-    await refetchDiff(fromOpt?.ref, toOpt?.ref, true);
+    await Promise.all([
+      refetchDiff(fromOpt?.ref, toOpt?.ref, true),
+      getReviewComments(projectId, taskId).then((result) => {
+        setComments(result.comments);
+        if (result.git_user_name) gitUserNameRef.current = result.git_user_name;
+      }).catch(() => null),
+    ]);
     setRefreshing(false);
-  }, [versions, fromVersion, toVersion, refetchDiff]);
+  }, [versions, fromVersion, toVersion, refetchDiff, projectId, taskId]);
 
   // Initial load: diff + comments + commits (builds version list)
   useEffect(() => {
