@@ -135,6 +135,50 @@ fn main() -> io::Result<()> {
         None => {
             // 无子命令：重放上次启动模式，默认 TUI
             let config = storage::config::load_config();
+
+            // AppBundle 环境下，始终强制进入 GUI 模式
+            // （忽略 last_launch 中可能存的 Web/Tui，仅保留上次记录的 GUI 端口）
+            #[cfg(feature = "gui")]
+            if matches!(
+                update::detect_install_method(),
+                update::InstallMethod::AppBundle
+            ) {
+                let port = config
+                    .last_launch
+                    .as_ref()
+                    .and_then(|ll| {
+                        if let storage::config::LastLaunch::Gui { port } = ll {
+                            Some(*port)
+                        } else {
+                            None
+                        }
+                    })
+                    .unwrap_or(3001);
+                return {
+                    let (command, from_replay) = (Commands::Gui { port }, false);
+                    // 保存 last_launch
+                    if let Some(last_launch) = command.to_last_launch() {
+                        let mut cfg = storage::config::load_config();
+                        cfg.last_launch = Some(last_launch);
+                        let _ = storage::config::save_config(&cfg);
+                    }
+                    // 直接执行 GUI
+                    tokio::runtime::Runtime::new()
+                        .expect("Failed to create tokio runtime")
+                        .block_on(async {
+                            cli::gui::execute(if let Commands::Gui { port } = command {
+                                port
+                            } else {
+                                3001
+                            })
+                            .await;
+                        });
+                    let _ = from_replay;
+                    Ok(())
+                };
+            }
+
+            // 非 AppBundle：重放上次启动模式，默认 TUI
             match config.last_launch {
                 Some(ref ll) => {
                     let label = ll.display_label();

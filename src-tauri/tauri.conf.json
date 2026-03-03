@@ -6,7 +6,8 @@
   "build": {
     "beforeBuildCommand": "cd grove-web && npm run build",
     "frontendDist": "../grove-web/dist",
-    "devUrl": "http://localhost:5173"
+    "devUrl": "http://localhost:5173",
+    "features": ["gui"]
   },
   "app": {
     "windows": [

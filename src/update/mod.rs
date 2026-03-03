@@ -15,6 +15,8 @@ pub enum InstallMethod {
     GitHubRelease,
     /// Installed via Homebrew
     Homebrew,
+    /// Running as a macOS .app bundle (DMG install)
+    AppBundle,
     /// Unknown installation method
     Unknown,
 }
@@ -28,6 +30,8 @@ impl InstallMethod {
             InstallMethod::GitHubRelease => {
                 "curl -sSL https://raw.githubusercontent.com/GarrickZ2/grove/master/install.sh | sh"
             }
+            // AppBundle updates are handled in-app via the web UI
+            InstallMethod::AppBundle => "",
             InstallMethod::Unknown => "https://github.com/GarrickZ2/grove/releases",
         }
     }
@@ -76,6 +80,11 @@ pub fn detect_install_method() -> InstallMethod {
     };
 
     let path_str = exe_path.to_string_lossy();
+
+    // Check for macOS .app bundle (highest priority on macOS)
+    if path_str.contains(".app/Contents/MacOS/") {
+        return InstallMethod::AppBundle;
+    }
 
     // Check for Homebrew (macOS)
     if path_str.contains("/homebrew/") || path_str.contains("/Cellar/") {
@@ -213,5 +222,6 @@ mod tests {
             InstallMethod::Homebrew.update_command(),
             "brew upgrade grove"
         );
+        assert_eq!(InstallMethod::AppBundle.update_command(), "");
     }
 }

@@ -15,10 +15,30 @@ export interface UpdateCheckResponse {
   check_time: string | null;
 }
 
+export interface AppUpdateProgress {
+  stage: 'idle' | 'downloading' | 'ready' | 'installing' | 'error';
+  downloaded: number;
+  total: number;
+  version: string | null;
+  error: string | null;
+}
+
 export async function getVersion(): Promise<VersionResponse> {
   return apiClient.get<VersionResponse>('/api/v1/version');
 }
 
 export async function checkUpdate(): Promise<UpdateCheckResponse> {
   return apiClient.get<UpdateCheckResponse>('/api/v1/update-check');
+}
+
+export async function startAppUpdate(): Promise<void> {
+  await apiClient.post('/api/v1/app-update/start', {});
+}
+
+export async function getAppUpdateProgress(): Promise<AppUpdateProgress> {
+  return apiClient.get<AppUpdateProgress>('/api/v1/app-update/progress');
+}
+
+export async function installAppUpdate(): Promise<void> {
+  await apiClient.post('/api/v1/app-update/install', {});
 }

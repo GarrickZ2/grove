@@ -176,9 +176,45 @@ jobs:
           gh release upload ${{ needs.create-release.outputs.tag }} \
             target/aarch64-unknown-linux-musl/release/grove-${{ needs.create-release.outputs.tag }}-aarch64-unknown-linux-musl.tar.gz
 
+  # Build macOS universal .app + DMG (arm64 + x86_64 combined)
+  build-macos-dmg:
+    needs: create-release
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22.14.0'
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+      - name: Build Frontend
+        run: |
+          cd grove-web
+          pnpm install --no-frozen-lockfile
+          pnpm run build
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+      - name: Install Tauri CLI
+        run: npm install -g @tauri-apps/cli@^2
+      - name: Build universal DMG
+        run: cargo tauri build --target universal-apple-darwin
+      - name: Rename and upload DMG
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${{ needs.create-release.outputs.tag }}"
+          DMG=$(find target/universal-apple-darwin/release/bundle/dmg -name "*.dmg" | head -1)
+          cp "$DMG" "grove-${TAG}-universal-apple-darwin.dmg"
+          gh release upload "${TAG}" "grove-${TAG}-universal-apple-darwin.dmg"
+
   # Publish the release
   publish-release:
-    needs: [create-release, build-macos-arm, build-macos-intel, build-linux-x64, build-linux-arm]
+    needs: [create-release, build-macos-arm, build-macos-intel, build-linux-x64, build-linux-arm, build-macos-dmg]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

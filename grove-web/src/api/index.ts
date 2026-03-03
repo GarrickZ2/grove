@@ -112,8 +112,8 @@ export type { DiffLine, DiffHunk, DiffFile, FullDiffResult } from './review';
 
 export type { HookEntryResponse, HooksListResponse } from './hooks';
 
-export { getVersion, checkUpdate } from './version';
-export type { VersionResponse, UpdateCheckResponse } from './version';
+export { getVersion, checkUpdate, startAppUpdate, getAppUpdateProgress, installAppUpdate } from './version';
+export type { VersionResponse, UpdateCheckResponse, AppUpdateProgress } from './version';
 
 export {
   getAgentDefs,

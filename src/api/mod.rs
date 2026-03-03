@@ -37,6 +37,19 @@ pub fn create_api_router() -> Router {
         .route("/version", get(handlers::version::get_version))
         // Update check API
         .route("/update-check", get(handlers::update::check_update))
+        // In-app update API (AppBundle mode)
+        .route(
+            "/app-update/start",
+            post(handlers::update::start_app_update),
+        )
+        .route(
+            "/app-update/progress",
+            get(handlers::update::get_app_update_progress),
+        )
+        .route(
+            "/app-update/install",
+            post(handlers::update::install_app_update),
+        )
         // Config API
         .route("/config", get(handlers::config::get_config))
         .route("/config", patch(handlers::config::patch_config))

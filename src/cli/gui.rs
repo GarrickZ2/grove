@@ -7,8 +7,62 @@ use crate::api;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
+/// When launched as a macOS .app bundle, the process inherits a minimal PATH
+/// (/usr/bin:/bin:/usr/sbin:/sbin). This function expands it by querying the
+/// user's login shell and appending common installation directories so that
+/// tools like tmux, claude, fzf, etc. can be found.
+fn expand_path_for_app_bundle() {
+    let home = std::env::var("HOME").unwrap_or_default();
+
+    // Common paths that are frequently missing in app-bundle launches
+    let extra_paths = [
+        "/opt/homebrew/bin",
+        "/opt/homebrew/sbin",
+        "/usr/local/bin",
+        "/usr/local/sbin",
+        &format!("{home}/.cargo/bin"),
+        &format!("{home}/.local/bin"),
+        "/opt/local/bin", // MacPorts
+    ];
+
+    // Seed with existing PATH so we don't lose anything
+    let current = std::env::var("PATH").unwrap_or_default();
+    let mut parts: Vec<&str> = current.split(':').filter(|s| !s.is_empty()).collect();
+
+    // Prepend extra paths that are not already present
+    for p in extra_paths.iter().rev() {
+        if !p.is_empty() && !parts.contains(p) {
+            parts.insert(0, p);
+        }
+    }
+
+    // Also try to read the full PATH from the user's login shell
+    let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".to_string());
+    let shell_path_str = std::process::Command::new(&shell)
+        .args(["-l", "-c", "echo $PATH"])
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .and_then(|o| String::from_utf8(o.stdout).ok())
+        .unwrap_or_default();
+    for p in shell_path_str.trim().split(':') {
+        if !p.is_empty() && !parts.contains(&p) {
+            parts.push(p);
+        }
+    }
+
+    let new_path = parts.join(":");
+    // SAFETY: called once at startup before any threads are spawned
+    #[allow(unused_unsafe)]
+    unsafe {
+        std::env::set_var("PATH", &new_path);
+    }
+}
+
 /// Execute the GUI desktop application
 pub async fn execute(port: u16) {
+    // Expand PATH before anything else so dependency checks work correctly
+    expand_path_for_app_bundle();
     // Check for embedded assets
     if !api::has_embedded_assets() {
         eprintln!("Error: No embedded frontend assets found.");
