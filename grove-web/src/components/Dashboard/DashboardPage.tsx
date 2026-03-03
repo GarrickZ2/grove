@@ -8,6 +8,7 @@ import { GitStatusBar } from "./GitStatusBar";
 import { BranchDrawer } from "./BranchDrawer";
 import { CommitHistory } from "./CommitHistory";
 import { ConfirmDialog, NewBranchDialog, RenameBranchDialog, CommitDialog } from "../Dialogs";
+import { RebaseDialog } from "../Tasks/dialogs";
 import { useProject } from "../../context";
 import {
   getGitStatus,
@@ -24,12 +25,16 @@ import {
   getProjectStats,
   openIDE,
   openTerminal,
+  archiveTask,
+  recoverTask,
+  rebaseToTask,
+  deleteTask,
   type RepoStatusResponse,
   type BranchDetailInfo,
   type RepoCommitEntry,
   type ProjectStatsResponse,
 } from "../../api";
-import type { Branch, Commit, RepoStatus, Stats } from "../../data/types";
+import type { Branch, Commit, RepoStatus, Stats, Task } from "../../data/types";
 
 interface DashboardPageProps {
   onNavigate: (page: string, data?: Record<string, unknown>) => void;
@@ -81,6 +86,14 @@ export function DashboardPage({ onNavigate }: DashboardPageProps) {
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
   const [showCommitDialog, setShowCommitDialog] = useState(false);
   const [selectedBranch, setSelectedBranch] = useState<Branch | null>(null);
+
+  // Task operation dialog states
+  const [taskOpTask, setTaskOpTask] = useState<Task | null>(null);
+  const [showTaskArchiveDialog, setShowTaskArchiveDialog] = useState(false);
+  const [showTaskCleanDialog, setShowTaskCleanDialog] = useState(false);
+  const [showTaskRebaseDialog, setShowTaskRebaseDialog] = useState(false);
+  const [rebaseAvailableBranches, setRebaseAvailableBranches] = useState<string[]>([]);
+  const [isRebasing, setIsRebasing] = useState(false);
 
   // Git data states - separate loading for each section
   const [repoStatus, setRepoStatus] = useState<RepoStatus | null>(null);
@@ -400,6 +413,92 @@ export function DashboardPage({ onNavigate }: DashboardPageProps) {
     // TODO: Implement git pull --rebase from remote branch
   };
 
+  const handleTaskRebase = async (task: Task) => {
+    if (!selectedProject) return;
+    setTaskOpTask(task);
+    try {
+      const branchesRes = await getGitBranches(selectedProject.id);
+      setRebaseAvailableBranches(branchesRes.branches.map(b => b.name));
+      setShowTaskRebaseDialog(true);
+    } catch (err) {
+      showMessage("Failed to load branches");
+    }
+  };
+
+  const handleConfirmTaskRebase = async (newTarget: string) => {
+    if (!selectedProject || !taskOpTask || isRebasing) return;
+    setIsRebasing(true);
+    try {
+      const result = await rebaseToTask(selectedProject.id, taskOpTask.id, newTarget);
+      showMessage(result.success ? (result.message || `Rebased onto ${newTarget}`) : (result.message || "Rebase failed"));
+      if (result.success) {
+        setShowTaskRebaseDialog(false);
+        setTaskOpTask(null);
+        await refreshSelectedProject();
+      }
+    } catch (err) {
+      showMessage("Rebase failed");
+    } finally {
+      setIsRebasing(false);
+    }
+  };
+
+  const handleTaskArchive = (task: Task) => {
+    setTaskOpTask(task);
+    setShowTaskArchiveDialog(true);
+  };
+
+  const handleConfirmTaskArchive = async () => {
+    if (!selectedProject || !taskOpTask || isOperating) return;
+    setIsOperating(true);
+    try {
+      await archiveTask(selectedProject.id, taskOpTask.id);
+      showMessage(`Archived "${taskOpTask.name}"`);
+      await refreshSelectedProject();
+    } catch (err) {
+      showMessage("Archive failed");
+    } finally {
+      setIsOperating(false);
+      setShowTaskArchiveDialog(false);
+      setTaskOpTask(null);
+    }
+  };
+
+  const handleTaskClean = (task: Task) => {
+    setTaskOpTask(task);
+    setShowTaskCleanDialog(true);
+  };
+
+  const handleTaskRecover = async (task: Task) => {
+    if (!selectedProject || isOperating) return;
+    setIsOperating(true);
+    try {
+      await recoverTask(selectedProject.id, task.id);
+      showMessage(`Recovered "${task.name}"`);
+      await refreshSelectedProject();
+    } catch (err) {
+      showMessage("Recover failed");
+    } finally {
+      setIsOperating(false);
+    }
+  };
+
+  const handleConfirmTaskClean = async () => {
+    if (!selectedProject || !taskOpTask || isOperating) return;
+    setIsOperating(true);
+    try {
+      await deleteTask(selectedProject.id, taskOpTask.id);
+      showMessage(`Cleaned "${taskOpTask.name}"`);
+      await refreshSelectedProject();
+    } catch (err) {
+      showMessage("Clean failed");
+    } finally {
+      setIsOperating(false);
+      setShowTaskCleanDialog(false);
+      setTaskOpTask(null);
+    }
+  };
+
   // Default repo status for loading state
   const defaultRepoStatus: RepoStatus = {
     currentBranch: selectedProject.currentBranch || "main",
@@ -491,6 +590,10 @@ export function DashboardPage({ onNavigate }: DashboardPageProps) {
         onPullMerge={handlePullMerge}
         onPullRebase={handlePullRebase}
         onTaskClick={(task) => onNavigate("tasks", { taskId: task.id })}
+        onTaskRebase={handleTaskRebase}
+        onTaskArchive={handleTaskArchive}
+        onTaskClean={handleTaskClean}
+        onTaskRecover={handleTaskRecover}
       />
 
       {/* Dialogs */}
@@ -530,6 +633,44 @@ export function DashboardPage({ onNavigate }: DashboardPageProps) {
         isLoading={isOperating}
         onCommit={handleCommitSubmit}
         onCancel={() => setShowCommitDialog(false)}
+      />
+
+      <RebaseDialog
+        isOpen={showTaskRebaseDialog}
+        taskName={taskOpTask?.name}
+        currentTarget={taskOpTask?.target || ""}
+        availableBranches={rebaseAvailableBranches}
+        onClose={() => {
+          setShowTaskRebaseDialog(false);
+          setTaskOpTask(null);
+        }}
+        onRebase={handleConfirmTaskRebase}
+      />
+
+      <ConfirmDialog
+        isOpen={showTaskArchiveDialog}
+        title="Archive Task"
+        message={`Archive "${taskOpTask?.name}"? The worktree and session will be removed.`}
+        confirmLabel="Archive"
+        variant="warning"
+        onConfirm={handleConfirmTaskArchive}
+        onCancel={() => {
+          setShowTaskArchiveDialog(false);
+          setTaskOpTask(null);
+        }}
+      />
+
+      <ConfirmDialog
+        isOpen={showTaskCleanDialog}
+        title="Clean Task"
+        message={`Delete "${taskOpTask?.name}"? This will permanently remove the worktree and all uncommitted changes.`}
+        confirmLabel="Delete"
+        variant="danger"
+        onConfirm={handleConfirmTaskClean}
+        onCancel={() => {
+          setShowTaskCleanDialog(false);
+          setTaskOpTask(null);
+        }}
       />
     </motion.div>
   );

@@ -270,13 +270,15 @@ pub async fn get_project(Path(id): Path<String>) -> Result<Json<ProjectResponse>
     let project = find_project_by_id(&id)?;
 
     // Load worktrees with status
-    let (current, other, _archived) = loader::load_worktrees(&project.path);
+    let (current, other, _) = loader::load_worktrees(&project.path);
+    let archived = loader::load_archived_worktrees(&project.path);
 
-    // Combine current and other branch tasks (parallel processing)
+    // Combine all tasks (parallel processing)
     use rayon::prelude::*;
     let mut all_tasks: Vec<TaskResponse> = current
         .iter()
         .chain(other.iter())
+        .chain(archived.iter())
         .collect::<Vec<_>>()
         .par_iter()
         .map(|wt| worktree_to_response(wt, &id))
