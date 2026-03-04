@@ -15,6 +15,7 @@ mod model;
 mod notification_state;
 mod operations;
 mod session;
+mod stats;
 mod storage;
 mod theme;
 mod tmux;

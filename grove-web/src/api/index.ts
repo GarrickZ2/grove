@@ -110,6 +110,15 @@ export type {
 
 export type { DiffLine, DiffHunk, DiffFile, FullDiffResult } from './review';
 
+export { getProjectStatistics } from './statistics';
+export type {
+  BriefDataPoint,
+  HotFile,
+  CommentFlowResponse,
+  AgentStatResponse,
+  ProjectStatisticsResponse,
+} from './statistics';
+
 export type { HookEntryResponse, HooksListResponse } from './hooks';
 
 export { getVersion, checkUpdate, startAppUpdate, getAppUpdateProgress, installAppUpdate } from './version';
