@@ -107,6 +107,10 @@ pub fn create_api_router() -> Router {
         .route("/projects/{id}", delete(handlers::projects::delete_project))
         .route("/projects/{id}/stats", get(handlers::projects::get_stats))
         .route(
+            "/projects/{id}/statistics",
+            get(handlers::statistics::get_project_statistics),
+        )
+        .route(
             "/projects/{id}/branches",
             get(handlers::projects::get_branches),
         )

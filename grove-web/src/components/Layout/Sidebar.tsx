@@ -5,6 +5,7 @@ import {
   LayoutGrid,
   ListTodo,
   Blocks,
+  BarChart2,
   ChevronLeft,
   ChevronRight,
   Bell,
@@ -20,12 +21,14 @@ interface NavItem {
   id: string;
   label: string;
   icon: React.ElementType;
+  beta?: boolean;
 }
 
 const navItems: NavItem[] = [
   { id: "dashboard", label: "Dashboard", icon: LayoutGrid },
   { id: "tasks", label: "Tasks", icon: ListTodo },
   { id: "skills", label: "Skills", icon: Blocks },
+  { id: "statistics", label: "Statistics", icon: BarChart2, beta: true },
 ];
 
 interface SidebarProps {
@@ -203,7 +206,14 @@ function NavButton({ item, isActive, onClick, collapsed }: NavButtonProps) {
       <Icon className="w-5 h-5 flex-shrink-0" />
       {!collapsed && (
         <>
-          <span className="flex-1 text-left">{item.label}</span>
+          <span className="flex-1 flex items-center gap-1.5">
+            <span>{item.label}</span>
+            {item.beta && (
+              <span className="px-1.5 py-0.5 text-[10px] font-semibold rounded-md bg-amber-500/15 text-amber-500 leading-none">
+                beta
+              </span>
+            )}
+          </span>
           {isActive && (
             <motion.div
               layoutId="activeIndicator"

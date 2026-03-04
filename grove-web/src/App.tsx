@@ -12,6 +12,7 @@ import { AddProjectDialog } from "./components/Projects/AddProjectDialog";
 import { WelcomePage } from "./components/Welcome";
 import { DiffReviewPage } from "./components/Review";
 import { SkillsPage } from "./components/Skills";
+import { ProjectStatsPage } from "./components/Stats/ProjectStatsPage";
 import { UpdateBanner } from "./components/ui/UpdateBanner";
 import { ThemeProvider, ProjectProvider, TerminalThemeProvider, NotificationProvider, ConfigProvider, useProject } from "./context";
 import { AuthGate } from "./components/AuthGate";
@@ -197,6 +198,8 @@ function AppContent() {
         );
       case "skills":
         return <SkillsPage />;
+      case "statistics":
+        return <ProjectStatsPage projectId={selectedProject?.id} />;
       case "settings":
         return <SettingsPage config={mockConfig} />;
       default:

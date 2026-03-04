@@ -231,30 +231,58 @@ pub fn archive_task(
     // 1. Get task info (before archival)
     let task_info = tasks::get_task(project_key, task_id)?;
 
-    // 2. Remove worktree
+    // 2. Snapshot git diff stats before removing worktree
+    let (code_additions, code_deletions, files_changed) = if let Some(task) = &task_info {
+        if std::path::Path::new(&task.worktree_path).exists() {
+            match git::diff_stat(&task.worktree_path, &task.target) {
+                Ok(entries) => {
+                    let additions: u32 = entries.iter().map(|e| e.additions).sum();
+                    let deletions: u32 = entries.iter().map(|e| e.deletions).sum();
+                    let files = entries.len() as u32;
+                    (additions, deletions, files)
+                }
+                Err(_) => (0, 0, 0),
+            }
+        } else {
+            (0, 0, 0)
+        }
+    } else {
+        (0, 0, 0)
+    };
+
+    // 3. Remove worktree
     if let Some(task) = &task_info {
         if std::path::Path::new(&task.worktree_path).exists() {
             git::remove_worktree(repo_path, &task.worktree_path)?;
         }
     }
 
-    // 3. Move to archived.toml
+    // 4. Move to archived.toml (sets archived_at timestamp)
     tasks::archive_task(project_key, task_id)?;
 
-    // 4. Remove hook notifications
+    // 5. Update code stats on the archived task
+    tasks::update_archived_task_code_stats(
+        project_key,
+        task_id,
+        code_additions,
+        code_deletions,
+        files_changed,
+    )?;
+
+    // 6. Remove hook notifications
     hooks::remove_task_hook(project_key, task_id);
 
-    // 5. Kill session
+    // 7. Kill session
     let task_session_type = session::resolve_session_type(task_multiplexer);
     let session_name = session::resolve_session_name(task_session_name, project_key, task_id);
     let _ = session::kill_session(&task_session_type, &session_name);
 
-    // 6. Remove Zellij layout if applicable
+    // 8. Remove Zellij layout if applicable
     if matches!(task_session_type, session::SessionType::Zellij) {
         crate::zellij::layout::remove_session_layout(&session_name);
     }
 
-    // 7. Return archived task
+    // 9. Return archived task
     tasks::get_archived_task(project_key, task_id)?
         .ok_or_else(|| GroveError::not_found("Archived task not found"))
 }
@@ -371,6 +399,10 @@ pub fn create_task(
         multiplexer: session_type.to_string(),
         session_name: session_name.clone(),
         created_by: created_by.to_string(),
+        archived_at: None,
+        code_additions: 0,
+        code_deletions: 0,
+        files_changed: 0,
     };
 
     tasks::add_task(project_key, task.clone())?;

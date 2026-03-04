@@ -9,6 +9,7 @@ pub mod adapter;
 
 use acp::Agent; // Required for .initialize(), .new_session(), .prompt(), .cancel()
 use agent_client_protocol as acp;
+use chrono::{DateTime, Utc};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, RwLock};
@@ -88,6 +89,8 @@ pub enum AcpUpdate {
         id: String,
         title: String,
         locations: Vec<(String, Option<u32>)>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        timestamp: Option<DateTime<Utc>>,
     },
     /// 工具调用更新
     ToolCallUpdate {
@@ -528,6 +531,7 @@ impl acp::Client for GroveAcpClient {
                     id: tool_call.tool_call_id.to_string(),
                     title: tool_call.title.clone(),
                     locations,
+                    timestamp: Some(Utc::now()),
                 });
 
                 // 记录 Write 工具的 tool_call_id → file_path（用于 PlanFileUpdate 检测）
