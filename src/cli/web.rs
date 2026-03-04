@@ -92,13 +92,13 @@ fn find_project_dir() -> Option<PathBuf> {
 }
 
 /// Execute the web server
-pub async fn execute(port: u16, no_open: bool, dev: bool) {
+pub async fn execute(port: u16, host: &str, no_open: bool, dev: bool) {
     if dev {
         // Development mode: run vite dev server + API server
-        execute_dev_mode(port, no_open).await;
+        execute_dev_mode(port, host, no_open).await;
     } else {
         // Production mode: serve static files
-        execute_prod_mode(port, no_open).await;
+        execute_prod_mode(port, host, no_open).await;
     }
 }
 
@@ -193,7 +193,7 @@ pub async fn execute_mobile(
 }
 
 /// Run in development mode (Vite dev server + API)
-async fn execute_dev_mode(api_port: u16, no_open: bool) {
+async fn execute_dev_mode(api_port: u16, _host: &str, no_open: bool) {
     let project_dir = find_project_dir();
 
     if project_dir.is_none() {
@@ -263,7 +263,7 @@ async fn execute_dev_mode(api_port: u16, no_open: bool) {
 }
 
 /// Run in production mode (static files + API)
-async fn execute_prod_mode(port: u16, no_open: bool) {
+async fn execute_prod_mode(port: u16, host: &str, no_open: bool) {
     // Check for embedded assets first
     let has_embedded = api::has_embedded_assets();
 
@@ -278,7 +278,7 @@ async fn execute_prod_mode(port: u16, no_open: bool) {
             if build_frontend(&project_dir) {
                 let built_dir = project_dir.join("grove-web").join("dist");
                 if let Err(e) = api::start_server(
-                    "127.0.0.1",
+                    host,
                     port,
                     Some(built_dir),
                     open_browser,
@@ -303,7 +303,7 @@ async fn execute_prod_mode(port: u16, no_open: bool) {
 
     // Start the server (will use embedded assets if no external static_dir)
     if let Err(e) = api::start_server(
-        "127.0.0.1",
+        host,
         port,
         static_dir,
         open_browser,
