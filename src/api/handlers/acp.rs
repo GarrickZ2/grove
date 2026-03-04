@@ -219,6 +219,7 @@ impl From<AcpUpdate> for ServerMessage {
                 id,
                 title,
                 locations,
+                ..
             } => ServerMessage::ToolCall {
                 id,
                 title,

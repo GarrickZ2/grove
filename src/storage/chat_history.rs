@@ -10,6 +10,8 @@ use std::fs;
 use std::io::{BufRead, Write};
 use std::path::PathBuf;
 
+use chrono::{DateTime, Utc};
+
 use crate::acp::AcpUpdate;
 
 /// 获取 history.jsonl 路径
@@ -145,6 +147,7 @@ struct ToolCompactState {
     status: String,
     content: Option<String>,
     locations: Vec<(String, Option<u32>)>,
+    timestamp: Option<DateTime<Utc>>,
 }
 
 /// Compact 事件列表：合并连续 chunk，合并同 id 的 tool 事件
@@ -187,6 +190,7 @@ pub fn compact_events(events: Vec<AcpUpdate>) -> Vec<AcpUpdate> {
                     id: id.clone(),
                     title: state.title,
                     locations: state.locations.clone(),
+                    timestamp: state.timestamp,
                 });
                 result.push(AcpUpdate::ToolCallUpdate {
                     id,
@@ -214,11 +218,12 @@ pub fn compact_events(events: Vec<AcpUpdate>) -> Vec<AcpUpdate> {
                 id,
                 title,
                 locations,
+                timestamp,
             } => {
                 flush_messages(&mut msg_buf, &mut result);
                 flush_thoughts(&mut thought_buf, &mut result);
                 if let Some(state) = tool_map.get_mut(id) {
-                    // 后续 ToolCall（同 id）更新 title/locations
+                    // 后续 ToolCall（同 id）更新 title/locations，timestamp 保留第一次的值
                     if !title.is_empty() {
                         state.title = title.clone();
                     }
@@ -234,6 +239,7 @@ pub fn compact_events(events: Vec<AcpUpdate>) -> Vec<AcpUpdate> {
                             status: String::new(),
                             content: None,
                             locations: locations.clone(),
+                            timestamp: *timestamp,
                         },
                     );
                 }
@@ -333,11 +339,13 @@ mod tests {
                 id: "t1".into(),
                 title: "Read foo.rs".into(),
                 locations: vec![],
+                timestamp: None,
             },
             AcpUpdate::ToolCall {
                 id: "t1".into(),
                 title: "Read foo.rs".into(),
                 locations: vec![("foo.rs".into(), Some(1))],
+                timestamp: None,
             },
             AcpUpdate::ToolCallUpdate {
                 id: "t1".into(),
@@ -385,6 +393,7 @@ mod tests {
                 id: "tool1".into(),
                 title: "Write x".into(),
                 locations: vec![],
+                timestamp: None,
             },
             AcpUpdate::ToolCallUpdate {
                 id: "tool1".into(),

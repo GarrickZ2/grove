@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.7] - 2026-03-03
+
+### Added
+
+- **Statistics page** (beta) — project-level productivity analytics with flexible time range picker; sections include AI Work Breakdown (tool calls/task, plans/task, spec-length vs interventions scatter), Review Intelligence (AI adoption rate, hit rate, rounds-per-fix), and Agent Leaderboard (canonical name aggregation, work + review panels); backed by a real `GET /api/v1/projects/{id}/statistics` API with lazy range aggregation and code snapshot on task archive
+
 ## [0.7.6] - 2026-03-02
 
 ### Added

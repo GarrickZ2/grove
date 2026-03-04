@@ -59,6 +59,16 @@ pub struct Task {
     /// 创建来源: "agent" (MCP 创建) | "user" (TUI/Web 创建) | "" (旧数据)
     #[serde(default)]
     pub created_by: String,
+    /// Archive 时间（用于确定归属到哪一天）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub archived_at: Option<DateTime<Utc>>,
+    /// Archive 前快照的 git diff 统计（worktree 删除后无法重新计算）
+    #[serde(default)]
+    pub code_additions: u32,
+    #[serde(default)]
+    pub code_deletions: u32,
+    #[serde(default)]
+    pub files_changed: u32,
 }
 
 fn default_multiplexer() -> String {
@@ -161,7 +171,9 @@ pub fn archive_task(project: &str, task_id: &str) -> Result<()> {
     if let Some(pos) = tasks.iter().position(|t| t.id == task_id) {
         let mut task = tasks.remove(pos);
         task.status = TaskStatus::Archived;
-        task.updated_at = Utc::now();
+        let now = Utc::now();
+        task.updated_at = now;
+        task.archived_at = Some(now);
         archived.push(task);
 
         save_tasks(project, &tasks)?;
@@ -195,6 +207,24 @@ pub fn remove_task(project: &str, task_id: &str) -> Result<()> {
     let mut tasks = load_tasks(project)?;
     tasks.retain(|t| t.id != task_id);
     save_tasks(project, &tasks)
+}
+
+/// 更新归档任务的代码统计快照
+pub fn update_archived_task_code_stats(
+    project: &str,
+    task_id: &str,
+    code_additions: u32,
+    code_deletions: u32,
+    files_changed: u32,
+) -> Result<()> {
+    let mut archived = load_archived_tasks(project)?;
+    if let Some(task) = archived.iter_mut().find(|t| t.id == task_id) {
+        task.code_additions = code_additions;
+        task.code_deletions = code_deletions;
+        task.files_changed = files_changed;
+        save_archived_tasks(project, &archived)?;
+    }
+    Ok(())
 }
 
 /// 删除归档任务
