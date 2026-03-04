@@ -39,15 +39,70 @@ jobs:
       - run: cargo clippy -- -D warnings
 
   build:
-    name: Build
+    name: Build (${{ matrix.cache-key }})
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        include:
+          - os: ubuntu-latest
+            cache-key: linux-x64-musl
+            target: x86_64-unknown-linux-musl
+          - os: ubuntu-latest
+            cache-key: linux-arm-cross
+            target: aarch64-unknown-linux-musl
+            use-cross: true
+            cache-all-crates: true
+          - os: macos-latest
+            cache-key: macos-arm-gui
+            target: aarch64-apple-darwin
+            features: gui
+          - os: macos-latest
+            cache-key: macos-intel-gui
+            target: x86_64-apple-darwin
+            features: gui
+          - os: macos-latest
+            cache-key: macos-dmg-universal
+            target: aarch64-apple-darwin
+            extra-target: x86_64-apple-darwin
+            features: gui
+            cache-all-crates: true
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - run: cargo build --release
-      - name: Build with GUI (macOS only)
+        with:
+          targets: ${{ !matrix.use-cross && (matrix.extra-target && format('{0},{1}', matrix.target, matrix.extra-target) || matrix.target) || '' }}
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.cache-key }}
+          add-job-id-key: false
+          cache-all-crates: ${{ matrix.cache-all-crates || false }}
+      - name: Cache Tauri CLI binary (macOS only)
         if: matrix.os == 'macos-latest'
-        run: cargo build --release --features gui
+        uses: actions/cache@v4
+        id: cache-tauri
+        with:
+          path: ~/.cargo/bin/cargo-tauri
+          key: cargo-tauri-2.10.0-${{ runner.os }}
+      - name: Install Tauri CLI (macOS only, if not cached)
+        if: matrix.os == 'macos-latest' && steps.cache-tauri.outputs.cache-hit != 'true'
+        run: cargo install tauri-cli --version "=2.10.0" --locked
+      - name: Install musl tools
+        if: matrix.cache-key == 'linux-x64-musl'
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+      - name: Install cross
+        if: matrix.use-cross
+        run: cargo install cross --git https://github.com/cross-rs/cross
+      - name: Create stub frontend dist (prevents npm build in build.rs)
+        if: matrix.features == 'gui'
+        run: mkdir -p grove-web/dist && touch grove-web/dist/index.html
+      - name: Build
+        run: |
+          if [ "${{ matrix.use-cross }}" = "true" ]; then
+            cross build --release --target ${{ matrix.target }}
+          else
+            cargo build --release --target ${{ matrix.target }} ${{ matrix.features && format('--features {0}', matrix.features) || '' }}
+          fi
+      - name: Build extra target (universal DMG warm-up)
+        if: matrix.extra-target != ''
+        run: cargo build --release --target ${{ matrix.extra-target }} ${{ matrix.features && format('--features {0}', matrix.features) || '' }}
