@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from 'react';
 import type { DiffFile } from '../../api/review';
 import { FolderOpen, Folder, Search, MessageSquare, FilePlus, FolderPlus } from 'lucide-react';
+import { VSCodeIcon } from '../ui';
 
 interface FileCommentCount {
   total: number;
@@ -156,6 +157,7 @@ export function FileTreeSidebar({
             onSubmitVirtualPath={handleSubmitVirtualPath}
             onCancelVirtualPath={handleCancelVirtualPath}
             virtualInputRef={virtualInputRef}
+            viewMode={viewMode}
           />
         ))}
       </div>
@@ -236,6 +238,7 @@ function TreeNode({
   onSubmitVirtualPath,
   onCancelVirtualPath,
   virtualInputRef,
+  viewMode,
 }: {
   node: DirNode | FileNode;
   depth: number;
@@ -248,6 +251,7 @@ function TreeNode({
   onSubmitVirtualPath?: (name: string) => void;
   onCancelVirtualPath?: () => void;
   virtualInputRef?: React.RefObject<HTMLInputElement | null>;
+  viewMode?: 'diff' | 'full';
 }) {
   const [expanded, setExpanded] = useState(true);
 
@@ -269,7 +273,9 @@ function TreeNode({
           onClick={() => setExpanded(!expanded)}
           onContextMenu={(e) => onContextMenu?.(e, node.path, true)}
         >
-          {expanded ? (
+          {viewMode === 'full' ? (
+            <VSCodeIcon filename={node.name.split('/').pop() || node.name} isFolder isOpen={expanded} size={14} />
+          ) : expanded ? (
             <FolderOpen style={{ width: 14, height: 14, color: 'var(--color-text-muted)', flexShrink: 0 }} />
           ) : (
             <Folder style={{ width: 14, height: 14, color: 'var(--color-text-muted)', flexShrink: 0 }} />
@@ -301,6 +307,7 @@ function TreeNode({
                 onSubmitVirtualPath={onSubmitVirtualPath}
                 onCancelVirtualPath={onCancelVirtualPath}
                 virtualInputRef={virtualInputRef}
+                viewMode={viewMode}
               />
             ))}
           </>
@@ -322,7 +329,11 @@ function TreeNode({
       onContextMenu={(e) => onContextMenu?.(e, file.new_path, false)}
       title={file.is_virtual ? 'Planned file (not yet created)' : undefined}
     >
-      <StatusIcon changeType={file.change_type} isVirtual={file.is_virtual} />
+      {viewMode === 'full' ? (
+        <VSCodeIcon filename={node.name} size={14} />
+      ) : (
+        <StatusIcon changeType={file.change_type} isVirtual={file.is_virtual} />
+      )}
       <span
         className={`truncate ${viewedStatus === 'viewed' ? 'diff-sidebar-file-viewed' : ''}`}
         style={file.is_virtual ? { opacity: 0.7, fontStyle: 'italic' } : undefined}
