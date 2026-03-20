@@ -75,6 +75,11 @@ pub fn merge_task(
     let task = tasks::get_task(project_key, task_id)?
         .ok_or_else(|| GroveError::not_found("Task not found"))?;
 
+    // Local Task 不支持 merge
+    if task.is_local {
+        return Err(GroveError::invalid_data("Cannot merge local task"));
+    }
+
     // 2. Check worktree uncommitted
     if git::has_uncommitted_changes(&task.worktree_path)? {
         return Err(GroveError::git(
@@ -172,6 +177,11 @@ pub fn sync_task(repo_path: &str, project_key: &str, task_id: &str) -> Result<St
     let task = tasks::get_task(project_key, task_id)?
         .ok_or_else(|| GroveError::not_found("Task not found"))?;
 
+    // Local Task 不支持 sync
+    if task.is_local {
+        return Err(GroveError::invalid_data("Cannot sync local task"));
+    }
+
     // 2. Check worktree uncommitted
     if git::has_uncommitted_changes(&task.worktree_path)? {
         return Err(GroveError::git(
@@ -228,6 +238,11 @@ pub fn archive_task(
     task_multiplexer: &str,
     task_session_name: &str,
 ) -> Result<tasks::Task> {
+    // Local Task 不支持 archive
+    if task_id == tasks::LOCAL_TASK_ID {
+        return Err(GroveError::invalid_data("Cannot archive local task"));
+    }
+
     // 1. Get task info (before archival)
     let task_info = tasks::get_task(project_key, task_id)?;
 
@@ -339,6 +354,13 @@ pub fn create_task(
     // 1. Generate identifiers
     let slug = tasks::to_slug(&task_name);
 
+    // 禁止创建与 Local Task 冲突的 ID
+    if slug == tasks::LOCAL_TASK_ID {
+        return Err(GroveError::invalid_data(
+            "Task name conflicts with reserved local task ID. Please use a different name.",
+        ));
+    }
+
     // 2. Check for duplicate task ID (active + archived)
     let active_tasks = tasks::load_tasks(project_key).unwrap_or_default();
     let archived_tasks = tasks::load_archived_tasks(project_key).unwrap_or_default();
@@ -403,6 +425,7 @@ pub fn create_task(
         code_additions: 0,
         code_deletions: 0,
         files_changed: 0,
+        is_local: false,
     };
 
     tasks::add_task(project_key, task.clone())?;
@@ -528,6 +551,11 @@ pub fn reset_task(
     task_multiplexer: &str,
     task_session_name: &str,
 ) -> Result<ResetTaskResult> {
+    // Local Task 不支持 reset
+    if task_id == tasks::LOCAL_TASK_ID {
+        return Err(GroveError::invalid_data("Cannot reset local task"));
+    }
+
     // 1. Get task info
     let task = tasks::get_task(project_key, task_id)?
         .ok_or_else(|| GroveError::not_found("Task not found"))?;

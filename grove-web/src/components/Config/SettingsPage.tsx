@@ -564,7 +564,7 @@ export function SettingsPage({ config }: SettingsPageProps) {
   }, [isLoaded, isChecking, depStates, enableTerminal, terminalMultiplexer, tmuxInstalled, zellijInstalled]);
 
   // Filter and mark agent options based on mode + command availability
-  const acpCompatibleAgentIds = ["claude", "traecli", "codex", "kimi", "gh-copilot", "gemini", "qwen", "opencode", ...customAgents.map(a => a.id)];
+  const customAgentIds = customAgents.map(a => a.id);
   const hasAvailability = Object.keys(commandAvailability).length > 0;
 
   // Terminal Agent 选项（检测 terminalCheck 命令）
@@ -579,7 +579,7 @@ export function SettingsPage({ config }: SettingsPageProps) {
 
   // Chat Agent 选项（仅 ACP 兼容 + 检测 acpCheck 命令）
   const chatAgentOptions = agentOptions
-    .filter(a => acpCompatibleAgentIds.includes(a.id))
+    .filter(a => !!a.acpCheck || customAgentIds.includes(a.id))
     .map(a => {
       if (!hasAvailability) return a;
       const cmd = a.acpCheck;

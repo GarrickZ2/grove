@@ -1,6 +1,5 @@
 import { Bot } from "lucide-react";
-import { Claude, Gemini, Copilot, Cursor, Trae, Qwen, Kimi, OpenAI, Windsurf } from "@lobehub/icons";
-import { OpenCodeIcon } from "../ui/OpenCodeIcon";
+import { Claude, Gemini, Copilot, Cursor, Trae, Qwen, Kimi, OpenAI, Windsurf, OpenCode, Junie } from "@lobehub/icons";
 
 const ICON_MAP: Record<string, React.ComponentType<{ size?: number; className?: string }>> = {
   claude: Claude.Color,
@@ -11,8 +10,9 @@ const ICON_MAP: Record<string, React.ComponentType<{ size?: number; className?: 
   qwen: Qwen.Color,
   kimi: Kimi.Color,
   openai: OpenAI,
-  opencode: OpenCodeIcon,
+  opencode: OpenCode,
   windsurf: Windsurf,
+  junie: Junie.Color,
 };
 
 interface AgentIconProps {

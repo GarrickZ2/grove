@@ -6,6 +6,9 @@ use serde::{Deserialize, Serialize};
 use super::ensure_project_dir;
 use crate::error::Result;
 
+/// Local Task 的固定 ID
+pub const LOCAL_TASK_ID: &str = "_local";
+
 /// Chat 会话（一个 Task 下可以有多个 Chat）
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChatSession {
@@ -69,6 +72,9 @@ pub struct Task {
     pub code_deletions: u32,
     #[serde(default)]
     pub files_changed: u32,
+    /// 是否为 Local Task（指向主仓库，非 worktree）
+    #[serde(default)]
+    pub is_local: bool,
 }
 
 fn default_multiplexer() -> String {
@@ -283,6 +289,29 @@ pub fn touch_task(project: &str, task_id: &str) -> Result<()> {
     }
 
     Ok(())
+}
+
+/// 创建 Local Task（指向主仓库的特殊任务，name 使用项目名称）
+pub fn create_local_task(repo_path: &str, current_branch: &str, project_name: &str) -> Task {
+    let now = Utc::now();
+    Task {
+        id: LOCAL_TASK_ID.to_string(),
+        name: project_name.to_string(),
+        branch: current_branch.to_string(),
+        target: current_branch.to_string(),
+        worktree_path: repo_path.to_string(),
+        created_at: now,
+        updated_at: now,
+        status: TaskStatus::Active,
+        multiplexer: "tmux".to_string(),
+        session_name: String::new(),
+        created_by: "system".to_string(),
+        archived_at: None,
+        code_additions: 0,
+        code_deletions: 0,
+        files_changed: 0,
+        is_local: true,
+    }
 }
 
 /// 生成 chat ID ("chat-XXXXXX")

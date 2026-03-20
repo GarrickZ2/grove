@@ -211,6 +211,9 @@ const ACP_AGENT_COMMANDS: &[&str] = &[
     "qwen",
     "kimi",
     "traecli",
+    "cursor-agent",
+    "agent",
+    "junie",
 ];
 
 pub async fn check_commands(Json(body): Json<CheckCommandsRequest>) -> Json<CheckCommandsResponse> {

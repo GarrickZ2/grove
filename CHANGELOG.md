@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.8] - 2026-03-19
+
+### Added
+
+- **Local Task** — lightweight non-worktree task per project for quick notes and planning without creating a git worktree
+- **ACP: Cursor Agent and Junie support** — added new agent types with unified agent icon system
+- **ACP: Plan file content embedding** — `PlanFileUpdate` events now embed the full plan file content; bottom panel UX improvements
+- **Web: VSCode file icons in Review Panel** — All Files mode now displays VSCode-style file/folder icons instead of generic "M" status badges
+
+### Fixed
+
+- **Web: Tool section auto-expand logic** — improved auto-expand behavior and summary text for tool sections in chat
+- **CI: Rust cache cross-tag sharing** — fixed cache key strategy and added full cache warm-up step
+
 ## [0.7.7] - 2026-03-03
 
 ### Added

@@ -1,4 +1,4 @@
-import { Circle, CheckCircle, AlertTriangle, XCircle, ChevronUp, ChevronDown } from "lucide-react";
+import { Circle, CheckCircle, AlertTriangle, XCircle, ChevronUp, ChevronDown, Laptop } from "lucide-react";
 import type { BlitzTask } from "../../data/types";
 import type { TaskStatus } from "../../data/types";
 import { useIsMobile } from "../../hooks";
@@ -114,16 +114,22 @@ export function BlitzTaskListItem({
       className={`relative flex-1 min-w-0 text-left rounded-lg transition-all duration-150 overflow-hidden ${
         isSelected
           ? "px-4 py-3 bg-[var(--color-highlight)]/5"
-          : "px-3 py-2.5 bg-[var(--color-bg-secondary)] hover:bg-[var(--color-bg-tertiary)]"
+          : task.isLocal
+            ? "px-3 py-2.5 bg-[var(--color-bg-secondary)] hover:bg-[var(--color-bg-tertiary)] border-l-2 border-l-[var(--color-accent)]/40"
+            : "px-3 py-2.5 bg-[var(--color-bg-secondary)] hover:bg-[var(--color-bg-tertiary)]"
       } ${!isTouchDevice && isDragging ? "opacity-40 cursor-grabbing" : !isTouchDevice ? "cursor-grab" : ""} ${
         isDragOver ? "border-t-2 border-t-[var(--color-highlight)]" : ""
       }`}
       style={isSelected ? {
         border: "2px solid transparent",
-        backgroundImage: `linear-gradient(var(--color-bg-secondary), var(--color-bg-secondary)), linear-gradient(135deg, var(--color-highlight), color-mix(in srgb, var(--color-highlight) 40%, white), var(--color-highlight))`,
+        backgroundImage: task.isLocal
+          ? `linear-gradient(var(--color-bg-secondary), var(--color-bg-secondary)), linear-gradient(135deg, var(--color-accent), color-mix(in srgb, var(--color-accent) 40%, white), var(--color-accent))`
+          : `linear-gradient(var(--color-bg-secondary), var(--color-bg-secondary)), linear-gradient(135deg, var(--color-highlight), color-mix(in srgb, var(--color-highlight) 40%, white), var(--color-highlight))`,
         backgroundOrigin: "border-box",
         backgroundClip: "padding-box, border-box",
-        boxShadow: `0 0 8px -2px var(--color-highlight)`,
+        boxShadow: task.isLocal
+          ? `0 0 8px -2px var(--color-accent)`
+          : `0 0 8px -2px var(--color-highlight)`,
       } : undefined}
     >
       {/* Selection sweep effect — single gentle left-to-right pass */}
@@ -138,15 +144,22 @@ export function BlitzTaskListItem({
         />
       )}
       <div className="relative flex items-start gap-2.5">
-        {/* Status Icon */}
+        {/* Status Icon — Local Task uses Laptop icon */}
         <div className="flex-shrink-0 mt-0.5">
-          <StatusIcon
-            className="w-3 h-3"
-            style={{
-              color: statusConfig.color,
-              fill: task.status === "live" ? statusConfig.color : "transparent",
-            }}
-          />
+          {task.isLocal ? (
+            <Laptop
+              className="w-3.5 h-3.5"
+              style={{ color: "var(--color-accent)" }}
+            />
+          ) : (
+            <StatusIcon
+              className="w-3 h-3"
+              style={{
+                color: statusConfig.color,
+                fill: task.status === "live" ? statusConfig.color : "transparent",
+              }}
+            />
+          )}
         </div>
 
         {/* Task Info */}
@@ -169,6 +182,11 @@ export function BlitzTaskListItem({
               <span className={`text-sm font-medium truncate ${isSelected ? "text-[var(--color-highlight)]" : "text-[var(--color-text)]"}`}>
                 {task.name}
               </span>
+              {task.isLocal && (
+                <span className="flex-shrink-0 text-[10px] font-medium px-1.5 py-0.5 rounded bg-[var(--color-accent)]/15 text-[var(--color-accent)]">
+                  Local
+                </span>
+              )}
               {task.createdBy === "agent" && (
                 <span className="flex-shrink-0 text-[10px] font-medium px-1.5 py-0.5 rounded bg-[var(--color-info)]/15 text-[var(--color-info)]">
                   Agent

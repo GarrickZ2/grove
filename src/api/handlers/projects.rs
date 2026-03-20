@@ -55,6 +55,7 @@ pub struct TaskResponse {
     pub path: String,
     pub multiplexer: String,
     pub created_by: String,
+    pub is_local: bool,
 }
 
 /// Commit response
@@ -154,6 +155,7 @@ fn worktree_to_response(wt: &crate::model::Worktree, _project_key: &str) -> Task
         path: wt.path.clone(),
         multiplexer: wt.multiplexer.clone(),
         created_by: wt.created_by.clone(),
+        is_local: wt.is_local,
     }
 }
 

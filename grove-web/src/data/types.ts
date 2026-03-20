@@ -24,6 +24,7 @@ export interface Task {
   updatedAt: Date;
   multiplexer: string;
   createdBy?: string;
+  isLocal?: boolean;
 }
 
 export interface Project {

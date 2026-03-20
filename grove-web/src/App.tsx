@@ -80,7 +80,6 @@ function AppContent() {
         }
 
         // Check Chat Agent (if enabled)
-        const acpCompatibleIds = ["claude", "traecli", "codex", "kimi", "gh-copilot", "gemini", "qwen", "opencode"];
         const isChatEnabled = cfg.enable_chat;
 
         if (isChatEnabled && cfg.acp?.agent_command) {
@@ -90,7 +89,7 @@ function AppContent() {
             // Find first available chat agent
             const firstAvailable = agentOptions.find(a => {
               const check = a.acpCheck;
-              return acpCompatibleIds.includes(a.id) && check && commandAvailability[check] !== false;
+              return check && commandAvailability[check] !== false;
             });
             if (firstAvailable) {
               updates.acp = { agent_command: firstAvailable.id };

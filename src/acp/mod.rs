@@ -129,7 +129,10 @@ pub enum AcpUpdate {
     /// 待执行消息队列更新
     QueueUpdate { messages: Vec<QueuedMessage> },
     /// Plan file 路径更新（Write 工具在 plan mode 下写入 .md 文件时触发）
-    PlanFileUpdate { path: String },
+    PlanFileUpdate {
+        path: String,
+        content: Option<String>,
+    },
     /// 会话结束
     SessionEnded,
 }
@@ -633,7 +636,27 @@ impl acp::Client for GroveAcpClient {
                                 .as_ref()
                                 .is_some_and(|m| m.to_lowercase().contains("plan"))
                             {
-                                self.handle.emit(AcpUpdate::PlanFileUpdate { path });
+                                // 优先从 ACP ToolCallContent 提取原始内容（Diff.new_text）
+                                let plan_content = update
+                                    .fields
+                                    .content
+                                    .as_ref()
+                                    .and_then(|blocks| blocks.first())
+                                    .and_then(|tc| match tc {
+                                        acp::ToolCallContent::Diff(diff) => {
+                                            Some(diff.new_text.clone())
+                                        }
+                                        acp::ToolCallContent::Content(c) => {
+                                            Some(content_block_to_text(&c.content))
+                                        }
+                                        _ => None,
+                                    })
+                                    // Fallback：从本地文件系统读取
+                                    .or_else(|| std::fs::read_to_string(&path).ok());
+                                self.handle.emit(AcpUpdate::PlanFileUpdate {
+                                    path,
+                                    content: plan_content,
+                                });
                             }
                         }
                     }
@@ -1963,6 +1986,15 @@ pub struct ResolvedAgent {
     pub auth_header: Option<String>,
 }
 
+/// Check if a command exists in PATH using `which`.
+fn command_exists(cmd: &str) -> bool {
+    std::process::Command::new("which")
+        .arg(cmd)
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+}
+
 /// 解析 agent 名称到完整 agent 信息（支持 built-in + custom）
 pub fn resolve_agent(agent_name: &str) -> Option<ResolvedAgent> {
     // 1. Built-in agents
@@ -2035,6 +2067,32 @@ pub fn resolve_agent(agent_name: &str) -> Option<ResolvedAgent> {
                 agent_type: "local".into(),
                 command: "copilot".into(),
                 args: vec!["--acp".into()],
+                url: None,
+                auth_header: None,
+            });
+        }
+        "junie" => {
+            return Some(ResolvedAgent {
+                agent_type: "local".into(),
+                command: "junie".into(),
+                args: vec!["--acp".into(), "true".into()],
+                url: None,
+                auth_header: None,
+            });
+        }
+        "cursor" | "cursor-agent" => {
+            // Auto-detect: prefer "cursor-agent", fall back to "agent"
+            let command = if command_exists("cursor-agent") {
+                "cursor-agent"
+            } else if command_exists("agent") {
+                "agent"
+            } else {
+                "cursor-agent"
+            };
+            return Some(ResolvedAgent {
+                agent_type: "local".into(),
+                command: command.into(),
+                args: vec!["acp".into()],
                 url: None,
                 auth_header: None,
             });

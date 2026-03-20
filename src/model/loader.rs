@@ -4,8 +4,8 @@ use std::path::Path;
 
 use crate::git;
 use crate::session::{self, SessionType};
-use crate::storage::tasks::{self, Task, TaskStatus};
-use crate::storage::workspace::project_hash;
+use crate::storage::tasks::{self, Task, TaskStatus, LOCAL_TASK_ID};
+use crate::storage::workspace::{self, project_hash};
 
 use super::{FileChanges, Worktree, WorktreeStatus};
 
@@ -16,7 +16,7 @@ pub fn load_worktrees(project_path: &str) -> (Vec<Worktree>, Vec<Worktree>, Vec<
     let project_key = project_hash(project_path);
 
     // 2. 加载 tasks.toml (活跃任务)
-    let active_tasks = match tasks::load_tasks(&project_key) {
+    let mut active_tasks = match tasks::load_tasks(&project_key) {
         Ok(t) => t,
         Err(e) => {
             eprintln!(
@@ -29,6 +29,51 @@ pub fn load_worktrees(project_path: &str) -> (Vec<Worktree>, Vec<Worktree>, Vec<
 
     // 3. 获取当前分支
     let current_branch = git::current_branch(project_path).unwrap_or_else(|_| "main".to_string());
+
+    // 3.5 确保 Local Task 存在并同步分支信息
+    // 获取项目名称（用作 Local Task 的显示名）
+    let project_name = workspace::load_project_by_hash(&project_key)
+        .ok()
+        .flatten()
+        .map(|p| p.name)
+        .unwrap_or_else(|| {
+            // Fallback: 从路径取最后一段目录名
+            std::path::Path::new(project_path)
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("Local")
+                .to_string()
+        });
+
+    if let Some(local_task) = active_tasks.iter_mut().find(|t| t.id == LOCAL_TASK_ID) {
+        // 同步 branch/target 为当前分支，worktree_path 为主仓库路径，name 为项目名
+        let mut needs_save = false;
+        if local_task.branch != current_branch {
+            local_task.branch = current_branch.clone();
+            needs_save = true;
+        }
+        if local_task.target != current_branch {
+            local_task.target = current_branch.clone();
+            needs_save = true;
+        }
+        if local_task.worktree_path != project_path {
+            local_task.worktree_path = project_path.to_string();
+            needs_save = true;
+        }
+        if local_task.name != project_name {
+            local_task.name = project_name.clone();
+            needs_save = true;
+        }
+        if needs_save {
+            let _ = tasks::save_tasks(&project_key, &active_tasks);
+        }
+    } else {
+        // 自动创建 Local Task
+        let local_task = tasks::create_local_task(project_path, &current_branch, &project_name);
+        if tasks::add_task(&project_key, local_task.clone()).is_ok() {
+            active_tasks.push(local_task);
+        }
+    }
 
     // 4. 检查主仓库是否有正在 merge 的 commit（冲突状态）
     let merging_commit = git::merging_commit(project_path);
@@ -46,10 +91,18 @@ pub fn load_worktrees(project_path: &str) -> (Vec<Worktree>, Vec<Worktree>, Vec<
     let mut other = Vec::new();
 
     for (idx, task) in active_tasks.iter().enumerate() {
-        if task.target == current_branch {
+        if task.is_local || task.target == current_branch {
             current.push(worktrees[idx].clone());
         } else {
             other.push(worktrees[idx].clone());
+        }
+    }
+
+    // Local Task 始终排在 current 列表最上方
+    if let Some(pos) = current.iter().position(|w| w.is_local) {
+        if pos != 0 {
+            let local = current.remove(pos);
+            current.insert(0, local);
         }
     }
 
@@ -104,6 +157,7 @@ fn archived_task_to_worktree(task: Task) -> Worktree {
         created_at: task.created_at,
         updated_at: task.updated_at,
         created_by: task.created_by,
+        is_local: false,
     }
 }
 
@@ -119,6 +173,75 @@ fn task_to_worktree(
 
     // 解析 session 类型（提前计算，status 判断和输出都需要）
     let resolved_session_type = session::resolve_session_type(&task.multiplexer);
+
+    // Local Task: 简化状态判断，只检查 session Live/Idle
+    if task.is_local {
+        let exists = Path::new(path).exists();
+        let status = if !exists {
+            WorktreeStatus::Broken
+        } else if git::has_conflicts(path) {
+            WorktreeStatus::Conflict
+        } else {
+            // 只检查 session 状态
+            if matches!(resolved_session_type, SessionType::Acp) {
+                let chats = tasks::load_chat_sessions(project, &task.id).unwrap_or_default();
+                let has_live = if chats.is_empty() {
+                    let key = format!("{}:{}", project, &task.id);
+                    session::session_exists(&resolved_session_type, &key)
+                } else {
+                    chats.iter().any(|chat| {
+                        let key = format!("{}:{}:{}", project, &task.id, &chat.id);
+                        session::session_exists(&resolved_session_type, &key)
+                    })
+                };
+                if has_live {
+                    WorktreeStatus::Live
+                } else {
+                    WorktreeStatus::Idle
+                }
+            } else {
+                let session_key =
+                    session::resolve_session_name(&task.session_name, project, &task.id);
+                if session::session_exists(&resolved_session_type, &session_key) {
+                    WorktreeStatus::Live
+                } else {
+                    WorktreeStatus::Idle
+                }
+            }
+        };
+
+        // Local Task: 只显示未提交变更（diff against HEAD），不计算 commits_behind
+        let file_changes = if exists {
+            git::file_changes(path, "HEAD")
+                .map(|(a, d, f)| FileChanges::new(a, d, f))
+                .unwrap_or_default()
+        } else {
+            FileChanges::default()
+        };
+
+        let mux_str = match resolved_session_type {
+            SessionType::Tmux => "tmux",
+            SessionType::Zellij => "zellij",
+            SessionType::Acp => "acp",
+        };
+
+        return Worktree {
+            id: task.id.clone(),
+            task_name: task.name.clone(),
+            branch: task.branch.clone(),
+            target: task.target.clone(),
+            status,
+            commits_behind: None,
+            file_changes,
+            archived: false,
+            path: path.clone(),
+            multiplexer: mux_str.to_string(),
+            created_at: task.created_at,
+            updated_at: task.updated_at,
+            created_by: task.created_by.clone(),
+            is_local: true,
+        };
+    }
 
     // 检查 worktree 是否存在
     let exists = Path::new(path).exists();
@@ -220,5 +343,6 @@ fn task_to_worktree(
         created_at: task.created_at,
         updated_at: task.updated_at,
         created_by: task.created_by.clone(),
+        is_local: false,
     }
 }

@@ -211,7 +211,7 @@ export function TaskInfoPanel({
                   )}
                 </div>
                 <p className="text-xs text-[var(--color-text-muted)] font-mono truncate">
-                  {task.branch} → {task.target}
+                  {task.isLocal ? task.branch : <>{task.branch} → {task.target}</>}
                 </p>
               </div>
 
@@ -465,7 +465,7 @@ export function TaskInfoPanel({
           )}
         </div>
         <p className="text-xs text-[var(--color-text-muted)] font-mono truncate">
-          {task.branch} → {task.target}
+          {task.isLocal ? task.branch : <>{task.branch} → {task.target}</>}
         </p>
       </div>
 

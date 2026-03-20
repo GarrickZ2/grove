@@ -29,6 +29,7 @@ export interface TaskResponse {
   enableTerminal: boolean;
   enableChat: boolean;
   created_by: string;
+  is_local: boolean;
 }
 
 export interface TaskListResponse {

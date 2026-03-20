@@ -142,6 +142,8 @@ enum ServerMessage {
     },
     PlanFileUpdate {
         path: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        content: Option<String>,
     },
     SessionEnded,
 }
@@ -292,7 +294,9 @@ impl From<AcpUpdate> for ServerMessage {
                     .collect(),
             },
             AcpUpdate::QueueUpdate { messages } => ServerMessage::QueueUpdate { messages },
-            AcpUpdate::PlanFileUpdate { path } => ServerMessage::PlanFileUpdate { path },
+            AcpUpdate::PlanFileUpdate { path, content } => {
+                ServerMessage::PlanFileUpdate { path, content }
+            }
             AcpUpdate::SessionEnded => ServerMessage::SessionEnded,
         }
     }

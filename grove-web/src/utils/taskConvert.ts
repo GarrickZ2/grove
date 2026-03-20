@@ -22,5 +22,6 @@ export function convertTaskResponse(task: TaskResponse): Task {
     updatedAt: new Date(task.updated_at),
     multiplexer: task.multiplexer || "tmux",
     createdBy: task.created_by || "",
+    isLocal: task.is_local || false,
   };
 }

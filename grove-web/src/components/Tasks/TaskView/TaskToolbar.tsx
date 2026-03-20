@@ -201,10 +201,11 @@ export function TaskToolbar({
   const { isMobile } = useIsMobile();
   const isArchived = task.status === "archived";
   const isBroken = task.status === "broken";
-  const canOperate = !isArchived && !isBroken;
+  const isLocal = task.isLocal === true;
+  const canOperate = !isArchived && !isBroken && !isLocal;
 
-  // Dangerous actions for dropdown
-  const dangerousActions: DropdownItem[] = [
+  // Dangerous actions for dropdown (hidden for local tasks)
+  const dangerousActions: DropdownItem[] = isLocal ? [] : [
     {
       id: "archive",
       label: "Archive",
@@ -267,27 +268,29 @@ export function TaskToolbar({
       onClick: onCommit,
       disabled: isArchived,
     },
-    {
-      id: "rebase",
-      label: "Rebase",
-      icon: GitBranchPlus,
-      onClick: onRebase,
-      disabled: !canOperate,
-    },
-    {
-      id: "sync",
-      label: "Sync",
-      icon: RefreshCw,
-      onClick: onSync,
-      disabled: !canOperate,
-    },
-    {
-      id: "merge",
-      label: "Merge",
-      icon: GitMerge,
-      onClick: onMerge,
-      disabled: !canOperate,
-    },
+    ...(!isLocal ? [
+      {
+        id: "rebase",
+        label: "Rebase",
+        icon: GitBranchPlus,
+        onClick: onRebase,
+        disabled: !canOperate,
+      },
+      {
+        id: "sync",
+        label: "Sync",
+        icon: RefreshCw,
+        onClick: onSync,
+        disabled: !canOperate,
+      },
+      {
+        id: "merge",
+        label: "Merge",
+        icon: GitMerge,
+        onClick: onMerge,
+        disabled: !canOperate,
+      },
+    ] : []),
     ...dangerousActions,
   ];
 
@@ -368,32 +371,36 @@ export function TaskToolbar({
           disabled={isArchived}
           shortcut="c"
         />
-        <ToolbarButton
-          icon={GitBranchPlus}
-          label="Rebase"
-          onClick={onRebase}
-          disabled={!canOperate}
-          shortcut="b"
-        />
-        <ToolbarButton
-          icon={RefreshCw}
-          label="Sync"
-          onClick={onSync}
-          disabled={!canOperate}
-          shortcut="s"
-        />
-        <ToolbarButton
-          icon={GitMerge}
-          label="Merge"
-          onClick={onMerge}
-          disabled={!canOperate}
-          shortcut="m"
-        />
+        {!isLocal && (
+          <>
+            <ToolbarButton
+              icon={GitBranchPlus}
+              label="Rebase"
+              onClick={onRebase}
+              disabled={!canOperate}
+              shortcut="b"
+            />
+            <ToolbarButton
+              icon={RefreshCw}
+              label="Sync"
+              onClick={onSync}
+              disabled={!canOperate}
+              shortcut="s"
+            />
+            <ToolbarButton
+              icon={GitMerge}
+              label="Merge"
+              onClick={onMerge}
+              disabled={!canOperate}
+              shortcut="m"
+            />
+          </>
+        )}
       </div>
 
       <div className="flex items-center gap-1">
-        {/* Dangerous Actions in Dropdown */}
-        <ActionsDropdown items={dangerousActions} />
+        {/* Dangerous Actions in Dropdown (hidden for local tasks) */}
+        {dangerousActions.length > 0 && <ActionsDropdown items={dangerousActions} />}
         {/* Header collapse/expand toggle */}
         {onToggleHeaderCollapse && (
           <motion.button

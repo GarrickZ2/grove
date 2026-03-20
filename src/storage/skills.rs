@@ -599,6 +599,16 @@ fn builtin_agents() -> Vec<AgentDef> {
             enabled: false,
             is_builtin: true,
         },
+        AgentDef {
+            id: "junie".into(),
+            display_name: "Junie".into(),
+            global_skills_dir: "~/.junie/skills".into(),
+            project_skills_dir: ".junie/skills".into(),
+            shared_group: None,
+            icon_id: Some("junie".into()),
+            enabled: false,
+            is_builtin: true,
+        },
     ]
 }
 
@@ -739,7 +749,7 @@ description: |
     #[test]
     fn test_builtin_agents_count() {
         let agents = builtin_agents();
-        assert_eq!(agents.len(), 10);
+        assert_eq!(agents.len(), 11);
     }
 
     #[test]

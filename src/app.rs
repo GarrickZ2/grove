@@ -1436,7 +1436,6 @@ impl App {
         let wt_branch = wt.branch.clone();
         let wt_target = wt.target.clone();
         let wt_path = wt.path.clone();
-        let slug = slug_from_path(&wt_path);
 
         // 从 task 记录获取 multiplexer、session_name 和 task_modes
         let task_data = tasks::get_task(&self.project.project_key, &wt_id)
@@ -1454,7 +1453,7 @@ impl App {
         // TUI always uses Terminal mode (根据 task.multiplexer 决定 tmux/zellij)
         let mux = session::resolve_session_type(&task_mux);
         let session =
-            session::resolve_session_name(&task_session_name, &self.project.project_key, &slug);
+            session::resolve_session_name(&task_session_name, &self.project.project_key, &wt_id);
 
         // 4. 如果 session 不存在，创建它
         let mut layout_path: Option<String> = None;
@@ -2824,34 +2823,46 @@ impl App {
             return;
         }
 
+        // 检查是否为 Local Task
+        let is_local = self
+            .project
+            .selected_worktree()
+            .map(|wt| wt.is_local)
+            .unwrap_or(false);
+
         // 根据当前 Tab 决定可用 actions
-        let actions = match self.project.current_tab {
-            ProjectTab::Archived => vec![ActionType::Clean, ActionType::Recover],
-            ProjectTab::Current => vec![
-                // Edit
-                ActionType::Commit,
-                ActionType::Review,
-                // Branch
-                ActionType::RebaseTo,
-                ActionType::Sync,
-                ActionType::Merge,
-                // Session
-                ActionType::Archive,
-                ActionType::Clean,
-                ActionType::Reset,
-            ],
-            ProjectTab::Other => vec![
-                // Edit
-                ActionType::Commit,
-                ActionType::Review,
-                // Branch
-                ActionType::RebaseTo,
-                ActionType::Sync,
-                // Session
-                ActionType::Archive,
-                ActionType::Clean,
-                ActionType::Reset,
-            ],
+        let actions = if is_local {
+            // Local Task: 仅 Commit 和 Review
+            vec![ActionType::Commit, ActionType::Review]
+        } else {
+            match self.project.current_tab {
+                ProjectTab::Archived => vec![ActionType::Clean, ActionType::Recover],
+                ProjectTab::Current => vec![
+                    // Edit
+                    ActionType::Commit,
+                    ActionType::Review,
+                    // Branch
+                    ActionType::RebaseTo,
+                    ActionType::Sync,
+                    ActionType::Merge,
+                    // Session
+                    ActionType::Archive,
+                    ActionType::Clean,
+                    ActionType::Reset,
+                ],
+                ProjectTab::Other => vec![
+                    // Edit
+                    ActionType::Commit,
+                    ActionType::Review,
+                    // Branch
+                    ActionType::RebaseTo,
+                    ActionType::Sync,
+                    // Session
+                    ActionType::Archive,
+                    ActionType::Clean,
+                    ActionType::Reset,
+                ],
+            }
         };
 
         self.dialogs.action_palette = Some(ActionPaletteData::new(actions));
@@ -3818,13 +3829,6 @@ impl Default for App {
 
 /// 从 worktree 路径提取 task slug
 /// ~/.grove/worktrees/project/oauth-login -> oauth-login
-fn slug_from_path(path: &str) -> String {
-    Path::new(path)
-        .file_name()
-        .map(|s| s.to_string_lossy().to_string())
-        .unwrap_or_default()
-}
-
 /// 加载所有项目的通知数据（自动清理不存在的 task）
 fn load_all_project_notifications(
     projects: &[ProjectInfo],

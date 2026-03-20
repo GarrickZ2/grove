@@ -1,5 +1,5 @@
 import { motion } from "framer-motion";
-import { Circle, ArrowRight, GitBranch } from "lucide-react";
+import { Circle, ArrowRight, GitBranch, Laptop } from "lucide-react";
 import type { Task } from "../../data/types";
 
 interface ActiveTasksListProps {
@@ -52,14 +52,22 @@ export function ActiveTasksList({ tasks, onTaskClick }: ActiveTasksListProps) {
             animate={{ opacity: 1, x: 0 }}
             transition={{ delay: index * 0.03 }}
             onClick={() => onTaskClick(task)}
-            className="w-full flex items-center gap-3 px-4 py-2.5 hover:bg-[var(--color-bg-tertiary)] transition-colors text-left group"
+            className={`w-full flex items-center gap-3 px-4 py-2.5 hover:bg-[var(--color-bg-tertiary)] transition-colors text-left group ${
+              task.isLocal ? "border-l-2 border-l-[var(--color-accent)]/40" : ""
+            }`}
           >
             {/* Status indicator */}
             <div className="relative flex-shrink-0">
-              <Circle className="w-2.5 h-2.5 fill-[var(--color-success)] text-[var(--color-success)]" />
-              <span className="absolute inset-0 animate-ping">
-                <Circle className="w-2.5 h-2.5 fill-[var(--color-success)]/30 text-transparent" />
-              </span>
+              {task.isLocal ? (
+                <Laptop className="w-3.5 h-3.5 text-[var(--color-accent)]" />
+              ) : (
+                <>
+                  <Circle className="w-2.5 h-2.5 fill-[var(--color-success)] text-[var(--color-success)]" />
+                  <span className="absolute inset-0 animate-ping">
+                    <Circle className="w-2.5 h-2.5 fill-[var(--color-success)]/30 text-transparent" />
+                  </span>
+                </>
+              )}
             </div>
 
             {/* Task info */}
@@ -68,6 +76,11 @@ export function ActiveTasksList({ tasks, onTaskClick }: ActiveTasksListProps) {
                 <span className="text-sm font-medium text-[var(--color-text)] truncate">
                   {task.name}
                 </span>
+                {task.isLocal && (
+                  <span className="flex-shrink-0 text-[10px] font-medium px-1.5 py-0.5 rounded bg-[var(--color-accent)]/15 text-[var(--color-accent)]">
+                    Local
+                  </span>
+                )}
               </div>
               <div className="flex items-center gap-1.5 mt-0.5 text-xs text-[var(--color-text-muted)]">
                 <GitBranch className="w-3 h-3" />

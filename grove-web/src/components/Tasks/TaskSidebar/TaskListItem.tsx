@@ -1,5 +1,5 @@
 import { motion } from "framer-motion";
-import { Circle, CheckCircle, AlertTriangle, XCircle, Archive, MoreVertical } from "lucide-react";
+import { Circle, CheckCircle, AlertTriangle, XCircle, Archive, MoreVertical, Laptop } from "lucide-react";
 import { useIsMobile } from "../../../hooks";
 import type { Task, TaskStatus } from "../../../data/types";
 
@@ -99,30 +99,43 @@ export function TaskListItem({ task, isSelected, onClick, onDoubleClick, onConte
         isMobile ? "py-3" : ""
       } ${
         isSelected
-          ? "bg-[var(--color-bg-tertiary)] border-l-2 border-l-[var(--color-highlight)]"
-          : "border-l-2 border-l-transparent"
+          ? task.isLocal
+            ? "bg-[var(--color-bg-tertiary)] border-l-2 border-l-[var(--color-accent)]"
+            : "bg-[var(--color-bg-tertiary)] border-l-2 border-l-[var(--color-highlight)]"
+          : task.isLocal
+            ? "border-l-2 border-l-[var(--color-accent)]/30"
+            : "border-l-2 border-l-transparent"
       }`}
     >
       <div className="flex items-start gap-2.5">
-        {/* Status Icon */}
+        {/* Status Icon — Local Task uses Laptop icon */}
         <div className="relative flex-shrink-0 mt-0.5">
-          <StatusIcon
-            className="w-3 h-3"
-            style={{
-              color: statusConfig.color,
-              fill: task.status === "live" ? statusConfig.color : "transparent"
-            }}
-          />
-          {statusConfig.pulse && (
-            <span className="absolute inset-0 animate-ping">
-              <Circle
+          {task.isLocal ? (
+            <Laptop
+              className="w-3.5 h-3.5"
+              style={{ color: "var(--color-accent)" }}
+            />
+          ) : (
+            <>
+              <StatusIcon
                 className="w-3 h-3"
                 style={{
-                  fill: `${statusConfig.color}30`,
-                  color: "transparent"
+                  color: statusConfig.color,
+                  fill: task.status === "live" ? statusConfig.color : "transparent"
                 }}
               />
-            </span>
+              {statusConfig.pulse && (
+                <span className="absolute inset-0 animate-ping">
+                  <Circle
+                    className="w-3 h-3"
+                    style={{
+                      fill: `${statusConfig.color}30`,
+                      color: "transparent"
+                    }}
+                  />
+                </span>
+              )}
+            </>
           )}
         </div>
 
@@ -133,6 +146,11 @@ export function TaskListItem({ task, isSelected, onClick, onDoubleClick, onConte
               <span className="text-sm font-medium text-[var(--color-text)] truncate">
                 {task.name}
               </span>
+              {task.isLocal && (
+                <span className="flex-shrink-0 text-[10px] font-medium px-1.5 py-0.5 rounded bg-[var(--color-accent)]/15 text-[var(--color-accent)]">
+                  Local
+                </span>
+              )}
               {task.createdBy === "agent" && (
                 <span className="flex-shrink-0 text-[10px] font-medium px-1.5 py-0.5 rounded bg-[var(--color-info)]/15 text-[var(--color-info)]">
                   Agent

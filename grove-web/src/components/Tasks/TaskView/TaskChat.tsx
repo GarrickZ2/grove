@@ -337,6 +337,9 @@ export function TaskChat({
   const [slashSelectedIdx, setSlashSelectedIdx] = useState(0);
   const [isTerminalMode, setIsTerminalMode] = useState(false);
   const [expandedSections, setExpandedSections] = useState<Set<string>>(new Set());
+  // The sectionId of the currently auto-expanded tool section (null = none)
+  // Set on tool_call, cleared on message_chunk or complete
+  const [autoExpandSectionId, setAutoExpandSectionId] = useState<string | null>(null);
   const [pendingMessages, setPendingMessages] = useState<string[]>([]);
   const [showPendingQueue, setShowPendingQueue] = useState(true);
   const [editingPendingIdx, setEditingPendingIdx] = useState<number | null>(null);
@@ -686,6 +689,7 @@ export function TaskChat({
           });
           break;
         case "message_chunk":
+          setAutoExpandSectionId(null);
           setMessages((prev) => {
             // Find last incomplete assistant message, but stop at tool/user boundaries
             // so that chunks after tools create a NEW assistant message segment
@@ -739,6 +743,14 @@ export function TaskChat({
               locations: msg.locations,
             }];
           });
+          // Auto-expand: if last message is a tool, this continues the same section;
+          // otherwise this starts a new section (sectionId = this tool's id)
+          setAutoExpandSectionId((prev) => {
+            // Check if messages end with a tool (same section continues)
+            // We use a callback to avoid stale closure — prev is the current sectionId
+            // If prev is set and we haven't received message_chunk, section continues
+            return prev ?? msg.id;
+          });
           // Track tool_call IDs that touch the plan file (for re-fetch on completion)
           if (planFilePathRef.current && msg.locations?.some(
             (l: { path: string }) => l.path === planFilePathRef.current
@@ -783,6 +795,7 @@ export function TaskChat({
           );
           break;
         case "complete":
+          setAutoExpandSectionId(null);
           setMessages((prev) =>
             prev.map((m) =>
               m.type === "assistant" && !m.complete ? { ...m, complete: true } : m,
@@ -819,16 +832,25 @@ export function TaskChat({
           setPlanEntries(entries);
           // Auto-expand while in progress, auto-collapse when all done
           const allDone = entries.length > 0 && entries.every((e: PlanEntry) => e.status === "completed");
-          setShowPlan(!allDone);
+          const shouldOpen = !allDone;
+          setShowPlan(shouldOpen);
+          if (shouldOpen) { setShowPlanFile(false); setShowPendingQueue(false); }
           break;
         }
         case "plan_file_update":
           setPlanFilePath(msg.path);
           planFilePathRef.current = msg.path;
-          readFile(msg.path).then((res) => {
-            setPlanFileContent(res.content);
+          if (msg.content) {
+            setPlanFileContent(msg.content);
             setShowPlanFile(true);
-          }).catch(() => {});
+            setShowPlan(false); setShowPendingQueue(false);
+          } else {
+            readFile(msg.path).then((res) => {
+              setPlanFileContent(res.content);
+              setShowPlanFile(true);
+              setShowPlan(false); setShowPendingQueue(false);
+            }).catch(() => {});
+          }
           break;
         case "available_commands":
           setSlashCommands(msg.commands ?? []);
@@ -978,7 +1000,9 @@ export function TaskChat({
         break;
       case "plan_file_update":
         state.planFilePath = msg.path;
-        // Don't fetch content in cache mode; will re-fetch when switching back
+        if (msg.content) {
+          state.planFileContent = msg.content;
+        }
         break;
       case "available_commands":
         state.slashCommands = msg.commands ?? [];
@@ -1193,6 +1217,8 @@ export function TaskChat({
       setIsTerminalMode(false);
       setIsInputExpanded(false);
       setShowPendingQueue(true);
+      setShowPlan(false);
+      setShowPlanFile(false);
       el.focus();
     } else {
       wsRef.current.send(JSON.stringify({ type: "prompt", text, attachments: contentAttachments }));
@@ -1909,14 +1935,12 @@ export function TaskChat({
               sectionId={item.sectionId}
               tools={item.tools}
               expanded={
-                // Force-expand only sections with running tools; completed sections auto-collapse
-                (isBusy && item.tools[0].index >= turnStartIndexRef.current
-                  && item.tools.some((t) => t.message.status === "running"))
+                // Auto-expand only the latest tool section until message_chunk or complete
+                item.sectionId === autoExpandSectionId
                 || expandedSections.has(item.sectionId)
               }
               forceExpanded={
-                isBusy && item.tools[0].index >= turnStartIndexRef.current
-                && item.tools.some((t) => t.message.status === "running")
+                item.sectionId === autoExpandSectionId
               }
               onToggleSection={toggleSection}
               onToggleToolCollapse={toggleToolCollapse}
@@ -1934,7 +1958,7 @@ export function TaskChat({
       {/* Todo Section (from ACP Plan notifications) */}
       {planEntries.length > 0 && (
         <div className="border-t border-[var(--color-border)] bg-[var(--color-bg)]">
-          <button onClick={() => setShowPlan(!showPlan)}
+          <button onClick={() => { const next = !showPlan; setShowPlan(next); if (next) { setShowPlanFile(false); setShowPendingQueue(false); } }}
             className="w-full flex items-center justify-between px-4 py-2 text-sm hover:bg-[var(--color-bg-tertiary)] transition-colors">
             <div className="flex items-center gap-2 text-[var(--color-text-muted)]">
               <motion.div animate={{ rotate: showPlan ? 90 : 0 }} transition={{ duration: 0.15 }}>
@@ -1958,7 +1982,7 @@ export function TaskChat({
                 transition={{ duration: 0.2, ease: "easeInOut" }}
                 className="overflow-hidden"
               >
-                <div className="px-4 pb-2 space-y-1">
+                <div className="px-4 pb-2 space-y-1 max-h-96 overflow-y-auto">
                   {planEntries.map((entry, i) => (
                     <div key={i} className="flex items-center gap-2 py-0.5 text-sm">
                       {entry.status === "completed" ? (
@@ -1984,7 +2008,7 @@ export function TaskChat({
       {/* Plan Section (markdown plan file) */}
       {planFileContent && (
         <div className="border-t border-[var(--color-border)] bg-[var(--color-bg)]">
-          <button onClick={() => setShowPlanFile(!showPlanFile)}
+          <button onClick={() => { const next = !showPlanFile; setShowPlanFile(next); if (next) { setShowPlan(false); setShowPendingQueue(false); } }}
             className="w-full flex items-center justify-between px-4 py-2 text-sm hover:bg-[var(--color-bg-tertiary)] transition-colors">
             <div className="flex items-center gap-2 text-[var(--color-text-muted)]">
               <motion.div animate={{ rotate: showPlanFile ? 90 : 0 }} transition={{ duration: 0.15 }}>
@@ -2016,7 +2040,7 @@ export function TaskChat({
       {/* Pending Queue */}
       {pendingMessages.length > 0 && (
         <div className="border-t border-[var(--color-border)] bg-[var(--color-bg)]">
-          <button onClick={() => setShowPendingQueue(!showPendingQueue)}
+          <button onClick={() => { const next = !showPendingQueue; setShowPendingQueue(next); if (next) { setShowPlan(false); setShowPlanFile(false); } }}
             className="w-full flex items-center justify-between px-4 py-2 text-sm hover:bg-[var(--color-bg-tertiary)] transition-colors">
             <div className="flex items-center gap-2 text-[var(--color-text-muted)]">
               <motion.div animate={{ rotate: showPendingQueue ? 90 : 0 }} transition={{ duration: 0.15 }}>
@@ -2043,7 +2067,7 @@ export function TaskChat({
                 transition={{ duration: 0.2, ease: "easeInOut" }}
                 className="overflow-hidden"
               >
-                <div className="px-4 pb-2 space-y-1">
+                <div className="px-4 pb-2 space-y-1 max-h-96 overflow-y-auto">
                   {pendingMessages.map((msg, i) => (
                     <div key={i} className="flex items-center gap-2 py-1 text-sm">
                       <span className="text-xs text-[var(--color-text-muted)] w-4 shrink-0 text-right">{i + 1}</span>
@@ -2636,12 +2660,17 @@ function ToolSectionView({ sectionId, tools, expanded, forceExpanded, onToggleSe
   // Summary label
   const primaryCount = primary.length;
   let summaryText: string;
+  const secondaryCount = secondary.length;
   if (running > 0) {
     summaryText = `Running ${completed}/${total} tools\u2026`;
   } else if (failed > 0) {
     summaryText = `${completed - failed} completed, ${failed} failed`;
-  } else if (primaryCount > 0 && primaryCount < total) {
-    summaryText = `${primaryCount} action${primaryCount > 1 ? "s" : ""}, ${total - primaryCount} exploration tools`;
+  } else if (primaryCount > 0 && secondaryCount > 0) {
+    summaryText = `${primaryCount} action${primaryCount > 1 ? "s" : ""}, ${secondaryCount} exploration tool${secondaryCount > 1 ? "s" : ""} completed`;
+  } else if (primaryCount > 0) {
+    summaryText = `${primaryCount} action tool${primaryCount > 1 ? "s" : ""} completed`;
+  } else if (secondaryCount > 0) {
+    summaryText = `${secondaryCount} exploration tool${secondaryCount > 1 ? "s" : ""} completed`;
   } else {
     summaryText = `${total} tool${total > 1 ? "s" : ""} completed`;
   }

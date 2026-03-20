@@ -5,8 +5,7 @@ import { ChevronDown, Check, Bot, Globe, Terminal, Settings } from "lucide-react
 import type { CustomAgent } from "../../api/config";
 
 // Import Lobe icons for AI agents
-import { Claude, Gemini, Copilot, Cursor, Trae, Qwen, Kimi, OpenAI } from "@lobehub/icons";
-import { OpenCodeIcon } from "./OpenCodeIcon";
+import { Claude, Gemini, Copilot, Cursor, Trae, Qwen, Kimi, OpenAI, Junie, OpenCode } from "@lobehub/icons";
 
 export interface AgentOption {
   id: string;
@@ -27,8 +26,9 @@ export const agentOptions: AgentOption[] = [
   { id: "codex", label: "CodeX", value: "codex", icon: OpenAI, terminalCheck: "codex", acpCheck: "codex-acp" },
   { id: "gemini", label: "Gemini", value: "gemini", icon: Gemini.Color, terminalCheck: "gemini", acpCheck: "gemini" },
   { id: "gh-copilot", label: "GitHub Copilot", value: "copilot", icon: Copilot.Color, terminalCheck: "copilot", acpCheck: "copilot" },
-  { id: "cursor-agent", label: "Cursor Agent", value: "cursor-agent", icon: Cursor, terminalCheck: "cursor-agent" },
-  { id: "opencode", label: "OpenCode", value: "opencode", icon: OpenCodeIcon, terminalCheck: "opencode", acpCheck: "opencode" },
+  { id: "cursor-agent", label: "Cursor Agent", value: "cursor", icon: Cursor, terminalCheck: "cursor-agent", acpCheck: "cursor-agent" },
+  { id: "junie", label: "Junie", value: "junie", icon: Junie.Color, terminalCheck: "junie", acpCheck: "junie" },
+  { id: "opencode", label: "OpenCode", value: "opencode", icon: OpenCode, terminalCheck: "opencode", acpCheck: "opencode" },
   { id: "qwen", label: "Qwen", value: "qwen", icon: Qwen.Color, terminalCheck: "qwen", acpCheck: "qwen" },
   { id: "kimi", label: "Kimi", value: "kimi", icon: Kimi.Color, terminalCheck: "kimi", acpCheck: "kimi" },
   { id: "traecli", label: "Trae", value: "traecli", icon: Trae.Color, terminalCheck: "traecli", acpCheck: "traecli" },

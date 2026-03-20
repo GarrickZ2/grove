@@ -60,6 +60,32 @@ export function buildContextMenuItems(
     return items;
   }
 
+  // Local task menu: only Terminal + Commit
+  if (task.isLocal) {
+    return [
+      {
+        id: "terminal",
+        label: "Enter Terminal",
+        icon: Terminal,
+        variant: "default",
+        onClick: handlers.onEnterTerminal,
+      },
+      {
+        id: "div-1",
+        label: "",
+        divider: true,
+        onClick: () => {},
+      },
+      {
+        id: "commit",
+        label: "Commit",
+        icon: GitCommit,
+        variant: "default",
+        onClick: handlers.onCommit,
+      },
+    ];
+  }
+
   // Active task menu
   const canOperate = task.status !== "broken";
 

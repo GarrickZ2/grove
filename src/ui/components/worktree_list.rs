@@ -85,13 +85,31 @@ pub fn render(
                 Cell::from(selector).style(Style::default().fg(colors.highlight)),
                 Cell::from(wt.status.icon()).style(icon_style),
                 Cell::from(notif_marker).style(notif_style),
-                Cell::from(wt.task_name.clone()),
+                Cell::from(if wt.is_local {
+                    ratatui::text::Line::from(vec![
+                        ratatui::text::Span::styled(
+                            "◈ ",
+                            Style::default().fg(colors.accent_palette[0]),
+                        ),
+                        ratatui::text::Span::raw(&wt.task_name),
+                    ])
+                } else {
+                    ratatui::text::Line::from(wt.task_name.clone())
+                }),
                 Cell::from(wt.status.label()).style(icon_style),
-                Cell::from(ratatui::text::Line::from(vec![
-                    ratatui::text::Span::styled(&wt.branch, Style::default().fg(colors.muted)),
-                    ratatui::text::Span::styled(" → ", Style::default().fg(colors.muted)),
-                    ratatui::text::Span::styled(&wt.target, Style::default().fg(colors.text)),
-                ])),
+                Cell::from(if wt.is_local {
+                    // Local Task: 只显示当前分支
+                    ratatui::text::Line::from(vec![ratatui::text::Span::styled(
+                        &wt.branch,
+                        Style::default().fg(colors.muted),
+                    )])
+                } else {
+                    ratatui::text::Line::from(vec![
+                        ratatui::text::Span::styled(&wt.branch, Style::default().fg(colors.muted)),
+                        ratatui::text::Span::styled(" → ", Style::default().fg(colors.muted)),
+                        ratatui::text::Span::styled(&wt.target, Style::default().fg(colors.text)),
+                    ])
+                }),
                 Cell::from(commits),
                 Cell::from(ratatui::text::Line::from(vec![
                     ratatui::text::Span::styled(

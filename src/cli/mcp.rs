@@ -990,6 +990,14 @@ impl GroveMcpServer {
         let (task_id, project_path) = get_task_context()
             .ok_or_else(|| McpError::invalid_request("Not in a Grove task", None))?;
 
+        // Local Task: only commit is allowed, no sync/merge
+        if task_id == tasks::LOCAL_TASK_ID {
+            return Err(McpError::invalid_request(
+                "grove_complete_task is not available for Local tasks. Local tasks cannot be synced or merged. Use git commit directly instead.",
+                None,
+            ));
+        }
+
         // Get environment variables
         let worktree_path = env::var("GROVE_WORKTREE")
             .map_err(|_| McpError::internal_error("GROVE_WORKTREE not set", None))?;
@@ -1379,6 +1387,7 @@ fn list_tasks_json(project_id: &str, query: Option<&str>) -> serde_json::Value {
                         "branch": t.branch,
                         "target": t.target,
                         "worktree_path": t.worktree_path,
+                        "is_local": t.is_local,
                     })
                 })
                 .collect();
@@ -1429,6 +1438,8 @@ const BUILTIN_AGENTS: &[(&str, &str)] = &[
     ("qwen", "Qwen"),
     ("opencode", "OpenCode"),
     ("copilot", "GitHub Copilot"),
+    ("cursor", "Cursor Agent"),
+    ("junie", "Junie"),
 ];
 
 fn list_agents_json() -> serde_json::Value {
@@ -1935,7 +1946,7 @@ fn build_chat_status_json(
 /// Extract the last plan file path from events
 fn extract_last_plan_file(events: &[acp::AcpUpdate]) -> Option<String> {
     events.iter().rev().find_map(|e| match e {
-        acp::AcpUpdate::PlanFileUpdate { path } => Some(path.clone()),
+        acp::AcpUpdate::PlanFileUpdate { path, .. } => Some(path.clone()),
         _ => None,
     })
 }

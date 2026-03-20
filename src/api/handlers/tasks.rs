@@ -352,6 +352,7 @@ fn worktree_to_response(wt: &crate::model::Worktree, _project_key: &str) -> Task
         path: wt.path.clone(),
         multiplexer: wt.multiplexer.clone(),
         created_by: wt.created_by.clone(),
+        is_local: wt.is_local,
     }
 }
 
@@ -399,8 +400,12 @@ pub async fn list_tasks(
             .collect()
     };
 
-    // Sort by updated_at descending (newest first)
-    tasks.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+    // Sort by updated_at descending (newest first), but Local Task always first
+    tasks.sort_by(|a, b| match (a.is_local, b.is_local) {
+        (true, false) => std::cmp::Ordering::Less,
+        (false, true) => std::cmp::Ordering::Greater,
+        _ => b.updated_at.cmp(&a.updated_at),
+    });
 
     Ok(Json(TaskListResponse { tasks }))
 }
@@ -504,6 +509,7 @@ pub async fn create_task(
         path: result.worktree_path.clone(),
         multiplexer: result.task.multiplexer.clone(),
         created_by: result.task.created_by.clone(),
+        is_local: false,
     }))
 }
 
@@ -687,6 +693,11 @@ pub async fn recover_task(
 pub async fn delete_task(
     Path((id, task_id)): Path<(String, String)>,
 ) -> Result<StatusCode, StatusCode> {
+    // Local Task 不允许删除
+    if task_id == crate::storage::tasks::LOCAL_TASK_ID {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+
     let (project, project_key) = find_project_by_id(&id)?;
 
     // Get task info first
@@ -1178,6 +1189,16 @@ pub async fn rebase_to_task(
     Path((id, task_id)): Path<(String, String)>,
     Json(req): Json<RebaseToRequest>,
 ) -> Result<Json<GitOperationResponse>, (StatusCode, Json<ApiErrorResponse>)> {
+    // Local Task 不支持 rebase
+    if task_id == crate::storage::tasks::LOCAL_TASK_ID {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ApiErrorResponse {
+                error: "Cannot rebase local task".to_string(),
+            }),
+        ));
+    }
+
     let (project, project_key) = find_project_by_id(&id).map_err(|s| {
         (
             s,

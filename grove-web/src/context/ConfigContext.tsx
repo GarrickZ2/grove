@@ -3,8 +3,6 @@ import { getConfig, type Config } from '../api/config';
 import { checkAllDependencies, checkCommands } from '../api';
 import { agentOptions } from '../components/ui';
 
-// ACP-compatible built-in agent IDs (agents that have an acpCheck field)
-const acpCompatibleAgentIds = ["claude", "traecli", "codex", "kimi", "gh-copilot", "gemini", "qwen", "opencode"];
 
 interface ConfigContextValue {
   config: Config | null;
@@ -42,7 +40,7 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
       // Collect all ACP check commands
       const acpCheckCmds = new Set<string>();
       for (const opt of agentOptions) {
-        if (opt.acpCheck && acpCompatibleAgentIds.includes(opt.id)) {
+        if (opt.acpCheck) {
           acpCheckCmds.add(opt.acpCheck);
         }
       }
@@ -59,7 +57,7 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
 
       // Chat: at least one ACP agent command exists OR custom agents configured
       const hasAnyAcp = agentOptions
-        .filter(a => acpCompatibleAgentIds.includes(a.id) && a.acpCheck)
+        .filter(a => a.acpCheck)
         .some(a => cmdResults[a.acpCheck!] === true);
       const hasCustom = (cfg?.acp?.custom_agents?.length ?? 0) > 0;
       setChatAvailable(hasAnyAcp || hasCustom);

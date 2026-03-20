@@ -65,6 +65,11 @@ export function TaskHeader({ task, projectName }: TaskHeaderProps) {
           <h2 className="text-lg font-semibold text-[var(--color-text)] truncate">
             {task.name}
           </h2>
+          {task.isLocal && (
+            <span className="flex-shrink-0 text-[10px] font-medium px-1.5 py-0.5 rounded bg-[var(--color-accent)]/15 text-[var(--color-accent)]">
+              Local
+            </span>
+          )}
           {projectName && (
             <span className="flex-shrink-0 px-1.5 py-0.5 text-[10px] font-medium text-[var(--color-text-muted)] bg-[var(--color-bg-tertiary)] rounded">{projectName}</span>
           )}
@@ -103,8 +108,12 @@ export function TaskHeader({ task, projectName }: TaskHeaderProps) {
       <div className="flex items-center gap-2 mt-1.5 text-sm text-[var(--color-text-muted)]">
         <GitBranch className="w-3.5 h-3.5" />
         <span className="truncate">{task.branch}</span>
-        <ArrowRight className="w-3 h-3" />
-        <span>{task.target}</span>
+        {!task.isLocal && (
+          <>
+            <ArrowRight className="w-3 h-3" />
+            <span>{task.target}</span>
+          </>
+        )}
       </div>
     </div>
   );
