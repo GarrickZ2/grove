@@ -337,6 +337,9 @@ export function TaskChat({
   const [slashSelectedIdx, setSlashSelectedIdx] = useState(0);
   const [isTerminalMode, setIsTerminalMode] = useState(false);
   const [expandedSections, setExpandedSections] = useState<Set<string>>(new Set());
+  // The sectionId of the currently auto-expanded tool section (null = none)
+  // Set on tool_call, cleared on message_chunk or complete
+  const [autoExpandSectionId, setAutoExpandSectionId] = useState<string | null>(null);
   const [pendingMessages, setPendingMessages] = useState<string[]>([]);
   const [showPendingQueue, setShowPendingQueue] = useState(true);
   const [editingPendingIdx, setEditingPendingIdx] = useState<number | null>(null);
@@ -686,6 +689,7 @@ export function TaskChat({
           });
           break;
         case "message_chunk":
+          setAutoExpandSectionId(null);
           setMessages((prev) => {
             // Find last incomplete assistant message, but stop at tool/user boundaries
             // so that chunks after tools create a NEW assistant message segment
@@ -739,6 +743,14 @@ export function TaskChat({
               locations: msg.locations,
             }];
           });
+          // Auto-expand: if last message is a tool, this continues the same section;
+          // otherwise this starts a new section (sectionId = this tool's id)
+          setAutoExpandSectionId((prev) => {
+            // Check if messages end with a tool (same section continues)
+            // We use a callback to avoid stale closure — prev is the current sectionId
+            // If prev is set and we haven't received message_chunk, section continues
+            return prev ?? msg.id;
+          });
           // Track tool_call IDs that touch the plan file (for re-fetch on completion)
           if (planFilePathRef.current && msg.locations?.some(
             (l: { path: string }) => l.path === planFilePathRef.current
@@ -783,6 +795,7 @@ export function TaskChat({
           );
           break;
         case "complete":
+          setAutoExpandSectionId(null);
           setMessages((prev) =>
             prev.map((m) =>
               m.type === "assistant" && !m.complete ? { ...m, complete: true } : m,
@@ -1922,14 +1935,12 @@ export function TaskChat({
               sectionId={item.sectionId}
               tools={item.tools}
               expanded={
-                // Force-expand only sections with running tools; completed sections auto-collapse
-                (isBusy && item.tools[0].index >= turnStartIndexRef.current
-                  && item.tools.some((t) => t.message.status === "running"))
+                // Auto-expand only the latest tool section until message_chunk or complete
+                item.sectionId === autoExpandSectionId
                 || expandedSections.has(item.sectionId)
               }
               forceExpanded={
-                isBusy && item.tools[0].index >= turnStartIndexRef.current
-                && item.tools.some((t) => t.message.status === "running")
+                item.sectionId === autoExpandSectionId
               }
               onToggleSection={toggleSection}
               onToggleToolCollapse={toggleToolCollapse}
@@ -2649,12 +2660,17 @@ function ToolSectionView({ sectionId, tools, expanded, forceExpanded, onToggleSe
   // Summary label
   const primaryCount = primary.length;
   let summaryText: string;
+  const secondaryCount = secondary.length;
   if (running > 0) {
     summaryText = `Running ${completed}/${total} tools\u2026`;
   } else if (failed > 0) {
     summaryText = `${completed - failed} completed, ${failed} failed`;
-  } else if (primaryCount > 0 && primaryCount < total) {
-    summaryText = `${primaryCount} action${primaryCount > 1 ? "s" : ""}, ${total - primaryCount} exploration tools`;
+  } else if (primaryCount > 0 && secondaryCount > 0) {
+    summaryText = `${primaryCount} action${primaryCount > 1 ? "s" : ""}, ${secondaryCount} exploration tool${secondaryCount > 1 ? "s" : ""} completed`;
+  } else if (primaryCount > 0) {
+    summaryText = `${primaryCount} action tool${primaryCount > 1 ? "s" : ""} completed`;
+  } else if (secondaryCount > 0) {
+    summaryText = `${secondaryCount} exploration tool${secondaryCount > 1 ? "s" : ""} completed`;
   } else {
     summaryText = `${total} tool${total > 1 ? "s" : ""} completed`;
   }
