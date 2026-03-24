@@ -10,3 +10,6 @@ export type { TerminalTheme, TerminalThemeColors } from "./terminalThemes";
 export { NotificationProvider, useNotifications } from "./NotificationContext";
 
 export { ConfigProvider, useConfig } from "./ConfigContext";
+
+export { CommandPaletteProvider, useCommandPalette } from "./CommandPaletteContext";
+export type { Command } from "./CommandPaletteContext";

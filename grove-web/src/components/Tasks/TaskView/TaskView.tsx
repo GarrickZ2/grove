@@ -30,6 +30,8 @@ interface TaskViewProps {
 
 export interface TaskViewHandle {
   addPanel: (type: PanelType) => void;
+  selectTabByIndex: (index: number) => void;
+  closeActiveTab: () => void;
 }
 
 export const TaskView = forwardRef<TaskViewHandle, TaskViewProps>((props, ref) => {
@@ -78,6 +80,12 @@ export const TaskView = forwardRef<TaskViewHandle, TaskViewProps>((props, ref) =
   // Expose addPanel method via ref
   useImperativeHandle(ref, () => ({
     addPanel: handleAddPanel,
+    selectTabByIndex: (index: number) => {
+      layoutRef.current?.selectTabByIndex(index);
+    },
+    closeActiveTab: () => {
+      layoutRef.current?.closeActiveTab();
+    },
   }), [handleAddPanel]);
 
   // Toggle fullscreen

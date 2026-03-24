@@ -116,12 +116,50 @@ export function DiffReviewPage({ projectId, taskId, embedded }: DiffReviewPagePr
 
   // Filter files based on view mode
   const displayFiles = useMemo(() => {
-    if (viewMode === 'full') {
-      // In All Files Mode: show all git-tracked files + virtual files
-      // Extract virtual files from diffData (they have is_virtual flag from comments)
-      const virtualFiles = diffData?.files.filter(f => f.is_virtual) || [];
+    // Sort files in tree order (dirs first, then files, alphabetically) to match FileTreeSidebar
+    const sortTreeOrder = (files: DiffFile[]): DiffFile[] => {
+      interface TreeNode { name: string; path: string; file?: DiffFile; children: TreeNode[] }
+      const root: TreeNode = { name: '', path: '', children: [] };
 
-      // Add temporary virtual files (created in current session, not persisted yet)
+      for (const file of files) {
+        const parts = file.new_path.split('/');
+        let current = root;
+        for (let i = 0; i < parts.length - 1; i++) {
+          const dirName = parts[i];
+          let existing = current.children.find((c) => !c.file && c.name === dirName);
+          if (!existing) {
+            existing = { name: dirName, path: parts.slice(0, i + 1).join('/'), children: [] };
+            current.children.push(existing);
+          }
+          current = existing;
+        }
+        current.children.push({ name: parts[parts.length - 1], path: file.new_path, file, children: [] });
+      }
+
+      const sortNodes = (nodes: TreeNode[]) => {
+        nodes.sort((a, b) => {
+          const aIsDir = !a.file ? 0 : 1;
+          const bIsDir = !b.file ? 0 : 1;
+          if (aIsDir !== bIsDir) return aIsDir - bIsDir;
+          return a.name.localeCompare(b.name);
+        });
+        for (const n of nodes) sortNodes(n.children);
+      };
+      sortNodes(root.children);
+
+      const result: DiffFile[] = [];
+      const flatten = (nodes: TreeNode[]) => {
+        for (const n of nodes) {
+          if (n.file) result.push(n.file);
+          else flatten(n.children);
+        }
+      };
+      flatten(root.children);
+      return result;
+    };
+
+    if (viewMode === 'full') {
+      const virtualFiles = diffData?.files.filter(f => f.is_virtual) || [];
       const temporaryVirtualFiles: DiffFile[] = Array.from(temporaryVirtualPaths).map(path => ({
         old_path: '',
         new_path: path,
@@ -132,36 +170,22 @@ export function DiffReviewPage({ projectId, taskId, embedded }: DiffReviewPagePr
         deletions: 0,
         is_virtual: true,
       }));
-
-      // Merge all virtual files (from comments + temporary)
       const allVirtualFiles = [...virtualFiles, ...temporaryVirtualFiles];
-
-      // Get all git-tracked files
       const allFileDiffFiles = allFiles.map((path): DiffFile => ({
         old_path: path,
         new_path: path,
-        change_type: 'modified', // Doesn't matter for full file view
-        hunks: [], // No hunks in File Mode
+        change_type: 'modified',
+        hunks: [],
         is_binary: false,
         additions: 0,
         deletions: 0,
       }));
-
-      // Create a set of existing file paths to avoid duplicates
       const existingPaths = new Set(allFiles);
-
-      // Only add virtual files that don't already exist as real files
       const uniqueVirtualFiles = allVirtualFiles.filter(vf => !existingPaths.has(vf.new_path));
-
-      return [...allFileDiffFiles, ...uniqueVirtualFiles].sort((a, b) =>
-        a.new_path.localeCompare(b.new_path)
-      );
+      return sortTreeOrder([...allFileDiffFiles, ...uniqueVirtualFiles]);
     }
-    // In Changes Mode (Diff Mode): only show real diff files, NO virtual files
     if (!diffData) return [];
-    return [...diffData.files.filter(f => !f.is_virtual)].sort((a, b) =>
-      a.new_path.localeCompare(b.new_path)
-    );
+    return sortTreeOrder([...diffData.files.filter(f => !f.is_virtual)]);
   }, [viewMode, allFiles, diffData, temporaryVirtualPaths]);
 
   // Use ref to access displayFiles in callbacks without dependency issues
@@ -420,7 +444,11 @@ export function DiffReviewPage({ projectId, taskId, embedded }: DiffReviewPagePr
           setError(e instanceof Error ? e.message : 'Failed to load diff');
         }
       } finally {
-        if (!cancelled) setLoading(false);
+        if (!cancelled) {
+          setLoading(false);
+          // Auto-focus content area so arrow keys scroll immediately
+          requestAnimationFrame(() => contentRef.current?.focus());
+        }
       }
     };
 
@@ -542,12 +570,7 @@ export function DiffReviewPage({ projectId, taskId, embedded }: DiffReviewPagePr
     handleTogglePreview(activeFilePath);
   }, [activeFilePath, handleTogglePreview]);
 
-  useHotkeys(
-    [
-      { key: 'v', handler: handleToggleActivePreview },
-    ],
-    [handleToggleActivePreview]
-  );
+  // (hotkeys registered below, after goToNextFile/goToPrevFile/handleToggleViewed are defined)
 
   // Track topmost visible file on scroll (non-focus mode)
   useEffect(() => {
@@ -635,6 +658,29 @@ export function DiffReviewPage({ projectId, taskId, embedded }: DiffReviewPagePr
       return next;
     });
   }, [fileHashes, viewedStorageKey]);
+
+  // Toggle viewed status of the active file
+  const handleToggleActiveViewed = useCallback(() => {
+    if (activeFilePath) handleToggleViewed(activeFilePath);
+  }, [activeFilePath, handleToggleViewed]);
+
+  // Toggle Changes / All Files mode
+  const handleToggleViewMode = useCallback(() => {
+    setViewMode((prev) => (prev === 'diff' ? 'full' : 'diff'));
+  }, []);
+
+  // Review panel keyboard shortcuts
+  useHotkeys(
+    [
+      { key: 'j', handler: goToNextFile },
+      { key: 'k', handler: goToPrevFile },
+      { key: 'v', handler: handleToggleActiveViewed },
+      { key: 'r', handler: handleRefresh },
+      { key: 'Shift+Tab', handler: handleToggleViewMode, options: { preventDefault: true } },
+      { key: 'p', handler: handleToggleActivePreview },
+    ],
+    [goToNextFile, goToPrevFile, handleToggleActiveViewed, handleRefresh, handleToggleViewMode, handleToggleActivePreview]
+  );
 
   // Toggle collapse
   const handleToggleCollapse = useCallback((path: string) => {
@@ -1063,7 +1109,7 @@ export function DiffReviewPage({ projectId, taskId, embedded }: DiffReviewPagePr
             />
 
             {/* Diff content */}
-            <div className="diff-content" ref={contentRef}>
+            <div className="diff-content" ref={contentRef} tabIndex={-1} style={{ outline: 'none' }}>
               {(() => {
                 // Reset global match index before rendering
                 resetGlobalMatchIndex();

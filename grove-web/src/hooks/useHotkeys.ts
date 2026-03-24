@@ -111,7 +111,7 @@ export function useHotkeys(
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      // Skip if already handled
+      // Skip if already handled by another useHotkeys instance
       if (e.defaultPrevented) return;
 
       // Skip during IME composition (e.g. Chinese/Japanese input)
@@ -139,8 +139,10 @@ export function useHotkeys(
       }
     };
 
-    window.addEventListener("keydown", handler);
-    return () => window.removeEventListener("keydown", handler);
+    // Use capture phase to intercept browser shortcuts (Cmd+P, Cmd+T, etc.)
+    // before the browser's default handler processes them
+    window.addEventListener("keydown", handler, true);
+    return () => window.removeEventListener("keydown", handler, true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, deps);
 }

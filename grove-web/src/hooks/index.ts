@@ -26,3 +26,6 @@ export type {
 
 export { useFileMention } from "./useFileMention";
 export type { UseFileMentionConfig, UseFileMentionReturn } from "./useFileMention";
+
+export { buildCommands } from "./useCommands";
+export type { UseCommandsOptions } from "./useCommands";

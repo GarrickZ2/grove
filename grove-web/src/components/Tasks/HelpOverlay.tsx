@@ -22,11 +22,31 @@ interface ShortcutGroup {
 
 const SHORTCUT_GROUPS: ShortcutGroup[] = [
   {
+    title: "Global",
+    entries: [
+      { keys: ["\u2318K"], description: "Command palette" },
+      { keys: ["\u2318P"], description: "Switch project" },
+      { keys: ["\u2318O"], description: "Switch task" },
+      { keys: ["\u23181"], description: "Dashboard" },
+      { keys: ["\u23182"], description: "Tasks" },
+      { keys: ["\u23183"], description: "Skills" },
+      { keys: ["\u23184"], description: "Statistics" },
+      { keys: ["?"], description: "Keyboard shortcuts" },
+    ],
+  },
+  {
+    title: "Workspace",
+    entries: [
+      { keys: ["\u23181-9"], description: "Switch panel tab" },
+      { keys: ["\u2318W", "\u2325W"], description: "Close active tab" },
+    ],
+  },
+  {
     title: "Navigation",
     entries: [
       { keys: ["j", "\u2193"], description: "Select next task" },
       { keys: ["k", "\u2191"], description: "Select previous task" },
-      { keys: ["Enter"], description: "Enter terminal / expand info" },
+      { keys: ["Enter"], description: "Enter workspace" },
       { keys: ["Esc"], description: "Go back" },
     ],
   },
@@ -48,8 +68,13 @@ const SHORTCUT_GROUPS: ShortcutGroup[] = [
       { keys: ["s"], description: "Sync" },
       { keys: ["m"], description: "Merge" },
       { keys: ["b"], description: "Rebase (change branch)" },
-      { keys: ["d"], description: "Open Review panel" },
-      { keys: ["e"], description: "Open Editor panel" },
+      { keys: ["a"], description: "Archive" },
+      { keys: ["x"], description: "Reset" },
+      { keys: ["X"], description: "Clean (delete worktree)" },
+      { keys: ["i"], description: "Chat" },
+      { keys: ["t"], description: "Terminal" },
+      { keys: ["r"], description: "Review" },
+      { keys: ["e"], description: "Editor" },
     ],
   },
   {

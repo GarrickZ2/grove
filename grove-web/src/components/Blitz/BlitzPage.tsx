@@ -8,7 +8,7 @@ import { RebaseDialog } from "../Tasks/dialogs";
 import { HelpOverlay } from "../Tasks/HelpOverlay";
 import { ContextMenu } from "../ui/ContextMenu";
 import { LogoBrand } from "../Layout/LogoBrand";
-import { useNotifications } from "../../context";
+import { useNotifications, useCommandPalette } from "../../context";
 import {
   useIsMobile,
   useHotkeys,
@@ -16,6 +16,7 @@ import {
   useTaskNavigation,
   usePostMergeArchive,
   useTaskOperations,
+  buildCommands,
 } from "../../hooks";
 import { useBlitzTasks } from "./useBlitzTasks";
 import { BlitzTaskListItem } from "./BlitzTaskListItem";
@@ -493,6 +494,30 @@ export function BlitzPage({ onSwitchToZen }: BlitzPageProps) {
   const canOperate = isActive && selectedTask.status !== "broken";
   const notInWorkspace = !pageState.inWorkspace;
 
+  // Workspace keyboard shortcuts (higher priority than Blitz task selection)
+  // Cmd+1-9: switch panel tabs, Cmd+W / Alt+W: close active tab
+  useEffect(() => {
+    if (!pageState.inWorkspace) return;
+    const isTauri = !!(window as any).__TAURI__;
+    const handler = (e: KeyboardEvent) => {
+      if (e.metaKey && !e.altKey && !e.ctrlKey && e.key >= "1" && e.key <= "9") {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        taskViewRef.current?.selectTabByIndex(parseInt(e.key) - 1);
+        return;
+      }
+      const isCloseTab = (isTauri && e.metaKey && e.code === "KeyW")
+        || (e.altKey && !e.metaKey && e.code === "KeyW");
+      if (isCloseTab) {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        taskViewRef.current?.closeActiveTab();
+      }
+    };
+    window.addEventListener("keydown", handler, true);
+    return () => window.removeEventListener("keydown", handler, true);
+  }, [pageState.inWorkspace]);
+
   useHotkeys(
     [
       { key: "j", handler: navHandlers.selectNextTask, options: { enabled: notInWorkspace } },
@@ -516,12 +541,19 @@ export function BlitzPage({ onSwitchToZen }: BlitzPageProps) {
       { key: "3", handler: () => pageHandlers.setInfoPanelTab("notes"), options: { enabled: notInWorkspace && hasTask } },
       { key: "4", handler: () => pageHandlers.setInfoPanelTab("comments"), options: { enabled: notInWorkspace && hasTask } },
 
-      // Actions (no 'n' for new task)
+      // Actions (no 'n' for new task in Blitz)
       { key: "Space", handler: navHandlers.openContextMenuAtSelectedTask, options: { enabled: hasTask && notInWorkspace } },
       { key: "c", handler: opsHandlers.handleCommit, options: { enabled: isActive } },
       { key: "s", handler: opsHandlers.handleSync, options: { enabled: canOperate } },
       { key: "m", handler: opsHandlers.handleMerge, options: { enabled: canOperate } },
       { key: "b", handler: opsHandlers.handleRebase, options: { enabled: canOperate } },
+      { key: "a", handler: opsHandlers.handleArchive, options: { enabled: isActive } },
+      { key: "x", handler: opsHandlers.handleReset, options: { enabled: canOperate } },
+      { key: "Shift+x", handler: opsHandlers.handleClean, options: { enabled: hasTask } },
+      { key: "r", handler: () => pageState.inWorkspace ? handleAddPanel("review") : handleAddPanelFromInfo("review"), options: { enabled: hasTask && isActive } },
+      { key: "e", handler: () => pageState.inWorkspace ? handleAddPanel("editor") : handleAddPanelFromInfo("editor"), options: { enabled: hasTask && isActive } },
+      { key: "i", handler: () => pageState.inWorkspace ? handleAddPanel("chat") : handleAddPanelFromInfo("chat"), options: { enabled: hasTask && isActive } },
+      { key: "t", handler: () => pageState.inWorkspace ? handleAddPanel("terminal") : handleAddPanelFromInfo("terminal"), options: { enabled: hasTask && isActive } },
 
       // Search
       { key: "/", handler: () => searchInputRef.current?.focus(), options: { enabled: notInWorkspace } },
@@ -530,10 +562,35 @@ export function BlitzPage({ onSwitchToZen }: BlitzPageProps) {
       { key: "?", handler: () => pageHandlers.setShowHelp(!pageState.showHelp) },
     ],
     [
-      navHandlers, pageHandlers, opsHandlers, handleCloseTask,
+      navHandlers, pageHandlers, opsHandlers, handleCloseTask, handleAddPanelFromInfo, refresh,
       pageState.inWorkspace, pageState.showHelp, selectedTask, hasTask, isActive, canOperate, notInWorkspace,
     ]
   );
+
+  // Register page-level commands for Cmd+K command palette
+  const { registerPageCommands, unregisterPageCommands, setInWorkspace: setContextInWorkspace } = useCommandPalette();
+
+  useEffect(() => {
+    setContextInWorkspace(pageState.inWorkspace);
+    return () => setContextInWorkspace(false);
+  }, [pageState.inWorkspace, setContextInWorkspace]);
+  const pageOptionsRef = useRef<Parameters<typeof buildCommands>[0]>(null!);
+  pageOptionsRef.current = {
+    taskActions: {
+      selectedTask: selectedTask ?? null,
+      inWorkspace: pageState.inWorkspace,
+      opsHandlers,
+      onEnterWorkspace: pageHandlers.handleEnterWorkspace,
+      onOpenPanel: (panel) => handleAddPanelFromInfo(panel as PanelType),
+      onSwitchInfoTab: pageHandlers.setInfoPanelTab,
+      onRefresh: refresh,
+    },
+  };
+
+  useEffect(() => {
+    registerPageCommands(() => buildCommands(pageOptionsRef.current));
+    return () => unregisterPageCommands();
+  }, [registerPageCommands, unregisterPageCommands]);
 
   const handleMobileBack = useCallback(() => {
     if (pageState.inWorkspace) {

@@ -26,6 +26,8 @@ interface FlexLayoutContainerProps {
 export interface FlexLayoutContainerHandle {
   addPanel: (type: PanelType) => void;
   getModel: () => Model;
+  selectTabByIndex: (index: number) => void;
+  closeActiveTab: () => void;
 }
 
 export const FlexLayoutContainer = forwardRef<
@@ -168,6 +170,27 @@ export const FlexLayoutContainer = forwardRef<
   // Fullscreen panel state (记录哪个 panel/tabset 正在全屏)
   const [fullscreenPanelId, setFullscreenPanelId] = useState<string | null>(null);
 
+  // Auto-focus the content inside a panel after switching to it
+  const focusPanelContent = useCallback(() => {
+    requestAnimationFrame(() => {
+      // Find visible FlexLayout tab contents and focus the appropriate element
+      const tabContents = document.querySelectorAll('.flexlayout__tab');
+      for (const tabContent of tabContents) {
+        if ((tabContent as HTMLElement).offsetParent === null) continue;
+
+        // Priority: xterm textarea > chat input > diff-content > any focusable
+        const xterm = tabContent.querySelector('.xterm-helper-textarea') as HTMLElement;
+        if (xterm) { xterm.focus(); return; }
+
+        const chatInput = tabContent.querySelector('textarea, [contenteditable="true"]') as HTMLElement;
+        if (chatInput) { chatInput.focus(); return; }
+
+        const diffContent = tabContent.querySelector('.diff-content[tabindex]') as HTMLElement;
+        if (diffContent) { diffContent.focus(); return; }
+      }
+    });
+  }, []);
+
   // Add new panel — always creates a new tab in the active tabset.
   const addPanel = useCallback((type: PanelType) => {
     const activeTabset = model.getActiveTabset();
@@ -180,13 +203,44 @@ export const FlexLayoutContainer = forwardRef<
     model.doAction(
       Actions.addNode(newTab, targetTabsetId, DockLocation.CENTER, -1)
     );
+    focusPanelContent();
+  }, [model, focusPanelContent]);
+
+  // Select a tab by its visual index (0-based) across all tabsets
+  const selectTabByIndex = useCallback((index: number) => {
+    const tabs: TabNode[] = [];
+    const visit = (node: any) => {
+      if (node.getType() === 'tab') {
+        tabs.push(node as TabNode);
+      }
+      if (node.getChildren) {
+        node.getChildren().forEach(visit);
+      }
+    };
+    visit(model.getRoot());
+    if (index >= 0 && index < tabs.length) {
+      model.doAction(Actions.selectTab(tabs[index].getId()));
+      focusPanelContent();
+    }
+  }, [model, focusPanelContent]);
+
+  // Close the currently active/selected tab
+  const closeActiveTab = useCallback(() => {
+    const activeTabset = model.getActiveTabset();
+    if (!activeTabset) return;
+    const selectedNode = activeTabset.getSelectedNode();
+    if (selectedNode) {
+      model.doAction(Actions.deleteTab(selectedNode.getId()));
+    }
   }, [model]);
 
   // Expose API via ref
   useImperativeHandle(ref, () => ({
     addPanel,
     getModel: () => model,
-  }), [addPanel, model]);
+    selectTabByIndex,
+    closeActiveTab,
+  }), [addPanel, model, selectTabByIndex, closeActiveTab]);
 
   // Get all tabs in the model
   const getAllTabs = useCallback(() => {

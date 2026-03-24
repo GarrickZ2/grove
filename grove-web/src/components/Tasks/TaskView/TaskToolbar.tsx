@@ -331,7 +331,7 @@ export function TaskToolbar({
             onClick={onAddChat}
             disabled={isArchived || !chatAvailable}
             title={!chatAvailable ? "No ACP agent available" : undefined}
-            shortcut="c"
+            shortcut="i"
           />
         )}
         {/* Terminal Button */}

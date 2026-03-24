@@ -10,7 +10,7 @@ import { RebaseDialog } from "./dialogs";
 import { HelpOverlay } from "./HelpOverlay";
 import { Button } from "../ui";
 import { ContextMenu } from "../ui/ContextMenu";
-import { useProject } from "../../context";
+import { useProject, useCommandPalette } from "../../context";
 import {
   useIsMobile,
   useHotkeys,
@@ -18,6 +18,7 @@ import {
   useTaskNavigation,
   usePostMergeArchive,
   useTaskOperations,
+  buildCommands,
 } from "../../hooks";
 import {
   createTask as apiCreateTask,
@@ -173,6 +174,13 @@ export function TasksPage({ initialTaskId, initialViewMode, onNavigationConsumed
     });
   }, [tasks, filter, pageState.searchQuery]);
 
+  // Auto-select first task when entering the page with no selection
+  useEffect(() => {
+    if (!pageState.selectedTask && !initialTaskId && filteredTasks.length > 0) {
+      pageHandlers.setSelectedTask(filteredTasks[0]);
+    }
+  }, [pageState.selectedTask, initialTaskId, filteredTasks, pageHandlers]);
+
   // Wrap page handlers to handle auto-start state
   const handleSelectTask = useCallback((task: Task) => {
     pageHandlers.handleSelectTask(task);
@@ -304,6 +312,33 @@ export function TasksPage({ initialTaskId, initialViewMode, onNavigationConsumed
   const canOperate = isActive && pageState.selectedTask!.status !== "broken";
   const notInWorkspace = !pageState.inWorkspace;
 
+  // Workspace keyboard shortcuts (higher priority than App-level)
+  // Cmd+1-9: switch panel tabs, Cmd+W / Alt+W: close active tab
+  useEffect(() => {
+    if (!pageState.inWorkspace) return;
+    const isTauri = !!(window as any).__TAURI__;
+    const handler = (e: KeyboardEvent) => {
+      // Cmd+1-9: switch panel tabs
+      if (e.metaKey && !e.altKey && !e.ctrlKey && e.key >= "1" && e.key <= "9") {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        taskViewRef.current?.selectTabByIndex(parseInt(e.key) - 1);
+        return;
+      }
+      // Close active tab: Cmd+W (Tauri) or Alt+W (web)
+      // Note: macOS Alt produces special chars (e.g. Alt+W → ∑), so use e.code
+      const isCloseTab = (isTauri && e.metaKey && e.code === "KeyW")
+        || (e.altKey && !e.metaKey && e.code === "KeyW");
+      if (isCloseTab) {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        taskViewRef.current?.closeActiveTab();
+      }
+    };
+    window.addEventListener("keydown", handler, true);
+    return () => window.removeEventListener("keydown", handler, true);
+  }, [pageState.inWorkspace]);
+
   // --- Register all hotkeys ---
   useHotkeys(
     [
@@ -340,6 +375,14 @@ export function TasksPage({ initialTaskId, initialViewMode, onNavigationConsumed
       { key: "s", handler: opsHandlers.handleSync, options: { enabled: canOperate } },
       { key: "m", handler: opsHandlers.handleMerge, options: { enabled: canOperate } },
       { key: "b", handler: opsHandlers.handleRebase, options: { enabled: canOperate } },
+      { key: "a", handler: opsHandlers.handleArchive, options: { enabled: isActive } },
+      { key: "x", handler: opsHandlers.handleReset, options: { enabled: canOperate } },
+      { key: "Shift+x", handler: opsHandlers.handleClean, options: { enabled: hasTask } },
+      // Panel shortcuts: workspace = add panel, task list = enter workspace + open panel
+      { key: "r", handler: () => pageState.inWorkspace ? handleAddPanel("review") : handleAddPanelFromInfo("review"), options: { enabled: hasTask && isActive } },
+      { key: "e", handler: () => pageState.inWorkspace ? handleAddPanel("editor") : handleAddPanelFromInfo("editor"), options: { enabled: hasTask && isActive } },
+      { key: "i", handler: () => pageState.inWorkspace ? handleAddPanel("chat") : handleAddPanelFromInfo("chat"), options: { enabled: hasTask && isActive } },
+      { key: "t", handler: () => pageState.inWorkspace ? handleAddPanel("terminal") : handleAddPanelFromInfo("terminal"), options: { enabled: hasTask && isActive } },
 
       // Search
       {
@@ -352,10 +395,37 @@ export function TasksPage({ initialTaskId, initialViewMode, onNavigationConsumed
       { key: "?", handler: () => pageHandlers.setShowHelp(!pageState.showHelp) },
     ],
     [
-      navHandlers, pageHandlers, opsHandlers,
+      navHandlers, pageHandlers, opsHandlers, handleAddPanelFromInfo, refreshSelectedProject,
       pageState.inWorkspace, pageState.selectedTask, hasTask, isActive, isArchived, canOperate, notInWorkspace,
     ]
   );
+
+  // Register page-level commands for Cmd+K command palette
+  const { registerPageCommands, unregisterPageCommands, setInWorkspace: setContextInWorkspace } = useCommandPalette();
+
+  // Sync inWorkspace to context so App can disable Cmd+1-4 sidebar switching
+  useEffect(() => {
+    setContextInWorkspace(pageState.inWorkspace);
+    return () => setContextInWorkspace(false);
+  }, [pageState.inWorkspace, setContextInWorkspace]);
+  const pageOptionsRef = useRef<Parameters<typeof buildCommands>[0]>(null!);
+  pageOptionsRef.current = {
+    taskActions: {
+      selectedTask: pageState.selectedTask,
+      inWorkspace: pageState.inWorkspace,
+      opsHandlers,
+      onEnterWorkspace: pageHandlers.handleEnterWorkspace,
+      onOpenPanel: (panel) => handleAddPanelFromInfo(panel as PanelType),
+      onSwitchInfoTab: pageHandlers.setInfoPanelTab,
+      onRefresh: refreshSelectedProject,
+      onNewTask: () => setShowNewTaskDialog(true),
+    },
+  };
+
+  useEffect(() => {
+    registerPageCommands(() => buildCommands(pageOptionsRef.current));
+    return () => unregisterPageCommands();
+  }, [registerPageCommands, unregisterPageCommands]);
 
   // If no project selected
   if (!selectedProject) {

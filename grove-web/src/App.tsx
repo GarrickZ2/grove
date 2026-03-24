@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Sidebar } from "./components/Layout/Sidebar";
 import { MobileHeader } from "./components/Layout/MobileHeader";
@@ -14,12 +14,17 @@ import { DiffReviewPage } from "./components/Review";
 import { SkillsPage } from "./components/Skills";
 import { ProjectStatsPage } from "./components/Stats/ProjectStatsPage";
 import { UpdateBanner } from "./components/ui/UpdateBanner";
-import { ThemeProvider, ProjectProvider, TerminalThemeProvider, NotificationProvider, ConfigProvider, useProject } from "./context";
+import { CommandPalette } from "./components/ui/CommandPalette";
+import { ProjectCommandPalette } from "./components/ui/ProjectCommandPalette";
+import { TaskCommandPalette } from "./components/ui/TaskCommandPalette";
+import { ThemeProvider, ProjectProvider, TerminalThemeProvider, NotificationProvider, ConfigProvider, CommandPaletteProvider, useProject, useCommandPalette, useTheme } from "./context";
 import { AuthGate } from "./components/AuthGate";
+import type { Task } from "./data/types";
 import { mockConfig } from "./data/mockData";
-import { getConfig, patchConfig, checkCommands } from "./api";
+import { getConfig, patchConfig, checkCommands, openIDE, openTerminal } from "./api";
 import { agentOptions } from "./components/ui";
-import { useIsMobile } from "./hooks";
+import { useIsMobile, useHotkeys, buildCommands } from "./hooks";
+import type { UseCommandsOptions } from "./hooks/useCommands";
 
 export type TasksMode = "zen" | "blitz";
 
@@ -35,6 +40,30 @@ function AppContent() {
   const [addProjectError, setAddProjectError] = useState<string | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const { isMobile } = useIsMobile();
+  const {
+    open: openCommandPalette, openProjectPalette, openTaskPalette,
+    closeProjectPalette, closeTaskPalette,
+    projectPaletteOpen, taskPaletteOpen,
+    registerGlobalCommands,
+    inWorkspace,
+  } = useCommandPalette();
+  const { theme } = useTheme();
+
+  const NAV_ITEMS = ["dashboard", "tasks", "skills", "statistics"] as const;
+
+  const isZenMode = tasksMode === "zen";
+
+  // Cmd+K = command palette, Cmd+P = project palette, Cmd+T = task palette
+  // Cmd+1-4 = tab switch (Zen mode only; Blitz uses Cmd+1-9 for task selection)
+  useHotkeys([
+    { key: "Meta+k", handler: openCommandPalette },
+    { key: "Meta+p", handler: openProjectPalette },
+    { key: "Meta+o", handler: openTaskPalette },
+    { key: "Meta+1", handler: () => setActiveItem(NAV_ITEMS[0]), options: { enabled: isZenMode && !inWorkspace } },
+    { key: "Meta+2", handler: () => setActiveItem(NAV_ITEMS[1]), options: { enabled: isZenMode && !inWorkspace } },
+    { key: "Meta+3", handler: () => setActiveItem(NAV_ITEMS[2]), options: { enabled: isZenMode && !inWorkspace } },
+    { key: "Meta+4", handler: () => setActiveItem(NAV_ITEMS[3]), options: { enabled: isZenMode && !inWorkspace } },
+  ], [openCommandPalette, openProjectPalette, openTaskPalette, isZenMode, inWorkspace]);
 
   const handleSwitchToZen = useCallback(() => {
     setTasksMode("zen");
@@ -167,6 +196,60 @@ function AppContent() {
     setActiveItem("dashboard");
   }, []);
 
+  // Task palette: navigate to tasks page and select the task
+  const handleTaskSelectFromPalette = useCallback((task: Task) => {
+    setActiveItem("tasks");
+    setNavigationData({ taskId: task.id });
+  }, []);
+
+  // Register global commands for the command palette
+  const toggleMode = useCallback(() => {
+    setTasksMode((prev) => (prev === "zen" ? "blitz" : "zen"));
+  }, []);
+  const toggleSidebar = useCallback(() => {
+    setSidebarCollapsed((prev) => !prev);
+  }, []);
+  const handleOpenIDE = useCallback(() => {
+    if (selectedProject) openIDE(selectedProject.id);
+  }, [selectedProject]);
+  const handleOpenTerminal = useCallback(() => {
+    if (selectedProject) openTerminal(selectedProject.id);
+  }, [selectedProject]);
+
+  // Register global command builder — uses refs internally, no re-renders
+  const globalOptionsRef = useRef<UseCommandsOptions>(null!);
+  globalOptionsRef.current = {
+    navigation: {
+      onNavigate: setActiveItem,
+      activeItem,
+    },
+    project: {
+      projects,
+      selectedProject,
+      onSelectProject: selectProject,
+      onAddProject: () => setShowAddProject(true),
+      onProjectSwitch: handleProjectSwitch,
+      accentPalette: theme.accentPalette,
+    },
+    mode: {
+      tasksMode,
+      onToggleMode: toggleMode,
+      onToggleSidebar: toggleSidebar,
+    },
+    palettes: {
+      onOpenProjectPalette: openProjectPalette,
+      onOpenTaskPalette: openTaskPalette,
+    },
+    projectActions: selectedProject ? {
+      onOpenIDE: handleOpenIDE,
+      onOpenTerminal: handleOpenTerminal,
+    } : undefined,
+  };
+
+  useEffect(() => {
+    registerGlobalCommands(() => buildCommands(globalOptionsRef.current));
+  }, [registerGlobalCommands]);
+
   // Show loading state
   if (isLoading) {
     return (
@@ -292,6 +375,19 @@ function AppContent() {
           isLoading={isAddingProject}
           externalError={addProjectError}
         />
+        <CommandPalette />
+        <ProjectCommandPalette
+          isOpen={projectPaletteOpen}
+          onClose={closeProjectPalette}
+          onProjectSelect={handleProjectSwitch}
+        />
+        <TaskCommandPalette
+          isOpen={taskPaletteOpen}
+          onClose={closeTaskPalette}
+          tasks={selectedProject?.tasks ?? []}
+          selectedTask={null}
+          onTaskSelect={handleTaskSelectFromPalette}
+        />
       </div>
     );
   }
@@ -340,6 +436,19 @@ function AppContent() {
         isLoading={isAddingProject}
         externalError={addProjectError}
       />
+      <CommandPalette />
+      <ProjectCommandPalette
+        isOpen={projectPaletteOpen}
+        onClose={closeProjectPalette}
+        onProjectSelect={handleProjectSwitch}
+      />
+      <TaskCommandPalette
+        isOpen={taskPaletteOpen}
+        onClose={closeTaskPalette}
+        tasks={selectedProject?.tasks ?? []}
+        selectedTask={null}
+        onTaskSelect={handleTaskSelectFromPalette}
+      />
     </div>
   );
 }
@@ -362,7 +471,9 @@ function App() {
           <TerminalThemeProvider>
             <ProjectProvider>
               <NotificationProvider>
-                <AppContent />
+                <CommandPaletteProvider>
+                  <AppContent />
+                </CommandPaletteProvider>
               </NotificationProvider>
             </ProjectProvider>
           </TerminalThemeProvider>
