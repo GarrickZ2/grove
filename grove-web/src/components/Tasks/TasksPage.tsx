@@ -223,22 +223,21 @@ export function TasksPage({ initialTaskId, initialViewMode, onNavigationConsumed
     }
   }, [selectedProject, pageState.selectedTask, refreshSelectedProject, pageHandlers]);
 
-  // 统一的 panel 添加处理函数（用于 Terminal/Chat/Review/Editor/Stats/Git/Notes/Comments）
+  // Unified panel add handler (Terminal/Chat/Review/Editor/Stats/Git/Notes/Comments)
   const handleAddPanel = useCallback((type: PanelType) => {
-    console.log(`Opening panel: ${type}`);
-    // 调用 TaskView 的 addPanel 方法
+    // Call TaskView's addPanel method
     if (taskViewRef.current) {
       taskViewRef.current.addPanel(type);
     }
   }, []);
 
-  // Handle adding panel from Info Panel (方案 A)
+  // Handle adding panel from Info Panel (enter workspace + open panel)
   const handleAddPanelFromInfo = useCallback((type: PanelType) => {
     pageHandlers.setInWorkspace(true);
     pageHandlers.setPendingPanel(type);
   }, [pageHandlers]);
 
-  // 方案 A: 使用 useEffect 处理 pendingPanel
+  // Process pendingPanel after entering workspace
   useEffect(() => {
     if (pageState.inWorkspace && pageState.pendingPanel && taskViewRef.current) {
       taskViewRef.current.addPanel(pageState.pendingPanel);
@@ -264,7 +263,7 @@ export function TasksPage({ initialTaskId, initialViewMode, onNavigationConsumed
         pageHandlers.setSelectedTask(newTask);
         pageHandlers.setInWorkspace(true);
 
-        // 🚀 优化: 异步刷新,不阻塞 UI
+        // Async refresh, don't block UI
         refreshSelectedProject();
       } catch (err: unknown) {
         console.error("Failed to create task:", err);
@@ -280,22 +279,6 @@ export function TasksPage({ initialTaskId, initialViewMode, onNavigationConsumed
     },
     [selectedProject, refreshSelectedProject, pageHandlers]
   );
-
-  // Deprecated - page is no longer in use
-  // const handleStartSession = useCallback(() => {
-  //   pageHandlers.setViewMode("terminal");
-  // }, [pageHandlers]);
-
-  // // Handle terminal connected - refresh to update task status to "live"
-  // const handleTerminalConnected = useCallback(async () => {
-  //   await refreshSelectedProject();
-  //   setAutoStartSession(false);
-  // }, [refreshSelectedProject]);
-
-  // // Handle terminal disconnected - refresh to update task status to "idle"
-  // const handleTerminalDisconnected = useCallback(async () => {
-  //   await refreshSelectedProject();
-  // }, [refreshSelectedProject]);
 
   // Task navigation hook
   const navHandlers = useTaskNavigation({
@@ -458,10 +441,10 @@ export function TasksPage({ initialTaskId, initialViewMode, onNavigationConsumed
       initial={{ opacity: 0, y: 20 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.3 }}
-      className={isMobile ? "h-[calc(100vh-48px)] flex flex-col" : "h-[calc(100vh-48px)] flex flex-col"}
+      className="h-full flex flex-col"
     >
-      {/* Header - hidden in fullscreen */}
-      {!isFullscreen && (
+      {/* Header - hidden in fullscreen and workspace */}
+      {!isFullscreen && !pageState.inWorkspace && (
         <div className="flex items-center justify-between mb-4 flex-shrink-0">
           {isMobile && mobileShowDetail ? (
             <button
@@ -509,7 +492,7 @@ export function TasksPage({ initialTaskId, initialViewMode, onNavigationConsumed
                 className="absolute inset-0"
               >
                 {pageState.inWorkspace ? (
-                  <div className="h-full flex flex-col gap-2">
+                  <div className="h-full flex flex-col">
                     <TaskView
                       ref={taskViewRef}
                       projectId={selectedProject.id}
@@ -517,6 +500,7 @@ export function TasksPage({ initialTaskId, initialViewMode, onNavigationConsumed
                       projectName={selectedProject.name}
                       fullscreen={isFullscreen}
                       onFullscreenChange={setIsFullscreen}
+                      onBack={handleMobileBack}
                       onCommit={opsHandlers.handleCommit}
                       onRebase={opsHandlers.handleRebase}
                       onSync={opsHandlers.handleSync}
@@ -659,24 +643,12 @@ export function TasksPage({ initialTaskId, initialViewMode, onNavigationConsumed
               {pageState.inWorkspace && pageState.selectedTask && (
                 <motion.div
                   key={pageState.selectedTask.id}
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                  exit={{ opacity: 0 }}
-                  transition={{ duration: 0.15 }}
-                  className="absolute inset-0 flex gap-3"
+                  initial={{ opacity: 0, scale: 0.97 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  exit={{ opacity: 0, scale: 0.97 }}
+                  transition={{ duration: 0.35, ease: [0.25, 1, 0.5, 1] }}
+                  className="absolute inset-0 flex gap-1"
                 >
-                  {/* Info Panel (collapsible vertical bar in Workspace) - hidden in fullscreen */}
-                  {!isFullscreen && (
-                    <TaskInfoPanel
-                      projectId={selectedProject.id}
-                      task={pageState.selectedTask}
-                      projectName={selectedProject.name}
-                      onClose={pageHandlers.handleCloseTask}
-                      isTerminalMode
-                      onAddPanel={handleAddPanel}
-                    />
-                  )}
-
                   <TaskView
                     ref={taskViewRef}
                     projectId={selectedProject.id}
@@ -684,6 +656,7 @@ export function TasksPage({ initialTaskId, initialViewMode, onNavigationConsumed
                     projectName={selectedProject.name}
                     fullscreen={isFullscreen}
                     onFullscreenChange={setIsFullscreen}
+                    onBack={pageHandlers.handleCloseTask}
                     onCommit={opsHandlers.handleCommit}
                     onRebase={opsHandlers.handleRebase}
                     onSync={opsHandlers.handleSync}

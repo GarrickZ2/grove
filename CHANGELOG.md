@@ -5,6 +5,26 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.10] - 2026-03-24
+
+### Changed
+
+- **Workspace redesign** — removed top toolbar and left sidebar activity bar; workspace now has a clean two-layer layout: breadcrumb bar + FlexLayout tabs
+- **Workspace bar** — new breadcrumb bar with back button, project name, task name, branch info, and inline git action buttons (Commit/Merge/Sync + overflow menu)
+- **Panel add menu** — moved to FlexLayout tab bar [+] hover dropdown; includes all panel types (Chat/Terminal/Review/Editor/Stats/Git/Notes/Comments)
+- **Sidebar Search** — added Search button with ⌘K shortcut hint to app sidebar footer
+- **Empty workspace state** — shows quick-add panel buttons and ⌘K hint when no panels are open
+- **Default workspace** — new workspaces start empty; user chooses what to open (saved layouts still restore)
+
+### Improved
+
+- **Workspace padding** — reduced from 24px to 8px in workspace mode, maximizing content area
+- **Workspace transition** — smooth scale + opacity animation when entering/exiting workspace
+- **Tab numbering** — panel numbers now based on max existing number +1 instead of ever-incrementing counter; resets properly when all tabs close
+- **Comments icon** — now uses MessageCircle to distinguish from Chat's MessageSquare
+- **Maximize button** — shows Minimize2 icon when panel is maximized for clearer restore affordance
+- **Code quality** — translated all Chinese comments to English, removed dead code, wrapped handlers in useCallback, fixed stale closure dependencies
+
 ## [0.7.9] - 2026-03-23
 
 ### Changed

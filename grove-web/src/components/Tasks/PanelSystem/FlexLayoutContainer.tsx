@@ -1,7 +1,12 @@
-import { useState, useRef, useCallback, forwardRef, useImperativeHandle } from 'react';
+import { useState, useRef, useCallback, useEffect, forwardRef, useImperativeHandle } from 'react';
+import { createPortal } from 'react-dom';
 import { Layout, Model, TabNode, Actions, DockLocation, TabSetNode, BorderNode } from 'flexlayout-react';
 import type { IJsonModel, ITabRenderValues, ITabSetRenderValues } from 'flexlayout-react';
-import { Terminal, MessageSquare, Code, FileCode, BarChart3, GitBranch, FileText, MessageSquare as CommentIcon, X, XCircle, Trash2, Maximize } from 'lucide-react';
+import {
+  Terminal, MessageSquare, Code, FileCode, BarChart3, GitBranch, FileText,
+  MessageCircle, X, XCircle, Trash2,
+  Plus, Maximize, Minimize2,
+} from 'lucide-react';
 import 'flexlayout-react/style/light.css';
 import './flexlayout-theme.css';
 import type { Task } from '../../../data/types';
@@ -13,6 +18,164 @@ import { TaskEditor } from '../TaskView/TaskEditor';
 import { StatsTab, GitTab, NotesTab, CommentsTab } from '../TaskInfoPanel/tabs';
 import { ContextMenu, type ContextMenuItem } from '../../ui/ContextMenu';
 import { useConfig } from '../../../context';
+
+// --- TabBar Dropdown Menu ---
+interface DropdownItem {
+  id: string;
+  label: string;
+  icon: typeof Plus;
+  onClick: () => void;
+  shortcut?: string;
+  variant?: 'default' | 'warning' | 'danger';
+  disabled?: boolean;
+  separator?: boolean;
+}
+
+// Shared inline-button style for tab bar controls
+const tabBarBtnStyle = (active = false): React.CSSProperties => ({
+  padding: '3px 6px',
+  background: active ? 'var(--color-bg-tertiary)' : 'transparent',
+  border: '1px solid transparent',
+  cursor: 'pointer',
+  color: 'var(--color-text-muted)',
+  display: 'flex',
+  alignItems: 'center',
+  gap: '3px',
+  borderRadius: '5px',
+  fontSize: '11px',
+  fontWeight: 500,
+  lineHeight: 1,
+  transition: 'all 0.15s ease',
+});
+
+function TabBarDropdown({ icon: TriggerIcon, items, title, label }: {
+  icon: typeof Plus;
+  items: DropdownItem[];
+  title: string;
+  label?: string;
+}) {
+  const [isOpen, setIsOpen] = useState(false);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+  const [menuPos, setMenuPos] = useState({ top: 0, left: 0 });
+  const closeTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
+
+  // Clean up timer on unmount
+  useEffect(() => {
+    return () => { if (closeTimer.current) clearTimeout(closeTimer.current); };
+  }, []);
+
+  // Close when clicking outside
+  useEffect(() => {
+    if (!isOpen) return;
+    const handleClickOutside = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node) &&
+          triggerRef.current && !triggerRef.current.contains(e.target as Node)) {
+        setIsOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [isOpen]);
+
+  const openMenu = () => {
+    if (closeTimer.current) clearTimeout(closeTimer.current);
+    if (!isOpen && triggerRef.current) {
+      const rect = triggerRef.current.getBoundingClientRect();
+      setMenuPos({ top: rect.bottom + 4, left: rect.right });
+    }
+    setIsOpen(true);
+  };
+
+  const scheduleClose = () => {
+    closeTimer.current = setTimeout(() => setIsOpen(false), 150);
+  };
+
+  const cancelClose = () => {
+    if (closeTimer.current) clearTimeout(closeTimer.current);
+  };
+
+  const getVariantColor = (variant?: string) => {
+    switch (variant) {
+      case 'warning': return 'var(--color-warning)';
+      case 'danger': return 'var(--color-error)';
+      default: return 'var(--color-text)';
+    }
+  };
+
+  return (
+    <>
+      <button
+        ref={triggerRef}
+        onMouseEnter={openMenu}
+        onMouseLeave={scheduleClose}
+        title={title}
+        style={tabBarBtnStyle(isOpen)}
+      >
+        <TriggerIcon size={13} />
+        {label && <span>{label}</span>}
+      </button>
+      {isOpen && createPortal(
+        <div
+          ref={menuRef}
+          onMouseEnter={cancelClose}
+          onMouseLeave={scheduleClose}
+          style={{
+            position: 'fixed',
+            top: menuPos.top,
+            left: menuPos.left,
+            transform: 'translateX(-100%)',
+            zIndex: 10000,
+            minWidth: '200px',
+            padding: '5px',
+            borderRadius: '10px',
+            border: '1px solid var(--color-border)',
+            background: 'var(--color-bg)',
+            boxShadow: '0 12px 40px rgba(0,0,0,0.18), 0 4px 12px rgba(0,0,0,0.08)',
+          }}
+        >
+          {items.map((item, i) => (
+            <div key={item.id}>
+              {item.separator && i > 0 && (
+                <div style={{ height: '1px', background: 'var(--color-border)', margin: '4px 6px' }} />
+              )}
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  if (!item.disabled) {
+                    item.onClick();
+                    setIsOpen(false);
+                  }
+                }}
+                disabled={item.disabled}
+                className={`w-full flex items-center gap-2.5 px-3 py-2 text-[12.5px] font-medium rounded-md transition-colors ${item.disabled ? 'opacity-35 cursor-not-allowed' : 'cursor-pointer hover:bg-[var(--color-bg-tertiary)]'}`}
+                style={{ border: 'none', background: 'none', textAlign: 'left', color: getVariantColor(item.variant) }}
+              >
+                <item.icon size={14} style={{ flexShrink: 0, opacity: 0.8 }} />
+                <span style={{ flex: 1 }}>{item.label}</span>
+                {item.shortcut && (
+                  <kbd style={{
+                    fontSize: '10px',
+                    fontFamily: 'SF Mono, Menlo, monospace',
+                    padding: '2px 5px',
+                    borderRadius: '4px',
+                    border: '1px solid var(--color-border)',
+                    background: 'var(--color-bg-secondary)',
+                    color: 'var(--color-text-muted)',
+                    lineHeight: 1,
+                  }}>
+                    {item.shortcut}
+                  </kbd>
+                )}
+              </button>
+            </div>
+          ))}
+        </div>,
+        document.body
+      )}
+    </>
+  );
+}
 
 interface FlexLayoutContainerProps {
   task: Task;
@@ -63,48 +226,25 @@ export const FlexLayoutContainer = forwardRef<
     return labels[type];
   };
 
-  // Create default layout
-  const createDefaultLayout = (): IJsonModel => {
-    // Determine default panel based on global config (only if enabled AND available)
-    let defaultPanelType: PanelType | null = null;
-    if (config?.enable_chat && chatAvailable) {
-      defaultPanelType = 'chat';
-    } else if (config?.enable_terminal && terminalAvailable) {
-      defaultPanelType = 'terminal';
-    }
-
-    if (defaultPanelType) {
-      instanceCounters.current[defaultPanelType] = 1;
-    }
-
-    return {
-      global: {
-        tabEnableClose: true,
-        tabEnableRename: false,
-        tabSetEnableDeleteWhenEmpty: true,
-        tabSetEnableDrop: true,
-        tabSetEnableDrag: true,
-        tabSetEnableDivide: true,
-        tabSetEnableMaximize: false, // 禁用原生最大化按钮，使用自定义按钮
-        splitterSize: 4,
-      },
-      borders: [],
-      layout: {
-        type: 'row',
-        weight: 100,
-        children: defaultPanelType ? [
-          {
-            type: 'tabset',
-            weight: 100,
-            active: true,
-            children: [
-              createTabNode(defaultPanelType, 1),
-            ],
-          },
-        ] : [], // 空布局
-      },
-    };
-  };
+  // Create default layout — empty, user chooses what to open
+  const createDefaultLayout = (): IJsonModel => ({
+    global: {
+      tabEnableClose: true,
+      tabEnableRename: false,
+      tabSetEnableDeleteWhenEmpty: true,
+      tabSetEnableDrop: true,
+      tabSetEnableDrag: true,
+      tabSetEnableDivide: true,
+      tabSetEnableMaximize: false,
+      splitterSize: 4,
+    },
+    borders: [],
+    layout: {
+      type: 'row',
+      weight: 100,
+      children: [],
+    },
+  });
 
   // Create tab node
   const createTabNode = (type: PanelType, instanceNumber: number) => {
@@ -167,7 +307,7 @@ export const FlexLayoutContainer = forwardRef<
     tabId: string;
   } | null>(null);
 
-  // Fullscreen panel state (记录哪个 panel/tabset 正在全屏)
+  // Fullscreen panel state (tracks which tabset is maximized)
   const [fullscreenPanelId, setFullscreenPanelId] = useState<string | null>(null);
 
   // Auto-focus the content inside a panel after switching to it
@@ -191,12 +331,36 @@ export const FlexLayoutContainer = forwardRef<
     });
   }, []);
 
+  // Get all tabs in the model
+  const getAllTabs = useCallback(() => {
+    const tabs: TabNode[] = [];
+    const visit = (node: any) => {
+      if (node.getType() === 'tab') {
+        tabs.push(node as TabNode);
+      }
+      if (node.getChildren) {
+        node.getChildren().forEach(visit);
+      }
+    };
+    visit(model.getRoot());
+    return tabs;
+  }, [model]);
+
   // Add new panel — always creates a new tab in the active tabset.
   const addPanel = useCallback((type: PanelType) => {
     const activeTabset = model.getActiveTabset();
 
-    instanceCounters.current[type]++;
-    const instanceNumber = instanceCounters.current[type];
+    // Find max existing number for this type from current tabs
+    let maxNum = 0;
+    const allTabs = getAllTabs();
+    for (const tab of allTabs) {
+      const match = tab.getId().match(new RegExp(`^${type}-(\\d+)$`));
+      if (match) {
+        maxNum = Math.max(maxNum, parseInt(match[1], 10));
+      }
+    }
+    const instanceNumber = maxNum + 1;
+
     const newTab = createTabNode(type, instanceNumber);
     const targetTabsetId = activeTabset?.getId() ?? model.getRoot().getId();
 
@@ -204,7 +368,7 @@ export const FlexLayoutContainer = forwardRef<
       Actions.addNode(newTab, targetTabsetId, DockLocation.CENTER, -1)
     );
     focusPanelContent();
-  }, [model, focusPanelContent]);
+  }, [model, focusPanelContent, getAllTabs]);
 
   // Select a tab by its visual index (0-based) across all tabsets
   const selectTabByIndex = useCallback((index: number) => {
@@ -241,21 +405,6 @@ export const FlexLayoutContainer = forwardRef<
     selectTabByIndex,
     closeActiveTab,
   }), [addPanel, model, selectTabByIndex, closeActiveTab]);
-
-  // Get all tabs in the model
-  const getAllTabs = useCallback(() => {
-    const tabs: TabNode[] = [];
-    const visit = (node: any) => {
-      if (node.getType() === 'tab') {
-        tabs.push(node as TabNode);
-      }
-      if (node.getChildren) {
-        node.getChildren().forEach(visit);
-      }
-    };
-    visit(model.getRoot());
-    return tabs;
-  }, [model]);
 
   // Context menu handlers
   const handleCloseTab = useCallback((tabId: string) => {
@@ -310,31 +459,31 @@ export const FlexLayoutContainer = forwardRef<
     ];
   }, [getAllTabs, handleCloseTab, handleCloseOthers, handleCloseAll]);
 
-  // 获取面板类型的图标和颜色
+  // Get panel icon and color by type
   const getPanelIconAndColor = (type: string): { icon: typeof Terminal; color: string } => {
     switch (type) {
       case 'terminal':
-        return { icon: Terminal, color: '#16a34a' }; // 绿色
+        return { icon: Terminal, color: '#16a34a' }; // green
       case 'chat':
-        return { icon: MessageSquare, color: '#3b82f6' }; // 蓝色
+        return { icon: MessageSquare, color: '#3b82f6' }; // blue
       case 'review':
-        return { icon: Code, color: '#a855f7' }; // 紫色
+        return { icon: Code, color: '#a855f7' }; // purple
       case 'editor':
-        return { icon: FileCode, color: '#f59e0b' }; // 橙色
+        return { icon: FileCode, color: '#f59e0b' }; // orange
       case 'stats':
-        return { icon: BarChart3, color: '#06b6d4' }; // 青色
+        return { icon: BarChart3, color: '#06b6d4' }; // cyan
       case 'git':
-        return { icon: GitBranch, color: '#10b981' }; // 翠绿色
+        return { icon: GitBranch, color: '#10b981' }; // teal
       case 'notes':
-        return { icon: FileText, color: '#8b5cf6' }; // 紫罗兰
+        return { icon: FileText, color: '#8b5cf6' }; // violet
       case 'comments':
-        return { icon: CommentIcon, color: '#ec4899' }; // 粉色
+        return { icon: MessageCircle, color: '#ec4899' }; // pink
       default:
-        return { icon: Terminal, color: '#6b7280' }; // 灰色
+        return { icon: Terminal, color: '#6b7280' }; // grey
     }
   };
 
-  // 自定义 Tab 渲染（支持双击重命名）
+  // Custom tab rendering (supports double-click rename)
   const renameBlurTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
   const onRenderTab = useCallback((node: TabNode, renderValues: ITabRenderValues) => {
     const component = node.getComponent() || 'terminal';
@@ -386,7 +535,7 @@ export const FlexLayoutContainer = forwardRef<
             onPointerDown={(e) => e.stopPropagation()}
             onMouseDown={(e) => e.stopPropagation()}
             onFocus={() => {
-              // 清除 blur timer，防止刚聚焦就被取消
+              // Clear blur timer to prevent immediate cancellation on focus
               if (renameBlurTimer.current) clearTimeout(renameBlurTimer.current);
             }}
             onKeyDown={(e) => {
@@ -400,7 +549,7 @@ export const FlexLayoutContainer = forwardRef<
             }}
             onBlur={(e) => {
               const val = e.target.value.trim();
-              // 延迟处理 blur，避免 flexlayout 内部抢焦点导致瞬间取消
+              // Delay blur handling to prevent flexlayout's internal focus stealing
               renameBlurTimer.current = setTimeout(() => {
                 if (val) model.doAction(Actions.renameTab(tabId, val));
                 setEditingTabId(null);
@@ -414,56 +563,72 @@ export const FlexLayoutContainer = forwardRef<
     );
   }, [editingTabId, model]);
 
-  // 自定义 TabSet 渲染（添加最大化按钮到 Panel）
+  // Build dropdown items for [+] Add Panel button
+  const addPanelItems = useCallback((): DropdownItem[] => {
+    const items: DropdownItem[] = [];
+    if (config?.enable_chat) {
+      items.push({ id: 'chat', label: 'Chat', icon: MessageSquare, onClick: () => addPanel('chat'), shortcut: 'i', disabled: !chatAvailable });
+    }
+    if (config?.enable_terminal) {
+      items.push({ id: 'terminal', label: 'Terminal', icon: Terminal, onClick: () => addPanel('terminal'), shortcut: 't', disabled: !terminalAvailable });
+    }
+    items.push(
+      { id: 'review', label: 'Review', icon: Code, onClick: () => addPanel('review'), shortcut: 'r' },
+      { id: 'editor', label: 'Editor', icon: FileCode, onClick: () => addPanel('editor'), shortcut: 'e' },
+      { id: 'stats', label: 'Stats', icon: BarChart3, onClick: () => addPanel('stats'), separator: true },
+      { id: 'git', label: 'Git', icon: GitBranch, onClick: () => addPanel('git') },
+      { id: 'notes', label: 'Notes', icon: FileText, onClick: () => addPanel('notes') },
+      { id: 'comments', label: 'Comments', icon: MessageCircle, onClick: () => addPanel('comments') },
+    );
+    return items;
+  }, [config, chatAvailable, terminalAvailable, addPanel]);
+
+  // Custom TabSet rendering ([+] add panel + maximize button)
   const onRenderTabSet = useCallback((tabSetNode: TabSetNode | BorderNode, renderValues: ITabSetRenderValues) => {
     const panelId = tabSetNode.getId();
-    const isFullscreen = fullscreenPanelId === panelId;
+    const isMaximized = fullscreenPanelId === panelId;
 
-    // 添加最大化按钮到 tabset header
     renderValues.buttons = renderValues.buttons || [];
+
+    // [+] Add Panel dropdown
+    renderValues.buttons.push(
+      <TabBarDropdown
+        key="add-panel"
+        icon={Plus}
+        items={addPanelItems()}
+        title="Add Panel"
+      />
+    );
+
+    // Maximize this tabset (FlexLayout maximize + page-level fullscreen)
     renderValues.buttons.push(
       <button
         key="maximize-panel"
         onClick={(e) => {
           e.stopPropagation();
-          if (isFullscreen) {
-            // 退出全屏：恢复 Layout + 恢复页面级 UI
-            model.doAction(Actions.maximizeToggle(panelId));
+          model.doAction(Actions.maximizeToggle(panelId));
+          if (isMaximized) {
             setFullscreenPanelId(null);
-            if (onToggleFullscreen) {
-              onToggleFullscreen();
-            }
           } else {
-            // 进入全屏：最大化 Panel + 隐藏页面级 UI
-            model.doAction(Actions.maximizeToggle(panelId));
             setFullscreenPanelId(panelId);
-            if (onToggleFullscreen) {
-              onToggleFullscreen();
-            }
           }
+          onToggleFullscreen?.();
         }}
-        style={{
-          padding: '4px',
-          background: 'transparent',
-          border: 'none',
-          cursor: 'pointer',
-          color: 'var(--color-text-muted)',
-          display: 'flex',
-          alignItems: 'center',
-          borderRadius: '3px',
-        }}
+        style={tabBarBtnStyle(false)}
         onMouseEnter={(e) => {
           e.currentTarget.style.background = 'var(--color-bg-tertiary)';
+          e.currentTarget.style.color = 'var(--color-text)';
         }}
         onMouseLeave={(e) => {
           e.currentTarget.style.background = 'transparent';
+          e.currentTarget.style.color = 'var(--color-text-muted)';
         }}
-        title={isFullscreen ? "Exit Fullscreen" : "Fullscreen"}
+        title={isMaximized ? "Restore" : "Maximize"}
       >
-        <Maximize size={14} />
+        {isMaximized ? <Minimize2 size={13} /> : <Maximize size={13} />}
       </button>
     );
-  }, [model, fullscreenPanelId, onToggleFullscreen]);
+  }, [addPanelItems, model, fullscreenPanelId, onToggleFullscreen]);
 
   // Factory function: render panel components based on tab type
   const factory = useCallback((node: TabNode) => {
@@ -556,19 +721,22 @@ export const FlexLayoutContainer = forwardRef<
     }
   }, [projectId, task, model]);
 
+  // Track empty state
+  const [isEmpty, setIsEmpty] = useState(() => getAllTabs().length === 0);
+
   // Handle model change (for persistence)
-  const handleModelChange = (model: Model) => {
+  const handleModelChange = useCallback((m: Model) => {
     try {
-      const json = model.toJson();
+      const json = m.toJson();
       localStorage.setItem(`grove-flexlayout-${task.id}`, JSON.stringify(json));
       onLayoutChange?.(json);
     } catch (error) {
       console.error('Failed to save layout:', error);
     }
-  };
+    setIsEmpty(getAllTabs().length === 0);
+  }, [task.id, onLayoutChange, getAllTabs]);
 
-
-  // 如果有 panel 正在全屏，只渲染该 panel
+  // Fullscreen: maximize panel to fill entire container
   if (fullscreenPanelId && fullscreen) {
     const fullscreenTabSet = model.getNodeById(fullscreenPanelId);
     if (fullscreenTabSet && fullscreenTabSet.getType() === 'tabset') {
@@ -597,6 +765,38 @@ export const FlexLayoutContainer = forwardRef<
           onModelChange={handleModelChange}
         />
       </div>
+
+      {/* Empty state overlay */}
+      {isEmpty && (
+        <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+          <div className="pointer-events-auto flex flex-col items-center gap-4 text-center">
+            <p className="text-sm text-[var(--color-text-muted)]">
+              Open a panel to get started
+            </p>
+            <div className="flex items-center gap-2">
+              {config?.enable_chat && chatAvailable && (
+                <button onClick={() => addPanel('chat')} className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md border border-[var(--color-border)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-bg-tertiary)] transition-colors">
+                  <MessageSquare size={13} /> Chat
+                </button>
+              )}
+              {config?.enable_terminal && terminalAvailable && (
+                <button onClick={() => addPanel('terminal')} className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md border border-[var(--color-border)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-bg-tertiary)] transition-colors">
+                  <Terminal size={13} /> Terminal
+                </button>
+              )}
+              <button onClick={() => addPanel('review')} className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md border border-[var(--color-border)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-bg-tertiary)] transition-colors">
+                <Code size={13} /> Review
+              </button>
+              <button onClick={() => addPanel('editor')} className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md border border-[var(--color-border)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-bg-tertiary)] transition-colors">
+                <FileCode size={13} /> Editor
+              </button>
+            </div>
+            <p className="text-[11px] text-[var(--color-text-muted)] opacity-60">
+              <kbd className="px-1.5 py-0.5 text-[10px] font-mono rounded border border-[var(--color-border)] bg-[var(--color-bg-tertiary)]">⌘K</kbd> for all actions
+            </p>
+          </div>
+        </div>
+      )}
 
       {/* Context Menu */}
       {contextMenu && (

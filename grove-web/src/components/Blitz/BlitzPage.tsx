@@ -58,6 +58,7 @@ export function BlitzPage({ onSwitchToZen }: BlitzPageProps) {
   const mainListRef = useRef<HTMLDivElement | null>(null);
   const searchInputRef = useRef<HTMLInputElement | null>(null);
   const taskViewRef = useRef<TaskViewHandle | null>(null);
+  const [isFullscreen, setIsFullscreen] = useState(false);
 
   // Archive confirmation state (shared between hooks)
   const [pendingArchiveConfirm, setPendingArchiveConfirm] = useState<PendingArchiveConfirm | null>(null);
@@ -113,7 +114,7 @@ export function BlitzPage({ onSwitchToZen }: BlitzPageProps) {
   // Keep selectedBlitzTask in sync with refreshed data
   const currentSelected = useMemo(() => {
     if (!selectedBlitzTask) return null;
-    return filteredTasks.find((bt) => bt.task.id === selectedBlitzTask.task.id && bt.projectId === selectedBlitzTask.projectId) ?? selectedBlitzTask;
+    return filteredTasks.find((bt) => bt.task.id === selectedBlitzTask.task.id && bt.projectId === selectedBlitzTask.projectId) ?? null;
   }, [filteredTasks, selectedBlitzTask]);
 
   // Separate filtered tasks into main-eligible and folder-local
@@ -163,6 +164,20 @@ export function BlitzPage({ onSwitchToZen }: BlitzPageProps) {
   // Combined for navigation (main + visible folder locals)
   const displayTasks = useMemo(() => [...mainListTasks, ...folderLocalTasks], [mainListTasks, folderLocalTasks]);
 
+  // Task selection handlers (Blitz-specific: handle BlitzTask)
+  const handleSelectTask = useCallback((bt: BlitzTask) => {
+    setSelectedBlitzTask(bt);
+    if (isMobile) {
+      setMobileShowDetail(true);
+    }
+  }, [isMobile]);
+
+  const handleDoubleClickTask = useCallback((bt: BlitzTask) => {
+    if (bt.task.status === "archived") return;
+    setSelectedBlitzTask(bt);
+    pageHandlers.setInWorkspace(true);
+  }, [pageHandlers]);
+
   // Listen for Command key press for quick navigation
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -209,21 +224,7 @@ export function BlitzPage({ onSwitchToZen }: BlitzPageProps) {
       // Clean up class on unmount
       document.body.classList.remove('blitz-command-pressed');
     };
-  }, [displayTasks, getTaskNotification, dismissNotification]);
-
-  // Task selection handlers (Blitz-specific: handle BlitzTask)
-  const handleSelectTask = useCallback((bt: BlitzTask) => {
-    setSelectedBlitzTask(bt);
-    if (isMobile) {
-      setMobileShowDetail(true);
-    }
-  }, [isMobile]);
-
-  const handleDoubleClickTask = useCallback((bt: BlitzTask) => {
-    if (bt.task.status === "archived") return;
-    setSelectedBlitzTask(bt);
-    pageHandlers.setInWorkspace(true);
-  }, [pageHandlers]);
+  }, [displayTasks, mainListTasks, handleSelectTask, getTaskNotification, dismissNotification]);
 
   // Helper: set drag ref + state together
   const setDrag = (source: "main" | "local" | null, idx: number | null, overIdx: number | null, localKey: string | null) => {
@@ -410,32 +411,19 @@ export function BlitzPage({ onSwitchToZen }: BlitzPageProps) {
     }
   }, []);
 
-  // Handle adding panel from Info Panel (方案 A)
+  // Handle adding panel from Info Panel (enter workspace + open panel)
   const handleAddPanelFromInfo = useCallback((type: PanelType) => {
     pageHandlers.setInWorkspace(true);
     pageHandlers.setPendingPanel(type);
   }, [pageHandlers]);
 
-  // 方案 A: 使用 useEffect 处理 pendingPanel
+  // Process pendingPanel after entering workspace
   useEffect(() => {
     if (pageState.inWorkspace && pageState.pendingPanel && taskViewRef.current) {
       taskViewRef.current.addPanel(pageState.pendingPanel);
       pageHandlers.setPendingPanel(null);
     }
   }, [pageState.inWorkspace, pageState.pendingPanel, pageHandlers]);
-
-  // Deprecated - page is no longer in use
-  // const handleStartSession = useCallback(() => {
-  //   pageHandlers.setViewMode("terminal");
-  // }, [pageHandlers]);
-
-  // const handleTerminalConnected = useCallback(async () => {
-  //   await refresh();
-  // }, [refresh]);
-
-  // const handleTerminalDisconnected = useCallback(async () => {
-  //   await refresh();
-  // }, [refresh]);
 
   // Task navigation hook (for Blitz tasks)
   const navHandlers = useTaskNavigation({
@@ -487,7 +475,7 @@ export function BlitzPage({ onSwitchToZen }: BlitzPageProps) {
       }
     }
     return items;
-  }, [pageState.contextMenu, mainListTasks, promotedLocalKeys, opsHandlers, handleDoubleClickTask, handleDemoteLocal]);
+  }, [pageState.contextMenu, mainListTasks, promotedLocalKeys, opsHandlers, handleDoubleClickTask, handleDemoteLocal, currentSelected]);
 
   const hasTask = !!selectedTask;
   const isActive = hasTask && selectedTask.status !== "archived";
@@ -907,21 +895,16 @@ export function BlitzPage({ onSwitchToZen }: BlitzPageProps) {
                   animate={{ opacity: 1 }}
                   exit={{ opacity: 0 }}
                   transition={{ duration: 0.15 }}
-                  className="absolute inset-0 flex gap-3"
+                  className="absolute inset-0 flex gap-1"
                 >
-                  <TaskInfoPanel
-                    projectId={currentSelected.projectId}
-                    task={currentSelected.task}
-                    projectName={currentSelected.projectName}
-                    onClose={handleCloseTask}
-                    isTerminalMode
-                    onAddPanel={handleAddPanel}
-                  />
                   <TaskView
                     ref={taskViewRef}
                     projectId={currentSelected.projectId}
                     task={currentSelected.task}
                     projectName={currentSelected.projectName}
+                    fullscreen={isFullscreen}
+                    onFullscreenChange={setIsFullscreen}
+                    onBack={handleCloseTask}
                     onCommit={opsHandlers.handleCommit}
                     onRebase={opsHandlers.handleRebase}
                     onSync={opsHandlers.handleSync}

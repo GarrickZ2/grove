@@ -9,6 +9,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Bell,
+  Search,
 } from "lucide-react";
 import { ProjectSelector } from "./ProjectSelector";
 import { NotificationPopover } from "./NotificationPopover";
@@ -42,13 +43,15 @@ interface SidebarProps {
   tasksMode: TasksMode;
   onTasksModeChange: (mode: TasksMode) => void;
   onProjectSwitch?: () => void;
+  /** Open command palette (⌘K) */
+  onSearch?: () => void;
   /** When true, renders sidebar content without the outer motion.aside wrapper (for use inside MobileDrawer) */
   drawerMode?: boolean;
   /** Called when an item is clicked in drawer mode so the drawer can close */
   onDrawerClose?: () => void;
 }
 
-export function Sidebar({ activeItem, onItemClick, collapsed, onToggleCollapse, onManageProjects, onAddProject, onNavigate, tasksMode, onTasksModeChange, onProjectSwitch, drawerMode, onDrawerClose }: SidebarProps) {
+export function Sidebar({ activeItem, onItemClick, collapsed, onToggleCollapse, onManageProjects, onAddProject, onNavigate, tasksMode, onTasksModeChange, onProjectSwitch, onSearch, drawerMode, onDrawerClose }: SidebarProps) {
   const [notifOpen, setNotifOpen] = useState(false);
   const { unreadCount } = useNotifications();
 
@@ -101,6 +104,27 @@ export function Sidebar({ activeItem, onItemClick, collapsed, onToggleCollapse, 
 
       {/* Footer */}
       <div className="p-2 border-t border-[var(--color-border)]">
+        {/* Search / Command Palette */}
+        {onSearch && (
+          <motion.button
+            whileHover={{ x: isCollapsed ? 0 : 2 }}
+            whileTap={{ scale: 0.98 }}
+            onClick={onSearch}
+            title={isCollapsed ? "Search (⌘K)" : undefined}
+            className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-colors duration-150
+              ${isCollapsed ? "justify-center" : ""}
+              text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-bg-secondary)]`}
+          >
+            <Search className="w-5 h-5 flex-shrink-0" />
+            {!isCollapsed && (
+              <span className="flex items-center gap-2">
+                <span>Search</span>
+                <kbd className="text-[10px] font-mono px-1.5 py-0.5 rounded border border-[var(--color-border)] bg-[var(--color-bg-tertiary)] text-[var(--color-text-muted)] leading-none">⌘K</kbd>
+              </span>
+            )}
+          </motion.button>
+        )}
+
         {/* Notification Bell */}
         <div className="relative">
           <motion.button

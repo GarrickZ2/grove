@@ -313,6 +313,7 @@ function AppContent() {
     tasksMode,
     onTasksModeChange: setTasksMode,
     onProjectSwitch: handleProjectSwitch,
+    onSearch: openCommandPalette,
   };
 
   // Mobile layout
@@ -419,7 +420,7 @@ function AppContent() {
           >
             <Sidebar {...sidebarProps} />
             <main className={`flex-1 ${isFullWidthPage ? "overflow-hidden" : "overflow-y-auto"}`}>
-              <div className={isFullWidthPage ? "h-full p-6" : "max-w-5xl mx-auto p-6"}>
+              <div className={isFullWidthPage ? `h-full transition-[padding] duration-300 ease-out ${inWorkspace ? 'p-2' : 'p-6'}` : "max-w-5xl mx-auto p-6"}>
                 {renderContent()}
               </div>
             </main>

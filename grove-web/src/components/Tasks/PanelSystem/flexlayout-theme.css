@@ -1,10 +1,8 @@
-/* Grove FlexLayout Custom Theme */
+/* Grove FlexLayout — Refined Workspace Theme
+   Design: Clean IDE aesthetic inspired by Cursor/Fleet.
+   Uses subtle depth, refined typography, and integrated controls. */
 
-/* Override flexlayout's built-in --color-text: black with our theme value.
-   flexlayout's light.css redefines --color-text on .flexlayout__layout,
-   which shadows :root --color-text, causing black text in dark themes.
-   We use --grove-text / --grove-bg aliases set by ThemeContext to break
-   the circular reference. */
+/* ── Foundation ── */
 .flexlayout__layout,
 .grove-flex-flexlayout__layout {
   --color-text: var(--grove-text);
@@ -13,7 +11,7 @@
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
 }
 
-/* TabSet 容器 - 移除圆角 */
+/* ── TabSet Container ── */
 .flexlayout__tabset,
 .grove-flex-flexlayout__tabset {
   background: var(--color-bg-secondary);
@@ -24,18 +22,18 @@
   flex-direction: column;
 }
 
-/* TabSet Header - VSCode 风格紧凑 */
+/* ── Tab Bar Header ── */
 .flexlayout__tabset_tabbar_outer,
 .grove-flex-flexlayout__tabset_header {
   background: var(--color-bg);
   border-bottom: 1px solid var(--color-border);
-  height: 35px;
-  padding: 0;
+  height: 38px;
+  padding: 0 4px 0 0;
   display: flex;
   align-items: center;
 }
 
-/* Tab Bar 容器 - 移除左右 padding 和 border-top */
+/* Tab Bar inner — flush edges */
 .flexlayout__tabset_tabbar_inner_tab_container,
 .flexlayout__tabset_tabbar_inner_tab_container_top {
   padding-left: 0 !important;
@@ -43,27 +41,28 @@
   border-top: 0 !important;
 }
 
-/* Tab - VSCode 风格紧凑样式 */
+/* ── Individual Tabs ── */
 .flexlayout__tab_button,
 .grove-flex-flexlayout__tab {
   color: var(--color-text-muted);
   background: transparent;
   border: none;
   border-radius: 0;
-  padding: 6px 12px;
+  padding: 0 14px;
   margin: 0;
-  font-size: 13px;
-  font-weight: 400;
-  transition: all 0.15s ease;
+  font-size: 12.5px;
+  font-weight: 450;
+  letter-spacing: 0.01em;
+  transition: color 0.15s ease, background 0.15s ease;
   position: relative;
   cursor: pointer;
-  height: 35px;
+  height: 38px;
   display: flex;
   align-items: center;
-  border-right: 1px solid var(--color-border);
+  border-right: 1px solid color-mix(in srgb, var(--color-border) 50%, transparent);
 }
 
-/* Tab divider - 隐藏 tab 之间的分隔线 */
+/* Hide the built-in dividers */
 .flexlayout__tabset_tab_divider {
   width: 0 !important;
   display: none !important;
@@ -71,39 +70,41 @@
 
 .flexlayout__tab_button:hover,
 .grove-flex-flexlayout__tab:hover {
-  background: rgba(255, 255, 255, 0.05);
   color: var(--color-text);
+  background: var(--color-bg-tertiary);
 }
 
-/* Selected Tab - VSCode 风格,底部细边框高亮 */
+/* ── Selected Tab ── */
 .flexlayout__tab_button--selected,
 .grove-flex-flexlayout__tab--selected {
   color: var(--color-text);
-  background: var(--color-bg-tertiary);
+  background: var(--color-bg-secondary);
   font-weight: 500;
 }
 
+/* Active indicator — refined 2px bottom bar */
 .flexlayout__tab_button--selected::after,
 .grove-flex-flexlayout__tab--selected::after {
   content: '';
   position: absolute;
   bottom: 0;
-  left: 0;
-  right: 0;
+  left: 8px;
+  right: 8px;
   height: 2px;
   background: var(--color-highlight);
+  border-radius: 2px 2px 0 0;
 }
 
-/* Tab 内的操作按钮 (close, etc.) - VSCode 风格 */
+/* ── Tab Close Button ── */
 .flexlayout__tab_button_trailing,
 .grove-flex-flexlayout__tab_button {
   color: var(--color-text-muted);
-  width: 16px;
-  height: 16px;
+  width: 18px;
+  height: 18px;
   padding: 0;
   margin-left: 6px;
-  border-radius: 3px;
-  transition: all 0.15s ease;
+  border-radius: 4px;
+  transition: all 0.12s ease;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -114,17 +115,17 @@
 .flexlayout__tab_button_trailing:hover,
 .grove-flex-flexlayout__tab_button:hover {
   color: var(--color-text);
-  background: rgba(0, 0, 0, 0.2);
+  background: color-mix(in srgb, var(--color-text) 10%, transparent);
   opacity: 1;
 }
 
 .flexlayout__tab_button--selected .flexlayout__tab_button_trailing,
 .grove-flex-flexlayout__tab_button--selected {
-  color: var(--color-text);
-  opacity: 0.7;
+  color: var(--color-text-muted);
+  opacity: 0.6;
 }
 
-/* Tab content area - 这是最关键的样式! */
+/* ── Tab Content Area ── */
 .flexlayout__tabset_content,
 .grove-flex-flexlayout__tabset_content {
   background: var(--color-bg-secondary);
@@ -135,62 +136,74 @@
   flex-direction: column;
 }
 
-/* Splitter */
+/* ── Splitter ── */
+.flexlayout__splitter,
 .grove-flex-flexlayout__splitter {
-  background: var(--color-border);
-  transition: background 0.15s ease;
+  background: transparent;
+  transition: background 0.2s ease;
 }
 
+.flexlayout__splitter:hover,
 .grove-flex-flexlayout__splitter:hover {
   background: var(--color-highlight);
+  opacity: 0.5;
 }
 
 .grove-flex-flexlayout__splitter_drag {
   background: var(--color-highlight);
-  opacity: 0.5;
+  opacity: 0.4;
   z-index: 1000;
 }
 
-/* Drag rectangle */
+/* ── Drag & Drop ── */
 .grove-flex-flexlayout__outline_rect {
   border: 2px dashed var(--color-highlight);
-  background: transparent;
-  opacity: 0.3;
+  background: color-mix(in srgb, var(--color-highlight) 8%, transparent);
+  border-radius: 6px;
 }
 
-/* Edge indicators (drop zones) */
 .grove-flex-flexlayout__edge_rect {
-  background: var(--color-highlight);
-  opacity: 0.2;
+  background: color-mix(in srgb, var(--color-highlight) 15%, transparent);
   border: 2px solid var(--color-highlight);
+  border-radius: 4px;
 }
 
-/* Tab floating (during drag) */
+/* ── Floating Tab (drag preview) ── */
 .grove-flex-flexlayout__tab_floating {
   background: var(--color-bg);
   border: 1px solid var(--color-border);
-  border-radius: 4px;
-  padding: 6px 12px;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
-  opacity: 0.8;
+  border-radius: 8px;
+  padding: 6px 14px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2), 0 2px 8px rgba(0, 0, 0, 0.1);
+  opacity: 0.9;
 }
 
-/* TabSet header buttons (add, maximize, etc.) */
-.grove-flex-flexlayout__tabset_header_button {
-  color: var(--color-text-muted);
-  width: 24px;
-  height: 24px;
-  padding: 0;
-  border-radius: 4px;
-  transition: all 0.15s ease;
+/* ── Popup Menu (overflow / context) ── */
+.flexlayout__popup_menu,
+.grove-flex-flexlayout__popup_menu {
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.18), 0 2px 8px rgba(0, 0, 0, 0.08);
+  padding: 4px;
 }
 
-.grove-flex-flexlayout__tabset_header_button:hover {
+.flexlayout__popup_menu_item,
+.grove-flex-flexlayout__popup_menu_item {
   color: var(--color-text);
+  padding: 6px 12px;
+  border-radius: 5px;
+  cursor: pointer;
+  font-size: 12.5px;
+  transition: background 0.12s ease;
+}
+
+.flexlayout__popup_menu_item:hover,
+.grove-flex-flexlayout__popup_menu_item:hover {
   background: var(--color-bg-tertiary);
 }
 
-/* Border (side panels, if used) */
+/* ── Borders (side panels) ── */
 .grove-flex-flexlayout__border {
   background: var(--color-bg);
   border: 1px solid var(--color-border);
@@ -208,38 +221,17 @@
   border-bottom: none;
 }
 
-/* Popup menu (context menu) */
-.grove-flex-flexlayout__popup_menu {
-  background: var(--color-bg);
-  border: 1px solid var(--color-border);
-  border-radius: 6px;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
-  padding: 4px;
-}
-
-.grove-flex-flexlayout__popup_menu_item {
-  color: var(--color-text);
-  padding: 6px 12px;
-  border-radius: 4px;
-  cursor: pointer;
-  transition: background 0.15s ease;
-}
-
-.grove-flex-flexlayout__popup_menu_item:hover {
-  background: var(--color-bg-tertiary);
-}
-
-/* Error overlay */
+/* ── Error State ── */
 .grove-flex-flexlayout__error_boundary_container {
   background: var(--color-bg);
   color: var(--color-text);
-  padding: 20px;
+  padding: 24px;
   border: 1px solid var(--color-border);
   border-radius: 8px;
 }
 
 .grove-flex-flexlayout__error_boundary_message {
-  color: #ef4444;
+  color: var(--color-error);
   font-weight: 600;
   margin-bottom: 12px;
 }
