@@ -125,19 +125,23 @@ export function TasksPage({ initialTaskId, initialViewMode, onNavigationConsumed
 
   // Handle initial task selection from navigation
   useEffect(() => {
-    if (initialTaskId && activeTasks.length > 0 && !pageState.selectedTask) {
-      const task = activeTasks.find((t) => t.id === initialTaskId);
-      if (task) {
-        pageHandlers.setSelectedTask(task);
-        // If initialViewMode is "terminal", enter Workspace
-        if (initialViewMode === "terminal") {
-          pageHandlers.setInWorkspace(true);
-        }
-        // Consume the navigation data so it doesn't re-trigger
-        onNavigationConsumed?.();
-      }
+    if (!initialTaskId || activeTasks.length === 0) return;
+
+    const task = activeTasks.find((t) => t.id === initialTaskId);
+    if (!task) return;
+
+    if (pageState.selectedTask?.id !== task.id) {
+      pageHandlers.setSelectedTask(task);
     }
-  }, [initialTaskId, initialViewMode, activeTasks, pageState.selectedTask, onNavigationConsumed, pageHandlers]);
+
+    // If initialViewMode is "terminal", enter Workspace
+    if (initialViewMode === "terminal") {
+      pageHandlers.setInWorkspace(true);
+    }
+
+    // Consume the navigation data so it doesn't re-trigger
+    onNavigationConsumed?.();
+  }, [initialTaskId, initialViewMode, activeTasks, pageState.selectedTask?.id, onNavigationConsumed, pageHandlers]);
 
   // Sync selectedTask with latest project data after refresh
   useEffect(() => {
