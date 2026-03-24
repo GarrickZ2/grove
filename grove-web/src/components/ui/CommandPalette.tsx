@@ -4,16 +4,21 @@ import { Search } from "lucide-react";
 import { useCommandPalette } from "../../context/CommandPaletteContext";
 import type { Command } from "../../context/CommandPaletteContext";
 import { KeyBadge } from "./KeyBadge";
+import { rankCommands, type CommandUsageMap } from "../../utils/commandPaletteRanking";
 
 interface CommandGroup {
+  key: string;
   category: string;
   commands: Command[];
 }
 
+const COMMAND_PALETTE_USAGE_KEY = "grove.command-palette.usage";
+
 export function CommandPalette() {
-  const { isOpen, close, getCommands } = useCommandPalette();
+  const { isOpen, close, getCommands, pageContext } = useCommandPalette();
   const [searchQuery, setSearchQuery] = useState("");
   const [highlightedIndex, setHighlightedIndex] = useState(0);
+  const [usageStats, setUsageStats] = useState<CommandUsageMap>({});
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
 
@@ -21,32 +26,29 @@ export function CommandPalette() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const allCommands = useMemo(() => isOpen ? getCommands() : [], [isOpen]);
 
-  // Filter commands by search query
-  const filteredCommands = useMemo(() => {
-    if (!searchQuery) return allCommands;
-    const q = searchQuery.toLowerCase();
-    return allCommands.filter(
-      (cmd) =>
-        cmd.name.toLowerCase().includes(q) ||
-        cmd.keywords?.some((kw) => kw.toLowerCase().includes(q))
-    );
-  }, [allCommands, searchQuery]);
+  const filteredCommands = useMemo(
+    () => rankCommands(allCommands, searchQuery, pageContext, usageStats),
+    [allCommands, searchQuery, pageContext, usageStats]
+  );
 
-  // Group filtered commands by category
+  // Keep ranked order intact; only group contiguous runs for headers
   const groups = useMemo(() => {
-    const map = new Map<string, typeof filteredCommands>();
+    const orderedGroups: CommandGroup[] = [];
+
     for (const cmd of filteredCommands) {
-      const existing = map.get(cmd.category);
-      if (existing) {
-        existing.push(cmd);
+      const lastGroup = orderedGroups[orderedGroups.length - 1];
+      if (lastGroup?.category === cmd.category) {
+        lastGroup.commands.push(cmd);
       } else {
-        map.set(cmd.category, [cmd]);
+        orderedGroups.push({
+          key: `${cmd.category}-${orderedGroups.length}`,
+          category: cmd.category,
+          commands: [cmd],
+        });
       }
     }
-    return Array.from(map.entries()).map(([category, commands]) => ({
-      category,
-      commands,
-    })) as CommandGroup[];
+
+    return orderedGroups;
   }, [filteredCommands]);
 
   // Flat list for keyboard navigation
@@ -60,6 +62,12 @@ export function CommandPalette() {
     if (isOpen) {
       setSearchQuery("");
       setHighlightedIndex(0);
+      try {
+        const raw = window.localStorage.getItem(COMMAND_PALETTE_USAGE_KEY);
+        setUsageStats(raw ? JSON.parse(raw) as CommandUsageMap : {});
+      } catch {
+        setUsageStats({});
+      }
       requestAnimationFrame(() => inputRef.current?.focus());
     }
   }, [isOpen]);
@@ -71,19 +79,48 @@ export function CommandPalette() {
 
   // Scroll highlighted item into view
   useEffect(() => {
-    if (!listRef.current) return;
-    const items = listRef.current.querySelectorAll("[data-cmd-item]");
+    const list = listRef.current;
+    if (!list) return;
+    const items = list.querySelectorAll("[data-cmd-item]");
     const item = items[highlightedIndex] as HTMLElement | undefined;
-    item?.scrollIntoView({ block: "nearest" });
+    if (!item) return;
+
+    const itemTop = item.offsetTop;
+    const itemBottom = itemTop + item.offsetHeight;
+    const viewTop = list.scrollTop;
+    const viewBottom = viewTop + list.clientHeight;
+    const edgePadding = 8;
+
+    if (itemTop < viewTop + edgePadding) {
+      list.scrollTop = Math.max(itemTop - edgePadding, 0);
+      return;
+    }
+
+    if (itemBottom > viewBottom - edgePadding) {
+      list.scrollTop = itemBottom - list.clientHeight + edgePadding;
+    }
   }, [highlightedIndex]);
 
   const handleSelect = useCallback(
     (cmd: Command) => {
+      const nextUsageStats: CommandUsageMap = {
+        ...usageStats,
+        [cmd.id]: {
+          count: (usageStats[cmd.id]?.count ?? 0) + 1,
+          lastUsedAt: Date.now(),
+        },
+      };
+      setUsageStats(nextUsageStats);
+      try {
+        window.localStorage.setItem(COMMAND_PALETTE_USAGE_KEY, JSON.stringify(nextUsageStats));
+      } catch {
+        // Ignore storage failures and continue to run the command
+      }
       close();
       // Defer handler to allow dialog to close first
       requestAnimationFrame(() => cmd.handler());
     },
-    [close]
+    [close, usageStats]
   );
 
   const handleKeyDown = useCallback(
@@ -170,7 +207,7 @@ export function CommandPalette() {
                   </div>
                 ) : (
                   groups.map((group) => (
-                    <div key={group.category}>
+                    <div key={group.key}>
                       {/* Category Header */}
                       <div className="px-4 pt-2 pb-1">
                         <span className="text-[10px] font-semibold uppercase tracking-wider text-[var(--color-text-muted)]">

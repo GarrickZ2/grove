@@ -388,13 +388,22 @@ export function TasksPage({ initialTaskId, initialViewMode, onNavigationConsumed
   );
 
   // Register page-level commands for Cmd+K command palette
-  const { registerPageCommands, unregisterPageCommands, setInWorkspace: setContextInWorkspace } = useCommandPalette();
+  const {
+    registerPageCommands,
+    unregisterPageCommands,
+    setInWorkspace: setContextInWorkspace,
+    setPageContext,
+  } = useCommandPalette();
 
   // Sync inWorkspace to context so App can disable Cmd+1-4 sidebar switching
   useEffect(() => {
     setContextInWorkspace(pageState.inWorkspace);
-    return () => setContextInWorkspace(false);
-  }, [pageState.inWorkspace, setContextInWorkspace]);
+    setPageContext(pageState.inWorkspace ? "workspace" : "tasks");
+    return () => {
+      setContextInWorkspace(false);
+      setPageContext("default");
+    };
+  }, [pageState.inWorkspace, setContextInWorkspace, setPageContext]);
   const pageOptionsRef = useRef<Parameters<typeof buildCommands>[0]>(null!);
   pageOptionsRef.current = {
     taskActions: {

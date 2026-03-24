@@ -2,6 +2,13 @@ import { createContext, useContext, useState, useCallback, useRef } from "react"
 import type { ReactNode } from "react";
 import type { LucideIcon } from "lucide-react";
 
+export type CommandPalettePageContext = "default" | "tasks" | "workspace";
+
+export interface CommandRanking {
+  base?: number;
+  contexts?: Partial<Record<CommandPalettePageContext, number>>;
+}
+
 export interface Command {
   id: string;
   name: string;
@@ -10,6 +17,7 @@ export interface Command {
   shortcut?: string;
   handler: () => void;
   keywords?: string[];
+  ranking?: CommandRanking;
 }
 
 export type CommandBuilder = () => Command[];
@@ -32,6 +40,8 @@ interface CommandPaletteContextType {
   projectPaletteOpen: boolean;
   openProjectPalette: () => void;
   closeProjectPalette: () => void;
+  pageContext: CommandPalettePageContext;
+  setPageContext: (value: CommandPalettePageContext) => void;
   /** Whether a workspace is currently active (for Cmd+1-9 priority) */
   inWorkspace: boolean;
   setInWorkspace: (value: boolean) => void;
@@ -44,6 +54,7 @@ export function CommandPaletteProvider({ children }: { children: ReactNode }) {
   const [taskPaletteOpen, setTaskPaletteOpen] = useState(false);
   const [projectPaletteOpen, setProjectPaletteOpen] = useState(false);
   const [inWorkspace, setInWorkspaceState] = useState(false);
+  const [pageContext, setPageContextState] = useState<CommandPalettePageContext>("default");
 
   // Store builders as refs — no re-renders when they change
   const globalBuilderRef = useRef<CommandBuilder>(() => []);
@@ -56,6 +67,7 @@ export function CommandPaletteProvider({ children }: { children: ReactNode }) {
   const openProjectPalette = useCallback(() => setProjectPaletteOpen(true), []);
   const closeProjectPalette = useCallback(() => setProjectPaletteOpen(false), []);
   const setInWorkspace = useCallback((value: boolean) => setInWorkspaceState(value), []);
+  const setPageContext = useCallback((value: CommandPalettePageContext) => setPageContextState(value), []);
 
   const registerGlobalCommands = useCallback((builder: CommandBuilder) => {
     globalBuilderRef.current = builder;
@@ -90,6 +102,8 @@ export function CommandPaletteProvider({ children }: { children: ReactNode }) {
         projectPaletteOpen,
         openProjectPalette,
         closeProjectPalette,
+        pageContext,
+        setPageContext,
         inWorkspace,
         setInWorkspace,
       }}
