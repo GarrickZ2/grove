@@ -28,7 +28,11 @@ fn attachments_dir(project: &str, task_id: &str, chat_id: &str) -> PathBuf {
 
 fn sanitize_filename(name: &str) -> String {
     let trimmed = name.trim();
-    let base = if trimmed.is_empty() { "attachment" } else { trimmed };
+    let base = if trimmed.is_empty() {
+        "attachment"
+    } else {
+        trimmed
+    };
     let sanitized: String = base
         .chars()
         .map(|c| match c {
@@ -98,7 +102,9 @@ pub fn store_attachment(
     let path = unique_attachment_path(&dir, &file_name);
     let bytes = base64::engine::general_purpose::STANDARD
         .decode(data_base64)
-        .map_err(|e| crate::error::GroveError::InvalidData(format!("Invalid base64 attachment: {}", e)))?;
+        .map_err(|e| {
+            crate::error::GroveError::InvalidData(format!("Invalid base64 attachment: {}", e))
+        })?;
     std::fs::write(&path, &bytes)?;
 
     let uri = url::Url::from_file_path(&path)

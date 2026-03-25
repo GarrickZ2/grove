@@ -28,35 +28,24 @@ export function ProjectSelector({ collapsed, onManageProjects, onAddProject, onP
     return projects.filter((p) => p.name.toLowerCase().includes(q));
   }, [projects, searchQuery]);
 
-  const activeProjectOptionId = activeProjectId ? `project-selector-option-${activeProjectId}` : undefined;
+  // Derive activeProjectId from filteredProjects without setState-in-effect
+  const derivedActiveProjectId = useMemo(() => {
+    if (!isOpen || filteredProjects.length === 0) return null;
+    if (activeProjectId && filteredProjects.some((p) => p.id === activeProjectId)) {
+      return activeProjectId;
+    }
+    return filteredProjects[0].id;
+  }, [filteredProjects, isOpen, activeProjectId]);
+
+  const activeProjectOptionId = derivedActiveProjectId ? `project-selector-option-${derivedActiveProjectId}` : undefined;
 
   useEffect(() => {
-    if (!isOpen) {
-      setActiveProjectId(null);
-      return;
-    }
+    if (!derivedActiveProjectId || !isOpen) return;
 
-    if (filteredProjects.length === 0) {
-      setActiveProjectId(null);
-      return;
-    }
-
-    setActiveProjectId((current) => {
-      if (current && filteredProjects.some((project) => project.id === current)) {
-        return current;
-      }
-
-      return filteredProjects[0].id;
-    });
-  }, [filteredProjects, isOpen]);
-
-  useEffect(() => {
-    if (!activeProjectId || !isOpen) return;
-
-    itemRefs.current[activeProjectId]?.scrollIntoView({
+    itemRefs.current[derivedActiveProjectId]?.scrollIntoView({
       block: "nearest",
     });
-  }, [activeProjectId, isOpen]);
+  }, [derivedActiveProjectId, isOpen]);
 
   // Close dropdown when clicking outside
   useEffect(() => {
@@ -73,7 +62,6 @@ export function ProjectSelector({ collapsed, onManageProjects, onAddProject, onP
   // Reset search when dropdown closes, auto-focus when opens
   useEffect(() => {
     if (!isOpen) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect
       setSearchQuery("");
     } else {
       // Small delay to let the dropdown render before focusing
@@ -93,7 +81,7 @@ export function ProjectSelector({ collapsed, onManageProjects, onAddProject, onP
   const moveActiveProject = (direction: 1 | -1) => {
     if (filteredProjects.length === 0) return;
 
-    const currentIndex = filteredProjects.findIndex((project) => project.id === activeProjectId);
+    const currentIndex = filteredProjects.findIndex((project) => project.id === derivedActiveProjectId);
     const startIndex = currentIndex >= 0 ? currentIndex : 0;
     const nextIndex = (startIndex + direction + filteredProjects.length) % filteredProjects.length;
     setActiveProjectId(filteredProjects[nextIndex].id);
@@ -117,9 +105,9 @@ export function ProjectSelector({ collapsed, onManageProjects, onAddProject, onP
     }
 
     if (e.key === "Enter") {
-      if (!activeProjectId) return;
+      if (!derivedActiveProjectId) return;
 
-      const activeProject = filteredProjects.find((project) => project.id === activeProjectId);
+      const activeProject = filteredProjects.find((project) => project.id === derivedActiveProjectId);
       if (!activeProject) return;
 
       e.preventDefault();
@@ -200,7 +188,7 @@ export function ProjectSelector({ collapsed, onManageProjects, onAddProject, onP
                     }}
                     project={project}
                     isSelected={selectedProject?.id === project.id}
-                    isActive={activeProjectId === project.id}
+                    isActive={derivedActiveProjectId === project.id}
                     onClick={() => handleSelectProject(project)}
                     onMouseEnter={() => setActiveProjectId(project.id)}
                     accentPalette={theme.accentPalette}
@@ -307,7 +295,7 @@ export function ProjectSelector({ collapsed, onManageProjects, onAddProject, onP
                   }}
                   project={project}
                   isSelected={selectedProject?.id === project.id}
-                  isActive={activeProjectId === project.id}
+                  isActive={derivedActiveProjectId === project.id}
                   onClick={() => handleSelectProject(project)}
                   onMouseEnter={() => setActiveProjectId(project.id)}
                   accentPalette={theme.accentPalette}

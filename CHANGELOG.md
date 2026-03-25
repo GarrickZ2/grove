@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.12] - 2026-03-25
+
+### Added
+
+- **Chat file path navigation** — clicking file path links in ACP Chat messages now opens the Review panel in All Files mode, scrolls to the target file and line, with a flash highlight animation
+- **Chat attachment resource links** — chat attachments can now include resource links
+- **Grove MCP server injection** — ACP sessions now have the Grove MCP server injected for task orchestration
+
+### Fixed
+
+- **Permission prompt resolution** — fixed permission prompt targeting to resolve against the correct chat session
+- **CI build** — use pnpm for eslint CI job; use Node 20 LTS to avoid npm exit handler crash; add .npmrc with legacy-peer-deps for React 19
+
+### Improved
+
+- **UI selection behavior** — refined selection behavior and chat interactions across the web frontend
+
 ## [0.7.11] - 2026-03-24
 
 ### Added
