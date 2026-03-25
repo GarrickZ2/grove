@@ -19,7 +19,6 @@ export interface LayoutConfig {
 export interface WebConfig {
   ide?: string;
   terminal?: string;
-  terminal_theme?: string;
 }
 
 export interface AutoLinkConfig {
