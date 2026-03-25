@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect, useMemo } from "react";
+import React, { useState, useRef, useEffect, useMemo, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { ChevronDown, Check, Plus, Settings2, Search } from "lucide-react";
 import { useProject, useTheme } from "../../context";
@@ -47,24 +47,28 @@ export function ProjectSelector({ collapsed, onManageProjects, onAddProject, onP
     });
   }, [derivedActiveProjectId, isOpen]);
 
+  // Helper to close dropdown and reset search
+  const closeDropdown = useCallback(() => {
+    setIsOpen(false);
+    setSearchQuery("");
+    setActiveProjectId(null);
+  }, []);
+
   // Close dropdown when clicking outside
   useEffect(() => {
     function handleClickOutside(event: MouseEvent) {
       if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
-        setIsOpen(false);
+        closeDropdown();
       }
     }
 
     document.addEventListener("mousedown", handleClickOutside);
     return () => document.removeEventListener("mousedown", handleClickOutside);
-  }, []);
+  }, [closeDropdown]);
 
-  // Reset search when dropdown closes, auto-focus when opens
+  // Auto-focus search input when dropdown opens
   useEffect(() => {
-    if (!isOpen) {
-      setSearchQuery("");
-    } else {
-      // Small delay to let the dropdown render before focusing
+    if (isOpen) {
       requestAnimationFrame(() => {
         searchInputRef.current?.focus();
       });
@@ -74,7 +78,7 @@ export function ProjectSelector({ collapsed, onManageProjects, onAddProject, onP
   const handleSelectProject = (project: Project) => {
     const switched = selectedProject?.id !== project.id;
     selectProject(project);
-    setIsOpen(false);
+    closeDropdown();
     if (switched) onProjectSwitch?.();
   };
 
@@ -119,7 +123,7 @@ export function ProjectSelector({ collapsed, onManageProjects, onAddProject, onP
       if (searchQuery) {
         setSearchQuery("");
       } else {
-        setIsOpen(false);
+        closeDropdown();
       }
       e.stopPropagation();
     }
@@ -198,14 +202,14 @@ export function ProjectSelector({ collapsed, onManageProjects, onAddProject, onP
               <div className="border-t border-[var(--color-border)]" />
               <div className="p-1">
                 <button
-                  onClick={() => { setIsOpen(false); onAddProject?.(); }}
+                  onClick={() => { closeDropdown(); onAddProject?.(); }}
                   className="w-full flex items-center gap-2 px-3 py-2 text-sm text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-bg-secondary)] rounded-md transition-colors"
                 >
                   <Plus className="w-4 h-4" />
                   <span>Add Project</span>
                 </button>
                 <button
-                  onClick={() => { setIsOpen(false); onManageProjects?.(); }}
+                  onClick={() => { closeDropdown(); onManageProjects?.(); }}
                   className="w-full flex items-center gap-2 px-3 py-2 text-sm text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-bg-secondary)] rounded-md transition-colors"
                 >
                   <Settings2 className="w-4 h-4" />
@@ -310,7 +314,7 @@ export function ProjectSelector({ collapsed, onManageProjects, onAddProject, onP
             <div className="p-1">
               <button
                 onClick={() => {
-                  setIsOpen(false);
+                  closeDropdown();
                   onAddProject?.();
                 }}
                 className="w-full flex items-center gap-2 px-3 py-2 text-sm text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-bg-secondary)] rounded-md transition-colors"
@@ -320,7 +324,7 @@ export function ProjectSelector({ collapsed, onManageProjects, onAddProject, onP
               </button>
               <button
                 onClick={() => {
-                  setIsOpen(false);
+                  closeDropdown();
                   onManageProjects?.();
                 }}
                 className="w-full flex items-center gap-2 px-3 py-2 text-sm text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-bg-secondary)] rounded-md transition-colors"
