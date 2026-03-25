@@ -48,7 +48,7 @@ jobs:
           node-version: 22
           cache: npm
           cache-dependency-path: grove-web/package-lock.json
-      - run: npm ci
+      - run: npm ci --legacy-peer-deps
         working-directory: grove-web
       - run: npx eslint src/ --max-warnings 0
         working-directory: grove-web
