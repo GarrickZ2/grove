@@ -134,48 +134,52 @@ body {
   }
 }
 
-@keyframes chatbox-border-flow {
+@property --chatbox-busy-angle {
+  syntax: "<angle>";
+  inherits: false;
+  initial-value: 0deg;
+}
+
+@keyframes chatbox-busy-border-spin {
   from {
-    stroke-dashoffset: 0;
+    --chatbox-busy-angle: 0deg;
   }
   to {
-    stroke-dashoffset: -1000;
+    --chatbox-busy-angle: 360deg;
   }
 }
 
-.chatbox-busy-track {
-  stroke: color-mix(in srgb, var(--color-highlight) 18%, transparent);
-  stroke-width: 1;
-  opacity: 0.22;
+.chatbox-busy-border {
+  border-color: transparent !important;
+  position: relative;
 }
 
-.chatbox-busy-glow,
-.chatbox-busy-core,
-.chatbox-busy-tail {
-  stroke-linecap: round;
-  animation: chatbox-border-flow 5.6s linear infinite;
-}
-
-.chatbox-busy-glow {
-  stroke: color-mix(in srgb, var(--color-highlight) 22%, white 8%);
-  stroke-width: 3.2;
-  stroke-dasharray: 120 880;
-  opacity: 0.24;
-}
-
-.chatbox-busy-tail {
-  stroke: color-mix(in srgb, var(--color-highlight) 54%, white 10%);
-  stroke-width: 1.15;
-  stroke-dasharray: 42 958;
-  animation-delay: -0.18s;
-  opacity: 0.42;
-}
-
-.chatbox-busy-core {
-  stroke: color-mix(in srgb, var(--color-highlight) 86%, white 10%);
-  stroke-width: 1.45;
-  stroke-dasharray: 68 932;
-  opacity: 0.78;
+.chatbox-busy-border::before {
+  content: "";
+  position: absolute;
+  inset: -1px;
+  padding: 2px;
+  border-radius: inherit;
+  pointer-events: none;
+  background: conic-gradient(
+    from var(--chatbox-busy-angle),
+    color-mix(in srgb, var(--color-highlight) 16%, transparent) 0deg,
+    color-mix(in srgb, var(--color-highlight) 16%, transparent) 272deg,
+    color-mix(in srgb, var(--color-highlight) 24%, transparent) 306deg,
+    color-mix(in srgb, var(--color-highlight) 48%, white 4%) 328deg,
+    color-mix(in srgb, var(--color-highlight) 92%, white 8%) 342deg,
+    color-mix(in srgb, var(--color-highlight) 46%, white 4%) 354deg,
+    color-mix(in srgb, var(--color-highlight) 16%, transparent) 360deg
+  );
+  -webkit-mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  mask-composite: exclude;
+  animation: chatbox-busy-border-spin 4.8s linear infinite;
 }
 
 /* Blitz mode: Show shortcuts when Command key is pressed */

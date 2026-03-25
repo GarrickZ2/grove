@@ -2203,76 +2203,16 @@ export function TaskChat({
         />
 
         <div
-          className={`relative min-w-0 rounded-[30px] border border-[color-mix(in_srgb,var(--color-border)_62%,transparent)] bg-[color-mix(in_srgb,var(--color-bg-secondary)_78%,transparent)] px-3 pt-2 pb-3 shadow-[0_22px_60px_rgba(0,0,0,0.18)] backdrop-blur-md transition-all ${
-            isTerminalMode
-              ? "focus-within:border-[var(--color-warning)]"
-              : "focus-within:border-[color-mix(in_srgb,var(--color-highlight)_82%,white_8%)]"
+          className={`relative min-w-0 rounded-[30px] border bg-[color-mix(in_srgb,var(--color-bg-secondary)_78%,transparent)] px-3 pt-2 pb-3 shadow-[0_22px_60px_rgba(0,0,0,0.18)] backdrop-blur-md transition-all ${
+            isBusy
+              ? "chatbox-busy-border border-transparent focus-within:border-transparent"
+              : isTerminalMode
+                ? "focus-within:border-[var(--color-warning)]"
+                + " border-[color-mix(in_srgb,var(--color-border)_62%,transparent)]"
+              : "focus-within:border-[color-mix(in_srgb,var(--color-highlight)_82%,white_8%)] border-[color-mix(in_srgb,var(--color-border)_62%,transparent)]"
           }`}
           style={{ transform: "translateY(-6px)" }}
         >
-          {isBusy && (
-            <svg
-              aria-hidden="true"
-              className="pointer-events-none absolute inset-0 h-full w-full overflow-visible"
-              viewBox="0 0 1000 220"
-              preserveAspectRatio="none"
-            >
-              <defs>
-                <filter id="chatboxBusyGlow" x="-20%" y="-20%" width="140%" height="140%">
-                  <feGaussianBlur stdDeviation="3.5" result="blur" />
-                  <feMerge>
-                    <feMergeNode in="blur" />
-                    <feMergeNode in="SourceGraphic" />
-                  </feMerge>
-                </filter>
-              </defs>
-              <rect
-                x="1.5"
-                y="1.5"
-                width="997"
-                height="217"
-                rx="34"
-                ry="34"
-                fill="none"
-                pathLength="1000"
-                className="chatbox-busy-track"
-              />
-              <rect
-                x="1.5"
-                y="1.5"
-                width="997"
-                height="217"
-                rx="34"
-                ry="34"
-                fill="none"
-                pathLength="1000"
-                filter="url(#chatboxBusyGlow)"
-                className="chatbox-busy-glow"
-              />
-              <rect
-                x="1.5"
-                y="1.5"
-                width="997"
-                height="217"
-                rx="34"
-                ry="34"
-                fill="none"
-                pathLength="1000"
-                className="chatbox-busy-tail"
-              />
-              <rect
-                x="1.5"
-                y="1.5"
-                width="997"
-                height="217"
-                rx="34"
-                ry="34"
-                fill="none"
-                pathLength="1000"
-                className="chatbox-busy-core"
-              />
-            </svg>
-          )}
           <div className="mb-2 flex items-center justify-between gap-2 pr-10">
             <div className="flex min-w-0 items-center gap-2">
               <div className="inline-flex items-center gap-1.5 rounded-full bg-[var(--color-bg)] px-2.5 py-1 text-[11px] text-[var(--color-text)] min-w-0 max-w-full">
