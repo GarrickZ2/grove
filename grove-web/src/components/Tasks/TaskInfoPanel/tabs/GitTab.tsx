@@ -71,17 +71,17 @@ export function GitTab({ projectId, task }: GitTabProps) {
     <div className="space-y-4">
       {/* Branch Info */}
       <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] p-4">
-        <h3 className="text-sm font-medium text-[var(--color-text)] mb-3 flex items-center gap-2">
+        <h3 className="text-sm font-medium text-[var(--color-text)] mb-3 flex items-center gap-2 select-none">
           <GitBranch className="w-4 h-4" />
           Branch Info
         </h3>
         <div className="space-y-2 text-sm">
           <div className="flex justify-between">
-            <span className="text-[var(--color-text-muted)]">Branch</span>
+            <span className="text-[var(--color-text-muted)] select-none">Branch</span>
             <span className="text-[var(--color-text)] font-mono">{task.branch}</span>
           </div>
           <div className="flex justify-between">
-            <span className="text-[var(--color-text-muted)]">Target</span>
+            <span className="text-[var(--color-text-muted)] select-none">Target</span>
             <span className="text-[var(--color-text)] font-mono">{task.target}</span>
           </div>
         </div>
@@ -89,34 +89,34 @@ export function GitTab({ projectId, task }: GitTabProps) {
 
       {/* Code Changes */}
       <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] p-4">
-        <h3 className="text-sm font-medium text-[var(--color-text)] mb-3 flex items-center gap-2">
+        <h3 className="text-sm font-medium text-[var(--color-text)] mb-3 flex items-center gap-2 select-none">
           <FileCode className="w-4 h-4" />
           Changes
         </h3>
         <div className="flex gap-4 text-sm">
           <div>
             <span className="text-[var(--color-success)] font-semibold">+{additions}</span>
-            <span className="text-[var(--color-text-muted)] ml-1">additions</span>
+            <span className="text-[var(--color-text-muted)] ml-1 select-none">additions</span>
           </div>
           <div>
             <span className="text-[var(--color-error)] font-semibold">-{deletions}</span>
-            <span className="text-[var(--color-text-muted)] ml-1">deletions</span>
+            <span className="text-[var(--color-text-muted)] ml-1 select-none">deletions</span>
           </div>
           <div>
             <span className="text-[var(--color-text)] font-semibold">{filesChanged}</span>
-            <span className="text-[var(--color-text-muted)] ml-1">files</span>
+            <span className="text-[var(--color-text-muted)] ml-1 select-none">files</span>
           </div>
         </div>
       </div>
 
       {/* Recent Commits */}
       <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] p-4">
-        <h3 className="text-sm font-medium text-[var(--color-text)] mb-3 flex items-center gap-2">
+        <h3 className="text-sm font-medium text-[var(--color-text)] mb-3 flex items-center gap-2 select-none">
           <GitCommit className="w-4 h-4" />
           Recent Commits
         </h3>
         {commits.length === 0 ? (
-          <p className="text-sm text-[var(--color-text-muted)]">No commits yet</p>
+          <p className="text-sm text-[var(--color-text-muted)] select-none">No commits yet</p>
         ) : (
           <div className="space-y-2">
             {commits.map((commit, index) => (

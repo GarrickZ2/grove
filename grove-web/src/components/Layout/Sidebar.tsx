@@ -65,7 +65,7 @@ export function Sidebar({ activeItem, onItemClick, collapsed, onToggleCollapse, 
   const content = (
     <>
       {/* Logo + Mode Brand */}
-      <div className="p-4">
+      <div className="p-4 select-none">
         {isCollapsed ? (
           <button
             onClick={() => onTasksModeChange(tasksMode === "zen" ? "blitz" : "zen")}
@@ -88,7 +88,7 @@ export function Sidebar({ activeItem, onItemClick, collapsed, onToggleCollapse, 
       </div>
 
       {/* Navigation */}
-      <nav className="flex-1 p-2 overflow-y-auto">
+      <nav className="flex-1 p-2 overflow-y-auto select-none">
         <div className="space-y-1">
           {navItems.map((item) => (
             <NavButton
@@ -103,7 +103,7 @@ export function Sidebar({ activeItem, onItemClick, collapsed, onToggleCollapse, 
       </nav>
 
       {/* Footer */}
-      <div className="p-2 border-t border-[var(--color-border)]">
+      <div className="p-2 border-t border-[var(--color-border)] select-none">
         {/* Search / Command Palette */}
         {onSearch && (
           <motion.button
@@ -196,7 +196,7 @@ export function Sidebar({ activeItem, onItemClick, collapsed, onToggleCollapse, 
       initial={false}
       animate={{ width: collapsed ? 72 : 256 }}
       transition={{ duration: 0.2, ease: "easeInOut" }}
-      className="h-screen bg-[var(--color-bg)] border-r border-[var(--color-border)] flex flex-col flex-shrink-0"
+      className="h-screen bg-[var(--color-bg)] border-r border-[var(--color-border)] flex flex-col flex-shrink-0 select-none"
     >
       {content}
     </motion.aside>

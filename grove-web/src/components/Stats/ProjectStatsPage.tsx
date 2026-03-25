@@ -282,14 +282,14 @@ function MetricCard({ icon: Icon, label, value, sub, color, delay = 0 }: MetricC
     <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }}
       transition={{ delay, duration: 0.3 }}
       className="rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)] p-4">
-      <div className="flex items-center gap-2 mb-3">
+      <div className="flex items-center gap-2 mb-3 select-none">
         <div className="w-7 h-7 rounded-lg flex items-center justify-center" style={{ backgroundColor: bg }}>
           <Icon className="w-3.5 h-3.5" style={{ color: c }} />
         </div>
         <span className="text-xs font-medium text-[var(--color-text-muted)] uppercase tracking-wide">{label}</span>
       </div>
       <div className="text-2xl font-bold" style={{ color: color ? c : "var(--color-text)" }}>{value}</div>
-      {sub && <div className="text-xs text-[var(--color-text-muted)] mt-1">{sub}</div>}
+      {sub && <div className="text-xs text-[var(--color-text-muted)] mt-1 select-none">{sub}</div>}
     </motion.div>
   );
 }
@@ -456,10 +456,10 @@ export function ProjectStatsPage({ projectId }: ProjectStatsPageProps) {
     <div className="space-y-6 pb-8">
 
       {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-xl font-semibold text-[var(--color-text)]">Statistics</h1>
-          <p className="text-sm text-[var(--color-text-muted)] mt-0.5">Productivity insights · this project</p>
+      <div className="flex items-center justify-between select-none">
+        <div className="select-none">
+          <h1 className="text-xl font-semibold text-[var(--color-text)] select-none">Statistics</h1>
+          <p className="text-sm text-[var(--color-text-muted)] mt-0.5 select-none">Productivity insights · this project</p>
         </div>
         <div className="flex items-center gap-3">
           {loading && (
@@ -496,7 +496,7 @@ export function ProjectStatsPage({ projectId }: ProjectStatsPageProps) {
                 <Zap className="w-5 h-5" style={{ color: "var(--color-highlight)" }} />
               </div>
               <div>
-                <p className="text-sm text-[var(--color-text-muted)] mb-1">
+                <p className="text-sm text-[var(--color-text-muted)] mb-1 select-none">
                   Grove has generated {heroLabel}
                 </p>
                 <div className="flex items-baseline gap-3">
@@ -505,7 +505,7 @@ export function ProjectStatsPage({ projectId }: ProjectStatsPageProps) {
                   </span>
                   <span className="text-lg font-semibold text-[var(--color-text)]">of extra capacity</span>
                 </div>
-                <p className="text-sm text-[var(--color-text-muted)] mt-1">
+                <p className="text-sm text-[var(--color-text-muted)] mt-1 select-none">
                   1 real minute ={" "}
                   <span className="font-medium text-[var(--color-text)]">{fmtMultiplier(d.parallelMultiplier)}</span>{" "}
                   minutes of output, peak{" "}
@@ -538,7 +538,7 @@ export function ProjectStatsPage({ projectId }: ProjectStatsPageProps) {
           <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }}
             transition={{ delay: 0.25, duration: 0.3 }}
             className="rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)] p-5">
-            <div className="flex items-center gap-2 mb-4">
+            <div className="flex items-center gap-2 mb-4 select-none">
               <Bot className="w-4 h-4 text-[var(--color-text-muted)]" />
               <h2 className="text-sm font-semibold text-[var(--color-text)]">AI Work Breakdown</h2>
               <span className="text-xs text-[var(--color-text-muted)]">active tasks only</span>
@@ -547,37 +547,37 @@ export function ProjectStatsPage({ projectId }: ProjectStatsPageProps) {
             {/* 3 inline stats */}
             <div className="grid grid-cols-3 gap-3 mb-5">
               <div className="rounded-lg bg-[var(--color-bg-tertiary)] p-3">
-                <div className="text-[10px] font-medium text-[var(--color-text-muted)] uppercase tracking-wide mb-1">
+                <div className="text-[10px] font-medium text-[var(--color-text-muted)] uppercase tracking-wide mb-1 select-none">
                   Tool Calls / Task
                 </div>
                 <div className="text-xl font-bold text-[var(--color-text)]">
                   {Math.round(d.avgToolCallsPerTask)}
                 </div>
-                <div className="text-[10px] text-[var(--color-text-muted)] mt-0.5">AI workload</div>
+                <div className="text-[10px] text-[var(--color-text-muted)] mt-0.5 select-none">AI workload</div>
               </div>
               <div className="rounded-lg bg-[var(--color-bg-tertiary)] p-3">
-                <div className="text-[10px] font-medium text-[var(--color-text-muted)] uppercase tracking-wide mb-1">
+                <div className="text-[10px] font-medium text-[var(--color-text-muted)] uppercase tracking-wide mb-1 select-none">
                   Plans / Task
                 </div>
                 <div className="text-xl font-bold text-[var(--color-text)]">
                   {d.avgPlanUpdatesPerTask.toFixed(1)}
                 </div>
-                <div className="text-[10px] text-[var(--color-text-muted)] mt-0.5">structured thinking</div>
+                <div className="text-[10px] text-[var(--color-text-muted)] mt-0.5 select-none">structured thinking</div>
               </div>
               <div className="rounded-lg bg-[var(--color-bg-tertiary)] p-3">
-                <div className="text-[10px] font-medium text-[var(--color-text-muted)] uppercase tracking-wide mb-1">
+                <div className="text-[10px] font-medium text-[var(--color-text-muted)] uppercase tracking-wide mb-1 select-none">
                   Tool Calls / Msg
                 </div>
                 <div className="text-xl font-bold text-[var(--color-text)]">
                   {toolCallsPerMsg ?? "—"}
                 </div>
-                <div className="text-[10px] text-[var(--color-text-muted)] mt-0.5">tool calls per user msg</div>
+                <div className="text-[10px] text-[var(--color-text-muted)] mt-0.5 select-none">tool calls per user msg</div>
               </div>
             </div>
 
             {/* Scatter: Notes length vs Interventions */}
             <div className="pt-4 border-t border-[var(--color-border)]">
-              <div className="flex items-center gap-1.5 mb-3">
+              <div className="flex items-center gap-1.5 mb-3 select-none">
                 <Sparkles className="w-3.5 h-3.5" style={{ color: "var(--color-highlight)" }} />
                 <span className="text-xs font-medium text-[var(--color-text)]">Spec Length vs Interventions</span>
                 <span className="text-xs text-[var(--color-text-muted)]">
@@ -587,10 +587,10 @@ export function ProjectStatsPage({ projectId }: ProjectStatsPageProps) {
               {d.briefInsightData.length > 0 ? (
                 <>
                   <ScatterChart data={d.briefInsightData} />
-                  <div className="flex items-center justify-between mt-2 text-xs text-[var(--color-text-muted)]">
+                  <div className="flex items-center justify-between mt-2 text-xs text-[var(--color-text-muted)] select-none">
                     <span>← Spec length (chars)</span><span>Corrections after initial brief ↑</span>
                   </div>
-                  <div className="mt-3 p-3 rounded-lg bg-[var(--color-bg-tertiary)] text-xs text-[var(--color-text-muted)] space-y-1">
+                  <div className="mt-3 p-3 rounded-lg bg-[var(--color-bg-tertiary)] text-xs text-[var(--color-text-muted)] space-y-1 select-none">
                     <div className="flex items-center gap-1.5">
                       <span className="w-2 h-2 rounded-full flex-shrink-0"
                         style={{ backgroundColor: "var(--color-highlight)", opacity: 0.5, display: "inline-block" }} />
@@ -618,7 +618,7 @@ export function ProjectStatsPage({ projectId }: ProjectStatsPageProps) {
           <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }}
             transition={{ delay: 0.5, duration: 0.3 }}
             className="rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)] p-5">
-            <div className="flex items-center gap-2 mb-4">
+            <div className="flex items-center gap-2 mb-4 select-none">
               <ArrowRight className="w-4 h-4 text-[var(--color-text-muted)]" />
               <h2 className="text-sm font-semibold text-[var(--color-text)]">Review Intelligence</h2>
             </div>
@@ -626,30 +626,30 @@ export function ProjectStatsPage({ projectId }: ProjectStatsPageProps) {
             {/* 3 headline metrics */}
             <div className="grid grid-cols-3 gap-3 mb-5">
               <div className="rounded-lg bg-[var(--color-bg-tertiary)] p-3">
-                <div className="text-[10px] font-medium text-[var(--color-text-muted)] uppercase tracking-wide mb-1">AI Review Share</div>
+                <div className="text-[10px] font-medium text-[var(--color-text-muted)] uppercase tracking-wide mb-1 select-none">AI Review Share</div>
                 <div className="text-xl font-bold text-[var(--color-text)]">
                   {cf.total > 0 ? pct(cf.agentTotal / cf.total) : "—"}
                 </div>
-                <div className="text-[10px] text-[var(--color-text-muted)] mt-0.5">
+                <div className="text-[10px] text-[var(--color-text-muted)] mt-0.5 select-none">
                   {cf.agentTotal} of {cf.total} comments
                 </div>
               </div>
               <div className="rounded-lg bg-[var(--color-bg-tertiary)] p-3">
-                <div className="text-[10px] font-medium text-[var(--color-text-muted)] uppercase tracking-wide mb-1">AI Hit Rate</div>
+                <div className="text-[10px] font-medium text-[var(--color-text-muted)] uppercase tracking-wide mb-1 select-none">AI Hit Rate</div>
                 <div className="text-xl font-bold" style={{
                   color: cf.agentTotal > 0 && cf.agentResolved / cf.agentTotal >= 0.5
                     ? "rgb(100,200,100)" : "var(--color-text)"
                 }}>
                   {cf.agentTotal > 0 ? pct(cf.agentResolved / cf.agentTotal) : "—"}
                 </div>
-                <div className="text-[10px] text-[var(--color-text-muted)] mt-0.5">AI suggestions resolved</div>
+                <div className="text-[10px] text-[var(--color-text-muted)] mt-0.5 select-none">AI suggestions resolved</div>
               </div>
               <div className="rounded-lg bg-[var(--color-bg-tertiary)] p-3">
-                <div className="text-[10px] font-medium text-[var(--color-text-muted)] uppercase tracking-wide mb-1">AI Rounds / Fix</div>
+                <div className="text-[10px] font-medium text-[var(--color-text-muted)] uppercase tracking-wide mb-1 select-none">AI Rounds / Fix</div>
                 <div className="text-xl font-bold text-[var(--color-text)]">
                   {cf.humanResolved > 0 ? cf.avgAiRoundsOnHumanComments.toFixed(1) : "—"}
                 </div>
-                <div className="text-[10px] text-[var(--color-text-muted)] mt-0.5">AI replies per your comment</div>
+                <div className="text-[10px] text-[var(--color-text-muted)] mt-0.5 select-none">AI replies per your comment</div>
               </div>
             </div>
 
@@ -659,7 +659,7 @@ export function ProjectStatsPage({ projectId }: ProjectStatsPageProps) {
               {cf.humanTotal > 0 && (
                 <motion.div initial={{ opacity: 0, x: -8 }} animate={{ opacity: 1, x: 0 }}
                   transition={{ delay: 0.55, duration: 0.3 }}>
-                  <div className="flex items-center justify-between mb-2">
+                  <div className="flex items-center justify-between mb-2 select-none">
                     <div className="flex items-center gap-2">
                       <User className="w-3.5 h-3.5 text-[var(--color-text-muted)]" />
                       <span className="text-sm font-medium text-[var(--color-text)]">Your Comments</span>
@@ -683,7 +683,7 @@ export function ProjectStatsPage({ projectId }: ProjectStatsPageProps) {
                       animate={{ width: `${cf.humanOutdated / cf.humanTotal * 100}%` }}
                       transition={{ delay: 0.7, duration: 0.5, ease: "easeOut" }} />
                   </div>
-                  <div className="flex gap-4 mt-1.5 text-[10px] text-[var(--color-text-muted)]">
+                  <div className="flex gap-4 mt-1.5 text-[10px] text-[var(--color-text-muted)] select-none">
                     <span><span className="inline-block w-2 h-2 rounded-sm mr-1" style={{ backgroundColor: "rgb(100,200,100)" }} />{cf.humanResolved} resolved</span>
                     <span><span className="inline-block w-2 h-2 rounded-sm mr-1" style={{ backgroundColor: "rgb(255,140,50)", opacity: 0.7 }} />{cf.humanOpen} open</span>
                     <span><span className="inline-block w-2 h-2 rounded-sm mr-1" style={{ backgroundColor: "rgb(100,130,160)", opacity: 0.5 }} />{cf.humanOutdated} outdated</span>
@@ -695,7 +695,7 @@ export function ProjectStatsPage({ projectId }: ProjectStatsPageProps) {
               {cf.agentTotal > 0 && (
                 <motion.div initial={{ opacity: 0, x: -8 }} animate={{ opacity: 1, x: 0 }}
                   transition={{ delay: 0.6, duration: 0.3 }}>
-                  <div className="flex items-center justify-between mb-2">
+                  <div className="flex items-center justify-between mb-2 select-none">
                     <div className="flex items-center gap-2">
                       <Bot className="w-3.5 h-3.5 text-[var(--color-text-muted)]" />
                       <span className="text-sm font-medium text-[var(--color-text)]">AI Suggestions</span>
@@ -719,7 +719,7 @@ export function ProjectStatsPage({ projectId }: ProjectStatsPageProps) {
                       animate={{ width: `${cf.agentOutdated / cf.agentTotal * 100}%` }}
                       transition={{ delay: 0.75, duration: 0.5, ease: "easeOut" }} />
                   </div>
-                  <div className="flex gap-4 mt-1.5 text-[10px] text-[var(--color-text-muted)]">
+                  <div className="flex gap-4 mt-1.5 text-[10px] text-[var(--color-text-muted)] select-none">
                     <span><span className="inline-block w-2 h-2 rounded-sm mr-1" style={{ backgroundColor: "rgb(80,160,220)" }} />{cf.agentResolved} acted on</span>
                     <span><span className="inline-block w-2 h-2 rounded-sm mr-1" style={{ backgroundColor: "rgb(255,140,50)", opacity: 0.7 }} />{cf.agentOpen} pending</span>
                     <span><span className="inline-block w-2 h-2 rounded-sm mr-1" style={{ backgroundColor: "rgb(100,130,160)", opacity: 0.5 }} />{cf.agentOutdated} outdated</span>
@@ -734,7 +734,7 @@ export function ProjectStatsPage({ projectId }: ProjectStatsPageProps) {
           {d.agentLeaderboard.length > 0 && (
             <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }}
               transition={{ delay: 0.65, duration: 0.3 }}>
-              <div className="flex items-center gap-2 mb-3">
+              <div className="flex items-center gap-2 mb-3 select-none">
                 <Trophy className="w-4 h-4 text-[var(--color-text-muted)]" />
                 <h2 className="text-sm font-semibold text-[var(--color-text)]">Agent Leaderboard</h2>
                 <span className="text-xs text-[var(--color-text-muted)]">Chat + Review composite score</span>
@@ -752,8 +752,8 @@ export function ProjectStatsPage({ projectId }: ProjectStatsPageProps) {
             <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }}
               transition={{ delay: 0.75, duration: 0.3 }}
               className="rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)] p-5">
-              <div className="flex items-center justify-between mb-4">
-                <div className="flex items-center gap-2">
+              <div className="flex items-center justify-between mb-4 select-none">
+                <div className="flex items-center gap-2 select-none">
                   <Target className="w-4 h-4 text-[var(--color-text-muted)]" />
                   <h2 className="text-sm font-semibold text-[var(--color-text)]">Hot Files</h2>
                 </div>

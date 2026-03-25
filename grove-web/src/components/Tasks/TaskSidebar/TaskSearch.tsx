@@ -16,8 +16,8 @@ export function TaskSearch({ value, onChange, inputRef }: TaskSearchProps) {
   };
 
   return (
-    <div className="relative">
-      <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[var(--color-text-muted)]" />
+    <div className="relative select-none">
+      <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[var(--color-text-muted)] pointer-events-none" />
       <input
         ref={inputRef}
         type="text"
@@ -27,6 +27,7 @@ export function TaskSearch({ value, onChange, inputRef }: TaskSearchProps) {
         placeholder="Search..."
         className="w-full pl-9 pr-3 py-2 bg-[var(--color-bg)] border border-[var(--color-border)] rounded-lg
           text-sm text-[var(--color-text)] placeholder-[var(--color-text-muted)]
+          [&::placeholder]:select-none
           focus:outline-none focus:border-[var(--color-highlight)] focus:ring-1 focus:ring-[var(--color-highlight)]
           transition-all duration-200"
       />

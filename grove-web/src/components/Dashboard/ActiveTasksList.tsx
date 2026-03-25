@@ -21,7 +21,7 @@ function formatTimeAgo(date: Date): string {
 export function ActiveTasksList({ tasks, onTaskClick }: ActiveTasksListProps) {
   if (tasks.length === 0) {
     return (
-      <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)] h-full">
+      <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)] h-full select-none">
         <div className="px-4 py-3 border-b border-[var(--color-border)]">
           <h2 className="text-sm font-medium text-[var(--color-text)]">
             Active Tasks
@@ -38,7 +38,7 @@ export function ActiveTasksList({ tasks, onTaskClick }: ActiveTasksListProps) {
   }
 
   return (
-    <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)] overflow-hidden h-full">
+    <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)] overflow-hidden h-full select-none">
       <div className="px-4 py-3 border-b border-[var(--color-border)]">
         <h2 className="text-sm font-medium text-[var(--color-text)]">
           Active Tasks

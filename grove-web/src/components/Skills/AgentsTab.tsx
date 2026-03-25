@@ -49,10 +49,10 @@ export function AgentsTab({ agents, onRefresh }: AgentsTabProps) {
   return (
     <div>
       {/* Header */}
-      <div className="flex items-center justify-between mb-4">
-        <div>
-          <h2 className="text-lg font-semibold text-[var(--color-text)]">Agents</h2>
-          <p className="text-sm text-[var(--color-text-muted)] mt-0.5">
+      <div className="flex items-center justify-between mb-4 select-none">
+        <div className="select-none">
+          <h2 className="text-lg font-semibold text-[var(--color-text)] select-none">Agents</h2>
+          <p className="text-sm text-[var(--color-text-muted)] mt-0.5 select-none">
             {enabledCount} of {agents.length} agents enabled. Skills will be installed to enabled agents.
           </p>
         </div>

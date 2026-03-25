@@ -468,7 +468,7 @@ export function TasksPage({ initialTaskId, initialViewMode, onNavigationConsumed
               Back
             </button>
           ) : (
-            <h1 className="text-xl font-semibold text-[var(--color-text)]">Tasks</h1>
+            <h1 className="text-xl font-semibold text-[var(--color-text)] select-none">Tasks</h1>
           )}
           <div className="flex items-center gap-2">
             {!isMobile && (

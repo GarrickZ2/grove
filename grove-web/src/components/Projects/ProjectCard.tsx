@@ -27,7 +27,7 @@ export function ProjectCard({ project, isSelected, onSelect, onDoubleClick, onDe
       onClick={onSelect}
       onDoubleClick={onDoubleClick}
       className={`
-        relative rounded-xl border cursor-pointer transition-colors
+        relative rounded-xl border cursor-pointer transition-colors select-none
         ${compact ? "p-3" : "p-4"}
         ${
           isSelected

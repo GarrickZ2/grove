@@ -71,7 +71,7 @@ export function TimeRangePicker({ value, onChange }: TimeRangePickerProps) {
   };
 
   return (
-    <div ref={ref} className="relative">
+    <div ref={ref} className="relative select-none">
       {/* Trigger button */}
       <button
         onClick={() => setOpen((v) => !v)}
@@ -101,12 +101,12 @@ export function TimeRangePicker({ value, onChange }: TimeRangePickerProps) {
             style={{ minWidth: 380 }}
           >
             {/* Left: Custom range */}
-            <div className="w-44 p-4 border-r border-[var(--color-border)] flex flex-col gap-3">
-              <p className="text-xs font-semibold text-[var(--color-text)] uppercase tracking-wide">
+            <div className="w-44 p-4 border-r border-[var(--color-border)] flex flex-col gap-3 select-none">
+              <p className="text-xs font-semibold text-[var(--color-text)] uppercase tracking-wide select-none">
                 Custom Range
               </p>
               <div className="flex flex-col gap-1">
-                <label className="text-xs text-[var(--color-text-muted)]">Start</label>
+                <label className="text-xs text-[var(--color-text-muted)] select-none">Start</label>
                 <input
                   type="date"
                   value={customFrom}
@@ -116,7 +116,7 @@ export function TimeRangePicker({ value, onChange }: TimeRangePickerProps) {
                 />
               </div>
               <div className="flex flex-col gap-1">
-                <label className="text-xs text-[var(--color-text-muted)]">End</label>
+                <label className="text-xs text-[var(--color-text-muted)] select-none">End</label>
                 <input
                   type="date"
                   value={customTo}
@@ -140,8 +140,8 @@ export function TimeRangePicker({ value, onChange }: TimeRangePickerProps) {
             </div>
 
             {/* Right: Presets */}
-            <div className="flex-1 p-2">
-              <p className="text-xs font-semibold text-[var(--color-text-muted)] uppercase tracking-wide px-2 py-1.5">
+            <div className="flex-1 p-2 select-none">
+              <p className="text-xs font-semibold text-[var(--color-text-muted)] uppercase tracking-wide px-2 py-1.5 select-none">
                 Quick Select
               </p>
               {PRESETS.map((preset) => {

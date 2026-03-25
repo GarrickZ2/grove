@@ -7,6 +7,8 @@
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  user-select: none;
+  -webkit-user-select: none;
 }
 
 .diff-review-page.embedded {
@@ -240,6 +242,20 @@
   min-width: 0;
   overflow-y: auto;
   overflow-x: auto;
+}
+
+/* Only allow selection in review body content, not chrome/header/sidebar controls */
+.diff-code,
+.diff-code *,
+.diff-comment-body,
+.diff-comment-body *,
+.preview-drawer-content,
+.preview-drawer-content *,
+.diff-review-page input,
+.diff-review-page textarea,
+.diff-review-page [contenteditable="true"] {
+  user-select: text;
+  -webkit-user-select: text;
 }
 
 /* File section */
@@ -811,6 +827,8 @@ td.diff-code.diff-line-highlighted::before {
 .diff-sidebar-search-input::placeholder {
   color: var(--color-text-muted);
   opacity: 0.6;
+  user-select: none;
+  -webkit-user-select: none;
 }
 
 .diff-sidebar-search-input:focus {

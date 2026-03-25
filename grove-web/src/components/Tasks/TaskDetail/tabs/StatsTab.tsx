@@ -66,7 +66,7 @@ function StatCard({ icon: Icon, label, value, subValue, delay = 0 }: StatCardPro
       transition={{ delay }}
       className="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] p-4"
     >
-      <div className="flex items-center gap-2 text-[var(--color-text-muted)] mb-2">
+      <div className="flex items-center gap-2 text-[var(--color-text-muted)] mb-2 select-none">
         <Icon className="w-4 h-4" />
         <span className="text-xs font-medium uppercase tracking-wide">{label}</span>
       </div>
@@ -187,13 +187,13 @@ export function StatsTab({ projectId, task }: StatsTabProps) {
         transition={{ delay: 0.2 }}
         className="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] p-4"
       >
-        <h3 className="text-sm font-medium text-[var(--color-text)] mb-3">Task Duration</h3>
+        <h3 className="text-sm font-medium text-[var(--color-text)] mb-3 select-none">Task Duration</h3>
         <div className="flex items-center gap-4">
           <div className="flex-1">
             <div className="text-2xl font-semibold text-[var(--color-text)]">
               {stats?.hourly_activity ? calculateActiveTime(stats.hourly_activity) : isLoading ? "—" : "—"}
             </div>
-            <div className="text-xs text-[var(--color-text-muted)] mt-1">
+            <div className="text-xs text-[var(--color-text-muted)] mt-1 select-none">
               Active time
             </div>
           </div>
@@ -202,7 +202,7 @@ export function StatsTab({ projectId, task }: StatsTabProps) {
             <div className="text-2xl font-semibold text-[var(--color-text)]">
               {additions + deletions}
             </div>
-            <div className="text-xs text-[var(--color-text-muted)] mt-1">
+            <div className="text-xs text-[var(--color-text-muted)] mt-1 select-none">
               Total lines changed
             </div>
           </div>
@@ -237,7 +237,7 @@ export function StatsTab({ projectId, task }: StatsTabProps) {
           transition={{ delay: 0.25 }}
           className="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] p-4"
         >
-          <div className="flex items-center gap-2 mb-3">
+          <div className="flex items-center gap-2 mb-3 select-none">
             <Activity className="w-4 h-4 text-[var(--color-text-muted)]" />
             <h3 className="text-sm font-medium text-[var(--color-text)]">File Edits</h3>
             <span className="text-xs text-[var(--color-text-muted)]">
@@ -316,7 +316,7 @@ export function StatsTab({ projectId, task }: StatsTabProps) {
           transition={{ delay: 0.25 }}
           className="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] p-4"
         >
-          <div className="flex items-center gap-2 mb-3">
+          <div className="flex items-center gap-2 mb-3 select-none">
             <Activity className="w-4 h-4 text-[var(--color-text-muted)]" />
             <h3 className="text-sm font-medium text-[var(--color-text)]">File Edits</h3>
           </div>
@@ -334,7 +334,7 @@ export function StatsTab({ projectId, task }: StatsTabProps) {
           transition={{ delay: 0.35 }}
           className="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] p-4"
         >
-          <div className="flex items-center gap-2 mb-3">
+          <div className="flex items-center gap-2 mb-3 select-none">
             <Clock className="w-4 h-4 text-[var(--color-text-muted)]" />
             <h3 className="text-sm font-medium text-[var(--color-text)]">Activity Timeline</h3>
             <span className="text-xs text-[var(--color-text-muted)]">

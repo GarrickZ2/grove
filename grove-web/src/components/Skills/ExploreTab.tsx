@@ -180,14 +180,14 @@ export function ExploreTab({ sources, agents, installed, projectPath, onInstalle
       <div className="min-w-0">
         {/* Search + Filters */}
         <div className="flex items-center gap-2 mb-4">
-          <div className="flex-1 relative">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[var(--color-text-muted)]" />
+          <div className="flex-1 relative select-none">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[var(--color-text-muted)] pointer-events-none" />
             <input
               type="text"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               placeholder="Search skills..."
-              className="w-full pl-9 pr-3 py-2 text-sm bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-lg text-[var(--color-text)] placeholder:text-[var(--color-text-muted)]/50 focus:outline-none focus:ring-1 focus:ring-[var(--color-highlight)]"
+              className="w-full pl-9 pr-3 py-2 text-sm bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-lg text-[var(--color-text)] placeholder:text-[var(--color-text-muted)]/50 [&::placeholder]:select-none focus:outline-none focus:ring-1 focus:ring-[var(--color-highlight)]"
             />
           </div>
 
@@ -433,11 +433,11 @@ export function ExploreTab({ sources, agents, installed, projectPath, onInstalle
             {/* Pagination */}
             {totalPages > 1 && (
               <div className="flex items-center justify-between mt-6 pt-4 border-t border-[var(--color-border)]">
-                <span className="text-xs text-[var(--color-text-muted)]">
+                <span className="text-xs text-[var(--color-text-muted)] select-none">
                   {(safePage - 1) * PAGE_SIZE + 1}–{Math.min(safePage * PAGE_SIZE, totalItems)} of {totalItems} skills
                 </span>
 
-                <div className="flex items-center gap-1.5">
+                <div className="flex items-center gap-1.5 select-none">
                   <button
                     onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
                     disabled={safePage <= 1}
@@ -448,7 +448,7 @@ export function ExploreTab({ sources, agents, installed, projectPath, onInstalle
 
                   {generatePageNumbers(safePage, totalPages).map((page, i) =>
                     page === "..." ? (
-                      <span key={`ellipsis-${i}`} className="px-2 text-xs text-[var(--color-text-muted)]">...</span>
+                      <span key={`ellipsis-${i}`} className="px-2 text-xs text-[var(--color-text-muted)] select-none">...</span>
                     ) : (
                       <button
                         key={page}

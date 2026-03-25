@@ -95,10 +95,10 @@ export function SourcesTab({ sources, onRefresh }: SourcesTabProps) {
   return (
     <div>
       {/* Header */}
-      <div className="flex items-center justify-between mb-4">
-        <div>
-          <h2 className="text-lg font-semibold text-[var(--color-text)]">Skill Sources</h2>
-          <p className="text-sm text-[var(--color-text-muted)] mt-0.5">
+      <div className="flex items-center justify-between mb-4 select-none">
+        <div className="select-none">
+          <h2 className="text-lg font-semibold text-[var(--color-text)] select-none">Skill Sources</h2>
+          <p className="text-sm text-[var(--color-text-muted)] mt-0.5 select-none">
             Manage git repositories and local directories where skills are discovered.
           </p>
         </div>

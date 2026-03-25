@@ -201,7 +201,7 @@ export function TaskInfoPanel({
               className="flex-1 flex flex-col min-w-0 overflow-hidden"
             >
               {/* Task Info Header */}
-              <div className="px-3 py-2 border-b border-[var(--color-border)]">
+              <div className="px-3 py-2 border-b border-[var(--color-border)] select-none">
                 <div className="flex items-center gap-1.5">
                   <h2 className="text-sm font-semibold text-[var(--color-text)] truncate">
                     {task.name}
@@ -216,7 +216,7 @@ export function TaskInfoPanel({
               </div>
 
               {/* Active Tab Label */}
-              <div className="px-3 py-1.5 border-b border-[var(--color-border)] bg-[var(--color-bg)]">
+              <div className="px-3 py-1.5 border-b border-[var(--color-border)] bg-[var(--color-bg)] select-none">
                 <span className="text-xs font-medium text-[var(--color-highlight)]">
                   {TABS.find((t) => t.id === activeTab)?.label}
                 </span>
@@ -455,7 +455,7 @@ export function TaskInfoPanel({
       </div>
 
       {/* Task Name */}
-      <div className="px-3 py-2 border-b border-[var(--color-border)]">
+      <div className="px-3 py-2 border-b border-[var(--color-border)] select-none">
         <div className="flex items-center gap-1.5">
           <h2 className="text-sm font-semibold text-[var(--color-text)] truncate">
             {task.name}
@@ -470,7 +470,7 @@ export function TaskInfoPanel({
       </div>
 
       {/* Tab Navigation */}
-      <div className="relative flex border-b border-[var(--color-border)] bg-[var(--color-bg)]">
+      <div className="relative flex border-b border-[var(--color-border)] bg-[var(--color-bg)] select-none">
         {TABS.map((tab) => {
           const Icon = tab.icon;
           const isActive = activeTab === tab.id;

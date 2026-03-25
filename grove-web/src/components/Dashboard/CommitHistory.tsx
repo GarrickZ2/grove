@@ -47,7 +47,7 @@ export function CommitHistory({ commits, getFileChanges, isLoading = false }: Co
   };
 
   return (
-    <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)] overflow-hidden">
+    <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)] overflow-hidden select-none">
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-3 border-b border-[var(--color-border)]">
         <h2 className="text-sm font-medium text-[var(--color-text)]">Recent Commits</h2>
@@ -109,7 +109,7 @@ export function CommitHistory({ commits, getFileChanges, isLoading = false }: Co
                           <code className="text-xs px-1.5 py-0.5 rounded bg-[var(--color-bg)] text-[var(--color-highlight)] font-mono">
                             {commit.hash.substring(0, 7)}
                           </code>
-                          <span className="text-sm text-[var(--color-text)] truncate">
+                          <span className="text-sm text-[var(--color-text)] truncate select-text">
                             {commit.message}
                           </span>
                         </div>

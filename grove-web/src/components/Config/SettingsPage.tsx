@@ -74,7 +74,7 @@ function Section({
     <div className="border border-[var(--color-border)] rounded-xl overflow-hidden">
       <motion.button
         onClick={onToggle}
-        className="w-full flex items-center gap-4 p-4 bg-[var(--color-bg-secondary)] hover:bg-[var(--color-bg-tertiary)] transition-colors"
+        className="w-full flex items-center gap-4 p-4 bg-[var(--color-bg-secondary)] hover:bg-[var(--color-bg-tertiary)] transition-colors select-none"
       >
         <div
           className="w-9 h-9 rounded-lg flex items-center justify-center"
@@ -82,7 +82,7 @@ function Section({
         >
           <Icon className="w-4 h-4" style={{ color: iconColor }} />
         </div>
-        <div className="flex-1 text-left">
+        <div className="flex-1 text-left select-none">
           <div className="font-medium text-[var(--color-text)] text-sm">{title}</div>
           <div className="text-xs text-[var(--color-text-muted)]">{description}</div>
         </div>
@@ -684,7 +684,7 @@ env_vars = [
       transition={{ duration: 0.3 }}
     >
       {/* Compact Header */}
-      <div className="flex items-center gap-3 mb-6">
+      <div className="flex items-center gap-3 mb-6 select-none">
         <div className="w-10 h-10 rounded-xl bg-[var(--color-highlight)]/10 flex items-center justify-center">
           <Settings className="w-5 h-5 text-[var(--color-highlight)]" />
         </div>
@@ -796,7 +796,7 @@ env_vars = [
           onToggle={() => toggleSection("appearance")}
         >
           <div className="space-y-3">
-            <div className="text-sm font-medium text-[var(--color-text-muted)] mb-2">Select Theme</div>
+            <div className="text-sm font-medium text-[var(--color-text-muted)] mb-2 select-none">Select Theme</div>
             <div className={`grid ${isMobile ? "grid-cols-3" : "grid-cols-4"} gap-2`}>
               {themes.map((t) => {
                 const isAuto = t.id === "auto";
@@ -869,7 +869,7 @@ env_vars = [
           <div className="space-y-4">
             {/* Status Summary */}
             <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 select-none">
                 {installedCount === (visibleDepKeys.length || 4) ? (
                   <>
                     <CheckCircle2 className="w-5 h-5 text-[var(--color-success)]" />
@@ -933,7 +933,7 @@ env_vars = [
                     <div className="flex items-center gap-3">
                       {getStatusIcon(state.status)}
                       <div>
-                        <div className="font-medium text-sm text-[var(--color-text)]">
+                        <div className="font-medium text-sm text-[var(--color-text)] select-none">
                           {info.name}
                           {isMuxActive && (
                             <motion.span
@@ -943,13 +943,13 @@ env_vars = [
                             >Active</motion.span>
                           )}
                         </div>
-                        <div className="text-xs text-[var(--color-text-muted)]">{info.description}</div>
+                        <div className="text-xs text-[var(--color-text-muted)] select-none">{info.description}</div>
                       </div>
                     </div>
 
                     <div className="flex items-center gap-2">
                       {canSwitchMux && (
-                        <span className="text-xs text-[var(--color-text-muted)]">Use</span>
+                        <span className="text-xs text-[var(--color-text-muted)] select-none">Use</span>
                       )}
 
                       {isInstalled && state.version && state.version !== "installed" && (
@@ -1001,7 +1001,7 @@ env_vars = [
                       {/* Multiplexer Divider + Section */}
                       <div className="flex items-center gap-3 mt-4 mb-2">
                         <div className="flex-1 h-px bg-[var(--color-border)]" />
-                        <span className="text-xs font-medium text-[var(--color-text-muted)] uppercase tracking-wider">Multiplexer</span>
+                        <span className="text-xs font-medium text-[var(--color-text-muted)] uppercase tracking-wider select-none">Multiplexer</span>
                         <div className="flex-1 h-px bg-[var(--color-border)]" />
                       </div>
                       <div className="space-y-2">
@@ -1016,7 +1016,7 @@ env_vars = [
                       {/* ACP Adapter Divider + Section */}
                       <div className="flex items-center gap-3 mt-4 mb-2">
                         <div className="flex-1 h-px bg-[var(--color-border)]" />
-                        <span className="text-xs font-medium text-[var(--color-text-muted)] uppercase tracking-wider">ACP Adapter</span>
+                        <span className="text-xs font-medium text-[var(--color-text-muted)] uppercase tracking-wider select-none">ACP Adapter</span>
                         <div className="flex-1 h-px bg-[var(--color-border)]" />
                       </div>
                       <div className="space-y-2">
@@ -1044,7 +1044,7 @@ env_vars = [
             {/* Terminal Coding Agent (仅当 Terminal 启用时显示) */}
             {enableTerminal && (
               <div>
-                <div className="flex items-center gap-2 mb-3">
+                <div className="flex items-center gap-2 mb-3 select-none">
                   <Sparkles className="w-4 h-4 text-[var(--color-warning)]" />
                   <span className="text-sm font-medium text-[var(--color-text)]">Terminal Coding Agent</span>
                 </div>
@@ -1061,7 +1061,7 @@ env_vars = [
             {/* Chat Coding Agent (仅当 Chat 启用时显示) */}
             {enableChat && (
               <div>
-                <div className="flex items-center gap-2 mb-3">
+                <div className="flex items-center gap-2 mb-3 select-none">
                   <MessageSquare className="w-4 h-4 text-[var(--color-info)]" />
                   <span className="text-sm font-medium text-[var(--color-text)]">Chat Coding Agent</span>
                 </div>
@@ -1079,7 +1079,7 @@ env_vars = [
 
             {/* Default IDE */}
             <div>
-              <div className="flex items-center gap-2 mb-3">
+              <div className="flex items-center gap-2 mb-3 select-none">
                 <Code className="w-4 h-4 text-[var(--color-info)]" />
                 <span className="text-sm font-medium text-[var(--color-text)]">Default IDE</span>
               </div>
@@ -1100,7 +1100,7 @@ env_vars = [
 
             {/* Default Terminal */}
             <div>
-              <div className="flex items-center gap-2 mb-3">
+              <div className="flex items-center gap-2 mb-3 select-none">
                 <Terminal className="w-4 h-4 text-[var(--color-accent)]" />
                 <span className="text-sm font-medium text-[var(--color-text)]">Default Terminal</span>
               </div>
@@ -1134,7 +1134,7 @@ env_vars = [
           <div className="space-y-6">
             {/* 功能说明 */}
             <div className="p-3 bg-[var(--color-bg-secondary)] rounded-lg">
-              <p className="text-xs text-[var(--color-text-muted)]">
+              <p className="text-xs text-[var(--color-text-muted)] select-none">
                 Automatically create symlinks in new worktrees for gitignored files/folders.
                 Saves disk space and avoids rebuilding node_modules, IDE configs, etc.
               </p>
@@ -1143,7 +1143,7 @@ env_vars = [
             {/* Glob 模式列表 */}
             <div>
               <div className="flex items-center justify-between mb-3">
-                <div>
+                <div className="select-none">
                   <h4 className="text-sm font-medium text-[var(--color-text)]">Path Patterns</h4>
                   <p className="text-xs text-[var(--color-text-muted)] mt-1">
                     Glob patterns to match files/folders (supports *, **, ?)
@@ -1186,7 +1186,7 @@ env_vars = [
                 ))}
 
                 {autoLinkPatterns.length === 0 && (
-                  <div className="text-center py-4 text-sm text-[var(--color-text-muted)]">
+                  <div className="text-center py-4 text-sm text-[var(--color-text-muted)] select-none">
                     No patterns configured. Click "Add" to create one.
                   </div>
                 )}
@@ -1194,7 +1194,7 @@ env_vars = [
 
               {/* 预设模板 */}
               <div className="p-3 bg-[var(--color-bg-secondary)] rounded-lg mb-3">
-                <h5 className="text-xs font-medium text-[var(--color-text)] mb-2">
+                <h5 className="text-xs font-medium text-[var(--color-text)] mb-2 select-none">
                   Quick Add Presets
                 </h5>
                 <div className="flex flex-wrap gap-2">
@@ -1233,8 +1233,8 @@ env_vars = [
 
               {/* Glob 语法帮助 */}
               <div className="p-3 bg-[var(--color-bg-secondary)] rounded-lg">
-                <h5 className="text-xs font-medium text-[var(--color-text)] mb-2">Glob Syntax</h5>
-                <ul className="text-xs text-[var(--color-text-muted)] space-y-1">
+                <h5 className="text-xs font-medium text-[var(--color-text)] mb-2 select-none">Glob Syntax</h5>
+                <ul className="text-xs text-[var(--color-text-muted)] space-y-1 select-none">
                   <li>• <code className="font-mono">*</code> matches any characters (except /)</li>
                   <li>• <code className="font-mono">**</code> matches any path segment</li>
                   <li>• <code className="font-mono">?</code> matches single character</li>
@@ -1397,7 +1397,7 @@ env_vars = [
                       )}
                       {renderPreview()}
                       <div className="text-xs font-medium text-[var(--color-text)]">{preset.name}</div>
-                      <div className="text-[10px] text-[var(--color-text-muted)]">
+                      <div className="text-[10px] text-[var(--color-text-muted)] select-none">
                         {isCustom && customLayouts.length > 0
                           ? `${customLayouts.length} layout${customLayouts.length > 1 ? "s" : ""} configured`
                           : preset.description}
@@ -1449,7 +1449,7 @@ env_vars = [
           <div className="space-y-4">
             {/* Level Selection */}
             <div>
-              <div className="text-sm font-medium text-[var(--color-text-muted)] mb-2">Level</div>
+              <div className="text-sm font-medium text-[var(--color-text-muted)] mb-2 select-none">Level</div>
               <div className="flex gap-2">
                 {notificationLevels.map(({ level, icon: Icon, color, title }) => {
                   const isSelected = hookLevel === level;
@@ -1478,7 +1478,7 @@ env_vars = [
             {/* Banner & Sound Options */}
             <div className="grid grid-cols-2 gap-4">
               <div>
-                <div className="text-sm font-medium text-[var(--color-text-muted)] mb-2">Banner</div>
+                <div className="text-sm font-medium text-[var(--color-text-muted)] mb-2 select-none">Banner</div>
                 <div className="flex gap-2">
                   {[true, false].map((value) => {
                     const isSelected = hookBanner === value;
@@ -1501,7 +1501,7 @@ env_vars = [
                 </div>
               </div>
               <div>
-                <div className="text-sm font-medium text-[var(--color-text-muted)] mb-2">Sound</div>
+                <div className="text-sm font-medium text-[var(--color-text-muted)] mb-2 select-none">Sound</div>
                 <Combobox
                   options={soundOptions}
                   value={hookSound}
@@ -1514,7 +1514,7 @@ env_vars = [
 
             {/* Message */}
             <div>
-              <div className="text-sm font-medium text-[var(--color-text-muted)] mb-2">Message</div>
+              <div className="text-sm font-medium text-[var(--color-text-muted)] mb-2 select-none">Message</div>
               <input
                 type="text"
                 value={hookMessage}
@@ -1522,14 +1522,14 @@ env_vars = [
                 placeholder="e.g., Task completed..."
                 className="w-full px-3 py-2 text-sm bg-[var(--color-bg-secondary)] text-[var(--color-text)] border border-[var(--color-border)] rounded-lg focus:outline-none focus:ring-1 focus:ring-[var(--color-highlight)] placeholder:text-[var(--color-text-muted)]"
               />
-              <p className="text-xs text-[var(--color-text-muted)] mt-1">
+              <p className="text-xs text-[var(--color-text-muted)] mt-1 select-none">
                 Optional message included with the notification.
               </p>
             </div>
 
             {/* Generated Command */}
             <div>
-              <div className="text-sm font-medium text-[var(--color-text-muted)] mb-2">Generated Command</div>
+              <div className="text-sm font-medium text-[var(--color-text-muted)] mb-2 select-none">Generated Command</div>
               <div className="flex items-center gap-2 p-3 bg-[var(--color-bg-secondary)] rounded-lg border border-[var(--color-border)]">
                 <code className="flex-1 text-sm text-[var(--color-highlight)] font-mono">{hookCommand}</code>
                 <Button
@@ -1544,7 +1544,7 @@ env_vars = [
                   )}
                 </Button>
               </div>
-              <p className="text-xs text-[var(--color-text-muted)] mt-2">
+              <p className="text-xs text-[var(--color-text-muted)] mt-2 select-none">
                 Add this command to your agent's workflow to send notifications to Grove.
               </p>
             </div>
@@ -1566,19 +1566,19 @@ env_vars = [
             <div className="p-4 bg-[var(--color-highlight)]/5 rounded-xl border border-[var(--color-highlight)]/20">
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <div className="text-xs text-[var(--color-text-muted)] mb-1">Name</div>
+                  <div className="text-xs text-[var(--color-text-muted)] mb-1 select-none">Name</div>
                   <code className="text-sm font-semibold text-[var(--color-highlight)]">{config.mcp.name}</code>
                 </div>
                 <div>
-                  <div className="text-xs text-[var(--color-text-muted)] mb-1">Type</div>
+                  <div className="text-xs text-[var(--color-text-muted)] mb-1 select-none">Type</div>
                   <code className="text-sm font-semibold text-[var(--color-text)]">{config.mcp.type}</code>
                 </div>
                 <div>
-                  <div className="text-xs text-[var(--color-text-muted)] mb-1">Command</div>
+                  <div className="text-xs text-[var(--color-text-muted)] mb-1 select-none">Command</div>
                   <code className="text-sm font-semibold text-[var(--color-text)]">{config.mcp.command}</code>
                 </div>
                 <div>
-                  <div className="text-xs text-[var(--color-text-muted)] mb-1">Args</div>
+                  <div className="text-xs text-[var(--color-text-muted)] mb-1 select-none">Args</div>
                   <code className="text-sm font-semibold text-[var(--color-text)]">{config.mcp.args.join(" ")}</code>
                 </div>
               </div>
@@ -1587,7 +1587,7 @@ env_vars = [
             {/* Claude Code Config */}
             <div>
               <div className="flex items-center justify-between mb-2">
-                <span className="text-sm font-medium text-[var(--color-text)]">Claude Code Configuration</span>
+                <span className="text-sm font-medium text-[var(--color-text)] select-none">Claude Code Configuration</span>
                 <Button
                   variant="ghost"
                   size="sm"
@@ -1603,7 +1603,7 @@ env_vars = [
               <pre className="p-3 bg-[var(--color-bg-secondary)] rounded-lg border border-[var(--color-border)] text-xs text-[var(--color-text-muted)] overflow-x-auto">
                 {claudeCodeConfig}
               </pre>
-              <p className="text-xs text-[var(--color-text-muted)] mt-2">
+              <p className="text-xs text-[var(--color-text-muted)] mt-2 select-none">
                 Add to your <code className="text-[var(--color-highlight)]">~/.claude.json</code> file.
               </p>
             </div>
@@ -1611,7 +1611,7 @@ env_vars = [
             {/* CodeX Config */}
             <div>
               <div className="flex items-center justify-between mb-2">
-                <span className="text-sm font-medium text-[var(--color-text)]">CodeX Configuration</span>
+                <span className="text-sm font-medium text-[var(--color-text)] select-none">CodeX Configuration</span>
                 <Button
                   variant="ghost"
                   size="sm"
@@ -1627,7 +1627,7 @@ env_vars = [
               <pre className="p-3 bg-[var(--color-bg-secondary)] rounded-lg border border-[var(--color-border)] text-xs text-[var(--color-text-muted)] overflow-x-auto">
                 {codexConfig}
               </pre>
-              <p className="text-xs text-[var(--color-text-muted)] mt-2">
+              <p className="text-xs text-[var(--color-text-muted)] mt-2 select-none">
                 Add to your <code className="text-[var(--color-highlight)]">~/.codex/config.toml</code> file.
               </p>
             </div>
@@ -1640,7 +1640,7 @@ env_vars = [
               className="flex items-center gap-3 p-3 rounded-lg bg-[var(--color-info)]/5 border border-[var(--color-info)]/20 hover:bg-[var(--color-info)]/10 transition-colors"
             >
               <ExternalLink className="w-4 h-4 text-[var(--color-info)]" />
-              <span className="text-sm text-[var(--color-text)]">Learn more about MCP protocol</span>
+              <span className="text-sm text-[var(--color-text)] select-none">Learn more about MCP protocol</span>
             </a>
           </div>
         </Section>

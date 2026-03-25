@@ -53,7 +53,7 @@ export function GitStatusBar({
   };
 
   return (
-    <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)] p-4">
+    <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)] p-4 select-none">
       <div className={`flex gap-4 ${isMobile ? "flex-col" : "items-center justify-between"}`}>
         {/* Status Cards */}
         <div className={`flex gap-3 ${isMobile ? "flex-col" : "items-center"}`}>

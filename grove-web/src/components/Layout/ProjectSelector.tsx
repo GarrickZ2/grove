@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useMemo } from "react";
+import React, { useState, useRef, useEffect, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { ChevronDown, Check, Plus, Settings2, Search } from "lucide-react";
 import { useProject, useTheme } from "../../context";
@@ -17,14 +17,46 @@ export function ProjectSelector({ collapsed, onManageProjects, onAddProject, onP
   const { theme } = useTheme();
   const [isOpen, setIsOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
+  const [activeProjectId, setActiveProjectId] = useState<string | null>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
+  const itemRefs = useRef<Record<string, HTMLButtonElement | null>>({});
 
   const filteredProjects = useMemo(() => {
     if (!searchQuery) return projects;
     const q = searchQuery.toLowerCase();
     return projects.filter((p) => p.name.toLowerCase().includes(q));
   }, [projects, searchQuery]);
+
+  const activeProjectOptionId = activeProjectId ? `project-selector-option-${activeProjectId}` : undefined;
+
+  useEffect(() => {
+    if (!isOpen) {
+      setActiveProjectId(null);
+      return;
+    }
+
+    if (filteredProjects.length === 0) {
+      setActiveProjectId(null);
+      return;
+    }
+
+    setActiveProjectId((current) => {
+      if (current && filteredProjects.some((project) => project.id === current)) {
+        return current;
+      }
+
+      return filteredProjects[0].id;
+    });
+  }, [filteredProjects, isOpen]);
+
+  useEffect(() => {
+    if (!activeProjectId || !isOpen) return;
+
+    itemRefs.current[activeProjectId]?.scrollIntoView({
+      block: "nearest",
+    });
+  }, [activeProjectId, isOpen]);
 
   // Close dropdown when clicking outside
   useEffect(() => {
@@ -58,11 +90,58 @@ export function ProjectSelector({ collapsed, onManageProjects, onAddProject, onP
     if (switched) onProjectSwitch?.();
   };
 
+  const moveActiveProject = (direction: 1 | -1) => {
+    if (filteredProjects.length === 0) return;
+
+    const currentIndex = filteredProjects.findIndex((project) => project.id === activeProjectId);
+    const startIndex = currentIndex >= 0 ? currentIndex : 0;
+    const nextIndex = (startIndex + direction + filteredProjects.length) % filteredProjects.length;
+    setActiveProjectId(filteredProjects[nextIndex].id);
+  };
+
+  const handleSearchKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.nativeEvent.isComposing || e.keyCode === 229) {
+      return;
+    }
+
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      moveActiveProject(1);
+      return;
+    }
+
+    if (e.key === "ArrowUp") {
+      e.preventDefault();
+      moveActiveProject(-1);
+      return;
+    }
+
+    if (e.key === "Enter") {
+      if (!activeProjectId) return;
+
+      const activeProject = filteredProjects.find((project) => project.id === activeProjectId);
+      if (!activeProject) return;
+
+      e.preventDefault();
+      handleSelectProject(activeProject);
+      return;
+    }
+
+    if (e.key === "Escape") {
+      if (searchQuery) {
+        setSearchQuery("");
+      } else {
+        setIsOpen(false);
+      }
+      e.stopPropagation();
+    }
+  };
+
   if (collapsed) {
     const style = selectedProject ? getProjectStyle(selectedProject.id, theme.accentPalette) : null;
     const Icon = style?.Icon;
     return (
-      <div className="px-2 py-2 relative" ref={dropdownRef}>
+      <div className="px-2 py-2 relative select-none" ref={dropdownRef}>
         <motion.button
           whileHover={{ scale: 1.05 }}
           whileTap={{ scale: 0.95 }}
@@ -92,32 +171,38 @@ export function ProjectSelector({ collapsed, onManageProjects, onAddProject, onP
                 <div className="flex items-center gap-2 px-2 py-1.5 rounded-md bg-[var(--color-bg-secondary)]">
                   <Search className="w-3.5 h-3.5 text-[var(--color-text-muted)] flex-shrink-0" />
                   <input
-                    ref={searchInputRef}
-                    type="text"
-                    value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Escape") {
-                        if (searchQuery) {
-                          setSearchQuery("");
-                        } else {
-                          setIsOpen(false);
-                        }
-                        e.stopPropagation();
-                      }
-                    }}
-                    placeholder="Filter projects..."
-                    className="flex-1 bg-transparent text-sm text-[var(--color-text)] placeholder-[var(--color-text-muted)] outline-none min-w-0"
-                  />
-                </div>
+                  ref={searchInputRef}
+                  type="text"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  onKeyDown={handleSearchKeyDown}
+                  role="combobox"
+                  aria-expanded={isOpen}
+                  aria-controls="project-selector-listbox-collapsed"
+                  aria-activedescendant={activeProjectOptionId}
+                  aria-autocomplete="list"
+                  placeholder="Filter projects..."
+                  className="flex-1 bg-transparent text-sm text-[var(--color-text)] placeholder-[var(--color-text-muted)] outline-none min-w-0"
+                />
               </div>
-              <div className="max-h-64 overflow-y-auto">
+              </div>
+              <div
+                id="project-selector-listbox-collapsed"
+                role="listbox"
+                aria-label="Projects"
+                className="max-h-64 overflow-y-auto"
+              >
                 {filteredProjects.map((project) => (
                   <ProjectItem
                     key={project.id}
+                    ref={(node) => {
+                      itemRefs.current[project.id] = node;
+                    }}
                     project={project}
                     isSelected={selectedProject?.id === project.id}
+                    isActive={activeProjectId === project.id}
                     onClick={() => handleSelectProject(project)}
+                    onMouseEnter={() => setActiveProjectId(project.id)}
                     accentPalette={theme.accentPalette}
                   />
                 ))}
@@ -150,7 +235,7 @@ export function ProjectSelector({ collapsed, onManageProjects, onAddProject, onP
   const SelectedIcon = selectedStyle?.Icon;
 
   return (
-    <div className="px-3 py-2" ref={dropdownRef}>
+    <div className="px-3 py-2 select-none" ref={dropdownRef}>
       <motion.button
         whileHover={{ scale: 1.01 }}
         whileTap={{ scale: 0.99 }}
@@ -196,29 +281,35 @@ export function ProjectSelector({ collapsed, onManageProjects, onAddProject, onP
                   type="text"
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Escape") {
-                      if (searchQuery) {
-                        setSearchQuery("");
-                      } else {
-                        setIsOpen(false);
-                      }
-                      e.stopPropagation();
-                    }
-                  }}
+                  onKeyDown={handleSearchKeyDown}
+                  role="combobox"
+                  aria-expanded={isOpen}
+                  aria-controls="project-selector-listbox"
+                  aria-activedescendant={activeProjectOptionId}
+                  aria-autocomplete="list"
                   placeholder="Filter projects..."
                   className="flex-1 bg-transparent text-sm text-[var(--color-text)] placeholder-[var(--color-text-muted)] outline-none min-w-0"
                 />
               </div>
             </div>
             {/* Project List */}
-            <div className="max-h-64 overflow-y-auto">
+            <div
+              id="project-selector-listbox"
+              role="listbox"
+              aria-label="Projects"
+              className="max-h-64 overflow-y-auto"
+            >
               {filteredProjects.map((project) => (
                 <ProjectItem
                   key={project.id}
+                  ref={(node) => {
+                    itemRefs.current[project.id] = node;
+                  }}
                   project={project}
                   isSelected={selectedProject?.id === project.id}
+                  isActive={activeProjectId === project.id}
                   onClick={() => handleSelectProject(project)}
+                  onMouseEnter={() => setActiveProjectId(project.id)}
                   accentPalette={theme.accentPalette}
                 />
               ))}
@@ -300,21 +391,36 @@ function MiddleTruncatedText({ text, className }: { text: string; className?: st
 interface ProjectItemProps {
   project: Project;
   isSelected: boolean;
+  isActive: boolean;
   onClick: () => void;
+  onMouseEnter: () => void;
   accentPalette: string[];
 }
 
-function ProjectItem({ project, isSelected, onClick, accentPalette }: ProjectItemProps) {
+const ProjectItem = React.forwardRef<HTMLButtonElement, ProjectItemProps>(function ProjectItem(
+  { project, isSelected, isActive, onClick, onMouseEnter, accentPalette },
+  ref
+) {
   // Use taskCount from list API, or calculate from tasks array if full project loaded
   const totalCount = project.taskCount ?? project.tasks.length;
   const { color, Icon } = getProjectStyle(project.id, accentPalette);
 
   return (
     <button
+      id={`project-selector-option-${project.id}`}
+      ref={ref}
+      type="button"
       onClick={onClick}
+      onMouseEnter={onMouseEnter}
+      role="option"
+      aria-selected={isActive}
       title={project.name}
-      className={`w-full flex items-start gap-3 px-3 py-2.5 hover:bg-[var(--color-bg-secondary)] transition-colors ${
-        isSelected ? "bg-[var(--color-highlight)]/5" : ""
+      className={`w-full flex items-start gap-3 px-3 py-2.5 hover:bg-[var(--color-bg-secondary)] transition-colors select-none ${
+        isActive
+          ? "bg-[var(--color-highlight)]/10 ring-1 ring-inset ring-[var(--color-highlight)]/40"
+          : isSelected
+            ? "bg-[var(--color-highlight)]/5"
+            : ""
       }`}
     >
       <div
@@ -341,4 +447,4 @@ function ProjectItem({ project, isSelected, onClick, accentPalette }: ProjectIte
       </div>
     </button>
   );
-}
+});

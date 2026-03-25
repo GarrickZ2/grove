@@ -107,8 +107,8 @@ export function SkillDetailPanel({ selectedSkill, agents, installed, projectPath
             className="fixed top-0 right-0 bottom-0 w-[520px] max-w-[90vw] z-50 flex flex-col bg-[var(--color-bg)] border-l border-[var(--color-border)] shadow-2xl"
           >
             {/* Header */}
-            <div className="flex items-center justify-between px-5 py-4 border-b border-[var(--color-border)]">
-              <h3 className="text-base font-semibold text-[var(--color-text)] truncate">
+            <div className="flex items-center justify-between px-5 py-4 border-b border-[var(--color-border)] select-none">
+              <h3 className="text-base font-semibold text-[var(--color-text)] truncate select-none">
                 {detail?.name || "Loading..."}
               </h3>
               <button
@@ -135,9 +135,9 @@ export function SkillDetailPanel({ selectedSkill, agents, installed, projectPath
                   )}
 
                   {/* Official metadata info grid */}
-                  <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-secondary)] mb-4 divide-y divide-[var(--color-border)]">
+                  <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-secondary)] mb-4 divide-y divide-[var(--color-border)] select-none">
                     {/* Source */}
-                    <div className="flex items-center gap-3 px-3.5 py-2.5">
+                    <div className="flex items-center gap-3 px-3.5 py-2.5 select-none">
                       <Tag className="w-3.5 h-3.5 flex-shrink-0 text-[var(--color-text-muted)]" />
                       <span className="text-xs text-[var(--color-text-muted)] w-24 flex-shrink-0">Source</span>
                       <span className="text-xs font-medium text-[var(--color-highlight)]">{detail.source}</span>
@@ -145,7 +145,7 @@ export function SkillDetailPanel({ selectedSkill, agents, installed, projectPath
 
                     {/* Author (from metadata fields) */}
                     {detail.metadata.fields.author && (
-                      <div className="flex items-center gap-3 px-3.5 py-2.5">
+                      <div className="flex items-center gap-3 px-3.5 py-2.5 select-none">
                         <User className="w-3.5 h-3.5 flex-shrink-0 text-[var(--color-text-muted)]" />
                         <span className="text-xs text-[var(--color-text-muted)] w-24 flex-shrink-0">Author</span>
                         <span className="text-xs text-[var(--color-text)]">{detail.metadata.fields.author}</span>
@@ -154,7 +154,7 @@ export function SkillDetailPanel({ selectedSkill, agents, installed, projectPath
 
                     {/* License */}
                     {detail.metadata.license && (
-                      <div className="flex items-center gap-3 px-3.5 py-2.5">
+                      <div className="flex items-center gap-3 px-3.5 py-2.5 select-none">
                         <Scale className="w-3.5 h-3.5 flex-shrink-0 text-[var(--color-text-muted)]" />
                         <span className="text-xs text-[var(--color-text-muted)] w-24 flex-shrink-0">License</span>
                         <span className="inline-flex items-center px-2 py-0.5 text-[10px] font-medium rounded-md bg-[var(--color-info)]/10 text-[var(--color-info)]">
@@ -165,7 +165,7 @@ export function SkillDetailPanel({ selectedSkill, agents, installed, projectPath
 
                     {/* Compatibility */}
                     {detail.metadata.compatibility && (
-                      <div className="flex items-center gap-3 px-3.5 py-2.5">
+                      <div className="flex items-center gap-3 px-3.5 py-2.5 select-none">
                         <Monitor className="w-3.5 h-3.5 flex-shrink-0 text-[var(--color-text-muted)]" />
                         <span className="text-xs text-[var(--color-text-muted)] w-24 flex-shrink-0">Compatibility</span>
                         <div className="flex flex-wrap gap-1">
@@ -180,7 +180,7 @@ export function SkillDetailPanel({ selectedSkill, agents, installed, projectPath
 
                     {/* Allowed tools */}
                     {detail.metadata.allowed_tools && (
-                      <div className="flex items-start gap-3 px-3.5 py-2.5">
+                      <div className="flex items-start gap-3 px-3.5 py-2.5 select-none">
                         <Wrench className="w-3.5 h-3.5 mt-0.5 flex-shrink-0 text-[var(--color-text-muted)]" />
                         <span className="text-xs text-[var(--color-text-muted)] w-24 flex-shrink-0">Tools</span>
                         <div className="flex flex-wrap gap-1">
@@ -196,7 +196,7 @@ export function SkillDetailPanel({ selectedSkill, agents, installed, projectPath
 
                   {/* Non-standard metadata fields (version, category, tags, etc.) — exclude author since it's shown above */}
                   {Object.keys(detail.metadata.fields).filter(k => k !== 'author').length > 0 && (
-                    <div className="flex flex-wrap gap-1.5 mb-4">
+                    <div className="flex flex-wrap gap-1.5 mb-4 select-none">
                       {Object.entries(detail.metadata.fields)
                         .filter(([key]) => key !== 'author')
                         .map(([key, value]) => (

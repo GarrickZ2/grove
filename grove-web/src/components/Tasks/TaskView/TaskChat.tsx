@@ -631,16 +631,7 @@ export function TaskChat({
     const ws = new WebSocket(url);
     wsMapRef.current.set(chatId, ws);
 
-    ws.onopen = () => {
-      // Update state only for active chat
-      if (chatId === activeChatIdRef.current) {
-        setMessages((prev) => [...prev, { type: "system", content: "Connecting..." }]);
-      } else {
-        const cached = perChatStateRef.current.get(chatId) ?? defaultPerChatState();
-        cached.messages = [...cached.messages, { type: "system", content: "Connecting..." }];
-        perChatStateRef.current.set(chatId, cached);
-      }
-    };
+    ws.onopen = () => {};
 
     ws.onmessage = (event) => {
       try {
@@ -721,11 +712,6 @@ export function TaskChat({
               embeddedContext: msg.prompt_capabilities.embedded_context ?? false,
             });
           }
-          // Replace "Connecting..." with friendly connected message
-          setMessages((prev) => {
-            const filtered = prev.filter((m) => !(m.type === "system" && m.content === "Connecting..."));
-            return [...filtered, { type: "system", content: "$$CONNECTED$$" }];
-          });
           break;
         case "message_chunk":
           setAutoExpandSectionId(null);
@@ -936,8 +922,6 @@ export function TaskChat({
             embeddedContext: msg.prompt_capabilities.embedded_context ?? false,
           };
         }
-        state.messages = [...state.messages.filter((m) => !(m.type === "system" && m.content === "Connecting...")),
-          { type: "system", content: "$$CONNECTED$$" }];
         break;
       case "message_chunk": {
         const msgs = state.messages;
@@ -1807,9 +1791,9 @@ export function TaskChat({
       )}
       {/* Header */}
       {!hideHeader && (
-      <div className="border-b border-[color-mix(in_srgb,var(--color-border)_78%,transparent)] bg-[color-mix(in_srgb,var(--color-bg)_88%,transparent)] backdrop-blur-sm">
+      <div className="relative z-30 border-b border-[color-mix(in_srgb,var(--color-border)_78%,transparent)] bg-[color-mix(in_srgb,var(--color-bg)_88%,transparent)] backdrop-blur-sm select-none">
         <div className="flex w-full items-center justify-between px-4 py-2">
-        <div className="flex items-center gap-2 text-sm min-w-0">
+        <div className="flex items-center gap-2 text-sm min-w-0 select-none">
           {AgentIcon ? <AgentIcon size={16} className="text-[var(--color-text-muted)] shrink-0" /> : <MessageSquare className="w-4 h-4 text-[var(--color-text-muted)] shrink-0" />}
 
           {/* Chat title / dropdown */}
@@ -1846,7 +1830,7 @@ export function TaskChat({
 
               {/* Chat dropdown menu */}
               {showChatMenu && (
-                <div className="absolute top-full left-0 mt-1 min-w-56 max-h-64 overflow-y-auto rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] shadow-lg py-1 z-50">
+                <div className="absolute top-full left-0 mt-1 min-w-56 max-h-64 overflow-y-auto rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] shadow-lg py-1 z-[80]">
                   {[...chats].reverse().map((chat) => {
                     const chatAgent = agentOptions.find((a) => a.value === chat.agent);
                     const ChatIcon = chatAgent?.icon;
@@ -1900,7 +1884,7 @@ export function TaskChat({
             </button>
 
             {showAgentPicker && (
-              <div className="absolute top-full left-0 mt-1 min-w-48 max-h-64 overflow-y-auto rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] shadow-lg py-1 z-50">
+              <div className="absolute top-full left-0 mt-1 min-w-48 max-h-64 overflow-y-auto rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] shadow-lg py-1 z-[80]">
                 {!acpAvailabilityLoaded && (
                   <div className="flex items-center gap-2 px-3 py-2 text-sm text-[var(--color-text-muted)]">
                     <Loader2 className="w-3.5 h-3.5 animate-spin" /> Checking...
@@ -1942,7 +1926,7 @@ export function TaskChat({
           </div>
         </div>
 
-        <div className="flex items-center gap-1.5 shrink-0">
+        <div className="flex items-center gap-1.5 shrink-0 select-none">
           <div className={`w-2.5 h-2.5 rounded-full ${isConnected ? "bg-[var(--color-success)] animate-pulse" : "bg-[var(--color-warning)]"}`} />
           <span className="text-xs text-[var(--color-text-muted)]">{isConnected ? "Connected" : "Connecting..."}</span>
           {onToggleFullscreen && (
@@ -1968,7 +1952,7 @@ export function TaskChat({
       <div
         ref={messagesViewportRef}
         onScroll={updateScrollState}
-        className={`relative flex-1 overflow-y-auto px-4 pt-4 min-h-0 ${composerPanelOpen ? "pb-[28rem]" : "pb-44"}`}
+        className={`relative z-0 flex-1 overflow-y-auto px-4 pt-4 min-h-0 ${composerPanelOpen ? "pb-[28rem]" : "pb-44"}`}
       >
         <div className="flex w-full flex-col gap-3">
         {renderItems.map((item) =>
@@ -2139,7 +2123,7 @@ export function TaskChat({
                   scrollMessagesToBottom("smooth");
                   setShowScrollToBottom(false);
                 }}
-                className="group relative mx-auto flex items-center gap-2 rounded-full px-3 py-2 text-[15px] font-medium tracking-[0.01em] text-[color-mix(in_srgb,var(--color-highlight)_80%,white_4%)] transition-all duration-200 hover:text-[color-mix(in_srgb,var(--color-highlight)_96%,white_8%)]"
+              className="group relative mx-auto flex items-center gap-2 rounded-full px-3 py-2 text-[15px] font-medium tracking-[0.01em] text-[color-mix(in_srgb,var(--color-highlight)_80%,white_4%)] transition-all duration-200 hover:text-[color-mix(in_srgb,var(--color-highlight)_96%,white_8%)] select-none"
               >
                 <span className="pointer-events-none absolute inset-0 rounded-full bg-[color-mix(in_srgb,var(--color-highlight)_8%,transparent)] opacity-0 blur-md transition-all duration-200 group-hover:opacity-100" />
                 <span className="relative flex items-center gap-2">
@@ -2211,11 +2195,11 @@ export function TaskChat({
                 ? "focus-within:border-[var(--color-warning)]"
                 + " border-[color-mix(in_srgb,var(--color-border)_62%,transparent)]"
               : "focus-within:border-[color-mix(in_srgb,var(--color-highlight)_82%,white_8%)] border-[color-mix(in_srgb,var(--color-border)_62%,transparent)]"
-          }`}
+          } select-none`}
           style={{ transform: "translateY(-6px)" }}
         >
-          <div className="mb-2 flex items-center justify-between gap-2 pr-10">
-            <div className="flex min-w-0 items-center gap-2">
+          <div className="mb-2 flex items-center justify-between gap-2 pr-10 select-none">
+            <div className="flex min-w-0 items-center gap-2 select-none">
               <div className="inline-flex items-center gap-1.5 rounded-full bg-[var(--color-bg)] px-2.5 py-1 text-[11px] text-[var(--color-text)] min-w-0 max-w-full">
                 {AgentIcon ? <AgentIcon size={12} className="shrink-0 text-[var(--color-highlight)]" /> : <Bot className="w-3 h-3 shrink-0 text-[var(--color-highlight)]" />}
                 <span className="text-[var(--color-text-muted)] shrink-0">Agent</span>
@@ -2228,7 +2212,7 @@ export function TaskChat({
                 </div>
               )}
             </div>
-            <div className="flex items-center gap-1.5 shrink-0">
+            <div className="flex items-center gap-1.5 shrink-0 select-none">
               {hasTodoPanel && (
                 <button
                   onClick={() => {
@@ -2285,7 +2269,7 @@ export function TaskChat({
           </div>
 
           {attachments.length > 0 && (
-            <div className="mb-2 flex gap-2 flex-wrap">
+            <div className="mb-2 flex gap-2 flex-wrap select-none">
               {attachments.map((att, i) => (
                 <div key={i} className="group relative flex items-center gap-2 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] px-2.5 py-2 pr-7 max-w-full">
                   {att.type === "image" && att.previewUrl ? (
@@ -2352,8 +2336,8 @@ export function TaskChat({
             style={{ wordBreak: "break-word", whiteSpace: "pre-wrap" }}
           />
 
-          <div className="mt-2 flex items-center justify-between gap-2">
-            <div className="flex items-center gap-2 min-w-0">
+          <div className="mt-2 flex items-center justify-between gap-2 select-none">
+            <div className="flex items-center gap-2 min-w-0 select-none">
               {(promptCaps.image || promptCaps.audio) && (
                 <button
                   onClick={() => fileInputRef.current?.click()}
@@ -2373,7 +2357,7 @@ export function TaskChat({
                       : "Enter send"}
               </span>
             </div>
-            <div className="flex items-center gap-2 shrink-0">
+            <div className="flex items-center gap-2 shrink-0 select-none">
               {modelOptions.length > 0 && (
                 <DropdownSelect ref={modelMenuRef} label="Model" options={modelOptions} value={selectedModel}
                   open={showModelMenu} onToggle={() => { setShowModelMenu(!showModelMenu); setShowPermMenu(false); }}

@@ -57,7 +57,7 @@ export function QuickStats({ stats, isLoading = false }: QuickStatsProps) {
 
   if (isLoading) {
     return (
-      <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)] overflow-hidden">
+      <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)] overflow-hidden select-none">
         <div className="px-4 py-3 border-b border-[var(--color-border)]">
           <h2 className="text-sm font-medium text-[var(--color-text)]">
             Task Overview
@@ -71,7 +71,7 @@ export function QuickStats({ stats, isLoading = false }: QuickStatsProps) {
   }
 
   return (
-    <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)] overflow-hidden">
+    <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)] overflow-hidden select-none">
       <div className="px-4 py-3 border-b border-[var(--color-border)]">
         <h2 className="text-sm font-medium text-[var(--color-text)]">
           Task Overview

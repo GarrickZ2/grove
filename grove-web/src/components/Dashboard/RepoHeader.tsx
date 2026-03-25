@@ -22,7 +22,7 @@ export function RepoHeader({ projectId, name, path, onOpenIDE, onOpenTerminal }:
     <motion.div
       initial={{ opacity: 0, y: -10 }}
       animate={{ opacity: 1, y: 0 }}
-      className="flex items-center justify-between"
+      className="flex items-center justify-between select-none"
     >
       {/* Left: Project Info */}
       <div className="flex items-center gap-4 min-w-0">

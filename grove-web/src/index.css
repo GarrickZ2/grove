@@ -22,6 +22,18 @@
   box-sizing: border-box;
 }
 
+button {
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+input,
+textarea,
+[contenteditable="true"] {
+  user-select: text;
+  -webkit-user-select: text;
+}
+
 body {
   margin: 0;
   background-color: var(--color-bg);
