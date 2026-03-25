@@ -35,6 +35,7 @@ export function XTerminal({
   const terminalRef = useRef<Terminal | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
+  const intentionalCloseRef = useRef(false);
 
   // Store callbacks in refs to avoid re-render issues
   const onConnectedRef = useRef(onConnected);
@@ -53,6 +54,7 @@ export function XTerminal({
   useEffect(() => {
     if (!containerRef.current) return;
     let cancelled = false;
+    intentionalCloseRef.current = false;
 
     // Create terminal with theme from context
     const terminal = new Terminal({
@@ -168,7 +170,9 @@ export function XTerminal({
       ws.onclose = () => {
         terminal.writeln("");
         terminal.writeln("\x1b[31mDisconnected from terminal\x1b[0m");
-        onDisconnectedRef.current?.();
+        if (!cancelled && !intentionalCloseRef.current) {
+          onDisconnectedRef.current?.();
+        }
       };
 
       ws.onerror = (error) => {
@@ -188,6 +192,7 @@ export function XTerminal({
     // Cleanup
     return () => {
       cancelled = true;
+      intentionalCloseRef.current = true;
       resizeObserver.disconnect();
       if (wsRef.current) {
         wsRef.current.close();

@@ -76,7 +76,12 @@ function matchesHotkey(
 function shouldSuppress(_e: KeyboardEvent): "all" | "alpha" | false {
   // 1. Terminal focused — suppress all
   const active = document.activeElement;
-  if (active?.closest(".xterm")) return "all";
+  if (active?.closest(".xterm")) {
+    // Preserve app-level Meta shortcuts (Cmd+K/Cmd+P/Cmd+O, etc.) while
+    // keeping terminal control keys available to the shell.
+    if (_e.metaKey) return false;
+    return "all";
+  }
 
   // 2. Monaco/CodeMirror editor focused — suppress all
   if (active?.closest(".monaco-editor") || active?.closest(".cm-editor") || active?.closest(".CodeMirror")) return "all";

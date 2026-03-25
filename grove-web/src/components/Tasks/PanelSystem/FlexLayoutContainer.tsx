@@ -412,6 +412,13 @@ export const FlexLayoutContainer = forwardRef<
     setContextMenu(null);
   }, [model]);
 
+  const closeTabById = useCallback((tabId: string) => {
+    const tab = model.getNodeById(tabId);
+    if (tab?.getType() === 'tab') {
+      model.doAction(Actions.deleteTab(tabId));
+    }
+  }, [model]);
+
   const handleCloseOthers = useCallback((tabId: string) => {
     const allTabs = getAllTabs();
     allTabs.forEach(tab => {
@@ -643,6 +650,7 @@ export const FlexLayoutContainer = forwardRef<
               task={task}
               hideHeader={true}
               fullscreen={true}
+              onDisconnected={() => closeTabById(node.getId())}
             />
           </div>
         );
@@ -719,7 +727,7 @@ export const FlexLayoutContainer = forwardRef<
       default:
         return <div className="p-4 text-[var(--color-text-muted)]">Unknown panel type: {component}</div>;
     }
-  }, [projectId, task, model]);
+  }, [projectId, task, model, closeTabById]);
 
   // Track empty state
   const [isEmpty, setIsEmpty] = useState(() => getAllTabs().length === 0);

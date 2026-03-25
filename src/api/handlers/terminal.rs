@@ -347,7 +347,7 @@ async fn handle_pty_terminal(socket: WebSocket, cmd: CommandBuilder, cols: u16, 
 
     // Task: Read from PTY (blocking) and send to channel
     let reader_clone = reader.clone();
-    let pty_reader_task = tokio::task::spawn_blocking(move || {
+    let mut pty_reader_task = tokio::task::spawn_blocking(move || {
         let mut buf = [0u8; 4096];
         loop {
             let n = {
@@ -370,7 +370,7 @@ async fn handle_pty_terminal(socket: WebSocket, cmd: CommandBuilder, cols: u16, 
     });
 
     // Task: Send PTY output to WebSocket
-    let pty_to_ws = tokio::spawn(async move {
+    let mut pty_to_ws = tokio::spawn(async move {
         while let Some(data) = pty_rx.recv().await {
             if ws_sender.send(Message::Text(data.into())).await.is_err() {
                 break;
@@ -381,7 +381,7 @@ async fn handle_pty_terminal(socket: WebSocket, cmd: CommandBuilder, cols: u16, 
     // Task: Write to PTY (blocking)
     let writer_clone = writer.clone();
     let master_clone = master.clone();
-    let pty_writer_task = tokio::task::spawn_blocking(move || {
+    let mut pty_writer_task = tokio::task::spawn_blocking(move || {
         while let Some(data) = ws_rx.blocking_recv() {
             // Check for resize message (JSON format)
             if let Ok(resize) = serde_json::from_slice::<ResizeMessage>(&data) {
@@ -406,7 +406,7 @@ async fn handle_pty_terminal(socket: WebSocket, cmd: CommandBuilder, cols: u16, 
     });
 
     // Task: Read from WebSocket and send to channel
-    let ws_to_pty = tokio::spawn(async move {
+    let mut ws_to_pty = tokio::spawn(async move {
         while let Some(msg) = ws_receiver.next().await {
             match msg {
                 Ok(Message::Text(text)) => {
@@ -428,19 +428,25 @@ async fn handle_pty_terminal(socket: WebSocket, cmd: CommandBuilder, cols: u16, 
 
     // Wait for any task to complete, detect panics
     tokio::select! {
-        result = pty_reader_task => {
+        result = &mut pty_reader_task => {
             if let Err(ref e) = result { if e.is_panic() { eprintln!("[Grove] PTY reader task panicked"); } }
         },
-        result = pty_to_ws => {
+        result = &mut pty_to_ws => {
             if let Err(ref e) = result { if e.is_panic() { eprintln!("[Grove] PTY-to-WS task panicked"); } }
         },
-        result = pty_writer_task => {
+        result = &mut pty_writer_task => {
             if let Err(ref e) = result { if e.is_panic() { eprintln!("[Grove] PTY writer task panicked"); } }
         },
-        result = ws_to_pty => {
+        result = &mut ws_to_pty => {
             if let Err(ref e) = result { if e.is_panic() { eprintln!("[Grove] WS-to-PTY task panicked"); } }
         },
     }
+
+    // One side finished; tear down the rest so the WebSocket actually closes
+    // instead of lingering with detached background tasks.
+    pty_to_ws.abort();
+    ws_to_pty.abort();
+    pty_writer_task.abort();
 
     // Cleanup: kill the child process
     // Note: For tmux attach, killing this process just detaches from the session
