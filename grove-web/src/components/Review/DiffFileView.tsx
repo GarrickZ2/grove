@@ -979,7 +979,7 @@ export function DiffFileView({
                   <textarea
                     ref={fileCommentTextareaRef}
                     value={fileCommentText}
-                    onChange={(e) => { setFileCommentText(e.target.value); fileCommentMention.handleChange(e.target.value); }}
+                    onChange={(e) => { setFileCommentText(e.target.value); fileCommentMention.handleChange(); }}
                     placeholder="Leave a comment about this file... (type @ to mention files)"
                     autoFocus
                     onKeyDown={(e) => {
@@ -2573,8 +2573,7 @@ interface FullFileViewProps extends CommentProps {
   viewType: 'unified' | 'split';
 }
 
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-function FullFileView({ file: _file, content, language, ...commentProps }: FullFileViewProps) {
+function FullFileView({ content, language, ...commentProps }: FullFileViewProps) {
   const lines = useMemo(() => content.split('\n'), [content]);
   const htmlLines = useMemo(() => highlightLines(lines, language), [lines, language]);
 

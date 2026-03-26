@@ -190,7 +190,7 @@ export function CommentCard({ comment, onDelete, onReply, onResolve, onReopen, o
                 ref={editCommentTextareaRef}
                 className="diff-reply-textarea"
                 value={editCommentText}
-                onChange={(e) => { setEditCommentText(e.target.value); editCommentMention.handleChange(e.target.value); }}
+                onChange={(e) => { setEditCommentText(e.target.value); editCommentMention.handleChange(); }}
                 autoFocus
                 onKeyDown={(e) => {
                   if (editCommentMention.handleKeyDown(e, setEditCommentText)) return;
@@ -281,7 +281,7 @@ export function CommentCard({ comment, onDelete, onReply, onResolve, onReopen, o
                     ref={editReplyTextareaRef}
                     className="diff-reply-textarea"
                     value={editReplyText}
-                    onChange={(e) => { setEditReplyText(e.target.value); editReplyMention.handleChange(e.target.value); }}
+                    onChange={(e) => { setEditReplyText(e.target.value); editReplyMention.handleChange(); }}
                     autoFocus
                     onKeyDown={(e) => {
                       if (editReplyMention.handleKeyDown(e, setEditReplyText)) return;
@@ -358,7 +358,7 @@ export function ReplyForm({ commentId, onSubmit, onCancel, mentionItems }: Reply
         ref={mentionTextareaRef}
         className="diff-reply-textarea"
         value={message}
-        onChange={(e) => { setMessage(e.target.value); mention.handleChange(e.target.value); }}
+        onChange={(e) => { setMessage(e.target.value); mention.handleChange(); }}
         placeholder="Write a reply... (type @ to mention files)"
         autoFocus
         onKeyDown={(e) => {
@@ -452,7 +452,7 @@ export function CommentForm({ anchor, onSubmit, onCancel, mentionItems }: Commen
       <textarea
         ref={mentionTextareaRef}
         value={content}
-        onChange={(e) => { setContent(e.target.value); mention.handleChange(e.target.value); }}
+        onChange={(e) => { setContent(e.target.value); mention.handleChange(); }}
         placeholder="Write a comment... (type @ to mention files)"
         autoFocus
         onKeyDown={(e) => {

@@ -106,7 +106,10 @@ pub async fn execute(agent: String, cwd: String) {
         }
 
         // 发送 prompt
-        if let Err(e) = handle_for_input.send_prompt(text, vec![], None).await {
+        if let Err(e) = handle_for_input
+            .send_prompt(text, vec![], None, false)
+            .await
+        {
             eprintln!("Failed to send prompt: {}", e);
             break;
         }
@@ -157,7 +160,10 @@ pub async fn execute(agent: String, cwd: String) {
                     | AcpUpdate::AvailableCommands { .. }
                     | AcpUpdate::PermissionResponse { .. }
                     | AcpUpdate::QueueUpdate { .. }
-                    | AcpUpdate::PlanFileUpdate { .. },
+                    | AcpUpdate::PlanFileUpdate { .. }
+                    | AcpUpdate::TerminalExecute { .. }
+                    | AcpUpdate::TerminalChunk { .. }
+                    | AcpUpdate::TerminalComplete { .. },
                 ) => continue,
                 Ok(AcpUpdate::SessionEnded) => {
                     eprintln!("Session ended.");

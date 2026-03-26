@@ -122,11 +122,16 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
     loadProjects();
   }, [loadProjects]);
 
+  // Track selectedProject in a ref so the auto-select effect can read it
+  // without re-triggering when it changes (which would cause a loop).
+  const selectedProjectRef = useRef(selectedProject);
+  selectedProjectRef.current = selectedProject;
+
   // Auto-select project after projects are loaded
   // Priority: currentProjectId (from server cwd) > savedProjectId > first project
   // Only runs when no project is currently selected.
   useEffect(() => {
-    if (isLoading || projects.length === 0 || selectedProject) return;
+    if (isLoading || projects.length === 0 || selectedProjectRef.current) return;
 
     // Priority 1: If server is running in a registered project directory, select it
     if (currentProjectId) {
@@ -165,7 +170,6 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
         }
       });
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isLoading, projects, currentProjectId, loadProjectDetails]);
 
   const selectProject = useCallback(

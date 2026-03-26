@@ -143,7 +143,7 @@ export interface TaskOperationsHandlers {
   // Archive
   handleArchive: () => Promise<void>;
   handleArchiveConfirm: (pendingConfirm: PendingArchiveConfirm | null) => Promise<void>;
-  handleArchiveCancel: (pendingConfirm: PendingArchiveConfirm | null) => void;
+  handleArchiveCancel: () => void;
 
   // Sync
   handleSync: () => Promise<void>;
@@ -385,8 +385,7 @@ export function useTaskOperations(
   );
 
   const handleArchiveCancel = useCallback(
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    (_pendingConfirm: PendingArchiveConfirm | null) => {
+    () => {
       if (!setPendingArchiveConfirm) return;
       setPendingArchiveConfirm(null);
       // Note: cleanup is handled by the caller if needed

@@ -1003,7 +1003,7 @@ export function BlitzPage({ onSwitchToZen }: BlitzPageProps) {
         message={pendingArchiveConfirm?.message || ""}
         variant="warning"
         onConfirm={() => opsHandlers.handleArchiveConfirm(pendingArchiveConfirm)}
-        onCancel={() => opsHandlers.handleArchiveCancel(pendingArchiveConfirm)}
+        onCancel={() => opsHandlers.handleArchiveCancel()}
       />
 
       <ConfirmDialog

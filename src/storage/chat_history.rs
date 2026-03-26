@@ -90,6 +90,92 @@ pub fn load_history(project: &str, task_id: &str, chat_id: &str) -> Vec<AcpUpdat
     history
 }
 
+/// On reconnect/history replay, unresolved permission requests, tool calls, and terminal
+/// executions are treated as cancelled. Append synthetic cancellation events so replayed
+/// history is self-consistent.
+pub fn cancel_unresolved_events(project: &str, task_id: &str, chat_id: &str) -> usize {
+    let history = load_history(project, task_id, chat_id);
+    if history.is_empty() {
+        return 0;
+    }
+
+    let mut unresolved_permissions = 0usize;
+    let mut unresolved_tools: std::collections::HashMap<String, Vec<(String, Option<u32>)>> =
+        std::collections::HashMap::new();
+    let mut unresolved_terminals = 0usize;
+
+    for event in &history {
+        match event {
+            AcpUpdate::PermissionRequest { .. } => unresolved_permissions += 1,
+            AcpUpdate::PermissionResponse { .. } if unresolved_permissions > 0 => {
+                unresolved_permissions -= 1;
+            }
+            AcpUpdate::ToolCall { id, locations, .. } => {
+                unresolved_tools.insert(id.clone(), locations.clone());
+            }
+            AcpUpdate::ToolCallUpdate { id, status, .. }
+                if matches!(
+                    status.as_str(),
+                    "completed" | "failed" | "error" | "cancelled"
+                ) =>
+            {
+                unresolved_tools.remove(id);
+            }
+            AcpUpdate::TerminalExecute { .. } => unresolved_terminals += 1,
+            AcpUpdate::TerminalComplete { .. } if unresolved_terminals > 0 => {
+                unresolved_terminals -= 1;
+            }
+            _ => {}
+        }
+    }
+
+    let unresolved_total = unresolved_permissions + unresolved_tools.len() + unresolved_terminals;
+    if unresolved_total == 0 {
+        return 0;
+    }
+
+    let path = history_file_path(project, task_id, chat_id);
+    let file = fs::OpenOptions::new().create(true).append(true).open(&path);
+    match file {
+        Ok(mut f) => {
+            for _ in 0..unresolved_permissions {
+                if let Ok(json) = serde_json::to_string(&AcpUpdate::PermissionResponse {
+                    option_id: "Cancelled".to_string(),
+                }) {
+                    let _ = writeln!(f, "{}", json);
+                }
+            }
+            for (id, locations) in unresolved_tools {
+                if let Ok(json) = serde_json::to_string(&AcpUpdate::ToolCallUpdate {
+                    id,
+                    status: "cancelled".to_string(),
+                    content: None,
+                    locations,
+                }) {
+                    let _ = writeln!(f, "{}", json);
+                }
+            }
+            for _ in 0..unresolved_terminals {
+                if let Ok(json) =
+                    serde_json::to_string(&AcpUpdate::TerminalComplete { exit_code: Some(1) })
+                {
+                    let _ = writeln!(f, "{}", json);
+                }
+            }
+        }
+        Err(e) => {
+            eprintln!(
+                "[chat_history] Failed to append cancelled replay events to {}: {}",
+                path.display(),
+                e
+            );
+            return 0;
+        }
+    }
+
+    unresolved_total
+}
+
 /// 清空 chat 历史文件（新 session 时调用）
 pub fn clear_history(project: &str, task_id: &str, chat_id: &str) {
     let path = history_file_path(project, task_id, chat_id);
@@ -155,6 +241,7 @@ pub fn compact_events(events: Vec<AcpUpdate>) -> Vec<AcpUpdate> {
     let mut result: Vec<AcpUpdate> = Vec::new();
     let mut msg_buf = String::new();
     let mut thought_buf = String::new();
+    let mut terminal_buf = String::new();
     // tool_call 合并：按 id 跟踪，保持插入顺序
     let mut tool_order: Vec<String> = Vec::new();
     let mut tool_map: std::collections::HashMap<String, ToolCompactState> =
@@ -174,6 +261,15 @@ pub fn compact_events(events: Vec<AcpUpdate>) -> Vec<AcpUpdate> {
         if !buf.is_empty() {
             result.push(AcpUpdate::ThoughtChunk {
                 text: std::mem::take(buf),
+            });
+        }
+    }
+
+    /// Flush accumulated terminal output chunks
+    fn flush_terminal(buf: &mut String, result: &mut Vec<AcpUpdate>) {
+        if !buf.is_empty() {
+            result.push(AcpUpdate::TerminalChunk {
+                output: std::mem::take(buf),
             });
         }
     }
@@ -207,12 +303,20 @@ pub fn compact_events(events: Vec<AcpUpdate>) -> Vec<AcpUpdate> {
             AcpUpdate::MessageChunk { text } => {
                 flush_thoughts(&mut thought_buf, &mut result);
                 flush_tools(&mut tool_order, &mut tool_map, &mut result);
+                flush_terminal(&mut terminal_buf, &mut result);
                 msg_buf.push_str(text);
             }
             AcpUpdate::ThoughtChunk { text } => {
                 flush_messages(&mut msg_buf, &mut result);
                 flush_tools(&mut tool_order, &mut tool_map, &mut result);
+                flush_terminal(&mut terminal_buf, &mut result);
                 thought_buf.push_str(text);
+            }
+            AcpUpdate::TerminalChunk { output } => {
+                flush_messages(&mut msg_buf, &mut result);
+                flush_thoughts(&mut thought_buf, &mut result);
+                flush_tools(&mut tool_order, &mut tool_map, &mut result);
+                terminal_buf.push_str(output);
             }
             AcpUpdate::ToolCall {
                 id,
@@ -222,6 +326,7 @@ pub fn compact_events(events: Vec<AcpUpdate>) -> Vec<AcpUpdate> {
             } => {
                 flush_messages(&mut msg_buf, &mut result);
                 flush_thoughts(&mut thought_buf, &mut result);
+                flush_terminal(&mut terminal_buf, &mut result);
                 if let Some(state) = tool_map.get_mut(id) {
                     // 后续 ToolCall（同 id）更新 title/locations，timestamp 保留第一次的值
                     if !title.is_empty() {
@@ -265,6 +370,7 @@ pub fn compact_events(events: Vec<AcpUpdate>) -> Vec<AcpUpdate> {
                     flush_messages(&mut msg_buf, &mut result);
                     flush_thoughts(&mut thought_buf, &mut result);
                     flush_tools(&mut tool_order, &mut tool_map, &mut result);
+                    flush_terminal(&mut terminal_buf, &mut result);
                     result.push(event);
                 }
             }
@@ -273,6 +379,7 @@ pub fn compact_events(events: Vec<AcpUpdate>) -> Vec<AcpUpdate> {
                 flush_messages(&mut msg_buf, &mut result);
                 flush_thoughts(&mut thought_buf, &mut result);
                 flush_tools(&mut tool_order, &mut tool_map, &mut result);
+                flush_terminal(&mut terminal_buf, &mut result);
                 result.push(event);
             }
         }
@@ -282,6 +389,7 @@ pub fn compact_events(events: Vec<AcpUpdate>) -> Vec<AcpUpdate> {
     flush_messages(&mut msg_buf, &mut result);
     flush_thoughts(&mut thought_buf, &mut result);
     flush_tools(&mut tool_order, &mut tool_map, &mut result);
+    flush_terminal(&mut terminal_buf, &mut result);
 
     result
 }

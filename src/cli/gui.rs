@@ -7,6 +7,80 @@ use crate::api;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
+const DAEMON_ENV: &str = "GROVE_GUI_DAEMON";
+
+/// Try to daemonize the GUI process so the terminal is released immediately.
+///
+/// Returns `true` if the current process is the **parent** that spawned a
+/// background child — the caller should exit.  Returns `false` if we are
+/// already the daemon child (or daemonize is not applicable) — proceed with
+/// the normal GUI startup.
+pub fn try_daemonize(port: u16) -> bool {
+    // Already the daemon child — run the GUI
+    if std::env::var(DAEMON_ENV).as_deref() == Ok("1") {
+        return false;
+    }
+
+    let exe = match std::env::current_exe() {
+        Ok(p) => p,
+        Err(_) => return false, // cannot determine exe path, run in foreground
+    };
+
+    // Build log path: ~/.grove/gui.log
+    let log_path = dirs::home_dir()
+        .map(|h| h.join(".grove").join("gui.log"))
+        .unwrap_or_else(|| std::path::PathBuf::from("/tmp/grove-gui.log"));
+
+    let log_file = match std::fs::OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(true)
+        .open(&log_path)
+    {
+        Ok(f) => f,
+        Err(_) => return false, // can't open log, run in foreground
+    };
+    let stderr_file = match log_file.try_clone() {
+        Ok(f) => f,
+        Err(_) => match std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&log_path)
+        {
+            Ok(f) => f,
+            Err(_) => return false, // can't open stderr log, run in foreground
+        },
+    };
+
+    let mut cmd = std::process::Command::new(&exe);
+    cmd.args(["gui", "--port", &port.to_string()])
+        .env(DAEMON_ENV, "1")
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::from(log_file))
+        .stderr(std::process::Stdio::from(stderr_file));
+
+    // Start a new process group so the child is not killed when the terminal closes
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        cmd.process_group(0);
+    }
+
+    let child = cmd.spawn();
+
+    match child {
+        Ok(c) => {
+            println!("Grove GUI launched in background (pid: {})", c.id());
+            println!("Logs: {}", log_path.display());
+            true // parent should exit
+        }
+        Err(e) => {
+            eprintln!("Failed to daemonize: {e}. Running in foreground.");
+            false
+        }
+    }
+}
+
 /// When launched as a macOS .app bundle, the process inherits a minimal PATH
 /// (/usr/bin:/bin:/usr/sbin:/sbin). This function expands it by querying the
 /// user's login shell and appending common installation directories so that

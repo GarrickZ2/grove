@@ -23,8 +23,7 @@ export function CommandPalette() {
   const listRef = useRef<HTMLDivElement>(null);
 
   // Build commands lazily — only when palette is open
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  const allCommands = useMemo(() => isOpen ? getCommands() : [], [isOpen]);
+  const allCommands = useMemo(() => isOpen ? getCommands() : [], [isOpen, getCommands]);
 
   const filteredCommands = useMemo(
     () => rankCommands(allCommands, searchQuery, pageContext, usageStats),

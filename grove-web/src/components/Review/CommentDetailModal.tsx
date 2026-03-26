@@ -249,7 +249,7 @@ export function CommentDetailModal({
               <textarea
                 ref={editCommentTextareaRef}
                 value={editCommentText}
-                onChange={(e) => { setEditCommentText(e.target.value); editCommentMention.handleChange(e.target.value); }}
+                onChange={(e) => { setEditCommentText(e.target.value); editCommentMention.handleChange(); }}
                 autoFocus
                 onKeyDown={(e) => {
                   if (editCommentMention.handleKeyDown(e, setEditCommentText)) return;
@@ -397,7 +397,7 @@ export function CommentDetailModal({
                       <textarea
                         ref={editReplyTextareaRef}
                         value={editReplyText}
-                        onChange={(e) => { setEditReplyText(e.target.value); editReplyMention.handleChange(e.target.value); }}
+                        onChange={(e) => { setEditReplyText(e.target.value); editReplyMention.handleChange(); }}
                         autoFocus
                         onKeyDown={(e) => {
                           if (editReplyMention.handleKeyDown(e, setEditReplyText)) return;
@@ -604,7 +604,7 @@ export function CommentDetailModal({
             <textarea
               ref={replyTextareaRef}
               value={replyText}
-              onChange={(e) => { setReplyText(e.target.value); replyMention.handleChange(e.target.value); }}
+              onChange={(e) => { setReplyText(e.target.value); replyMention.handleChange(); }}
               placeholder="Write a reply... (Markdown supported, type @ to mention files)"
               autoFocus
               onKeyDown={(e) => {

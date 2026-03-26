@@ -87,8 +87,7 @@ export function InstallDialog({
     }
     setError(null);
     setConflictInfo(null);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isOpen]);
+  }, [isOpen, installedRecord]);
 
   // Escape to close
   useEffect(() => {

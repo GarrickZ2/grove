@@ -28,6 +28,8 @@ enum ClientMessage {
         attachments: Vec<ContentBlockData>,
         #[serde(default)]
         sender: Option<String>,
+        #[serde(default)]
+        terminal: bool,
     },
     Cancel,
     /// Explicitly kill the ACP session
@@ -65,6 +67,12 @@ enum ClientMessage {
     PauseQueue,
     /// Resume queue auto-send (user finished editing)
     ResumeQueue,
+    /// Execute a terminal command directly (Shell mode, bypasses AI)
+    TerminalExecute {
+        command: String,
+    },
+    /// Kill a running user terminal command
+    TerminalKill,
 }
 
 /// Server-to-client messages (serialized AcpUpdate)
@@ -122,6 +130,8 @@ enum ServerMessage {
         attachments: Vec<ContentBlockData>,
         #[serde(skip_serializing_if = "Option::is_none")]
         sender: Option<String>,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        terminal: bool,
     },
     /// Session is owned by another process (read-only observation mode)
     RemoteSession {
@@ -146,6 +156,18 @@ enum ServerMessage {
         content: Option<String>,
     },
     SessionEnded,
+    /// 用户直接执行终端命令（Shell 模式）
+    TerminalExecute {
+        command: String,
+    },
+    /// 终端输出片段
+    TerminalChunk {
+        output: String,
+    },
+    /// 终端命令执行完成
+    TerminalComplete {
+        exit_code: Option<i32>,
+    },
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -286,10 +308,12 @@ impl From<AcpUpdate> for ServerMessage {
                 text,
                 attachments,
                 sender,
+                terminal,
             } => ServerMessage::UserMessage {
                 text,
                 attachments,
                 sender,
+                terminal,
             },
             AcpUpdate::ModeChanged { mode_id } => ServerMessage::ModeChanged { mode_id },
             AcpUpdate::PlanUpdate { entries } => ServerMessage::PlanUpdate {
@@ -316,6 +340,11 @@ impl From<AcpUpdate> for ServerMessage {
                 ServerMessage::PlanFileUpdate { path, content }
             }
             AcpUpdate::SessionEnded => ServerMessage::SessionEnded,
+            AcpUpdate::TerminalExecute { command } => ServerMessage::TerminalExecute { command },
+            AcpUpdate::TerminalChunk { output } => ServerMessage::TerminalChunk { output },
+            AcpUpdate::TerminalComplete { exit_code } => {
+                ServerMessage::TerminalComplete { exit_code }
+            }
         }
     }
 }
@@ -326,6 +355,14 @@ async fn handle_acp_ws(socket: WebSocket, session_key: String, config: AcpStartC
 
     // Check if we're reattaching to an existing session
     let is_existing = acp::session_exists(&session_key);
+    let should_cancel_replayed_unresolved_events = !is_existing
+        && config.chat_id.as_ref().is_some_and(|chat_id| {
+            tasks::get_chat_session(&config.project_key, &config.task_id, chat_id)
+                .ok()
+                .flatten()
+                .and_then(|chat| chat.acp_session_id)
+                .is_some()
+        });
 
     // Guard: if session is owned by another process, notify frontend for read-only mode
     if !is_existing {
@@ -363,6 +400,13 @@ async fn handle_acp_ws(socket: WebSocket, session_key: String, config: AcpStartC
     // For NEW sessions: send disk history immediately so frontend shows it while agent starts
     if !is_existing {
         if let Some(ref chat_id) = config.chat_id {
+            if should_cancel_replayed_unresolved_events {
+                let _ = crate::storage::chat_history::cancel_unresolved_events(
+                    &config.project_key,
+                    &config.task_id,
+                    chat_id,
+                );
+            }
             let disk_history = crate::storage::chat_history::load_history(
                 &config.project_key,
                 &config.task_id,
@@ -460,9 +504,10 @@ async fn handle_acp_ws(socket: WebSocket, session_key: String, config: AcpStartC
                                 text,
                                 attachments,
                                 sender,
+                                terminal,
                             } => {
                                 if let Err(e) = handle_for_input
-                                    .send_prompt(text, attachments, sender)
+                                    .send_prompt(text, attachments, sender, terminal)
                                     .await
                                 {
                                     eprintln!("Failed to send prompt: {}", e);
@@ -483,7 +528,11 @@ async fn handle_acp_ws(socket: WebSocket, session_key: String, config: AcpStartC
                                 let _ = handle_for_input.set_model(model_id).await;
                             }
                             ClientMessage::PermissionResponse { option_id } => {
-                                handle_for_input.respond_permission(option_id);
+                                if !handle_for_input.respond_permission(option_id) {
+                                    handle_for_input.emit(AcpUpdate::Error {
+                                        message: "No pending permission request".to_string(),
+                                    });
+                                }
                             }
                             ClientMessage::QueueMessage { text, attachments } => {
                                 let messages = handle_for_input
@@ -507,6 +556,12 @@ async fn handle_acp_ws(socket: WebSocket, session_key: String, config: AcpStartC
                             }
                             ClientMessage::ResumeQueue => {
                                 handle_for_input.resume_queue();
+                            }
+                            ClientMessage::TerminalExecute { command } => {
+                                handle_for_input.execute_terminal(command);
+                            }
+                            ClientMessage::TerminalKill => {
+                                handle_for_input.kill_terminal();
                             }
                         }
                     }

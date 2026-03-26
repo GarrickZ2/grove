@@ -254,6 +254,13 @@ fn main() -> io::Result<()> {
         Commands::Gui { port } => {
             #[cfg(feature = "gui")]
             {
+                // When launched from CLI (not AppBundle), daemonize so the
+                // terminal is released immediately.  The child re-execs itself
+                // with GROVE_GUI_DAEMON=1 and runs the actual GUI.
+                if cli::gui::try_daemonize(port) {
+                    return Ok(()); // parent exits, child runs in background
+                }
+
                 tokio::runtime::Runtime::new()
                     .expect("Failed to create tokio runtime")
                     .block_on(async {

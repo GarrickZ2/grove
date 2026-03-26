@@ -1718,7 +1718,7 @@ async fn send_prompt_local(
     }
 
     handle
-        .send_prompt(text, vec![], p.sender)
+        .send_prompt(text, vec![], p.sender, false)
         .await
         .map_err(|e| McpError::internal_error(format!("Failed to send prompt: {e}"), None))?;
 

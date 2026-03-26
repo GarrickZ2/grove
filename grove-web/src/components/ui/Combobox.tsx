@@ -35,8 +35,9 @@ export function Combobox({
   label,
 }: ComboboxProps) {
   const [isOpen, setIsOpen] = useState(false);
-  const [isCustomMode, setIsCustomMode] = useState(false);
-  const [customValue, setCustomValue] = useState("");
+  // Initialize custom mode from initial props (lazy state initializer)
+  const [isCustomMode, setIsCustomMode] = useState(() => !!(value && !options.find((opt) => opt.value === value)));
+  const [customValue, setCustomValue] = useState(() => (value && !options.find((opt) => opt.value === value)) ? value : "");
   const [dropdownPosition, setDropdownPosition] = useState<DropdownPosition | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
@@ -46,15 +47,6 @@ export function Combobox({
   // Check if current value matches any option
   const selectedOption = options.find((opt) => opt.value === value);
   const isCustomValue = value && !selectedOption;
-
-  // Initialize custom value if current value is custom
-  useEffect(() => {
-    if (isCustomValue) {
-      setCustomValue(value);
-      setIsCustomMode(true);
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
   // Calculate dropdown position (fixed positioning, viewport-relative)
   const updateDropdownPosition = useCallback(() => {

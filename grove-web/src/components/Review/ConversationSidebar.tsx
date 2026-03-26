@@ -283,7 +283,7 @@ export function ConversationSidebar({
             <textarea
               ref={projectTextareaRef}
               value={projectCommentContent}
-              onChange={(e) => { setProjectCommentContent(e.target.value); projectMention.handleChange(e.target.value); }}
+              onChange={(e) => { setProjectCommentContent(e.target.value); projectMention.handleChange(); }}
               placeholder="Add a project-level comment... (type @ to mention files)"
               rows={2}
               onKeyDown={(e) => {
@@ -530,7 +530,7 @@ function ConversationItem({
             ref={replyTextareaRef}
             className="conv-reply-textarea"
             value={replyText}
-            onChange={(e) => { setReplyText(e.target.value); replyMention.handleChange(e.target.value); }}
+            onChange={(e) => { setReplyText(e.target.value); replyMention.handleChange(); }}
             placeholder="Write a reply... (type @ to mention files)"
             autoFocus
             onKeyDown={(e) => {

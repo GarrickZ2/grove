@@ -67,13 +67,6 @@ export function AgentPicker({
 }: AgentPickerProps) {
   const displayOptions = externalOptions ?? agentOptions;
   const [isOpen, setIsOpen] = useState(false);
-  const [isCustomMode, setIsCustomMode] = useState(false);
-  const [customValue, setCustomValue] = useState("");
-  const [dropdownPosition, setDropdownPosition] = useState<DropdownPosition | null>(null);
-  const containerRef = useRef<HTMLDivElement>(null);
-  const triggerRef = useRef<HTMLButtonElement>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
-  const dropdownRef = useRef<HTMLDivElement>(null);
 
   // Check if current value matches any built-in option or custom agent
   const selectedOption = displayOptions.find((opt) => opt.value === value);
@@ -82,14 +75,14 @@ export function AgentPicker({
     : null;
   const isCustomValue = value && !selectedOption && !selectedCustomAgent;
 
-  // Initialize custom value if current value is custom (Terminal mode)
-  useEffect(() => {
-    if (isCustomValue && allowCustom) {
-      setCustomValue(value);
-      setIsCustomMode(true);
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  // Initialize custom mode from initial props (lazy state initializer)
+  const [isCustomMode, setIsCustomMode] = useState(() => !!(allowCustom && value && !displayOptions.find((opt) => opt.value === value) && !customAgents.find((a) => a.id === value)));
+  const [customValue, setCustomValue] = useState(() => (allowCustom && value && !displayOptions.find((opt) => opt.value === value) && !customAgents.find((a) => a.id === value)) ? value : "");
+  const [dropdownPosition, setDropdownPosition] = useState<DropdownPosition | null>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const dropdownRef = useRef<HTMLDivElement>(null);
 
   // Calculate dropdown position (fixed positioning, viewport-relative)
   const updateDropdownPosition = useCallback(() => {

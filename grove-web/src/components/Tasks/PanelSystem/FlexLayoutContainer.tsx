@@ -297,7 +297,7 @@ export const FlexLayoutContainer = forwardRef<
   };
 
   // Initialize model
-  // eslint-disable-next-line react-hooks/refs
+  // eslint-disable-next-line react-hooks/refs -- reading ref in lazy initializer is safe (runs once on mount)
   const [model] = useState<Model>(() => {
     const layoutJson = initialLayout || loadSavedLayout() || createDefaultLayout();
     return Model.fromJson(layoutJson);

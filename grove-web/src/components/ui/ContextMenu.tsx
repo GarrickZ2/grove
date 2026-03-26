@@ -1,4 +1,4 @@
-import { useRef, useEffect, useState, useCallback } from "react";
+import { useRef, useEffect, useLayoutEffect, useState, useCallback } from "react";
 import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { useIsMobile } from "../../hooks";
@@ -131,43 +131,28 @@ function DesktopContextMenu({ items, position, onClose }: ContextMenuProps) {
     .map((item, i) => (!item.divider && !item.disabled ? i : -1))
     .filter((i) => i !== -1);
 
-  // Reset focus when menu opens/closes
-  useEffect(() => {
-    if (position) {
-       
-      setFocusedIndex(-1);
-    }
-  }, [position]);
-
-  // Adjust position to keep menu within viewport
-  useEffect(() => {
+  /* eslint-disable react-hooks/set-state-in-effect -- position sync requires setState in layout effect */
+  // Reset focus and adjust position when menu opens/closes
+  useLayoutEffect(() => {
     if (!position) {
-       
       setAdjusted(null);
       return;
     }
-    // Start with the mouse position, adjust after render
-     
-    setAdjusted(position);
-  }, [position]);
-
-  // After render, check bounds and adjust
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => {
-    if (!position || !menuRef.current) return;
-    const rect = menuRef.current.getBoundingClientRect();
-    const vw = window.innerWidth;
-    const vh = window.innerHeight;
+    setFocusedIndex(-1);
+    // Start with mouse position, then clamp to viewport
     let { x, y } = position;
-    if (x + rect.width > vw) x = vw - rect.width - 8;
-    if (y + rect.height > vh) y = vh - rect.height - 8;
-    if (x < 0) x = 8;
-    if (y < 0) y = 8;
-    if (x !== adjusted?.x || y !== adjusted?.y) {
-       
-      setAdjusted({ x, y });
+    if (menuRef.current) {
+      const rect = menuRef.current.getBoundingClientRect();
+      const vw = window.innerWidth;
+      const vh = window.innerHeight;
+      if (x + rect.width > vw) x = vw - rect.width - 8;
+      if (y + rect.height > vh) y = vh - rect.height - 8;
+      if (x < 0) x = 8;
+      if (y < 0) y = 8;
     }
-  });
+    setAdjusted({ x, y });
+  }, [position]);
+  /* eslint-enable react-hooks/set-state-in-effect */
 
   // Close on click outside
   useEffect(() => {

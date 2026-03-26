@@ -16,6 +16,7 @@ import {
   X,
   ShieldCheck,
   ShieldX,
+  AlertTriangle,
   Plus,
   ListPlus,
   Trash2,
@@ -88,12 +89,13 @@ interface Attachment {
 }
 
 type ChatMessage =
-  | { type: "user"; content: string; sender?: string; attachments?: Attachment[] }
+  | { type: "user"; content: string; sender?: string; attachments?: Attachment[]; terminal?: boolean }
   | { type: "assistant"; content: string; complete: boolean }
   | { type: "thinking"; content: string; collapsed: boolean }
   | ToolMessage
   | { type: "system"; content: string }
-  | PermissionMessage;
+  | PermissionMessage
+  | { type: "terminal_output"; chunks: string[]; exitCode?: number | null };
 
 interface PlanEntry {
   content: string;
@@ -190,6 +192,10 @@ function buildRenderItems(messages: ChatMessage[]): RenderItem[] {
   });
   flush();
   return items;
+}
+
+function isToolSectionRunning(tools: ToolSectionItem[]): boolean {
+  return tools.some((tool) => tool.message.status === "running");
 }
 
 function resolveLatestPendingPermission(
@@ -371,6 +377,8 @@ export function TaskChat({
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [hasContent, setHasContent] = useState(false);
   const [isBusy, setIsBusy] = useState(false);
+  const terminalRunningRef = useRef(false);
+  const composingRef = useRef(false);
   const [selectedModel, setSelectedModel] = useState("");
   const [permissionLevel, setPermissionLevel] = useState("");
   const [modelOptions, setModelOptions] = useState<{label: string; value: string}[]>([]);
@@ -640,6 +648,7 @@ export function TaskChat({
       setPlanEntries([]);
       setSlashCommands([]);
       setIsConnected(false);
+      setIsTerminalMode(false);
       setPromptCaps({ image: false, audio: false, embeddedContext: false });
       setPlanFilePath("");
       setPlanFileContent("");
@@ -682,6 +691,14 @@ export function TaskChat({
 
   // ─── Per-chat WebSocket management ─────────────────────────────────────
 
+  // Refs for WS callbacks so connectChatWs doesn't need them as deps
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const handleServerMessageRef = useRef<(msg: any) => void>(() => {});
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const handleServerMessageForCacheRef = useRef<(chatId: string, msg: any) => void>(() => {});
+  const onDisconnectedPropRef = useRef(onDisconnectedProp);
+  onDisconnectedPropRef.current = onDisconnectedProp;
+
   /** Connect a WebSocket for a given chat ID (idempotent) */
   const connectChatWs = useCallback(async (chatId: string) => {
     if (wsMapRef.current.has(chatId)) return; // Already connected
@@ -705,10 +722,10 @@ export function TaskChat({
       try {
         const data = JSON.parse(event.data);
         if (chatId === activeChatIdRef.current) {
-          handleServerMessage(data);
+          handleServerMessageRef.current(data);
         } else {
           // Buffer into per-chat cache
-          handleServerMessageForCache(chatId, data);
+          handleServerMessageForCacheRef.current(chatId, data);
         }
       } catch { /* ignore */ }
     };
@@ -717,7 +734,7 @@ export function TaskChat({
       wsMapRef.current.delete(chatId);
       if (chatId === activeChatIdRef.current) {
         setIsConnected(false);
-        onDisconnectedProp?.();
+        onDisconnectedPropRef.current?.();
       } else {
         const cached = perChatStateRef.current.get(chatId);
         if (cached) cached.isConnected = false;
@@ -729,7 +746,6 @@ export function TaskChat({
         setMessages((prev) => [...prev, { type: "system", content: "Connection error." }]);
       }
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId, task.id]);
 
   // Ref to track current activeChatId (for use in callbacks)
@@ -904,9 +920,11 @@ export function TaskChat({
           setMessages((prev) => [...prev, { type: "system", content: `Error: ${msg.message}` }]);
           setIsBusy(false);
           break;
-        case "user_message":
+        case "user_message": {
           setMessages((prev) => [...prev, {
-            type: "user", content: msg.text,
+            type: "user",
+            content: msg.text,
+            terminal: !!msg.terminal,
             sender: msg.sender || undefined,
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             attachments: msg.attachments?.map((a: any) => ({
@@ -920,6 +938,7 @@ export function TaskChat({
             })),
           }]);
           break;
+        }
         case "mode_changed":
           setPermissionLevel(msg.mode_id);
           break;
@@ -964,6 +983,45 @@ export function TaskChat({
             type: "system",
             content: `This chat is controlled by another process (${msg.agent_name || "Unknown"})`,
           }]);
+          break;
+        case "terminal_execute":
+          // User-initiated terminal command — show as terminal user message
+          terminalRunningRef.current = true;
+          setIsBusy(true);
+          setMessages((prev) => [...prev,
+            { type: "user", content: msg.command, terminal: true },
+            { type: "terminal_output", chunks: [], exitCode: undefined },
+          ]);
+          break;
+        case "terminal_chunk":
+          // Append chunk to the last terminal_output message
+          setMessages((prev) => {
+            for (let i = prev.length - 1; i >= 0; i--) {
+              if (prev[i].type === "terminal_output") {
+                const updated = [...prev];
+                const m = prev[i] as { type: "terminal_output"; chunks: string[]; exitCode?: number | null };
+                updated[i] = { ...m, chunks: [...m.chunks, msg.output] };
+                return updated;
+              }
+            }
+            return [...prev, { type: "terminal_output", chunks: [msg.output] }];
+          });
+          break;
+        case "terminal_complete":
+          // Set exit code on the last terminal_output message
+          terminalRunningRef.current = false;
+          setIsBusy(false);
+          setMessages((prev) => {
+            for (let i = prev.length - 1; i >= 0; i--) {
+              if (prev[i].type === "terminal_output") {
+                const updated = [...prev];
+                const m = prev[i] as { type: "terminal_output"; chunks: string[]; exitCode?: number | null };
+                updated[i] = { ...m, exitCode: msg.exit_code ?? 0 };
+                return updated;
+              }
+            }
+            return prev;
+          });
           break;
         case "session_ended":
           setIsConnected(false);
@@ -1071,9 +1129,11 @@ export function TaskChat({
       case "busy":
         state.isBusy = msg.value;
         break;
-      case "user_message":
+      case "user_message": {
         state.messages = [...state.messages, {
-          type: "user", content: msg.text,
+          type: "user",
+          content: msg.text,
+          terminal: !!msg.terminal,
           sender: msg.sender || undefined,
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           attachments: msg.attachments?.map((a: any) => ({
@@ -1087,6 +1147,7 @@ export function TaskChat({
           })),
         }];
         break;
+      }
       case "plan_update":
         state.planEntries = msg.entries ?? [];
         break;
@@ -1099,12 +1160,46 @@ export function TaskChat({
       case "available_commands":
         state.slashCommands = msg.commands ?? [];
         break;
+      case "terminal_execute":
+        state.messages = [...state.messages,
+          { type: "user", content: msg.command, terminal: true },
+          { type: "terminal_output", chunks: [], exitCode: undefined },
+        ];
+        break;
+      case "terminal_chunk": {
+        const msgs = [...state.messages];
+        for (let i = msgs.length - 1; i >= 0; i--) {
+          if (msgs[i].type === "terminal_output") {
+            const m = msgs[i] as { type: "terminal_output"; chunks: string[]; exitCode?: number | null };
+            msgs[i] = { ...m, chunks: [...m.chunks, msg.output] };
+            break;
+          }
+        }
+        state.messages = msgs;
+        break;
+      }
+      case "terminal_complete": {
+        const msgs2 = [...state.messages];
+        for (let i = msgs2.length - 1; i >= 0; i--) {
+          if (msgs2[i].type === "terminal_output") {
+            const m = msgs2[i] as { type: "terminal_output"; chunks: string[]; exitCode?: number | null };
+            msgs2[i] = { ...m, exitCode: msg.exit_code ?? 0 };
+            break;
+          }
+        }
+        state.messages = msgs2;
+        break;
+      }
       case "session_ended":
         state.isConnected = false;
         break;
     }
     perChatStateRef.current.set(chatId, state);
   }, []);
+
+  // Keep refs in sync so connectChatWs WS handlers always call latest versions
+  handleServerMessageRef.current = handleServerMessage;
+  handleServerMessageForCacheRef.current = handleServerMessageForCache;
 
   // ─── Read-only observation polling ─────────────────────────────────────
   useEffect(() => {
@@ -1310,10 +1405,20 @@ export function TaskChat({
     const prompt = getPromptFromEditable(el);
     if ((!prompt && attachments.length === 0) || !wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
 
-    // Shell mode → wrap as terminal command
-    const text = isTerminalMode
-      ? `Run this command: \`${prompt}\``
-      : prompt;
+    // Shell mode → send terminal_execute directly (bypasses AI)
+    if (isTerminalMode) {
+      if (!prompt || isBusy) return;
+      wsRef.current.send(JSON.stringify({ type: "terminal_execute", command: prompt }));
+      el.innerHTML = "";
+      setHasContent(false);
+      setAttachments([]);
+      setIsTerminalMode(false);
+      setIsInputExpanded(false);
+      el.focus();
+      return;
+    }
+
+    const text = prompt;
 
     // Build attachments payload for server
     const contentAttachments = attachments.map(att => ({
@@ -1366,10 +1471,14 @@ export function TaskChat({
     wsRef.current.send(JSON.stringify({ type: "cancel" }));
   }, []);
 
-  /** Stop agent (only shown when no pending messages) */
+  /** Stop agent or kill running terminal command */
   const handleStopAgent = useCallback(() => {
     if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
-    wsRef.current.send(JSON.stringify({ type: "cancel" }));
+    if (terminalRunningRef.current) {
+      wsRef.current.send(JSON.stringify({ type: "terminal_kill" }));
+    } else {
+      wsRef.current.send(JSON.stringify({ type: "cancel" }));
+    }
   }, []);
 
   const handleEditPending = useCallback((i: number) => {
@@ -1418,21 +1527,75 @@ export function TaskChat({
   }, []);
 
   /** Respond to a permission request */
-  const handlePermissionResponse = useCallback((optionId: string, optionName: string) => {
+  const handlePermissionResponse = useCallback((optionId: string) => {
     if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
     wsRef.current.send(JSON.stringify({ type: "permission_response", option_id: optionId }));
-    // Mark the permission message as resolved
-    setMessages((prev) => resolveLatestPendingPermission(prev, optionId, optionName));
   }, []);
 
   /** Detect /slash or @file at cursor position in contentEditable */
   const handleInput = useCallback(() => {
     // Detect "!" typed into empty input → enter shell mode and clear the "!"
     const el = editableRef.current;
-    if (el && !isTerminalMode && el.textContent === "!") {
+    if (el && !isTerminalMode && !isBusy && el.textContent === "!") {
       el.innerHTML = "";
       setHasContent(false);
       setIsTerminalMode(true);
+      return;
+    }
+    // Shell mode: highlight first word (command) differently from args
+    if (el && isTerminalMode && !composingRef.current) {
+      const raw = el.textContent || "";
+      checkContent();
+      const match = raw.match(/^(\S+)([\s\S]*)$/);
+      if (match) {
+        const sel = window.getSelection();
+        // Calculate cursor offset within the raw text
+        let cursorOffset = raw.length;
+        if (sel && sel.rangeCount > 0) {
+          const r = sel.getRangeAt(0);
+          // Walk text nodes to find absolute offset
+          const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+          let offset = 0;
+          let node: Node | null;
+          while ((node = walker.nextNode())) {
+            if (node === r.startContainer) {
+              cursorOffset = offset + r.startOffset;
+              break;
+            }
+            offset += (node.textContent || "").length;
+          }
+        }
+        const escCmd = match[1].replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+        const escArgs = match[2].replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/\n/g, "<br>");
+        const highlighted = `<span style="color:var(--color-accent);font-weight:600">${escCmd}</span>${escArgs}`;
+        el.innerHTML = highlighted;
+        // Restore cursor
+        if (sel) {
+          const newRange = document.createRange();
+          const tw = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+          let remaining = cursorOffset;
+          let placed = false;
+          let tn: Node | null;
+          while ((tn = tw.nextNode())) {
+            const len = (tn.textContent || "").length;
+            if (remaining <= len) {
+              newRange.setStart(tn, remaining);
+              newRange.collapse(true);
+              sel.removeAllRanges();
+              sel.addRange(newRange);
+              placed = true;
+              break;
+            }
+            remaining -= len;
+          }
+          if (!placed) {
+            newRange.selectNodeContents(el);
+            newRange.collapse(false);
+            sel.removeAllRanges();
+            sel.addRange(newRange);
+          }
+        }
+      }
       return;
     }
     checkContent();
@@ -1480,7 +1643,7 @@ export function TaskChat({
       setShowSlashMenu(false);
       setShowFileMenu(false);
     }
-  }, [checkContent, isTerminalMode, slashCommands.length, taskFiles.length]);
+  }, [checkContent, isTerminalMode, isBusy, slashCommands.length, taskFiles.length]);
 
   /** Insert a command chip at the current cursor position, replacing the /partial text */
   const insertCommandAtCursor = useCallback((name: string) => {
@@ -1728,6 +1891,7 @@ export function TaskChat({
       const el = editableRef.current;
       if (el && !el.textContent?.trim()) {
         e.preventDefault();
+        el.innerHTML = "";
         setIsTerminalMode(false);
         return;
       }
@@ -1735,6 +1899,12 @@ export function TaskChat({
     // Shell mode: Escape → exit shell mode
     if (isTerminalMode && e.key === "Escape") {
       e.preventDefault();
+      const el = editableRef.current;
+      if (el) {
+        // Strip highlight spans, keep plain text
+        const raw = el.textContent || "";
+        el.textContent = raw;
+      }
       setIsTerminalMode(false);
       return;
     }
@@ -2067,18 +2237,18 @@ export function TaskChat({
               tools={item.tools}
               expanded={
                 // Auto-expand only the latest tool section until message_chunk or complete
-                item.sectionId === autoExpandSectionId
+                (item.sectionId === autoExpandSectionId && isToolSectionRunning(item.tools))
                 || expandedSections.has(item.sectionId)
               }
               forceExpanded={
-                item.sectionId === autoExpandSectionId
+                item.sectionId === autoExpandSectionId && isToolSectionRunning(item.tools)
               }
               onToggleSection={toggleSection}
               onToggleToolCollapse={toggleToolCollapse}
             />
           ),
         )}
-        {isBusy && messages[messages.length - 1]?.type !== "assistant" && (
+        {isBusy && messages[messages.length - 1]?.type !== "assistant" && messages[messages.length - 1]?.type !== "terminal_output" && (
           <div className="flex items-center gap-2 text-sm text-[var(--color-text-muted)] py-1">
             <Loader2 className="w-4 h-4 animate-spin" /><span>Thinking...</span>
           </div>
@@ -2213,7 +2383,7 @@ export function TaskChat({
                       {activePermissionMessage.options.map((opt) => (
                         <button
                           key={opt.option_id}
-                          onClick={() => handlePermissionResponse(opt.option_id, opt.name)}
+                          onClick={() => handlePermissionResponse(opt.option_id)}
                           className="flex w-full items-center justify-between rounded-xl border border-[color-mix(in_srgb,var(--color-warning)_18%,transparent)] bg-[color-mix(in_srgb,var(--color-warning)_7%,transparent)] px-3 py-2.5 text-left transition-colors hover:bg-[color-mix(in_srgb,var(--color-warning)_12%,transparent)]"
                         >
                           <span className="text-sm font-medium text-[var(--color-text)]">{opt.name}</span>
@@ -2462,21 +2632,32 @@ export function TaskChat({
               : <Maximize2 className="w-3.5 h-3.5" />}
           </button>
 
-          <div
-            ref={editableRef}
-            contentEditable={isConnected && !isRemoteSession && !activePermissionMessage}
-            suppressContentEditableWarning
-            onInput={handleInput}
-            onKeyDown={handleKeyDown}
-            onMouseDown={handleEditableMouseDown}
-            onFocus={() => setIsInputFocused(true)}
-            onBlur={() => setIsInputFocused(false)}
-            onPaste={handlePaste}
-            className={`overflow-y-auto px-4 py-2 text-sm leading-7 text-[var(--color-text)] focus:outline-none ${
-              isInputExpanded ? "min-h-[32vh] max-h-[56vh]" : "min-h-[56px] max-h-32"
-            } ${!isConnected || isRemoteSession || activePermissionMessage ? "opacity-50 cursor-not-allowed" : ""}`}
-            style={{ wordBreak: "break-word", whiteSpace: "pre-wrap" }}
-          />
+          <div className={`flex ${isTerminalMode ? "items-start" : ""}`}>
+            {isTerminalMode && (
+              <span className="shrink-0 pl-4 pt-2 text-sm leading-7 font-mono text-[var(--color-text-muted)] select-none">$&nbsp;</span>
+            )}
+            <div
+              ref={editableRef}
+              contentEditable={isConnected && !isRemoteSession && !activePermissionMessage}
+              suppressContentEditableWarning
+              onInput={handleInput}
+              onKeyDown={handleKeyDown}
+              onMouseDown={handleEditableMouseDown}
+              onFocus={() => setIsInputFocused(true)}
+              onBlur={() => setIsInputFocused(false)}
+              onPaste={handlePaste}
+              onCompositionStart={() => { composingRef.current = true; }}
+              onCompositionEnd={() => { composingRef.current = false; handleInput(); }}
+              className={`overflow-y-auto py-2 text-sm leading-7 text-[var(--color-text)] focus:outline-none flex-1 ${
+                isTerminalMode ? "pr-4" : "px-4"
+              } ${
+                isInputExpanded ? "min-h-[32vh] max-h-[56vh]" : "min-h-[56px] max-h-32"
+              } ${!isConnected || isRemoteSession || activePermissionMessage ? "opacity-50 cursor-not-allowed" : ""} ${
+                isTerminalMode ? "font-mono" : ""
+              }`}
+              style={{ wordBreak: "break-word", whiteSpace: "pre-wrap" }}
+            />
+          </div>
 
           <div className="mt-2 flex items-center justify-between gap-2 select-none">
             <div className="flex items-center gap-2 min-w-0 select-none">
@@ -2513,30 +2694,30 @@ export function TaskChat({
                   onSelect={(v) => { setPermissionLevel(v); setShowPermMenu(false); if (wsRef.current?.readyState === WebSocket.OPEN) { wsRef.current.send(JSON.stringify({ type: "set_mode", mode_id: v })); } }} />
               )}
               {activePermissionMessage && isBusy ? (
-                <Button variant="secondary" size="sm" className="h-10 w-10 !p-0 rounded-xl" onClick={handleStopAgent}>
+                <Button variant="secondary" size="sm" className="h-9 w-9 !p-0 rounded-xl" onClick={handleStopAgent}>
                   <Square className="w-3.5 h-3.5" />
                 </Button>
               ) : !activePermissionMessage && !isBusy && hasContent ? (
-                <Button variant="primary" size="sm" className="h-10 w-10 !p-0 rounded-xl shadow-sm" onClick={handleSend} disabled={!isConnected}>
-                  <Send className="w-4 h-4" />
+                <Button variant="primary" size="sm" className="h-9 w-9 !p-0 rounded-xl shadow-sm" onClick={handleSend} disabled={!isConnected}>
+                  <Send className="w-3.5 h-3.5" />
                 </Button>
               ) : !activePermissionMessage && isBusy && hasContent ? (
-                <Button variant="primary" size="sm" className="h-10 w-10 !p-0 rounded-xl shadow-sm" onClick={handleSend}>
-                  <ListPlus className="w-4 h-4" />
+                <Button variant="primary" size="sm" className="h-9 w-9 !p-0 rounded-xl shadow-sm" onClick={handleSend}>
+                  <ListPlus className="w-3.5 h-3.5" />
                 </Button>
               ) : !activePermissionMessage && isBusy && !hasContent ? (
                 pendingMessages.length > 0 ? (
-                  <Button variant="secondary" size="sm" className="h-10 w-10 !p-0 rounded-xl" onClick={handleSendNow}>
-                    <Send className="w-4 h-4" />
+                  <Button variant="secondary" size="sm" className="h-9 w-9 !p-0 rounded-xl" onClick={handleSendNow}>
+                    <Send className="w-3.5 h-3.5" />
                   </Button>
                 ) : (
-                  <Button variant="secondary" size="sm" className="h-10 w-10 !p-0 rounded-xl" onClick={handleStopAgent}>
+                  <Button variant="secondary" size="sm" className="h-9 w-9 !p-0 rounded-xl" onClick={handleStopAgent}>
                     <Square className="w-3.5 h-3.5" />
                   </Button>
                 )
               ) : (
-                <Button variant="primary" size="sm" className="h-10 w-10 !p-0 rounded-xl shadow-sm" disabled>
-                  <Send className="w-4 h-4" />
+                <Button variant="primary" size="sm" className="h-9 w-9 !p-0 rounded-xl shadow-sm" disabled>
+                  <Send className="w-3.5 h-3.5" />
                 </Button>
               )}
             </div>
@@ -2586,11 +2767,30 @@ const DropdownSelect = ({ ref, label, options, value, open, onToggle, onSelect }
 function MessageItem({ message, index, isBusy, agentLabel, onToggleThinkingCollapse, onPermissionResponse, onFileClick }: {
   message: ChatMessage; index: number; isBusy: boolean; agentLabel?: string;
   onToggleThinkingCollapse: (index: number) => void;
-  onPermissionResponse?: (optionId: string, optionName: string) => void;
+  onPermissionResponse?: (optionId: string) => void;
   onFileClick?: (filePath: string, line?: number) => void;
 }) {
   switch (message.type) {
     case "user":
+      if (message.terminal) {
+        // Simple highlight: first token = command (accent), rest = args (normal)
+        const parts = message.content.match(/^(\S+)([\s\S]*)$/);
+        const cmd = parts ? parts[1] : message.content;
+        const args = parts ? parts[2] : "";
+        return (
+          <div className="flex justify-end">
+            <div className="max-w-[85%]">
+              <div className="rounded-xl px-3.5 py-2 bg-[var(--color-bg-tertiary)] border border-[color-mix(in_srgb,var(--color-border)_72%,transparent)] shadow-[0_10px_30px_rgba(0,0,0,0.08)]">
+                <code className="text-[13px] font-mono whitespace-pre-wrap">
+                  <span className="text-[var(--color-text-muted)] select-none">$ </span>
+                  <span className="text-[var(--color-accent)] font-semibold">{cmd}</span>
+                  <span className="text-[var(--color-text)]">{args}</span>
+                </code>
+              </div>
+            </div>
+          </div>
+        );
+      }
       return (
         <div className="flex justify-end">
           <div className="max-w-[80%]">
@@ -2677,25 +2877,78 @@ function MessageItem({ message, index, isBusy, agentLabel, onToggleThinkingColla
         <div className="text-center text-xs text-[var(--color-text-muted)] py-1">{displayContent}</div>
       );
     }
+    case "terminal_output": {
+      const hasExited = message.exitCode !== undefined;
+      const isError = hasExited && message.exitCode !== 0;
+      const output = message.chunks.join("");
+      return (
+        <div className="flex justify-start">
+          <div className="max-w-[90%] w-full">
+            <div className={`rounded-xl border overflow-hidden ${
+              isError
+                ? "border-[color-mix(in_srgb,var(--color-error)_40%,transparent)]"
+                : "border-[color-mix(in_srgb,var(--color-border)_72%,transparent)]"
+            } bg-[var(--color-bg-secondary)]`}>
+              {output && (
+                <pre className="px-3 py-2 text-[12px] font-mono text-[var(--color-text-secondary)] whitespace-pre-wrap overflow-x-auto max-h-[300px] overflow-y-auto">
+                  {output}
+                </pre>
+              )}
+              {hasExited && (
+                <div className={`flex items-center gap-1.5 px-3 py-1 text-[10px] font-medium border-t ${
+                  isError
+                    ? "border-[color-mix(in_srgb,var(--color-error)_30%,transparent)] text-[var(--color-error)] bg-[color-mix(in_srgb,var(--color-error)_8%,transparent)]"
+                    : "border-[color-mix(in_srgb,var(--color-border)_50%,transparent)] text-[var(--color-text-muted)] bg-[var(--color-bg-tertiary)]"
+                }`}>
+                  <Terminal className="w-3 h-3" />
+                  exit {message.exitCode}
+                </div>
+              )}
+              {!hasExited && (
+                <div className="flex items-center gap-1.5 px-3 py-1 text-[10px] text-[var(--color-text-muted)] border-t border-[color-mix(in_srgb,var(--color-border)_50%,transparent)] bg-[var(--color-bg-tertiary)]">
+                  <span className="inline-block w-1.5 h-1.5 rounded-full bg-[var(--color-warning)] animate-pulse" />
+                  running...
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      );
+    }
   }
 }
 
 /** Permission request card with action buttons */
 function PermissionCard({ message, onRespond }: {
   message: PermissionMessage;
-  onRespond?: (optionId: string, optionName: string) => void;
+  onRespond?: (optionId: string) => void;
 }) {
   const isResolved = !!message.resolved;
+  const isCancelled = isResolved && message.resolved!.toLowerCase() === "cancelled";
   const isAllowed = isResolved && (message.resolved!.toLowerCase().includes("allow") || message.resolved!.toLowerCase().includes("yes"));
 
   if (isResolved) {
     return (
-      <div className="flex items-center gap-2 py-1.5 px-3 rounded-lg text-xs bg-[var(--color-bg-tertiary)] border border-[var(--color-border)]">
-        {isAllowed
-          ? <ShieldCheck className="w-3.5 h-3.5 text-[var(--color-success)] shrink-0" />
-          : <ShieldX className="w-3.5 h-3.5 text-[var(--color-error)] shrink-0" />}
-        <span className="text-[var(--color-text-muted)]">{message.description}</span>
-        <span className="ml-auto text-[10px] text-[var(--color-text-muted)] opacity-70">{message.resolved}</span>
+      <div
+        className={`flex items-center gap-2 py-1.5 px-3 rounded-lg text-xs border ${
+          isCancelled
+            ? "bg-[color-mix(in_srgb,var(--color-warning)_8%,transparent)] border-[color-mix(in_srgb,var(--color-warning)_24%,transparent)]"
+            : "bg-[var(--color-bg-tertiary)] border-[var(--color-border)]"
+        }`}
+      >
+        {isCancelled ? (
+          <AlertTriangle className="w-3.5 h-3.5 text-[var(--color-warning)] shrink-0" />
+        ) : isAllowed ? (
+          <ShieldCheck className="w-3.5 h-3.5 text-[var(--color-success)] shrink-0" />
+        ) : (
+          <ShieldX className="w-3.5 h-3.5 text-[var(--color-error)] shrink-0" />
+        )}
+        <span className={isCancelled ? "text-[color-mix(in_srgb,var(--color-warning)_92%,white_6%)]" : "text-[var(--color-text-muted)]"}>
+          {message.description}
+        </span>
+        <span className={`ml-auto text-[10px] ${isCancelled ? "text-[var(--color-warning)]" : "text-[var(--color-text-muted)] opacity-70"}`}>
+          {message.resolved}
+        </span>
       </div>
     );
   }
@@ -2714,14 +2967,14 @@ function PermissionCard({ message, onRespond }: {
         <p className="text-xs text-[var(--color-text-muted)] mb-3 ml-6">{message.description}</p>
         <div className="flex items-center gap-2 ml-6 flex-wrap">
           {allowOptions.map((opt) => (
-            <button key={opt.option_id} onClick={() => onRespond?.(opt.option_id, opt.name)}
+            <button key={opt.option_id} onClick={() => onRespond?.(opt.option_id)}
               className="px-3 py-1 rounded-md text-xs font-medium transition-colors bg-[var(--color-success)] text-white hover:opacity-80"
               style={{ backgroundColor: "color-mix(in srgb, var(--color-success) 85%, white)" }}>
               {opt.name}
             </button>
           ))}
           {rejectOptions.map((opt) => (
-            <button key={opt.option_id} onClick={() => onRespond?.(opt.option_id, opt.name)}
+            <button key={opt.option_id} onClick={() => onRespond?.(opt.option_id)}
               className="px-3 py-1 rounded-md text-xs font-medium transition-colors border border-[var(--color-border)] text-[var(--color-text-muted)] hover:bg-[var(--color-bg)] hover:text-[var(--color-error)]">
               {opt.name}
             </button>
@@ -2743,6 +2996,14 @@ function isSecondaryTool(title: string): boolean {
   return false;
 }
 
+function formatToolStatusSummary(counts: { completed?: number; cancelled?: number; failed?: number }): string {
+  const parts: string[] = [];
+  if ((counts.completed ?? 0) > 0) parts.push(`${counts.completed} completed`);
+  if ((counts.cancelled ?? 0) > 0) parts.push(`${counts.cancelled} cancelled`);
+  if ((counts.failed ?? 0) > 0) parts.push(`${counts.failed} failed`);
+  return parts.join(", ");
+}
+
 /** Single tool row used inside ToolSectionView */
 function ToolItemRow({ message, onToggleCollapse, onFileClick }: {
   message: ToolMessage;
@@ -2750,6 +3011,8 @@ function ToolItemRow({ message, onToggleCollapse, onFileClick }: {
   onFileClick?: (filePath: string, line?: number) => void;
 }) {
   const isRunning = message.status === "running";
+  const isCancelled = message.status === "cancelled";
+  const isFailed = message.status === "error" || message.status === "failed";
   const loc = message.locations?.[0];
   const shortPath = loc?.path
     ? loc.path.replace(/^.*\/worktrees\/[^/]+\//, "")
@@ -2773,11 +3036,11 @@ function ToolItemRow({ message, onToggleCollapse, onFileClick }: {
       >
         {isRunning
           ? <Loader2 className="w-3.5 h-3.5 text-[var(--color-highlight)] animate-spin shrink-0" />
-          : <CheckCircle2 className="w-3.5 h-3.5 text-[var(--color-success)] shrink-0" />}
+          : <CheckCircle2 className={`w-3.5 h-3.5 shrink-0 ${isCancelled || isFailed ? "text-[var(--color-warning)]" : "text-[var(--color-success)]"}`} />}
         {hasContent && (message.collapsed
           ? <ChevronRight className="w-3 h-3 text-[var(--color-text-muted)] shrink-0" />
           : <ChevronDown className="w-3 h-3 text-[var(--color-text-muted)] shrink-0" />)}
-        <span className={`shrink-0 ${isRunning ? "text-[var(--color-highlight)]" : "text-[var(--color-text-muted)]"}`}>
+        <span className={`shrink-0 ${isRunning ? "text-[var(--color-highlight)]" : isCancelled || isFailed ? "text-[var(--color-warning)]" : "text-[var(--color-text-muted)]"}`}>
           {message.title}
         </span>
         {locationLabel && (
@@ -2810,10 +3073,14 @@ function SecondaryToolsRow({ tools, expanded, onToggle, onToggleToolCollapse }: 
   onToggleToolCollapse: (id: string) => void;
 }) {
   const running = tools.filter((t) => t.message.status === "running").length;
-  const completed = tools.length - running;
+  const cancelled = tools.filter((t) => t.message.status === "cancelled").length;
+  const failed = tools.filter((t) => t.message.status === "error" || t.message.status === "failed").length;
+  const completed = tools.length - running - cancelled - failed;
   const label = running > 0
     ? `Running ${completed}/${tools.length} exploration tools\u2026`
-    : `${tools.length} exploration tool${tools.length > 1 ? "s" : ""} completed`;
+    : cancelled > 0 || failed > 0
+      ? formatToolStatusSummary({ completed, cancelled, failed })
+        : `${tools.length} exploration tool${tools.length > 1 ? "s" : ""} completed`;
 
   return (
     <div>
@@ -2824,7 +3091,7 @@ function SecondaryToolsRow({ tools, expanded, onToggle, onToggleToolCollapse }: 
       >
         {running > 0
           ? <Loader2 className="w-3.5 h-3.5 text-[var(--color-highlight)] animate-spin shrink-0" />
-          : <CheckCircle2 className="w-3.5 h-3.5 text-[var(--color-success)] shrink-0" />}
+          : <CheckCircle2 className={`w-3.5 h-3.5 shrink-0 ${cancelled > 0 || failed > 0 ? "text-[var(--color-warning)]" : "text-[var(--color-success)]"}`} />}
         {expanded
           ? <ChevronDown className="w-3 h-3 text-[var(--color-text-muted)] shrink-0" />
           : <ChevronRight className="w-3 h-3 text-[var(--color-text-muted)] shrink-0" />}
@@ -2852,8 +3119,10 @@ function ToolSectionView({ sectionId, tools, expanded, forceExpanded, onToggleSe
 }) {
   const total = tools.length;
   const running = tools.filter((t) => t.message.status === "running").length;
-  const failed = tools.filter((t) => t.message.status === "error").length;
-  const completed = total - running;
+  const failed = tools.filter((t) => t.message.status === "error" || t.message.status === "failed").length;
+  const cancelled = tools.filter((t) => t.message.status === "cancelled").length;
+  const completed = total - running - failed - cancelled;
+  const sectionExpanded = forceExpanded || expanded;
 
   const toolIds = useMemo(() => tools.map((t) => t.message.id), [tools]);
 
@@ -2868,8 +3137,8 @@ function ToolSectionView({ sectionId, tools, expanded, forceExpanded, onToggleSe
   const secondaryCount = secondary.length;
   if (running > 0) {
     summaryText = `Running ${completed}/${total} tools\u2026`;
-  } else if (failed > 0) {
-    summaryText = `${completed - failed} completed, ${failed} failed`;
+  } else if (cancelled > 0 || failed > 0) {
+    summaryText = formatToolStatusSummary({ completed, cancelled, failed });
   } else if (primaryCount > 0 && secondaryCount > 0) {
     summaryText = `${primaryCount} action${primaryCount > 1 ? "s" : ""}, ${secondaryCount} exploration tool${secondaryCount > 1 ? "s" : ""} completed`;
   } else if (primaryCount > 0) {
@@ -2883,11 +3152,11 @@ function ToolSectionView({ sectionId, tools, expanded, forceExpanded, onToggleSe
   // Icon
   const summaryIcon = running > 0
     ? <Loader2 className="w-3.5 h-3.5 text-[var(--color-highlight)] animate-spin shrink-0" />
-    : failed > 0
+    : failed > 0 || cancelled > 0
       ? <CheckCircle2 className="w-3.5 h-3.5 text-[var(--color-warning)] shrink-0" />
       : <CheckCircle2 className="w-3.5 h-3.5 text-[var(--color-success)] shrink-0" />;
 
-  if (!expanded) {
+  if (!sectionExpanded) {
     // Collapsed: single summary row
     return (
       <div
@@ -2908,10 +3177,8 @@ function ToolSectionView({ sectionId, tools, expanded, forceExpanded, onToggleSe
       {/* Section header */}
       <div
         role="button"
-        onClick={forceExpanded ? undefined : () => onToggleSection(sectionId, toolIds)}
-        className={`flex items-center gap-1.5 py-1.5 px-2 rounded-md text-xs ${
-          forceExpanded ? "" : "hover:bg-[var(--color-bg-tertiary)] cursor-pointer"
-        } transition-colors`}
+        onClick={() => onToggleSection(sectionId, toolIds)}
+        className="flex items-center gap-1.5 py-1.5 px-2 rounded-md text-xs hover:bg-[var(--color-bg-tertiary)] cursor-pointer transition-colors"
       >
         {summaryIcon}
         <ChevronDown className="w-3 h-3 text-[var(--color-text-muted)] shrink-0" />

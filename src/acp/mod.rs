@@ -46,6 +46,10 @@ pub struct AcpSessionHandle {
     queue_paused: std::sync::atomic::AtomicBool,
     /// 当前 agent mode id（用于 PlanFileUpdate 检测）
     current_mode_id: Mutex<Option<String>>,
+    /// Task 工作目录（用于用户直接执行 terminal 命令）
+    pub working_dir: String,
+    /// 用户终端命令的 kill channel（Shell 模式）
+    terminal_kill_tx: Mutex<Option<mpsc::Sender<()>>>,
 }
 
 /// 发送给 ACP 后台任务的命令
@@ -54,6 +58,7 @@ enum AcpCommand {
         text: String,
         attachments: Vec<ContentBlockData>,
         sender: Option<String>,
+        terminal: bool,
     },
     Cancel,
     Kill,
@@ -119,6 +124,9 @@ pub enum AcpUpdate {
         attachments: Vec<ContentBlockData>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         sender: Option<String>,
+        /// true when the message originated from Shell mode (terminal command)
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        terminal: bool,
     },
     /// Mode 变更通知
     ModeChanged { mode_id: String },
@@ -135,6 +143,12 @@ pub enum AcpUpdate {
     },
     /// 会话结束
     SessionEnded,
+    /// 用户直接执行终端命令（Shell 模式）
+    TerminalExecute { command: String },
+    /// 终端输出片段（流式推送）
+    TerminalChunk { output: String },
+    /// 终端命令执行完成
+    TerminalComplete { exit_code: Option<i32> },
 }
 
 /// 权限选项数据（从 ACP PermissionOption 提取，用于 WebSocket 传输）
@@ -919,6 +933,8 @@ pub async fn get_or_start_session(
                     pending_queue: Mutex::new(Vec::new()),
                     queue_paused: std::sync::atomic::AtomicBool::new(false),
                     current_mode_id: Mutex::new(None),
+                    working_dir: config.working_dir.to_string_lossy().to_string(),
+                    terminal_kill_tx: Mutex::new(None),
                 });
 
                 // 注册到全局表
@@ -1244,12 +1260,14 @@ async fn run_acp_session(
                 text,
                 attachments,
                 sender,
+                terminal,
             } => {
                 // 记录用户消息到 history（重连时回放）
                 handle.emit(AcpUpdate::UserMessage {
                     text: text.clone(),
                     attachments: attachments.clone(),
                     sender,
+                    terminal,
                 });
                 handle.emit(AcpUpdate::Busy { value: true });
 
@@ -1360,6 +1378,7 @@ async fn run_acp_session(
                         text,
                         attachments,
                         sender: None,
+                        terminal: false,
                     });
                 } else {
                     // Auto-send next queued message (if any), unless queue is paused
@@ -1500,12 +1519,15 @@ async fn connect_remote_agent(
 
 impl AcpSessionHandle {
     /// 响应待处理的权限请求
-    pub fn respond_permission(&self, option_id: String) {
+    pub fn respond_permission(&self, option_id: String) -> bool {
         if let Some(tx) = self.pending_permission.lock().unwrap().take() {
-            let _ = tx.send(option_id.clone());
+            if tx.send(option_id.clone()).is_ok() {
+                // 记录到历史（磁盘 + 内存），回放时前端可标记为已解决
+                self.emit(AcpUpdate::PermissionResponse { option_id });
+                return true;
+            }
         }
-        // 记录到历史（磁盘 + 内存），回放时前端可标记为已解决
-        self.emit(AcpUpdate::PermissionResponse { option_id });
+        false
     }
 
     /// 发送更新并记录到 history buffer（带磁盘持久化）
@@ -1597,12 +1619,14 @@ impl AcpSessionHandle {
         text: String,
         attachments: Vec<ContentBlockData>,
         sender: Option<String>,
+        terminal: bool,
     ) -> crate::error::Result<()> {
         self.cmd_tx
             .send(AcpCommand::Prompt {
                 text,
                 attachments,
                 sender,
+                terminal,
             })
             .await
             .map_err(|_| crate::error::GroveError::Session("ACP session closed".to_string()))
@@ -1699,6 +1723,7 @@ impl AcpSessionHandle {
                 text,
                 attachments,
                 sender: None,
+                terminal: false,
             })
             .is_ok()
     }
@@ -1719,6 +1744,92 @@ impl AcpSessionHandle {
                 messages: self.get_queue(),
             });
             self.try_enqueue_prompt(next_msg.text, next_msg.attachments);
+        }
+    }
+
+    /// 用户直接执行终端命令（Shell 模式，不经过 AI agent）
+    pub fn execute_terminal(self: &Arc<Self>, command: String) {
+        // 先终止已有的终端命令（如果有）
+        self.kill_terminal();
+        // 记录到 history
+        self.emit(AcpUpdate::TerminalExecute {
+            command: command.clone(),
+        });
+
+        let handle = self.clone();
+        let cwd = self.working_dir.clone();
+        let (kill_tx, mut kill_rx) = mpsc::channel::<()>(1);
+        *self.terminal_kill_tx.lock().unwrap() = Some(kill_tx);
+
+        tokio::spawn(async move {
+            let mut cmd = tokio::process::Command::new("sh");
+            cmd.arg("-c")
+                .arg(&command)
+                .current_dir(&cwd)
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped())
+                .kill_on_drop(true);
+
+            let mut child = match cmd.spawn() {
+                Ok(c) => c,
+                Err(e) => {
+                    handle.emit(AcpUpdate::TerminalChunk {
+                        output: format!("Failed to execute: {}\n", e),
+                    });
+                    handle.emit(AcpUpdate::TerminalComplete { exit_code: Some(1) });
+                    *handle.terminal_kill_tx.lock().unwrap() = None;
+                    return;
+                }
+            };
+
+            let mut stdout = child.stdout.take().unwrap();
+            let mut stderr = child.stderr.take().unwrap();
+            let mut stdout_buf = [0u8; 4096];
+            let mut stderr_buf = [0u8; 4096];
+            let mut stdout_done = false;
+            let mut stderr_done = false;
+
+            loop {
+                tokio::select! {
+                    result = stdout.read(&mut stdout_buf), if !stdout_done => {
+                        match result {
+                            Ok(0) | Err(_) => stdout_done = true,
+                            Ok(n) => {
+                                let text = String::from_utf8_lossy(&stdout_buf[..n]).to_string();
+                                handle.emit(AcpUpdate::TerminalChunk { output: text });
+                            }
+                        }
+                    }
+                    result = stderr.read(&mut stderr_buf), if !stderr_done => {
+                        match result {
+                            Ok(0) | Err(_) => stderr_done = true,
+                            Ok(n) => {
+                                let text = String::from_utf8_lossy(&stderr_buf[..n]).to_string();
+                                handle.emit(AcpUpdate::TerminalChunk { output: text });
+                            }
+                        }
+                    }
+                    _ = kill_rx.recv() => {
+                        let _ = child.start_kill();
+                        stdout_done = true;
+                        stderr_done = true;
+                    }
+                }
+                if stdout_done && stderr_done {
+                    break;
+                }
+            }
+
+            let exit_code = child.wait().await.ok().and_then(|s| s.code());
+            *handle.terminal_kill_tx.lock().unwrap() = None;
+            handle.emit(AcpUpdate::TerminalComplete { exit_code });
+        });
+    }
+
+    /// 终止用户终端命令
+    pub fn kill_terminal(&self) {
+        if let Some(tx) = self.terminal_kill_tx.lock().unwrap().take() {
+            let _ = tx.try_send(());
         }
     }
 }
@@ -1901,7 +2012,7 @@ async fn dispatch_socket_command(handle: &AcpSessionHandle, cmd: SocketCommand) 
             text,
             attachments,
             sender,
-        } => match handle.send_prompt(text, attachments, sender).await {
+        } => match handle.send_prompt(text, attachments, sender, false).await {
             Ok(()) => SocketResponse::Ok,
             Err(e) => SocketResponse::Error {
                 message: e.to_string(),
@@ -1926,8 +2037,13 @@ async fn dispatch_socket_command(handle: &AcpSessionHandle, cmd: SocketCommand) 
             },
         },
         SocketCommand::RespondPermission { option_id } => {
-            handle.respond_permission(option_id);
-            SocketResponse::Ok
+            if handle.respond_permission(option_id) {
+                SocketResponse::Ok
+            } else {
+                SocketResponse::Error {
+                    message: "No pending permission request".to_string(),
+                }
+            }
         }
         SocketCommand::Kill => match handle.kill().await {
             Ok(()) => SocketResponse::Ok,

@@ -14,7 +14,7 @@ interface UseFileMentionReturn {
   selectedIdx: number;
   atCharIdx: number;
   /** Call inside textarea onChange after updating your own state */
-  handleChange: (value: string) => void;
+  handleChange: () => void;
   /** Call inside textarea onKeyDown. Returns true if event was consumed. Pass setText so keyboard selection can update caller state. */
   handleKeyDown: (e: React.KeyboardEvent<HTMLTextAreaElement>, setText: (v: string) => void) => boolean;
   /** Call when user clicks a dropdown item. Returns new text or null. */
@@ -71,8 +71,7 @@ export function useFileMention({ mentionItems, textareaRef }: UseFileMentionConf
   }, [textareaRef, showDropdown]);
 
   const handleChange = useCallback(
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    (_value: string) => {
+    () => {
       if (!mentionItems || mentionItems.length === 0) return;
       const textarea = textareaRef.current;
       if (!textarea) return;

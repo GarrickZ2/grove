@@ -774,7 +774,7 @@ export function TasksPage({ initialTaskId, initialViewMode, onNavigationConsumed
         message={pendingArchiveConfirm?.message || ""}
         variant="warning"
         onConfirm={() => opsHandlers.handleArchiveConfirm(pendingArchiveConfirm)}
-        onCancel={() => opsHandlers.handleArchiveCancel(pendingArchiveConfirm)}
+        onCancel={() => opsHandlers.handleArchiveCancel()}
       />
 
       {/* Reset Confirm Dialog (TUI: ConfirmType::Reset) */}
