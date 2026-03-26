@@ -387,6 +387,17 @@ export function TaskChat({
   const [showPermMenu, setShowPermMenu] = useState(false);
   const [planEntries, setPlanEntries] = useState<PlanEntry[]>([]);
   const [showPlan, setShowPlan] = useState(false);
+  const [lightboxUrl, setLightboxUrl] = useState<string | null>(null);
+
+  // Close lightbox on Escape
+  useEffect(() => {
+    if (!lightboxUrl) return;
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setLightboxUrl(null);
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [lightboxUrl]);
   const [planFilePath, setPlanFilePath] = useState("");
   const [planFileContent, setPlanFileContent] = useState("");
   const [showPlanFile, setShowPlanFile] = useState(false);
@@ -2229,7 +2240,7 @@ export function TaskChat({
         {renderItems.map((item) =>
           item.kind === "single" ? (
             <MessageItem key={`m-${item.index}`} message={item.message} index={item.index} isBusy={isBusy} agentLabel={agentLabel}
-              onToggleThinkingCollapse={toggleThinkingCollapse} onPermissionResponse={handlePermissionResponse} onFileClick={onNavigateToFile} />
+              onToggleThinkingCollapse={toggleThinkingCollapse} onPermissionResponse={handlePermissionResponse} onFileClick={onNavigateToFile} onImageClick={setLightboxUrl} />
           ) : (
             <ToolSectionView
               key={`ts-${item.sectionId}`}
@@ -2579,7 +2590,8 @@ export function TaskChat({
               {attachments.map((att, i) => (
                 <div key={i} className="group relative flex items-center gap-2 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] px-2.5 py-2 pr-7 max-w-full">
                   {att.type === "image" && att.previewUrl ? (
-                    <img src={att.previewUrl} className="w-8 h-8 object-cover rounded-md border border-[var(--color-border)] shrink-0" alt={att.name} />
+                    <img src={att.previewUrl} className="w-8 h-8 object-cover rounded-md border border-[var(--color-border)] shrink-0 cursor-pointer hover:opacity-80 transition-opacity" alt={att.name}
+                      onClick={() => setLightboxUrl(att.previewUrl!)} />
                   ) : att.type === "audio" ? (
                     <div className="w-8 h-8 rounded-md border border-[var(--color-border)] flex items-center justify-center bg-[var(--color-bg-tertiary)] shrink-0">
                       <Mic className="w-4 h-4 text-[var(--color-text-muted)]" />
@@ -2725,6 +2737,36 @@ export function TaskChat({
         </div>
         </div>
       </div>
+      {/* Image Lightbox */}
+      <AnimatePresence>
+        {lightboxUrl && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.15 }}
+            className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/70 backdrop-blur-sm cursor-pointer"
+            onClick={() => setLightboxUrl(null)}
+          >
+            <button
+              onClick={(e) => { e.stopPropagation(); setLightboxUrl(null); }}
+              className="absolute top-4 right-4 w-9 h-9 rounded-full bg-black/50 text-white/80 hover:text-white hover:bg-black/70 flex items-center justify-center transition-colors"
+            >
+              <X className="w-5 h-5" />
+            </button>
+            <motion.img
+              initial={{ scale: 0.9, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.9, opacity: 0 }}
+              transition={{ duration: 0.15 }}
+              src={lightboxUrl}
+              className="max-w-[90vw] max-h-[90vh] object-contain rounded-lg shadow-2xl cursor-default"
+              onClick={(e) => e.stopPropagation()}
+              alt=""
+            />
+          </motion.div>
+        )}
+      </AnimatePresence>
     </motion.div>
   );
 }
@@ -2764,11 +2806,12 @@ const DropdownSelect = ({ ref, label, options, value, open, onToggle, onSelect }
 );
 
 /** Individual message rendering */
-function MessageItem({ message, index, isBusy, agentLabel, onToggleThinkingCollapse, onPermissionResponse, onFileClick }: {
+function MessageItem({ message, index, isBusy, agentLabel, onToggleThinkingCollapse, onPermissionResponse, onFileClick, onImageClick }: {
   message: ChatMessage; index: number; isBusy: boolean; agentLabel?: string;
   onToggleThinkingCollapse: (index: number) => void;
   onPermissionResponse?: (optionId: string) => void;
   onFileClick?: (filePath: string, line?: number) => void;
+  onImageClick?: (url: string) => void;
 }) {
   switch (message.type) {
     case "user":
@@ -2803,8 +2846,8 @@ function MessageItem({ message, index, isBusy, agentLabel, onToggleThinkingColla
             <div className="rounded-2xl px-3.5 py-2.5 bg-[color-mix(in_srgb,var(--color-bg-tertiary)_78%,transparent)] border border-[color-mix(in_srgb,var(--color-border)_72%,transparent)] text-sm text-[var(--color-text)] shadow-[0_10px_30px_rgba(0,0,0,0.08)]">
               {message.attachments?.map((att, i) => (
                 att.type === "image" && att.previewUrl ? (
-                  <img key={i} src={att.previewUrl} className="max-w-full max-h-48 rounded mb-2 cursor-pointer"
-                    onClick={() => window.open(att.previewUrl, '_blank')} alt="" />
+                  <img key={i} src={att.previewUrl} className="max-w-full max-h-48 rounded mb-2 cursor-pointer hover:opacity-90 transition-opacity"
+                    onClick={() => onImageClick?.(att.previewUrl!)} alt="" />
                 ) : att.type === "audio" ? (
                   <audio key={i} controls src={`data:${att.mimeType};base64,${att.data}`} className="max-w-full mb-2" />
                 ) : att.type === "resource" ? (

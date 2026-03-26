@@ -162,7 +162,7 @@ fn strip_system_reminders(text: &str) -> String {
 pub fn resolve_adapter(agent_command: &str) -> Box<dyn AgentContentAdapter> {
     let cmd = agent_command.rsplit('/').next().unwrap_or(agent_command);
     match cmd {
-        "claude-code-acp" => Box::new(ClaudeAdapter),
+        "claude-agent-acp" | "claude-code-acp" => Box::new(ClaudeAdapter),
         _ => Box::new(DefaultAdapter),
     }
 }

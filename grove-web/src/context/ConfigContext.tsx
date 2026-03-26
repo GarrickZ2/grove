@@ -37,11 +37,14 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
 
   const checkAvailability = useCallback(async (cfg: Config | null) => {
     try {
-      // Collect all ACP check commands
+      // Collect all ACP check commands (including fallbacks)
       const acpCheckCmds = new Set<string>();
       for (const opt of agentOptions) {
         if (opt.acpCheck) {
           acpCheckCmds.add(opt.acpCheck);
+        }
+        if (opt.acpFallback) {
+          acpCheckCmds.add(opt.acpFallback);
         }
       }
 
@@ -55,10 +58,10 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
       const zellij = envResult.dependencies.find(d => d.name === 'zellij')?.installed ?? false;
       setTerminalAvailable(tmux || zellij);
 
-      // Chat: at least one ACP agent command exists OR custom agents configured
+      // Chat: at least one ACP agent command exists (primary or fallback) OR custom agents configured
       const hasAnyAcp = agentOptions
         .filter(a => a.acpCheck)
-        .some(a => cmdResults[a.acpCheck!] === true);
+        .some(a => cmdResults[a.acpCheck!] === true || (a.acpFallback && cmdResults[a.acpFallback] === true));
       const hasCustom = (cfg?.acp?.custom_agents?.length ?? 0) > 0;
       setChatAvailable(hasAnyAcp || hasCustom);
     } catch {

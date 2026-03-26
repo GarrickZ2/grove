@@ -186,7 +186,8 @@ const dependencyInfo: Record<string, { name: string; description: string; docsUr
   tmux: { name: "tmux", description: "Terminal multiplexer", docsUrl: "https://github.com/tmux/tmux/wiki" },
   zellij: { name: "Zellij", description: "Terminal multiplexer", docsUrl: "https://zellij.dev/documentation/" },
   fzf: { name: "fzf", description: "Fuzzy finder for file picker", docsUrl: "https://github.com/junegunn/fzf" },
-  "claude-code-acp": { name: "Claude Code ACP", description: "ACP adapter for Claude Code", docsUrl: "https://github.com/anthropics/claude-code" },
+  "claude-agent-acp": { name: "Claude Agent ACP", description: "ACP adapter for Claude Code", docsUrl: "https://github.com/anthropics/claude-code" },
+  "claude-code-acp": { name: "Claude Code ACP (deprecated)", description: "Deprecated — please upgrade to claude-agent-acp", docsUrl: "https://github.com/anthropics/claude-code" },
   "codex-acp": { name: "Codex ACP", description: "ACP adapter for OpenAI Codex", docsUrl: "https://github.com/zed-industries/codex-acp" },
 };
 
@@ -410,6 +411,7 @@ export function SettingsPage({ config }: SettingsPageProps) {
     for (const opt of agentOptions) {
       if (opt.terminalCheck) cmds.add(opt.terminalCheck);
       if (opt.acpCheck) cmds.add(opt.acpCheck);
+      if (opt.acpFallback) cmds.add(opt.acpFallback);
     }
     try {
       const results = await checkCommands([...cmds]);
@@ -425,7 +427,7 @@ export function SettingsPage({ config }: SettingsPageProps) {
     if (!isLoaded) return; // Don't save during initial load
 
     try {
-      console.log("Saving config:", { enableTerminal, enableChat, terminalMultiplexer });
+
 
       const patch = {
         theme: {
@@ -570,13 +572,15 @@ export function SettingsPage({ config }: SettingsPageProps) {
     return a;
   });
 
-  // Chat Agent 选项（仅 ACP 兼容 + 检测 acpCheck 命令）
+  // Chat Agent 选项（仅 ACP 兼容 + 检测 acpCheck 命令，支持 fallback）
   const chatAgentOptions = agentOptions
     .filter(a => !!a.acpCheck || customAgentIds.includes(a.id))
     .map(a => {
       if (!hasAvailability) return a;
       const cmd = a.acpCheck;
-      if (cmd && commandAvailability[cmd] === false) {
+      const fallback = a.acpFallback;
+      const available = (cmd && commandAvailability[cmd] === true) || (fallback && commandAvailability[fallback] === true);
+      if (cmd && !available) {
         return { ...a, disabled: true, disabledReason: `${cmd} not found — install to enable` };
       }
       return a;
@@ -611,11 +615,13 @@ export function SettingsPage({ config }: SettingsPageProps) {
       }
     }
 
-    // Chat Agent
+    // Chat Agent (check both acpCheck and acpFallback)
     if (acpAgent) {
       const currentAgent = agentOptions.find(a => a.id === acpAgent);
       const cmd = currentAgent?.acpCheck;
-      if (cmd && commandAvailability[cmd] === false) {
+      const fallback = currentAgent?.acpFallback;
+      const available = (cmd && commandAvailability[cmd] === true) || (fallback && commandAvailability[fallback] === true);
+      if (cmd && !available) {
         const firstAvailable = chatAgentOptions.find(a => !a.disabled);
         setAcpAgent(firstAvailable?.id ?? "");
       }
@@ -636,10 +642,14 @@ export function SettingsPage({ config }: SettingsPageProps) {
   };
 
   const muxNames = ["tmux", "zellij"];
-  const acpAdapterNames = ["claude-code-acp", "codex-acp"];
+  const acpAdapterNames = ["claude-agent-acp", "claude-code-acp", "codex-acp"];
 
   // 根据 enabled_modes 动态计算可见的依赖
+  // Treat claude-agent-acp and claude-code-acp as one logical dependency
+  const claudeAcpInstalled = depStates["claude-agent-acp"]?.status === "installed" || depStates["claude-code-acp"]?.status === "installed";
   const visibleDepKeys = Object.keys(depStates).filter((k) => {
+    // claude-code-acp is merged with claude-agent-acp — skip it from count
+    if (k === "claude-code-acp") return false;
     // 基础依赖始终显示
     if (!muxNames.includes(k) && !acpAdapterNames.includes(k)) return true;
     // Terminal 依赖：仅当 Terminal 启用时显示
@@ -648,7 +658,11 @@ export function SettingsPage({ config }: SettingsPageProps) {
     if (acpAdapterNames.includes(k)) return enableChat;
     return true;
   });
-  const installedCount = visibleDepKeys.filter((k) => depStates[k]?.status === "installed").length;
+  const installedCount = visibleDepKeys.filter((k) => {
+    // For claude-agent-acp, count as installed if either version exists
+    if (k === "claude-agent-acp") return claudeAcpInstalled;
+    return depStates[k]?.status === "installed";
+  }).length;
 
   const claudeCodeConfig = JSON.stringify(
     {
@@ -895,7 +909,7 @@ env_vars = [
 
             {/* Dependency row renderer */}
             {(() => {
-              const allDeps = Object.keys(depStates).length > 0 ? Object.keys(depStates) : ["git", "tmux", "zellij", "fzf", "claude-code-acp", "codex-acp"];
+              const allDeps = Object.keys(depStates).length > 0 ? Object.keys(depStates) : ["git", "tmux", "zellij", "fzf", "claude-agent-acp", "codex-acp"];
               const baseDeps = allDeps.filter((d) => !muxNames.includes(d) && !acpAdapterNames.includes(d));
               const muxDeps = allDeps.filter((d) => muxNames.includes(d));
               const acpDeps = allDeps.filter((d) => acpAdapterNames.includes(d));
@@ -1011,19 +1025,56 @@ env_vars = [
                   )}
 
                   {/* Chat Dependencies (仅当 Chat 启用时显示) */}
-                  {enableChat && (
-                    <>
-                      {/* ACP Adapter Divider + Section */}
-                      <div className="flex items-center gap-3 mt-4 mb-2">
-                        <div className="flex-1 h-px bg-[var(--color-border)]" />
-                        <span className="text-xs font-medium text-[var(--color-text-muted)] uppercase tracking-wider select-none">ACP Adapter</span>
-                        <div className="flex-1 h-px bg-[var(--color-border)]" />
-                      </div>
-                      <div className="space-y-2">
-                        {acpDeps.map((d) => renderDepRow(d, { interactive: false }))}
-                      </div>
-                    </>
-                  )}
+                  {enableChat && (() => {
+                    const agentAcpInstalled = depStates["claude-agent-acp"]?.status === "installed";
+                    const codeAcpInstalled = depStates["claude-code-acp"]?.status === "installed";
+                    const needsUpgrade = !agentAcpInstalled && codeAcpInstalled;
+                    // Hide both claude-*-acp rows when user needs upgrade (show merged banner instead)
+                    // Hide deprecated claude-code-acp when claude-agent-acp is already installed
+                    const filteredAcpDeps = needsUpgrade
+                      ? acpDeps.filter((d) => d !== "claude-agent-acp" && d !== "claude-code-acp")
+                      : acpDeps.filter((d) => d !== "claude-code-acp");
+
+                    return (
+                      <>
+                        {/* ACP Adapter Divider + Section */}
+                        <div className="flex items-center gap-3 mt-4 mb-2">
+                          <div className="flex-1 h-px bg-[var(--color-border)]" />
+                          <span className="text-xs font-medium text-[var(--color-text-muted)] uppercase tracking-wider select-none">ACP Adapter</span>
+                          <div className="flex-1 h-px bg-[var(--color-border)]" />
+                        </div>
+                        <div className="space-y-2">
+                          {needsUpgrade && (
+                            <div className="flex items-center justify-between p-3 rounded-lg border border-[var(--color-warning)]/30 bg-[var(--color-warning)]/5">
+                              <div className="flex items-center gap-3">
+                                <AlertCircle className="w-4 h-4 text-[var(--color-warning)]" />
+                                <div>
+                                  <div className="font-medium text-sm text-[var(--color-text)] select-none">Claude Agent ACP</div>
+                                  <div className="text-xs text-[var(--color-warning)] select-none">
+                                    <code className="text-[11px]">claude-code-acp</code> has been renamed to <code className="text-[11px]">claude-agent-acp</code> — please upgrade
+                                  </div>
+                                </div>
+                              </div>
+                              <div title="Copy: npm install -g @zed-industries/claude-agent-acp" onClick={(e) => e.stopPropagation()}>
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => handleCopy("upgrade-acp", "npm install -g @zed-industries/claude-agent-acp")}
+                                >
+                                  {copiedField === "upgrade-acp" ? (
+                                    <Check className="w-4 h-4 text-[var(--color-success)]" />
+                                  ) : (
+                                    <Copy className="w-4 h-4" />
+                                  )}
+                                </Button>
+                              </div>
+                            </div>
+                          )}
+                          {filteredAcpDeps.map((d) => renderDepRow(d, { interactive: false }))}
+                        </div>
+                      </>
+                    );
+                  })()}
                 </>
               );
             })()}

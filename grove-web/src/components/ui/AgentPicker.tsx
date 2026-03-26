@@ -18,12 +18,14 @@ interface AgentOption {
   terminalCheck?: string;
   /** Command to check in chat/ACP mode */
   acpCheck?: string;
+  /** Fallback ACP command (deprecated, still functional) */
+  acpFallback?: string;
 }
 
 // Agent options with icons
 // eslint-disable-next-line react-refresh/only-export-components
 export const agentOptions: AgentOption[] = [
-  { id: "claude", label: "Claude Code", value: "claude", icon: Claude.Color, terminalCheck: "claude", acpCheck: "claude-code-acp" },
+  { id: "claude", label: "Claude Code", value: "claude", icon: Claude.Color, terminalCheck: "claude", acpCheck: "claude-agent-acp", acpFallback: "claude-code-acp" },
   { id: "codex", label: "CodeX", value: "codex", icon: OpenAI, terminalCheck: "codex", acpCheck: "codex-acp" },
   { id: "gemini", label: "Gemini", value: "gemini", icon: Gemini.Color, terminalCheck: "gemini", acpCheck: "gemini" },
   { id: "gh-copilot", label: "GitHub Copilot", value: "copilot", icon: Copilot.Color, terminalCheck: "copilot", acpCheck: "copilot" },

@@ -2162,9 +2162,15 @@ pub fn resolve_agent(agent_name: &str) -> Option<ResolvedAgent> {
     // 1. Built-in agents
     match agent_name.to_lowercase().as_str() {
         "claude" => {
+            // Prefer claude-agent-acp (new name), fallback to claude-code-acp (deprecated)
+            let command = if command_exists("claude-agent-acp") {
+                "claude-agent-acp"
+            } else {
+                "claude-code-acp"
+            };
             return Some(ResolvedAgent {
                 agent_type: "local".into(),
-                command: "claude-code-acp".into(),
+                command: command.into(),
                 args: vec![],
                 url: None,
                 auth_header: None,

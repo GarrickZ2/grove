@@ -54,10 +54,16 @@ const DEPENDENCIES: &[DependencyDef] = &[
         install_command: "brew install fzf",
     },
     DependencyDef {
+        name: "claude-agent-acp",
+        check_cmd: "which",
+        check_args: &["claude-agent-acp"],
+        install_command: "npm install -g @zed-industries/claude-agent-acp",
+    },
+    DependencyDef {
         name: "claude-code-acp",
         check_cmd: "which",
         check_args: &["claude-code-acp"],
-        install_command: "npm install -g @zed-industries/claude-code-acp",
+        install_command: "npm install -g @zed-industries/claude-agent-acp",
     },
     DependencyDef {
         name: "codex-acp",
@@ -68,7 +74,7 @@ const DEPENDENCIES: &[DependencyDef] = &[
 ];
 
 /// ACP adapter dependency names
-const ACP_DEP_NAMES: &[&str] = &["claude-code-acp", "codex-acp"];
+const ACP_DEP_NAMES: &[&str] = &["claude-agent-acp", "claude-code-acp", "codex-acp"];
 
 fn check_dependency(dep: &DependencyDef) -> DependencyStatus {
     // 对 tmux 和 zellij 使用 check.rs 中的函数（支持测试环境变量）
@@ -168,7 +174,7 @@ fn parse_version(name: &str, output: &str) -> String {
                 .unwrap_or(output)
                 .to_string()
         }
-        "claude-code-acp" | "codex-acp" => {
+        "claude-agent-acp" | "claude-code-acp" | "codex-acp" => {
             // `which` returns path, not version — just confirm installed
             "installed".to_string()
         }
@@ -203,6 +209,7 @@ pub struct CheckCommandsResponse {
 
 /// Known ACP agent commands — forced to false when GROVE_TEST_NO_ACP=1
 const ACP_AGENT_COMMANDS: &[&str] = &[
+    "claude-agent-acp",
     "claude-code-acp",
     "codex-acp",
     "gemini",

@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.14] - 2026-03-26
+
+### Added
+
+- **Image lightbox** — clicking image thumbnails in chat (both input attachments and sent messages) now opens a fullscreen lightbox overlay with Escape key support, replacing the previous open-in-new-tab behavior
+
+### Improved
+
+- **ACP package migration** — `claude-code-acp` has been renamed to `claude-agent-acp`. Settings now prefer the new package, with automatic fallback to the deprecated name. Users with only the old package see a single upgrade banner with copy-to-clipboard install command
+
 ## [0.7.13] - 2026-03-26
 
 ### Added
