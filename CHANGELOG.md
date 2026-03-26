@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.13] - 2026-03-26
+
+### Added
+
+- **Shell mode** — press `!` in chat to execute terminal commands directly, bypassing the AI agent. Commands run in the task's worktree with real-time streaming output, exit code display, and kill support via the stop button
+- **GUI daemonize** — `grove gui` now forks to background and releases the terminal immediately. Closing the terminal no longer kills the GUI window. Logs written to `~/.grove/gui.log`
+
+### Improved
+
+- **Chat history compaction** — terminal output chunks are now merged during history compaction, preventing unbounded history file growth
+- **Chat history replay** — unresolved terminal executions are automatically cancelled on reconnect, preventing stuck "running..." indicators
+- **ESLint cleanup** — removed unnecessary eslint-disable comments across the codebase, fixing root causes instead of suppressing warnings
+
 ## [0.7.12] - 2026-03-25
 
 ### Added
