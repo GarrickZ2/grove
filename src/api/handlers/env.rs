@@ -57,13 +57,13 @@ const DEPENDENCIES: &[DependencyDef] = &[
         name: "claude-agent-acp",
         check_cmd: "which",
         check_args: &["claude-agent-acp"],
-        install_command: "npm install -g @zed-industries/claude-agent-acp",
+        install_command: "npm install -g @agentclientprotocol/claude-agent-acp",
     },
     DependencyDef {
         name: "claude-code-acp",
         check_cmd: "which",
         check_args: &["claude-code-acp"],
-        install_command: "npm install -g @zed-industries/claude-agent-acp",
+        install_command: "npm install -g @agentclientprotocol/claude-agent-acp",
     },
     DependencyDef {
         name: "codex-acp",

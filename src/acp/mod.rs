@@ -661,6 +661,20 @@ impl acp::Client for GroveAcpClient {
                     }
                 }
 
+                // ToolCallUpdate 中也可能带 locations（路径可能只在中间的 update 出现），
+                // 及时更新 write_tool_paths 以便 completed 时能拿到正确路径
+                if !locations.is_empty() {
+                    let tc_id = update.tool_call_id.to_string();
+                    let mut paths = self.write_tool_paths.lock().unwrap();
+                    if let Some(existing) = paths.get_mut(&tc_id) {
+                        if existing.is_empty() {
+                            if let Some((p, _)) = locations.first() {
+                                *existing = p.clone();
+                            }
+                        }
+                    }
+                }
+
                 self.handle.emit(AcpUpdate::ToolCallUpdate {
                     id: update.tool_call_id.to_string(),
                     status: status.clone(),
@@ -672,7 +686,7 @@ impl acp::Client for GroveAcpClient {
                 if is_completed {
                     let tc_id = update.tool_call_id.to_string();
                     let write_path = self.write_tool_paths.lock().unwrap().remove(&tc_id);
-                    if let Some(path) = write_path {
+                    if let Some(path) = write_path.filter(|p| !p.is_empty()) {
                         if path.ends_with(".md") {
                             let mode = self.handle.current_mode_id.lock().unwrap().clone();
                             if mode

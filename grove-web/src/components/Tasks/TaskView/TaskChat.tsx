@@ -91,7 +91,7 @@ interface Attachment {
 type ChatMessage =
   | { type: "user"; content: string; sender?: string; attachments?: Attachment[]; terminal?: boolean }
   | { type: "assistant"; content: string; complete: boolean }
-  | { type: "thinking"; content: string; collapsed: boolean }
+  | { type: "thinking"; content: string; collapsed: boolean; complete: boolean }
   | ToolMessage
   | { type: "system"; content: string }
   | PermissionMessage
@@ -130,6 +130,8 @@ interface PerChatState {
   promptCaps: PromptCaps;
   planFilePath: string;
   planFileContent: string;
+  isRemoteSession: boolean;
+  remoteOwnerName: string;
 }
 
 function defaultPerChatState(): PerChatState {
@@ -145,6 +147,8 @@ function defaultPerChatState(): PerChatState {
     isConnected: false,
     agentLabel: "Chat",
     agentIcon: null,
+    isRemoteSession: false,
+    remoteOwnerName: "",
     promptCaps: { image: false, audio: false, embeddedContext: false },
     planFilePath: "",
     planFileContent: "",
@@ -194,8 +198,17 @@ function buildRenderItems(messages: ChatMessage[]): RenderItem[] {
   return items;
 }
 
-function isToolSectionRunning(tools: ToolSectionItem[]): boolean {
-  return tools.some((tool) => tool.message.status === "running");
+/** Mark all incomplete thinking messages as complete and auto-collapse them */
+function completeThinking(messages: ChatMessage[]): ChatMessage[] {
+  let changed = false;
+  const result = messages.map((m) => {
+    if (m.type === "thinking" && !m.complete) {
+      changed = true;
+      return { ...m, complete: true, collapsed: true };
+    }
+    return m;
+  });
+  return changed ? result : messages;
 }
 
 function resolveLatestPendingPermission(
@@ -369,6 +382,8 @@ export function TaskChat({
   const perChatStateRef = useRef<Map<string, PerChatState>>(new Map());
   // Per-chat WebSocket connections
   const wsMapRef = useRef<Map<string, WebSocket>>(new Map());
+  // Track intentionally closed WebSockets (don't auto-reconnect these)
+  const intentionalCloseRef = useRef<Set<string>>(new Set());
   // Track in-flight connection attempts to prevent async TOCTOU race
   const connectingRef = useRef<Set<string>>(new Set());
 
@@ -410,7 +425,7 @@ export function TaskChat({
   const [expandedSections, setExpandedSections] = useState<Set<string>>(new Set());
   // The sectionId of the currently auto-expanded tool section (null = none)
   // Set on tool_call, cleared on message_chunk or complete
-  const [autoExpandSectionId, setAutoExpandSectionId] = useState<string | null>(null);
+  const [, setAutoExpandSectionId] = useState<string | null>(null);
   const [pendingMessages, setPendingMessages] = useState<string[]>([]);
   const [showPendingQueue, setShowPendingQueue] = useState(true);
   const [editingPendingIdx, setEditingPendingIdx] = useState<number | null>(null);
@@ -624,9 +639,9 @@ export function TaskChat({
       messages, isBusy, selectedModel, permissionLevel,
       modelOptions, modeOptions, planEntries, slashCommands,
       isConnected, agentLabel, agentIcon: AgentIcon, promptCaps,
-      planFilePath, planFileContent,
+      planFilePath, planFileContent, isRemoteSession, remoteOwnerName,
     });
-  }, [activeChatId, messages, isBusy, selectedModel, permissionLevel, modelOptions, modeOptions, planEntries, slashCommands, isConnected, agentLabel, AgentIcon, promptCaps, planFilePath, planFileContent]);
+  }, [activeChatId, messages, isBusy, selectedModel, permissionLevel, modelOptions, modeOptions, planEntries, slashCommands, isConnected, agentLabel, AgentIcon, promptCaps, planFilePath, planFileContent, isRemoteSession, remoteOwnerName]);
 
   /** Restore chat state from cache */
   const restoreChatState = useCallback((chatId: string) => {
@@ -648,6 +663,8 @@ export function TaskChat({
       setPlanFileContent(cached.planFileContent);
       planFilePathRef.current = cached.planFilePath;
       setShowPlanFile(!!cached.planFileContent);
+      setIsRemoteSession(cached.isRemoteSession);
+      setRemoteOwnerName(cached.remoteOwnerName);
     } else {
       // Fresh state for new chat
       setMessages([]);
@@ -665,6 +682,8 @@ export function TaskChat({
       setPlanFileContent("");
       planFilePathRef.current = "";
       setShowPlanFile(false);
+      setIsRemoteSession(false);
+      setRemoteOwnerName("");
     }
     // Reset pending messages — server will send queue_update on reconnect
     setPendingMessages([]);
@@ -750,6 +769,21 @@ export function TaskChat({
         const cached = perChatStateRef.current.get(chatId);
         if (cached) cached.isConnected = false;
       }
+      // Auto-reconnect after unexpected close (e.g., session killed by Take Control).
+      // Skip if this was an intentional close (unmount, chat switch, etc.)
+      if (intentionalCloseRef.current.has(chatId)) {
+        intentionalCloseRef.current.delete(chatId);
+      } else {
+        setTimeout(() => {
+          if (!wsMapRef.current.has(chatId)) {
+            connectChatWs(chatId).then(() => {
+              if (chatId === activeChatIdRef.current) {
+                wsRef.current = wsMapRef.current.get(chatId) ?? null;
+              }
+            });
+          }
+        }, 1000);
+      }
     };
 
     ws.onerror = () => {
@@ -775,7 +809,9 @@ export function TaskChat({
   // Cleanup all WebSockets on unmount
   useEffect(() => {
     const wsMap = wsMapRef.current;
+    const intentional = intentionalCloseRef.current;
     return () => {
+      wsMap.forEach((_, id) => intentional.add(id));
       wsMap.forEach((ws) => ws.close());
       wsMap.clear();
     };
@@ -809,8 +845,15 @@ export function TaskChat({
           }
           break;
         case "message_chunk":
-          setAutoExpandSectionId(null);
-          setMessages((prev) => {
+          // Auto-close the current tool section (one-time)
+          setAutoExpandSectionId((prev) => {
+            if (prev) {
+              setExpandedSections((s) => { const n = new Set(s); n.delete(prev); return n; });
+            }
+            return null;
+          });
+          setMessages((rawPrev) => {
+            const prev = completeThinking(rawPrev);
             // Find last incomplete assistant message, but stop at tool/user boundaries
             // so that chunks after tools create a NEW assistant message segment
             for (let i = prev.length - 1; i >= 0; i--) {
@@ -829,6 +872,13 @@ export function TaskChat({
           });
           break;
         case "thought_chunk":
+          // Auto-close the current tool section (same as message_chunk)
+          setAutoExpandSectionId((prev) => {
+            if (prev) {
+              setExpandedSections((s) => { const n = new Set(s); n.delete(prev); return n; });
+            }
+            return null;
+          });
           setMessages((prev) => {
             // Find last thinking message (may not be the very last due to interleaved tools)
             for (let i = prev.length - 1; i >= 0; i--) {
@@ -840,11 +890,12 @@ export function TaskChat({
               }
               if (m.type === "user" || m.type === "assistant") break;
             }
-            return [...prev, { type: "thinking", content: msg.text, collapsed: false }];
+            return [...prev, { type: "thinking", content: msg.text, collapsed: false, complete: false }];
           });
           break;
         case "tool_call":
-          setMessages((prev) => {
+          setMessages((rawPrev) => {
+            const prev = completeThinking(rawPrev);
             // Upsert: if a tool with same ID already exists, update it (some agents send duplicate ToolCall)
             if (prev.some((m) => m.type === "tool" && m.id === msg.id)) {
               return prev.map((m) =>
@@ -863,13 +914,15 @@ export function TaskChat({
               locations: msg.locations,
             }];
           });
-          // Auto-expand: if last message is a tool, this continues the same section;
-          // otherwise this starts a new section (sectionId = this tool's id)
+          // Default-expand: new section gets expanded once; existing section untouched
           setAutoExpandSectionId((prev) => {
-            // Check if messages end with a tool (same section continues)
-            // We use a callback to avoid stale closure — prev is the current sectionId
-            // If prev is set and we haven't received message_chunk, section continues
-            return prev ?? msg.id;
+            if (prev === null) {
+              // New section — default expand it once
+              setExpandedSections((s) => { const n = new Set(s); n.add(msg.id); return n; });
+              return msg.id;
+            }
+            // Same section continues — don't touch expandedSections
+            return prev;
           });
           // Track tool_call IDs that touch the plan file (for re-fetch on completion)
           if (planFilePathRef.current && msg.locations?.some(
@@ -883,7 +936,7 @@ export function TaskChat({
             const exists = prev.some((m) => m.type === "tool" && m.id === msg.id);
             if (exists) {
               return prev.map((m) => m.type === "tool" && m.id === msg.id
-                ? { ...m, status: msg.status, content: msg.content,
+                ? { ...m, status: msg.status, content: msg.content ?? m.content,
                     locations: msg.locations?.length ? msg.locations : m.locations } : m);
             }
             // No preceding tool_call (e.g. compacted disk replay) — create entry
@@ -916,12 +969,18 @@ export function TaskChat({
           );
           break;
         case "complete":
-          setAutoExpandSectionId(null);
-          setMessages((prev) =>
-            prev.map((m) =>
+          setAutoExpandSectionId((prev) => {
+            if (prev) {
+              setExpandedSections((s) => { const n = new Set(s); n.delete(prev); return n; });
+            }
+            return null;
+          });
+          setMessages((prev) => {
+            const completed = completeThinking(prev);
+            return completed.map((m) =>
               m.type === "assistant" && !m.complete ? { ...m, complete: true } : m,
-            ),
-          );
+            );
+          });
           setIsBusy(false);
           break;
         case "busy":
@@ -1064,6 +1123,7 @@ export function TaskChat({
         }
         break;
       case "message_chunk": {
+        state.messages = completeThinking(state.messages);
         const msgs = state.messages;
         let found = false;
         for (let i = msgs.length - 1; i >= 0; i--) {
@@ -1080,6 +1140,7 @@ export function TaskChat({
         break;
       }
       case "tool_call": {
+        state.messages = completeThinking(state.messages);
         // Upsert: if a tool with same ID already exists, update it (some agents send duplicate ToolCall)
         const toolExists = state.messages.some((m) => m.type === "tool" && m.id === msg.id);
         if (toolExists) {
@@ -1105,7 +1166,7 @@ export function TaskChat({
           }
           if (m.type === "user" || m.type === "assistant") break;
         }
-        if (!found) msgs.push({ type: "thinking", content: msg.text, collapsed: false });
+        if (!found) msgs.push({ type: "thinking", content: msg.text, collapsed: false, complete: false });
         state.messages = [...msgs];
         break;
       }
@@ -1113,7 +1174,7 @@ export function TaskChat({
         const toolUpdateExists = state.messages.some((m) => m.type === "tool" && m.id === msg.id);
         if (toolUpdateExists) {
           state.messages = state.messages.map((m) =>
-            m.type === "tool" && m.id === msg.id ? { ...m, status: msg.status, content: msg.content, locations: msg.locations?.length ? msg.locations : m.locations } : m);
+            m.type === "tool" && m.id === msg.id ? { ...m, status: msg.status, content: msg.content ?? m.content, locations: msg.locations?.length ? msg.locations : m.locations } : m);
         } else {
           state.messages = [...state.messages, {
             type: "tool", id: msg.id, title: msg.id, status: msg.status,
@@ -1130,9 +1191,11 @@ export function TaskChat({
       case "permission_response":
         state.messages = resolveLatestPendingPermission(state.messages, msg.option_id, msg.option_id);
         break;
-      case "complete":
-        state.messages = state.messages.map((m) => m.type === "assistant" && !m.complete ? { ...m, complete: true } : m);
+      case "complete": {
+        const completed = completeThinking(state.messages);
+        state.messages = completed.map((m) => m.type === "assistant" && !m.complete ? { ...m, complete: true } : m);
         state.isBusy = false;
+      }
         break;
       case "queue_update":
         // Server manages queue — ignored for non-active chat cache
@@ -1310,7 +1373,7 @@ export function TaskChat({
       await deleteChat(projectId, task.id, chatId);
       // Close WebSocket if connected
       const ws = wsMapRef.current.get(chatId);
-      if (ws) { ws.close(); wsMapRef.current.delete(chatId); }
+      if (ws) { intentionalCloseRef.current.add(chatId); ws.close(); wsMapRef.current.delete(chatId); }
       perChatStateRef.current.delete(chatId);
       setChats((prev) => {
         const updated = prev.filter((c) => c.id !== chatId);
@@ -1397,8 +1460,16 @@ export function TaskChat({
       // Clear polling and remote state
       setIsRemoteSession(false);
       setRemoteOwnerName("");
+      // Resolve any pending permission requests (session was killed, permissions are void)
+      setShowPermissionPanel(false);
+      setMessages((prev) => prev.map((m) =>
+        m.type === "permission" && !m.resolved
+          ? { ...m, resolved: "Cancelled" }
+          : m,
+      ));
       pollingOffsetRef.current = 0;
       // Reconnect via WebSocket (normal flow)
+      intentionalCloseRef.current.add(activeChatId);
       wsMapRef.current.get(activeChatId)?.close();
       wsMapRef.current.delete(activeChatId);
       await connectChatWs(activeChatId);
@@ -2246,14 +2317,8 @@ export function TaskChat({
               key={`ts-${item.sectionId}`}
               sectionId={item.sectionId}
               tools={item.tools}
-              expanded={
-                // Auto-expand only the latest tool section until message_chunk or complete
-                (item.sectionId === autoExpandSectionId && isToolSectionRunning(item.tools))
-                || expandedSections.has(item.sectionId)
-              }
-              forceExpanded={
-                item.sectionId === autoExpandSectionId && isToolSectionRunning(item.tools)
-              }
+              expanded={expandedSections.has(item.sectionId)}
+              forceExpanded={false}
               onToggleSection={toggleSection}
               onToggleToolCollapse={toggleToolCollapse}
             />
@@ -2897,7 +2962,7 @@ function MessageItem({ message, index, isBusy, agentLabel, onToggleThinkingColla
               className="flex items-center gap-1.5 text-xs text-[var(--color-text-muted)] hover:text-[var(--color-text)] transition-colors mb-1">
               <Brain className="w-3 h-3" />
               {message.collapsed ? <ChevronRight className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
-              <span className="italic">Thinking</span>
+              <span className="italic">{message.complete ? "Thought" : "Thinking"}</span>
             </button>
             {!message.collapsed && (
               <div className="ml-5 rounded-lg px-3 py-2 bg-[var(--color-bg-tertiary)] text-xs text-[var(--color-text-muted)] italic whitespace-pre-wrap max-h-40 overflow-y-auto">

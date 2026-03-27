@@ -219,6 +219,9 @@ pub struct SingleReply {
     pub comment_id: u32,
     /// Your reply message
     pub message: String,
+    /// Set to true to mark the comment as resolved. Only the original comment creator can resolve.
+    /// The creator is identified by matching agent_name + role against the comment's author field.
+    pub resolve: Option<bool>,
 }
 
 /// Batch reply parameters - reply to multiple comments at once
@@ -471,6 +474,12 @@ struct ReplyResultEntry {
     success: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     error: Option<String>,
+    /// Whether the comment was resolved by this reply
+    #[serde(skip_serializing_if = "Option::is_none")]
+    resolved: Option<bool>,
+    /// Error message if resolve was requested but failed (e.g., permission denied)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    resolve_error: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -757,7 +766,7 @@ impl GroveMcpServer {
     /// Reply to review comments (supports batch)
     #[tool(
         name = "grove_reply_review",
-        description = "Reply to one or more code review comments. Supports batch replies to reduce tool calls. Call grove_read_review first to get comment IDs."
+        description = "Reply to one or more code review comments. Supports batch replies to reduce tool calls. Call grove_read_review first to get comment IDs. You can also mark comments as resolved by setting resolve=true — only the original comment creator (matched by agent_name + role) is allowed to resolve."
     )]
     async fn grove_reply_review(
         &self,
@@ -795,10 +804,45 @@ impl GroveMcpServer {
                 &author,
             ) {
                 Ok(true) => {
+                    // Handle resolve if requested
+                    let (resolved, resolve_error) = if reply.resolve == Some(true) {
+                        // Load comment to check creator permission
+                        match comments::load_comments(&project_key, &task_id) {
+                            Ok(data) => {
+                                match data.comments.iter().find(|c| c.id == reply.comment_id) {
+                                    Some(comment) if comment.author == author => {
+                                        match comments::update_comment_status(
+                                            &project_key,
+                                            &task_id,
+                                            reply.comment_id,
+                                            comments::CommentStatus::Resolved,
+                                        ) {
+                                            Ok(true) => (Some(true), None),
+                                            Ok(false) => (Some(false), Some("comment not found during resolve".to_string())),
+                                            Err(e) => (Some(false), Some(e.to_string())),
+                                        }
+                                    }
+                                    Some(comment) => {
+                                        (Some(false), Some(format!(
+                                            "permission denied: only the creator ({}) can resolve this comment",
+                                            comment.author
+                                        )))
+                                    }
+                                    None => (Some(false), Some("comment not found during resolve".to_string())),
+                                }
+                            }
+                            Err(e) => (Some(false), Some(e.to_string())),
+                        }
+                    } else {
+                        (None, None)
+                    };
+
                     reply_results.push(ReplyResultEntry {
                         comment_id: reply.comment_id,
                         success: true,
                         error: None,
+                        resolved,
+                        resolve_error,
                     });
                 }
                 Ok(false) => {
@@ -806,6 +850,8 @@ impl GroveMcpServer {
                         comment_id: reply.comment_id,
                         success: false,
                         error: Some("comment not found".to_string()),
+                        resolved: None,
+                        resolve_error: None,
                     });
                 }
                 Err(e) => {
@@ -813,6 +859,8 @@ impl GroveMcpServer {
                         comment_id: reply.comment_id,
                         success: false,
                         error: Some(e.to_string()),
+                        resolved: None,
+                        resolve_error: None,
                     });
                 }
             }

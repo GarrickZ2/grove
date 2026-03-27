@@ -852,10 +852,10 @@ pub struct HistoryQuery {
 }
 
 #[derive(Serialize)]
-pub struct HistoryResponse {
-    pub events: Vec<AcpUpdate>,
-    pub total: usize,
-    pub session: Option<acp::SessionMetadata>,
+pub(crate) struct HistoryResponse {
+    events: Vec<ServerMessage>,
+    total: usize,
+    session: Option<acp::SessionMetadata>,
 }
 
 /// GET /api/v1/projects/{id}/tasks/{taskId}/chats/{chatId}/history?offset=N
@@ -872,7 +872,11 @@ pub async fn get_chat_history(
     let history = chat_history::load_history(&project_key, &task_id, &chat_id);
     let total = history.len();
     let offset = params.offset.unwrap_or(0).min(total);
-    let events = history[offset..].to_vec();
+    let events: Vec<ServerMessage> = history[offset..]
+        .iter()
+        .cloned()
+        .map(ServerMessage::from)
+        .collect();
 
     // Also read session metadata to let frontend know if owner is still alive
     let session = acp::read_session_metadata(&project_key, &task_id, &chat_id);

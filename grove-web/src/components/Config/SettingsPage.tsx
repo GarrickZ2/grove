@@ -1055,11 +1055,11 @@ env_vars = [
                                   </div>
                                 </div>
                               </div>
-                              <div title="Copy: npm install -g @zed-industries/claude-agent-acp" onClick={(e) => e.stopPropagation()}>
+                              <div title="Copy: npm install -g @agentclientprotocol/claude-agent-acp" onClick={(e) => e.stopPropagation()}>
                                 <Button
                                   variant="ghost"
                                   size="sm"
-                                  onClick={() => handleCopy("upgrade-acp", "npm install -g @zed-industries/claude-agent-acp")}
+                                  onClick={() => handleCopy("upgrade-acp", "npm install -g @agentclientprotocol/claude-agent-acp")}
                                 >
                                   {copiedField === "upgrade-acp" ? (
                                     <Check className="w-4 h-4 text-[var(--color-success)]" />
