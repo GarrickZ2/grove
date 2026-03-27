@@ -533,6 +533,36 @@ pub fn add_comment(
     Ok(comment)
 }
 
+/// 批量删除 Comments（按 status 和 author 组合过滤）
+/// - statuses 之间 OR，authors 之间 OR，两者之间 AND
+/// - 都为空 = 删除全部
+pub fn bulk_delete_comments(
+    project: &str,
+    task_id: &str,
+    statuses: &[CommentStatus],
+    authors: &[String],
+) -> Result<usize> {
+    let mut data = load_comments(project, task_id)?;
+    let len_before = data.comments.len();
+
+    if statuses.is_empty() && authors.is_empty() {
+        data.comments.clear();
+    } else {
+        data.comments.retain(|c| {
+            let status_match = statuses.is_empty() || statuses.contains(&c.status);
+            let author_match = authors.is_empty() || authors.iter().any(|a| a == &c.author);
+            // retain = NOT matched (we delete matched ones)
+            !(status_match && author_match)
+        });
+    }
+
+    let deleted = len_before - data.comments.len();
+    if deleted > 0 {
+        save_comments_json(project, task_id, &data)?;
+    }
+    Ok(deleted)
+}
+
 /// 删除 Comment
 pub fn delete_comment(project: &str, task_id: &str, comment_id: u32) -> Result<bool> {
     let mut data = load_comments(project, task_id)?;

@@ -239,6 +239,10 @@ pub fn create_api_router() -> Router {
             "/projects/{id}/tasks/{taskId}/review/comments/{commentId}/replies/{replyId}",
             put(handlers::tasks::edit_review_reply).delete(handlers::tasks::delete_review_reply),
         )
+        .route(
+            "/projects/{id}/tasks/{taskId}/review/bulk-delete",
+            post(handlers::tasks::bulk_delete_review_comments),
+        )
         // Hooks API
         .route("/hooks", get(handlers::hooks::list_all_hooks))
         .route(

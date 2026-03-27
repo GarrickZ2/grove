@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
-import { getFullDiff, createInlineComment, createFileComment, createProjectComment, deleteComment as apiDeleteComment, replyReviewComment as apiReplyComment, updateCommentStatus as apiUpdateCommentStatus, getFileContent, editComment as apiEditComment, editReply as apiEditReply, deleteReply as apiDeleteReply } from '../../api/review';
+import { getFullDiff, createInlineComment, createFileComment, createProjectComment, deleteComment as apiDeleteComment, replyReviewComment as apiReplyComment, updateCommentStatus as apiUpdateCommentStatus, getFileContent, editComment as apiEditComment, editReply as apiEditReply, deleteReply as apiDeleteReply, bulkDeleteComments as apiBulkDeleteComments } from '../../api/review';
 import { getReviewComments, getCommits, getTaskFiles } from '../../api/tasks';
 import type { FullDiffResult, DiffFile } from '../../api/review';
 import type { ReviewCommentEntry, ReviewCommentsResponse } from '../../api/tasks';
@@ -935,6 +935,16 @@ export function DiffReviewPage({ projectId, taskId, embedded, navigateToFile }: 
     }
   }, [projectId, taskId, applyReviewResponse]);
 
+  // Bulk delete comments
+  const handleBulkDelete = useCallback(async (statuses?: string[], authors?: string[]) => {
+    try {
+      const result = await apiBulkDeleteComments(projectId, taskId, statuses, authors);
+      applyReviewResponse(result);
+    } catch {
+      // Could add toast here
+    }
+  }, [projectId, taskId, applyReviewResponse]);
+
   // Navigate to a comment (from conversation sidebar)
   const handleNavigateToComment = useCallback((filePath: string, line: number, commentId?: number) => {
     setSelectedFile(filePath);
@@ -1262,6 +1272,7 @@ export function DiffReviewPage({ projectId, taskId, embedded, navigateToFile }: 
               onEditComment={handleEditComment}
               onEditReply={handleEditReply}
               onDeleteReply={handleDeleteReply}
+              onBulkDelete={handleBulkDelete}
               mentionItems={mentionItems}
             />
           </>

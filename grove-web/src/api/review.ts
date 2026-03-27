@@ -211,6 +211,22 @@ export async function editReply(
   );
 }
 
+/** Bulk delete comments by status and/or author filters */
+export async function bulkDeleteComments(
+  projectId: string,
+  taskId: string,
+  statuses?: string[],
+  authors?: string[],
+): Promise<ReviewCommentsResponse> {
+  return apiClient.post<Record<string, unknown>, ReviewCommentsResponse>(
+    `/api/v1/projects/${projectId}/tasks/${taskId}/review/bulk-delete`,
+    {
+      statuses: statuses && statuses.length > 0 ? statuses : undefined,
+      authors: authors && authors.length > 0 ? authors : undefined,
+    },
+  );
+}
+
 /** Delete a reply */
 export async function deleteReply(
   projectId: string,

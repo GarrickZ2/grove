@@ -1,4 +1,4 @@
-import { useState, useMemo, useRef } from 'react';
+import { useState, useMemo, useRef, useEffect, useCallback } from 'react';
 import { MessageSquare, CheckCircle, RotateCcw, Reply, Send, FileCode, ChevronDown, ChevronRight, Trash2, Maximize2 } from 'lucide-react';
 import type { ReviewCommentEntry } from '../../api/tasks';
 import { AgentAvatar } from './AgentAvatar';
@@ -21,6 +21,7 @@ interface ConversationSidebarProps {
   onEditComment?: (id: number, content: string) => void;
   onEditReply?: (commentId: number, replyId: number, content: string) => void;
   onDeleteReply?: (commentId: number, replyId: number) => void;
+  onBulkDelete?: (statuses?: string[], authors?: string[]) => void;
   mentionItems?: MentionItem[] | null;
 }
 
@@ -36,12 +37,14 @@ export function ConversationSidebar({
   onEditComment,
   onEditReply,
   onDeleteReply,
+  onBulkDelete,
   mentionItems,
 }: ConversationSidebarProps) {
   const [filter, setFilter] = useState<StatusFilter>('all');
   const [collapsedFiles, setCollapsedFiles] = useState<Set<string>>(new Set());
   const [projectCommentContent, setProjectCommentContent] = useState('');
   const [expandedCommentId, setExpandedCommentId] = useState<number | null>(null);
+  const [cleanupOpen, setCleanupOpen] = useState(false);
 
   const projectTextareaRef = useRef<HTMLTextAreaElement>(null);
   const projectMention = useFileMention({ mentionItems: mentionItems ?? null, textareaRef: projectTextareaRef });
@@ -55,6 +58,15 @@ export function ConversationSidebar({
   const openCount = comments.filter((c) => c.status === 'open').length;
   const resolvedCount = comments.filter((c) => c.status === 'resolved').length;
   const outdatedCount = comments.filter((c) => c.status === 'outdated').length;
+
+  // Author counts
+  const authorCounts = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const c of comments) {
+      map.set(c.author, (map.get(c.author) || 0) + 1);
+    }
+    return map;
+  }, [comments]);
 
   // Filter
   const filtered = useMemo(() => {
@@ -127,6 +139,32 @@ export function ConversationSidebar({
         <MessageSquare style={{ width: 14, height: 14 }} />
         <span>Conversation</span>
         <span className="conv-sidebar-count">{comments.length}</span>
+        {comments.length > 0 && onBulkDelete && (
+          <div style={{ marginLeft: 'auto', position: 'relative' }}>
+            <button
+              className="conv-cleanup-btn"
+              onMouseDown={(e) => {
+                // Prevent the CleanupPanel's outside-click handler from firing first
+                e.stopPropagation();
+              }}
+              onClick={() => setCleanupOpen((v) => !v)}
+              title="Clean up comments"
+            >
+              <Trash2 style={{ width: 13, height: 13 }} />
+            </button>
+            {cleanupOpen && (
+              <CleanupPanel
+                comments={comments}
+                openCount={openCount}
+                resolvedCount={resolvedCount}
+                outdatedCount={outdatedCount}
+                authorCounts={authorCounts}
+                onClose={() => setCleanupOpen(false)}
+                onBulkDelete={onBulkDelete}
+              />
+            )}
+          </div>
+        )}
       </div>
 
       {/* Filter tabs */}
@@ -566,6 +604,166 @@ function ConversationItem({
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+function CleanupPanel({
+  comments,
+  openCount,
+  resolvedCount,
+  outdatedCount,
+  authorCounts,
+  onClose,
+  onBulkDelete,
+}: {
+  comments: ReviewCommentEntry[];
+  openCount: number;
+  resolvedCount: number;
+  outdatedCount: number;
+  authorCounts: Map<string, number>;
+  onClose: () => void;
+  onBulkDelete: (statuses?: string[], authors?: string[]) => void;
+}) {
+  const [checkedStatuses, setCheckedStatuses] = useState<Set<string>>(new Set());
+  const [checkedAuthors, setCheckedAuthors] = useState<Set<string>>(new Set());
+  const [confirming, setConfirming] = useState(false);
+  const panelRef = useRef<HTMLDivElement>(null);
+
+  // Click outside to close
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (panelRef.current && !panelRef.current.contains(e.target as Node)) {
+        onClose();
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [onClose]);
+
+  // Escape to close
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
+    document.addEventListener('keydown', handler);
+    return () => document.removeEventListener('keydown', handler);
+  }, [onClose]);
+
+  const toggleStatus = useCallback((s: string) => {
+    setCheckedStatuses((prev) => {
+      const next = new Set(prev);
+      if (next.has(s)) next.delete(s); else next.add(s);
+      return next;
+    });
+    setConfirming(false);
+  }, []);
+
+  const toggleAuthor = useCallback((a: string) => {
+    setCheckedAuthors((prev) => {
+      const next = new Set(prev);
+      if (next.has(a)) next.delete(a); else next.add(a);
+      return next;
+    });
+    setConfirming(false);
+  }, []);
+
+  // Compute affected count (same logic as backend)
+  const affectedCount = useMemo(() => {
+    const noStatuses = checkedStatuses.size === 0;
+    const noAuthors = checkedAuthors.size === 0;
+    if (noStatuses && noAuthors) return comments.length;
+    return comments.filter((c) => {
+      const statusMatch = noStatuses || checkedStatuses.has(c.status);
+      const authorMatch = noAuthors || checkedAuthors.has(c.author);
+      return statusMatch && authorMatch;
+    }).length;
+  }, [comments, checkedStatuses, checkedAuthors]);
+
+  const isDeleteAll = checkedStatuses.size === 0 && checkedAuthors.size === 0;
+
+  const handleDelete = () => {
+    if (!confirming) {
+      setConfirming(true);
+      return;
+    }
+    const statuses = checkedStatuses.size > 0 ? Array.from(checkedStatuses) : undefined;
+    const authors = checkedAuthors.size > 0 ? Array.from(checkedAuthors) : undefined;
+    onBulkDelete(statuses, authors);
+    onClose();
+  };
+
+  const statusItems: { key: string; label: string; count: number }[] = [
+    { key: 'resolved', label: 'Resolved', count: resolvedCount },
+    { key: 'outdated', label: 'Outdated', count: outdatedCount },
+    { key: 'open', label: 'Open', count: openCount },
+  ].filter((s) => s.count > 0);
+
+  const authorItems = Array.from(authorCounts.entries())
+    .sort((a, b) => b[1] - a[1])
+    .map(([name, count]) => ({ name, count }));
+
+  return (
+    <div ref={panelRef} className="conv-cleanup-panel" onClick={(e) => e.stopPropagation()}>
+      <div className="conv-cleanup-title">Clean Up Comments</div>
+
+      {statusItems.length > 0 && (
+        <>
+          <div className="conv-cleanup-section-title">STATUS</div>
+          {statusItems.map((s) => (
+            <label key={s.key} className="conv-cleanup-checkbox-item">
+              <input
+                type="checkbox"
+                checked={checkedStatuses.has(s.key)}
+                onChange={() => toggleStatus(s.key)}
+              />
+              <span>{s.label}</span>
+              <span className="conv-cleanup-count">{s.count}</span>
+            </label>
+          ))}
+        </>
+      )}
+
+      {authorItems.length > 0 && (
+        <>
+          <div className="conv-cleanup-section-title" style={statusItems.length > 0 ? { borderTop: '1px solid var(--color-border)', paddingTop: 8, marginTop: 4 } : undefined}>
+            AUTHOR
+          </div>
+          {authorItems.map((a) => (
+            <label key={a.name} className="conv-cleanup-checkbox-item">
+              <input
+                type="checkbox"
+                checked={checkedAuthors.has(a.name)}
+                onChange={() => toggleAuthor(a.name)}
+              />
+              <span>{a.name}</span>
+              <span className="conv-cleanup-count">{a.count}</span>
+            </label>
+          ))}
+        </>
+      )}
+
+      <div className="conv-cleanup-footer">
+        <span className="conv-cleanup-affected">
+          {affectedCount === 0
+            ? 'No comments match'
+            : `Affects ${affectedCount} comment${affectedCount !== 1 ? 's' : ''}`}
+        </span>
+        <div className="conv-cleanup-actions">
+          <button className="conv-cleanup-cancel" onClick={onClose}>Cancel</button>
+          <button
+            className={`conv-cleanup-delete ${confirming ? 'confirming' : ''}`}
+            disabled={affectedCount === 0}
+            onClick={handleDelete}
+          >
+            {confirming
+              ? `Confirm Delete (${affectedCount})`
+              : isDeleteAll
+                ? `Delete All (${affectedCount})`
+                : `Delete (${affectedCount})`}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

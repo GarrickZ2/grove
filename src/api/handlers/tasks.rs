@@ -282,6 +282,15 @@ pub struct EditReplyRequest {
     pub content: String,
 }
 
+/// Bulk delete review comments request
+#[derive(Debug, Deserialize)]
+pub struct BulkDeleteRequest {
+    /// Status filter (OR): ["resolved", "outdated", "open"]
+    pub statuses: Option<Vec<String>>,
+    /// Author filter (OR): ["Claude", "You"]
+    pub authors: Option<Vec<String>>,
+}
+
 /// Create review comment request
 #[derive(Debug, Deserialize)]
 pub struct CreateReviewCommentRequest {
@@ -1503,6 +1512,40 @@ pub async fn delete_review_comment(
     if !deleted {
         return Err(StatusCode::NOT_FOUND);
     }
+
+    // Return updated comments
+    get_review_comments(Path((id, task_id))).await
+}
+
+/// POST /api/v1/projects/{id}/tasks/{taskId}/review/bulk-delete
+/// Bulk delete review comments by status and/or author filters
+pub async fn bulk_delete_review_comments(
+    Path((id, task_id)): Path<(String, String)>,
+    Json(req): Json<BulkDeleteRequest>,
+) -> Result<Json<ReviewCommentsResponse>, StatusCode> {
+    let (_project, project_key) = find_project_by_id(&id)?;
+
+    // Parse status strings to CommentStatus enums (case-insensitive)
+    let raw_statuses = req.statuses.unwrap_or_default();
+    let statuses: Vec<comments::CommentStatus> = raw_statuses
+        .iter()
+        .filter_map(|s| match s.to_lowercase().as_str() {
+            "open" => Some(comments::CommentStatus::Open),
+            "resolved" => Some(comments::CommentStatus::Resolved),
+            "outdated" => Some(comments::CommentStatus::Outdated),
+            _ => None,
+        })
+        .collect();
+
+    // If caller provided statuses but none were valid, reject to prevent accidental full-delete
+    if !raw_statuses.is_empty() && statuses.is_empty() {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+
+    let authors = req.authors.unwrap_or_default();
+
+    comments::bulk_delete_comments(&project_key, &task_id, &statuses, &authors)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     // Return updated comments
     get_review_comments(Path((id, task_id))).await
