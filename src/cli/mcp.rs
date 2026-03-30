@@ -1872,30 +1872,57 @@ async fn chat_status_impl(p: ChatStatusParams) -> Result<CallToolResult, McpErro
 async fn chat_status_from_handle(
     handle: &acp::AcpSessionHandle,
 ) -> Result<CallToolResult, McpError> {
-    // Wait briefly for SessionReady if the session was just started
+    // Get modes/models: check agent_info first (already initialized), else wait for broadcast
     let timeout = tokio::time::Duration::from_secs(60);
-    let modes_models = tokio::time::timeout(timeout, async {
-        loop {
-            let history = handle.get_history();
-            for event in &history {
-                if let acp::AcpUpdate::SessionReady {
-                    available_modes,
-                    available_models,
-                    ..
-                } = event
-                {
-                    return (available_modes.clone(), available_models.clone());
+    let (persist_project, persist_task, persist_chat) = handle.persist_info();
+
+    // Try session metadata first (already exists for initialized sessions)
+    let modes_models = if let Some(ref cid) = persist_chat {
+        if let Some(meta) = acp::read_session_metadata(&persist_project, &persist_task, cid) {
+            Some((meta.available_modes, meta.available_models))
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
+    let (available_modes, available_models) = if let Some(mm) = modes_models {
+        mm
+    } else {
+        // New session still initializing — wait for SessionReady via broadcast
+        let mut rx = handle.subscribe();
+        tokio::time::timeout(timeout, async move {
+            loop {
+                match rx.recv().await {
+                    Ok(acp::AcpUpdate::SessionReady {
+                        available_modes,
+                        available_models,
+                        ..
+                    }) => return (available_modes, available_models),
+                    Ok(_) => continue,
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                        return (Vec::new(), Vec::new());
+                    }
+                    Err(_) => {
+                        // Lagged — messages were missed, retry
+                        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+                    }
                 }
             }
-            tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-        }
-    })
-    .await
-    .map_err(|_| McpError::internal_error("Timeout waiting for agent to initialize (60s)", None))?;
+        })
+        .await
+        .map_err(|_| {
+            McpError::internal_error("Timeout waiting for agent to initialize (60s)", None)
+        })?
+    };
 
-    let (available_modes, available_models) = modes_models;
-
-    let history = handle.get_history();
+    // Read history from disk (single source of truth)
+    let history = if let Some(ref cid) = persist_chat {
+        chat_history::load_history(&persist_project, &persist_task, cid)
+    } else {
+        vec![]
+    };
     let compacted = chat_history::compact_events(history);
 
     build_chat_status_json(&compacted, &available_modes, &available_models)

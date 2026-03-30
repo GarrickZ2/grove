@@ -866,6 +866,11 @@ export function TaskChat({
   const pollingOffsetRef = useRef(0);
   const pollingTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
+  // Buffer WS events while HTTP history is loading to avoid race condition
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const wsEventBufferRef = useRef<any[]>([]);
+  const historyLoadingRef = useRef(false);
+
   const activeChat = chats.find((c) => c.id === activeChatId);
   const orderedChats = useMemo(() => [...chats].reverse(), [chats]);
   const hasTodoPanel = planEntries.length > 0;
@@ -1035,6 +1040,8 @@ export function TaskChat({
   );
 
   const prevMsgCountRef = useRef(0);
+  const messagesLengthRef = useRef(messages.length);
+  messagesLengthRef.current = messages.length;
   useEffect(() => {
     if (
       messages.length > prevMsgCountRef.current &&
@@ -1051,7 +1058,7 @@ export function TaskChat({
 
   useEffect(() => {
     suppressNextSmoothScrollRef.current = true;
-    prevMsgCountRef.current = messages.length;
+    prevMsgCountRef.current = messagesLengthRef.current;
     requestAnimationFrame(() => {
       shouldStickToBottomRef.current = true;
       scrollMessagesToBottom("auto");
@@ -1296,10 +1303,12 @@ export function TaskChat({
   // Refs for WS callbacks so connectChatWs doesn't need them as deps
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const handleServerMessageRef = useRef<(msg: any) => void>(() => {});
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const handleServerMessageForCacheRef = useRef<
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (chatId: string, msg: any) => void
   >(() => {});
+  const onConnectedPropRef = useRef(onConnectedProp);
+  onConnectedPropRef.current = onConnectedProp;
   const onDisconnectedPropRef = useRef(onDisconnectedProp);
   onDisconnectedPropRef.current = onDisconnectedProp;
 
@@ -1329,7 +1338,11 @@ export function TaskChat({
         try {
           const data = JSON.parse(event.data);
           if (chatId === activeChatIdRef.current) {
-            handleServerMessageRef.current(data);
+            if (historyLoadingRef.current) {
+              wsEventBufferRef.current.push(data);
+            } else {
+              handleServerMessageRef.current(data);
+            }
           } else {
             // Buffer into per-chat cache
             handleServerMessageForCacheRef.current(chatId, data);
@@ -1378,14 +1391,92 @@ export function TaskChat({
   const activeChatIdRef = useRef<string | null>(null);
   activeChatIdRef.current = activeChatId;
 
-  // Connect WebSocket when activeChatId changes
+  // Connect WS first (for real-time events + SessionReady), then load history via HTTP
   useEffect(() => {
     if (!activeChatId) return;
+    const chatId = activeChatId;
+    historyLoadingRef.current = true;
+    wsEventBufferRef.current = [];
     (async () => {
-      await connectChatWs(activeChatId);
-      wsRef.current = wsMapRef.current.get(activeChatId) ?? null;
+      // Step 1: Connect WS for real-time events
+      await connectChatWs(chatId);
+      wsRef.current = wsMapRef.current.get(chatId) ?? null;
+      // Step 2: Load history from HTTP (one-shot, avoids "过电影" effect)
+      if (chatId !== activeChatIdRef.current) return;
+      try {
+        const res = await getChatHistory(projectId, task.id, chatId);
+        if (chatId !== activeChatIdRef.current) return;
+        let msgs: ChatMessage[] = [];
+        for (const evt of res.events) {
+          msgs = reduceHistoryMessages(msgs, evt);
+        }
+        // Drain buffered WS events that arrived during HTTP load
+        const buffered = wsEventBufferRef.current;
+        wsEventBufferRef.current = [];
+        historyLoadingRef.current = false;
+        // Reduce buffered message events into msgs locally (avoids React batching concerns)
+        for (const evt of buffered) {
+          msgs = reduceHistoryMessages(msgs, evt);
+        }
+        setMessages(msgs);
+        // Process non-message side effects from buffered events
+        for (const evt of buffered) {
+          switch (evt.type) {
+            case "session_ready":
+              setIsConnected(true);
+              onConnectedPropRef.current?.();
+              if (evt.available_modes?.length) {
+                setModeOptions(
+                  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                  evt.available_modes.map((m: any) => ({
+                    label: m.name,
+                    value: m.id,
+                  })),
+                );
+              }
+              if (evt.current_mode_id) setPermissionLevel(evt.current_mode_id);
+              if (evt.available_models?.length) {
+                setModelOptions(
+                  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                  evt.available_models.map((m: any) => ({
+                    label: m.name,
+                    value: m.id,
+                  })),
+                );
+              }
+              if (evt.current_model_id) setSelectedModel(evt.current_model_id);
+              if (evt.prompt_capabilities) {
+                setPromptCaps({
+                  image: evt.prompt_capabilities.image ?? false,
+                  audio: evt.prompt_capabilities.audio ?? false,
+                  embeddedContext:
+                    evt.prompt_capabilities.embedded_context ?? false,
+                });
+              }
+              break;
+            case "busy":
+              setIsBusy(true);
+              break;
+            case "complete":
+              setIsBusy(false);
+              break;
+            case "plan_update":
+              setPlanEntries(evt.entries || []);
+              break;
+            case "queue_update":
+              setPendingMessages(evt.messages || []);
+              break;
+            case "session_ended":
+              setIsConnected(false);
+              break;
+          }
+        }
+      } catch {
+        historyLoadingRef.current = false;
+        wsEventBufferRef.current = [];
+      }
     })();
-  }, [activeChatId, connectChatWs]);
+  }, [activeChatId, connectChatWs, projectId, task.id]);
 
   // Cleanup all WebSockets on unmount
   useEffect(() => {
@@ -1585,9 +1676,8 @@ export function TaskChat({
           break;
         case "queue_update":
           // Server sends QueuedMessage[]; extract text for display
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
           setPendingMessages(
-            (msg.messages ?? []).map((m: any) =>
+            (msg.messages ?? []).map((m: string | { text: string }) =>
               typeof m === "string" ? m : m.text,
             ),
           );
@@ -1622,8 +1712,8 @@ export function TaskChat({
   );
 
   /** Buffer a server message into the per-chat cache (for non-active chats) */
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const handleServerMessageForCache = useCallback(
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (chatId: string, msg: any) => {
       const state =
         perChatStateRef.current.get(chatId) ?? defaultPerChatState();
@@ -1726,7 +1816,7 @@ export function TaskChat({
       .catch(() => {});
 
     // Poll every 5 seconds for incremental updates
-    const timer = setInterval(async () => {
+    const loadLatest = async () => {
       try {
         const res = await getChatHistory(
           projectId,
@@ -1746,9 +1836,10 @@ export function TaskChat({
           setRemoteOwnerName("");
         }
       } catch {
-        /* ignore polling errors */
+        /* ignore */
       }
-    }, 5000);
+    };
+    const timer = setInterval(loadLatest, 5000);
     pollingTimerRef.current = timer;
 
     return () => {

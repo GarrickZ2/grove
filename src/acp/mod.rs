@@ -28,8 +28,6 @@ pub struct AcpSessionHandle {
     cmd_tx: mpsc::Sender<AcpCommand>,
     /// Agent info stored after initialization: (session_id, name, version)
     pub agent_info: std::sync::RwLock<Option<(String, String, String)>>,
-    /// 历史消息缓冲区（用于 WebSocket 重连时回放）
-    history: RwLock<Vec<AcpUpdate>>,
     /// 待处理的权限请求响应 channel
     pending_permission: Mutex<Option<tokio::sync::oneshot::Sender<String>>>,
     /// 项目 key（用于磁盘持久化路径）
@@ -182,6 +180,16 @@ pub struct PromptCapabilitiesData {
     pub embedded_context: bool,
 }
 
+impl Default for PromptCapabilitiesData {
+    fn default() -> Self {
+        Self {
+            image: true,
+            audio: true,
+            embedded_context: true,
+        }
+    }
+}
+
 /// 前端→后端的内容块类型（用于多媒体 prompt）
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -230,6 +238,8 @@ pub struct SessionMetadata {
     pub current_mode_id: Option<String>,
     pub available_models: Vec<(String, String)>,
     pub current_model_id: Option<String>,
+    #[serde(default)]
+    pub prompt_capabilities: PromptCapabilitiesData,
 }
 
 /// Unix socket 命令（JSONL，每连接一条）
@@ -938,7 +948,6 @@ pub async fn get_or_start_session(
                     update_tx: update_tx.clone(),
                     cmd_tx,
                     agent_info: std::sync::RwLock::new(None),
-                    history: RwLock::new(Vec::new()),
                     pending_permission: Mutex::new(None),
                     project_key: config.project_key.clone(),
                     task_id: config.task_id.clone(),
@@ -1202,6 +1211,9 @@ async fn run_acp_session(
                     .mcp_servers(vec![grove_mcp_server(&config.env_vars)?]),
             )
             .await;
+        // load_session spec 保证 response 在所有 replay notification 之后，
+        // 额外等 300ms 作为安全余量
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
         handle
             .suppress_emit
             .store(false, std::sync::atomic::Ordering::Relaxed);
@@ -1210,17 +1222,6 @@ async fn run_acp_session(
             Ok(resp) => {
                 (available_modes, current_mode_id) = extract_modes(&resp.modes);
                 (available_models, current_model_id) = extract_models(&resp.models);
-                // 填充内存历史（供 WS 重连回放），不 broadcast（WS handler 已先行发送）
-                if let Some(ref cid) = config.chat_id {
-                    let disk_history = crate::storage::chat_history::load_history(
-                        &config.project_key,
-                        &config.task_id,
-                        cid,
-                    );
-                    for update in disk_history {
-                        handle.push_to_history(update);
-                    }
-                }
                 saved_id
             }
             Err(_) => {
@@ -1562,6 +1563,7 @@ impl AcpSessionHandle {
             ref current_mode_id,
             ref available_models,
             ref current_model_id,
+            ref prompt_capabilities,
             ..
         } = update
         {
@@ -1578,12 +1580,13 @@ impl AcpSessionHandle {
                         current_mode_id: current_mode_id.clone(),
                         available_models: available_models.clone(),
                         current_model_id: current_model_id.clone(),
+                        prompt_capabilities: prompt_capabilities.clone(),
                     },
                 );
             }
         }
 
-        // 实时 append 到磁盘（替代 turn_buffer 缓存）
+        // 实时 append 到磁盘
         if crate::storage::chat_history::should_persist(&update) {
             if let Some(ref chat_id) = self.chat_id {
                 crate::storage::chat_history::append_event(
@@ -1595,13 +1598,10 @@ impl AcpSessionHandle {
             }
         }
 
-        // Turn 结束时 compact 磁盘历史（合并 chunk 碎片）
+        // Turn 结束时 compact 磁盘历史
         let should_compact = matches!(&update, AcpUpdate::Complete { .. });
 
-        // 内存 history + broadcast
-        if let Ok(mut h) = self.history.write() {
-            h.push(update.clone());
-        }
+        // broadcast
         let _ = self.update_tx.send(update);
 
         if should_compact {
@@ -1615,16 +1615,13 @@ impl AcpSessionHandle {
         }
     }
 
-    /// 仅写入内存 history（不 broadcast），用于预填充历史供重连回放
-    pub fn push_to_history(&self, update: AcpUpdate) {
-        if let Ok(mut h) = self.history.write() {
-            h.push(update);
-        }
-    }
-
-    /// 获取完整的历史消息
-    pub fn get_history(&self) -> Vec<AcpUpdate> {
-        self.history.read().map(|h| h.clone()).unwrap_or_default()
+    /// 获取磁盘持久化所需信息
+    pub fn persist_info(&self) -> (String, String, Option<String>) {
+        (
+            self.project_key.clone(),
+            self.task_id.clone(),
+            self.chat_id.clone(),
+        )
     }
 
     /// 发送用户提示

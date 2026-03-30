@@ -385,19 +385,15 @@ async fn handle_acp_ws(socket: WebSocket, session_key: String, config: AcpStartC
                         .map(|m| m.agent_name.clone())
                         .unwrap_or_else(|| "Unknown".to_string()),
                 };
-                let _ = ws_sender
-                    .send(Message::Text(
-                        serde_json::to_string(&msg)
-                            .expect("serialize WS message")
-                            .into(),
-                    ))
-                    .await;
+                if let Ok(json) = serde_json::to_string(&msg) {
+                    let _ = ws_sender.send(Message::Text(json.into())).await;
+                }
                 return;
             }
         }
     }
 
-    // For NEW sessions: send disk history immediately so frontend shows it while agent starts
+    // Cancel unresolved events for new sessions
     if !is_existing {
         if let Some(ref chat_id) = config.chat_id {
             if should_cancel_replayed_unresolved_events {
@@ -407,23 +403,11 @@ async fn handle_acp_ws(socket: WebSocket, session_key: String, config: AcpStartC
                     chat_id,
                 );
             }
-            let disk_history = crate::storage::chat_history::load_history(
-                &config.project_key,
-                &config.task_id,
-                chat_id,
-            );
-            for update in disk_history {
-                let msg: ServerMessage = update.into();
-                let _ = ws_sender
-                    .send(Message::Text(
-                        serde_json::to_string(&msg)
-                            .expect("serialize WS message")
-                            .into(),
-                    ))
-                    .await;
-            }
         }
     }
+
+    // History is loaded by the frontend via HTTP GET /history (separate path).
+    // WS only handles real-time events going forward.
 
     // Get or start ACP session (thread managed by acp module)
     let (handle, mut update_rx) = match acp::get_or_start_session(session_key, config).await {
@@ -432,28 +416,58 @@ async fn handle_acp_ws(socket: WebSocket, session_key: String, config: AcpStartC
             let msg = ServerMessage::Error {
                 message: format!("Failed to start ACP session: {}", e),
             };
-            let _ = ws_sender
-                .send(Message::Text(
-                    serde_json::to_string(&msg)
-                        .expect("serialize WS message")
-                        .into(),
-                ))
-                .await;
+            if let Ok(json) = serde_json::to_string(&msg) {
+                let _ = ws_sender.send(Message::Text(json.into())).await;
+            }
             return;
         }
     };
 
-    // For existing sessions, replay in-memory history so frontend rebuilds UI
+    // For existing sessions, construct SessionReady from metadata so frontend can interact.
+    // History is already loaded via HTTP.
     if is_existing {
-        for update in handle.get_history() {
-            let msg: ServerMessage = update.into();
-            let _ = ws_sender
-                .send(Message::Text(
-                    serde_json::to_string(&msg)
-                        .expect("serialize WS message")
-                        .into(),
-                ))
-                .await;
+        let meta_msg = (|| {
+            let (persist_proj, persist_tsk, persist_cid) = handle.persist_info();
+            let cid = persist_cid?;
+            let meta = acp::read_session_metadata(&persist_proj, &persist_tsk, &cid)?;
+            let info = handle.agent_info.read().ok().and_then(|i| i.clone());
+            let (sid, _name, _ver) = info.unwrap_or_default();
+            Some(ServerMessage::SessionReady {
+                session_id: sid,
+                agent_name: meta.agent_name,
+                agent_version: meta.agent_version,
+                available_modes: meta
+                    .available_modes
+                    .into_iter()
+                    .map(|(id, name)| ModeOption { id, name })
+                    .collect(),
+                current_mode_id: meta.current_mode_id,
+                available_models: meta
+                    .available_models
+                    .into_iter()
+                    .map(|(id, name)| ModelOption { id, name })
+                    .collect(),
+                current_model_id: meta.current_model_id,
+                prompt_capabilities: meta.prompt_capabilities,
+            })
+        })()
+        .unwrap_or_else(|| {
+            // Fallback: metadata missing or corrupt — send minimal SessionReady with defaults
+            let info = handle.agent_info.read().ok().and_then(|i| i.clone());
+            let (sid, name, ver) = info.unwrap_or_default();
+            ServerMessage::SessionReady {
+                session_id: sid,
+                agent_name: name,
+                agent_version: ver,
+                available_modes: Vec::new(),
+                current_mode_id: None,
+                available_models: Vec::new(),
+                current_model_id: None,
+                prompt_capabilities: PromptCapabilitiesData::default(),
+            }
+        });
+        if let Ok(json) = serde_json::to_string(&meta_msg) {
+            let _ = ws_sender.send(Message::Text(json.into())).await;
         }
     }
 
@@ -461,13 +475,9 @@ async fn handle_acp_ws(socket: WebSocket, session_key: String, config: AcpStartC
     let queue = handle.get_queue();
     if !queue.is_empty() {
         let msg = ServerMessage::QueueUpdate { messages: queue };
-        let _ = ws_sender
-            .send(Message::Text(
-                serde_json::to_string(&msg)
-                    .expect("serialize WS message")
-                    .into(),
-            ))
-            .await;
+        if let Ok(json) = serde_json::to_string(&msg) {
+            let _ = ws_sender.send(Message::Text(json.into())).await;
+        }
     }
 
     let handle_for_input = handle.clone();
@@ -479,9 +489,10 @@ async fn handle_acp_ws(socket: WebSocket, session_key: String, config: AcpStartC
                 Ok(update) => {
                     let is_ended = matches!(update, AcpUpdate::SessionEnded);
                     let msg: ServerMessage = update.into();
-                    let json = serde_json::to_string(&msg).expect("serialize WS message");
-                    if ws_sender.send(Message::Text(json.into())).await.is_err() {
-                        break;
+                    if let Ok(json) = serde_json::to_string(&msg) {
+                        if ws_sender.send(Message::Text(json.into())).await.is_err() {
+                            break;
+                        }
                     }
                     if is_ended {
                         break;
@@ -860,15 +871,13 @@ pub(crate) struct HistoryResponse {
 
 /// GET /api/v1/projects/{id}/tasks/{taskId}/chats/{chatId}/history?offset=N
 ///
-/// Returns incremental chat history from the given offset.
-/// Used by read-only observation mode to poll for updates.
+/// Returns chat history from the given offset.
 pub async fn get_chat_history(
     Path((project_id, task_id, chat_id)): Path<(String, String, String)>,
     Query(params): Query<HistoryQuery>,
 ) -> Result<Json<HistoryResponse>, AcpError> {
     let (project_key, _, _) = resolve_project_key(&project_id)?;
 
-    // Load full history from disk
     let history = chat_history::load_history(&project_key, &task_id, &chat_id);
     let total = history.len();
     let offset = params.offset.unwrap_or(0).min(total);
@@ -878,7 +887,6 @@ pub async fn get_chat_history(
         .map(ServerMessage::from)
         .collect();
 
-    // Also read session metadata to let frontend know if owner is still alive
     let session = acp::read_session_metadata(&project_key, &task_id, &chat_id);
 
     Ok(Json(HistoryResponse {
