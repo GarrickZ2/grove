@@ -152,11 +152,6 @@ impl LastLaunch {
     }
 }
 
-/// 默认启用 Terminal 模式
-fn default_enable_terminal() -> bool {
-    true
-}
-
 /// 应用配置
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Config {
@@ -179,12 +174,12 @@ pub struct Config {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub storage_version: Option<String>,
 
-    /// 是否启用 Terminal 模式
-    #[serde(default = "default_enable_terminal")]
+    /// 是否启用 Terminal 模式（不再持久化，TUI 内部运行时管理）
+    #[serde(skip)]
     pub enable_terminal: bool,
 
-    /// 是否启用 Chat 模式
-    #[serde(default)]
+    /// 是否启用 Chat 模式（不再持久化，TUI 内部运行时管理）
+    #[serde(skip)]
     pub enable_chat: bool,
 
     /// Terminal 模式使用的复用器
@@ -218,6 +213,12 @@ pub struct WebConfig {
     /// Terminal 命令 (e.g., "iterm", "warp", "kitty")
     #[serde(default)]
     pub terminal: Option<String>,
+    /// Web 端 Terminal 后端模式: "multiplexer" (default) | "direct"
+    /// - "multiplexer": 使用 terminal_multiplexer 配置的 tmux/zellij
+    /// - "direct": 每个 Tab 一个独立 PTY 实例，无需 multiplexer
+    /// CLI 不使用此字段，始终走 multiplexer
+    #[serde(default)]
+    pub terminal_mode: Option<String>,
 }
 
 /// 自定义布局配置

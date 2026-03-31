@@ -16,10 +16,9 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 
 use crate::api::state;
-use crate::session::{self, SessionType};
+use crate::operations::tasks::create_task_session;
+use crate::session::SessionType;
 use crate::storage::{config, tasks, workspace};
-use crate::tmux;
-use crate::tmux::layout::{parse_custom_layout_tree, CustomLayout, TaskLayout};
 
 #[derive(Debug, Deserialize)]
 pub struct TerminalQuery {
@@ -68,50 +67,38 @@ pub async fn task_terminal_handler(
         .map_err(|e| TaskTerminalError::Internal(format!("Failed to get task: {}", e)))?
         .ok_or(TaskTerminalError::NotFound("Task not found".to_string()))?;
 
-    // 3. Resolve session type and build session name
-    // Use multiplexer field from task config
-    let task_session_type = match task.multiplexer.as_str() {
-        "tmux" => SessionType::Tmux,
-        "zellij" => SessionType::Zellij,
-        _ => {
-            // Fallback to config default for unknown multiplexer
-            let cfg = config::load_config();
-            match cfg.terminal_multiplexer {
-                config::TerminalMultiplexer::Tmux => SessionType::Tmux,
-                config::TerminalMultiplexer::Zellij => SessionType::Zellij,
-            }
-        }
-    };
-    let session_name = session::resolve_session_name(&task.session_name, &project_key, &task_id);
-
-    // 4. Ensure session exists (create if needed)
-    let session_created = !session::session_exists(&task_session_type, &session_name);
-    let mut zellij_layout_path: Option<String> = None;
-    if session_created {
-        zellij_layout_path =
-            ensure_task_session(&project, &project_key, &task, &task_session_type)?;
-
-        // Register FileWatcher for this task's worktree
-        state::watch_task(&project_key, &task.id, &task.worktree_path);
-    }
-
+    // 3. Check web terminal mode
+    let cfg = config::load_config();
+    let web_terminal_mode = cfg.web.terminal_mode.as_deref().unwrap_or("multiplexer");
     let working_dir = task.worktree_path.clone();
 
-    // 5. Upgrade to WebSocket and handle mux terminal
-    Ok(ws.on_upgrade(move |socket| {
-        handle_mux_terminal(
-            socket,
-            MuxTerminalParams {
-                session_name,
-                mux: task_session_type,
-                new_session: session_created,
-                working_dir,
-                zellij_layout_path,
-                cols,
-                rows,
-            },
-        )
-    }))
+    if web_terminal_mode == "direct" {
+        // Direct mode: spawn a plain shell in the task's worktree (no multiplexer)
+        state::watch_task(&project_key, &task.id, &task.worktree_path);
+
+        Ok(ws.on_upgrade(move |socket| handle_shell_terminal(socket, working_dir, cols, rows)))
+    } else {
+        // Multiplexer mode: use shared create_task_session
+        let session_info = create_task_session(&project_key, &task, &project.path)
+            .map_err(|e| TaskTerminalError::Internal(format!("Session error: {}", e)))?;
+
+        state::watch_task(&project_key, &task.id, &task.worktree_path);
+
+        Ok(ws.on_upgrade(move |socket| {
+            handle_mux_terminal(
+                socket,
+                MuxTerminalParams {
+                    session_name: session_info.session_name,
+                    mux: session_info.session_type,
+                    new_session: session_info.is_new,
+                    working_dir,
+                    zellij_layout_path: session_info.layout_path,
+                    cols,
+                    rows,
+                },
+            )
+        }))
+    }
 }
 
 /// Error type for task terminal handler
@@ -129,94 +116,6 @@ impl IntoResponse for TaskTerminalError {
             }
         }
     }
-}
-
-/// Ensure the task's session exists, creating it if needed.
-/// Returns the Zellij layout path if one was generated (for use at attach time).
-fn ensure_task_session(
-    project: &workspace::RegisteredProject,
-    project_key: &str,
-    task: &tasks::Task,
-    session_type: &SessionType,
-) -> Result<Option<String>, TaskTerminalError> {
-    let session_name = session::resolve_session_name(&task.session_name, project_key, &task.id);
-
-    // Build session environment
-    let project_name = std::path::Path::new(&project.path)
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or("unknown");
-
-    let session_env = tmux::SessionEnv {
-        task_id: task.id.clone(),
-        task_name: task.name.clone(),
-        branch: task.branch.clone(),
-        target: task.target.clone(),
-        worktree: task.worktree_path.clone(),
-        project_name: project_name.to_string(),
-        project_path: project.path.clone(),
-    };
-
-    // Create session
-    session::create_session(
-        session_type,
-        &session_name,
-        &task.worktree_path,
-        Some(&session_env),
-    )
-    .map_err(|e| TaskTerminalError::Internal(format!("Failed to create session: {}", e)))?;
-
-    // Load config and apply layout
-    let cfg = config::load_config();
-    let layout = TaskLayout::from_name(&cfg.layout.default).unwrap_or(TaskLayout::Single);
-    let agent_cmd = cfg.layout.agent_command.clone().unwrap_or_default();
-
-    // Parse custom layout if needed
-    let custom_layout = if layout == TaskLayout::Custom {
-        cfg.layout.custom.as_ref().and_then(|c| {
-            parse_custom_layout_tree(&c.tree, cfg.layout.selected_custom_id.as_deref())
-                .map(|root| CustomLayout { root })
-        })
-    } else {
-        None
-    };
-
-    // Apply layout
-    let mut layout_path: Option<String> = None;
-    match session_type {
-        SessionType::Acp => {
-            // ACP tasks use chat interface, not terminal
-            return Ok(None);
-        }
-        SessionType::Tmux => {
-            if layout != TaskLayout::Single {
-                if let Err(e) = tmux::layout::apply_layout(
-                    &session_name,
-                    &task.worktree_path,
-                    &layout,
-                    &agent_cmd,
-                    custom_layout.as_ref(),
-                ) {
-                    eprintln!("Warning: Failed to apply layout: {}", e);
-                }
-            }
-        }
-        SessionType::Zellij => {
-            // Zellij: 始终生成 KDL layout 以通过 pane 命令注入环境变量
-            let kdl = crate::zellij::layout::generate_kdl(
-                &layout,
-                &agent_cmd,
-                custom_layout.as_ref(),
-                &session_env.shell_export_prefix(),
-            );
-            match crate::zellij::layout::write_session_layout(&session_name, &kdl) {
-                Ok(path) => layout_path = Some(path),
-                Err(e) => eprintln!("Warning: Failed to write zellij layout: {}", e),
-            }
-        }
-    }
-
-    Ok(layout_path)
 }
 
 /// Handle the WebSocket connection for a simple shell terminal
@@ -290,7 +189,7 @@ async fn handle_mux_terminal(socket: WebSocket, params: MuxTerminalParams) {
             handle_pty_terminal(socket, cmd, cols, rows).await;
         }
         SessionType::Acp => {
-            // ACP tasks use chat interface, not terminal — should not reach here
+            eprintln!("Warning: ACP task reached terminal handler — this should not happen");
         }
     }
 }

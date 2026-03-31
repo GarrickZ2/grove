@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from "react";
+import React, { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Terminal,
@@ -6,14 +6,12 @@ import {
   Bell,
   Plug,
   ChevronDown,
-  Sparkles,
   Check,
   Copy,
   AlertCircle,
   AlertTriangle,
   Info,
   ExternalLink,
-  Package,
   CheckCircle2,
   XCircle,
   RefreshCw,
@@ -205,8 +203,9 @@ export function SettingsPage({ config }: SettingsPageProps) {
   const { isMobile } = useIsMobile();
 
   const [openSections, setOpenSections] = useState<Record<string, boolean>>({
+    terminal: false,
+    chat: false,
     appearance: false,
-    environment: false,
     devtools: false,
     autolink: false,
     layout: false,
@@ -236,10 +235,10 @@ export function SettingsPage({ config }: SettingsPageProps) {
   // Agent command availability: command name → exists on PATH
   const [commandAvailability, setCommandAvailability] = useState<Record<string, boolean>>({});
 
-  // Mode state - 新的双模式设计
-  const [enableTerminal, setEnableTerminal] = useState(true);
-  const [enableChat, setEnableChat] = useState(false);
+  // Mode state
   const [terminalMultiplexer, setTerminalMultiplexer] = useState("tmux");
+  // Web terminal backend: "multiplexer" (default) | "direct"
+  const [webTerminalMode, setWebTerminalMode] = useState("multiplexer");
 
   const lastTerminalMuxRef = useRef<string>("tmux");
   const defaultAppliedRef = useRef(false);
@@ -299,11 +298,9 @@ export function SettingsPage({ config }: SettingsPageProps) {
       setTerminalCommand(cfg.web.terminal || "");
       setSelectedLayout(cfg.layout.default);
 
-      // Load mode settings from new API
-      setEnableTerminal(cfg.enable_terminal);
-      setEnableChat(cfg.enable_chat);
       setTerminalMultiplexer(cfg.terminal_multiplexer || "tmux");
       lastTerminalMuxRef.current = cfg.terminal_multiplexer || "tmux";
+      setWebTerminalMode(cfg.web.terminal_mode || "multiplexer");
 
       // Load theme - sync with context
       // API stores theme id (e.g., "dark", "tokyo-night")
@@ -333,7 +330,7 @@ export function SettingsPage({ config }: SettingsPageProps) {
           // If it's TUI format (object), keep the default customLayouts
           // customLayoutsLoaded stays false, so we won't overwrite TUI data
         } catch {
-          console.log("Failed to parse custom layouts");
+          console.error("Failed to parse custom layouts");
         }
       } else {
         // No existing custom layouts, mark as loaded so we can save new ones
@@ -354,7 +351,7 @@ export function SettingsPage({ config }: SettingsPageProps) {
       setIsLoaded(true);
     } catch {
       // API not available, use props config
-      console.log("Config API not available, using local config");
+      console.warn("Config API not available, using local config");
       setIsLoaded(true);
     }
   }, [config.agent.command, setTheme]);
@@ -423,20 +420,15 @@ export function SettingsPage({ config }: SettingsPageProps) {
 
   // Save config to API (called automatically)
   // Note: themeId parameter allows immediate save with new theme value
-  const saveConfig = useCallback(async (overrideThemeId?: string) => {
+  const saveConfig = useCallback(async () => {
     if (!isLoaded) return; // Don't save during initial load
 
     try {
-
-
       const patch = {
-        theme: {
-          name: overrideThemeId || theme.id,
-        },
         layout: {
           default: selectedLayout,
           // 仅当 Terminal 启用时保存 agent_command
-          ...(enableTerminal ? { agent_command: agentCommand || undefined } : {}),
+          agent_command: agentCommand || undefined,
           // Only save custom layouts if they were loaded/created in Web format
           // This prevents overwriting TUI's custom layout format
           ...(customLayoutsLoaded ? {
@@ -447,9 +439,8 @@ export function SettingsPage({ config }: SettingsPageProps) {
         web: {
           ide: ideCommand || undefined,
           terminal: terminalCommand || undefined,
+          terminal_mode: webTerminalMode,
         },
-        enable_terminal: enableTerminal,
-        enable_chat: enableChat,
         terminal_multiplexer: terminalMultiplexer,
         acp: {
           agent_command: acpAgent || undefined,
@@ -464,7 +455,7 @@ export function SettingsPage({ config }: SettingsPageProps) {
     } catch {
       console.error("Failed to save config");
     }
-  }, [isLoaded, theme.id, selectedLayout, agentCommand, acpAgent, customLayouts, selectedCustomLayoutId, customLayoutsLoaded, ideCommand, terminalCommand, enableTerminal, enableChat, terminalMultiplexer, autoLinkPatterns, refreshGlobalConfig]);
+  }, [isLoaded, selectedLayout, agentCommand, acpAgent, customLayouts, selectedCustomLayoutId, customLayoutsLoaded, ideCommand, terminalCommand, terminalMultiplexer, webTerminalMode, autoLinkPatterns, refreshGlobalConfig]);
 
   // Handle theme change with immediate save
   const handleThemeChange = useCallback((newThemeId: string) => {
@@ -486,7 +477,7 @@ export function SettingsPage({ config }: SettingsPageProps) {
     }, 500); // 500ms debounce
 
     return () => clearTimeout(timer);
-  }, [theme.id, selectedLayout, agentCommand, acpAgent, customLayouts, selectedCustomLayoutId, customLayoutsLoaded, ideCommand, terminalCommand, enableTerminal, enableChat, terminalMultiplexer, autoLinkPatterns, isLoaded, saveConfig]);
+  }, [selectedLayout, agentCommand, acpAgent, customLayouts, selectedCustomLayoutId, customLayoutsLoaded, ideCommand, terminalCommand, terminalMultiplexer, webTerminalMode, autoLinkPatterns, isLoaded, saveConfig]);
 
   // Load applications list
   const loadApplications = useCallback(async () => {
@@ -512,42 +503,24 @@ export function SettingsPage({ config }: SettingsPageProps) {
   // Terminal availability
   const tmuxInstalled = depStates["tmux"]?.status === "installed";
   const zellijInstalled = depStates["zellij"]?.status === "installed";
-  const canUseTerminal = tmuxInstalled || zellijInstalled;
+  const hasMultiplexer = tmuxInstalled || zellijInstalled;
+  const canUseTerminal = webTerminalMode === "direct" || hasMultiplexer;
 
-  // Mode toggle handler (多选模式)
-  const toggleMode = (mode: "terminal" | "chat") => {
-    if (mode === "terminal") {
-      // 切换 Terminal 模式
-      const newValue = !enableTerminal;
-      console.log("Toggle Terminal:", enableTerminal, "→", newValue);
+  // (enable states are auto-synced from dependency availability below)
 
-      // 至少保留一个模式（Terminal 或 Chat）
-      if (!newValue && !enableChat) {
-        // 如果要禁用 Terminal 但 Chat 也未启用，自动启用 Chat
-        setEnableChat(true);
-      }
-      setEnableTerminal(newValue);
-    } else {
-      // 切换 Chat 模式
-      const newValue = !enableChat;
-      console.log("Toggle Chat:", enableChat, "→", newValue);
-
-      // 至少保留一个模式（Terminal 或 Chat）
-      if (!newValue && !enableTerminal) {
-        // 如果要禁用 Chat 但 Terminal 也未启用，自动启用 Terminal
-        setEnableTerminal(true);
-      }
-      setEnableChat(newValue);
-    }
-  };
-
-  // Auto-correct multiplexer selection (not enable/disable state) on first load
+  // Auto-correct on first load:
+  // 1. If multiplexer mode but no multiplexer installed → fallback to direct
+  // 2. If selected multiplexer not installed but other is → switch
   useEffect(() => {
     if (defaultAppliedRef.current || !isLoaded || isChecking) return;
     if (Object.keys(depStates).length === 0) return;
     defaultAppliedRef.current = true;
 
-    if (enableTerminal) {
+    if (webTerminalMode === "multiplexer" && !hasMultiplexer) {
+      // No multiplexer available → fallback to direct
+      setWebTerminalMode("direct");
+    } else if (webTerminalMode === "multiplexer") {
+      // Auto-correct multiplexer selection
       if (terminalMultiplexer === "tmux" && !tmuxInstalled && zellijInstalled) {
         setTerminalMultiplexer("zellij");
         lastTerminalMuxRef.current = "zellij";
@@ -556,24 +529,24 @@ export function SettingsPage({ config }: SettingsPageProps) {
         lastTerminalMuxRef.current = "tmux";
       }
     }
-  }, [isLoaded, isChecking, depStates, enableTerminal, terminalMultiplexer, tmuxInstalled, zellijInstalled]);
+  }, [isLoaded, isChecking, depStates, webTerminalMode, hasMultiplexer, terminalMultiplexer, tmuxInstalled, zellijInstalled]);
 
   // Filter and mark agent options based on mode + command availability
   const customAgentIds = customAgents.map(a => a.id);
   const hasAvailability = Object.keys(commandAvailability).length > 0;
 
   // Terminal Agent 选项（检测 terminalCheck 命令）
-  const terminalAgentOptions = agentOptions.map(a => {
+  const terminalAgentOptions = useMemo(() => agentOptions.map(a => {
     if (!hasAvailability) return a;
     const cmd = a.terminalCheck;
     if (cmd && commandAvailability[cmd] === false) {
       return { ...a, disabled: true, disabledReason: `${cmd} not found — install to enable` };
     }
     return a;
-  });
+  }), [commandAvailability, hasAvailability]);
 
   // Chat Agent 选项（仅 ACP 兼容 + 检测 acpCheck 命令，支持 fallback）
-  const chatAgentOptions = agentOptions
+  const chatAgentOptions = useMemo(() => agentOptions
     .filter(a => !!a.acpCheck || customAgentIds.includes(a.id))
     .map(a => {
       if (!hasAvailability) return a;
@@ -584,15 +557,11 @@ export function SettingsPage({ config }: SettingsPageProps) {
         return { ...a, disabled: true, disabledReason: `${cmd} not found — install to enable` };
       }
       return a;
-    });
+    }), [commandAvailability, hasAvailability, customAgentIds]);
 
-  // Three-state feature availability
+  // Feature availability (auto-derived from dependencies)
   const isTerminalAvailable = canUseTerminal;
   const isChatAvailable = chatAgentOptions.some(a => !a.disabled) || customAgents.length > 0;
-
-  type FeatureState = 'enabled' | 'unavailable' | 'disabled';
-  const terminalState: FeatureState = !enableTerminal ? 'disabled' : isTerminalAvailable ? 'enabled' : 'unavailable';
-  const chatState: FeatureState = !enableChat ? 'disabled' : isChatAvailable ? 'enabled' : 'unavailable';
 
   // Sync availability to ConfigContext for Task panel components
   useEffect(() => {
@@ -627,42 +596,6 @@ export function SettingsPage({ config }: SettingsPageProps) {
       }
     }
   }, [isLoaded, commandAvailability, agentCommand, acpAgent, terminalAgentOptions, chatAgentOptions]);
-
-  const getStatusIcon = (status: DependencyStatusType) => {
-    switch (status) {
-      case "checking":
-        return <RefreshCw className="w-4 h-4 text-[var(--color-text-muted)] animate-spin" />;
-      case "installed":
-        return <CheckCircle2 className="w-4 h-4 text-[var(--color-success)]" />;
-      case "not_installed":
-        return <XCircle className="w-4 h-4 text-[var(--color-warning)]" />;
-      case "error":
-        return <AlertCircle className="w-4 h-4 text-[var(--color-error)]" />;
-    }
-  };
-
-  const muxNames = ["tmux", "zellij"];
-  const acpAdapterNames = ["claude-agent-acp", "claude-code-acp", "codex-acp"];
-
-  // 根据 enabled_modes 动态计算可见的依赖
-  // Treat claude-agent-acp and claude-code-acp as one logical dependency
-  const claudeAcpInstalled = depStates["claude-agent-acp"]?.status === "installed" || depStates["claude-code-acp"]?.status === "installed";
-  const visibleDepKeys = Object.keys(depStates).filter((k) => {
-    // claude-code-acp is merged with claude-agent-acp — skip it from count
-    if (k === "claude-code-acp") return false;
-    // 基础依赖始终显示
-    if (!muxNames.includes(k) && !acpAdapterNames.includes(k)) return true;
-    // Terminal 依赖：仅当 Terminal 启用时显示
-    if (muxNames.includes(k)) return enableTerminal;
-    // Chat 依赖：仅当 Chat 启用时显示
-    if (acpAdapterNames.includes(k)) return enableChat;
-    return true;
-  });
-  const installedCount = visibleDepKeys.filter((k) => {
-    // For claude-agent-acp, count as installed if either version exists
-    if (k === "claude-agent-acp") return claudeAcpInstalled;
-    return depStates[k]?.status === "installed";
-  }).length;
 
   const claudeCodeConfig = JSON.stringify(
     {
@@ -709,95 +642,328 @@ env_vars = [
       </div>
 
       <div className="space-y-3">
-        {/* Mode Toggle (多选) */}
-        <div className="grid grid-cols-2 gap-3 mb-2">
-          {/* Terminal Card */}
-          <motion.button
-            whileHover={{ scale: 1.01 }}
-            whileTap={{ scale: 0.98 }}
-            onClick={() => toggleMode("terminal")}
-            className={`relative flex ${isMobile ? "flex-row items-center gap-3 px-4 py-3" : "flex-col items-center justify-center gap-2 py-5"} rounded-xl border-2 text-center transition-all
-              ${terminalState === 'enabled'
-                ? "border-[var(--color-highlight)] bg-[var(--color-highlight)]/5"
-                : terminalState === 'unavailable'
-                  ? "border-[var(--color-warning)] bg-[var(--color-warning)]/5"
-                  : "border-[var(--color-border)] hover:border-[var(--color-text-muted)] bg-[var(--color-bg-secondary)]"
-              }`}
-          >
-            <div className={`${isMobile ? "w-9 h-9" : "w-10 h-10"} rounded-lg flex items-center justify-center flex-shrink-0 ${
-              terminalState === 'enabled' ? "bg-[var(--color-highlight)]/10"
-                : terminalState === 'unavailable' ? "bg-[var(--color-warning)]/10"
-                : "bg-[var(--color-bg-tertiary)]"
-            }`}>
-              <Terminal className={`w-5 h-5 ${
-                terminalState === 'enabled' ? "text-[var(--color-highlight)]"
-                  : terminalState === 'unavailable' ? "text-[var(--color-warning)]"
-                  : "text-[var(--color-text-muted)]"
-              }`} />
+        {/* Chat Section */}
+        <Section
+          id="chat"
+          title="Chat"
+          description={isChatAvailable ? "Ready" : "Need Setup"}
+          icon={MessageSquare}
+          iconColor={isChatAvailable ? "var(--color-success)" : "var(--color-warning)"}
+          isOpen={openSections.chat}
+          onToggle={() => toggleSection("chat")}
+        >
+          <div className="space-y-5">
+            {/* Chat Coding Agent */}
+            <div>
+              <div className="text-xs font-medium text-[var(--color-text-muted)] mb-2 uppercase tracking-wider select-none">Chat Coding Agent</div>
+              <AgentPicker
+                value={acpAgent}
+                onChange={setAcpAgent}
+                options={chatAgentOptions}
+                allowCustom={false}
+                placeholder="Select agent..."
+                customAgents={customAgents}
+                onManageCustomAgents={() => setShowCustomAgentModal(true)}
+              />
             </div>
-            <div className={isMobile ? "text-left" : ""}>
-              <div className="text-sm font-semibold text-[var(--color-text)]">Terminal</div>
-              {terminalState === 'unavailable' && (
-                <div className="text-[10px] text-[var(--color-warning)]">Missing dependencies</div>
-              )}
-            </div>
-            {terminalState === 'enabled' && (
-              <div className="absolute top-2.5 right-2.5 w-5 h-5 rounded-full bg-[var(--color-highlight)] flex items-center justify-center">
-                <Check className="w-3 h-3 text-white" />
-              </div>
-            )}
-            {terminalState === 'unavailable' && (
-              <div className="absolute top-2.5 right-2.5 w-5 h-5 rounded-full bg-[var(--color-warning)] flex items-center justify-center">
-                <AlertTriangle className="w-3 h-3 text-white" />
-              </div>
-            )}
-          </motion.button>
 
-          {/* Chat Card */}
-          <motion.button
-            whileHover={{ scale: 1.01 }}
-            whileTap={{ scale: 0.98 }}
-            onClick={() => toggleMode("chat")}
-            className={`relative flex ${isMobile ? "flex-row items-center gap-3 px-4 py-3" : "flex-col items-center justify-center gap-2 py-5"} rounded-xl border-2 text-center transition-all
-              ${chatState === 'enabled'
-                ? "border-[var(--color-highlight)] bg-[var(--color-highlight)]/5"
-                : chatState === 'unavailable'
-                  ? "border-[var(--color-warning)] bg-[var(--color-warning)]/5"
-                  : "border-[var(--color-border)] hover:border-[var(--color-text-muted)] bg-[var(--color-bg-secondary)]"
-              }`}
-          >
-            <div className={`${isMobile ? "w-9 h-9" : "w-10 h-10"} rounded-lg flex items-center justify-center flex-shrink-0 ${
-              chatState === 'enabled' ? "bg-[var(--color-highlight)]/10"
-                : chatState === 'unavailable' ? "bg-[var(--color-warning)]/10"
-                : "bg-[var(--color-bg-tertiary)]"
-            }`}>
-              <MessageSquare className={`w-5 h-5 ${
-                chatState === 'enabled' ? "text-[var(--color-highlight)]"
-                  : chatState === 'unavailable' ? "text-[var(--color-warning)]"
-                  : "text-[var(--color-text-muted)]"
-              }`} />
-            </div>
-            <div className={isMobile ? "text-left" : ""}>
-              <div className="flex items-center gap-1.5">
-                <span className="text-sm font-semibold text-[var(--color-text)]">Chat</span>
-                <span className="text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-[var(--color-info)]/15 text-[var(--color-info)]">beta</span>
+            {/* ACP Adapter */}
+            <div>
+              <div className="flex items-center justify-between mb-2">
+                <div className="text-xs font-medium text-[var(--color-text-muted)] uppercase tracking-wider select-none">ACP Adapter</div>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => { checkDependencies(); checkAgentCommands(); }}
+                  disabled={isChecking}
+                  className="!p-1 !h-auto"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${isChecking ? "animate-spin" : ""}`} />
+                </Button>
               </div>
-              {chatState === 'unavailable' && (
-                <div className="text-[10px] text-[var(--color-warning)]">No ACP agent available</div>
-              )}
+              {(() => {
+                const agentAcpInstalled = depStates["claude-agent-acp"]?.status === "installed";
+                const codeAcpInstalled = depStates["claude-code-acp"]?.status === "installed";
+                const codexAcpInstalled = depStates["codex-acp"]?.status === "installed";
+                const needsUpgrade = !agentAcpInstalled && codeAcpInstalled;
+
+                return (
+                  <div className="space-y-1.5">
+                    {needsUpgrade && (
+                      <div className="flex items-center justify-between px-3 py-2.5 rounded-lg border border-[var(--color-warning)]/30 bg-[var(--color-warning)]/5">
+                        <div className="flex items-center gap-2.5">
+                          <AlertCircle className="w-3.5 h-3.5 text-[var(--color-warning)]" />
+                          <div>
+                            <span className="text-sm text-[var(--color-text)]">Claude Agent ACP</span>
+                            <div className="text-[11px] text-[var(--color-warning)]">
+                              <code className="text-[11px]">claude-code-acp</code> renamed — upgrade to <code className="text-[11px]">claude-agent-acp</code>
+                            </div>
+                          </div>
+                        </div>
+                        <button
+                          onClick={() => handleCopy("upgrade-acp", "npm install -g @agentclientprotocol/claude-agent-acp")}
+                          className="flex items-center gap-1.5 px-2 py-1 text-xs rounded bg-[var(--color-bg-tertiary)] hover:bg-[var(--color-border)] transition-colors"
+                        >
+                          <code className="text-[11px] text-[var(--color-text-muted)]">npm i -g @agentclientprotocol/claude-agent-acp</code>
+                          {copiedField === "upgrade-acp" ? (
+                            <Check className="w-3 h-3 text-[var(--color-success)]" />
+                          ) : (
+                            <Copy className="w-3 h-3 text-[var(--color-text-muted)]" />
+                          )}
+                        </button>
+                      </div>
+                    )}
+                    {!needsUpgrade && (
+                      <div className={`flex items-center justify-between px-3 py-2.5 rounded-lg border transition-all ${
+                        agentAcpInstalled
+                          ? "border-[var(--color-border)] bg-[var(--color-bg-secondary)]"
+                          : "border-[var(--color-border)]/50 bg-[var(--color-bg-secondary)]"
+                      }`}>
+                        <div className="flex items-center gap-2.5">
+                          {depStates["claude-agent-acp"]?.status === "checking"
+                            ? <RefreshCw className="w-3.5 h-3.5 text-[var(--color-text-muted)] animate-spin" />
+                            : agentAcpInstalled
+                              ? <CheckCircle2 className="w-3.5 h-3.5 text-[var(--color-success)]" />
+                              : <XCircle className="w-3.5 h-3.5 text-[var(--color-text-muted)]" />
+                          }
+                          <span className="text-sm text-[var(--color-text)]">Claude Agent ACP</span>
+                        </div>
+                        {!agentAcpInstalled && depStates["claude-agent-acp"]?.installCommand && (
+                          <button
+                            onClick={() => handleCopy("install-claude-agent-acp", depStates["claude-agent-acp"].installCommand)}
+                            className="flex items-center gap-1.5 px-2 py-1 text-xs rounded bg-[var(--color-bg-tertiary)] hover:bg-[var(--color-border)] transition-colors"
+                            title={depStates["claude-agent-acp"].installCommand}
+                          >
+                            <code className="text-[11px] text-[var(--color-text-muted)]">{depStates["claude-agent-acp"].installCommand}</code>
+                            {copiedField === "install-claude-agent-acp" ? (
+                              <Check className="w-3 h-3 text-[var(--color-success)]" />
+                            ) : (
+                              <Copy className="w-3 h-3 text-[var(--color-text-muted)]" />
+                            )}
+                          </button>
+                        )}
+                        {agentAcpInstalled && depStates["claude-agent-acp"]?.version && (
+                          <span className="text-xs text-[var(--color-text-muted)]">v{depStates["claude-agent-acp"].version}</span>
+                        )}
+                      </div>
+                    )}
+                    <div className={`flex items-center justify-between px-3 py-2.5 rounded-lg border transition-all ${
+                      codexAcpInstalled
+                        ? "border-[var(--color-border)] bg-[var(--color-bg-secondary)]"
+                        : "border-[var(--color-border)]/50 bg-[var(--color-bg-secondary)]"
+                    }`}>
+                      <div className="flex items-center gap-2.5">
+                        {depStates["codex-acp"]?.status === "checking"
+                          ? <RefreshCw className="w-3.5 h-3.5 text-[var(--color-text-muted)] animate-spin" />
+                          : codexAcpInstalled
+                            ? <CheckCircle2 className="w-3.5 h-3.5 text-[var(--color-success)]" />
+                            : <XCircle className="w-3.5 h-3.5 text-[var(--color-text-muted)]" />
+                        }
+                        <span className="text-sm text-[var(--color-text)]">Codex ACP</span>
+                      </div>
+                      {!codexAcpInstalled && depStates["codex-acp"]?.installCommand && (
+                        <button
+                          onClick={() => handleCopy("install-codex-acp", depStates["codex-acp"].installCommand)}
+                          className="flex items-center gap-1.5 px-2 py-1 text-xs rounded bg-[var(--color-bg-tertiary)] hover:bg-[var(--color-border)] transition-colors"
+                          title={depStates["codex-acp"].installCommand}
+                        >
+                          <code className="text-[11px] text-[var(--color-text-muted)]">{depStates["codex-acp"].installCommand}</code>
+                          {copiedField === "install-codex-acp" ? (
+                            <Check className="w-3 h-3 text-[var(--color-success)]" />
+                          ) : (
+                            <Copy className="w-3 h-3 text-[var(--color-text-muted)]" />
+                          )}
+                        </button>
+                      )}
+                      {codexAcpInstalled && depStates["codex-acp"]?.version && (
+                        <span className="text-xs text-[var(--color-text-muted)]">v{depStates["codex-acp"].version}</span>
+                      )}
+                    </div>
+                  </div>
+                );
+              })()}
             </div>
-            {chatState === 'enabled' && (
-              <div className="absolute top-2.5 right-2.5 w-5 h-5 rounded-full bg-[var(--color-highlight)] flex items-center justify-center">
-                <Check className="w-3 h-3 text-white" />
+          </div>
+        </Section>
+
+        {/* Terminal Section */}
+        <Section
+          id="terminal"
+          title="Terminal"
+          description={
+            !isTerminalAvailable ? "Need Setup"
+              : webTerminalMode === "direct" ? "Direct"
+              : `${dependencyInfo[terminalMultiplexer]?.name || terminalMultiplexer}`
+          }
+          icon={Terminal}
+          iconColor={isTerminalAvailable ? "var(--color-success)" : "var(--color-warning)"}
+          isOpen={openSections.terminal}
+          onToggle={() => toggleSection("terminal")}
+        >
+          <div className="space-y-5">
+            {/* Terminal — two-panel selector */}
+            <div>
+              <div className="flex items-center justify-between mb-2">
+                <div className="text-xs font-medium text-[var(--color-text-muted)] uppercase tracking-wider select-none">Terminal</div>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => { checkDependencies(); checkAgentCommands(); }}
+                  disabled={isChecking}
+                  className="!p-1 !h-auto"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${isChecking ? "animate-spin" : ""}`} />
+                </Button>
+              </div>
+              <div className="flex gap-2">
+                {/* Direct card */}
+                <motion.div
+                  layout
+                  onClick={() => setWebTerminalMode("direct")}
+                  className={`rounded-lg border cursor-pointer transition-colors overflow-hidden ${
+                    webTerminalMode === "direct"
+                      ? "border-[var(--color-highlight)] bg-[var(--color-highlight)]/5"
+                      : "border-[var(--color-border)] bg-[var(--color-bg-secondary)] hover:border-[var(--color-highlight)]/50"
+                  }`}
+                  style={{ flex: webTerminalMode === "direct" ? 3 : 2 }}
+                  transition={{ duration: 0.25, ease: "easeInOut" }}
+                >
+                  <div className="px-3 py-2.5">
+                    <div className="flex items-center gap-2">
+                      <div className={`w-2 h-2 rounded-full flex-shrink-0 ${
+                        webTerminalMode === "direct" ? "bg-[var(--color-highlight)]" : "bg-[var(--color-border)]"
+                      }`} />
+                      <span className="text-sm font-medium text-[var(--color-text)]">Direct</span>
+                    </div>
+                    <AnimatePresence>
+                      {webTerminalMode === "direct" && (
+                        <motion.p
+                          initial={{ opacity: 0, height: 0 }}
+                          animate={{ opacity: 1, height: "auto" }}
+                          exit={{ opacity: 0, height: 0 }}
+                          transition={{ duration: 0.2 }}
+                          className="text-[11px] text-[var(--color-text-muted)] mt-1.5 ml-4 select-none"
+                        >
+                          Independent terminal instances, no session persistence
+                        </motion.p>
+                      )}
+                    </AnimatePresence>
+                  </div>
+                </motion.div>
+
+                {/* Multiplexer card */}
+                <motion.div
+                  layout
+                  onClick={() => {
+                    if (webTerminalMode !== "multiplexer" && hasMultiplexer) {
+                      setWebTerminalMode("multiplexer");
+                    }
+                  }}
+                  className={`rounded-lg border overflow-hidden transition-colors ${
+                    hasMultiplexer ? "cursor-pointer" : "opacity-50 cursor-not-allowed"
+                  } ${
+                    webTerminalMode === "multiplexer"
+                      ? "border-[var(--color-highlight)] bg-[var(--color-highlight)]/5"
+                      : `border-[var(--color-border)] bg-[var(--color-bg-secondary)] ${hasMultiplexer ? "hover:border-[var(--color-highlight)]/50" : ""}`
+                  }`}
+                  style={{ flex: webTerminalMode === "multiplexer" ? 3 : 2 }}
+                  transition={{ duration: 0.25, ease: "easeInOut" }}
+                >
+                  <div className="px-3 py-2.5">
+                    <div className="flex items-center gap-2">
+                      <div className={`w-2 h-2 rounded-full flex-shrink-0 ${
+                        webTerminalMode === "multiplexer" ? "bg-[var(--color-highlight)]" : "bg-[var(--color-border)]"
+                      }`} />
+                      <span className="text-sm font-medium text-[var(--color-text)]">Multiplexer</span>
+                    </div>
+                    <AnimatePresence>
+                      {webTerminalMode === "multiplexer" && (
+                        <motion.div
+                          initial={{ opacity: 0, height: 0 }}
+                          animate={{ opacity: 1, height: "auto" }}
+                          exit={{ opacity: 0, height: 0 }}
+                          transition={{ duration: 0.2 }}
+                          className="mt-2 ml-0.5 space-y-1"
+                        >
+                          {(["tmux", "zellij"] as const).map((mux) => {
+                            const state = depStates[mux];
+                            const isInstalled = state?.status === "installed";
+                            const isMuxActive = terminalMultiplexer === mux && isInstalled;
+
+                            return (
+                              <div
+                                key={mux}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  if (isInstalled) {
+                                    setTerminalMultiplexer(mux);
+                                    lastTerminalMuxRef.current = mux;
+                                  }
+                                }}
+                                className={`flex items-center justify-between px-2.5 py-1.5 rounded-md transition-all ${
+                                  isInstalled ? "cursor-pointer" : ""
+                                } ${
+                                  isMuxActive
+                                    ? "bg-[var(--color-highlight)]/10"
+                                    : isInstalled
+                                      ? "hover:bg-[var(--color-bg-tertiary)]"
+                                      : "opacity-50"
+                                }`}
+                              >
+                                <div className="flex items-center gap-2">
+                                  <div className={`w-1.5 h-1.5 rounded-full ${
+                                    isMuxActive ? "bg-[var(--color-highlight)]"
+                                      : isInstalled ? "bg-[var(--color-success)]"
+                                      : "bg-[var(--color-text-muted)]"
+                                  }`} />
+                                  <span className={`text-xs ${isMuxActive ? "font-medium text-[var(--color-text)]" : "text-[var(--color-text-muted)]"}`}>
+                                    {dependencyInfo[mux]?.name || mux}
+                                  </span>
+                                </div>
+                                <div className="flex items-center gap-1.5">
+                                  {isInstalled && state?.version && state.version !== "installed" && (
+                                    <span className="text-[10px] text-[var(--color-text-muted)]">v{state.version}</span>
+                                  )}
+                                  {!isInstalled && state?.status !== "checking" && state?.installCommand && (
+                                    <button
+                                      onClick={(e) => { e.stopPropagation(); handleCopy(`install-${mux}`, state.installCommand); }}
+                                      className="text-[10px] text-[var(--color-text-muted)] hover:text-[var(--color-text)] transition-colors"
+                                      title={state.installCommand}
+                                    >
+                                      {copiedField === `install-${mux}` ? (
+                                        <Check className="w-3 h-3 text-[var(--color-success)]" />
+                                      ) : (
+                                        <Copy className="w-3 h-3" />
+                                      )}
+                                    </button>
+                                  )}
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
+                  </div>
+                </motion.div>
+              </div>
+            </div>
+
+            {/* Terminal Coding Agent (only for multiplexer mode) */}
+            {webTerminalMode === "multiplexer" && (
+              <div>
+                <div className="text-xs font-medium text-[var(--color-text-muted)] mb-2 uppercase tracking-wider select-none">Terminal Coding Agent</div>
+                <AgentPicker
+                  value={agentCommand}
+                  onChange={setAgentCommand}
+                  options={terminalAgentOptions}
+                  allowCustom={true}
+                  placeholder="Select agent..."
+                />
               </div>
             )}
-            {chatState === 'unavailable' && (
-              <div className="absolute top-2.5 right-2.5 w-5 h-5 rounded-full bg-[var(--color-warning)] flex items-center justify-center">
-                <AlertTriangle className="w-3 h-3 text-white" />
-              </div>
-            )}
-          </motion.button>
-        </div>
+          </div>
+        </Section>
 
         {/* Appearance Section */}
         <Section
@@ -870,264 +1036,17 @@ env_vars = [
 
         </Section>
 
-        {/* Environment Section */}
-        <Section
-          id="environment"
-          title="Environment"
-          description={`${installedCount}/${visibleDepKeys.length || 4} dependencies installed`}
-          icon={Package}
-          iconColor="var(--color-accent)"
-          isOpen={openSections.environment}
-          onToggle={() => toggleSection("environment")}
-        >
-          <div className="space-y-4">
-            {/* Status Summary */}
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2 select-none">
-                {installedCount === (visibleDepKeys.length || 4) ? (
-                  <>
-                    <CheckCircle2 className="w-5 h-5 text-[var(--color-success)]" />
-                    <span className="text-sm text-[var(--color-success)]">All dependencies installed</span>
-                  </>
-                ) : (
-                  <>
-                    <AlertTriangle className="w-5 h-5 text-[var(--color-warning)]" />
-                    <span className="text-sm text-[var(--color-warning)]">Some dependencies are missing</span>
-                  </>
-                )}
-              </div>
-              <Button
-                variant="secondary"
-                size="sm"
-                onClick={() => { checkDependencies(); checkAgentCommands(); }}
-                disabled={isChecking}
-              >
-                <RefreshCw className={`w-4 h-4 mr-2 ${isChecking ? "animate-spin" : ""}`} />
-                {isChecking ? "Checking..." : "Refresh"}
-              </Button>
-            </div>
-
-            {/* Dependency row renderer */}
-            {(() => {
-              const allDeps = Object.keys(depStates).length > 0 ? Object.keys(depStates) : ["git", "tmux", "zellij", "fzf", "claude-agent-acp", "codex-acp"];
-              const baseDeps = allDeps.filter((d) => !muxNames.includes(d) && !acpAdapterNames.includes(d));
-              const muxDeps = allDeps.filter((d) => muxNames.includes(d));
-              const acpDeps = allDeps.filter((d) => acpAdapterNames.includes(d));
-
-              const renderDepRow = (depName: string, opts?: { interactive?: boolean }) => {
-                const state = depStates[depName] || { status: "checking" as DependencyStatusType, installCommand: "" };
-                const info = dependencyInfo[depName] || { name: depName, description: "" };
-                const isInstalled = state.status === "installed";
-                const isMux = muxNames.includes(depName);
-                const isMuxActive = isMux && terminalMultiplexer === depName && isInstalled;
-                const canSwitchMux = (opts?.interactive ?? true) && isMux && isInstalled && !isMuxActive;
-
-                return (
-                  <motion.div
-                    key={depName}
-                    initial={{ opacity: 0, y: 10 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    whileHover={canSwitchMux ? { scale: 1.01 } : {}}
-                    whileTap={canSwitchMux ? { scale: 0.98 } : {}}
-                    onClick={() => {
-                      if (canSwitchMux) {
-                        setTerminalMultiplexer(depName);
-                        lastTerminalMuxRef.current = depName;
-                      }
-                    }}
-                    className={`flex items-center justify-between p-3 rounded-lg border transition-all duration-200
-                      ${canSwitchMux ? "cursor-pointer hover:border-[var(--color-highlight)]/50" : ""}
-                      ${isMuxActive
-                        ? "border-[var(--color-highlight)] bg-[var(--color-highlight)]/5"
-                        : isInstalled
-                          ? "bg-[var(--color-bg-secondary)] border-[var(--color-border)]"
-                          : "bg-[var(--color-warning)]/5 border-[var(--color-warning)]/20"
-                      }`}
-                  >
-                    <div className="flex items-center gap-3">
-                      {getStatusIcon(state.status)}
-                      <div>
-                        <div className="font-medium text-sm text-[var(--color-text)] select-none">
-                          {info.name}
-                          {isMuxActive && (
-                            <motion.span
-                              initial={{ opacity: 0, scale: 0.8 }}
-                              animate={{ opacity: 1, scale: 1 }}
-                              className="ml-2 text-xs font-normal text-[var(--color-highlight)]"
-                            >Active</motion.span>
-                          )}
-                        </div>
-                        <div className="text-xs text-[var(--color-text-muted)] select-none">{info.description}</div>
-                      </div>
-                    </div>
-
-                    <div className="flex items-center gap-2">
-                      {canSwitchMux && (
-                        <span className="text-xs text-[var(--color-text-muted)] select-none">Use</span>
-                      )}
-
-                      {isInstalled && state.version && state.version !== "installed" && (
-                        <span className="text-xs text-[var(--color-success)]">v{state.version}</span>
-                      )}
-
-                      {!isInstalled && state.status !== "checking" && state.installCommand && (
-                        <div title={`Copy: ${state.installCommand}`} onClick={(e) => e.stopPropagation()}>
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => handleCopy(`install-${depName}`, state.installCommand)}
-                          >
-                            {copiedField === `install-${depName}` ? (
-                              <Check className="w-4 h-4 text-[var(--color-success)]" />
-                            ) : (
-                              <Copy className="w-4 h-4" />
-                            )}
-                          </Button>
-                        </div>
-                      )}
-
-                      {isInstalled && info.docsUrl && (
-                        <a
-                          href={info.docsUrl}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          onClick={(e) => e.stopPropagation()}
-                          className="text-[var(--color-text-muted)] hover:text-[var(--color-text)] transition-colors"
-                        >
-                          <ExternalLink className="w-4 h-4" />
-                        </a>
-                      )}
-                    </div>
-                  </motion.div>
-                );
-              };
-
-              return (
-                <>
-                  {/* Base Dependencies */}
-                  <div className="space-y-2">
-                    {baseDeps.map((d) => renderDepRow(d))}
-                  </div>
-
-                  {/* Terminal Dependencies (仅当 Terminal 启用时显示) */}
-                  {enableTerminal && (
-                    <>
-                      {/* Multiplexer Divider + Section */}
-                      <div className="flex items-center gap-3 mt-4 mb-2">
-                        <div className="flex-1 h-px bg-[var(--color-border)]" />
-                        <span className="text-xs font-medium text-[var(--color-text-muted)] uppercase tracking-wider select-none">Multiplexer</span>
-                        <div className="flex-1 h-px bg-[var(--color-border)]" />
-                      </div>
-                      <div className="space-y-2">
-                        {muxDeps.map((d) => renderDepRow(d))}
-                      </div>
-                    </>
-                  )}
-
-                  {/* Chat Dependencies (仅当 Chat 启用时显示) */}
-                  {enableChat && (() => {
-                    const agentAcpInstalled = depStates["claude-agent-acp"]?.status === "installed";
-                    const codeAcpInstalled = depStates["claude-code-acp"]?.status === "installed";
-                    const needsUpgrade = !agentAcpInstalled && codeAcpInstalled;
-                    // Hide both claude-*-acp rows when user needs upgrade (show merged banner instead)
-                    // Hide deprecated claude-code-acp when claude-agent-acp is already installed
-                    const filteredAcpDeps = needsUpgrade
-                      ? acpDeps.filter((d) => d !== "claude-agent-acp" && d !== "claude-code-acp")
-                      : acpDeps.filter((d) => d !== "claude-code-acp");
-
-                    return (
-                      <>
-                        {/* ACP Adapter Divider + Section */}
-                        <div className="flex items-center gap-3 mt-4 mb-2">
-                          <div className="flex-1 h-px bg-[var(--color-border)]" />
-                          <span className="text-xs font-medium text-[var(--color-text-muted)] uppercase tracking-wider select-none">ACP Adapter</span>
-                          <div className="flex-1 h-px bg-[var(--color-border)]" />
-                        </div>
-                        <div className="space-y-2">
-                          {needsUpgrade && (
-                            <div className="flex items-center justify-between p-3 rounded-lg border border-[var(--color-warning)]/30 bg-[var(--color-warning)]/5">
-                              <div className="flex items-center gap-3">
-                                <AlertCircle className="w-4 h-4 text-[var(--color-warning)]" />
-                                <div>
-                                  <div className="font-medium text-sm text-[var(--color-text)] select-none">Claude Agent ACP</div>
-                                  <div className="text-xs text-[var(--color-warning)] select-none">
-                                    <code className="text-[11px]">claude-code-acp</code> has been renamed to <code className="text-[11px]">claude-agent-acp</code> — please upgrade
-                                  </div>
-                                </div>
-                              </div>
-                              <div title="Copy: npm install -g @agentclientprotocol/claude-agent-acp" onClick={(e) => e.stopPropagation()}>
-                                <Button
-                                  variant="ghost"
-                                  size="sm"
-                                  onClick={() => handleCopy("upgrade-acp", "npm install -g @agentclientprotocol/claude-agent-acp")}
-                                >
-                                  {copiedField === "upgrade-acp" ? (
-                                    <Check className="w-4 h-4 text-[var(--color-success)]" />
-                                  ) : (
-                                    <Copy className="w-4 h-4" />
-                                  )}
-                                </Button>
-                              </div>
-                            </div>
-                          )}
-                          {filteredAcpDeps.map((d) => renderDepRow(d, { interactive: false }))}
-                        </div>
-                      </>
-                    );
-                  })()}
-                </>
-              );
-            })()}
-          </div>
-        </Section>
-
-        {/* Development Tools Section (NEW - merged Agent + IDE + Terminal) */}
+        {/* General Section (IDE + Terminal App) */}
         <Section
           id="devtools"
-          title="Development Tools"
-          description="Configure your coding agent, IDE, and terminal"
+          title="General"
+          description="Default IDE and terminal application"
           icon={Wrench}
           iconColor="var(--color-highlight)"
           isOpen={openSections.devtools}
           onToggle={() => toggleSection("devtools")}
         >
           <div className="space-y-6">
-            {/* Terminal Coding Agent (仅当 Terminal 启用时显示) */}
-            {enableTerminal && (
-              <div>
-                <div className="flex items-center gap-2 mb-3 select-none">
-                  <Sparkles className="w-4 h-4 text-[var(--color-warning)]" />
-                  <span className="text-sm font-medium text-[var(--color-text)]">Terminal Coding Agent</span>
-                </div>
-                <AgentPicker
-                  value={agentCommand}
-                  onChange={setAgentCommand}
-                  options={terminalAgentOptions}
-                  allowCustom={true}
-                  placeholder="Select agent..."
-                />
-              </div>
-            )}
-
-            {/* Chat Coding Agent (仅当 Chat 启用时显示) */}
-            {enableChat && (
-              <div>
-                <div className="flex items-center gap-2 mb-3 select-none">
-                  <MessageSquare className="w-4 h-4 text-[var(--color-info)]" />
-                  <span className="text-sm font-medium text-[var(--color-text)]">Chat Coding Agent</span>
-                </div>
-                <AgentPicker
-                  value={acpAgent}
-                  onChange={setAcpAgent}
-                  options={chatAgentOptions}
-                  allowCustom={false}
-                  placeholder="Select agent..."
-                  customAgents={customAgents}
-                  onManageCustomAgents={() => setShowCustomAgentModal(true)}
-                />
-              </div>
-            )}
-
             {/* Default IDE */}
             <div>
               <div className="flex items-center gap-2 mb-3 select-none">
@@ -1296,12 +1215,12 @@ env_vars = [
           </div>
         </Section>
 
-        {/* Task Layout Section (仅当 Terminal 启用时显示) */}
-        {enableTerminal && (
+        {/* Terminal Layout Section (仅当 Multiplexer 模式时显示) */}
+        {webTerminalMode === "multiplexer" && (
           <>
             <Section
               id="layout"
-              title="Task Layout"
+              title="Terminal Layout"
               description="Default pane layout for new tasks"
               icon={LayoutGrid}
               iconColor="var(--color-info)"

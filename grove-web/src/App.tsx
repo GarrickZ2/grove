@@ -97,10 +97,8 @@ function AppContent() {
         let needsUpdate = false;
         const updates: { layout?: { agent_command?: string }, acp?: { agent_command?: string } } = {};
 
-        // Check Terminal Agent (if enabled)
-        const isTerminalEnabled = cfg.enable_terminal;
-
-        if (isTerminalEnabled && cfg.layout?.agent_command) {
+        // Check Terminal Agent
+        if (cfg.layout?.agent_command) {
           const currentAgent = agentOptions.find(a => a.id === cfg.layout.agent_command);
           const cmd = currentAgent?.terminalCheck;
           if (cmd && commandAvailability[cmd] === false) {
@@ -116,10 +114,8 @@ function AppContent() {
           }
         }
 
-        // Check Chat Agent (if enabled)
-        const isChatEnabled = cfg.enable_chat;
-
-        if (isChatEnabled && cfg.acp?.agent_command) {
+        // Check Chat Agent
+        if (cfg.acp?.agent_command) {
           const currentAgent = agentOptions.find(a => a.id === cfg.acp.agent_command);
           const cmd = currentAgent?.acpCheck;
           if (cmd && commandAvailability[cmd] === false) {

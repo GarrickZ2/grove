@@ -53,10 +53,11 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
         checkCommands([...acpCheckCmds]),
       ]);
 
-      // Terminal: tmux or zellij installed
+      // Terminal: direct mode always available, or tmux/zellij installed
+      const isDirectMode = cfg?.web?.terminal_mode === 'direct';
       const tmux = envResult.dependencies.find(d => d.name === 'tmux')?.installed ?? false;
       const zellij = envResult.dependencies.find(d => d.name === 'zellij')?.installed ?? false;
-      setTerminalAvailable(tmux || zellij);
+      setTerminalAvailable(isDirectMode || tmux || zellij);
 
       // Chat: at least one ACP agent command exists (primary or fallback) OR custom agents configured
       const hasAnyAcp = agentOptions
@@ -78,10 +79,11 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
     try {
       const cfg = await getConfig();
       setConfig(cfg);
+      await checkAvailability(cfg);
     } catch (error) {
       console.error('Failed to refresh config:', error);
     }
-  }, []);
+  }, [checkAvailability]);
 
   useEffect(() => {
     loadConfig().then(cfg => checkAvailability(cfg));

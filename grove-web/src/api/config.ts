@@ -19,6 +19,8 @@ export interface LayoutConfig {
 export interface WebConfig {
   ide?: string;
   terminal?: string;
+  /** Web terminal backend: "multiplexer" (default) | "direct" */
+  terminal_mode?: string;
 }
 
 export interface AutoLinkConfig {
@@ -44,8 +46,6 @@ export interface Config {
   theme: ThemeConfig;
   layout: LayoutConfig;
   web: WebConfig;
-  enable_terminal: boolean;
-  enable_chat: boolean;
   terminal_multiplexer: string; // "tmux" | "zellij"
   auto_link: AutoLinkConfig;
   acp: AcpConfig;
@@ -55,8 +55,6 @@ interface ConfigPatch {
   theme?: Partial<ThemeConfig>;
   layout?: Partial<LayoutConfig>;
   web?: Partial<WebConfig>;
-  enable_terminal?: boolean;
-  enable_chat?: boolean;
   terminal_multiplexer?: string;
   auto_link?: Partial<AutoLinkConfig>;
   acp?: Partial<AcpConfig>;

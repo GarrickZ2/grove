@@ -200,7 +200,7 @@ export const FlexLayoutContainer = forwardRef<
   FlexLayoutContainerHandle,
   FlexLayoutContainerProps
 >(({ task, projectId, initialLayout, onLayoutChange, fullscreen = false, onToggleFullscreen }, ref) => {
-  const { config, terminalAvailable, chatAvailable } = useConfig();
+  const { terminalAvailable, chatAvailable } = useConfig();
 
   // Panel instance counters
   const instanceCounters = useRef<Record<PanelType, number>>({
@@ -600,11 +600,11 @@ export const FlexLayoutContainer = forwardRef<
   // Build dropdown items for [+] Add Panel button
   const addPanelItems = useCallback((): DropdownItem[] => {
     const items: DropdownItem[] = [];
-    if (config?.enable_chat) {
-      items.push({ id: 'chat', label: 'Chat', icon: MessageSquare, onClick: () => addPanel('chat'), shortcut: 'i', disabled: !chatAvailable });
+    if (chatAvailable) {
+      items.push({ id: 'chat', label: 'Chat', icon: MessageSquare, onClick: () => addPanel('chat'), shortcut: 'i' });
     }
-    if (config?.enable_terminal) {
-      items.push({ id: 'terminal', label: 'Terminal', icon: Terminal, onClick: () => addPanel('terminal'), shortcut: 't', disabled: !terminalAvailable });
+    if (terminalAvailable) {
+      items.push({ id: 'terminal', label: 'Terminal', icon: Terminal, onClick: () => addPanel('terminal'), shortcut: 't' });
     }
     items.push(
       { id: 'review', label: 'Review', icon: Code, onClick: () => addPanel('review'), shortcut: 'r' },
@@ -615,7 +615,7 @@ export const FlexLayoutContainer = forwardRef<
       { id: 'comments', label: 'Comments', icon: MessageCircle, onClick: () => addPanel('comments') },
     );
     return items;
-  }, [config, chatAvailable, terminalAvailable, addPanel]);
+  }, [chatAvailable, terminalAvailable, addPanel]);
 
   // Custom TabSet rendering ([+] add panel + maximize button)
   const onRenderTabSet = useCallback((tabSetNode: TabSetNode | BorderNode, renderValues: ITabSetRenderValues) => {
@@ -811,12 +811,12 @@ export const FlexLayoutContainer = forwardRef<
               Open a panel to get started
             </p>
             <div className="flex items-center gap-2">
-              {config?.enable_chat && chatAvailable && (
+              {chatAvailable && (
                 <button onClick={() => addPanel('chat')} className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md border border-[var(--color-border)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-bg-tertiary)] transition-colors">
                   <MessageSquare size={13} /> Chat
                 </button>
               )}
-              {config?.enable_terminal && terminalAvailable && (
+              {terminalAvailable && (
                 <button onClick={() => addPanel('terminal')} className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md border border-[var(--color-border)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-bg-tertiary)] transition-colors">
                   <Terminal size={13} /> Terminal
                 </button>

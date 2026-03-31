@@ -431,42 +431,45 @@ async fn handle_acp_ws(socket: WebSocket, session_key: String, config: AcpStartC
             let cid = persist_cid?;
             acp::read_session_metadata(&persist_proj, &persist_tsk, &cid)
         })();
-        let meta_msg = meta.clone().map(|meta| {
-            let info = handle.agent_info.read().ok().and_then(|i| i.clone());
-            let (sid, _name, _ver) = info.unwrap_or_default();
-            ServerMessage::SessionReady {
-                session_id: sid,
-                agent_name: meta.agent_name,
-                agent_version: meta.agent_version,
-                available_modes: meta
-                    .available_modes
-                    .into_iter()
-                    .map(|(id, name)| ModeOption { id, name })
-                    .collect(),
-                current_mode_id: meta.current_mode_id,
-                available_models: meta
-                    .available_models
-                    .into_iter()
-                    .map(|(id, name)| ModelOption { id, name })
-                    .collect(),
-                current_model_id: meta.current_model_id,
-                prompt_capabilities: meta.prompt_capabilities,
-            }
-        }).unwrap_or_else(|| {
-            // Fallback: metadata missing or corrupt — send minimal SessionReady with defaults
-            let info = handle.agent_info.read().ok().and_then(|i| i.clone());
-            let (sid, name, ver) = info.unwrap_or_default();
-            ServerMessage::SessionReady {
-                session_id: sid,
-                agent_name: name,
-                agent_version: ver,
-                available_modes: Vec::new(),
-                current_mode_id: None,
-                available_models: Vec::new(),
-                current_model_id: None,
-                prompt_capabilities: PromptCapabilitiesData::default(),
-            }
-        });
+        let meta_msg = meta
+            .clone()
+            .map(|meta| {
+                let info = handle.agent_info.read().ok().and_then(|i| i.clone());
+                let (sid, _name, _ver) = info.unwrap_or_default();
+                ServerMessage::SessionReady {
+                    session_id: sid,
+                    agent_name: meta.agent_name,
+                    agent_version: meta.agent_version,
+                    available_modes: meta
+                        .available_modes
+                        .into_iter()
+                        .map(|(id, name)| ModeOption { id, name })
+                        .collect(),
+                    current_mode_id: meta.current_mode_id,
+                    available_models: meta
+                        .available_models
+                        .into_iter()
+                        .map(|(id, name)| ModelOption { id, name })
+                        .collect(),
+                    current_model_id: meta.current_model_id,
+                    prompt_capabilities: meta.prompt_capabilities,
+                }
+            })
+            .unwrap_or_else(|| {
+                // Fallback: metadata missing or corrupt — send minimal SessionReady with defaults
+                let info = handle.agent_info.read().ok().and_then(|i| i.clone());
+                let (sid, name, ver) = info.unwrap_or_default();
+                ServerMessage::SessionReady {
+                    session_id: sid,
+                    agent_name: name,
+                    agent_version: ver,
+                    available_modes: Vec::new(),
+                    current_mode_id: None,
+                    available_models: Vec::new(),
+                    current_model_id: None,
+                    prompt_capabilities: PromptCapabilitiesData::default(),
+                }
+            });
         if let Ok(json) = serde_json::to_string(&meta_msg) {
             let _ = ws_sender.send(Message::Text(json.into())).await;
         }

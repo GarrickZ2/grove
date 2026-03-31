@@ -19,8 +19,157 @@
 //! ```
 
 use crate::error::{GroveError, Result};
-use crate::storage::{self, notes, tasks};
-use crate::{git, hooks, session};
+use crate::session::SessionType;
+use crate::storage::{self, config, notes, tasks};
+use crate::tmux::layout::{parse_custom_layout_tree, CustomLayout, TaskLayout};
+use crate::{git, hooks, session, tmux};
+
+/// Result of `create_task_session` — everything the caller needs to attach
+#[derive(Debug, Clone)]
+pub struct SessionInfo {
+    pub session_type: SessionType,
+    pub session_name: String,
+    pub is_new: bool,
+    pub layout_path: Option<String>,
+}
+
+/// Create (or find existing) task session.
+///
+/// This is the single source of truth for session creation, shared by TUI and Web.
+/// - Session name is always computed from `project_key + task.id` (deterministic)
+/// - First checks if the stored multiplexer's session is still alive → attach
+/// - If not alive, reads current config to create a new session
+/// - Persists `task.multiplexer` + `task.session_name` back to storage (best effort)
+pub fn create_task_session(
+    project_key: &str,
+    task: &tasks::Task,
+    project_path: &str,
+) -> Result<SessionInfo> {
+    // 1. Compute session name deterministically
+    let session_name = session::session_name(project_key, &task.id);
+
+    // 2. Check if stored multiplexer's session is still alive
+    let stored_mux = match task.multiplexer.as_str() {
+        "tmux" => Some(SessionType::Tmux),
+        "zellij" => Some(SessionType::Zellij),
+        _ => None,
+    };
+    if let Some(ref mux) = stored_mux {
+        if session::session_exists(mux, &session_name) {
+            return Ok(SessionInfo {
+                session_type: mux.clone(),
+                session_name,
+                is_new: false,
+                layout_path: None,
+            });
+        }
+    }
+
+    // 3. Stored session not alive → read config to decide what to create
+    let cfg = config::load_config();
+    let session_type = match cfg.terminal_multiplexer {
+        config::TerminalMultiplexer::Tmux => SessionType::Tmux,
+        config::TerminalMultiplexer::Zellij => SessionType::Zellij,
+    };
+
+    // 4. Build session environment
+    let project_name = std::path::Path::new(project_path)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("unknown");
+
+    let session_env = tmux::SessionEnv {
+        task_id: task.id.clone(),
+        task_name: task.name.clone(),
+        branch: task.branch.clone(),
+        target: task.target.clone(),
+        worktree: task.worktree_path.clone(),
+        project_name: project_name.to_string(),
+        project_path: project_path.to_string(),
+    };
+
+    // 5. Create session
+    session::create_session(
+        &session_type,
+        &session_name,
+        &task.worktree_path,
+        Some(&session_env),
+    )?;
+
+    // 6. Apply layout
+    let layout = TaskLayout::from_name(&cfg.layout.default).unwrap_or(TaskLayout::Single);
+    let agent_cmd = cfg.layout.agent_command.clone().unwrap_or_default();
+    let custom_layout = if layout == TaskLayout::Custom {
+        cfg.layout.custom.as_ref().and_then(|c| {
+            parse_custom_layout_tree(&c.tree, cfg.layout.selected_custom_id.as_deref())
+                .map(|root| CustomLayout { root })
+        })
+    } else {
+        None
+    };
+
+    let mut layout_path: Option<String> = None;
+    match session_type {
+        SessionType::Tmux => {
+            if layout != TaskLayout::Single {
+                if let Err(e) = tmux::layout::apply_layout(
+                    &session_name,
+                    &task.worktree_path,
+                    &layout,
+                    &agent_cmd,
+                    custom_layout.as_ref(),
+                ) {
+                    eprintln!("Warning: Failed to apply layout: {}", e);
+                }
+            }
+        }
+        SessionType::Zellij => {
+            let kdl = crate::zellij::layout::generate_kdl(
+                &layout,
+                &agent_cmd,
+                custom_layout.as_ref(),
+                &session_env.shell_export_prefix(),
+            );
+            match crate::zellij::layout::write_session_layout(&session_name, &kdl) {
+                Ok(path) => layout_path = Some(path),
+                Err(e) => eprintln!("Warning: Failed to write zellij layout: {}", e),
+            }
+        }
+        SessionType::Acp => {}
+    }
+
+    // 7. Persist task session data (best effort)
+    persist_task_session(project_key, &task.id, &session_type, &session_name);
+
+    Ok(SessionInfo {
+        session_type,
+        session_name,
+        is_new: true,
+        layout_path,
+    })
+}
+
+/// Best-effort persist of multiplexer + session_name to task storage
+fn persist_task_session(
+    project_key: &str,
+    task_id: &str,
+    session_type: &SessionType,
+    session_name: &str,
+) {
+    let mux_str = match session_type {
+        SessionType::Tmux => "tmux",
+        SessionType::Zellij => "zellij",
+        SessionType::Acp => "acp",
+    };
+    if let Ok(mut all_tasks) = tasks::load_tasks(project_key) {
+        if let Some(t) = all_tasks.iter_mut().find(|t| t.id == task_id) {
+            t.multiplexer = mux_str.to_string();
+            t.session_name = session_name.to_string();
+            t.updated_at = chrono::Utc::now();
+            let _ = tasks::save_tasks(project_key, &all_tasks);
+        }
+    }
+}
 
 /// Merge method selection
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

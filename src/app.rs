@@ -1444,64 +1444,31 @@ impl App {
         let wt_target = wt.target.clone();
         let wt_path = wt.path.clone();
 
-        // 从 task 记录获取 multiplexer、session_name 和 task_modes
+        // 从 task 记录获取 task 数据
         let task_data = tasks::get_task(&self.project.project_key, &wt_id)
             .ok()
             .flatten();
-        let task_mux = task_data
-            .as_ref()
-            .map(|t| t.multiplexer.clone())
-            .unwrap_or_default();
-        let task_session_name = task_data
-            .as_ref()
-            .map(|t| t.session_name.clone())
-            .unwrap_or_default();
+        let Some(task) = task_data else {
+            self.show_toast("Task not found");
+            return;
+        };
 
-        // TUI always uses Terminal mode (根据 task.multiplexer 决定 tmux/zellij)
-        let mux = session::resolve_session_type(&task_mux);
-        let session =
-            session::resolve_session_name(&task_session_name, &self.project.project_key, &wt_id);
-
-        // 4. 如果 session 不存在，创建它
-        let mut layout_path: Option<String> = None;
-        if !session::session_exists(&mux, &session) {
-            let session_env =
-                self.build_session_env(&wt_id, &wt_task_name, &wt_branch, &wt_target, &wt_path);
-            if let Err(e) = session::create_session(&mux, &session, &wt_path, Some(&session_env)) {
+        // 4. 使用共享的 create_task_session（读 config、检查存在、创建、持久化）
+        let session_info = match crate::operations::tasks::create_task_session(
+            &self.project.project_key,
+            &task,
+            &self.project.project_path,
+        ) {
+            Ok(info) => info,
+            Err(e) => {
                 self.show_toast(format!("Session error: {}", e));
                 return;
             }
+        };
 
-            // 应用布局
-            match mux {
-                SessionType::Tmux => {
-                    if self.config.task_layout != TaskLayout::Single {
-                        if let Err(e) = tmux::layout::apply_layout(
-                            &session,
-                            &wt_path,
-                            &self.config.task_layout,
-                            &self.config.agent_command,
-                            self.config.custom_layout.as_ref(),
-                        ) {
-                            self.show_toast(format!("Layout: {}", e));
-                        }
-                    }
-                }
-                SessionType::Zellij => {
-                    let kdl = crate::zellij::layout::generate_kdl(
-                        &self.config.task_layout,
-                        &self.config.agent_command,
-                        self.config.custom_layout.as_ref(),
-                        &session_env.shell_export_prefix(),
-                    );
-                    match crate::zellij::layout::write_session_layout(&session, &kdl) {
-                        Ok(path) => layout_path = Some(path),
-                        Err(e) => self.show_toast(format!("Layout: {}", e)),
-                    }
-                }
-                SessionType::Acp => {} // ACP 不需要布局
-            }
-        }
+        let mux = session_info.session_type;
+        let session = session_info.session_name;
+        let layout_path = session_info.layout_path;
 
         // 5. 清除该任务的通知标记
         self.remove_notification(&wt_id);

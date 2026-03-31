@@ -1,6 +1,7 @@
 import { Children, isValidElement } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { VSCodeIcon } from "./VSCodeIcon";
 
 // Match file paths like `path/to/file.ext` or `path/to/file.ext:123`
 // Must contain at least one `/` and end with a known extension (optionally followed by `:line`)
@@ -14,6 +15,43 @@ interface MarkdownRendererProps {
   content: string;
   /** When provided, inline code matching file path patterns become clickable */
   onFileClick?: (filePath: string, line?: number) => void;
+}
+
+/** Extract filename from a full file path */
+function getFileName(filePath: string): string {
+  const parts = filePath.split("/");
+  return parts[parts.length - 1];
+}
+
+/** Render an inline file chip with VSCode icon */
+function FileChip({
+  filePath,
+  line,
+  onClick,
+}: {
+  filePath: string;
+  line?: number;
+  onClick: () => void;
+}) {
+  const fileName = getFileName(filePath);
+  const lineLabel = line ? `:${line}` : "";
+  return (
+    <button
+      type="button"
+      onClick={(e) => { e.preventDefault(); e.stopPropagation(); onClick(); }}
+      className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium cursor-pointer
+        bg-[color-mix(in_srgb,var(--color-bg-secondary)_80%,var(--color-bg))]
+        text-[var(--color-highlight)]
+        border border-[color-mix(in_srgb,var(--color-border)_65%,transparent)]
+        hover:bg-[color-mix(in_srgb,var(--color-highlight)_12%,var(--color-bg-secondary))]
+        hover:border-[color-mix(in_srgb,var(--color-highlight)_30%,var(--color-border))]
+        transition-colors align-middle"
+      title={`Open ${filePath}${line ? ` at line ${line}` : ""}`}
+    >
+      <VSCodeIcon filename={fileName} size={13} />
+      <span>{fileName}{lineLabel}</span>
+    </button>
+  );
 }
 
 /** Extract plain text from React children recursively */
@@ -81,14 +119,11 @@ export function MarkdownRenderer({ content, onFileClick }: MarkdownRendererProps
               const textMatch = text.match(FILE_PATH_RE);
               const finalLine = line ?? (textMatch?.[2] ? parseInt(textMatch[2], 10) : undefined);
               return (
-                <a
-                  href="#"
-                  onClick={(e) => { e.preventDefault(); e.stopPropagation(); onFileClick(filePath, finalLine); }}
-                  className="text-[var(--color-highlight)] hover:underline cursor-pointer"
-                  title={`Open ${filePath}${finalLine ? ` at line ${finalLine}` : ''}`}
-                >
-                  {children}
-                </a>
+                <FileChip
+                  filePath={filePath}
+                  line={finalLine}
+                  onClick={() => onFileClick(filePath, finalLine)}
+                />
               );
             }
           }
@@ -129,13 +164,11 @@ export function MarkdownRenderer({ content, onFileClick }: MarkdownRendererProps
               const filePath = match[1];
               const line = match[2] ? parseInt(match[2], 10) : undefined;
               return (
-                <code
-                  className="px-1 py-0.5 rounded bg-[var(--color-bg-tertiary)] text-[var(--color-highlight)] text-xs font-mono cursor-pointer hover:underline hover:brightness-125 transition-all"
-                  onClick={(e) => { e.stopPropagation(); onFileClick(filePath, line); }}
-                  title={`Open ${filePath}${line ? ` at line ${line}` : ''}`}
-                >
-                  {children}
-                </code>
+                <FileChip
+                  filePath={filePath}
+                  line={line}
+                  onClick={() => onFileClick(filePath, line)}
+                />
               );
             }
           }
