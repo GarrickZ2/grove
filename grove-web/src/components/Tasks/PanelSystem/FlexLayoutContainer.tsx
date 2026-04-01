@@ -190,7 +190,8 @@ interface FlexLayoutContainerProps {
 export interface FlexLayoutContainerHandle {
   addPanel: (type: PanelType) => void;
   getModel: () => Model;
-  selectTabByIndex: (index: number) => void;
+  selectTabByIndex: (index: number) => "handled" | "no_tabs" | "out_of_range";
+  selectAdjacentTab: (delta: number) => boolean;
   closeActiveTab: () => void;
   /** Navigate to a file (optionally at a line) in the Review panel */
   navigateToFile: (filePath: string, line?: number, mode?: 'diff' | 'full') => void;
@@ -376,8 +377,10 @@ export const FlexLayoutContainer = forwardRef<
     focusPanelContent();
   }, [model, focusPanelContent, getAllTabs, createTabNode]);
 
-  // Select a tab by its visual index (0-based) across all tabsets
-  const selectTabByIndex = useCallback((index: number) => {
+  // Select a tab by its visual index (0-based) across all tabsets.
+  // Returns: "handled" if tab was selected, "no_tabs" if workspace has no tabs,
+  // "out_of_range" if index exceeds the number of open tabs.
+  const selectTabByIndex = useCallback((index: number): "handled" | "no_tabs" | "out_of_range" => {
     const tabs: TabNode[] = [];
     const visit = (node: FlexNode) => {
       if (node.getType() === 'tab') {
@@ -388,10 +391,31 @@ export const FlexLayoutContainer = forwardRef<
       }
     };
     visit(model.getRoot());
+    if (tabs.length === 0) return "no_tabs";
     if (index >= 0 && index < tabs.length) {
       model.doAction(Actions.selectTab(tabs[index].getId()));
       focusPanelContent();
+      return "handled";
     }
+    return "out_of_range";
+  }, [model, focusPanelContent]);
+
+  // Select next/previous tab relative to the current one (delta: +1 or -1)
+  const selectAdjacentTab = useCallback((delta: number): boolean => {
+    const tabs: TabNode[] = [];
+    const visit = (node: FlexNode) => {
+      if (node.getType() === 'tab') tabs.push(node as TabNode);
+      if (node.getChildren) node.getChildren().forEach(visit);
+    };
+    visit(model.getRoot());
+    if (tabs.length === 0) return false;
+    const activeTabset = model.getActiveTabset();
+    const selectedNode = activeTabset?.getSelectedNode();
+    const currentIndex = selectedNode ? tabs.findIndex(t => t.getId() === selectedNode.getId()) : -1;
+    const nextIndex = currentIndex === -1 ? 0 : (currentIndex + delta + tabs.length) % tabs.length;
+    model.doAction(Actions.selectTab(tabs[nextIndex].getId()));
+    focusPanelContent();
+    return true;
   }, [model, focusPanelContent]);
 
   // Close the currently active/selected tab
@@ -429,9 +453,10 @@ export const FlexLayoutContainer = forwardRef<
     addPanel,
     getModel: () => model,
     selectTabByIndex,
+    selectAdjacentTab,
     closeActiveTab,
     navigateToFile,
-  }), [addPanel, model, selectTabByIndex, closeActiveTab, navigateToFile]);
+  }), [addPanel, model, selectTabByIndex, selectAdjacentTab, closeActiveTab, navigateToFile]);
 
   // Context menu handlers
   const handleCloseTab = useCallback((tabId: string) => {

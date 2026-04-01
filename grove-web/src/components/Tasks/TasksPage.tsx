@@ -38,9 +38,14 @@ interface TasksPageProps {
   initialViewMode?: string;
   /** Callback when navigation data has been consumed */
   onNavigationConsumed?: () => void;
+  /** When true, auto-selects the Local task and enters workspace directly */
+  localMode?: boolean;
+  /** Fallback for Cmd+N navigation when workspace doesn't have a matching tab.
+   *  Called with (index, false) for absolute or (delta, true) for relative. */
+  onNavByIndex?: (indexOrDelta: number, relative?: boolean) => void;
 }
 
-export function TasksPage({ initialTaskId, initialViewMode, onNavigationConsumed }: TasksPageProps) {
+export function TasksPage({ initialTaskId, initialViewMode, onNavigationConsumed, localMode, onNavByIndex }: TasksPageProps) {
   const { selectedProject, refreshSelectedProject } = useProject();
 
   const { isMobile } = useIsMobile();
@@ -118,8 +123,9 @@ export function TasksPage({ initialTaskId, initialViewMode, onNavigationConsumed
   }, [filter, selectedProject]);
 
   // Get tasks for current project (combine active and archived)
+  // In normal mode, exclude local tasks (they have their own "Work" tab)
   const activeTasks = (selectedProject?.tasks || []).filter(
-    (t) => t.status !== "archived"
+    (t) => t.status !== "archived" && (!t.isLocal || localMode)
   );
   const tasks = filter === "archived" ? archivedTasks : activeTasks;
 
@@ -142,6 +148,21 @@ export function TasksPage({ initialTaskId, initialViewMode, onNavigationConsumed
     // Consume the navigation data so it doesn't re-trigger
     onNavigationConsumed?.();
   }, [initialTaskId, initialViewMode, activeTasks, pageState.selectedTask?.id, onNavigationConsumed, pageHandlers]);
+
+  // localMode: auto-select local task and lock into workspace mode.
+  // This intentionally re-enters workspace if anything sets inWorkspace=false,
+  // since localMode has no task list view — Back/Escape are disabled via onBack=undefined.
+  useEffect(() => {
+    if (!localMode) return;
+    const local = activeTasks.find((t) => t.isLocal);
+    if (!local) return;
+    if (pageState.selectedTask?.id !== local.id) {
+      pageHandlers.setSelectedTask(local);
+    }
+    if (!pageState.inWorkspace) {
+      pageHandlers.setInWorkspace(true);
+    }
+  }, [localMode, activeTasks, pageState.selectedTask?.id, pageState.inWorkspace, pageHandlers]);
 
   // Sync selectedTask with latest project data after refresh
   useEffect(() => {
@@ -305,11 +326,38 @@ export function TasksPage({ initialTaskId, initialViewMode, onNavigationConsumed
     if (!pageState.inWorkspace) return;
     const isTauri = !!((window as Window & { __TAURI__?: unknown }).__TAURI__);
     const handler = (e: KeyboardEvent) => {
-      // Cmd+1-9: switch panel tabs
-      if (e.metaKey && !e.altKey && !e.ctrlKey && e.key >= "1" && e.key <= "9") {
+      // Cmd+1-9: switch panel tabs.
+      // Fallback to sidebar navigation only when workspace has no tabs.
+      // When tabs exist but index is out of range, do nothing (user intended a tab switch).
+      if (e.metaKey && !e.altKey && !e.ctrlKey && !e.shiftKey && e.key >= "1" && e.key <= "9") {
+        const index = parseInt(e.key) - 1;
+        const result = taskViewRef.current?.selectTabByIndex(index) ?? "no_tabs";
+        if (result === "handled") {
+          e.preventDefault();
+          e.stopImmediatePropagation();
+        } else if (result === "no_tabs" && onNavByIndex) {
+          e.preventDefault();
+          e.stopImmediatePropagation();
+          onNavByIndex(index);
+        }
+        // "out_of_range": tabs exist but index exceeds count — do nothing
+        return;
+      }
+      // Cmd+Shift+Left/Right: switch workspace tabs
+      if (e.metaKey && e.shiftKey && !e.altKey && (e.code === "ArrowLeft" || e.code === "ArrowRight")) {
         e.preventDefault();
         e.stopImmediatePropagation();
-        taskViewRef.current?.selectTabByIndex(parseInt(e.key) - 1);
+        const delta = e.code === "ArrowRight" ? 1 : -1;
+        taskViewRef.current?.selectAdjacentTab(delta);
+        return;
+      }
+      // Option+Cmd+Up/Down: switch sidebar nav items
+      if (e.metaKey && e.altKey && (e.code === "ArrowUp" || e.code === "ArrowDown")) {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        if (onNavByIndex) {
+          onNavByIndex(e.code === "ArrowDown" ? 1 : -1, true);
+        }
         return;
       }
       // Close active tab: Cmd+W (Tauri) or Alt+W (web)
@@ -324,7 +372,7 @@ export function TasksPage({ initialTaskId, initialViewMode, onNavigationConsumed
     };
     window.addEventListener("keydown", handler, true);
     return () => window.removeEventListener("keydown", handler, true);
-  }, [pageState.inWorkspace]);
+  }, [pageState.inWorkspace, onNavByIndex]);
 
   // --- Register all hotkeys ---
   useHotkeys(
@@ -346,7 +394,7 @@ export function TasksPage({ initialTaskId, initialViewMode, onNavigationConsumed
       {
         key: "Escape",
         handler: pageHandlers.handleCloseTask,
-        options: { enabled: pageState.inWorkspace || hasTask },
+        options: { enabled: !localMode && (pageState.inWorkspace || hasTask) },
       },
 
       // Info panel tabs (only in Task List page, not in Workspace)
@@ -382,7 +430,7 @@ export function TasksPage({ initialTaskId, initialViewMode, onNavigationConsumed
       { key: "?", handler: () => pageHandlers.setShowHelp(!pageState.showHelp) },
     ],
     [
-      navHandlers, pageHandlers, opsHandlers, handleAddPanelFromInfo, refreshSelectedProject,
+      navHandlers, pageHandlers, opsHandlers, handleAddPanel, handleAddPanelFromInfo, refreshSelectedProject,
       pageState.inWorkspace, pageState.selectedTask, hasTask, isActive, isArchived, canOperate, notInWorkspace,
     ]
   );
@@ -513,7 +561,7 @@ export function TasksPage({ initialTaskId, initialViewMode, onNavigationConsumed
                       projectName={selectedProject.name}
                       fullscreen={isFullscreen}
                       onFullscreenChange={setIsFullscreen}
-                      onBack={handleMobileBack}
+                      onBack={localMode ? undefined : handleMobileBack}
                       onCommit={opsHandlers.handleCommit}
                       onRebase={opsHandlers.handleRebase}
                       onSync={opsHandlers.handleSync}
@@ -562,7 +610,7 @@ export function TasksPage({ initialTaskId, initialViewMode, onNavigationConsumed
                   onSelectTask={handleSelectTask}
                   onDoubleClickTask={handleDoubleClickTask}
                   onContextMenuTask={pageHandlers.handleContextMenu}
-                  onFilterChange={setFilter}
+                  onFilterChange={(f) => { setFilter(f); pageHandlers.setSelectedTask(null); pageHandlers.setInWorkspace(false); }}
                   onSearchChange={pageHandlers.setSearchQuery}
                   fullWidth
                 />
@@ -593,7 +641,7 @@ export function TasksPage({ initialTaskId, initialViewMode, onNavigationConsumed
                   onSelectTask={handleSelectTask}
                   onDoubleClickTask={handleDoubleClickTask}
                   onContextMenuTask={pageHandlers.handleContextMenu}
-                  onFilterChange={setFilter}
+                  onFilterChange={(f) => { setFilter(f); pageHandlers.setSelectedTask(null); pageHandlers.setInWorkspace(false); }}
                   onSearchChange={pageHandlers.setSearchQuery}
                 />
               </div>
@@ -669,7 +717,7 @@ export function TasksPage({ initialTaskId, initialViewMode, onNavigationConsumed
                     projectName={selectedProject.name}
                     fullscreen={isFullscreen}
                     onFullscreenChange={setIsFullscreen}
-                    onBack={pageHandlers.handleCloseTask}
+                    onBack={localMode ? undefined : pageHandlers.handleCloseTask}
                     onCommit={opsHandlers.handleCommit}
                     onRebase={opsHandlers.handleRebase}
                     onSync={opsHandlers.handleSync}

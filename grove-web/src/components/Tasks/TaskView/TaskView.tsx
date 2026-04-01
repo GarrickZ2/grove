@@ -122,7 +122,7 @@ interface TaskViewProps {
   projectName?: string;
   fullscreen?: boolean;
   onFullscreenChange?: (fullscreen: boolean) => void;
-  onBack: () => void;
+  onBack?: () => void;
   onCommit: () => void;
   onRebase: () => void;
   onSync: () => void;
@@ -134,7 +134,8 @@ interface TaskViewProps {
 
 export interface TaskViewHandle {
   addPanel: (type: PanelType) => void;
-  selectTabByIndex: (index: number) => void;
+  selectTabByIndex: (index: number) => "handled" | "no_tabs" | "out_of_range";
+  selectAdjacentTab: (delta: number) => boolean;
   closeActiveTab: () => void;
 }
 
@@ -164,7 +165,8 @@ export const TaskView = forwardRef<TaskViewHandle, TaskViewProps>((props, ref) =
 
   useImperativeHandle(ref, () => ({
     addPanel: handleAddPanel,
-    selectTabByIndex: (index: number) => layoutRef.current?.selectTabByIndex(index),
+    selectTabByIndex: (index: number) => layoutRef.current?.selectTabByIndex(index) ?? "no_tabs",
+    selectAdjacentTab: (delta: number) => layoutRef.current?.selectAdjacentTab(delta) ?? false,
     closeActiveTab: () => layoutRef.current?.closeActiveTab(),
   }), [handleAddPanel]);
 
@@ -200,15 +202,17 @@ export const TaskView = forwardRef<TaskViewHandle, TaskViewProps>((props, ref) =
       {!fullscreen && <div className="flex items-center h-9 px-3 gap-3 bg-[var(--color-bg)] border-b border-[var(--color-border)] shrink-0 select-none">
         {/* Left: Back + Breadcrumb + Branch */}
         <div className="flex items-center gap-2.5 min-w-0 text-[12.5px]">
-          {/* Back button */}
-          <button
-            onClick={onBack}
-            className="flex items-center gap-1 h-7 px-2 rounded-md text-[var(--color-text)]/50 hover:text-[var(--color-text)] hover:bg-[var(--color-bg-tertiary)] transition-colors shrink-0"
-            title="Back (Esc)"
-          >
-            <ArrowLeft size={13} />
-            <span className="text-xs font-medium">Back</span>
-          </button>
+          {/* Back button (hidden when onBack is not provided, e.g. localMode) */}
+          {onBack && (
+            <button
+              onClick={onBack}
+              className="flex items-center gap-1 h-7 px-2 rounded-md text-[var(--color-text)]/50 hover:text-[var(--color-text)] hover:bg-[var(--color-bg-tertiary)] transition-colors shrink-0"
+              title="Back (Esc)"
+            >
+              <ArrowLeft size={13} />
+              <span className="text-xs font-medium">Back</span>
+            </button>
+          )}
 
           {/* Breadcrumb: project › task (skip project for local tasks) */}
           <div className="flex items-center gap-1.5 min-w-0">

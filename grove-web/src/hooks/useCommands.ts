@@ -1,7 +1,9 @@
 import {
   LayoutGrid,
+  Laptop,
   ListTodo,
   Blocks,
+  Sparkles,
   BarChart2,
   Settings,
   FolderOpen,
@@ -93,8 +95,10 @@ export function buildCommands(options: UseCommandsOptions): Command[] {
       const { onNavigate } = navigation;
       commands.push(
         withRanking({ id: "nav-dashboard", name: "Go to Dashboard", category: "Navigation", icon: LayoutGrid, handler: () => onNavigate("dashboard"), keywords: ["home"] }, { contexts: { default: 28, tasks: 4, workspace: -8 } }),
+        withRanking({ id: "nav-work", name: "Go to Work", category: "Navigation", icon: Laptop, handler: () => onNavigate("work"), keywords: ["local", "workspace", "main"] }, { contexts: { default: 52, tasks: 12, workspace: 4 } }),
         withRanking({ id: "nav-tasks", name: "Go to Tasks", category: "Navigation", icon: ListTodo, handler: () => onNavigate("tasks"), keywords: ["zen"] }, { contexts: { default: 48, tasks: 8, workspace: 0 } }),
         withRanking({ id: "nav-skills", name: "Go to Skills", category: "Navigation", icon: Blocks, handler: () => onNavigate("skills"), keywords: ["agent", "plugin"] }, { contexts: { default: 12, tasks: -8, workspace: -12 } }),
+        withRanking({ id: "nav-ai", name: "Go to AI", category: "Navigation", icon: Sparkles, handler: () => onNavigate("ai"), keywords: ["audio", "voice", "provider"] }, { contexts: { default: 14, tasks: -4, workspace: -8 } }),
         withRanking({ id: "nav-statistics", name: "Go to Statistics", category: "Navigation", icon: BarChart2, handler: () => onNavigate("statistics"), keywords: ["stats", "analytics"] }, { contexts: { default: 10, tasks: -6, workspace: -10 } }),
         withRanking({ id: "nav-settings", name: "Go to Settings", category: "Navigation", icon: Settings, handler: () => onNavigate("settings"), keywords: ["config", "preferences"] }, { contexts: { default: 8, tasks: -4, workspace: -8 } }),
         withRanking({ id: "nav-projects", name: "Go to Projects", category: "Navigation", icon: FolderOpen, handler: () => onNavigate("projects"), keywords: ["manage"] }, { contexts: { default: 24, tasks: 4, workspace: 8 } }),

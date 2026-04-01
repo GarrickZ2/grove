@@ -29,6 +29,10 @@ import type { UseCommandsOptions } from "./hooks/useCommands";
 
 export type TasksMode = "zen" | "blitz";
 
+// Main sidebar nav items for Cmd+1-6 and Option+Cmd+Up/Down cycling.
+// "settings" and "projects" are excluded as they are utility pages, not part of the main nav cycle.
+const NAV_ITEMS = ["dashboard", "work", "tasks", "skills", "ai", "statistics"] as const;
+
 function AppContent() {
   const [activeItem, setActiveItem] = useState("dashboard");
   const [tasksMode, setTasksMode] = useState<TasksMode>("zen");
@@ -50,13 +54,23 @@ function AppContent() {
   } = useCommandPalette();
   const { theme } = useTheme();
 
-  const NAV_ITEMS = ["dashboard", "tasks", "skills", "ai", "statistics"] as const;
   const setActiveNavItem = (index: number) => {
     const nextItem = NAV_ITEMS[index];
     if (nextItem) {
       setActiveItem(nextItem);
     }
   };
+  // Navigate sidebar by absolute index or relative delta (based on current active item)
+  const navigateSidebar = useCallback((indexOrDelta: number, relative?: boolean) => {
+    if (relative) {
+      const currentIndex = NAV_ITEMS.indexOf(activeItem as typeof NAV_ITEMS[number]);
+      const nextIndex = (currentIndex + indexOrDelta + NAV_ITEMS.length) % NAV_ITEMS.length;
+      setActiveItem(NAV_ITEMS[nextIndex]);
+    } else {
+      const nextItem = NAV_ITEMS[indexOrDelta];
+      if (nextItem) setActiveItem(nextItem);
+    }
+  }, [activeItem]);
 
   const isZenMode = tasksMode === "zen";
 
@@ -71,7 +85,10 @@ function AppContent() {
     { key: "Meta+3", handler: () => setActiveNavItem(2), options: { enabled: isZenMode && !inWorkspace } },
     { key: "Meta+4", handler: () => setActiveNavItem(3), options: { enabled: isZenMode && !inWorkspace } },
     { key: "Meta+5", handler: () => setActiveNavItem(4), options: { enabled: isZenMode && !inWorkspace } },
-  ], [openCommandPalette, openProjectPalette, openTaskPalette, isZenMode, inWorkspace]);
+    { key: "Meta+6", handler: () => setActiveNavItem(5), options: { enabled: isZenMode && !inWorkspace } },
+    { key: "Meta+Alt+ArrowUp", handler: () => navigateSidebar(-1, true), options: { enabled: isZenMode && !inWorkspace } },
+    { key: "Meta+Alt+ArrowDown", handler: () => navigateSidebar(1, true), options: { enabled: isZenMode && !inWorkspace } },
+  ], [openCommandPalette, openProjectPalette, openTaskPalette, isZenMode, inWorkspace, navigateSidebar]);
 
   const handleSwitchToZen = useCallback(() => {
     setTasksMode("zen");
@@ -202,8 +219,12 @@ function AppContent() {
 
   // Task palette: navigate to tasks page and select the task
   const handleTaskSelectFromPalette = useCallback((task: Task) => {
-    setActiveItem("tasks");
-    setNavigationData({ taskId: task.id });
+    if (task.isLocal) {
+      setActiveItem("work");
+    } else {
+      setActiveItem("tasks");
+      setNavigationData({ taskId: task.id });
+    }
   }, []);
 
   // Register global commands for the command palette
@@ -274,12 +295,16 @@ function AppContent() {
         return <DashboardPage onNavigate={handleNavigate} />;
       case "projects":
         return <ProjectsPage onNavigate={setActiveItem} />;
+      case "work":
+        return <TasksPage key="work" localMode onNavByIndex={navigateSidebar} />;
       case "tasks":
         return (
           <TasksPage
+            key="tasks"
             initialTaskId={navigationData?.taskId as string | undefined}
             initialViewMode={navigationData?.viewMode as string | undefined}
             onNavigationConsumed={() => setNavigationData(null)}
+            onNavByIndex={navigateSidebar}
           />
         );
       case "skills":
@@ -306,7 +331,7 @@ function AppContent() {
     }
   };
 
-  const isFullWidthPage = activeItem === "tasks" || activeItem === "skills" || activeItem === "ai";
+  const isFullWidthPage = activeItem === "tasks" || activeItem === "work" || activeItem === "skills" || activeItem === "ai";
 
   const sidebarProps = {
     activeItem,

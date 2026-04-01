@@ -3,6 +3,7 @@ import { motion } from "framer-motion";
 import {
   Settings,
   LayoutGrid,
+  Laptop,
   ListTodo,
   Blocks,
   Sparkles,
@@ -28,6 +29,7 @@ interface NavItem {
 
 const navItems: NavItem[] = [
   { id: "dashboard", label: "Dashboard", icon: LayoutGrid },
+  { id: "work", label: "Work", icon: Laptop },
   { id: "tasks", label: "Tasks", icon: ListTodo },
   { id: "skills", label: "Skills", icon: Blocks },
   { id: "ai", label: "AI", icon: Sparkles },
