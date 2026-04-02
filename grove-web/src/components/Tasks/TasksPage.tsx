@@ -351,11 +351,11 @@ export function TasksPage({ initialTaskId, initialViewMode, onNavigationConsumed
         // "out_of_range": tabs exist but index exceeds count — do nothing
         return;
       }
-      // Cmd+Shift+Left/Right: switch workspace tabs
-      if (e.metaKey && e.shiftKey && !e.altKey && (e.code === "ArrowLeft" || e.code === "ArrowRight")) {
+      // Cmd+Shift+[/]: switch workspace tabs
+      if (e.metaKey && e.shiftKey && !e.altKey && (e.key === "[" || e.key === "]")) {
         e.preventDefault();
         e.stopImmediatePropagation();
-        const delta = e.code === "ArrowRight" ? 1 : -1;
+        const delta = e.key === "]" ? 1 : -1;
         taskViewRef.current?.selectAdjacentTab(delta);
         return;
       }

@@ -38,6 +38,7 @@ const SHORTCUT_GROUPS: ShortcutGroup[] = [
     title: "Workspace",
     entries: [
       { keys: ["\u23181-9"], description: "Switch panel tab" },
+      { keys: ["\u2318\u21E7[", "\u2318\u21E7]"], description: "Previous / next tab" },
       { keys: ["\u2318W", "\u2325W"], description: "Close active tab" },
     ],
   },

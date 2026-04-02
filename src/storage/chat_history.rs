@@ -538,6 +538,7 @@ mod tests {
                 text: "hello".into(),
                 attachments: vec![],
                 sender: None,
+                terminal: false,
             },
             AcpUpdate::MessageChunk { text: "hi".into() },
             AcpUpdate::Complete {

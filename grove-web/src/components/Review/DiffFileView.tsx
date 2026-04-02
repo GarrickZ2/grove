@@ -374,7 +374,7 @@ export function DiffFileView({
         if (entries[0].isIntersecting) {
           onVisible?.();
           // Trigger full file load when in full mode
-          if (viewMode === 'full' && !fullFileContent && !isLoadingFullFile && onRequestFullFile) {
+          if (viewMode === 'full' && fullFileContent == null && !isLoadingFullFile && onRequestFullFile) {
             onRequestFullFile(file.new_path);
           }
         }
@@ -389,7 +389,7 @@ export function DiffFileView({
   useEffect(() => {
     if (!isPreviewOpen || viewMode !== 'full') return;
     if (file.is_binary) return;
-    if (fullFileContent || isLoadingFullFile || !onRequestFullFile) return;
+    if (fullFileContent != null || isLoadingFullFile || !onRequestFullFile) return;
     onRequestFullFile(file.new_path);
   }, [isPreviewOpen, viewMode, file.is_binary, fullFileContent, isLoadingFullFile, onRequestFullFile, file.new_path]);
 
@@ -1073,7 +1073,7 @@ export function DiffFileView({
               ) : viewMode === 'full' ? (
                 isLoadingFullFile ? (
                   <div className="diff-loading">Loading full file...</div>
-                ) : fullFileContent ? (
+                ) : fullFileContent != null ? (
                   <FullFileView
                     file={file}
                     content={fullFileContent}
@@ -1132,7 +1132,7 @@ export function DiffFileView({
                   {viewMode === 'full' ? (
                     isLoadingFullFile ? (
                       <div className="preview-loading">Loading content...</div>
-                    ) : fullFileContent ? (
+                    ) : fullFileContent != null ? (
                       <MarkdownRenderer content={fullFileContent} />
                     ) : (
                       <div className="preview-loading">Failed to load file content</div>

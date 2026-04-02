@@ -150,22 +150,86 @@ fn parse_file_diff(chunk: &str) -> Option<DiffFile> {
     })
 }
 
+/// Unquote a git-quoted path: strip surrounding quotes and decode `\NNN` octal escapes to UTF-8.
+/// Git quotes paths containing non-ASCII or special chars as `"path/\350\203\275.md"`.
+fn unquote_git_path(s: &str) -> String {
+    let inner = s
+        .strip_prefix('"')
+        .and_then(|s| s.strip_suffix('"'))
+        .unwrap_or(s);
+    let mut bytes = Vec::with_capacity(inner.len());
+    let mut chars = inner.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '\\' {
+            // Check for octal escape: 1-3 octal digits
+            if chars.peek().is_some_and(|&d| ('0'..='3').contains(&d)) {
+                let mut val: u8 = 0;
+                for _ in 0..3 {
+                    if let Some(&d) = chars.peek() {
+                        if d.is_ascii_digit() && d <= '7' {
+                            val = val * 8 + (d as u8 - b'0');
+                            chars.next();
+                        } else {
+                            break;
+                        }
+                    }
+                }
+                bytes.push(val);
+            } else {
+                // Other escape sequences: \n, \t, \\, \"
+                match chars.next() {
+                    Some('n') => bytes.push(b'\n'),
+                    Some('t') => bytes.push(b'\t'),
+                    Some('\\') => bytes.push(b'\\'),
+                    Some('"') => bytes.push(b'"'),
+                    Some(other) => {
+                        bytes.push(b'\\');
+                        let mut buf = [0u8; 4];
+                        bytes.extend_from_slice(other.encode_utf8(&mut buf).as_bytes());
+                    }
+                    None => bytes.push(b'\\'),
+                }
+            }
+        } else {
+            let mut buf = [0u8; 4];
+            bytes.extend_from_slice(c.encode_utf8(&mut buf).as_bytes());
+        }
+    }
+    String::from_utf8(bytes).unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).into_owned())
+}
+
 /// Parse "a/path b/path" from the diff header
 fn parse_diff_paths(line: &str) -> Option<(String, String)> {
-    // Format: "a/foo/bar.rs b/foo/bar.rs"
+    // Git may quote paths with non-ASCII chars: "a/\350\203\275.md" "b/\350\203\275.md"
+    // Detect quoted format: starts with "a/ or "a/
+    if line.starts_with('"') {
+        // Quoted format: "a/old" "b/new"
+        let parts: Vec<&str> = line.splitn(2, "\" \"").collect();
+        if parts.len() == 2 {
+            let old_raw = format!("{}\"", parts[0]); // restore trailing quote
+            let new_raw = format!("\"{}", parts[1]); // restore leading quote
+            let old = unquote_git_path(&old_raw);
+            let new_path = unquote_git_path(&new_raw);
+            let old = old.strip_prefix("a/").unwrap_or(&old).to_string();
+            let new_path = new_path.strip_prefix("b/").unwrap_or(&new_path).to_string();
+            return Some((old, new_path));
+        }
+    }
+
+    // Unquoted format: a/foo/bar.rs b/foo/bar.rs
     // Handle paths with spaces by finding the " b/" separator
     let parts: Vec<&str> = line.splitn(2, " b/").collect();
     if parts.len() == 2 {
         let old = parts[0].strip_prefix("a/").unwrap_or(parts[0]);
-        let new = parts[1];
-        Some((old.to_string(), new.to_string()))
+        let new_path = parts[1];
+        Some((old.to_string(), new_path.to_string()))
     } else {
         // Fallback: split on space
         let parts: Vec<&str> = line.split_whitespace().collect();
         if parts.len() >= 2 {
             let old = parts[0].strip_prefix("a/").unwrap_or(parts[0]);
-            let new = parts[1].strip_prefix("b/").unwrap_or(parts[1]);
-            Some((old.to_string(), new.to_string()))
+            let new_path = parts[1].strip_prefix("b/").unwrap_or(parts[1]);
+            Some((old.to_string(), new_path.to_string()))
         } else {
             None
         }
@@ -418,5 +482,26 @@ index abc..def 100644
         assert_eq!(result.files.len(), 2);
         assert_eq!(result.total_additions, 1);
         assert_eq!(result.total_deletions, 1);
+    }
+
+    #[test]
+    fn test_unquote_git_path_ascii() {
+        assert_eq!(unquote_git_path("simple.txt"), "simple.txt");
+        assert_eq!(unquote_git_path("\"quoted.txt\""), "quoted.txt");
+    }
+
+    #[test]
+    fn test_unquote_git_path_chinese() {
+        // \350\203\275\345\212\233 = "能力" in UTF-8 octal
+        let quoted = r#""\350\203\275\345\212\233.md""#;
+        assert_eq!(unquote_git_path(quoted), "能力.md");
+    }
+
+    #[test]
+    fn test_parse_diff_paths_quoted() {
+        let line = r#""a/docs/\350\203\275.md" "b/docs/\350\203\275.md""#;
+        let (old, new) = parse_diff_paths(line).unwrap();
+        assert_eq!(old, "docs/能.md");
+        assert_eq!(new, "docs/能.md");
     }
 }

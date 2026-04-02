@@ -48,6 +48,8 @@ pub struct AcpSessionHandle {
     pub working_dir: String,
     /// 用户终端命令的 kill channel（Shell 模式）
     terminal_kill_tx: Mutex<Option<mpsc::Sender<()>>>,
+    /// 最近一轮 agent 回复的累积文本（用于 Complete 通知摘要）
+    last_assistant_text: Mutex<String>,
 }
 
 /// 发送给 ACP 后台任务的命令
@@ -200,10 +202,14 @@ pub enum ContentBlockData {
     Image {
         data: String,
         mime_type: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        label: Option<String>,
     },
     Audio {
         data: String,
         mime_type: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        label: Option<String>,
     },
     ResourceLink {
         uri: String,
@@ -212,6 +218,8 @@ pub enum ContentBlockData {
         size: Option<i64>,
         title: Option<String>,
         description: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        label: Option<String>,
     },
     Resource {
         uri: String,
@@ -573,6 +581,9 @@ impl acp::Client for GroveAcpClient {
         match args.update {
             acp::SessionUpdate::AgentMessageChunk(chunk) => {
                 let text = content_block_to_text(&chunk.content);
+                if let Ok(mut buf) = self.handle.last_assistant_text.lock() {
+                    buf.push_str(&text);
+                }
                 self.handle.emit(AcpUpdate::MessageChunk { text });
             }
             acp::SessionUpdate::AgentThoughtChunk(chunk) => {
@@ -797,11 +808,30 @@ pub fn content_block_to_text(block: &acp::ContentBlock) -> String {
 fn to_acp_content_block(block: &ContentBlockData) -> acp::ContentBlock {
     match block {
         ContentBlockData::Text { text } => text.clone().into(),
-        ContentBlockData::Image { data, mime_type } => {
-            acp::ContentBlock::Image(acp::ImageContent::new(data, mime_type))
+        ContentBlockData::Image {
+            data,
+            mime_type,
+            label,
+        } => {
+            let mut img = acp::ImageContent::new(data, mime_type);
+            if let Some(l) = label {
+                img = img.uri(l.clone());
+            }
+            acp::ContentBlock::Image(img)
         }
-        ContentBlockData::Audio { data, mime_type } => {
-            acp::ContentBlock::Audio(acp::AudioContent::new(data, mime_type))
+        ContentBlockData::Audio {
+            data,
+            mime_type,
+            label,
+        } => {
+            let mut aud = acp::AudioContent::new(data, mime_type);
+            // AudioContent has no uri field; store label in _meta if present
+            if let Some(l) = label {
+                let mut meta = serde_json::Map::new();
+                meta.insert("name".to_string(), serde_json::Value::String(l.clone()));
+                aud = aud.meta(meta);
+            }
+            acp::ContentBlock::Audio(aud)
         }
         ContentBlockData::ResourceLink {
             uri,
@@ -810,13 +840,15 @@ fn to_acp_content_block(block: &ContentBlockData) -> acp::ContentBlock {
             size,
             title,
             description,
-        } => acp::ContentBlock::ResourceLink(
-            acp::ResourceLink::new(name.clone(), uri.clone())
+            label,
+        } => {
+            let rl = acp::ResourceLink::new(name.clone(), uri.clone())
                 .mime_type(mime_type.clone())
                 .size(*size)
-                .title(title.clone())
-                .description(description.clone()),
-        ),
+                .title(title.clone().or_else(|| label.clone()))
+                .description(description.clone());
+            acp::ContentBlock::ResourceLink(rl)
+        }
         ContentBlockData::Resource {
             uri,
             mime_type: _,
@@ -876,7 +908,7 @@ async fn drive_terminal(
         Ok(status) => {
             let mut es = acp::TerminalExitStatus::new();
             if let Some(code) = status.code() {
-                es = es.exit_code(code as u32);
+                es = es.exit_code(code.max(0) as u32);
             }
             es
         }
@@ -960,6 +992,7 @@ pub async fn get_or_start_session(
                     current_mode_id: Mutex::new(None),
                     working_dir: config.working_dir.to_string_lossy().to_string(),
                     terminal_kill_tx: Mutex::new(None),
+                    last_assistant_text: Mutex::new(String::new()),
                 });
 
                 // 注册到全局表
@@ -1287,6 +1320,10 @@ async fn run_acp_session(
                     terminal,
                 });
                 handle.emit(AcpUpdate::Busy { value: true });
+                // 清空上轮累积文本
+                if let Ok(mut buf) = handle.last_assistant_text.lock() {
+                    buf.clear();
+                }
 
                 // 构建 content blocks
                 let mut content_blocks: Vec<acp::ContentBlock> = vec![text.into()];
@@ -1371,11 +1408,18 @@ async fn run_acp_session(
                             handle.emit(AcpUpdate::Complete {
                                 stop_reason: format!("{:?}", resp.stop_reason),
                             });
+                            let summary = handle
+                                .last_assistant_text
+                                .lock()
+                                .ok()
+                                .map(|buf| truncate_chars(&buf, 80))
+                                .filter(|s| !s.is_empty())
+                                .unwrap_or_else(|| "Agent finished responding".to_string());
                             notify_acp_event(
                                 &config.project_key,
                                 &config.task_id,
                                 "Task Complete",
-                                "Agent finished responding",
+                                &summary,
                                 "Glass",
                             );
                         }
@@ -1591,12 +1635,20 @@ impl AcpSessionHandle {
                     );
                 }
                 AcpUpdate::AvailableCommands { commands } => {
-                    if let Some(mut meta) =
-                        read_session_metadata(&self.project_key, &self.task_id, chat_id)
-                    {
-                        meta.available_commands = commands.clone();
-                        write_session_metadata(&self.project_key, &self.task_id, chat_id, &meta);
-                    }
+                    let mut meta = read_session_metadata(&self.project_key, &self.task_id, chat_id)
+                        .unwrap_or_else(|| SessionMetadata {
+                            pid: std::process::id(),
+                            agent_name: String::new(),
+                            agent_version: String::new(),
+                            available_modes: Vec::new(),
+                            current_mode_id: None,
+                            available_models: Vec::new(),
+                            current_model_id: None,
+                            prompt_capabilities: PromptCapabilitiesData::default(),
+                            available_commands: Vec::new(),
+                        });
+                    meta.available_commands = commands.clone();
+                    write_session_metadata(&self.project_key, &self.task_id, chat_id, &meta);
                 }
                 _ => {}
             }
@@ -2324,7 +2376,12 @@ fn notify_acp_event(
     // 播放声音
     hooks::play_sound(sound);
 
-    // 查询 task 名称用于横幅
+    // 查询 project 名称和 task 名称用于横幅
+    let project_name = crate::storage::workspace::load_project_by_hash(project_key)
+        .ok()
+        .flatten()
+        .map(|p| p.name)
+        .unwrap_or_else(|| "Grove".to_string());
     let task_name = task_storage::get_task(project_key, task_id)
         .ok()
         .flatten()
@@ -2332,7 +2389,7 @@ fn notify_acp_event(
         .unwrap_or_else(|| task_id.to_string());
 
     // 发送系统横幅
-    let title = format!("Grove - {}", title_suffix);
+    let title = format!("{} - {}", project_name, title_suffix);
     let banner_msg = format!("{} — {}", task_name, message);
     hooks::send_banner(&title, &banner_msg);
 
@@ -2345,6 +2402,22 @@ fn notify_acp_event(
     let mut hooks_file = hooks::load_hooks(project_key);
     hooks_file.update(task_id, level, Some(message.to_string()));
     let _ = hooks::save_hooks(project_key, &hooks_file);
+}
+
+/// Truncate a string to at most `max_chars` Unicode characters, appending "…" if truncated.
+/// Collapses newlines to spaces for single-line display.
+fn truncate_chars(s: &str, max_chars: usize) -> String {
+    let collapsed: String = s
+        .chars()
+        .map(|c| if c == '\n' || c == '\r' { ' ' } else { c })
+        .collect();
+    let trimmed = collapsed.trim();
+    if trimmed.chars().count() <= max_chars {
+        trimmed.to_string()
+    } else {
+        let truncated: String = trimmed.chars().take(max_chars).collect();
+        format!("{}…", truncated.trim_end())
+    }
 }
 
 /// Build log file path for agent stderr:
@@ -2469,6 +2542,8 @@ mod tests {
             current_mode_id: Some("code".into()),
             available_models: vec![("opus".into(), "Opus".into())],
             current_model_id: Some("opus".into()),
+            prompt_capabilities: PromptCapabilitiesData::default(),
+            available_commands: vec![],
         };
 
         let json = serde_json::to_string_pretty(&meta).expect("serialize");

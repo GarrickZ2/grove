@@ -117,7 +117,8 @@ interface Attachment {
   type: "image" | "audio" | "resource";
   data: string; // base64 for image/audio
   mimeType: string;
-  name: string; // display name
+  name: string; // original filename
+  label: string; // display label e.g. "Image #1", "Audio #2", "File #3"
   previewUrl?: string; // blob URL for image preview
   uri?: string;
   size?: number;
@@ -262,22 +263,47 @@ function getAutoScrollTailSignature(messages: ChatMessage[]): string {
     .map((message) => {
       switch (message.type) {
         case "assistant":
-          return `assistant:${message.complete ? 1 : 0}:${message.content}`;
+          return `assistant:${message.complete ? 1 : 0}:${message.content.length}`;
         case "thinking":
-          return `thinking:${message.complete ? 1 : 0}:${message.content}`;
+          return `thinking:${message.complete ? 1 : 0}:${message.content.length}`;
         case "tool":
-          return `tool:${message.id}:${message.status}:${message.content ?? ""}`;
+          return `tool:${message.id}:${message.status}:${(message.content ?? "").length}`;
         case "system":
-          return `system:${message.content}`;
+          return `system:${message.content.length}`;
         case "permission":
           return `permission:${message.description}:${message.resolved ?? ""}`;
         case "terminal_output":
-          return `terminal_output:${message.exitCode ?? ""}:${message.chunks.join("")}`;
+          return `terminal_output:${message.exitCode ?? ""}:${message.chunks.length}:${message.chunks.reduce((s, c) => s + c.length, 0)}`;
         case "user":
-          return `user:${message.content}:${message.attachments?.length ?? 0}:${message.terminal ? 1 : 0}`;
+          return `user:${message.content.length}:${message.attachments?.length ?? 0}:${message.terminal ? 1 : 0}`;
       }
     })
     .join("|");
+}
+
+/** Per-type attachment counters. Initialized once from history on chat switch,
+ *  then incremented cheaply on each new attachment. */
+interface AttachmentCounters {
+  image: number;
+  audio: number;
+  resource: number;
+}
+
+function buildAttachmentCounters(messages: ChatMessage[]): AttachmentCounters {
+  const counters: AttachmentCounters = { image: 0, audio: 0, resource: 0 };
+  for (const msg of messages) {
+    if (msg.type === "user" && msg.attachments) {
+      for (const att of msg.attachments) {
+        counters[att.type]++;
+      }
+    }
+  }
+  return counters;
+}
+
+function attachmentLabel(type: "image" | "audio" | "resource", index: number): string {
+  const prefix = type === "image" ? "Image" : type === "audio" ? "Audio" : "File";
+  return `${prefix} #${index}`;
 }
 
 /** Mark all incomplete thinking messages as complete and auto-collapse them */
@@ -538,6 +564,8 @@ function getPromptFromEditable(el: HTMLElement): string {
     } else if (node instanceof HTMLElement) {
       if (node.dataset.command) {
         parts.push(`/${node.dataset.command}`);
+      } else if (node.dataset.ref) {
+        parts.push(`[${node.dataset.ref}]`);
       } else if (node.dataset.file) {
         parts.push(node.dataset.file);
       } else if (node.tagName === "BR") {
@@ -689,6 +717,7 @@ function reduceHistoryMessages(
             data: a.data ?? "",
             mimeType: a.mime_type ?? "",
             name: a.name ?? "",
+            label: a.label ?? a.name ?? "",
             uri: a.uri ?? undefined,
             size: a.size ?? undefined,
             previewUrl:
@@ -873,6 +902,7 @@ export function TaskChat({
     embeddedContext: false,
   });
   const [attachments, setAttachments] = useState<Attachment[]>([]);
+  const attachCountersRef = useRef<AttachmentCounters>({ image: 0, audio: 0, resource: 0 });
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [isDragging, setIsDragging] = useState(false);
   const [isInputExpanded, setIsInputExpanded] = useState(false);
@@ -884,6 +914,8 @@ export function TaskChat({
   const suppressNextSmoothScrollRef = useRef(false);
   const messagesCountRef = useRef(messages.length);
   messagesCountRef.current = messages.length;
+  const inputAreaRef = useRef<HTMLDivElement>(null);
+  const [inputAreaHeight, setInputAreaHeight] = useState(120);
 
   // ─── Read-only observation mode state ──────────────────────────────────
   const [isRemoteSession, setIsRemoteSession] = useState(false);
@@ -922,13 +954,6 @@ export function TaskChat({
             ? "pending"
             : null;
   const composerPanelOpen = activeComposerPanel !== null;
-  const messagesBottomPaddingClass = composerPanelOpen
-    ? isRemoteSession
-      ? "pb-[32rem]"
-      : "pb-[28rem]"
-    : isRemoteSession
-      ? "pb-56"
-      : "pb-44";
 
   useEffect(() => {
     if (activePermissionMessage) {
@@ -1045,6 +1070,20 @@ export function TaskChat({
       .catch(() => {});
   }, [projectId, task.id]);
 
+  // Dynamically measure the input area height so the messages viewport
+  // always has enough bottom padding regardless of expanded input, panels, banners, etc.
+  useEffect(() => {
+    const el = inputAreaRef.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(() => {
+      setInputAreaHeight(el.getBoundingClientRect().height);
+    });
+    ro.observe(el);
+    // Set initial height
+    setInputAreaHeight(el.getBoundingClientRect().height);
+    return () => ro.disconnect();
+  }, [activeChatId]);
+
   const scrollMessagesToBottom = useCallback(
     (behavior: ScrollBehavior = "smooth") => {
       const viewport = messagesViewportRef.current;
@@ -1063,6 +1102,42 @@ export function TaskChat({
     [scrollMessagesToBottom],
   );
 
+  // Track user-initiated scroll-up via wheel/touch events.
+  // Only user wheel-up can DISABLE auto-stick; IntersectionObserver only
+  // re-enables it when user scrolls back to bottom.
+  useEffect(() => {
+    const viewport = messagesViewportRef.current;
+    if (!viewport) return;
+
+    const handleWheel = (e: WheelEvent) => {
+      if (e.deltaY < 0) {
+        // User is scrolling UP → disable auto-stick
+        autoStickToBottomRef.current = false;
+      }
+    };
+
+    let touchStartY = 0;
+    const handleTouchStart = (e: TouchEvent) => {
+      touchStartY = e.touches[0]?.clientY ?? 0;
+    };
+    const handleTouchMove = (e: TouchEvent) => {
+      const currentY = e.touches[0]?.clientY ?? 0;
+      if (currentY > touchStartY) {
+        // Finger moving down = scrolling UP → disable auto-stick
+        autoStickToBottomRef.current = false;
+      }
+    };
+
+    viewport.addEventListener("wheel", handleWheel, { passive: true });
+    viewport.addEventListener("touchstart", handleTouchStart, { passive: true });
+    viewport.addEventListener("touchmove", handleTouchMove, { passive: true });
+    return () => {
+      viewport.removeEventListener("wheel", handleWheel);
+      viewport.removeEventListener("touchstart", handleTouchStart);
+      viewport.removeEventListener("touchmove", handleTouchMove);
+    };
+  }, [activeChatId]);
+
   useEffect(() => {
     const viewport = messagesViewportRef.current;
     const bottomMarker = messagesEndRef.current;
@@ -1073,8 +1148,15 @@ export function TaskChat({
     const observer = new IntersectionObserver(
       ([entry]) => {
         const isAtBottom = entry?.isIntersecting ?? false;
-        autoStickToBottomRef.current = isAtBottom;
-        setShowScrollToBottom(!isAtBottom && messagesCountRef.current > 0);
+        // Only re-enable auto-stick when bottom marker becomes visible
+        // (user scrolled back to bottom). Never disable it here — only
+        // wheel/touch handlers disable auto-stick.
+        if (isAtBottom) {
+          autoStickToBottomRef.current = true;
+        }
+        // Only show button when user has actively scrolled up (autoStick is false).
+        // This prevents the button from flashing during initial load / chat switch.
+        setShowScrollToBottom(!isAtBottom && !autoStickToBottomRef.current && messagesCountRef.current > 0);
       },
       {
         root: viewport,
@@ -1098,13 +1180,20 @@ export function TaskChat({
     const previousTail = prevAutoScrollTailRef.current;
     const tailChanged = autoScrollTailSignature !== previousTail;
     if (tailChanged && autoStickToBottomRef.current) {
+      // During streaming (incomplete assistant/thinking messages), use instant
+      // scroll to prevent smooth animation from falling behind rapid updates.
+      const lastMsg = messages[messages.length - 1];
+      const isStreaming =
+        lastMsg &&
+        (lastMsg.type === "assistant" || lastMsg.type === "thinking") &&
+        !lastMsg.complete;
       scrollMessagesToBottom(
-        suppressNextSmoothScrollRef.current ? "auto" : "smooth",
+        suppressNextSmoothScrollRef.current || isStreaming ? "auto" : "smooth",
       );
     }
     suppressNextSmoothScrollRef.current = false;
     prevAutoScrollTailRef.current = autoScrollTailSignature;
-  }, [autoScrollTailSignature, scrollMessagesToBottom]);
+  }, [autoScrollTailSignature, scrollMessagesToBottom, messages]);
 
   useEffect(() => {
     suppressNextSmoothScrollRef.current = true;
@@ -1310,8 +1399,13 @@ export function TaskChat({
     }
     // Reset pending messages — server will send queue_update on reconnect
     setPendingMessages([]);
-    // Clear attachments on chat switch
-    setAttachments([]);
+    // Clear attachments on chat switch (revoke blob URLs to avoid leaks)
+    setAttachments((prev) => {
+      prev.forEach((att) => { if (att.previewUrl) URL.revokeObjectURL(att.previewUrl); });
+      return [];
+    });
+    const restoredMessages = perChatStateRef.current.get(chatId)?.messages ?? [];
+    attachCountersRef.current = buildAttachmentCounters(restoredMessages);
     // Point wsRef to this chat's WebSocket
     wsRef.current = wsMapRef.current.get(chatId) ?? null;
   }, []);
@@ -1469,6 +1563,8 @@ export function TaskChat({
           msgs = reduceHistoryMessages(msgs, evt);
         }
         setMessages(msgs);
+        // Rebuild attachment counters from the full message history
+        attachCountersRef.current = buildAttachmentCounters(msgs);
         // Process non-message side effects from buffered events
         for (const evt of buffered) {
           switch (evt.type) {
@@ -1515,6 +1611,9 @@ export function TaskChat({
               break;
             case "queue_update":
               setPendingMessages(evt.messages || []);
+              break;
+            case "available_commands":
+              setSlashCommands(evt.commands ?? []);
               break;
             case "session_ended":
               setIsConnected(false);
@@ -1858,7 +1957,7 @@ export function TaskChat({
       .then((res) => {
         if (res.events.length > 0) {
           for (const evt of res.events) {
-            handleServerMessage(evt);
+            handleServerMessageRef.current(evt);
           }
           pollingOffsetRef.current = res.total;
         }
@@ -1876,7 +1975,7 @@ export function TaskChat({
         );
         if (res.events.length > 0) {
           for (const evt of res.events) {
-            handleServerMessage(evt);
+            handleServerMessageRef.current(evt);
           }
           pollingOffsetRef.current = res.total;
         }
@@ -1896,7 +1995,7 @@ export function TaskChat({
       clearInterval(timer);
       pollingTimerRef.current = null;
     };
-  }, [isRemoteSession, activeChatId, projectId, task.id, handleServerMessage]);
+  }, [isRemoteSession, activeChatId, projectId, task.id]);
 
   // ─── Chat switching ────────────────────────────────────────────────────
 
@@ -2025,6 +2124,7 @@ export function TaskChat({
               data,
             },
           );
+          const label = attachmentLabel("resource", ++attachCountersRef.current.resource);
           setAttachments((prev) => [
             ...prev,
             {
@@ -2033,6 +2133,7 @@ export function TaskChat({
               mimeType:
                 uploaded.mime_type ?? file.type ?? "application/octet-stream",
               name: uploaded.name,
+              label,
               uri: uploaded.uri,
               size: uploaded.size,
             },
@@ -2051,16 +2152,19 @@ export function TaskChat({
       reader.onload = () => {
         const dataUrl = reader.result as string;
         const base64 = dataUrl.split(",")[1];
-        const previewUrl = file.type.startsWith("image/")
+        const attType: "image" | "audio" = file.type.startsWith("image/") ? "image" : "audio";
+        const previewUrl = attType === "image"
           ? URL.createObjectURL(file)
           : undefined;
+        const label = attachmentLabel(attType, ++attachCountersRef.current[attType]);
         setAttachments((prev) => [
           ...prev,
           {
-            type: file.type.startsWith("image/") ? "image" : "audio",
+            type: attType,
             data: base64,
             mimeType: file.type,
             name: file.name,
+            label,
             previewUrl,
           },
         ]);
@@ -2074,9 +2178,64 @@ export function TaskChat({
     setAttachments((prev) => {
       const att = prev[index];
       if (att?.previewUrl) URL.revokeObjectURL(att.previewUrl);
-      return prev.filter((_, i) => i !== index);
+      const remaining = prev.filter((_, i) => i !== index);
+      // Re-label all remaining attachments so numbering stays contiguous
+      const counters: AttachmentCounters = { ...attachCountersRef.current };
+      // Reset counters to history baseline, then re-number pending attachments
+      const historyBase = { ...counters };
+      // Count how many of each type exist in remaining
+      const pendingCounts: AttachmentCounters = { image: 0, audio: 0, resource: 0 };
+      for (const a of remaining) pendingCounts[a.type]++;
+      // History base = current counter - old pending count (before removal)
+      const oldPendingCounts: AttachmentCounters = { image: 0, audio: 0, resource: 0 };
+      for (const a of prev) oldPendingCounts[a.type]++;
+      historyBase.image = counters.image - oldPendingCounts.image;
+      historyBase.audio = counters.audio - oldPendingCounts.audio;
+      historyBase.resource = counters.resource - oldPendingCounts.resource;
+      // Re-assign labels sequentially
+      const reCount: AttachmentCounters = { ...historyBase };
+      const relabeled = remaining.map((a) => ({
+        ...a,
+        label: attachmentLabel(a.type, ++reCount[a.type]),
+      }));
+      attachCountersRef.current = reCount;
+      return relabeled;
     });
   }, []);
+
+  /** Insert an attachment reference chip (e.g. [Image #1]) into the input */
+  const insertAttachmentReference = useCallback(
+    (label: string) => {
+      const el = editableRef.current;
+      if (!el) return;
+      // Build a non-editable chip span
+      const chip = document.createElement("span");
+      chip.contentEditable = "false";
+      chip.setAttribute("data-ref", label);
+      chip.className =
+        "inline-flex items-center gap-0.5 rounded-md bg-[color-mix(in_srgb,var(--color-highlight)_14%,transparent)] text-[var(--color-highlight)] text-xs font-medium px-1.5 py-0.5 mx-0.5 align-baseline select-none cursor-default";
+      chip.textContent = label;
+
+      // Insert at cursor or append at end
+      el.focus();
+      const sel = window.getSelection();
+      if (sel && sel.rangeCount > 0 && el.contains(sel.anchorNode)) {
+        const range = sel.getRangeAt(0);
+        range.deleteContents();
+        range.insertNode(chip);
+        // Move cursor after chip
+        range.setStartAfter(chip);
+        range.collapse(true);
+        sel.removeAllRanges();
+        sel.addRange(range);
+      } else {
+        el.appendChild(chip);
+      }
+      // Trigger content check
+      setHasContent(true);
+    },
+    [],
+  );
 
   /** Take control of a remote session */
   const handleTakeControl = useCallback(async () => {
@@ -2152,12 +2311,14 @@ export function TaskChat({
             type: "resource_link",
             uri: att.uri,
             name: att.name,
+            label: att.label,
             mime_type: att.mimeType || undefined,
             size: att.size,
           }
         : {
             type: att.type,
             data: att.data,
+            label: att.label,
             mime_type: att.mimeType,
           }),
     }));
@@ -2174,7 +2335,10 @@ export function TaskChat({
       );
       el.innerHTML = "";
       setHasContent(false);
-      setAttachments([]);
+      setAttachments((prev) => {
+        prev.forEach((att) => { if (att.previewUrl) URL.revokeObjectURL(att.previewUrl); });
+        return [];
+      });
       setShowSlashMenu(false);
       setShowFileMenu(false);
       setIsTerminalMode(false);
@@ -2194,7 +2358,10 @@ export function TaskChat({
       );
       el.innerHTML = "";
       setHasContent(false);
-      setAttachments([]);
+      setAttachments((prev) => {
+        prev.forEach((att) => { if (att.previewUrl) URL.revokeObjectURL(att.previewUrl); });
+        return [];
+      });
       setShowSlashMenu(false);
       setShowFileMenu(false);
       setIsTerminalMode(false);
@@ -3250,7 +3417,8 @@ export function TaskChat({
           {/* Messages */}
           <div
             ref={messagesViewportRef}
-            className={`relative z-0 h-full min-h-0 flex-1 overflow-y-auto px-4 pt-4 ${messagesBottomPaddingClass}`}
+            className="relative z-0 h-full min-h-0 flex-1 overflow-y-auto px-4 pt-4"
+            style={{ paddingBottom: inputAreaHeight > 0 ? inputAreaHeight + 16 : undefined }}
           >
             <div className="flex w-full flex-col gap-3">
               {renderItems.map((item) =>
@@ -3265,6 +3433,7 @@ export function TaskChat({
                     onPermissionResponse={handlePermissionResponse}
                     onFileClick={onNavigateToFile}
                     onImageClick={setLightboxUrl}
+                    onInsertReference={insertAttachmentReference}
                   />
                 ) : (
                   <ToolSectionView
@@ -3291,7 +3460,7 @@ export function TaskChat({
           </div>
 
           {/* Input */}
-          <div className="pointer-events-none absolute inset-x-0 bottom-0 z-10 px-3 pb-4 pt-2">
+          <div ref={inputAreaRef} className="pointer-events-none absolute inset-x-0 bottom-0 z-10 px-3 pb-4 pt-2">
             <div className="pointer-events-none absolute inset-x-0 bottom-0 h-24 bg-[linear-gradient(to_top,color-mix(in_srgb,var(--color-bg)_96%,transparent),transparent)]" />
             <div className="pointer-events-auto relative mx-auto w-full max-w-[920px]">
               {isRemoteSession && (
@@ -3697,7 +3866,8 @@ export function TaskChat({
                           <img
                             src={att.previewUrl}
                             className="w-8 h-8 object-cover rounded-md border border-[var(--color-border)] shrink-0 cursor-pointer hover:opacity-80 transition-opacity"
-                            alt={att.name}
+                            alt={att.label}
+                            title={att.label}
                             onClick={() => setLightboxUrl(att.previewUrl!)}
                           />
                         ) : att.type === "audio" ? (
@@ -3711,10 +3881,10 @@ export function TaskChat({
                         ) : null}
                         <div className="min-w-0">
                           <div className="text-xs font-medium text-[var(--color-text)] truncate max-w-40">
-                            {att.name}
+                            {att.label}
                           </div>
-                          <div className="text-[10px] text-[var(--color-text-muted)] uppercase">
-                            {att.type}
+                          <div className="text-[10px] text-[var(--color-text-muted)] truncate max-w-40">
+                            {att.name}
                           </div>
                         </div>
                         <button
@@ -4117,6 +4287,7 @@ function MessageItem({
   onPermissionResponse,
   onFileClick,
   onImageClick,
+  onInsertReference,
 }: {
   message: ChatMessage;
   index: number;
@@ -4126,6 +4297,7 @@ function MessageItem({
   onPermissionResponse?: (optionId: string) => void;
   onFileClick?: (filePath: string, line?: number) => void;
   onImageClick?: (url: string) => void;
+  onInsertReference?: (label: string) => void;
 }) {
   switch (message.type) {
     case "user":
@@ -4164,43 +4336,80 @@ function MessageItem({
             <div className="rounded-2xl px-3.5 py-2.5 bg-[color-mix(in_srgb,var(--color-bg-tertiary)_78%,transparent)] border border-[color-mix(in_srgb,var(--color-border)_72%,transparent)] text-sm text-[var(--color-text)] shadow-[0_10px_30px_rgba(0,0,0,0.08)]">
               {message.attachments?.map((att, i) =>
                 att.type === "image" && att.previewUrl ? (
-                  <img
-                    key={i}
-                    src={att.previewUrl}
-                    className="max-w-full max-h-48 rounded mb-2 cursor-pointer hover:opacity-90 transition-opacity"
-                    onClick={() => onImageClick?.(att.previewUrl!)}
-                    alt=""
-                  />
+                  <div key={i} className="group/img relative mb-2 inline-block max-w-full">
+                    <img
+                      src={att.previewUrl}
+                      className="max-w-full max-h-48 rounded cursor-pointer hover:opacity-90 transition-opacity"
+                      onClick={() => onImageClick?.(att.previewUrl!)}
+                      alt={att.label}
+                    />
+                    {att.label && (
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onInsertReference?.(att.label);
+                        }}
+                        className="absolute left-1.5 top-1.5 flex items-center gap-1 rounded-md bg-black/60 px-1.5 py-0.5 text-[10px] font-medium text-white opacity-0 backdrop-blur-sm transition-opacity group-hover/img:opacity-100 hover:!bg-[var(--color-highlight)] hover:!text-white cursor-pointer select-none"
+                        title={`Insert reference to ${att.label}`}
+                      >
+                        {att.label}
+                      </button>
+                    )}
+                  </div>
                 ) : att.type === "audio" ? (
-                  <audio
-                    key={i}
-                    controls
-                    src={`data:${att.mimeType};base64,${att.data}`}
-                    className="max-w-full mb-2"
-                  />
+                  <div key={i} className="group/aud relative mb-2 max-w-full">
+                    <audio
+                      controls
+                      src={`data:${att.mimeType};base64,${att.data}`}
+                      className="max-w-full"
+                    />
+                    {att.label && (
+                      <button
+                        type="button"
+                        onClick={() => onInsertReference?.(att.label)}
+                        className="absolute left-1.5 top-1.5 flex items-center gap-1 rounded-md bg-black/60 px-1.5 py-0.5 text-[10px] font-medium text-white opacity-0 backdrop-blur-sm transition-opacity group-hover/aud:opacity-100 hover:!bg-[var(--color-highlight)] hover:!text-white cursor-pointer select-none"
+                        title={`Insert reference to ${att.label}`}
+                      >
+                        {att.label}
+                      </button>
+                    )}
+                  </div>
                 ) : att.type === "resource" ? (
-                  <button
-                    key={i}
-                    type="button"
-                    onClick={() => att.uri && window.open(att.uri, "_blank")}
-                    className="mb-2 flex w-full max-w-[320px] items-center gap-2 rounded-xl border border-[color-mix(in_srgb,var(--color-border)_70%,transparent)] bg-[color-mix(in_srgb,var(--color-bg)_72%,transparent)] px-3 py-2 text-left transition-colors hover:bg-[color-mix(in_srgb,var(--color-bg)_88%,transparent)]"
-                    title={att.uri ?? att.name}
-                  >
-                    <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-[color-mix(in_srgb,var(--color-border)_72%,transparent)] bg-[var(--color-bg-secondary)]">
-                      <Paperclip className="h-4 w-4 text-[var(--color-text-muted)]" />
-                    </div>
-                    <div className="min-w-0">
-                      <div className="truncate text-xs font-medium text-[var(--color-text)]">
-                        {att.name}
+                  <div key={i} className="group/res relative mb-2">
+                    <button
+                      type="button"
+                      onClick={() => att.uri && window.open(att.uri, "_blank")}
+                      className="flex w-full max-w-[320px] items-center gap-2 rounded-xl border border-[color-mix(in_srgb,var(--color-border)_70%,transparent)] bg-[color-mix(in_srgb,var(--color-bg)_72%,transparent)] px-3 py-2 text-left transition-colors hover:bg-[color-mix(in_srgb,var(--color-bg)_88%,transparent)]"
+                      title={att.uri ?? att.name}
+                    >
+                      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-[color-mix(in_srgb,var(--color-border)_72%,transparent)] bg-[var(--color-bg-secondary)]">
+                        <Paperclip className="h-4 w-4 text-[var(--color-text-muted)]" />
                       </div>
-                      <div className="text-[10px] uppercase text-[var(--color-text-muted)]">
-                        {att.mimeType || "file"}
-                        {typeof att.size === "number"
-                          ? ` • ${Math.max(1, Math.round(att.size / 1024))} KB`
-                          : ""}
+                      <div className="min-w-0">
+                        <div className="truncate text-xs font-medium text-[var(--color-text)]">
+                          {att.label || att.name}
+                        </div>
+                        {att.name !== att.label && (
+                          <div className="text-[10px] text-[var(--color-text-muted)]">
+                            {att.name}{typeof att.size === "number"
+                              ? ` • ${Math.max(1, Math.round(att.size / 1024))} KB`
+                              : ""}
+                          </div>
+                        )}
                       </div>
-                    </div>
-                  </button>
+                    </button>
+                    {att.label && (
+                      <button
+                        type="button"
+                        onClick={() => onInsertReference?.(att.label)}
+                        className="absolute left-1.5 top-1.5 flex items-center gap-1 rounded-md bg-black/60 px-1.5 py-0.5 text-[10px] font-medium text-white opacity-0 backdrop-blur-sm transition-opacity group-hover/res:opacity-100 hover:!bg-[var(--color-highlight)] hover:!text-white cursor-pointer select-none"
+                        title={`Insert reference to ${att.label}`}
+                      >
+                        {att.label}
+                      </button>
+                    )}
+                  </div>
                 ) : null,
               )}
               {message.content && (
@@ -4689,21 +4898,38 @@ function summarizeToolSection(tools: ToolSectionItem[]) {
   else if (backgroundActions.length > 0)
     title = running > 0 ? "Inspecting code" : "Inspection complete";
 
-  const editItems = edits.map((tool) => {
-    const loc = tool.message.locations?.[0];
-    const path =
-      loc?.path?.split("/").pop() ||
-      tool.message.title.replace(/^(Edit|Write)\s+/i, "");
-    const stat = parseDiffStat(tool.message.content);
-    return {
-      key: `${tool.message.id}:${path}`,
-      toolId: tool.message.id,
-      label: path,
-      additions: stat?.additions ?? 0,
-      deletions: stat?.deletions ?? 0,
-      status: tool.message.status,
-    };
-  });
+  // Merge edits on the same file: accumulate +/- and keep the latest tool id/status
+  const editItems = (() => {
+    const merged = new Map<string, { key: string; toolId: string; label: string; fullPath: string; additions: number; deletions: number; status: string }>();
+    for (const tool of edits) {
+      const loc = tool.message.locations?.[0];
+      const fullPath = loc?.path ?? "";
+      const label =
+        fullPath.split("/").pop() ||
+        tool.message.title.replace(/^(Edit|Write)\s+/i, "");
+      const stat = parseDiffStat(tool.message.content);
+      const existing = merged.get(label);
+      if (existing) {
+        existing.additions += stat?.additions ?? 0;
+        existing.deletions += stat?.deletions ?? 0;
+        existing.toolId = tool.message.id;
+        existing.status = tool.message.status;
+        // Use the longest (most specific) full path
+        if (fullPath.length > existing.fullPath.length) existing.fullPath = fullPath;
+      } else {
+        merged.set(label, {
+          key: `${tool.message.id}:${label}`,
+          toolId: tool.message.id,
+          label,
+          fullPath,
+          additions: stat?.additions ?? 0,
+          deletions: stat?.deletions ?? 0,
+          status: tool.message.status,
+        });
+      }
+    }
+    return Array.from(merged.values());
+  })();
 
   const actionItems = foregroundActions.map((tool) => ({
     key: tool.message.id,
@@ -4718,7 +4944,7 @@ function summarizeToolSection(tools: ToolSectionItem[]) {
   );
   const actionEntries = collectLocationChips(
     tools,
-    (message) => !isBackgroundAction(message),
+    (message) => !isBackgroundAction(message) && !isEditTool(message),
   );
   const actionFiles = actionEntries.map((entry) => entry.label);
 
@@ -4727,9 +4953,10 @@ function summarizeToolSection(tools: ToolSectionItem[]) {
     inspectionFiles.length > 0
       ? `Reviewed ${inspectionFiles.length} file${inspectionFiles.length > 1 ? "s" : ""}`
       : null;
+  const totalAffectedFiles = new Set([...actionFiles, ...editItems.map((e) => e.label)]).size;
   const actionSectionSummary =
-    actionFiles.length > 0
-      ? `Action on ${actionFiles.length} file${actionFiles.length > 1 ? "s" : ""}`
+    totalAffectedFiles > 0
+      ? `Action on ${totalAffectedFiles} file${totalAffectedFiles > 1 ? "s" : ""}`
       : formatActionCount(totalActionCount);
   const headerSummary =
     backgroundActions.length > 0 &&
@@ -5023,11 +5250,11 @@ function ToolSectionView({
                           const tool = tools.find(
                             (t) => t.message.id === item.toolId,
                           )?.message;
-                          const loc = tool?.locations?.[0];
-                          if (loc?.path && tool)
+                          const path = item.fullPath || tool?.locations?.[0]?.path;
+                          if (path && tool)
                             onFileClick?.(
-                              loc.path,
-                              loc.line,
+                              path,
+                              undefined,
                               getToolNavMode(tool),
                             );
                         }}
