@@ -87,8 +87,12 @@ export async function getGitBranches(projectId: string, remote: string = 'local'
 /**
  * Get recent commits for the repository
  */
-export async function getGitCommits(projectId: string): Promise<RepoCommitsResponse> {
-  return apiClient.get<RepoCommitsResponse>(`/api/v1/projects/${projectId}/git/commits`);
+export async function getGitCommits(projectId: string, options?: { since?: string; limit?: number }): Promise<RepoCommitsResponse> {
+  const params = new URLSearchParams();
+  if (options?.since) params.set('since', options.since);
+  if (options?.limit != null) params.set('limit', String(options.limit));
+  const qs = params.toString();
+  return apiClient.get<RepoCommitsResponse>(`/api/v1/projects/${projectId}/git/commits${qs ? `?${qs}` : ''}`);
 }
 
 /**

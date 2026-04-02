@@ -214,8 +214,9 @@ pub struct WebConfig {
     #[serde(default)]
     pub terminal: Option<String>,
     /// Web 端 Terminal 后端模式: "multiplexer" (default) | "direct"
-    /// - "multiplexer": 使用 terminal_multiplexer 配置的 tmux/zellij
-    /// - "direct": 每个 Tab 一个独立 PTY 实例，无需 multiplexer
+    ///   - "multiplexer": 使用 terminal_multiplexer 配置的 tmux/zellij
+    ///   - "direct": 每个 Tab 一个独立 PTY 实例，无需 multiplexer
+    ///
     /// CLI 不使用此字段，始终走 multiplexer
     #[serde(default)]
     pub terminal_mode: Option<String>,

@@ -43,9 +43,11 @@ interface TasksPageProps {
   /** Fallback for Cmd+N navigation when workspace doesn't have a matching tab.
    *  Called with (index, false) for absolute or (delta, true) for relative. */
   onNavByIndex?: (indexOrDelta: number, relative?: boolean) => void;
+  /** When true, opens the New Task dialog on mount */
+  initialOpenNewTask?: boolean;
 }
 
-export function TasksPage({ initialTaskId, initialViewMode, onNavigationConsumed, localMode, onNavByIndex }: TasksPageProps) {
+export function TasksPage({ initialTaskId, initialViewMode, onNavigationConsumed, localMode, onNavByIndex, initialOpenNewTask }: TasksPageProps) {
   const { selectedProject, refreshSelectedProject } = useProject();
 
   const { isMobile } = useIsMobile();
@@ -54,7 +56,13 @@ export function TasksPage({ initialTaskId, initialViewMode, onNavigationConsumed
   const [filter, setFilter] = useState<TaskFilter>("active");
   // Mobile: whether the detail view is showing (stacked navigation)
   const [mobileShowDetail, setMobileShowDetail] = useState(false);
-  const [showNewTaskDialog, setShowNewTaskDialog] = useState(false);
+  const [showNewTaskDialog, setShowNewTaskDialog] = useState(initialOpenNewTask ?? false);
+  useEffect(() => {
+    if (initialOpenNewTask) {
+      setShowNewTaskDialog(true);
+      onNavigationConsumed?.();
+    }
+  }, [initialOpenNewTask, onNavigationConsumed]);
   const [isCreating, setIsCreating] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
   const [archivedTasks, setArchivedTasks] = useState<Task[]>([]);

@@ -358,12 +358,36 @@ pub async fn get_remotes(Path(id): Path<String>) -> Result<Json<RemotesResponse>
 
 /// GET /api/v1/projects/{id}/git/commits
 /// Get recent commits for the repository
-pub async fn get_commits(Path(id): Path<String>) -> Result<Json<RepoCommitsResponse>, StatusCode> {
+#[derive(Deserialize)]
+pub struct CommitQueryParams {
+    /// Optional: only return commits since this date (e.g. "1 week ago", "2024-01-01")
+    pub since: Option<String>,
+    /// Max number of commits to return (default: 20)
+    pub limit: Option<usize>,
+}
+
+pub async fn get_commits(
+    Path(id): Path<String>,
+    Query(params): Query<CommitQueryParams>,
+) -> Result<Json<RepoCommitsResponse>, StatusCode> {
     let project_path = find_project_path(&id)?;
 
-    // Get recent commits with hash, message, author, and time
-    let output =
-        git_cmd(&project_path, &["log", "-20", "--format=%H\t%s\t%an\t%cr"]).unwrap_or_default();
+    let limit = params.limit.unwrap_or(20).min(100);
+    let limit_str = format!("-{}", limit);
+    let mut args = vec!["log", &limit_str, "--format=%H\t%s\t%an\t%cr"];
+    // Validate `since` to only allow alphanumeric, spaces, hyphens, and colons (date-like values)
+    if let Some(ref since) = params.since {
+        if since.len() <= 50
+            && since
+                .chars()
+                .all(|c| c.is_alphanumeric() || " -:/.".contains(c))
+        {
+            args.push("--since");
+            args.push(since);
+        }
+    }
+
+    let output = git_cmd(&project_path, &args).unwrap_or_default();
 
     let commits: Vec<RepoCommitEntry> = output
         .lines()

@@ -151,7 +151,6 @@ function AppContent() {
         // Save updated config if needed
         if (needsUpdate) {
           await patchConfig(updates);
-          console.log("Auto-corrected agent configuration:", updates);
         }
       } catch (err) {
         console.error("Failed to initialize agent configuration:", err);
@@ -303,6 +302,7 @@ function AppContent() {
             key="tasks"
             initialTaskId={navigationData?.taskId as string | undefined}
             initialViewMode={navigationData?.viewMode as string | undefined}
+            initialOpenNewTask={navigationData?.openNewTask as boolean | undefined}
             onNavigationConsumed={() => setNavigationData(null)}
             onNavByIndex={navigateSidebar}
           />
@@ -331,7 +331,8 @@ function AppContent() {
     }
   };
 
-  const isFullWidthPage = activeItem === "tasks" || activeItem === "work" || activeItem === "skills" || activeItem === "ai";
+  const isDashboardPage = activeItem === "dashboard";
+  const isFullWidthPage = isDashboardPage || activeItem === "tasks" || activeItem === "work" || activeItem === "skills" || activeItem === "ai";
 
   const sidebarProps = {
     activeItem,
@@ -367,7 +368,7 @@ function AppContent() {
           />
         </MobileDrawer>
 
-        <main className={`flex-1 ${isFullWidthPage ? "overflow-hidden" : "overflow-y-auto"}`}>
+        <main className={`flex-1 ${isFullWidthPage && !isDashboardPage ? "overflow-hidden" : "overflow-y-auto"}`}>
           <div className={isFullWidthPage ? "h-full p-3" : "max-w-5xl mx-auto p-3"}>
             <AnimatePresence mode="wait">
               {tasksMode === "blitz" ? (
@@ -451,7 +452,7 @@ function AppContent() {
             transition={{ duration: 0.3, ease: [0.25, 1, 0.5, 1] }}
           >
             <Sidebar {...sidebarProps} />
-            <main className={`flex-1 ${isFullWidthPage ? "overflow-hidden" : "overflow-y-auto"}`}>
+            <main className={`flex-1 ${isFullWidthPage && !isDashboardPage ? "overflow-hidden" : "overflow-y-auto"}`}>
               <div className={isFullWidthPage ? `h-full transition-[padding] duration-300 ease-out ${inWorkspace ? 'p-2' : 'p-6'}` : "max-w-5xl mx-auto p-6"}>
                 {renderContent()}
               </div>
