@@ -5,6 +5,27 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.2] - 2026-04-02
+
+### Added
+
+- **Attachment labeling system** — attachments now display sequential labels (Image #1, Audio #2, File #3) with hover badges for inserting reference chips into chat
+- **Workspace tab switching** — added Cmd+Shift+[/] keyboard shortcut for switching between workspace tabs
+
+### Improved
+
+- **Chat auto-scroll** — replaced IntersectionObserver with wheel/touch tracking for more reliable auto-scroll behavior
+- **Chat input layout** — dynamic bottom padding via ResizeObserver ensures chat input area adapts correctly
+- **Polling performance** — polling effect uses ref to avoid unnecessary restarts; blob URLs revoked on attachment clear to prevent memory leaks
+- **Tail signature performance** — uses content length instead of full string comparison
+
+### Fixed
+
+- **Slash commands** — buffered WebSocket events now processed correctly for slash command responses
+- **ACP session race condition** — upsert session.json for AvailableCommands to fix startup race condition
+- **ACP exit code** — exit_code clamped to non-negative before u32 cast
+- **Review page empty file** — empty file content no longer shows error (added null check)
+
 ## [0.8.1] - 2026-04-01
 
 ### Added
