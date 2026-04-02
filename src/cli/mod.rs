@@ -101,6 +101,16 @@ pub enum Commands {
         #[arg(long)]
         dry_run: bool,
     },
+    /// Register a project in Grove
+    Register {
+        /// Path to the project (defaults to current directory)
+        path: Option<String>,
+    },
+    /// Remove a project from Grove
+    Remove {
+        /// Path to the project (defaults to current directory)
+        path: Option<String>,
+    },
 }
 
 impl Commands {

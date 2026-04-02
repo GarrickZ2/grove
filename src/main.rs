@@ -292,6 +292,44 @@ fn main() -> io::Result<()> {
         Commands::Migrate { dry_run } => {
             cli::migrate::execute(dry_run);
         }
+        Commands::Register { path } => {
+            let path = path.unwrap_or_else(|| {
+                std::env::current_dir()
+                    .expect("Failed to get current directory")
+                    .to_string_lossy()
+                    .to_string()
+            });
+            let name = std::path::Path::new(&path)
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_else(|| path.clone());
+            match storage::workspace::upsert_project(&name, &path) {
+                Ok(()) => println!("Registered project: {} ({})", name, path),
+                Err(e) => {
+                    eprintln!("Failed to register project: {}", e);
+                    std::process::exit(1);
+                }
+            }
+        }
+        Commands::Remove { path } => {
+            let path = path.unwrap_or_else(|| {
+                std::env::current_dir()
+                    .expect("Failed to get current directory")
+                    .to_string_lossy()
+                    .to_string()
+            });
+            // Resolve to main repo path (handles worktrees)
+            let resolved = git::repo_root(&path)
+                .and_then(|root| git::get_main_repo_path(&root).or(Ok(root)))
+                .unwrap_or_else(|_| path.clone());
+            match storage::workspace::remove_project(&resolved) {
+                Ok(()) => println!("Removed project: {}", resolved),
+                Err(e) => {
+                    eprintln!("Failed to remove project: {}", e);
+                    std::process::exit(1);
+                }
+            }
+        }
     }
 
     Ok(())
