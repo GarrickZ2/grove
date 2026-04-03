@@ -5,6 +5,28 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.3] - 2026-04-03
+
+### Added
+
+- **Mermaid diagram rendering** — markdown code blocks with `mermaid` language are rendered as interactive diagrams in preview and chat
+- **Extensible preview renderer system** — new `PreviewRenderer` registry supports markdown, mermaid, SVG, and image file previews without if/else chains
+- **SVG file preview** — `.svg` files render as inline graphics in the review preview drawer
+- **Image file preview** — `.png`, `.jpg`, `.webp`, `.gif` files preview via API in the review drawer
+- **Mermaid/MMD file preview** — `.mmd` and `.mermaid` files render as diagrams in the review preview drawer
+- **Display Mode toggle** — cycle button (Code / Split / Preview) to batch-control preview state across all files in review
+
+### Improved
+
+- **Unified markdown rendering** — migrated `CommentsTab` from raw `ReactMarkdown` to shared `MarkdownRenderer` component
+- **Agent icons** — replaced `@lobehub/icons` dependency with lightweight local SVG icons, removing heavy transitive deps (`es-toolkit`, `antd`)
+- **CJK path support** — added `git_unquote()` utility to decode git's octal-escaped non-ASCII paths across all git operations (`list_files`, `diff_stat`, `conflict_files`, `get_raw_diff`, watcher)
+
+### Fixed
+
+- **Terminal crash loop** — disposed stale terminal cache when WebSocket is dead, preventing flash-close loop on reopen
+- **All Files mode missing CJK files** — files with Chinese/Japanese/Korean names were filtered out due to git's octal path escaping
+
 ## [0.8.2] - 2026-04-02
 
 ### Added
