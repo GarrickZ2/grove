@@ -41,6 +41,7 @@ import {
   deleteTask,
   checkCommands,
   getConfig,
+  initGitRepo,
   type RepoStatusResponse,
   type BranchDetailInfo,
   type RepoCommitEntry,
@@ -99,7 +100,7 @@ interface GuidanceTip {
 }
 
 export function DashboardPage({ onNavigate }: DashboardPageProps) {
-  const { selectedProject, refreshSelectedProject } = useProject();
+  const { selectedProject, refreshSelectedProject, applySelectedProject } = useProject();
   const { theme } = useTheme();
 
   const [showBranchDrawer, setShowBranchDrawer] = useState(false);
@@ -183,12 +184,44 @@ export function DashboardPage({ onNavigate }: DashboardPageProps) {
   }, [selectedProject]);
 
   const loadGitData = useCallback(async () => {
+    // 非 git 项目:跳过所有 git 调用,避免 500
+    if (selectedProject && !selectedProject.isGitRepo) {
+      setRepoStatus(null);
+      setBranches([]);
+      setRepoCommits([]);
+      setWeeklyCommitCount(0);
+      setProjectStats(null);
+      setIsBranchesLoading(false);
+      return;
+    }
     await Promise.all([loadGitStatus(), loadBranches(), loadCommits(), loadStats()]);
-  }, [loadGitStatus, loadBranches, loadCommits, loadStats]);
+  }, [selectedProject, loadGitStatus, loadBranches, loadCommits, loadStats]);
 
   useEffect(() => {
     loadGitData();
   }, [loadGitData]);
+
+  // Initialize git for non-git projects
+  const [isInitializingGit, setIsInitializingGit] = useState(false);
+  const handleInitGit = async () => {
+    if (!selectedProject || isInitializingGit) return;
+    setIsInitializingGit(true);
+    try {
+      // Use the response directly — it already contains the fresh project
+      // state (is_git_repo=true, current_branch=main, local_task updated).
+      // Going through refreshSelectedProject would fire a second getProject
+      // round-trip and leave a render window where selectedProject is updated
+      // but repoStatus is still stale from the non-git state.
+      const updated = await initGitRepo(selectedProject.id);
+      applySelectedProject(updated);
+      showMessage("Git repository initialized");
+    } catch (err) {
+      console.error("Failed to initialize git:", err);
+      showMessage("Failed to initialize git repository");
+    } finally {
+      setIsInitializingGit(false);
+    }
+  };
 
   // Check agent availability and config for guidance
   useEffect(() => {
@@ -221,9 +254,13 @@ export function DashboardPage({ onNavigate }: DashboardPageProps) {
     );
   }
 
-  const activeTasks = selectedProject.tasks.filter(t => t.status !== "archived");
-  const workTasks = activeTasks.filter(t => t.isLocal);
-  const worktreeTasks = activeTasks.filter(t => !t.isLocal);
+  // Missing project: gated at the App level via a global overlay.
+  // If we reach here, selectedProject.exists is guaranteed to be true.
+
+  const isGitRepo = selectedProject.isGitRepo;
+  // `selectedProject.tasks` contains only worktree tasks; Local Task lives on `localTask`.
+  const worktreeTasks = selectedProject.tasks.filter(t => t.status !== "archived");
+  const hasLocalWork = selectedProject.localTask != null;
 
   // ── Handlers ──
 
@@ -440,6 +477,20 @@ export function DashboardPage({ onNavigate }: DashboardPageProps) {
 
   // Guidance tips
   const allTips: GuidanceTip[] = [];
+  if (!isGitRepo) {
+    allTips.push({
+      id: "not-git-repo",
+      icon: GitBranch,
+      title: "Not a Git repository",
+      description:
+        "Work sessions, notes and chat still work here. Initialize Git to unlock Tasks, Review and Commit features.",
+      action: {
+        label: isInitializingGit ? "Initializing..." : "Initialize Git",
+        onClick: handleInitGit,
+      },
+      tone: "warning",
+    });
+  }
   if (!terminalAgentConfigured) {
     allTips.push({
       id: "no-terminal-agent",
@@ -470,7 +521,7 @@ export function DashboardPage({ onNavigate }: DashboardPageProps) {
       tone: "warning",
     });
   }
-  if (activeTasks.length === 0) {
+  if (worktreeTasks.length === 0) {
     allTips.push({
       id: "first-task",
       icon: Plus,
@@ -523,7 +574,7 @@ export function DashboardPage({ onNavigate }: DashboardPageProps) {
       </AnimatePresence>
 
       {/* ── Two-column layout ── */}
-      <div className="flex-1 min-h-0 grid grid-cols-1 gap-5 xl:grid-cols-[1fr_340px] items-stretch">
+      <div className={`flex-1 min-h-0 grid grid-cols-1 gap-5 items-stretch ${isGitRepo ? "xl:grid-cols-[1fr_340px]" : ""}`}>
 
         {/* ── Left column ── */}
         <div className="flex flex-col gap-5 min-h-0">
@@ -546,13 +597,23 @@ export function DashboardPage({ onNavigate }: DashboardPageProps) {
                 <h1 className="text-lg font-semibold tracking-tight text-[var(--color-text)]">
                   {selectedProject.name}
                 </h1>
-                <span
-                  className="inline-flex items-center gap-1 rounded-md border border-[var(--color-border)] bg-[var(--color-bg)]/70 px-2 py-0.5 text-xs font-medium"
-                  style={{ color: "var(--color-highlight)" }}
-                >
-                  <GitBranch className="h-3 w-3" />
-                  {currentStatus.currentBranch}
-                </span>
+                {isGitRepo ? (
+                  <span
+                    className="inline-flex items-center gap-1 rounded-md border border-[var(--color-border)] bg-[var(--color-bg)]/70 px-2 py-0.5 text-xs font-medium"
+                    style={{ color: "var(--color-highlight)" }}
+                  >
+                    <GitBranch className="h-3 w-3" />
+                    {currentStatus.currentBranch}
+                  </span>
+                ) : (
+                  <span
+                    className="inline-flex items-center gap-1 rounded-md border border-[var(--color-warning)]/30 bg-[var(--color-warning)]/10 px-2 py-0.5 text-xs font-medium text-[var(--color-warning)]"
+                    title="This project is not a Git repository yet"
+                  >
+                    <GitBranch className="h-3 w-3" />
+                    Not a Git repo
+                  </span>
+                )}
               </div>
               <div className="mt-0.5 text-sm text-[var(--color-text-muted)] truncate">
                 {shortenPath(selectedProject.path)}
@@ -561,7 +622,9 @@ export function DashboardPage({ onNavigate }: DashboardPageProps) {
             <div className="flex items-center gap-2 shrink-0">
               <HeroButton icon={Code2} label="Open IDE" onClick={handleOpenIDE} />
               <HeroButton icon={TerminalSquare} label="Terminal" onClick={handleOpenTerminal} />
-              <HeroButton icon={ArrowUpDown} label="Branches" onClick={() => setShowBranchDrawer(true)} />
+              {isGitRepo && (
+                <HeroButton icon={ArrowUpDown} label="Branches" onClick={() => setShowBranchDrawer(true)} />
+              )}
             </div>
           </section>
 
@@ -651,7 +714,7 @@ export function DashboardPage({ onNavigate }: DashboardPageProps) {
           </section>
 
           {/* Action buttons */}
-          <div className="grid grid-cols-2 gap-4 shrink-0">
+          <div className={`grid gap-4 shrink-0 ${isGitRepo ? "grid-cols-2" : "grid-cols-1"}`}>
             <button
               onClick={() => onNavigate("work")}
               className="flex items-center gap-3 rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)] px-5 py-4 text-left transition-colors hover:border-[var(--color-highlight)] group"
@@ -662,8 +725,8 @@ export function DashboardPage({ onNavigate }: DashboardPageProps) {
               <div className="flex-1 min-w-0">
                 <div className="text-sm font-semibold text-[var(--color-text)]">Go to Work</div>
                 <div className="text-xs text-[var(--color-text-muted)]">
-                  {workTasks.length > 0
-                    ? `${workTasks.length} session${workTasks.length !== 1 ? "s" : ""} · ${currentStatus.unstaged} changes`
+                  {hasLocalWork
+                    ? `Main repository${isGitRepo ? ` · ${currentStatus.unstaged} changes` : ""}`
                     : "Main repository"
                   }
                 </div>
@@ -671,19 +734,21 @@ export function DashboardPage({ onNavigate }: DashboardPageProps) {
               <ArrowRight className="h-4 w-4 text-[var(--color-text-muted)] opacity-0 group-hover:opacity-100 transition-opacity shrink-0" />
             </button>
 
-            <button
-              onClick={() => onNavigate("tasks", { openNewTask: true })}
-              className="flex items-center gap-3 rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)] px-5 py-4 text-left transition-colors hover:border-[var(--color-highlight)] group"
-            >
-              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[color-mix(in_srgb,var(--color-info)_12%,transparent)]">
-                <Plus className="h-5 w-5 text-[var(--color-info)]" />
-              </div>
-              <div className="flex-1 min-w-0">
-                <div className="text-sm font-semibold text-[var(--color-text)]">New Task</div>
-                <div className="text-xs text-[var(--color-text-muted)]">Create isolated worktree</div>
-              </div>
-              <ArrowRight className="h-4 w-4 text-[var(--color-text-muted)] opacity-0 group-hover:opacity-100 transition-opacity shrink-0" />
-            </button>
+            {isGitRepo && (
+              <button
+                onClick={() => onNavigate("tasks", { openNewTask: true })}
+                className="flex items-center gap-3 rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)] px-5 py-4 text-left transition-colors hover:border-[var(--color-highlight)] group"
+              >
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[color-mix(in_srgb,var(--color-info)_12%,transparent)]">
+                  <Plus className="h-5 w-5 text-[var(--color-info)]" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="text-sm font-semibold text-[var(--color-text)]">New Task</div>
+                  <div className="text-xs text-[var(--color-text-muted)]">Create isolated worktree</div>
+                </div>
+                <ArrowRight className="h-4 w-4 text-[var(--color-text-muted)] opacity-0 group-hover:opacity-100 transition-opacity shrink-0" />
+              </button>
+            )}
           </div>
 
           {/* Sessions list — flex-1 fills remaining space */}
@@ -723,7 +788,8 @@ export function DashboardPage({ onNavigate }: DashboardPageProps) {
 
         </div>
 
-        {/* ── Right column ── */}
+        {/* ── Right column (git-only) ── */}
+        {isGitRepo && (
         <aside className="flex flex-col gap-4 min-h-0">
 
           {/* Repo Control */}
@@ -827,6 +893,7 @@ export function DashboardPage({ onNavigate }: DashboardPageProps) {
             </div>
           </div>
         </aside>
+        )}
       </div>
 
       {/* ── Drawers & Dialogs ── */}
@@ -949,3 +1016,5 @@ function formatRelativeTime(date: Date): string {
   const days = Math.floor(hours / 24);
   return `${days}d`;
 }
+
+

@@ -23,6 +23,7 @@ pub mod hook_panel;
 pub mod input_confirm_dialog;
 pub mod logo;
 pub mod merge_dialog;
+pub mod new_project_dialog;
 pub mod new_task_dialog;
 pub mod preview_panel;
 pub mod project_info;

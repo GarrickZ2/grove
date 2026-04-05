@@ -14,6 +14,9 @@ export interface ProjectListItem {
   added_at: string;
   task_count: number;
   live_count: number;
+  is_git_repo: boolean;
+  /** Whether the filesystem path still exists. false = "missing" state. */
+  exists: boolean;
 }
 
 interface ProjectListResponse {
@@ -27,13 +30,25 @@ export interface ProjectResponse {
   name: string;
   path: string;
   current_branch: string;
+  /** Worktree tasks only. Local Task is on `local_task`. */
   tasks: TaskResponse[];
+  /** The single Local Task for this project (with real session status). */
+  local_task: TaskResponse | null;
   added_at: string;
+  is_git_repo: boolean;
+  /** Whether the filesystem path still exists. false = "missing" state. */
+  exists: boolean;
 }
 
 interface AddProjectRequest {
   path: string;
   name?: string;
+}
+
+interface NewProjectRequest {
+  parent_dir: string;
+  name: string;
+  init_git: boolean;
 }
 
 export interface ProjectStatsResponse {
@@ -80,6 +95,22 @@ export async function addProject(path: string, name?: string): Promise<ProjectRe
   return apiClient.post<AddProjectRequest, ProjectResponse>('/api/v1/projects', {
     path,
     name,
+  });
+}
+
+/**
+ * Create a brand new project: mkdir + (optional) git init + register.
+ * Name is used as both the directory name and the Grove project name.
+ */
+export async function createNewProject(
+  parentDir: string,
+  name: string,
+  initGit: boolean,
+): Promise<ProjectResponse> {
+  return apiClient.post<NewProjectRequest, ProjectResponse>('/api/v1/projects/new', {
+    parent_dir: parentDir,
+    name,
+    init_git: initGit,
   });
 }
 
@@ -134,4 +165,12 @@ export async function openIDE(id: string): Promise<OpenResponse> {
  */
 export async function openTerminal(id: string): Promise<OpenResponse> {
   return apiClient.post<undefined, OpenResponse>(`/api/v1/projects/${id}/open-terminal`);
+}
+
+/**
+ * Initialize a git repository in a non-git project directory.
+ * Runs `git init` + an empty initial commit so the repo is immediately usable.
+ */
+export async function initGitRepo(id: string): Promise<ProjectResponse> {
+  return apiClient.post<undefined, ProjectResponse>(`/api/v1/projects/${id}/init-git`);
 }

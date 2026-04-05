@@ -113,6 +113,10 @@ pub struct ProjectState {
     pub stats_scroll: u16,
     /// 待打开外部编辑器的 notes 文件路径
     pub pending_notes_edit: Option<String>,
+    /// 项目目录是否还存在(false = "missing")
+    pub exists: bool,
+    /// git 状态是否可用(是 git repo 且有至少一个 commit)
+    pub is_git_usable: bool,
 }
 
 impl ProjectState {
@@ -121,7 +125,11 @@ impl ProjectState {
         let project_key = project_hash(project_path);
 
         // 从 Task 元数据加载真实数据
-        let active = loader::load_worktrees(project_path);
+        // 注意: load_worktrees 不再包含 Local Task,需要单独加载后在视图层合并,
+        // 保留 "Local Task 始终第一项" 的 TUI UX。
+        let worktrees = loader::load_worktrees(project_path);
+        let local = loader::load_local_task(project_path);
+        let active = Self::merge_local_first(local, worktrees);
 
         // TUI 过滤：移除只有 Chat 模式的任务（TUI 不支持）
         let active = Self::filter_tui_tasks(active);
@@ -141,6 +149,9 @@ impl ProjectState {
         let active_indices: Vec<usize> = (0..active.len()).collect();
         let archived_indices: Vec<usize> = (0..archived.len()).collect();
 
+        let exists = Path::new(project_path).exists();
+        let is_git_usable = exists && git::is_git_usable(project_path);
+
         Self {
             current_tab: ProjectTab::Active,
             list_states: [active_state, archived_state],
@@ -158,6 +169,8 @@ impl ProjectState {
             diff_scroll: 0,
             stats_scroll: 0,
             pending_notes_edit: None,
+            exists,
+            is_git_usable,
         }
     }
 
@@ -167,16 +180,30 @@ impl ProjectState {
         tasks
     }
 
+    /// 把 Local Task 合并到 worktree 列表最前面(视图层,保留 TUI UX)
+    fn merge_local_first(local: Option<Worktree>, mut worktrees: Vec<Worktree>) -> Vec<Worktree> {
+        if let Some(local) = local {
+            worktrees.insert(0, local);
+        }
+        worktrees
+    }
+
     /// 刷新数据
     pub fn refresh(&mut self) {
         git::cache::clear_all();
-        let active = loader::load_worktrees(&self.project_path);
+        let worktrees = loader::load_worktrees(&self.project_path);
+        let local = loader::load_local_task(&self.project_path);
+        let active = Self::merge_local_first(local, worktrees);
 
         // TUI 过滤：移除只有 Chat 模式的任务
         let active = Self::filter_tui_tasks(active);
         let archived = loader::load_archived_worktrees(&self.project_path);
         let archived = Self::filter_tui_tasks(archived);
         self.worktrees = [active, archived];
+
+        // 刷新 existence / git 可用性(用户可能中途 `git init` 或删除目录)
+        self.exists = Path::new(&self.project_path).exists();
+        self.is_git_usable = self.exists && git::is_git_usable(&self.project_path);
 
         // 清空搜索状态并重置过滤索引
         self.search_mode = false;
@@ -892,6 +919,8 @@ pub enum PendingAction {
     NewTaskTarget,
     /// Exit - 退出 tmux session
     ExitSession,
+    /// Initialize Git on the current project, then open the New Task dialog
+    InitGitThenNewTask,
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -947,8 +976,10 @@ impl App {
         // 判断是否在 Monitor 模式（GROVE_TASK_ID 存在）
         let is_monitor = std::env::var("GROVE_TASK_ID").is_ok();
 
-        // 判断是否在 git 仓库中
-        let is_in_git_repo = git::is_git_repo(".");
+        // 判断是否在可用的 git 仓库中(有 .git 且至少有一个 commit)
+        // 只有 .git 没 commit 的半拉子状态不算 —— 此时 current_branch 等都会失败,
+        // 降级到 Workspace 模式让用户看到所有项目,避免卡在 "unknown" 状态
+        let is_in_git_repo = git::is_git_usable(".");
 
         let (mode, project, workspace, target_branch) = if is_monitor {
             // Monitor 模式 - 从环境变量读取
@@ -1234,6 +1265,22 @@ impl App {
 
     /// 打开 New Task 弹窗
     pub fn open_new_task_dialog(&mut self) {
+        // 非 git 项目: 先弹一个确认对话框引导 init git
+        if !self.project.is_git_usable {
+            let name = Path::new(&self.project.project_path)
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("this project")
+                .to_string();
+            self.dialogs.confirm_dialog = Some(
+                crate::ui::components::confirm_dialog::ConfirmType::InitGitForNewTask {
+                    project_name: name,
+                },
+            );
+            self.async_ops.pending_action = Some(PendingAction::InitGitThenNewTask);
+            return;
+        }
+
         // 刷新目标分支
         if let Ok(branch) = git::current_branch(&self.project.project_path) {
             self.async_ops.target_branch = branch;
@@ -2030,6 +2077,20 @@ impl App {
                     let _ = session::kill_session(&self.monitor.session_type, &session);
                     self.should_quit = true;
                 }
+                PendingAction::InitGitThenNewTask => {
+                    let path = self.project.project_path.clone();
+                    match crate::operations::projects::init_git_repo(&path) {
+                        Ok(()) => {
+                            self.project.is_git_usable = true;
+                            self.project.refresh();
+                            self.workspace.reload_projects();
+                            self.dialogs.show_new_task_dialog = true;
+                        }
+                        Err(e) => {
+                            self.show_toast(format!("Failed to initialize Git: {}", e));
+                        }
+                    }
+                }
             }
         }
     }
@@ -2663,6 +2724,95 @@ impl App {
         }
     }
 
+    // ========== New Project 功能 ==========
+
+    /// 打开 New Project 对话框
+    pub fn open_new_project_dialog(&mut self) {
+        self.dialogs.new_project_dialog = Some(crate::dialogs::NewProjectData::new());
+    }
+
+    /// 关闭 New Project 对话框
+    pub fn close_new_project_dialog(&mut self) {
+        self.dialogs.new_project_dialog = None;
+    }
+
+    /// New Project - 输入字符
+    pub fn new_project_input_char(&mut self, c: char) {
+        if let Some(ref mut data) = self.dialogs.new_project_dialog {
+            data.input_char(c);
+        }
+    }
+
+    /// New Project - 删除字符
+    pub fn new_project_delete_char(&mut self) {
+        if let Some(ref mut data) = self.dialogs.new_project_dialog {
+            data.delete_char();
+        }
+    }
+
+    /// New Project - Tab 切换焦点
+    pub fn new_project_toggle_focus(&mut self) {
+        if let Some(ref mut data) = self.dialogs.new_project_dialog {
+            data.toggle_focus();
+        }
+    }
+
+    /// New Project - 切换 init_git 复选框
+    pub fn new_project_toggle_init_git(&mut self) {
+        if let Some(ref mut data) = self.dialogs.new_project_dialog {
+            data.toggle_init_git();
+        }
+    }
+
+    /// New Project - 确认创建
+    pub fn new_project_confirm(&mut self) {
+        let (expanded, init_git) = match &self.dialogs.new_project_dialog {
+            Some(data) => (data.expanded_path(), data.init_git),
+            None => return,
+        };
+
+        if expanded.is_empty() {
+            if let Some(ref mut data) = self.dialogs.new_project_dialog {
+                data.set_error("Path cannot be empty");
+            }
+            return;
+        }
+
+        // 拆分 parent + name
+        let path_obj = Path::new(&expanded);
+        let name = match path_obj.file_name().and_then(|n| n.to_str()) {
+            Some(n) if !n.is_empty() => n.to_string(),
+            _ => {
+                if let Some(ref mut data) = self.dialogs.new_project_dialog {
+                    data.set_error("Invalid path: cannot derive project name");
+                }
+                return;
+            }
+        };
+        let parent = match path_obj.parent().and_then(|p| p.to_str()) {
+            Some(p) if !p.is_empty() => p.to_string(),
+            _ => {
+                if let Some(ref mut data) = self.dialogs.new_project_dialog {
+                    data.set_error("Invalid path: missing parent directory");
+                }
+                return;
+            }
+        };
+
+        match crate::operations::projects::create_new_project(&parent, &name, init_git) {
+            Ok(_) => {
+                self.close_new_project_dialog();
+                self.workspace.reload_projects();
+                self.show_toast(format!("Created: {}", name));
+            }
+            Err(e) => {
+                if let Some(ref mut data) = self.dialogs.new_project_dialog {
+                    data.set_error(format!("{}", e));
+                }
+            }
+        }
+    }
+
     /// Add Project - 确认添加
     pub fn add_project_confirm(&mut self) {
         let path = match &self.dialogs.add_project_dialog {
@@ -2685,13 +2835,7 @@ impl App {
             return;
         }
 
-        // 验证是否是 git 仓库
-        if !git::is_git_repo(&path) {
-            if let Some(ref mut data) = self.dialogs.add_project_dialog {
-                data.set_error("Not a git repository");
-            }
-            return;
-        }
+        // 非 git 仓库也允许注册,后续通过 Web UI 可引导初始化
 
         // 验证是否已注册(add_project 内部会处理 worktree)
         if storage::workspace::is_project_registered(&path).unwrap_or(false) {
@@ -2811,8 +2955,12 @@ impl App {
 
         // 根据当前 Tab 决定可用 actions
         let actions = if is_local {
-            // Local Task: 仅 Commit 和 Review
-            vec![ActionType::Commit, ActionType::Review]
+            // Local Task: 仅 Commit 和 Review(非 git 项目禁用 Commit)
+            if self.project.is_git_usable {
+                vec![ActionType::Commit, ActionType::Review]
+            } else {
+                vec![ActionType::Review]
+            }
         } else {
             match self.project.current_tab {
                 ProjectTab::Archived => vec![ActionType::Clean, ActionType::Recover],

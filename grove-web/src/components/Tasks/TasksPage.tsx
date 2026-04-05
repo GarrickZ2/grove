@@ -1,12 +1,11 @@
 import { useState, useMemo, useCallback, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Plus, ArrowLeft } from "lucide-react";
+import { Plus, ArrowLeft, GitBranch } from "lucide-react";
 import { TaskSidebar } from "./TaskSidebar/TaskSidebar";
 import { TaskInfoPanel } from "./TaskInfoPanel";
 import { TaskView, type TaskViewHandle } from "./TaskView";
 import { NewTaskDialog } from "./NewTaskDialog";
-import { CommitDialog, ConfirmDialog, DirtyBranchDialog, MergeDialog } from "../Dialogs";
-import { RebaseDialog } from "./dialogs";
+import { TaskOperationDialogs } from "./TaskOperationDialogs";
 import { HelpOverlay } from "./HelpOverlay";
 import { Button } from "../ui";
 import { ContextMenu } from "../ui/ContextMenu";
@@ -24,6 +23,7 @@ import {
   createTask as apiCreateTask,
   recoverTask as apiRecoverTask,
   listTasks as apiListTasks,
+  initGitRepo,
 } from "../../api";
 import type { Task, TaskFilter } from "../../data/types";
 import { convertTaskResponse } from "../../utils/taskConvert";
@@ -38,8 +38,6 @@ interface TasksPageProps {
   initialViewMode?: string;
   /** Callback when navigation data has been consumed */
   onNavigationConsumed?: () => void;
-  /** When true, auto-selects the Local task and enters workspace directly */
-  localMode?: boolean;
   /** Fallback for Cmd+N navigation when workspace doesn't have a matching tab.
    *  Called with (index, false) for absolute or (delta, true) for relative. */
   onNavByIndex?: (indexOrDelta: number, relative?: boolean) => void;
@@ -47,7 +45,7 @@ interface TasksPageProps {
   initialOpenNewTask?: boolean;
 }
 
-export function TasksPage({ initialTaskId, initialViewMode, onNavigationConsumed, localMode, onNavByIndex, initialOpenNewTask }: TasksPageProps) {
+export function TasksPage({ initialTaskId, initialViewMode, onNavigationConsumed, onNavByIndex, initialOpenNewTask }: TasksPageProps) {
   const { selectedProject, refreshSelectedProject } = useProject();
 
   const { isMobile } = useIsMobile();
@@ -130,10 +128,11 @@ export function TasksPage({ initialTaskId, initialViewMode, onNavigationConsumed
     return () => { cancelled = true; };
   }, [filter, selectedProject]);
 
-  // Get tasks for current project (combine active and archived)
-  // In normal mode, exclude local tasks (they have their own "Work" tab)
+  // Get tasks for current project (combine active and archived).
+  // Backend already excludes Local Task from the tasks array; Local Task has
+  // its own dedicated WorkPage route.
   const activeTasks = (selectedProject?.tasks || []).filter(
-    (t) => t.status !== "archived" && (!t.isLocal || localMode)
+    (t) => t.status !== "archived"
   );
   const tasks = filter === "archived" ? archivedTasks : activeTasks;
 
@@ -156,21 +155,6 @@ export function TasksPage({ initialTaskId, initialViewMode, onNavigationConsumed
     // Consume the navigation data so it doesn't re-trigger
     onNavigationConsumed?.();
   }, [initialTaskId, initialViewMode, activeTasks, pageState.selectedTask?.id, onNavigationConsumed, pageHandlers]);
-
-  // localMode: auto-select local task and lock into workspace mode.
-  // This intentionally re-enters workspace if anything sets inWorkspace=false,
-  // since localMode has no task list view — Back/Escape are disabled via onBack=undefined.
-  useEffect(() => {
-    if (!localMode) return;
-    const local = activeTasks.find((t) => t.isLocal);
-    if (!local) return;
-    if (pageState.selectedTask?.id !== local.id) {
-      pageHandlers.setSelectedTask(local);
-    }
-    if (!pageState.inWorkspace) {
-      pageHandlers.setInWorkspace(true);
-    }
-  }, [localMode, activeTasks, pageState.selectedTask?.id, pageState.inWorkspace, pageHandlers]);
 
   // Sync selectedTask with latest project data after refresh
   useEffect(() => {
@@ -402,7 +386,7 @@ export function TasksPage({ initialTaskId, initialViewMode, onNavigationConsumed
       {
         key: "Escape",
         handler: pageHandlers.handleCloseTask,
-        options: { enabled: !localMode && (pageState.inWorkspace || hasTask) },
+        options: { enabled: pageState.inWorkspace || hasTask },
       },
 
       // Info panel tabs (only in Task List page, not in Workspace)
@@ -490,6 +474,11 @@ export function TasksPage({ initialTaskId, initialViewMode, onNavigationConsumed
     );
   }
 
+  // Non-git project: Tasks require git worktrees, show init prompt.
+  if (!selectedProject.isGitRepo) {
+    return <NonGitTasksEmptyState projectId={selectedProject.id} onRefresh={refreshSelectedProject} />;
+  }
+
   // Build context menu items using utility function
   const contextMenuItems = pageState.contextMenu
     ? buildContextMenuItems(pageState.contextMenu.task, {
@@ -569,7 +558,7 @@ export function TasksPage({ initialTaskId, initialViewMode, onNavigationConsumed
                       projectName={selectedProject.name}
                       fullscreen={isFullscreen}
                       onFullscreenChange={setIsFullscreen}
-                      onBack={localMode ? undefined : handleMobileBack}
+                      onBack={handleMobileBack}
                       onCommit={opsHandlers.handleCommit}
                       onRebase={opsHandlers.handleRebase}
                       onSync={opsHandlers.handleSync}
@@ -725,7 +714,7 @@ export function TasksPage({ initialTaskId, initialViewMode, onNavigationConsumed
                     projectName={selectedProject.name}
                     fullscreen={isFullscreen}
                     onFullscreenChange={setIsFullscreen}
-                    onBack={localMode ? undefined : pageHandlers.handleCloseTask}
+                    onBack={pageHandlers.handleCloseTask}
                     onCommit={opsHandlers.handleCommit}
                     onRebase={opsHandlers.handleRebase}
                     onSync={opsHandlers.handleSync}
@@ -767,91 +756,14 @@ export function TasksPage({ initialTaskId, initialViewMode, onNavigationConsumed
         externalError={createError}
       />
 
-      {/* Commit Dialog */}
-      <CommitDialog
-        isOpen={opsState.showCommitDialog}
-        isLoading={opsState.isCommitting}
-        error={opsState.commitError}
-        onCommit={opsHandlers.handleCommitSubmit}
-        onCancel={opsHandlers.handleCommitCancel}
-      />
-
-      {/* Merge Dialog */}
-      <MergeDialog
-        isOpen={opsState.showMergeDialog}
-        taskName={pageState.selectedTask?.name || ""}
-        branchName={pageState.selectedTask?.branch || ""}
-        targetBranch={pageState.selectedTask?.target || ""}
-        isLoading={opsState.isMerging}
-        error={opsState.mergeError}
-        onMerge={opsHandlers.handleMergeSubmit}
-        onCancel={opsHandlers.handleMergeCancel}
-      />
-
-      {/* Clean Confirm Dialog */}
-      <ConfirmDialog
-        isOpen={opsState.showCleanConfirm}
-        title="Delete Task"
-        message={`Are you sure you want to delete "${pageState.selectedTask?.name}"? This will remove the worktree and all associated data. This action cannot be undone.`}
-        confirmLabel={opsState.isDeleting ? "Deleting..." : "Delete"}
-        variant="danger"
-        onConfirm={opsHandlers.handleCleanConfirm}
-        onCancel={opsHandlers.handleCleanCancel}
-      />
-
-      {/* Archive after Merge Confirm Dialog (TUI: ConfirmType::MergeSuccess) */}
-      <ConfirmDialog
-        isOpen={postMergeState.showArchiveAfterMerge}
-        title="Merge Complete"
-        message={
-          <div className="flex flex-col gap-4">
-            <div className="bg-[var(--color-bg-tertiary)] rounded-lg p-3">
-              <div className="flex justify-between text-sm">
-                <span className="text-[var(--color-text-muted)]">Task</span>
-                <span className="text-[var(--color-text)] font-medium">{postMergeState.mergedTaskName}</span>
-              </div>
-            </div>
-            <p className="text-sm text-[var(--color-text-muted)]">
-              Would you like to archive this task?
-            </p>
-          </div>
-        }
-        variant="info"
-        confirmLabel="Archive"
-        cancelLabel="Later"
-        onConfirm={postMergeHandlers.handleArchiveAfterMerge}
-        onCancel={postMergeHandlers.handleSkipArchive}
-      />
-
-      {/* Archive Confirm Dialog (API preflight) */}
-      <ConfirmDialog
-        isOpen={!!pendingArchiveConfirm}
-        title="Archive"
-        message={pendingArchiveConfirm?.message || ""}
-        variant="warning"
-        onConfirm={() => opsHandlers.handleArchiveConfirm(pendingArchiveConfirm)}
-        onCancel={() => opsHandlers.handleArchiveCancel()}
-      />
-
-      {/* Reset Confirm Dialog (TUI: ConfirmType::Reset) */}
-      <ConfirmDialog
-        isOpen={opsState.showResetConfirm}
-        title="Reset Task"
-        message={`Are you sure you want to reset "${pageState.selectedTask?.name}"? This will discard all changes and recreate the worktree from ${pageState.selectedTask?.target}. This action cannot be undone.`}
-        confirmLabel={opsState.isResetting ? "Resetting..." : "Reset"}
-        variant="danger"
-        onConfirm={opsHandlers.handleResetConfirm}
-        onCancel={opsHandlers.handleResetCancel}
-      />
-
-      {/* Rebase Dialog (Change Target Branch) */}
-      <RebaseDialog
-        isOpen={opsState.showRebaseDialog}
-        taskName={pageState.selectedTask?.name}
-        currentTarget={pageState.selectedTask?.target || ""}
-        availableBranches={opsState.availableBranches}
-        onClose={opsHandlers.handleRebaseCancel}
-        onRebase={opsHandlers.handleRebaseSubmit}
+      {/* Shared operation dialogs (Commit / Merge / Clean / Reset / Rebase / Archive / PostMerge / DirtyBranch) */}
+      <TaskOperationDialogs
+        task={pageState.selectedTask}
+        opsState={opsState}
+        opsHandlers={opsHandlers}
+        postMergeState={postMergeState}
+        postMergeHandlers={postMergeHandlers}
+        pendingArchiveConfirm={pendingArchiveConfirm}
       />
 
       {/* Task Context Menu */}
@@ -861,13 +773,68 @@ export function TasksPage({ initialTaskId, initialViewMode, onNavigationConsumed
         onClose={pageHandlers.closeContextMenu}
       />
 
-      <DirtyBranchDialog
-        error={opsState.dirtyBranchError}
-        onClose={opsHandlers.handleDirtyBranchErrorClose}
-      />
-
       {/* Help Overlay */}
       <HelpOverlay isOpen={pageState.showHelp} onClose={() => pageHandlers.setShowHelp(false)} />
     </motion.div>
+  );
+}
+
+/**
+ * Empty state shown on the Tasks page when the project is not a Git repository.
+ * Tasks require git worktrees, so the page prompts the user to initialize git.
+ */
+function NonGitTasksEmptyState({
+  projectId,
+  onRefresh,
+}: {
+  projectId: string;
+  onRefresh: () => Promise<void>;
+}) {
+  const [isInitializing, setIsInitializing] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const handleInit = async () => {
+    setIsInitializing(true);
+    setError(null);
+    try {
+      await initGitRepo(projectId);
+      await onRefresh();
+    } catch (err: unknown) {
+      if (err && typeof err === "object" && "message" in err) {
+        setError((err as { message: string }).message || "Failed to initialize Git");
+      } else {
+        setError("Failed to initialize Git");
+      }
+    } finally {
+      setIsInitializing(false);
+    }
+  };
+
+  return (
+    <div className="flex items-center justify-center h-full px-6">
+      <div className="max-w-md w-full text-center">
+        <div className="mx-auto mb-6 w-16 h-16 rounded-full bg-[var(--color-bg-secondary)] flex items-center justify-center border border-[var(--color-border)]">
+          <GitBranch className="w-8 h-8 text-[var(--color-text-muted)]" />
+        </div>
+        <h2 className="text-xl font-semibold text-[var(--color-text)] mb-2">
+          Tasks require Git
+        </h2>
+        <p className="text-sm text-[var(--color-text-muted)] mb-6">
+          Tasks run in isolated Git worktrees, which need a Git repository in this project.
+          Initialize Git to unlock task creation, review and merge workflows.
+        </p>
+        <button
+          onClick={handleInit}
+          disabled={isInitializing}
+          className="inline-flex items-center gap-2 px-4 py-2 rounded-md bg-[var(--color-highlight)] text-white text-sm font-medium hover:opacity-90 transition-opacity disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          <GitBranch className="w-4 h-4" />
+          {isInitializing ? "Initializing..." : "Initialize Git Repository"}
+        </button>
+        {error && (
+          <p className="mt-4 text-xs text-[var(--color-error)]">{error}</p>
+        )}
+      </div>
+    </div>
   );
 }

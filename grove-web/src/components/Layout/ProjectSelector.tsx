@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect, useMemo, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { ChevronDown, Check, Plus, Settings2, Search } from "lucide-react";
+import { ChevronDown, Check, Plus, Settings2, Search, AlertCircle, FolderX } from "lucide-react";
 import { useProject, useTheme } from "../../context";
 import type { Project } from "../../data/types";
 import { getProjectStyle } from "../../utils/projectStyle";
@@ -397,6 +397,7 @@ const ProjectItem = React.forwardRef<HTMLButtonElement, ProjectItemProps>(functi
   const totalCount = project.taskCount ?? project.tasks.length;
   const { color, Icon } = getProjectStyle(project.id, accentPalette);
 
+  const isMissing = !project.exists;
   return (
     <button
       id={`project-selector-option-${project.id}`}
@@ -406,8 +407,10 @@ const ProjectItem = React.forwardRef<HTMLButtonElement, ProjectItemProps>(functi
       onMouseEnter={onMouseEnter}
       role="option"
       aria-selected={isActive}
-      title={project.name}
+      title={isMissing ? `${project.name} (directory missing)` : project.name}
       className={`w-full flex items-start gap-3 px-3 py-2.5 hover:bg-[var(--color-bg-secondary)] transition-colors select-none ${
+        isMissing ? "opacity-50" : ""
+      } ${
         isActive
           ? "bg-[var(--color-highlight)]/10 ring-1 ring-inset ring-[var(--color-highlight)]/40"
           : isSelected
@@ -425,16 +428,34 @@ const ProjectItem = React.forwardRef<HTMLButtonElement, ProjectItemProps>(functi
         <div className="flex items-center gap-2">
           <MiddleTruncatedText
             text={project.name}
-            className="text-sm font-medium text-[var(--color-text)]"
+            className={`text-sm font-medium text-[var(--color-text)] ${isMissing ? "line-through" : ""}`}
           />
           {isSelected && (
             <Check className="w-4 h-4 text-[var(--color-highlight)] flex-shrink-0" />
           )}
         </div>
         <div className="flex items-center gap-2 mt-0.5">
-          <span className="text-xs text-[var(--color-text-muted)]">
-            {totalCount} task{totalCount !== 1 ? "s" : ""}
-          </span>
+          {isMissing ? (
+            <span
+              className="inline-flex items-center gap-1 text-[10px] text-[var(--color-error)]"
+              title="Directory no longer exists on disk"
+            >
+              <FolderX className="w-3 h-3" />
+              Missing
+            </span>
+          ) : project.isGitRepo ? (
+            <span className="text-xs text-[var(--color-text-muted)]">
+              {totalCount} task{totalCount !== 1 ? "s" : ""}
+            </span>
+          ) : (
+            <span
+              className="inline-flex items-center gap-1 text-[10px] text-[var(--color-warning)]"
+              title="Not a Git repository yet"
+            >
+              <AlertCircle className="w-3 h-3" />
+              Not initialized
+            </span>
+          )}
         </div>
       </div>
     </button>

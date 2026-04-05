@@ -17,13 +17,22 @@ export function useBlitzTasks() {
         projects.map(async (p) => {
           try {
             const full = await getProject(p.id);
-            return full.tasks
+            // Worktree tasks + the project's Local Task (Blitz view surfaces both)
+            const worktreeTasks = full.tasks
               .filter((t) => t.status !== "archived")
               .map((t) => ({
                 task: convertTaskResponse(t),
                 projectId: full.id,
                 projectName: full.name,
               }));
+            if (full.local_task) {
+              worktreeTasks.push({
+                task: convertTaskResponse(full.local_task),
+                projectId: full.id,
+                projectName: full.name,
+              });
+            }
+            return worktreeTasks;
           } catch {
             return [];
           }

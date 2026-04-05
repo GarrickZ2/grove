@@ -159,7 +159,7 @@ fn resolve_source_scan_dir(source: &SkillSourceDef) -> Option<PathBuf> {
             }
         }
         "local" => {
-            let path = expand_tilde(&source.url);
+            let path = crate::storage::workspace::expand_tilde(&source.url);
             Some(PathBuf::from(path))
         }
         _ => None,
@@ -709,7 +709,7 @@ fn resolve_actual_skill_dir(source: &SkillSourceDef, relative_path: &str) -> Res
             Ok(path)
         }
         "local" => {
-            let base = expand_tilde(&source.url);
+            let base = crate::storage::workspace::expand_tilde(&source.url);
             Ok(PathBuf::from(base).join(relative_path))
         }
         _ => Err(GroveError::storage(format!(
@@ -725,7 +725,9 @@ fn resolve_agent_target_dir(
     project_path: Option<&str>,
 ) -> Result<PathBuf> {
     match scope {
-        "global" => Ok(PathBuf::from(expand_tilde(&agent.global_skills_dir))),
+        "global" => Ok(PathBuf::from(crate::storage::workspace::expand_tilde(
+            &agent.global_skills_dir,
+        ))),
         "project" => {
             let project = project_path
                 .ok_or_else(|| GroveError::storage("Project path required for project scope"))?;
@@ -733,15 +735,6 @@ fn resolve_agent_target_dir(
         }
         _ => Err(GroveError::storage(format!("Unknown scope: {}", scope))),
     }
-}
-
-fn expand_tilde(path: &str) -> String {
-    if let Some(rest) = path.strip_prefix("~/") {
-        if let Some(home) = dirs::home_dir() {
-            return format!("{}/{}", home.display(), rest);
-        }
-    }
-    path.to_string()
 }
 
 /// Get the SKILL.md content for a specific skill

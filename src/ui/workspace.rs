@@ -10,8 +10,8 @@ use ratatui::{
 use crate::app::App;
 
 use super::components::{
-    add_project_dialog, config_panel, delete_project_dialog, help_panel, logo, search_bar,
-    theme_selector, toast, workspace_empty, workspace_footer, workspace_list,
+    add_project_dialog, config_panel, delete_project_dialog, help_panel, logo, new_project_dialog,
+    search_bar, theme_selector, toast, workspace_empty, workspace_footer, workspace_list,
 };
 
 /// 渲染 Workspace 页面
@@ -54,6 +54,11 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     // 渲染 Add Project 弹窗
     if let Some(ref data) = app.dialogs.add_project_dialog {
         add_project_dialog::render(frame, data, &app.ui.colors, &mut app.ui.click_areas);
+    }
+
+    // 渲染 New Project 弹窗
+    if let Some(ref data) = app.dialogs.new_project_dialog {
+        new_project_dialog::render(frame, data, &app.ui.colors, &mut app.ui.click_areas);
     }
 
     // 渲染 Delete Project 弹窗

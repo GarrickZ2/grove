@@ -123,13 +123,14 @@ interface TaskViewProps {
   fullscreen?: boolean;
   onFullscreenChange?: (fullscreen: boolean) => void;
   onBack?: () => void;
-  onCommit: () => void;
-  onRebase: () => void;
-  onSync: () => void;
-  onMerge: () => void;
-  onArchive: () => void;
-  onClean: () => void;
-  onReset: () => void;
+  /** Git-dependent actions — pass `undefined` to hide the corresponding button. */
+  onCommit?: () => void;
+  onRebase?: () => void;
+  onSync?: () => void;
+  onMerge?: () => void;
+  onArchive?: () => void;
+  onClean?: () => void;
+  onReset?: () => void;
 }
 
 export interface TaskViewHandle {
@@ -177,23 +178,23 @@ export const TaskView = forwardRef<TaskViewHandle, TaskViewProps>((props, ref) =
   const canOperate = !isArchived && !isBroken && !isLocal;
 
   const overflowItems: OverflowItem[] = [
-    ...(!isLocal ? [{
+    ...(!isLocal && onRebase ? [{
       id: "rebase", label: "Rebase", icon: GitBranchPlus, onClick: onRebase,
       shortcut: "b", disabled: !canOperate,
     }] : []),
-    ...(!isLocal ? [{
+    ...(!isLocal && onArchive ? [{
       id: "archive", label: "Archive", icon: Archive, onClick: onArchive,
       shortcut: "a", variant: "warning" as const, disabled: isBroken || isArchived, separator: true,
     }] : []),
-    {
+    ...(onReset ? [{
       id: "reset", label: "Reset", icon: RotateCcw, onClick: onReset,
       shortcut: "x", variant: "warning" as const, disabled: isArchived,
       separator: isLocal,
-    },
-    {
+    }] : []),
+    ...(onClean ? [{
       id: "clean", label: "Clean", icon: Trash2, onClick: onClean,
       shortcut: "⇧X", variant: "danger" as const,
-    },
+    }] : []),
   ];
 
   return (
@@ -243,26 +244,30 @@ export const TaskView = forwardRef<TaskViewHandle, TaskViewProps>((props, ref) =
 
         {/* Right: Git Actions + Overflow + CmdK + Fullscreen */}
         <div className="flex items-center gap-1 shrink-0">
-          {/* Git Actions — direct buttons */}
-          <button
-            onClick={onCommit}
-            disabled={isArchived}
-            className="flex items-center gap-1.5 h-7 px-2.5 rounded-md text-xs font-medium text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-bg-tertiary)] transition-colors disabled:opacity-35 disabled:cursor-not-allowed"
-            title="Commit (c)"
-          >
-            <GitCommit size={13} />
-            <span>Commit</span>
-          </button>
-          <button
-            onClick={onMerge}
-            disabled={!canOperate}
-            className="flex items-center gap-1.5 h-7 px-2.5 rounded-md text-xs font-medium text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-bg-tertiary)] transition-colors disabled:opacity-35 disabled:cursor-not-allowed"
-            title="Merge (m)"
-          >
-            <GitMerge size={13} />
-            <span>Merge</span>
-          </button>
-          {!isLocal && (
+          {/* Git Actions — direct buttons (omitted on non-git projects) */}
+          {onCommit && (
+            <button
+              onClick={onCommit}
+              disabled={isArchived}
+              className="flex items-center gap-1.5 h-7 px-2.5 rounded-md text-xs font-medium text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-bg-tertiary)] transition-colors disabled:opacity-35 disabled:cursor-not-allowed"
+              title="Commit (c)"
+            >
+              <GitCommit size={13} />
+              <span>Commit</span>
+            </button>
+          )}
+          {onMerge && (
+            <button
+              onClick={onMerge}
+              disabled={!canOperate}
+              className="flex items-center gap-1.5 h-7 px-2.5 rounded-md text-xs font-medium text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-bg-tertiary)] transition-colors disabled:opacity-35 disabled:cursor-not-allowed"
+              title="Merge (m)"
+            >
+              <GitMerge size={13} />
+              <span>Merge</span>
+            </button>
+          )}
+          {!isLocal && onSync && (
             <button
               onClick={onSync}
               disabled={!canOperate}

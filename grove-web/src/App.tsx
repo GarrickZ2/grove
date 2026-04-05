@@ -7,7 +7,9 @@ import { SettingsPage } from "./components/Config";
 import { DashboardPage } from "./components/Dashboard";
 import { BlitzPage } from "./components/Blitz";
 import { TasksPage } from "./components/Tasks/TasksPage";
+import { WorkPage } from "./components/Work";
 import { ProjectsPage } from "./components/Projects";
+import { MissingProjectState } from "./components/Projects/MissingProjectState";
 import { AddProjectDialog } from "./components/Projects/AddProjectDialog";
 import { WelcomePage } from "./components/Welcome";
 import { DiffReviewPage } from "./components/Review";
@@ -39,7 +41,7 @@ function AppContent() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [hasExitedWelcome, setHasExitedWelcome] = useState(false);
   const [navigationData, setNavigationData] = useState<Record<string, unknown> | null>(null);
-  const { selectedProject, currentProjectId, isLoading, selectProject, projects, addProject, refreshProjects, refreshSelectedProject } = useProject();
+  const { selectedProject, currentProjectId, isLoading, selectProject, projects, addProject, createNewProject, refreshProjects, refreshSelectedProject } = useProject();
   const [showAddProject, setShowAddProject] = useState(false);
   const [isAddingProject, setIsAddingProject] = useState(false);
   const [addProjectError, setAddProjectError] = useState<string | null>(null);
@@ -173,6 +175,23 @@ function AppContent() {
     }
   };
 
+  const handleCreateNewProject = async (parentDir: string, name: string, initGit: boolean) => {
+    setIsAddingProject(true);
+    setAddProjectError(null);
+    try {
+      await createNewProject(parentDir, name, initGit);
+      setShowAddProject(false);
+    } catch (err: unknown) {
+      if (err && typeof err === "object" && "message" in err) {
+        setAddProjectError((err as { message: string }).message || "Failed to create project");
+      } else {
+        setAddProjectError("Failed to create project");
+      }
+    } finally {
+      setIsAddingProject(false);
+    }
+  };
+
   // Check if we should show welcome page
   const shouldShowWelcome = currentProjectId === null && !hasExitedWelcome;
 
@@ -295,7 +314,7 @@ function AppContent() {
       case "projects":
         return <ProjectsPage onNavigate={setActiveItem} />;
       case "work":
-        return <TasksPage key="work" localMode onNavByIndex={navigateSidebar} />;
+        return <WorkPage key="work" />;
       case "tasks":
         return (
           <TasksPage
@@ -368,7 +387,7 @@ function AppContent() {
           />
         </MobileDrawer>
 
-        <main className={`flex-1 ${isFullWidthPage && !isDashboardPage ? "overflow-hidden" : "overflow-y-auto"}`}>
+        <main className={`relative flex-1 ${isFullWidthPage && !isDashboardPage ? "overflow-hidden" : "overflow-y-auto"}`}>
           <div className={isFullWidthPage ? "h-full p-3" : "max-w-5xl mx-auto p-3"}>
             <AnimatePresence mode="wait">
               {tasksMode === "blitz" ? (
@@ -396,6 +415,12 @@ function AppContent() {
               )}
             </AnimatePresence>
           </div>
+          {selectedProject && !selectedProject.exists &&
+            activeItem !== "projects" && activeItem !== "settings" && (
+              <div className="absolute inset-0 z-40 bg-[var(--color-bg)] flex items-center justify-center">
+                <MissingProjectState project={selectedProject} />
+              </div>
+            )}
         </main>
 
         <AddProjectDialog
@@ -405,6 +430,7 @@ function AppContent() {
             setAddProjectError(null);
           }}
           onAdd={handleAddProject}
+          onCreateNew={handleCreateNewProject}
           isLoading={isAddingProject}
           externalError={addProjectError}
         />
@@ -452,10 +478,16 @@ function AppContent() {
             transition={{ duration: 0.3, ease: [0.25, 1, 0.5, 1] }}
           >
             <Sidebar {...sidebarProps} />
-            <main className={`flex-1 ${isFullWidthPage && !isDashboardPage ? "overflow-hidden" : "overflow-y-auto"}`}>
+            <main className={`relative flex-1 ${isFullWidthPage && !isDashboardPage ? "overflow-hidden" : "overflow-y-auto"}`}>
               <div className={isFullWidthPage ? `h-full transition-[padding] duration-300 ease-out ${inWorkspace ? 'p-2' : 'p-6'}` : "max-w-5xl mx-auto p-6"}>
                 {renderContent()}
               </div>
+              {selectedProject && !selectedProject.exists &&
+                activeItem !== "projects" && activeItem !== "settings" && (
+                  <div className="absolute inset-0 z-40 bg-[var(--color-bg)] flex items-center justify-center">
+                    <MissingProjectState project={selectedProject} />
+                  </div>
+                )}
             </main>
           </motion.div>
         )}
@@ -467,6 +499,7 @@ function AppContent() {
           setAddProjectError(null);
         }}
         onAdd={handleAddProject}
+        onCreateNew={handleCreateNewProject}
         isLoading={isAddingProject}
         externalError={addProjectError}
       />

@@ -47,13 +47,7 @@ impl AddProjectData {
 
     /// 获取展开后的路径（处理 ~）
     pub fn expanded_path(&self) -> String {
-        let path = self.input.trim();
-        if let Some(stripped) = path.strip_prefix("~/") {
-            if let Some(home) = dirs::home_dir() {
-                return home.join(stripped).to_string_lossy().to_string();
-            }
-        }
-        path.to_string()
+        crate::storage::workspace::expand_tilde(self.input.trim())
     }
 }
 

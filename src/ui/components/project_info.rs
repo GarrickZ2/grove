@@ -21,6 +21,8 @@ pub struct ProjectInfoData {
     pub additions: u32,
     pub deletions: u32,
     pub last_commit: String,
+    /// 项目是否处于可用的 git 状态(false → 显示降级信息)
+    pub is_git_usable: bool,
 }
 
 /// 渲染 Project Info 区域
@@ -33,6 +35,30 @@ pub fn render(frame: &mut Frame, area: Rect, data: &ProjectInfoData, colors: &Th
 
     let inner_area = block.inner(area);
     frame.render_widget(block, area);
+
+    // 非 git 项目:整个区域显示一个引导行
+    if !data.is_git_usable {
+        let lines = vec![
+            Line::from(vec![
+                Span::styled("  ", Style::default()),
+                Span::styled(
+                    "⚠ Git not init",
+                    Style::default()
+                        .fg(colors.warning)
+                        .add_modifier(Modifier::BOLD),
+                ),
+            ]),
+            Line::from(vec![
+                Span::styled("  ", Style::default()),
+                Span::styled(
+                    "Git-related actions are disabled. Create a task to initialize Git.",
+                    Style::default().fg(colors.muted),
+                ),
+            ]),
+        ];
+        frame.render_widget(Paragraph::new(lines), inner_area);
+        return;
+    }
 
     // 左右两列布局
     let [left_area, right_area] =

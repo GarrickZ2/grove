@@ -380,7 +380,7 @@ fn find_project_by_id(id: &str) -> Result<(workspace::RegisteredProject, String)
 // ============================================================================
 
 /// GET /api/v1/projects/{id}/tasks
-/// List tasks for a project
+/// List tasks for a project (worktree tasks only; Local Task is on `ProjectResponse.local_task`)
 pub async fn list_tasks(
     Path(id): Path<String>,
     Query(query): Query<TaskListQuery>,
@@ -401,6 +401,7 @@ pub async fn list_tasks(
                 .map(|wt| worktree_to_response(wt, &pk))
                 .collect()
         } else {
+            // load_worktrees excludes Local Task by design
             let active = loader::load_worktrees(&project_path);
             active
                 .iter()
@@ -411,18 +412,15 @@ pub async fn list_tasks(
     .await
     .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
-    // Sort by updated_at descending (newest first), but Local Task always first
-    tasks.sort_by(|a, b| match (a.is_local, b.is_local) {
-        (true, false) => std::cmp::Ordering::Less,
-        (false, true) => std::cmp::Ordering::Greater,
-        _ => b.updated_at.cmp(&a.updated_at),
-    });
+    // Sort by updated_at descending (newest first)
+    tasks.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
 
     Ok(Json(TaskListResponse { tasks }))
 }
 
 /// GET /api/v1/projects/{id}/tasks/{taskId}
-/// Get a single task
+/// Get a single task. If `taskId` is the Local Task constant, falls back to
+/// `loader::load_local_task` since `load_worktrees` no longer includes it.
 pub async fn get_task(
     Path((id, task_id)): Path<(String, String)>,
 ) -> Result<Json<TaskResponse>, StatusCode> {
@@ -433,6 +431,10 @@ pub async fn get_task(
     let pk = project_key.clone();
     let tid = task_id.clone();
     let result: Option<TaskResponse> = tokio::task::spawn_blocking(move || {
+        // Local Task is fetched via the dedicated loader function
+        if tid == crate::storage::tasks::LOCAL_TASK_ID {
+            return loader::load_local_task(&project_path).map(|wt| worktree_to_response(&wt, &pk));
+        }
         let active = loader::load_worktrees(&project_path);
         if let Some(wt) = active.iter().find(|wt| wt.id == tid) {
             return Some(worktree_to_response(wt, &pk));

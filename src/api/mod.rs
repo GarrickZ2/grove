@@ -107,6 +107,10 @@ pub fn create_api_router() -> Router {
         // Projects API
         .route("/projects", get(handlers::projects::list_projects))
         .route("/projects", post(handlers::projects::add_project))
+        .route(
+            "/projects/new",
+            post(handlers::projects::create_new_project),
+        )
         .route("/projects/{id}", get(handlers::projects::get_project))
         .route("/projects/{id}", delete(handlers::projects::delete_project))
         .route("/projects/{id}/stats", get(handlers::projects::get_stats))
@@ -126,6 +130,10 @@ pub fn create_api_router() -> Router {
         .route(
             "/projects/{id}/open-terminal",
             post(handlers::projects::open_terminal),
+        )
+        .route(
+            "/projects/{id}/init-git",
+            post(handlers::projects::init_git),
         )
         // Tasks API
         .route(

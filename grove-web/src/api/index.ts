@@ -7,7 +7,7 @@ export type { AppInfo, CustomAgent } from './config';
 
 export { checkAllDependencies, checkCommands } from './env';
 
-export { listProjects, getProject, addProject, deleteProject, getProjectStats, getBranches, getRemotes, openIDE, openTerminal } from './projects';
+export { listProjects, getProject, addProject, deleteProject, getProjectStats, getBranches, getRemotes, openIDE, openTerminal, initGitRepo, createNewProject } from './projects';
 export type {
   ProjectListItem,
   ProjectResponse,

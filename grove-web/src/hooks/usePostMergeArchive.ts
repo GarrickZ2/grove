@@ -36,7 +36,7 @@ interface PostMergeArchiveConfig {
 /**
  * Post-merge archive state
  */
-interface PostMergeArchiveState {
+export interface PostMergeArchiveState {
   showArchiveAfterMerge: boolean;
   mergedTaskId: string | null;
   mergedTaskName: string;
@@ -46,7 +46,7 @@ interface PostMergeArchiveState {
 /**
  * Post-merge archive handlers
  */
-interface PostMergeArchiveHandlers {
+export interface PostMergeArchiveHandlers {
   /**
    * Trigger post-merge archive dialog
    *

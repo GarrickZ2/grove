@@ -48,15 +48,22 @@ fn get_shortcuts(has_items: bool) -> Vec<(&'static str, &'static str)> {
     if has_items {
         vec![
             ("Enter", "open"),
-            ("←→↑↓", "navigate"),
             ("a", "add"),
+            ("n", "new"),
             ("x", "delete"),
             ("/", "search"),
             ("c", "config"),
             ("t", "theme"),
+            ("?", "help"),
             ("q", "quit"),
         ]
     } else {
-        vec![("a", "add"), ("c", "config"), ("t", "theme"), ("q", "quit")]
+        vec![
+            ("a", "add"),
+            ("n", "new"),
+            ("c", "config"),
+            ("t", "theme"),
+            ("q", "quit"),
+        ]
     }
 }

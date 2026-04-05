@@ -93,7 +93,7 @@ function parseDirtyBranchError(
 /**
  * Task operations state
  */
-interface TaskOperationsState {
+export interface TaskOperationsState {
   // Commit
   showCommitDialog: boolean;
   isCommitting: boolean;

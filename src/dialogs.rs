@@ -12,6 +12,7 @@ pub use crate::ui::components::confirm_dialog::ConfirmType;
 pub use crate::ui::components::delete_project_dialog::DeleteProjectData;
 pub use crate::ui::components::input_confirm_dialog::InputConfirmData;
 pub use crate::ui::components::merge_dialog::MergeDialogData;
+pub use crate::ui::components::new_project_dialog::NewProjectData;
 
 /// 对话框状态
 #[derive(Debug)]
@@ -43,6 +44,8 @@ pub struct DialogState {
     // === Project Dialogs ===
     /// Add Project 弹窗
     pub add_project_dialog: Option<AddProjectData>,
+    /// New Project 弹窗(创建目录 + 可选 git init)
+    pub new_project_dialog: Option<NewProjectData>,
     /// Delete Project 弹窗
     pub delete_project_dialog: Option<DeleteProjectData>,
 
@@ -77,6 +80,7 @@ impl DialogState {
             branch_selector: None,
             merge_dialog: None,
             add_project_dialog: None,
+            new_project_dialog: None,
             delete_project_dialog: None,
             action_palette: None,
             commit_dialog: None,
@@ -95,6 +99,7 @@ impl DialogState {
         self.branch_selector = None;
         self.merge_dialog = None;
         self.add_project_dialog = None;
+        self.new_project_dialog = None;
         self.delete_project_dialog = None;
         self.action_palette = None;
         self.commit_dialog = None;
@@ -111,6 +116,7 @@ impl DialogState {
             || self.branch_selector.is_some()
             || self.merge_dialog.is_some()
             || self.add_project_dialog.is_some()
+            || self.new_project_dialog.is_some()
             || self.delete_project_dialog.is_some()
             || self.action_palette.is_some()
             || self.commit_dialog.is_some()
@@ -123,6 +129,7 @@ impl DialogState {
         self.show_new_task_dialog
             || self.input_confirm_dialog.is_some()
             || self.add_project_dialog.is_some()
+            || self.new_project_dialog.is_some()
             || self.action_palette.is_some()
             || self.commit_dialog.is_some()
     }

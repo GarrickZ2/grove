@@ -1,4 +1,10 @@
 //! 从 Task 元数据加载 Worktree 数据
+//!
+//! 设计:
+//! - `load_worktrees` 只返回真正的 worktree 任务(不含 Local Task)
+//! - `load_local_task` 返回单独的 Local Task
+//! - 两者都会确保 Local Task 在 `tasks.toml` 中被创建/同步(给 notes/chats/sessions
+//!   的存储层使用),但对外的数据契约里 Local Task 和 worktree 任务是隔离的
 
 use std::path::Path;
 
@@ -9,12 +15,14 @@ use crate::storage::workspace::{self, project_hash};
 
 use super::{FileChanges, Worktree, WorktreeStatus};
 
-/// 从 Task 元数据加载活跃 worktree 列表
-pub fn load_worktrees(project_path: &str) -> Vec<Worktree> {
-    // 1. 获取项目 key（路径的 hash）
+/// 确保 Local Task 记录在 tasks.toml 中存在并与项目状态同步
+///
+/// 返回 `(active_tasks, project_key)`。`active_tasks` 包含已同步 Local Task
+/// 的完整任务列表(供后续拆分使用)。
+fn ensure_local_task_synced(project_path: &str) -> (Vec<Task>, String) {
     let project_key = project_hash(project_path);
 
-    // 2. 加载 tasks.toml (活跃任务)
+    // 加载 tasks.toml (活跃任务)
     let mut active_tasks = match tasks::load_tasks(&project_key) {
         Ok(t) => t,
         Err(e) => {
@@ -26,19 +34,23 @@ pub fn load_worktrees(project_path: &str) -> Vec<Worktree> {
         }
     };
 
-    // 3. 获取当前分支和 default branch
-    let current_branch = git::current_branch(project_path).unwrap_or_else(|_| "main".to_string());
-    let default_branch = git::default_branch(project_path);
+    // 非 git 项目无分支概念,传空串
+    let is_git = git::is_git_repo(project_path);
+    let (current_branch, default_branch) = if is_git {
+        let cur = git::current_branch(project_path).unwrap_or_else(|_| "main".to_string());
+        let def = git::default_branch(project_path);
+        (cur, def)
+    } else {
+        (String::new(), String::new())
+    };
 
-    // 3.5 确保 Local Task 存在并同步分支信息
-    // 获取项目名称（用作 Local Task 的显示名）
+    // 项目名(用作 Local Task 的显示名)
     let project_name = workspace::load_project_by_hash(&project_key)
         .ok()
         .flatten()
         .map(|p| p.name)
         .unwrap_or_else(|| {
-            // Fallback: 从路径取最后一段目录名
-            std::path::Path::new(project_path)
+            Path::new(project_path)
                 .file_name()
                 .and_then(|n| n.to_str())
                 .unwrap_or("Local")
@@ -46,7 +58,6 @@ pub fn load_worktrees(project_path: &str) -> Vec<Worktree> {
         });
 
     if let Some(local_task) = active_tasks.iter_mut().find(|t| t.id == LOCAL_TASK_ID) {
-        // 同步 branch 为当前分支，target 为 default branch（用于 Review 比较）
         let mut needs_save = false;
         if local_task.branch != current_branch {
             local_task.branch = current_branch.clone();
@@ -68,7 +79,6 @@ pub fn load_worktrees(project_path: &str) -> Vec<Worktree> {
             let _ = tasks::save_tasks(&project_key, &active_tasks);
         }
     } else {
-        // 自动创建 Local Task
         let local_task = tasks::create_local_task(
             project_path,
             &current_branch,
@@ -80,29 +90,81 @@ pub fn load_worktrees(project_path: &str) -> Vec<Worktree> {
         }
     }
 
-    // 4. 检查主仓库是否有正在 merge 的 commit（冲突状态）
+    (active_tasks, project_key)
+}
+
+/// 从 Task 元数据加载活跃 worktree 列表(**不含** Local Task)
+///
+/// Local Task 仍然会在 tasks.toml 中被创建/同步(供存储层的 notes/chats 等复用),
+/// 但不会出现在返回的列表中。需要 Local Task 请使用 [`load_local_task`]。
+pub fn load_worktrees(project_path: &str) -> Vec<Worktree> {
+    let (active_tasks, project_key) = ensure_local_task_synced(project_path);
+
+    // 过滤掉 Local Task,只保留 worktree 任务
+    let worktree_tasks: Vec<&Task> = active_tasks.iter().filter(|t| !t.is_local).collect();
+
+    if worktree_tasks.is_empty() {
+        return Vec::new();
+    }
+
+    // 检查主仓库是否有正在 merge 的 commit(冲突状态)
     let merging_commit = git::merging_commit(project_path);
 
-    // 5. 转换活跃任务 (并行处理以提升性能)
+    // 并行转换
     use rayon::prelude::*;
-
-    let worktrees: Vec<_> = active_tasks
-        .par_iter() // 🚀 并行迭代
+    let mut worktrees: Vec<Worktree> = worktree_tasks
+        .par_iter()
         .map(|task| task_to_worktree(task, &project_key, project_path, merging_commit.as_deref()))
         .collect();
 
-    // 所有活跃任务统一列表，按 updated_at 降序排列，Local Task 始终最前
-    let mut active = worktrees;
-    active.sort_by(|a, b| match (a.is_local, b.is_local) {
-        (true, false) => std::cmp::Ordering::Less,
-        (false, true) => std::cmp::Ordering::Greater,
-        _ => b.updated_at.cmp(&a.updated_at),
-    });
-
-    active
+    // 按 updated_at 降序排列
+    worktrees.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+    worktrees
 }
 
-/// 加载归档任务（懒加载）
+/// 加载项目的 Local Task(每个项目有且只有一个)
+///
+/// 返回 `None` 仅在 Local Task 创建失败这种极端情况(例如 tasks.toml 损坏)。
+pub fn load_local_task(project_path: &str) -> Option<Worktree> {
+    let (active_tasks, project_key) = ensure_local_task_synced(project_path);
+    let local_task = active_tasks.iter().find(|t| t.is_local)?;
+    let merging_commit = git::merging_commit(project_path);
+    Some(task_to_worktree(
+        local_task,
+        &project_key,
+        project_path,
+        merging_commit.as_deref(),
+    ))
+}
+
+/// 同时加载 worktree 列表和 Local Task,只做一次 `ensure_local_task_synced`
+///
+/// 当调用方(例如 API `get_project`)需要两者时,应该使用此函数而不是分别调用
+/// [`load_worktrees`] + [`load_local_task`],以避免重复的 git I/O 和 TOML 读写。
+pub fn load_worktrees_and_local(project_path: &str) -> (Vec<Worktree>, Option<Worktree>) {
+    let (active_tasks, project_key) = ensure_local_task_synced(project_path);
+    let merging_commit = git::merging_commit(project_path);
+
+    // 拆分 Local 与 worktree
+    let (local_tasks, worktree_tasks): (Vec<&Task>, Vec<&Task>) =
+        active_tasks.iter().partition(|t| t.is_local);
+
+    // 并行转换 worktree 列表
+    use rayon::prelude::*;
+    let mut worktrees: Vec<Worktree> = worktree_tasks
+        .par_iter()
+        .map(|task| task_to_worktree(task, &project_key, project_path, merging_commit.as_deref()))
+        .collect();
+    worktrees.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+
+    let local = local_tasks
+        .first()
+        .map(|task| task_to_worktree(task, &project_key, project_path, merging_commit.as_deref()));
+
+    (worktrees, local)
+}
+
+/// 加载归档任务(懒加载)
 pub fn load_archived_worktrees(project_path: &str) -> Vec<Worktree> {
     let project_key = project_hash(project_path);
 
@@ -125,9 +187,8 @@ pub fn load_archived_worktrees(project_path: &str) -> Vec<Worktree> {
     archived
 }
 
-/// 将 Archived Task 转换为 UI Worktree (直接标记为 Archived 状态)
+/// 将 Archived Task 转换为 UI Worktree(直接标记为 Archived 状态)
 fn archived_task_to_worktree(task: Task) -> Worktree {
-    // Resolve session type for archived tasks
     let resolved_session_type = session::resolve_session_type(&task.multiplexer);
     let mux_str = match resolved_session_type {
         SessionType::Tmux => "tmux",
@@ -154,7 +215,7 @@ fn archived_task_to_worktree(task: Task) -> Worktree {
 }
 
 /// 将 Task 转换为 UI Worktree
-/// merging_commit: 主仓库正在 merge 的 commit hash（如果有冲突的话）
+/// merging_commit: 主仓库正在 merge 的 commit hash(如果有冲突的话)
 fn task_to_worktree(
     task: &Task,
     project: &str,
@@ -163,42 +224,38 @@ fn task_to_worktree(
 ) -> Worktree {
     let path = &task.worktree_path;
 
-    // 解析 session 类型（提前计算，status 判断和输出都需要）
+    // 解析 session 类型(提前计算,status 判断和输出都需要)
     let resolved_session_type = session::resolve_session_type(&task.multiplexer);
 
-    // Local Task: 简化状态判断，只检查 session Live/Idle
+    // Local Task: 简化状态判断,只检查 session Live/Idle
     if task.is_local {
         let exists = Path::new(path).exists();
         let status = if !exists {
             WorktreeStatus::Broken
         } else if git::has_conflicts(path) {
             WorktreeStatus::Conflict
-        } else {
-            // 只检查 session 状态
-            if matches!(resolved_session_type, SessionType::Acp) {
-                let chats = tasks::load_chat_sessions(project, &task.id).unwrap_or_default();
-                let has_live = if chats.is_empty() {
-                    let key = format!("{}:{}", project, &task.id);
-                    session::session_exists(&resolved_session_type, &key)
-                } else {
-                    chats.iter().any(|chat| {
-                        let key = format!("{}:{}:{}", project, &task.id, &chat.id);
-                        session::session_exists(&resolved_session_type, &key)
-                    })
-                };
-                if has_live {
-                    WorktreeStatus::Live
-                } else {
-                    WorktreeStatus::Idle
-                }
+        } else if matches!(resolved_session_type, SessionType::Acp) {
+            let chats = tasks::load_chat_sessions(project, &task.id).unwrap_or_default();
+            let has_live = if chats.is_empty() {
+                let key = format!("{}:{}", project, &task.id);
+                session::session_exists(&resolved_session_type, &key)
             } else {
-                let session_key =
-                    session::resolve_session_name(&task.session_name, project, &task.id);
-                if session::session_exists(&resolved_session_type, &session_key) {
-                    WorktreeStatus::Live
-                } else {
-                    WorktreeStatus::Idle
-                }
+                chats.iter().any(|chat| {
+                    let key = format!("{}:{}:{}", project, &task.id, &chat.id);
+                    session::session_exists(&resolved_session_type, &key)
+                })
+            };
+            if has_live {
+                WorktreeStatus::Live
+            } else {
+                WorktreeStatus::Idle
+            }
+        } else {
+            let session_key = session::resolve_session_name(&task.session_name, project, &task.id);
+            if session::session_exists(&resolved_session_type, &session_key) {
+                WorktreeStatus::Live
+            } else {
+                WorktreeStatus::Idle
             }
         };
 
@@ -234,7 +291,7 @@ fn task_to_worktree(
         .map(|commit| git::branch_head_equals(project_path, &task.branch, commit))
         .unwrap_or(false);
 
-    // 确定状态和 commits_behind（一次性计算，避免重复 git 调用）
+    // 确定状态和 commits_behind(一次性计算,避免重复 git 调用)
     let (status, commits_behind) = if !exists {
         (WorktreeStatus::Broken, None)
     } else if is_merging_this_task || git::has_conflicts(path) {

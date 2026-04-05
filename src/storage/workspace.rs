@@ -28,6 +28,32 @@ pub struct RegisteredProject {
     pub path: String,
     /// 添加时间
     pub added_at: DateTime<Utc>,
+    /// 是否为 git 仓库
+    /// 默认 true 以兼容老数据(老版本只支持 git 项目)
+    #[serde(default = "default_is_git_repo")]
+    pub is_git_repo: bool,
+}
+
+fn default_is_git_repo() -> bool {
+    true
+}
+
+/// 将 `~` 或 `~/...` 前缀展开为绝对路径(HOME 下)
+///
+/// 如果不是 `~` / `~/` 形式或 HOME 无法取得,则原样返回。TUI 的对话框和 API
+/// 的 handler 都应该用此函数预处理用户输入,保持行为一致。(`~user/` 未支持)
+pub fn expand_tilde(path: &str) -> String {
+    if path == "~" {
+        if let Some(home) = dirs::home_dir() {
+            return home.to_string_lossy().to_string();
+        }
+    }
+    if let Some(rest) = path.strip_prefix("~/") {
+        if let Some(home) = dirs::home_dir() {
+            return home.join(rest).to_string_lossy().to_string();
+        }
+    }
+    path.to_string()
 }
 
 /// 根据项目路径生成唯一的目录名（hash）
@@ -77,15 +103,29 @@ fn save_project_metadata(project_hash: &str, project: &RegisteredProject) -> Res
 
 /// 解析项目路径,处理 worktree 情况
 ///
-/// - 获取 git repo root
-/// - 如果是 worktree,返回主 repo 路径
-/// - 如果是主 repo,返回规范化后的路径
+/// - 如果是 git 仓库:获取 repo root,worktree 情况下返回主 repo 路径
+/// - 如果不是 git 仓库:返回规范化后的绝对路径
 fn resolve_project_path(path: &str) -> Result<String> {
-    // 获取 repo root(规范化路径)
-    let repo_root = git::repo_root(path)?;
-
-    // 如果是 worktree,返回主 repo 路径;否则返回 repo_root
-    git::get_main_repo_path(&repo_root).or(Ok(repo_root))
+    if git::is_git_repo(path) {
+        // 获取 repo root(规范化路径)
+        let repo_root = git::repo_root(path)?;
+        // 如果是 worktree,返回主 repo 路径;否则返回 repo_root
+        git::get_main_repo_path(&repo_root).or(Ok(repo_root))
+    } else {
+        // 非 git 项目:存在则规范化;不存在则原路返回(避免 canonicalize 在
+        // 恢复/注册临时不存在路径的场景下失败)
+        let p = std::path::Path::new(path);
+        if p.exists() {
+            let abs = p
+                .canonicalize()
+                .map_err(|e| crate::error::GroveError::storage(format!("Invalid path: {}", e)))?;
+            abs.to_str()
+                .map(|s| s.to_string())
+                .ok_or_else(|| crate::error::GroveError::storage("Invalid path encoding"))
+        } else {
+            Ok(path.to_string())
+        }
+    }
 }
 
 /// 加载所有注册的项目列表
@@ -108,10 +148,10 @@ pub fn load_projects() -> Result<Vec<RegisteredProject>> {
             if project_toml.exists() {
                 if let Ok(content) = std::fs::read_to_string(&project_toml) {
                     if let Ok(project) = toml::from_str::<RegisteredProject>(&content) {
-                        // 验证项目路径仍然存在
-                        if std::path::Path::new(&project.path).exists() {
-                            projects.push(project);
-                        }
+                        // 注意:即使 project.path 已经不存在(用户手动删了目录),
+                        // 也要返回它。API 层会用 `exists` 字段告诉前端这是 missing
+                        // 状态,让用户能看到孤儿项目并主动 Delete 清理元数据。
+                        projects.push(project);
                     }
                 }
             }
@@ -143,12 +183,23 @@ pub fn add_project(name: &str, path: &str) -> Result<()> {
         ));
     }
 
+    let is_git_repo = git::is_git_repo(&resolved_path);
     let project = RegisteredProject {
         name: name.to_string(),
         path: resolved_path,
         added_at: Utc::now(),
+        is_git_repo,
     };
 
+    save_project_metadata(&hash, &project)
+}
+
+/// 更新已注册项目的 is_git_repo 标志
+pub fn set_is_git_repo(path: &str, is_git_repo: bool) -> Result<()> {
+    let hash = project_hash(path);
+    let mut project = load_project_metadata(&hash)?
+        .ok_or_else(|| crate::error::GroveError::storage("Project not found"))?;
+    project.is_git_repo = is_git_repo;
     save_project_metadata(&hash, &project)
 }
 
@@ -191,12 +242,14 @@ pub fn upsert_project(name: &str, path: &str) -> Result<()> {
     let resolved_path = resolve_project_path(path)?;
     let hash = project_hash(&resolved_path);
 
+    let is_git_repo = git::is_git_repo(&resolved_path);
     let project = if let Some(existing) = load_project_metadata(&hash)? {
-        // 存在 → 更新 name，保留 added_at
+        // 存在 → 更新 name 和 is_git_repo，保留 added_at
         RegisteredProject {
             name: name.to_string(),
             path: resolved_path,
             added_at: existing.added_at,
+            is_git_repo,
         }
     } else {
         // 不存在 → 新建
@@ -204,6 +257,7 @@ pub fn upsert_project(name: &str, path: &str) -> Result<()> {
             name: name.to_string(),
             path: resolved_path,
             added_at: Utc::now(),
+            is_git_repo,
         }
     };
 

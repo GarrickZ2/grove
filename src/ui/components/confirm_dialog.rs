@@ -44,6 +44,8 @@ pub enum ConfirmType {
     },
     /// Exit - 退出 tmux session
     ExitSession { session_name: String },
+    /// Initialize Git before creating a new task (shortcut 'n' on non-git project)
+    InitGitForNewTask { project_name: String },
 }
 
 impl ConfirmType {
@@ -58,6 +60,7 @@ impl ConfirmType {
             ConfirmType::MergeSuccess { .. } => " Success ",
             ConfirmType::Reset { .. } => " Reset ",
             ConfirmType::ExitSession { .. } => " Exit ",
+            ConfirmType::InitGitForNewTask { .. } => " Git Required ",
         }
     }
 
@@ -180,6 +183,16 @@ impl ConfirmType {
                     Line::from(format!("Session: {}", session_name)),
                     Line::from(""),
                     Line::from("This will close all panes in the current session."),
+                ]
+            }
+            ConfirmType::InitGitForNewTask { project_name, .. } => {
+                vec![
+                    Line::from("New Task requires a Git repository."),
+                    Line::from(""),
+                    Line::from(format!("Initialize Git for '{}'", project_name)),
+                    Line::from("and continue?"),
+                    Line::from(""),
+                    Line::from("(git init + empty initial commit)"),
                 ]
             }
         }

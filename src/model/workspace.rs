@@ -20,6 +20,10 @@ pub struct ProjectInfo {
     pub task_count: usize,
     /// Live 状态的任务数
     pub live_count: usize,
+    /// 是否为 git 仓库
+    pub is_git_repo: bool,
+    /// 文件系统路径是否还存在(false = "missing" 状态)
+    pub exists: bool,
 }
 
 /// Workspace 状态
@@ -59,6 +63,10 @@ impl WorkspaceState {
                 // 计算任务数（使用项目路径的 hash 作为存储 key）
                 let hash = project_hash(&p.path);
                 let task_count = count_tasks(&hash);
+                let exists = std::path::Path::new(&p.path).exists();
+                // Live check: 避免用户在 Grove 外部 `git init` 后 UI 不刷新
+                // (和 API 侧保持一致的语义)
+                let is_git_repo = exists && crate::git::is_git_usable(&p.path);
 
                 ProjectInfo {
                     name: p.name,
@@ -66,6 +74,8 @@ impl WorkspaceState {
                     added_at: p.added_at,
                     task_count,
                     live_count: 0,
+                    is_git_repo,
+                    exists,
                 }
             })
             .collect();

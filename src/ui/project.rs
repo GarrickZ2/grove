@@ -1,7 +1,8 @@
 use ratatui::{
-    layout::Constraint,
-    style::Style,
-    widgets::{Block, Widget},
+    layout::{Alignment, Constraint, Rect},
+    style::{Modifier, Style},
+    text::{Line, Span},
+    widgets::{Block, Clear, Paragraph, Widget},
     Frame,
 };
 
@@ -22,6 +23,13 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     Block::default()
         .style(Style::default().bg(colors.bg))
         .render(area, frame.buffer_mut());
+
+    // Missing project: the directory has vanished while we were open. Show a
+    // full-page overlay and ask the user to return to Workspace.
+    if !app.project.exists {
+        render_missing_overlay(frame, area, &app.project.project_path, colors);
+        return;
+    }
 
     // 是否显示搜索框：正在输入或有搜索内容
     let show_search = app.project.search_mode || !app.project.search_query.is_empty();
@@ -78,7 +86,18 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     );
 
     // 获取并渲染 Project Info (使用缓存避免每帧都执行 git 命令)
-    let project_info_data = {
+    let is_git_usable = app.project.is_git_usable;
+    let project_info_data = if !is_git_usable {
+        // 非 git 项目:返回空数据,render 函数会显示降级 UI
+        project_info::ProjectInfoData {
+            branch: String::new(),
+            commits_ahead: None,
+            additions: 0,
+            deletions: 0,
+            last_commit: String::new(),
+            is_git_usable: false,
+        }
+    } else {
         use crate::git::cache;
         let repo_path = &app.project.project_path;
         const CACHE_TTL: u64 = 2; // 2 秒缓存
@@ -110,6 +129,7 @@ pub fn render(frame: &mut Frame, app: &mut App) {
             additions,
             deletions,
             last_commit,
+            is_git_usable: true,
         }
     };
     project_info::render(frame, project_info_area, &project_info_data, colors);
@@ -180,6 +200,7 @@ pub fn render(frame: &mut Frame, app: &mut App) {
             app.project.diff_scroll,
             app.project.stats_scroll,
             stats_history.as_ref(),
+            app.project.is_git_usable,
             colors,
             &mut app.ui.click_areas,
         );
@@ -278,4 +299,60 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     if app.dialogs.show_help {
         help_panel::render(frame, colors, app.update_info.as_ref());
     }
+}
+
+/// Render a full-page overlay when the current project's directory is missing.
+fn render_missing_overlay(
+    frame: &mut Frame,
+    area: Rect,
+    project_path: &str,
+    colors: &crate::theme::ThemeColors,
+) {
+    frame.render_widget(Clear, area);
+
+    let lines = vec![
+        Line::from(""),
+        Line::from(""),
+        Line::from(Span::styled(
+            "⚠ Project Missing",
+            Style::default()
+                .fg(colors.error)
+                .add_modifier(Modifier::BOLD),
+        )),
+        Line::from(""),
+        Line::from(Span::styled(
+            project_path.to_string(),
+            Style::default()
+                .fg(colors.muted)
+                .add_modifier(Modifier::CROSSED_OUT),
+        )),
+        Line::from(""),
+        Line::from(Span::styled(
+            "The project directory no longer exists on disk.",
+            Style::default().fg(colors.muted),
+        )),
+        Line::from(Span::styled(
+            "Grove still has its metadata (notes, tasks, chat history).",
+            Style::default().fg(colors.muted),
+        )),
+        Line::from(""),
+        Line::from(vec![
+            Span::styled("Press ", Style::default().fg(colors.muted)),
+            Span::styled(
+                "Esc",
+                Style::default()
+                    .fg(colors.highlight)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(
+                " to return to Workspace, then 'x' to delete from Grove",
+                Style::default().fg(colors.muted),
+            ),
+        ]),
+    ];
+
+    let paragraph = Paragraph::new(lines)
+        .alignment(Alignment::Center)
+        .style(Style::default().bg(colors.bg));
+    frame.render_widget(paragraph, area);
 }

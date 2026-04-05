@@ -14,7 +14,7 @@ interface ProjectsPageProps {
 }
 
 export function ProjectsPage({ onNavigate }: ProjectsPageProps) {
-  const { projects, selectedProject, selectProject, addProject, deleteProject, refreshProjects } = useProject();
+  const { projects, selectedProject, selectProject, addProject, createNewProject, deleteProject, refreshProjects } = useProject();
   const { isMobile } = useIsMobile();
 
   // Refresh project list when navigating to this page
@@ -35,17 +35,30 @@ export function ProjectsPage({ onNavigate }: ProjectsPageProps) {
       setShowAddDialog(false);
     } catch (err: unknown) {
       console.error("Failed to add project:", err);
-      if (err && typeof err === "object" && "status" in err) {
-        const apiErr = err as { status: number; message: string };
-        if (apiErr.status === 409) {
-          setError("Project already registered");
-        } else if (apiErr.status === 400) {
-          setError("Invalid path or not a git repository");
-        } else {
-          setError("Failed to add project");
-        }
+      if (err && typeof err === "object" && "message" in err) {
+        // Backend returns specific error messages in the body; prefer them.
+        const apiErr = err as { status?: number; message: string };
+        setError(apiErr.message || "Failed to add project");
       } else {
         setError("Failed to add project");
+      }
+    } finally {
+      setIsAdding(false);
+    }
+  };
+
+  const handleCreateNewProject = async (parentDir: string, name: string, initGit: boolean) => {
+    try {
+      setIsAdding(true);
+      setError(null);
+      await createNewProject(parentDir, name, initGit);
+      setShowAddDialog(false);
+    } catch (err: unknown) {
+      console.error("Failed to create new project:", err);
+      if (err && typeof err === "object" && "message" in err) {
+        setError((err as { message: string }).message || "Failed to create project");
+      } else {
+        setError("Failed to create project");
       }
     } finally {
       setIsAdding(false);
@@ -150,6 +163,7 @@ export function ProjectsPage({ onNavigate }: ProjectsPageProps) {
           setError(null);
         }}
         onAdd={handleAddProject}
+        onCreateNew={handleCreateNewProject}
         isLoading={isAdding}
         externalError={error}
       />

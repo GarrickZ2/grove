@@ -263,10 +263,17 @@ fn render_card(
     let name_max = content_w.saturating_sub(right_len);
     let name = truncate(&project.name, name_max);
     let name_pad = name_max.saturating_sub(name.chars().count());
-    let name_color = if is_selected {
+    let name_color = if !project.exists {
+        colors.muted
+    } else if is_selected {
         colors.highlight
     } else {
         colors.text
+    };
+    let name_modifier = if project.exists {
+        Modifier::BOLD
+    } else {
+        Modifier::BOLD | Modifier::CROSSED_OUT
     };
 
     let mut row1_spans = vec![Span::styled(" ", Style::default().bg(card_bg))];
@@ -277,7 +284,7 @@ fn render_card(
         Style::default()
             .fg(name_color)
             .bg(card_bg)
-            .add_modifier(Modifier::BOLD),
+            .add_modifier(name_modifier),
     ));
     row1_spans.push(Span::styled(
         " ".repeat(name_pad),
@@ -305,17 +312,26 @@ fn render_card(
     let mut row2_spans = vec![Span::styled(" ", Style::default().bg(card_bg))];
     row2_spans.extend(gradient_block_spans(1, color_a, color_b));
     row2_spans.push(Span::styled("  ", Style::default().bg(card_bg)));
-    row2_spans.push(Span::styled(
-        path_display,
-        Style::default().fg(colors.muted).bg(card_bg),
-    ));
+    let path_style = if !project.exists {
+        Style::default()
+            .fg(colors.muted)
+            .bg(card_bg)
+            .add_modifier(Modifier::CROSSED_OUT)
+    } else {
+        Style::default().fg(colors.muted).bg(card_bg)
+    };
+    row2_spans.push(Span::styled(path_display, path_style));
     let row2 = Line::from(row2_spans);
 
-    // ── Row 3: [方块底]  N tasks  [!!] ──
-    let task_text = if project.task_count == 1 {
-        "1 task".to_string()
+    // ── Row 3: [方块底]  N tasks / Git not init / missing ──
+    let (task_text, task_color) = if !project.exists {
+        ("⚠ missing".to_string(), colors.error)
+    } else if !project.is_git_repo {
+        ("⚠ Git not init".to_string(), colors.warning)
+    } else if project.task_count == 1 {
+        ("1 task".to_string(), colors.muted)
     } else {
-        format!("{} tasks", project.task_count)
+        (format!("{} tasks", project.task_count), colors.muted)
     };
 
     let mut row3_spans = vec![Span::styled(" ", Style::default().bg(card_bg))];
@@ -323,15 +339,8 @@ fn render_card(
     row3_spans.push(Span::styled("  ", Style::default().bg(card_bg)));
     row3_spans.push(Span::styled(
         task_text,
-        Style::default().fg(colors.muted).bg(card_bg),
+        Style::default().fg(task_color).bg(card_bg),
     ));
-
-    if !notif_text.is_empty() {
-        row3_spans.push(Span::styled(
-            notif_text,
-            Style::default().fg(notif_color).bg(card_bg),
-        ));
-    }
 
     let row3 = Line::from(row3_spans);
 

@@ -5,6 +5,7 @@ import {
   listProjects,
   getProject,
   addProject as apiAddProject,
+  createNewProject as apiCreateNewProject,
   deleteProject as apiDeleteProject,
   type ProjectListItem,
   type ProjectResponse,
@@ -18,9 +19,17 @@ interface ProjectContextType {
   currentProjectId: string | null;
   selectProject: (project: Project | null) => void;
   addProject: (path: string, name?: string) => Promise<Project>;
+  createNewProject: (parentDir: string, name: string, initGit: boolean) => Promise<Project>;
   deleteProject: (id: string) => Promise<void>;
   refreshProjects: () => Promise<void>;
   refreshSelectedProject: () => Promise<void>;
+  /**
+   * Directly replace the selected project with a pre-fetched API response.
+   * Use this when you have fresh data from an API call and want to avoid an
+   * extra `getProject` round-trip. Also refreshes the projects list in the
+   * background.
+   */
+  applySelectedProject: (response: ProjectResponse) => void;
   isLoading: boolean;
   error: string | null;
 }
@@ -60,7 +69,10 @@ function convertProject(project: ProjectResponse): Project {
     path: project.path,
     currentBranch: project.current_branch,
     tasks: project.tasks.map(convertTask),
+    localTask: project.local_task ? convertTask(project.local_task) : null,
     addedAt: new Date(project.added_at),
+    isGitRepo: project.is_git_repo,
+    exists: project.exists,
   };
 }
 
@@ -72,8 +84,11 @@ function convertProjectListItem(item: ProjectListItem): Project {
     path: item.path,
     currentBranch: "", // Will be loaded when selected
     tasks: [], // Will be loaded when selected
+    localTask: null, // Will be loaded when selected
     addedAt: new Date(item.added_at),
     taskCount: item.task_count,
+    isGitRepo: item.is_git_repo,
+    exists: item.exists,
   };
 }
 
@@ -202,6 +217,16 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
     [loadProjects]
   );
 
+  const createNewProject = useCallback(
+    async (parentDir: string, name: string, initGit: boolean): Promise<Project> => {
+      const response = await apiCreateNewProject(parentDir, name, initGit);
+      const newProject = convertProject(response);
+      await loadProjects();
+      return newProject;
+    },
+    [loadProjects]
+  );
+
   const deleteProject = useCallback(
     async (id: string): Promise<void> => {
       await apiDeleteProject(id);
@@ -220,6 +245,15 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
   const refreshProjects = useCallback(async () => {
     await loadProjects();
   }, [loadProjects]);
+
+  const applySelectedProject = useCallback(
+    (response: ProjectResponse) => {
+      setSelectedProject(convertProject(response));
+      // Refresh list in background so task counts / is_git_repo flags stay in sync
+      void loadProjects();
+    },
+    [loadProjects],
+  );
 
   const refreshSelectedProject = useCallback(async () => {
     if (selectedProject) {
@@ -241,6 +275,8 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
         currentProjectId,
         selectProject,
         addProject,
+        createNewProject,
+        applySelectedProject,
         deleteProject,
         refreshProjects,
         refreshSelectedProject,

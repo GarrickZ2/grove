@@ -93,7 +93,7 @@ export function TaskInfoPanel({
   const [expanded, setExpanded] = useState(false);
 
   // Support controlled/uncontrolled tab mode
-  const activeTab = controlledTab ?? internalTab;
+  const activeTab: TabType = controlledTab ?? internalTab;
   const handleTabChange = (tab: TabType) => {
     setInternalTab(tab);
     onTabChange?.(tab);

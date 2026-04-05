@@ -26,6 +26,7 @@ pub fn render(
     diff_scroll: u16,
     stats_scroll: u16,
     stats_history: Option<&TaskEditHistory>,
+    is_git_usable: bool,
     colors: &ThemeColors,
     click_areas: &mut ClickAreas,
 ) {
@@ -90,14 +91,48 @@ pub fn render(
         PreviewSubTab::Stats => {
             render_stats_tab(frame, content_area, stats_history, stats_scroll, colors)
         }
-        PreviewSubTab::Git => render_git_tab(frame, content_area, panel_data, git_scroll, colors),
+        PreviewSubTab::Git => {
+            if is_git_usable {
+                render_git_tab(frame, content_area, panel_data, git_scroll, colors)
+            } else {
+                render_git_unavailable(frame, content_area, colors)
+            }
+        }
         PreviewSubTab::Notes => {
             render_notes_tab(frame, content_area, panel_data, notes_scroll, colors)
         }
         PreviewSubTab::Diff => {
-            render_diff_tab(frame, content_area, panel_data, diff_scroll, colors)
+            if is_git_usable {
+                render_diff_tab(frame, content_area, panel_data, diff_scroll, colors)
+            } else {
+                render_git_unavailable(frame, content_area, colors)
+            }
         }
     }
+}
+
+/// Placeholder when a git-dependent preview tab is opened on a non-git project.
+fn render_git_unavailable(frame: &mut Frame, area: Rect, colors: &ThemeColors) {
+    let lines = vec![
+        Line::from(""),
+        Line::from(Span::styled(
+            "Not available",
+            Style::default()
+                .fg(colors.warning)
+                .add_modifier(Modifier::BOLD),
+        )),
+        Line::from(""),
+        Line::from(Span::styled(
+            "This project is not a Git repository.",
+            Style::default().fg(colors.muted),
+        )),
+        Line::from(Span::styled(
+            "Create a task to initialize Git.",
+            Style::default().fg(colors.muted),
+        )),
+    ];
+    let paragraph = Paragraph::new(lines).alignment(Alignment::Center);
+    frame.render_widget(paragraph, area);
 }
 
 fn render_sub_tab_bar(

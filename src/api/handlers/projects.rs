@@ -28,6 +28,11 @@ pub struct ProjectListItem {
     pub added_at: String,
     pub task_count: u32,
     pub live_count: u32,
+    pub is_git_repo: bool,
+    /// Whether the filesystem path still exists. When false, the project is
+    /// considered "missing" — UI should show a warning state and only allow
+    /// Delete (to clean up stale metadata).
+    pub exists: bool,
 }
 
 /// Project list response
@@ -73,8 +78,17 @@ pub struct ProjectResponse {
     pub name: String,
     pub path: String,
     pub current_branch: String,
+    /// Worktree tasks only. Local Task is returned via `local_task`.
     pub tasks: Vec<TaskResponse>,
+    /// The project's Local Task (每个 project 永远有且只有一个),with real session state.
+    /// Frontend can synthesize one locally as a fallback, but this field has accurate status.
+    pub local_task: Option<TaskResponse>,
     pub added_at: String,
+    pub is_git_repo: bool,
+    /// Whether the filesystem path still exists. When false, the project is
+    /// considered "missing"; `tasks` / `local_task` / `current_branch` are
+    /// forced to empty defaults and no git I/O is attempted.
+    pub exists: bool,
 }
 
 /// Add project request
@@ -82,6 +96,23 @@ pub struct ProjectResponse {
 pub struct AddProjectRequest {
     pub path: String,
     pub name: Option<String>,
+}
+
+/// Create new project request
+#[derive(Debug, Deserialize)]
+pub struct NewProjectRequest {
+    /// 父目录(必须存在且为目录)
+    pub parent_dir: String,
+    /// 项目名(同时作为目录名和 Grove 项目名)
+    pub name: String,
+    /// 是否初始化为 git 仓库
+    pub init_git: bool,
+}
+
+/// Simple API error body
+#[derive(Debug, Serialize)]
+pub struct ProjectError {
+    pub error: String,
 }
 
 /// Project stats response
@@ -234,6 +265,9 @@ pub async fn list_projects() -> Result<Json<ProjectListResponse>, StatusCode> {
         .map(|p| {
             let id = workspace::project_hash(&p.path);
             let task_count = count_project_tasks(&id);
+            let exists = std::path::Path::new(&p.path).exists();
+            // Live check: HEAD 可用才算 git repo(与 TUI 侧一致,避免半 init 状态分叉)
+            let is_git_repo = exists && git::is_git_usable(&p.path);
 
             ProjectListItem {
                 id,
@@ -242,6 +276,8 @@ pub async fn list_projects() -> Result<Json<ProjectListResponse>, StatusCode> {
                 added_at: p.added_at.to_rfc3339(),
                 task_count,
                 live_count: 0,
+                is_git_repo,
+                exists,
             }
         })
         .collect();
@@ -260,36 +296,59 @@ pub async fn get_project(Path(id): Path<String>) -> Result<Json<ProjectResponse>
     let project_name = project.name.clone();
     let project_path = project.path.clone();
     let added_at = project.added_at.to_rfc3339();
+    let exists = std::path::Path::new(&project_path).exists();
     let id_clone = id.clone();
 
+    // Missing project: skip all git I/O and return clean defaults. The frontend
+    // will show a dedicated "Project Missing" state with a Delete-only path.
+    if !exists {
+        return Ok(Json(ProjectResponse {
+            id,
+            name: project_name,
+            path: project.path,
+            current_branch: String::new(),
+            tasks: Vec::new(),
+            local_task: None,
+            added_at,
+            is_git_repo: false,
+            exists: false,
+        }));
+    }
+
     // Heavy git I/O — run on blocking thread pool so other projects aren't starved
-    let (all_tasks, current_branch) = tokio::task::spawn_blocking(move || {
-        let active = loader::load_worktrees(&project_path);
-        let archived = loader::load_archived_worktrees(&project_path);
+    let (all_tasks, local_task, current_branch, is_git_usable) =
+        tokio::task::spawn_blocking(move || {
+            // Live check: `.git/` 存在且 HEAD 已创建才算可用
+            let is_git_usable = git::is_git_usable(&project_path);
 
-        use rayon::prelude::*;
-        let mut all_tasks: Vec<TaskResponse> = active
-            .iter()
-            .chain(archived.iter())
-            .collect::<Vec<_>>()
-            .par_iter()
-            .map(|wt| worktree_to_response(wt, &id_clone))
-            .collect();
+            // Worktree tasks + Local Task 一次性加载,避免重复 git I/O
+            let (active, local) = loader::load_worktrees_and_local(&project_path);
+            let archived = loader::load_archived_worktrees(&project_path);
 
-        // Sort: Local Task first, then by updated_at desc
-        all_tasks.sort_by(|a, b| match (a.is_local, b.is_local) {
-            (true, false) => std::cmp::Ordering::Less,
-            (false, true) => std::cmp::Ordering::Greater,
-            _ => b.updated_at.cmp(&a.updated_at),
-        });
+            use rayon::prelude::*;
+            let mut all_tasks: Vec<TaskResponse> = active
+                .iter()
+                .chain(archived.iter())
+                .collect::<Vec<_>>()
+                .par_iter()
+                .map(|wt| worktree_to_response(wt, &id_clone))
+                .collect();
 
-        let current_branch =
-            git::current_branch(&project_path).unwrap_or_else(|_| "unknown".to_string());
+            all_tasks.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
 
-        (all_tasks, current_branch)
-    })
-    .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+            let local_task = local.map(|wt| worktree_to_response(&wt, &id_clone));
+
+            // 非 git 项目没有分支,返回空串
+            let current_branch = if is_git_usable {
+                git::current_branch(&project_path).unwrap_or_else(|_| "unknown".to_string())
+            } else {
+                String::new()
+            };
+
+            (all_tasks, local_task, current_branch, is_git_usable)
+        })
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     Ok(Json(ProjectResponse {
         id,
@@ -297,57 +356,151 @@ pub async fn get_project(Path(id): Path<String>) -> Result<Json<ProjectResponse>
         path: project.path,
         current_branch,
         tasks: all_tasks,
+        local_task,
         added_at,
+        is_git_repo: is_git_usable,
+        exists: true,
     }))
 }
 
 /// POST /api/v1/projects
-/// Add a new project
+/// Add a new project (supports both git and non-git directories)
 pub async fn add_project(
     Json(req): Json<AddProjectRequest>,
-) -> Result<Json<ProjectResponse>, StatusCode> {
-    // Validate path exists and is a git repo
-    if !std::path::Path::new(&req.path).exists() {
-        return Err(StatusCode::BAD_REQUEST);
+) -> Result<Json<ProjectResponse>, (StatusCode, Json<ProjectError>)> {
+    let bad_request = |msg: &str| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ProjectError {
+                error: msg.to_string(),
+            }),
+        )
+    };
+
+    // Expand ~/... (frontend placeholder text suggests users may type it)
+    let expanded_path = workspace::expand_tilde(&req.path);
+
+    // Validate path exists
+    if !std::path::Path::new(&expanded_path).exists() {
+        return Err(bad_request(&format!(
+            "Path does not exist: {}",
+            expanded_path
+        )));
     }
 
-    if !git::is_git_repo(&req.path) {
-        return Err(StatusCode::BAD_REQUEST);
-    }
-
-    // Get repo root (normalize path)
-    let repo_path = git::repo_root(&req.path).map_err(|_| StatusCode::BAD_REQUEST)?;
+    // Resolve the effective project path
+    let is_git = git::is_git_repo(&expanded_path);
+    let resolved_path = if is_git {
+        // Git 项目: 解析到 repo root (处理 worktree)
+        let repo_root = git::repo_root(&expanded_path)
+            .map_err(|e| bad_request(&format!("Failed to resolve Git repo root: {}", e)))?;
+        git::get_main_repo_path(&repo_root).unwrap_or(repo_root)
+    } else {
+        // 非 git 项目: 规范化绝对路径
+        std::path::Path::new(&expanded_path)
+            .canonicalize()
+            .map_err(|e| bad_request(&format!("Failed to resolve path: {}", e)))?
+            .to_string_lossy()
+            .to_string()
+    };
 
     // Determine name
     let name = req.name.unwrap_or_else(|| {
-        std::path::Path::new(&repo_path)
+        std::path::Path::new(&resolved_path)
             .file_name()
             .and_then(|n| n.to_str())
             .unwrap_or("unknown")
             .to_string()
     });
 
-    // Add project (internally handles worktree)
-    workspace::add_project(&name, &repo_path).map_err(|e| {
-        // Check if error is "already registered" error
-        if e.to_string().contains("already registered") {
-            StatusCode::CONFLICT
+    // Add project (internally handles worktree + is_git_repo 字段)
+    workspace::add_project(&name, &resolved_path).map_err(|e| {
+        let msg = e.to_string();
+        if msg.contains("already registered") {
+            (
+                StatusCode::CONFLICT,
+                Json(ProjectError {
+                    error: format!("Project already registered: {}", resolved_path),
+                }),
+            )
         } else {
-            StatusCode::INTERNAL_SERVER_ERROR
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ProjectError { error: msg }),
+            )
         }
     })?;
 
     // Return the new project
-    let id = workspace::project_hash(&repo_path);
-    let current_branch = git::current_branch(&repo_path).unwrap_or_else(|_| "unknown".to_string());
+    let id = workspace::project_hash(&resolved_path);
+    let current_branch = if is_git {
+        git::current_branch(&resolved_path).unwrap_or_else(|_| "unknown".to_string())
+    } else {
+        String::new()
+    };
 
     Ok(Json(ProjectResponse {
         id,
         name,
-        path: repo_path,
+        path: resolved_path,
         current_branch,
         tasks: Vec::new(),
+        local_task: None,
         added_at: chrono::Utc::now().to_rfc3339(),
+        is_git_repo: is_git,
+        exists: true,
+    }))
+}
+
+/// POST /api/v1/projects/new
+/// Create a brand new project: mkdir + (optional) git init + register.
+/// Name is used as both the directory name and the Grove project name.
+/// On failure at any step, no cleanup is performed — the caller receives a
+/// clear error describing which step failed.
+pub async fn create_new_project(
+    Json(req): Json<NewProjectRequest>,
+) -> Result<Json<ProjectResponse>, (StatusCode, Json<ProjectError>)> {
+    let name = req.name.trim().to_string();
+    let init_git = req.init_git;
+
+    // Delegate to shared operation (TUI + API).
+    let resolved_path =
+        crate::operations::projects::create_new_project(&req.parent_dir, &name, init_git).map_err(
+            |e| {
+                let msg = e.to_string();
+                let status = if msg.contains("already exists") || msg.contains("already registered")
+                {
+                    StatusCode::CONFLICT
+                } else if msg.contains("does not exist")
+                    || msg.contains("not a directory")
+                    || msg.contains("Invalid project name")
+                    || msg.contains("is required")
+                {
+                    StatusCode::BAD_REQUEST
+                } else {
+                    StatusCode::INTERNAL_SERVER_ERROR
+                };
+                (status, Json(ProjectError { error: msg }))
+            },
+        )?;
+
+    let id = workspace::project_hash(&resolved_path);
+    let current_branch = if init_git {
+        git::current_branch(&resolved_path).unwrap_or_else(|_| "main".to_string())
+    } else {
+        String::new()
+    };
+
+    Ok(Json(ProjectResponse {
+        id,
+        name,
+        path: resolved_path,
+        current_branch,
+        tasks: Vec::new(),
+        local_task: None,
+        added_at: chrono::Utc::now().to_rfc3339(),
+        is_git_repo: init_git,
+        exists: true,
     }))
 }
 
@@ -366,6 +519,18 @@ pub async fn delete_project(Path(id): Path<String>) -> Result<StatusCode, Status
 pub async fn get_stats(Path(id): Path<String>) -> Result<Json<ProjectStatsResponse>, StatusCode> {
     let project = find_project_by_id(&id)?;
     let project_key = workspace::project_hash(&project.path);
+
+    // Missing project: skip git I/O entirely (mirrors get_project)
+    if !std::path::Path::new(&project.path).exists() {
+        return Ok(Json(ProjectStatsResponse {
+            total_tasks: 0,
+            live_tasks: 0,
+            idle_tasks: 0,
+            merged_tasks: 0,
+            archived_tasks: 0,
+            weekly_activity: vec![0; 7],
+        }));
+    }
 
     // Load all worktrees on blocking thread pool
     let project_path = project.path.clone();
@@ -510,6 +675,30 @@ pub async fn get_branches(
 pub struct OpenResponse {
     pub success: bool,
     pub message: String,
+}
+
+/// POST /api/v1/projects/{id}/init-git
+/// Initialize a git repository in a non-git project directory.
+///
+/// Delegates to `operations::projects::init_git_repo` for the actual work
+/// (shared with TUI).
+pub async fn init_git(Path(id): Path<String>) -> Result<Json<ProjectResponse>, StatusCode> {
+    let project = find_project_by_id(&id)?;
+    let project_path = project.path.clone();
+
+    let init_result = tokio::task::spawn_blocking(move || {
+        crate::operations::projects::init_git_repo(&project_path)
+    })
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    if let Err(e) = init_result {
+        eprintln!("init_git failed for {}: {}", project.path, e);
+        return Err(StatusCode::INTERNAL_SERVER_ERROR);
+    }
+
+    // 返回完整的 project 数据(复用 get_project)
+    get_project(Path(id)).await
 }
 
 /// POST /api/v1/projects/{id}/open-ide

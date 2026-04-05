@@ -161,6 +161,12 @@ fn handle_key(app: &mut App, key: KeyEvent) {
         return;
     }
 
+    // New Project 弹窗
+    if app.dialogs.new_project_dialog.is_some() {
+        handle_new_project_dialog_key(app, key);
+        return;
+    }
+
     // Delete Project 弹窗
     if app.dialogs.delete_project_dialog.is_some() {
         handle_delete_project_dialog_key(app, key);
@@ -229,13 +235,24 @@ fn handle_workspace_key(app: &mut App, key: KeyEvent) {
         KeyCode::Enter => {
             if let Some(project) = app.workspace.selected_project() {
                 let path = project.path.clone();
-                app.enter_project(&path);
+                if !project.exists {
+                    app.show_toast(
+                        "Project directory is missing. Press 'x' to delete from Grove.".to_string(),
+                    );
+                } else {
+                    app.enter_project(&path);
+                }
             }
         }
 
-        // 功能按键 - 添加项目
+        // 功能按键 - 添加已存在项目
         KeyCode::Char('a') => {
             app.open_add_project_dialog();
+        }
+
+        // 功能按键 - 新建项目(创建目录 + 可选 git init + 注册)
+        KeyCode::Char('n') | KeyCode::Char('N') => {
+            app.open_new_project_dialog();
         }
 
         // 功能按键 - 删除项目
@@ -314,6 +331,14 @@ fn handle_project_key(app: &mut App, key: KeyEvent) {
     // 搜索模式
     if app.project.search_mode {
         handle_search_mode_key(app, key);
+        return;
+    }
+
+    // Missing project: 只允许返回 Workspace,其它按键全部禁用
+    if !app.project.exists {
+        if matches!(key.code, KeyCode::Esc | KeyCode::Char('q')) {
+            app.back_to_workspace();
+        }
         return;
     }
 
@@ -743,6 +768,51 @@ fn handle_add_project_dialog_key(app: &mut App, key: KeyEvent) {
     }
 }
 
+/// 处理 New Project 弹窗的键盘事件
+fn handle_new_project_dialog_key(app: &mut App, key: KeyEvent) {
+    match key.code {
+        // 确认创建
+        KeyCode::Enter => {
+            app.new_project_confirm();
+        }
+
+        // 取消
+        KeyCode::Esc => {
+            app.close_new_project_dialog();
+        }
+
+        // Tab 切换焦点
+        KeyCode::Tab | KeyCode::BackTab => {
+            app.new_project_toggle_focus();
+        }
+
+        // 删除字符
+        KeyCode::Backspace => {
+            app.new_project_delete_char();
+        }
+
+        // Space: 当焦点在复选框时切换,否则当普通字符
+        KeyCode::Char(' ') => {
+            let is_checkbox = matches!(
+                app.dialogs.new_project_dialog.as_ref().map(|d| d.focus),
+                Some(crate::ui::components::new_project_dialog::NewProjectFocus::InitGit)
+            );
+            if is_checkbox {
+                app.new_project_toggle_init_git();
+            } else {
+                app.new_project_input_char(' ');
+            }
+        }
+
+        // 输入字符
+        KeyCode::Char(c) => {
+            app.new_project_input_char(c);
+        }
+
+        _ => {}
+    }
+}
+
 /// 处理 Delete Project 弹窗的键盘事件
 fn handle_delete_project_dialog_key(app: &mut App, key: KeyEvent) {
     match key.code {
@@ -1001,6 +1071,7 @@ fn has_active_popup(app: &App) -> bool {
         || app.dialogs.show_new_task_dialog
         || app.ui.show_theme_selector
         || app.dialogs.add_project_dialog.is_some()
+        || app.dialogs.new_project_dialog.is_some()
         || app.dialogs.delete_project_dialog.is_some()
         || app.dialogs.action_palette.is_some()
         || app.dialogs.commit_dialog.is_some()
@@ -1043,7 +1114,13 @@ fn handle_workspace_click(app: &mut App, col: u16, row: u16, is_double: bool) {
         if is_double {
             if let Some(project) = app.workspace.selected_project() {
                 let path = project.path.clone();
-                app.enter_project(&path);
+                if !project.exists {
+                    app.show_toast(
+                        "Project directory is missing. Press 'x' to delete from Grove.".to_string(),
+                    );
+                } else {
+                    app.enter_project(&path);
+                }
             }
         }
     }
@@ -1326,6 +1403,8 @@ fn popup_confirm(app: &mut App) {
         app.create_new_task();
     } else if app.dialogs.add_project_dialog.is_some() {
         app.add_project_confirm();
+    } else if app.dialogs.new_project_dialog.is_some() {
+        app.new_project_confirm();
     } else if app.dialogs.delete_project_dialog.is_some() {
         app.delete_project_confirm();
     } else if app.ui.show_theme_selector {
@@ -1352,6 +1431,8 @@ fn popup_cancel(app: &mut App) {
         app.close_new_task_dialog();
     } else if app.dialogs.add_project_dialog.is_some() {
         app.close_add_project_dialog();
+    } else if app.dialogs.new_project_dialog.is_some() {
+        app.close_new_project_dialog();
     } else if app.dialogs.delete_project_dialog.is_some() {
         app.close_delete_project_dialog();
     } else if app.ui.show_theme_selector {

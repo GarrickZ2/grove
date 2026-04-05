@@ -32,10 +32,21 @@ export interface Project {
   name: string;
   path: string;
   currentBranch: string;
+  /** Worktree tasks only (Local Task is on `localTask`). */
   tasks: Task[];
+  /** The project's single Local Task (every project has exactly one, always). */
+  localTask: Task | null;
   addedAt: Date;
   // From ProjectListItem, used for display before full project is loaded
   taskCount?: number;
+  /** Whether this project is backed by a git repository */
+  isGitRepo: boolean;
+  /**
+   * Whether the project's filesystem path still exists. When false, the
+   * project is in a "missing" state — UI should show a warning badge and
+   * only allow Delete to clean up stale metadata.
+   */
+  exists: boolean;
 }
 
 export type ActivityType = 'create' | 'merge' | 'sync' | 'archive' | 'recover';
