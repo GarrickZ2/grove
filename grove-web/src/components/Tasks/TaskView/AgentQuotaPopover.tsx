@@ -4,6 +4,7 @@ import {
   useId,
   useRef,
   useState,
+  type FocusEvent,
   type RefObject,
 } from "react";
 import { createPortal } from "react-dom";
@@ -160,8 +161,12 @@ export function AgentQuotaPopover({
     popoverHoveredRef.current = false;
     reconcileOpen();
   };
-  const handleFocus = () => {
-    focusedRef.current = true;
+  const handleFocus = (e: FocusEvent<HTMLSpanElement>) => {
+    // Only keep the popover open for keyboard-style focus. Mouse clicks on
+    // the badge focus the button too, but that should not pin the popover
+    // open after hover ends.
+    focusedRef.current =
+      e.target instanceof HTMLElement && e.target.matches(":focus-visible");
     reconcileOpen();
   };
   const handleBlur = () => {

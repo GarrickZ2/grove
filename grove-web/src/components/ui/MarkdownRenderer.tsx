@@ -213,50 +213,20 @@ export function MarkdownRenderer({ content, onFileClick }: MarkdownRendererProps
             {children}
           </blockquote>
         ),
-        code: ({ className, children }) => {
-          const isBlock = className?.startsWith("language-");
-          if (isBlock) {
-            if (className === "language-mermaid") {
-              const text = extractText(children);
+        pre: ({ children }) => {
+          const child = Children.toArray(children)[0];
+          if (isValidElement(child)) {
+            const props = child.props as {
+              className?: string;
+              children?: React.ReactNode;
+            };
+            const text = extractText(props.children);
+
+            if (props.className === "language-mermaid") {
               return <MermaidBlock code={text} />;
             }
-            return (
-              <code className="block text-xs font-mono">{children}</code>
-            );
           }
-          // Check if inline code looks like a file path
-          if (onFileClick) {
-            const text = extractText(children);
-            const match = text.match(FILE_PATH_RE);
-            if (match) {
-              const filePath = match[1];
-              const line = match[2] ? parseInt(match[2], 10) : undefined;
-              return (
-                <FileChip
-                  filePath={filePath}
-                  line={line}
-                  onClick={() => onFileClick(filePath, line)}
-                />
-              );
-            }
-          }
-          return (
-            <code className="px-1 py-0.5 rounded bg-[var(--color-bg-tertiary)] text-[var(--color-highlight)] text-xs font-mono">
-              {children}
-            </code>
-          );
-        },
-        pre: ({ children }) => {
-          // If the child is a component (e.g. MermaidBlock) rather than a native <code>, pass through
-          const child = Children.toArray(children)[0];
-          if (isValidElement(child) && typeof child.type !== 'string') {
-            return <>{children}</>;
-          }
-          return (
-            <pre className="rounded-lg bg-[var(--color-bg-tertiary)] border border-[var(--color-border)] p-3 my-2 whitespace-pre-wrap break-words text-xs font-mono text-[var(--color-text)]">
-              {children}
-            </pre>
-          );
+          return <pre>{children}</pre>;
         },
         hr: () => (
           <hr className="border-[var(--color-border)] my-3" />
