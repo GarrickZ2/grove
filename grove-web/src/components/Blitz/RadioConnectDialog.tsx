@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, useRef } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { Radio, X, Copy, Check, Loader2 } from "lucide-react";
 import { DialogShell } from "../ui/DialogShell";
 import { apiClient } from "../../api/client";
@@ -6,6 +6,7 @@ import { apiClient } from "../../api/client";
 interface RadioConnectDialogProps {
   open: boolean;
   onClose: () => void;
+  onGoToSettings?: () => void;
 }
 
 interface RadioStartResult {
@@ -15,16 +16,16 @@ interface RadioStartResult {
   host: string;
   qr_svg: string | null;
   error?: string;
+  message?: string;
 }
 
 type ConnectState = "idle" | "starting" | "ready" | "error";
 
-export function RadioConnectDialog({ open, onClose }: RadioConnectDialogProps) {
+export function RadioConnectDialog({ open, onClose, onGoToSettings }: RadioConnectDialogProps) {
   const [connectState, setConnectState] = useState<ConnectState>("idle");
   const [radioInfo, setRadioInfo] = useState<RadioStartResult | null>(null);
   const [copied, setCopied] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const stoppedRef = useRef(false);
 
   // Start Radio server when dialog opens
   useEffect(() => {
@@ -32,7 +33,6 @@ export function RadioConnectDialog({ open, onClose }: RadioConnectDialogProps) {
       setConnectState("idle");
       setRadioInfo(null);
       setError(null);
-      stoppedRef.current = false;
       return;
     }
 
@@ -54,14 +54,11 @@ export function RadioConnectDialog({ open, onClose }: RadioConnectDialogProps) {
       });
   }, [open]);
 
-  // Stop Radio server when dialog closes
+  // Close dialog without stopping the Radio server — it should keep running
+  // after a phone connects (BlitzPage auto-closes this dialog on connection).
   const handleClose = useCallback(() => {
-    if (!stoppedRef.current && radioInfo) {
-      stoppedRef.current = true;
-      apiClient.post("/api/v1/radio/stop").catch(() => {});
-    }
     onClose();
-  }, [onClose, radioInfo]);
+  }, [onClose]);
 
   const handleCopy = useCallback(async () => {
     if (!radioInfo) return;
@@ -116,32 +113,57 @@ export function RadioConnectDialog({ open, onClose }: RadioConnectDialogProps) {
           )}
 
           {connectState === "error" && (
-            <div className="flex flex-col items-center gap-4 py-10">
-              <p className="text-sm text-red-400 text-center">{error}</p>
-              <button
-                onClick={() => {
-                  setConnectState("starting");
-                  setError(null);
-                  apiClient
-                    .post<unknown, RadioStartResult>("/api/v1/radio/start")
-                    .then((info) => {
-                      if (info.error) {
-                        setError(info.error);
-                        setConnectState("error");
-                      } else {
-                        setRadioInfo(info);
-                        setConnectState("ready");
-                      }
-                    })
-                    .catch((err) => {
-                      setError(String(err?.message ?? "Failed"));
-                      setConnectState("error");
-                    });
-                }}
-                className="text-xs text-[var(--color-highlight)] hover:underline"
-              >
-                Retry
-              </button>
+            <div className="flex flex-col items-center gap-4 py-8">
+              {error === "transcribe_not_configured" ? (
+                <>
+                  <div className="w-12 h-12 rounded-full flex items-center justify-center bg-[var(--color-warning)]/10">
+                    <Radio className="w-6 h-6 text-[var(--color-warning)]" />
+                  </div>
+                  <div className="text-center">
+                    <p className="text-sm font-medium text-[var(--color-text)] mb-1">Audio Transcription Not Configured</p>
+                    <p className="text-xs text-[var(--color-text-muted)]">
+                      Radio requires an AI provider for audio transcription. Please configure it in AI settings first.
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => {
+                      handleClose();
+                      onGoToSettings?.();
+                    }}
+                    className="px-4 py-2 text-xs font-medium rounded-lg bg-[var(--color-highlight)]/10 text-[var(--color-highlight)] border border-[var(--color-highlight)]/30 hover:bg-[var(--color-highlight)]/20 transition-colors"
+                  >
+                    Go to AI Settings
+                  </button>
+                </>
+              ) : (
+                <>
+                  <p className="text-sm text-[var(--color-error)] text-center">{error}</p>
+                  <button
+                    onClick={() => {
+                      setConnectState("starting");
+                      setError(null);
+                      apiClient
+                        .post<unknown, RadioStartResult>("/api/v1/radio/start")
+                        .then((info) => {
+                          if (info.error) {
+                            setError(info.error);
+                            setConnectState("error");
+                          } else {
+                            setRadioInfo(info);
+                            setConnectState("ready");
+                          }
+                        })
+                        .catch((err) => {
+                          setError(String(err?.message ?? "Failed"));
+                          setConnectState("error");
+                        });
+                    }}
+                    className="text-xs text-[var(--color-highlight)] hover:underline"
+                  >
+                    Retry
+                  </button>
+                </>
+              )}
             </div>
           )}
 
@@ -150,9 +172,8 @@ export function RadioConnectDialog({ open, onClose }: RadioConnectDialogProps) {
               {/* QR Code */}
               {radioInfo.qr_svg && (
                 <div
-                  className="bg-white rounded-xl p-3"
+                  className="bg-white rounded-lg p-1 w-3/5 aspect-square [&>svg]:w-full [&>svg]:h-full"
                   dangerouslySetInnerHTML={{ __html: radioInfo.qr_svg }}
-                  style={{ width: 240, height: 240 }}
                 />
               )}
 
@@ -162,7 +183,7 @@ export function RadioConnectDialog({ open, onClose }: RadioConnectDialogProps) {
 
               {/* Connection info */}
               <div className="w-full flex items-center gap-2 px-3 py-2 rounded-lg bg-[var(--color-bg)] border border-[var(--color-border)]">
-                <span className="w-2 h-2 rounded-full bg-green-500 flex-shrink-0" />
+                <span className="w-2 h-2 rounded-full bg-[var(--color-success)] flex-shrink-0" />
                 <span className="text-xs font-mono text-[var(--color-text-muted)] flex-1 truncate">
                   {radioInfo.host}:{radioInfo.port}
                 </span>
@@ -171,7 +192,7 @@ export function RadioConnectDialog({ open, onClose }: RadioConnectDialogProps) {
                   className="flex-shrink-0 p-1 rounded hover:bg-[var(--color-bg-tertiary)] text-[var(--color-text-muted)] transition-colors"
                   title="Copy URL"
                 >
-                  {copied ? <Check className="w-3.5 h-3.5 text-green-400" /> : <Copy className="w-3.5 h-3.5" />}
+                  {copied ? <Check className="w-3.5 h-3.5 text-[var(--color-success)]" /> : <Copy className="w-3.5 h-3.5" />}
                 </button>
               </div>
             </div>

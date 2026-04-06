@@ -12,7 +12,7 @@ interface BlitzTaskListItemProps {
   notification?: { level: string };
   shortcutNumber?: number;
   onDragStart?: () => void;
-  onDragOver?: () => void;
+  onDragOver?: (e: React.DragEvent) => void;
   onDragEnd?: () => void;
   onDragLeave?: () => void;
   isDragging?: boolean;
@@ -58,7 +58,7 @@ function getStatusConfig(status: TaskStatus): {
     case "idle":
       return { icon: Circle, color: "var(--color-text-muted)", label: "Idle" };
     case "merged":
-      return { icon: CheckCircle, color: "#a855f7", label: "Merged" };
+      return { icon: CheckCircle, color: "var(--color-info)", label: "Merged" };
     case "conflict":
       return { icon: AlertTriangle, color: "var(--color-error)", label: "Conflict" };
     case "broken":
@@ -106,7 +106,7 @@ export function BlitzTaskListItem({
       onDragOver={isTouchDevice ? undefined : (e) => {
         e.preventDefault();
         e.dataTransfer.dropEffect = 'move';
-        onDragOver?.();
+        onDragOver?.(e);
       }}
       onDragEnd={isTouchDevice ? undefined : onDragEnd}
       onDragLeave={isTouchDevice ? undefined : onDragLeave}

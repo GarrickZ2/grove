@@ -30,3 +30,10 @@ export async function upsertTaskSlot(
 export async function removeTaskSlot(groupId: string, position: number): Promise<TaskGroup> {
   return apiClient.delete(`/api/v1/taskgroups/${groupId}/slots/${position}`);
 }
+
+export async function setSlots(
+  groupId: string,
+  slots: { position: number; project_id: string; task_id: string; target_chat_id?: string }[],
+): Promise<TaskGroup> {
+  return apiClient.put(`/api/v1/taskgroups/${groupId}/slots`, { slots });
+}

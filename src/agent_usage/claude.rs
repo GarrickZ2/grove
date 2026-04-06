@@ -22,6 +22,7 @@ const CREDENTIALS_PATH: &str = ".claude/.credentials.json";
 const USAGE_URL: &str = "https://api.anthropic.com/api/oauth/usage";
 const KEYCHAIN_SERVICE: &str = "Claude Code-credentials";
 const REQUIRED_SCOPE: &str = "user:profile";
+const CLAUDE_CODE_UA: &str = "claude-code/2.0.32";
 
 #[derive(Debug, Deserialize)]
 struct CredentialsFile {
@@ -103,8 +104,9 @@ pub fn fetch() -> Result<AgentUsage, String> {
         .get(USAGE_URL)
         .set("Authorization", &format!("Bearer {}", creds.access_token))
         .set("anthropic-beta", "oauth-2025-04-20")
-        .set("Accept", "application/json")
+        .set("Accept", "application/json, text/plain, */*")
         .set("Content-Type", "application/json")
+        .set("User-Agent", CLAUDE_CODE_UA)
         .call()
         .map_err(|e| format!("usage api call failed: {}", e))?;
 
@@ -193,7 +195,19 @@ fn infer_plan(rate_limit_tier: Option<&str>, subscription_type: Option<&str>) ->
 // ---------- credential resolution ----------
 
 fn read_credentials() -> Result<Credentials, String> {
-    // Strategy 1: credentials file
+    // Strategy 1: macOS login keychain. This most closely matches Claude
+    // Code itself and avoids preferring a stale on-disk token over the
+    // active credential stored by the desktop client.
+    #[cfg(target_os = "macos")]
+    {
+        if let Some(value) = read_keychain_password(KEYCHAIN_SERVICE) {
+            if let Some(c) = parse_credential_text(&value) {
+                return Ok(c);
+            }
+        }
+    }
+
+    // Strategy 2: credentials file
     if let Some(home) = dirs::home_dir() {
         let path = home.join(CREDENTIALS_PATH);
         if path.exists() {
@@ -201,16 +215,6 @@ fn read_credentials() -> Result<Credentials, String> {
                 if let Some(c) = parse_credential_text(&text) {
                     return Ok(c);
                 }
-            }
-        }
-    }
-
-    // Strategy 2: macOS login keychain
-    #[cfg(target_os = "macos")]
-    {
-        if let Some(value) = read_keychain_password(KEYCHAIN_SERVICE) {
-            if let Some(c) = parse_credential_text(&value) {
-                return Ok(c);
             }
         }
     }

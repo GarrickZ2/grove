@@ -4,11 +4,15 @@ use uuid::Uuid;
 
 use crate::error::Result;
 
+/// System group IDs (auto-created, cannot be deleted/renamed)
+pub const MAIN_GROUP_ID: &str = "_main";
+pub const LOCAL_GROUP_ID: &str = "_local";
+
 /// TaskSlot: binds a Task to a position in a TaskGroup
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TaskSlot {
-    /// 1-9 button position
-    pub position: u8,
+    /// Sort position (1-based, no upper limit for system groups; 1-9 for Radio grid)
+    pub position: u16,
     /// Project hash
     pub project_id: String,
     /// Task ID
@@ -57,7 +61,7 @@ pub fn load_groups() -> Result<Vec<TaskGroup>> {
     Ok(file.groups)
 }
 
-/// Save task groups to TOML.
+/// Save task groups to TOML (internal).
 fn save_groups(groups: &[TaskGroup]) -> Result<()> {
     let path = taskgroups_file_path();
     // Ensure ~/.grove/ exists
@@ -68,6 +72,167 @@ fn save_groups(groups: &[TaskGroup]) -> Result<()> {
         groups: groups.to_vec(),
     };
     super::save_toml(&path, &file)
+}
+
+/// Public save for batch operations (e.g. delete_group with slot reassignment).
+pub fn save_groups_pub(groups: &[TaskGroup]) -> Result<()> {
+    save_groups(groups)
+}
+
+/// Ensure _main and _local system groups exist, and auto-assign unassigned tasks.
+/// Called on startup and can be called periodically.
+pub fn ensure_system_groups() -> Result<()> {
+    let mut groups = load_groups()?;
+    let mut changed = false;
+
+    let has_main = groups.iter().any(|g| g.id == MAIN_GROUP_ID);
+    let has_local = groups.iter().any(|g| g.id == LOCAL_GROUP_ID);
+
+    if !has_main {
+        groups.insert(
+            0,
+            TaskGroup {
+                id: MAIN_GROUP_ID.to_string(),
+                name: "Main".to_string(),
+                color: None,
+                slots: Vec::new(),
+                created_at: Utc::now(),
+            },
+        );
+        changed = true;
+    }
+    if !has_local {
+        groups.push(TaskGroup {
+            id: LOCAL_GROUP_ID.to_string(),
+            name: "Local".to_string(),
+            color: None,
+            slots: Vec::new(),
+            created_at: Utc::now(),
+        });
+        changed = true;
+    }
+
+    // Auto-assign unassigned tasks to _main / _local
+    let projects = crate::storage::workspace::load_projects().unwrap_or_default();
+
+    // Collect all assigned (project_id, task_id)
+    let mut assigned: std::collections::HashSet<(String, String)> =
+        std::collections::HashSet::new();
+    for g in &groups {
+        for s in &g.slots {
+            assigned.insert((s.project_id.clone(), s.task_id.clone()));
+        }
+    }
+
+    let mut main_max = groups
+        .iter()
+        .find(|g| g.id == MAIN_GROUP_ID)
+        .map(|g| g.slots.iter().map(|s| s.position).max().unwrap_or(0))
+        .unwrap_or(0);
+    let mut local_max = groups
+        .iter()
+        .find(|g| g.id == LOCAL_GROUP_ID)
+        .map(|g| g.slots.iter().map(|s| s.position).max().unwrap_or(0))
+        .unwrap_or(0);
+
+    for project in &projects {
+        let project_id = crate::storage::workspace::project_hash(&project.path);
+        let tasks = crate::storage::tasks::load_tasks(&project_id).unwrap_or_default();
+
+        for task in &tasks {
+            let key = (project_id.clone(), task.id.clone());
+            if assigned.contains(&key) {
+                continue;
+            }
+            assigned.insert(key);
+            changed = true;
+
+            let is_local = task.id == "_local";
+            let target_id = if is_local {
+                LOCAL_GROUP_ID
+            } else {
+                MAIN_GROUP_ID
+            };
+            let pos = if is_local {
+                local_max += 1;
+                local_max
+            } else {
+                main_max += 1;
+                main_max
+            };
+
+            if let Some(g) = groups.iter_mut().find(|g| g.id == target_id) {
+                g.slots.push(TaskSlot {
+                    position: pos,
+                    project_id: project_id.clone(),
+                    task_id: task.id.clone(),
+                    target_chat_id: None,
+                });
+            }
+        }
+    }
+
+    // Remove slots whose task no longer exists (archived/deleted)
+    let mut task_cache: std::collections::HashMap<String, Vec<crate::storage::tasks::Task>> =
+        std::collections::HashMap::new();
+    for g in &mut groups {
+        let before = g.slots.len();
+        g.slots.retain(|s| {
+            let tasks = task_cache.entry(s.project_id.clone()).or_insert_with(|| {
+                crate::storage::tasks::load_tasks(&s.project_id).unwrap_or_default()
+            });
+            tasks.iter().any(|t| t.id == s.task_id)
+        });
+        if g.slots.len() < before {
+            changed = true;
+        }
+        // Deduplicate within the same group
+        let before2 = g.slots.len();
+        let mut seen_in_group: std::collections::HashSet<(String, String)> =
+            std::collections::HashSet::new();
+        g.slots
+            .retain(|s| seen_in_group.insert((s.project_id.clone(), s.task_id.clone())));
+        if g.slots.len() < before2 {
+            changed = true;
+        }
+        // Re-number positions to be sequential (1, 2, 3, ...)
+        for (i, slot) in g.slots.iter_mut().enumerate() {
+            let new_pos = (i as u16) + 1;
+            if slot.position != new_pos {
+                slot.position = new_pos;
+                changed = true;
+            }
+        }
+    }
+
+    // Deduplicate: remove slots where (project_id, task_id) appears in multiple groups
+    // Keep the first occurrence (by group order: _main, custom, _local)
+    let mut seen: std::collections::HashSet<(String, String)> = std::collections::HashSet::new();
+    for g in &mut groups {
+        let before = g.slots.len();
+        g.slots
+            .retain(|s| seen.insert((s.project_id.clone(), s.task_id.clone())));
+        if g.slots.len() < before {
+            changed = true;
+        }
+    }
+
+    if changed {
+        save_groups(&groups)?;
+    }
+    Ok(())
+}
+
+/// Replace all slots for a group at once (for reordering). Returns updated group if found.
+pub fn set_slots(group_id: &str, slots: Vec<TaskSlot>) -> Result<Option<TaskGroup>> {
+    let mut groups = load_groups()?;
+    let Some(group) = groups.iter_mut().find(|g| g.id == group_id) else {
+        return Ok(None);
+    };
+    group.slots = slots;
+    let updated = group.clone();
+    save_groups(&groups)?;
+    Ok(Some(updated))
 }
 
 /// Create a new task group with a UUID.
@@ -147,7 +312,7 @@ pub fn upsert_slot(group_id: &str, slot: TaskSlot) -> Result<Option<TaskGroup>> 
 
 /// Remove a slot from a task group by position.
 /// Returns the updated group if found.
-pub fn remove_slot(group_id: &str, position: u8) -> Result<Option<TaskGroup>> {
+pub fn remove_slot(group_id: &str, position: u16) -> Result<Option<TaskGroup>> {
     let mut groups = load_groups()?;
 
     let Some(group) = groups.iter_mut().find(|g| g.id == group_id) else {
@@ -159,6 +324,32 @@ pub fn remove_slot(group_id: &str, position: u8) -> Result<Option<TaskGroup>> {
     let updated = group.clone();
     save_groups(&groups)?;
     Ok(Some(updated))
+}
+
+/// Remove a task from all groups (called when task is archived/deleted).
+/// Returns true if any slot was removed.
+pub fn remove_task_from_all_groups(project_id: &str, task_id: &str) -> bool {
+    if let Ok(mut groups) = load_groups() {
+        let mut changed = false;
+        for g in &mut groups {
+            let before = g.slots.len();
+            g.slots
+                .retain(|s| !(s.project_id == project_id && s.task_id == task_id));
+            if g.slots.len() < before {
+                changed = true;
+                // Re-number positions
+                for (i, slot) in g.slots.iter_mut().enumerate() {
+                    slot.position = (i as u16) + 1;
+                }
+            }
+        }
+        if changed {
+            let _ = save_groups(&groups);
+        }
+        changed
+    } else {
+        false
+    }
 }
 
 #[cfg(test)]
@@ -333,7 +524,7 @@ mod tests {
         // Load and verify slots are sorted by position
         let groups = load_groups().unwrap();
         let group = groups.iter().find(|g| g.id == guard.id).unwrap();
-        let positions: Vec<u8> = group.slots.iter().map(|s| s.position).collect();
+        let positions: Vec<u16> = group.slots.iter().map(|s| s.position).collect();
         assert_eq!(positions, vec![1, 2, 3, 5, 9]);
     }
 }

@@ -11,6 +11,23 @@ use tokio::sync::{broadcast, mpsc};
 use crate::acp;
 use crate::storage::{taskgroups, tasks, workspace};
 
+// ─── Radio Client Counter ───────────────────────────────────────────────────
+
+static RADIO_CLIENT_COUNT: Lazy<std::sync::atomic::AtomicUsize> =
+    Lazy::new(|| std::sync::atomic::AtomicUsize::new(0));
+
+pub fn radio_client_count() -> usize {
+    RADIO_CLIENT_COUNT.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+pub fn increment_radio_clients() {
+    RADIO_CLIENT_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+}
+
+pub fn decrement_radio_clients() {
+    RADIO_CLIENT_COUNT.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
+}
+
 // ─── Radio Events Broadcast (Radio → Desktop) ─────────────────────────────
 
 /// Events broadcast from Radio phone to desktop Blitz listeners.
@@ -25,8 +42,12 @@ pub enum RadioEvent {
     ClientConnected,
     /// A phone disconnected from the Radio server.
     ClientDisconnected,
+    /// Current count of connected Radio clients (sent on desktop events WS connect).
+    ClientCount { count: usize },
     /// TaskGroup data changed (Blitz updated groups via REST).
     GroupChanged,
+    /// Theme changed on desktop.
+    ThemeChanged,
 }
 
 /// Global broadcast channel for radio events.
@@ -51,18 +72,18 @@ enum ClientMessage {
     },
     SelectTask {
         group_id: String,
-        position: u8,
+        position: u16,
     },
     SendPrompt {
         group_id: String,
-        position: u8,
+        position: u16,
         text: String,
         #[serde(default)]
         chat_id: Option<String>,
     },
     SwitchChat {
         group_id: String,
-        position: u8,
+        position: u16,
         direction: String,
     },
 }
@@ -74,6 +95,7 @@ enum ClientMessage {
 enum ServerMessage {
     Connected {
         groups: Vec<GroupSnapshot>,
+        theme: String,
     },
     TaskStatus {
         project_id: String,
@@ -82,18 +104,21 @@ enum ServerMessage {
     },
     PromptSent {
         group_id: String,
-        position: u8,
+        position: u16,
         status: String,
         #[serde(skip_serializing_if = "Option::is_none")]
         error: Option<String>,
     },
     ChatInfo {
-        position: u8,
+        position: u16,
         active_chat: Option<ChatRef>,
         available_chats: Vec<ChatRef>,
     },
     GroupUpdated {
         groups: Vec<GroupSnapshot>,
+    },
+    ThemeChanged {
+        theme: String,
     },
 }
 
@@ -103,7 +128,7 @@ enum ServerMessage {
 struct GroupSnapshot {
     #[serde(flatten)]
     group: taskgroups::TaskGroup,
-    slot_statuses: HashMap<u8, SlotStatus>,
+    slot_statuses: HashMap<u16, SlotStatus>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -123,7 +148,7 @@ struct ChatRef {
 /// Per-connection state tracking the user's current focus.
 struct WalkieTalkieState {
     current_group_id: Option<String>,
-    current_position: Option<u8>,
+    current_position: Option<u16>,
     /// Maps (project_id, task_id) → currently selected chat_id
     active_chats: HashMap<(String, String), String>,
 }
@@ -190,8 +215,10 @@ pub async fn handle_walkie_talkie_ws_inner(socket: WebSocket) {
 
     // Build initial snapshot and send Connected message
     let snapshot = build_full_snapshot();
+    let theme_name = crate::storage::config::load_config().theme.name;
     let connected = ServerMessage::Connected {
         groups: snapshot.clone(),
+        theme: theme_name,
     };
     if let Ok(json) = serde_json::to_string(&connected) {
         use futures::SinkExt;
@@ -242,17 +269,37 @@ pub async fn handle_walkie_talkie_ws_inner(socket: WebSocket) {
                 }
             }
 
-            // Radio events (GroupChanged from Blitz, etc.)
+            // Radio events (GroupChanged, ThemeChanged from Blitz, etc.)
             result = radio_rx.recv() => {
-                if let Ok(RadioEvent::GroupChanged) = result {
-                    let snapshot = build_full_snapshot();
-                    let _ = msg_tx.send(ServerMessage::GroupUpdated { groups: snapshot });
+                match result {
+                    Ok(RadioEvent::GroupChanged) => {
+                        let snapshot = build_full_snapshot();
+                        // Refresh last_statuses so the poller tracks new/removed tasks
+                        last_statuses.clear();
+                        for gs in &snapshot {
+                            for slot in &gs.group.slots {
+                                let status = check_agent_status(&slot.project_id, &slot.task_id);
+                                last_statuses.insert(
+                                    (slot.project_id.clone(), slot.task_id.clone()),
+                                    status,
+                                );
+                            }
+                        }
+                        let _ = msg_tx.send(ServerMessage::GroupUpdated { groups: snapshot });
+                    }
+                    Ok(RadioEvent::ThemeChanged) => {
+                        let theme_name = crate::storage::config::load_config().theme.name;
+                        let _ = msg_tx.send(ServerMessage::ThemeChanged { theme: theme_name });
+                    }
+                    _ => {}
                 }
             }
 
-            // Periodic status poll
+            // Periodic status poll (skip if no tasks are tracked)
             _ = poll_interval.tick() => {
-                poll_task_statuses(&mut last_statuses, &msg_tx);
+                if !last_statuses.is_empty() {
+                    poll_task_statuses(&mut last_statuses, &msg_tx);
+                }
             }
         }
     }
@@ -260,8 +307,8 @@ pub async fn handle_walkie_talkie_ws_inner(socket: WebSocket) {
 
 // ─── Client Message Dispatch ────────────────────────────────────────────────
 
-fn validate_position(position: u8) -> bool {
-    (1..=9).contains(&position)
+fn validate_position(position: u16) -> bool {
+    position >= 1
 }
 
 async fn handle_client_message(
@@ -279,13 +326,16 @@ async fn handle_client_message(
                     group_id: String::new(),
                     position: *position,
                     status: "error".to_string(),
-                    error: Some("Position must be between 1 and 9".to_string()),
+                    error: Some("Position must be >= 1".to_string()),
                 });
                 return;
             }
         }
         _ => {}
     }
+
+    // Load groups once per message to avoid repeated disk reads
+    let groups = taskgroups::load_groups().unwrap_or_default();
 
     match msg {
         ClientMessage::SwitchGroup { group_id } => {
@@ -299,14 +349,14 @@ async fn handle_client_message(
             state.current_group_id = Some(group_id.clone());
             state.current_position = Some(position);
             // Broadcast focus event to desktop Blitz listeners
-            if let Some(slot) = find_slot(&group_id, position) {
+            if let Some(slot) = find_slot_in(&groups, &group_id, position) {
                 let _ = RADIO_EVENTS.send(RadioEvent::FocusTask {
                     project_id: slot.project_id.clone(),
                     task_id: slot.task_id.clone(),
                 });
             }
             // Send chat info for the selected slot
-            if let Some(chat_info) = get_chat_info_for_slot(&group_id, position, state) {
+            if let Some(chat_info) = get_chat_info_for_slot(&group_id, position, state, &groups) {
                 let _ = tx.send(chat_info);
             }
         }
@@ -317,16 +367,16 @@ async fn handle_client_message(
             chat_id,
         } => {
             // Broadcast focus event first (desktop switches to this task)
-            if let Some(slot) = find_slot(&group_id, position) {
+            if let Some(slot) = find_slot_in(&groups, &group_id, position) {
                 let _ = RADIO_EVENTS.send(RadioEvent::FocusTask {
                     project_id: slot.project_id.clone(),
                     task_id: slot.task_id.clone(),
                 });
             }
             let result =
-                send_prompt_to_task(&group_id, position, &text, chat_id.as_deref(), state).await;
+                send_prompt_to_task(&group_id, position, &text, chat_id.as_deref(), state, &groups).await;
             // Broadcast prompt_sent event after sending
-            if let Some(slot) = find_slot(&group_id, position) {
+            if let Some(slot) = find_slot_in(&groups, &group_id, position) {
                 let _ = RADIO_EVENTS.send(RadioEvent::PromptSent {
                     project_id: slot.project_id.clone(),
                     task_id: slot.task_id.clone(),
@@ -339,7 +389,7 @@ async fn handle_client_message(
             position,
             direction,
         } => {
-            if let Some(chat_info) = switch_chat(&group_id, position, &direction, state) {
+            if let Some(chat_info) = switch_chat(&group_id, position, &direction, state, &groups) {
                 let _ = tx.send(chat_info);
             }
         }
@@ -349,9 +399,13 @@ async fn handle_client_message(
 // ─── Core Functions ─────────────────────────────────────────────────────────
 
 /// Load all groups and build a full snapshot with slot statuses.
-/// Also synthesizes an "Ungrouped" virtual group for tasks not in any real group.
+/// Excludes _local group (not relevant for Radio control).
 fn build_full_snapshot() -> Vec<GroupSnapshot> {
-    let groups = taskgroups::load_groups().unwrap_or_default();
+    let groups: Vec<_> = taskgroups::load_groups()
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|g| g.id != taskgroups::LOCAL_GROUP_ID)
+        .collect();
     let projects = workspace::load_projects().unwrap_or_default();
 
     // Build a project-name lookup by project hash
@@ -359,18 +413,7 @@ fn build_full_snapshot() -> Vec<GroupSnapshot> {
         .iter()
         .map(|p| (workspace::project_hash(&p.path), p.name.clone()))
         .collect();
-
-    // Collect all (project_id, task_id) pairs that are assigned to at least one group slot
-    let mut grouped_task_keys: std::collections::HashSet<(String, String)> =
-        std::collections::HashSet::new();
-    for group in &groups {
-        for slot in &group.slots {
-            grouped_task_keys.insert((slot.project_id.clone(), slot.task_id.clone()));
-        }
-    }
-
-    // Build snapshots for real groups
-    let mut snapshots: Vec<GroupSnapshot> = groups
+    groups
         .into_iter()
         .map(|group| {
             let mut slot_statuses = HashMap::new();
@@ -381,7 +424,6 @@ fn build_full_snapshot() -> Vec<GroupSnapshot> {
                     .get(&slot.project_id)
                     .cloned()
                     .unwrap_or_else(|| slot.project_id.clone());
-
                 slot_statuses.insert(
                     slot.position,
                     SlotStatus {
@@ -396,72 +438,7 @@ fn build_full_snapshot() -> Vec<GroupSnapshot> {
                 slot_statuses,
             }
         })
-        .collect();
-
-    // Build the "Ungrouped" virtual group from tasks not in any real group
-    let mut ungrouped_slots: Vec<taskgroups::TaskSlot> = Vec::new();
-    let mut ungrouped_statuses: HashMap<u8, SlotStatus> = HashMap::new();
-    let mut position: u8 = 1;
-
-    for project in &projects {
-        let project_id = workspace::project_hash(&project.path);
-        let project_tasks = tasks::load_tasks(&project_id).unwrap_or_default();
-
-        for task in &project_tasks {
-            if position > 9 {
-                break;
-            }
-            if grouped_task_keys.contains(&(project_id.clone(), task.id.clone())) {
-                continue;
-            }
-
-            ungrouped_slots.push(taskgroups::TaskSlot {
-                position,
-                project_id: project_id.clone(),
-                task_id: task.id.clone(),
-                target_chat_id: None,
-            });
-
-            let agent_status = check_agent_status(&project_id, &task.id);
-            let project_name = project_names
-                .get(&project_id)
-                .cloned()
-                .unwrap_or_else(|| project_id.clone());
-
-            ungrouped_statuses.insert(
-                position,
-                SlotStatus {
-                    agent_status,
-                    task_name: task.name.clone(),
-                    project_name,
-                },
-            );
-
-            position += 1;
-        }
-        if position > 9 {
-            break;
-        }
-    }
-
-    if !ungrouped_slots.is_empty() {
-        let ungrouped_group = taskgroups::TaskGroup {
-            id: "_ungrouped".to_string(),
-            name: "Ungrouped".to_string(),
-            color: None,
-            slots: ungrouped_slots,
-            created_at: chrono::Utc::now(),
-        };
-        snapshots.insert(
-            0,
-            GroupSnapshot {
-                group: ungrouped_group,
-                slot_statuses: ungrouped_statuses,
-            },
-        );
-    }
-
-    snapshots
+        .collect()
 }
 
 /// Resolve a task's display name from storage.
@@ -501,10 +478,11 @@ fn check_agent_status(project_id: &str, task_id: &str) -> String {
 /// Build ChatInfo for a slot, returning the active chat and all available chats.
 fn get_chat_info_for_slot(
     group_id: &str,
-    position: u8,
+    position: u16,
     state: &WalkieTalkieState,
+    groups: &[taskgroups::TaskGroup],
 ) -> Option<ServerMessage> {
-    let slot = find_slot(group_id, position)?;
+    let slot = find_slot_in(groups, group_id, position)?;
 
     let chats = tasks::load_chat_sessions(&slot.project_id, &slot.task_id).unwrap_or_default();
     let available_chats: Vec<ChatRef> = chats
@@ -540,12 +518,13 @@ fn get_chat_info_for_slot(
 /// Send a prompt to the active (or overridden) chat for a slot.
 async fn send_prompt_to_task(
     group_id: &str,
-    position: u8,
+    position: u16,
     text: &str,
     override_chat_id: Option<&str>,
     state: &mut WalkieTalkieState,
+    groups: &[taskgroups::TaskGroup],
 ) -> ServerMessage {
-    let slot = match find_slot(group_id, position) {
+    let slot = match find_slot_in(groups, group_id, position) {
         Some(s) => s,
         None => {
             return ServerMessage::PromptSent {
@@ -626,11 +605,12 @@ async fn send_prompt_to_task(
 /// Cycle through available chats for a slot in the given direction ("next" | "prev").
 fn switch_chat(
     group_id: &str,
-    position: u8,
+    position: u16,
     direction: &str,
     state: &mut WalkieTalkieState,
+    groups: &[taskgroups::TaskGroup],
 ) -> Option<ServerMessage> {
-    let slot = find_slot(group_id, position)?;
+    let slot = find_slot_in(groups, group_id, position)?;
 
     let chats = tasks::load_chat_sessions(&slot.project_id, &slot.task_id).unwrap_or_default();
     if chats.is_empty() {
@@ -688,67 +668,59 @@ fn switch_chat(
     })
 }
 
-/// Poll all task statuses and send TaskStatus messages only when a status changes.
-/// Uses `build_full_snapshot` to include both real groups and the virtual "Ungrouped" group.
+/// Poll status changes for known tasks without rebuilding the full snapshot.
+/// New tasks are picked up via GroupChanged events which trigger a full snapshot
+/// rebuild and update `last_statuses` in the WS loop.
 fn poll_task_statuses(
     last_statuses: &mut HashMap<(String, String), String>,
     tx: &mpsc::UnboundedSender<ServerMessage>,
 ) {
-    let snapshot = build_full_snapshot();
-
-    // Collect current slot keys to prune stale entries
-    let mut current_keys = std::collections::HashSet::new();
-
-    for gs in &snapshot {
-        for slot in &gs.group.slots {
-            let key = (slot.project_id.clone(), slot.task_id.clone());
-            current_keys.insert(key.clone());
-            let current = check_agent_status(&slot.project_id, &slot.task_id);
-
-            let changed = last_statuses
-                .get(&key)
-                .map(|prev| prev != &current)
-                .unwrap_or(true);
-
-            if changed {
-                last_statuses.insert(key, current.clone());
-                let _ = tx.send(ServerMessage::TaskStatus {
-                    project_id: slot.project_id.clone(),
-                    task_id: slot.task_id.clone(),
-                    agent_status: current,
-                });
-            }
+    for (key, prev_status) in last_statuses.iter_mut() {
+        let current = check_agent_status(&key.0, &key.1);
+        if *prev_status != current {
+            let _ = tx.send(ServerMessage::TaskStatus {
+                project_id: key.0.clone(),
+                task_id: key.1.clone(),
+                agent_status: current.clone(),
+            });
+            *prev_status = current;
         }
     }
-
-    // Remove stale entries for deleted slots
-    last_statuses.retain(|k, _| current_keys.contains(k));
 }
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
-/// Find a TaskSlot by group_id and position.
-/// Supports the virtual "_ungrouped" group by rebuilding the snapshot.
-fn find_slot(group_id: &str, position: u8) -> Option<taskgroups::TaskSlot> {
-    if group_id == "_ungrouped" {
-        // For the virtual group, rebuild the snapshot and find the slot there
-        let snapshot = build_full_snapshot();
-        return snapshot
-            .into_iter()
-            .find(|g| g.group.id == "_ungrouped")
-            .and_then(|g| g.group.slots.into_iter().find(|s| s.position == position));
-    }
-    let groups = taskgroups::load_groups().unwrap_or_default();
+/// Find a TaskSlot from pre-loaded groups (avoids repeated disk reads).
+fn find_slot_in(groups: &[taskgroups::TaskGroup], group_id: &str, position: u16) -> Option<taskgroups::TaskSlot> {
     groups
-        .into_iter()
+        .iter()
         .find(|g| g.id == group_id)
-        .and_then(|g| g.slots.into_iter().find(|s| s.position == position))
+        .and_then(|g| g.slots.iter().find(|s| s.position == position).cloned())
 }
 
 // ─── Radio Server Endpoints ───────────────────────────────────────────────
 
 /// POST /radio/start — Start the independent Radio server, return connection info + QR code
 pub async fn start_radio() -> axum::response::Json<serde_json::Value> {
+    // Check if audio transcription is enabled and configured
+    let audio_settings = crate::storage::ai::load_audio_global();
+    if !audio_settings.enabled {
+        return axum::response::Json(serde_json::json!({
+            "error": "transcribe_not_configured",
+            "message": "Audio transcription is not enabled. Please enable it in Settings → AI → Audio first.",
+        }));
+    }
+    let providers = crate::storage::ai::load_providers();
+    let has_transcribe = providers.providers.iter().any(|p| {
+        p.id == audio_settings.transcribe_provider || p.name == audio_settings.transcribe_provider
+    });
+    if !has_transcribe {
+        return axum::response::Json(serde_json::json!({
+            "error": "transcribe_not_configured",
+            "message": "Audio transcription provider is not configured. Please set up a provider in Settings → AI → Audio first.",
+        }));
+    }
+
     match crate::api::radio_server::start().await {
         Ok(info) => {
             let lan_ip = crate::api::get_lan_ip();
@@ -824,6 +796,14 @@ async fn handle_radio_events_ws(socket: WebSocket) {
     let mut event_rx = RADIO_EVENTS.subscribe();
 
     use futures::{SinkExt, StreamExt};
+
+    // Send current Radio client count immediately on connect
+    let count_event = RadioEvent::ClientCount {
+        count: radio_client_count(),
+    };
+    if let Ok(json) = serde_json::to_string(&count_event) {
+        let _ = ws_tx.send(Message::Text(json.into())).await;
+    }
 
     loop {
         tokio::select! {

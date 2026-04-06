@@ -7,7 +7,8 @@ export interface RadioEventCallbacks {
   onPromptSent?: (projectId: string, taskId: string) => void;
 }
 
-const RECONNECT_DELAY = 3000;
+const RECONNECT_BASE_DELAY = 3000;
+const RECONNECT_MAX_DELAY = 30000;
 
 /**
  * Hook for desktop Blitz to receive radio control events.
@@ -23,6 +24,7 @@ export function useRadioEvents(callbacks: RadioEventCallbacks): { radioClients: 
   const wsRef = useRef<WebSocket | null>(null);
   const intentionalCloseRef = useRef(false);
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const reconnectAttemptsRef = useRef(0);
 
   const connect = useCallback(async () => {
     const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
@@ -33,6 +35,11 @@ export function useRadioEvents(callbacks: RadioEventCallbacks): { radioClients: 
 
     const ws = new WebSocket(url);
     wsRef.current = ws;
+
+    ws.onopen = () => {
+      // Reset backoff on successful connection
+      reconnectAttemptsRef.current = 0;
+    };
 
     ws.onmessage = (event) => {
       try {
@@ -50,6 +57,12 @@ export function useRadioEvents(callbacks: RadioEventCallbacks): { radioClients: 
           case "client_disconnected":
             setRadioClients((prev) => Math.max(0, prev - 1));
             break;
+          case "client_count":
+            if ("count" in data && typeof (data as Record<string, unknown>).count === "number") {
+              setRadioClients((data as RadioEvent & { count: number }).count);
+            }
+            break;
+          // group_changed / theme_changed are handled by Blitz REST refresh, not needed here
         }
       } catch {
         // ignore malformed
@@ -58,11 +71,18 @@ export function useRadioEvents(callbacks: RadioEventCallbacks): { radioClients: 
 
     ws.onclose = () => {
       wsRef.current = null;
+      setRadioClients(0); // Reset on disconnect — count is stale after reconnect
       if (!intentionalCloseRef.current) {
+        // Exponential backoff: 3s, 6s, 12s, 24s, 30s (capped)
+        const delay = Math.min(
+          RECONNECT_BASE_DELAY * Math.pow(2, reconnectAttemptsRef.current),
+          RECONNECT_MAX_DELAY,
+        );
+        reconnectAttemptsRef.current++;
         reconnectTimerRef.current = setTimeout(() => {
           reconnectTimerRef.current = null;
           connect();
-        }, RECONNECT_DELAY);
+        }, delay);
       }
     };
 
@@ -73,6 +93,7 @@ export function useRadioEvents(callbacks: RadioEventCallbacks): { radioClients: 
 
   useEffect(() => {
     intentionalCloseRef.current = false;
+    reconnectAttemptsRef.current = 0;
     connect();
 
     return () => {

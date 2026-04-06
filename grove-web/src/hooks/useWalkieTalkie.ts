@@ -15,6 +15,7 @@ export interface WalkieTalkieState {
   currentPosition: number | null;
   activeChat: ChatRef | null;
   availableChats: ChatRef[];
+  theme: string | null;
   lastPromptStatus: {
     position: number;
     status: "ok" | "error";
@@ -40,7 +41,8 @@ export interface WalkieTalkieActions {
 
 // ─── Hook ────────────────────────────────────────────────────────────────────
 
-const RECONNECT_DELAY = 2000;
+const RECONNECT_BASE_DELAY = 2000;
+const RECONNECT_MAX_DELAY = 30000;
 
 export function useWalkieTalkie(): [WalkieTalkieState, WalkieTalkieActions] {
   const [connected, setConnected] = useState(false);
@@ -49,12 +51,14 @@ export function useWalkieTalkie(): [WalkieTalkieState, WalkieTalkieActions] {
   const [currentPosition, setCurrentPosition] = useState<number | null>(null);
   const [activeChat, setActiveChat] = useState<ChatRef | null>(null);
   const [availableChats, setAvailableChats] = useState<ChatRef[]>([]);
+  const [theme, setTheme] = useState<string | null>(null);
   const [lastPromptStatus, setLastPromptStatus] =
     useState<WalkieTalkieState["lastPromptStatus"]>(null);
 
   const wsRef = useRef<WebSocket | null>(null);
   const intentionalCloseRef = useRef(false);
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const reconnectAttemptsRef = useRef(0);
 
   // ── Send helper ──────────────────────────────────────────────────────────
 
@@ -72,6 +76,7 @@ export function useWalkieTalkie(): [WalkieTalkieState, WalkieTalkieActions] {
       switch (msg.type) {
         case "connected": {
           setGroups(msg.groups);
+          setTheme(msg.theme);
           setCurrentGroupId((prev) => {
             if (prev && msg.groups.some((g: GroupSnapshot) => g.id === prev)) return prev;
             return msg.groups.length > 0 ? msg.groups[0].id : null;
@@ -121,6 +126,11 @@ export function useWalkieTalkie(): [WalkieTalkieState, WalkieTalkieActions] {
           setGroups(msg.groups);
           break;
         }
+
+        case "theme_changed": {
+          setTheme(msg.theme);
+          break;
+        }
       }
     },
     [], // eslint-disable-line react-hooks/exhaustive-deps
@@ -153,6 +163,7 @@ export function useWalkieTalkie(): [WalkieTalkieState, WalkieTalkieActions] {
 
     ws.onopen = () => {
       setConnected(true);
+      reconnectAttemptsRef.current = 0;
     };
 
     ws.onmessage = (event) => {
@@ -168,14 +179,27 @@ export function useWalkieTalkie(): [WalkieTalkieState, WalkieTalkieActions] {
       wsRef.current = null;
       setConnected(false);
 
+      // In Radio token mode, reconnect on clean close (1000) or abnormal
+      // network interruption (1006). Reject all other codes (e.g. 1008
+      // Policy Violation = invalid token) as terminal.
+      if (radioToken && event.code !== 1000 && event.code !== 1006) {
+        return;
+      }
+
       // Do NOT reconnect if:
       // - we intentionally closed the connection
       // - the server rejected the token (close code 1008 = Policy Violation)
       if (!intentionalCloseRef.current && event.code !== 1008) {
+        // Exponential backoff: 2s, 4s, 8s, 16s, 30s (capped)
+        const delay = Math.min(
+          RECONNECT_BASE_DELAY * Math.pow(2, reconnectAttemptsRef.current),
+          RECONNECT_MAX_DELAY,
+        );
+        reconnectAttemptsRef.current++;
         reconnectTimerRef.current = setTimeout(() => {
           reconnectTimerRef.current = null;
           connect();
-        }, RECONNECT_DELAY);
+        }, delay);
       }
     };
 
@@ -186,6 +210,7 @@ export function useWalkieTalkie(): [WalkieTalkieState, WalkieTalkieActions] {
 
   useEffect(() => {
     intentionalCloseRef.current = false;
+    reconnectAttemptsRef.current = 0;
     connect();
 
     return () => {
@@ -254,6 +279,7 @@ export function useWalkieTalkie(): [WalkieTalkieState, WalkieTalkieActions] {
     currentPosition,
     activeChat,
     availableChats,
+    theme,
     lastPromptStatus,
   };
 

@@ -633,6 +633,12 @@ pub async fn archive_task(
         )
     })?;
 
+    // Clean up task slot from all groups
+    if crate::storage::taskgroups::remove_task_from_all_groups(&project_key, &task_id) {
+        use crate::api::handlers::walkie_talkie::{broadcast_radio_event, RadioEvent};
+        broadcast_radio_event(RadioEvent::GroupChanged);
+    }
+
     // Load the archived task to return
     let archived = loader::load_archived_worktrees(&project.path);
     let task = archived.iter().find(|wt| wt.id == task_id).ok_or_else(|| {
@@ -702,6 +708,13 @@ pub async fn recover_task(
         )
     })?;
 
+    // Re-assign recovered task to appropriate system group
+    let _ = crate::storage::taskgroups::ensure_system_groups();
+    {
+        use crate::api::handlers::walkie_talkie::{broadcast_radio_event, RadioEvent};
+        broadcast_radio_event(RadioEvent::GroupChanged);
+    }
+
     result.map(Json).ok_or_else(|| {
         (
             StatusCode::NOT_FOUND,
@@ -755,6 +768,12 @@ pub async fn delete_task(
     // Clean all associated data
     hooks::remove_task_hook(&project_key, &task_id);
     let _ = storage::delete_task_data(&project_key, &task_id);
+
+    // Clean up task slot from all groups
+    if crate::storage::taskgroups::remove_task_from_all_groups(&project_key, &task_id) {
+        use crate::api::handlers::walkie_talkie::{broadcast_radio_event, RadioEvent};
+        broadcast_radio_event(RadioEvent::GroupChanged);
+    }
 
     Ok(StatusCode::NO_CONTENT)
 }

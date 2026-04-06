@@ -1,3 +1,5 @@
+import type { AgentUsage } from "../../../api/agentUsage";
+
 /**
  * Health-based color mapping for an agent quota percentage (remaining).
  *
@@ -13,4 +15,13 @@ export function quotaHealthColor(percentRemaining: number): string {
   if (percentRemaining < 20) return "var(--color-error)";
   if (percentRemaining < 50) return "var(--color-warning)";
   return "var(--color-success)";
+}
+
+/**
+ * Chat badge display policy: prefer the short-term "5h limit" window when it
+ * exists, otherwise fall back to the backend aggregate.
+ */
+export function quotaBadgePercent(usage: AgentUsage): number {
+  const preferred = usage.windows.find((window) => window.label === "5h limit");
+  return preferred?.percentage_remaining ?? usage.percentage_remaining;
 }

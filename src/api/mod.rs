@@ -29,7 +29,7 @@ use auth::ServerAuth;
 /// Embedded frontend assets (built from grove-web/dist)
 #[derive(Embed)]
 #[folder = "grove-web/dist"]
-struct FrontendAssets;
+pub(crate) struct FrontendAssets;
 
 /// Create the API router
 pub fn create_api_router() -> Router {
@@ -371,7 +371,7 @@ pub fn create_api_router() -> Router {
         )
         .route(
             "/taskgroups/{id}/slots",
-            post(handlers::taskgroups::upsert_slot),
+            post(handlers::taskgroups::upsert_slot).put(handlers::taskgroups::set_slots),
         )
         .route(
             "/taskgroups/{id}/slots/{position}",
@@ -645,6 +645,11 @@ pub async fn start_server(
 ) -> std::io::Result<()> {
     // Initialize FileWatchers for all live tasks
     init_file_watchers();
+
+    // Ensure _main and _local system groups exist
+    if let Err(e) = crate::storage::taskgroups::ensure_system_groups() {
+        eprintln!("[warning] Failed to ensure system groups: {}", e);
+    }
 
     // Pre-build Grove.app notification bundle (macOS only, first run compiles Swift)
     #[cfg(target_os = "macos")]

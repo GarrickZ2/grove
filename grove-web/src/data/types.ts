@@ -118,7 +118,13 @@ export interface BlitzTask {
 
 // ─── TaskGroup (Walkie-Talkie) ───────────────────────────────────────────────
 
+/** System group ID for the main (worktree) tasks group. */
+export const MAIN_GROUP_ID = "_main";
+/** System group ID for local workspace tasks. */
+export const LOCAL_GROUP_ID = "_local";
+
 export interface TaskSlot {
+  /** Slot position — any positive integer (u16 on backend). */
   position: number;
   project_id: string;
   task_id: string;

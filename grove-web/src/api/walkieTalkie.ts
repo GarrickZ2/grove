@@ -11,11 +11,12 @@ export type WalkieTalkieClientMessage =
 // ─── Server → Client ────────────────────────────────────────────────────────
 
 export type WalkieTalkieServerMessage =
-  | { type: "connected"; groups: GroupSnapshot[] }
+  | { type: "connected"; groups: GroupSnapshot[]; theme: string }
   | { type: "task_status"; project_id: string; task_id: string; agent_status: "idle" | "busy" | "disconnected" }
   | { type: "prompt_sent"; group_id: string; position: number; status: "ok" | "error"; error?: string }
   | { type: "chat_info"; position: number; active_chat: ChatRef | null; available_chats: ChatRef[] }
-  | { type: "group_updated"; groups: GroupSnapshot[] };
+  | { type: "group_updated"; groups: GroupSnapshot[] }
+  | { type: "theme_changed"; theme: string };
 
 // ─── Radio Events (Desktop ← Radio) ───────────────────────────────────────
 
@@ -23,4 +24,7 @@ export type RadioEvent =
   | { type: "focus_task"; project_id: string; task_id: string }
   | { type: "prompt_sent"; project_id: string; task_id: string }
   | { type: "client_connected" }
-  | { type: "client_disconnected" };
+  | { type: "client_disconnected" }
+  | { type: "client_count"; count: number }
+  | { type: "group_changed" }
+  | { type: "theme_changed" };

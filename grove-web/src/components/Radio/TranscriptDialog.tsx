@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 
 interface TranscriptDialogProps {
   text: string | null;
@@ -21,12 +21,37 @@ export default function TranscriptDialog({
     }
   }, [text]);
 
+  // Close on Escape key
+  useEffect(() => {
+    if (text === null) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        onCancel();
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [text, onCancel]);
+
+  const handleBackdropClick = useCallback((e: React.MouseEvent) => {
+    if (e.target === e.currentTarget) {
+      onCancel();
+    }
+  }, [onCancel]);
+
   if (text === null) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
-      <div className="w-full max-w-sm bg-[#1a1a20] border border-[#2a2a32] rounded-xl p-4 flex flex-col gap-3">
-        <span className="text-xs uppercase tracking-wider text-[#6a6a78]">
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
+      onClick={handleBackdropClick}
+    >
+      <div
+        className="w-full max-w-sm rounded-xl border p-4 flex flex-col gap-3"
+        style={{ borderColor: "var(--color-border)", backgroundColor: "var(--color-bg-secondary)" }}
+      >
+        <span className="text-xs uppercase tracking-wider" style={{ color: "var(--color-text-muted)" }}>
           Edit before sending
         </span>
         <textarea
@@ -34,19 +59,34 @@ export default function TranscriptDialog({
           value={editText}
           onChange={(e) => setEditText(e.target.value)}
           rows={4}
-          className="w-full bg-[#0e0e12] border border-[#2a2a32] rounded-lg px-3 py-2 text-sm text-[#c8c8d4] resize-none focus:outline-none focus:border-[#b49060]"
+          className="w-full rounded-lg border px-3 py-2 text-sm resize-none focus:outline-none"
+          style={{
+            borderColor: "var(--color-border)",
+            backgroundColor: "var(--color-bg)",
+            color: "var(--color-text)",
+          }}
         />
         <div className="flex gap-3 justify-end">
           <button
             onClick={onCancel}
-            className="text-xs text-[#6a6a78] hover:text-[#c8c8d4] px-4 py-2.5 min-h-[44px] rounded-lg border border-[#2a2a32] bg-[#141418] transition-colors"
+            className="text-xs px-4 py-2.5 min-h-[44px] rounded-lg border transition-colors"
+            style={{
+              borderColor: "var(--color-border)",
+              backgroundColor: "var(--color-bg)",
+              color: "var(--color-text-muted)",
+            }}
           >
             Cancel
           </button>
           <button
             onClick={() => onSend(editText)}
             disabled={editText.trim().length === 0}
-            className="text-xs text-[#b49060] px-4 py-2.5 min-h-[44px] rounded-lg border border-[#b49060]/30 bg-[#b49060]/10 hover:bg-[#b49060]/20 disabled:opacity-30 transition-colors"
+            className="text-xs px-4 py-2.5 min-h-[44px] rounded-lg border transition-colors disabled:opacity-30"
+            style={{
+              borderColor: "color-mix(in srgb, var(--color-highlight) 40%, transparent)",
+              backgroundColor: "color-mix(in srgb, var(--color-highlight) 15%, transparent)",
+              color: "var(--color-highlight)",
+            }}
           >
             Send
           </button>

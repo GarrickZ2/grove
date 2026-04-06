@@ -126,6 +126,14 @@ async function getSignedHeaders(
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
   };
+
+  // Radio server mode: use Bearer token instead of HMAC
+  const radioToken = getRadioToken();
+  if (radioToken) {
+    headers['Authorization'] = `Bearer ${radioToken}`;
+    return headers;
+  }
+
   const sig = await signRequest(method, path);
   if (sig) {
     headers['X-Timestamp'] = sig.timestamp;
@@ -141,6 +149,14 @@ async function getAuthOnlyHeaders(
   path: string,
 ): Promise<Record<string, string>> {
   const headers: Record<string, string> = {};
+
+  // Radio server mode: use Bearer token instead of HMAC
+  const radioToken = getRadioToken();
+  if (radioToken) {
+    headers['Authorization'] = `Bearer ${radioToken}`;
+    return headers;
+  }
+
   const sig = await signRequest(method, path);
   if (sig) {
     headers['X-Timestamp'] = sig.timestamp;

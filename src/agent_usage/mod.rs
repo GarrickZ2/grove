@@ -55,7 +55,8 @@ pub struct AgentUsage {
     /// Plan or tier name, e.g. "Claude Max", "ChatGPT Pro", "Gemini Paid".
     pub plan: Option<String>,
     /// The smallest `percentage_remaining` across all windows (the most
-    /// constrained quota). This is what the badge displays.
+    /// constrained quota). Frontend display policy can choose a different
+    /// window, but the backend keeps this field as a pure aggregate.
     pub percentage_remaining: f32,
     /// All windows — shown as rows in the badge's hover tooltip.
     pub windows: Vec<UsageWindow>,

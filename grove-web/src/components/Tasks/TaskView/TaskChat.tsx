@@ -56,7 +56,7 @@ import type { Task } from "../../../data/types";
 import { getApiHost, appendHmacToUrl } from "../../../api/client";
 import { useAgentQuota } from "../../../hooks";
 import { AgentQuotaPopover } from "./AgentQuotaPopover";
-import { quotaHealthColor } from "./quotaColors";
+import { quotaBadgePercent, quotaHealthColor } from "./quotaColors";
 import {
   getConfig,
   listChats,
@@ -941,6 +941,9 @@ export function TaskChat({
     refreshing: quotaRefreshing,
     refresh: refreshAgentQuota,
   } = useAgentQuota(activeChat?.agent ?? null);
+  const quotaBadgePercentRemaining = agentQuota
+    ? quotaBadgePercent(agentQuota)
+    : null;
   const orderedChats = useMemo(() => [...chats].reverse(), [chats]);
   const hasTodoPanel = planEntries.length > 0;
   const hasPlanPanel = !!planFileContent;
@@ -3792,30 +3795,28 @@ export function TaskChat({
                             onClick={refreshAgentQuota}
                             disabled={quotaRefreshing}
                             aria-label={`Agent quota: ${Math.round(
-                              agentQuota.percentage_remaining,
+                              quotaBadgePercentRemaining ?? 0,
                             )}% remaining${
                               agentQuota.plan ? ` on ${agentQuota.plan}` : ""
                             }. Click to refresh.`}
                             title={`${Math.round(
-                              agentQuota.percentage_remaining,
+                              quotaBadgePercentRemaining ?? 0,
                             )}% remaining — click to refresh`}
                             className="shrink-0 rounded-full border px-1.5 text-[10px] font-semibold leading-[16px] transition-opacity hover:opacity-80 disabled:opacity-50"
                             style={{
-                              color: quotaHealthColor(
-                                agentQuota.percentage_remaining,
-                              ),
+                              color: quotaHealthColor(quotaBadgePercentRemaining ?? 0),
                               // Subtle health-tinted pill so the status is
                               // legible even at a glance: healthy green,
                               // warning amber, critical red.
                               backgroundColor: `color-mix(in srgb, ${quotaHealthColor(
-                                agentQuota.percentage_remaining,
+                                quotaBadgePercentRemaining ?? 0,
                               )} 12%, transparent)`,
                               borderColor: `color-mix(in srgb, ${quotaHealthColor(
-                                agentQuota.percentage_remaining,
+                                quotaBadgePercentRemaining ?? 0,
                               )} 40%, transparent)`,
                             }}
                           >
-                            {Math.round(agentQuota.percentage_remaining)}%
+                            {Math.round(quotaBadgePercentRemaining ?? 0)}%
                           </button>
                         </AgentQuotaPopover>
                       )}

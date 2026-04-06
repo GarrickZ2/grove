@@ -1,3 +1,4 @@
+import { useMemo } from "react";
 import type { GroupSnapshot, ChatRef } from "../../data/types";
 
 interface InfoDisplayProps {
@@ -18,26 +19,33 @@ function formatTime(seconds: number): string {
 }
 
 function Waveform({ frequencyData }: { frequencyData: Uint8Array | null }) {
-  const bars = 24;
-  const heights: number[] = [];
-
-  for (let i = 0; i < bars; i++) {
-    if (frequencyData && frequencyData.length > 0) {
-      const index = Math.floor((i / bars) * frequencyData.length);
-      const value = frequencyData[index];
-      heights.push(4 + (value / 255) * 28);
-    } else {
-      heights.push(4);
+  const bars = 28;
+  const heights = useMemo(() => {
+    const result: number[] = [];
+    for (let i = 0; i < bars; i++) {
+      if (frequencyData && frequencyData.length > 0) {
+        const index = Math.floor((i / bars) * frequencyData.length);
+        const value = frequencyData[index];
+        result.push(4 + (value / 255) * 28);
+      } else {
+        result.push(4);
+      }
     }
-  }
+    return result;
+  }, [frequencyData]);
 
   return (
-    <div className="flex items-center justify-center gap-[2px] h-8">
+    <div className="flex h-7 items-end gap-[2px]">
       {heights.map((h, i) => (
         <div
           key={i}
-          className="bg-[#22c55e] opacity-70 rounded-sm"
-          style={{ width: 3, height: h, transition: "height 0.1s ease" }}
+          className="rounded-sm"
+          style={{
+            width: 3,
+            height: h,
+            transition: "height 0.1s ease",
+            backgroundColor: "var(--color-warning)",
+          }}
         />
       ))}
     </div>
@@ -59,88 +67,68 @@ export default function InfoDisplay({
       ? group.slot_statuses[selectedPosition] ?? null
       : null;
 
-  const borderClass = isRecording
-    ? "border-[#22c55e]"
+  const borderColor = isRecording
+    ? "var(--color-warning)"
     : isTranscribing
-      ? "border-[#b49060]"
-      : "border-[#1e1e24]";
+      ? "var(--color-accent)"
+      : "var(--color-border)";
+
+  const statusLabel = isRecording
+    ? "Recording"
+    : isTranscribing
+      ? "Transcribing..."
+      : promptStatus
+        ? promptStatus.status === "ok" ? "Sent" : "Error"
+        : "Ready";
+
+  const statusColor = isRecording
+    ? "var(--color-warning)"
+    : isTranscribing
+      ? "var(--color-accent)"
+      : promptStatus
+        ? promptStatus.status === "ok" ? "var(--color-success)" : "var(--color-error)"
+        : "var(--color-text-muted)";
 
   return (
     <div
-      className={`bg-[#0e0e12] border ${borderClass} rounded-lg px-4 py-3 sm:px-3 sm:py-2 transition-colors`}
+      className="rounded-xl border px-3 py-2.5 transition-colors"
+      style={{ borderColor, backgroundColor: "var(--color-bg)" }}
     >
-      {isRecording ? (
-        /* ── Recording mode: replace entire content with waveform ── */
-        <>
-          <div className="flex items-center justify-between mb-1">
-            <span className="text-[11px] sm:text-[9px] uppercase tracking-wider text-[#22c55e]">
-              Recording
-            </span>
-            <span className="font-mono text-sm sm:text-[11px] text-[#22c55e] font-bold">
+      <div className="mb-1.5 flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="font-mono text-[10px] uppercase tracking-wider" style={{ color: statusColor }}>
+            {statusLabel}
+          </div>
+          <div className="mt-0.5 truncate text-[15px] font-semibold" style={{ color: "var(--color-text)" }}>
+            {slotStatus ? slotStatus.task_name : "No Channel Selected"}
+          </div>
+        </div>
+        <div className="shrink-0 text-right">
+          <div className="font-mono text-[10px] uppercase tracking-wider" style={{ color: "var(--color-text-muted)" }}>
+            CH
+          </div>
+          <div className="font-mono text-[18px] font-semibold leading-none" style={{ color: "var(--color-highlight)" }}>
+            {selectedPosition !== null ? String(selectedPosition).padStart(2, "0") : "--"}
+          </div>
+        </div>
+      </div>
+
+      <div className="flex items-end justify-between gap-3">
+        <div className="min-w-0 flex-1">
+          <div className="truncate text-[11px]" style={{ color: "var(--color-text-muted)" }}>
+            {activeChat ? `${activeChat.agent} / ${activeChat.title}` : isRecording ? "Recording..." : "No session"}
+          </div>
+        </div>
+
+        {isRecording && (
+          <div className="shrink-0 flex items-center gap-2">
+            <Waveform frequencyData={frequencyData} />
+            <span className="font-mono text-[11px]" style={{ color: "var(--color-warning)" }}>
               {formatTime(recordingElapsed)}
             </span>
           </div>
-          <Waveform frequencyData={frequencyData} />
-          {slotStatus && (
-            <div className="text-xs sm:text-[10px] text-[#6a6a78] truncate mt-1">
-              → {slotStatus.task_name}
-            </div>
-          )}
-        </>
-      ) : isTranscribing ? (
-        /* ── Transcribing mode ── */
-        <>
-          <div className="flex items-center justify-between mb-1">
-            <span className="text-[11px] sm:text-[9px] uppercase tracking-wider text-[#b49060] animate-pulse">
-              Transcribing...
-            </span>
-            {selectedPosition !== null && (
-              <span className="font-mono text-sm sm:text-[11px] text-[#b49060] font-bold">
-                CH-{selectedPosition}
-              </span>
-            )}
-          </div>
-          {slotStatus && (
-            <div className="text-sm sm:text-xs text-[#c8c8d4] truncate">
-              {slotStatus.task_name}
-            </div>
-          )}
-        </>
-      ) : (
-        /* ── Normal mode: show selection info ── */
-        <>
-          <div className="flex items-center justify-between mb-1">
-            <span className={`text-[11px] sm:text-[9px] uppercase tracking-wider ${
-              promptStatus
-                ? promptStatus.status === "ok" ? "text-[#22c55e]" : "text-[#ef4444]"
-                : "text-[#6a6a78]"
-            }`}>
-              {promptStatus
-                ? promptStatus.status === "ok" ? "Sent" : (promptStatus.error ?? "Error")
-                : "Selected"}
-            </span>
-            {selectedPosition !== null && (
-              <span className="font-mono text-sm sm:text-[11px] text-[#b49060] font-bold">
-                CH-{selectedPosition}
-              </span>
-            )}
-          </div>
-
-          {slotStatus ? (
-            <div className="text-sm sm:text-xs text-[#c8c8d4] truncate">
-              {slotStatus.task_name}
-            </div>
-          ) : (
-            <div className="text-sm sm:text-xs text-[#3a3a44]">No channel selected</div>
-          )}
-
-          {activeChat && (
-            <div className="text-xs sm:text-[10px] text-[#6a6a78] truncate mt-0.5">
-              {activeChat.agent} - {activeChat.title}
-            </div>
-          )}
-        </>
-      )}
+        )}
+      </div>
     </div>
   );
 }

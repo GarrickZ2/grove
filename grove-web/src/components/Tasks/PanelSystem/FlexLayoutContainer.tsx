@@ -274,6 +274,18 @@ export const FlexLayoutContainer = forwardRef<
       const saved = localStorage.getItem(layoutStorageKey);
       if (saved) {
         const json = JSON.parse(saved) as IJsonModel;
+        // Strip any persisted maximized state (transient, not saved).
+        // Must recurse into nested rows/tabsets for split layouts.
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const stripMaximized = (node: any) => {
+          if (node?.type === 'tabset' && node.maximized) {
+            delete node.maximized;
+          }
+          if (node?.children) {
+            node.children.forEach(stripMaximized);
+          }
+        };
+        stripMaximized(json.layout);
         // Restore instance counters from saved layout
         type JsonNode = (IJsonRowNode | IJsonTabSetNode | IJsonTabNode) & { children?: JsonNode[] };
         const restoreCounters = (node: JsonNode) => {
@@ -538,23 +550,23 @@ export const FlexLayoutContainer = forwardRef<
   const getPanelIconAndColor = (type: string): { icon: typeof Terminal; color: string } => {
     switch (type) {
       case 'terminal':
-        return { icon: Terminal, color: '#16a34a' }; // green
+        return { icon: Terminal, color: 'var(--color-success)' };
       case 'chat':
-        return { icon: MessageSquare, color: '#3b82f6' }; // blue
+        return { icon: MessageSquare, color: 'var(--color-info)' };
       case 'review':
-        return { icon: Code, color: '#a855f7' }; // purple
+        return { icon: Code, color: 'var(--color-highlight)' };
       case 'editor':
-        return { icon: FileCode, color: '#f59e0b' }; // orange
+        return { icon: FileCode, color: 'var(--color-warning)' };
       case 'stats':
-        return { icon: BarChart3, color: '#06b6d4' }; // cyan
+        return { icon: BarChart3, color: 'var(--color-accent)' };
       case 'git':
-        return { icon: GitBranch, color: '#10b981' }; // teal
+        return { icon: GitBranch, color: 'var(--color-success)' };
       case 'notes':
-        return { icon: FileText, color: '#8b5cf6' }; // violet
+        return { icon: FileText, color: 'var(--color-info)' };
       case 'comments':
-        return { icon: MessageCircle, color: '#ec4899' }; // pink
+        return { icon: MessageCircle, color: 'var(--color-error)' };
       default:
-        return { icon: Terminal, color: '#6b7280' }; // grey
+        return { icon: Terminal, color: 'var(--color-text-muted)' };
     }
   };
 
@@ -807,6 +819,19 @@ export const FlexLayoutContainer = forwardRef<
   const handleModelChange = useCallback((m: Model) => {
     try {
       const json = m.toJson();
+      // Strip maximized state from all tabsets before saving — maximized is a
+      // transient UI state managed by fullscreenPanelId, not persisted.
+      // Must recurse into nested rows/tabsets for split layouts.
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const stripMaximized = (node: any) => {
+        if (node?.type === 'tabset' && node.maximized) {
+          delete node.maximized;
+        }
+        if (node?.children) {
+          node.children.forEach(stripMaximized);
+        }
+      };
+      stripMaximized(json.layout);
       localStorage.setItem(layoutStorageKey, JSON.stringify(json));
       onLayoutChange?.(json);
     } catch (error) {

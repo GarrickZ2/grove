@@ -127,4 +127,5 @@ export {
   deleteTaskGroup,
   upsertTaskSlot,
   removeTaskSlot,
+  setSlots,
 } from './taskgroups';

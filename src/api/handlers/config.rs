@@ -173,8 +173,12 @@ pub async fn patch_config(
     let mut config = config::load_config();
 
     // Apply theme patch
+    let mut theme_changed = false;
     if let Some(theme_patch) = patch.theme {
         if let Some(name) = theme_patch.name {
+            if config.theme.name != name {
+                theme_changed = true;
+            }
             config.theme = ThemeConfig { name };
         }
     }
@@ -251,6 +255,12 @@ pub async fn patch_config(
 
     // Save config
     config::save_config(&config).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    // Notify Radio clients if theme changed
+    if theme_changed {
+        use crate::api::handlers::walkie_talkie::{broadcast_radio_event, RadioEvent};
+        broadcast_radio_event(RadioEvent::ThemeChanged);
+    }
 
     Ok(Json(ConfigResponse::from(&config)))
 }

@@ -15,16 +15,12 @@ use axum::{
     routing::{get, post},
     Router,
 };
-use rust_embed::Embed;
 use serde::Serialize;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
-/// Embedded frontend assets (same embed as the main server)
-#[derive(Embed)]
-#[folder = "grove-web/dist"]
-struct RadioFrontendAssets;
+use super::FrontendAssets;
 
 /// Information about a running Radio server instance.
 #[derive(Debug, Clone, Serialize)]
@@ -134,23 +130,20 @@ pub async fn info() -> Option<RadioServerInfo> {
 // ─── Router ────────────────────────────────────────────────────────────────
 
 fn create_radio_router(expected_token: Arc<String>) -> Router {
-    let ws_route =
-        Router::new()
-            .route("/ws", get(radio_ws_handler))
-            .layer(middleware::from_fn_with_state(
-                expected_token,
-                radio_auth_middleware,
-            ));
-
-    // API routes that Radio page needs (e.g. audio transcription)
-    let api_routes = Router::new().route(
-        "/api/v1/ai/transcribe",
-        post(super::handlers::ai::transcribe),
-    );
+    let authed_routes = Router::new()
+        .route("/ws", get(radio_ws_handler))
+        .route(
+            "/api/v1/ai/transcribe",
+            post(super::handlers::ai::transcribe),
+        )
+        .layer(middleware::from_fn_with_state(
+            expected_token,
+            radio_auth_middleware,
+        ));
 
     let static_routes = Router::new().fallback(serve_radio_embedded);
 
-    ws_route.merge(api_routes).merge(static_routes)
+    authed_routes.merge(static_routes)
 }
 
 // ─── Token Auth Middleware ──────────────────────────────────────────────────
@@ -180,9 +173,13 @@ async fn radio_auth_middleware(
 
 async fn radio_ws_handler(ws: WebSocketUpgrade) -> axum::response::Response {
     ws.on_upgrade(|socket| async {
-        use super::handlers::walkie_talkie::{broadcast_radio_event, RadioEvent};
+        use super::handlers::walkie_talkie::{
+            broadcast_radio_event, decrement_radio_clients, increment_radio_clients, RadioEvent,
+        };
+        increment_radio_clients();
         broadcast_radio_event(RadioEvent::ClientConnected);
         super::handlers::walkie_talkie::handle_walkie_talkie_ws_inner(socket).await;
+        decrement_radio_clients();
         broadcast_radio_event(RadioEvent::ClientDisconnected);
     })
 }
@@ -192,10 +189,11 @@ async fn radio_ws_handler(ws: WebSocketUpgrade) -> axum::response::Response {
 async fn serve_radio_embedded(uri: Uri) -> impl IntoResponse {
     let path = uri.path().trim_start_matches('/');
 
-    let (file, serve_path) = if let Some(content) = RadioFrontendAssets::get(path) {
+    // Radio server serves radio.html as the SPA entry point (independent from main Grove app)
+    let (file, serve_path) = if let Some(content) = FrontendAssets::get(path) {
         (Some(content), path)
     } else if path.is_empty() || !path.contains('.') || path.ends_with(".html") {
-        (RadioFrontendAssets::get("index.html"), "index.html")
+        (FrontendAssets::get("radio.html"), "radio.html")
     } else {
         (None, path)
     };
@@ -210,12 +208,12 @@ async fn serve_radio_embedded(uri: Uri) -> impl IntoResponse {
                 .expect("build static file HTTP response")
         }
         None => {
-            if let Some(index) = RadioFrontendAssets::get("index.html") {
+            if let Some(index) = FrontendAssets::get("radio.html") {
                 Response::builder()
                     .status(StatusCode::OK)
                     .header(header::CONTENT_TYPE, "text/html; charset=utf-8")
                     .body(Body::from(index.data.into_owned()))
-                    .expect("build index.html HTTP response")
+                    .expect("build radio.html HTTP response")
             } else {
                 Response::builder()
                     .status(StatusCode::NOT_FOUND)
