@@ -5,6 +5,32 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.4] - 2026-04-06
+
+### Added
+
+- **SQLite storage backend** — migrated projects, taskgroups, AI providers/audio, and skills from file-based TOML/JSON to a single `~/.grove/grove.db` database with WAL mode, transactions, and busy_timeout for multi-process safety
+- **Auto-migration (v2.0)** — startup detects legacy storage versions and chains migrations (1.0 → 1.1 → 2.0); original files left untouched for safe rollback
+- **`grove migrate --prune`** — removes legacy files after confirming SQLite migration is correct
+- **Grove Radio walkie-talkie** — TaskGroup-based dispatch system with channel grid, frequency bands, and real-time WebSocket synchronization
+- **Agent usage quota badge** — displays Claude Code, Codex, and Gemini usage quotas with visual progress indicators
+- **Non-git project support** — register and manage plain directories without git initialization
+
+### Improved
+
+- **Storage atomicity** — all write operations (upsert, delete, renumber) wrapped in SQLite transactions; cascading cleanup on project deletion with position renumbering
+- **Skill hash stability** — `compute_repo_key` switched from `DefaultHasher` to FNV-1a for cross-Rust-version determinism; migration remaps existing keys
+- **Task group lifecycle** — `create_task` auto-assigns to system groups and broadcasts GroupChanged; `delete_project` notifies Radio/Blitz clients
+- **Markdown renderer** — restored inline code FileChip navigation and styled fenced code block containers; added CJK/Unicode file path support
+
+### Fixed
+
+- **Page scroll lock** — fixed body overflow when switching between views
+- **Tool section timing** — corrected ACP tool call display order in chat
+- **Permission serialization** — fixed permission prompt data marshaling
+- **Review refresh** — resolved stale review panel after task operations
+- **Session name tests** — adapted to dynamic `MAX_SESSION_NAME_LEN` based on platform socket path limits
+
 ## [0.8.3] - 2026-04-03
 
 ### Added

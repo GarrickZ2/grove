@@ -11,19 +11,37 @@ export default function TranscriptDialog({
   onSend,
   onCancel,
 }: TranscriptDialogProps) {
-  const [editText, setEditText] = useState("");
+  if (text === null) return null;
+
+  // key={text} resets TranscriptDialogInner state when text changes
+  return (
+    <TranscriptDialogInner
+      key={text}
+      text={text}
+      onSend={onSend}
+      onCancel={onCancel}
+    />
+  );
+}
+
+function TranscriptDialogInner({
+  text,
+  onSend,
+  onCancel,
+}: {
+  text: string;
+  onSend: (text: string) => void;
+  onCancel: () => void;
+}) {
+  const [editText, setEditText] = useState(text);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
-    if (text !== null) {
-      setEditText(text);
-      setTimeout(() => textareaRef.current?.focus(), 50);
-    }
-  }, [text]);
+    setTimeout(() => textareaRef.current?.focus(), 50);
+  }, []);
 
   // Close on Escape key
   useEffect(() => {
-    if (text === null) return;
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
         e.preventDefault();
@@ -32,15 +50,13 @@ export default function TranscriptDialog({
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [text, onCancel]);
+  }, [onCancel]);
 
   const handleBackdropClick = useCallback((e: React.MouseEvent) => {
     if (e.target === e.currentTarget) {
       onCancel();
     }
   }, [onCancel]);
-
-  if (text === null) return null;
 
   return (
     <div

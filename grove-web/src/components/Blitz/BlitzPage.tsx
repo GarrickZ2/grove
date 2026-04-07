@@ -99,7 +99,7 @@ export function BlitzPage({ onSwitchToZen, onNavigate }: BlitzPageProps) {
   // Archive confirmation state (shared between hooks)
   const [pendingArchiveConfirm, setPendingArchiveConfirm] = useState<PendingArchiveConfirm | null>(null);
 
-  // Derived helpers
+  // Derived helpers (use effectiveSelectedBlitzTask once computed below; for hooks that don't depend on it, raw is fine)
   const activeProjectId = selectedBlitzTask?.projectId ?? null;
   const selectedTask = selectedBlitzTask?.task ?? null;
 
@@ -137,7 +137,7 @@ export function BlitzPage({ onSwitchToZen, onNavigate }: BlitzPageProps) {
 
   // Radio events: desktop receives focus/prompt events from Radio phone
   const blitzTasksRef = useRef(blitzTasks);
-  blitzTasksRef.current = blitzTasks;
+  useEffect(() => { blitzTasksRef.current = blitzTasks; }, [blitzTasks]);
   const radioFocusedTaskRef = useRef<string | null>(null);
 
   const { radioClients } = useRadioEvents({
@@ -169,11 +169,8 @@ export function BlitzPage({ onSwitchToZen, onNavigate }: BlitzPageProps) {
   const radioConnected = radioClients > 0;
 
   // Auto-close Radio connect dialog when a phone connects
-  useEffect(() => {
-    if (radioConnected && showRadioConnect) {
-      setShowRadioConnect(false);
-    }
-  }, [radioConnected, showRadioConnect]);
+  // Derived: if radio is connected, never show the connect dialog
+  const effectiveShowRadioConnect = showRadioConnect && !radioConnected;
 
   // Filter tasks by search query (match task name, branch, or project name)
   const searchFilteredTasks = useMemo(() => {
@@ -211,13 +208,6 @@ export function BlitzPage({ onSwitchToZen, onNavigate }: BlitzPageProps) {
     if (!selectedBlitzTask) return null;
     return filteredTasks.find((bt) => bt.task.id === selectedBlitzTask.task.id && bt.projectId === selectedBlitzTask.projectId) ?? null;
   }, [filteredTasks, selectedBlitzTask]);
-
-  // Sync stale selectedBlitzTask with latest data from blitzTasks refresh
-  useEffect(() => {
-    if (currentSelected && selectedBlitzTask && currentSelected !== selectedBlitzTask) {
-      setSelectedBlitzTask(currentSelected);
-    }
-  }, [currentSelected, selectedBlitzTask]);
 
   // Derive task lists from groups
   const mainGroup = useMemo(() => taskGroups.find(g => g.id === MAIN_GROUP_ID), [taskGroups]);
@@ -610,18 +600,19 @@ export function BlitzPage({ onSwitchToZen, onNavigate }: BlitzPageProps) {
     };
   }, [pageState.inWorkspace, setContextInWorkspace, setPageContext]);
   const pageOptionsRef = useRef<Parameters<typeof buildCommands>[0]>(null!);
-   
-  pageOptionsRef.current = {
-    taskActions: {
-      selectedTask: selectedTask ?? null,
-      inWorkspace: pageState.inWorkspace,
-      opsHandlers,
-      onEnterWorkspace: pageHandlers.handleEnterWorkspace,
-      onOpenPanel: (panel) => handleAddPanelFromInfo(panel as PanelType),
-      onSwitchInfoTab: pageHandlers.setInfoPanelTab,
-      onRefresh: refresh,
-    },
-  };
+  useEffect(() => {
+    pageOptionsRef.current = {
+      taskActions: {
+        selectedTask: selectedTask ?? null,
+        inWorkspace: pageState.inWorkspace,
+        opsHandlers,
+        onEnterWorkspace: pageHandlers.handleEnterWorkspace,
+        onOpenPanel: (panel) => handleAddPanelFromInfo(panel as PanelType),
+        onSwitchInfoTab: pageHandlers.setInfoPanelTab,
+        onRefresh: refresh,
+      },
+    };
+  });
 
   useEffect(() => {
     registerPageCommands(() => buildCommands(pageOptionsRef.current));
@@ -1270,7 +1261,7 @@ export function BlitzPage({ onSwitchToZen, onNavigate }: BlitzPageProps) {
       <HelpOverlay isOpen={pageState.showHelp} onClose={() => pageHandlers.setShowHelp(false)} />
 
       <RadioConnectDialog
-        open={showRadioConnect}
+        open={effectiveShowRadioConnect}
         onClose={() => setShowRadioConnect(false)}
         onGoToSettings={() => {
           onSwitchToZen();

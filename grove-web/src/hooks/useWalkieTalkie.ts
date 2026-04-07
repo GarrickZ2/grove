@@ -133,7 +133,7 @@ export function useWalkieTalkie(): [WalkieTalkieState, WalkieTalkieActions] {
         }
       }
     },
-    [], // eslint-disable-line react-hooks/exhaustive-deps
+    [],
   );
 
   // ── WebSocket lifecycle ──────────────────────────────────────────────────

@@ -60,18 +60,19 @@ function getStatusColor(status: TaskStatus): string {
   }
 }
 
-function getStatusIcon(status: TaskStatus) {
+function StatusIcon({ status, className, style }: { status: TaskStatus; className?: string; style?: React.CSSProperties }) {
+  const fill = status === "live" ? getStatusColor(status) : "none";
   switch (status) {
     case "live":
     case "idle":
     case "archived":
-      return Circle;
+      return <Circle className={className} style={style} fill={fill} />;
     case "merged":
-      return CheckCircle;
+      return <CheckCircle className={className} style={style} fill={fill} />;
     case "conflict":
-      return AlertTriangle;
+      return <AlertTriangle className={className} style={style} fill={fill} />;
     case "broken":
-      return XCircle;
+      return <XCircle className={className} style={style} fill={fill} />;
   }
 }
 
@@ -88,7 +89,6 @@ function GroupTaskItem({
   onRemove?: () => void;
 }) {
   const { task, projectName } = blitzTask;
-  const StatusIcon = getStatusIcon(task.status);
 
   return (
     <button
@@ -122,9 +122,9 @@ function GroupTaskItem({
 
         {/* Status dot */}
         <StatusIcon
+          status={task.status}
           className="w-2.5 h-2.5 flex-shrink-0"
           style={{ color: getStatusColor(task.status) }}
-          fill={task.status === "live" ? getStatusColor(task.status) : "none"}
         />
 
         {/* Task name */}

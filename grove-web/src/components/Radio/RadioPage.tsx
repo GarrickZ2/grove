@@ -180,7 +180,7 @@ export function RadioPage() {
   processBlobRef.current = processBlob;
 
   const handleHoldEnd = useCallback(
-    (_position: number) => {
+    () => {
       setRecordingPosition(null);
       setIsTranscribing(true); // Show "Transcribing" immediately on release
 
