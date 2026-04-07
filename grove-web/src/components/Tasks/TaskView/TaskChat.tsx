@@ -1900,7 +1900,7 @@ export function TaskChat({
           break;
       }
     },
-    [onConnectedProp],
+    [onConnectedProp, enableAutoStickToBottom],
   );
 
   /** Buffer a server message into the per-chat cache (for non-active chats) */

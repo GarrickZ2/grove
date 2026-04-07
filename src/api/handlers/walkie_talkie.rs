@@ -328,7 +328,7 @@ pub async fn handle_walkie_talkie_ws_inner(socket: WebSocket) {
                         // Real-time status push from ACP session
                         let status = if busy { "busy" } else { "idle" };
                         let key = (project_id.clone(), task_id.clone());
-                        let changed = last_statuses.get(&key).map_or(true, |prev| prev != status);
+                        let changed = last_statuses.get(&key).is_none_or(|prev| prev != status);
                         if changed {
                             let _ = msg_tx.send(ServerMessage::TaskStatus {
                                 project_id,

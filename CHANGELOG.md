@@ -5,6 +5,27 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.5] - 2026-04-07
+
+### Added
+
+- **Radio Chat/Terminal mode switching** — per-task mode toggle on Radio page; voice transcripts can be sent to a chat session or directly to the terminal
+- **Real-time Blitz sync** — Radio mode/session changes preemptively switch Blitz desktop panel (chat tab, terminal tab, or specific chat session) via SetTarget messages
+- **Terminal input from Radio** — voice transcripts in terminal mode are injected into the desktop terminal via cached WebSocket with proper carriage return handling
+- **ACP busy state push** — agent busy/idle transitions broadcast `RadioEvent::TaskBusy` for instant Radio status light updates, replacing pure 2-second polling
+- **Chat session switching** — Radio session dropdown triggers `grove:switch-chat` CustomEvent so Blitz chat panel switches to the selected session
+
+### Improved
+
+- **Radio group ordering** — `_main` group is always displayed first, matching Blitz sidebar order
+- **Blitz UI cleanup** — removed aurora background effect, outer padding, and rounded corners from main content area and TaskInfoPanel
+
+### Fixed
+
+- **Auto-scroll on Radio messages** — chat view now auto-scrolls to bottom when receiving user messages from Radio
+- **AnimatePresence ref clearing** — callback ref prevents exit animation from nullifying `taskViewRef`, fixing broken panel switching after task changes
+- **Auto-migration scope** — SQLite migration only runs for UI startup commands (Tui/Web/Mobile/Gui), not CLI subcommands
+
 ## [0.8.4] - 2026-04-06
 
 ### Added
