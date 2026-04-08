@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.6] - 2026-04-07
+
+### Fixed
+
+- **Radio session selection on task switch** — Radio now sends the correct target (mode + chat_id) from the tapped slot's state so Blitz switches to the right session instead of always the newest
+- **Busy state on reconnect** — server sends current `Busy` state when a WebSocket reconnects to an existing ACP session, preventing stale idle/busy display after task switches
+- **Chat list ordering** — Radio session dropdown now shows newest sessions first
+- **TaskChat state isolation** — added `key` prop to force clean remount on task switch, preventing busy state leaking between tasks
+- **WS message routing race** — `activeChatIdRef` is now synced immediately on chat switch, preventing messages from the old session polluting the new one
+- **External chat switch consistency** — `grove:switch-chat` event handler now uses full `switchChat` logic (save/restore state, sync ref) instead of bare `setActiveChatId`
+- **Radio hold-start target** — hold-to-record now reads the target slot's mode/session state instead of the previous slot's
+- **Stale pending chat cleanup** — `__grove_pending_chat` is cleared at the start of each focus event to prevent stale values from previous tasks
+- **macOS-only keychain code** — added `cfg(target_os = "macos")` to suppress dead_code warning on other platforms
+
 ## [0.8.5] - 2026-04-07
 
 ### Added

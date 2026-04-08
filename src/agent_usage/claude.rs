@@ -23,7 +23,7 @@ const USAGE_URL: &str = "https://api.anthropic.com/api/oauth/usage";
 #[cfg(target_os = "macos")]
 const KEYCHAIN_SERVICE: &str = "Claude Code-credentials";
 const REQUIRED_SCOPE: &str = "user:profile";
-const CLAUDE_CODE_UA: &str = "claude-code/2.0.32";
+const CLAUDE_CODE_UA: &str = "claude-code/2.1.92";
 
 #[derive(Debug, Deserialize)]
 struct CredentialsFile {
