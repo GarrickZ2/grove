@@ -62,11 +62,10 @@ fn ensure_storage_version() {
             .join("agents.toml")
             .exists();
 
-    // Chain migrations: None/1.0 → 1.1 → 2.0
+    // Chain migrations: None/1.0 → 1.1 → 2.0 → 2.1
     match version {
         Some("1.0") | None => {
             if has_legacy_files {
-                // Legacy files need v1.0→v1.1 migration first
                 if storage::grove_dir().join("projects").exists() {
                     eprintln!("Migrating storage v1.0 → v1.1...");
                     cli::migrate::execute(false);
@@ -74,7 +73,6 @@ fn ensure_storage_version() {
                 eprintln!("Migrating storage v1.1 → v2.0 (SQLite)...");
                 storage::database::migrate_from_files();
             } else {
-                // Fresh install — just init DB
                 let _ = storage::database::connection();
             }
         }
@@ -84,6 +82,11 @@ fn ensure_storage_version() {
                 storage::database::migrate_from_files();
             } else {
                 let _ = storage::database::connection();
+            }
+        }
+        Some("2.0") => {
+            if storage::database::migrate_v20_fix_empty_slots() {
+                eprintln!("Migrating storage v2.0 → v2.1...");
             }
         }
         Some(v) => {

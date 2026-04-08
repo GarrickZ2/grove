@@ -13,7 +13,7 @@ use std::sync::Mutex;
 use super::grove_dir;
 use crate::error::Result;
 
-pub const CURRENT_STORAGE_VERSION: &str = "2.0";
+pub const CURRENT_STORAGE_VERSION: &str = "2.1";
 
 /// Database state: caches connection + its path so we can detect HOME changes.
 struct DbState {
@@ -252,6 +252,8 @@ pub fn migrate_from_files() {
     migrate_audio_global();
     migrate_audio_projects();
     migrate_skills_all();
+
+    let _ = super::taskgroups::ensure_system_groups();
 }
 
 fn migrate_projects(conn: &Connection) {
@@ -551,7 +553,7 @@ fn default_true_for_migration() -> bool {
 // ============================================================================
 
 /// Remove legacy files that have been migrated to SQLite.
-/// Only runs when storage_version is already 2.0 (migration completed).
+/// Only runs when storage_version is already at current version (migration completed).
 pub fn prune_legacy_files() {
     // Ensure DB is initialized
     let _ = connection();
@@ -637,6 +639,30 @@ pub fn prune_legacy_files() {
     } else {
         eprintln!("No legacy files to prune.");
     }
+}
+
+fn task_group_slots_empty() -> bool {
+    let conn = connection();
+    let count: i64 = conn
+        .query_row("SELECT COUNT(*) FROM task_group_slots", [], |row| {
+            row.get(0)
+        })
+        .unwrap_or(0);
+    count == 0
+}
+
+pub fn migrate_v20_fix_empty_slots() -> bool {
+    if !task_group_slots_empty() {
+        return false;
+    }
+    eprintln!("Fixing empty task_group_slots (v2.0 bug)...");
+    if let Err(e) = super::taskgroups::ensure_system_groups() {
+        eprintln!(
+            "[warning] migrate_v20_fix_empty_slots: ensure_system_groups failed: {}",
+            e
+        );
+    }
+    true
 }
 
 #[cfg(test)]
