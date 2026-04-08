@@ -16,6 +16,7 @@ use super::{
 };
 use serde::Deserialize;
 use std::fs;
+#[cfg(target_os = "macos")]
 use std::process::{Command, Stdio};
 
 const CREDENTIALS_PATH: &str = ".claude/.credentials.json";
