@@ -4,25 +4,23 @@ import type { ContextMenuItem } from "../components/ui/ContextMenu";
 
 /**
  * Task operation handlers interface
+ * All handlers are optional — if undefined, the corresponding menu item is hidden.
  */
 export interface TaskOperationHandlers {
-  onEnterTerminal: () => void;
-  onCommit: () => void;
-  onRebase: () => void;
-  onSync: () => void;
-  onMerge: () => void;
-  onArchive: () => void;
-  onReset: () => void;
-  onClean: () => void;
-  onRecover?: () => void; // Zen-only (for archived tasks)
+  onEnterTerminal?: () => void;
+  onCommit?: () => void;
+  onRebase?: () => void;
+  onSync?: () => void;
+  onMerge?: () => void;
+  onArchive?: () => void;
+  onReset?: () => void;
+  onClean?: () => void;
+  onRecover?: () => void;
 }
 
 /**
- * Build context menu items for a task
- *
- * @param task - The task to build menu for
- * @param handlers - Operation handlers
- * @returns Array of context menu items
+ * Build context menu items for a task.
+ * Only includes items whose handlers are provided (non-undefined).
  */
 export function buildContextMenuItems(
   task: Task,
@@ -32,7 +30,6 @@ export function buildContextMenuItems(
   if (task.status === "archived") {
     const items: ContextMenuItem[] = [];
 
-    // Add recover option if handler provided (Zen-only)
     if (handlers.onRecover) {
       items.push({
         id: "recover",
@@ -49,118 +46,141 @@ export function buildContextMenuItems(
       });
     }
 
-    items.push({
-      id: "clean",
-      label: "Clean",
-      icon: Trash2,
-      variant: "danger",
-      onClick: handlers.onClean,
-    });
+    if (handlers.onClean) {
+      items.push({
+        id: "clean",
+        label: "Clean",
+        icon: Trash2,
+        variant: "danger",
+        onClick: handlers.onClean,
+      });
+    }
 
     return items;
   }
 
   // Local task menu: only Terminal + Commit
   if (task.isLocal) {
-    return [
-      {
+    const items: ContextMenuItem[] = [];
+    if (handlers.onEnterTerminal) {
+      items.push({
         id: "terminal",
         label: "Enter Terminal",
         icon: Terminal,
         variant: "default",
         onClick: handlers.onEnterTerminal,
-      },
-      {
-        id: "div-1",
-        label: "",
-        divider: true,
-        onClick: () => {},
-      },
-      {
+      });
+    }
+    if (handlers.onCommit) {
+      if (items.length > 0) items.push({ id: "div-1", label: "", divider: true, onClick: () => {} });
+      items.push({
         id: "commit",
         label: "Commit",
         icon: GitCommit,
         variant: "default",
         onClick: handlers.onCommit,
-      },
-    ];
+      });
+    }
+    return items;
   }
 
-  // Active task menu
+  // Active task menu — build dynamically based on available handlers
   const canOperate = task.status !== "broken";
+  const items: ContextMenuItem[] = [];
 
-  return [
-    {
+  // Enter workspace
+  if (handlers.onEnterTerminal) {
+    items.push({
       id: "terminal",
-      label: "Enter Terminal",
+      label: "Enter Workspace",
       icon: Terminal,
       variant: "default",
       onClick: handlers.onEnterTerminal,
-    },
-    {
-      id: "div-1",
-      label: "",
-      divider: true,
-      onClick: () => {},
-    },
-    {
+    });
+  }
+
+  // Git operations group
+  const gitItems: ContextMenuItem[] = [];
+  if (handlers.onCommit) {
+    gitItems.push({
       id: "commit",
       label: "Commit",
       icon: GitCommit,
       variant: "default",
       onClick: handlers.onCommit,
-    },
-    {
+    });
+  }
+  if (handlers.onRebase) {
+    gitItems.push({
       id: "rebase",
       label: "Rebase",
       icon: GitBranchPlus,
       variant: "default",
       onClick: handlers.onRebase,
       disabled: !canOperate,
-    },
-    {
+    });
+  }
+  if (handlers.onSync) {
+    gitItems.push({
       id: "sync",
       label: "Sync",
       icon: RefreshCw,
       variant: "default",
       onClick: handlers.onSync,
       disabled: !canOperate,
-    },
-    {
+    });
+  }
+  if (handlers.onMerge) {
+    gitItems.push({
       id: "merge",
       label: "Merge",
       icon: GitMerge,
       variant: "default",
       onClick: handlers.onMerge,
       disabled: !canOperate,
-    },
-    {
-      id: "div-2",
-      label: "",
-      divider: true,
-      onClick: () => {},
-    },
-    {
+    });
+  }
+
+  if (gitItems.length > 0) {
+    if (items.length > 0) items.push({ id: "div-1", label: "", divider: true, onClick: () => {} });
+    items.push(...gitItems);
+  }
+
+  // Danger operations group
+  const dangerItems: ContextMenuItem[] = [];
+  if (handlers.onArchive) {
+    dangerItems.push({
       id: "archive",
       label: "Archive",
       icon: Archive,
       variant: "warning",
       onClick: handlers.onArchive,
       disabled: task.status === "broken",
-    },
-    {
+    });
+  }
+  if (handlers.onReset) {
+    dangerItems.push({
       id: "reset",
       label: "Reset",
       icon: RotateCcw,
       variant: "warning",
       onClick: handlers.onReset,
-    },
-    {
+    });
+  }
+  if (handlers.onClean) {
+    dangerItems.push({
       id: "clean",
       label: "Clean",
       icon: Trash2,
       variant: "danger",
       onClick: handlers.onClean,
-    },
-  ];
+    });
+  }
+
+  if (dangerItems.length > 0) {
+    if (items.length > 0) items.push({ id: "div-2", label: "", divider: true, onClick: () => {} });
+    items.push(...dangerItems);
+  }
+
+  return items;
 }

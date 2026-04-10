@@ -91,6 +91,10 @@ interface TaskChatProps {
     line?: number,
     mode?: "diff" | "full",
   ) => void;
+  /** Called when chat transitions from busy to idle (work completed) */
+  onChatBecameIdle?: () => void;
+  /** Called when the user successfully sends a message */
+  onUserMessageSent?: () => void;
 }
 
 type ToolMessage = {
@@ -125,6 +129,8 @@ interface Attachment {
   previewUrl?: string; // blob URL for image preview
   uri?: string;
   size?: number;
+  /** Raw file pending upload — upload is deferred until the prompt is sent */
+  pendingFile?: File;
 }
 
 type ChatMessage =
@@ -788,6 +794,8 @@ export function TaskChat({
   onToggleFullscreen,
   hideHeader = false,
   onNavigateToFile,
+  onChatBecameIdle,
+  onUserMessageSent,
 }: TaskChatProps) {
   const sessionModeStorageKey = `taskchat:session-mode:${projectId}`;
   // ─── Multi-chat state ───────────────────────────────────────────────────
@@ -850,16 +858,23 @@ export function TaskChat({
   const [planEntries, setPlanEntries] = useState<PlanEntry[]>([]);
   const [showPlan, setShowPlan] = useState(false);
   const [lightboxUrl, setLightboxUrl] = useState<string | null>(null);
+  const [lightboxSvg, setLightboxSvg] = useState<string | null>(null);
+  const [lightboxZoom, setLightboxZoom] = useState(1);
+  const [lightboxPan, setLightboxPan] = useState({ x: 0, y: 0 });
+  const lightboxPanningRef = useRef(false);
+  const lightboxPanStartRef = useRef({ x: 0, y: 0, panX: 0, panY: 0 });
+
+  const resetLightboxView = useCallback(() => { setLightboxZoom(1); setLightboxPan({ x: 0, y: 0 }); }, []);
 
   // Close lightbox on Escape
   useEffect(() => {
-    if (!lightboxUrl) return;
+    if (!lightboxUrl && !lightboxSvg) return;
     const handler = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setLightboxUrl(null);
+      if (e.key === "Escape") { e.preventDefault(); setLightboxUrl(null); setLightboxSvg(null); resetLightboxView(); }
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [lightboxUrl]);
+  }, [lightboxUrl, lightboxSvg, resetLightboxView]);
   const [planFilePath, setPlanFilePath] = useState("");
   const [planFileContent, setPlanFileContent] = useState("");
   const [showPlanFile, setShowPlanFile] = useState(false);
@@ -919,7 +934,6 @@ export function TaskChat({
   messagesCountRef.current = messages.length;
   const inputAreaRef = useRef<HTMLDivElement>(null);
   const chatboxContainerRef = useRef<HTMLDivElement>(null);
-  const [inputAreaHeight, setInputAreaHeight] = useState(120);
 
   // ─── Read-only observation mode state ──────────────────────────────────
   const [isRemoteSession, setIsRemoteSession] = useState(false);
@@ -1086,15 +1100,18 @@ export function TaskChat({
 
   // Dynamically measure the input area height so the messages viewport
   // always has enough bottom padding regardless of expanded input, panels, banners, etc.
+  // We write directly to the DOM style to avoid a React state update → re-render → layout jump.
   useEffect(() => {
     const el = inputAreaRef.current;
     if (!el || typeof ResizeObserver === "undefined") return;
-    const ro = new ResizeObserver(() => {
-      setInputAreaHeight(el.getBoundingClientRect().height);
-    });
+    const applyPadding = () => {
+      const viewport = messagesViewportRef.current;
+      if (!viewport) return;
+      viewport.style.paddingBottom = `${el.getBoundingClientRect().height + 16}px`;
+    };
+    const ro = new ResizeObserver(applyPadding);
     ro.observe(el);
-    // Set initial height
-    setInputAreaHeight(el.getBoundingClientRect().height);
+    applyPadding();
     return () => ro.disconnect();
   }, [activeChatId]);
 
@@ -1444,8 +1461,7 @@ export function TaskChat({
         if (cancelled) return;
         setChats(chatList);
         // Check if Radio requested a specific session (pending from before mount)
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const pending = (window as any).__grove_pending_chat as
+        const pending = (window as unknown as Record<string, unknown>).__grove_pending_chat as
           | { projectId: string; taskId: string; chatId: string }
           | undefined;
         if (
@@ -1455,8 +1471,7 @@ export function TaskChat({
           chatList.some((c) => c.id === pending.chatId)
         ) {
           setActiveChatId(pending.chatId);
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          delete (window as any).__grove_pending_chat;
+          delete (window as unknown as Record<string, unknown>).__grove_pending_chat;
         } else {
           // Select last chat by default
           const lastChat = chatList[chatList.length - 1];
@@ -1812,9 +1827,11 @@ export function TaskChat({
           });
           setMessages((prev) => reduceHistoryMessages(prev, msg));
           setIsBusy(false);
+          onChatBecameIdle?.();
           break;
         case "busy":
           setIsBusy(msg.value);
+          if (!msg.value) onChatBecameIdle?.();
           break;
         case "error": {
           const isStalePermission = msg.message?.includes("No pending permission");
@@ -1835,6 +1852,7 @@ export function TaskChat({
               { type: "system", content: `Error: ${msg.message}` },
             ]);
             setIsBusy(false);
+            onChatBecameIdle?.();
           }
           break;
         }
@@ -1910,6 +1928,7 @@ export function TaskChat({
           // Set exit code on the last terminal_output message
           terminalRunningRef.current = false;
           setIsBusy(false);
+          onChatBecameIdle?.();
           setMessages((prev) => reduceHistoryMessages(prev, msg));
           break;
         case "session_ended":
@@ -1917,7 +1936,7 @@ export function TaskChat({
           break;
       }
     },
-    [onConnectedProp, enableAutoStickToBottom],
+    [onConnectedProp, enableAutoStickToBottom, onChatBecameIdle],
   );
 
   /** Buffer a server message into the per-chat cache (for non-active chats) */
@@ -2173,40 +2192,20 @@ export function TaskChat({
   const addFileAsAttachment = useCallback(
     async (file: File) => {
       if (!file.type.startsWith("image/") && !file.type.startsWith("audio/")) {
-        if (!activeChatId) return;
-        try {
-          const data = await fileToBase64(file);
-          const uploaded = await uploadChatAttachment(
-            projectId,
-            task.id,
-            activeChatId,
-            {
-              name: file.name,
-              mime_type: file.type || undefined,
-              data,
-            },
-          );
-          const label = attachmentLabel("resource", ++attachCountersRef.current.resource);
-          setAttachments((prev) => [
-            ...prev,
-            {
-              type: "resource",
-              data: "",
-              mimeType:
-                uploaded.mime_type ?? file.type ?? "application/octet-stream",
-              name: uploaded.name,
-              label,
-              uri: uploaded.uri,
-              size: uploaded.size,
-            },
-          ]);
-        } catch (err) {
-          console.error("Failed to upload attachment:", err);
-          setMessages((prev) => [
-            ...prev,
-            { type: "system", content: `Failed to attach ${file.name}.` },
-          ]);
-        }
+        // Defer upload until the prompt is actually sent
+        const label = attachmentLabel("resource", ++attachCountersRef.current.resource);
+        setAttachments((prev) => [
+          ...prev,
+          {
+            type: "resource",
+            data: "",
+            mimeType: file.type || "application/octet-stream",
+            name: file.name,
+            label,
+            size: file.size,
+            pendingFile: file,
+          },
+        ]);
         return;
       }
 
@@ -2233,7 +2232,7 @@ export function TaskChat({
       };
       reader.readAsDataURL(file);
     },
-    [activeChatId, projectId, task.id],
+    [],
   );
 
   const removeAttachment = useCallback((index: number) => {
@@ -2337,9 +2336,12 @@ export function TaskChat({
     }
   }, [activeChatId, isTakingControl, projectId, task.id, connectChatWs]);
 
-  const handleSend = useCallback(() => {
+  const handleSend = useCallback(async () => {
     const el = editableRef.current;
     if (!el) return;
+    // Guard activeChatId before consuming any UI state — if we return after
+    // clearing the editable, the user's typed message is silently lost.
+    if (!activeChatId) return;
     const prompt = getPromptFromEditable(el);
     if (
       (!prompt && attachments.length === 0) ||
@@ -2366,8 +2368,46 @@ export function TaskChat({
 
     const text = prompt;
 
+    // Upload any pending files now (deferred from drag/drop time)
+    let resolvedAttachments = attachments;
+    const pendingOnes = attachments.filter((a) => a.pendingFile);
+    if (pendingOnes.length > 0) {
+      try {
+        const uploadResults = await Promise.all(
+          pendingOnes.map(async (att) => {
+            const data = await fileToBase64(att.pendingFile!);
+            return uploadChatAttachment(projectId, task.id, activeChatId, {
+              name: att.pendingFile!.name,
+              mime_type: att.pendingFile!.type || undefined,
+              data,
+            });
+          }),
+        );
+        let uploadIdx = 0;
+        resolvedAttachments = attachments.map((att) => {
+          if (!att.pendingFile) return att;
+          const result = uploadResults[uploadIdx++];
+          return {
+            ...att,
+            uri: result.uri,
+            name: result.name,
+            mimeType: result.mime_type ?? att.mimeType,
+            size: result.size,
+            pendingFile: undefined,
+          };
+        });
+      } catch (err) {
+        console.error("Failed to upload attachment:", err);
+        setMessages((prev) => [
+          ...prev,
+          { type: "system", content: `Failed to upload attachment: ${err instanceof Error ? err.message : String(err)}` },
+        ]);
+        return;
+      }
+    }
+
     // Build attachments payload for server
-    const contentAttachments = attachments.map((att) => ({
+    const contentAttachments = resolvedAttachments.map((att) => ({
       ...(att.type === "resource"
         ? {
             type: "resource_link",
@@ -2408,6 +2448,7 @@ export function TaskChat({
       setShowPendingQueue(true);
       setShowPlan(false);
       setShowPlanFile(false);
+      onUserMessageSent?.();
       el.focus();
     } else {
       enableAutoStickToBottom("auto");
@@ -2429,9 +2470,10 @@ export function TaskChat({
       setIsTerminalMode(false);
       setIsInputExpanded(false);
       setIsBusy(true);
+      onUserMessageSent?.();
       el.focus();
     }
-  }, [isTerminalMode, isBusy, attachments, enableAutoStickToBottom]);
+  }, [isTerminalMode, isBusy, attachments, activeChatId, projectId, task.id, enableAutoStickToBottom, onUserMessageSent]);
 
   /** Cancel current agent work — server auto-sends next queued message after Complete */
   const handleSendNow = useCallback(() => {
@@ -3480,7 +3522,6 @@ export function TaskChat({
           <div
             ref={messagesViewportRef}
             className="relative z-0 h-full min-h-0 flex-1 overflow-y-auto px-4 pt-4"
-            style={{ paddingBottom: inputAreaHeight > 0 ? inputAreaHeight + 16 : undefined }}
           >
             <div className="flex w-full flex-col gap-3">
               {renderItems.map((item, idx) =>
@@ -3491,10 +3532,13 @@ export function TaskChat({
                     index={item.index}
                     isBusy={isBusy}
                     agentLabel={agentLabel}
+                    projectId={projectId}
+                    taskId={task.id}
                     onToggleThinkingCollapse={toggleThinkingCollapse}
                     onPermissionResponse={handlePermissionResponse}
                     onFileClick={onNavigateToFile}
                     onImageClick={setLightboxUrl}
+                    onMermaidClick={setLightboxSvg}
                     onInsertReference={insertAttachmentReference}
                   />
                 ) : (
@@ -3597,6 +3641,7 @@ export function TaskChat({
                           <MarkdownRenderer
                             content={planFileContent}
                             onFileClick={onNavigateToFile}
+                            onMermaidClick={setLightboxSvg}
                           />
                         </div>
                       )}
@@ -4224,36 +4269,87 @@ export function TaskChat({
           </div>
         </div>
       </div>
-      {/* Image Lightbox */}
+      {/* Image / SVG Lightbox */}
       <AnimatePresence>
-        {lightboxUrl && (
+        {(lightboxUrl || lightboxSvg) && (
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             transition={{ duration: 0.15 }}
-            className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/70 backdrop-blur-sm cursor-pointer"
-            onClick={() => setLightboxUrl(null)}
+            className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/70 backdrop-blur-sm cursor-pointer select-none"
+            data-hotkeys-dialog
+            onClick={() => { setLightboxUrl(null); setLightboxSvg(null); resetLightboxView(); }}
+            onWheel={(e) => {
+              if (!e.metaKey && !e.ctrlKey) return;
+              e.preventDefault();
+              e.stopPropagation();
+              const delta = e.deltaY > 0 ? -0.15 : 0.15;
+              setLightboxZoom((z) => Math.min(10, Math.max(0.2, z + delta * z)));
+            }}
+            onMouseDown={(e) => {
+              if (lightboxZoom <= 1) return;
+              e.preventDefault();
+              lightboxPanningRef.current = true;
+              lightboxPanStartRef.current = { x: e.clientX, y: e.clientY, panX: lightboxPan.x, panY: lightboxPan.y };
+            }}
+            onMouseMove={(e) => {
+              if (!lightboxPanningRef.current) return;
+              const dx = e.clientX - lightboxPanStartRef.current.x;
+              const dy = e.clientY - lightboxPanStartRef.current.y;
+              setLightboxPan({ x: lightboxPanStartRef.current.panX + dx, y: lightboxPanStartRef.current.panY + dy });
+            }}
+            onMouseUp={() => { lightboxPanningRef.current = false; }}
+            onMouseLeave={() => { lightboxPanningRef.current = false; }}
           >
             <button
               onClick={(e) => {
                 e.stopPropagation();
                 setLightboxUrl(null);
+                setLightboxSvg(null);
+                resetLightboxView();
               }}
-              className="absolute top-4 right-4 w-9 h-9 rounded-full bg-black/50 text-white/80 hover:text-white hover:bg-black/70 flex items-center justify-center transition-colors"
+              className="absolute top-4 right-4 w-9 h-9 rounded-full bg-black/50 text-white/80 hover:text-white hover:bg-black/70 flex items-center justify-center transition-colors z-10"
             >
               <X className="w-5 h-5" />
             </button>
-            <motion.img
-              initial={{ scale: 0.9, opacity: 0 }}
-              animate={{ scale: 1, opacity: 1 }}
-              exit={{ scale: 0.9, opacity: 0 }}
-              transition={{ duration: 0.15 }}
-              src={lightboxUrl}
-              className="max-w-[90vw] max-h-[90vh] object-contain rounded-lg shadow-2xl cursor-default"
+            {lightboxZoom > 1 && (
+              <button
+                onClick={(e) => { e.stopPropagation(); resetLightboxView(); }}
+                className="absolute top-4 left-4 h-9 px-3 rounded-full bg-black/50 text-white/80 hover:text-white hover:bg-black/70 flex items-center justify-center gap-1.5 text-xs font-medium transition-colors z-10"
+              >
+                <Minimize2 className="w-3.5 h-3.5" />
+                {Math.round(lightboxZoom * 100)}%
+              </button>
+            )}
+            <div
+              style={{
+                transform: `translate(${lightboxPan.x}px, ${lightboxPan.y}px) scale(${lightboxZoom})`,
+                transition: lightboxPanningRef.current ? "none" : "transform 0.15s ease-out",
+              }}
               onClick={(e) => e.stopPropagation()}
-              alt=""
-            />
+            >
+              {lightboxUrl ? (
+                <motion.img
+                  initial={{ scale: 0.9, opacity: 0 }}
+                  animate={{ scale: 1, opacity: 1 }}
+                  exit={{ scale: 0.9, opacity: 0 }}
+                  transition={{ duration: 0.15 }}
+                  src={lightboxUrl}
+                  className="max-w-[90vw] max-h-[90vh] object-contain rounded-lg shadow-2xl cursor-default"
+                  alt=""
+                />
+              ) : lightboxSvg ? (
+                <motion.div
+                  initial={{ scale: 0.9, opacity: 0 }}
+                  animate={{ scale: 1, opacity: 1 }}
+                  exit={{ scale: 0.9, opacity: 0 }}
+                  transition={{ duration: 0.15 }}
+                  className="w-[90vw] h-[90vh] flex items-center justify-center rounded-lg bg-[var(--color-bg-secondary)] shadow-2xl cursor-default [&_svg]:max-w-[88vw] [&_svg]:max-h-[88vh]"
+                  dangerouslySetInnerHTML={{ __html: lightboxSvg }}
+                />
+              ) : null}
+            </div>
           </motion.div>
         )}
       </AnimatePresence>
@@ -4389,22 +4485,33 @@ function MessageItem({
   index,
   isBusy,
   agentLabel,
+  projectId,
+  taskId,
   onToggleThinkingCollapse,
   onPermissionResponse,
   onFileClick,
   onImageClick,
+  onMermaidClick,
   onInsertReference,
 }: {
   message: ChatMessage;
   index: number;
   isBusy: boolean;
   agentLabel?: string;
+  projectId: string;
+  taskId: string;
   onToggleThinkingCollapse: (index: number) => void;
   onPermissionResponse?: (optionId: string) => void;
   onFileClick?: (filePath: string, line?: number) => void;
   onImageClick?: (url: string) => void;
+  onMermaidClick?: (svg: string) => void;
   onInsertReference?: (label: string) => void;
 }) {
+  const resolveImageUrl = useCallback((src: string) => {
+    if (/^https?:\/\//.test(src)) return src;
+    return `/api/v1/projects/${projectId}/tasks/${taskId}/file?path=${encodeURIComponent(src)}`;
+  }, [projectId, taskId]);
+
   switch (message.type) {
     case "user":
       if (message.terminal) {
@@ -4534,6 +4641,8 @@ function MessageItem({
             <MarkdownRenderer
               content={message.content}
               onFileClick={onFileClick}
+              resolveImageUrl={resolveImageUrl}
+              onMermaidClick={onMermaidClick}
             />
             {!message.complete && isBusy && (
               <span className="inline-block w-1.5 h-4 ml-0.5 bg-[var(--color-text-muted)] animate-pulse rounded-sm" />

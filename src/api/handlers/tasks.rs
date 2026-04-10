@@ -8,7 +8,9 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 
+use std::fs;
 use std::path::PathBuf;
+use std::process::Command;
 
 use crate::git;
 use crate::hooks;
@@ -16,7 +18,11 @@ use crate::model::loader;
 use crate::session::{self, SessionType};
 use crate::storage::{self, comments, notes, tasks, workspace};
 
-use super::projects::{CommitResponse, TaskResponse};
+use super::projects::{storage_task_to_response, CommitResponse, TaskResponse};
+use super::studio_common::{
+    self, AddWorkDirectoryRequest, WorkDirectoryEntry, WorkDirectoryListResponse,
+    WorkDirectoryQuery,
+};
 
 // ============================================================================
 // Request/Response DTOs
@@ -386,8 +392,25 @@ pub async fn list_tasks(
     Query(query): Query<TaskListQuery>,
 ) -> Result<Json<TaskListResponse>, StatusCode> {
     let (project, project_key) = find_project_by_id(&id)?;
-
     let filter = query.filter.as_deref().unwrap_or("active");
+
+    if project.project_type == workspace::ProjectType::Studio {
+        let filter_owned = filter.to_string();
+        let pk = project_key.clone();
+        let mut tasks: Vec<TaskResponse> = tokio::task::spawn_blocking(move || {
+            let stored = if filter_owned == "archived" {
+                tasks::load_archived_tasks(&pk).unwrap_or_default()
+            } else {
+                tasks::load_tasks(&pk).unwrap_or_default()
+            };
+            stored.iter().map(storage_task_to_response).collect()
+        })
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+        tasks.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+        return Ok(Json(TaskListResponse { tasks }));
+    }
 
     // Heavy git I/O — run on blocking thread pool
     let project_path = project.path.clone();
@@ -425,6 +448,22 @@ pub async fn get_task(
     Path((id, task_id)): Path<(String, String)>,
 ) -> Result<Json<TaskResponse>, StatusCode> {
     let (project, project_key) = find_project_by_id(&id)?;
+
+    if project.project_type == workspace::ProjectType::Studio {
+        let pk = project_key.clone();
+        let tid = task_id.clone();
+        let result: Option<TaskResponse> = tokio::task::spawn_blocking(move || {
+            tasks::get_task(&pk, &tid)
+                .ok()
+                .flatten()
+                .or_else(|| tasks::get_archived_task(&pk, &tid).ok().flatten())
+                .map(|task| storage_task_to_response(&task))
+        })
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+        return result.map(Json).ok_or(StatusCode::NOT_FOUND);
+    }
 
     // Heavy git I/O — run on blocking thread pool
     let project_path = project.path.clone();
@@ -466,25 +505,35 @@ pub async fn create_task(
         )
     })?;
 
-    // Determine target branch
-    let target = req.target.unwrap_or_else(|| {
-        git::current_branch(&project.path).unwrap_or_else(|_| "main".to_string())
-    });
-
-    // Get config
     let full_config = storage::config::load_config();
-    let autolink_patterns = &full_config.auto_link.patterns;
+    let is_studio = project.project_type == workspace::ProjectType::Studio;
 
-    // Call shared operation
-    let result = crate::operations::tasks::create_task(
-        &project.path,
-        &project_key,
-        req.name.clone(),
-        target.clone(),
-        &full_config.default_session_type(),
-        autolink_patterns,
-        "user",
-    )
+    // Call shared operation — branch by project type
+    let result = if is_studio {
+        crate::operations::tasks::create_studio_task(
+            &project.path,
+            &project_key,
+            req.name.clone(),
+            &full_config.default_session_type(),
+            "user",
+        )
+    } else {
+        // Determine target branch (Repo only)
+        let target = req.target.unwrap_or_else(|| {
+            git::current_branch(&project.path).unwrap_or_else(|_| "main".to_string())
+        });
+        let autolink_patterns = &full_config.auto_link.patterns;
+
+        crate::operations::tasks::create_task(
+            &project.path,
+            &project_key,
+            req.name.clone(),
+            target,
+            &full_config.default_session_type(),
+            autolink_patterns,
+            "user",
+        )
+    }
     .map_err(|e| {
         let msg = e.to_string();
         if msg.contains("already exists") {
@@ -550,6 +599,96 @@ pub async fn archive_task(
     })?;
 
     let force = query.force.unwrap_or(false);
+
+    if project.project_type == workspace::ProjectType::Studio {
+        let task = tasks::get_task(&project_key, &task_id)
+            .map_err(|_| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ArchiveConfirmResponse::error(
+                        "TASK_LOAD_FAILED",
+                        "Failed to load task",
+                        task_id.clone(),
+                    )),
+                )
+            })?
+            .ok_or_else(|| {
+                (
+                    StatusCode::NOT_FOUND,
+                    Json(ArchiveConfirmResponse::error(
+                        "TASK_NOT_FOUND",
+                        "Task not found",
+                        task_id.clone(),
+                    )),
+                )
+            })?;
+
+        if !force {
+            let input_dir = std::path::Path::new(&task.worktree_path).join("input");
+            let output_dir = std::path::Path::new(&task.worktree_path).join("output");
+            let scripts_dir = std::path::Path::new(&task.worktree_path).join("scripts");
+            let has_files = [input_dir, output_dir, scripts_dir].iter().any(|dir| {
+                fs::read_dir(dir)
+                    .map(|mut it| it.next().is_some())
+                    .unwrap_or(false)
+            });
+
+            if has_files {
+                return Err((
+                    StatusCode::CONFLICT,
+                    Json(ArchiveConfirmResponse::confirm_required(
+                        task.name,
+                        String::new(),
+                        String::new(),
+                        true,
+                        true,
+                        false,
+                        false,
+                    )),
+                ));
+            }
+        }
+
+        tasks::archive_task(&project_key, &task_id).map_err(|_| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ArchiveConfirmResponse::error(
+                    "ARCHIVE_FAILED",
+                    "Archive failed",
+                    task_id.clone(),
+                )),
+            )
+        })?;
+
+        if crate::storage::taskgroups::remove_task_from_all_groups(&project_key, &task_id) {
+            use crate::api::handlers::walkie_talkie::{broadcast_radio_event, RadioEvent};
+            broadcast_radio_event(RadioEvent::GroupChanged);
+        }
+
+        let archived = tasks::get_archived_task(&project_key, &task_id)
+            .map_err(|_| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ArchiveConfirmResponse::error(
+                        "ARCHIVED_TASK_LOAD_FAILED",
+                        "Failed to load archived task",
+                        task_id.clone(),
+                    )),
+                )
+            })?
+            .ok_or_else(|| {
+                (
+                    StatusCode::NOT_FOUND,
+                    Json(ArchiveConfirmResponse::error(
+                        "ARCHIVED_TASK_NOT_FOUND",
+                        "Archived task not found",
+                        task_id.clone(),
+                    )),
+                )
+            })?;
+
+        return Ok(Json(storage_task_to_response(&archived)));
+    }
 
     // Safety checks (GUI needs a confirmation step like TUI)
     if !force {
@@ -751,6 +890,28 @@ pub async fn delete_task(
                 .flatten()
         })
         .ok_or(StatusCode::NOT_FOUND)?;
+
+    if project.project_type == workspace::ProjectType::Studio {
+        let task_path = std::path::Path::new(&task.worktree_path);
+        // Safety: only delete paths that are provably inside our studio tasks
+        // directory.  Guards against corrupted task records pointing elsewhere.
+        let expected_prefix = workspace::studio_project_dir(&project.path).join("tasks");
+        if task_path.exists() && task_path.starts_with(&expected_prefix) {
+            fs::remove_dir_all(task_path).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        }
+
+        let _ = tasks::remove_task(&project_key, &task_id);
+        let _ = tasks::remove_archived_task(&project_key, &task_id);
+        hooks::remove_task_hook(&project_key, &task_id);
+        let _ = storage::delete_task_data(&project_key, &task_id);
+
+        if crate::storage::taskgroups::remove_task_from_all_groups(&project_key, &task_id) {
+            use crate::api::handlers::walkie_talkie::{broadcast_radio_event, RadioEvent};
+            broadcast_radio_event(RadioEvent::GroupChanged);
+        }
+
+        return Ok(StatusCode::NO_CONTENT);
+    }
 
     // Kill session
     let task_session_type = session::resolve_session_type(&task.multiplexer);
@@ -1321,9 +1482,32 @@ pub async fn list_files(
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .ok_or(StatusCode::NOT_FOUND)?;
 
-    let files = git::list_files(&task.worktree_path).unwrap_or_default();
+    // Try git first; fall back to filesystem walk for non-git directories
+    let files = match git::list_files(&task.worktree_path) {
+        Ok(f) if !f.is_empty() => f,
+        _ => list_files_fs(&task.worktree_path),
+    };
 
     Ok(Json(FilesResponse { files }))
+}
+
+/// Walk a directory tree and return relative paths (non-git fallback)
+fn list_files_fs(root: &str) -> Vec<String> {
+    let root_path = std::path::Path::new(root);
+    let mut files = Vec::new();
+    for entry in walkdir::WalkDir::new(root_path)
+        .min_depth(1)
+        .into_iter()
+        .filter_map(|e| e.ok())
+    {
+        if entry.file_type().is_file() {
+            if let Ok(rel) = entry.path().strip_prefix(root_path) {
+                files.push(rel.to_string_lossy().to_string());
+            }
+        }
+    }
+    files.sort();
+    files
 }
 
 /// GET /api/v1/projects/{id}/tasks/{taskId}/file?path=src/main.rs
@@ -2048,4 +2232,632 @@ pub async fn copy_file(
         success: true,
         message: format!("Copied {} to {}", req.source, req.destination),
     }))
+}
+
+// ============================================================================
+// Studio Artifacts API
+// ============================================================================
+
+#[derive(Debug, Serialize)]
+pub struct ArtifactFile {
+    pub name: String,
+    pub path: String,
+    pub directory: String,
+    pub size: u64,
+    pub modified_at: String,
+    pub is_dir: bool,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ArtifactsResponse {
+    pub input: Vec<ArtifactFile>,
+    pub output: Vec<ArtifactFile>,
+}
+
+/// Recursively list files in a directory
+fn list_dir_recursive(
+    base: &std::path::Path,
+    dir: &std::path::Path,
+    category: &str,
+) -> Vec<ArtifactFile> {
+    let mut files = Vec::new();
+    let entries = match std::fs::read_dir(dir) {
+        Ok(e) => e,
+        Err(_) => return files,
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let link_meta = match fs::symlink_metadata(&path) {
+            Ok(m) => m,
+            Err(_) => continue,
+        };
+        if link_meta.file_type().is_symlink() {
+            continue;
+        }
+        let meta = match entry.metadata() {
+            Ok(m) => m,
+            Err(_) => continue,
+        };
+        let rel_path = path.strip_prefix(base).unwrap_or(&path);
+        let rel_str = rel_path.to_string_lossy().to_string();
+        let name = entry.file_name().to_string_lossy().to_string();
+
+        if meta.is_dir() {
+            // Add directory entry
+            files.push(ArtifactFile {
+                name: name.clone(),
+                path: rel_str.clone(),
+                directory: category.to_string(),
+                size: 0,
+                modified_at: studio_common::format_modified_time(&meta),
+                is_dir: true,
+            });
+            // Recurse into subdirectory
+            files.extend(list_dir_recursive(base, &path, category));
+        } else {
+            files.push(ArtifactFile {
+                name,
+                path: rel_str,
+                directory: category.to_string(),
+                size: meta.len(),
+                modified_at: studio_common::format_modified_time(&meta),
+                is_dir: false,
+            });
+        }
+    }
+    files.sort_by(|a, b| a.path.cmp(&b.path));
+    files
+}
+
+fn resolve_task_dir(
+    project: &workspace::RegisteredProject,
+    project_id: &str,
+    task_id: &str,
+) -> Option<PathBuf> {
+    if project.project_type == workspace::ProjectType::Studio {
+        // Guard against path traversal via crafted task_id values.
+        if !studio_common::is_studio_id_segment(task_id) {
+            return None;
+        }
+        Some(
+            workspace::studio_project_dir(&project.path)
+                .join("tasks")
+                .join(task_id),
+        )
+    } else {
+        let tasks_list = tasks::load_tasks(project_id).unwrap_or_default();
+        tasks_list
+            .iter()
+            .find(|t| t.id == task_id)
+            .map(|t| PathBuf::from(&t.worktree_path))
+    }
+}
+
+fn artifact_workdir_dir(task_dir: &std::path::Path) -> PathBuf {
+    task_dir.join("input")
+}
+
+fn ensure_workdir_symlink(dir: &std::path::Path, name: &str) -> Result<PathBuf, ApiErrorResponse> {
+    studio_common::validate_symlink_entry(dir, name).map_err(|err| ApiErrorResponse { error: err })
+}
+
+/// GET /api/v1/projects/{id}/tasks/{taskId}/artifacts
+/// List all files in input/ and output/ directories of a Studio task
+pub async fn list_artifacts(
+    Path((id, task_id)): Path<(String, String)>,
+) -> Result<Json<ArtifactsResponse>, StatusCode> {
+    let (project, project_key) = find_project_by_id(&id)?;
+
+    let task_dir =
+        resolve_task_dir(&project, &project_key, &task_id).ok_or(StatusCode::NOT_FOUND)?;
+
+    if !task_dir.exists() {
+        return Err(StatusCode::NOT_FOUND);
+    }
+
+    let input_dir = task_dir.join("input");
+    let output_dir = task_dir.join("output");
+
+    let input_files = list_dir_recursive(&input_dir, &input_dir, "input");
+    let output_files = list_dir_recursive(&output_dir, &output_dir, "output");
+
+    Ok(Json(ArtifactsResponse {
+        input: input_files,
+        output: output_files,
+    }))
+}
+
+/// GET /api/v1/projects/{id}/tasks/{taskId}/artifacts/workdir
+pub async fn list_artifact_workdirs(
+    Path((id, task_id)): Path<(String, String)>,
+) -> Result<Json<WorkDirectoryListResponse>, (StatusCode, Json<ApiErrorResponse>)> {
+    let (project, _) = find_project_by_id(&id).map_err(|s| {
+        (
+            s,
+            Json(ApiErrorResponse {
+                error: "Project not found".to_string(),
+            }),
+        )
+    })?;
+    let task_dir = resolve_task_dir(&project, &id, &task_id).ok_or((
+        StatusCode::NOT_FOUND,
+        Json(ApiErrorResponse {
+            error: "Task not found".to_string(),
+        }),
+    ))?;
+    let entries = studio_common::list_workdir_entries(&artifact_workdir_dir(&task_dir));
+    Ok(Json(WorkDirectoryListResponse { entries }))
+}
+
+/// POST /api/v1/projects/{id}/tasks/{taskId}/artifacts/workdir
+pub async fn add_artifact_workdir(
+    Path((id, task_id)): Path<(String, String)>,
+    Json(request): Json<AddWorkDirectoryRequest>,
+) -> Result<Json<WorkDirectoryEntry>, (StatusCode, Json<ApiErrorResponse>)> {
+    let (project, _) = find_project_by_id(&id).map_err(|s| {
+        (
+            s,
+            Json(ApiErrorResponse {
+                error: "Project not found".to_string(),
+            }),
+        )
+    })?;
+    let task_dir = resolve_task_dir(&project, &id, &task_id).ok_or((
+        StatusCode::NOT_FOUND,
+        Json(ApiErrorResponse {
+            error: "Task not found".to_string(),
+        }),
+    ))?;
+    let workdir_dir = artifact_workdir_dir(&task_dir);
+    fs::create_dir_all(&workdir_dir).map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ApiErrorResponse {
+                error: format!("Failed to create input directory: {e}"),
+            }),
+        )
+    })?;
+
+    let target = PathBuf::from(request.path.trim());
+    if !target.is_absolute() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ApiErrorResponse {
+                error: "Path must be absolute".to_string(),
+            }),
+        ));
+    }
+    if !target.exists() || !target.is_dir() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ApiErrorResponse {
+                error: "Selected path must be an existing directory".to_string(),
+            }),
+        ));
+    }
+
+    let link_name = studio_common::create_unique_symlink_name(&workdir_dir, &target);
+    let link_path = workdir_dir.join(&link_name);
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(&target, &link_path).map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ApiErrorResponse {
+                error: format!("Failed to create symlink: {e}"),
+            }),
+        )
+    })?;
+
+    #[cfg(not(unix))]
+    {
+        return Err((
+            StatusCode::NOT_IMPLEMENTED,
+            Json(ApiErrorResponse {
+                error: "Work Directory is currently only supported on Unix-like systems"
+                    .to_string(),
+            }),
+        ));
+    }
+
+    Ok(Json(WorkDirectoryEntry {
+        name: link_name,
+        target_path: target.to_string_lossy().to_string(),
+        exists: true,
+    }))
+}
+
+/// DELETE /api/v1/projects/{id}/tasks/{taskId}/artifacts/workdir
+pub async fn delete_artifact_workdir(
+    Path((id, task_id)): Path<(String, String)>,
+    Query(query): Query<WorkDirectoryQuery>,
+) -> Result<StatusCode, (StatusCode, Json<ApiErrorResponse>)> {
+    let (project, _) = find_project_by_id(&id).map_err(|s| {
+        (
+            s,
+            Json(ApiErrorResponse {
+                error: "Project not found".to_string(),
+            }),
+        )
+    })?;
+    let task_dir = resolve_task_dir(&project, &id, &task_id).ok_or((
+        StatusCode::NOT_FOUND,
+        Json(ApiErrorResponse {
+            error: "Task not found".to_string(),
+        }),
+    ))?;
+    let link_path = ensure_workdir_symlink(&artifact_workdir_dir(&task_dir), &query.name)
+        .map_err(|err| (StatusCode::BAD_REQUEST, Json(err)))?;
+    fs::remove_file(link_path).map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ApiErrorResponse {
+                error: format!("Failed to remove symlink: {e}"),
+            }),
+        )
+    })?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// POST /api/v1/projects/{id}/tasks/{taskId}/artifacts/workdir/open
+pub async fn open_artifact_workdir(
+    Path((id, task_id)): Path<(String, String)>,
+    Query(query): Query<WorkDirectoryQuery>,
+) -> Result<StatusCode, (StatusCode, Json<ApiErrorResponse>)> {
+    let (project, _) = find_project_by_id(&id).map_err(|s| {
+        (
+            s,
+            Json(ApiErrorResponse {
+                error: "Project not found".to_string(),
+            }),
+        )
+    })?;
+    let task_dir = resolve_task_dir(&project, &id, &task_id).ok_or((
+        StatusCode::NOT_FOUND,
+        Json(ApiErrorResponse {
+            error: "Task not found".to_string(),
+        }),
+    ))?;
+    let link_path = ensure_workdir_symlink(&artifact_workdir_dir(&task_dir), &query.name)
+        .map_err(|err| (StatusCode::BAD_REQUEST, Json(err)))?;
+
+    // Open the symlink path directly — the OS will follow the link.
+    // This avoids a TOCTOU race that would occur if we read_link() and then
+    // passed the raw target string to `open`.
+    #[cfg(target_os = "macos")]
+    let _ = Command::new("open").arg(&link_path).spawn();
+    #[cfg(target_os = "linux")]
+    let _ = Command::new("xdg-open").arg(&link_path).spawn();
+
+    Ok(StatusCode::NO_CONTENT)
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ArtifactQuery {
+    pub path: String,
+    pub dir: String,
+}
+
+/// GET /api/v1/projects/{id}/tasks/{taskId}/artifacts/preview
+/// Preview file content (text files with proper encoding)
+pub async fn preview_artifact(
+    Path((id, task_id)): Path<(String, String)>,
+    Query(query): Query<ArtifactQuery>,
+) -> Result<impl IntoResponse, (StatusCode, Json<ApiErrorResponse>)> {
+    let (project, project_key) = find_project_by_id(&id).map_err(|s| {
+        (
+            s,
+            Json(ApiErrorResponse {
+                error: "Project not found".to_string(),
+            }),
+        )
+    })?;
+
+    let task_dir = resolve_task_dir(&project, &project_key, &task_id).ok_or((
+        StatusCode::NOT_FOUND,
+        Json(ApiErrorResponse {
+            error: "Task not found".to_string(),
+        }),
+    ))?;
+
+    let file_path = task_dir.join(&query.dir).join(&query.path);
+
+    // Security: ensure file_path is within task_dir
+    let canonical_task = task_dir.canonicalize().unwrap_or(task_dir.clone());
+    let canonical_file = file_path.canonicalize().map_err(|_| {
+        (
+            StatusCode::NOT_FOUND,
+            Json(ApiErrorResponse {
+                error: "File not found".to_string(),
+            }),
+        )
+    })?;
+    if !canonical_file.starts_with(&canonical_task) {
+        return Err((
+            StatusCode::FORBIDDEN,
+            Json(ApiErrorResponse {
+                error: "Access denied".to_string(),
+            }),
+        ));
+    }
+
+    // Enforce preview size limit to avoid loading huge files into memory.
+    const MAX_PREVIEW_SIZE: u64 = 10 * 1024 * 1024; // 10 MB
+    let file_size = std::fs::metadata(&canonical_file)
+        .map(|m| m.len())
+        .unwrap_or(0);
+    if file_size > MAX_PREVIEW_SIZE {
+        return Err((
+            StatusCode::PAYLOAD_TOO_LARGE,
+            Json(ApiErrorResponse {
+                error: format!("File too large to preview ({file_size} bytes, max 10 MB)"),
+            }),
+        ));
+    }
+
+    let content = std::fs::read(&canonical_file).map_err(|_| {
+        (
+            StatusCode::NOT_FOUND,
+            Json(ApiErrorResponse {
+                error: "Failed to read file".to_string(),
+            }),
+        )
+    })?;
+
+    // Try UTF-8 first, then attempt other encodings for CJK text
+    let text = studio_common::decode_text_bytes(&content);
+
+    Ok((
+        [(
+            axum::http::header::CONTENT_TYPE,
+            "text/plain; charset=utf-8",
+        )],
+        text,
+    ))
+}
+
+/// GET /api/v1/projects/{id}/tasks/{taskId}/artifacts/download
+/// Download a file
+pub async fn download_artifact(
+    Path((id, task_id)): Path<(String, String)>,
+    Query(query): Query<ArtifactQuery>,
+) -> Result<impl IntoResponse, StatusCode> {
+    let (project, project_key) = find_project_by_id(&id)?;
+
+    let task_dir =
+        resolve_task_dir(&project, &project_key, &task_id).ok_or(StatusCode::NOT_FOUND)?;
+
+    let file_path = task_dir.join(&query.dir).join(&query.path);
+
+    // Security check
+    let canonical_task = task_dir.canonicalize().unwrap_or(task_dir.clone());
+    let canonical_file = file_path
+        .canonicalize()
+        .map_err(|_| StatusCode::NOT_FOUND)?;
+    if !canonical_file.starts_with(&canonical_task) {
+        return Err(StatusCode::FORBIDDEN);
+    }
+
+    let content = std::fs::read(&canonical_file).map_err(|_| StatusCode::NOT_FOUND)?;
+    let filename = studio_common::sanitize_filename_for_header(
+        &canonical_file
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_else(|| "download".to_string()),
+    );
+
+    let content_type =
+        studio_common::guess_content_type(file_path.extension().and_then(|e| e.to_str()));
+
+    Ok((
+        [
+            (axum::http::header::CONTENT_TYPE, content_type.to_string()),
+            (
+                axum::http::header::CONTENT_DISPOSITION,
+                format!("attachment; filename=\"{}\"", filename),
+            ),
+        ],
+        content,
+    ))
+}
+
+/// DELETE /api/v1/projects/{id}/tasks/{taskId}/artifacts
+/// Delete a file from input/ directory only
+pub async fn delete_artifact(
+    Path((id, task_id)): Path<(String, String)>,
+    Query(query): Query<ArtifactQuery>,
+) -> Result<StatusCode, (StatusCode, Json<ApiErrorResponse>)> {
+    let (project, project_key) = find_project_by_id(&id).map_err(|s| {
+        (
+            s,
+            Json(ApiErrorResponse {
+                error: "Project not found".to_string(),
+            }),
+        )
+    })?;
+
+    // Only allow deletion from input/
+    if query.dir != "input" {
+        return Err((
+            StatusCode::FORBIDDEN,
+            Json(ApiErrorResponse {
+                error: "Can only delete files from input/ directory".to_string(),
+            }),
+        ));
+    }
+
+    let task_dir = resolve_task_dir(&project, &project_key, &task_id).ok_or((
+        StatusCode::NOT_FOUND,
+        Json(ApiErrorResponse {
+            error: "Task not found".to_string(),
+        }),
+    ))?;
+
+    let input_dir = task_dir.join("input");
+    let file_path = input_dir.join(&query.path);
+
+    // Security check: ensure the resolved path stays inside input/
+    let canonical_input = input_dir.canonicalize().map_err(|_| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ApiErrorResponse {
+                error: "input/ directory not accessible".to_string(),
+            }),
+        )
+    })?;
+    let canonical_file = file_path.canonicalize().map_err(|_| {
+        (
+            StatusCode::NOT_FOUND,
+            Json(ApiErrorResponse {
+                error: "File not found".to_string(),
+            }),
+        )
+    })?;
+    if !canonical_file.starts_with(&canonical_input) {
+        return Err((
+            StatusCode::FORBIDDEN,
+            Json(ApiErrorResponse {
+                error: "Access denied: path escapes input/ directory".to_string(),
+            }),
+        ));
+    }
+
+    if canonical_file.is_dir() {
+        std::fs::remove_dir_all(&canonical_file).map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResponse {
+                    error: format!("Failed to delete: {}", e),
+                }),
+            )
+        })?;
+    } else {
+        std::fs::remove_file(&canonical_file).map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResponse {
+                    error: format!("Failed to delete: {}", e),
+                }),
+            )
+        })?;
+    }
+
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// POST /api/v1/projects/{id}/tasks/{taskId}/artifacts/upload
+/// Upload file(s) to input/ directory (multipart)
+pub async fn upload_artifact(
+    Path((id, task_id)): Path<(String, String)>,
+    mut multipart: axum::extract::Multipart,
+) -> Result<Json<Vec<ArtifactFile>>, (StatusCode, Json<ApiErrorResponse>)> {
+    let (project, project_key) = find_project_by_id(&id).map_err(|s| {
+        (
+            s,
+            Json(ApiErrorResponse {
+                error: "Project not found".to_string(),
+            }),
+        )
+    })?;
+
+    let task_dir = resolve_task_dir(&project, &project_key, &task_id).ok_or((
+        StatusCode::NOT_FOUND,
+        Json(ApiErrorResponse {
+            error: "Task not found".to_string(),
+        }),
+    ))?;
+
+    let input_dir = task_dir.join("input");
+    std::fs::create_dir_all(&input_dir).map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ApiErrorResponse {
+                error: format!("Failed to create input directory: {}", e),
+            }),
+        )
+    })?;
+
+    let mut uploaded = Vec::new();
+
+    while let Ok(Some(field)) = multipart.next_field().await {
+        let filename = field.file_name().unwrap_or("upload").to_string();
+
+        // Security: strip path separators from filename
+        let safe_name = filename.replace(['/', '\\'], "_");
+        if safe_name.is_empty() || safe_name.starts_with('.') {
+            continue;
+        }
+
+        let data = field.bytes().await.map_err(|e| {
+            (
+                StatusCode::BAD_REQUEST,
+                Json(ApiErrorResponse {
+                    error: format!("Failed to read upload: {}", e),
+                }),
+            )
+        })?;
+
+        // Guard against memory exhaustion from arbitrarily large uploads.
+        if data.len() > studio_common::MAX_UPLOAD_SIZE {
+            return Err((
+                StatusCode::PAYLOAD_TOO_LARGE,
+                Json(ApiErrorResponse {
+                    error: format!(
+                        "File '{}' too large ({} bytes, max 100 MB)",
+                        safe_name,
+                        data.len()
+                    ),
+                }),
+            ));
+        }
+
+        let file_path = input_dir.join(&safe_name);
+        std::fs::write(&file_path, &data).map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResponse {
+                    error: format!("Failed to write file: {}", e),
+                }),
+            )
+        })?;
+
+        let meta = std::fs::metadata(&file_path).ok();
+        uploaded.push(ArtifactFile {
+            name: safe_name.clone(),
+            path: safe_name,
+            directory: "input".to_string(),
+            size: meta.as_ref().map(|m| m.len()).unwrap_or(data.len() as u64),
+            modified_at: chrono::Utc::now().to_rfc3339(),
+            is_dir: false,
+        });
+    }
+
+    Ok(Json(uploaded))
+}
+
+/// POST /api/v1/projects/{id}/tasks/{taskId}/open-folder
+/// Open a task subdirectory in the system file manager
+pub async fn open_folder(
+    Path((id, task_id)): Path<(String, String)>,
+    Query(query): Query<ArtifactQuery>,
+) -> Result<StatusCode, StatusCode> {
+    let (project, project_key) = find_project_by_id(&id)?;
+
+    let task_dir =
+        resolve_task_dir(&project, &project_key, &task_id).ok_or(StatusCode::NOT_FOUND)?;
+
+    let folder = task_dir.join(&query.dir);
+    if !folder.exists() {
+        return Err(StatusCode::NOT_FOUND);
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        let _ = std::process::Command::new("open").arg(&folder).spawn();
+    }
+    #[cfg(target_os = "linux")]
+    {
+        let _ = std::process::Command::new("xdg-open").arg(&folder).spawn();
+    }
+
+    Ok(StatusCode::NO_CONTENT)
 }

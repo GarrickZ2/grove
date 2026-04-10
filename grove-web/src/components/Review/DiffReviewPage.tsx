@@ -42,18 +42,20 @@ interface DiffReviewPageProps {
   embedded?: boolean;
   /** When set, switch mode and scroll to the given file/line */
   navigateToFile?: FileNavRequest | null;
+  /** Whether the project is a git repository (non-git projects don't have Changes mode) */
+  isGitRepo?: boolean;
 }
 
 import { getPreviewRenderer } from './previewRenderers';
 
 
-export function DiffReviewPage({ projectId, taskId, embedded, navigateToFile }: DiffReviewPageProps) {
+export function DiffReviewPage({ projectId, taskId, embedded, navigateToFile, isGitRepo }: DiffReviewPageProps) {
   const { isMobile } = useIsMobile();
   const [diffData, setDiffData] = useState<FullDiffResult | null>(null);
   const [allFiles, setAllFiles] = useState<string[]>([]); // All git-tracked files for File Mode
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
   const [viewType, setViewType] = useState<'unified' | 'split'>('unified');
-  const [viewMode, setViewMode] = useState<'diff' | 'full'>('diff');
+  const [viewMode, setViewMode] = useState<'diff' | 'full'>(isGitRepo === false ? 'full' : 'diff');
   // Track per-file user overrides: true = force open, false = force closed, absent = follow displayMode
   const [previewOverrides, setPreviewOverrides] = useState<Map<string, boolean>>(new Map());
   const [loading, setLoading] = useState(true);
@@ -1070,13 +1072,15 @@ export function DiffReviewPage({ projectId, taskId, embedded, navigateToFile }: 
       <div className="diff-page-header">
         <div className="diff-page-title">Code Review</div>
         <div className="diff-mode-selector">
-          <button
-            className={viewMode === 'diff' ? 'active' : ''}
-            onClick={() => void handleSetViewMode('diff')}
-          >
-            <GitCompare size={14} />
-            <span>Changes</span>
-          </button>
+          {isGitRepo !== false && (
+            <button
+              className={viewMode === 'diff' ? 'active' : ''}
+              onClick={() => void handleSetViewMode('diff')}
+            >
+              <GitCompare size={14} />
+              <span>Changes</span>
+            </button>
+          )}
           <button
             className={viewMode === 'full' ? 'active' : ''}
             onClick={() => void handleSetViewMode('full')}

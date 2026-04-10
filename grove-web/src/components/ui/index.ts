@@ -11,3 +11,5 @@ export { MarkdownRenderer } from "./MarkdownRenderer";
 export { KeyBadge } from "./KeyBadge";
 export { VSCodeIcon } from "./VSCodeIcon";
 export { FileMentionDropdown } from "./FileMentionDropdown";
+export { FilePreviewDrawer, getExtBadge, downloadViaIframe, getPreviewType, canPreviewFile } from "./filePreview";
+export { getPreviewRenderer } from "../Review/previewRenderers";

@@ -178,15 +178,13 @@ export function BlitzPage({ onSwitchToZen, onNavigate }: BlitzPageProps) {
       }
 
       // Clear any stale pending chat from a previous focus event
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      delete (window as any).__grove_pending_chat;
+      delete (window as unknown as Record<string, unknown>).__grove_pending_chat;
 
       // Tell TaskChat which session to show (Radio's active session)
       if (target?.mode === "chat" && "chat_id" in target && target.chat_id) {
         const chatId = target.chat_id;
         // Store as pending so TaskChat can pick it up on mount (before its listener is set up)
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        (window as any).__grove_pending_chat = { projectId, taskId, chatId };
+        (window as unknown as Record<string, unknown>).__grove_pending_chat = { projectId, taskId, chatId };
         window.dispatchEvent(new CustomEvent("grove:switch-chat", {
           detail: { projectId, taskId, chatId },
         }));
@@ -266,6 +264,9 @@ export function BlitzPage({ onSwitchToZen, onNavigate }: BlitzPageProps) {
     if (!selectedBlitzTask) return null;
     return filteredTasks.find((bt) => bt.task.id === selectedBlitzTask.task.id && bt.projectId === selectedBlitzTask.projectId) ?? null;
   }, [filteredTasks, selectedBlitzTask]);
+
+  // Derive studio status from current selection — kept in sync via React state
+  const isStudioTask = currentSelected?.projectType === "studio";
 
   // Clear stale taskViewRef when no task is selected
   useEffect(() => {
@@ -524,17 +525,22 @@ export function BlitzPage({ onSwitchToZen, onNavigate }: BlitzPageProps) {
   // Build context menu items
   const contextMenuItems = useMemo(() => {
     if (!pageState.contextMenu) return [];
+    // Find the BlitzTask to get projectType — more reliable than checking branch.
+    const ctxBlitzTask = filteredTasks.find(
+      (bt) => bt.task.id === pageState.contextMenu!.task.id,
+    );
+    const isStudioTask = ctxBlitzTask?.projectType === "studio";
     const items = buildContextMenuItems(pageState.contextMenu.task, {
       onEnterTerminal: () => {
         if (currentSelected) handleDoubleClickTask(currentSelected);
       },
-      onCommit: opsHandlers.handleCommit,
-      onRebase: opsHandlers.handleRebase,
-      onSync: opsHandlers.handleSync,
-      onMerge: opsHandlers.handleMerge,
+      onCommit: isStudioTask ? undefined : opsHandlers.handleCommit,
+      onRebase: isStudioTask ? undefined : opsHandlers.handleRebase,
+      onSync: isStudioTask ? undefined : opsHandlers.handleSync,
+      onMerge: isStudioTask ? undefined : opsHandlers.handleMerge,
       onArchive: opsHandlers.handleArchive,
-      onReset: opsHandlers.handleReset,
-      onClean: opsHandlers.handleClean,
+      onReset: isStudioTask ? undefined : opsHandlers.handleReset,
+      onClean: isStudioTask ? undefined : opsHandlers.handleClean,
     } as TaskOperationHandlers);
 
     // Add "Move to group" options for all tasks
@@ -566,7 +572,7 @@ export function BlitzPage({ onSwitchToZen, onNavigate }: BlitzPageProps) {
       }
     }
     return items;
-  }, [pageState.contextMenu, opsHandlers, handleDoubleClickTask, currentSelected, taskGroups, blitzTasks, taskGroupsHook]);
+  }, [pageState.contextMenu, opsHandlers, handleDoubleClickTask, currentSelected, taskGroups, blitzTasks, taskGroupsHook, filteredTasks]);
 
   const hasTask = !!selectedTask;
   const isActive = hasTask && selectedTask.status !== "archived";
@@ -1138,13 +1144,13 @@ export function BlitzPage({ onSwitchToZen, onNavigate }: BlitzPageProps) {
                       onClose={handleCloseTask}
                       onEnterWorkspace={currentSelected.task.status !== "archived" ? pageHandlers.handleEnterWorkspace : undefined}
                       onAddPanel={currentSelected.task.status !== "archived" ? handleAddPanelFromInfo : undefined}
-                      onClean={opsHandlers.handleClean}
-                      onCommit={currentSelected.task.status !== "archived" ? opsHandlers.handleCommit : undefined}
-                      onRebase={currentSelected.task.status !== "archived" ? opsHandlers.handleRebase : undefined}
-                      onSync={currentSelected.task.status !== "archived" ? opsHandlers.handleSync : undefined}
-                      onMerge={currentSelected.task.status !== "archived" ? opsHandlers.handleMerge : undefined}
+                      onClean={isStudioTask ? undefined : opsHandlers.handleClean}
+                      onCommit={isStudioTask ? undefined : (currentSelected.task.status !== "archived" ? opsHandlers.handleCommit : undefined)}
+                      onRebase={isStudioTask ? undefined : (currentSelected.task.status !== "archived" ? opsHandlers.handleRebase : undefined)}
+                      onSync={isStudioTask ? undefined : (currentSelected.task.status !== "archived" ? opsHandlers.handleSync : undefined)}
+                      onMerge={isStudioTask ? undefined : (currentSelected.task.status !== "archived" ? opsHandlers.handleMerge : undefined)}
                       onArchive={currentSelected.task.status !== "archived" ? opsHandlers.handleArchive : undefined}
-                      onReset={currentSelected.task.status !== "archived" ? opsHandlers.handleReset : undefined}
+                      onReset={isStudioTask ? undefined : (currentSelected.task.status !== "archived" ? opsHandlers.handleReset : undefined)}
                       activeTab={pageState.infoPanelTab}
                       onTabChange={pageHandlers.setInfoPanelTab}
                     />
@@ -1189,13 +1195,13 @@ export function BlitzPage({ onSwitchToZen, onNavigate }: BlitzPageProps) {
                     fullscreen={isFullscreen}
                     onFullscreenChange={setIsFullscreen}
                     onBack={handleCloseTask}
-                    onCommit={opsHandlers.handleCommit}
-                    onRebase={opsHandlers.handleRebase}
-                    onSync={opsHandlers.handleSync}
-                    onMerge={opsHandlers.handleMerge}
+                    onCommit={isStudioTask ? undefined : opsHandlers.handleCommit}
+                    onRebase={isStudioTask ? undefined : opsHandlers.handleRebase}
+                    onSync={isStudioTask ? undefined : opsHandlers.handleSync}
+                    onMerge={isStudioTask ? undefined : opsHandlers.handleMerge}
                     onArchive={opsHandlers.handleArchive}
-                    onClean={opsHandlers.handleClean}
-                    onReset={opsHandlers.handleReset}
+                    onClean={isStudioTask ? undefined : opsHandlers.handleClean}
+                    onReset={isStudioTask ? undefined : opsHandlers.handleReset}
                   />
                 </motion.div>
               )}

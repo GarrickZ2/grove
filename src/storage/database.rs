@@ -82,11 +82,12 @@ fn create_schema(conn: &Connection) -> Result<()> {
         "
         -- Projects
         CREATE TABLE IF NOT EXISTS projects (
-            hash        TEXT PRIMARY KEY,
-            name        TEXT NOT NULL,
-            path        TEXT NOT NULL UNIQUE,
-            is_git_repo INTEGER NOT NULL DEFAULT 1,
-            added_at    TEXT NOT NULL
+            hash         TEXT PRIMARY KEY,
+            name         TEXT NOT NULL,
+            path         TEXT NOT NULL UNIQUE,
+            is_git_repo  INTEGER NOT NULL DEFAULT 1,
+            added_at     TEXT NOT NULL,
+            project_type TEXT NOT NULL DEFAULT 'repo'
         );
 
         -- Task Groups
@@ -220,6 +221,12 @@ fn create_schema(conn: &Connection) -> Result<()> {
         );
     ",
     )?;
+
+    // Column migrations for existing databases
+    // ALTER TABLE ADD COLUMN is not idempotent in SQLite, so we ignore errors
+    let _ = conn.execute_batch(
+        "ALTER TABLE projects ADD COLUMN project_type TEXT NOT NULL DEFAULT 'repo';",
+    );
 
     Ok(())
 }

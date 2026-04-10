@@ -3,17 +3,26 @@
 use axum::{
     extract::{Path, Query},
     http::StatusCode,
+    response::IntoResponse,
     Json,
 };
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
+use std::fs;
+use std::path::PathBuf;
+use std::process::Command;
 
 use crate::git;
 use crate::git::git_cmd;
 use crate::model::loader;
 use crate::storage::{tasks, workspace};
 use crate::watcher;
+
+use super::studio_common::{
+    self, AddWorkDirectoryRequest, WorkDirectoryEntry, WorkDirectoryListResponse,
+    WorkDirectoryQuery,
+};
 
 // ============================================================================
 // Request/Response DTOs
@@ -33,6 +42,8 @@ pub struct ProjectListItem {
     /// considered "missing" — UI should show a warning state and only allow
     /// Delete (to clean up stale metadata).
     pub exists: bool,
+    /// Project type: "repo" or "studio"
+    pub project_type: String,
 }
 
 /// Project list response
@@ -89,6 +100,8 @@ pub struct ProjectResponse {
     /// considered "missing"; `tasks` / `local_task` / `current_branch` are
     /// forced to empty defaults and no git I/O is attempted.
     pub exists: bool,
+    /// Project type: "repo" or "studio"
+    pub project_type: String,
 }
 
 /// Add project request
@@ -101,12 +114,17 @@ pub struct AddProjectRequest {
 /// Create new project request
 #[derive(Debug, Deserialize)]
 pub struct NewProjectRequest {
-    /// 父目录(必须存在且为目录)
+    /// 父目录(必须存在且为目录) — ignored for studio projects
+    #[serde(default)]
     pub parent_dir: String,
     /// 项目名(同时作为目录名和 Grove 项目名)
     pub name: String,
-    /// 是否初始化为 git 仓库
+    /// 是否初始化为 git 仓库 — ignored for studio projects
+    #[serde(default)]
     pub init_git: bool,
+    /// Project type: "repo" (default) or "studio"
+    #[serde(default)]
+    pub project_type: Option<String>,
 }
 
 /// Simple API error body
@@ -144,6 +162,35 @@ pub struct BranchesResponse {
 // ============================================================================
 // Helper functions
 // ============================================================================
+
+/// Convert a storage TaskStatus to the string the frontend expects.
+pub fn storage_task_status_to_string(status: &tasks::TaskStatus) -> &'static str {
+    match status {
+        tasks::TaskStatus::Active => "idle",
+        tasks::TaskStatus::Archived => "archived",
+    }
+}
+
+/// Convert a storage Task to the TaskResponse DTO.
+pub fn storage_task_to_response(task: &tasks::Task) -> TaskResponse {
+    TaskResponse {
+        id: task.id.clone(),
+        name: task.name.clone(),
+        branch: task.branch.clone(),
+        target: task.target.clone(),
+        status: storage_task_status_to_string(&task.status).to_string(),
+        additions: task.code_additions,
+        deletions: task.code_deletions,
+        files_changed: task.files_changed,
+        commits: Vec::new(),
+        created_at: task.created_at.to_rfc3339(),
+        updated_at: task.updated_at.to_rfc3339(),
+        path: task.worktree_path.clone(),
+        multiplexer: task.multiplexer.clone(),
+        created_by: task.created_by.clone(),
+        is_local: task.is_local,
+    }
+}
 
 /// Convert WorktreeStatus to string
 fn status_to_string(status: &crate::model::WorktreeStatus) -> &'static str {
@@ -265,9 +312,19 @@ pub async fn list_projects() -> Result<Json<ProjectListResponse>, StatusCode> {
         .map(|p| {
             let id = workspace::project_hash(&p.path);
             let task_count = count_project_tasks(&id);
-            let exists = std::path::Path::new(&p.path).exists();
+            let is_studio = p.project_type == workspace::ProjectType::Studio;
+            // Studio projects use virtual path — check studio dir instead
+            let exists = if is_studio {
+                workspace::studio_project_dir(&p.path).exists()
+            } else {
+                std::path::Path::new(&p.path).exists()
+            };
             // Live check: HEAD 可用才算 git repo(与 TUI 侧一致,避免半 init 状态分叉)
-            let is_git_repo = exists && git::is_git_usable(&p.path);
+            let is_git_repo = if is_studio {
+                false
+            } else {
+                exists && git::is_git_usable(&p.path)
+            };
 
             ProjectListItem {
                 id,
@@ -278,6 +335,7 @@ pub async fn list_projects() -> Result<Json<ProjectListResponse>, StatusCode> {
                 live_count: 0,
                 is_git_repo,
                 exists,
+                project_type: p.project_type.as_str().to_string(),
             }
         })
         .collect();
@@ -296,7 +354,13 @@ pub async fn get_project(Path(id): Path<String>) -> Result<Json<ProjectResponse>
     let project_name = project.name.clone();
     let project_path = project.path.clone();
     let added_at = project.added_at.to_rfc3339();
-    let exists = std::path::Path::new(&project_path).exists();
+    let project_type = project.project_type.as_str().to_string();
+    let is_studio = project.project_type == workspace::ProjectType::Studio;
+    let exists = if is_studio {
+        workspace::studio_project_dir(&project_path).exists()
+    } else {
+        std::path::Path::new(&project_path).exists()
+    };
     let id_clone = id.clone();
 
     // Missing project: skip all git I/O and return clean defaults. The frontend
@@ -312,6 +376,38 @@ pub async fn get_project(Path(id): Path<String>) -> Result<Json<ProjectResponse>
             added_at,
             is_git_repo: false,
             exists: false,
+            project_type,
+        }));
+    }
+
+    // Studio projects: no git I/O needed, return tasks from storage directly
+    if is_studio {
+        let project_key = id.clone();
+        let (tasks_list, _) = tokio::task::spawn_blocking(move || {
+            let active_tasks = tasks::load_tasks(&project_key).unwrap_or_default();
+            let archived_tasks = tasks::load_archived_tasks(&project_key).unwrap_or_default();
+            let mut all: Vec<TaskResponse> = active_tasks
+                .iter()
+                .chain(archived_tasks.iter())
+                .map(storage_task_to_response)
+                .collect();
+            all.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+            (all, ())
+        })
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+        return Ok(Json(ProjectResponse {
+            id,
+            name: project_name,
+            path: project.path,
+            current_branch: String::new(),
+            tasks: tasks_list,
+            local_task: None,
+            added_at,
+            is_git_repo: false,
+            exists: true,
+            project_type,
         }));
     }
 
@@ -360,6 +456,7 @@ pub async fn get_project(Path(id): Path<String>) -> Result<Json<ProjectResponse>
         added_at,
         is_git_repo: is_git_usable,
         exists: true,
+        project_type,
     }))
 }
 
@@ -449,6 +546,7 @@ pub async fn add_project(
         added_at: chrono::Utc::now().to_rfc3339(),
         is_git_repo: is_git,
         exists: true,
+        project_type: "repo".to_string(),
     }))
 }
 
@@ -461,47 +559,88 @@ pub async fn create_new_project(
     Json(req): Json<NewProjectRequest>,
 ) -> Result<Json<ProjectResponse>, (StatusCode, Json<ProjectError>)> {
     let name = req.name.trim().to_string();
-    let init_git = req.init_git;
+    let is_studio = req.project_type.as_deref() == Some("studio");
 
-    // Delegate to shared operation (TUI + API).
-    let resolved_path =
-        crate::operations::projects::create_new_project(&req.parent_dir, &name, init_git).map_err(
-            |e| {
-                let msg = e.to_string();
-                let status = if msg.contains("already exists") || msg.contains("already registered")
-                {
-                    StatusCode::CONFLICT
-                } else if msg.contains("does not exist")
-                    || msg.contains("not a directory")
-                    || msg.contains("Invalid project name")
-                    || msg.contains("is required")
-                {
-                    StatusCode::BAD_REQUEST
-                } else {
-                    StatusCode::INTERNAL_SERVER_ERROR
-                };
-                (status, Json(ProjectError { error: msg }))
-            },
-        )?;
-
-    let id = workspace::project_hash(&resolved_path);
-    let current_branch = if init_git {
-        git::current_branch(&resolved_path).unwrap_or_else(|_| "main".to_string())
-    } else {
-        String::new()
+    let bad_request = |msg: &str| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ProjectError {
+                error: msg.to_string(),
+            }),
+        )
     };
 
-    Ok(Json(ProjectResponse {
-        id,
-        name,
-        path: resolved_path,
-        current_branch,
-        tasks: Vec::new(),
-        local_task: None,
-        added_at: chrono::Utc::now().to_rfc3339(),
-        is_git_repo: init_git,
-        exists: true,
-    }))
+    if name.is_empty() {
+        return Err(bad_request("Project name is required"));
+    }
+
+    if is_studio {
+        // Studio: create directory under ~/.grove/studios/, no filesystem path needed
+        let virtual_path = workspace::create_studio_project(&name).map_err(|e| {
+            let msg = e.to_string();
+            let status = if msg.contains("already registered") {
+                StatusCode::CONFLICT
+            } else {
+                StatusCode::INTERNAL_SERVER_ERROR
+            };
+            (status, Json(ProjectError { error: msg }))
+        })?;
+
+        let id = workspace::project_hash(&virtual_path);
+        Ok(Json(ProjectResponse {
+            id,
+            name,
+            path: virtual_path,
+            current_branch: String::new(),
+            tasks: Vec::new(),
+            local_task: None,
+            added_at: Utc::now().to_rfc3339(),
+            is_git_repo: false,
+            exists: true,
+            project_type: "studio".to_string(),
+        }))
+    } else {
+        // Repo: delegate to shared operation (TUI + API)
+        let init_git = req.init_git;
+        let resolved_path =
+            crate::operations::projects::create_new_project(&req.parent_dir, &name, init_git)
+                .map_err(|e| {
+                    let msg = e.to_string();
+                    let status =
+                        if msg.contains("already exists") || msg.contains("already registered") {
+                            StatusCode::CONFLICT
+                        } else if msg.contains("does not exist")
+                            || msg.contains("not a directory")
+                            || msg.contains("Invalid project name")
+                            || msg.contains("is required")
+                        {
+                            StatusCode::BAD_REQUEST
+                        } else {
+                            StatusCode::INTERNAL_SERVER_ERROR
+                        };
+                    (status, Json(ProjectError { error: msg }))
+                })?;
+
+        let id = workspace::project_hash(&resolved_path);
+        let current_branch = if init_git {
+            git::current_branch(&resolved_path).unwrap_or_else(|_| "main".to_string())
+        } else {
+            String::new()
+        };
+
+        Ok(Json(ProjectResponse {
+            id,
+            name,
+            path: resolved_path,
+            current_branch,
+            tasks: Vec::new(),
+            local_task: None,
+            added_at: Utc::now().to_rfc3339(),
+            is_git_repo: init_git,
+            exists: true,
+            project_type: "repo".to_string(),
+        }))
+    }
 }
 
 /// DELETE /api/v1/projects/{id}
@@ -516,6 +655,501 @@ pub async fn delete_project(Path(id): Path<String>) -> Result<StatusCode, Status
     broadcast_radio_event(RadioEvent::GroupChanged);
 
     Ok(StatusCode::NO_CONTENT)
+}
+
+// ============================================================================
+// Studio Resource API
+// ============================================================================
+
+#[derive(Debug, Serialize)]
+pub struct ResourceFile {
+    pub name: String,
+    pub path: String,
+    pub size: u64,
+    pub modified_at: String,
+    pub is_dir: bool,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ResourceListResponse {
+    pub files: Vec<ResourceFile>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct InstructionsResponse {
+    pub content: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct InstructionsUpdateRequest {
+    pub content: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ResourceDeleteQuery {
+    pub path: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ResourceFileQuery {
+    pub path: String,
+}
+
+/// Resolve the studio project directory, returning error if not a Studio project
+fn resolve_studio_dir(
+    id: &str,
+) -> Result<(workspace::RegisteredProject, std::path::PathBuf), (StatusCode, Json<ProjectError>)> {
+    let project = find_project_by_id(id).map_err(|s| {
+        (
+            s,
+            Json(ProjectError {
+                error: "Project not found".to_string(),
+            }),
+        )
+    })?;
+    if project.project_type != workspace::ProjectType::Studio {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ProjectError {
+                error: "Not a Studio project".to_string(),
+            }),
+        ));
+    }
+    let dir = workspace::studio_project_dir(&project.path);
+    Ok((project, dir))
+}
+
+fn list_resource_files(dir: &std::path::Path) -> Vec<ResourceFile> {
+    let mut files = Vec::new();
+    let entries = match std::fs::read_dir(dir) {
+        Ok(e) => e,
+        Err(_) => return files,
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let link_meta = match fs::symlink_metadata(&path) {
+            Ok(m) => m,
+            Err(_) => continue,
+        };
+        if link_meta.file_type().is_symlink() {
+            continue;
+        }
+        let meta = match entry.metadata() {
+            Ok(m) => m,
+            Err(_) => continue,
+        };
+        let name = entry.file_name().to_string_lossy().to_string();
+        files.push(ResourceFile {
+            name: name.clone(),
+            path: name,
+            size: if meta.is_file() { meta.len() } else { 0 },
+            modified_at: studio_common::format_modified_time(&meta),
+            is_dir: meta.is_dir(),
+        });
+    }
+    files.sort_by(|a, b| a.name.cmp(&b.name));
+    files
+}
+
+fn ensure_link_points_inside(dir: &std::path::Path, name: &str) -> Result<PathBuf, ProjectError> {
+    studio_common::validate_symlink_entry(dir, name).map_err(|err| ProjectError { error: err })
+}
+
+/// GET /api/v1/projects/{id}/resource
+pub async fn list_resources(
+    Path(id): Path<String>,
+) -> Result<Json<ResourceListResponse>, (StatusCode, Json<ProjectError>)> {
+    let (_project, studio_dir) = resolve_studio_dir(&id)?;
+    let resource_dir = studio_dir.join("resource");
+    let files = list_resource_files(&resource_dir);
+    Ok(Json(ResourceListResponse { files }))
+}
+
+/// GET /api/v1/projects/{id}/resource/workdir
+pub async fn list_resource_workdirs(
+    Path(id): Path<String>,
+) -> Result<Json<WorkDirectoryListResponse>, (StatusCode, Json<ProjectError>)> {
+    let (_project, studio_dir) = resolve_studio_dir(&id)?;
+    let workdir_dir = studio_dir.join("resource");
+    let entries = studio_common::list_workdir_entries(&workdir_dir);
+    Ok(Json(WorkDirectoryListResponse { entries }))
+}
+
+/// POST /api/v1/projects/{id}/resource/workdir
+pub async fn add_resource_workdir(
+    Path(id): Path<String>,
+    Json(request): Json<AddWorkDirectoryRequest>,
+) -> Result<Json<WorkDirectoryEntry>, (StatusCode, Json<ProjectError>)> {
+    let (_project, studio_dir) = resolve_studio_dir(&id)?;
+    let workdir_dir = studio_dir.join("resource");
+    fs::create_dir_all(&workdir_dir).map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ProjectError {
+                error: format!("Failed to create resource directory: {e}"),
+            }),
+        )
+    })?;
+
+    let target = PathBuf::from(request.path.trim());
+    if !target.is_absolute() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ProjectError {
+                error: "Path must be absolute".to_string(),
+            }),
+        ));
+    }
+    if !target.exists() || !target.is_dir() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ProjectError {
+                error: "Selected path must be an existing directory".to_string(),
+            }),
+        ));
+    }
+
+    let link_name = studio_common::create_unique_symlink_name(&workdir_dir, &target);
+    let link_path = workdir_dir.join(&link_name);
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(&target, &link_path).map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ProjectError {
+                error: format!("Failed to create symlink: {e}"),
+            }),
+        )
+    })?;
+
+    #[cfg(not(unix))]
+    {
+        return Err((
+            StatusCode::NOT_IMPLEMENTED,
+            Json(ProjectError {
+                error: "Work Directory is currently only supported on Unix-like systems"
+                    .to_string(),
+            }),
+        ));
+    }
+
+    Ok(Json(WorkDirectoryEntry {
+        name: link_name,
+        target_path: target.to_string_lossy().to_string(),
+        exists: true,
+    }))
+}
+
+/// DELETE /api/v1/projects/{id}/resource/workdir
+pub async fn delete_resource_workdir(
+    Path(id): Path<String>,
+    Query(query): Query<WorkDirectoryQuery>,
+) -> Result<StatusCode, (StatusCode, Json<ProjectError>)> {
+    let (_project, studio_dir) = resolve_studio_dir(&id)?;
+    let workdir_dir = studio_dir.join("resource");
+    let link_path = ensure_link_points_inside(&workdir_dir, &query.name)
+        .map_err(|err| (StatusCode::BAD_REQUEST, Json(err)))?;
+
+    fs::remove_file(link_path).map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ProjectError {
+                error: format!("Failed to remove symlink: {e}"),
+            }),
+        )
+    })?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// POST /api/v1/projects/{id}/resource/workdir/open
+pub async fn open_resource_workdir(
+    Path(id): Path<String>,
+    Query(query): Query<WorkDirectoryQuery>,
+) -> Result<StatusCode, (StatusCode, Json<ProjectError>)> {
+    let (_project, studio_dir) = resolve_studio_dir(&id)?;
+    let workdir_dir = studio_dir.join("resource");
+    let link_path = ensure_link_points_inside(&workdir_dir, &query.name)
+        .map_err(|err| (StatusCode::BAD_REQUEST, Json(err)))?;
+
+    // Open the symlink path directly — the OS will follow the link.
+    // This avoids a TOCTOU race that would occur if we read_link() and then
+    // passed the raw target string to `open`.
+    #[cfg(target_os = "macos")]
+    let _ = Command::new("open").arg(&link_path).spawn();
+    #[cfg(target_os = "linux")]
+    let _ = Command::new("xdg-open").arg(&link_path).spawn();
+
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// POST /api/v1/projects/{id}/resource/upload
+pub async fn upload_resource(
+    Path(id): Path<String>,
+    mut multipart: axum::extract::Multipart,
+) -> Result<Json<Vec<ResourceFile>>, (StatusCode, Json<ProjectError>)> {
+    let (_project, studio_dir) = resolve_studio_dir(&id)?;
+    let resource_dir = studio_dir.join("resource");
+    std::fs::create_dir_all(&resource_dir).map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ProjectError {
+                error: format!("Failed to create resource directory: {}", e),
+            }),
+        )
+    })?;
+
+    let max_upload_size = studio_common::MAX_UPLOAD_SIZE;
+
+    let mut uploaded = Vec::new();
+    while let Ok(Some(field)) = multipart.next_field().await {
+        let filename = field.file_name().unwrap_or("upload").to_string();
+        let safe_name = filename.replace(['/', '\\'], "_");
+        if safe_name.is_empty() || safe_name.starts_with('.') {
+            continue;
+        }
+        let data = field.bytes().await.map_err(|e| {
+            (
+                StatusCode::BAD_REQUEST,
+                Json(ProjectError {
+                    error: format!("Failed to read upload: {}", e),
+                }),
+            )
+        })?;
+        if data.len() > max_upload_size {
+            return Err((
+                StatusCode::PAYLOAD_TOO_LARGE,
+                Json(ProjectError {
+                    error: format!(
+                        "File '{}' too large ({} bytes, max 100 MB)",
+                        safe_name,
+                        data.len()
+                    ),
+                }),
+            ));
+        }
+        let file_path = resource_dir.join(&safe_name);
+        std::fs::write(&file_path, &data).map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ProjectError {
+                    error: format!("Failed to write file: {}", e),
+                }),
+            )
+        })?;
+        let meta = std::fs::metadata(&file_path).ok();
+        uploaded.push(ResourceFile {
+            name: safe_name.clone(),
+            path: safe_name,
+            size: meta.as_ref().map(|m| m.len()).unwrap_or(data.len() as u64),
+            modified_at: chrono::Utc::now().to_rfc3339(),
+            is_dir: false,
+        });
+    }
+    Ok(Json(uploaded))
+}
+
+/// DELETE /api/v1/projects/{id}/resource
+pub async fn delete_resource(
+    Path(id): Path<String>,
+    Query(query): Query<ResourceDeleteQuery>,
+) -> Result<StatusCode, (StatusCode, Json<ProjectError>)> {
+    let (_project, studio_dir) = resolve_studio_dir(&id)?;
+    let resource_dir = studio_dir.join("resource");
+    let file_path = resource_dir.join(&query.path);
+
+    // Security check
+    let canonical_base = resource_dir.canonicalize().map_err(|_| {
+        (
+            StatusCode::NOT_FOUND,
+            Json(ProjectError {
+                error: "Resource directory not found".to_string(),
+            }),
+        )
+    })?;
+    let canonical_file = file_path.canonicalize().map_err(|_| {
+        (
+            StatusCode::NOT_FOUND,
+            Json(ProjectError {
+                error: "File not found".to_string(),
+            }),
+        )
+    })?;
+    if !canonical_file.starts_with(&canonical_base) {
+        return Err((
+            StatusCode::FORBIDDEN,
+            Json(ProjectError {
+                error: "Access denied".to_string(),
+            }),
+        ));
+    }
+
+    if canonical_file.is_dir() {
+        std::fs::remove_dir_all(&canonical_file)
+    } else {
+        std::fs::remove_file(&canonical_file)
+    }
+    .map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ProjectError {
+                error: format!("Failed to delete: {}", e),
+            }),
+        )
+    })?;
+
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// GET /api/v1/projects/{id}/resource/preview
+pub async fn preview_resource(
+    Path(id): Path<String>,
+    Query(query): Query<ResourceFileQuery>,
+) -> Result<impl IntoResponse, (StatusCode, Json<ProjectError>)> {
+    let (_project, studio_dir) = resolve_studio_dir(&id)?;
+    let resource_dir = studio_dir.join("resource");
+    let canonical_file = resolve_resource_file(&resource_dir, &query.path)?;
+
+    const MAX_PREVIEW_SIZE: u64 = 10 * 1024 * 1024; // 10 MB
+    let file_size = std::fs::metadata(&canonical_file)
+        .map(|m| m.len())
+        .unwrap_or(0);
+    if file_size > MAX_PREVIEW_SIZE {
+        return Err((
+            StatusCode::PAYLOAD_TOO_LARGE,
+            Json(ProjectError {
+                error: format!("File too large to preview ({} bytes, max 10 MB)", file_size),
+            }),
+        ));
+    }
+
+    let content = std::fs::read(&canonical_file).map_err(|_| {
+        (
+            StatusCode::NOT_FOUND,
+            Json(ProjectError {
+                error: "Failed to read file".to_string(),
+            }),
+        )
+    })?;
+
+    let text = studio_common::decode_text_bytes(&content);
+
+    Ok((
+        [(
+            axum::http::header::CONTENT_TYPE,
+            "text/plain; charset=utf-8",
+        )],
+        text,
+    ))
+}
+
+/// GET /api/v1/projects/{id}/resource/download
+pub async fn download_resource(
+    Path(id): Path<String>,
+    Query(query): Query<ResourceFileQuery>,
+) -> Result<impl IntoResponse, (StatusCode, Json<ProjectError>)> {
+    let (_project, studio_dir) = resolve_studio_dir(&id)?;
+    let resource_dir = studio_dir.join("resource");
+    let canonical_file = resolve_resource_file(&resource_dir, &query.path)?;
+
+    let content = std::fs::read(&canonical_file).map_err(|_| {
+        (
+            StatusCode::NOT_FOUND,
+            Json(ProjectError {
+                error: "Failed to read file".to_string(),
+            }),
+        )
+    })?;
+    let filename = studio_common::sanitize_filename_for_header(
+        &canonical_file
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_else(|| "download".to_string()),
+    );
+    let content_type =
+        studio_common::guess_content_type(canonical_file.extension().and_then(|e| e.to_str()));
+
+    Ok((
+        [
+            (axum::http::header::CONTENT_TYPE, content_type.to_string()),
+            (
+                axum::http::header::CONTENT_DISPOSITION,
+                format!("attachment; filename=\"{}\"", filename),
+            ),
+        ],
+        content,
+    ))
+}
+
+fn resolve_resource_file(
+    resource_dir: &::std::path::Path,
+    relative_path: &str,
+) -> Result<PathBuf, (StatusCode, Json<ProjectError>)> {
+    let file_path = resource_dir.join(relative_path);
+    let canonical_base = resource_dir.canonicalize().map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ProjectError {
+                error: format!("Resource directory not accessible: {e}"),
+            }),
+        )
+    })?;
+    let canonical_file = file_path.canonicalize().map_err(|_| {
+        (
+            StatusCode::NOT_FOUND,
+            Json(ProjectError {
+                error: "File not found".to_string(),
+            }),
+        )
+    })?;
+    if !canonical_file.starts_with(&canonical_base) {
+        return Err((
+            StatusCode::FORBIDDEN,
+            Json(ProjectError {
+                error: "Access denied".to_string(),
+            }),
+        ));
+    }
+    Ok(canonical_file)
+}
+
+/// GET /api/v1/projects/{id}/instructions
+pub async fn get_instructions(
+    Path(id): Path<String>,
+) -> Result<Json<InstructionsResponse>, (StatusCode, Json<ProjectError>)> {
+    let (_project, studio_dir) = resolve_studio_dir(&id)?;
+    let path = studio_dir.join("instructions.md");
+    let content = match std::fs::read_to_string(&path) {
+        Ok(s) => s,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
+        Err(e) => {
+            return Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ProjectError {
+                    error: format!("Failed to read instructions: {}", e),
+                }),
+            ))
+        }
+    };
+    Ok(Json(InstructionsResponse { content }))
+}
+
+/// PUT /api/v1/projects/{id}/instructions
+pub async fn update_instructions(
+    Path(id): Path<String>,
+    Json(body): Json<InstructionsUpdateRequest>,
+) -> Result<Json<InstructionsResponse>, (StatusCode, Json<ProjectError>)> {
+    let (_project, studio_dir) = resolve_studio_dir(&id)?;
+    let path = studio_dir.join("instructions.md");
+    std::fs::write(&path, &body.content).map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ProjectError {
+                error: format!("Failed to write instructions: {}", e),
+            }),
+        )
+    })?;
+    Ok(Json(InstructionsResponse {
+        content: body.content,
+    }))
 }
 
 /// GET /api/v1/projects/{id}/stats

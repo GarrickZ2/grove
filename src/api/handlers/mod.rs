@@ -12,6 +12,7 @@ pub mod projects;
 pub mod skills;
 pub mod statistics;
 pub mod stats;
+pub mod studio_common;
 pub mod taskgroups;
 pub mod tasks;
 pub mod terminal;

@@ -1,6 +1,6 @@
-import { Children, isValidElement, useState, useEffect, useRef, useId } from "react";
+import { Children, isValidElement, useState, useEffect, useRef, useId, memo, useMemo } from "react";
 import { Check, Copy } from "lucide-react";
-import ReactMarkdown from "react-markdown";
+import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import mermaid from "mermaid";
 import { VSCodeIcon } from "./VSCodeIcon";
@@ -88,27 +88,51 @@ function getMermaidConfig() {
   };
 }
 
-export function MermaidBlock({ code }: { code: string }): React.JSX.Element {
+// Module-level SVG cache: code → rendered SVG string.
+// Survives component re-mounts so cached diagrams are shown instantly.
+const mermaidSvgCache = new Map<string, string>();
+
+export const MermaidBlock = memo(function MermaidBlock({ code, onPreviewClick }: { code: string; onPreviewClick?: (svg: string) => void }): React.JSX.Element {
   const containerRef = useRef<HTMLDivElement>(null);
   const uniqueId = useId();
   const { theme } = useTheme();
-  const [svg, setSvg] = useState<string | null>(null);
+  const cacheKey = `${theme.id}::${code}`;
+  const [svg, setSvg] = useState<string | null>(() => mermaidSvgCache.get(cacheKey) ?? null);
   const [error, setError] = useState<string | null>(null);
 
+  /* eslint-disable react-hooks/set-state-in-effect */
   useEffect(() => {
-    let cancelled = false;
-    const id = `mermaid-${uniqueId.replace(/:/g, "")}`;
-    mermaid.initialize(getMermaidConfig());
-    mermaid
-      .render(id, code)
-      .then(({ svg: rendered }) => {
-        if (!cancelled) setSvg(rendered);
-      })
-      .catch((err) => {
-        if (!cancelled) setError(err instanceof Error ? err.message : String(err));
-      });
-    return () => { cancelled = true; };
-  }, [code, uniqueId, theme.id, theme.colors.bg, theme.colors.bgSecondary, theme.colors.bgTertiary, theme.colors.border, theme.colors.text, theme.colors.textMuted, theme.colors.highlight]);
+    const cached = mermaidSvgCache.get(cacheKey);
+    if (cached) {
+      setSvg(cached);
+      setError(null);
+      return;
+    }
+
+    // Debounce rendering so rapidly-changing streaming code doesn't fire mermaid on every token.
+    // The old svg (if any) stays visible during the debounce window — no loading flash.
+    const timer = window.setTimeout(() => {
+      let cancelled = false;
+      const id = `mermaid-${uniqueId.replace(/:/g, "")}`;
+      mermaid.initialize(getMermaidConfig());
+      mermaid
+        .render(id, code)
+        .then(({ svg: rendered }) => {
+          if (!cancelled) {
+            mermaidSvgCache.set(cacheKey, rendered);
+            setSvg(rendered);
+            setError(null);
+          }
+        })
+        .catch((err) => {
+          if (!cancelled) setError(err instanceof Error ? err.message : String(err));
+        });
+      return () => { cancelled = true; };
+    }, 300);
+
+    return () => window.clearTimeout(timer);
+  }, [cacheKey, code, uniqueId, theme.id, theme.colors.bg, theme.colors.bgSecondary, theme.colors.bgTertiary, theme.colors.border, theme.colors.text, theme.colors.textMuted, theme.colors.highlight]);
+  /* eslint-enable react-hooks/set-state-in-effect */
 
   if (error) {
     return (
@@ -129,12 +153,18 @@ export function MermaidBlock({ code }: { code: string }): React.JSX.Element {
   return (
     <div
       ref={containerRef}
-      className="rounded-lg border border-[var(--color-border)] bg-[color-mix(in_srgb,var(--color-bg-secondary)_72%,transparent)] p-3 my-2 overflow-x-auto flex justify-center [&_svg]:max-w-full"
+      className={`rounded-lg border border-[var(--color-border)] bg-[color-mix(in_srgb,var(--color-bg-secondary)_72%,transparent)] p-3 my-2 overflow-x-auto flex justify-center [&_svg]:max-w-full ${onPreviewClick ? "cursor-pointer hover:border-[var(--color-highlight)] transition-colors" : ""}`}
       dangerouslySetInnerHTML={{ __html: svg }}
+      onClick={onPreviewClick ? () => {
+        const responsive = svg
+          .replace(/\s*width="[^"]*"/, ' width="100%"')
+          .replace(/\s*height="[^"]*"/, ' height="100%"')
+          .replace(/(<svg[^>]*?)(?=\s*>)/, '$1 style="max-width:90vw;max-height:85vh;width:auto;height:auto;" preserveAspectRatio="xMidYMid meet"');
+        onPreviewClick(responsive);
+      } : undefined}
     />
   );
-}
-MermaidBlock.displayName = 'MermaidBlock';
+});
 
 function CodeBlock({
   code,
@@ -189,6 +219,10 @@ interface MarkdownRendererProps {
   content: string;
   /** When provided, inline code matching file path patterns become clickable */
   onFileClick?: (filePath: string, line?: number) => void;
+  /** When provided, relative image src values are resolved via this function */
+  resolveImageUrl?: (src: string) => string;
+  /** When provided, clicking a rendered mermaid diagram triggers this callback with the SVG */
+  onMermaidClick?: (svg: string) => void;
 }
 
 /** Extract filename from a full file path */
@@ -273,11 +307,8 @@ function parseFileHref(href: string): { filePath: string; line?: number } | null
   };
 }
 
-export function MarkdownRenderer({ content, onFileClick }: MarkdownRendererProps) {
-  return (
-    <ReactMarkdown
-      remarkPlugins={[remarkGfm]}
-      components={{
+export const MarkdownRenderer = memo(function MarkdownRenderer({ content, onFileClick, resolveImageUrl, onMermaidClick }: MarkdownRendererProps) {
+  const components = useMemo((): Components => ({
         h1: ({ children }) => (
           <h1 className="text-lg font-bold text-[var(--color-text)] mt-4 mb-2 first:mt-0">{children}</h1>
         ),
@@ -354,7 +385,7 @@ export function MarkdownRenderer({ content, onFileClick }: MarkdownRendererProps
           const isBlock = className?.startsWith("language-") || text.includes("\n");
           if (isBlock) {
             if (className === "language-mermaid") {
-              return <MermaidBlock code={text} />;
+              return <MermaidBlock code={text} onPreviewClick={onMermaidClick} />;
             }
             const language = className?.replace(/^language-/, "");
             return <CodeBlock code={text.replace(/\n$/, "")} language={language} />;
@@ -382,6 +413,23 @@ export function MarkdownRenderer({ content, onFileClick }: MarkdownRendererProps
         },
         pre: ({ children }) => {
           return <>{children}</>;
+        },
+        img: ({ src, alt }) => {
+          if (!src) return null;
+          const resolved = resolveImageUrl ? resolveImageUrl(src) : src;
+          return (
+            <img
+              src={resolved}
+              alt={alt ?? ""}
+              className="max-w-full rounded-lg my-2 border border-[var(--color-border)]"
+              onError={(e) => {
+                const el = e.currentTarget;
+                el.style.display = 'none';
+                const placeholder = el.nextElementSibling as HTMLElement | null;
+                if (placeholder) placeholder.style.display = 'inline-flex';
+              }}
+            />
+          );
         },
         hr: () => (
           <hr className="border-[var(--color-border)] my-3" />
@@ -416,9 +464,11 @@ export function MarkdownRenderer({ content, onFileClick }: MarkdownRendererProps
           }
           return <input {...props} />;
         },
-      }}
-    >
+  }), [onFileClick, resolveImageUrl, onMermaidClick]);
+
+  return (
+    <ReactMarkdown remarkPlugins={[remarkGfm]} components={components}>
       {content}
     </ReactMarkdown>
   );
-}
+});

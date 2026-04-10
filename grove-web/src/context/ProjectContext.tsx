@@ -19,7 +19,7 @@ interface ProjectContextType {
   currentProjectId: string | null;
   selectProject: (project: Project | null) => void;
   addProject: (path: string, name?: string) => Promise<Project>;
-  createNewProject: (parentDir: string, name: string, initGit: boolean) => Promise<Project>;
+  createNewProject: (parentDir: string, name: string, initGit: boolean, projectType?: string) => Promise<Project>;
   deleteProject: (id: string) => Promise<void>;
   refreshProjects: () => Promise<void>;
   refreshSelectedProject: () => Promise<void>;
@@ -35,6 +35,12 @@ interface ProjectContextType {
 }
 
 const ProjectContext = createContext<ProjectContextType | undefined>(undefined);
+
+/** Normalize API project_type to the frontend union type. */
+function normalizeProjectType(apiType: string | undefined): 'repo' | 'studio' {
+  if (apiType === 'studio') return 'studio';
+  return 'repo'; // default for undefined, 'repo', and any future types
+}
 
 // Convert API TaskResponse to frontend Task type
 function convertTask(task: TaskResponse): Task {
@@ -73,6 +79,7 @@ function convertProject(project: ProjectResponse): Project {
     addedAt: new Date(project.added_at),
     isGitRepo: project.is_git_repo,
     exists: project.exists,
+    projectType: normalizeProjectType(project.project_type),
   };
 }
 
@@ -89,6 +96,7 @@ function convertProjectListItem(item: ProjectListItem): Project {
     taskCount: item.task_count,
     isGitRepo: item.is_git_repo,
     exists: item.exists,
+    projectType: normalizeProjectType(item.project_type),
   };
 }
 
@@ -218,8 +226,8 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
   );
 
   const createNewProject = useCallback(
-    async (parentDir: string, name: string, initGit: boolean): Promise<Project> => {
-      const response = await apiCreateNewProject(parentDir, name, initGit);
+    async (parentDir: string, name: string, initGit: boolean, projectType?: string): Promise<Project> => {
+      const response = await apiCreateNewProject(parentDir, name, initGit, projectType);
       const newProject = convertProject(response);
       await loadProjects();
       return newProject;

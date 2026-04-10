@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import Editor from "@monaco-editor/react";
-import { X, FileCode, Loader2, Save, Maximize2, Minimize2, PanelLeftOpen, PanelLeftClose } from "lucide-react";
+import { X, FileCode, Loader2, Save, Maximize2, Minimize2, PanelLeftOpen, PanelLeftClose, RefreshCw } from "lucide-react";
 import { Button } from "../../ui";
 import { FileTree } from "./FileTree";
 import { buildFileTree } from "../../../utils/fileTree";
@@ -85,6 +85,7 @@ export function TaskEditor({ projectId, taskId, onClose, fullscreen = false, onT
   const [fileContent, setFileContent] = useState<string>('');
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
   const [modified, setModified] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const editorContentRef = useRef<string>('');
@@ -180,7 +181,7 @@ export function TaskEditor({ projectId, taskId, onClose, fullscreen = false, onT
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [handleSave]);
 
-  // Reload file list
+  // Internal: used by create/delete handlers
   const reloadFiles = useCallback(async () => {
     try {
       const res = await getTaskFiles(projectId, taskId);
@@ -189,6 +190,27 @@ export function TaskEditor({ projectId, taskId, onClose, fullscreen = false, onT
       console.error('Failed to reload files:', err);
     }
   }, [projectId, taskId]);
+
+  // Refresh button: reloads file tree + current file content
+  const handleRefresh = useCallback(async () => {
+    setRefreshing(true);
+    try {
+      const res = await getTaskFiles(projectId, taskId);
+      setFiles(res.files);
+
+      if (selectedFile) {
+        const fileRes = await getFileContent(projectId, taskId, selectedFile);
+        setFileContent(fileRes.content);
+        editorContentRef.current = fileRes.content;
+        setModified(false);
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setError(msg);
+    } finally {
+      setRefreshing(false);
+    }
+  }, [projectId, taskId, selectedFile]);
 
   // Context menu handler
   const handleContextMenu = useCallback((e: React.MouseEvent, path: string, isDir: boolean) => {
@@ -205,10 +227,7 @@ export function TaskEditor({ projectId, taskId, onClose, fullscreen = false, onT
 
   // Copy path handler
   const handleCopyPath = useCallback((path: string) => {
-    navigator.clipboard.writeText(path).then(() => {
-      // Could show a toast notification here
-      console.log('Path copied:', path);
-    }).catch((err) => {
+    navigator.clipboard.writeText(path).catch((err) => {
       console.error('Failed to copy path:', err);
     });
   }, []);
@@ -369,7 +388,7 @@ export function TaskEditor({ projectId, taskId, onClose, fullscreen = false, onT
         {/* Collapsed sidebar strip — shown when file tree is hidden */}
         {!fileTreeVisible && (
           <div
-            className="flex-shrink-0 flex flex-col items-center pt-2 bg-[var(--color-bg)] border-r border-[var(--color-border)]"
+            className="flex-shrink-0 flex flex-col items-center pt-2 gap-1 bg-[var(--color-bg)] border-r border-[var(--color-border)]"
             style={{ width: 36 }}
           >
             <button
@@ -378,6 +397,14 @@ export function TaskEditor({ projectId, taskId, onClose, fullscreen = false, onT
               title="Show file tree"
             >
               <PanelLeftOpen className="w-4 h-4" />
+            </button>
+            <button
+              onClick={handleRefresh}
+              disabled={refreshing}
+              className="flex items-center justify-center w-7 h-7 rounded-md text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-bg-tertiary)] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              title="Refresh files"
+            >
+              <RefreshCw className={`w-4 h-4 ${refreshing ? 'animate-spin' : ''}`} />
             </button>
           </div>
         )}
@@ -401,13 +428,23 @@ export function TaskEditor({ projectId, taskId, onClose, fullscreen = false, onT
             {/* Collapse button inside sidebar header */}
             <div className="flex items-center justify-between px-2 py-1.5 border-b border-[var(--color-border)]">
               <span className="text-xs font-medium text-[var(--color-text-muted)] uppercase tracking-wider pl-1">Files</span>
-              <button
-                onClick={() => setFileTreeVisible(false)}
-                className="flex items-center justify-center w-6 h-6 rounded text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-bg-tertiary)] transition-colors"
-                title="Hide file tree"
-              >
-                <PanelLeftClose className="w-3.5 h-3.5" />
-              </button>
+              <div className="flex items-center gap-0.5">
+                <button
+                  onClick={handleRefresh}
+                  disabled={refreshing}
+                  className="flex items-center justify-center w-6 h-6 rounded text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-bg-tertiary)] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                  title="Refresh files"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${refreshing ? 'animate-spin' : ''}`} />
+                </button>
+                <button
+                  onClick={() => setFileTreeVisible(false)}
+                  className="flex items-center justify-center w-6 h-6 rounded text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-bg-tertiary)] transition-colors"
+                  title="Hide file tree"
+                >
+                  <PanelLeftClose className="w-3.5 h-3.5" />
+                </button>
+              </div>
             </div>
             <FileTree
               nodes={fileTree}

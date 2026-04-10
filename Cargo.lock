@@ -1776,6 +1776,7 @@ dependencies = [
  "clap",
  "crossterm",
  "dirs 5.0.1",
+ "encoding_rs",
  "futures",
  "getrandom 0.2.17",
  "glob",

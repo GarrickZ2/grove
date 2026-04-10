@@ -72,6 +72,7 @@ export interface UseCommandsOptions {
     onSwitchInfoTab: (tab: "stats" | "git" | "notes" | "comments") => void;
     onRefresh: () => void;
     onNewTask?: () => void;
+    isStudio?: boolean;
   };
   // Palette launchers (optional)
   palettes?: {
@@ -87,6 +88,7 @@ export interface UseCommandsOptions {
 
 export function buildCommands(options: UseCommandsOptions): Command[] {
   const { navigation, project, mode, palettes, taskActions, projectActions } = options;
+  const isStudio = project?.selectedProject?.projectType === "studio";
 
     const commands: Command[] = [];
 
@@ -95,8 +97,19 @@ export function buildCommands(options: UseCommandsOptions): Command[] {
       const { onNavigate } = navigation;
       commands.push(
         withRanking({ id: "nav-dashboard", name: "Go to Dashboard", category: "Navigation", icon: LayoutGrid, handler: () => onNavigate("dashboard"), keywords: ["home"] }, { contexts: { default: 28, tasks: 4, workspace: -8 } }),
-        withRanking({ id: "nav-work", name: "Go to Work", category: "Navigation", icon: Laptop, handler: () => onNavigate("work"), keywords: ["local", "workspace", "main"] }, { contexts: { default: 52, tasks: 12, workspace: 4 } }),
-        withRanking({ id: "nav-tasks", name: "Go to Tasks", category: "Navigation", icon: ListTodo, handler: () => onNavigate("tasks"), keywords: ["zen"] }, { contexts: { default: 48, tasks: 8, workspace: 0 } }),
+      );
+      if (isStudio) {
+        commands.push(
+          withRanking({ id: "nav-tasks", name: "Go to Tasks", category: "Navigation", icon: ListTodo, handler: () => onNavigate("tasks"), keywords: ["task", "session"] }, { contexts: { default: 48, tasks: 8, workspace: 0 } }),
+          withRanking({ id: "nav-resource", name: "Go to Resource", category: "Navigation", icon: FolderOpen, handler: () => onNavigate("resource"), keywords: ["resources", "files", "library", "tab"] }, { contexts: { default: 46, tasks: 6, workspace: 2 } }),
+        );
+      } else {
+        commands.push(
+          withRanking({ id: "nav-work", name: "Go to Work", category: "Navigation", icon: Laptop, handler: () => onNavigate("work"), keywords: ["local", "workspace", "main"] }, { contexts: { default: 52, tasks: 12, workspace: 4 } }),
+          withRanking({ id: "nav-tasks", name: "Go to Tasks", category: "Navigation", icon: ListTodo, handler: () => onNavigate("tasks"), keywords: ["zen"] }, { contexts: { default: 48, tasks: 8, workspace: 0 } }),
+        );
+      }
+      commands.push(
         withRanking({ id: "nav-skills", name: "Go to Skills", category: "Navigation", icon: Blocks, handler: () => onNavigate("skills"), keywords: ["agent", "plugin"] }, { contexts: { default: 12, tasks: -8, workspace: -12 } }),
         withRanking({ id: "nav-ai", name: "Go to AI", category: "Navigation", icon: Sparkles, handler: () => onNavigate("ai"), keywords: ["audio", "voice", "provider"] }, { contexts: { default: 14, tasks: -4, workspace: -8 } }),
         withRanking({ id: "nav-statistics", name: "Go to Statistics", category: "Navigation", icon: BarChart2, handler: () => onNavigate("statistics"), keywords: ["stats", "analytics"] }, { contexts: { default: 10, tasks: -6, workspace: -10 } }),
@@ -182,7 +195,7 @@ export function buildCommands(options: UseCommandsOptions): Command[] {
 
     // --- Task Actions (only when task context available) ---
     if (taskActions) {
-      const { selectedTask, inWorkspace, opsHandlers, onEnterWorkspace, onOpenPanel, onSwitchInfoTab, onRefresh, onNewTask } = taskActions;
+      const { selectedTask, inWorkspace, opsHandlers, onEnterWorkspace, onOpenPanel, onSwitchInfoTab, onRefresh, onNewTask, isStudio: studioMode } = taskActions;
       const isActive = selectedTask && selectedTask.status !== "archived";
       const canOperate = isActive && selectedTask.status !== "broken";
 
@@ -210,7 +223,7 @@ export function buildCommands(options: UseCommandsOptions): Command[] {
         }, { contexts: { default: 6, tasks: 38, workspace: 0 } }));
       }
 
-      if (isActive) {
+      if (isActive && !studioMode) {
         commands.push(withRanking({
           id: "task-commit",
           name: "Commit",
@@ -222,7 +235,7 @@ export function buildCommands(options: UseCommandsOptions): Command[] {
         }, { contexts: { default: 0, tasks: 18, workspace: 34 } }));
       }
 
-      if (canOperate) {
+      if (canOperate && !studioMode) {
         commands.push(
           withRanking({
             id: "task-sync",
@@ -266,7 +279,7 @@ export function buildCommands(options: UseCommandsOptions): Command[] {
         }, { contexts: { default: -4, tasks: 8, workspace: 14 } }));
       }
 
-      if (canOperate) {
+      if (canOperate && !studioMode) {
         commands.push(withRanking({
           id: "task-reset",
           name: "Reset",
@@ -311,15 +324,6 @@ export function buildCommands(options: UseCommandsOptions): Command[] {
             keywords: ["tmux", "shell", "panel"],
           }, { contexts: { default: 0, tasks: 12, workspace: 38 } }),
           withRanking({
-            id: "panel-review",
-            name: "Open Review",
-            category: "Action Panel",
-            icon: FileSearch,
-            shortcut: "d",
-            handler: () => onOpenPanel("review"),
-            keywords: ["diff", "code review"],
-          }, { contexts: { default: 0, tasks: 8, workspace: 30 } }),
-          withRanking({
             id: "panel-editor",
             name: "Open Editor",
             category: "Action Panel",
@@ -329,6 +333,32 @@ export function buildCommands(options: UseCommandsOptions): Command[] {
             keywords: ["file", "edit", "code"],
           }, { contexts: { default: 0, tasks: 8, workspace: 34 } }),
         );
+        if (!studioMode) {
+          commands.push(
+            withRanking({
+              id: "panel-review",
+              name: "Open Review",
+              category: "Action Panel",
+              icon: FileSearch,
+              shortcut: "d",
+              handler: () => onOpenPanel("review"),
+              keywords: ["diff", "code review"],
+            }, { contexts: { default: 0, tasks: 8, workspace: 30 } }),
+          );
+        }
+        if (studioMode) {
+          commands.push(
+            withRanking({
+              id: "panel-artifacts",
+              name: "Open Artifacts",
+              category: "Action Panel",
+              icon: FolderOpen,
+              shortcut: "f",
+              handler: () => onOpenPanel("artifacts"),
+              keywords: ["input", "output", "upload", "files"],
+            }, { contexts: { default: 0, tasks: 10, workspace: 34 } }),
+          );
+        }
       }
 
       // Info Panel Tabs — in workspace: open as panel; outside: switch info tab
@@ -346,34 +376,44 @@ export function buildCommands(options: UseCommandsOptions): Command[] {
             handler: infoHandler("stats"),
             keywords: ["statistics", "info", "overview"],
           }, { contexts: { default: 0, tasks: 8, workspace: 22 } }),
-          withRanking({
-            id: "tab-git",
-            name: inWorkspace ? "Open Git Panel" : "Show Git Tab",
-            category: "Info Panel",
-            icon: GitFork,
-            shortcut: "2",
-            handler: infoHandler("git"),
-            keywords: ["branch", "commit", "history"],
-          }, { contexts: { default: 0, tasks: 8, workspace: 22 } }),
+        );
+        if (!studioMode) {
+          commands.push(
+            withRanking({
+              id: "tab-git",
+              name: inWorkspace ? "Open Git Panel" : "Show Git Tab",
+              category: "Info Panel",
+              icon: GitFork,
+              shortcut: "2",
+              handler: infoHandler("git"),
+              keywords: ["branch", "commit", "history"],
+            }, { contexts: { default: 0, tasks: 8, workspace: 22 } }),
+          );
+        }
+        commands.push(
           withRanking({
             id: "tab-notes",
             name: inWorkspace ? "Open Notes Panel" : "Show Notes Tab",
             category: "Info Panel",
             icon: StickyNote,
-            shortcut: "3",
+            shortcut: studioMode ? "2" : "3",
             handler: infoHandler("notes"),
             keywords: ["note", "memo", "description"],
           }, { contexts: { default: 0, tasks: 6, workspace: 18 } }),
-          withRanking({
-            id: "tab-comments",
-            name: inWorkspace ? "Open Comments Panel" : "Show Comments Tab",
-            category: "Info Panel",
-            icon: MessageCircle,
-            shortcut: "4",
-            handler: infoHandler("comments"),
-            keywords: ["comment", "discussion", "feedback"],
-          }, { contexts: { default: 0, tasks: 6, workspace: 18 } }),
         );
+        if (!studioMode) {
+          commands.push(
+            withRanking({
+              id: "tab-comments",
+              name: inWorkspace ? "Open Comments Panel" : "Show Comments Tab",
+              category: "Info Panel",
+              icon: MessageCircle,
+              shortcut: "4",
+              handler: infoHandler("comments"),
+              keywords: ["comment", "discussion", "feedback"],
+            }, { contexts: { default: 0, tasks: 6, workspace: 18 } }),
+          );
+        }
       }
 
       // Refresh

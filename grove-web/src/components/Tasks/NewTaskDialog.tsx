@@ -16,6 +16,7 @@ interface NewTaskDialogProps {
 
 export function NewTaskDialog({ isOpen, onClose, onCreate, isLoading, externalError }: NewTaskDialogProps) {
   const { selectedProject } = useProject();
+  const isStudio = selectedProject?.projectType === "studio";
   const [taskName, setTaskName] = useState("");
   const [targetBranch, setTargetBranch] = useState(selectedProject?.currentBranch || "main");
   const [notes, setNotes] = useState("");
@@ -25,12 +26,12 @@ export function NewTaskDialog({ isOpen, onClose, onCreate, isLoading, externalEr
   const [isLoadingBranches, setIsLoadingBranches] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
 
-  // Load branches and reset target when dialog opens
+  // Load branches and reset target when dialog opens (skip for Studio)
   useEffect(() => {
-    if (isOpen && selectedProject) {
+    if (isOpen && selectedProject && !isStudio) {
       // eslint-disable-next-line react-hooks/set-state-in-effect
       setTargetBranch(selectedProject.currentBranch || "main");
-       
+
       setIsLoadingBranches(true);
       getBranches(selectedProject.id, "local")
         .then((res) => {
@@ -43,7 +44,7 @@ export function NewTaskDialog({ isOpen, onClose, onCreate, isLoading, externalEr
           setIsLoadingBranches(false);
         });
     }
-  }, [isOpen, selectedProject]);
+  }, [isOpen, selectedProject, isStudio]);
 
   // Click outside to close dropdown
   const handleClickOutside = useCallback((e: MouseEvent) => {
@@ -60,7 +61,7 @@ export function NewTaskDialog({ isOpen, onClose, onCreate, isLoading, externalEr
   }, [showBranchDropdown, handleClickOutside]);
 
   const handleSubmit = async () => {
-    if (!hasValidBranch) return;
+    if (!isStudio && !hasValidBranch) return;
 
     // Validate task name
     if (!taskName.trim()) {
@@ -69,7 +70,7 @@ export function NewTaskDialog({ isOpen, onClose, onCreate, isLoading, externalEr
     }
 
     setError("");
-    await onCreate(taskName.trim(), targetBranch, notes.trim());
+    await onCreate(taskName.trim(), isStudio ? "" : targetBranch, notes.trim());
   };
 
   const handleClose = () => {
@@ -101,8 +102,8 @@ export function NewTaskDialog({ isOpen, onClose, onCreate, isLoading, externalEr
     return () => window.removeEventListener("keydown", handler);
   });
 
-  // Detect empty repo (no commits → currentBranch is "unknown")
-  const hasValidBranch = !!selectedProject?.currentBranch && selectedProject.currentBranch !== "unknown";
+  // Detect empty repo (no commits → currentBranch is "unknown") — Studio always valid
+  const hasValidBranch = isStudio || (!!selectedProject?.currentBranch && selectedProject.currentBranch !== "unknown");
 
   // Generate branch preview
   const branchPreview = previewBranchName(taskName);
@@ -163,76 +164,84 @@ export function NewTaskDialog({ isOpen, onClose, onCreate, isLoading, externalEr
                   />
                 </div>
 
-                {/* Target Branch (selectable) */}
-                <div className="relative" ref={dropdownRef}>
-                  <label className="block text-sm font-medium text-[var(--color-text-muted)] mb-2">
-                    Target Branch
-                  </label>
-                  {hasValidBranch ? (
-                    <>
-                      <button
-                        type="button"
-                        onClick={() => setShowBranchDropdown(!showBranchDropdown)}
-                        className="w-full flex items-center justify-between gap-2 px-3 py-2 bg-[var(--color-bg)] border border-[var(--color-border)] rounded-lg
-                          hover:border-[var(--color-highlight)] transition-colors text-left"
-                      >
-                        <div className="flex items-center gap-2">
-                          <GitBranch className="w-4 h-4 text-[var(--color-text-muted)]" />
-                          <span className="text-sm text-[var(--color-text)]">{targetBranch}</span>
-                        </div>
-                        {isLoadingBranches ? (
-                          <Loader2 className="w-4 h-4 text-[var(--color-text-muted)] animate-spin" />
-                        ) : (
-                          <ChevronDown className={`w-4 h-4 text-[var(--color-text-muted)] transition-transform ${showBranchDropdown ? "rotate-180" : ""}`} />
-                        )}
-                      </button>
-                      {showBranchDropdown && (
-                        <div className="absolute z-10 mt-1 w-full max-h-48 overflow-y-auto bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-lg shadow-lg">
+                {/* Target Branch (selectable) — hidden for Studio */}
+                {!isStudio && (
+                  <div className="relative" ref={dropdownRef}>
+                    <label className="block text-sm font-medium text-[var(--color-text-muted)] mb-2">
+                      Target Branch
+                    </label>
+                    {hasValidBranch ? (
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => setShowBranchDropdown(!showBranchDropdown)}
+                          className="w-full flex items-center justify-between gap-2 px-3 py-2 bg-[var(--color-bg)] border border-[var(--color-border)] rounded-lg
+                            hover:border-[var(--color-highlight)] transition-colors text-left"
+                        >
+                          <div className="flex items-center gap-2">
+                            <GitBranch className="w-4 h-4 text-[var(--color-text-muted)]" />
+                            <span className="text-sm text-[var(--color-text)]">{targetBranch}</span>
+                          </div>
                           {isLoadingBranches ? (
-                            <div className="flex items-center justify-center gap-2 px-3 py-3 text-sm text-[var(--color-text-muted)]">
-                              <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                              <span>Loading branches...</span>
-                            </div>
-                          ) : branches.length > 0 ? (
-                            branches.map((branch) => (
-                              <button
-                                key={branch}
-                                type="button"
-                                onClick={() => {
-                                  setTargetBranch(branch);
-                                  setShowBranchDropdown(false);
-                                }}
-                                className={`w-full flex items-center gap-2 px-3 py-2 text-sm text-left hover:bg-[var(--color-bg-tertiary)] transition-colors
-                                  ${branch === targetBranch ? "text-[var(--color-highlight)] bg-[var(--color-highlight)]/5" : "text-[var(--color-text)]"}`}
-                              >
-                                <GitBranch className="w-3.5 h-3.5 flex-shrink-0" />
-                                <span className="truncate">{branch}</span>
-                                {branch === selectedProject?.currentBranch && (
-                                  <span className="ml-auto text-xs text-[var(--color-text-muted)] flex-shrink-0">current</span>
-                                )}
-                              </button>
-                            ))
+                            <Loader2 className="w-4 h-4 text-[var(--color-text-muted)] animate-spin" />
                           ) : (
-                            <div className="px-3 py-2 text-sm text-[var(--color-text-muted)]">
-                              No branches found
-                            </div>
+                            <ChevronDown className={`w-4 h-4 text-[var(--color-text-muted)] transition-transform ${showBranchDropdown ? "rotate-180" : ""}`} />
                           )}
-                        </div>
-                      )}
-                      <p className="text-xs text-[var(--color-text-muted)] mt-1.5">
-                        New branch will be created from this branch
-                      </p>
-                    </>
-                  ) : (
-                    <div className="flex items-center gap-2 px-3 py-2 bg-red-500/5 border border-red-500/30 rounded-lg">
-                      <GitBranch className="w-4 h-4 text-red-400" />
-                      <span className="text-sm text-red-400">No valid branch found</span>
-                    </div>
-                  )}
-                </div>
+                        </button>
+                        {showBranchDropdown && (
+                          <div className="absolute z-10 mt-1 w-full max-h-48 overflow-y-auto bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-lg shadow-lg">
+                            {isLoadingBranches ? (
+                              <div className="flex items-center justify-center gap-2 px-3 py-3 text-sm text-[var(--color-text-muted)]">
+                                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                <span>Loading branches...</span>
+                              </div>
+                            ) : branches.length > 0 ? (
+                              branches.map((branch) => (
+                                <button
+                                  key={branch}
+                                  type="button"
+                                  onClick={() => {
+                                    setTargetBranch(branch);
+                                    setShowBranchDropdown(false);
+                                  }}
+                                  className={`w-full flex items-center gap-2 px-3 py-2 text-sm text-left hover:bg-[var(--color-bg-tertiary)] transition-colors
+                                    ${branch === targetBranch ? "text-[var(--color-highlight)] bg-[var(--color-highlight)]/5" : "text-[var(--color-text)]"}`}
+                                >
+                                  <GitBranch className="w-3.5 h-3.5 flex-shrink-0" />
+                                  <span className="truncate">{branch}</span>
+                                  {branch === selectedProject?.currentBranch && (
+                                    <span className="ml-auto text-xs text-[var(--color-text-muted)] flex-shrink-0">current</span>
+                                  )}
+                                </button>
+                              ))
+                            ) : (
+                              <div className="px-3 py-2 text-sm text-[var(--color-text-muted)]">
+                                No branches found
+                              </div>
+                            )}
+                          </div>
+                        )}
+                        <p className="text-xs text-[var(--color-text-muted)] mt-1.5">
+                          New branch will be created from this branch
+                        </p>
+                      </>
+                    ) : (
+                      <div className="flex items-center gap-2 px-3 py-2 bg-red-500/5 border border-red-500/30 rounded-lg">
+                        <GitBranch className="w-4 h-4 text-red-400" />
+                        <span className="text-sm text-red-400">No valid branch found</span>
+                      </div>
+                    )}
+                  </div>
+                )}
 
                 {/* Info */}
-                {hasValidBranch ? (
+                {isStudio ? (
+                  <div className="p-3 rounded-lg bg-[var(--color-bg-secondary)] border border-[var(--color-border)]">
+                    <p className="text-xs text-[var(--color-text-muted)]">
+                      A new task workspace will be created with input, output, and scripts folders.
+                    </p>
+                  </div>
+                ) : hasValidBranch ? (
                   <div className="p-3 rounded-lg bg-[var(--color-bg-secondary)] border border-[var(--color-border)]">
                     <p className="text-xs text-[var(--color-text-muted)]">
                       A new worktree will be created with branch{" "}
@@ -263,7 +272,7 @@ export function NewTaskDialog({ isOpen, onClose, onCreate, isLoading, externalEr
                   <Button variant="secondary" onClick={handleClose} disabled={isLoading}>
                     Cancel
                   </Button>
-                  <Button onClick={handleSubmit} disabled={isLoading || !hasValidBranch}>
+                  <Button onClick={handleSubmit} disabled={isLoading || (!isStudio && !hasValidBranch)}>
                     <Plus className="w-4 h-4 mr-1.5" />
                     {isLoading ? "Creating..." : "Create Task"}
                   </Button>

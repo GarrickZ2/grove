@@ -1,6 +1,7 @@
 // Projects API client
 
 import { apiClient } from './client';
+import type { StudioFileEntry, StudioWorkDirEntry } from './studio-types';
 import type { TaskResponse } from './tasks';
 
 // ============================================================================
@@ -17,6 +18,8 @@ export interface ProjectListItem {
   is_git_repo: boolean;
   /** Whether the filesystem path still exists. false = "missing" state. */
   exists: boolean;
+  /** Project type: "repo" or "studio" */
+  project_type: string;
 }
 
 interface ProjectListResponse {
@@ -38,6 +41,8 @@ export interface ProjectResponse {
   is_git_repo: boolean;
   /** Whether the filesystem path still exists. false = "missing" state. */
   exists: boolean;
+  /** Project type: "repo" or "studio" */
+  project_type: string;
 }
 
 interface AddProjectRequest {
@@ -49,6 +54,7 @@ interface NewProjectRequest {
   parent_dir: string;
   name: string;
   init_git: boolean;
+  project_type?: string;
 }
 
 export interface ProjectStatsResponse {
@@ -106,11 +112,13 @@ export async function createNewProject(
   parentDir: string,
   name: string,
   initGit: boolean,
+  projectType?: string,
 ): Promise<ProjectResponse> {
   return apiClient.post<NewProjectRequest, ProjectResponse>('/api/v1/projects/new', {
     parent_dir: parentDir,
     name,
     init_git: initGit,
+    project_type: projectType,
   });
 }
 
@@ -173,4 +181,57 @@ export async function openTerminal(id: string): Promise<OpenResponse> {
  */
 export async function initGitRepo(id: string): Promise<ProjectResponse> {
   return apiClient.post<undefined, ProjectResponse>(`/api/v1/projects/${id}/init-git`);
+}
+
+// ============================================================================
+// Studio Resource API
+// ============================================================================
+
+export type ResourceFile = StudioFileEntry;
+export type WorkDirectoryEntry = StudioWorkDirEntry;
+
+export async function listResources(id: string): Promise<{ files: ResourceFile[] }> {
+  return apiClient.get<{ files: ResourceFile[] }>(`/api/v1/projects/${id}/resource`);
+}
+
+export async function uploadResource(id: string, files: File[]): Promise<ResourceFile[]> {
+  const formData = new FormData();
+  for (const file of files) formData.append('file', file);
+  return apiClient.postFormData<ResourceFile[]>(`/api/v1/projects/${id}/resource/upload`, formData);
+}
+
+export async function deleteResource(id: string, path: string): Promise<void> {
+  return apiClient.delete(`/api/v1/projects/${id}/resource?path=${encodeURIComponent(path)}`);
+}
+
+export async function listResourceWorkdirs(id: string): Promise<{ entries: WorkDirectoryEntry[] }> {
+  return apiClient.get<{ entries: WorkDirectoryEntry[] }>(`/api/v1/projects/${id}/resource/workdir`);
+}
+
+export async function addResourceWorkdir(id: string, path: string): Promise<WorkDirectoryEntry> {
+  return apiClient.post<{ path: string }, WorkDirectoryEntry>(`/api/v1/projects/${id}/resource/workdir`, { path });
+}
+
+export async function deleteResourceWorkdir(id: string, name: string): Promise<void> {
+  return apiClient.delete(`/api/v1/projects/${id}/resource/workdir?name=${encodeURIComponent(name)}`);
+}
+
+export async function openResourceWorkdir(id: string, name: string): Promise<void> {
+  await apiClient.postNoContent(`/api/v1/projects/${id}/resource/workdir/open?name=${encodeURIComponent(name)}`);
+}
+
+export async function previewResource(id: string, path: string): Promise<string> {
+  return apiClient.getText(`/api/v1/projects/${id}/resource/preview?path=${encodeURIComponent(path)}`);
+}
+
+export function resourceDownloadUrl(id: string, path: string): string {
+  return `/api/v1/projects/${id}/resource/download?path=${encodeURIComponent(path)}`;
+}
+
+export async function getInstructions(id: string): Promise<{ content: string }> {
+  return apiClient.get<{ content: string }>(`/api/v1/projects/${id}/instructions`);
+}
+
+export async function updateInstructions(id: string, content: string): Promise<{ content: string }> {
+  return apiClient.put<{ content: string }, { content: string }>(`/api/v1/projects/${id}/instructions`, { content });
 }

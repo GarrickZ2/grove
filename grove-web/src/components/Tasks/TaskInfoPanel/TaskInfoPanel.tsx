@@ -24,6 +24,7 @@ import type { Task } from "../../../data/types";
 import { StatsTab, GitTab, NotesTab, CommentsTab } from "./tabs";
 
 import { useIsMobile } from "../../../hooks";
+import { useProject } from "../../../context";
 import type { PanelType } from "../PanelSystem/types";
 
 interface TaskInfoPanelProps {
@@ -58,11 +59,16 @@ interface TabConfig {
   icon: typeof BarChart3;
 }
 
-const TABS: TabConfig[] = [
+const REPO_TABS: TabConfig[] = [
   { id: "stats", label: "Stats", icon: BarChart3 },
   { id: "git", label: "Git", icon: GitBranch },
   { id: "notes", label: "Notes", icon: FileText },
   { id: "comments", label: "Comments", icon: MessageSquare },
+];
+
+const STUDIO_TABS: TabConfig[] = [
+  { id: "stats", label: "Stats", icon: BarChart3 },
+  { id: "notes", label: "Notes", icon: FileText },
 ];
 
 export function TaskInfoPanel({
@@ -86,6 +92,9 @@ export function TaskInfoPanel({
 }: TaskInfoPanelProps) {
 
   const { isMobile } = useIsMobile();
+  const { selectedProject } = useProject();
+  const isStudio = selectedProject?.projectType === "studio";
+  const TABS = isStudio ? STUDIO_TABS : REPO_TABS;
   const isArchived = task.status === "archived";
   const isBroken = task.status === "broken";
   const canOperate = !isArchived && !isBroken;
@@ -464,9 +473,11 @@ export function TaskInfoPanel({
             <span className="flex-shrink-0 px-1.5 py-0.5 text-[10px] font-medium text-[var(--color-text-muted)] bg-[var(--color-bg-tertiary)] rounded">{projectName}</span>
           )}
         </div>
-        <p className="text-xs text-[var(--color-text-muted)] font-mono truncate">
-          {task.isLocal ? task.branch : <>{task.branch} → {task.target}</>}
-        </p>
+        {task.branch && (
+          <p className="text-xs text-[var(--color-text-muted)] font-mono truncate">
+            {task.isLocal ? task.branch : <>{task.branch} → {task.target}</>}
+          </p>
+        )}
       </div>
 
       {/* Tab Navigation */}

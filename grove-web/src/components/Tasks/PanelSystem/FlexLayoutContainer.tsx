@@ -5,7 +5,7 @@ import type { IJsonModel, ITabRenderValues, ITabSetRenderValues, IJsonRowNode, I
 import {
   Terminal, MessageSquare, Code, FileCode, BarChart3, GitBranch, FileText,
   MessageCircle, X, XCircle, Trash2,
-  Plus, Maximize, Minimize2,
+  Plus, Maximize, Minimize2, FolderOpen,
 } from 'lucide-react';
 import 'flexlayout-react/style/light.css';
 import './flexlayout-theme.css';
@@ -16,9 +16,10 @@ import { TaskTerminal } from '../TaskView/TaskTerminal';
 import { TaskChat } from '../TaskView/TaskChat';
 import { TaskCodeReview } from '../TaskView/TaskCodeReview';
 import { TaskEditor } from '../TaskView/TaskEditor';
-import { StatsTab, GitTab, NotesTab, CommentsTab } from '../TaskInfoPanel/tabs';
+import { StatsTab, GitTab, NotesTab, CommentsTab, ArtifactsTab } from '../TaskInfoPanel/tabs';
+import type { ArtifactPreviewRequest } from '../TaskInfoPanel/tabs';
 import { ContextMenu, type ContextMenuItem } from '../../ui/ContextMenu';
-import { useConfig } from '../../../context';
+import { useConfig, useProject } from '../../../context';
 
 // --- TabBar Dropdown Menu ---
 interface DropdownItem {
@@ -204,6 +205,8 @@ export const FlexLayoutContainer = forwardRef<
   FlexLayoutContainerProps
 >(({ task, projectId, initialLayout, onLayoutChange, fullscreen = false, onToggleFullscreen }, ref) => {
   const { terminalAvailable, chatAvailable } = useConfig();
+  const { selectedProject } = useProject();
+  const isStudio = selectedProject?.projectType === 'studio';
 
   // Panel instance counters
   const instanceCounters = useRef<Record<PanelType, number>>({
@@ -215,6 +218,7 @@ export const FlexLayoutContainer = forwardRef<
     git: 0,
     notes: 0,
     comments: 0,
+    artifacts: 0,
   });
 
   // Get panel label
@@ -228,6 +232,7 @@ export const FlexLayoutContainer = forwardRef<
       git: 'Git',
       notes: 'Notes',
       comments: 'Comments',
+      artifacts: 'Artifacts',
     };
     return labels[type];
   }, []);
@@ -458,22 +463,31 @@ export const FlexLayoutContainer = forwardRef<
   // --- File navigation for Review panel ---
   const navSeqRef = useRef(0);
   const [fileNavRequest, setFileNavRequest] = useState<FileNavRequest | null>(null);
+  const [artifactPreviewRequest, setArtifactPreviewRequest] = useState<ArtifactPreviewRequest | null>(null);
+  const [lastChatIdleAt, setLastChatIdleAt] = useState<number | undefined>(undefined);
+  const handleChatBecameIdle = useCallback(() => setLastChatIdleAt(Date.now()), []);
 
   const navigateToFile = useCallback((filePath: string, line?: number, mode: 'diff' | 'full' = 'full') => {
     const seq = ++navSeqRef.current;
-    setFileNavRequest({ file: filePath, line, mode, seq });
-
-    // Ensure a review tab exists and is selected
     const allTabs = getAllTabs();
-    const reviewTab = allTabs.find((t) => t.getComponent() === 'review');
-    if (reviewTab) {
-      // Select the existing review tab
-      model.doAction(Actions.selectTab(reviewTab.getId()));
+    if (isStudio) {
+      setArtifactPreviewRequest({ file: filePath, seq });
+      const artifactsTab = allTabs.find((t) => t.getComponent() === 'artifacts');
+      if (artifactsTab) {
+        model.doAction(Actions.selectTab(artifactsTab.getId()));
+      } else {
+        addPanel('artifacts');
+      }
     } else {
-      // Create a new review tab
-      addPanel('review');
+      setFileNavRequest({ file: filePath, line, mode, seq });
+      const reviewTab = allTabs.find((t) => t.getComponent() === 'review');
+      if (reviewTab) {
+        model.doAction(Actions.selectTab(reviewTab.getId()));
+      } else {
+        addPanel('review');
+      }
     }
-  }, [model, getAllTabs, addPanel]);
+  }, [model, getAllTabs, addPanel, isStudio]);
 
   // Expose API via ref
   useImperativeHandle(ref, () => ({
@@ -565,6 +579,8 @@ export const FlexLayoutContainer = forwardRef<
         return { icon: FileText, color: 'var(--color-info)' };
       case 'comments':
         return { icon: MessageCircle, color: 'var(--color-error)' };
+      case 'artifacts':
+        return { icon: FolderOpen, color: 'var(--color-highlight)' };
       default:
         return { icon: Terminal, color: 'var(--color-text-muted)' };
     }
@@ -656,19 +672,32 @@ export const FlexLayoutContainer = forwardRef<
     if (chatAvailable) {
       items.push({ id: 'chat', label: 'Chat', icon: MessageSquare, onClick: () => addPanel('chat'), shortcut: 'i' });
     }
+    if (isStudio) {
+      items.push({ id: 'artifacts', label: 'Artifacts', icon: FolderOpen, onClick: () => addPanel('artifacts'), shortcut: 'f' });
+    }
     if (terminalAvailable) {
       items.push({ id: 'terminal', label: 'Terminal', icon: Terminal, onClick: () => addPanel('terminal'), shortcut: 't' });
     }
+    if (!isStudio) {
+      items.push(
+        { id: 'review', label: 'Review', icon: Code, onClick: () => addPanel('review'), shortcut: 'r' },
+      );
+    }
     items.push(
-      { id: 'review', label: 'Review', icon: Code, onClick: () => addPanel('review'), shortcut: 'r' },
-      { id: 'editor', label: 'Editor', icon: FileCode, onClick: () => addPanel('editor'), shortcut: 'e' },
-      { id: 'stats', label: 'Stats', icon: BarChart3, onClick: () => addPanel('stats'), separator: true },
-      { id: 'git', label: 'Git', icon: GitBranch, onClick: () => addPanel('git') },
-      { id: 'notes', label: 'Notes', icon: FileText, onClick: () => addPanel('notes') },
-      { id: 'comments', label: 'Comments', icon: MessageCircle, onClick: () => addPanel('comments') },
+      { id: 'editor', label: 'Editor', icon: FileCode, onClick: () => addPanel('editor'), shortcut: 'e', separator: true },
+      { id: 'stats', label: 'Stats', icon: BarChart3, onClick: () => addPanel('stats') },
     );
+    if (!isStudio) {
+      items.push({ id: 'git', label: 'Git', icon: GitBranch, onClick: () => addPanel('git') });
+    }
+    items.push(
+      { id: 'notes', label: 'Notes', icon: FileText, onClick: () => addPanel('notes') },
+    );
+    if (!isStudio) {
+      items.push({ id: 'comments', label: 'Comments', icon: MessageCircle, onClick: () => addPanel('comments') });
+    }
     return items;
-  }, [chatAvailable, terminalAvailable, addPanel]);
+  }, [chatAvailable, terminalAvailable, isStudio, addPanel]);
 
   // Custom TabSet rendering ([+] add panel + maximize button)
   const onRenderTabSet = useCallback((tabSetNode: TabSetNode | BorderNode, renderValues: ITabSetRenderValues) => {
@@ -745,6 +774,8 @@ export const FlexLayoutContainer = forwardRef<
               task={task}
               fullscreen={true}
               onNavigateToFile={navigateToFile}
+              onChatBecameIdle={handleChatBecameIdle}
+              onUserMessageSent={handleChatBecameIdle}
             />
           </div>
         );
@@ -761,6 +792,7 @@ export const FlexLayoutContainer = forwardRef<
               navigateToFile={fileNavRequest}
               hideHeader={true}
               fullscreen={true}
+              isGitRepo={selectedProject?.isGitRepo}
             />
           </div>
         );
@@ -808,10 +840,17 @@ export const FlexLayoutContainer = forwardRef<
           </div>
         );
 
+      case 'artifacts':
+        return (
+          <div style={{ display: 'flex', flexDirection: 'column', width: '100%', height: '100%', overflow: 'hidden' }}>
+            <ArtifactsTab projectId={projectId} task={task} previewRequest={artifactPreviewRequest} lastChatIdleAt={lastChatIdleAt} />
+          </div>
+        );
+
       default:
         return <div className="p-4 text-[var(--color-text-muted)]">Unknown panel type: {component}</div>;
     }
-  }, [projectId, task, model, closeTabById, navigateToFile, fileNavRequest]);
+  }, [projectId, task, model, closeTabById, navigateToFile, fileNavRequest, artifactPreviewRequest, lastChatIdleAt, handleChatBecameIdle, selectedProject?.isGitRepo]);
 
   // Track empty state
   const [isEmpty, setIsEmpty] = useState(() => getAllTabs().length === 0);
@@ -884,14 +923,21 @@ export const FlexLayoutContainer = forwardRef<
                   <MessageSquare size={13} /> Chat
                 </button>
               )}
+              {isStudio && (
+                <button onClick={() => addPanel('artifacts')} className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md border border-[var(--color-border)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-bg-tertiary)] transition-colors">
+                  <FolderOpen size={13} /> Artifacts
+                </button>
+              )}
               {terminalAvailable && (
                 <button onClick={() => addPanel('terminal')} className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md border border-[var(--color-border)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-bg-tertiary)] transition-colors">
                   <Terminal size={13} /> Terminal
                 </button>
               )}
-              <button onClick={() => addPanel('review')} className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md border border-[var(--color-border)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-bg-tertiary)] transition-colors">
-                <Code size={13} /> Review
-              </button>
+              {!isStudio && (
+                <button onClick={() => addPanel('review')} className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md border border-[var(--color-border)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-bg-tertiary)] transition-colors">
+                  <Code size={13} /> Review
+                </button>
+              )}
               <button onClick={() => addPanel('editor')} className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md border border-[var(--color-border)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-bg-tertiary)] transition-colors">
                 <FileCode size={13} /> Editor
               </button>

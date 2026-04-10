@@ -24,6 +24,8 @@ interface TaskCodeReviewProps {
   hideHeader?: boolean;
   /** External navigation request — open a file (optionally at a line) in Review */
   navigateToFile?: FileNavRequest | null;
+  /** Whether the project is a git repository (non-git projects don't have Changes mode) */
+  isGitRepo?: boolean;
 }
 
 export function TaskCodeReview({
@@ -34,6 +36,7 @@ export function TaskCodeReview({
   onToggleFullscreen,
   hideHeader = false,
   navigateToFile,
+  isGitRepo,
 }: TaskCodeReviewProps) {
   const containerClass = `flex-1 flex flex-col bg-[var(--color-bg-secondary)] overflow-hidden ${fullscreen ? '' : 'rounded-lg border border-[var(--color-border)]'}`;
 
@@ -77,6 +80,7 @@ export function TaskCodeReview({
           taskId={taskId}
           embedded
           navigateToFile={navigateToFile}
+          isGitRepo={isGitRepo}
         />
       </div>
     </motion.div>

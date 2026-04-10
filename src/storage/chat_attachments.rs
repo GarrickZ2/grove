@@ -96,10 +96,20 @@ pub fn store_attachment(
     data_base64: &str,
 ) -> Result<StoredAttachment> {
     let dir = attachments_dir(project, task_id, chat_id);
-    std::fs::create_dir_all(&dir)?;
+    store_attachment_to_dir(&dir, name, mime_type, data_base64)
+}
+
+/// Store an attachment to a specific directory (used by Studio to write to input/)
+pub fn store_attachment_to_dir(
+    dir: &std::path::Path,
+    name: &str,
+    mime_type: Option<&str>,
+    data_base64: &str,
+) -> Result<StoredAttachment> {
+    std::fs::create_dir_all(dir)?;
 
     let file_name = sanitize_filename(name);
-    let path = unique_attachment_path(&dir, &file_name);
+    let path = unique_attachment_path(dir, &file_name);
     let bytes = base64::engine::general_purpose::STANDARD
         .decode(data_base64)
         .map_err(|e| {

@@ -1,5 +1,5 @@
 import { motion } from "framer-motion";
-import { Trash2, AlertCircle, FolderX } from "lucide-react";
+import { Trash2, AlertCircle, FolderX, Sparkles } from "lucide-react";
 import type { Project } from "../../data/types";
 import { getProjectStyle } from "../../utils/projectStyle";
 import { compactPath } from "../../utils/pathUtils";
@@ -20,6 +20,7 @@ export function ProjectCard({ project, isSelected, onSelect, onDoubleClick, onDe
   const taskCount = project.taskCount ?? project.tasks.length;
   const { color, Icon } = getProjectStyle(project.id, theme.accentPalette);
   const isMissing = !project.exists;
+  const isStudio = project.projectType === "studio";
 
   return (
     <motion.div
@@ -75,6 +76,20 @@ export function ProjectCard({ project, isSelected, onSelect, onDoubleClick, onDe
             <FolderX className="w-3 h-3" />
             Missing
           </span>
+        ) : isStudio ? (
+          <>
+            <span
+              className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium bg-[var(--color-highlight)]/10 text-[var(--color-highlight)] border border-[var(--color-highlight)]/20"
+            >
+              <Sparkles className="w-3 h-3" />
+              Studio
+            </span>
+            {taskCount > 0 && (
+              <span className="text-[var(--color-text-muted)]">
+                {taskCount} {taskCount === 1 ? "Task" : "Tasks"}
+              </span>
+            )}
+          </>
         ) : project.isGitRepo ? (
           <span className="text-[var(--color-text-muted)]">
             {taskCount} {taskCount === 1 ? "Task" : "Tasks"}

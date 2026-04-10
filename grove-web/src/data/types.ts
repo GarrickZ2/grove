@@ -1,3 +1,6 @@
+// Project type
+export type ProjectType = 'repo' | 'studio';
+
 // Task status types
 export type TaskStatus = 'live' | 'idle' | 'merged' | 'conflict' | 'broken' | 'archived';
 
@@ -47,6 +50,8 @@ export interface Project {
    * only allow Delete to clean up stale metadata.
    */
   exists: boolean;
+  /** Project type: 'repo' for code repositories, 'studio' for AI agent workspaces */
+  projectType: ProjectType;
 }
 
 export type ActivityType = 'create' | 'merge' | 'sync' | 'archive' | 'recover';
@@ -114,6 +119,8 @@ export interface BlitzTask {
   task: Task;
   projectId: string;
   projectName: string;
+  /** Project type — use this instead of checking task.branch to detect Studio tasks. */
+  projectType: ProjectType;
 }
 
 // ─── TaskGroup (Walkie-Talkie) ───────────────────────────────────────────────

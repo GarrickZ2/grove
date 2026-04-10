@@ -7,11 +7,13 @@ export type { AppInfo, CustomAgent } from './config';
 
 export { checkAllDependencies, checkCommands } from './env';
 
-export { listProjects, getProject, addProject, deleteProject, getProjectStats, getBranches, getRemotes, openIDE, openTerminal, initGitRepo, createNewProject } from './projects';
+export { listProjects, getProject, addProject, deleteProject, getProjectStats, getBranches, getRemotes, openIDE, openTerminal, initGitRepo, createNewProject, listResources, uploadResource, deleteResource, previewResource, resourceDownloadUrl, getInstructions, updateInstructions, listResourceWorkdirs, addResourceWorkdir, deleteResourceWorkdir, openResourceWorkdir } from './projects';
 export type {
   ProjectListItem,
   ProjectResponse,
   ProjectStatsResponse,
+  ResourceFile,
+  WorkDirectoryEntry,
 } from './projects';
 
 export {
@@ -45,6 +47,15 @@ export {
   getChatHistory,
   takeControl,
   readFile,
+  listArtifacts,
+  previewArtifact,
+  artifactDownloadUrl,
+  deleteArtifact,
+  uploadArtifacts,
+  listArtifactWorkdirs,
+  addArtifactWorkdir,
+  deleteArtifactWorkdir,
+  openArtifactWorkdir,
 } from './tasks';
 export type {
   TaskResponse,
@@ -53,6 +64,9 @@ export type {
   ReviewCommentEntry,
   TaskStatsResponse,
   ChatSessionResponse,
+  ArtifactFile,
+  ArtifactsResponse,
+  ArtifactWorkDirectoryEntry,
 } from './tasks';
 
 export {

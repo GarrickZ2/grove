@@ -1,6 +1,7 @@
 // Tasks API client
 
 import { apiClient } from './client';
+import type { StudioFileEntry, StudioWorkDirEntry } from './studio-types';
 
 // ============================================================================
 // Types
@@ -608,4 +609,62 @@ export async function takeControl(
   return apiClient.post<undefined, TakeControlResponse>(
     `/api/v1/projects/${projectId}/tasks/${taskId}/chats/${chatId}/take-control`
   );
+}
+
+// ============================================================================
+// Studio Artifacts API
+// ============================================================================
+
+export interface ArtifactFile extends StudioFileEntry {
+  directory: string;
+}
+
+export type ArtifactWorkDirectoryEntry = StudioWorkDirEntry;
+
+export interface ArtifactsResponse {
+  input: ArtifactFile[];
+  output: ArtifactFile[];
+}
+
+export async function listArtifacts(projectId: string, taskId: string): Promise<ArtifactsResponse> {
+  return apiClient.get<ArtifactsResponse>(`/api/v1/projects/${projectId}/tasks/${taskId}/artifacts`);
+}
+
+export async function previewArtifact(projectId: string, taskId: string, dir: string, path: string): Promise<string> {
+  return apiClient.getText(`/api/v1/projects/${projectId}/tasks/${taskId}/artifacts/preview?dir=${encodeURIComponent(dir)}&path=${encodeURIComponent(path)}`);
+}
+
+export function artifactDownloadUrl(projectId: string, taskId: string, dir: string, path: string): string {
+  return `/api/v1/projects/${projectId}/tasks/${taskId}/artifacts/download?dir=${encodeURIComponent(dir)}&path=${encodeURIComponent(path)}`;
+}
+
+export async function deleteArtifact(projectId: string, taskId: string, dir: string, path: string): Promise<void> {
+  return apiClient.delete(`/api/v1/projects/${projectId}/tasks/${taskId}/artifacts?dir=${encodeURIComponent(dir)}&path=${encodeURIComponent(path)}`);
+}
+
+export async function uploadArtifacts(projectId: string, taskId: string, files: File[]): Promise<ArtifactFile[]> {
+  const formData = new FormData();
+  for (const file of files) {
+    formData.append('file', file);
+  }
+  return apiClient.postFormData<ArtifactFile[]>(
+    `/api/v1/projects/${projectId}/tasks/${taskId}/artifacts/upload`,
+    formData,
+  );
+}
+
+export async function listArtifactWorkdirs(projectId: string, taskId: string): Promise<{ entries: ArtifactWorkDirectoryEntry[] }> {
+  return apiClient.get<{ entries: ArtifactWorkDirectoryEntry[] }>(`/api/v1/projects/${projectId}/tasks/${taskId}/artifacts/workdir`);
+}
+
+export async function addArtifactWorkdir(projectId: string, taskId: string, path: string): Promise<ArtifactWorkDirectoryEntry> {
+  return apiClient.post<{ path: string }, ArtifactWorkDirectoryEntry>(`/api/v1/projects/${projectId}/tasks/${taskId}/artifacts/workdir`, { path });
+}
+
+export async function deleteArtifactWorkdir(projectId: string, taskId: string, name: string): Promise<void> {
+  return apiClient.delete(`/api/v1/projects/${projectId}/tasks/${taskId}/artifacts/workdir?name=${encodeURIComponent(name)}`);
+}
+
+export async function openArtifactWorkdir(projectId: string, taskId: string, name: string): Promise<void> {
+  await apiClient.postNoContent(`/api/v1/projects/${projectId}/tasks/${taskId}/artifacts/workdir/open?name=${encodeURIComponent(name)}`);
 }

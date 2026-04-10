@@ -463,17 +463,16 @@ impl acp::Client for GroveAcpClient {
         let cwd = args.cwd.unwrap_or_else(|| self.working_dir.clone());
 
         // Agent 发来的 command 可能是完整 shell 命令字符串（含 &&、|、;、空格参数等），
-        // 必须通过 sh -c 执行，否则 Command::new() 会把整个字符串当可执行文件路径。
         let shell_cmd = if args.args.is_empty() {
             args.command.clone()
         } else {
             format!("{} {}", args.command, args.args.join(" "))
         };
 
-        let mut cmd = tokio::process::Command::new("sh");
-        cmd.arg("-c")
-            .arg(&shell_cmd)
-            .current_dir(&cwd)
+        let shell = std::env::var("SHELL").unwrap_or_else(|_| "sh".to_string());
+        let mut cmd = tokio::process::Command::new(&shell);
+        cmd.arg("-l").arg("-i").arg("-c").arg(&shell_cmd);
+        cmd.current_dir(&cwd)
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
             .kill_on_drop(true);
@@ -1869,10 +1868,10 @@ impl AcpSessionHandle {
         *self.terminal_kill_tx.lock().unwrap() = Some(kill_tx);
 
         tokio::spawn(async move {
-            let mut cmd = tokio::process::Command::new("sh");
-            cmd.arg("-c")
-                .arg(&command)
-                .current_dir(&cwd)
+            let shell = std::env::var("SHELL").unwrap_or_else(|_| "sh".to_string());
+            let mut cmd = tokio::process::Command::new(&shell);
+            cmd.arg("-l").arg("-i").arg("-c").arg(&command);
+            cmd.current_dir(&cwd)
                 .stdout(std::process::Stdio::piped())
                 .stderr(std::process::Stdio::piped())
                 .kill_on_drop(true);

@@ -61,6 +61,11 @@
   transform: translateX(calc(100% + 4px));
 }
 
+/* When there's only one button (non-git mode), full-width indicator */
+.diff-mode-selector:not(:has(button:nth-child(2)))::before {
+  width: calc(100% - 6px);
+}
+
 .diff-refresh-btn {
   display: flex;
   align-items: center;

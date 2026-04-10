@@ -47,6 +47,7 @@ interface TasksPageProps {
 
 export function TasksPage({ initialTaskId, initialViewMode, onNavigationConsumed, onNavByIndex, initialOpenNewTask }: TasksPageProps) {
   const { selectedProject, refreshSelectedProject } = useProject();
+  const isStudio = selectedProject?.projectType === "studio";
 
   const { isMobile } = useIsMobile();
 
@@ -455,6 +456,7 @@ export function TasksPage({ initialTaskId, initialViewMode, onNavigationConsumed
       onSwitchInfoTab: pageHandlers.setInfoPanelTab,
       onRefresh: refreshSelectedProject,
       onNewTask: () => setShowNewTaskDialog(true),
+      isStudio,
     },
   };
 
@@ -474,8 +476,8 @@ export function TasksPage({ initialTaskId, initialViewMode, onNavigationConsumed
     );
   }
 
-  // Non-git project: Tasks require git worktrees, show init prompt.
-  if (!selectedProject.isGitRepo) {
+  // Non-git project: Tasks require git worktrees, show init prompt (skip for Studio).
+  if (!selectedProject.isGitRepo && !isStudio) {
     return <NonGitTasksEmptyState projectId={selectedProject.id} onRefresh={refreshSelectedProject} />;
   }
 
@@ -483,13 +485,13 @@ export function TasksPage({ initialTaskId, initialViewMode, onNavigationConsumed
   const contextMenuItems = pageState.contextMenu
     ? buildContextMenuItems(pageState.contextMenu.task, {
         onEnterTerminal: () => handleDoubleClickTask(pageState.contextMenu!.task),
-        onCommit: opsHandlers.handleCommit,
-        onRebase: opsHandlers.handleRebase,
-        onSync: opsHandlers.handleSync,
-        onMerge: opsHandlers.handleMerge,
+        onCommit: isStudio ? undefined : opsHandlers.handleCommit,
+        onRebase: isStudio ? undefined : opsHandlers.handleRebase,
+        onSync: isStudio ? undefined : opsHandlers.handleSync,
+        onMerge: isStudio ? undefined : opsHandlers.handleMerge,
         onArchive: opsHandlers.handleArchive,
-        onReset: opsHandlers.handleReset,
-        onClean: opsHandlers.handleClean,
+        onReset: isStudio ? undefined : opsHandlers.handleReset,
+        onClean: isStudio ? undefined : opsHandlers.handleClean,
         onRecover: pageState.contextMenu.task.status === "archived" ? handleRecover : undefined,
       } as TaskOperationHandlers)
     : [];
@@ -559,13 +561,13 @@ export function TasksPage({ initialTaskId, initialViewMode, onNavigationConsumed
                       fullscreen={isFullscreen}
                       onFullscreenChange={setIsFullscreen}
                       onBack={handleMobileBack}
-                      onCommit={opsHandlers.handleCommit}
-                      onRebase={opsHandlers.handleRebase}
-                      onSync={opsHandlers.handleSync}
-                      onMerge={opsHandlers.handleMerge}
+                      onCommit={isStudio ? undefined : opsHandlers.handleCommit}
+                      onRebase={isStudio ? undefined : opsHandlers.handleRebase}
+                      onSync={isStudio ? undefined : opsHandlers.handleSync}
+                      onMerge={isStudio ? undefined : opsHandlers.handleMerge}
                       onArchive={opsHandlers.handleArchive}
-                      onClean={opsHandlers.handleClean}
-                      onReset={opsHandlers.handleReset}
+                      onClean={isStudio ? undefined : opsHandlers.handleClean}
+                      onReset={isStudio ? undefined : opsHandlers.handleReset}
                     />
                   </div>
                 ) : (
@@ -576,14 +578,14 @@ export function TasksPage({ initialTaskId, initialViewMode, onNavigationConsumed
                     onClose={handleMobileBack}
                     onEnterWorkspace={pageState.selectedTask.status !== "archived" ? pageHandlers.handleEnterWorkspace : undefined}
                     onAddPanel={pageState.selectedTask.status !== "archived" ? handleAddPanelFromInfo : undefined}
-                    onRecover={pageState.selectedTask.status === "archived" ? handleRecover : undefined}
-                    onClean={opsHandlers.handleClean}
-                    onCommit={pageState.selectedTask.status !== "archived" ? opsHandlers.handleCommit : undefined}
-                    onRebase={pageState.selectedTask.status !== "archived" ? opsHandlers.handleRebase : undefined}
-                    onSync={pageState.selectedTask.status !== "archived" ? opsHandlers.handleSync : undefined}
-                    onMerge={pageState.selectedTask.status !== "archived" ? opsHandlers.handleMerge : undefined}
+                     onRecover={pageState.selectedTask.status === "archived" ? handleRecover : undefined}
+                     onClean={isStudio ? undefined : opsHandlers.handleClean}
+                     onCommit={!isStudio && pageState.selectedTask.status !== "archived" ? opsHandlers.handleCommit : undefined}
+                    onRebase={!isStudio && pageState.selectedTask.status !== "archived" ? opsHandlers.handleRebase : undefined}
+                    onSync={!isStudio && pageState.selectedTask.status !== "archived" ? opsHandlers.handleSync : undefined}
+                    onMerge={!isStudio && pageState.selectedTask.status !== "archived" ? opsHandlers.handleMerge : undefined}
                     onArchive={pageState.selectedTask.status !== "archived" ? opsHandlers.handleArchive : undefined}
-                    onReset={pageState.selectedTask.status !== "archived" ? opsHandlers.handleReset : undefined}
+                    onReset={!isStudio && pageState.selectedTask.status !== "archived" ? opsHandlers.handleReset : undefined}
                     activeTab={pageState.infoPanelTab}
                     onTabChange={pageHandlers.setInfoPanelTab}
                   />
@@ -663,13 +665,13 @@ export function TasksPage({ initialTaskId, initialViewMode, onNavigationConsumed
                         onEnterWorkspace={pageState.selectedTask.status !== "archived" ? pageHandlers.handleEnterWorkspace : undefined}
                         onAddPanel={pageState.selectedTask.status !== "archived" ? handleAddPanelFromInfo : undefined}
                         onRecover={pageState.selectedTask.status === "archived" ? handleRecover : undefined}
-                        onClean={opsHandlers.handleClean}
-                        onCommit={pageState.selectedTask.status !== "archived" ? opsHandlers.handleCommit : undefined}
-                        onRebase={pageState.selectedTask.status !== "archived" ? opsHandlers.handleRebase : undefined}
-                        onSync={pageState.selectedTask.status !== "archived" ? opsHandlers.handleSync : undefined}
-                        onMerge={pageState.selectedTask.status !== "archived" ? opsHandlers.handleMerge : undefined}
+                        onClean={isStudio ? undefined : opsHandlers.handleClean}
+                        onCommit={!isStudio && pageState.selectedTask.status !== "archived" ? opsHandlers.handleCommit : undefined}
+                        onRebase={!isStudio && pageState.selectedTask.status !== "archived" ? opsHandlers.handleRebase : undefined}
+                        onSync={!isStudio && pageState.selectedTask.status !== "archived" ? opsHandlers.handleSync : undefined}
+                        onMerge={!isStudio && pageState.selectedTask.status !== "archived" ? opsHandlers.handleMerge : undefined}
                         onArchive={pageState.selectedTask.status !== "archived" ? opsHandlers.handleArchive : undefined}
-                        onReset={pageState.selectedTask.status !== "archived" ? opsHandlers.handleReset : undefined}
+                        onReset={!isStudio && pageState.selectedTask.status !== "archived" ? opsHandlers.handleReset : undefined}
                         activeTab={pageState.infoPanelTab}
                         onTabChange={pageHandlers.setInfoPanelTab}
                       />
@@ -715,13 +717,13 @@ export function TasksPage({ initialTaskId, initialViewMode, onNavigationConsumed
                     fullscreen={isFullscreen}
                     onFullscreenChange={setIsFullscreen}
                     onBack={pageHandlers.handleCloseTask}
-                    onCommit={opsHandlers.handleCommit}
-                    onRebase={opsHandlers.handleRebase}
-                    onSync={opsHandlers.handleSync}
-                    onMerge={opsHandlers.handleMerge}
+                    onCommit={isStudio ? undefined : opsHandlers.handleCommit}
+                    onRebase={isStudio ? undefined : opsHandlers.handleRebase}
+                    onSync={isStudio ? undefined : opsHandlers.handleSync}
+                    onMerge={isStudio ? undefined : opsHandlers.handleMerge}
                     onArchive={opsHandlers.handleArchive}
-                    onClean={opsHandlers.handleClean}
-                    onReset={opsHandlers.handleReset}
+                    onClean={isStudio ? undefined : opsHandlers.handleClean}
+                    onReset={isStudio ? undefined : opsHandlers.handleReset}
                   />
                 </motion.div>
               )}

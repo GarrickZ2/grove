@@ -243,17 +243,19 @@ export const TaskView = forwardRef<TaskViewHandle, TaskViewProps>((props, ref) =
             <span className="font-medium text-[var(--color-highlight)] truncate">{task.name}</span>
           </div>
 
-          {/* Branch info — accent color */}
-          <div className="flex items-center gap-1.5 text-[var(--color-accent)] shrink-0 opacity-75">
-            <GitBranch size={13} />
-            <span className="font-mono">{task.branch}</span>
-            {!task.isLocal && (
-              <>
-                <ArrowRight size={11} />
-                <span className="font-mono">{task.target}</span>
-              </>
-            )}
-          </div>
+          {/* Branch info — accent color (hidden for Studio tasks with no branch) */}
+          {task.branch && (
+            <div className="flex items-center gap-1.5 text-[var(--color-accent)] shrink-0 opacity-75">
+              <GitBranch size={13} />
+              <span className="font-mono">{task.branch}</span>
+              {!task.isLocal && task.target && (
+                <>
+                  <ArrowRight size={11} />
+                  <span className="font-mono">{task.target}</span>
+                </>
+              )}
+            </div>
+          )}
         </div>
 
         {/* Spacer */}

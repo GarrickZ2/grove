@@ -20,7 +20,7 @@
 
 use crate::error::{GroveError, Result};
 use crate::session::SessionType;
-use crate::storage::{self, config, notes, tasks};
+use crate::storage::{self, config, notes, tasks, workspace};
 use crate::tmux::layout::{parse_custom_layout_tree, CustomLayout, TaskLayout};
 use crate::{git, hooks, session, tmux};
 
@@ -517,6 +517,49 @@ pub fn create_task(
     autolink_patterns: &[String],
     created_by: &str,
 ) -> Result<CreateTaskResult> {
+    create_task_inner(
+        repo_path,
+        project_key,
+        task_name,
+        target_branch,
+        session_type,
+        autolink_patterns,
+        created_by,
+        false, // is_studio = false
+    )
+}
+
+/// Create a Studio task (folder-based, no git worktree)
+pub fn create_studio_task(
+    project_path: &str,
+    project_key: &str,
+    task_name: String,
+    session_type: &str,
+    created_by: &str,
+) -> Result<CreateTaskResult> {
+    create_task_inner(
+        project_path,
+        project_key,
+        task_name,
+        String::new(), // no target branch
+        session_type,
+        &[], // no autolink
+        created_by,
+        true, // is_studio = true
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn create_task_inner(
+    repo_path: &str,
+    project_key: &str,
+    task_name: String,
+    target_branch: String,
+    session_type: &str,
+    autolink_patterns: &[String],
+    created_by: &str,
+    is_studio: bool,
+) -> Result<CreateTaskResult> {
     // 1. Generate identifiers
     let slug = tasks::to_slug(&task_name);
 
@@ -543,44 +586,133 @@ pub fn create_task(
         )));
     }
 
-    let branch = tasks::generate_branch_name(&task_name);
+    let (task_path_str, branch) = if is_studio {
+        // Studio: create folder structure under ~/.grove/studios/{project_key}/tasks/{slug}/
+        let studio_dir = workspace::studio_project_dir(repo_path);
+        let task_dir = studio_dir.join("tasks").join(&slug);
+        std::fs::create_dir_all(task_dir.join("input"))?;
+        std::fs::create_dir_all(task_dir.join("output"))?;
+        std::fs::create_dir_all(task_dir.join("scripts"))?;
 
-    // 3. Ensure worktree directory
-    let worktree_dir = storage::ensure_worktree_dir(project_key)?;
-    let worktree_path = worktree_dir.join(&slug);
-
-    // 4. Create git worktree
-    git::create_worktree(repo_path, &branch, &worktree_path, &target_branch).map_err(|e| {
-        let msg = e.to_string();
-        if msg.contains("invalid reference") || msg.contains("not a valid object name") {
-            GroveError::git(format!(
-                "Branch '{}' does not exist. The repository may have no commits yet — \
-                 please create an initial commit first.",
-                target_branch
-            ))
-        } else {
-            e
+        // Symlink resource/ → project resource/ (read-only)
+        let resource_link = task_dir.join("resource");
+        let project_resource = studio_dir.join("resource");
+        if !resource_link.exists() && project_resource.exists() {
+            #[cfg(unix)]
+            {
+                let _ = std::os::unix::fs::symlink(&project_resource, &resource_link);
+            }
         }
-    })?;
 
-    // 5. Create AutoLink symlinks
-    let main_repo = git::get_main_repo_path(repo_path).unwrap_or_else(|_| repo_path.to_string());
-    let _ = git::create_worktree_symlinks(
-        &worktree_path,
-        std::path::Path::new(&main_repo),
-        autolink_patterns,
-        true, // always check gitignore
-    );
+        // Symlink instructions.md → project instructions.md (read-only)
+        let instructions_link = task_dir.join("instructions.md");
+        let project_instructions = studio_dir.join("instructions.md");
+        if !instructions_link.exists() && project_instructions.exists() {
+            #[cfg(unix)]
+            {
+                let _ = std::os::unix::fs::symlink(&project_instructions, &instructions_link);
+            }
+        }
 
-    // 6. Create task record
+        // Generate AGENTS.md
+        let agents_md = format!(
+            "# Studio Task: {task_name}\n\
+             You are an AI agent working inside a Grove Studio task workspace.\n\
+             This workspace is isolated for this task only. Follow the rules below carefully.\n\n\
+             ## Directory Structure\n\
+             \n\
+             ```\n\
+             ./\n\
+             ├── input/           # User-provided input files. Read these to understand your task.\n\
+             ├── output/          # Write all your results and deliverables here.\n\
+             ├── scripts/         # Place any scripts you create or use here.\n\
+             ├── resource/        # Read-only shared project resources (symlink). Do not modify.\n\
+             ├── instructions.md  # Read-only project-level instructions (symlink). Read this first.\n\
+             └── AGENTS.md        # This file.\n\
+             ```\n\
+             ## Getting Started\n\
+             \n\
+             1. Read `instructions.md` for project-level context and guidelines.\n\
+             2. Read all files in `input/` to understand what you need to do.\n\
+             3. Browse `resource/` if you need shared reference materials.\n\
+             4. Write your results to `output/`.\n\
+             5. Place any scripts in `scripts/`.\n\
+             \n\
+             See `instructions.md` for project-level instructions.\n\n\
+             ## Rules\n\
+             \n\
+             - ALWAYS read `instructions.md` before starting work.\n\
+             - ALWAYS read everything in `input/` before starting work.\n\
+             - ALWAYS write results and deliverables to `output/`.\n\
+             - ALWAYS place scripts in `scripts/`.\n\
+             - NEVER modify files in `resource/` — it is a read-only symlink to the project vault.\n\
+             - NEVER modify files in `input/` unless the user explicitly asks you to.\n\
+             - NEVER modify `instructions.md` — it is a read-only symlink.\n\
+             - Keep `output/` organized. Use subdirectories if you produce many files.\n\n\
+             ## Presentation Guidelines\n\
+             \n\
+             - **Documentation**: Write in Markdown format.\n\
+             - **Diagrams**: Use [Mermaid](https://mermaid.js.org/) syntax for diagrams (flowcharts, sequence diagrams, etc.).\n\
+             - **Demos**: Use JSX/React components for interactive demos and visual presentations.\n",
+        );
+        std::fs::write(task_dir.join("AGENTS.md"), &agents_md)?;
+
+        // Symlink CLAUDE.md and GEMINI.md → AGENTS.md
+        #[cfg(unix)]
+        {
+            let agents_path = task_dir.join("AGENTS.md");
+            let claude_md = task_dir.join("CLAUDE.md");
+            let gemini_md = task_dir.join("GEMINI.md");
+            if !claude_md.exists() {
+                let _ = std::os::unix::fs::symlink(&agents_path, &claude_md);
+            }
+            if !gemini_md.exists() {
+                let _ = std::os::unix::fs::symlink(&agents_path, &gemini_md);
+            }
+        }
+
+        (task_dir.to_string_lossy().to_string(), String::new())
+    } else {
+        // Repo: create git worktree
+        let branch = tasks::generate_branch_name(&task_name);
+        let worktree_dir = storage::ensure_worktree_dir(project_key)?;
+        let worktree_path = worktree_dir.join(&slug);
+
+        git::create_worktree(repo_path, &branch, &worktree_path, &target_branch).map_err(|e| {
+            let msg = e.to_string();
+            if msg.contains("invalid reference") || msg.contains("not a valid object name") {
+                GroveError::git(format!(
+                    "Branch '{}' does not exist. The repository may have no commits yet — \
+                         please create an initial commit first.",
+                    target_branch
+                ))
+            } else {
+                e
+            }
+        })?;
+
+        // Create AutoLink symlinks
+        let main_repo =
+            git::get_main_repo_path(repo_path).unwrap_or_else(|_| repo_path.to_string());
+        let _ = git::create_worktree_symlinks(
+            &worktree_path,
+            std::path::Path::new(&main_repo),
+            autolink_patterns,
+            true,
+        );
+
+        (worktree_path.to_string_lossy().to_string(), branch)
+    };
+
+    // 6. Create task record (shared for both types)
     let now = chrono::Utc::now();
     let session_name = session::session_name(project_key, &slug);
     let task = tasks::Task {
         id: slug.clone(),
         name: task_name,
-        branch: branch.clone(),
+        branch,
         target: target_branch,
-        worktree_path: worktree_path.to_string_lossy().to_string(),
+        worktree_path: task_path_str.clone(),
         created_at: now,
         updated_at: now,
         status: tasks::TaskStatus::Active,
@@ -598,7 +730,7 @@ pub fn create_task(
 
     Ok(CreateTaskResult {
         task,
-        worktree_path: worktree_path.to_string_lossy().to_string(),
+        worktree_path: task_path_str,
     })
 }
 

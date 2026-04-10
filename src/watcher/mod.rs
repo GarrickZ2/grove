@@ -426,8 +426,9 @@ fn run_watcher_thread(
                                 }
 
                                 // Only track git-tracked files
+                                // Empty set means no git repo (Studio project) - track all files
                                 if let Some(tracked) = git_tracked_cache.get(watch_path) {
-                                    if !tracked.contains(&relative_path) {
+                                    if !tracked.is_empty() && !tracked.contains(&relative_path) {
                                         continue;
                                     }
                                 }

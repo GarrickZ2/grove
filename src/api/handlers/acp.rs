@@ -823,7 +823,8 @@ pub async fn delete_chat(
     Ok(StatusCode::NO_CONTENT)
 }
 
-/// Store a non-image/audio chat attachment on disk and return an ACP resource_link payload
+/// Store a non-image/audio chat attachment on disk and return an ACP resource_link payload.
+/// For Studio projects, files are stored in the task's input/ directory instead of chat attachments.
 pub async fn upload_chat_attachment(
     Path((project_id, task_id, chat_id)): Path<(String, String, String)>,
     Json(body): Json<UploadAttachmentRequest>,
@@ -834,14 +835,41 @@ pub async fn upload_chat_attachment(
         .map_err(|e| AcpError::Internal(e.to_string()))?
         .ok_or(AcpError::NotFound("Chat not found".to_string()))?;
 
-    let stored = chat_attachments::store_attachment(
-        &project_key,
-        &task_id,
-        &chat_id,
-        &body.name,
-        body.mime_type.as_deref(),
-        &body.data,
-    )
+    // Studio projects: store in task input/ directory so agent can access via AGENTS.md rules
+    let project = workspace::load_project_by_hash(&project_key).ok().flatten();
+
+    let stored = if let Some(ref proj) = project {
+        if proj.project_type == workspace::ProjectType::Studio {
+            let input_dir = workspace::studio_project_dir(&proj.path)
+                .join("tasks")
+                .join(&task_id)
+                .join("input");
+            chat_attachments::store_attachment_to_dir(
+                &input_dir,
+                &body.name,
+                body.mime_type.as_deref(),
+                &body.data,
+            )
+        } else {
+            chat_attachments::store_attachment(
+                &project_key,
+                &task_id,
+                &chat_id,
+                &body.name,
+                body.mime_type.as_deref(),
+                &body.data,
+            )
+        }
+    } else {
+        chat_attachments::store_attachment(
+            &project_key,
+            &task_id,
+            &chat_id,
+            &body.name,
+            body.mime_type.as_deref(),
+            &body.data,
+        )
+    }
     .map_err(|e| AcpError::Internal(e.to_string()))?;
 
     Ok(Json(UploadAttachmentResponse {

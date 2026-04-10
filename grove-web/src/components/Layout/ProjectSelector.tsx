@@ -1,15 +1,50 @@
 import React, { useState, useRef, useEffect, useMemo, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { ChevronDown, Check, Plus, Settings2, Search, AlertCircle, FolderX } from "lucide-react";
+import { ChevronDown, Check, Plus, Settings2, Search, AlertCircle, FolderX, Sparkles } from "lucide-react";
 import { useProject, useTheme } from "../../context";
 import type { Project } from "../../data/types";
 import { getProjectStyle } from "../../utils/projectStyle";
+import { filterProjectsByType } from "../../utils/projectFilter";
 
 interface ProjectSelectorProps {
   collapsed: boolean;
-  onManageProjects?: () => void;
-  onAddProject?: () => void;
+  onManageProjects?: (tab?: "coding" | "studio") => void;
+  onAddProject?: (studioMode?: "studio") => void;
   onProjectSwitch?: () => void;
+}
+
+function TypeFilterTabs({ active, onChange }: { active: "coding" | "studio"; onChange: (tab: "coding" | "studio") => void }) {
+  return (
+    <div className="relative flex border-b border-[var(--color-border)]">
+      <button
+        type="button"
+        onClick={() => onChange("coding")}
+        className={`flex-1 px-3 py-2 text-xs font-medium transition-colors z-10 ${
+          active === "coding"
+            ? "text-[var(--color-highlight)]"
+            : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
+        }`}
+      >
+        Coding
+      </button>
+      <button
+        type="button"
+        onClick={() => onChange("studio")}
+        className={`flex-1 px-3 py-2 text-xs font-medium transition-colors z-10 ${
+          active === "studio"
+            ? "text-[var(--color-highlight)]"
+            : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
+        }`}
+      >
+        Studio
+      </button>
+      <motion.div
+        className="absolute bottom-0 left-0 w-1/2 h-[2px] bg-[var(--color-highlight)]"
+        animate={{ left: active === "studio" ? "50%" : "0%" }}
+        transition={{ type: "spring", stiffness: 500, damping: 30 }}
+      />
+    </div>
+  );
 }
 
 export function ProjectSelector({ collapsed, onManageProjects, onAddProject, onProjectSwitch }: ProjectSelectorProps) {
@@ -18,15 +53,40 @@ export function ProjectSelector({ collapsed, onManageProjects, onAddProject, onP
   const [isOpen, setIsOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [activeProjectId, setActiveProjectId] = useState<string | null>(null);
+  const [typeFilter, setTypeFilter] = useState<"coding" | "studio">(() => {
+    try {
+      const stored = localStorage.getItem("projectSelectorTab");
+      return stored === "coding" || stored === "studio" ? stored : "coding";
+    } catch {
+      return "coding";
+    }
+  });
+
+  const handleSetTypeFilter = (tab: "coding" | "studio") => {
+    setTypeFilter(tab);
+    try {
+      localStorage.setItem("projectSelectorTab", tab);
+    } catch {
+      // Ignore storage errors (private browsing, quota exceeded)
+    }
+  };
   const dropdownRef = useRef<HTMLDivElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const itemRefs = useRef<Record<string, HTMLButtonElement | null>>({});
 
   const filteredProjects = useMemo(() => {
-    if (!searchQuery) return projects;
-    const q = searchQuery.toLowerCase();
-    return projects.filter((p) => p.name.toLowerCase().includes(q));
-  }, [projects, searchQuery]);
+    let list = projects;
+    if (searchQuery) {
+      const q = searchQuery.toLowerCase();
+      list = list.filter((p) => p.name.toLowerCase().includes(q));
+    }
+    if (typeFilter === "studio") {
+      list = filterProjectsByType(list, "studio");
+    } else {
+      list = filterProjectsByType(list, "coding");
+    }
+    return list;
+  }, [projects, searchQuery, typeFilter]);
 
   // Derive activeProjectId from filteredProjects without setState-in-effect
   const derivedActiveProjectId = useMemo(() => {
@@ -178,6 +238,7 @@ export function ProjectSelector({ collapsed, onManageProjects, onAddProject, onP
                 />
               </div>
               </div>
+              <TypeFilterTabs active={typeFilter} onChange={handleSetTypeFilter} />
               <div
                 id="project-selector-listbox-collapsed"
                 role="listbox"
@@ -199,17 +260,16 @@ export function ProjectSelector({ collapsed, onManageProjects, onAddProject, onP
                   />
                 ))}
               </div>
-              <div className="border-t border-[var(--color-border)]" />
               <div className="p-1">
                 <button
-                  onClick={() => { closeDropdown(); onAddProject?.(); }}
+                  onClick={() => { closeDropdown(); onAddProject?.(typeFilter === "studio" ? "studio" : undefined); }}
                   className="w-full flex items-center gap-2 px-3 py-2 text-sm text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-bg-secondary)] rounded-md transition-colors"
                 >
                   <Plus className="w-4 h-4" />
                   <span>Add Project</span>
                 </button>
                 <button
-                  onClick={() => { closeDropdown(); onManageProjects?.(); }}
+                  onClick={() => { closeDropdown(); onManageProjects?.(typeFilter); }}
                   className="w-full flex items-center gap-2 px-3 py-2 text-sm text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-bg-secondary)] rounded-md transition-colors"
                 >
                   <Settings2 className="w-4 h-4" />
@@ -284,7 +344,7 @@ export function ProjectSelector({ collapsed, onManageProjects, onAddProject, onP
                 />
               </div>
             </div>
-            {/* Project List */}
+            <TypeFilterTabs active={typeFilter} onChange={handleSetTypeFilter} />
             <div
               id="project-selector-listbox"
               role="listbox"
@@ -306,8 +366,6 @@ export function ProjectSelector({ collapsed, onManageProjects, onAddProject, onP
                 />
               ))}
             </div>
-
-            {/* Divider */}
             <div className="border-t border-[var(--color-border)]" />
 
             {/* Actions */}
@@ -315,7 +373,7 @@ export function ProjectSelector({ collapsed, onManageProjects, onAddProject, onP
               <button
                 onClick={() => {
                   closeDropdown();
-                  onAddProject?.();
+                  onAddProject?.(typeFilter === "studio" ? "studio" : undefined);
                 }}
                 className="w-full flex items-center gap-2 px-3 py-2 text-sm text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-bg-secondary)] rounded-md transition-colors"
               >
@@ -325,7 +383,7 @@ export function ProjectSelector({ collapsed, onManageProjects, onAddProject, onP
               <button
                 onClick={() => {
                   closeDropdown();
-                  onManageProjects?.();
+                  onManageProjects?.(typeFilter);
                 }}
                 className="w-full flex items-center gap-2 px-3 py-2 text-sm text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-bg-secondary)] rounded-md transition-colors"
               >
@@ -398,6 +456,7 @@ const ProjectItem = React.forwardRef<HTMLButtonElement, ProjectItemProps>(functi
   const { color, Icon } = getProjectStyle(project.id, accentPalette);
 
   const isMissing = !project.exists;
+  const isStudio = project.projectType === "studio";
   return (
     <button
       id={`project-selector-option-${project.id}`}
@@ -442,6 +501,11 @@ const ProjectItem = React.forwardRef<HTMLButtonElement, ProjectItemProps>(functi
             >
               <FolderX className="w-3 h-3" />
               Missing
+            </span>
+          ) : isStudio ? (
+            <span className="inline-flex items-center gap-1 text-[10px] text-[var(--color-highlight)]">
+              <Sparkles className="w-3 h-3" />
+              Studio
             </span>
           ) : project.isGitRepo ? (
             <span className="text-xs text-[var(--color-text-muted)]">

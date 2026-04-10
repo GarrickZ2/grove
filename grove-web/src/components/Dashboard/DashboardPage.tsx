@@ -6,6 +6,7 @@ import {
   ArrowUp,
   ArrowUpDown,
   Code2,
+  FolderOpen,
   GitBranch,
   GitCommit,
   Laptop,
@@ -15,6 +16,7 @@ import {
   TrendingUp,
   TrendingDown,
   X,
+  Sparkles,
 } from "lucide-react";
 import { BranchDrawer } from "./BranchDrawer";
 import { ConfirmDialog, NewBranchDialog, RenameBranchDialog, CommitDialog } from "../Dialogs";
@@ -258,6 +260,7 @@ export function DashboardPage({ onNavigate }: DashboardPageProps) {
   // If we reach here, selectedProject.exists is guaranteed to be true.
 
   const isGitRepo = selectedProject.isGitRepo;
+  const isStudio = selectedProject.projectType === "studio";
   // `selectedProject.tasks` contains only worktree tasks; Local Task lives on `localTask`.
   const worktreeTasks = selectedProject.tasks.filter(t => t.status !== "archived");
   const hasLocalWork = selectedProject.localTask != null;
@@ -477,7 +480,7 @@ export function DashboardPage({ onNavigate }: DashboardPageProps) {
 
   // Guidance tips
   const allTips: GuidanceTip[] = [];
-  if (!isGitRepo) {
+  if (!isGitRepo && !isStudio) {
     allTips.push({
       id: "not-git-repo",
       icon: GitBranch,
@@ -526,7 +529,9 @@ export function DashboardPage({ onNavigate }: DashboardPageProps) {
       id: "first-task",
       icon: Plus,
       title: "Create your first task",
-      description: "Tasks run in isolated worktrees — perfect for parallel AI agent work.",
+      description: isStudio
+        ? "Tasks provide isolated workspaces for AI agents to process your files."
+        : "Tasks run in isolated worktrees — perfect for parallel AI agent work.",
       action: { label: "New Task", onClick: () => onNavigate("tasks", { openNewTask: true }) },
       tone: "info",
     });
@@ -597,7 +602,14 @@ export function DashboardPage({ onNavigate }: DashboardPageProps) {
                 <h1 className="text-lg font-semibold tracking-tight text-[var(--color-text)]">
                   {selectedProject.name}
                 </h1>
-                {isGitRepo ? (
+                {isStudio ? (
+                  <span
+                    className="inline-flex items-center gap-1 rounded-md border border-[var(--color-highlight)]/30 bg-[var(--color-highlight)]/10 px-2 py-0.5 text-xs font-medium text-[var(--color-highlight)]"
+                  >
+                    <Sparkles className="h-3 w-3" />
+                    Studio
+                  </span>
+                ) : isGitRepo ? (
                   <span
                     className="inline-flex items-center gap-1 rounded-md border border-[var(--color-border)] bg-[var(--color-bg)]/70 px-2 py-0.5 text-xs font-medium"
                     style={{ color: "var(--color-highlight)" }}
@@ -619,13 +631,15 @@ export function DashboardPage({ onNavigate }: DashboardPageProps) {
                 {shortenPath(selectedProject.path)}
               </div>
             </div>
-            <div className="flex items-center gap-2 shrink-0">
-              <HeroButton icon={Code2} label="Open IDE" onClick={handleOpenIDE} />
-              <HeroButton icon={TerminalSquare} label="Terminal" onClick={handleOpenTerminal} />
-              {isGitRepo && (
-                <HeroButton icon={ArrowUpDown} label="Branches" onClick={() => setShowBranchDrawer(true)} />
-              )}
-            </div>
+            {!isStudio && (
+              <div className="flex items-center gap-2 shrink-0">
+                <HeroButton icon={Code2} label="Open IDE" onClick={handleOpenIDE} />
+                <HeroButton icon={TerminalSquare} label="Terminal" onClick={handleOpenTerminal} />
+                {isGitRepo && (
+                  <HeroButton icon={ArrowUpDown} label="Branches" onClick={() => setShowBranchDrawer(true)} />
+                )}
+              </div>
+            )}
           </section>
 
           {/* Guidance — contextual, right after Hero */}
@@ -706,35 +720,39 @@ export function DashboardPage({ onNavigate }: DashboardPageProps) {
                 </span>
               )}
             </div>
-            <div className="mt-4 grid grid-cols-3 gap-4">
-              <PulseStat label="Commits" value={weeklyCommitCount} subtext="this week" />
+            <div className={`mt-4 grid gap-4 ${isStudio ? "grid-cols-2" : "grid-cols-3"}`}>
+              {!isStudio && (
+                <PulseStat label="Commits" value={weeklyCommitCount} subtext="this week" />
+              )}
               <PulseStat label="Avg / day" value={weeklyData.length > 0 ? Math.round(weeklyTotal / 7) : 0} subtext="actions" />
               <PulseStat label="Peak day" value={weeklyPeakIdx >= 0 ? dayLabels[weeklyPeakIdx] : "—"} subtext={weeklyMaxValue > 0 ? `${weeklyMaxValue} actions` : "no activity"} />
             </div>
           </section>
 
           {/* Action buttons */}
-          <div className={`grid gap-4 shrink-0 ${isGitRepo ? "grid-cols-2" : "grid-cols-1"}`}>
-            <button
-              onClick={() => onNavigate("work")}
-              className="flex items-center gap-3 rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)] px-5 py-4 text-left transition-colors hover:border-[var(--color-highlight)] group"
-            >
-              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[color-mix(in_srgb,var(--color-accent)_12%,transparent)]">
-                <Laptop className="h-5 w-5 text-[var(--color-accent)]" />
-              </div>
-              <div className="flex-1 min-w-0">
-                <div className="text-sm font-semibold text-[var(--color-text)]">Go to Work</div>
-                <div className="text-xs text-[var(--color-text-muted)]">
-                  {hasLocalWork
-                    ? `Main repository${isGitRepo ? ` · ${currentStatus.unstaged} changes` : ""}`
-                    : "Main repository"
-                  }
+          <div className={`grid gap-4 shrink-0 ${(isGitRepo && !isStudio) || isStudio ? "grid-cols-2" : "grid-cols-1"}`}>
+            {!isStudio && (
+              <button
+                onClick={() => onNavigate("work")}
+                className="flex items-center gap-3 rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)] px-5 py-4 text-left transition-colors hover:border-[var(--color-highlight)] group"
+              >
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[color-mix(in_srgb,var(--color-accent)_12%,transparent)]">
+                  <Laptop className="h-5 w-5 text-[var(--color-accent)]" />
                 </div>
-              </div>
-              <ArrowRight className="h-4 w-4 text-[var(--color-text-muted)] opacity-0 group-hover:opacity-100 transition-opacity shrink-0" />
-            </button>
+                <div className="flex-1 min-w-0">
+                  <div className="text-sm font-semibold text-[var(--color-text)]">Go to Work</div>
+                  <div className="text-xs text-[var(--color-text-muted)]">
+                    {hasLocalWork
+                      ? `Main repository${isGitRepo ? ` · ${currentStatus.unstaged} changes` : ""}`
+                      : "Main repository"
+                    }
+                  </div>
+                </div>
+                <ArrowRight className="h-4 w-4 text-[var(--color-text-muted)] opacity-0 group-hover:opacity-100 transition-opacity shrink-0" />
+              </button>
+            )}
 
-            {isGitRepo && (
+            {(isGitRepo || isStudio) && (
               <button
                 onClick={() => onNavigate("tasks", { openNewTask: true })}
                 className="flex items-center gap-3 rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)] px-5 py-4 text-left transition-colors hover:border-[var(--color-highlight)] group"
@@ -744,7 +762,27 @@ export function DashboardPage({ onNavigate }: DashboardPageProps) {
                 </div>
                 <div className="flex-1 min-w-0">
                   <div className="text-sm font-semibold text-[var(--color-text)]">New Task</div>
-                  <div className="text-xs text-[var(--color-text-muted)]">Create isolated worktree</div>
+                  <div className="text-xs text-[var(--color-text-muted)]">
+                    {isStudio ? "Create AI agent workspace" : "Create isolated worktree"}
+                  </div>
+                </div>
+                <ArrowRight className="h-4 w-4 text-[var(--color-text-muted)] opacity-0 group-hover:opacity-100 transition-opacity shrink-0" />
+              </button>
+            )}
+
+            {isStudio && (
+              <button
+                onClick={() => onNavigate("resource")}
+                className="flex items-center gap-3 rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)] px-5 py-4 text-left transition-colors hover:border-[var(--color-highlight)] group"
+              >
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[color-mix(in_srgb,var(--color-accent)_12%,transparent)]">
+                  <FolderOpen className="h-5 w-5 text-[var(--color-accent)]" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="text-sm font-semibold text-[var(--color-text)]">Manage Resource</div>
+                  <div className="text-xs text-[var(--color-text-muted)]">
+                    Open the shared resource library
+                  </div>
                 </div>
                 <ArrowRight className="h-4 w-4 text-[var(--color-text-muted)] opacity-0 group-hover:opacity-100 transition-opacity shrink-0" />
               </button>
@@ -1016,5 +1054,4 @@ function formatRelativeTime(date: Date): string {
   const days = Math.floor(hours / 24);
   return `${days}d`;
 }
-
 

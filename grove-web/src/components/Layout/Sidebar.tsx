@@ -12,12 +12,14 @@ import {
   ChevronRight,
   Bell,
   Search,
+  FolderOpen,
 } from "lucide-react";
 import { ProjectSelector } from "./ProjectSelector";
 import { NotificationPopover } from "./NotificationPopover";
 import { LogoBrand } from "./LogoBrand";
 import { GroveIcon } from "./GroveIcon";
-import { useNotifications } from "../../context";
+import { useNotifications, useProject } from "../../context";
+import { REPO_NAV_IDS, STUDIO_NAV_IDS } from "../../data/nav";
 import type { TasksMode } from "../../App";
 
 interface NavItem {
@@ -27,22 +29,28 @@ interface NavItem {
   beta?: boolean;
 }
 
-const navItems: NavItem[] = [
-  { id: "dashboard", label: "Dashboard", icon: LayoutGrid },
-  { id: "work", label: "Work", icon: Laptop },
-  { id: "tasks", label: "Tasks", icon: ListTodo },
-  { id: "skills", label: "Skills", icon: Blocks },
-  { id: "ai", label: "AI", icon: Sparkles },
-  { id: "statistics", label: "Statistics", icon: BarChart2, beta: true },
-];
+const ALL_NAV_ITEMS: Record<string, NavItem> = {
+  dashboard: { id: "dashboard", label: "Dashboard", icon: LayoutGrid },
+  work: { id: "work", label: "Work", icon: Laptop },
+  tasks: { id: "tasks", label: "Tasks", icon: ListTodo },
+  resource: { id: "resource", label: "Resource", icon: FolderOpen },
+  skills: { id: "skills", label: "Skills", icon: Blocks },
+  ai: { id: "ai", label: "AI", icon: Sparkles },
+  statistics: { id: "statistics", label: "Statistics", icon: BarChart2, beta: true },
+};
+
+function resolveNavItems(isStudio: boolean): NavItem[] {
+  const ids = isStudio ? STUDIO_NAV_IDS : REPO_NAV_IDS;
+  return ids.map((id) => ALL_NAV_ITEMS[id]).filter(Boolean);
+}
 
 interface SidebarProps {
   activeItem: string;
   onItemClick: (id: string) => void;
   collapsed: boolean;
   onToggleCollapse: () => void;
-  onManageProjects: () => void;
-  onAddProject?: () => void;
+  onManageProjects?: (tab?: "coding" | "studio") => void;
+  onAddProject?: (studioMode?: "studio") => void;
   onNavigate?: (page: string, data?: Record<string, unknown>) => void;
   tasksMode: TasksMode;
   onTasksModeChange: (mode: TasksMode) => void;
@@ -58,6 +66,8 @@ interface SidebarProps {
 export function Sidebar({ activeItem, onItemClick, collapsed, onToggleCollapse, onManageProjects, onAddProject, onNavigate, tasksMode, onTasksModeChange, onProjectSwitch, onSearch, drawerMode, onDrawerClose }: SidebarProps) {
   const [notifOpen, setNotifOpen] = useState(false);
   const { unreadCount } = useNotifications();
+  const { selectedProject } = useProject();
+  const navItems = resolveNavItems(selectedProject?.projectType === "studio");
 
   const isCollapsed = drawerMode ? false : collapsed;
 
@@ -88,7 +98,7 @@ export function Sidebar({ activeItem, onItemClick, collapsed, onToggleCollapse, 
 
       {/* Project Selector */}
       <div className="relative border-b border-[var(--color-border)]">
-        <ProjectSelector collapsed={isCollapsed} onManageProjects={() => { onManageProjects(); onDrawerClose?.(); }} onAddProject={() => { onAddProject?.(); onDrawerClose?.(); }} onProjectSwitch={onProjectSwitch} />
+        <ProjectSelector collapsed={isCollapsed} onManageProjects={(tab) => { onManageProjects?.(tab); onDrawerClose?.(); }} onAddProject={(studioMode) => { onAddProject?.(studioMode); onDrawerClose?.(); }} onProjectSwitch={onProjectSwitch} />
       </div>
 
       {/* Navigation */}

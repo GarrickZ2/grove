@@ -7,6 +7,7 @@ import { SettingsPage } from "./components/Config";
 import { DashboardPage } from "./components/Dashboard";
 import { BlitzPage } from "./components/Blitz";
 import { TasksPage } from "./components/Tasks/TasksPage";
+import { ResourcePage } from "./components/Studio";
 import { WorkPage } from "./components/Work";
 import { ProjectsPage } from "./components/Projects";
 import { MissingProjectState } from "./components/Projects/MissingProjectState";
@@ -28,12 +29,9 @@ import { getConfig, patchConfig, checkCommands, openIDE, openTerminal } from "./
 import { agentOptions } from "./components/ui";
 import { useIsMobile, useHotkeys, buildCommands } from "./hooks";
 import type { UseCommandsOptions } from "./hooks/useCommands";
+import { REPO_NAV_IDS, STUDIO_NAV_IDS } from "./data/nav";
 
 export type TasksMode = "zen" | "blitz";
-
-// Main sidebar nav items for Cmd+1-6 and Option+Cmd+Up/Down cycling.
-// "settings" and "projects" are excluded as they are utility pages, not part of the main nav cycle.
-const NAV_ITEMS = ["dashboard", "work", "tasks", "skills", "ai", "statistics"] as const;
 
 function AppContent() {
   const [activeItem, setActiveItem] = useState("dashboard");
@@ -43,6 +41,7 @@ function AppContent() {
   const [navigationData, setNavigationData] = useState<Record<string, unknown> | null>(null);
   const { selectedProject, currentProjectId, isLoading, selectProject, projects, addProject, createNewProject, refreshProjects, refreshSelectedProject } = useProject();
   const [showAddProject, setShowAddProject] = useState(false);
+  const [addProjectInitialMode, setAddProjectInitialMode] = useState<"coding" | "studio">("coding");
   const [isAddingProject, setIsAddingProject] = useState(false);
   const [addProjectError, setAddProjectError] = useState<string | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -55,9 +54,10 @@ function AppContent() {
     inWorkspace,
   } = useCommandPalette();
   const { theme } = useTheme();
+  const navItems: readonly string[] = selectedProject?.projectType === "studio" ? STUDIO_NAV_IDS : REPO_NAV_IDS;
 
   const setActiveNavItem = (index: number) => {
-    const nextItem = NAV_ITEMS[index];
+    const nextItem = navItems[index];
     if (nextItem) {
       setActiveItem(nextItem);
     }
@@ -65,14 +65,15 @@ function AppContent() {
   // Navigate sidebar by absolute index or relative delta (based on current active item)
   const navigateSidebar = useCallback((indexOrDelta: number, relative?: boolean) => {
     if (relative) {
-      const currentIndex = NAV_ITEMS.indexOf(activeItem as typeof NAV_ITEMS[number]);
-      const nextIndex = (currentIndex + indexOrDelta + NAV_ITEMS.length) % NAV_ITEMS.length;
-      setActiveItem(NAV_ITEMS[nextIndex]);
+      const currentIndex = navItems.indexOf(activeItem);
+      const baseIndex = currentIndex >= 0 ? currentIndex : 0;
+      const nextIndex = (baseIndex + indexOrDelta + navItems.length) % navItems.length;
+      setActiveItem(navItems[nextIndex]);
     } else {
-      const nextItem = NAV_ITEMS[indexOrDelta];
+      const nextItem = navItems[indexOrDelta];
       if (nextItem) setActiveItem(nextItem);
     }
-  }, [activeItem]);
+  }, [activeItem, navItems]);
 
   const isZenMode = tasksMode === "zen";
 
@@ -166,7 +167,8 @@ function AppContent() {
     setIsAddingProject(true);
     setAddProjectError(null);
     try {
-      await addProject(path, name);
+      const project = await addProject(path, name);
+      selectProject(project);
       setShowAddProject(false);
     } catch (err) {
       setAddProjectError(err instanceof Error ? err.message : "Failed to add project");
@@ -175,11 +177,12 @@ function AppContent() {
     }
   };
 
-  const handleCreateNewProject = async (parentDir: string, name: string, initGit: boolean) => {
+  const handleCreateNewProject = async (parentDir: string, name: string, initGit: boolean, projectType?: string) => {
     setIsAddingProject(true);
     setAddProjectError(null);
     try {
-      await createNewProject(parentDir, name, initGit);
+      const project = await createNewProject(parentDir, name, initGit, projectType);
+      selectProject(project);
       setShowAddProject(false);
     } catch (err: unknown) {
       if (err && typeof err === "object" && "message" in err) {
@@ -270,7 +273,10 @@ function AppContent() {
       projects,
       selectedProject,
       onSelectProject: selectProject,
-      onAddProject: () => setShowAddProject(true),
+    onAddProject: (studioMode?: "studio") => {
+      setAddProjectInitialMode(studioMode === "studio" ? "studio" : "coding");
+      setShowAddProject(true);
+    },
       onProjectSwitch: handleProjectSwitch,
       accentPalette: theme.accentPalette,
     },
@@ -312,7 +318,7 @@ function AppContent() {
       case "dashboard":
         return <DashboardPage onNavigate={handleNavigate} />;
       case "projects":
-        return <ProjectsPage onNavigate={setActiveItem} />;
+        return <ProjectsPage onNavigate={setActiveItem} key={"projects-" + (navigationData?.tab ?? "coding")} initialTab={navigationData?.tab as "coding" | "studio" | undefined} />;
       case "work":
         return <WorkPage key="work" />;
       case "tasks":
@@ -326,6 +332,8 @@ function AppContent() {
             onNavByIndex={navigateSidebar}
           />
         );
+      case "resource":
+        return <ResourcePage />;
       case "skills":
         return <SkillsPage />;
       case "ai":
@@ -351,15 +359,25 @@ function AppContent() {
   };
 
   const isDashboardPage = activeItem === "dashboard";
-  const isFullWidthPage = isDashboardPage || activeItem === "tasks" || activeItem === "work" || activeItem === "skills" || activeItem === "ai";
+  const isFullWidthPage =
+    isDashboardPage ||
+    activeItem === "projects" ||
+    activeItem === "tasks" ||
+    activeItem === "work" ||
+    activeItem === "skills" ||
+    activeItem === "ai" ||
+    activeItem === "resource";
 
   const sidebarProps = {
     activeItem,
     onItemClick: setActiveItem,
     collapsed: sidebarCollapsed,
     onToggleCollapse: () => setSidebarCollapsed(!sidebarCollapsed),
-    onManageProjects: () => setActiveItem("projects"),
-    onAddProject: () => setShowAddProject(true),
+    onManageProjects: (tab?: "coding" | "studio") => handleNavigate("projects", { tab }),
+    onAddProject: (studioMode?: "studio") => {
+      setAddProjectInitialMode(studioMode === "studio" ? "studio" : "coding");
+      setShowAddProject(true);
+    },
     onNavigate: handleNavigate,
     tasksMode,
     onTasksModeChange: setTasksMode,
@@ -433,6 +451,7 @@ function AppContent() {
           onCreateNew={handleCreateNewProject}
           isLoading={isAddingProject}
           externalError={addProjectError}
+          initialMode={addProjectInitialMode}
         />
         <CommandPalette />
         <ProjectCommandPalette
@@ -502,6 +521,7 @@ function AppContent() {
         onCreateNew={handleCreateNewProject}
         isLoading={isAddingProject}
         externalError={addProjectError}
+        initialMode={addProjectInitialMode}
       />
       <CommandPalette />
       <ProjectCommandPalette

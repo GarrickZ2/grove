@@ -10,6 +10,7 @@ pub use state::{init_file_watchers, shutdown_file_watchers};
 
 use axum::{
     body::Body,
+    extract::DefaultBodyLimit,
     http::{header, Response, StatusCode, Uri},
     middleware,
     response::IntoResponse,
@@ -120,6 +121,39 @@ pub fn create_api_router() -> Router {
         .route("/projects/{id}", get(handlers::projects::get_project))
         .route("/projects/{id}", delete(handlers::projects::delete_project))
         .route("/projects/{id}/stats", get(handlers::projects::get_stats))
+        // Studio Resource API
+        .route(
+            "/projects/{id}/resource",
+            get(handlers::projects::list_resources).delete(handlers::projects::delete_resource),
+        )
+        .route(
+            "/projects/{id}/resource/upload",
+            post(handlers::projects::upload_resource).layer(DefaultBodyLimit::max(
+                handlers::studio_common::MAX_UPLOAD_SIZE,
+            )),
+        )
+        .route(
+            "/projects/{id}/resource/workdir",
+            get(handlers::projects::list_resource_workdirs)
+                .post(handlers::projects::add_resource_workdir)
+                .delete(handlers::projects::delete_resource_workdir),
+        )
+        .route(
+            "/projects/{id}/resource/workdir/open",
+            post(handlers::projects::open_resource_workdir),
+        )
+        .route(
+            "/projects/{id}/resource/preview",
+            get(handlers::projects::preview_resource),
+        )
+        .route(
+            "/projects/{id}/resource/download",
+            get(handlers::projects::download_resource),
+        )
+        .route(
+            "/projects/{id}/instructions",
+            get(handlers::projects::get_instructions).put(handlers::projects::update_instructions),
+        )
         .route(
             "/projects/{id}/statistics",
             get(handlers::statistics::get_project_statistics),
@@ -196,6 +230,39 @@ pub fn create_api_router() -> Router {
         .route(
             "/projects/{id}/tasks/{taskId}/file",
             get(handlers::tasks::get_file).put(handlers::tasks::update_file),
+        )
+        // Studio Artifacts API
+        .route(
+            "/projects/{id}/tasks/{taskId}/artifacts",
+            get(handlers::tasks::list_artifacts).delete(handlers::tasks::delete_artifact),
+        )
+        .route(
+            "/projects/{id}/tasks/{taskId}/artifacts/preview",
+            get(handlers::tasks::preview_artifact),
+        )
+        .route(
+            "/projects/{id}/tasks/{taskId}/artifacts/download",
+            get(handlers::tasks::download_artifact),
+        )
+        .route(
+            "/projects/{id}/tasks/{taskId}/artifacts/upload",
+            post(handlers::tasks::upload_artifact).layer(DefaultBodyLimit::max(
+                handlers::studio_common::MAX_UPLOAD_SIZE,
+            )),
+        )
+        .route(
+            "/projects/{id}/tasks/{taskId}/artifacts/workdir",
+            get(handlers::tasks::list_artifact_workdirs)
+                .post(handlers::tasks::add_artifact_workdir)
+                .delete(handlers::tasks::delete_artifact_workdir),
+        )
+        .route(
+            "/projects/{id}/tasks/{taskId}/artifacts/workdir/open",
+            post(handlers::tasks::open_artifact_workdir),
+        )
+        .route(
+            "/projects/{id}/tasks/{taskId}/open-folder",
+            post(handlers::tasks::open_folder),
         )
         // File System Operations API
         .route(

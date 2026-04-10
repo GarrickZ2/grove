@@ -236,6 +236,29 @@ class ApiClient {
     return response.json();
   }
 
+  /**
+   * Fetch a text response (assumes UTF-8 encoding).
+   * Uses `response.text()` which decodes the body as UTF-8 by default.
+   * For binary content, use download URLs instead.
+   */
+  async getText(path: string): Promise<string> {
+    const response = await fetch(`${this.baseUrl}${path}`, {
+      method: 'GET',
+      headers: await getSignedHeaders('GET', path),
+    });
+
+    if (!response.ok) {
+      const payload = await extractErrorPayload(response);
+      throw {
+        status: response.status,
+        message: payload.message,
+        data: payload.data,
+      } as ApiError;
+    }
+
+    return response.text();
+  }
+
   async patch<T, R>(path: string, data: T): Promise<R> {
     const response = await fetch(`${this.baseUrl}${path}`, {
       method: 'PATCH',
@@ -272,6 +295,22 @@ class ApiClient {
     }
 
     return response.json();
+  }
+
+  async postNoContent(path: string): Promise<void> {
+    const response = await fetch(`${this.baseUrl}${path}`, {
+      method: 'POST',
+      headers: await getSignedHeaders('POST', path),
+    });
+
+    if (!response.ok) {
+      const payload = await extractErrorPayload(response);
+      throw {
+        status: response.status,
+        message: payload.message,
+        data: payload.data,
+      } as ApiError;
+    }
   }
 
   async delete<T = void>(path: string): Promise<T> {
