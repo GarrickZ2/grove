@@ -356,7 +356,7 @@ export function ResourcePage() {
       initial={{ opacity: 0, y: 12 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.25 }}
-      className="h-full flex flex-col gap-5 p-5 overflow-y-auto select-none"
+      className="h-full flex flex-col gap-4 p-4 overflow-y-auto select-none"
       style={{ color: "var(--color-text)" }}
       onDrop={handleDrop}
       onDragOver={(e) => { e.preventDefault(); setIsDragOver(true); }}
@@ -395,17 +395,17 @@ export function ResourcePage() {
 
       {/* Page header */}
       <section
-        className="rounded-[24px] border px-5 py-4 sm:px-6"
+        className="rounded-2xl border px-4 py-3 sm:px-5"
         style={{
           borderColor: "color-mix(in srgb, var(--color-highlight) 20%, var(--color-border))",
           background: "linear-gradient(135deg, color-mix(in srgb, var(--color-highlight) 10%, var(--color-bg-secondary)), var(--color-bg-secondary) 44%, color-mix(in srgb, var(--color-accent) 12%, var(--color-bg-secondary)))",
           boxShadow: "0 18px 40px color-mix(in srgb, var(--color-bg) 45%, transparent)",
         }}
       >
-        <div className="flex flex-col gap-4">
+        <div className="flex flex-col gap-3">
           <div className="min-w-0">
             <div className="flex items-start gap-3">
-              <div className="w-10 h-10 rounded-2xl flex items-center justify-center border shrink-0"
+              <div className="w-8 h-8 rounded-xl flex items-center justify-center border shrink-0"
                 style={{
                   borderColor: "color-mix(in srgb, var(--color-highlight) 24%, var(--color-border))",
                   background: "color-mix(in srgb, var(--color-highlight) 12%, transparent)",
@@ -420,14 +420,14 @@ export function ResourcePage() {
                   }}>
                   Studio Resource Hub
                 </div>
-                <h1 className="mt-2 text-xl font-semibold tracking-tight">Shared context for every task</h1>
-                <p className="mt-1 max-w-3xl text-sm" style={{ color: "var(--color-text-muted)" }}>
+                <h1 className="mt-1.5 text-lg font-semibold tracking-tight">Shared context for every task</h1>
+                <p className="mt-0.5 max-w-3xl text-xs" style={{ color: "var(--color-text-muted)" }}>
                   Upload reusable files, define workspace-wide instructions, and keep agent context visible instead of buried in a form.
                 </p>
               </div>
             </div>
 
-            <div className="mt-4 grid gap-3 md:grid-cols-3">
+            <div className="mt-3 grid gap-2 md:grid-cols-3">
               <HeroStat
                 icon={Files}
                 label="Uploads"
@@ -451,14 +451,14 @@ export function ResourcePage() {
         </div>
       </section>
 
-      <div className="grid flex-1 min-h-0 gap-5 xl:grid-cols-[minmax(0,1.5fr)_minmax(460px,1fr)] 2xl:grid-cols-[minmax(0,1.65fr)_minmax(520px,1fr)]">
-        <section className="min-h-[420px] rounded-[26px] border overflow-hidden flex flex-col"
+      <div className="grid flex-1 min-h-0 gap-4 xl:grid-cols-[minmax(0,1.5fr)_minmax(420px,1fr)] 2xl:grid-cols-[minmax(0,1.65fr)_minmax(480px,1fr)]">
+        <section className="min-h-[300px] rounded-2xl border overflow-hidden flex flex-col xl:min-h-0"
           style={{ borderColor: "var(--color-border)", background: "var(--color-bg-secondary)" }}>
-          <div className="flex flex-col gap-4 px-5 py-4 border-b"
+          <div className="flex flex-col gap-3 px-4 py-3 border-b"
             style={{ borderColor: "var(--color-border)" }}>
             <div className="flex flex-wrap items-start gap-3">
               <div className="flex items-center gap-3 min-w-0 flex-1">
-                <div className="w-10 h-10 rounded-2xl flex items-center justify-center"
+                <div className="w-8 h-8 rounded-xl flex items-center justify-center"
                   style={{ background: "color-mix(in srgb, var(--color-highlight) 12%, transparent)" }}>
                   <FolderOpen className="w-4 h-4" style={{ color: "var(--color-highlight)" }} />
                 </div>
@@ -510,7 +510,7 @@ export function ResourcePage() {
                 <button
                   onClick={() => activeTab === "uploads" ? fileInputRef.current?.click() : handleAddWorkdir()}
                   disabled={activeTab === "uploads" ? isUploading : isAddingWorkdir}
-                  className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-sm font-medium transition-colors disabled:opacity-50"
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors disabled:opacity-50"
                   style={{ color: "var(--color-highlight)", background: "color-mix(in srgb, var(--color-highlight) 10%, transparent)" }}
                   onMouseEnter={e => e.currentTarget.style.background = "color-mix(in srgb, var(--color-highlight) 18%, transparent)"}
                   onMouseLeave={e => e.currentTarget.style.background = "color-mix(in srgb, var(--color-highlight) 10%, transparent)"}>
@@ -523,7 +523,7 @@ export function ResourcePage() {
             </div>
 
             {activeTab === "uploads" ? (
-              <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_auto]">
+              <div className="grid gap-2 lg:grid-cols-[minmax(0,1fr)_auto]">
                 <label
                   className="flex items-center gap-2 rounded-xl border px-3 py-2"
                   style={{ borderColor: "var(--color-border)", background: "color-mix(in srgb, var(--color-bg) 46%, transparent)" }}
@@ -581,14 +581,14 @@ export function ResourcePage() {
               </div>
             ) : activeTab === "uploads" && files.length === 0 ? (
               <button onClick={() => fileInputRef.current?.click()}
-                className="w-full h-full min-h-[280px] rounded-[22px] cursor-pointer transition-all flex flex-col items-center justify-center gap-4 px-6 text-center"
+                className="w-full h-full min-h-[200px] rounded-2xl cursor-pointer transition-all flex flex-col items-center justify-center gap-3 px-6 text-center"
                 style={{
                   border: "1px dashed color-mix(in srgb, var(--color-highlight) 26%, var(--color-border))",
                   background: "linear-gradient(180deg, color-mix(in srgb, var(--color-highlight) 5%, transparent), transparent)",
                 }}
                 onMouseEnter={e => { e.currentTarget.style.borderColor = "var(--color-highlight)"; }}
                 onMouseLeave={e => { e.currentTarget.style.borderColor = "color-mix(in srgb, var(--color-highlight) 26%, var(--color-border))"; }}>
-                <div className="w-14 h-14 rounded-2xl flex items-center justify-center"
+                <div className="w-12 h-12 rounded-xl flex items-center justify-center"
                   style={{ background: "color-mix(in srgb, var(--color-highlight) 12%, transparent)" }}>
                   <Upload className="w-6 h-6" style={{ color: "var(--color-highlight)" }} />
                 </div>
@@ -605,13 +605,13 @@ export function ResourcePage() {
               </button>
             ) : activeTab === "workdir" && workdirs.length === 0 ? (
               <button onClick={handleAddWorkdir}
-                className="w-full h-full min-h-[280px] rounded-[22px] cursor-pointer transition-all flex flex-col items-center justify-center gap-4 px-6 text-center"
+                className="w-full h-full min-h-[200px] rounded-2xl cursor-pointer transition-all flex flex-col items-center justify-center gap-3 px-6 text-center"
                 style={{
                   border: "1px dashed color-mix(in srgb, var(--color-highlight) 26%, var(--color-border))",
                   background: "linear-gradient(180deg, color-mix(in srgb, var(--color-highlight) 5%, transparent), transparent)",
                 }}
               >
-                <div className="w-14 h-14 rounded-2xl flex items-center justify-center"
+                <div className="w-12 h-12 rounded-xl flex items-center justify-center"
                   style={{ background: "color-mix(in srgb, var(--color-highlight) 12%, transparent)" }}>
                   <FolderOpen className="w-6 h-6" style={{ color: "var(--color-highlight)" }} />
                 </div>
@@ -670,13 +670,14 @@ export function ResourcePage() {
           </div>
         </section>
 
-        <section className="min-h-[420px] rounded-[26px] border overflow-hidden flex flex-col xl:min-w-[460px] 2xl:min-w-[520px]"
-          style={{ borderColor: "var(--color-border)", background: "var(--color-bg-secondary)" }}>
-          <div className="px-5 py-4 border-b"
+        <div className="flex min-h-0 flex-col gap-4">
+          <section className="min-h-[240px] rounded-2xl border overflow-hidden flex flex-col xl:min-h-0 xl:flex-1 xl:min-w-[420px] 2xl:min-w-[480px]"
+            style={{ borderColor: "var(--color-border)", background: "var(--color-bg-secondary)" }}>
+          <div className="px-4 py-3 border-b"
             style={{ borderColor: "var(--color-border)" }}>
             <div className="flex flex-wrap items-start gap-3">
               <div className="flex items-center gap-3 min-w-0 flex-1">
-                <div className="w-10 h-10 rounded-2xl flex items-center justify-center"
+                <div className="w-8 h-8 rounded-xl flex items-center justify-center"
                   style={{ background: "color-mix(in srgb, var(--color-accent) 12%, transparent)" }}>
                   <FileText className="w-4 h-4" style={{ color: "var(--color-accent)" }} />
                 </div>
@@ -698,7 +699,7 @@ export function ResourcePage() {
 
               <div className="flex items-center gap-2">
                 <button onClick={() => setInstructions(savedInstructions)} disabled={!hasUnsaved}
-                  className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-sm font-medium transition-all disabled:opacity-30 border"
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-all disabled:opacity-30 border"
                   style={{
                     borderColor: "var(--color-border)",
                     color: "var(--color-text-muted)",
@@ -708,7 +709,7 @@ export function ResourcePage() {
                   Cancel
                 </button>
                 <button onClick={handleSaveInstructions} disabled={isSaving || !hasUnsaved}
-                  className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-sm font-medium transition-all disabled:opacity-30"
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-all disabled:opacity-30"
                   style={{
                     color: hasUnsaved ? "white" : "var(--color-text-muted)",
                     background: hasUnsaved ? "var(--color-highlight)" : "var(--color-bg)",
@@ -719,7 +720,7 @@ export function ResourcePage() {
               </div>
             </div>
 
-            <div className="mt-4 flex flex-wrap gap-2">
+            <div className="mt-3 flex flex-wrap gap-2">
               {INSTRUCTION_TEMPLATES.map((template) => (
                 <button
                   key={template.label}
@@ -757,12 +758,12 @@ export function ResourcePage() {
                 <Loader2 className="w-5 h-5 animate-spin" style={{ color: "var(--color-text-muted)" }} />
               </div>
             ) : (
-              <div className="flex h-full min-h-[300px] flex-col rounded-[22px] border"
+              <div className="flex h-full min-h-[120px] flex-col rounded-2xl border"
                 style={{
                   borderColor: "var(--color-border)",
                   background: "linear-gradient(180deg, color-mix(in srgb, var(--color-bg) 56%, transparent), transparent)",
                 }}>
-                <div className="flex items-center justify-between gap-3 px-4 py-3 border-b"
+                <div className="flex items-center justify-between gap-3 px-4 py-2.5 border-b"
                   style={{ borderColor: "var(--color-border)" }}>
                   <div>
                     <p className="text-sm font-medium">Rules editor</p>
@@ -784,7 +785,7 @@ export function ResourcePage() {
                   value={instructions}
                   onChange={(e) => setInstructions(e.target.value)}
                   placeholder={"# Workspace rules\n\nAdd shared expectations for every task in this Studio.\n\nExamples:\n- Always respond in Chinese\n- Use formal tone for reports\n- Output files in Markdown format\n- Reference data from resource/ when available"}
-                  className="w-full flex-1 resize-none outline-none px-4 py-4 text-[13px] font-mono leading-7"
+                  className="w-full flex-1 resize-none outline-none px-4 py-3 text-[13px] font-mono leading-6"
                   style={{
                     background: "transparent",
                     color: "var(--color-text)",
@@ -797,13 +798,13 @@ export function ResourcePage() {
           </div>
         </section>
 
-        <section className="min-h-[420px] rounded-[26px] border overflow-hidden flex flex-col xl:min-w-[460px] 2xl:min-w-[520px]"
-          style={{ borderColor: "var(--color-border)", background: "var(--color-bg-secondary)" }}>
-          <div className="px-5 py-4 border-b"
+          <section className="min-h-[240px] rounded-2xl border overflow-hidden flex flex-col xl:min-h-0 xl:flex-1 xl:min-w-[420px] 2xl:min-w-[480px]"
+            style={{ borderColor: "var(--color-border)", background: "var(--color-bg-secondary)" }}>
+          <div className="px-4 py-3 border-b"
             style={{ borderColor: "var(--color-border)" }}>
             <div className="flex flex-wrap items-start gap-3">
               <div className="flex items-center gap-3 min-w-0 flex-1">
-                <div className="w-10 h-10 rounded-2xl flex items-center justify-center"
+                <div className="w-8 h-8 rounded-xl flex items-center justify-center"
                   style={{ background: "color-mix(in srgb, var(--color-highlight) 12%, transparent)" }}>
                   <Brain className="w-4 h-4" style={{ color: "var(--color-highlight)" }} />
                 </div>
@@ -825,7 +826,7 @@ export function ResourcePage() {
 
               <div className="flex items-center gap-2">
                 <button onClick={() => setMemory(savedMemory)} disabled={!hasUnsavedMemory}
-                  className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-sm font-medium transition-all disabled:opacity-30 border"
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-all disabled:opacity-30 border"
                   style={{
                     borderColor: "var(--color-border)",
                     color: "var(--color-text-muted)",
@@ -835,7 +836,7 @@ export function ResourcePage() {
                   Cancel
                 </button>
                 <button onClick={handleSaveMemory} disabled={isSavingMemory || !hasUnsavedMemory}
-                  className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-sm font-medium transition-all disabled:opacity-30"
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-all disabled:opacity-30"
                   style={{
                     color: hasUnsavedMemory ? "white" : "var(--color-text-muted)",
                     background: hasUnsavedMemory ? "var(--color-highlight)" : "var(--color-bg)",
@@ -859,12 +860,12 @@ export function ResourcePage() {
                 <Loader2 className="w-5 h-5 animate-spin" style={{ color: "var(--color-text-muted)" }} />
               </div>
             ) : (
-              <div className="flex h-full min-h-[300px] flex-col rounded-[22px] border"
+              <div className="flex h-full min-h-[120px] flex-col rounded-2xl border"
                 style={{
                   borderColor: "var(--color-border)",
                   background: "linear-gradient(180deg, color-mix(in srgb, var(--color-bg) 56%, transparent), transparent)",
                 }}>
-                <div className="flex items-center justify-between gap-3 px-4 py-3 border-b"
+                <div className="flex items-center justify-between gap-3 px-4 py-2.5 border-b"
                   style={{ borderColor: "var(--color-border)" }}>
                   <div>
                     <p className="text-sm font-medium">Memory editor</p>
@@ -886,7 +887,7 @@ export function ResourcePage() {
                   value={memory}
                   onChange={(e) => setMemory(e.target.value)}
                   placeholder={"# Project Memory\n\nThis file is maintained by AI agents.\n\n## Conventions\n\n## Known Issues\n\n## Decisions"}
-                  className="w-full flex-1 resize-none outline-none px-4 py-4 text-[13px] font-mono leading-7"
+                  className="w-full flex-1 resize-none outline-none px-4 py-3 text-[13px] font-mono leading-6"
                   style={{
                     background: "transparent",
                     color: "var(--color-text)",
@@ -897,7 +898,8 @@ export function ResourcePage() {
               </div>
             )}
           </div>
-        </section>
+          </section>
+        </div>
       </div>
     </motion.div>
   );
@@ -916,7 +918,7 @@ function HeroStat({
 }) {
   return (
     <div
-      className="rounded-2xl border px-4 py-2.5"
+      className="rounded-xl border px-3 py-2"
       style={{
         borderColor: "color-mix(in srgb, var(--color-border) 78%, transparent)",
         background: "color-mix(in srgb, var(--color-bg) 58%, transparent)",
@@ -928,7 +930,7 @@ function HeroStat({
           {label}
         </span>
       </div>
-      <div className="mt-2 text-base font-semibold">{value}</div>
+      <div className="mt-1.5 text-sm font-semibold">{value}</div>
       <div className="mt-0.5 text-xs" style={{ color: "var(--color-text-muted)" }}>{subtext}</div>
     </div>
   );
