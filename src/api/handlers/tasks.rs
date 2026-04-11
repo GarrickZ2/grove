@@ -2309,6 +2309,71 @@ fn list_dir_recursive(
     files
 }
 
+fn list_workdir_entries(dir: &std::path::Path) -> Vec<WorkDirectoryEntry> {
+    let mut entries_out = Vec::new();
+    let entries = match fs::read_dir(dir) {
+        Ok(entries) => entries,
+        Err(_) => return entries_out,
+    };
+
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let meta = match fs::symlink_metadata(&path) {
+            Ok(meta) => meta,
+            Err(_) => continue,
+        };
+        if !meta.file_type().is_symlink() {
+            continue;
+        }
+        let target = match fs::read_link(&path) {
+            Ok(target) => target,
+            Err(_) => continue,
+        };
+        entries_out.push(WorkDirectoryEntry {
+            name: entry.file_name().to_string_lossy().to_string(),
+            target_path: target.to_string_lossy().to_string(),
+            exists: target.exists(),
+        });
+    }
+
+    entries_out.sort_by(|a, b| a.name.cmp(&b.name));
+    entries_out
+}
+
+fn sanitize_link_name(name: &str) -> String {
+    name.chars()
+        .map(|ch| match ch {
+            '/' | '\\' | ':' | '\0' => '_',
+            _ => ch,
+        })
+        .collect::<String>()
+        .trim()
+        .trim_matches('.')
+        .to_string()
+}
+
+fn create_unique_symlink_name(dir: &std::path::Path, target_path: &std::path::Path) -> String {
+    let fallback = "folder".to_string();
+    let base = target_path
+        .file_name()
+        .map(|name| sanitize_link_name(&name.to_string_lossy()))
+        .filter(|name| !name.is_empty())
+        .unwrap_or(fallback);
+
+    if !dir.join(&base).exists() && !dir.join(&base).is_symlink() {
+        return base;
+    }
+
+    for idx in 2..1000 {
+        let candidate = format!("{base}-{idx}");
+        if !dir.join(&candidate).exists() && !dir.join(&candidate).is_symlink() {
+            return candidate;
+        }
+    }
+
+    format!("{base}-{}", chrono::Utc::now().timestamp())
+}
+
 fn resolve_task_dir(
     project: &workspace::RegisteredProject,
     project_id: &str,

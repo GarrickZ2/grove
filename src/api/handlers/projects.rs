@@ -1152,6 +1152,47 @@ pub async fn update_instructions(
     }))
 }
 
+/// GET /api/v1/projects/{id}/memory
+pub async fn get_memory(
+    Path(id): Path<String>,
+) -> Result<Json<InstructionsResponse>, (StatusCode, Json<ProjectError>)> {
+    let (_project, studio_dir) = resolve_studio_dir(&id)?;
+    let path = studio_dir.join("memory.md");
+    let content = match std::fs::read_to_string(&path) {
+        Ok(s) => s,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
+        Err(e) => {
+            return Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ProjectError {
+                    error: format!("Failed to read memory: {}", e),
+                }),
+            ))
+        }
+    };
+    Ok(Json(InstructionsResponse { content }))
+}
+
+/// PUT /api/v1/projects/{id}/memory
+pub async fn update_memory(
+    Path(id): Path<String>,
+    Json(body): Json<InstructionsUpdateRequest>,
+) -> Result<Json<InstructionsResponse>, (StatusCode, Json<ProjectError>)> {
+    let (_project, studio_dir) = resolve_studio_dir(&id)?;
+    let path = studio_dir.join("memory.md");
+    std::fs::write(&path, &body.content).map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ProjectError {
+                error: format!("Failed to write memory: {}", e),
+            }),
+        )
+    })?;
+    Ok(Json(InstructionsResponse {
+        content: body.content,
+    }))
+}
+
 /// GET /api/v1/projects/{id}/stats
 /// Get project statistics
 pub async fn get_stats(Path(id): Path<String>) -> Result<Json<ProjectStatsResponse>, StatusCode> {

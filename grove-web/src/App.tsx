@@ -33,6 +33,8 @@ import { REPO_NAV_IDS, STUDIO_NAV_IDS } from "./data/nav";
 
 export type TasksMode = "zen" | "blitz";
 
+// Main sidebar nav items for Cmd+1-6 and Option+Cmd+Up/Down cycling.
+// "settings" and "projects" are excluded as they are utility pages, not part of the main nav cycle.
 function AppContent() {
   const [activeItem, setActiveItem] = useState("dashboard");
   const [tasksMode, setTasksMode] = useState<TasksMode>("zen");

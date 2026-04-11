@@ -3,13 +3,14 @@ import { AnimatePresence, motion } from "framer-motion";
 import {
   Trash2, Upload, Loader2, MoreHorizontal, Download, Eye,
   FolderOpen, Save, FileText, RefreshCw, Sparkles,
-  Search, ArrowRight, Files, ShieldCheck, Clock3, Plus, X,
+  Search, ArrowRight, Files, ShieldCheck, Clock3, Plus, X, Brain,
 } from "lucide-react";
 import { useProject } from "../../context";
 import {
   listResources, uploadResource, deleteResource,
   previewResource, resourceDownloadUrl,
   getInstructions, updateInstructions,
+  getMemory, updateMemory,
   listResourceWorkdirs, addResourceWorkdir, deleteResourceWorkdir, openResourceWorkdir,
   type ResourceFile, type WorkDirectoryEntry,
 } from "../../api";
@@ -21,8 +22,6 @@ import {
   getExtBadge,
   downloadViaIframe,
 } from "../ui";
-
-const AUTO_DISMISS_MS = 2000;
 
 function formatSize(bytes: number): string {
   if (bytes === 0) return "—";
@@ -113,6 +112,16 @@ export function ResourcePage() {
 
   const hasUnsaved = instructions !== savedInstructions;
   const instructionLineCount = countInstructionLines(instructions);
+
+  const [memory, setMemory] = useState("");
+  const [savedMemory, setSavedMemory] = useState("");
+  const [isLoadingMemory, setIsLoadingMemory] = useState(true);
+  const [isSavingMemory, setIsSavingMemory] = useState(false);
+  const [memorySaveMessage, setMemorySaveMessage] = useState<string | null>(null);
+
+  const hasUnsavedMemory = memory !== savedMemory;
+  const memoryLineCount = countInstructionLines(memory);
+
   const filteredFiles = files.filter((file) =>
     file.name.toLowerCase().includes(searchQuery.toLowerCase()),
   );
@@ -165,7 +174,38 @@ export function ResourcePage() {
     }
   }, [projectId]);
 
-  useEffect(() => { loadFiles(); loadWorkdirs(); loadInstructions(); }, [loadFiles, loadWorkdirs, loadInstructions]);
+  const loadMemory = useCallback(async () => {
+    if (!projectId) return;
+    setIsLoadingMemory(true);
+    try {
+      const data = await getMemory(projectId);
+      setMemory(data.content);
+      setSavedMemory(data.content);
+    } catch {
+      setMemory("");
+      setSavedMemory("");
+    } finally {
+      setIsLoadingMemory(false);
+    }
+  }, [projectId]);
+
+  const handleSaveMemory = useCallback(async () => {
+    if (!projectId) return;
+    setIsSavingMemory(true);
+    setMemorySaveMessage(null);
+    try {
+      await updateMemory(projectId, memory);
+      setSavedMemory(memory);
+      setMemorySaveMessage("Saved");
+      setTimeout(() => setMemorySaveMessage(null), 2000);
+    } catch {
+      setMemorySaveMessage("Failed to save");
+    } finally {
+      setIsSavingMemory(false);
+    }
+  }, [projectId, memory]);
+
+  useEffect(() => { loadFiles(); loadWorkdirs(); loadInstructions(); loadMemory(); }, [loadFiles, loadWorkdirs, loadInstructions, loadMemory]);
 
   const handleUpload = useCallback(async (fileList: FileList | File[]) => {
     if (!projectId || fileList.length === 0) return;
@@ -228,33 +268,37 @@ export function ResourcePage() {
     }
   };
 
-  const handleSaveInstructions = async () => {
+  const handleSaveInstructions = useCallback(async () => {
     if (!projectId) return;
     setIsSaving(true);
     try {
       await updateInstructions(projectId, instructions);
       setSavedInstructions(instructions);
       setSaveMessage("Saved");
-      setTimeout(() => setSaveMessage(null), AUTO_DISMISS_MS);
+      setTimeout(() => setSaveMessage(null), 2000);
     } catch (err) {
       setSaveMessage(err instanceof Error ? err.message : "Failed to save");
     } finally {
       setIsSaving(false);
     }
-  };
+  }, [projectId, instructions]);
 
-  // Register global keydown listener on every render to capture latest state/callbacks.
-// No dependency array is intentional — ensures fresh closures for drag/preview state.
   useEffect(() => {
-    const handler = (e: KeyboardEvent) => {
+    const handleKeyDown = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key === "s") {
-        e.preventDefault();
-        if (hasUnsaved) handleSaveInstructions();
+        const active = document.activeElement;
+        if (active?.id === "resource-instructions-editor") {
+          e.preventDefault();
+          if (hasUnsaved) handleSaveInstructions();
+        } else if (active?.id === "resource-memory-editor") {
+          e.preventDefault();
+          if (hasUnsavedMemory) handleSaveMemory();
+        }
       }
     };
-    window.addEventListener("keydown", handler);
-    return () => window.removeEventListener("keydown", handler);
-  });
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [hasUnsaved, handleSaveInstructions, hasUnsavedMemory, handleSaveMemory]);
 
   const handleDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault();
@@ -287,11 +331,8 @@ export function ResourcePage() {
     try {
       const content = await previewResource(projectId, file.path);
       setPreviewFile({ file, content });
-    } catch (err) {
-      const message = err && typeof err === 'object' && 'message' in err
-        ? (err as { message: string }).message
-        : 'Failed to load preview';
-      setPreviewFile({ file, content: `Error: ${message}` });
+    } catch {
+      setPreviewFile({ file, content: "(Failed to load preview)" });
     } finally {
       setPreviewLoading(false);
     }
@@ -743,6 +784,108 @@ export function ResourcePage() {
                   value={instructions}
                   onChange={(e) => setInstructions(e.target.value)}
                   placeholder={"# Workspace rules\n\nAdd shared expectations for every task in this Studio.\n\nExamples:\n- Always respond in Chinese\n- Use formal tone for reports\n- Output files in Markdown format\n- Reference data from resource/ when available"}
+                  className="w-full flex-1 resize-none outline-none px-4 py-4 text-[13px] font-mono leading-7"
+                  style={{
+                    background: "transparent",
+                    color: "var(--color-text)",
+                    caretColor: "var(--color-highlight)",
+                  }}
+                  spellCheck={false}
+                />
+              </div>
+            )}
+          </div>
+        </section>
+
+        <section className="min-h-[420px] rounded-[26px] border overflow-hidden flex flex-col xl:min-w-[460px] 2xl:min-w-[520px]"
+          style={{ borderColor: "var(--color-border)", background: "var(--color-bg-secondary)" }}>
+          <div className="px-5 py-4 border-b"
+            style={{ borderColor: "var(--color-border)" }}>
+            <div className="flex flex-wrap items-start gap-3">
+              <div className="flex items-center gap-3 min-w-0 flex-1">
+                <div className="w-10 h-10 rounded-2xl flex items-center justify-center"
+                  style={{ background: "color-mix(in srgb, var(--color-highlight) 12%, transparent)" }}>
+                  <Brain className="w-4 h-4" style={{ color: "var(--color-highlight)" }} />
+                </div>
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="text-sm font-semibold">Project Memory</span>
+                    {hasUnsavedMemory && (
+                      <span className="text-[10px] px-1.5 py-0.5 rounded font-medium"
+                        style={{ background: "color-mix(in srgb, var(--color-warning) 15%, transparent)", color: "var(--color-warning)" }}>
+                        Unsaved
+                      </span>
+                    )}
+                  </div>
+                  <p className="mt-0.5 text-xs" style={{ color: "var(--color-text-muted)" }}>
+                    Accumulated by AI agents across tasks. Read on start, updated on finish.
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <button onClick={() => setMemory(savedMemory)} disabled={!hasUnsavedMemory}
+                  className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-sm font-medium transition-all disabled:opacity-30 border"
+                  style={{
+                    borderColor: "var(--color-border)",
+                    color: "var(--color-text-muted)",
+                    background: "var(--color-bg)",
+                  }}>
+                  <X className="w-4 h-4" />
+                  Cancel
+                </button>
+                <button onClick={handleSaveMemory} disabled={isSavingMemory || !hasUnsavedMemory}
+                  className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-sm font-medium transition-all disabled:opacity-30"
+                  style={{
+                    color: hasUnsavedMemory ? "white" : "var(--color-text-muted)",
+                    background: hasUnsavedMemory ? "var(--color-highlight)" : "var(--color-bg)",
+                  }}>
+                  {isSavingMemory ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+                  {hasUnsavedMemory ? "Save Changes" : "Saved"}
+                </button>
+              </div>
+            </div>
+
+            {memorySaveMessage && (
+              <p className="mt-3 text-xs font-medium" style={{ color: memorySaveMessage === "Saved" ? "var(--color-success)" : "var(--color-error)" }}>
+                {memorySaveMessage}
+              </p>
+            )}
+          </div>
+
+          <div className="flex-1 min-h-0 p-3">
+            {isLoadingMemory ? (
+              <div className="flex items-center justify-center h-full">
+                <Loader2 className="w-5 h-5 animate-spin" style={{ color: "var(--color-text-muted)" }} />
+              </div>
+            ) : (
+              <div className="flex h-full min-h-[300px] flex-col rounded-[22px] border"
+                style={{
+                  borderColor: "var(--color-border)",
+                  background: "linear-gradient(180deg, color-mix(in srgb, var(--color-bg) 56%, transparent), transparent)",
+                }}>
+                <div className="flex items-center justify-between gap-3 px-4 py-3 border-b"
+                  style={{ borderColor: "var(--color-border)" }}>
+                  <div>
+                    <p className="text-sm font-medium">Memory editor</p>
+                    <p className="text-xs" style={{ color: "var(--color-text-muted)" }}>
+                      AI-maintained knowledge base. Save with <span className="font-mono">Cmd/Ctrl + S</span>.
+                    </p>
+                  </div>
+                  <div className="text-right">
+                    <p className="text-xs font-medium" style={{ color: "var(--color-text)" }}>
+                      {memoryLineCount > 0 ? `${memoryLineCount} ${memoryLineCount === 1 ? "line" : "lines"}` : "No content"}
+                    </p>
+                    <p className="text-[11px]" style={{ color: "var(--color-text-muted)" }}>
+                      Shared across tasks
+                    </p>
+                  </div>
+                </div>
+                <textarea
+                  id="resource-memory-editor"
+                  value={memory}
+                  onChange={(e) => setMemory(e.target.value)}
+                  placeholder={"# Project Memory\n\nThis file is maintained by AI agents.\n\n## Conventions\n\n## Known Issues\n\n## Decisions"}
                   className="w-full flex-1 resize-none outline-none px-4 py-4 text-[13px] font-mono leading-7"
                   style={{
                     background: "transparent",

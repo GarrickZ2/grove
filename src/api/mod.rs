@@ -155,6 +155,10 @@ pub fn create_api_router() -> Router {
             get(handlers::projects::get_instructions).put(handlers::projects::update_instructions),
         )
         .route(
+            "/projects/{id}/memory",
+            get(handlers::projects::get_memory).put(handlers::projects::update_memory),
+        )
+        .route(
             "/projects/{id}/statistics",
             get(handlers::statistics::get_project_statistics),
         )

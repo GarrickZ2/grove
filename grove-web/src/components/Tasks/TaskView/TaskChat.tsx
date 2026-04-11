@@ -2372,6 +2372,7 @@ export function TaskChat({
     let resolvedAttachments = attachments;
     const pendingOnes = attachments.filter((a) => a.pendingFile);
     if (pendingOnes.length > 0) {
+      if (!activeChatId) return;
       try {
         const uploadResults = await Promise.all(
           pendingOnes.map(async (att) => {

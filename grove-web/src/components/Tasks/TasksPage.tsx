@@ -578,9 +578,9 @@ export function TasksPage({ initialTaskId, initialViewMode, onNavigationConsumed
                     onClose={handleMobileBack}
                     onEnterWorkspace={pageState.selectedTask.status !== "archived" ? pageHandlers.handleEnterWorkspace : undefined}
                     onAddPanel={pageState.selectedTask.status !== "archived" ? handleAddPanelFromInfo : undefined}
-                     onRecover={pageState.selectedTask.status === "archived" ? handleRecover : undefined}
-                     onClean={isStudio ? undefined : opsHandlers.handleClean}
-                     onCommit={!isStudio && pageState.selectedTask.status !== "archived" ? opsHandlers.handleCommit : undefined}
+                    onRecover={pageState.selectedTask.status === "archived" ? handleRecover : undefined}
+                    onClean={isStudio ? undefined : opsHandlers.handleClean}
+                    onCommit={!isStudio && pageState.selectedTask.status !== "archived" ? opsHandlers.handleCommit : undefined}
                     onRebase={!isStudio && pageState.selectedTask.status !== "archived" ? opsHandlers.handleRebase : undefined}
                     onSync={!isStudio && pageState.selectedTask.status !== "archived" ? opsHandlers.handleSync : undefined}
                     onMerge={!isStudio && pageState.selectedTask.status !== "archived" ? opsHandlers.handleMerge : undefined}

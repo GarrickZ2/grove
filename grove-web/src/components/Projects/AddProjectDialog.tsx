@@ -76,6 +76,15 @@ export function AddProjectDialog({
     onClose();
   };
 
+  /* eslint-disable react-hooks/set-state-in-effect */
+  useEffect(() => {
+    if (!isOpen) return;
+    setMode(initialMode);
+    setCodingTab("existing");
+    setError("");
+  }, [initialMode, isOpen]);
+  /* eslint-enable react-hooks/set-state-in-effect */
+
   const handleBrowseExisting = async () => {
     try {
       const response = await fetch("/api/v1/browse-folder");

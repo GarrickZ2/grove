@@ -614,6 +614,20 @@ fn create_task_inner(
             }
         }
 
+        // Symlink memory.md → project memory.md (read-write)
+        let memory_link = task_dir.join("memory.md");
+        let project_memory = studio_dir.join("memory.md");
+        // Ensure the target file exists so the symlink has a valid target
+        if !project_memory.exists() {
+            let _ = std::fs::write(&project_memory, "");
+        }
+        if !memory_link.exists() {
+            #[cfg(unix)]
+            {
+                let _ = std::os::unix::fs::symlink(&project_memory, &memory_link);
+            }
+        }
+
         // Generate AGENTS.md
         let agents_md = format!(
             "# Studio Task: {task_name}\n\
@@ -628,6 +642,7 @@ fn create_task_inner(
              ├── scripts/         # Place any scripts you create or use here.\n\
              ├── resource/        # Read-only shared project resources (symlink). Do not modify.\n\
              ├── instructions.md  # Read-only project-level instructions (symlink). Read this first.\n\
+             ├── memory.md        # Read-write shared project memory (symlink). Read on start, update on finish.\n\
              └── AGENTS.md        # This file.\n\
              ```\n\
              ## Getting Started\n\
@@ -649,6 +664,29 @@ fn create_task_inner(
              - NEVER modify files in `input/` unless the user explicitly asks you to.\n\
              - NEVER modify `instructions.md` — it is a read-only symlink.\n\
              - Keep `output/` organized. Use subdirectories if you produce many files.\n\n\
+             ## Memory\n\
+             \n\
+             `memory.md` is a shared project memory file. It persists across all tasks and\n\
+             accumulates knowledge that would otherwise be lost between sessions.\n\
+             \n\
+             ### On start\n\
+             Read `memory.md` before doing anything else. Use it to understand:\n\
+             - Project conventions and patterns the team uses\n\
+             - Known issues, gotchas, and their root causes\n\
+             - Past decisions and the reasons behind them\n\
+             - User preferences and working style\n\
+             \n\
+             ### On finish\n\
+             Before ending your session, reflect on what you learned. Update `memory.md` if any\n\
+             of the following apply:\n\
+             - You discovered a non-obvious project convention\n\
+             - You hit a bug or gotcha that would slow down a future agent\n\
+             - You made a significant architectural or design decision\n\
+             - You learned something about the user's preferences\n\
+             \n\
+             Write in Markdown. Organize by category (e.g. `## Conventions`, `## Known Issues`,\n\
+             `## Decisions`). Append or update existing sections — do not delete entries unless\n\
+             they are clearly outdated or wrong.\n\n\
              ## Presentation Guidelines\n\
              \n\
              - **Documentation**: Write in Markdown format.\n\
