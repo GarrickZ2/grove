@@ -4,7 +4,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { ChevronDown, Check, Bot, Globe, Terminal, Settings } from "lucide-react";
 import type { CustomAgent } from "../../api/config";
 
-import { Claude, Gemini, Copilot, Cursor, Trae, Qwen, Kimi, OpenAI, Junie, OpenCode } from "./AgentIcons";
+import { Claude, Gemini, Copilot, Cursor, Trae, Qwen, Kimi, OpenAI, Junie, OpenCode, OpenClaw, Hermes, Kiro, Windsurf } from "./AgentIcons";
 
 interface AgentOption {
   id: string;
@@ -26,14 +26,18 @@ interface AgentOption {
 export const agentOptions: AgentOption[] = [
   { id: "claude", label: "Claude Code", value: "claude", icon: Claude.Color, terminalCheck: "claude", acpCheck: "claude-agent-acp", acpFallback: "claude-code-acp" },
   { id: "codex", label: "CodeX", value: "codex", icon: OpenAI, terminalCheck: "codex", acpCheck: "codex-acp" },
+  { id: "cursor-agent", label: "Cursor", value: "cursor", icon: Cursor, terminalCheck: "cursor-agent", acpCheck: "cursor-agent" },
   { id: "gemini", label: "Gemini", value: "gemini", icon: Gemini.Color, terminalCheck: "gemini", acpCheck: "gemini" },
   { id: "gh-copilot", label: "GitHub Copilot", value: "copilot", icon: Copilot.Color, terminalCheck: "copilot", acpCheck: "copilot" },
-  { id: "cursor-agent", label: "Cursor Agent", value: "cursor", icon: Cursor, terminalCheck: "cursor-agent", acpCheck: "cursor-agent" },
+  { id: "hermes", label: "Hermes", value: "hermes", icon: Hermes, terminalCheck: "hermes", acpCheck: "hermes acp" },
   { id: "junie", label: "Junie", value: "junie", icon: Junie.Color, terminalCheck: "junie", acpCheck: "junie" },
+  { id: "kimi", label: "Kimi", value: "kimi", icon: Kimi.Color, terminalCheck: "kimi", acpCheck: "kimi" },
+  { id: "kiro", label: "Kiro", value: "kiro", icon: Kiro, terminalCheck: "kiro-cli", acpCheck: "kiro-cli acp" },
+  { id: "openclaw", label: "OpenClaw", value: "openclaw", icon: OpenClaw.Color, terminalCheck: "openclaw", acpCheck: "openclaw acp" },
   { id: "opencode", label: "OpenCode", value: "opencode", icon: OpenCode, terminalCheck: "opencode", acpCheck: "opencode" },
   { id: "qwen", label: "Qwen", value: "qwen", icon: Qwen.Color, terminalCheck: "qwen", acpCheck: "qwen" },
-  { id: "kimi", label: "Kimi", value: "kimi", icon: Kimi.Color, terminalCheck: "kimi", acpCheck: "kimi" },
   { id: "traecli", label: "Trae", value: "traecli", icon: Trae.Color, terminalCheck: "traecli", acpCheck: "traecli" },
+  { id: "windsurf", label: "Windsurf", value: "windsurf", icon: Windsurf, terminalCheck: "windsurf", acpCheck: "windsurf" },
 ];
 
 interface AgentPickerProps {

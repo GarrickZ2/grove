@@ -65,7 +65,7 @@ portable-pty = "0.8"
 futures = "0.3"
 
 # ACP (Agent Client Protocol)
-agent-client-protocol = { version = "0.9", features = ["unstable_session_model"] }
+agent-client-protocol = { version = "0.10", features = ["unstable_session_model"] }
 tokio-util = { version = "0.7", features = ["compat"] }
 async-trait = "0.1"
 tokio-stream = "0.1"

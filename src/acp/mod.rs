@@ -569,17 +569,17 @@ impl acp::Client for GroveAcpClient {
         ))
     }
 
-    async fn kill_terminal_command(
+    async fn kill_terminal(
         &self,
-        args: acp::KillTerminalCommandRequest,
-    ) -> acp::Result<acp::KillTerminalCommandResponse> {
+        args: acp::KillTerminalRequest,
+    ) -> acp::Result<acp::KillTerminalResponse> {
         let terms = self.terminals.lock().unwrap();
         let tid = &*args.terminal_id.0;
         let state = terms
             .get(tid)
             .ok_or_else(|| acp::Error::invalid_params().data("Unknown terminal ID"))?;
         let _ = state.kill_tx.try_send(());
-        Ok(acp::KillTerminalCommandResponse::default())
+        Ok(acp::KillTerminalResponse::default())
     }
 
     async fn session_notification(

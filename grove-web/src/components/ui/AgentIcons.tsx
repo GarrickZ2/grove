@@ -21,3 +21,6 @@ export const OpenAI = svgIcon("/agent-icon/openai.svg");
 export const Windsurf = svgIcon("/agent-icon/windsurf.svg");
 export const OpenCode = svgIcon("/agent-icon/opencode.svg");
 export const Junie = { Color: svgIcon("/agent-icon/junie-color.svg") };
+export const OpenClaw = { Color: svgIcon("/agent-icon/openclaw-color.svg") };
+export const Hermes = svgIcon("/agent-icon/hermes.svg");
+export const Kiro = svgIcon("/agent-icon/kiro.svg");
