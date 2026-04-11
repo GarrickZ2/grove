@@ -1,6 +1,7 @@
 //! Web API module for Grove
 
 pub mod auth;
+pub mod error;
 pub mod handlers;
 pub mod radio_server;
 mod state;

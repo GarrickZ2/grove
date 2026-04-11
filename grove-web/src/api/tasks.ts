@@ -1,6 +1,7 @@
 // Tasks API client
 
 import { apiClient } from './client';
+import { createStudioFileApi } from './studio-factory';
 import type { StudioFileEntry, StudioWorkDirEntry } from './studio-types';
 
 // ============================================================================
@@ -630,41 +631,37 @@ export async function listArtifacts(projectId: string, taskId: string): Promise<
   return apiClient.get<ArtifactsResponse>(`/api/v1/projects/${projectId}/tasks/${taskId}/artifacts`);
 }
 
-export async function previewArtifact(projectId: string, taskId: string, dir: string, path: string): Promise<string> {
-  return apiClient.getText(`/api/v1/projects/${projectId}/tasks/${taskId}/artifacts/preview?dir=${encodeURIComponent(dir)}&path=${encodeURIComponent(path)}`);
+const artifactApi = (projectId: string, taskId: string) =>
+  createStudioFileApi(`/api/v1/projects/${projectId}/tasks/${taskId}/artifacts`);
+
+export function previewArtifact(projectId: string, taskId: string, dir: string, path: string) {
+  return artifactApi(projectId, taskId).preview(path, { dir });
 }
 
-export function artifactDownloadUrl(projectId: string, taskId: string, dir: string, path: string): string {
-  return `/api/v1/projects/${projectId}/tasks/${taskId}/artifacts/download?dir=${encodeURIComponent(dir)}&path=${encodeURIComponent(path)}`;
+export function artifactDownloadUrl(projectId: string, taskId: string, dir: string, path: string) {
+  return artifactApi(projectId, taskId).downloadUrl(path, { dir });
 }
 
-export async function deleteArtifact(projectId: string, taskId: string, dir: string, path: string): Promise<void> {
-  return apiClient.delete(`/api/v1/projects/${projectId}/tasks/${taskId}/artifacts?dir=${encodeURIComponent(dir)}&path=${encodeURIComponent(path)}`);
+export function deleteArtifact(projectId: string, taskId: string, dir: string, path: string) {
+  return artifactApi(projectId, taskId).delete(path, { dir });
 }
 
-export async function uploadArtifacts(projectId: string, taskId: string, files: File[]): Promise<ArtifactFile[]> {
-  const formData = new FormData();
-  for (const file of files) {
-    formData.append('file', file);
-  }
-  return apiClient.postFormData<ArtifactFile[]>(
-    `/api/v1/projects/${projectId}/tasks/${taskId}/artifacts/upload`,
-    formData,
-  );
+export function uploadArtifacts(projectId: string, taskId: string, files: File[]) {
+  return artifactApi(projectId, taskId).upload(files) as Promise<ArtifactFile[]>;
 }
 
-export async function listArtifactWorkdirs(projectId: string, taskId: string): Promise<{ entries: ArtifactWorkDirectoryEntry[] }> {
-  return apiClient.get<{ entries: ArtifactWorkDirectoryEntry[] }>(`/api/v1/projects/${projectId}/tasks/${taskId}/artifacts/workdir`);
+export function listArtifactWorkdirs(projectId: string, taskId: string) {
+  return artifactApi(projectId, taskId).listWorkdirs();
 }
 
-export async function addArtifactWorkdir(projectId: string, taskId: string, path: string): Promise<ArtifactWorkDirectoryEntry> {
-  return apiClient.post<{ path: string }, ArtifactWorkDirectoryEntry>(`/api/v1/projects/${projectId}/tasks/${taskId}/artifacts/workdir`, { path });
+export function addArtifactWorkdir(projectId: string, taskId: string, path: string) {
+  return artifactApi(projectId, taskId).addWorkdir(path);
 }
 
-export async function deleteArtifactWorkdir(projectId: string, taskId: string, name: string): Promise<void> {
-  return apiClient.delete(`/api/v1/projects/${projectId}/tasks/${taskId}/artifacts/workdir?name=${encodeURIComponent(name)}`);
+export function deleteArtifactWorkdir(projectId: string, taskId: string, name: string) {
+  return artifactApi(projectId, taskId).deleteWorkdir(name);
 }
 
-export async function openArtifactWorkdir(projectId: string, taskId: string, name: string): Promise<void> {
-  await apiClient.postNoContent(`/api/v1/projects/${projectId}/tasks/${taskId}/artifacts/workdir/open?name=${encodeURIComponent(name)}`);
+export function openArtifactWorkdir(projectId: string, taskId: string, name: string) {
+  return artifactApi(projectId, taskId).openWorkdir(name);
 }

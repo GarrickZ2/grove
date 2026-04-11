@@ -8,6 +8,7 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 
+use crate::api::error::ApiError;
 use crate::operations::skills as ops;
 use crate::storage::skills::{
     self, compute_repo_key, load_installed, load_manifest, load_sources, parse_skill_md,
@@ -118,25 +119,11 @@ pub struct AgentInstallResponse {
 }
 
 #[derive(Debug, Serialize)]
-struct ErrorResponse {
-    error: String,
-}
-
-#[derive(Debug, Serialize)]
 struct ConflictResponse {
     error: String,
     error_type: String,
     conflict_source_name: String,
     conflict_skill_name: String,
-}
-
-fn error_response(status: StatusCode, msg: &str) -> impl IntoResponse {
-    (
-        status,
-        Json(ErrorResponse {
-            error: msg.to_string(),
-        }),
-    )
 }
 
 // ============================================================================
@@ -206,8 +193,7 @@ pub async fn add_agent(Json(req): Json<AddAgentRequest>) -> impl IntoResponse {
 
     // Check for duplicate against all agents (builtin + custom)
     if skills::get_all_agents().iter().any(|a| a.id == id) {
-        return error_response(StatusCode::CONFLICT, "Agent with this ID already exists")
-            .into_response();
+        return ApiError::response(StatusCode::CONFLICT, "Agent with this ID already exists");
     }
 
     let agent = AgentDef {
@@ -222,7 +208,7 @@ pub async fn add_agent(Json(req): Json<AddAgentRequest>) -> impl IntoResponse {
     };
 
     if let Err(e) = skills::add_custom_agent(agent.clone()) {
-        return error_response(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()).into_response();
+        return ApiError::response(StatusCode::INTERNAL_SERVER_ERROR, e.to_string());
     }
 
     Json(AgentResponse::from(&agent)).into_response()
@@ -234,7 +220,7 @@ pub async fn update_agent(
     Json(req): Json<AddAgentRequest>,
 ) -> impl IntoResponse {
     if skills::is_builtin_agent(&id) {
-        return error_response(StatusCode::FORBIDDEN, "Cannot edit builtin agent").into_response();
+        return ApiError::response(StatusCode::FORBIDDEN, "Cannot edit builtin agent");
     }
 
     match skills::update_custom_agent(
@@ -248,29 +234,24 @@ pub async fn update_agent(
             if let Some(agent) = skills::get_all_agents().into_iter().find(|a| a.id == id) {
                 Json(AgentResponse::from(&agent)).into_response()
             } else {
-                error_response(StatusCode::NOT_FOUND, "Agent not found").into_response()
+                ApiError::response(StatusCode::NOT_FOUND, "Agent not found")
             }
         }
-        Ok(false) => {
-            error_response(StatusCode::NOT_FOUND, "Custom agent not found").into_response()
-        }
-        Err(e) => error_response(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()).into_response(),
+        Ok(false) => ApiError::response(StatusCode::NOT_FOUND, "Custom agent not found"),
+        Err(e) => ApiError::response(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
     }
 }
 
 /// DELETE /api/v1/skills/agents/{id}
 pub async fn delete_agent(Path(id): Path<String>) -> impl IntoResponse {
     if skills::is_builtin_agent(&id) {
-        return error_response(StatusCode::FORBIDDEN, "Cannot delete builtin agent")
-            .into_response();
+        return ApiError::response(StatusCode::FORBIDDEN, "Cannot delete builtin agent");
     }
 
     match skills::delete_custom_agent(&id) {
         Ok(true) => StatusCode::NO_CONTENT.into_response(),
-        Ok(false) => {
-            error_response(StatusCode::NOT_FOUND, "Custom agent not found").into_response()
-        }
-        Err(e) => error_response(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()).into_response(),
+        Ok(false) => ApiError::response(StatusCode::NOT_FOUND, "Custom agent not found"),
+        Err(e) => ApiError::response(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
     }
 }
 
@@ -279,15 +260,14 @@ pub async fn toggle_agent(Path(id): Path<String>) -> impl IntoResponse {
     let all_agents = skills::get_all_agents();
     let agent = all_agents.iter().find(|a| a.id == id);
     let Some(agent) = agent else {
-        return error_response(StatusCode::NOT_FOUND, "Agent not found").into_response();
+        return ApiError::response(StatusCode::NOT_FOUND, "Agent not found");
     };
 
     let new_enabled = !agent.enabled;
 
     if agent.is_builtin {
         if let Err(e) = skills::set_builtin_enabled(&id, new_enabled) {
-            return error_response(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string())
-                .into_response();
+            return ApiError::response(StatusCode::INTERNAL_SERVER_ERROR, e.to_string());
         }
     } else {
         // For custom agents, toggle via update
@@ -296,8 +276,7 @@ pub async fn toggle_agent(Path(id): Path<String>) -> impl IntoResponse {
             custom.enabled = new_enabled;
         }
         if let Err(e) = skills::save_agents(&file) {
-            return error_response(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string())
-                .into_response();
+            return ApiError::response(StatusCode::INTERNAL_SERVER_ERROR, e.to_string());
         }
     }
 
@@ -305,7 +284,7 @@ pub async fn toggle_agent(Path(id): Path<String>) -> impl IntoResponse {
     if let Some(updated) = skills::get_all_agents().into_iter().find(|a| a.id == id) {
         Json(AgentResponse::from(&updated)).into_response()
     } else {
-        error_response(StatusCode::NOT_FOUND, "Agent not found after toggle").into_response()
+        ApiError::response(StatusCode::NOT_FOUND, "Agent not found after toggle")
     }
 }
 
@@ -356,8 +335,7 @@ pub async fn add_source(Json(req): Json<AddSourceRequest>) -> impl IntoResponse 
     let mut sources_file = load_sources();
 
     if sources_file.sources.iter().any(|s| s.name == req.name) {
-        return error_response(StatusCode::CONFLICT, "Source with this name already exists")
-            .into_response();
+        return ApiError::response(StatusCode::CONFLICT, "Source with this name already exists");
     }
 
     let repo_key = compute_repo_key(&req.url);
@@ -373,7 +351,7 @@ pub async fn add_source(Json(req): Json<AddSourceRequest>) -> impl IntoResponse 
                     "Subpath conflicts with existing source '{}' (same repository, overlapping paths)",
                     existing.name
                 );
-                return error_response(StatusCode::CONFLICT, &msg).into_response();
+                return ApiError::response(StatusCode::CONFLICT, &msg);
             }
         }
     }
@@ -390,7 +368,7 @@ pub async fn add_source(Json(req): Json<AddSourceRequest>) -> impl IntoResponse 
 
     sources_file.sources.push(source);
     if let Err(e) = save_sources(&sources_file) {
-        return error_response(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()).into_response();
+        return ApiError::response(StatusCode::INTERNAL_SERVER_ERROR, e.to_string());
     }
 
     // Trigger initial sync
@@ -418,9 +396,9 @@ pub async fn add_source(Json(req): Json<AddSourceRequest>) -> impl IntoResponse 
                 let resp = source_to_response(s, count, false);
                 (StatusCode::CREATED, Json(resp)).into_response()
             } else {
-                error_response(
+                ApiError::response(
                     StatusCode::INTERNAL_SERVER_ERROR,
-                    &format!("Sync failed: {}", e),
+                    format!("Sync failed: {}", e),
                 )
                 .into_response()
             }
@@ -437,7 +415,7 @@ pub async fn update_source(
 
     let source = sources_file.sources.iter_mut().find(|s| s.name == name);
     let Some(source) = source else {
-        return error_response(StatusCode::NOT_FOUND, "Source not found").into_response();
+        return ApiError::response(StatusCode::NOT_FOUND, "Source not found");
     };
 
     source.source_type = req.source_type.clone();
@@ -447,7 +425,7 @@ pub async fn update_source(
 
     let resp_source = source.clone();
     if let Err(e) = save_sources(&sources_file) {
-        return error_response(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()).into_response();
+        return ApiError::response(StatusCode::INTERNAL_SERVER_ERROR, e.to_string());
     }
 
     let manifest = load_manifest();
@@ -463,7 +441,7 @@ pub async fn update_source(
 pub async fn delete_source(Path(name): Path<String>) -> impl IntoResponse {
     match ops::delete_source(&name) {
         Ok(()) => StatusCode::NO_CONTENT.into_response(),
-        Err(e) => error_response(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()).into_response(),
+        Err(e) => ApiError::response(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
     }
 }
 
@@ -479,7 +457,7 @@ pub async fn sync_source(Path(name): Path<String>) -> impl IntoResponse {
                 .count();
             Json(source_to_response(&updated, count, false)).into_response()
         }
-        Err(e) => error_response(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()).into_response(),
+        Err(e) => ApiError::response(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
     }
 }
 
@@ -501,7 +479,7 @@ pub async fn sync_all_sources() -> impl IntoResponse {
                 .collect();
             Json(responses).into_response()
         }
-        Err(e) => error_response(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()).into_response(),
+        Err(e) => ApiError::response(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
     }
 }
 
@@ -530,7 +508,7 @@ pub async fn check_updates() -> impl IntoResponse {
                 .collect();
             Json(responses).into_response()
         }
-        Err(e) => error_response(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()).into_response(),
+        Err(e) => ApiError::response(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
     }
 }
 
@@ -654,7 +632,7 @@ pub async fn get_skill_detail(Path((source, skill)): Path<(String, String)>) -> 
         .find(|s| s.source == source && s.name == skill);
 
     let Some(entry) = entry else {
-        return error_response(StatusCode::NOT_FOUND, "Skill not found").into_response();
+        return ApiError::response(StatusCode::NOT_FOUND, "Skill not found");
     };
 
     // Read SKILL.md content
@@ -782,7 +760,7 @@ pub async fn install_skill(Json(req): Json<InstallSkillRequest>) -> impl IntoRes
             }),
         )
             .into_response(),
-        Err(e) => error_response(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()).into_response(),
+        Err(e) => ApiError::response(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
     }
 }
 
@@ -792,6 +770,6 @@ pub async fn uninstall_skill(
 ) -> impl IntoResponse {
     match ops::uninstall_skill(&repo_key, &repo_path) {
         Ok(()) => StatusCode::NO_CONTENT.into_response(),
-        Err(e) => error_response(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()).into_response(),
+        Err(e) => ApiError::response(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
     }
 }

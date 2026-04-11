@@ -1,6 +1,7 @@
 // Projects API client
 
 import { apiClient } from './client';
+import { createStudioFileApi } from './studio-factory';
 import type { StudioFileEntry, StudioWorkDirEntry } from './studio-types';
 import type { TaskResponse } from './tasks';
 
@@ -190,42 +191,43 @@ export async function initGitRepo(id: string): Promise<ProjectResponse> {
 export type ResourceFile = StudioFileEntry;
 export type WorkDirectoryEntry = StudioWorkDirEntry;
 
-export async function listResources(id: string): Promise<{ files: ResourceFile[] }> {
-  return apiClient.get<{ files: ResourceFile[] }>(`/api/v1/projects/${id}/resource`);
+const resourceApi = (id: string) =>
+  createStudioFileApi(`/api/v1/projects/${id}/resource`);
+
+export function listResources(id: string) {
+  return resourceApi(id).list();
 }
 
-export async function uploadResource(id: string, files: File[]): Promise<ResourceFile[]> {
-  const formData = new FormData();
-  for (const file of files) formData.append('file', file);
-  return apiClient.postFormData<ResourceFile[]>(`/api/v1/projects/${id}/resource/upload`, formData);
+export function uploadResource(id: string, files: File[]) {
+  return resourceApi(id).upload(files);
 }
 
-export async function deleteResource(id: string, path: string): Promise<void> {
-  return apiClient.delete(`/api/v1/projects/${id}/resource?path=${encodeURIComponent(path)}`);
+export function deleteResource(id: string, path: string) {
+  return resourceApi(id).delete(path);
 }
 
-export async function listResourceWorkdirs(id: string): Promise<{ entries: WorkDirectoryEntry[] }> {
-  return apiClient.get<{ entries: WorkDirectoryEntry[] }>(`/api/v1/projects/${id}/resource/workdir`);
+export function listResourceWorkdirs(id: string) {
+  return resourceApi(id).listWorkdirs();
 }
 
-export async function addResourceWorkdir(id: string, path: string): Promise<WorkDirectoryEntry> {
-  return apiClient.post<{ path: string }, WorkDirectoryEntry>(`/api/v1/projects/${id}/resource/workdir`, { path });
+export function addResourceWorkdir(id: string, path: string) {
+  return resourceApi(id).addWorkdir(path);
 }
 
-export async function deleteResourceWorkdir(id: string, name: string): Promise<void> {
-  return apiClient.delete(`/api/v1/projects/${id}/resource/workdir?name=${encodeURIComponent(name)}`);
+export function deleteResourceWorkdir(id: string, name: string) {
+  return resourceApi(id).deleteWorkdir(name);
 }
 
-export async function openResourceWorkdir(id: string, name: string): Promise<void> {
-  await apiClient.postNoContent(`/api/v1/projects/${id}/resource/workdir/open?name=${encodeURIComponent(name)}`);
+export function openResourceWorkdir(id: string, name: string) {
+  return resourceApi(id).openWorkdir(name);
 }
 
-export async function previewResource(id: string, path: string): Promise<string> {
-  return apiClient.getText(`/api/v1/projects/${id}/resource/preview?path=${encodeURIComponent(path)}`);
+export function previewResource(id: string, path: string) {
+  return resourceApi(id).preview(path);
 }
 
-export function resourceDownloadUrl(id: string, path: string): string {
-  return `/api/v1/projects/${id}/resource/download?path=${encodeURIComponent(path)}`;
+export function resourceDownloadUrl(id: string, path: string) {
+  return resourceApi(id).downloadUrl(path);
 }
 
 export async function getInstructions(id: string): Promise<{ content: string }> {
