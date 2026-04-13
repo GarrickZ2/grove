@@ -257,7 +257,13 @@ pub fn upsert_project(name: &str, path: &str) -> Result<()> {
 
 /// 删除项目（删除数据库记录和相关数据）
 pub fn remove_project(path: &str) -> Result<()> {
-    let resolved = resolve_project_path(path).unwrap_or_else(|_| path.to_string());
+    // Studio projects use virtual paths (studio://name) that cannot be resolved
+    // via git. Use them as-is; the hash matches what was stored at registration.
+    let resolved = if path.starts_with("studio://") {
+        path.to_string()
+    } else {
+        resolve_project_path(path).unwrap_or_else(|_| path.to_string())
+    };
     let hash = project_hash(&resolved);
 
     {
@@ -365,19 +371,23 @@ pub fn create_studio_project(name: &str) -> Result<String> {
     // Check DB first — before touching the filesystem — so we fail fast and
     // avoid leaving orphaned directories when a project with the same name
     // already exists.
-    let conn = crate::storage::database::connection();
-    let already_exists: bool = conn
-        .query_row(
-            "SELECT 1 FROM projects WHERE hash = ?1 LIMIT 1",
-            rusqlite::params![&hash],
-            |_| Ok(true),
-        )
-        .unwrap_or(false);
-    if already_exists {
-        return Err(crate::error::GroveError::storage(
-            "A Studio project with that name already exists",
-        ));
-    }
+    // NOTE: DbGuard holds the global Mutex. It must be dropped before calling
+    // add_project_with_type, which acquires the same Mutex (Mutex is not reentrant).
+    {
+        let conn = crate::storage::database::connection();
+        let already_exists: bool = conn
+            .query_row(
+                "SELECT 1 FROM projects WHERE hash = ?1 LIMIT 1",
+                rusqlite::params![&hash],
+                |_| Ok(true),
+            )
+            .unwrap_or(false);
+        if already_exists {
+            return Err(crate::error::GroveError::storage(
+                "A Studio project with that name already exists",
+            ));
+        }
+    } // DbGuard dropped here — Mutex released before add_project_with_type
 
     let project_dir = grove_dir().join("studios").join(&hash);
     std::fs::create_dir_all(project_dir.join("resource"))?;

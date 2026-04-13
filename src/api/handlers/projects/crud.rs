@@ -105,14 +105,6 @@ pub(crate) fn list_resource_files(dir: &std::path::Path) -> Vec<ResourceFile> {
 }
 
 /// Validate that a symlink entry points inside the given directory
-pub(crate) fn ensure_link_points_inside(
-    dir: &std::path::Path,
-    name: &str,
-) -> Result<std::path::PathBuf, ApiError> {
-    crate::api::handlers::studio_common::validate_symlink_entry(dir, name)
-        .map_err(|err| ApiError { error: err })
-}
-
 /// GET /api/v1/projects
 pub async fn list_projects() -> Result<Json<ProjectListResponse>, StatusCode> {
     let cwd = std::env::current_dir().ok();
@@ -206,8 +198,6 @@ pub async fn get_project(Path(id): Path<String>) -> Result<Json<ProjectResponse>
     } else {
         std::path::Path::new(&project_path).exists()
     };
-    let id_clone = id.clone();
-
     if !exists {
         return Ok(Json(ProjectResponse {
             id,
@@ -270,12 +260,12 @@ pub async fn get_project(Path(id): Path<String>) -> Result<Json<ProjectResponse>
             .chain(archived.iter())
             .collect::<Vec<_>>()
             .par_iter()
-            .map(|wt| common::worktree_to_response(wt, &id_clone))
+            .map(|wt| common::worktree_to_response(wt))
             .collect();
 
         all_tasks.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
 
-        let local_task = local.map(|wt| common::worktree_to_response(&wt, &id_clone));
+        let local_task = local.map(|wt| common::worktree_to_response(&wt));
 
         let current_branch = if is_git_usable {
             git::current_branch(&project_path).unwrap_or_else(|_| "unknown".to_string())
@@ -389,7 +379,7 @@ pub async fn create_new_project(
     if is_studio {
         let virtual_path = workspace::create_studio_project(&name).map_err(|e| {
             let msg = e.to_string();
-            let status = if msg.contains("already registered") {
+            let status = if msg.contains("already exists") || msg.contains("already registered") {
                 StatusCode::CONFLICT
             } else {
                 StatusCode::INTERNAL_SERVER_ERROR

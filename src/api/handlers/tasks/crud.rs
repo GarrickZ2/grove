@@ -54,21 +54,14 @@ pub async fn list_tasks(
     }
 
     let project_path = project.path.clone();
-    let pk = project_key.clone();
     let filter_owned = filter.to_string();
     let mut tasks: Vec<TaskResponse> = tokio::task::spawn_blocking(move || {
         if filter_owned == "archived" {
             let archived = loader::load_archived_worktrees(&project_path);
-            archived
-                .iter()
-                .map(|wt| common::worktree_to_response(wt, &pk))
-                .collect()
+            archived.iter().map(common::worktree_to_response).collect()
         } else {
             let active = loader::load_worktrees(&project_path);
-            active
-                .iter()
-                .map(|wt| common::worktree_to_response(wt, &pk))
-                .collect()
+            active.iter().map(common::worktree_to_response).collect()
         }
     })
     .await
@@ -102,22 +95,21 @@ pub async fn get_task(
     }
 
     let project_path = project.path.clone();
-    let pk = project_key.clone();
     let tid = task_id.clone();
     let result: Option<TaskResponse> = tokio::task::spawn_blocking(move || {
         if tid == crate::storage::tasks::LOCAL_TASK_ID {
             return loader::load_local_task(&project_path)
-                .map(|wt| common::worktree_to_response(&wt, &pk));
+                .map(|wt| common::worktree_to_response(&wt));
         }
         let active = loader::load_worktrees(&project_path);
         if let Some(wt) = active.iter().find(|wt| wt.id == tid) {
-            return Some(common::worktree_to_response(wt, &pk));
+            return Some(common::worktree_to_response(wt));
         }
         let archived = loader::load_archived_worktrees(&project_path);
         archived
             .iter()
             .find(|wt| wt.id == tid)
-            .map(|wt| common::worktree_to_response(wt, &pk))
+            .map(common::worktree_to_response)
     })
     .await
     .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
@@ -274,29 +266,13 @@ pub async fn archive_task(
             }
         }
 
-        tasks::archive_task(&project_key, &task_id).map_err(|_| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ArchiveConfirmResponse::error(
-                    "ARCHIVE_FAILED",
-                    "Archive failed",
-                    task_id.clone(),
-                )),
-            )
-        })?;
-
-        if crate::storage::taskgroups::remove_task_from_all_groups(&project_key, &task_id) {
-            use crate::api::handlers::walkie_talkie::{broadcast_radio_event, RadioEvent};
-            broadcast_radio_event(RadioEvent::GroupChanged);
-        }
-
-        let archived = tasks::get_archived_task(&project_key, &task_id)
+        let archived = tasks::archive_task(&project_key, &task_id)
             .map_err(|_| {
                 (
                     StatusCode::INTERNAL_SERVER_ERROR,
                     Json(ArchiveConfirmResponse::error(
-                        "ARCHIVED_TASK_LOAD_FAILED",
-                        "Failed to load archived task",
+                        "ARCHIVE_FAILED",
+                        "Archive failed",
                         task_id.clone(),
                     )),
                 )
@@ -305,12 +281,17 @@ pub async fn archive_task(
                 (
                     StatusCode::NOT_FOUND,
                     Json(ArchiveConfirmResponse::error(
-                        "ARCHIVED_TASK_NOT_FOUND",
-                        "Archived task not found",
+                        "TASK_NOT_FOUND",
+                        "Task not found",
                         task_id.clone(),
                     )),
                 )
             })?;
+
+        if crate::storage::taskgroups::remove_task_from_all_groups(&project_key, &task_id) {
+            use crate::api::handlers::walkie_talkie::{broadcast_radio_event, RadioEvent};
+            broadcast_radio_event(RadioEvent::GroupChanged);
+        }
 
         return Ok(Json(storage_task_to_response(&archived)));
     }
@@ -415,7 +396,7 @@ pub async fn archive_task(
         )
     })?;
 
-    Ok(Json(common::worktree_to_response(task, &project_key)))
+    Ok(Json(common::worktree_to_response(task)))
 }
 
 /// POST /api/v1/projects/{id}/tasks/{taskId}/recover
@@ -433,12 +414,10 @@ pub async fn recover_task(
 
     let _result = crate::operations::tasks::recover_task(&project.path, &project_key, &task_id)
         .map_err(|e| {
-            let status = if e.to_string().contains("not found") {
-                StatusCode::NOT_FOUND
-            } else if e.to_string().contains("no longer exists") {
-                StatusCode::CONFLICT
-            } else {
-                StatusCode::INTERNAL_SERVER_ERROR
+            let status = match &e {
+                crate::error::GroveError::NotFound(_) => StatusCode::NOT_FOUND,
+                crate::error::GroveError::Git(_) => StatusCode::CONFLICT,
+                _ => StatusCode::INTERNAL_SERVER_ERROR,
             };
             (
                 status,
@@ -449,14 +428,13 @@ pub async fn recover_task(
         })?;
 
     let project_path = project.path.clone();
-    let pk = project_key.clone();
     let tid = task_id.clone();
     let result: Option<TaskResponse> = tokio::task::spawn_blocking(move || {
         let active = loader::load_worktrees(&project_path);
         active
             .iter()
             .find(|wt| wt.id == tid)
-            .map(|wt| common::worktree_to_response(wt, &pk))
+            .map(common::worktree_to_response)
     })
     .await
     .map_err(|e| {

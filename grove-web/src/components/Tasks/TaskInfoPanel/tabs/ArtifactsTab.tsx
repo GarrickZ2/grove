@@ -54,6 +54,7 @@ export function ArtifactsTab({ projectId, task, previewRequest, lastChatIdleAt }
   const [previewLoading, setPreviewLoading] = useState(false);
 
   const [isUploading, setIsUploading] = useState(false);
+  const isUploadingRef = useRef(false);
   const [isDragOver, setIsDragOver] = useState(false);
   const [uploadsOpen, setUploadsOpen] = useState(true);
   const [downloadsOpen, setDownloadsOpen] = useState(true);
@@ -107,14 +108,17 @@ export function ArtifactsTab({ projectId, task, previewRequest, lastChatIdleAt }
 
   useEffect(() => { loadFiles(); loadWorkdirs(); }, [loadFiles, loadWorkdirs]);
 
-  // Refresh when ACP chat finishes work
+  // Refresh when ACP chat finishes work.
+  // Use isUploadingRef (not isUploading state) to avoid stale closure:
+  // the ref always reflects the current upload state when this effect fires.
   useEffect(() => {
     if (lastChatIdleAt === undefined) return;
-    if (!isUploading) loadFiles();
-  }, [lastChatIdleAt]); // eslint-disable-line react-hooks/exhaustive-deps
+    if (!isUploadingRef.current) loadFiles();
+  }, [lastChatIdleAt, loadFiles]);
 
   const handleUpload = useCallback(async (files: FileList | File[]) => {
     if (!projectId || files.length === 0) return;
+    isUploadingRef.current = true;
     setIsUploading(true);
     setError(null);
     try {
@@ -123,6 +127,7 @@ export function ArtifactsTab({ projectId, task, previewRequest, lastChatIdleAt }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Upload failed");
     } finally {
+      isUploadingRef.current = false;
       setIsUploading(false);
     }
   }, [projectId, task.id, loadFiles]);
@@ -146,6 +151,7 @@ export function ArtifactsTab({ projectId, task, previewRequest, lastChatIdleAt }
     setIsAddingWorkdir(true);
     try {
       const response = await fetch("/api/v1/browse-folder");
+      if (!response.ok) throw new Error("Failed to open folder picker");
       const data = await response.json().catch(() => ({ path: null }));
       if (!data.path) return;
       await addArtifactWorkdir(projectId, task.id, data.path);

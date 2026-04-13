@@ -153,7 +153,7 @@ export function TaskEditor({ projectId, taskId, onClose, fullscreen = false, onT
 
   // Save file
   const handleSave = useCallback(async () => {
-    if (!selectedFile || saving) return;
+    if (!selectedFile || saving || refreshing) return;
 
     setSaving(true);
     try {
@@ -167,7 +167,7 @@ export function TaskEditor({ projectId, taskId, onClose, fullscreen = false, onT
     } finally {
       setSaving(false);
     }
-  }, [projectId, taskId, selectedFile, saving]);
+  }, [projectId, taskId, selectedFile, saving, refreshing]);
 
   // Keyboard shortcut: Cmd/Ctrl+S to save
   useEffect(() => {

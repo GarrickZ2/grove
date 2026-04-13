@@ -22,7 +22,7 @@ pub(crate) fn status_to_string(status: &model::WorktreeStatus) -> &'static str {
 }
 
 /// Convert [`model::Worktree`] to [`TaskResponse`].
-pub(crate) fn worktree_to_response(wt: &model::Worktree, _project_key: &str) -> TaskResponse {
+pub(crate) fn worktree_to_response(wt: &model::Worktree) -> TaskResponse {
     let commits = git::recent_log(&wt.path, &wt.target, 10)
         .unwrap_or_default()
         .into_iter()

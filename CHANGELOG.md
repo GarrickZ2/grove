@@ -5,6 +5,26 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.7] - 2026-04-12
+
+### Added
+
+- **Hermes / Kiro / OpenClaw agents** — added three new agent presets; agent list is now sorted alphabetically
+- **ACP 0.10 support** — bumped ACP protocol to version 0.10
+- **Studio project support** — new Studio page with resources, artifacts, and working directory management
+
+### Improved
+
+- **Studio resource layout** — optimized Studio project resource panel layout
+- **Studio memory editor** — merged memory editor panel into Studio, resolving conflicts
+- **API handler organization** — modularized handlers and unified error/studio patterns for cleaner code
+
+### Fixed
+
+- **API code review findings** — deduplicated logic, unified patterns, and fixed error handling across project/task/artifact handlers
+- **Empty Blitz list after migration** — `task_group_slots` is now populated on migration, fixing the blank Blitz list bug
+- **Radio cancel gesture + audio config** — added cancel gesture support, audio configuration, and recording quality improvements
+
 ## [0.8.6] - 2026-04-07
 
 ### Fixed

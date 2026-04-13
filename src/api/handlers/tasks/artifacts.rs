@@ -98,10 +98,6 @@ fn artifact_workdir_dir(task_dir: &std::path::Path) -> PathBuf {
     task_dir.join("input")
 }
 
-fn ensure_workdir_symlink(dir: &std::path::Path, name: &str) -> Result<PathBuf, ApiError> {
-    studio_common::validate_symlink_entry(dir, name).map_err(|err| ApiError { error: err })
-}
-
 type ApiErr = (StatusCode, Json<ApiError>);
 
 fn task_not_found() -> ApiErr {
@@ -118,6 +114,12 @@ pub async fn list_artifacts(
     Path((id, task_id)): Path<(String, String)>,
 ) -> Result<Json<ArtifactsResponse>, StatusCode> {
     let (project, project_key) = find_project_by_id(&id)?;
+
+    // Artifacts (input/output dirs) are only supported for Studio tasks
+    if project.project_type != crate::storage::workspace::ProjectType::Studio {
+        return Err(StatusCode::NOT_FOUND);
+    }
+
     let task_dir =
         resolve_task_dir(&project, &project_key, &task_id).ok_or(StatusCode::NOT_FOUND)?;
 
@@ -127,6 +129,10 @@ pub async fn list_artifacts(
 
     let input_dir = task_dir.join("input");
     let output_dir = task_dir.join("output");
+
+    if !input_dir.exists() || !output_dir.exists() {
+        return Err(StatusCode::NOT_FOUND);
+    }
 
     let input_files = list_dir_recursive(&input_dir, &input_dir, "input");
     let output_files = list_dir_recursive(&output_dir, &output_dir, "output");
@@ -188,8 +194,9 @@ pub async fn delete_artifact_workdir(
         )
     })?;
     let task_dir = resolve_task_dir(&project, &id, &task_id).ok_or_else(task_not_found)?;
-    let link_path = ensure_workdir_symlink(&artifact_workdir_dir(&task_dir), &query.name)
-        .map_err(|err| (StatusCode::BAD_REQUEST, Json(err)))?;
+    let link_path =
+        studio_common::validate_symlink_entry(&artifact_workdir_dir(&task_dir), &query.name)
+            .map_err(|err| (StatusCode::BAD_REQUEST, Json(ApiError { error: err })))?;
     fs::remove_file(link_path).map_err(|e| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -215,8 +222,9 @@ pub async fn open_artifact_workdir(
         )
     })?;
     let task_dir = resolve_task_dir(&project, &id, &task_id).ok_or_else(task_not_found)?;
-    let link_path = ensure_workdir_symlink(&artifact_workdir_dir(&task_dir), &query.name)
-        .map_err(|err| (StatusCode::BAD_REQUEST, Json(err)))?;
+    let link_path =
+        studio_common::validate_symlink_entry(&artifact_workdir_dir(&task_dir), &query.name)
+            .map_err(|err| (StatusCode::BAD_REQUEST, Json(ApiError { error: err })))?;
     studio_common::open_in_file_manager(&link_path);
     Ok(StatusCode::NO_CONTENT)
 }
@@ -250,15 +258,10 @@ pub async fn download_artifact(
     let task_dir =
         resolve_task_dir(&project, &project_key, &task_id).ok_or(StatusCode::NOT_FOUND)?;
     let file_path = task_dir.join(&query.dir).join(&query.path);
-    let canonical_task = task_dir.canonicalize().unwrap_or(task_dir);
-    let canonical_file = file_path
-        .canonicalize()
-        .map_err(|_| StatusCode::NOT_FOUND)?;
-    if !canonical_file.starts_with(&canonical_task) {
-        return Err(StatusCode::FORBIDDEN);
-    }
+    let canonical_file = studio_common::validate_path_containment(&task_dir, &file_path)
+        .map_err(|(status, _)| status)?;
     let (headers, content) =
-        studio_common::download_file(&canonical_file).map_err(|_| StatusCode::NOT_FOUND)?;
+        studio_common::download_file(&canonical_file).map_err(|(status, _)| status)?;
     Ok((headers, content))
 }
 

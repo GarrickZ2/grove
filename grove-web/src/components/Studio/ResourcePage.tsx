@@ -211,6 +211,7 @@ export function ResourcePage() {
     setWorkdirError(null);
     try {
       const response = await fetch("/api/v1/browse-folder");
+      if (!response.ok) throw new Error("Failed to open folder picker");
       const data = await response.json().catch(() => ({ path: null }));
       if (!data.path) return;
       await addResourceWorkdir(projectId, data.path);

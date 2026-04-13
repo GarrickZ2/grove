@@ -169,7 +169,7 @@ pub fn save_archived_tasks(project: &str, tasks: &[Task]) -> Result<()> {
 }
 
 /// 归档任务 (tasks.toml → archived.toml)
-pub fn archive_task(project: &str, task_id: &str) -> Result<()> {
+pub fn archive_task(project: &str, task_id: &str) -> Result<Option<Task>> {
     let mut tasks = load_tasks(project)?;
     let mut archived = load_archived_tasks(project)?;
 
@@ -180,13 +180,15 @@ pub fn archive_task(project: &str, task_id: &str) -> Result<()> {
         let now = Utc::now();
         task.updated_at = now;
         task.archived_at = Some(now);
-        archived.push(task);
+        archived.push(task.clone());
 
         save_tasks(project, &tasks)?;
         save_archived_tasks(project, &archived)?;
-    }
 
-    Ok(())
+        Ok(Some(task))
+    } else {
+        Ok(None)
+    }
 }
 
 /// 恢复任务 (archived.toml → tasks.toml)

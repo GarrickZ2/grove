@@ -15,7 +15,7 @@ use crate::api::handlers::studio_common::{
     AddWorkDirectoryRequest, WorkDirectoryEntry, WorkDirectoryListResponse, WorkDirectoryQuery,
 };
 
-use super::crud::{ensure_link_points_inside, list_resource_files, resolve_studio_dir};
+use super::crud::{list_resource_files, resolve_studio_dir};
 use super::types::*;
 
 /// GET /api/v1/projects/{id}/resource
@@ -65,8 +65,8 @@ pub async fn delete_resource_workdir(
 ) -> Result<StatusCode, (StatusCode, Json<ApiError>)> {
     let (_project, studio_dir) = resolve_studio_dir(&id)?;
     let workdir_dir = studio_dir.join("resource");
-    let link_path = ensure_link_points_inside(&workdir_dir, &query.name)
-        .map_err(|err| (StatusCode::BAD_REQUEST, Json(err)))?;
+    let link_path = studio_common::validate_symlink_entry(&workdir_dir, &query.name)
+        .map_err(|err| (StatusCode::BAD_REQUEST, Json(ApiError { error: err })))?;
     fs::remove_file(link_path).map_err(|e| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -85,8 +85,8 @@ pub async fn open_resource_workdir(
 ) -> Result<StatusCode, (StatusCode, Json<ApiError>)> {
     let (_project, studio_dir) = resolve_studio_dir(&id)?;
     let workdir_dir = studio_dir.join("resource");
-    let link_path = ensure_link_points_inside(&workdir_dir, &query.name)
-        .map_err(|err| (StatusCode::BAD_REQUEST, Json(err)))?;
+    let link_path = studio_common::validate_symlink_entry(&workdir_dir, &query.name)
+        .map_err(|err| (StatusCode::BAD_REQUEST, Json(ApiError { error: err })))?;
     studio_common::open_in_file_manager(&link_path);
     Ok(StatusCode::NO_CONTENT)
 }
