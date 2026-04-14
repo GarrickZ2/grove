@@ -1,6 +1,6 @@
 /* eslint-disable react-refresh/only-export-components */
 import { motion } from "framer-motion";
-import { Download, Eye, Loader2, X } from "lucide-react";
+import { Download, Eye, Loader2, RefreshCw, X } from "lucide-react";
 import { getPreviewRenderer } from "../Review/previewRenderers";
 import { highlightCode, detectLanguage } from "../Review/syntaxHighlight";
 
@@ -45,16 +45,22 @@ interface FilePreviewDrawerProps {
   fileName: string;
   content: string;
   loading?: boolean;
+  error?: string | null;
+  isLive?: boolean;
   onClose: () => void;
   onDownload: () => void;
+  onRefresh?: () => void;
 }
 
 export function FilePreviewDrawer({
   fileName,
   content,
   loading = false,
+  error,
+  isLive,
   onClose,
   onDownload,
+  onRefresh,
 }: FilePreviewDrawerProps) {
   const renderer = getPreviewRenderer(fileName);
   const wide = renderer?.id === 'jsx' || renderer?.id === 'html';
@@ -92,8 +98,26 @@ export function FilePreviewDrawer({
             >
               {getExtBadge(fileName)}
             </span>
+            {isLive && (
+              <span className="flex items-center gap-1 text-[10px] font-medium shrink-0" style={{ color: "var(--color-success)" }}>
+                <span className="w-1.5 h-1.5 rounded-full animate-pulse" style={{ background: "var(--color-success)" }} />
+                LIVE
+              </span>
+            )}
           </div>
           <div className="flex items-center gap-1 shrink-0">
+            {onRefresh && (
+              <button
+                onClick={onRefresh}
+                className="p-1.5 rounded-md transition-colors"
+                title="Refresh"
+                style={{ color: "var(--color-text-muted)" }}
+                onMouseEnter={(e) => e.currentTarget.style.background = "var(--color-bg-tertiary)"}
+                onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}
+              >
+                <RefreshCw className="w-4 h-4" />
+              </button>
+            )}
             <button
               onClick={onDownload}
               className="p-1.5 rounded-md transition-colors"
@@ -115,6 +139,16 @@ export function FilePreviewDrawer({
             </button>
           </div>
         </div>
+        {error && (
+          <div className="px-4 py-2 text-xs shrink-0 flex items-center gap-2" style={{ background: "color-mix(in srgb, var(--color-error) 8%, transparent)", color: "var(--color-error)", borderBottom: "1px solid color-mix(in srgb, var(--color-error) 20%, transparent)" }}>
+            <span className="flex-1 truncate">{error}</span>
+            {onRefresh && (
+              <button onClick={onRefresh} className="shrink-0 underline text-[11px] font-medium hover:opacity-80">
+                Retry
+              </button>
+            )}
+          </div>
+        )}
         <div className="flex-1 overflow-auto">
           {loading ? (
             <div className="flex items-center justify-center h-full">

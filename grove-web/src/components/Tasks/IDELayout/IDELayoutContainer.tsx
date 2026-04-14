@@ -117,7 +117,7 @@ interface IDELayoutInternalState {
   fileNavRequest: FileNavRequest | null;
   artifactPreviewRequest: ArtifactPreviewRequest | null;
   lastChatIdleAt: number | undefined;
-  /** Terminal multi-tab state — persists across panel hide/show */
+  isChatBusy: boolean;
   terminalTabs: TerminalTab[];
   terminalActiveId: string;
 }
@@ -289,6 +289,7 @@ export const IDELayoutContainer = forwardRef<IDELayoutHandle, IDELayoutContainer
         fileNavRequest: null,
         artifactPreviewRequest: null,
         lastChatIdleAt: undefined,
+        isChatBusy: false,
         terminalTabs,
         terminalActiveId,
       };
@@ -333,6 +334,10 @@ export const IDELayoutContainer = forwardRef<IDELayoutHandle, IDELayoutContainer
 
     const handleChatBecameIdle = useCallback(() => {
       update({ lastChatIdleAt: Date.now() });
+    }, [update]);
+
+    const handleBusyStateChange = useCallback((busy: boolean) => {
+      update({ isChatBusy: busy });
     }, [update]);
 
     const startResize = useCallback((side: "aux" | "info", event: React.PointerEvent<HTMLDivElement>) => {
@@ -493,7 +498,7 @@ export const IDELayoutContainer = forwardRef<IDELayoutHandle, IDELayoutContainer
             />
           )}
           {state.auxType === "artifacts" && isStudio && (
-            <ArtifactsTab projectId={projectId} task={task} previewRequest={state.artifactPreviewRequest} lastChatIdleAt={state.lastChatIdleAt} />
+            <ArtifactsTab projectId={projectId} task={task} previewRequest={state.artifactPreviewRequest} lastChatIdleAt={state.lastChatIdleAt} isChatBusy={state.isChatBusy} />
           )}
         </PanelSlot>
       );
@@ -503,7 +508,7 @@ export const IDELayoutContainer = forwardRef<IDELayoutHandle, IDELayoutContainer
       if (!chatAvailable && isStudio) {
         return (
           <div className="ide-center-fallback">
-            <ArtifactsTab projectId={projectId} task={task} previewRequest={state.artifactPreviewRequest} lastChatIdleAt={state.lastChatIdleAt} />
+            <ArtifactsTab projectId={projectId} task={task} previewRequest={state.artifactPreviewRequest} lastChatIdleAt={state.lastChatIdleAt} isChatBusy={state.isChatBusy} />
           </div>
         );
       }
@@ -523,6 +528,7 @@ export const IDELayoutContainer = forwardRef<IDELayoutHandle, IDELayoutContainer
           onNavigateToFile={handleNavigateToFile}
           onChatBecameIdle={handleChatBecameIdle}
           onUserMessageSent={handleChatBecameIdle}
+          onBusyStateChange={handleBusyStateChange}
         />
       );
     };

@@ -97,6 +97,8 @@ interface TaskChatProps {
   onChatBecameIdle?: () => void;
   /** Called when the user successfully sends a message */
   onUserMessageSent?: () => void;
+  /** Called when busy state changes (true = agent working, false = idle) */
+  onBusyStateChange?: (busy: boolean) => void;
 }
 
 type ToolMessage = {
@@ -798,6 +800,7 @@ export function TaskChat({
   onNavigateToFile,
   onChatBecameIdle,
   onUserMessageSent,
+  onBusyStateChange,
 }: TaskChatProps) {
   const sessionModeStorageKey = `taskchat:session-mode:${projectId}`;
   // ─── Multi-chat state ───────────────────────────────────────────────────
@@ -845,6 +848,12 @@ export function TaskChat({
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [hasContent, setHasContent] = useState(false);
   const [isBusy, setIsBusy] = useState(false);
+  const busyRef = useRef(false);
+  const updateBusy = useCallback((value: boolean) => {
+    busyRef.current = value;
+    setIsBusy(value);
+    onBusyStateChange?.(value);
+  }, [onBusyStateChange]);
   const terminalRunningRef = useRef(false);
   const composingRef = useRef(false);
   const [selectedModel, setSelectedModel] = useState("");
@@ -1393,7 +1402,7 @@ export function TaskChat({
     const cached = perChatStateRef.current.get(chatId);
     if (cached) {
       setMessages(cached.messages);
-      setIsBusy(cached.isBusy);
+      updateBusy(cached.isBusy);
       setSelectedModel(cached.selectedModel);
       setPermissionLevel(cached.permissionLevel);
       setModelOptions(cached.modelOptions);
@@ -1411,9 +1420,8 @@ export function TaskChat({
       setIsRemoteSession(cached.isRemoteSession);
       setRemoteOwnerName(cached.remoteOwnerName);
     } else {
-      // Fresh state for new chat
       setMessages([]);
-      setIsBusy(false);
+      updateBusy(false);
       setSelectedModel("");
       setPermissionLevel("");
       setModelOptions([]);
@@ -1662,10 +1670,10 @@ export function TaskChat({
               }
               break;
             case "busy":
-              setIsBusy(true);
+              updateBusy(true);
               break;
             case "complete":
-              setIsBusy(false);
+              updateBusy(false);
               break;
             case "plan_update":
               setPlanEntries(evt.entries || []);
@@ -1828,11 +1836,11 @@ export function TaskChat({
             return null;
           });
           setMessages((prev) => reduceHistoryMessages(prev, msg));
-          setIsBusy(false);
+          updateBusy(false);
           onChatBecameIdle?.();
           break;
         case "busy":
-          setIsBusy(msg.value);
+          updateBusy(msg.value);
           if (!msg.value) onChatBecameIdle?.();
           break;
         case "error": {
@@ -1853,7 +1861,7 @@ export function TaskChat({
               ...prev,
               { type: "system", content: `Error: ${msg.message}` },
             ]);
-            setIsBusy(false);
+            updateBusy(false);
             onChatBecameIdle?.();
           }
           break;
@@ -1919,17 +1927,15 @@ export function TaskChat({
         case "terminal_execute":
           // User-initiated terminal command — show as terminal user message
           terminalRunningRef.current = true;
-          setIsBusy(true);
+          updateBusy(true);
           setMessages((prev) => reduceHistoryMessages(prev, msg));
           break;
         case "terminal_chunk":
-          // Append chunk to the last terminal_output message
           setMessages((prev) => reduceHistoryMessages(prev, msg));
           break;
         case "terminal_complete":
-          // Set exit code on the last terminal_output message
           terminalRunningRef.current = false;
-          setIsBusy(false);
+          updateBusy(false);
           onChatBecameIdle?.();
           setMessages((prev) => reduceHistoryMessages(prev, msg));
           break;
@@ -2472,11 +2478,11 @@ export function TaskChat({
       setShowFileMenu(false);
       setIsTerminalMode(false);
       setIsInputExpanded(false);
-      setIsBusy(true);
+      updateBusy(true);
       onUserMessageSent?.();
       el.focus();
     }
-  }, [isTerminalMode, isBusy, attachments, activeChatId, projectId, task.id, enableAutoStickToBottom, onUserMessageSent]);
+  }, [isTerminalMode, isBusy, attachments, activeChatId, projectId, task.id, enableAutoStickToBottom, onUserMessageSent, updateBusy]);
 
   /** Cancel current agent work — server auto-sends next queued message after Complete */
   const handleSendNow = useCallback(() => {

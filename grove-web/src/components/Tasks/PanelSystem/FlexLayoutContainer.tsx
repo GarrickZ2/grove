@@ -465,7 +465,9 @@ export const FlexLayoutContainer = forwardRef<
   const [fileNavRequest, setFileNavRequest] = useState<FileNavRequest | null>(null);
   const [artifactPreviewRequest, setArtifactPreviewRequest] = useState<ArtifactPreviewRequest | null>(null);
   const [lastChatIdleAt, setLastChatIdleAt] = useState<number | undefined>(undefined);
+  const [isChatBusy, setIsChatBusy] = useState(false);
   const handleChatBecameIdle = useCallback(() => setLastChatIdleAt(Date.now()), []);
+  const handleBusyStateChange = useCallback((busy: boolean) => setIsChatBusy(busy), []);
 
   const navigateToFile = useCallback((filePath: string, line?: number, mode: 'diff' | 'full' = 'full') => {
     const seq = ++navSeqRef.current;
@@ -776,6 +778,7 @@ export const FlexLayoutContainer = forwardRef<
               onNavigateToFile={navigateToFile}
               onChatBecameIdle={handleChatBecameIdle}
               onUserMessageSent={handleChatBecameIdle}
+              onBusyStateChange={handleBusyStateChange}
             />
           </div>
         );
@@ -843,14 +846,14 @@ export const FlexLayoutContainer = forwardRef<
       case 'artifacts':
         return (
           <div style={{ display: 'flex', flexDirection: 'column', width: '100%', height: '100%', overflow: 'hidden' }}>
-            <ArtifactsTab projectId={projectId} task={task} previewRequest={artifactPreviewRequest} lastChatIdleAt={lastChatIdleAt} />
+            <ArtifactsTab projectId={projectId} task={task} previewRequest={artifactPreviewRequest} lastChatIdleAt={lastChatIdleAt} isChatBusy={isChatBusy} />
           </div>
         );
 
       default:
         return <div className="p-4 text-[var(--color-text-muted)]">Unknown panel type: {component}</div>;
     }
-  }, [projectId, task, model, closeTabById, navigateToFile, fileNavRequest, artifactPreviewRequest, lastChatIdleAt, handleChatBecameIdle, selectedProject?.isGitRepo]);
+  }, [projectId, task, model, closeTabById, navigateToFile, fileNavRequest, artifactPreviewRequest, lastChatIdleAt, isChatBusy, handleChatBecameIdle, handleBusyStateChange, selectedProject?.isGitRepo]);
 
   // Track empty state
   const [isEmpty, setIsEmpty] = useState(() => getAllTabs().length === 0);

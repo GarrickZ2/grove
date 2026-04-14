@@ -26,6 +26,7 @@ interface ArtifactsTabProps {
   task: Task;
   previewRequest?: ArtifactPreviewRequest | null;
   lastChatIdleAt?: number;
+  isChatBusy?: boolean;
 }
 
 export interface ArtifactPreviewRequest {
@@ -43,7 +44,7 @@ function dropContainsDirectory(dataTransfer: DataTransfer): boolean {
   return false;
 }
 
-export function ArtifactsTab({ projectId, task, previewRequest, lastChatIdleAt }: ArtifactsTabProps) {
+export function ArtifactsTab({ projectId, task, previewRequest, lastChatIdleAt, isChatBusy }: ArtifactsTabProps) {
   const [inputFiles, setInputFiles] = useState<ArtifactFile[]>([]);
   const [outputFiles, setOutputFiles] = useState<ArtifactFile[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -70,6 +71,27 @@ export function ArtifactsTab({ projectId, task, previewRequest, lastChatIdleAt }
   const [splitRatio, setSplitRatio] = useState(0.5);
   const isDraggingRef = useRef(false);
   const lastPreviewSeqRef = useRef(0);
+  const lastGoodContentRef = useRef<string | null>(null);
+  const liveRefreshSeqRef = useRef(0);
+  const [previewError, setPreviewError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!isChatBusy || !previewFile || !projectId) return;
+    const seq = ++liveRefreshSeqRef.current;
+    const file = previewFile.file;
+    if (getPreviewType(file.name) === "image") return;
+    const timer = setInterval(() => {
+      previewArtifact(projectId, task.id, file.directory, file.path)
+        .then((content) => {
+          if (seq !== liveRefreshSeqRef.current) return;
+          lastGoodContentRef.current = content;
+          setPreviewFile({ file, content });
+          setPreviewError(null);
+        })
+        .catch(() => {});
+    }, 10_000);
+    return () => clearInterval(timer);
+  }, [isChatBusy, previewFile, projectId, task.id]);
 
   // Auto-dismiss toast after 3 seconds
   useEffect(() => {
@@ -183,25 +205,35 @@ export function ArtifactsTab({ projectId, task, previewRequest, lastChatIdleAt }
     }
   }, [projectId, task.id]);
 
-  const handlePreview = useCallback(async (file: ArtifactFile) => {
+  const handlePreview = useCallback(async (file: ArtifactFile, force?: boolean) => {
     if (!projectId || file.is_dir) return;
     if (getPreviewType(file.name) === "image") {
-      setPreviewFile({ file, content: artifactDownloadUrl(projectId, task.id, file.directory, file.path) });
+      const url = artifactDownloadUrl(projectId, task.id, file.directory, file.path);
+      setPreviewFile({ file, content: url });
+      lastGoodContentRef.current = url;
+      setPreviewError(null);
       return;
     }
     setPreviewLoading(true);
+    setPreviewError(null);
     try {
       const content = await previewArtifact(projectId, task.id, file.directory, file.path);
+      lastGoodContentRef.current = content;
       setPreviewFile({ file, content });
     } catch (err) {
       const message = err && typeof err === 'object' && 'message' in err
         ? (err as { message: string }).message
         : 'Failed to load preview';
-      setPreviewFile({ file, content: `Error: ${message}` });
+      if (force || !lastGoodContentRef.current) {
+        setPreviewFile({ file, content: `Error: ${message}` });
+        setPreviewError(message);
+      } else if (lastGoodContentRef.current && previewFile?.file.path === file.path) {
+        setPreviewFile({ file, content: lastGoodContentRef.current });
+      }
     } finally {
       setPreviewLoading(false);
     }
-  }, [projectId, task.id]);
+  }, [projectId, task.id, previewFile]);
 
   const [pendingPreview, setPendingPreview] = useState<string | null>(null);
 
@@ -372,8 +404,11 @@ export function ArtifactsTab({ projectId, task, previewRequest, lastChatIdleAt }
             fileName={previewFile.file.name}
             content={previewFile.content}
             loading={previewLoading}
-            onClose={() => setPreviewFile(null)}
+            error={previewError}
+            isLive={!!isChatBusy}
+            onClose={() => { setPreviewFile(null); lastGoodContentRef.current = null; setPreviewError(null); }}
             onDownload={() => handleDownload(previewFile.file)}
+            onRefresh={() => handlePreview(previewFile.file, true)}
           />
         )}
       </AnimatePresence>

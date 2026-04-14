@@ -17,6 +17,9 @@ Cargo.lock  # Uncomment if this is a library project
 .superpowers/
 docs/superpowers/
 
+# Sisyphus
+.sisyphus/
+
 # Development / Marketing materials (not for version control)
 .grove-dev/
 
