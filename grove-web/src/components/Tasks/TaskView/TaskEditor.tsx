@@ -3,16 +3,17 @@ import Editor from "@monaco-editor/react";
 import { X, FileCode, Loader2, Save, Maximize2, Minimize2, PanelLeftOpen, PanelLeftClose, RefreshCw } from "lucide-react";
 import { Button } from "../../ui";
 import { FileTree } from "./FileTree";
-import { buildFileTree } from "../../../utils/fileTree";
+import type { FileTreeNode } from "../../../utils/fileTree";
 import { useIsMobile } from "../../../hooks";
 import {
-  getTaskFiles,
+  getTaskDirEntries,
   getFileContent,
   writeFileContent,
   createFile,
   createDirectory,
   deleteFileOrDir,
 } from "../../../api";
+import type { DirEntry } from "../../../api";
 import { FileContextMenu, type ContextMenuPosition, type ContextMenuTarget } from "./FileContextMenu";
 import { ConfirmDialog } from "../../Dialogs/ConfirmDialog";
 
@@ -77,9 +78,23 @@ function getLanguage(filePath: string): string {
   return map[ext] || 'plaintext';
 }
 
+/** Map a flat DirEntry list to FileTreeNode[] for the file tree */
+function dirEntriesToNodes(entries: { path: string; is_dir: boolean }[]): FileTreeNode[] {
+  return entries
+    .sort((a, b) => {
+      if (a.is_dir !== b.is_dir) return a.is_dir ? -1 : 1;
+      return a.path.localeCompare(b.path);
+    })
+    .map(e => {
+      const name = e.path.split('/').pop() || e.path;
+      return { name, path: e.path, isDir: e.is_dir, children: e.is_dir ? [] : undefined };
+    });
+}
+
 export function TaskEditor({ projectId, taskId, onClose, fullscreen = false, onToggleFullscreen, hideHeader = false }: TaskEditorProps) {
   const { isMobile } = useIsMobile();
-  const [files, setFiles] = useState<string[]>([]);
+  const [fileNodes, setFileNodes] = useState<FileTreeNode[]>([]);
+  const [treeKey, setTreeKey] = useState(0);
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
   const [fileTreeVisible, setFileTreeVisible] = useState(true);
   const [fileContent, setFileContent] = useState<string>('');
@@ -109,15 +124,11 @@ export function TaskEditor({ projectId, taskId, onClose, fullscreen = false, onT
 
   // Load file list on mount
   useEffect(() => {
-    getTaskFiles(projectId, taskId)
-      .then((res) => setFiles(res.files))
+    getTaskDirEntries(projectId, taskId, '')
+      .then((res) => setFileNodes(dirEntriesToNodes(res.entries)))
       .catch((err) => setError(err.message || 'Failed to load files'));
   }, [projectId, taskId]);
 
-  // Build file tree
-  const fileTree = buildFileTree(files);
-
-  // Load file content when selected
   const handleSelectFile = useCallback(async (path: string) => {
     if (path === selectedFile) return;
 
@@ -184,8 +195,10 @@ export function TaskEditor({ projectId, taskId, onClose, fullscreen = false, onT
   // Internal: used by create/delete handlers
   const reloadFiles = useCallback(async () => {
     try {
-      const res = await getTaskFiles(projectId, taskId);
-      setFiles(res.files);
+      const res = await getTaskDirEntries(projectId, taskId, '');
+      setFileNodes(dirEntriesToNodes(res.entries));
+      // Remount lazy tree items so expanded directories drop stale loaded children.
+      setTreeKey(k => k + 1);
     } catch (err) {
       console.error('Failed to reload files:', err);
     }
@@ -195,8 +208,10 @@ export function TaskEditor({ projectId, taskId, onClose, fullscreen = false, onT
   const handleRefresh = useCallback(async () => {
     setRefreshing(true);
     try {
-      const res = await getTaskFiles(projectId, taskId);
-      setFiles(res.files);
+      const res = await getTaskDirEntries(projectId, taskId, '');
+      setFileNodes(dirEntriesToNodes(res.entries));
+      // Increment treeKey to remount FileTree, resetting all expanded directory state
+      setTreeKey(k => k + 1);
 
       if (selectedFile) {
         const fileRes = await getFileContent(projectId, taskId, selectedFile);
@@ -212,7 +227,11 @@ export function TaskEditor({ projectId, taskId, onClose, fullscreen = false, onT
     }
   }, [projectId, taskId, selectedFile]);
 
-  // Context menu handler
+  const handleExpandDir = useCallback(async (dirPath: string): Promise<DirEntry[]> => {
+    const result = await getTaskDirEntries(projectId, taskId, dirPath);
+    return result.entries;
+  }, [projectId, taskId]);
+
   const handleContextMenu = useCallback((e: React.MouseEvent, path: string, isDir: boolean) => {
     setContextMenuPosition({ x: e.clientX, y: e.clientY });
     setContextMenuTarget({ path, isDirectory: isDir });
@@ -447,13 +466,15 @@ export function TaskEditor({ projectId, taskId, onClose, fullscreen = false, onT
               </div>
             </div>
             <FileTree
-              nodes={fileTree}
+              key={treeKey}
+              nodes={fileNodes}
               selectedFile={selectedFile}
               onSelectFile={handleSelectFile}
               onContextMenu={handleContextMenu}
               creatingPath={creatingPath}
               onSubmitPath={handleSubmitPath}
               onCancelPath={handleCancelPath}
+              onExpandDir={handleExpandDir}
             />
           </div>
         )}

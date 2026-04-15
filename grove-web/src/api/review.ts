@@ -32,10 +32,21 @@ export interface DiffFile {
   additions: number;
   deletions: number;
   is_virtual?: boolean; // Virtual file (has comments but doesn't exist in diff)
+  is_unsupported?: boolean; // Diff not supported for this file type
+  load_error?: boolean; // Diff failed to load
+  is_untracked?: boolean; // File is untracked (never git-added)
 }
 
-export interface FullDiffResult {
-  files: DiffFile[];
+export interface DiffStatFile {
+  path: string;
+  status: 'A' | 'M' | 'D' | 'R' | 'U';
+  additions: number;
+  deletions: number;
+  is_binary: boolean;
+}
+
+export interface DiffStatsResult {
+  files: DiffStatFile[];
   total_additions: number;
   total_deletions: number;
 }
@@ -44,17 +55,32 @@ export interface FullDiffResult {
 // API Functions
 // ============================================================================
 
-/** Get full parsed diff with hunks and lines */
-export async function getFullDiff(
+/** Get diff stats (file list with addition/deletion counts, no hunk content) */
+export async function getDiffStats(
   projectId: string,
   taskId: string,
   fromRef?: string,
   toRef?: string,
-): Promise<FullDiffResult> {
-  let url = `/api/v1/projects/${projectId}/tasks/${taskId}/diff?full=true`;
+): Promise<DiffStatsResult> {
+  let url = `/api/v1/projects/${projectId}/tasks/${taskId}/diff`;
+  const params: string[] = [];
+  if (fromRef) params.push(`from_ref=${encodeURIComponent(fromRef)}`);
+  if (toRef) params.push(`to_ref=${encodeURIComponent(toRef)}`);
+  if (params.length > 0) url += `?${params.join('&')}`;
+  return apiClient.get<DiffStatsResult>(url);
+}
+
+export async function getSingleFileDiff(
+  projectId: string,
+  taskId: string,
+  filePath: string,
+  fromRef?: string,
+  toRef?: string,
+): Promise<DiffFile> {
+  let url = `/api/v1/projects/${projectId}/tasks/${taskId}/diff/file?path=${encodeURIComponent(filePath)}`;
   if (fromRef) url += `&from_ref=${encodeURIComponent(fromRef)}`;
   if (toRef) url += `&to_ref=${encodeURIComponent(toRef)}`;
-  return apiClient.get<FullDiffResult>(url);
+  return apiClient.get<DiffFile>(url);
 }
 
 /** Create a new review comment (inline, file, or project level) */

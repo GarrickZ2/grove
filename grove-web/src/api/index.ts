@@ -34,6 +34,7 @@ export {
   getReviewComments,
   getTaskStats,
   getTaskFiles,
+  getTaskDirEntries,
   getFileContent,
   writeFileContent,
   createFile,
@@ -67,6 +68,7 @@ export type {
   ArtifactFile,
   ArtifactsResponse,
   ArtifactWorkDirectoryEntry,
+  DirEntry,
 } from './tasks';
 
 export {

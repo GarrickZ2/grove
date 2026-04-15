@@ -236,6 +236,10 @@ pub fn create_api_router() -> Router {
             "/projects/{id}/tasks/{taskId}/file",
             get(handlers::tasks::get_file).put(handlers::tasks::update_file),
         )
+        .route(
+            "/projects/{id}/tasks/{taskId}/dir-entries",
+            get(handlers::tasks::dir_entries),
+        )
         // Studio Artifacts API
         .route(
             "/projects/{id}/tasks/{taskId}/artifacts",
@@ -295,6 +299,10 @@ pub fn create_api_router() -> Router {
         .route(
             "/projects/{id}/tasks/{taskId}/diff",
             get(handlers::tasks::get_diff),
+        )
+        .route(
+            "/projects/{id}/tasks/{taskId}/diff/file",
+            get(handlers::tasks::get_single_file_diff),
         )
         .route(
             "/projects/{id}/tasks/{taskId}/commits",

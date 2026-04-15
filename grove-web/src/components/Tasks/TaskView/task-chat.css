@@ -33,7 +33,7 @@
   }
 }
 
-/* Very narrow (< 300px): further compress */
+/* Very narrow (< 300px): hide left footer (status text + attach), keep only dropdowns + send */
 @container chatbox (max-width: 300px) {
   .chatbox-cq-root {
     padding-left: 4px;
@@ -45,5 +45,20 @@
     padding-left: 8px;
     padding-right: 8px;
     border-radius: 16px;
+  }
+
+  .chatbox-footer-left {
+    display: none;
+  }
+
+  .chatbox-footer {
+    justify-content: flex-end;
+  }
+}
+
+/* Extremely narrow (< 220px): also hide dropdowns, keep only send/stop button */
+@container chatbox (max-width: 220px) {
+  .chatbox-footer-right > *:not(:last-child) {
+    display: none;
   }
 }

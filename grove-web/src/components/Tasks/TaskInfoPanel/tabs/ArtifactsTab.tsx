@@ -29,6 +29,10 @@ interface ArtifactsTabProps {
   isChatBusy?: boolean;
 }
 
+interface LoadFilesOptions {
+  silent?: boolean;
+}
+
 export interface ArtifactPreviewRequest {
   file: string;
   seq: number;
@@ -73,25 +77,30 @@ export function ArtifactsTab({ projectId, task, previewRequest, lastChatIdleAt, 
   const lastPreviewSeqRef = useRef(0);
   const lastGoodContentRef = useRef<string | null>(null);
   const liveRefreshSeqRef = useRef(0);
+  const previousChatBusyRef = useRef(!!isChatBusy);
   const [previewError, setPreviewError] = useState<string | null>(null);
+
+  const refreshPreviewContent = useCallback((file: ArtifactFile, seq: number) => {
+    if (!projectId || getPreviewType(file.name) === "image") return;
+    previewArtifact(projectId, task.id, file.directory, file.path)
+      .then((content) => {
+        if (seq !== liveRefreshSeqRef.current) return;
+        lastGoodContentRef.current = content;
+        setPreviewFile({ file, content });
+        setPreviewError(null);
+      })
+      .catch(() => {});
+  }, [projectId, task.id]);
 
   useEffect(() => {
     if (!isChatBusy || !previewFile || !projectId) return;
     const seq = ++liveRefreshSeqRef.current;
     const file = previewFile.file;
-    if (getPreviewType(file.name) === "image") return;
     const timer = setInterval(() => {
-      previewArtifact(projectId, task.id, file.directory, file.path)
-        .then((content) => {
-          if (seq !== liveRefreshSeqRef.current) return;
-          lastGoodContentRef.current = content;
-          setPreviewFile({ file, content });
-          setPreviewError(null);
-        })
-        .catch(() => {});
+      refreshPreviewContent(file, seq);
     }, 10_000);
     return () => clearInterval(timer);
-  }, [isChatBusy, previewFile, projectId, task.id]);
+  }, [isChatBusy, previewFile, projectId, refreshPreviewContent]);
 
   // Auto-dismiss toast after 3 seconds
   useEffect(() => {
@@ -100,9 +109,10 @@ export function ArtifactsTab({ projectId, task, previewRequest, lastChatIdleAt, 
     return () => clearTimeout(timer);
   }, [toastMessage]);
 
-  const loadFiles = useCallback(async () => {
+  const loadFiles = useCallback(async (options?: LoadFilesOptions) => {
     if (!projectId) return;
-    setIsLoading(true);
+    const silent = options?.silent === true;
+    if (!silent) setIsLoading(true);
     setError(null);
     try {
       const data = await listArtifacts(projectId, task.id);
@@ -111,7 +121,7 @@ export function ArtifactsTab({ projectId, task, previewRequest, lastChatIdleAt, 
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load files");
     } finally {
-      setIsLoading(false);
+      if (!silent) setIsLoading(false);
     }
   }, [projectId, task.id]);
 
@@ -135,7 +145,7 @@ export function ArtifactsTab({ projectId, task, previewRequest, lastChatIdleAt, 
   // the ref always reflects the current upload state when this effect fires.
   useEffect(() => {
     if (lastChatIdleAt === undefined) return;
-    if (!isUploadingRef.current) loadFiles();
+    if (!isUploadingRef.current) void loadFiles({ silent: true });
   }, [lastChatIdleAt, loadFiles]);
 
   const handleUpload = useCallback(async (files: FileList | File[]) => {
@@ -234,6 +244,14 @@ export function ArtifactsTab({ projectId, task, previewRequest, lastChatIdleAt, 
       setPreviewLoading(false);
     }
   }, [projectId, task.id, previewFile]);
+
+  useEffect(() => {
+    const wasBusy = previousChatBusyRef.current;
+    const busy = !!isChatBusy;
+    previousChatBusyRef.current = busy;
+    if (!wasBusy || busy || !previewFile) return;
+    void handlePreview(previewFile.file, true);
+  }, [isChatBusy, previewFile, handlePreview]);
 
   const [pendingPreview, setPendingPreview] = useState<string | null>(null);
 
@@ -374,7 +392,7 @@ export function ArtifactsTab({ projectId, task, previewRequest, lastChatIdleAt, 
     return (
       <div className="flex flex-col items-center justify-center h-full gap-3">
         <p className="text-sm" style={{ color: "var(--color-error)" }}>{error}</p>
-        <button onClick={loadFiles} className="text-xs hover:underline" style={{ color: "var(--color-highlight)" }}>Retry</button>
+        <button onClick={() => { void loadFiles(); }} className="text-xs hover:underline" style={{ color: "var(--color-highlight)" }}>Retry</button>
       </div>
     );
   }
@@ -453,7 +471,7 @@ export function ArtifactsTab({ projectId, task, previewRequest, lastChatIdleAt, 
             count={uploadsTab === "uploads" ? inputFileCount : workdirs.length}
             isOpen={uploadsOpen}
             onToggle={() => setUploadsOpen(!uploadsOpen)}
-            onRefresh={uploadsTab === "uploads" ? loadFiles : loadWorkdirs}
+            onRefresh={uploadsTab === "uploads" ? () => { void loadFiles(); } : loadWorkdirs}
             onUpload={uploadsTab === "uploads" ? () => fileInputRef.current?.click() : handleAddWorkdir}
             onOpenFolder={uploadsTab === "uploads" ? () => handleOpenFolder("input") : undefined}
             isUploading={uploadsTab === "uploads" ? isUploading : isAddingWorkdir}

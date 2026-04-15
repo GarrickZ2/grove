@@ -169,7 +169,7 @@ export const TaskView = forwardRef<TaskViewHandle, TaskViewProps>((props, ref) =
   const layoutRef = useRef<FlexLayoutContainerHandle>(null);
   const ideLayoutRef = useRef<IDELayoutHandle>(null);
   const { config } = useConfig();
-  const layoutMode: LayoutMode = (config?.web?.workspace_layout === "ide" ? "ide" : "flex") as LayoutMode;
+  const layoutMode: LayoutMode = (config?.web?.workspace_layout === "flex" ? "flex" : "ide") as LayoutMode;
   const fullscreen = externalFullscreen ?? false;
   const toggleFullscreen = () => onFullscreenChange?.(!fullscreen);
 

@@ -43,6 +43,8 @@ pub struct DiffFile {
     pub is_binary: bool,
     pub additions: u32,
     pub deletions: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub is_untracked: Option<bool>,
 }
 
 /// Complete diff result across all files
@@ -147,6 +149,7 @@ fn parse_file_diff(chunk: &str) -> Option<DiffFile> {
         is_binary,
         additions,
         deletions,
+        is_untracked: None,
     })
 }
 
@@ -335,34 +338,65 @@ fn parse_range(s: &str) -> (u32, u32) {
     }
 }
 
-/// Get diff result for a specific range (from_ref..to_ref or from_ref..working tree)
+/// Get diff for a single file
 ///
-/// When `to_ref` is `None`, diffs against the working tree (including untracked files).
-/// When `to_ref` is `Some(hash)`, diffs between two commits.
-pub fn get_diff_range(
+/// Handles both tracked and untracked files.
+/// For untracked files, diffs against /dev/null using `git diff --no-index`.
+pub fn get_single_file_diff(
     worktree_path: &str,
-    from_ref: &str,
+    file_path: &str,
+    from_ref: Option<&str>,
     to_ref: Option<&str>,
-) -> Result<DiffResult> {
-    let raw = git::get_raw_diff_range(worktree_path, from_ref, to_ref)?;
+) -> Result<DiffFile> {
+    let is_untracked = git::git_cmd(
+        worktree_path,
+        &[
+            "ls-files",
+            "--others",
+            "--exclude-standard",
+            "--",
+            file_path,
+        ],
+    )
+    .map(|out| !out.trim().is_empty())
+    .unwrap_or(false);
+
+    let raw = if is_untracked {
+        git::git_cmd_allow_exit1(
+            worktree_path,
+            &["diff", "--no-index", "-U3", "--", "/dev/null", file_path],
+        )?
+    } else if let Some(to) = to_ref {
+        let range = format!("{}..{}", from_ref.unwrap_or("HEAD"), to);
+        git::git_cmd(worktree_path, &["diff", "-U3", &range, "--", file_path])?
+    } else {
+        git::git_cmd(
+            worktree_path,
+            &["diff", "-U3", from_ref.unwrap_or("HEAD"), "--", file_path],
+        )?
+    };
+
     let mut result = parse_diff(&raw);
+    result
+        .files
+        .retain(|f| f.new_path == file_path || f.old_path == file_path);
 
-    // Filter out symlinks (autolink creates symlinks to main repo)
-    let wt_base = std::path::Path::new(worktree_path);
-    result.files.retain(|file| {
-        let path = if file.new_path.is_empty() || file.new_path == "/dev/null" {
-            &file.old_path
-        } else {
-            &file.new_path
-        };
-        !wt_base.join(path).is_symlink()
-    });
-
-    // Recalculate totals after filtering
-    result.total_additions = result.files.iter().map(|f| f.additions).sum();
-    result.total_deletions = result.files.iter().map(|f| f.deletions).sum();
-
-    Ok(result)
+    match result.files.into_iter().next() {
+        Some(mut file) => {
+            file.is_untracked = Some(is_untracked);
+            Ok(file)
+        }
+        None => Ok(DiffFile {
+            old_path: file_path.to_string(),
+            new_path: file_path.to_string(),
+            change_type: if is_untracked { "added" } else { "modified" }.to_string(),
+            hunks: vec![],
+            is_binary: false,
+            additions: 0,
+            deletions: 0,
+            is_untracked: Some(is_untracked),
+        }),
+    }
 }
 
 #[cfg(test)]

@@ -302,7 +302,7 @@ export function SettingsPage({ config }: SettingsPageProps) {
       setTerminalMultiplexer(cfg.terminal_multiplexer || "tmux");
       lastTerminalMuxRef.current = cfg.terminal_multiplexer || "tmux";
       setWebTerminalMode(cfg.web.terminal_mode || "multiplexer");
-      setWorkspaceLayout(cfg.web.workspace_layout || "flex");
+      setWorkspaceLayout(cfg.web.workspace_layout || "ide");
 
       // Load theme - sync with context
       // API stores theme id (e.g., "dark", "tokyo-night")

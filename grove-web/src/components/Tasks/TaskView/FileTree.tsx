@@ -1,6 +1,7 @@
 import { useState, useCallback, useRef, useEffect } from "react";
-import { ChevronRight, ChevronDown, FileText, Folder } from "lucide-react";
+import { ChevronRight, ChevronDown, Loader2 } from "lucide-react";
 import type { FileTreeNode } from "../../../utils/fileTree";
+import type { DirEntry } from "../../../api";
 import { VSCodeIcon } from "../../ui";
 
 interface FileTreeProps {
@@ -11,6 +12,7 @@ interface FileTreeProps {
   creatingPath?: { type: 'file' | 'directory'; parentPath: string; depth: number } | null;
   onSubmitPath?: (name: string) => void;
   onCancelPath?: () => void;
+  onExpandDir?: (path: string) => Promise<DirEntry[]>;
 }
 
 export function FileTree({
@@ -21,12 +23,12 @@ export function FileTree({
   creatingPath,
   onSubmitPath,
   onCancelPath,
+  onExpandDir,
 }: FileTreeProps) {
   const inputRef = useRef<HTMLInputElement>(null);
 
   return (
     <div className="flex flex-col text-sm overflow-y-auto h-full py-1">
-      {/* Root level inline input */}
       {creatingPath && creatingPath.parentPath === '' && (
         <InlinePathInput
           type={creatingPath.type}
@@ -49,13 +51,13 @@ export function FileTree({
           onSubmitPath={onSubmitPath}
           onCancelPath={onCancelPath}
           inputRef={inputRef}
+          onExpandDir={onExpandDir}
         />
       ))}
     </div>
   );
 }
 
-// Inline input for creating files/directories
 function InlinePathInput({
   type,
   depth,
@@ -69,7 +71,7 @@ function InlinePathInput({
   onCancel: () => void;
   inputRef: React.RefObject<HTMLInputElement | null>;
 }) {
-  const Icon = type === 'file' ? FileText : Folder;
+  const Icon = VSCodeIcon;
 
   useEffect(() => {
     inputRef.current?.focus();
@@ -81,7 +83,12 @@ function InlinePathInput({
       style={{ paddingLeft: `${depth * 16 + 8}px` }}
     >
       <span className="w-4 h-4 flex-shrink-0" />
-      <Icon className="w-4 h-4 text-[var(--color-warning)] flex-shrink-0" />
+      <Icon
+        filename={type === 'file' ? 'new.txt' : 'folder'}
+        isFolder={type === 'directory'}
+        isOpen={false}
+        size={16}
+      />
       <input
         ref={inputRef}
         type="text"
@@ -112,6 +119,7 @@ interface FileTreeItemProps {
   onSubmitPath?: (name: string) => void;
   onCancelPath?: () => void;
   inputRef?: React.RefObject<HTMLInputElement | null>;
+  onExpandDir?: (path: string) => Promise<DirEntry[]>;
 }
 
 function FileTreeItem({
@@ -124,17 +132,53 @@ function FileTreeItem({
   onSubmitPath,
   onCancelPath,
   inputRef,
+  onExpandDir,
 }: FileTreeItemProps) {
-  const [expanded, setExpanded] = useState(depth < 1);
+  // Lazy mode: always start collapsed (load on first click).
+  // Static mode: auto-expand root level (depth < 1).
+  const [expanded, setExpanded] = useState(onExpandDir ? false : depth < 1);
+  const [children, setChildren] = useState<FileTreeNode[] | null>(null);
+  const [loading, setLoading] = useState(false);
+  const loadedRef = useRef(false);
   const isSelected = !node.isDir && selectedFile === node.path;
 
-  const handleClick = useCallback(() => {
+  const handleClick = useCallback(async () => {
     if (node.isDir) {
+      if (!expanded && onExpandDir && !loadedRef.current) {
+        setLoading(true);
+        try {
+          const entries = await onExpandDir(node.path);
+          loadedRef.current = true;
+          const childNodes: FileTreeNode[] = entries
+            .sort((a, b) => {
+              if (a.is_dir !== b.is_dir) return a.is_dir ? -1 : 1;
+              const aName = a.path.split('/').pop() || a.path;
+              const bName = b.path.split('/').pop() || b.path;
+              return aName.localeCompare(bName);
+            })
+            .map(e => {
+              const name = e.path.split('/').pop() || e.path;
+              return {
+                name,
+                path: e.path,
+                isDir: e.is_dir,
+                children: e.is_dir ? [] : undefined,
+              };
+            });
+          setChildren(childNodes);
+        } catch (err) {
+          console.error('Failed to load directory:', err);
+          // Do not expand if the load failed — leave the node collapsed
+          return;
+        } finally {
+          setLoading(false);
+        }
+      }
       setExpanded((prev) => !prev);
     } else {
       onSelectFile(node.path);
     }
-  }, [node, onSelectFile]);
+  }, [node, onSelectFile, onExpandDir, expanded]);
 
   const handleContextMenu = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
@@ -143,6 +187,9 @@ function FileTreeItem({
       onContextMenu(e, node.path, node.isDir);
     }
   }, [node, onContextMenu]);
+
+  // Lazy mode: use loaded children state; static mode: use node.children from props.
+  const displayChildren = onExpandDir ? (children ?? []) : (node.children ?? []);
 
   return (
     <>
@@ -155,10 +202,11 @@ function FileTreeItem({
         `}
         style={{ paddingLeft: `${depth * 16 + 8}px` }}
       >
-        {/* Expand/collapse icon for directories */}
         {node.isDir ? (
           <span className="w-4 h-4 flex items-center justify-center flex-shrink-0">
-            {expanded ? (
+            {loading ? (
+              <Loader2 className="w-3 h-3 animate-spin" />
+            ) : expanded ? (
               <ChevronDown className="w-3 h-3" />
             ) : (
               <ChevronRight className="w-3 h-3" />
@@ -168,7 +216,6 @@ function FileTreeItem({
           <span className="w-4 h-4 flex-shrink-0" />
         )}
 
-        {/* File/folder icon */}
         <VSCodeIcon
           filename={node.name}
           isFolder={node.isDir}
@@ -176,14 +223,11 @@ function FileTreeItem({
           size={16}
         />
 
-        {/* Name */}
         <span className="truncate text-xs">{node.name}</span>
       </button>
 
-      {/* Children */}
-      {node.isDir && expanded && node.children && (
+      {node.isDir && expanded && (
         <>
-          {/* Inline input for this directory */}
           {creatingPath && creatingPath.parentPath === node.path && (
             <InlinePathInput
               type={creatingPath.type}
@@ -194,7 +238,7 @@ function FileTreeItem({
             />
           )}
 
-          {node.children.map((child) => (
+          {displayChildren.map((child) => (
             <FileTreeItem
               key={child.path}
               node={child}
@@ -206,6 +250,7 @@ function FileTreeItem({
               onSubmitPath={onSubmitPath}
               onCancelPath={onCancelPath}
               inputRef={inputRef}
+              onExpandDir={onExpandDir}
             />
           ))}
         </>

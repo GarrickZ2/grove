@@ -5,6 +5,7 @@ use axum::{
     http::StatusCode,
     Json,
 };
+use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
 use crate::api::error::ApiError;
@@ -12,6 +13,23 @@ use crate::storage::tasks;
 
 use super::super::common::find_project_by_id;
 use super::types::*;
+
+#[derive(Debug, Deserialize)]
+pub struct DirEntriesQuery {
+    #[serde(default)]
+    pub path: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct DirEntryItem {
+    pub path: String,
+    pub is_dir: bool,
+}
+
+#[derive(Debug, Serialize)]
+pub struct DirEntriesResponse {
+    pub entries: Vec<DirEntryItem>,
+}
 
 /// Resolve a relative path within a worktree, preventing path traversal attacks.
 fn resolve_safe_path(
@@ -105,6 +123,139 @@ fn list_files_fs(root: &str) -> Vec<String> {
     files
 }
 
+/// GET /api/v1/projects/{id}/tasks/{taskId}/dir-entries?path=...
+pub async fn dir_entries(
+    Path((id, task_id)): Path<(String, String)>,
+    Query(params): Query<DirEntriesQuery>,
+) -> Result<Json<DirEntriesResponse>, (StatusCode, Json<ApiError>)> {
+    let (_project, project_key) = find_project_by_id(&id).map_err(|s| {
+        (
+            s,
+            Json(ApiError {
+                error: "Project not found".to_string(),
+            }),
+        )
+    })?;
+
+    let task = tasks::get_task(&project_key, &task_id)
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiError {
+                    error: format!("Failed to load task: {}", e),
+                }),
+            )
+        })?
+        .ok_or_else(|| {
+            (
+                StatusCode::NOT_FOUND,
+                Json(ApiError {
+                    error: "Task not found".to_string(),
+                }),
+            )
+        })?;
+
+    if params.path.contains("..") {
+        return Err((
+            StatusCode::FORBIDDEN,
+            Json(ApiError {
+                error: "Path traversal not allowed".to_string(),
+            }),
+        ));
+    }
+
+    let base = std::fs::canonicalize(&task.worktree_path).map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ApiError {
+                error: format!("Failed to resolve worktree path: {}", e),
+            }),
+        )
+    })?;
+
+    let trimmed = params.path.trim_matches('/');
+    let target_dir = if trimmed.is_empty() {
+        base.clone()
+    } else {
+        let target = base.join(trimmed);
+        if target.exists() {
+            let canonical = std::fs::canonicalize(&target).map_err(|e| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ApiError {
+                        error: format!("Failed to resolve path: {}", e),
+                    }),
+                )
+            })?;
+            if !canonical.starts_with(&base) {
+                return Err((
+                    StatusCode::FORBIDDEN,
+                    Json(ApiError {
+                        error: "Path traversal not allowed".to_string(),
+                    }),
+                ));
+            }
+            canonical
+        } else {
+            return Err((
+                StatusCode::NOT_FOUND,
+                Json(ApiError {
+                    error: "Directory not found".to_string(),
+                }),
+            ));
+        }
+    };
+
+    if !target_dir.is_dir() {
+        return Err((
+            StatusCode::NOT_FOUND,
+            Json(ApiError {
+                error: "Directory not found".to_string(),
+            }),
+        ));
+    }
+
+    let read_dir = std::fs::read_dir(&target_dir).map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ApiError {
+                error: format!("Failed to read directory: {}", e),
+            }),
+        )
+    })?;
+
+    let mut entries: Vec<DirEntryItem> = Vec::new();
+    for entry in read_dir.flatten() {
+        let name = entry.file_name().to_string_lossy().to_string();
+        // Only hide .git — everything else (dotfiles, node_modules, etc.) is shown
+        if name == ".git" {
+            continue;
+        }
+
+        // Use entry.path().is_dir() instead of file_type().is_dir() so that
+        // symlinks pointing to directories are treated as directories.
+        let is_dir = entry.path().is_dir();
+        let rel_path = if trimmed.is_empty() {
+            name.clone()
+        } else {
+            format!("{}/{}", trimmed, name)
+        };
+
+        entries.push(DirEntryItem {
+            path: rel_path,
+            is_dir,
+        });
+    }
+
+    entries.sort_by(|a, b| {
+        b.is_dir
+            .cmp(&a.is_dir)
+            .then_with(|| a.path.to_lowercase().cmp(&b.path.to_lowercase()))
+    });
+
+    Ok(Json(DirEntriesResponse { entries }))
+}
+
 /// GET /api/v1/projects/{id}/tasks/{taskId}/files
 pub async fn list_files(
     Path((id, task_id)): Path<(String, String)>,
@@ -115,9 +266,11 @@ pub async fn list_files(
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .ok_or(StatusCode::NOT_FOUND)?;
 
+    // Only fall back to fs listing for non-git repos (Err).
+    // An empty Ok result means a new/empty git repo — return empty, don't walkdir.
     let files = match crate::git::list_files(&task.worktree_path) {
-        Ok(f) if !f.is_empty() => f,
-        _ => list_files_fs(&task.worktree_path),
+        Ok(f) => f,
+        Err(_) => list_files_fs(&task.worktree_path),
     };
 
     Ok(Json(FilesResponse { files }))

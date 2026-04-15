@@ -35,6 +35,29 @@ fn git_cmd_unit(path: &str, args: &[&str]) -> Result<()> {
     git_cmd(path, args).map(|_| ())
 }
 
+/// 执行 git 命令，允许 exit code 1（如 `git diff --no-index` 在文件不同时返回 1）
+pub(crate) fn git_cmd_allow_exit1(path: &str, args: &[&str]) -> Result<String> {
+    let output = Command::new("git")
+        .current_dir(path)
+        .args(args)
+        .stdin(Stdio::null())
+        .output()
+        .map_err(|e| GroveError::git(format!("Failed to execute git: {}", e)))?;
+
+    if output.status.success() || output.status.code() == Some(1) {
+        String::from_utf8(output.stdout)
+            .map(|s| s.trim().to_string())
+            .map_err(|e| GroveError::git(format!("UTF-8 error: {}", e)))
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        Err(GroveError::git(format!(
+            "git {} failed: {}",
+            args.join(" "),
+            stderr.trim()
+        )))
+    }
+}
+
 /// 执行 git 命令，仅检查是否成功 (用于 bool 检查)
 fn git_cmd_check(path: &str, args: &[&str]) -> bool {
     git_cmd(path, args).is_ok()
@@ -517,17 +540,6 @@ pub fn list_files(repo_path: &str) -> Result<Vec<String>> {
     all_files.sort();
     all_files.dedup();
 
-    // Filter out files that don't actually exist or are symlinks (autolink)
-    let repo_path_base = Path::new(repo_path);
-    all_files.retain(|file| {
-        let full_path = repo_path_base.join(file);
-        // Skip symlinks (autolink creates symlinks to main repo)
-        if full_path.is_symlink() {
-            return false;
-        }
-        full_path.exists()
-    });
-
     Ok(all_files)
 }
 
@@ -746,35 +758,24 @@ pub struct DiffStatEntry {
     pub path: String,
     pub additions: u32,
     pub deletions: u32,
+    pub is_binary: bool,
 }
 
-/// 获取相对于 target 的变更文件列表（带统计）
-/// 执行: git diff --numstat --diff-filter=ACDMRT {target}
 pub fn diff_stat(worktree_path: &str, target: &str) -> Result<Vec<DiffStatEntry>> {
-    // intent-to-add 未跟踪文件，让 diff 能看到新文件
     let untracked = git_cmd(
         worktree_path,
         &["ls-files", "--others", "--exclude-standard"],
     )?;
-    let has_untracked = !untracked.trim().is_empty();
-    if has_untracked {
-        let _ = git_cmd_unit(worktree_path, &["add", "--intent-to-add", "--all"]);
-    }
+    let untracked_set: std::collections::HashSet<String> = untracked
+        .lines()
+        .map(|l| git_unquote(l.trim()))
+        .filter(|p| !p.is_empty())
+        .collect();
 
-    // 先获取 numstat（additions/deletions）
-    let numstat = git_cmd(worktree_path, &["diff", "--numstat", target])?;
-    // 再获取 name-status（状态字母）
-    let name_status = git_cmd(worktree_path, &["diff", "--name-status", target])?;
-
-    // 撤销 intent-to-add
-    if has_untracked {
-        for line in untracked.lines() {
-            let path = git_unquote(line.trim());
-            if !path.is_empty() {
-                let _ = git_cmd_unit(worktree_path, &["reset", "HEAD", "--", &path]);
-            }
-        }
-    }
+    let numstat_res = git_cmd(worktree_path, &["diff", "--numstat", target]);
+    let name_status_res = git_cmd(worktree_path, &["diff", "--name-status", target]);
+    let numstat = numstat_res?;
+    let name_status = name_status_res?;
 
     let status_map: std::collections::HashMap<String, char> = name_status
         .lines()
@@ -791,24 +792,29 @@ pub fn diff_stat(worktree_path: &str, target: &str) -> Result<Vec<DiffStatEntry>
         })
         .collect();
 
-    let wt_base = Path::new(worktree_path);
-    Ok(numstat
+    let mut entries: Vec<DiffStatEntry> = numstat
         .lines()
         .filter(|l| !l.is_empty())
         .filter_map(|line| {
             let parts: Vec<&str> = line.split('\t').collect();
             if parts.len() >= 3 {
                 let path = git_unquote(parts[2]);
-                // Skip symlinks (autolink creates symlinks to main repo)
-                if wt_base.join(&path).is_symlink() {
-                    return None;
-                }
+                let is_binary = parts[0].trim() == "-";
                 let status = status_map.get(&path).copied().unwrap_or('M');
                 Some(DiffStatEntry {
                     status,
                     path,
-                    additions: parts[0].parse().unwrap_or(0),
-                    deletions: parts[1].parse().unwrap_or(0),
+                    additions: if is_binary {
+                        0
+                    } else {
+                        parts[0].parse().unwrap_or(0)
+                    },
+                    deletions: if is_binary {
+                        0
+                    } else {
+                        parts[1].parse().unwrap_or(0)
+                    },
+                    is_binary,
                 })
             } else {
                 Some(DiffStatEntry {
@@ -816,45 +822,105 @@ pub fn diff_stat(worktree_path: &str, target: &str) -> Result<Vec<DiffStatEntry>
                     path: line.to_string(),
                     additions: 0,
                     deletions: 0,
+                    is_binary: false,
                 })
             }
         })
-        .collect())
-}
+        .collect();
 
-/// 获取完整的 unified diff 输出（用于 diff review UI）
-///
-/// 包含所有变更：已提交 + 已暂存 + 未暂存 + 未跟踪文件，相对于 target branch。
-/// 实现方式：先 `git add --intent-to-add` 未跟踪文件，执行 diff，再撤销 intent-to-add。
-pub fn get_raw_diff(worktree_path: &str, target: &str) -> Result<String> {
-    // 1. 找出未跟踪文件
-    let untracked = git_cmd(
-        worktree_path,
-        &["ls-files", "--others", "--exclude-standard"],
-    )?;
-    let has_untracked = !untracked.trim().is_empty();
-
-    // 2. 如果有未跟踪文件，用 intent-to-add 让 git diff 能看到它们
-    if has_untracked {
-        let _ = git_cmd_unit(worktree_path, &["add", "--intent-to-add", "--all"]);
-    }
-
-    // 3. 执行 diff
-    let result = git_cmd(worktree_path, &["diff", "-U3", target]);
-
-    // 4. 撤销 intent-to-add（恢复未跟踪状态）
-    if has_untracked {
-        // git reset 只影响 index，不影响工作区
-        // 只 reset 那些是 intent-to-add 的文件（即之前 untracked 的）
-        for line in untracked.lines() {
-            let path = git_unquote(line.trim());
-            if !path.is_empty() {
-                let _ = git_cmd_unit(worktree_path, &["reset", "HEAD", "--", &path]);
+    for path in &untracked_set {
+        let output = git_cmd_allow_exit1(
+            worktree_path,
+            &["diff", "--no-index", "--numstat", "--", "/dev/null", path],
+        );
+        if let Ok(numstat_out) = output {
+            let parts: Vec<&str> = numstat_out.trim().split('\t').collect();
+            if parts.len() >= 2 {
+                let is_binary = parts[0].trim() == "-";
+                entries.push(DiffStatEntry {
+                    status: 'U',
+                    path: path.clone(),
+                    additions: if is_binary {
+                        0
+                    } else {
+                        parts[0].parse().unwrap_or(0)
+                    },
+                    deletions: if is_binary {
+                        0
+                    } else {
+                        parts[1].parse().unwrap_or(0)
+                    },
+                    is_binary,
+                });
             }
+        } else {
+            entries.push(DiffStatEntry {
+                status: 'U',
+                path: path.clone(),
+                additions: 0,
+                deletions: 0,
+                is_binary: false,
+            });
         }
     }
 
-    result
+    Ok(entries)
+}
+
+/// 获取两个 ref 之间的变更文件统计（不含 working tree）
+pub fn diff_stat_range(
+    worktree_path: &str,
+    from_ref: &str,
+    to_ref: &str,
+) -> Result<Vec<DiffStatEntry>> {
+    let range = format!("{}..{}", from_ref, to_ref);
+    let numstat = git_cmd(worktree_path, &["diff", "--numstat", &range])?;
+    let name_status = git_cmd(worktree_path, &["diff", "--name-status", &range])?;
+
+    let status_map: std::collections::HashMap<String, char> = name_status
+        .lines()
+        .filter_map(|line| {
+            let parts: Vec<&str> = line.split('\t').collect();
+            if parts.len() >= 2 {
+                Some((
+                    git_unquote(parts[1]),
+                    parts[0].chars().next().unwrap_or('M'),
+                ))
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    Ok(numstat
+        .lines()
+        .filter(|l| !l.is_empty())
+        .filter_map(|line| {
+            let parts: Vec<&str> = line.split('\t').collect();
+            if parts.len() >= 3 {
+                let path = git_unquote(parts[2]);
+                let is_binary = parts[0].trim() == "-";
+                let status = status_map.get(&path).copied().unwrap_or('M');
+                Some(DiffStatEntry {
+                    status,
+                    path,
+                    additions: if is_binary {
+                        0
+                    } else {
+                        parts[0].parse().unwrap_or(0)
+                    },
+                    deletions: if is_binary {
+                        0
+                    } else {
+                        parts[1].parse().unwrap_or(0)
+                    },
+                    is_binary,
+                })
+            } else {
+                None
+            }
+        })
+        .collect())
 }
 
 /// 获取指定 ref 的 tree hash
@@ -862,23 +928,6 @@ pub fn get_raw_diff(worktree_path: &str, target: &str) -> Result<String> {
 pub fn tree_hash(repo_path: &str, git_ref: &str) -> Result<String> {
     let spec = format!("{}^{{tree}}", git_ref);
     git_cmd(repo_path, &["rev-parse", &spec])
-}
-
-/// 获取指定范围的 unified diff
-///
-/// `to_ref=None` 表示 working tree（含 untracked），否则 commit 间 diff。
-pub fn get_raw_diff_range(
-    worktree_path: &str,
-    from_ref: &str,
-    to_ref: Option<&str>,
-) -> Result<String> {
-    match to_ref {
-        Some(to) => {
-            let range = format!("{}..{}", from_ref, to);
-            git_cmd(worktree_path, &["diff", "-U3", &range])
-        }
-        None => get_raw_diff(worktree_path, from_ref),
-    }
 }
 
 /// 获取未提交文件数量

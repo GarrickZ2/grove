@@ -140,6 +140,8 @@ pub enum DiffStatus {
     Deleted,
     #[serde(rename = "R")]
     Renamed,
+    #[serde(rename = "U")]
+    Untracked,
 }
 
 /// Diff file entry
@@ -149,6 +151,7 @@ pub struct DiffFileEntry {
     pub status: DiffStatus,
     pub additions: u32,
     pub deletions: u32,
+    pub is_binary: bool,
 }
 
 /// Diff response
@@ -162,11 +165,17 @@ pub struct DiffResponse {
 /// Diff query parameters
 #[derive(Debug, Deserialize)]
 pub struct DiffQuery {
-    /// When true, return full parsed diff with hunks and lines
-    pub full: Option<bool>,
     /// Start ref (defaults to task.target)
     pub from_ref: Option<String>,
-    /// End ref: commit hash or omit for working tree (latest)
+    /// End ref (commit hash); omit for working tree comparison
+    pub to_ref: Option<String>,
+}
+
+/// Single file diff query parameters
+#[derive(Debug, Deserialize)]
+pub struct SingleFileDiffQuery {
+    pub path: String,
+    pub from_ref: Option<String>,
     pub to_ref: Option<String>,
 }
 

@@ -230,7 +230,7 @@ pub async fn rebase_to_task(
 pub async fn get_diff(
     Path((id, task_id)): Path<(String, String)>,
     Query(query): Query<DiffQuery>,
-) -> Result<axum::response::Response, StatusCode> {
+) -> Result<Json<DiffResponse>, StatusCode> {
     let (_project, project_key) = find_project_by_id(&id)?;
 
     let task = tasks::get_task(&project_key, &task_id)
@@ -242,55 +242,47 @@ pub async fn get_diff(
         })
         .ok_or(StatusCode::NOT_FOUND)?;
 
-    if query.full.unwrap_or(false) {
-        let from_ref = query.from_ref.as_deref().unwrap_or(&task.target);
-        let to_ref = match query.to_ref.as_deref() {
-            None | Some("latest") | Some("") => None,
-            Some(hash) => Some(hash),
-        };
-
-        let result = crate::diff::get_diff_range(&task.worktree_path, from_ref, to_ref)
-            .unwrap_or_else(|_| crate::diff::DiffResult {
-                files: Vec::new(),
-                total_additions: 0,
-                total_deletions: 0,
-            });
-        Ok(Json(result).into_response())
+    let diff_entries = if let Some(to_ref) = query.to_ref.as_deref() {
+        let from = query.from_ref.as_deref().unwrap_or(&task.target);
+        git::diff_stat_range(&task.worktree_path, from, to_ref).unwrap_or_default()
     } else {
-        let diff_entries = git::diff_stat(&task.worktree_path, &task.target).unwrap_or_default();
+        let target = query.from_ref.as_deref().unwrap_or(&task.target);
+        git::diff_stat(&task.worktree_path, target).unwrap_or_default()
+    };
 
-        let mut total_additions = 0u32;
-        let mut total_deletions = 0u32;
+    let mut total_additions = 0u32;
+    let mut total_deletions = 0u32;
 
-        let files: Vec<DiffFileEntry> = diff_entries
-            .into_iter()
-            .map(|entry| {
-                total_additions += entry.additions;
-                total_deletions += entry.deletions;
+    let files: Vec<DiffFileEntry> = diff_entries
+        .into_iter()
+        .filter(|entry| entry.additions > 0 || entry.deletions > 0 || entry.is_binary)
+        .map(|entry| {
+            total_additions += entry.additions;
+            total_deletions += entry.deletions;
 
-                let status = match entry.status {
-                    'A' => DiffStatus::Added,
-                    'D' => DiffStatus::Deleted,
-                    'R' => DiffStatus::Renamed,
-                    _ => DiffStatus::Modified,
-                };
+            let status = match entry.status {
+                'A' => DiffStatus::Added,
+                'D' => DiffStatus::Deleted,
+                'R' => DiffStatus::Renamed,
+                'U' => DiffStatus::Untracked,
+                _ => DiffStatus::Modified,
+            };
 
-                DiffFileEntry {
-                    path: entry.path,
-                    status,
-                    additions: entry.additions,
-                    deletions: entry.deletions,
-                }
-            })
-            .collect();
-
-        Ok(Json(DiffResponse {
-            files,
-            total_additions,
-            total_deletions,
+            DiffFileEntry {
+                path: entry.path,
+                status,
+                additions: entry.additions,
+                deletions: entry.deletions,
+                is_binary: entry.is_binary,
+            }
         })
-        .into_response())
-    }
+        .collect();
+
+    Ok(Json(DiffResponse {
+        files,
+        total_additions,
+        total_deletions,
+    }))
 }
 
 /// GET /api/v1/projects/{id}/tasks/{taskId}/commits
@@ -340,4 +332,30 @@ pub async fn get_commits(
         total,
         skip_versions,
     }))
+}
+
+/// GET /api/v1/projects/{id}/tasks/{taskId}/diff/file?path=...&from_ref=...&to_ref=...
+pub async fn get_single_file_diff(
+    Path((id, task_id)): Path<(String, String)>,
+    Query(query): Query<SingleFileDiffQuery>,
+) -> Result<axum::response::Response, StatusCode> {
+    let (_project, project_key) = find_project_by_id(&id)?;
+
+    let task = tasks::get_task(&project_key, &task_id)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .or_else(|| {
+            tasks::get_archived_task(&project_key, &task_id)
+                .ok()
+                .flatten()
+        })
+        .ok_or(StatusCode::NOT_FOUND)?;
+
+    let from_ref = query.from_ref.as_deref().or(Some(&task.target));
+    let to_ref = query.to_ref.as_deref();
+
+    let result =
+        crate::diff::get_single_file_diff(&task.worktree_path, &query.path, from_ref, to_ref)
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    Ok(Json(result).into_response())
 }

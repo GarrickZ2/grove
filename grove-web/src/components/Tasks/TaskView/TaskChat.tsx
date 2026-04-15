@@ -4138,7 +4138,7 @@ export function TaskChat({
                 </div>
 
                 <div className="chatbox-footer mt-2 flex items-center justify-between gap-2 select-none">
-                  <div className="flex items-center gap-2 min-w-0 select-none">
+                  <div className="chatbox-footer-left flex items-center gap-2 min-w-0 select-none">
                     {!activePermissionMessage &&
                       (promptCaps.image || promptCaps.audio) && (
                         <button
@@ -4165,7 +4165,7 @@ export function TaskChat({
                               : "Enter send"}
                     </span>
                   </div>
-                  <div className="flex items-center gap-2 shrink-0 select-none">
+                  <div className="chatbox-footer-right flex items-center gap-2 shrink-0 select-none">
                     {modelOptions.length > 0 && (
                       <DropdownSelect
                         ref={modelMenuRef}

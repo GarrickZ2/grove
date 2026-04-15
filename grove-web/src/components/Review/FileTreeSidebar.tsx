@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
 import type { DiffFile } from '../../api/review';
+import type { DirEntry } from '../../api/tasks';
 import { FolderOpen, Folder, Search, MessageSquare, FilePlus, FolderPlus } from 'lucide-react';
 import { VSCodeIcon } from '../ui';
 
@@ -19,6 +20,8 @@ interface FileTreeSidebarProps {
   getFileViewedStatus?: (path: string) => 'none' | 'viewed' | 'updated';
   onCreateVirtualPath?: (path: string) => void;
   viewMode?: 'diff' | 'full';
+  onExpandDir?: (dirPath: string) => Promise<DirEntry[]>;
+  onLoadFileDiff?: (filePath: string, fromRef?: string, toRef?: string) => Promise<void>;
 }
 
 interface DirNode {
@@ -48,6 +51,8 @@ export function FileTreeSidebar({
   getFileViewedStatus,
   onCreateVirtualPath,
   viewMode = 'diff',
+  onExpandDir,
+  onLoadFileDiff,
 }: FileTreeSidebarProps) {
   // Context menu state
   const [contextMenu, setContextMenu] = useState<{
@@ -158,6 +163,8 @@ export function FileTreeSidebar({
             onCancelVirtualPath={handleCancelVirtualPath}
             virtualInputRef={virtualInputRef}
             viewMode={viewMode}
+            onExpandDir={onExpandDir}
+            onLoadFileDiff={onLoadFileDiff}
           />
         ))}
       </div>
@@ -239,6 +246,8 @@ function TreeNode({
   onCancelVirtualPath,
   virtualInputRef,
   viewMode,
+  onExpandDir,
+  onLoadFileDiff,
 }: {
   node: DirNode | FileNode;
   depth: number;
@@ -252,8 +261,11 @@ function TreeNode({
   onCancelVirtualPath?: () => void;
   virtualInputRef?: React.RefObject<HTMLInputElement | null>;
   viewMode?: 'diff' | 'full';
+  onExpandDir?: (dirPath: string) => Promise<DirEntry[]>;
+  onLoadFileDiff?: (filePath: string, fromRef?: string, toRef?: string) => Promise<void>;
 }) {
-  const [expanded, setExpanded] = useState(true);
+  // In lazy dir mode (onExpandDir provided) start collapsed; otherwise auto-expand root dirs.
+  const [expanded, setExpanded] = useState(!onExpandDir);
 
   useEffect(() => {
     if (creatingVirtual && virtualInputRef?.current) {
@@ -270,7 +282,21 @@ function TreeNode({
         <button
           className="diff-sidebar-item"
           style={{ paddingLeft: depth * 12 + 12 }}
-          onClick={() => setExpanded(!expanded)}
+          onClick={() => {
+            if (!expanded && onExpandDir) {
+              // After the dir expands, preload diffs for the newly-revealed files
+              onExpandDir(node.path).then((entries) => {
+                if (onLoadFileDiff) {
+                  entries.forEach((entry) => {
+                    if (!entry.is_dir) {
+                      onLoadFileDiff(entry.path).catch(console.error);
+                    }
+                  });
+                }
+              }).catch(console.error);
+            }
+            setExpanded(!expanded);
+          }}
           onContextMenu={(e) => onContextMenu?.(e, node.path, true)}
         >
           {viewMode === 'full' ? (
@@ -308,6 +334,8 @@ function TreeNode({
                 onCancelVirtualPath={onCancelVirtualPath}
                 virtualInputRef={virtualInputRef}
                 viewMode={viewMode}
+                onExpandDir={onExpandDir}
+                onLoadFileDiff={onLoadFileDiff}
               />
             ))}
           </>
@@ -332,7 +360,7 @@ function TreeNode({
       {viewMode === 'full' ? (
         <VSCodeIcon filename={node.name} size={14} />
       ) : (
-        <StatusIcon changeType={file.change_type} isVirtual={file.is_virtual} />
+        <StatusIcon changeType={file.change_type} isVirtual={file.is_virtual} isUntracked={file.is_untracked} />
       )}
       <span
         className={`truncate ${viewedStatus === 'viewed' ? 'diff-sidebar-file-viewed' : ''}`}
@@ -354,15 +382,21 @@ function TreeNode({
           </span>
         )}
         <span className="diff-sidebar-item-stats">
-          {file.additions > 0 && <span className="stat-add">+{file.additions}</span>}
-          {file.deletions > 0 && <span className="stat-del">-{file.deletions}</span>}
+          {file.is_binary ? (
+            <span style={{ fontSize: 9, color: 'var(--color-text-muted)', fontStyle: 'italic' }}>Binary</span>
+          ) : (
+            <>
+              {file.additions > 0 && <span className="stat-add">+{file.additions}</span>}
+              {file.deletions > 0 && <span className="stat-del">-{file.deletions}</span>}
+            </>
+          )}
         </span>
       </span>
     </button>
   );
 }
 
-function StatusIcon({ changeType, isVirtual }: { changeType: string; isVirtual?: boolean }) {
+function StatusIcon({ changeType, isVirtual, isUntracked }: { changeType: string; isVirtual?: boolean; isUntracked?: boolean }) {
   const color =
     changeType === 'added'
       ? 'var(--color-success)'
@@ -371,7 +405,7 @@ function StatusIcon({ changeType, isVirtual }: { changeType: string; isVirtual?:
         : changeType === 'renamed'
           ? 'var(--color-warning)'
           : 'var(--color-info)';
-  const letter = changeType === 'added' ? 'A' : changeType === 'deleted' ? 'D' : changeType === 'renamed' ? 'R' : 'M';
+  const letter = isUntracked ? 'U' : changeType === 'added' ? 'A' : changeType === 'deleted' ? 'D' : changeType === 'renamed' ? 'R' : 'M';
 
   return (
     <span
@@ -396,7 +430,9 @@ function buildTree(files: DiffFile[]): (DirNode | FileNode)[] {
   const root: DirNode = { name: '', path: '', children: [] };
 
   for (const file of files) {
-    const parts = file.new_path.split('/');
+    const rawPath = file.new_path;
+    const isDirPlaceholder = rawPath.endsWith('/');
+    const parts = rawPath.replace(/\/$/, '').split('/');
     let current = root;
 
     for (let i = 0; i < parts.length - 1; i++) {
@@ -412,11 +448,19 @@ function buildTree(files: DiffFile[]): (DirNode | FileNode)[] {
       current = existing;
     }
 
-    current.children.push({
-      name: parts[parts.length - 1],
-      path: file.new_path,
-      file,
-    });
+    if (isDirPlaceholder) {
+      const dirName = parts[parts.length - 1];
+      const dirPath = parts.join('/');
+      if (!current.children.find((c) => isDirNode(c) && c.name === dirName)) {
+        current.children.push({ name: dirName, path: dirPath, children: [] });
+      }
+    } else {
+      current.children.push({
+        name: parts[parts.length - 1],
+        path: file.new_path,
+        file,
+      });
+    }
   }
 
   // Sort: dirs first, then files, alphabetically

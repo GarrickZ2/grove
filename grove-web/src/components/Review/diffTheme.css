@@ -251,6 +251,21 @@
   overflow-x: auto;
 }
 
+/* When a preview drawer is open, make diff-content a flex column so the file section
+   can stretch to fill all available height (avoiding both triple scrollbars and clipping) */
+.diff-content:has(.diff-file-body.with-preview) {
+  overflow-y: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.diff-content:has(.diff-file-body.with-preview) .diff-file-section {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
 /* Only allow selection in review body content, not chrome/header/sidebar controls */
 .diff-code,
 .diff-code *,
@@ -1324,10 +1339,11 @@ td.diff-code.diff-line-highlighted::before {
   overflow: clip;
 }
 
-/* When preview drawer is open, fix height to viewport so iframe can fill it */
+/* When preview drawer is open, fill available height (set by flex parent) so both
+   left and right panels can scroll independently without a fixed viewport height */
 .diff-file-body.with-preview {
-  height: calc(100vh - 50px);
-  max-height: 100vh;
+  flex: 1;
+  min-height: 0;
   overflow: hidden;
 }
 

@@ -1,8 +1,8 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
-import { getFullDiff, createInlineComment, createFileComment, createProjectComment, deleteComment as apiDeleteComment, replyReviewComment as apiReplyComment, updateCommentStatus as apiUpdateCommentStatus, getFileContent, editComment as apiEditComment, editReply as apiEditReply, deleteReply as apiDeleteReply, bulkDeleteComments as apiBulkDeleteComments } from '../../api/review';
-import { getReviewComments, getCommits, getTaskFiles } from '../../api/tasks';
-import type { FullDiffResult, DiffFile } from '../../api/review';
-import type { ReviewCommentEntry, ReviewCommentsResponse } from '../../api/tasks';
+import { getDiffStats, getSingleFileDiff, createInlineComment, createFileComment, createProjectComment, deleteComment as apiDeleteComment, replyReviewComment as apiReplyComment, updateCommentStatus as apiUpdateCommentStatus, getFileContent, editComment as apiEditComment, editReply as apiEditReply, deleteReply as apiDeleteReply, bulkDeleteComments as apiBulkDeleteComments } from '../../api/review';
+import type { DiffFile, DiffStatsResult } from '../../api/review';
+import { getReviewComments, getCommits, getTaskFiles, getTaskDirEntries } from '../../api/tasks';
+import type { ReviewCommentEntry, ReviewCommentsResponse, DirEntry } from '../../api/tasks';
 import { buildMentionItems } from '../../utils/fileMention';
 
 export interface VersionOption {
@@ -46,16 +46,35 @@ interface DiffReviewPageProps {
   isGitRepo?: boolean;
 }
 
+interface RefetchDiffOptions {
+  fromRef?: string;
+  toRef?: string;
+  keepSelection?: boolean;
+  gen?: number;
+}
+
 import { getPreviewRenderer } from './previewRenderers';
 
 
 export function DiffReviewPage({ projectId, taskId, embedded, navigateToFile, isGitRepo }: DiffReviewPageProps) {
   const { isMobile } = useIsMobile();
-  const [diffData, setDiffData] = useState<FullDiffResult | null>(null);
+  const [diffData, setDiffData] = useState<DiffStatsResult | null>(null);
   const [allFiles, setAllFiles] = useState<string[]>([]); // All git-tracked files for File Mode
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
+  const selectedFileRef = useRef<string | null>(selectedFile);
+  selectedFileRef.current = selectedFile;
   const [viewType, setViewType] = useState<'unified' | 'split'>('unified');
-  const [viewMode, setViewMode] = useState<'diff' | 'full'>(isGitRepo === false ? 'full' : 'diff');
+  const viewModeStorageKey = `grove:review-mode:${projectId}:${taskId}`;
+  const [viewMode, setViewMode] = useState<'diff' | 'full'>(() => {
+    // If the caller wants to navigate to a file in a specific mode, honour that.
+    if (navigateToFile?.mode) return navigateToFile.mode;
+    // Non-git projects always use full mode.
+    if (isGitRepo === false) return 'full';
+    // Restore last-used mode so reopening the panel keeps the user's context.
+    const stored = sessionStorage.getItem(viewModeStorageKey);
+    if (stored === 'full' || stored === 'diff') return stored;
+    return 'diff';
+  });
   // Track per-file user overrides: true = force open, false = force closed, absent = follow displayMode
   const [previewOverrides, setPreviewOverrides] = useState<Map<string, boolean>>(new Map());
   const [loading, setLoading] = useState(true);
@@ -100,11 +119,24 @@ export function DiffReviewPage({ projectId, taskId, embedded, navigateToFile, is
     }
   }, [isMobile]);
   const [focusMode, setFocusMode] = useState(true); // Default to true for better performance
+  const [focusModeWarn, setFocusModeWarn] = useState<string | null>(null);
+  const lazyRootDirEntriesRef = useRef<DirEntry[]>([]);
+  const [focusFiles, setFocusFiles] = useState<DiffFile[]>([]);
+  const fileDiffCacheRef = useRef<Map<string, DiffFile | 'unsupported' | 'error'>>(new Map());
+  const loadingDiffsRef = useRef<Set<string>>(new Set());
+  const failedFullFilesRef = useRef<Set<string>>(new Set());
   const [displayMode, setDisplayMode] = useState<'code' | 'split' | 'preview'>('code');
   const [fromVersion, setFromVersion] = useState('target');
   const [toVersion, setToVersion] = useState('latest');
   const [collapsedCommentIds, setCollapsedCommentIds] = useState<Set<number>>(new Set());
   const [versions, setVersions] = useState<VersionOption[]>([]);
+  const currentDiffRefs = useMemo(() => {
+    const fromOpt = versions.find((v) => v.id === fromVersion);
+    const toOpt = versions.find((v) => v.id === toVersion);
+    return { fromRef: fromOpt?.ref, toRef: toOpt?.ref };
+  }, [versions, fromVersion, toVersion]);
+  const currentDiffRefsRef = useRef(currentDiffRefs);
+  currentDiffRefsRef.current = currentDiffRefs;
   const initialCollapseRef = useRef(false);
 
   // Code search state (Ctrl+F)
@@ -129,12 +161,15 @@ export function DiffReviewPage({ projectId, taskId, embedded, navigateToFile, is
   const lastNavSeqRef = useRef(-1);
   // Pending navigation — resolved once displayFiles is available after mode switch
   const pendingNavRef = useRef<{ file: string; line?: number } | null>(null);
+  // Track which parent dirs we've already tried to expand for pending navigation (lazy load)
+  const expandedForNavRef = useRef<Set<string>>(new Set());
 
   // Handle external navigateToFile requests — stage the request and switch mode
   useEffect(() => {
     if (!navigateToFile || navigateToFile.seq === lastNavSeqRef.current) return;
     lastNavSeqRef.current = navigateToFile.seq;
-    // Store the pending navigation target
+    // Store the pending navigation target; reset expansion tracker for the new target
+    expandedForNavRef.current.clear();
     pendingNavRef.current = { file: navigateToFile.file, line: navigateToFile.line };
     setViewMode(navigateToFile.mode ?? 'full');
   }, [navigateToFile]);
@@ -142,52 +177,67 @@ export function DiffReviewPage({ projectId, taskId, embedded, navigateToFile, is
   // Build mention items from allFiles for @ mention in comment textareas
   const mentionItems = useMemo(() => buildMentionItems(allFiles), [allFiles]);
 
-  // Filter files based on view mode
-  const displayFiles = useMemo(() => {
-    // Sort files in tree order (dirs first, then files, alphabetically) to match FileTreeSidebar
-    const sortTreeOrder = (files: DiffFile[]): DiffFile[] => {
-      interface TreeNode { name: string; path: string; file?: DiffFile; children: TreeNode[] }
-      const root: TreeNode = { name: '', path: '', children: [] };
+  const sortTreeOrder = useCallback((files: DiffFile[]): DiffFile[] => {
+    interface TreeNode { name: string; path: string; file?: DiffFile; children: TreeNode[] }
+    const root: TreeNode = { name: '', path: '', children: [] };
 
-      for (const file of files) {
-        const parts = file.new_path.split('/');
-        let current = root;
-        for (let i = 0; i < parts.length - 1; i++) {
-          const dirName = parts[i];
-          let existing = current.children.find((c) => !c.file && c.name === dirName);
-          if (!existing) {
-            existing = { name: dirName, path: parts.slice(0, i + 1).join('/'), children: [] };
-            current.children.push(existing);
-          }
-          current = existing;
+    for (const file of files) {
+      const parts = file.new_path.split('/');
+      let current = root;
+      for (let i = 0; i < parts.length - 1; i++) {
+        const dirName = parts[i];
+        let existing = current.children.find((c) => !c.file && c.name === dirName);
+        if (!existing) {
+          existing = { name: dirName, path: parts.slice(0, i + 1).join('/'), children: [] };
+          current.children.push(existing);
         }
-        current.children.push({ name: parts[parts.length - 1], path: file.new_path, file, children: [] });
+        current = existing;
       }
+      current.children.push({ name: parts[parts.length - 1], path: file.new_path, file, children: [] });
+    }
 
-      const sortNodes = (nodes: TreeNode[]) => {
-        nodes.sort((a, b) => {
-          const aIsDir = !a.file ? 0 : 1;
-          const bIsDir = !b.file ? 0 : 1;
-          if (aIsDir !== bIsDir) return aIsDir - bIsDir;
-          return a.name.localeCompare(b.name);
-        });
-        for (const n of nodes) sortNodes(n.children);
-      };
-      sortNodes(root.children);
-
-      const result: DiffFile[] = [];
-      const flatten = (nodes: TreeNode[]) => {
-        for (const n of nodes) {
-          if (n.file) result.push(n.file);
-          else flatten(n.children);
-        }
-      };
-      flatten(root.children);
-      return result;
+    const sortNodes = (nodes: TreeNode[]) => {
+      nodes.sort((a, b) => {
+        const aIsDir = !a.file ? 0 : 1;
+        const bIsDir = !b.file ? 0 : 1;
+        if (aIsDir !== bIsDir) return aIsDir - bIsDir;
+        return a.name.localeCompare(b.name);
+      });
+      for (const n of nodes) sortNodes(n.children);
     };
+    sortNodes(root.children);
 
+    const result: DiffFile[] = [];
+    const flatten = (nodes: TreeNode[]) => {
+      for (const n of nodes) {
+        if (n.file) result.push(n.file);
+        else flatten(n.children);
+      }
+    };
+    flatten(root.children);
+    return result;
+  }, []);
+
+  const appendLazyFiles = useCallback((entries: DirEntry[]) => {
+    const newFiles = entries.map((e): DiffFile => ({
+      old_path: e.is_dir ? '' : e.path,
+      new_path: e.is_dir ? e.path + '/' : e.path,
+      change_type: 'modified' as const,
+      hunks: [],
+      is_binary: false,
+      additions: 0,
+      deletions: 0,
+    }));
+    if (newFiles.length === 0) return;
+    setFocusFiles(prev => {
+      const existing = new Set(prev.map(f => f.new_path));
+      const merged = [...prev, ...newFiles.filter(f => !existing.has(f.new_path))];
+      return sortTreeOrder(merged);
+    });
+  }, [sortTreeOrder]);
+
+  const sortedDiffFiles = useMemo(() => {
     if (viewMode === 'full') {
-      const virtualFiles = diffData?.files.filter(f => f.is_virtual) || [];
       const temporaryVirtualFiles: DiffFile[] = Array.from(temporaryVirtualPaths).map(path => ({
         old_path: '',
         new_path: path,
@@ -198,7 +248,6 @@ export function DiffReviewPage({ projectId, taskId, embedded, navigateToFile, is
         deletions: 0,
         is_virtual: true,
       }));
-      const allVirtualFiles = [...virtualFiles, ...temporaryVirtualFiles];
       const allFileDiffFiles = allFiles.map((path): DiffFile => ({
         old_path: path,
         new_path: path,
@@ -209,12 +258,35 @@ export function DiffReviewPage({ projectId, taskId, embedded, navigateToFile, is
         deletions: 0,
       }));
       const existingPaths = new Set(allFiles);
-      const uniqueVirtualFiles = allVirtualFiles.filter(vf => !existingPaths.has(vf.new_path));
+      const uniqueVirtualFiles = temporaryVirtualFiles.filter(vf => !existingPaths.has(vf.new_path));
       return sortTreeOrder([...allFileDiffFiles, ...uniqueVirtualFiles]);
     }
     if (!diffData) return [];
-    return sortTreeOrder([...diffData.files.filter(f => !f.is_virtual)]);
-  }, [viewMode, allFiles, diffData, temporaryVirtualPaths]);
+    const statFiles: DiffFile[] = diffData.files.map(e => ({
+      old_path: e.path,
+      new_path: e.path,
+      change_type: (e.status === 'A' || e.status === 'U') ? 'added' : e.status === 'D' ? 'deleted' : e.status === 'R' ? 'renamed' : 'modified',
+      hunks: [],
+      is_binary: e.is_binary ?? false,
+      additions: e.additions,
+      deletions: e.deletions,
+      is_untracked: e.status === 'U',
+    }));
+    return sortTreeOrder(statFiles);
+  }, [viewMode, allFiles, diffData, temporaryVirtualPaths, sortTreeOrder]);
+
+  const baseFiles = (viewMode === 'full' && focusMode) ? focusFiles : sortedDiffFiles;
+
+  const displayFiles = useMemo(() => {
+    if (viewMode !== 'diff' || baseFiles.length === 0) return baseFiles;
+    return baseFiles.map(f => {
+      const cached = fileDiffCacheRef.current.get(f.new_path);
+      if (!cached) return f;
+      if (cached === 'unsupported') return { ...f, hunks: [], additions: 0, deletions: 0, is_unsupported: true };
+      if (cached === 'error') return { ...f, hunks: [], additions: 0, deletions: 0, load_error: true };
+      return { ...f, hunks: cached.hunks, additions: cached.additions, deletions: cached.deletions, change_type: cached.change_type, is_binary: cached.is_binary };
+    });
+  }, [viewMode, baseFiles]);
 
   // Use ref to access displayFiles in callbacks without dependency issues
   const displayFilesRef = useRef(displayFiles);
@@ -224,7 +296,9 @@ export function DiffReviewPage({ projectId, taskId, embedded, navigateToFile, is
   }, [displayFiles]);
 
   const activeFilePath = useMemo(() => {
-    return displayFiles.find((f) => f.new_path === selectedFile)?.new_path || displayFiles[0]?.new_path || null;
+    const found = displayFiles.find((f) => f.new_path === selectedFile && !f.new_path.endsWith('/'));
+    if (found) return found.new_path;
+    return displayFiles.find((f) => !f.new_path.endsWith('/'))?.new_path || null;
   }, [displayFiles, selectedFile]);
 
 
@@ -236,11 +310,20 @@ export function DiffReviewPage({ projectId, taskId, embedded, navigateToFile, is
   useEffect(() => {
     if (displayFiles.length === 0) return;
     if (pendingNavRef.current) return; // navigation effect will handle selection
-    if (!selectedFile || !displayFiles.some((f) => f.new_path === selectedFile)) {
-      setSelectedFile(displayFiles[0].new_path);
-      setCurrentFileIndex(0);
+    const firstFile = displayFiles.find((f) => !f.new_path.endsWith('/'));
+    if (!selectedFile || !displayFiles.some((f) => f.new_path === selectedFile && !f.new_path.endsWith('/'))) {
+      if (firstFile) {
+        setSelectedFile(firstFile.new_path);
+        setCurrentFileIndex(displayFiles.indexOf(firstFile));
+      }
     }
   }, [displayFiles, selectedFile]);
+
+  // Trigger diff load whenever selected file changes in CHANGES mode
+  useEffect(() => {
+    if (!selectedFile || viewMode !== 'diff') return;
+    loadFileDiffRef.current(selectedFile, currentDiffRefs.fromRef, currentDiffRefs.toRef);
+  }, [selectedFile, viewMode, currentDiffRefs.fromRef, currentDiffRefs.toRef]);
 
   // Resolve pending navigation once displayFiles updates (after mode switch)
   // Also re-run when navigateToFile changes (for when Review tab already exists)
@@ -250,21 +333,43 @@ export function DiffReviewPage({ projectId, taskId, embedded, navigateToFile, is
 
     // Find matching file — try exact match first, then suffix match in both directions
     const target = pending.file;
-    let match = displayFiles.find((f) => f.new_path === target);
+    let match = displayFiles.find((f) => f.new_path === target && !f.new_path.endsWith('/'));
     if (!match) {
       // Target is absolute, file is relative: check if target ends with /file
-      match = displayFiles.find((f) => target.endsWith('/' + f.new_path));
+      match = displayFiles.find((f) => !f.new_path.endsWith('/') && target.endsWith('/' + f.new_path));
     }
     if (!match) {
       // File is absolute, target is relative: check if file ends with /target
-      match = displayFiles.find((f) => f.new_path.endsWith('/' + target));
+      match = displayFiles.find((f) => !f.new_path.endsWith('/') && f.new_path.endsWith('/' + target));
     }
     if (!match) {
       // Loose suffix match (either direction)
-      match = displayFiles.find((f) => f.new_path.endsWith(target) || target.endsWith(f.new_path));
+      match = displayFiles.find((f) => !f.new_path.endsWith('/') && (f.new_path.endsWith(target) || target.endsWith(f.new_path)));
+    }
+
+    if (!match && viewMode === 'full' && focusMode) {
+      // File not yet in tree — expand parent directories to trigger lazy load.
+      // Build all ancestor paths of the target file (relative path assumed).
+      const parts = target.replace(/^\//, '').split('/');
+      const parentPaths: string[] = [];
+      for (let i = 1; i < parts.length; i++) {
+        parentPaths.push(parts.slice(0, i).join('/'));
+      }
+      // Expand any parent that hasn't been tried yet
+      for (const dirPath of parentPaths) {
+        if (!expandedForNavRef.current.has(dirPath)) {
+          expandedForNavRef.current.add(dirPath);
+          getTaskDirEntries(projectId, taskId, dirPath)
+            .then((result) => appendLazyFilesRef.current(result.entries))
+            .catch(console.error);
+        }
+      }
+      // displayFiles will update when appendLazyFiles runs, re-triggering this effect
+      return;
     }
 
     if (match) {
+      expandedForNavRef.current.clear();
       pendingNavRef.current = null;
       const resolvedPath = match.new_path;
       setSelectedFile(resolvedPath);
@@ -288,11 +393,11 @@ export function DiffReviewPage({ projectId, taskId, embedded, navigateToFile, is
         });
       }
     }
-  }, [displayFiles, navigateToFile]);
+  }, [displayFiles, navigateToFile, viewMode, focusMode, projectId, taskId]);
 
   // Load full file content with concurrency control
   const loadFullFileContent = useCallback(async (filePath: string) => {
-    if (fullFileContents.has(filePath) || loadingFiles.has(filePath)) return;
+    if (fullFileContents.has(filePath) || loadingFiles.has(filePath) || failedFullFilesRef.current.has(filePath)) return;
 
     // Add to queue
     requestQueue.current.push(filePath);
@@ -309,6 +414,7 @@ export function DiffReviewPage({ projectId, taskId, embedded, navigateToFile, is
           setFullFileContents(prev => new Map(prev).set(path, content));
         } catch (error) {
           console.error(`Failed to load ${path}:`, error);
+          failedFullFilesRef.current.add(path);
         } finally {
           setLoadingFiles(prev => {
             const next = new Set(prev);
@@ -323,6 +429,99 @@ export function DiffReviewPage({ projectId, taskId, embedded, navigateToFile, is
 
     processQueue();
   }, [projectId, taskId, fullFileContents, loadingFiles]);
+
+  const appendLazyFilesRef = useRef(appendLazyFiles);
+  appendLazyFilesRef.current = appendLazyFiles;
+
+  // true after initial load completes — prevents double-fetch on mount
+  const modeSwitchReadyRef = useRef(false);
+  // Monotonic counter — increment before each fetch; stale responses are discarded
+  const fetchGenRef = useRef(0);
+  // Refs so initial load closure can read the latest mode without re-running
+  const viewModeRef = useRef(viewMode);
+  viewModeRef.current = viewMode;
+  const focusModeRef = useRef(focusMode);
+  focusModeRef.current = focusMode;
+
+  useEffect(() => {
+    if (!modeSwitchReadyRef.current) return;
+
+    const gen = ++fetchGenRef.current;
+    setFocusFiles([]);
+    setLoading(true);
+    // Reset scroll position so the new mode starts at the top
+    if (contentRef.current) contentRef.current.scrollTop = 0;
+    if (viewMode === 'full' && focusMode) {
+      getTaskDirEntries(projectId, taskId, '').then((result) => {
+        if (fetchGenRef.current !== gen) return;
+        lazyRootDirEntriesRef.current = result.entries;
+        appendLazyFilesRef.current(result.entries);
+      }).catch(console.error).finally(() => {
+        if (fetchGenRef.current === gen) setLoading(false);
+      });
+    } else if (viewMode === 'full' && !focusMode) {
+      getTaskFiles(projectId, taskId).then((result) => {
+        if (fetchGenRef.current !== gen) return;
+        setAllFiles(result.files);
+      }).catch(() => null).finally(() => {
+        if (fetchGenRef.current === gen) setLoading(false);
+      });
+    } else {
+      refetchDiffRef.current({ ...currentDiffRefsRef.current, gen }); // pass gen so refetchDiff can discard stale responses
+    }
+  }, [viewMode, focusMode, projectId, taskId]);
+
+  const handleToggleFocusMode = useCallback(async () => {
+    if (!focusMode) {
+      // Switching back to Focus — always allowed
+      setFocusModeWarn(null);
+      setFocusMode(true);
+      return;
+    }
+    // Switching to Un-Focus — check file count first
+    let count = allFiles.length;
+    if (count === 0) {
+      try {
+        const result = await getTaskFiles(projectId, taskId);
+        count = result.files.length;
+      } catch {
+        setFocusMode(false);
+        return;
+      }
+    }
+    if (count > 1000) {
+      setFocusModeWarn(`Too many files (${count}). Un-Focus mode is limited to repos with ≤ 1000 files.`);
+      return;
+    }
+    setFocusModeWarn(null);
+    setFocusMode(false);
+  }, [focusMode, allFiles, projectId, taskId]);
+
+  const loadFileDiff = useCallback(async (filePath: string, fromRef?: string, toRef?: string) => {
+    if (fileDiffCacheRef.current.has(filePath) || loadingDiffsRef.current.has(filePath)) return;
+    loadingDiffsRef.current = new Set(loadingDiffsRef.current).add(filePath);
+    try {
+      const result = await getSingleFileDiff(projectId, taskId, filePath, fromRef, toRef);
+      fileDiffCacheRef.current = new Map(fileDiffCacheRef.current).set(filePath, result);
+    } catch (e: unknown) {
+      const status = (e as { status?: number })?.status;
+      const marker = status === 400 || status === 415 || status === 422 ? 'unsupported' : 'error';
+      fileDiffCacheRef.current = new Map(fileDiffCacheRef.current).set(filePath, marker);
+    } finally {
+      const next = new Set(loadingDiffsRef.current);
+      next.delete(filePath);
+      loadingDiffsRef.current = next;
+    }
+  }, [projectId, taskId]);
+
+  const loadFileDiffRef = useRef(loadFileDiff);
+  loadFileDiffRef.current = loadFileDiff;
+
+  const handleExpandDir = useCallback(async (dirPath: string): Promise<DirEntry[]> => {
+    const result = await getTaskDirEntries(projectId, taskId, dirPath);
+    appendLazyFiles(result.entries);
+    return result.entries;
+  }, [projectId, taskId, appendLazyFiles]);
 
   // Compute per-file comment counts
   const fileCommentCounts = useMemo(() => {
@@ -357,19 +556,27 @@ export function DiffReviewPage({ projectId, taskId, embedded, navigateToFile, is
       return hashes;
     }
 
-    // In Changes mode, compute hash based on diff content
+    // In Changes mode, compute hash based on cached diff content
     if (!diffData) return hashes;
     for (const f of diffData.files) {
+      const cached = fileDiffCacheRef.current.get(f.path);
       let hash = 5381;
-      for (const h of f.hunks) {
-        for (const l of h.lines) {
-          for (let i = 0; i < l.content.length; i++) {
-            hash = ((hash << 5) + hash) + l.content.charCodeAt(i);
-            hash = hash & hash;
+      if (cached && typeof cached !== 'string' && cached.hunks) {
+        for (const h of cached.hunks) {
+          for (const l of h.lines) {
+            for (let i = 0; i < l.content.length; i++) {
+              hash = ((hash << 5) + hash) + l.content.charCodeAt(i);
+              hash = hash & hash;
+            }
           }
         }
+      } else {
+        for (let i = 0; i < f.path.length; i++) {
+          hash = ((hash << 5) + hash) + f.path.charCodeAt(i);
+          hash = hash & hash;
+        }
       }
-      hashes.set(f.new_path, hash.toString(36));
+      hashes.set(f.path, hash.toString(36));
     }
     return hashes;
   }, [diffData, viewMode, displayFiles]);
@@ -397,18 +604,38 @@ export function DiffReviewPage({ projectId, taskId, embedded, navigateToFile, is
   );
 
   // Refetch diff for a given from/to ref pair
-  const refetchDiff = useCallback(async (fromRef?: string, toRef?: string, keepSelection?: boolean) => {
+  // gen: if provided, discard response when fetchGenRef has advanced past this gen
+  const refetchDiff = useCallback(async ({ fromRef, toRef, keepSelection = false, gen }: RefetchDiffOptions = {}) => {
+    // If no external gen provided, claim a new one so version-change calls also cancel stale fetches
+    if (gen === undefined) {
+      gen = ++fetchGenRef.current;
+    }
+
+    setLoading(true);
     try {
-      const data = await getFullDiff(projectId, taskId, fromRef, toRef);
+      fileDiffCacheRef.current = new Map();
+      loadingDiffsRef.current = new Set();
+      const data = await getDiffStats(projectId, taskId, fromRef, toRef);
+      if (fetchGenRef.current !== gen) return; // stale — a newer fetch is running
       setDiffData(data);
       if (!keepSelection) {
-        // Reset selectedFile so the validation effect picks the first sorted file
         setSelectedFile(null);
+      } else {
+        const selected = selectedFileRef.current;
+        if (selected && data.files.some((f) => f.path === selected)) {
+          loadFileDiffRef.current(selected, fromRef, toRef);
+        }
       }
     } catch (e) {
+      if (fetchGenRef.current !== gen) return;
       setError(e instanceof Error ? e.message : 'Failed to load diff');
+    } finally {
+      if (fetchGenRef.current === gen) setLoading(false);
     }
   }, [projectId, taskId]);
+
+  const refetchDiffRef = useRef(refetchDiff);
+  refetchDiffRef.current = refetchDiff;
 
   // Version change handlers — directly trigger refetch
   const handleFromVersionChange = useCallback((id: string) => {
@@ -416,7 +643,7 @@ export function DiffReviewPage({ projectId, taskId, embedded, navigateToFile, is
     if (versions.length === 0) return;
     const fromOpt = versions.find((v) => v.id === id);
     const toOpt = versions.find((v) => v.id === toVersion);
-    refetchDiff(fromOpt?.ref, toOpt?.ref);
+    refetchDiff({ fromRef: fromOpt?.ref, toRef: toOpt?.ref });
   }, [versions, toVersion, refetchDiff]);
 
   const handleToVersionChange = useCallback((id: string) => {
@@ -424,7 +651,7 @@ export function DiffReviewPage({ projectId, taskId, embedded, navigateToFile, is
     if (versions.length === 0) return;
     const fromOpt = versions.find((v) => v.id === fromVersion);
     const toOpt = versions.find((v) => v.id === id);
-    refetchDiff(fromOpt?.ref, toOpt?.ref);
+    refetchDiff({ fromRef: fromOpt?.ref, toRef: toOpt?.ref });
   }, [versions, fromVersion, refetchDiff]);
 
   const [refreshing, setRefreshing] = useState(false);
@@ -434,30 +661,49 @@ export function DiffReviewPage({ projectId, taskId, embedded, navigateToFile, is
     activeRequests.current.clear();
     setLoadingFiles(new Set());
     setFullFileContents(new Map());
+    fileDiffCacheRef.current = new Map();
+    loadingDiffsRef.current = new Set();
+    lazyRootDirEntriesRef.current = [];
 
     const fromOpt = versions.find((v) => v.id === fromVersion);
     const toOpt = versions.find((v) => v.id === toVersion);
 
+    const commentsPromise = getReviewComments(projectId, taskId).then((result) => {
+      setComments(result.comments);
+      if (result.git_user_name) gitUserNameRef.current = result.git_user_name;
+    }).catch(() => null);
+
     try {
-      await Promise.all([
-        refetchDiff(fromOpt?.ref, toOpt?.ref, true),
-        getReviewComments(projectId, taskId).then((result) => {
-          setComments(result.comments);
-          if (result.git_user_name) gitUserNameRef.current = result.git_user_name;
-        }).catch(() => null),
-        getTaskFiles(projectId, taskId).then((result) => {
-          setAllFiles(result.files);
-        }).catch(() => null),
-      ]);
+      if (viewMode === 'diff') {
+        await Promise.all([
+          refetchDiff({ fromRef: fromOpt?.ref, toRef: toOpt?.ref, keepSelection: true }),
+          commentsPromise,
+        ]);
+      } else if (focusMode) {
+        await Promise.all([
+          commentsPromise,
+          getTaskDirEntries(projectId, taskId, '').then((result) => {
+            lazyRootDirEntriesRef.current = result.entries;
+            appendLazyFiles(result.entries);
+          }).catch(() => null),
+        ]);
+      } else {
+        await Promise.all([
+          commentsPromise,
+          getTaskFiles(projectId, taskId).then((result) => {
+            setAllFiles(result.files);
+          }).catch(() => null),
+        ]);
+      }
     } finally {
       setRefreshing(false);
     }
-  }, [versions, fromVersion, toVersion, refetchDiff, projectId, taskId]);
+  }, [versions, fromVersion, toVersion, refetchDiff, projectId, taskId, viewMode, focusMode, appendLazyFiles]);
 
-  const handleSetViewMode = useCallback(async (nextMode: 'diff' | 'full') => {
+  const handleSetViewMode = useCallback((nextMode: 'diff' | 'full') => {
+    sessionStorage.setItem(viewModeStorageKey, nextMode);
     setViewMode(nextMode);
-    await handleRefresh();
-  }, [handleRefresh]);
+  }, [viewModeStorageKey]);
 
   // Initial load: diff + comments + commits (builds version list)
   useEffect(() => {
@@ -466,14 +712,30 @@ export function DiffReviewPage({ projectId, taskId, embedded, navigateToFile, is
     const load = async () => {
       setLoading(true);
       setError(null);
+      fileDiffCacheRef.current = new Map();
+      loadingDiffsRef.current = new Set();
       try {
         let reviewComments: ReviewCommentEntry[] = [];
 
-        const [diffResult, reviewData, commitsData, filesData] = await Promise.all([
-          getFullDiff(projectId, taskId),
+        const diffPromise = viewMode === 'diff'
+          ? getDiffStats(projectId, taskId)
+          : Promise.resolve({ files: [], total_additions: 0, total_deletions: 0 } as DiffStatsResult);
+        const commitsPromise = viewMode === 'diff'
+          ? getCommits(projectId, taskId).catch(() => null)
+          : Promise.resolve(null);
+        const filesPromise = viewMode === 'full' && !focusMode
+          ? getTaskFiles(projectId, taskId).catch(() => null)
+          : Promise.resolve(null);
+        const dirEntriesPromise = viewMode === 'full' && focusMode
+          ? getTaskDirEntries(projectId, taskId, '').catch(() => null)
+          : Promise.resolve(null);
+
+        const [diffResult, reviewData, commitsData, filesData, dirEntriesData] = await Promise.all([
+          diffPromise,
           getReviewComments(projectId, taskId).catch(() => null),
-          getCommits(projectId, taskId).catch(() => null),
-          getTaskFiles(projectId, taskId).catch(() => null),
+          commitsPromise,
+          filesPromise,
+          dirEntriesPromise,
         ]);
         const data = diffResult;
         if (reviewData) {
@@ -506,32 +768,31 @@ export function DiffReviewPage({ projectId, taskId, embedded, navigateToFile, is
         if (!cancelled) {
           // Detect virtual files (files with comments but not in diff)
           // Include all comment types (file, inline) - any comment with a file_path
-          const existingFilePaths = new Set(data.files.map(f => f.new_path));
+          const existingFilePaths = new Set(data.files.map(f => f.path));
           const virtualFilePaths = reviewComments
             .filter(c => c.file_path && !existingFilePaths.has(c.file_path))
             .map(c => c.file_path!)
-            .filter((path, idx, arr) => arr.indexOf(path) === idx); // unique
+            .filter((path, idx, arr) => arr.indexOf(path) === idx);
 
-          // Create virtual file entries
-          const virtualFiles: DiffFile[] = virtualFilePaths.map(path => ({
-            old_path: '',
-            new_path: path,
-            change_type: 'added' as const,
-            hunks: [],
-            is_binary: false,
-            additions: 0,
-            deletions: 0,
-            is_virtual: true, // mark as virtual
-          }));
-
-          // Merge virtual files with real files
-          const allDiffFiles = [...data.files, ...virtualFiles];
-
-          setDiffData({ ...data, files: allDiffFiles });
+          if (virtualFilePaths.length > 0) {
+            const virtualEntries = virtualFilePaths.map(path => ({
+              path,
+              status: 'A' as const,
+              additions: 0,
+              deletions: 0,
+              is_binary: false,
+            }));
+            setDiffData({ ...data, files: [...data.files, ...virtualEntries] });
+          } else {
+            setDiffData(data);
+          }
           if (filesData) {
             setAllFiles(filesData.files);
           }
-          // selectedFile will be set by the displayFiles validation effect (sorted order)
+          if (dirEntriesData) {
+            lazyRootDirEntriesRef.current = dirEntriesData.entries;
+            appendLazyFiles(dirEntriesData.entries);
+          }
           setComments(reviewComments);
         }
       } catch (e) {
@@ -540,6 +801,7 @@ export function DiffReviewPage({ projectId, taskId, embedded, navigateToFile, is
         }
       } finally {
         if (!cancelled) {
+          modeSwitchReadyRef.current = true;
           setLoading(false);
           // Auto-focus content area so arrow keys scroll immediately
           requestAnimationFrame(() => contentRef.current?.focus());
@@ -549,7 +811,7 @@ export function DiffReviewPage({ projectId, taskId, embedded, navigateToFile, is
 
     load();
     return () => { cancelled = true; };
-  }, [projectId, taskId]);
+  }, [projectId, taskId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Auto-collapse resolved comments on first load
   useEffect(() => {
@@ -561,6 +823,44 @@ export function DiffReviewPage({ projectId, taskId, embedded, navigateToFile, is
       if (ids.size > 0) setCollapsedCommentIds(ids);
     }
   }, [comments]);
+
+  // Unfocus mode: batch load diffs for all files after initial load
+  useEffect(() => {
+    if (viewMode !== 'diff' || focusMode || !diffData || diffData.files.length === 0) return;
+    const fromOpt = versions.find(v => v.id === fromVersion);
+    const toOpt = versions.find(v => v.id === toVersion);
+    const batchSize = 5;
+    const files = diffData.files;
+    let idx = 0;
+    const loadBatch = () => {
+      const batch = files.slice(idx, idx + batchSize);
+      if (batch.length === 0) return;
+      idx += batchSize;
+      Promise.all(batch.map(f => {
+        if (fileDiffCacheRef.current.has(f.path) || loadingDiffsRef.current.has(f.path)) return Promise.resolve();
+        loadingDiffsRef.current = new Set(loadingDiffsRef.current).add(f.path);
+        return getSingleFileDiff(projectId, taskId, f.path, fromOpt?.ref, toOpt?.ref)
+          .then(result => {
+            fileDiffCacheRef.current = new Map(fileDiffCacheRef.current).set(f.path, result);
+          })
+          .catch((e: unknown) => {
+            const status = (e as { status?: number })?.status;
+            const marker = status === 400 || status === 415 || status === 422 ? 'unsupported' : 'error';
+            fileDiffCacheRef.current = new Map(fileDiffCacheRef.current).set(f.path, marker);
+          })
+          .finally(() => {
+            const next = new Set(loadingDiffsRef.current);
+            next.delete(f.path);
+            loadingDiffsRef.current = next;
+          });
+      })).then(() => {
+        setCacheVersion(v => v + 1);
+        loadBatch();
+      });
+    };
+    loadBatch();
+  }, [viewMode, focusMode, diffData, projectId, taskId, versions, fromVersion, toVersion]);
+
 
   // Listen for Ctrl+F / Cmd+F to open code search
   useEffect(() => {
@@ -638,18 +938,26 @@ export function DiffReviewPage({ projectId, taskId, embedded, navigateToFile, is
     });
   }, []);
 
-  // Scroll to file when clicking sidebar
+  // Scroll to file when clicking sidebar — ignore directory placeholders (path ends with '/')
   const handleSelectFile = useCallback((path: string) => {
+    if (path.endsWith('/')) return;
     setSelectedFile(path);
-    const el = document.getElementById(`diff-file-${encodeURIComponent(path)}`);
-    if (el) {
-      el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    if (viewMode === 'diff') {
+      const fromOpt = versions.find(v => v.id === fromVersion);
+      const toOpt = versions.find(v => v.id === toVersion);
+      loadFileDiff(path, fromOpt?.ref, toOpt?.ref);
     }
-    // On mobile, close sidebar after selecting a file
+    if (focusMode) {
+      // Focus mode renders only the selected file — reset scroll to top
+      if (contentRef.current) contentRef.current.scrollTop = 0;
+    } else {
+      const el = document.getElementById(`diff-file-${encodeURIComponent(path)}`);
+      if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
     if (isMobile) {
       setSidebarVisible(false);
     }
-  }, [isMobile]);
+  }, [isMobile, loadFileDiff, versions, fromVersion, toVersion, focusMode, viewMode]);
 
   const handleTogglePreview = useCallback((path: string) => {
     setPreviewOverrides((prev) => {
@@ -785,15 +1093,25 @@ export function DiffReviewPage({ projectId, taskId, embedded, navigateToFile, is
     [goToNextFile, goToPrevFile, handleToggleActiveViewed, handleRefresh, handleToggleViewMode, handleToggleActivePreview]
   );
 
-  // Toggle collapse
+  // Toggle collapse — in diff mode, load the diff when expanding a previously-collapsed file
   const handleToggleCollapse = useCallback((path: string) => {
     setCollapsedFiles((prev) => {
+      const wasCollapsed = prev.has(path);
       const next = new Set(prev);
-      if (next.has(path)) next.delete(path);
-      else next.add(path);
+      if (wasCollapsed) {
+        next.delete(path);
+        // Trigger diff load when expanding in diff mode (lazy / ≥1000 case)
+        if (viewMode === 'diff') {
+          const fromOpt = versions.find(v => v.id === fromVersion);
+          const toOpt = versions.find(v => v.id === toVersion);
+          loadFileDiff(path, fromOpt?.ref, toOpt?.ref);
+        }
+      } else {
+        next.add(path);
+      }
       return next;
     });
-  }, []);
+  }, [viewMode, versions, fromVersion, toVersion, loadFileDiff]);
 
   // Create virtual file/directory (temporary, only persisted if comment is added)
   const handleCreateVirtualPath = useCallback((path: string) => {
@@ -1037,17 +1355,6 @@ export function DiffReviewPage({ projectId, taskId, embedded, navigateToFile, is
   };
 
   // Loading state
-  if (loading) {
-    return (
-      <div className={`diff-review-page ${isEmbedded ? 'embedded' : ''}`}>
-        <div className="diff-center-message">
-          <div className="spinner" />
-          <span>Loading diff...</span>
-        </div>
-      </div>
-    );
-  }
-
   // Error state
   if (error) {
     return (
@@ -1115,12 +1422,21 @@ export function DiffReviewPage({ projectId, taskId, embedded, navigateToFile, is
           </button>
           <button
             className={`diff-toggle-pill ${focusMode ? 'active' : ''}`}
-            onClick={() => setFocusMode((v) => !v)}
+            onClick={() => void handleToggleFocusMode()}
             title="Focus mode — show one file at a time"
           >
             <Crosshair style={{ width: 12, height: 12 }} />
             Focus
           </button>
+          {focusModeWarn && (
+            <span
+              style={{ fontSize: 11, color: 'var(--color-warning)', whiteSpace: 'nowrap', cursor: 'pointer' }}
+              onClick={() => setFocusModeWarn(null)}
+              title="Click to dismiss"
+            >
+              {focusModeWarn}
+            </span>
+          )}
           <button
             className="diff-toggle-pill"
             onClick={() => setDisplayMode((v) => v === 'code' ? 'split' : v === 'split' ? 'preview' : 'code')}
@@ -1200,7 +1516,12 @@ export function DiffReviewPage({ projectId, taskId, embedded, navigateToFile, is
 
       {/* Layout */}
       <div className="diff-layout">
-        {isEmpty ? (
+        {loading ? (
+          <div className="diff-content" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', flex: 1, gap: 8 }}>
+            <div className="spinner" />
+            <span style={{ color: 'var(--color-text-muted)', fontSize: 13 }}>Loading...</span>
+          </div>
+        ) : isEmpty ? (
           /* Empty diff — keep toolbar visible for version switching */
           <div className="diff-content" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', flex: 1 }}>
             <span style={{ color: 'var(--color-text-muted)', fontSize: 14 }}>No changes found</span>
@@ -1235,6 +1556,8 @@ export function DiffReviewPage({ projectId, taskId, embedded, navigateToFile, is
               getFileViewedStatus={getFileViewedStatus}
               onCreateVirtualPath={handleCreateVirtualPath}
               viewMode={viewMode}
+              onExpandDir={viewMode === 'full' && focusMode ? handleExpandDir : undefined}
+              onLoadFileDiff={viewMode === 'full' && focusMode ? loadFileDiff : undefined}
             />
 
             {/* Diff content */}

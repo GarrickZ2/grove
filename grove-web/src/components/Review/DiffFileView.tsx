@@ -1094,6 +1094,15 @@ export function DiffFileView({
                 ) : (
                   <div className="diff-error">Failed to load file content</div>
                 )
+              ) : file.is_unsupported ? (
+                <div className="diff-binary">Diff not supported for this file type</div>
+              ) : file.load_error ? (
+                <div className="diff-error">Failed to load file content</div>
+              ) : file.hunks.length === 0 && (file.additions > 0 || file.deletions > 0) ? (
+                <div className="diff-binary" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <div className="spinner" style={{ width: 14, height: 14 }} />
+                  Loading diff...
+                </div>
               ) : file.hunks.length === 0 ? (
                 <div className="diff-binary">No content changes (mode/permissions only)</div>
               ) : viewType === 'unified' ? (
@@ -1138,51 +1147,65 @@ export function DiffFileView({
                     <X style={{ width: 14, height: 14 }} />
                   </button>
                 </div>
-                <div className="preview-drawer-content">
-                  {previewRenderer && previewRenderer.id === 'image' ? (
-                    <ImagePreview projectId={projectId} taskId={taskId} file={file} />
-                  ) : previewRenderer && !previewRenderer.supportsDiffSegments ? (
-                    (() => {
-                      const content = viewMode === 'full' && fullFileContent != null
-                        ? fullFileContent
-                        : file.hunks.flatMap(h => h.lines.filter(l => l.line_type !== 'delete').map(l => l.content)).join('\n');
-                      return content.trim()
-                        ? previewRenderer.renderFull({ content })
-                        : <div className="preview-loading">No content to render</div>;
-                    })()
-                  ) : viewMode === 'full' ? (
-                    isLoadingFullFile ? (
-                      <div className="preview-loading">Loading content...</div>
-                    ) : fullFileContent != null ? (
-                      (previewRenderer ?? { renderFull: ({ content }: { content: string }) => <MarkdownRenderer content={content} /> }).renderFull({ content: fullFileContent })
-                    ) : (
-                      <div className="preview-loading">Failed to load file content</div>
-                    )
-                  ) : previewSegments.length > 0 ? (
-                    previewSegments.map((seg) =>
-                      seg.type === 'markdown' ? (
-                        <div key={seg.id} className={`preview-block-${seg.kind}`}>
-                          <MarkdownRenderer content={seg.content} />
-                        </div>
-                      ) : seg.language === 'mermaid' ? (
-                        <MermaidBlock key={seg.id} code={seg.lines.map(l => l.content).join('\n')} />
+                <div
+                  className="preview-drawer-content"
+                  style={
+                    // When there's no real content to show, don't let the content area flex-stretch
+                    // to fill the full viewport height — cap it so the drawer stays compact.
+                    isPreviewOpen && fullFileContent == null && file.hunks.length === 0
+                      ? { flex: 'none' }
+                      : undefined
+                  }
+                >
+                  {/* Only render content when the drawer is open.
+                      The closed drawer has width:0 but no height limit — rendering heavy content
+                      (e.g. MarkdownRenderer) would inflate the flex-row height of diff-file-body. */}
+                  {isPreviewOpen && (
+                    previewRenderer && previewRenderer.id === 'image' ? (
+                      <ImagePreview projectId={projectId} taskId={taskId} file={file} />
+                    ) : previewRenderer && !previewRenderer.supportsDiffSegments ? (
+                      (() => {
+                        const content = viewMode === 'full' && fullFileContent != null
+                          ? fullFileContent
+                          : file.hunks.flatMap(h => h.lines.filter(l => l.line_type !== 'delete').map(l => l.content)).join('\n');
+                        return content.trim()
+                          ? previewRenderer.renderFull({ content })
+                          : <div className="preview-loading">No content to render</div>;
+                      })()
+                    ) : viewMode === 'full' ? (
+                      isLoadingFullFile ? (
+                        <div className="preview-loading">Loading content...</div>
+                      ) : fullFileContent != null ? (
+                        (previewRenderer ?? { renderFull: ({ content }: { content: string }) => <MarkdownRenderer content={content} /> }).renderFull({ content: fullFileContent })
                       ) : (
-                        <pre key={seg.id} className="preview-code-block">
-                          <code>
-                            {seg.lines.map((line, i) => (
-                              <div
-                                key={i}
-                                className={`preview-code-line${line.kind !== 'context' ? ` preview-code-line-${line.kind}` : ''}`}
-                              >
-                                {line.content || ' '}
-                              </div>
-                            ))}
-                          </code>
-                        </pre>
+                        <div className="preview-loading">Failed to load file content</div>
                       )
+                    ) : previewSegments.length > 0 ? (
+                      previewSegments.map((seg) =>
+                        seg.type === 'markdown' ? (
+                          <div key={seg.id} className={`preview-block-${seg.kind}`}>
+                            <MarkdownRenderer content={seg.content} />
+                          </div>
+                        ) : seg.language === 'mermaid' ? (
+                          <MermaidBlock key={seg.id} code={seg.lines.map(l => l.content).join('\n')} />
+                        ) : (
+                          <pre key={seg.id} className="preview-code-block">
+                            <code>
+                              {seg.lines.map((line, i) => (
+                                <div
+                                  key={i}
+                                  className={`preview-code-line${line.kind !== 'context' ? ` preview-code-line-${line.kind}` : ''}`}
+                                >
+                                  {line.content || ' '}
+                                </div>
+                              ))}
+                            </code>
+                          </pre>
+                        )
+                      )
+                    ) : (
+                      <div className="preview-loading">No previewable changes</div>
                     )
-                  ) : (
-                    <div className="preview-loading">No previewable changes</div>
                   )}
                 </div>
               </div>

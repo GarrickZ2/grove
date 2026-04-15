@@ -324,6 +324,15 @@ interface FilesResponse {
   files: string[];
 }
 
+export interface DirEntry {
+  path: string;
+  is_dir: boolean;
+}
+
+interface DirEntriesResponse {
+  entries: DirEntry[];
+}
+
 interface RebaseToRequest {
   target: string;
 }
@@ -333,6 +342,12 @@ interface RebaseToRequest {
  */
 export async function getTaskFiles(projectId: string, taskId: string): Promise<FilesResponse> {
   return apiClient.get<FilesResponse>(`/api/v1/projects/${projectId}/tasks/${taskId}/files`);
+}
+
+export async function getTaskDirEntries(projectId: string, taskId: string, dirPath: string): Promise<DirEntriesResponse> {
+  return apiClient.get<DirEntriesResponse>(
+    `/api/v1/projects/${projectId}/tasks/${taskId}/dir-entries?path=${encodeURIComponent(dirPath)}`
+  );
 }
 
 /**
