@@ -7,24 +7,12 @@ set -e
 REPO="GarrickZ2/grove"
 INSTALL_DIR="${INSTALL_DIR:-/usr/local/bin}"
 BINARY_NAME="grove"
+GROVE_GUI="${GROVE_GUI:-0}"
 
 # Detect OS and architecture
 detect_platform() {
     OS=$(uname -s | tr '[:upper:]' '[:lower:]')
     ARCH=$(uname -m)
-
-    case "$OS" in
-        darwin)
-            OS="apple-darwin"
-            ;;
-        linux)
-            OS="unknown-linux-musl"
-            ;;
-        *)
-            echo "Error: Unsupported OS: $OS"
-            exit 1
-            ;;
-    esac
 
     case "$ARCH" in
         x86_64|amd64)
@@ -39,8 +27,42 @@ detect_platform() {
             ;;
     esac
 
+    case "$OS" in
+        darwin)
+            OS="apple-darwin"
+            ;;
+        linux)
+            if [ "$GROVE_GUI" = "1" ]; then
+                if [ "$ARCH" != "x86_64" ]; then
+                    echo "Error: Linux GUI binary currently supports x86_64 only"
+                    exit 1
+                fi
+                OS="unknown-linux-gnu-gui"
+            else
+                OS="unknown-linux-musl"
+            fi
+            ;;
+        *)
+            echo "Error: Unsupported OS: $OS"
+            exit 1
+            ;;
+    esac
+
     PLATFORM="${ARCH}-${OS}"
     echo "Detected platform: $PLATFORM"
+}
+
+check_linux_gui_deps() {
+    if [ "$GROVE_GUI" != "1" ] || [ "$(uname -s)" != "Linux" ]; then
+        return
+    fi
+
+    if command -v ldconfig >/dev/null 2>&1 && ! ldconfig -p 2>/dev/null | grep -q 'libwebkit2gtk-4.1.so.0'; then
+        echo "Warning: Linux GUI requires WebKitGTK/GTK runtime libraries."
+        echo "On Debian/Ubuntu, install:"
+        echo "  sudo apt install libwebkit2gtk-4.1-0 libgtk-3-0 libayatana-appindicator3-1 librsvg2-2"
+        echo ""
+    fi
 }
 
 # Get latest release tag
@@ -89,6 +111,7 @@ main() {
     echo ""
 
     detect_platform
+    check_linux_gui_deps
     get_latest_version
     install
 }

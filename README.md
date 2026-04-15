@@ -36,7 +36,7 @@ cd your-project
 grove          # Resumes last mode (TUI on first run)
 grove tui      # TUI
 grove web      # Web UI (http://localhost:3001)
-grove gui      # Desktop GUI (macOS)
+grove gui      # Desktop GUI
 grove mobile   # Remote access (phone/tablet via LAN)
 ```
 
@@ -127,13 +127,13 @@ grove web --port 8080      # Custom port
 
 Binds to `localhost` only — designed for desktop use on the same machine, no authentication required. To access Grove from other devices, use `grove mobile` instead.
 
-### GUI — `grove gui` (macOS)
+### GUI — `grove gui`
 
 Native desktop app powered by Tauri 2 WebView. Same frontend as Grove Web, runs in a native window.
 
 ![Grove GUI](docs/images/grove-gui.png)
 
-Included by default in macOS release binaries. For `cargo install`, enable with `cargo install grove-rs --features gui`.
+Included by default in macOS release binaries. Linux desktop builds are available from GitHub Releases and require WebKitGTK/GTK runtime libraries. For `cargo install`, enable with `cargo install grove-rs --features gui`.
 
 ---
 
@@ -239,6 +239,9 @@ brew tap GarrickZ2/grove && brew install grove
 ```bash
 curl -sSL https://raw.githubusercontent.com/GarrickZ2/grove/master/install.sh | sh
 
+# Linux desktop GUI build
+GROVE_GUI=1 curl -sSL https://raw.githubusercontent.com/GarrickZ2/grove/master/install.sh | sh
+
 # Custom install path (default: /usr/local/bin)
 INSTALL_DIR=~/.local/bin curl -sSL https://raw.githubusercontent.com/GarrickZ2/grove/master/install.sh | sh
 ```
@@ -247,10 +250,16 @@ INSTALL_DIR=~/.local/bin curl -sSL https://raw.githubusercontent.com/GarrickZ2/g
 
 Download the `.dmg` from [GitHub Releases](https://github.com/GarrickZ2/grove/releases/latest), open it, and drag Grove to Applications. Universal binary — runs natively on Apple Silicon and Intel Macs.
 
+**Linux GUI dependencies**:
+```bash
+# Debian/Ubuntu
+sudo apt install libwebkit2gtk-4.1-0 libgtk-3-0 libayatana-appindicator3-1 librsvg2-2
+```
+
 **Cargo**:
 ```bash
 cargo install grove-rs                   # TUI + Web UI
-cargo install grove-rs --features gui    # + native macOS GUI
+cargo install grove-rs --features gui    # + native desktop GUI
 ```
 
 **From Source**:
