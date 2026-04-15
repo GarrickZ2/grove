@@ -99,6 +99,21 @@ jobs:
           key: ${{ matrix.cache-key }}
           add-job-id-key: false
           cache-all-crates: ${{ matrix.cache-all-crates || false }}
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22.14.0'
+          cache: pnpm
+          cache-dependency-path: grove-web/pnpm-lock.yaml
+      - name: Build frontend dist
+        run: |
+          pnpm install --no-frozen-lockfile
+          pnpm run build
+        working-directory: grove-web
       - name: Cache Tauri CLI binary (macOS only)
         if: matrix.os == 'macos-latest'
         uses: actions/cache@v4
@@ -129,9 +144,6 @@ jobs:
       - name: Install cross
         if: matrix.use-cross
         run: cargo install cross --git https://github.com/cross-rs/cross
-      - name: Create stub frontend dist (prevents npm build in build.rs)
-        if: matrix.features == 'gui'
-        run: mkdir -p grove-web/dist && touch grove-web/dist/index.html
       - name: Build
         run: |
           if [ "${{ matrix.use-cross }}" = "true" ]; then
