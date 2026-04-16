@@ -465,7 +465,7 @@ export function ResourcePage() {
         style={{ borderColor: "var(--color-border)" }}>
         <div className="flex flex-wrap items-start gap-3">
           <div
-            className={`flex items-center gap-3 min-w-0 flex-1 rounded-lg transition-colors ${!isMain ? "cursor-pointer" : ""}`}
+            className={`flex items-center gap-3 min-w-0 flex-1 rounded-lg transition-colors ${!isMain ? "cursor-pointer px-1 -mx-1" : ""}`}
             onClick={!isMain ? () => setMainPanel("assets") : undefined}
             onMouseEnter={e => { if (!isMain) e.currentTarget.style.background = "color-mix(in srgb, var(--color-highlight) 8%, transparent)"; }}
             onMouseLeave={e => { if (!isMain) e.currentTarget.style.background = "transparent"; }}
@@ -485,10 +485,12 @@ export function ResourcePage() {
                   {activeTab === "uploads" ? filteredFiles.length : workdirs.length}
                 </span>
                 {isMain && (
-                  <Maximize2
-                    className="w-3.5 h-3.5 shrink-0"
-                    style={{ color: "var(--color-text-muted)", opacity: 0.5 }}
-                  />
+                  <span title="Current main view" className="shrink-0 flex items-center">
+                    <Maximize2
+                      className="w-3.5 h-3.5"
+                      style={{ color: "var(--color-text-muted)", opacity: 0.5 }}
+                    />
+                  </span>
                 )}
               </div>
               <p className="mt-1 text-xs" style={{ color: "var(--color-text-muted)" }}>
@@ -784,13 +786,13 @@ export function ResourcePage() {
   );
 
   const renderInstructionsPanel = ({ isMain }: { isMain: boolean }) => (
-    <section className="min-h-[240px] rounded-2xl border overflow-hidden flex flex-col xl:min-h-0 xl:flex-1 xl:min-w-[420px] 2xl:min-w-[480px]"
+    <section className={`min-h-[240px] rounded-2xl border overflow-hidden flex flex-col xl:min-h-0${!isMain ? " xl:flex-1 xl:min-w-[420px] 2xl:min-w-[480px]" : " h-full"}`}
       style={{ borderColor: "var(--color-border)", background: "var(--color-bg-secondary)" }}>
       <div className="px-4 py-3 border-b"
         style={{ borderColor: "var(--color-border)" }}>
         <div className="flex flex-wrap items-start gap-3">
           <div
-            className={`flex items-center gap-3 min-w-0 flex-1 rounded-lg transition-colors ${!isMain ? "cursor-pointer" : ""}`}
+            className={`flex items-center gap-3 min-w-0 flex-1 rounded-lg transition-colors ${!isMain ? "cursor-pointer px-1 -mx-1" : ""}`}
             onClick={!isMain ? () => setMainPanel("instructions") : undefined}
             onMouseEnter={e => { if (!isMain) e.currentTarget.style.background = "color-mix(in srgb, var(--color-highlight) 8%, transparent)"; }}
             onMouseLeave={e => { if (!isMain) e.currentTarget.style.background = "transparent"; }}
@@ -809,10 +811,12 @@ export function ResourcePage() {
                   </span>
                 )}
                 {isMain && (
-                  <Maximize2
-                    className="w-3.5 h-3.5 shrink-0"
-                    style={{ color: "var(--color-text-muted)", opacity: 0.5 }}
-                  />
+                  <span title="Current main view" className="shrink-0 flex items-center">
+                    <Maximize2
+                      className="w-3.5 h-3.5"
+                      style={{ color: "var(--color-text-muted)", opacity: 0.5 }}
+                    />
+                  </span>
                 )}
               </div>
               <p className="mt-0.5 text-xs" style={{ color: "var(--color-text-muted)" }}>
@@ -953,13 +957,13 @@ export function ResourcePage() {
   );
 
   const renderMemoryPanel = ({ isMain }: { isMain: boolean }) => (
-    <section className="min-h-[240px] rounded-2xl border overflow-hidden flex flex-col xl:min-h-0 xl:flex-1 xl:min-w-[420px] 2xl:min-w-[480px]"
+    <section className={`min-h-[240px] rounded-2xl border overflow-hidden flex flex-col xl:min-h-0${!isMain ? " xl:flex-1 xl:min-w-[420px] 2xl:min-w-[480px]" : " h-full"}`}
       style={{ borderColor: "var(--color-border)", background: "var(--color-bg-secondary)" }}>
       <div className="px-4 py-3 border-b"
         style={{ borderColor: "var(--color-border)" }}>
         <div className="flex flex-wrap items-start gap-3">
           <div
-            className={`flex items-center gap-3 min-w-0 flex-1 rounded-lg transition-colors ${!isMain ? "cursor-pointer" : ""}`}
+            className={`flex items-center gap-3 min-w-0 flex-1 rounded-lg transition-colors ${!isMain ? "cursor-pointer px-1 -mx-1" : ""}`}
             onClick={!isMain ? () => setMainPanel("memory") : undefined}
             onMouseEnter={e => { if (!isMain) e.currentTarget.style.background = "color-mix(in srgb, var(--color-highlight) 8%, transparent)"; }}
             onMouseLeave={e => { if (!isMain) e.currentTarget.style.background = "transparent"; }}
@@ -978,10 +982,12 @@ export function ResourcePage() {
                   </span>
                 )}
                 {isMain && (
-                  <Maximize2
-                    className="w-3.5 h-3.5 shrink-0"
-                    style={{ color: "var(--color-text-muted)", opacity: 0.5 }}
-                  />
+                  <span title="Current main view" className="shrink-0 flex items-center">
+                    <Maximize2
+                      className="w-3.5 h-3.5"
+                      style={{ color: "var(--color-text-muted)", opacity: 0.5 }}
+                    />
+                  </span>
                 )}
               </div>
               <p className="mt-0.5 text-xs" style={{ color: "var(--color-text-muted)" }}>
