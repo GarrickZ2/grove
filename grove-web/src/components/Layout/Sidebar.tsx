@@ -13,7 +13,7 @@ import {
   ChevronRight,
   Bell,
   Search,
-  FolderOpen,
+  Layers,
 } from "lucide-react";
 import { ProjectSelector } from "./ProjectSelector";
 import { NotificationPopover } from "./NotificationPopover";
@@ -36,7 +36,7 @@ const ALL_NAV_ITEMS: Record<string, NavItem> = {
   dashboard: { id: "dashboard", label: "Dashboard", icon: LayoutGrid },
   work: { id: "work", label: "Work", icon: Laptop },
   tasks: { id: "tasks", label: "Tasks", icon: ListTodo },
-  resource: { id: "resource", label: "Resource", icon: FolderOpen },
+  resource: { id: "resource", label: "Studio", icon: Layers },
   skills: { id: "skills", label: "Skills", icon: Blocks },
   ai: { id: "ai", label: "AI", icon: Sparkles },
   statistics: { id: "statistics", label: "Statistics", icon: BarChart2, beta: true },

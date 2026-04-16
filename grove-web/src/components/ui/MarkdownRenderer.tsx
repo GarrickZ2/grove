@@ -224,6 +224,8 @@ interface MarkdownRendererProps {
   resolveImageUrl?: (src: string) => string;
   /** When provided, clicking a rendered mermaid diagram triggers this callback with the SVG */
   onMermaidClick?: (svg: string) => void;
+  /** When provided, clicking an inline image triggers this callback with the resolved URL */
+  onImageClick?: (url: string) => void;
 }
 
 /** Extract filename from a full file path */
@@ -308,7 +310,7 @@ function parseFileHref(href: string): { filePath: string; line?: number } | null
   };
 }
 
-export const MarkdownRenderer = memo(function MarkdownRenderer({ content, onFileClick, resolveImageUrl, onMermaidClick }: MarkdownRendererProps) {
+export const MarkdownRenderer = memo(function MarkdownRenderer({ content, onFileClick, resolveImageUrl, onMermaidClick, onImageClick }: MarkdownRendererProps) {
   const components = useMemo((): Components => ({
         h1: ({ children }) => (
           <h1 className="text-lg font-bold text-[var(--color-text)] mt-4 mb-2 first:mt-0">{children}</h1>
@@ -437,7 +439,8 @@ export const MarkdownRenderer = memo(function MarkdownRenderer({ content, onFile
             <img
               src={resolved}
               alt={alt ?? ""}
-              className="max-w-full rounded-lg my-2 border border-[var(--color-border)]"
+              className={`max-w-full rounded-lg my-2 border border-[var(--color-border)]${onImageClick ? " cursor-pointer hover:opacity-80 transition-opacity" : ""}`}
+              onClick={onImageClick ? () => onImageClick(resolved) : undefined}
               onError={(e) => {
                 const el = e.currentTarget;
                 el.style.display = 'none';
@@ -480,7 +483,7 @@ export const MarkdownRenderer = memo(function MarkdownRenderer({ content, onFile
           }
           return <input {...props} />;
         },
-  }), [onFileClick, resolveImageUrl, onMermaidClick]);
+  }), [onFileClick, resolveImageUrl, onMermaidClick, onImageClick]);
 
   return (
     <ReactMarkdown remarkPlugins={[remarkGfm]} components={components}>

@@ -665,6 +665,22 @@ export function uploadArtifacts(projectId: string, taskId: string, files: File[]
   return artifactApi(projectId, taskId).upload(files) as Promise<ArtifactFile[]>;
 }
 
+export async function syncArtifactToResource(
+  projectId: string,
+  taskId: string,
+  directory: string,
+  path: string,
+  options?: { force?: boolean; renameTo?: string },
+): Promise<void> {
+  await apiClient.post<
+    { path: string; directory: string; force?: boolean; rename_to?: string },
+    void
+  >(
+    `/api/v1/projects/${projectId}/tasks/${taskId}/artifacts/sync-to-resource`,
+    { path, directory, force: options?.force, rename_to: options?.renameTo },
+  );
+}
+
 export function listArtifactWorkdirs(projectId: string, taskId: string) {
   return artifactApi(projectId, taskId).listWorkdirs();
 }

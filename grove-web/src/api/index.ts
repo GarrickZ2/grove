@@ -7,7 +7,7 @@ export type { AppInfo, CustomAgent } from './config';
 
 export { checkAllDependencies, checkCommands } from './env';
 
-export { listProjects, getProject, addProject, deleteProject, getProjectStats, getBranches, getRemotes, openIDE, openTerminal, initGitRepo, createNewProject, listResources, uploadResource, deleteResource, previewResource, resourceDownloadUrl, getInstructions, updateInstructions, getMemory, updateMemory, listResourceWorkdirs, addResourceWorkdir, deleteResourceWorkdir, openResourceWorkdir } from './projects';
+export { listProjects, getProject, addProject, deleteProject, getProjectStats, getBranches, getRemotes, openIDE, openTerminal, initGitRepo, createNewProject, listResources, uploadResource, deleteResource, previewResource, resourceDownloadUrl, getInstructions, updateInstructions, getMemory, updateMemory, listResourceWorkdirs, addResourceWorkdir, deleteResourceWorkdir, openResourceWorkdir, createResourceFolder, moveResource } from './projects';
 export type {
   ProjectListItem,
   ProjectResponse,
@@ -53,6 +53,7 @@ export {
   artifactDownloadUrl,
   deleteArtifact,
   uploadArtifacts,
+  syncArtifactToResource,
   listArtifactWorkdirs,
   addArtifactWorkdir,
   deleteArtifactWorkdir,

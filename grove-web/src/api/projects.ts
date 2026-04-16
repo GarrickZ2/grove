@@ -194,12 +194,12 @@ export type WorkDirectoryEntry = StudioWorkDirEntry;
 const resourceApi = (id: string) =>
   createStudioFileApi(`/api/v1/projects/${id}/resource`);
 
-export function listResources(id: string) {
-  return resourceApi(id).list();
+export function listResources(id: string, path?: string) {
+  return resourceApi(id).list(path);
 }
 
-export function uploadResource(id: string, files: File[]) {
-  return resourceApi(id).upload(files);
+export function uploadResource(id: string, files: File[], path?: string) {
+  return resourceApi(id).upload(files, path);
 }
 
 export function deleteResource(id: string, path: string) {
@@ -228,6 +228,14 @@ export function previewResource(id: string, path: string) {
 
 export function resourceDownloadUrl(id: string, path: string) {
   return resourceApi(id).downloadUrl(path);
+}
+
+export function createResourceFolder(id: string, path: string) {
+  return resourceApi(id).createFolder(path);
+}
+
+export function moveResource(id: string, from: string, to: string, options?: { force?: boolean; renameTo?: string }) {
+  return resourceApi(id).move(from, to, options);
 }
 
 export async function getInstructions(id: string): Promise<{ content: string }> {

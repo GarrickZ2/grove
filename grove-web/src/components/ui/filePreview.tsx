@@ -1,8 +1,10 @@
 /* eslint-disable react-refresh/only-export-components */
+import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
-import { Download, Eye, Loader2, RefreshCw, X } from "lucide-react";
+import { Download, Eye, Loader2, Maximize2, Minimize2, RefreshCw, X } from "lucide-react";
 import { getPreviewRenderer } from "../Review/previewRenderers";
 import { highlightCode, detectLanguage } from "../Review/syntaxHighlight";
+import { ImageLightbox } from "./ImageLightbox";
 
 
 export function getExtBadge(name: string): string {
@@ -64,21 +66,36 @@ export function FilePreviewDrawer({
 }: FilePreviewDrawerProps) {
   const renderer = getPreviewRenderer(fileName);
   const wide = renderer?.id === 'jsx' || renderer?.id === 'html';
+  const [lightboxUrl, setLightboxUrl] = useState<string | null>(null);
+  const [lightboxSvg, setLightboxSvg] = useState<string | null>(null);
+  const [fullscreen, setFullscreen] = useState(false);
+
+  useEffect(() => {
+    if (!fullscreen) return;
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === "Escape") { e.preventDefault(); setFullscreen(false); }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [fullscreen]);
+
   return (
     <>
+      {!fullscreen && (
+        <motion.div
+          className="absolute inset-0 z-20 bg-black/20"
+          onClick={onClose}
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          transition={{ duration: 0.2 }}
+        />
+      )}
       <motion.div
-        className="absolute inset-0 z-20 bg-black/20"
-        onClick={onClose}
-        initial={{ opacity: 0 }}
-        animate={{ opacity: 1 }}
-        exit={{ opacity: 0 }}
-        transition={{ duration: 0.2 }}
-      />
-      <motion.div
-        className={`absolute inset-y-0 right-0 z-30 ${wide ? 'w-[min(96vw,1100px)]' : 'w-[min(92vw,780px)]'} max-w-full flex flex-col shadow-2xl`}
+        className={fullscreen ? 'fixed inset-0 z-[9998] flex flex-col shadow-2xl' : `absolute inset-y-0 right-0 z-30 ${wide ? 'w-[min(96vw,1100px)]' : 'w-[min(92vw,780px)]'} max-w-full flex flex-col shadow-2xl`}
         style={{
           background: "var(--color-bg)",
-          borderLeft: "1px solid var(--color-border)",
+          ...(fullscreen ? {} : { borderLeft: "1px solid var(--color-border)" }),
         }}
         initial={{ x: "100%" }}
         animate={{ x: 0 }}
@@ -129,6 +146,16 @@ export function FilePreviewDrawer({
               <Download className="w-4 h-4" />
             </button>
             <button
+              onClick={() => setFullscreen(f => !f)}
+              className="p-1.5 rounded-md transition-colors"
+              title={fullscreen ? "Exit fullscreen" : "Fullscreen"}
+              style={{ color: "var(--color-text-muted)" }}
+              onMouseEnter={(e) => e.currentTarget.style.background = "var(--color-bg-tertiary)"}
+              onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}
+            >
+              {fullscreen ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
+            </button>
+            <button
               onClick={onClose}
               className="p-1.5 rounded-md transition-colors"
               style={{ color: "var(--color-text-muted)" }}
@@ -156,13 +183,13 @@ export function FilePreviewDrawer({
             </div>
           ) : renderer ? (
             <div className={renderer.id === 'image' || renderer.id === 'jsx' || renderer.id === 'html' ? 'h-full' : 'p-5'}>
-              {renderer.renderFull({ content })}
+              {renderer.renderFull({ content, onImageClick: setLightboxUrl, onSvgClick: setLightboxSvg })}
             </div>
           ) : (() => {
             const lang = detectLanguage(fileName);
             const highlighted = lang ? highlightCode(content, lang) : null;
             return highlighted ? (
-              <pre className="p-5 text-xs font-mono whitespace-pre leading-6 overflow-x-auto" style={{ color: "var(--color-text)" }}>
+              <pre className="markdown-code-block p-5 text-xs font-mono whitespace-pre leading-6 overflow-x-auto" style={{ color: "var(--color-text)" }}>
                 <code dangerouslySetInnerHTML={{ __html: highlighted }} />
               </pre>
             ) : (
@@ -173,6 +200,11 @@ export function FilePreviewDrawer({
           })()}
         </div>
       </motion.div>
+      <ImageLightbox
+        imageUrl={lightboxUrl}
+        svgContent={lightboxSvg}
+        onClose={() => { setLightboxUrl(null); setLightboxSvg(null); }}
+      />
     </>
   );
 }

@@ -43,10 +43,13 @@ interface TasksPageProps {
   onNavByIndex?: (indexOrDelta: number, relative?: boolean) => void;
   /** When true, opens the New Task dialog on mount */
   initialOpenNewTask?: boolean;
+  /** Increment to signal TasksPage to exit the current workspace (e.g. when Tasks tab is re-clicked) */
+  exitWorkspaceSignal?: number;
 }
 
-export function TasksPage({ initialTaskId, initialViewMode, onNavigationConsumed, onNavByIndex, initialOpenNewTask }: TasksPageProps) {
+export function TasksPage({ initialTaskId, initialViewMode, onNavigationConsumed, onNavByIndex, initialOpenNewTask, exitWorkspaceSignal }: TasksPageProps) {
   const { selectedProject, refreshSelectedProject } = useProject();
+  const prevProjectIdRef = useRef<string | undefined>(selectedProject?.id);
   const isStudio = selectedProject?.projectType === "studio";
 
   const { isMobile } = useIsMobile();
@@ -156,6 +159,26 @@ export function TasksPage({ initialTaskId, initialViewMode, onNavigationConsumed
     // Consume the navigation data so it doesn't re-trigger
     onNavigationConsumed?.();
   }, [initialTaskId, initialViewMode, activeTasks, pageState.selectedTask?.id, onNavigationConsumed, pageHandlers]);
+
+  // Exit workspace when Tasks tab is re-clicked (signal from App.tsx).
+  // Use a ref for inWorkspace so the effect only fires on signal changes but
+  // always reads the latest value — avoids a stale-closure without adding
+  // inWorkspace as a dep (which would make every workspace-enter/exit fire it).
+  const inWorkspaceRef = useRef(pageState.inWorkspace);
+  inWorkspaceRef.current = pageState.inWorkspace;
+  useEffect(() => {
+    if (!exitWorkspaceSignal) return;
+    if (inWorkspaceRef.current) pageHandlers.handleCloseTask();
+  }, [exitWorkspaceSignal, pageHandlers]);
+
+  // Reset workspace state when project changes (sidebar switch or notification navigation)
+  useEffect(() => {
+    if (prevProjectIdRef.current !== selectedProject?.id) {
+      prevProjectIdRef.current = selectedProject?.id;
+      pageHandlers.setInWorkspace(false);
+      pageHandlers.setSelectedTask(null);
+    }
+  }, [selectedProject?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Sync selectedTask with latest project data after refresh
   useEffect(() => {
@@ -491,7 +514,7 @@ export function TasksPage({ initialTaskId, initialViewMode, onNavigationConsumed
         onMerge: isStudio ? undefined : opsHandlers.handleMerge,
         onArchive: opsHandlers.handleArchive,
         onReset: isStudio ? undefined : opsHandlers.handleReset,
-        onClean: isStudio ? undefined : opsHandlers.handleClean,
+        onClean: opsHandlers.handleClean,
         onRecover: pageState.contextMenu.task.status === "archived" ? handleRecover : undefined,
       } as TaskOperationHandlers)
     : [];
@@ -566,7 +589,7 @@ export function TasksPage({ initialTaskId, initialViewMode, onNavigationConsumed
                       onSync={isStudio ? undefined : opsHandlers.handleSync}
                       onMerge={isStudio ? undefined : opsHandlers.handleMerge}
                       onArchive={opsHandlers.handleArchive}
-                      onClean={isStudio ? undefined : opsHandlers.handleClean}
+                      onClean={opsHandlers.handleClean}
                       onReset={isStudio ? undefined : opsHandlers.handleReset}
                     />
                   </div>
@@ -579,7 +602,7 @@ export function TasksPage({ initialTaskId, initialViewMode, onNavigationConsumed
                     onEnterWorkspace={pageState.selectedTask.status !== "archived" ? pageHandlers.handleEnterWorkspace : undefined}
                     onAddPanel={pageState.selectedTask.status !== "archived" ? handleAddPanelFromInfo : undefined}
                     onRecover={pageState.selectedTask.status === "archived" ? handleRecover : undefined}
-                    onClean={isStudio ? undefined : opsHandlers.handleClean}
+                    onClean={opsHandlers.handleClean}
                     onCommit={!isStudio && pageState.selectedTask.status !== "archived" ? opsHandlers.handleCommit : undefined}
                     onRebase={!isStudio && pageState.selectedTask.status !== "archived" ? opsHandlers.handleRebase : undefined}
                     onSync={!isStudio && pageState.selectedTask.status !== "archived" ? opsHandlers.handleSync : undefined}
@@ -665,7 +688,7 @@ export function TasksPage({ initialTaskId, initialViewMode, onNavigationConsumed
                         onEnterWorkspace={pageState.selectedTask.status !== "archived" ? pageHandlers.handleEnterWorkspace : undefined}
                         onAddPanel={pageState.selectedTask.status !== "archived" ? handleAddPanelFromInfo : undefined}
                         onRecover={pageState.selectedTask.status === "archived" ? handleRecover : undefined}
-                        onClean={isStudio ? undefined : opsHandlers.handleClean}
+                        onClean={opsHandlers.handleClean}
                         onCommit={!isStudio && pageState.selectedTask.status !== "archived" ? opsHandlers.handleCommit : undefined}
                         onRebase={!isStudio && pageState.selectedTask.status !== "archived" ? opsHandlers.handleRebase : undefined}
                         onSync={!isStudio && pageState.selectedTask.status !== "archived" ? opsHandlers.handleSync : undefined}
@@ -722,7 +745,7 @@ export function TasksPage({ initialTaskId, initialViewMode, onNavigationConsumed
                     onSync={isStudio ? undefined : opsHandlers.handleSync}
                     onMerge={isStudio ? undefined : opsHandlers.handleMerge}
                     onArchive={opsHandlers.handleArchive}
-                    onClean={isStudio ? undefined : opsHandlers.handleClean}
+                    onClean={opsHandlers.handleClean}
                     onReset={isStudio ? undefined : opsHandlers.handleReset}
                   />
                 </motion.div>

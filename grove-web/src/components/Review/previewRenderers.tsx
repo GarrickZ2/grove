@@ -6,6 +6,12 @@ import type { DiffFile } from '../../api/review';
 // Preview Renderer Registry
 // ============================================================================
 
+export interface RenderFullProps {
+  content: string;
+  onImageClick?: (url: string) => void;
+  onSvgClick?: (svg: string) => void;
+}
+
 export interface PreviewRenderer {
   /** Unique identifier */
   id: string;
@@ -21,8 +27,9 @@ export interface PreviewRenderer {
   /**
    * Render full-file preview content.
    * `content` is either a URL or file text depending on `contentType`.
+   * Optional `onImageClick` / `onSvgClick` callbacks enable lightbox support.
    */
-  renderFull: (props: { content: string }) => React.ReactNode;
+  renderFull: (props: RenderFullProps) => React.ReactNode;
   /**
    * Whether this renderer supports diff-mode segment preview.
    * If false, the preview drawer will use `renderFull` with reconstructed content.
@@ -39,7 +46,9 @@ const markdownRenderer: PreviewRenderer = {
   label: 'Preview markdown',
   match: (path) => /\.(md|markdown)$/i.test(path),
   contentType: 'text',
-  renderFull: ({ content }) => <MarkdownRenderer content={content} />,
+  renderFull: ({ content, onImageClick, onSvgClick }) => (
+    <MarkdownRenderer content={content} onImageClick={onImageClick} onMermaidClick={onSvgClick} />
+  ),
   supportsDiffSegments: true,
 };
 
@@ -48,7 +57,9 @@ const mermaidRenderer: PreviewRenderer = {
   label: 'Preview diagram',
   match: (path) => /\.(mmd|mermaid)$/i.test(path),
   contentType: 'text',
-  renderFull: ({ content }) => <MermaidBlock code={content} />,
+  renderFull: ({ content, onSvgClick }) => (
+    <MermaidBlock code={content} onPreviewClick={onSvgClick} />
+  ),
   supportsDiffSegments: false,
 };
 
@@ -57,10 +68,17 @@ const svgRenderer: PreviewRenderer = {
   label: 'Preview SVG',
   match: (path) => /\.svg$/i.test(path),
   contentType: 'text',
-  renderFull: ({ content }) => (
+  renderFull: ({ content, onSvgClick }) => (
     <div
-      className="flex items-center justify-center p-4 [&_svg]:max-w-full [&_svg]:max-h-[70vh]"
+      className={`flex items-center justify-center p-4 [&_svg]:max-w-full [&_svg]:max-h-[70vh]${onSvgClick ? " cursor-pointer hover:opacity-80 transition-opacity" : ""}`}
       dangerouslySetInnerHTML={{ __html: content }}
+      onClick={onSvgClick ? () => {
+        const responsive = content
+          .replace(/\s*width="[^"]*"/, ' width="100%"')
+          .replace(/\s*height="[^"]*"/, ' height="100%"')
+          .replace(/(<svg[^>]*?)(?=\s*>)/, '$1 style="max-width:90vw;max-height:85vh;width:auto;height:auto;" preserveAspectRatio="xMidYMid meet"');
+        onSvgClick(responsive);
+      } : undefined}
     />
   ),
   supportsDiffSegments: false,
@@ -71,12 +89,16 @@ const imageRenderer: PreviewRenderer = {
   label: 'Preview image',
   match: (path) => /\.(png|jpe?g|webp|gif|bmp|ico)$/i.test(path),
   contentType: 'url',
-  renderFull: ({ content }) => (
-    <div className="flex items-center justify-center h-full p-6" style={{ background: "var(--color-bg-secondary)" }}>
+  renderFull: ({ content, onImageClick }) => (
+    <div
+      className={`flex items-center justify-center h-full p-6${onImageClick ? " cursor-pointer" : ""}`}
+      style={{ background: "var(--color-bg-secondary)" }}
+      onClick={onImageClick ? () => onImageClick(content) : undefined}
+    >
       <img
         src={content}
         alt=""
-        className="max-w-full max-h-[70vh] object-contain rounded-lg shadow-md"
+        className={`max-w-full max-h-[70vh] object-contain rounded-lg shadow-md${onImageClick ? " hover:opacity-80 transition-opacity" : ""}`}
         onError={(e) => {
           (e.target as HTMLImageElement).style.display = 'none';
           (e.target as HTMLImageElement).nextElementSibling?.classList.remove('hidden');
@@ -309,9 +331,10 @@ interface ImagePreviewProps {
   projectId?: string;
   taskId?: string;
   file: DiffFile;
+  onImageClick?: (url: string) => void;
 }
 
-export function ImagePreview({ projectId, taskId, file }: ImagePreviewProps) {
+export function ImagePreview({ projectId, taskId, file, onImageClick }: ImagePreviewProps) {
   if (!projectId || !taskId) {
     return <div className="preview-loading">Missing project context</div>;
   }
@@ -323,7 +346,8 @@ export function ImagePreview({ projectId, taskId, file }: ImagePreviewProps) {
       <img
         src={imgUrl}
         alt={file.new_path}
-        className="max-w-full max-h-[70vh] object-contain rounded-lg border border-[var(--color-border)]"
+        className={`max-w-full max-h-[70vh] object-contain rounded-lg border border-[var(--color-border)]${onImageClick ? " cursor-pointer hover:opacity-80 transition-opacity" : ""}`}
+        onClick={onImageClick ? () => onImageClick(imgUrl) : undefined}
         onError={(e) => {
           (e.target as HTMLImageElement).style.display = 'none';
           (e.target as HTMLImageElement).nextElementSibling?.classList.remove('hidden');

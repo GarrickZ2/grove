@@ -38,6 +38,7 @@ export type TasksMode = "zen" | "blitz";
 function AppContent() {
   const [activeItem, setActiveItem] = useState("dashboard");
   const [tasksMode, setTasksMode] = useState<TasksMode>("zen");
+  const [tasksExitSignal, setTasksExitSignal] = useState(0);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [hasExitedWelcome, setHasExitedWelcome] = useState(false);
   const [navigationData, setNavigationData] = useState<Record<string, unknown> | null>(null);
@@ -301,6 +302,14 @@ function AppContent() {
     registerGlobalCommands(() => buildCommands(globalOptionsRef.current));
   }, [registerGlobalCommands]);
 
+  const handleItemClick = useCallback((item: string) => {
+    if (item === "tasks" && activeItem === "tasks" && inWorkspace) {
+      setTasksExitSignal(prev => prev + 1);
+    } else {
+      setActiveItem(item);
+    }
+  }, [activeItem, inWorkspace]);
+
   // Show loading state
   if (isLoading) {
     return (
@@ -323,17 +332,6 @@ function AppContent() {
         return <ProjectsPage onNavigate={setActiveItem} key={"projects-" + (navigationData?.tab ?? "coding")} initialTab={navigationData?.tab as "coding" | "studio" | undefined} />;
       case "work":
         return <WorkPage key="work" />;
-      case "tasks":
-        return (
-          <TasksPage
-            key="tasks"
-            initialTaskId={navigationData?.taskId as string | undefined}
-            initialViewMode={navigationData?.viewMode as string | undefined}
-            initialOpenNewTask={navigationData?.openNewTask as boolean | undefined}
-            onNavigationConsumed={() => setNavigationData(null)}
-            onNavByIndex={navigateSidebar}
-          />
-        );
       case "resource":
         return <ResourcePage />;
       case "skills":
@@ -364,7 +362,6 @@ function AppContent() {
   const isFullWidthPage =
     isDashboardPage ||
     activeItem === "projects" ||
-    activeItem === "tasks" ||
     activeItem === "work" ||
     activeItem === "skills" ||
     activeItem === "ai" ||
@@ -372,7 +369,7 @@ function AppContent() {
 
   const sidebarProps = {
     activeItem,
-    onItemClick: setActiveItem,
+    onItemClick: handleItemClick,
     collapsed: sidebarCollapsed,
     onToggleCollapse: () => setSidebarCollapsed(!sidebarCollapsed),
     onManageProjects: (tab?: "coding" | "studio") => handleNavigate("projects", { tab }),
@@ -411,7 +408,22 @@ function AppContent() {
         </MobileDrawer>
 
         <main className={`relative flex-1 ${isFullWidthPage && !isDashboardPage ? "overflow-hidden" : "overflow-y-auto"}`}>
-          <div className={isFullWidthPage ? "h-full p-3" : "max-w-5xl mx-auto p-3"}>
+          {/* TasksPage always mounted on mobile too */}
+          <div
+            className="h-full p-3"
+            style={{ display: activeItem === "tasks" && tasksMode !== "blitz" ? "block" : "none" }}
+          >
+            <TasksPage
+              initialTaskId={navigationData?.taskId as string | undefined}
+              initialViewMode={navigationData?.viewMode as string | undefined}
+              initialOpenNewTask={navigationData?.openNewTask as boolean | undefined}
+              onNavigationConsumed={() => setNavigationData(null)}
+              onNavByIndex={navigateSidebar}
+              exitWorkspaceSignal={tasksExitSignal}
+            />
+          </div>
+          <div className={isFullWidthPage ? "h-full p-3" : "max-w-5xl mx-auto p-3"}
+               style={{ display: activeItem === "tasks" && tasksMode !== "blitz" ? "none" : undefined }}>
             <AnimatePresence mode="wait">
               {tasksMode === "blitz" ? (
                 <motion.div
@@ -503,9 +515,25 @@ function AppContent() {
           >
             <Sidebar {...sidebarProps} />
             <main className={`relative flex-1 ${isFullWidthPage && !isDashboardPage ? "overflow-hidden" : "overflow-y-auto"}`}>
-              <div className={isFullWidthPage ? `h-full transition-[padding] duration-300 ease-out ${inWorkspace ? 'p-2' : 'p-6'}` : "max-w-5xl mx-auto p-6"}>
-                {renderContent()}
+              {/* TasksPage always mounted to preserve workspace state across tab switches */}
+              <div
+                className={`h-full transition-[padding] duration-300 ease-out ${inWorkspace ? 'p-2' : 'p-6'}`}
+                style={{ display: activeItem === "tasks" ? "block" : "none" }}
+              >
+                <TasksPage
+                  initialTaskId={navigationData?.taskId as string | undefined}
+                  initialViewMode={navigationData?.viewMode as string | undefined}
+                  initialOpenNewTask={navigationData?.openNewTask as boolean | undefined}
+                  onNavigationConsumed={() => setNavigationData(null)}
+                  onNavByIndex={navigateSidebar}
+                  exitWorkspaceSignal={tasksExitSignal}
+                />
               </div>
+              {activeItem !== "tasks" && (
+                <div className={isFullWidthPage ? `h-full transition-[padding] duration-300 ease-out ${inWorkspace ? 'p-2' : 'p-6'}` : "max-w-5xl mx-auto p-6"}>
+                  {renderContent()}
+                </div>
+              )}
               {selectedProject && !selectedProject.exists &&
                 activeItem !== "projects" && activeItem !== "settings" && (
                   <div className="absolute inset-0 z-40 bg-[var(--color-bg)] flex items-center justify-center">

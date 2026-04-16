@@ -294,7 +294,12 @@ class ApiClient {
       } as ApiError;
     }
 
-    return response.json();
+    // Handle empty body (e.g. 201/204 responses)
+    const text = await response.text();
+    if (text) {
+      return JSON.parse(text) as R;
+    }
+    return undefined as R;
   }
 
   async postNoContent(path: string): Promise<void> {

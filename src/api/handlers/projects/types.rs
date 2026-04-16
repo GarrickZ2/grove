@@ -161,6 +161,35 @@ pub struct ResourceFileQuery {
     pub path: String,
 }
 
+/// Query params for list resources (optional path for subdirectory listing)
+#[derive(Debug, Deserialize)]
+pub struct ResourceListQuery {
+    pub path: Option<String>,
+}
+
+/// Query params for upload resource (optional path for subdirectory target)
+#[derive(Debug, Deserialize)]
+pub struct UploadQuery {
+    pub path: Option<String>,
+}
+
+/// Create folder request
+#[derive(Debug, Deserialize)]
+pub struct CreateFolderRequest {
+    pub path: String,
+}
+
+/// Move/rename resource request
+#[derive(Debug, Deserialize)]
+pub struct MoveResourceRequest {
+    pub from: String,
+    pub to: String,
+    /// Overwrite destination if it already exists
+    pub force: Option<bool>,
+    /// Replace the final path component with this name
+    pub rename_to: Option<String>,
+}
+
 /// Open command response
 #[derive(Debug, Serialize)]
 pub struct OpenResponse {

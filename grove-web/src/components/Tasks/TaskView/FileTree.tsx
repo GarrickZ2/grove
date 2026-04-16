@@ -1,5 +1,5 @@
 import { useState, useCallback, useRef, useEffect } from "react";
-import { ChevronRight, ChevronDown, Loader2 } from "lucide-react";
+import { ChevronRight, ChevronDown, Loader2, ShieldOff } from "lucide-react";
 import type { FileTreeNode } from "../../../utils/fileTree";
 import type { DirEntry } from "../../../api";
 import { VSCodeIcon } from "../../ui";
@@ -139,11 +139,14 @@ function FileTreeItem({
   const [expanded, setExpanded] = useState(onExpandDir ? false : depth < 1);
   const [children, setChildren] = useState<FileTreeNode[] | null>(null);
   const [loading, setLoading] = useState(false);
+  const [expandError, setExpandError] = useState<string | null>(null);
   const loadedRef = useRef(false);
   const isSelected = !node.isDir && selectedFile === node.path;
 
   const handleClick = useCallback(async () => {
     if (node.isDir) {
+      // Once a symlink/forbidden error is set, treat the folder as non-expandable
+      if (expandError) return;
       if (!expanded && onExpandDir && !loadedRef.current) {
         setLoading(true);
         try {
@@ -167,8 +170,9 @@ function FileTreeItem({
             });
           setChildren(childNodes);
         } catch (err) {
-          console.error('Failed to load directory:', err);
-          // Do not expand if the load failed — leave the node collapsed
+          const msg = err instanceof Error ? err.message : String(err);
+          const isForbidden = msg.includes('403') || msg.toLowerCase().includes('forbidden');
+          setExpandError(isForbidden ? 'Symlink folders cannot be expanded' : 'Failed to load folder');
           return;
         } finally {
           setLoading(false);
@@ -178,7 +182,7 @@ function FileTreeItem({
     } else {
       onSelectFile(node.path);
     }
-  }, [node, onSelectFile, onExpandDir, expanded]);
+  }, [node, onSelectFile, onExpandDir, expanded, expandError]);
 
   const handleContextMenu = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
@@ -196,6 +200,7 @@ function FileTreeItem({
       <button
         onClick={handleClick}
         onContextMenu={handleContextMenu}
+        title={expandError ?? undefined}
         className={`
           flex items-center gap-1 w-full text-left px-2 py-0.5 hover:bg-[var(--color-bg-tertiary)] transition-colors
           ${isSelected ? "bg-[var(--color-highlight)]/15 text-[var(--color-highlight)]" : "text-[var(--color-text-muted)]"}
@@ -206,6 +211,8 @@ function FileTreeItem({
           <span className="w-4 h-4 flex items-center justify-center flex-shrink-0">
             {loading ? (
               <Loader2 className="w-3 h-3 animate-spin" />
+            ) : expandError ? (
+              <ShieldOff className="w-3 h-3 opacity-40" />
             ) : expanded ? (
               <ChevronDown className="w-3 h-3" />
             ) : (
@@ -219,11 +226,11 @@ function FileTreeItem({
         <VSCodeIcon
           filename={node.name}
           isFolder={node.isDir}
-          isOpen={expanded}
+          isOpen={expanded && !expandError}
           size={16}
         />
 
-        <span className="truncate text-xs">{node.name}</span>
+        <span className={`truncate text-xs ${expandError ? "opacity-50" : ""}`}>{node.name}</span>
       </button>
 
       {node.isDir && expanded && (

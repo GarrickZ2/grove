@@ -152,6 +152,14 @@ pub fn create_api_router() -> Router {
             get(handlers::projects::download_resource),
         )
         .route(
+            "/projects/{id}/resource/folder",
+            post(handlers::projects::create_resource_folder),
+        )
+        .route(
+            "/projects/{id}/resource/move",
+            post(handlers::projects::move_resource),
+        )
+        .route(
             "/projects/{id}/instructions",
             get(handlers::projects::get_instructions).put(handlers::projects::update_instructions),
         )
@@ -268,6 +276,10 @@ pub fn create_api_router() -> Router {
         .route(
             "/projects/{id}/tasks/{taskId}/artifacts/workdir/open",
             post(handlers::tasks::open_artifact_workdir),
+        )
+        .route(
+            "/projects/{id}/tasks/{taskId}/artifacts/sync-to-resource",
+            post(handlers::tasks::sync_artifact_to_resource),
         )
         .route(
             "/projects/{id}/tasks/{taskId}/open-folder",

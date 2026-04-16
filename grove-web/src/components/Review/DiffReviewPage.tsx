@@ -131,6 +131,7 @@ export function DiffReviewPage({ projectId, taskId, embedded, navigateToFile, is
   const [toVersion, setToVersion] = useState('latest');
   const [collapsedCommentIds, setCollapsedCommentIds] = useState<Set<number>>(new Set());
   const [versions, setVersions] = useState<VersionOption[]>([]);
+  const [, setCacheVersion] = useState(0); // force re-render after diff cache is populated
   const currentDiffRefs = useMemo(() => {
     const fromOpt = versions.find((v) => v.id === fromVersion);
     const toOpt = versions.find((v) => v.id === toVersion);
@@ -870,8 +871,8 @@ export function DiffReviewPage({ projectId, taskId, embedded, navigateToFile, is
         e.preventDefault();
         setCodeSearchVisible(true);
       }
-      // ESC to close code search
-      if (e.key === 'Escape' && codeSearchVisible) {
+      // ESC to close code search — skip if a lightbox is open (it handles ESC itself)
+      if (e.key === 'Escape' && codeSearchVisible && !document.querySelector('[data-lightbox-active]')) {
         setCodeSearchVisible(false);
         setCodeSearchQuery('');
       }

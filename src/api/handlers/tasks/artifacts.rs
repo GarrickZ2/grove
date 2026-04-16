@@ -19,6 +19,16 @@ use super::super::studio_common::{
 };
 use super::types::*;
 
+#[derive(serde::Deserialize)]
+pub struct SyncToResourceRequest {
+    pub path: String,
+    pub directory: String,
+    /// Overwrite if destination already exists
+    pub force: Option<bool>,
+    /// Use a different filename at the destination
+    pub rename_to: Option<String>,
+}
+
 fn list_dir_recursive(
     base: &std::path::Path,
     dir: &std::path::Path,
@@ -130,12 +140,16 @@ pub async fn list_artifacts(
     let input_dir = task_dir.join("input");
     let output_dir = task_dir.join("output");
 
-    if !input_dir.exists() || !output_dir.exists() {
-        return Err(StatusCode::NOT_FOUND);
-    }
-
-    let input_files = list_dir_recursive(&input_dir, &input_dir, "input");
-    let output_files = list_dir_recursive(&output_dir, &output_dir, "output");
+    let input_files = if input_dir.exists() {
+        list_dir_recursive(&input_dir, &input_dir, "input")
+    } else {
+        vec![]
+    };
+    let output_files = if output_dir.exists() {
+        list_dir_recursive(&output_dir, &output_dir, "output")
+    } else {
+        vec![]
+    };
 
     Ok(Json(ArtifactsResponse {
         input: input_files,
@@ -322,6 +336,102 @@ pub async fn upload_artifact(
         })
         .collect();
     Ok(Json(files))
+}
+
+/// POST /api/v1/projects/{id}/tasks/{taskId}/artifacts/sync-to-resource
+pub async fn sync_artifact_to_resource(
+    Path((id, task_id)): Path<(String, String)>,
+    Json(request): Json<SyncToResourceRequest>,
+) -> Result<StatusCode, ApiErr> {
+    let (project, project_key) = find_project_by_id(&id).map_err(|s| {
+        (
+            s,
+            Json(ApiError {
+                error: "Project not found".to_string(),
+            }),
+        )
+    })?;
+
+    if project.project_type != workspace::ProjectType::Studio {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ApiError {
+                error: "Not a Studio project".to_string(),
+            }),
+        ));
+    }
+
+    let task_dir = resolve_task_dir(&project, &project_key, &task_id).ok_or_else(task_not_found)?;
+
+    if request.directory != "output" && request.directory != "input" {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ApiError {
+                error: "directory must be 'input' or 'output'".to_string(),
+            }),
+        ));
+    }
+
+    let artifact_dir = task_dir.join(&request.directory);
+    let artifact_path =
+        studio_common::validate_path_containment(&artifact_dir, &artifact_dir.join(&request.path))?;
+
+    if !artifact_path.is_file() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ApiError {
+                error: "Path is not a file".to_string(),
+            }),
+        ));
+    }
+
+    let studio_dir = workspace::studio_project_dir(&project.path);
+    let resource_dir = studio_dir.join("resource");
+    fs::create_dir_all(&resource_dir).map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ApiError {
+                error: format!("Failed to create resource directory: {e}"),
+            }),
+        )
+    })?;
+
+    let original_file_name = artifact_path
+        .file_name()
+        .ok_or_else(|| {
+            (
+                StatusCode::BAD_REQUEST,
+                Json(ApiError {
+                    error: "Invalid file name".to_string(),
+                }),
+            )
+        })?
+        .to_string_lossy()
+        .into_owned();
+
+    let dest_name = request.rename_to.as_deref().unwrap_or(&original_file_name);
+    let dest = resource_dir.join(dest_name);
+
+    // Conflict check: if dest exists and caller didn't force-overwrite
+    if dest.exists() && !request.force.unwrap_or(false) {
+        return Err((
+            StatusCode::CONFLICT,
+            Json(ApiError {
+                error: "File already exists".to_string(),
+            }),
+        ));
+    }
+
+    fs::copy(&artifact_path, &dest).map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ApiError {
+                error: format!("Failed to copy file: {e}"),
+            }),
+        )
+    })?;
+
+    Ok(StatusCode::NO_CONTENT)
 }
 
 /// POST /api/v1/projects/{id}/tasks/{taskId}/open-folder

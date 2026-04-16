@@ -71,8 +71,13 @@ pub(crate) fn resolve_studio_dir(
     Ok((project, dir))
 }
 
-/// List resource files in a directory (non-recursive, skipping symlinks)
-pub(crate) fn list_resource_files(dir: &std::path::Path) -> Vec<ResourceFile> {
+/// List resource files in a directory (non-recursive, skipping symlinks).
+/// `dir`  — the directory to scan.
+/// `base` — the root directory; paths in results are relative to this.
+pub(crate) fn list_resource_files(
+    dir: &std::path::Path,
+    base: &std::path::Path,
+) -> Vec<ResourceFile> {
     let mut files = Vec::new();
     let entries = match std::fs::read_dir(dir) {
         Ok(e) => e,
@@ -92,15 +97,24 @@ pub(crate) fn list_resource_files(dir: &std::path::Path) -> Vec<ResourceFile> {
             Err(_) => continue,
         };
         let name = entry.file_name().to_string_lossy().to_string();
+        let rel_path = path
+            .strip_prefix(base)
+            .map(|p| p.to_string_lossy().to_string())
+            .unwrap_or_else(|_| name.clone());
         files.push(ResourceFile {
             name: name.clone(),
-            path: name,
+            path: rel_path,
             size: if meta.is_file() { meta.len() } else { 0 },
             modified_at: crate::api::handlers::studio_common::format_modified_time(&meta),
             is_dir: meta.is_dir(),
         });
     }
-    files.sort_by(|a, b| a.name.cmp(&b.name));
+    files.sort_by(|a, b| {
+        if a.is_dir != b.is_dir {
+            return b.is_dir.cmp(&a.is_dir); // dirs first
+        }
+        a.name.cmp(&b.name)
+    });
     files
 }
 
