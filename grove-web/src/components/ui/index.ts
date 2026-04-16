@@ -12,5 +12,6 @@ export { KeyBadge } from "./KeyBadge";
 export { VSCodeIcon } from "./VSCodeIcon";
 export { FileMentionDropdown } from "./FileMentionDropdown";
 export { FilePreviewDrawer, getExtBadge, downloadViaIframe, getPreviewType, canPreviewFile } from "./filePreview";
+export { ImageLightbox } from "./ImageLightbox";
 export { formatSize, formatTime } from "./FileListUtils";
 export { getPreviewRenderer } from "../Review/previewRenderers";
