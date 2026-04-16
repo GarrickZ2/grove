@@ -5,7 +5,7 @@ import {
   Trash2, Upload, Loader2, MoreHorizontal, Download, Eye,
   FolderOpen, Save, FileText, RefreshCw, Sparkles,
   Search, ArrowRight, Files, ShieldCheck, Clock3, Plus, X, Brain,
-  FolderPlus, ChevronRight, Pencil, Check, CornerLeftUp,
+  FolderPlus, ChevronRight, Pencil, Check, CornerLeftUp, Maximize2,
 } from "lucide-react";
 import { useProject } from "../../context";
 import {
@@ -87,7 +87,7 @@ export function ResourcePage() {
   const [isDragOver, setIsDragOver] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [activeTab, setActiveTab] = useState<"uploads" | "workdir">("uploads");
-  const [mainPanel, _setMainPanel] = useState<"assets" | "instructions" | "memory">("assets");
+  const [mainPanel, setMainPanel] = useState<"assets" | "instructions" | "memory">("assets");
   const [workdirs, setWorkdirs] = useState<WorkDirectoryEntry[]>([]);
   const [isLoadingWorkdirs, setIsLoadingWorkdirs] = useState(true);
   const [workdirError, setWorkdirError] = useState<string | null>(null);
@@ -452,14 +452,18 @@ export function ResourcePage() {
     (p) => p !== mainPanel,
   );
 
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  const renderAssetsPanel = (_: { isMain: boolean }) => (
+  const renderAssetsPanel = ({ isMain }: { isMain: boolean }) => (
     <section className="min-h-[300px] rounded-2xl border overflow-hidden flex flex-col xl:min-h-0"
       style={{ borderColor: "var(--color-border)", background: "var(--color-bg-secondary)" }}>
       <div className="flex flex-col gap-3 px-4 py-3 border-b"
         style={{ borderColor: "var(--color-border)" }}>
         <div className="flex flex-wrap items-start gap-3">
-          <div className="flex items-center gap-3 min-w-0 flex-1">
+          <div
+            className={`flex items-center gap-3 min-w-0 flex-1 rounded-lg transition-colors ${!isMain ? "cursor-pointer" : ""}`}
+            onClick={!isMain ? () => setMainPanel("assets") : undefined}
+            onMouseEnter={e => { if (!isMain) e.currentTarget.style.background = "color-mix(in srgb, var(--color-highlight) 8%, transparent)"; }}
+            onMouseLeave={e => { if (!isMain) e.currentTarget.style.background = "transparent"; }}
+          >
             <div className="w-8 h-8 rounded-xl flex items-center justify-center"
               style={{ background: "color-mix(in srgb, var(--color-highlight) 12%, transparent)" }}>
               <FolderOpen className="w-4 h-4" style={{ color: "var(--color-highlight)" }} />
@@ -474,6 +478,12 @@ export function ResourcePage() {
                   }}>
                   {activeTab === "uploads" ? filteredFiles.length : workdirs.length}
                 </span>
+                {isMain && (
+                  <Maximize2
+                    className="w-3.5 h-3.5 shrink-0"
+                    style={{ color: "var(--color-text-muted)", opacity: 0.5 }}
+                  />
+                )}
               </div>
               <p className="mt-1 text-xs" style={{ color: "var(--color-text-muted)" }}>
                 {activeTab === "uploads"
@@ -767,14 +777,18 @@ export function ResourcePage() {
     </section>
   );
 
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  const renderInstructionsPanel = (_: { isMain: boolean }) => (
+  const renderInstructionsPanel = ({ isMain }: { isMain: boolean }) => (
     <section className="min-h-[240px] rounded-2xl border overflow-hidden flex flex-col xl:min-h-0 xl:flex-1 xl:min-w-[420px] 2xl:min-w-[480px]"
       style={{ borderColor: "var(--color-border)", background: "var(--color-bg-secondary)" }}>
       <div className="px-4 py-3 border-b"
         style={{ borderColor: "var(--color-border)" }}>
         <div className="flex flex-wrap items-start gap-3">
-          <div className="flex items-center gap-3 min-w-0 flex-1">
+          <div
+            className={`flex items-center gap-3 min-w-0 flex-1 rounded-lg transition-colors ${!isMain ? "cursor-pointer" : ""}`}
+            onClick={!isMain ? () => setMainPanel("instructions") : undefined}
+            onMouseEnter={e => { if (!isMain) e.currentTarget.style.background = "color-mix(in srgb, var(--color-highlight) 8%, transparent)"; }}
+            onMouseLeave={e => { if (!isMain) e.currentTarget.style.background = "transparent"; }}
+          >
             <div className="w-8 h-8 rounded-xl flex items-center justify-center"
               style={{ background: "color-mix(in srgb, var(--color-accent) 12%, transparent)" }}>
               <FileText className="w-4 h-4" style={{ color: "var(--color-accent)" }} />
@@ -787,6 +801,12 @@ export function ResourcePage() {
                     style={{ background: "color-mix(in srgb, var(--color-warning) 15%, transparent)", color: "var(--color-warning)" }}>
                     Unsaved
                   </span>
+                )}
+                {isMain && (
+                  <Maximize2
+                    className="w-3.5 h-3.5 shrink-0"
+                    style={{ color: "var(--color-text-muted)", opacity: 0.5 }}
+                  />
                 )}
               </div>
               <p className="mt-0.5 text-xs" style={{ color: "var(--color-text-muted)" }}>
@@ -897,14 +917,18 @@ export function ResourcePage() {
     </section>
   );
 
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  const renderMemoryPanel = (_: { isMain: boolean }) => (
+  const renderMemoryPanel = ({ isMain }: { isMain: boolean }) => (
     <section className="min-h-[240px] rounded-2xl border overflow-hidden flex flex-col xl:min-h-0 xl:flex-1 xl:min-w-[420px] 2xl:min-w-[480px]"
       style={{ borderColor: "var(--color-border)", background: "var(--color-bg-secondary)" }}>
       <div className="px-4 py-3 border-b"
         style={{ borderColor: "var(--color-border)" }}>
         <div className="flex flex-wrap items-start gap-3">
-          <div className="flex items-center gap-3 min-w-0 flex-1">
+          <div
+            className={`flex items-center gap-3 min-w-0 flex-1 rounded-lg transition-colors ${!isMain ? "cursor-pointer" : ""}`}
+            onClick={!isMain ? () => setMainPanel("memory") : undefined}
+            onMouseEnter={e => { if (!isMain) e.currentTarget.style.background = "color-mix(in srgb, var(--color-highlight) 8%, transparent)"; }}
+            onMouseLeave={e => { if (!isMain) e.currentTarget.style.background = "transparent"; }}
+          >
             <div className="w-8 h-8 rounded-xl flex items-center justify-center"
               style={{ background: "color-mix(in srgb, var(--color-highlight) 12%, transparent)" }}>
               <Brain className="w-4 h-4" style={{ color: "var(--color-highlight)" }} />
@@ -917,6 +941,12 @@ export function ResourcePage() {
                     style={{ background: "color-mix(in srgb, var(--color-warning) 15%, transparent)", color: "var(--color-warning)" }}>
                     Unsaved
                   </span>
+                )}
+                {isMain && (
+                  <Maximize2
+                    className="w-3.5 h-3.5 shrink-0"
+                    style={{ color: "var(--color-text-muted)", opacity: 0.5 }}
+                  />
                 )}
               </div>
               <p className="mt-0.5 text-xs" style={{ color: "var(--color-text-muted)" }}>
