@@ -11,6 +11,7 @@ import { useFileMention } from '../../hooks';
 import { FileMentionDropdown } from '../ui';
 import { MarkdownRenderer, MermaidBlock } from '../ui/MarkdownRenderer';
 import { ImagePreview, type PreviewRenderer } from './previewRenderers';
+import { ImageLightbox } from '../ui/ImageLightbox';
 
 // ============================================================================
 // Types for context line expansion
@@ -586,6 +587,8 @@ export function DiffFileView({
   }, [gaps]);
 
   const [expansions, setExpansions] = useState<Map<number, GapExpansion>>(new Map());
+  const [lightboxUrl, setLightboxUrl] = useState<string | null>(null);
+  const [lightboxSvg, setLightboxSvg] = useState<string | null>(null);
 
   // Compute preview segments for diff mode drawer.
   // Code-fence-aware: code blocks render as single units with per-line coloring,
@@ -1162,21 +1165,23 @@ export function DiffFileView({
                       (e.g. MarkdownRenderer) would inflate the flex-row height of diff-file-body. */}
                   {isPreviewOpen && (
                     previewRenderer && previewRenderer.id === 'image' ? (
-                      <ImagePreview projectId={projectId} taskId={taskId} file={file} />
+                      <ImagePreview projectId={projectId} taskId={taskId} file={file} onImageClick={setLightboxUrl} />
                     ) : previewRenderer && !previewRenderer.supportsDiffSegments ? (
                       (() => {
                         const content = viewMode === 'full' && fullFileContent != null
                           ? fullFileContent
                           : file.hunks.flatMap(h => h.lines.filter(l => l.line_type !== 'delete').map(l => l.content)).join('\n');
                         return content.trim()
-                          ? previewRenderer.renderFull({ content })
+                          ? previewRenderer.renderFull({ content, onImageClick: setLightboxUrl, onSvgClick: setLightboxSvg })
                           : <div className="preview-loading">No content to render</div>;
                       })()
                     ) : viewMode === 'full' ? (
                       isLoadingFullFile ? (
                         <div className="preview-loading">Loading content...</div>
                       ) : fullFileContent != null ? (
-                        (previewRenderer ?? { renderFull: ({ content }: { content: string }) => <MarkdownRenderer content={content} /> }).renderFull({ content: fullFileContent })
+                        previewRenderer
+                          ? previewRenderer.renderFull({ content: fullFileContent, onImageClick: setLightboxUrl, onSvgClick: setLightboxSvg })
+                          : <MarkdownRenderer content={fullFileContent} onImageClick={setLightboxUrl} onMermaidClick={setLightboxSvg} />
                       ) : (
                         <div className="preview-loading">Failed to load file content</div>
                       )
@@ -1184,10 +1189,10 @@ export function DiffFileView({
                       previewSegments.map((seg) =>
                         seg.type === 'markdown' ? (
                           <div key={seg.id} className={`preview-block-${seg.kind}`}>
-                            <MarkdownRenderer content={seg.content} />
+                            <MarkdownRenderer content={seg.content} onImageClick={setLightboxUrl} onMermaidClick={setLightboxSvg} />
                           </div>
                         ) : seg.language === 'mermaid' ? (
-                          <MermaidBlock key={seg.id} code={seg.lines.map(l => l.content).join('\n')} />
+                          <MermaidBlock key={seg.id} code={seg.lines.map(l => l.content).join('\n')} onPreviewClick={setLightboxSvg} />
                         ) : (
                           <pre key={seg.id} className="preview-code-block">
                             <code>
@@ -1213,6 +1218,12 @@ export function DiffFileView({
           </div>
         </>
       )}
+
+      <ImageLightbox
+        imageUrl={lightboxUrl}
+        svgContent={lightboxSvg}
+        onClose={() => { setLightboxUrl(null); setLightboxSvg(null); }}
+      />
 
       {/* Floating comment button on text selection */}
       {selectionAnchor && onGutterClick && (
