@@ -42,11 +42,14 @@ export function ImageLightbox({ imageUrl, svgContent, onClose }: ImageLightboxPr
           className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/70 backdrop-blur-sm cursor-pointer select-none"
           onClick={handleClose}
           onWheel={(e) => {
-            if (!e.metaKey && !e.ctrlKey) return;
             e.preventDefault();
             e.stopPropagation();
-            const delta = e.deltaY > 0 ? -0.15 : 0.15;
-            setZoom((z) => Math.min(10, Math.max(0.2, z + delta * z)));
+            if (e.metaKey || e.ctrlKey) {
+              const delta = e.deltaY > 0 ? -0.15 : 0.15;
+              setZoom((z) => Math.min(10, Math.max(0.2, z + delta * z)));
+            } else if (zoom > 1) {
+              setPan((p) => ({ x: p.x - e.deltaX, y: p.y - e.deltaY }));
+            }
           }}
           onMouseDown={(e) => {
             if (zoom <= 1) return;
