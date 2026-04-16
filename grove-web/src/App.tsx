@@ -302,6 +302,14 @@ function AppContent() {
     registerGlobalCommands(() => buildCommands(globalOptionsRef.current));
   }, [registerGlobalCommands]);
 
+  const handleItemClick = useCallback((item: string) => {
+    if (item === "tasks" && activeItem === "tasks" && inWorkspace) {
+      setTasksExitSignal(prev => prev + 1);
+    } else {
+      setActiveItem(item);
+    }
+  }, [activeItem, inWorkspace]);
+
   // Show loading state
   if (isLoading) {
     return (
@@ -354,19 +362,10 @@ function AppContent() {
   const isFullWidthPage =
     isDashboardPage ||
     activeItem === "projects" ||
-    activeItem === "tasks" ||
     activeItem === "work" ||
     activeItem === "skills" ||
     activeItem === "ai" ||
     activeItem === "resource";
-
-  const handleItemClick = useCallback((item: string) => {
-    if (item === "tasks" && activeItem === "tasks" && inWorkspace) {
-      setTasksExitSignal(prev => prev + 1);
-    } else {
-      setActiveItem(item);
-    }
-  }, [activeItem, inWorkspace]);
 
   const sidebarProps = {
     activeItem,

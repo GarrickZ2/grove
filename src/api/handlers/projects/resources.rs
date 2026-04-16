@@ -60,6 +60,12 @@ pub async fn list_resources(
 }
 
 /// GET /api/v1/projects/{id}/resource/workdir
+///
+/// Work-directory symlinks and regular uploaded files share the same `resource/`
+/// directory on disk. Symlinks point to external folders; regular files are
+/// stored directly. The frontend separates them into two tabs ("Uploads" vs
+/// "Work Directory") by calling this endpoint for symlinks and `list_resources`
+/// for regular files.
 pub async fn list_resource_workdirs(
     Path(id): Path<String>,
 ) -> Result<Json<WorkDirectoryListResponse>, (StatusCode, Json<ApiError>)> {
@@ -224,10 +230,8 @@ pub async fn move_resource(
     let (_project, studio_dir) = resolve_studio_dir(&id)?;
     let resource_dir = studio_dir.join("resource");
 
-    let from = studio_common::validate_path_containment(
-        &resource_dir,
-        &resource_dir.join(&request.from),
-    )?;
+    let from =
+        studio_common::validate_path_containment(&resource_dir, &resource_dir.join(&request.from))?;
 
     // Build effective destination: optionally replace the final component
     let effective_to = if let Some(rename_to) = &request.rename_to {
@@ -249,19 +253,10 @@ pub async fn move_resource(
 
     // Conflict check: destination exists and caller didn't force-overwrite
     if to_path.exists() && !request.force.unwrap_or(false) {
-        let file_name = to_path
-            .file_name()
-            .map(|n| n.to_string_lossy().into_owned())
-            .unwrap_or_default();
         return Err((
             StatusCode::CONFLICT,
             Json(ApiError {
-                error: serde_json::to_string(&super::types::MoveConflictResponse {
-                    error: "File already exists".to_string(),
-                    conflict: true,
-                    file_name,
-                })
-                .unwrap_or_default(),
+                error: "File already exists".to_string(),
             }),
         ));
     }

@@ -29,13 +29,6 @@ pub struct SyncToResourceRequest {
     pub rename_to: Option<String>,
 }
 
-#[derive(serde::Serialize)]
-pub struct SyncConflictResponse {
-    pub error: String,
-    pub conflict: bool,
-    pub file_name: String,
-}
-
 fn list_dir_recursive(
     base: &std::path::Path,
     dir: &std::path::Path,
@@ -147,12 +140,16 @@ pub async fn list_artifacts(
     let input_dir = task_dir.join("input");
     let output_dir = task_dir.join("output");
 
-    if !input_dir.exists() || !output_dir.exists() {
-        return Err(StatusCode::NOT_FOUND);
-    }
-
-    let input_files = list_dir_recursive(&input_dir, &input_dir, "input");
-    let output_files = list_dir_recursive(&output_dir, &output_dir, "output");
+    let input_files = if input_dir.exists() {
+        list_dir_recursive(&input_dir, &input_dir, "input")
+    } else {
+        vec![]
+    };
+    let output_files = if output_dir.exists() {
+        list_dir_recursive(&output_dir, &output_dir, "output")
+    } else {
+        vec![]
+    };
 
     Ok(Json(ArtifactsResponse {
         input: input_files,
@@ -364,8 +361,7 @@ pub async fn sync_artifact_to_resource(
         ));
     }
 
-    let task_dir =
-        resolve_task_dir(&project, &project_key, &task_id).ok_or_else(task_not_found)?;
+    let task_dir = resolve_task_dir(&project, &project_key, &task_id).ok_or_else(task_not_found)?;
 
     if request.directory != "output" && request.directory != "input" {
         return Err((
@@ -377,10 +373,8 @@ pub async fn sync_artifact_to_resource(
     }
 
     let artifact_dir = task_dir.join(&request.directory);
-    let artifact_path = studio_common::validate_path_containment(
-        &artifact_dir,
-        &artifact_dir.join(&request.path),
-    )?;
+    let artifact_path =
+        studio_common::validate_path_containment(&artifact_dir, &artifact_dir.join(&request.path))?;
 
     if !artifact_path.is_file() {
         return Err((
@@ -423,12 +417,7 @@ pub async fn sync_artifact_to_resource(
         return Err((
             StatusCode::CONFLICT,
             Json(ApiError {
-                error: serde_json::to_string(&SyncConflictResponse {
-                    error: "File already exists".to_string(),
-                    conflict: true,
-                    file_name: original_file_name,
-                })
-                .unwrap_or_default(),
+                error: "File already exists".to_string(),
             }),
         ));
     }

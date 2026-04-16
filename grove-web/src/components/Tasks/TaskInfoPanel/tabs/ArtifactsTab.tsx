@@ -12,6 +12,7 @@ import {
   listResources,
   type ArtifactFile, type ArtifactWorkDirectoryEntry,
 } from "../../../../api";
+import { apiClient } from "../../../../api/client";
 import {
   VSCodeIcon,
   FilePreviewDrawer,
@@ -69,6 +70,7 @@ export function ArtifactsTab({ projectId, task, previewRequest, lastChatIdleAt, 
   const [isUploading, setIsUploading] = useState(false);
   const isUploadingRef = useRef(false);
   const [isDragOver, setIsDragOver] = useState(false);
+  const dragCountRef = useRef(0);
   const [uploadsOpen, setUploadsOpen] = useState(true);
   const [downloadsOpen, setDownloadsOpen] = useState(true);
   const [uploadsTab, setUploadsTab] = useState<"uploads" | "workdir">("uploads");
@@ -86,6 +88,8 @@ export function ArtifactsTab({ projectId, task, previewRequest, lastChatIdleAt, 
   const lastGoodContentRef = useRef<string | null>(null);
   const liveRefreshSeqRef = useRef(0);
   const previousChatBusyRef = useRef(!!isChatBusy);
+  const previewFileRef = useRef(previewFile);
+  useEffect(() => { previewFileRef.current = previewFile; }, [previewFile]);
   const [previewError, setPreviewError] = useState<string | null>(null);
 
   const refreshPreviewContent = useCallback((file: ArtifactFile, seq: number) => {
@@ -174,6 +178,7 @@ export function ArtifactsTab({ projectId, task, previewRequest, lastChatIdleAt, 
 
   const handleDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault();
+    dragCountRef.current = 0;
     setIsDragOver(false);
     if (uploadsTab === "workdir") {
       setError("Drag-and-drop folders are not supported for Work Directory yet. Use Add Folder.");
@@ -190,9 +195,7 @@ export function ArtifactsTab({ projectId, task, previewRequest, lastChatIdleAt, 
     if (!projectId) return;
     setIsAddingWorkdir(true);
     try {
-      const response = await fetch("/api/v1/browse-folder");
-      if (!response.ok) throw new Error("Failed to open folder picker");
-      const data = await response.json().catch(() => ({ path: null }));
+      const data = await apiClient.get<{ path: string | null }>("/api/v1/browse-folder");
       if (!data.path) return;
       await addArtifactWorkdir(projectId, task.id, data.path);
       await loadWorkdirs();
@@ -245,13 +248,13 @@ export function ArtifactsTab({ projectId, task, previewRequest, lastChatIdleAt, 
       if (force || !lastGoodContentRef.current) {
         setPreviewFile({ file, content: `Error: ${message}` });
         setPreviewError(message);
-      } else if (lastGoodContentRef.current && previewFile?.file.path === file.path) {
+      } else if (lastGoodContentRef.current && previewFileRef.current?.file.path === file.path) {
         setPreviewFile({ file, content: lastGoodContentRef.current });
       }
     } finally {
       setPreviewLoading(false);
     }
-  }, [projectId, task.id, previewFile]);
+  }, [projectId, task.id]);
 
   useEffect(() => {
     const wasBusy = previousChatBusyRef.current;
@@ -333,12 +336,12 @@ export function ArtifactsTab({ projectId, task, previewRequest, lastChatIdleAt, 
     void handlePreview(target);
   }, [isLoading, pendingPreview, inputFiles, outputFiles, handlePreview]);
 
-  const handleDownload = (file: ArtifactFile) => {
+  const handleDownload = useCallback((file: ArtifactFile) => {
     if (!projectId || file.is_dir) return;
     downloadViaIframe(artifactDownloadUrl(projectId, task.id, file.directory, file.path));
-  };
+  }, [projectId, task.id]);
 
-  const handleDelete = async (file: ArtifactFile) => {
+  const handleDelete = useCallback(async (file: ArtifactFile) => {
     if (!projectId) return;
     try {
       await deleteArtifact(projectId, task.id, file.directory, file.path);
@@ -346,7 +349,7 @@ export function ArtifactsTab({ projectId, task, previewRequest, lastChatIdleAt, 
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to delete file");
     }
-  };
+  }, [projectId, task.id, loadFiles]);
 
   const handleSyncToResource = useCallback(async (
     file: ArtifactFile,
@@ -378,7 +381,7 @@ export function ArtifactsTab({ projectId, task, previewRequest, lastChatIdleAt, 
 
   const handleOpenFolder = (dir: string) => {
     if (!projectId) return;
-    fetch(`/api/v1/projects/${projectId}/tasks/${task.id}/open-folder?dir=${encodeURIComponent(dir)}&path=.`, { method: "POST" }).catch(() => {});
+    apiClient.post(`/api/v1/projects/${projectId}/tasks/${task.id}/open-folder?dir=${encodeURIComponent(dir)}&path=.`).catch(() => {});
   };
 
   useEffect(() => {
@@ -487,8 +490,9 @@ export function ArtifactsTab({ projectId, task, previewRequest, lastChatIdleAt, 
         ref={containerRef}
         className="flex-1 flex flex-col min-h-0"
         onDrop={handleDrop}
-        onDragOver={(e) => { e.preventDefault(); setIsDragOver(true); }}
-        onDragLeave={(e) => { e.preventDefault(); setIsDragOver(false); }}
+        onDragEnter={(e) => { e.preventDefault(); dragCountRef.current++; setIsDragOver(true); }}
+        onDragOver={(e) => { e.preventDefault(); }}
+        onDragLeave={(e) => { e.preventDefault(); dragCountRef.current--; if (dragCountRef.current === 0) setIsDragOver(false); }}
       >
         {error && (
           <div className="text-xs px-4 py-2 shrink-0" style={{ color: "var(--color-error)" }}>{error}</div>
@@ -685,13 +689,6 @@ export function ArtifactsTab({ projectId, task, previewRequest, lastChatIdleAt, 
           </div>
         </div>
       </div>
-
-      <style>{`
-        @keyframes slideInRight {
-          from { transform: translateX(100%); }
-          to { transform: translateX(0); }
-        }
-      `}</style>
 
       {syncConflict && (
         <FileConflictDialog

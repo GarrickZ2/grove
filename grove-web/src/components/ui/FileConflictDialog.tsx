@@ -33,10 +33,11 @@ export function FileConflictDialog({
 }: FileConflictDialogProps) {
   const inputRef = useRef<HTMLInputElement>(null);
   useEffect(() => {
-    setTimeout(() => {
+    const id = setTimeout(() => {
       inputRef.current?.focus();
       inputRef.current?.select();
     }, 0);
+    return () => clearTimeout(id);
   }, []);
 
   const trimmed = newName.trim();
@@ -91,6 +92,11 @@ export function FileConflictDialog({
             onFocus={(e) => (e.currentTarget.style.borderColor = "var(--color-highlight)")}
             onBlur={(e) => (e.currentTarget.style.borderColor = "var(--color-border)")}
           />
+          {isOverwrite && (
+            <p className="text-[11px] mt-1" style={{ color: "var(--color-warning)" }}>
+              This will replace the existing file.
+            </p>
+          )}
         </div>
 
         <div className="flex items-center gap-2">
@@ -124,7 +130,7 @@ export function FileConflictDialog({
               if (canConfirm) e.currentTarget.style.opacity = "0.85";
             }}
             onMouseLeave={(e) => {
-              e.currentTarget.style.opacity = "1";
+              if (canConfirm) e.currentTarget.style.opacity = "1";
             }}
           >
             {isOverwrite ? "Overwrite" : "Rename"}

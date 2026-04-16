@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import Editor from "@monaco-editor/react";
-import { X, FileCode, Loader2, Save, Maximize2, Minimize2, PanelLeftOpen, PanelLeftClose, RefreshCw } from "lucide-react";
+import { X, FileCode, Loader2, Save, Maximize2, Minimize2, PanelLeftOpen, PanelLeftClose, RefreshCw, AlertCircle } from "lucide-react";
 import { Button } from "../../ui";
 import { FileTree } from "./FileTree";
 import type { FileTreeNode } from "../../../utils/fileTree";
@@ -253,7 +253,12 @@ export function TaskEditor({ projectId, taskId, onClose, fullscreen = false, onT
 
   // Create file submit handler
   const handleCreateFile = useCallback(async (path: string) => {
-    await createFile(projectId, taskId, path, "");
+    try {
+      await createFile(projectId, taskId, path, "");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to create file');
+      return;
+    }
     await reloadFiles();
     // Optionally open the newly created file
     setSelectedFile(path);
@@ -275,7 +280,12 @@ export function TaskEditor({ projectId, taskId, onClose, fullscreen = false, onT
 
   // Create directory submit handler
   const handleCreateDirectory = useCallback(async (path: string) => {
-    await createDirectory(projectId, taskId, path);
+    try {
+      await createDirectory(projectId, taskId, path);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to create directory');
+      return;
+    }
     await reloadFiles();
   }, [projectId, taskId, reloadFiles]);
 
@@ -330,6 +340,7 @@ export function TaskEditor({ projectId, taskId, onClose, fullscreen = false, onT
       if (selectedFile === deleteTarget) {
         setSelectedFile(null);
         setFileContent('');
+        setModified(false);
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -486,8 +497,18 @@ export function TaskEditor({ projectId, taskId, onClose, fullscreen = false, onT
               <Loader2 className="w-8 h-8 text-[var(--color-text-muted)] animate-spin" />
             </div>
           ) : error ? (
-            <div className="flex-1 flex items-center justify-center p-4">
-              <p className="text-sm text-[var(--color-error)]">{error}</p>
+            <div className="flex-1 flex items-center justify-center p-6">
+              <div className="flex flex-col items-center gap-3 max-w-xs text-center">
+                <AlertCircle className="w-8 h-8" style={{ color: "var(--color-text-muted)" }} />
+                <p className="text-sm" style={{ color: "var(--color-text-muted)" }}>
+                  {(() => {
+                    const e = error.toLowerCase();
+                    return e.includes('utf-8') || e.includes('utf8') || e.includes('binary') || e.includes('not valid utf') || e.includes('invalid utf')
+                      ? 'Binary file — preview not supported'
+                      : 'Failed to open file';
+                  })()}
+                </p>
+              </div>
             </div>
           ) : selectedFile ? (
             <Editor

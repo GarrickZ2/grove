@@ -870,8 +870,8 @@ export function DiffReviewPage({ projectId, taskId, embedded, navigateToFile, is
         e.preventDefault();
         setCodeSearchVisible(true);
       }
-      // ESC to close code search
-      if (e.key === 'Escape' && codeSearchVisible) {
+      // ESC to close code search — skip if a lightbox is open (it handles ESC itself)
+      if (e.key === 'Escape' && codeSearchVisible && !document.querySelector('[data-lightbox-active]')) {
         setCodeSearchVisible(false);
         setCodeSearchQuery('');
       }

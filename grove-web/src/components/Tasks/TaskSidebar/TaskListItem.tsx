@@ -1,4 +1,3 @@
-import { motion } from "framer-motion";
 import { Circle, CheckCircle, AlertTriangle, XCircle, Archive, MoreVertical, Laptop, Zap, Code } from "lucide-react";
 import { useIsMobile } from "../../../hooks";
 import type { Task, TaskStatus } from "../../../data/types";
@@ -88,13 +87,12 @@ export function TaskListItem({ task, isSelected, onClick, onDoubleClick, onConte
   const { isMobile, isTouchDevice } = useIsMobile();
 
   return (
-    <motion.button
+    <button
       data-task-id={task.id}
-      whileHover={isTouchDevice ? undefined : { backgroundColor: "var(--color-bg-tertiary)" }}
       onClick={onClick}
       onDoubleClick={!isMobile && task.status !== "archived" ? onDoubleClick : undefined}
       onContextMenu={!isTouchDevice ? onContextMenu : undefined}
-      className={`w-full text-left px-3 py-2.5 transition-colors ${
+      className={`w-full text-left px-3 py-2.5 transition-colors hover:bg-[var(--color-bg-tertiary)] ${
         isMobile ? "py-3" : ""
       } ${
         isSelected
@@ -191,6 +189,6 @@ export function TaskListItem({ task, isSelected, onClick, onDoubleClick, onConte
           </div>
         </div>
       </div>
-    </motion.button>
+    </button>
   );
 }

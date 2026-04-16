@@ -11,50 +11,71 @@ interface ImageLightboxProps {
 export function ImageLightbox({ imageUrl, svgContent, onClose }: ImageLightboxProps) {
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
+  const [isPanning, setIsPanning] = useState(false);
   const panningRef = useRef(false);
   const panStartRef = useRef({ x: 0, y: 0, panX: 0, panY: 0 });
+  const containerRef = useRef<HTMLDivElement>(null);
+  // Keep zoom in a ref so the wheel handler (registered imperatively) always reads the latest value
+  const zoomRef = useRef(zoom);
+  useEffect(() => { zoomRef.current = zoom; }, [zoom]);
+
+  // Reset view when image/svg changes
+  useEffect(() => {
+    setZoom(1);
+    setPan({ x: 0, y: 0 });
+    setIsPanning(false);
+    panningRef.current = false;
+  }, [imageUrl, svgContent]);
 
   const reset = useCallback(() => { setZoom(1); setPan({ x: 0, y: 0 }); }, []);
 
   const handleClose = useCallback(() => { onClose(); reset(); }, [onClose, reset]);
 
-  // Reset view whenever the content changes
-  useEffect(() => { reset(); }, [imageUrl, svgContent, reset]);
-
   // ESC to close
   useEffect(() => {
     if (!imageUrl && !svgContent) return;
     const handler = (e: KeyboardEvent) => {
-      if (e.key === "Escape") { e.preventDefault(); handleClose(); }
+      if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); handleClose(); }
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
   }, [imageUrl, svgContent, handleClose]);
 
+  // Wheel zoom/pan — registered imperatively with { passive: false } so preventDefault works
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const handler = (e: WheelEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (e.metaKey || e.ctrlKey) {
+        const delta = e.deltaY > 0 ? -0.15 : 0.15;
+        setZoom((z) => Math.min(10, Math.max(0.2, z + delta * z)));
+      } else if (zoomRef.current > 1) {
+        setPan((p) => ({ x: p.x - e.deltaX, y: p.y - e.deltaY }));
+      }
+    };
+    el.addEventListener("wheel", handler, { passive: false });
+    return () => el.removeEventListener("wheel", handler);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
   return (
     <AnimatePresence>
       {(imageUrl || svgContent) && (
         <motion.div
+          ref={containerRef}
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
           transition={{ duration: 0.15 }}
+          data-lightbox-active="true"
           className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/70 backdrop-blur-sm cursor-pointer select-none"
           onClick={handleClose}
-          onWheel={(e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            if (e.metaKey || e.ctrlKey) {
-              const delta = e.deltaY > 0 ? -0.15 : 0.15;
-              setZoom((z) => Math.min(10, Math.max(0.2, z + delta * z)));
-            } else if (zoom > 1) {
-              setPan((p) => ({ x: p.x - e.deltaX, y: p.y - e.deltaY }));
-            }
-          }}
           onMouseDown={(e) => {
             if (zoom <= 1) return;
             e.preventDefault();
             panningRef.current = true;
+            setIsPanning(true);
             panStartRef.current = { x: e.clientX, y: e.clientY, panX: pan.x, panY: pan.y };
           }}
           onMouseMove={(e) => {
@@ -63,8 +84,8 @@ export function ImageLightbox({ imageUrl, svgContent, onClose }: ImageLightboxPr
             const dy = e.clientY - panStartRef.current.y;
             setPan({ x: panStartRef.current.panX + dx, y: panStartRef.current.panY + dy });
           }}
-          onMouseUp={() => { panningRef.current = false; }}
-          onMouseLeave={() => { panningRef.current = false; }}
+          onMouseUp={() => { panningRef.current = false; setIsPanning(false); }}
+          onMouseLeave={() => { panningRef.current = false; setIsPanning(false); }}
         >
           {/* Close button */}
           <button
@@ -89,7 +110,7 @@ export function ImageLightbox({ imageUrl, svgContent, onClose }: ImageLightboxPr
           <div
             style={{
               transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
-              transition: panningRef.current ? "none" : "transform 0.15s ease-out",
+              transition: isPanning ? "none" : "transform 0.15s ease-out",
             }}
             onClick={(e) => e.stopPropagation()}
           >

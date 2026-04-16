@@ -190,14 +190,6 @@ pub struct MoveResourceRequest {
     pub rename_to: Option<String>,
 }
 
-/// Conflict response for move/rename
-#[derive(Debug, Serialize)]
-pub struct MoveConflictResponse {
-    pub error: String,
-    pub conflict: bool,
-    pub file_name: String,
-}
-
 /// Open command response
 #[derive(Debug, Serialize)]
 pub struct OpenResponse {

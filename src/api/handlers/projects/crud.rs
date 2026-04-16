@@ -74,7 +74,10 @@ pub(crate) fn resolve_studio_dir(
 /// List resource files in a directory (non-recursive, skipping symlinks).
 /// `dir`  — the directory to scan.
 /// `base` — the root directory; paths in results are relative to this.
-pub(crate) fn list_resource_files(dir: &std::path::Path, base: &std::path::Path) -> Vec<ResourceFile> {
+pub(crate) fn list_resource_files(
+    dir: &std::path::Path,
+    base: &std::path::Path,
+) -> Vec<ResourceFile> {
     let mut files = Vec::new();
     let entries = match std::fs::read_dir(dir) {
         Ok(e) => e,

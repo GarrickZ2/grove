@@ -42,6 +42,7 @@ import {
 } from "lucide-react";
 import {
   Button,
+  ImageLightbox,
   MarkdownRenderer,
   Tooltip,
   VSCodeIcon,
@@ -870,22 +871,6 @@ export function TaskChat({
   const [showPlan, setShowPlan] = useState(false);
   const [lightboxUrl, setLightboxUrl] = useState<string | null>(null);
   const [lightboxSvg, setLightboxSvg] = useState<string | null>(null);
-  const [lightboxZoom, setLightboxZoom] = useState(1);
-  const [lightboxPan, setLightboxPan] = useState({ x: 0, y: 0 });
-  const lightboxPanningRef = useRef(false);
-  const lightboxPanStartRef = useRef({ x: 0, y: 0, panX: 0, panY: 0 });
-
-  const resetLightboxView = useCallback(() => { setLightboxZoom(1); setLightboxPan({ x: 0, y: 0 }); }, []);
-
-  // Close lightbox on Escape
-  useEffect(() => {
-    if (!lightboxUrl && !lightboxSvg) return;
-    const handler = (e: KeyboardEvent) => {
-      if (e.key === "Escape") { e.preventDefault(); setLightboxUrl(null); setLightboxSvg(null); resetLightboxView(); }
-    };
-    window.addEventListener("keydown", handler);
-    return () => window.removeEventListener("keydown", handler);
-  }, [lightboxUrl, lightboxSvg, resetLightboxView]);
   const [planFilePath, setPlanFilePath] = useState("");
   const [planFileContent, setPlanFileContent] = useState("");
   const [showPlanFile, setShowPlanFile] = useState(false);
@@ -4280,89 +4265,11 @@ export function TaskChat({
         </div>
       </div>
       {/* Image / SVG Lightbox */}
-      <AnimatePresence>
-        {(lightboxUrl || lightboxSvg) && (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            transition={{ duration: 0.15 }}
-            className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/70 backdrop-blur-sm cursor-pointer select-none"
-            data-hotkeys-dialog
-            onClick={() => { setLightboxUrl(null); setLightboxSvg(null); resetLightboxView(); }}
-            onWheel={(e) => {
-              if (!e.metaKey && !e.ctrlKey) return;
-              e.preventDefault();
-              e.stopPropagation();
-              const delta = e.deltaY > 0 ? -0.15 : 0.15;
-              setLightboxZoom((z) => Math.min(10, Math.max(0.2, z + delta * z)));
-            }}
-            onMouseDown={(e) => {
-              if (lightboxZoom <= 1) return;
-              e.preventDefault();
-              lightboxPanningRef.current = true;
-              lightboxPanStartRef.current = { x: e.clientX, y: e.clientY, panX: lightboxPan.x, panY: lightboxPan.y };
-            }}
-            onMouseMove={(e) => {
-              if (!lightboxPanningRef.current) return;
-              const dx = e.clientX - lightboxPanStartRef.current.x;
-              const dy = e.clientY - lightboxPanStartRef.current.y;
-              setLightboxPan({ x: lightboxPanStartRef.current.panX + dx, y: lightboxPanStartRef.current.panY + dy });
-            }}
-            onMouseUp={() => { lightboxPanningRef.current = false; }}
-            onMouseLeave={() => { lightboxPanningRef.current = false; }}
-          >
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                setLightboxUrl(null);
-                setLightboxSvg(null);
-                resetLightboxView();
-              }}
-              className="absolute top-4 right-4 w-9 h-9 rounded-full bg-black/50 text-white/80 hover:text-white hover:bg-black/70 flex items-center justify-center transition-colors z-10"
-            >
-              <X className="w-5 h-5" />
-            </button>
-            {lightboxZoom > 1 && (
-              <button
-                onClick={(e) => { e.stopPropagation(); resetLightboxView(); }}
-                className="absolute top-4 left-4 h-9 px-3 rounded-full bg-black/50 text-white/80 hover:text-white hover:bg-black/70 flex items-center justify-center gap-1.5 text-xs font-medium transition-colors z-10"
-              >
-                <Minimize2 className="w-3.5 h-3.5" />
-                {Math.round(lightboxZoom * 100)}%
-              </button>
-            )}
-            <div
-              style={{
-                transform: `translate(${lightboxPan.x}px, ${lightboxPan.y}px) scale(${lightboxZoom})`,
-                transition: lightboxPanningRef.current ? "none" : "transform 0.15s ease-out",
-              }}
-              onClick={(e) => e.stopPropagation()}
-            >
-              {lightboxUrl ? (
-                <motion.img
-                  initial={{ scale: 0.9, opacity: 0 }}
-                  animate={{ scale: 1, opacity: 1 }}
-                  exit={{ scale: 0.9, opacity: 0 }}
-                  transition={{ duration: 0.15 }}
-                  src={lightboxUrl}
-                  className="max-w-[90vw] max-h-[90vh] object-contain rounded-lg shadow-2xl cursor-default"
-                  alt=""
-                />
-              ) : lightboxSvg ? (
-                <motion.div
-                  initial={{ scale: 0.9, opacity: 0 }}
-                  animate={{ scale: 1, opacity: 1 }}
-                  exit={{ scale: 0.9, opacity: 0 }}
-                  transition={{ duration: 0.15 }}
-                  className="w-[90vw] h-[90vh] flex items-center justify-center rounded-lg bg-[var(--color-bg-secondary)] shadow-2xl cursor-default [&_svg]:max-w-[88vw] [&_svg]:max-h-[88vh]"
-                  dangerouslySetInnerHTML={{ __html: lightboxSvg }}
-                />
-              ) : null}
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
+      <ImageLightbox
+        imageUrl={lightboxUrl}
+        svgContent={lightboxSvg}
+        onClose={() => { setLightboxUrl(null); setLightboxSvg(null); }}
+      />
       {showAgentPicker &&
         agentPickerAnchor &&
         typeof document !== "undefined" &&

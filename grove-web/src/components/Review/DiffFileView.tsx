@@ -46,17 +46,20 @@ interface ExpandProps {
 // ============================================================================
 
 // Global counter for match indexing across all renders
-let globalMatchIndex = 0;
+// Module-level match counter — always reset via resetGlobalMatchIndex() before each render pass.
+// Safe in practice: DiffReviewPage resets it in the same synchronous render lambda that maps
+// all DiffFileView children, so each render pass resets-then-recounts correctly.
+const _matchCounter = { current: 0 };
 
 // eslint-disable-next-line react-refresh/only-export-components
 export function resetGlobalMatchIndex() {
-  globalMatchIndex = 0;
+  _matchCounter.current = 0;
 }
 
 function highlightSearchMatches(
   text: string,
   searchQuery: string,
-  caseSensitive: boolean
+  caseSensitive: boolean,
 ): React.ReactNode {
   if (!searchQuery) return text;
 
@@ -72,7 +75,7 @@ function highlightSearchMatches(
       parts.push(text.substring(lastIndex, match.index));
     }
 
-    const currentIndex = globalMatchIndex++;
+    const currentIndex = _matchCounter.current++;
 
     // Add highlighted match
     parts.push(
@@ -105,7 +108,7 @@ function highlightSearchMatches(
 function highlightSearchInHTML(
   html: string,
   searchQuery: string,
-  caseSensitive: boolean
+  caseSensitive: boolean,
 ): string {
   if (!searchQuery) return html;
 
@@ -135,7 +138,7 @@ function highlightSearchInHTML(
           // Add highlighted match
           const mark = document.createElement('mark');
           mark.className = 'code-search-match';
-          mark.setAttribute('data-match-index', String(globalMatchIndex++));
+          mark.setAttribute('data-match-index', String(_matchCounter.current++));
           mark.style.background = 'rgba(255, 215, 0, 0.4)';
           mark.style.color = 'inherit';
           mark.style.padding = '0';

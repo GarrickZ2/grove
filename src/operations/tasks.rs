@@ -592,6 +592,7 @@ fn create_task_inner(
         let task_dir = studio_dir.join("tasks").join(&slug);
         std::fs::create_dir_all(task_dir.join("input"))?;
         std::fs::create_dir_all(task_dir.join("output"))?;
+        std::fs::create_dir_all(task_dir.join("internal"))?;
         std::fs::create_dir_all(task_dir.join("scripts"))?;
 
         // Symlink resource/ → project resource/ (read-only)
@@ -637,8 +638,9 @@ fn create_task_inner(
              \n\
              ```\n\
              ./\n\
-             ├── input/           # User-provided input files. Read these to understand your task.\n\
-             ├── output/          # Write all your results and deliverables here.\n\
+             ├── input/           # User-provided material files. Browse when looking for task inputs.\n\
+             ├── output/          # Final deliverables shown to the user. Write results here.\n\
+             ├── internal/        # Your private workspace. Store intermediate files and working data here.\n\
              ├── scripts/         # Place any scripts you create or use here.\n\
              ├── resource/        # Read-only shared project resources (symlink). Do not modify.\n\
              ├── instructions.md  # Read-only project-level instructions (symlink). Read this first.\n\
@@ -648,17 +650,17 @@ fn create_task_inner(
              ## Getting Started\n\
              \n\
              1. Read `instructions.md` for project-level context and guidelines.\n\
-             2. Read all files in `input/` to understand what you need to do.\n\
-             3. Browse `resource/` if you need shared reference materials.\n\
-             4. Write your results to `output/`.\n\
-             5. Place any scripts in `scripts/`.\n\
-             \n\
-             See `instructions.md` for project-level instructions.\n\n\
+             2. Read `memory.md` for accumulated project knowledge from past sessions.\n\
+             3. Ask the user what they need, or read their chat message. Browse `input/` and `resource/` for any material they reference.\n\
+             4. Write final results and deliverables to `output/`.\n\
+             5. Use `internal/` for intermediate files, scratch work, and working data.\n\
+             6. Place any scripts in `scripts/`.\n\n\
              ## Rules\n\
              \n\
              - ALWAYS read `instructions.md` before starting work.\n\
-             - ALWAYS read everything in `input/` before starting work.\n\
-             - ALWAYS write results and deliverables to `output/`.\n\
+             - Browse `input/` and `resource/` when you need material relevant to your task — do not bulk-read all files upfront.\n\
+             - ALWAYS write final results and deliverables to `output/`.\n\
+             - Use `internal/` for intermediate files and working data — keep `output/` for finished work only.\n\
              - ALWAYS place scripts in `scripts/`.\n\
              - NEVER modify files in `resource/` — it is a read-only symlink to the project vault.\n\
              - NEVER modify files in `input/` unless the user explicitly asks you to.\n\
@@ -684,9 +686,8 @@ fn create_task_inner(
              - You made a significant architectural or design decision\n\
              - You learned something about the user's preferences\n\
              \n\
-             Write in Markdown. Organize by category (e.g. `## Conventions`, `## Known Issues`,\n\
-             `## Decisions`). Append or update existing sections — do not delete entries unless\n\
-             they are clearly outdated or wrong.\n\n\
+             Write concisely. Append new insights — do not delete entries unless they are clearly\n\
+             outdated or wrong.\n\n\
              ## Presentation Guidelines\n\
              \n\
              - **Documentation**: Write in Markdown format.\n\

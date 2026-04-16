@@ -17,6 +17,7 @@ import {
   listResourceWorkdirs, addResourceWorkdir, deleteResourceWorkdir, openResourceWorkdir,
   type ResourceFile, type WorkDirectoryEntry,
 } from "../../api";
+import { apiClient } from "../../api/client";
 import {
   VSCodeIcon,
   FilePreviewDrawer,
@@ -86,6 +87,8 @@ export function ResourcePage() {
   const [fileError, setFileError] = useState<string | null>(null);
   const [isUploading, setIsUploading] = useState(false);
   const [isDragOver, setIsDragOver] = useState(false);
+  const dragCountRef = useRef(0);
+  const isMoveInProgressRef = useRef(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [activeTab, setActiveTab] = useState<"uploads" | "workdir">("uploads");
   const [mainPanel, setMainPanel] = useState<"assets" | "instructions" | "memory">("assets");
@@ -177,7 +180,8 @@ export function ResourcePage() {
       const data = await getInstructions(projectId);
       setInstructions(data.content);
       setSavedInstructions(data.content);
-    } catch {
+    } catch (err) {
+      console.error('Failed to load instructions:', err);
       setInstructions("");
       setSavedInstructions("");
     } finally {
@@ -192,7 +196,8 @@ export function ResourcePage() {
       const data = await getMemory(projectId);
       setMemory(data.content);
       setSavedMemory(data.content);
-    } catch {
+    } catch (err) {
+      console.error('Failed to load memory:', err);
       setMemory("");
       setSavedMemory("");
     } finally {
@@ -208,7 +213,6 @@ export function ResourcePage() {
       await updateMemory(projectId, memory);
       setSavedMemory(memory);
       setMemorySaveMessage("Saved");
-      setTimeout(() => setMemorySaveMessage(null), 2000);
       setIsEditingMemory(false);
     } catch {
       setMemorySaveMessage("Failed to save");
@@ -219,6 +223,19 @@ export function ResourcePage() {
 
   useEffect(() => { loadFiles(); }, [loadFiles]);
   useEffect(() => { loadWorkdirs(); loadInstructions(); loadMemory(); }, [loadWorkdirs, loadInstructions, loadMemory]);
+
+  // Auto-dismiss save messages with proper cleanup
+  useEffect(() => {
+    if (!saveMessage) return;
+    const t = setTimeout(() => setSaveMessage(null), 2000);
+    return () => clearTimeout(t);
+  }, [saveMessage]);
+
+  useEffect(() => {
+    if (!memorySaveMessage) return;
+    const t = setTimeout(() => setMemorySaveMessage(null), 2000);
+    return () => clearTimeout(t);
+  }, [memorySaveMessage]);
 
   // Focus new folder input when it appears
   useEffect(() => {
@@ -265,7 +282,8 @@ export function ResourcePage() {
     options?: { force?: boolean; renameTo?: string },
     cachedExistingNames?: Set<string>,
   ) => {
-    if (!projectId) return;
+    if (!projectId || isMoveInProgressRef.current) return;
+    isMoveInProgressRef.current = true;
     const filename = fromPath.split("/").pop()!;
     const toPath = toFolderPath ? `${toFolderPath}/${filename}` : filename;
     try {
@@ -289,9 +307,12 @@ export function ResourcePage() {
           newName: options?.renameTo ?? filename,
           existingNames,
         });
+        isMoveInProgressRef.current = false;
         return;
       }
       setFileError(err instanceof Error ? err.message : "Failed to move");
+    } finally {
+      isMoveInProgressRef.current = false;
     }
   }, [projectId, loadFiles]);
 
@@ -315,9 +336,7 @@ export function ResourcePage() {
     setIsAddingWorkdir(true);
     setWorkdirError(null);
     try {
-      const response = await fetch("/api/v1/browse-folder");
-      if (!response.ok) throw new Error("Failed to open folder picker");
-      const data = await response.json().catch(() => ({ path: null }));
+      const data = await apiClient.get<{ path: string | null }>("/api/v1/browse-folder");
       if (!data.path) return;
       await addResourceWorkdir(projectId, data.path);
       await loadWorkdirs();
@@ -348,7 +367,7 @@ export function ResourcePage() {
     }
   }, [projectId]);
 
-  const handleDelete = async (file: ResourceFile) => {
+  const handleDelete = useCallback(async (file: ResourceFile) => {
     if (!projectId) return;
     try {
       await deleteResource(projectId, file.path);
@@ -356,7 +375,7 @@ export function ResourcePage() {
     } catch (err) {
       setFileError(err instanceof Error ? err.message : "Failed to delete");
     }
-  };
+  }, [projectId, loadFiles]);
 
   const handleSaveInstructions = useCallback(async () => {
     if (!projectId) return;
@@ -365,7 +384,6 @@ export function ResourcePage() {
       await updateInstructions(projectId, instructions);
       setSavedInstructions(instructions);
       setSaveMessage("Saved");
-      setTimeout(() => setSaveMessage(null), 2000);
       setIsEditingInstructions(false);
     } catch (err) {
       setSaveMessage(err instanceof Error ? err.message : "Failed to save");
@@ -393,6 +411,7 @@ export function ResourcePage() {
 
   const handleDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault();
+    dragCountRef.current = 0;
     setIsDragOver(false);
     // Ignore internal drag-drop (file row → folder)
     if (e.dataTransfer.types.includes(DRAG_TYPE)) return;
@@ -474,10 +493,10 @@ export function ResourcePage() {
               style={{ background: "color-mix(in srgb, var(--color-highlight) 12%, transparent)" }}>
               <FolderOpen className="w-4 h-4" style={{ color: "var(--color-highlight)" }} />
             </div>
-            <div className="min-w-0">
-              <div className="flex items-center gap-2">
-                <span className="text-sm font-semibold">Shared Assets</span>
-                <span className="text-[11px] tabular-nums px-2 py-0.5 rounded-full"
+            <div className="min-w-0 overflow-hidden">
+              <div className="flex items-center gap-2 min-w-0">
+                <span className="text-sm font-semibold truncate">Shared Assets</span>
+                <span className="text-[11px] tabular-nums px-2 py-0.5 rounded-full shrink-0"
                   style={{
                     color: "var(--color-text-muted)",
                     background: "var(--color-bg)",
@@ -485,11 +504,13 @@ export function ResourcePage() {
                   {activeTab === "uploads" ? filteredFiles.length : workdirs.length}
                 </span>
               </div>
-              <p className="mt-1 text-xs" style={{ color: "var(--color-text-muted)" }}>
-                {activeTab === "uploads"
-                  ? <>Reusable files available to all tasks through <span className="font-mono">resource/</span></>
-                  : <>Read-only local folders linked into this Studio</>}
-              </p>
+              {isMain && (
+                <p className="mt-1 text-xs" style={{ color: "var(--color-text-muted)" }}>
+                  {activeTab === "uploads"
+                    ? <>Reusable files available to all tasks through <span className="font-mono">resource/</span></>
+                    : <>Read-only local folders linked into this Studio</>}
+                </p>
+              )}
             </div>
           </div>
 
@@ -511,7 +532,7 @@ export function ResourcePage() {
                 </button>
               ))}
             </div>
-            <button onClick={loadFiles}
+            <button onClick={activeTab === "uploads" ? loadFiles : loadWorkdirs}
               className="p-2 rounded-lg transition-colors"
               style={{ color: "var(--color-text-muted)" }}
               onMouseEnter={e => { e.currentTarget.style.background = "var(--color-bg-tertiary)"; e.currentTarget.style.color = "var(--color-text)"; }}
@@ -1084,14 +1105,22 @@ export function ResourcePage() {
       className="h-full flex flex-col gap-4 p-4 overflow-y-auto select-none"
       style={{ color: "var(--color-text)" }}
       onDrop={handleDrop}
+      onDragEnter={(e) => {
+        if (!e.dataTransfer.types.includes(DRAG_TYPE)) {
+          dragCountRef.current++;
+          setIsDragOver(true);
+        }
+      }}
       onDragOver={(e) => {
         // Only show overlay for OS file drops, not internal drags
         if (!e.dataTransfer.types.includes(DRAG_TYPE)) {
           e.preventDefault();
-          setIsDragOver(true);
         }
       }}
-      onDragLeave={(e) => { e.preventDefault(); setIsDragOver(false); }}
+      onDragLeave={() => {
+        dragCountRef.current--;
+        if (dragCountRef.current <= 0) { dragCountRef.current = 0; setIsDragOver(false); }
+      }}
     >
       {/* Hidden file input */}
       <input ref={fileInputRef} type="file" multiple className="hidden"
@@ -1552,7 +1581,7 @@ function ResourceFileRow({
         background: "color-mix(in srgb, var(--color-bg) 44%, transparent)",
         cursor: isRenaming ? "default" : "grab",
       }}
-      onClick={() => { if (!isRenaming) (canPreview ? onPreview(file) : onDownload(file)); }}
+      onClick={() => { if (!isRenaming) { if (canPreview) onPreview(file); else onDownload(file); } }}
       onDragStart={onDragStart}
       onMouseEnter={e => {
         e.currentTarget.style.background = "var(--color-bg-tertiary)";
