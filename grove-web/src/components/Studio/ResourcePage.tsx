@@ -20,7 +20,6 @@ import {
 import {
   VSCodeIcon,
   FilePreviewDrawer,
-  MarkdownRenderer,
   getPreviewType,
   canPreviewFile,
   getExtBadge,
@@ -88,8 +87,7 @@ export function ResourcePage() {
   const [isDragOver, setIsDragOver] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [activeTab, setActiveTab] = useState<"uploads" | "workdir">("uploads");
-  // @ts-expect-error - Will be used in later tasks
-  const [mainPanel, setMainPanel] = useState<"assets" | "instructions" | "memory">("assets");
+  const [_mainPanel, _setMainPanel] = useState<"assets" | "instructions" | "memory">("assets");
   const [workdirs, setWorkdirs] = useState<WorkDirectoryEntry[]>([]);
   const [isLoadingWorkdirs, setIsLoadingWorkdirs] = useState(true);
   const [workdirError, setWorkdirError] = useState<string | null>(null);
