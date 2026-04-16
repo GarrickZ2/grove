@@ -1,8 +1,10 @@
 /* eslint-disable react-refresh/only-export-components */
+import { useState } from "react";
 import { motion } from "framer-motion";
 import { Download, Eye, Loader2, RefreshCw, X } from "lucide-react";
 import { getPreviewRenderer } from "../Review/previewRenderers";
 import { highlightCode, detectLanguage } from "../Review/syntaxHighlight";
+import { ImageLightbox } from "./ImageLightbox";
 
 
 export function getExtBadge(name: string): string {
@@ -64,6 +66,8 @@ export function FilePreviewDrawer({
 }: FilePreviewDrawerProps) {
   const renderer = getPreviewRenderer(fileName);
   const wide = renderer?.id === 'jsx' || renderer?.id === 'html';
+  const [lightboxUrl, setLightboxUrl] = useState<string | null>(null);
+  const [lightboxSvg, setLightboxSvg] = useState<string | null>(null);
   return (
     <>
       <motion.div
@@ -156,7 +160,7 @@ export function FilePreviewDrawer({
             </div>
           ) : renderer ? (
             <div className={renderer.id === 'image' || renderer.id === 'jsx' || renderer.id === 'html' ? 'h-full' : 'p-5'}>
-              {renderer.renderFull({ content })}
+              {renderer.renderFull({ content, onImageClick: setLightboxUrl, onSvgClick: setLightboxSvg })}
             </div>
           ) : (() => {
             const lang = detectLanguage(fileName);
@@ -173,6 +177,11 @@ export function FilePreviewDrawer({
           })()}
         </div>
       </motion.div>
+      <ImageLightbox
+        imageUrl={lightboxUrl}
+        svgContent={lightboxSvg}
+        onClose={() => { setLightboxUrl(null); setLightboxSvg(null); }}
+      />
     </>
   );
 }
