@@ -87,7 +87,7 @@ export function ResourcePage() {
   const [isDragOver, setIsDragOver] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [activeTab, setActiveTab] = useState<"uploads" | "workdir">("uploads");
-  const [_mainPanel, _setMainPanel] = useState<"assets" | "instructions" | "memory">("assets");
+  const [mainPanel, _setMainPanel] = useState<"assets" | "instructions" | "memory">("assets");
   const [workdirs, setWorkdirs] = useState<WorkDirectoryEntry[]>([]);
   const [isLoadingWorkdirs, setIsLoadingWorkdirs] = useState(true);
   const [workdirError, setWorkdirError] = useState<string | null>(null);
@@ -448,6 +448,560 @@ export function ResourcePage() {
 
   const breadcrumbSegments = currentPath.split("/").filter(Boolean);
 
+  const rightPanels = (["assets", "instructions", "memory"] as const).filter(
+    (p) => p !== mainPanel,
+  );
+
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const renderAssetsPanel = (_: { isMain: boolean }) => (
+    <section className="min-h-[300px] rounded-2xl border overflow-hidden flex flex-col xl:min-h-0"
+      style={{ borderColor: "var(--color-border)", background: "var(--color-bg-secondary)" }}>
+      <div className="flex flex-col gap-3 px-4 py-3 border-b"
+        style={{ borderColor: "var(--color-border)" }}>
+        <div className="flex flex-wrap items-start gap-3">
+          <div className="flex items-center gap-3 min-w-0 flex-1">
+            <div className="w-8 h-8 rounded-xl flex items-center justify-center"
+              style={{ background: "color-mix(in srgb, var(--color-highlight) 12%, transparent)" }}>
+              <FolderOpen className="w-4 h-4" style={{ color: "var(--color-highlight)" }} />
+            </div>
+            <div className="min-w-0">
+              <div className="flex items-center gap-2">
+                <span className="text-sm font-semibold">Shared Assets</span>
+                <span className="text-[11px] tabular-nums px-2 py-0.5 rounded-full"
+                  style={{
+                    color: "var(--color-text-muted)",
+                    background: "var(--color-bg)",
+                  }}>
+                  {activeTab === "uploads" ? filteredFiles.length : workdirs.length}
+                </span>
+              </div>
+              <p className="mt-1 text-xs" style={{ color: "var(--color-text-muted)" }}>
+                {activeTab === "uploads"
+                  ? <>Reusable files available to all tasks through <span className="font-mono">resource/</span></>
+                  : <>Read-only local folders linked into this Studio</>}
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <div className="inline-flex rounded-xl border p-1"
+              style={{ borderColor: "var(--color-border)", background: "var(--color-bg)" }}>
+              {(["uploads", "workdir"] as const).map((tab) => (
+                <button
+                  key={tab}
+                  onClick={() => { setActiveTab(tab); if (tab === "uploads") navigateTo(""); }}
+                  className={`rounded-lg px-3 py-1.5 text-xs font-medium transition-colors ${
+                    activeTab === tab ? "text-white" : ""
+                  }`}
+                  style={activeTab === tab
+                    ? { background: "var(--color-highlight)" }
+                    : { color: "var(--color-text-muted)" }}
+                >
+                  {tab === "uploads" ? "Uploads" : "Work Directory"}
+                </button>
+              ))}
+            </div>
+            <button onClick={loadFiles}
+              className="p-2 rounded-lg transition-colors"
+              style={{ color: "var(--color-text-muted)" }}
+              onMouseEnter={e => { e.currentTarget.style.background = "var(--color-bg-tertiary)"; e.currentTarget.style.color = "var(--color-text)"; }}
+              onMouseLeave={e => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.color = "var(--color-text-muted)"; }}
+              title="Refresh">
+              <RefreshCw className="w-4 h-4" />
+            </button>
+            {activeTab === "uploads" && (
+              <button
+                onClick={() => { setIsCreatingFolder(true); setNewFolderName(""); }}
+                className="p-2 rounded-lg transition-colors"
+                style={{ color: "var(--color-text-muted)" }}
+                onMouseEnter={e => { e.currentTarget.style.background = "var(--color-bg-tertiary)"; e.currentTarget.style.color = "var(--color-text)"; }}
+                onMouseLeave={e => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.color = "var(--color-text-muted)"; }}
+                title="New folder">
+                <FolderPlus className="w-4 h-4" />
+              </button>
+            )}
+            <button
+              onClick={() => activeTab === "uploads" ? fileInputRef.current?.click() : handleAddWorkdir()}
+              disabled={activeTab === "uploads" ? isUploading : isAddingWorkdir}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors disabled:opacity-50"
+              style={{ color: "var(--color-highlight)", background: "color-mix(in srgb, var(--color-highlight) 10%, transparent)" }}
+              onMouseEnter={e => e.currentTarget.style.background = "color-mix(in srgb, var(--color-highlight) 18%, transparent)"}
+              onMouseLeave={e => e.currentTarget.style.background = "color-mix(in srgb, var(--color-highlight) 10%, transparent)"}>
+              {(activeTab === "uploads" ? isUploading : isAddingWorkdir)
+                ? <Loader2 className="w-4 h-4 animate-spin" />
+                : activeTab === "uploads" ? <Upload className="w-4 h-4" /> : <Plus className="w-4 h-4" />}
+              {activeTab === "uploads" ? "Upload" : "Add Folder"}
+            </button>
+          </div>
+        </div>
+
+        {/* Breadcrumb (uploads tab) — also acts as drop targets to move files up */}
+        {activeTab === "uploads" && (
+          <BreadcrumbNav
+            currentPath={currentPath}
+            breadcrumbSegments={breadcrumbSegments}
+            onNavigate={navigateTo}
+            onDropToPath={handleMoveFile}
+          />
+        )}
+
+        {activeTab === "uploads" ? (
+          <div className="grid gap-2 lg:grid-cols-[minmax(0,1fr)_auto]">
+            <label
+              className="flex items-center gap-2 rounded-xl border px-3 py-2"
+              style={{ borderColor: "var(--color-border)", background: "color-mix(in srgb, var(--color-bg) 46%, transparent)" }}
+            >
+              <Search className="w-4 h-4 shrink-0" style={{ color: "var(--color-text-muted)" }} />
+              <input
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="Search files"
+                className="w-full bg-transparent text-sm outline-none"
+                style={{ color: "var(--color-text)" }}
+              />
+            </label>
+            <div className="flex items-center gap-2 text-xs" style={{ color: "var(--color-text-muted)" }}>
+              <span className="rounded-full px-2.5 py-1" style={{ background: "var(--color-bg)" }}>
+                {filteredFiles.length} visible
+              </span>
+              <span className="rounded-full px-2.5 py-1" style={{ background: "var(--color-bg)" }}>
+                Shared across studio
+              </span>
+            </div>
+          </div>
+        ) : (
+          <div className="flex items-center gap-2 text-xs" style={{ color: "var(--color-text-muted)" }}>
+            <span className="rounded-full px-2.5 py-1" style={{ background: "var(--color-bg)" }}>
+              Read-only soft links
+            </span>
+            <span className="rounded-full px-2.5 py-1" style={{ background: "var(--color-bg)" }}>
+              Local folders stay in place
+            </span>
+          </div>
+        )}
+      </div>
+
+      <div className="flex-1 min-h-0 p-3">
+        {activeTab === "uploads" && isLoadingFiles ? (
+          <div className="flex items-center justify-center py-16">
+            <Loader2 className="w-5 h-5 animate-spin" style={{ color: "var(--color-text-muted)" }} />
+          </div>
+        ) : activeTab === "workdir" && isLoadingWorkdirs ? (
+          <div className="flex items-center justify-center py-16">
+            <Loader2 className="w-5 h-5 animate-spin" style={{ color: "var(--color-text-muted)" }} />
+          </div>
+        ) : activeTab === "uploads" && fileError ? (
+          <div className="flex flex-col items-center justify-center gap-3 rounded-2xl border border-dashed py-14 text-center"
+            style={{ borderColor: "var(--color-border)" }}>
+            <p className="text-sm" style={{ color: "var(--color-error)" }}>{fileError}</p>
+            <button onClick={loadFiles} className="text-sm hover:underline" style={{ color: "var(--color-highlight)" }}>Retry</button>
+          </div>
+        ) : activeTab === "workdir" && workdirError ? (
+          <div className="flex flex-col items-center justify-center gap-3 rounded-2xl border border-dashed py-14 text-center"
+            style={{ borderColor: "var(--color-border)" }}>
+            <p className="text-sm" style={{ color: "var(--color-error)" }}>{workdirError}</p>
+            <button onClick={loadWorkdirs} className="text-sm hover:underline" style={{ color: "var(--color-highlight)" }}>Retry</button>
+          </div>
+        ) : activeTab === "uploads" && files.length === 0 && !isCreatingFolder ? (
+          <button onClick={() => fileInputRef.current?.click()}
+            className="w-full h-full min-h-[200px] rounded-2xl cursor-pointer transition-all flex flex-col items-center justify-center gap-3 px-6 text-center"
+            style={{
+              border: "1px dashed color-mix(in srgb, var(--color-highlight) 26%, var(--color-border))",
+              background: "linear-gradient(180deg, color-mix(in srgb, var(--color-highlight) 5%, transparent), transparent)",
+            }}
+            onMouseEnter={e => { e.currentTarget.style.borderColor = "var(--color-highlight)"; }}
+            onMouseLeave={e => { e.currentTarget.style.borderColor = "color-mix(in srgb, var(--color-highlight) 26%, var(--color-border))"; }}>
+            <div className="w-12 h-12 rounded-xl flex items-center justify-center"
+              style={{ background: "color-mix(in srgb, var(--color-highlight) 12%, transparent)" }}>
+              <Upload className="w-6 h-6" style={{ color: "var(--color-highlight)" }} />
+            </div>
+            <div>
+              <p className="text-base font-semibold">Build a shared resource library</p>
+              <p className="mt-2 text-sm max-w-md" style={{ color: "var(--color-text-muted)" }}>
+                Drag files here or browse from disk. Uploaded assets become instantly available to every task in this Studio.
+              </p>
+            </div>
+            <div className="inline-flex items-center gap-1.5 text-sm font-medium"
+              style={{ color: "var(--color-highlight)" }}>
+              Browse files <ArrowRight className="w-4 h-4" />
+            </div>
+          </button>
+        ) : activeTab === "workdir" && workdirs.length === 0 ? (
+          <button onClick={handleAddWorkdir}
+            className="w-full h-full min-h-[200px] rounded-2xl cursor-pointer transition-all flex flex-col items-center justify-center gap-3 px-6 text-center"
+            style={{
+              border: "1px dashed color-mix(in srgb, var(--color-highlight) 26%, var(--color-border))",
+              background: "linear-gradient(180deg, color-mix(in srgb, var(--color-highlight) 5%, transparent), transparent)",
+            }}
+          >
+            <div className="w-12 h-12 rounded-xl flex items-center justify-center"
+              style={{ background: "color-mix(in srgb, var(--color-highlight) 12%, transparent)" }}>
+              <FolderOpen className="w-6 h-6" style={{ color: "var(--color-highlight)" }} />
+            </div>
+            <div>
+              <p className="text-base font-semibold">Link a local Work Directory</p>
+              <p className="mt-2 text-sm max-w-md" style={{ color: "var(--color-text-muted)" }}>
+                Choose a local folder and expose it to this Studio as a read-only soft link without copying files.
+              </p>
+            </div>
+            <div className="inline-flex items-center gap-1.5 text-sm font-medium"
+              style={{ color: "var(--color-highlight)" }}>
+              Add Folder <ArrowRight className="w-4 h-4" />
+            </div>
+          </button>
+        ) : activeTab === "uploads" && filteredFiles.length === 0 && !isCreatingFolder && searchQuery ? (
+          <div className="flex flex-col items-center justify-center gap-3 rounded-[22px] border py-14 text-center"
+            style={{ borderColor: "var(--color-border)", background: "color-mix(in srgb, var(--color-bg) 40%, transparent)" }}>
+            <Search className="w-5 h-5" style={{ color: "var(--color-text-muted)" }} />
+            <p className="text-sm font-medium">No files match "{searchQuery}"</p>
+            <button
+              onClick={() => setSearchQuery("")}
+              className="text-sm hover:underline"
+              style={{ color: "var(--color-highlight)" }}
+            >
+              Clear search
+            </button>
+          </div>
+        ) : (
+          <div className="h-full overflow-y-auto pr-1 [scrollbar-width:none] hover:[scrollbar-width:thin] [&::-webkit-scrollbar]:w-0 hover:[&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-[var(--color-border)]">
+            {activeTab === "uploads" ? (
+              <div className="space-y-2">
+                {/* New folder inline input */}
+                {isCreatingFolder && (
+                  <div className="flex items-center gap-2 rounded-2xl border px-3 py-2.5"
+                    style={{ borderColor: "var(--color-highlight)", background: "color-mix(in srgb, var(--color-highlight) 6%, var(--color-bg))" }}>
+                    <div className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0"
+                      style={{ background: "color-mix(in srgb, var(--color-highlight) 14%, transparent)" }}>
+                      <FolderOpen className="w-4 h-4" style={{ color: "var(--color-highlight)" }} />
+                    </div>
+                    <input
+                      ref={newFolderInputRef}
+                      value={newFolderName}
+                      onChange={e => setNewFolderName(e.target.value)}
+                      onKeyDown={e => {
+                        if (e.key === "Enter") handleCreateFolder();
+                        if (e.key === "Escape") { setIsCreatingFolder(false); setNewFolderName(""); }
+                      }}
+                      placeholder="Folder name"
+                      className="flex-1 bg-transparent text-sm outline-none font-medium"
+                      style={{ color: "var(--color-text)" }}
+                    />
+                    <button onClick={handleCreateFolder}
+                      className="p-1.5 rounded-md transition-colors"
+                      style={{ color: "var(--color-highlight)" }}
+                      onMouseEnter={e => e.currentTarget.style.background = "var(--color-bg-tertiary)"}
+                      onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
+                      <Check className="w-3.5 h-3.5" />
+                    </button>
+                    <button onClick={() => { setIsCreatingFolder(false); setNewFolderName(""); }}
+                      className="p-1.5 rounded-md transition-colors"
+                      style={{ color: "var(--color-text-muted)" }}
+                      onMouseEnter={e => e.currentTarget.style.background = "var(--color-bg-tertiary)"}
+                      onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                )}
+                {filteredFiles.map(file => (
+                  file.is_dir ? (
+                    <ResourceFolderRow
+                      key={file.path}
+                      file={file}
+                      isRenaming={renamingPath === file.path}
+                      renameValue={renameValue}
+                      renameInputRef={renamingPath === file.path ? renameInputRef : undefined}
+                      onEnter={() => navigateTo(file.path)}
+                      onStartRename={() => { setRenamingPath(file.path); setRenameValue(file.name); }}
+                      onRenameChange={setRenameValue}
+                      onRenameConfirm={() => handleRenameFile(file.path, renameValue)}
+                      onRenameCancel={() => setRenamingPath(null)}
+                      onDelete={() => handleDelete(file)}
+                      onDragStart={(e) => { e.dataTransfer.setData(DRAG_TYPE, file.path); e.dataTransfer.effectAllowed = "move"; }}
+                      onMoveToParent={currentPath ? () => handleMoveFile(file.path, currentPath.split("/").slice(0, -1).join("/")) : undefined}
+                      onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); }}
+                      onDrop={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        const fromPath = e.dataTransfer.getData(DRAG_TYPE);
+                        // prevent drop onto self or own descendant
+                        if (fromPath && fromPath !== file.path && !fromPath.startsWith(file.path + "/")) {
+                          handleMoveFile(fromPath, file.path);
+                        }
+                      }}
+                    />
+                  ) : (
+                    <ResourceFileRow
+                      key={file.path}
+                      file={file}
+                      isRenaming={renamingPath === file.path}
+                      renameValue={renameValue}
+                      renameInputRef={renamingPath === file.path ? renameInputRef : undefined}
+                      onPreview={handlePreview}
+                      onDownload={handleDownload}
+                      onDelete={handleDelete}
+                      onStartRename={() => { setRenamingPath(file.path); setRenameValue(file.name); }}
+                      onRenameChange={setRenameValue}
+                      onRenameConfirm={() => handleRenameFile(file.path, renameValue)}
+                      onRenameCancel={() => setRenamingPath(null)}
+                      onDragStart={(e) => { e.dataTransfer.setData(DRAG_TYPE, file.path); e.dataTransfer.effectAllowed = "move"; }}
+                      onMoveToParent={currentPath ? () => handleMoveFile(file.path, currentPath.split("/").slice(0, -1).join("/")) : undefined}
+                    />
+                  )
+                ))}
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {workdirs.map((entry) => (
+                  <WorkDirectoryRow
+                    key={entry.name}
+                    entry={entry}
+                    onOpen={handleOpenWorkdir}
+                    onDelete={handleDeleteWorkdir}
+                  />
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    </section>
+  );
+
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const renderInstructionsPanel = (_: { isMain: boolean }) => (
+    <section className="min-h-[240px] rounded-2xl border overflow-hidden flex flex-col xl:min-h-0 xl:flex-1 xl:min-w-[420px] 2xl:min-w-[480px]"
+      style={{ borderColor: "var(--color-border)", background: "var(--color-bg-secondary)" }}>
+      <div className="px-4 py-3 border-b"
+        style={{ borderColor: "var(--color-border)" }}>
+        <div className="flex flex-wrap items-start gap-3">
+          <div className="flex items-center gap-3 min-w-0 flex-1">
+            <div className="w-8 h-8 rounded-xl flex items-center justify-center"
+              style={{ background: "color-mix(in srgb, var(--color-accent) 12%, transparent)" }}>
+              <FileText className="w-4 h-4" style={{ color: "var(--color-accent)" }} />
+            </div>
+            <div className="min-w-0">
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-sm font-semibold">Workspace Instructions</span>
+                {hasUnsaved && (
+                  <span className="text-[10px] px-1.5 py-0.5 rounded font-medium"
+                    style={{ background: "color-mix(in srgb, var(--color-warning) 15%, transparent)", color: "var(--color-warning)" }}>
+                    Unsaved
+                  </span>
+                )}
+              </div>
+              <p className="mt-0.5 text-xs" style={{ color: "var(--color-text-muted)" }}>
+                Injected into every task. Define reusable guidance once.
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <button onClick={() => setInstructions(savedInstructions)} disabled={!hasUnsaved}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-all disabled:opacity-30 border"
+              style={{
+                borderColor: "var(--color-border)",
+                color: "var(--color-text-muted)",
+                background: "var(--color-bg)",
+              }}>
+              <X className="w-4 h-4" />
+              Cancel
+            </button>
+            <button onClick={handleSaveInstructions} disabled={isSaving || !hasUnsaved}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-all disabled:opacity-30"
+              style={{
+                color: hasUnsaved ? "white" : "var(--color-text-muted)",
+                background: hasUnsaved ? "var(--color-highlight)" : "var(--color-bg)",
+              }}>
+              {isSaving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+              {hasUnsaved ? "Save Changes" : "Saved"}
+            </button>
+          </div>
+        </div>
+
+        <div className="mt-3 flex flex-wrap gap-2">
+          {INSTRUCTION_TEMPLATES.map((template) => (
+            <button
+              key={template.label}
+              onClick={() => insertTemplate(template.content)}
+              className="rounded-full border px-3 py-1.5 text-xs font-medium transition-colors"
+              style={{
+                borderColor: "var(--color-border)",
+                color: "var(--color-text-muted)",
+                background: "color-mix(in srgb, var(--color-bg) 48%, transparent)",
+              }}
+              onMouseEnter={e => {
+                e.currentTarget.style.borderColor = "var(--color-highlight)";
+                e.currentTarget.style.color = "var(--color-text)";
+              }}
+              onMouseLeave={e => {
+                e.currentTarget.style.borderColor = "var(--color-border)";
+                e.currentTarget.style.color = "var(--color-text-muted)";
+              }}
+            >
+              {template.label}
+            </button>
+          ))}
+        </div>
+
+        {saveMessage && (
+          <p className="mt-3 text-xs font-medium" style={{ color: saveMessage === "Saved" ? "var(--color-success)" : "var(--color-error)" }}>
+            {saveMessage}
+          </p>
+        )}
+      </div>
+
+      <div className="flex-1 min-h-0 p-3">
+        {isLoadingInstructions ? (
+          <div className="flex items-center justify-center h-full">
+            <Loader2 className="w-5 h-5 animate-spin" style={{ color: "var(--color-text-muted)" }} />
+          </div>
+        ) : (
+          <div className="flex h-full min-h-[120px] flex-col rounded-2xl border"
+            style={{
+              borderColor: "var(--color-border)",
+              background: "linear-gradient(180deg, color-mix(in srgb, var(--color-bg) 56%, transparent), transparent)",
+            }}>
+            <div className="flex items-center justify-between gap-3 px-4 py-2.5 border-b"
+              style={{ borderColor: "var(--color-border)" }}>
+              <div>
+                <p className="text-sm font-medium">Rules editor</p>
+                <p className="text-xs" style={{ color: "var(--color-text-muted)" }}>
+                  Use sections and short bullets. Save with <span className="font-mono">Cmd/Ctrl + S</span>.
+                </p>
+              </div>
+              <div className="text-right">
+                <p className="text-xs font-medium" style={{ color: "var(--color-text)" }}>
+                  {instructionLineCount > 0 ? `${instructionLineCount} ${instructionLineCount === 1 ? "line" : "lines"}` : "No content"}
+                </p>
+                <p className="text-[11px]" style={{ color: "var(--color-text-muted)" }}>
+                  Synced to task bootstrap
+                </p>
+              </div>
+            </div>
+            <textarea
+              id="resource-instructions-editor"
+              value={instructions}
+              onChange={(e) => setInstructions(e.target.value)}
+              placeholder={"# Workspace rules\n\nAdd shared expectations for every task in this Studio.\n\nExamples:\n- Always respond in Chinese\n- Use formal tone for reports\n- Output files in Markdown format\n- Reference data from resource/ when available"}
+              className="w-full flex-1 resize-none outline-none px-4 py-3 text-[13px] font-mono leading-6"
+              style={{
+                background: "transparent",
+                color: "var(--color-text)",
+                caretColor: "var(--color-highlight)",
+              }}
+              spellCheck={false}
+            />
+          </div>
+        )}
+      </div>
+    </section>
+  );
+
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const renderMemoryPanel = (_: { isMain: boolean }) => (
+    <section className="min-h-[240px] rounded-2xl border overflow-hidden flex flex-col xl:min-h-0 xl:flex-1 xl:min-w-[420px] 2xl:min-w-[480px]"
+      style={{ borderColor: "var(--color-border)", background: "var(--color-bg-secondary)" }}>
+      <div className="px-4 py-3 border-b"
+        style={{ borderColor: "var(--color-border)" }}>
+        <div className="flex flex-wrap items-start gap-3">
+          <div className="flex items-center gap-3 min-w-0 flex-1">
+            <div className="w-8 h-8 rounded-xl flex items-center justify-center"
+              style={{ background: "color-mix(in srgb, var(--color-highlight) 12%, transparent)" }}>
+              <Brain className="w-4 h-4" style={{ color: "var(--color-highlight)" }} />
+            </div>
+            <div className="min-w-0">
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-sm font-semibold">Project Memory</span>
+                {hasUnsavedMemory && (
+                  <span className="text-[10px] px-1.5 py-0.5 rounded font-medium"
+                    style={{ background: "color-mix(in srgb, var(--color-warning) 15%, transparent)", color: "var(--color-warning)" }}>
+                    Unsaved
+                  </span>
+                )}
+              </div>
+              <p className="mt-0.5 text-xs" style={{ color: "var(--color-text-muted)" }}>
+                Accumulated by AI agents across tasks. Read on start, updated on finish.
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <button onClick={() => setMemory(savedMemory)} disabled={!hasUnsavedMemory}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-all disabled:opacity-30 border"
+              style={{
+                borderColor: "var(--color-border)",
+                color: "var(--color-text-muted)",
+                background: "var(--color-bg)",
+              }}>
+              <X className="w-4 h-4" />
+              Cancel
+            </button>
+            <button onClick={handleSaveMemory} disabled={isSavingMemory || !hasUnsavedMemory}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-all disabled:opacity-30"
+              style={{
+                color: hasUnsavedMemory ? "white" : "var(--color-text-muted)",
+                background: hasUnsavedMemory ? "var(--color-highlight)" : "var(--color-bg)",
+              }}>
+              {isSavingMemory ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+              {hasUnsavedMemory ? "Save Changes" : "Saved"}
+            </button>
+          </div>
+        </div>
+
+        {memorySaveMessage && (
+          <p className="mt-3 text-xs font-medium" style={{ color: memorySaveMessage === "Saved" ? "var(--color-success)" : "var(--color-error)" }}>
+            {memorySaveMessage}
+          </p>
+        )}
+      </div>
+
+      <div className="flex-1 min-h-0 p-3">
+        {isLoadingMemory ? (
+          <div className="flex items-center justify-center h-full">
+            <Loader2 className="w-5 h-5 animate-spin" style={{ color: "var(--color-text-muted)" }} />
+          </div>
+        ) : (
+          <div className="flex h-full min-h-[120px] flex-col rounded-2xl border"
+            style={{
+              borderColor: "var(--color-border)",
+              background: "linear-gradient(180deg, color-mix(in srgb, var(--color-bg) 56%, transparent), transparent)",
+            }}>
+            <div className="flex items-center justify-between gap-3 px-4 py-2.5 border-b"
+              style={{ borderColor: "var(--color-border)" }}>
+              <div>
+                <p className="text-sm font-medium">Memory editor</p>
+                <p className="text-xs" style={{ color: "var(--color-text-muted)" }}>
+                  AI-maintained knowledge base. Save with <span className="font-mono">Cmd/Ctrl + S</span>.
+                </p>
+              </div>
+              <div className="text-right">
+                <p className="text-xs font-medium" style={{ color: "var(--color-text)" }}>
+                  {memoryLineCount > 0 ? `${memoryLineCount} ${memoryLineCount === 1 ? "line" : "lines"}` : "No content"}
+                </p>
+                <p className="text-[11px]" style={{ color: "var(--color-text-muted)" }}>
+                  Shared across tasks
+                </p>
+              </div>
+            </div>
+            <textarea
+              id="resource-memory-editor"
+              value={memory}
+              onChange={(e) => setMemory(e.target.value)}
+              placeholder={"# Project Memory\n\nThis file is maintained by AI agents.\n\n## Conventions\n\n## Known Issues\n\n## Decisions"}
+              className="w-full flex-1 resize-none outline-none px-4 py-3 text-[13px] font-mono leading-6"
+              style={{
+                background: "transparent",
+                color: "var(--color-text)",
+                caretColor: "var(--color-highlight)",
+              }}
+              spellCheck={false}
+            />
+          </div>
+        )}
+      </div>
+    </section>
+  );
+
   return (
     <motion.div
       initial={{ opacity: 0, y: 12 }}
@@ -576,547 +1130,31 @@ export function ResourcePage() {
       </section>
 
       <div className="grid flex-1 min-h-0 gap-4 xl:grid-cols-[minmax(0,1.5fr)_minmax(420px,1fr)] 2xl:grid-cols-[minmax(0,1.65fr)_minmax(480px,1fr)]">
-        <section className="min-h-[300px] rounded-2xl border overflow-hidden flex flex-col xl:min-h-0"
-          style={{ borderColor: "var(--color-border)", background: "var(--color-bg-secondary)" }}>
-          <div className="flex flex-col gap-3 px-4 py-3 border-b"
-            style={{ borderColor: "var(--color-border)" }}>
-            <div className="flex flex-wrap items-start gap-3">
-              <div className="flex items-center gap-3 min-w-0 flex-1">
-                <div className="w-8 h-8 rounded-xl flex items-center justify-center"
-                  style={{ background: "color-mix(in srgb, var(--color-highlight) 12%, transparent)" }}>
-                  <FolderOpen className="w-4 h-4" style={{ color: "var(--color-highlight)" }} />
-                </div>
-                <div className="min-w-0">
-                  <div className="flex items-center gap-2">
-                    <span className="text-sm font-semibold">Shared Assets</span>
-                    <span className="text-[11px] tabular-nums px-2 py-0.5 rounded-full"
-                      style={{
-                        color: "var(--color-text-muted)",
-                        background: "var(--color-bg)",
-                      }}>
-                      {activeTab === "uploads" ? filteredFiles.length : workdirs.length}
-                    </span>
-                  </div>
-                  <p className="mt-1 text-xs" style={{ color: "var(--color-text-muted)" }}>
-                    {activeTab === "uploads"
-                      ? <>Reusable files available to all tasks through <span className="font-mono">resource/</span></>
-                      : <>Read-only local folders linked into this Studio</>}
-                  </p>
-                </div>
-              </div>
+        {/* Main panel (animated) */}
+        <AnimatePresence mode="wait">
+          <motion.div
+            key={mainPanel}
+            initial={{ opacity: 0, scale: 0.98 }}
+            animate={{ opacity: 1, scale: 1 }}
+            exit={{ opacity: 0, scale: 0.98 }}
+            transition={{ duration: 0.2 }}
+            className="min-h-[300px] xl:min-h-0 flex flex-col"
+          >
+            {mainPanel === "assets" && renderAssetsPanel({ isMain: true })}
+            {mainPanel === "instructions" && renderInstructionsPanel({ isMain: true })}
+            {mainPanel === "memory" && renderMemoryPanel({ isMain: true })}
+          </motion.div>
+        </AnimatePresence>
 
-              <div className="flex items-center gap-2">
-                <div className="inline-flex rounded-xl border p-1"
-                  style={{ borderColor: "var(--color-border)", background: "var(--color-bg)" }}>
-                  {(["uploads", "workdir"] as const).map((tab) => (
-                    <button
-                      key={tab}
-                      onClick={() => { setActiveTab(tab); if (tab === "uploads") navigateTo(""); }}
-                      className={`rounded-lg px-3 py-1.5 text-xs font-medium transition-colors ${
-                        activeTab === tab ? "text-white" : ""
-                      }`}
-                      style={activeTab === tab
-                        ? { background: "var(--color-highlight)" }
-                        : { color: "var(--color-text-muted)" }}
-                    >
-                      {tab === "uploads" ? "Uploads" : "Work Directory"}
-                    </button>
-                  ))}
-                </div>
-                <button onClick={loadFiles}
-                  className="p-2 rounded-lg transition-colors"
-                  style={{ color: "var(--color-text-muted)" }}
-                  onMouseEnter={e => { e.currentTarget.style.background = "var(--color-bg-tertiary)"; e.currentTarget.style.color = "var(--color-text)"; }}
-                  onMouseLeave={e => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.color = "var(--color-text-muted)"; }}
-                  title="Refresh">
-                  <RefreshCw className="w-4 h-4" />
-                </button>
-                {activeTab === "uploads" && (
-                  <button
-                    onClick={() => { setIsCreatingFolder(true); setNewFolderName(""); }}
-                    className="p-2 rounded-lg transition-colors"
-                    style={{ color: "var(--color-text-muted)" }}
-                    onMouseEnter={e => { e.currentTarget.style.background = "var(--color-bg-tertiary)"; e.currentTarget.style.color = "var(--color-text)"; }}
-                    onMouseLeave={e => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.color = "var(--color-text-muted)"; }}
-                    title="New folder">
-                    <FolderPlus className="w-4 h-4" />
-                  </button>
-                )}
-                <button
-                  onClick={() => activeTab === "uploads" ? fileInputRef.current?.click() : handleAddWorkdir()}
-                  disabled={activeTab === "uploads" ? isUploading : isAddingWorkdir}
-                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors disabled:opacity-50"
-                  style={{ color: "var(--color-highlight)", background: "color-mix(in srgb, var(--color-highlight) 10%, transparent)" }}
-                  onMouseEnter={e => e.currentTarget.style.background = "color-mix(in srgb, var(--color-highlight) 18%, transparent)"}
-                  onMouseLeave={e => e.currentTarget.style.background = "color-mix(in srgb, var(--color-highlight) 10%, transparent)"}>
-                  {(activeTab === "uploads" ? isUploading : isAddingWorkdir)
-                    ? <Loader2 className="w-4 h-4 animate-spin" />
-                    : activeTab === "uploads" ? <Upload className="w-4 h-4" /> : <Plus className="w-4 h-4" />}
-                  {activeTab === "uploads" ? "Upload" : "Add Folder"}
-                </button>
-              </div>
-            </div>
-
-            {/* Breadcrumb (uploads tab) — also acts as drop targets to move files up */}
-            {activeTab === "uploads" && (
-              <BreadcrumbNav
-                currentPath={currentPath}
-                breadcrumbSegments={breadcrumbSegments}
-                onNavigate={navigateTo}
-                onDropToPath={handleMoveFile}
-              />
-            )}
-
-            {activeTab === "uploads" ? (
-              <div className="grid gap-2 lg:grid-cols-[minmax(0,1fr)_auto]">
-                <label
-                  className="flex items-center gap-2 rounded-xl border px-3 py-2"
-                  style={{ borderColor: "var(--color-border)", background: "color-mix(in srgb, var(--color-bg) 46%, transparent)" }}
-                >
-                  <Search className="w-4 h-4 shrink-0" style={{ color: "var(--color-text-muted)" }} />
-                  <input
-                    value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
-                    placeholder="Search files"
-                    className="w-full bg-transparent text-sm outline-none"
-                    style={{ color: "var(--color-text)" }}
-                  />
-                </label>
-                <div className="flex items-center gap-2 text-xs" style={{ color: "var(--color-text-muted)" }}>
-                  <span className="rounded-full px-2.5 py-1" style={{ background: "var(--color-bg)" }}>
-                    {filteredFiles.length} visible
-                  </span>
-                  <span className="rounded-full px-2.5 py-1" style={{ background: "var(--color-bg)" }}>
-                    Shared across studio
-                  </span>
-                </div>
-              </div>
-            ) : (
-              <div className="flex items-center gap-2 text-xs" style={{ color: "var(--color-text-muted)" }}>
-                <span className="rounded-full px-2.5 py-1" style={{ background: "var(--color-bg)" }}>
-                  Read-only soft links
-                </span>
-                <span className="rounded-full px-2.5 py-1" style={{ background: "var(--color-bg)" }}>
-                  Local folders stay in place
-                </span>
-              </div>
-            )}
-          </div>
-
-          <div className="flex-1 min-h-0 p-3">
-            {activeTab === "uploads" && isLoadingFiles ? (
-              <div className="flex items-center justify-center py-16">
-                <Loader2 className="w-5 h-5 animate-spin" style={{ color: "var(--color-text-muted)" }} />
-              </div>
-            ) : activeTab === "workdir" && isLoadingWorkdirs ? (
-              <div className="flex items-center justify-center py-16">
-                <Loader2 className="w-5 h-5 animate-spin" style={{ color: "var(--color-text-muted)" }} />
-              </div>
-            ) : activeTab === "uploads" && fileError ? (
-              <div className="flex flex-col items-center justify-center gap-3 rounded-2xl border border-dashed py-14 text-center"
-                style={{ borderColor: "var(--color-border)" }}>
-                <p className="text-sm" style={{ color: "var(--color-error)" }}>{fileError}</p>
-                <button onClick={loadFiles} className="text-sm hover:underline" style={{ color: "var(--color-highlight)" }}>Retry</button>
-              </div>
-            ) : activeTab === "workdir" && workdirError ? (
-              <div className="flex flex-col items-center justify-center gap-3 rounded-2xl border border-dashed py-14 text-center"
-                style={{ borderColor: "var(--color-border)" }}>
-                <p className="text-sm" style={{ color: "var(--color-error)" }}>{workdirError}</p>
-                <button onClick={loadWorkdirs} className="text-sm hover:underline" style={{ color: "var(--color-highlight)" }}>Retry</button>
-              </div>
-            ) : activeTab === "uploads" && files.length === 0 && !isCreatingFolder ? (
-              <button onClick={() => fileInputRef.current?.click()}
-                className="w-full h-full min-h-[200px] rounded-2xl cursor-pointer transition-all flex flex-col items-center justify-center gap-3 px-6 text-center"
-                style={{
-                  border: "1px dashed color-mix(in srgb, var(--color-highlight) 26%, var(--color-border))",
-                  background: "linear-gradient(180deg, color-mix(in srgb, var(--color-highlight) 5%, transparent), transparent)",
-                }}
-                onMouseEnter={e => { e.currentTarget.style.borderColor = "var(--color-highlight)"; }}
-                onMouseLeave={e => { e.currentTarget.style.borderColor = "color-mix(in srgb, var(--color-highlight) 26%, var(--color-border))"; }}>
-                <div className="w-12 h-12 rounded-xl flex items-center justify-center"
-                  style={{ background: "color-mix(in srgb, var(--color-highlight) 12%, transparent)" }}>
-                  <Upload className="w-6 h-6" style={{ color: "var(--color-highlight)" }} />
-                </div>
-                <div>
-                  <p className="text-base font-semibold">Build a shared resource library</p>
-                  <p className="mt-2 text-sm max-w-md" style={{ color: "var(--color-text-muted)" }}>
-                    Drag files here or browse from disk. Uploaded assets become instantly available to every task in this Studio.
-                  </p>
-                </div>
-                <div className="inline-flex items-center gap-1.5 text-sm font-medium"
-                  style={{ color: "var(--color-highlight)" }}>
-                  Browse files <ArrowRight className="w-4 h-4" />
-                </div>
-              </button>
-            ) : activeTab === "workdir" && workdirs.length === 0 ? (
-              <button onClick={handleAddWorkdir}
-                className="w-full h-full min-h-[200px] rounded-2xl cursor-pointer transition-all flex flex-col items-center justify-center gap-3 px-6 text-center"
-                style={{
-                  border: "1px dashed color-mix(in srgb, var(--color-highlight) 26%, var(--color-border))",
-                  background: "linear-gradient(180deg, color-mix(in srgb, var(--color-highlight) 5%, transparent), transparent)",
-                }}
-              >
-                <div className="w-12 h-12 rounded-xl flex items-center justify-center"
-                  style={{ background: "color-mix(in srgb, var(--color-highlight) 12%, transparent)" }}>
-                  <FolderOpen className="w-6 h-6" style={{ color: "var(--color-highlight)" }} />
-                </div>
-                <div>
-                  <p className="text-base font-semibold">Link a local Work Directory</p>
-                  <p className="mt-2 text-sm max-w-md" style={{ color: "var(--color-text-muted)" }}>
-                    Choose a local folder and expose it to this Studio as a read-only soft link without copying files.
-                  </p>
-                </div>
-                <div className="inline-flex items-center gap-1.5 text-sm font-medium"
-                  style={{ color: "var(--color-highlight)" }}>
-                  Add Folder <ArrowRight className="w-4 h-4" />
-                </div>
-              </button>
-            ) : activeTab === "uploads" && filteredFiles.length === 0 && !isCreatingFolder && searchQuery ? (
-              <div className="flex flex-col items-center justify-center gap-3 rounded-[22px] border py-14 text-center"
-                style={{ borderColor: "var(--color-border)", background: "color-mix(in srgb, var(--color-bg) 40%, transparent)" }}>
-                <Search className="w-5 h-5" style={{ color: "var(--color-text-muted)" }} />
-                <p className="text-sm font-medium">No files match "{searchQuery}"</p>
-                <button
-                  onClick={() => setSearchQuery("")}
-                  className="text-sm hover:underline"
-                  style={{ color: "var(--color-highlight)" }}
-                >
-                  Clear search
-                </button>
-              </div>
-            ) : (
-              <div className="h-full overflow-y-auto pr-1 [scrollbar-width:none] hover:[scrollbar-width:thin] [&::-webkit-scrollbar]:w-0 hover:[&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-[var(--color-border)]">
-                {activeTab === "uploads" ? (
-                  <div className="space-y-2">
-                    {/* New folder inline input */}
-                    {isCreatingFolder && (
-                      <div className="flex items-center gap-2 rounded-2xl border px-3 py-2.5"
-                        style={{ borderColor: "var(--color-highlight)", background: "color-mix(in srgb, var(--color-highlight) 6%, var(--color-bg))" }}>
-                        <div className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0"
-                          style={{ background: "color-mix(in srgb, var(--color-highlight) 14%, transparent)" }}>
-                          <FolderOpen className="w-4 h-4" style={{ color: "var(--color-highlight)" }} />
-                        </div>
-                        <input
-                          ref={newFolderInputRef}
-                          value={newFolderName}
-                          onChange={e => setNewFolderName(e.target.value)}
-                          onKeyDown={e => {
-                            if (e.key === "Enter") handleCreateFolder();
-                            if (e.key === "Escape") { setIsCreatingFolder(false); setNewFolderName(""); }
-                          }}
-                          placeholder="Folder name"
-                          className="flex-1 bg-transparent text-sm outline-none font-medium"
-                          style={{ color: "var(--color-text)" }}
-                        />
-                        <button onClick={handleCreateFolder}
-                          className="p-1.5 rounded-md transition-colors"
-                          style={{ color: "var(--color-highlight)" }}
-                          onMouseEnter={e => e.currentTarget.style.background = "var(--color-bg-tertiary)"}
-                          onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
-                          <Check className="w-3.5 h-3.5" />
-                        </button>
-                        <button onClick={() => { setIsCreatingFolder(false); setNewFolderName(""); }}
-                          className="p-1.5 rounded-md transition-colors"
-                          style={{ color: "var(--color-text-muted)" }}
-                          onMouseEnter={e => e.currentTarget.style.background = "var(--color-bg-tertiary)"}
-                          onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
-                          <X className="w-3.5 h-3.5" />
-                        </button>
-                      </div>
-                    )}
-                    {filteredFiles.map(file => (
-                      file.is_dir ? (
-                        <ResourceFolderRow
-                          key={file.path}
-                          file={file}
-                          isRenaming={renamingPath === file.path}
-                          renameValue={renameValue}
-                          renameInputRef={renamingPath === file.path ? renameInputRef : undefined}
-                          onEnter={() => navigateTo(file.path)}
-                          onStartRename={() => { setRenamingPath(file.path); setRenameValue(file.name); }}
-                          onRenameChange={setRenameValue}
-                          onRenameConfirm={() => handleRenameFile(file.path, renameValue)}
-                          onRenameCancel={() => setRenamingPath(null)}
-                          onDelete={() => handleDelete(file)}
-                          onDragStart={(e) => { e.dataTransfer.setData(DRAG_TYPE, file.path); e.dataTransfer.effectAllowed = "move"; }}
-                          onMoveToParent={currentPath ? () => handleMoveFile(file.path, currentPath.split("/").slice(0, -1).join("/")) : undefined}
-                          onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); }}
-                          onDrop={(e) => {
-                            e.preventDefault();
-                            e.stopPropagation();
-                            const fromPath = e.dataTransfer.getData(DRAG_TYPE);
-                            // prevent drop onto self or own descendant
-                            if (fromPath && fromPath !== file.path && !fromPath.startsWith(file.path + "/")) {
-                              handleMoveFile(fromPath, file.path);
-                            }
-                          }}
-                        />
-                      ) : (
-                        <ResourceFileRow
-                          key={file.path}
-                          file={file}
-                          isRenaming={renamingPath === file.path}
-                          renameValue={renameValue}
-                          renameInputRef={renamingPath === file.path ? renameInputRef : undefined}
-                          onPreview={handlePreview}
-                          onDownload={handleDownload}
-                          onDelete={handleDelete}
-                          onStartRename={() => { setRenamingPath(file.path); setRenameValue(file.name); }}
-                          onRenameChange={setRenameValue}
-                          onRenameConfirm={() => handleRenameFile(file.path, renameValue)}
-                          onRenameCancel={() => setRenamingPath(null)}
-                          onDragStart={(e) => { e.dataTransfer.setData(DRAG_TYPE, file.path); e.dataTransfer.effectAllowed = "move"; }}
-                          onMoveToParent={currentPath ? () => handleMoveFile(file.path, currentPath.split("/").slice(0, -1).join("/")) : undefined}
-                        />
-                      )
-                    ))}
-                  </div>
-                ) : (
-                  <div className="space-y-2">
-                    {workdirs.map((entry) => (
-                      <WorkDirectoryRow
-                        key={entry.name}
-                        entry={entry}
-                        onOpen={handleOpenWorkdir}
-                        onDelete={handleDeleteWorkdir}
-                      />
-                    ))}
-                  </div>
-                )}
-              </div>
-            )}
-          </div>
-        </section>
-
+        {/* Right sidebar: remaining two panels */}
         <div className="flex min-h-0 flex-col gap-4">
-          <section className="min-h-[240px] rounded-2xl border overflow-hidden flex flex-col xl:min-h-0 xl:flex-1 xl:min-w-[420px] 2xl:min-w-[480px]"
-            style={{ borderColor: "var(--color-border)", background: "var(--color-bg-secondary)" }}>
-          <div className="px-4 py-3 border-b"
-            style={{ borderColor: "var(--color-border)" }}>
-            <div className="flex flex-wrap items-start gap-3">
-              <div className="flex items-center gap-3 min-w-0 flex-1">
-                <div className="w-8 h-8 rounded-xl flex items-center justify-center"
-                  style={{ background: "color-mix(in srgb, var(--color-accent) 12%, transparent)" }}>
-                  <FileText className="w-4 h-4" style={{ color: "var(--color-accent)" }} />
-                </div>
-                <div className="min-w-0">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <span className="text-sm font-semibold">Workspace Instructions</span>
-                    {hasUnsaved && (
-                      <span className="text-[10px] px-1.5 py-0.5 rounded font-medium"
-                        style={{ background: "color-mix(in srgb, var(--color-warning) 15%, transparent)", color: "var(--color-warning)" }}>
-                        Unsaved
-                      </span>
-                    )}
-                  </div>
-                  <p className="mt-0.5 text-xs" style={{ color: "var(--color-text-muted)" }}>
-                    Injected into every task. Define reusable guidance once.
-                  </p>
-                </div>
-              </div>
-
-              <div className="flex items-center gap-2">
-                <button onClick={() => setInstructions(savedInstructions)} disabled={!hasUnsaved}
-                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-all disabled:opacity-30 border"
-                  style={{
-                    borderColor: "var(--color-border)",
-                    color: "var(--color-text-muted)",
-                    background: "var(--color-bg)",
-                  }}>
-                  <X className="w-4 h-4" />
-                  Cancel
-                </button>
-                <button onClick={handleSaveInstructions} disabled={isSaving || !hasUnsaved}
-                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-all disabled:opacity-30"
-                  style={{
-                    color: hasUnsaved ? "white" : "var(--color-text-muted)",
-                    background: hasUnsaved ? "var(--color-highlight)" : "var(--color-bg)",
-                  }}>
-                  {isSaving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
-                  {hasUnsaved ? "Save Changes" : "Saved"}
-                </button>
-              </div>
+          {rightPanels.map((p) => (
+            <div key={p} className="min-h-[240px] xl:min-h-0 xl:flex-1 flex flex-col">
+              {p === "assets" && renderAssetsPanel({ isMain: false })}
+              {p === "instructions" && renderInstructionsPanel({ isMain: false })}
+              {p === "memory" && renderMemoryPanel({ isMain: false })}
             </div>
-
-            <div className="mt-3 flex flex-wrap gap-2">
-              {INSTRUCTION_TEMPLATES.map((template) => (
-                <button
-                  key={template.label}
-                  onClick={() => insertTemplate(template.content)}
-                  className="rounded-full border px-3 py-1.5 text-xs font-medium transition-colors"
-                  style={{
-                    borderColor: "var(--color-border)",
-                    color: "var(--color-text-muted)",
-                    background: "color-mix(in srgb, var(--color-bg) 48%, transparent)",
-                  }}
-                  onMouseEnter={e => {
-                    e.currentTarget.style.borderColor = "var(--color-highlight)";
-                    e.currentTarget.style.color = "var(--color-text)";
-                  }}
-                  onMouseLeave={e => {
-                    e.currentTarget.style.borderColor = "var(--color-border)";
-                    e.currentTarget.style.color = "var(--color-text-muted)";
-                  }}
-                >
-                  {template.label}
-                </button>
-              ))}
-            </div>
-
-            {saveMessage && (
-              <p className="mt-3 text-xs font-medium" style={{ color: saveMessage === "Saved" ? "var(--color-success)" : "var(--color-error)" }}>
-                {saveMessage}
-              </p>
-            )}
-          </div>
-
-          <div className="flex-1 min-h-0 p-3">
-            {isLoadingInstructions ? (
-              <div className="flex items-center justify-center h-full">
-                <Loader2 className="w-5 h-5 animate-spin" style={{ color: "var(--color-text-muted)" }} />
-              </div>
-            ) : (
-              <div className="flex h-full min-h-[120px] flex-col rounded-2xl border"
-                style={{
-                  borderColor: "var(--color-border)",
-                  background: "linear-gradient(180deg, color-mix(in srgb, var(--color-bg) 56%, transparent), transparent)",
-                }}>
-                <div className="flex items-center justify-between gap-3 px-4 py-2.5 border-b"
-                  style={{ borderColor: "var(--color-border)" }}>
-                  <div>
-                    <p className="text-sm font-medium">Rules editor</p>
-                    <p className="text-xs" style={{ color: "var(--color-text-muted)" }}>
-                      Use sections and short bullets. Save with <span className="font-mono">Cmd/Ctrl + S</span>.
-                    </p>
-                  </div>
-                  <div className="text-right">
-                    <p className="text-xs font-medium" style={{ color: "var(--color-text)" }}>
-                      {instructionLineCount > 0 ? `${instructionLineCount} ${instructionLineCount === 1 ? "line" : "lines"}` : "No content"}
-                    </p>
-                    <p className="text-[11px]" style={{ color: "var(--color-text-muted)" }}>
-                      Synced to task bootstrap
-                    </p>
-                  </div>
-                </div>
-                <textarea
-                  id="resource-instructions-editor"
-                  value={instructions}
-                  onChange={(e) => setInstructions(e.target.value)}
-                  placeholder={"# Workspace rules\n\nAdd shared expectations for every task in this Studio.\n\nExamples:\n- Always respond in Chinese\n- Use formal tone for reports\n- Output files in Markdown format\n- Reference data from resource/ when available"}
-                  className="w-full flex-1 resize-none outline-none px-4 py-3 text-[13px] font-mono leading-6"
-                  style={{
-                    background: "transparent",
-                    color: "var(--color-text)",
-                    caretColor: "var(--color-highlight)",
-                  }}
-                  spellCheck={false}
-                />
-              </div>
-            )}
-          </div>
-        </section>
-
-          <section className="min-h-[240px] rounded-2xl border overflow-hidden flex flex-col xl:min-h-0 xl:flex-1 xl:min-w-[420px] 2xl:min-w-[480px]"
-            style={{ borderColor: "var(--color-border)", background: "var(--color-bg-secondary)" }}>
-          <div className="px-4 py-3 border-b"
-            style={{ borderColor: "var(--color-border)" }}>
-            <div className="flex flex-wrap items-start gap-3">
-              <div className="flex items-center gap-3 min-w-0 flex-1">
-                <div className="w-8 h-8 rounded-xl flex items-center justify-center"
-                  style={{ background: "color-mix(in srgb, var(--color-highlight) 12%, transparent)" }}>
-                  <Brain className="w-4 h-4" style={{ color: "var(--color-highlight)" }} />
-                </div>
-                <div className="min-w-0">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <span className="text-sm font-semibold">Project Memory</span>
-                    {hasUnsavedMemory && (
-                      <span className="text-[10px] px-1.5 py-0.5 rounded font-medium"
-                        style={{ background: "color-mix(in srgb, var(--color-warning) 15%, transparent)", color: "var(--color-warning)" }}>
-                        Unsaved
-                      </span>
-                    )}
-                  </div>
-                  <p className="mt-0.5 text-xs" style={{ color: "var(--color-text-muted)" }}>
-                    Accumulated by AI agents across tasks. Read on start, updated on finish.
-                  </p>
-                </div>
-              </div>
-
-              <div className="flex items-center gap-2">
-                <button onClick={() => setMemory(savedMemory)} disabled={!hasUnsavedMemory}
-                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-all disabled:opacity-30 border"
-                  style={{
-                    borderColor: "var(--color-border)",
-                    color: "var(--color-text-muted)",
-                    background: "var(--color-bg)",
-                  }}>
-                  <X className="w-4 h-4" />
-                  Cancel
-                </button>
-                <button onClick={handleSaveMemory} disabled={isSavingMemory || !hasUnsavedMemory}
-                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-all disabled:opacity-30"
-                  style={{
-                    color: hasUnsavedMemory ? "white" : "var(--color-text-muted)",
-                    background: hasUnsavedMemory ? "var(--color-highlight)" : "var(--color-bg)",
-                  }}>
-                  {isSavingMemory ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
-                  {hasUnsavedMemory ? "Save Changes" : "Saved"}
-                </button>
-              </div>
-            </div>
-
-            {memorySaveMessage && (
-              <p className="mt-3 text-xs font-medium" style={{ color: memorySaveMessage === "Saved" ? "var(--color-success)" : "var(--color-error)" }}>
-                {memorySaveMessage}
-              </p>
-            )}
-          </div>
-
-          <div className="flex-1 min-h-0 p-3">
-            {isLoadingMemory ? (
-              <div className="flex items-center justify-center h-full">
-                <Loader2 className="w-5 h-5 animate-spin" style={{ color: "var(--color-text-muted)" }} />
-              </div>
-            ) : (
-              <div className="flex h-full min-h-[120px] flex-col rounded-2xl border"
-                style={{
-                  borderColor: "var(--color-border)",
-                  background: "linear-gradient(180deg, color-mix(in srgb, var(--color-bg) 56%, transparent), transparent)",
-                }}>
-                <div className="flex items-center justify-between gap-3 px-4 py-2.5 border-b"
-                  style={{ borderColor: "var(--color-border)" }}>
-                  <div>
-                    <p className="text-sm font-medium">Memory editor</p>
-                    <p className="text-xs" style={{ color: "var(--color-text-muted)" }}>
-                      AI-maintained knowledge base. Save with <span className="font-mono">Cmd/Ctrl + S</span>.
-                    </p>
-                  </div>
-                  <div className="text-right">
-                    <p className="text-xs font-medium" style={{ color: "var(--color-text)" }}>
-                      {memoryLineCount > 0 ? `${memoryLineCount} ${memoryLineCount === 1 ? "line" : "lines"}` : "No content"}
-                    </p>
-                    <p className="text-[11px]" style={{ color: "var(--color-text-muted)" }}>
-                      Shared across tasks
-                    </p>
-                  </div>
-                </div>
-                <textarea
-                  id="resource-memory-editor"
-                  value={memory}
-                  onChange={(e) => setMemory(e.target.value)}
-                  placeholder={"# Project Memory\n\nThis file is maintained by AI agents.\n\n## Conventions\n\n## Known Issues\n\n## Decisions"}
-                  className="w-full flex-1 resize-none outline-none px-4 py-3 text-[13px] font-mono leading-6"
-                  style={{
-                    background: "transparent",
-                    color: "var(--color-text)",
-                    caretColor: "var(--color-highlight)",
-                  }}
-                  spellCheck={false}
-                />
-              </div>
-            )}
-          </div>
-          </section>
+          ))}
         </div>
       </div>
     </motion.div>
