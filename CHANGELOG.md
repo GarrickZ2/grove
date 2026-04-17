@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.10] - 2026-04-17
+
+### Added
+
+- **Windows cross-platform support** — Grove now builds and runs on Windows; `grove web`, `grove mcp`, `grove acp`, and `grove gui` work natively, while `grove tui` and `grove fp` show a clear message directing users to WSL2 or `grove web`
+- **Cross-platform filesystem links** — new `fs_link` module provides unified hard links (files) and junctions on Windows / symlinks on Unix for directories, so features like skill links, studio workdir links, and artifacts work without Developer Mode
+- **Windows CI & release artifacts** — CI matrix now builds on `windows-latest` (x64 and best-effort ARM64); release workflow produces a `.zip` Windows package uploaded to GitHub Releases
+
+### Fixed
+
+- **Git `/dev/null` portability** — `git diff --no-index` paths now pick `NUL` on Windows and `/dev/null` elsewhere, fixing diff generation on Windows
+- **ACP Unix socket gating** — cross-process ACP socket listener and probe are gated to Unix; Windows falls back to in-process session lookup with a clear error for cross-process attempts
+- **GUI daemonization on Windows** — uses `CREATE_NEW_PROCESS_GROUP` as the Windows equivalent of Unix process groups; PATH expansion logic restricted to macOS AppBundle only
+
 ## [0.8.9] - 2026-04-16
 
 ### Added
