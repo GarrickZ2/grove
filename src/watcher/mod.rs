@@ -96,7 +96,7 @@ impl TaskEditHistory {
     /// Get files sorted by edit count (descending)
     pub fn files_by_count(&self) -> Vec<(&PathBuf, u32)> {
         let mut files: Vec<_> = self.file_counts.iter().map(|(k, v)| (k, *v)).collect();
-        files.sort_by(|a, b| b.1.cmp(&a.1));
+        files.sort_by_key(|b| std::cmp::Reverse(b.1));
         files
     }
 

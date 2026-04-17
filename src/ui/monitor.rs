@@ -279,10 +279,8 @@ fn render_sidebar(
     let all_actions = MonitorAction::all();
 
     // 渲染可见窗口
-    let mut y = inner.y;
-    for row in rows.iter().skip(scroll_offset).take(visible) {
+    for (y, row) in (inner.y..).zip(rows.iter().skip(scroll_offset).take(visible)) {
         let row_y = y;
-        y += 1;
 
         match row {
             SidebarRow::Logo => {

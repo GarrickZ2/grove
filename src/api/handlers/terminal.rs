@@ -308,16 +308,13 @@ async fn handle_pty_terminal(socket: WebSocket, cmd: CommandBuilder, cols: u16, 
     let mut ws_to_pty = tokio::spawn(async move {
         while let Some(msg) = ws_receiver.next().await {
             match msg {
-                Ok(Message::Text(text)) => {
-                    if ws_tx.send(text.as_bytes().to_vec()).await.is_err() {
-                        break;
-                    }
+                Ok(Message::Text(text)) if ws_tx.send(text.as_bytes().to_vec()).await.is_err() => {
+                    break;
                 }
-                Ok(Message::Binary(data)) => {
-                    if ws_tx.send(data.to_vec()).await.is_err() {
-                        break;
-                    }
+                Ok(Message::Binary(data)) if ws_tx.send(data.to_vec()).await.is_err() => {
+                    break;
                 }
+                Ok(Message::Text(_) | Message::Binary(_)) => {}
                 Ok(Message::Close(_)) => break,
                 Err(_) => break,
                 _ => {}

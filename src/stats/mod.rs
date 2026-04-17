@@ -365,10 +365,8 @@ fn aggregate_tasks(
                     }
                 }
                 match &event {
-                    AcpUpdate::UserMessage { text, .. } => {
-                        if text.trim().chars().count() >= 5 {
-                            user_message_count += 1;
-                        }
+                    AcpUpdate::UserMessage { text, .. } if text.trim().chars().count() >= 5 => {
+                        user_message_count += 1;
                     }
                     AcpUpdate::ToolCall { timestamp, .. } => {
                         task_tool_calls += 1;
@@ -518,7 +516,7 @@ fn aggregate_tasks(
             task_count: set.len() as u32,
         })
         .collect();
-    hot_files.sort_by(|a, b| b.task_count.cmp(&a.task_count));
+    hot_files.sort_by_key(|b| std::cmp::Reverse(b.task_count));
     hot_files.truncate(6);
 
     // ── Agent leaderboard ──────────────────────────────────────────────────

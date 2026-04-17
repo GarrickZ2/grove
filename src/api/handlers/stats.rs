@@ -97,7 +97,7 @@ pub async fn get_task_stats(
             last_edited: last.to_rfc3339(),
         })
         .collect();
-    file_edits.sort_by(|a, b| b.edit_count.cmp(&a.edit_count));
+    file_edits.sort_by_key(|b| std::cmp::Reverse(b.edit_count));
     file_edits.truncate(10); // Top 10
 
     // Calculate hourly activity with minute-level buckets (last 7 days)

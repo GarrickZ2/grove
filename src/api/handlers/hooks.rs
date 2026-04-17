@@ -72,7 +72,7 @@ pub async fn list_all_hooks() -> Result<Json<HooksListResponse>, StatusCode> {
     }
 
     // Sort by timestamp descending (newest first)
-    all_hooks.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
+    all_hooks.sort_by_key(|b| std::cmp::Reverse(b.timestamp));
 
     let total = all_hooks.len() as u32;
     Ok(Json(HooksListResponse {

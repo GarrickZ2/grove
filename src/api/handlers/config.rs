@@ -326,7 +326,7 @@ pub async fn list_applications() -> Json<ApplicationsResponse> {
     }
 
     // Sort by name
-    apps.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+    apps.sort_by_key(|a| a.name.to_lowercase());
 
     // Remove duplicates (same name from different locations, prefer /Applications)
     apps.dedup_by(|a, b| a.name == b.name);
@@ -535,7 +535,7 @@ fn extract_app_icon_to_file(app_path: &Path, output_path: &Path) -> Option<Vec<u
             .collect();
 
         // Sort by size descending
-        icns_files.sort_by(|a, b| b.1.cmp(&a.1));
+        icns_files.sort_by_key(|b| std::cmp::Reverse(b.1));
 
         // Try the largest .icns file
         if let Some((path, _)) = icns_files.first() {

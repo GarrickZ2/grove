@@ -375,16 +375,16 @@ async fn handle_client_message(
         ClientMessage::SelectTask { position, .. }
         | ClientMessage::SendPrompt { position, .. }
         | ClientMessage::SwitchChat { position, .. }
-        | ClientMessage::SetTarget { position, .. } => {
-            if !validate_position(*position) {
-                let _ = tx.send(ServerMessage::PromptSent {
-                    group_id: String::new(),
-                    position: *position,
-                    status: "error".to_string(),
-                    error: Some("Position must be >= 1".to_string()),
-                });
-                return;
-            }
+        | ClientMessage::SetTarget { position, .. }
+            if !validate_position(*position) =>
+        {
+            let _ = tx.send(ServerMessage::PromptSent {
+                group_id: String::new(),
+                position: *position,
+                status: "error".to_string(),
+                error: Some("Position must be >= 1".to_string()),
+            });
+            return;
         }
         _ => {}
     }

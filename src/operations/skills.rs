@@ -249,11 +249,12 @@ pub fn sync_all_sources() -> Result<Vec<SkillSourceDef>> {
 
     for source in &sources_file.sources {
         match source.source_type.as_str() {
-            "git" => {
-                if !source.repo_key.is_empty() && synced_repo_keys.insert(source.repo_key.clone()) {
-                    // First source with this repo_key — sync it (pulls for all)
-                    let _ = sync_source(&source.name);
-                }
+            "git"
+                if !source.repo_key.is_empty()
+                    && synced_repo_keys.insert(source.repo_key.clone()) =>
+            {
+                // First source with this repo_key — sync it (pulls for all)
+                let _ = sync_source(&source.name);
             }
             "local" => {
                 let _ = sync_source(&source.name);

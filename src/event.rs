@@ -34,14 +34,12 @@ pub fn handle_events(app: &mut App) -> io::Result<bool> {
     for _ in 0..MAX_EVENTS_PER_FRAME {
         // 第一次已经 poll 过了；后续用 0ms poll 排空剩余事件
         match event::read()? {
-            Event::Key(key) => {
-                if key.kind == KeyEventKind::Press {
-                    // 按键不合并：逐个处理以保证操作顺序
-                    if let Some(prev_key) = last_key.take() {
-                        handle_key(app, prev_key);
-                    }
-                    last_key = Some(key);
+            Event::Key(key) if key.kind == KeyEventKind::Press => {
+                // 按键不合并：逐个处理以保证操作顺序
+                if let Some(prev_key) = last_key.take() {
+                    handle_key(app, prev_key);
                 }
+                last_key = Some(key);
             }
             Event::Mouse(mouse) => match mouse.kind {
                 MouseEventKind::ScrollDown => {
@@ -256,10 +254,8 @@ fn handle_workspace_key(app: &mut App, key: KeyEvent) {
         }
 
         // 功能按键 - 删除项目
-        KeyCode::Char('x') => {
-            if app.workspace.selected_project().is_some() {
-                app.open_delete_project_dialog();
-            }
+        KeyCode::Char('x') if app.workspace.selected_project().is_some() => {
+            app.open_delete_project_dialog();
         }
 
         // 功能按键 - 搜索
@@ -401,15 +397,11 @@ fn handle_project_key(app: &mut App, key: KeyEvent) {
                 app.project.switch_to_tab(ProjectTab::Archived);
             }
         }
-        KeyCode::Char('3') => {
-            if app.project.preview_visible {
-                app.project.preview_sub_tab = PreviewSubTab::Notes;
-            }
+        KeyCode::Char('3') if app.project.preview_visible => {
+            app.project.preview_sub_tab = PreviewSubTab::Notes;
         }
-        KeyCode::Char('4') => {
-            if app.project.preview_visible {
-                app.project.preview_sub_tab = PreviewSubTab::Diff;
-            }
+        KeyCode::Char('4') if app.project.preview_visible => {
+            app.project.preview_sub_tab = PreviewSubTab::Diff;
         }
 
         // Notes 编辑：打开外部编辑器
@@ -431,10 +423,8 @@ fn handle_project_key(app: &mut App, key: KeyEvent) {
         }
 
         // 功能按键 - Enter
-        KeyCode::Enter => {
-            if app.project.current_tab != ProjectTab::Archived {
-                app.enter_worktree();
-            }
+        KeyCode::Enter if app.project.current_tab != ProjectTab::Archived => {
+            app.enter_worktree();
         }
 
         // 功能按键 - Recover (仅 Archived Tab) / Refresh (其他 Tab)
@@ -447,10 +437,8 @@ fn handle_project_key(app: &mut App, key: KeyEvent) {
         }
 
         // 功能按键 - Clean (仅 Archived Tab)
-        KeyCode::Char('x') => {
-            if app.project.current_tab == ProjectTab::Archived {
-                app.start_clean();
-            }
+        KeyCode::Char('x') if app.project.current_tab == ProjectTab::Archived => {
+            app.start_clean();
         }
 
         // 功能按键 - Theme 选择器
@@ -474,10 +462,8 @@ fn handle_project_key(app: &mut App, key: KeyEvent) {
         }
 
         // 功能按键 - Action Palette (非 Archived Tab)
-        KeyCode::Char(' ') => {
-            if app.project.current_tab != ProjectTab::Archived {
-                app.open_action_palette();
-            }
+        KeyCode::Char(' ') if app.project.current_tab != ProjectTab::Archived => {
+            app.open_action_palette();
         }
 
         // 功能按键 - Checkout (在主仓库切换分支)

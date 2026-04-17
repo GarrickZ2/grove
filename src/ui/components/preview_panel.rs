@@ -743,11 +743,10 @@ pub fn render_stats_tab(
         // Show top 10 files with color gradient based on intensity
         for (path, count) in files.iter().take(10) {
             let path_str = path.to_string_lossy();
-            let bar_width = if max_count > 0 {
-                ((count * bar_max_width as u32) / max_count).max(1) as usize
-            } else {
-                1
-            };
+            let bar_width = (count * bar_max_width as u32)
+                .checked_div(max_count)
+                .unwrap_or(0)
+                .max(1) as usize;
             let bar = "█".repeat(bar_width);
 
             // Color gradient: more edits = warmer color

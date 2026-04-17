@@ -118,7 +118,7 @@ pub fn load_worktrees(project_path: &str) -> Vec<Worktree> {
         .collect();
 
     // 按 updated_at 降序排列
-    worktrees.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+    worktrees.sort_by_key(|b| std::cmp::Reverse(b.updated_at));
     worktrees
 }
 
@@ -155,7 +155,7 @@ pub fn load_worktrees_and_local(project_path: &str) -> (Vec<Worktree>, Option<Wo
         .par_iter()
         .map(|task| task_to_worktree(task, &project_key, project_path, merging_commit.as_deref()))
         .collect();
-    worktrees.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+    worktrees.sort_by_key(|b| std::cmp::Reverse(b.updated_at));
 
     let local = local_tasks
         .first()
@@ -183,7 +183,7 @@ pub fn load_archived_worktrees(project_path: &str) -> Vec<Worktree> {
         .into_iter()
         .map(archived_task_to_worktree)
         .collect();
-    archived.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+    archived.sort_by_key(|b| std::cmp::Reverse(b.updated_at));
     archived
 }
 
