@@ -1,30 +1,41 @@
 mod acp;
 mod agent_usage;
 mod api;
+#[cfg(not(windows))]
 mod app;
+#[cfg(not(windows))]
 mod async_ops_state;
+#[cfg(not(windows))]
 mod check;
 mod cli;
+#[cfg(not(windows))]
 mod config_state;
+#[cfg(not(windows))]
 mod dialogs;
 mod diff;
 mod error;
+#[cfg(not(windows))]
 mod event;
 mod fs_link;
 mod git;
 mod hooks;
 mod model;
+#[cfg(not(windows))]
 mod notification_state;
 mod operations;
 mod session;
 mod stats;
 mod storage;
+#[cfg(not(windows))]
 mod theme;
 mod tmux;
+#[cfg(not(windows))]
 mod ui;
+#[cfg(not(windows))]
 mod ui_state;
 mod update;
 mod watcher;
+#[cfg(not(windows))]
 mod zellij;
 
 use std::io::{self, Write};
@@ -32,10 +43,14 @@ use std::panic;
 use std::time::Instant;
 
 use clap::Parser;
+#[cfg(not(windows))]
 use crossterm::event::{DisableMouseCapture, EnableMouseCapture};
+#[cfg(not(windows))]
 use crossterm::execute;
+#[cfg(not(windows))]
 use ratatui::DefaultTerminal;
 
+#[cfg(not(windows))]
 use app::{App, AppMode};
 use cli::{Cli, Commands};
 
