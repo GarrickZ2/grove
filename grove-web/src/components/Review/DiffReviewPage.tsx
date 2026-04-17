@@ -131,7 +131,6 @@ export function DiffReviewPage({ projectId, taskId, embedded, navigateToFile, is
   const [toVersion, setToVersion] = useState('latest');
   const [collapsedCommentIds, setCollapsedCommentIds] = useState<Set<number>>(new Set());
   const [versions, setVersions] = useState<VersionOption[]>([]);
-  const [, setCacheVersion] = useState(0); // force re-render after diff cache is populated
   const currentDiffRefs = useMemo(() => {
     const fromOpt = versions.find((v) => v.id === fromVersion);
     const toOpt = versions.find((v) => v.id === toVersion);
@@ -521,9 +520,9 @@ export function DiffReviewPage({ projectId, taskId, embedded, navigateToFile, is
 
   const handleExpandDir = useCallback(async (dirPath: string): Promise<DirEntry[]> => {
     const result = await getTaskDirEntries(projectId, taskId, dirPath);
-    appendLazyFiles(result.entries);
+    appendLazyFilesRef.current(result.entries);
     return result.entries;
-  }, [projectId, taskId, appendLazyFiles]);
+  }, [projectId, taskId]);
 
   // Compute per-file comment counts
   const fileCommentCounts = useMemo(() => {
@@ -805,6 +804,25 @@ export function DiffReviewPage({ projectId, taskId, embedded, navigateToFile, is
         if (!cancelled) {
           modeSwitchReadyRef.current = true;
           setLoading(false);
+          // Race condition: if viewMode switched to 'full' while this diff-mode initial load
+          // was in-flight, the mode-switch effect fired but was gated by modeSwitchReady=false.
+          // Now that we're ready, trigger the All Files fetch manually.
+          if (viewMode === 'diff' && viewModeRef.current === 'full') {
+            if (!focusModeRef.current) {
+              getTaskFiles(projectId, taskId)
+                .then((result) => { if (!cancelled) setAllFiles(result.files); })
+                .catch(() => null);
+            } else {
+              getTaskDirEntries(projectId, taskId, '')
+                .then((result) => {
+                  if (!cancelled) {
+                    lazyRootDirEntriesRef.current = result.entries;
+                    appendLazyFilesRef.current(result.entries);
+                  }
+                })
+                .catch(console.error);
+            }
+          }
           // Auto-focus content area so arrow keys scroll immediately
           requestAnimationFrame(() => contentRef.current?.focus());
         }

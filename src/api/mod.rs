@@ -73,6 +73,8 @@ pub fn create_api_router() -> Router {
         .route("/env/check", get(handlers::env::check_all))
         .route("/env/check/{name}", get(handlers::env::check_one))
         .route("/env/check-commands", post(handlers::env::check_commands))
+        // Diagram rendering API
+        .route("/render/d2", post(handlers::render::render_d2))
         // Folder selection API
         .route("/browse-folder", get(handlers::folder::browse_folder))
         // Read file API (for Plan File rendering)

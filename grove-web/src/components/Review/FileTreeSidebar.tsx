@@ -264,8 +264,23 @@ function TreeNode({
   onExpandDir?: (dirPath: string) => Promise<DirEntry[]>;
   onLoadFileDiff?: (filePath: string, fromRef?: string, toRef?: string) => Promise<void>;
 }) {
-  // In lazy dir mode (onExpandDir provided) start collapsed; otherwise auto-expand root dirs.
-  const [expanded, setExpanded] = useState(!onExpandDir);
+  // In lazy dir mode (onExpandDir provided) start collapsed, UNLESS the selected file is
+  // a descendant of this directory — in which case start expanded so the file is visible.
+  const isAncestorOfSelected = isDirNode(node) && !!selectedFile?.startsWith(node.path + '/');
+  const [expanded, setExpanded] = useState(() => !onExpandDir || isAncestorOfSelected);
+  // Track which selectedFile we last auto-expanded for, to avoid re-expanding after user collapses.
+  const autoExpandedForRef = useRef<string | null>(isAncestorOfSelected ? selectedFile : null);
+
+  // Auto-expand when selectedFile changes to a descendant of this directory.
+  useEffect(() => {
+    if (!isDirNode(node)) return;
+    if (!selectedFile || !selectedFile.startsWith(node.path + '/')) return;
+    if (autoExpandedForRef.current === selectedFile) return;
+    autoExpandedForRef.current = selectedFile;
+    setExpanded(true);
+    // In lazy-load mode, also trigger dir load so children become available.
+    if (onExpandDir) onExpandDir(node.path).catch(console.error);
+  }, [selectedFile]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (creatingVirtual && virtualInputRef?.current) {

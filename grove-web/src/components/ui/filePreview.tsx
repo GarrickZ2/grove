@@ -1,7 +1,7 @@
 /* eslint-disable react-refresh/only-export-components */
 import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
-import { Download, Eye, Loader2, Maximize2, Minimize2, RefreshCw, X } from "lucide-react";
+import { Code, Download, Eye, Loader2, Maximize2, Minimize2, RefreshCw, X } from "lucide-react";
 import { getPreviewRenderer } from "../Review/previewRenderers";
 import { highlightCode, detectLanguage } from "../Review/syntaxHighlight";
 import { ImageLightbox } from "./ImageLightbox";
@@ -66,9 +66,11 @@ export function FilePreviewDrawer({
 }: FilePreviewDrawerProps) {
   const renderer = getPreviewRenderer(fileName);
   const wide = renderer?.id === 'jsx' || renderer?.id === 'html';
+  const canToggleSource = renderer?.contentType === 'text';
   const [lightboxUrl, setLightboxUrl] = useState<string | null>(null);
   const [lightboxSvg, setLightboxSvg] = useState<string | null>(null);
   const [fullscreen, setFullscreen] = useState(false);
+  const [showSource, setShowSource] = useState(false);
 
   useEffect(() => {
     if (!fullscreen) return;
@@ -123,6 +125,21 @@ export function FilePreviewDrawer({
             )}
           </div>
           <div className="flex items-center gap-1 shrink-0">
+            {canToggleSource && (
+              <button
+                onClick={() => setShowSource(s => !s)}
+                className="p-1.5 rounded-md transition-colors"
+                title={showSource ? "Show preview" : "Show source"}
+                style={{
+                  color: showSource ? "var(--color-highlight)" : "var(--color-text-muted)",
+                  background: showSource ? "color-mix(in srgb, var(--color-highlight) 12%, transparent)" : "transparent",
+                }}
+                onMouseEnter={(e) => { e.currentTarget.style.background = showSource ? "color-mix(in srgb, var(--color-highlight) 20%, transparent)" : "var(--color-bg-tertiary)"; }}
+                onMouseLeave={(e) => { e.currentTarget.style.background = showSource ? "color-mix(in srgb, var(--color-highlight) 12%, transparent)" : "transparent"; }}
+              >
+                <Code className="w-4 h-4" />
+              </button>
+            )}
             {onRefresh && (
               <button
                 onClick={onRefresh}
@@ -181,7 +198,19 @@ export function FilePreviewDrawer({
             <div className="flex items-center justify-center h-full">
               <Loader2 className="w-5 h-5 animate-spin" style={{ color: "var(--color-text-muted)" }} />
             </div>
-          ) : renderer ? (
+          ) : showSource ? (() => {
+            const lang = detectLanguage(fileName);
+            const highlighted = lang ? highlightCode(content, lang) : null;
+            return highlighted ? (
+              <pre className="markdown-code-block p-5 text-xs font-mono whitespace-pre leading-6 overflow-x-auto" style={{ color: "var(--color-text)" }}>
+                <code dangerouslySetInnerHTML={{ __html: highlighted }} />
+              </pre>
+            ) : (
+              <pre className="p-5 text-xs font-mono whitespace-pre-wrap break-words leading-relaxed" style={{ color: "var(--color-text)" }}>
+                {content}
+              </pre>
+            );
+          })() : renderer ? (
             <div className={renderer.id === 'image' || renderer.id === 'jsx' || renderer.id === 'html' ? 'h-full' : 'p-5'}>
               {renderer.renderFull({ content, onImageClick: setLightboxUrl, onSvgClick: setLightboxSvg })}
             </div>

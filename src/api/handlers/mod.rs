@@ -10,6 +10,7 @@ pub mod folder;
 pub mod git;
 pub mod hooks;
 pub mod projects;
+pub mod render;
 pub mod skills;
 pub mod statistics;
 pub mod stats;

@@ -71,6 +71,12 @@ const DEPENDENCIES: &[DependencyDef] = &[
         check_args: &["codex-acp"],
         install_command: "npm install -g @zed-industries/codex-acp",
     },
+    DependencyDef {
+        name: "d2",
+        check_cmd: "d2",
+        check_args: &["--version"],
+        install_command: "brew install d2",
+    },
 ];
 
 /// ACP adapter dependency names
@@ -177,6 +183,15 @@ fn parse_version(name: &str, output: &str) -> String {
         "claude-agent-acp" | "claude-code-acp" | "codex-acp" => {
             // `which` returns path, not version — just confirm installed
             "installed".to_string()
+        }
+        "d2" => {
+            // "v0.6.8" or "v0.6.8 (linux-amd64)" → "0.6.8"
+            output
+                .trim_start_matches('v')
+                .split_whitespace()
+                .next()
+                .unwrap_or(output)
+                .to_string()
         }
         _ => output.to_string(),
     }

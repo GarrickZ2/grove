@@ -137,6 +137,9 @@ export type {
   InstalledSkill,
 } from './skills';
 
+export { renderD2 } from './render';
+export type { RenderD2Error } from './render';
+
 export {
   listTaskGroups,
   createTaskGroup,

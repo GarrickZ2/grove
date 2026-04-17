@@ -1,5 +1,5 @@
 /* eslint-disable react-refresh/only-export-components */
-import { MarkdownRenderer, MermaidBlock } from '../ui/MarkdownRenderer';
+import { MarkdownRenderer, MermaidBlock, D2Block } from '../ui/MarkdownRenderer';
 import type { DiffFile } from '../../api/review';
 
 // ============================================================================
@@ -47,7 +47,7 @@ const markdownRenderer: PreviewRenderer = {
   match: (path) => /\.(md|markdown)$/i.test(path),
   contentType: 'text',
   renderFull: ({ content, onImageClick, onSvgClick }) => (
-    <MarkdownRenderer content={content} onImageClick={onImageClick} onMermaidClick={onSvgClick} />
+    <MarkdownRenderer content={content} onImageClick={onImageClick} onMermaidClick={onSvgClick} onD2Click={onSvgClick} />
   ),
   supportsDiffSegments: true,
 };
@@ -304,11 +304,23 @@ const jsxRenderer: PreviewRenderer = {
 // Registry
 // ============================================================================
 
+const d2Renderer: PreviewRenderer = {
+  id: 'd2',
+  label: 'Preview D2 diagram',
+  match: (path) => /\.d2$/i.test(path),
+  contentType: 'text',
+  renderFull: ({ content, onSvgClick }) => (
+    <D2Block code={content} onPreviewClick={onSvgClick} />
+  ),
+  supportsDiffSegments: false,
+};
+
 const renderers: PreviewRenderer[] = [
   jsxRenderer,
   htmlRenderer,
   markdownRenderer,
   mermaidRenderer,
+  d2Renderer,
   svgRenderer,
   imageRenderer,
   csvRenderer,

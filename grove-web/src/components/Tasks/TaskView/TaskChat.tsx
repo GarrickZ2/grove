@@ -3533,6 +3533,7 @@ export function TaskChat({
                     onFileClick={onNavigateToFile}
                     onImageClick={setLightboxUrl}
                     onMermaidClick={setLightboxSvg}
+                    onD2Click={setLightboxSvg}
                     onInsertReference={insertAttachmentReference}
                   />
                 ) : (
@@ -3636,6 +3637,7 @@ export function TaskChat({
                             content={planFileContent}
                             onFileClick={onNavigateToFile}
                             onMermaidClick={setLightboxSvg}
+                            onD2Click={setLightboxSvg}
                             onImageClick={setLightboxUrl}
                           />
                         </div>
@@ -4409,6 +4411,7 @@ function MessageItem({
   onFileClick,
   onImageClick,
   onMermaidClick,
+  onD2Click,
   onInsertReference,
 }: {
   message: ChatMessage;
@@ -4422,6 +4425,7 @@ function MessageItem({
   onFileClick?: (filePath: string, line?: number) => void;
   onImageClick?: (url: string) => void;
   onMermaidClick?: (svg: string) => void;
+  onD2Click?: (svg: string) => void;
   onInsertReference?: (label: string) => void;
 }) {
   const resolveImageUrl = useCallback((src: string) => {
@@ -4560,6 +4564,7 @@ function MessageItem({
               onFileClick={onFileClick}
               resolveImageUrl={resolveImageUrl}
               onMermaidClick={onMermaidClick}
+              onD2Click={onD2Click}
               onImageClick={onImageClick}
             />
             {!message.complete && isBusy && (

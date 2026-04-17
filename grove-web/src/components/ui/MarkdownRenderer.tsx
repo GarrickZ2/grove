@@ -1,5 +1,7 @@
 import { Children, isValidElement, useState, useEffect, useRef, useId, memo, useMemo } from "react";
-import { Check, Copy } from "lucide-react";
+import { Check, Code, Copy, Loader2 } from "lucide-react";
+import { renderD2 } from "../../api";
+import type { RenderD2Error } from "../../api";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import mermaid from "mermaid";
@@ -89,9 +91,27 @@ function getMermaidConfig() {
   };
 }
 
-// Module-level SVG cache: code → rendered SVG string.
-// Survives component re-mounts so cached diagrams are shown instantly.
+// Module-level SVG caches: code → rendered SVG string.
+// Survive component re-mounts so cached diagrams are shown instantly.
 const mermaidSvgCache = new Map<string, string>();
+const d2SvgCache = new Map<string, string>();
+
+function SourceToggleButton({ active, onClick }: { active: boolean; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={(e) => { e.stopPropagation(); onClick(); }}
+      className="absolute top-2 right-2 z-10 p-1 rounded opacity-0 group-hover:opacity-100 transition-opacity"
+      title={active ? "Show preview" : "Show source"}
+      style={{
+        color: active ? "var(--color-highlight)" : "var(--color-text-muted)",
+        background: active ? "color-mix(in srgb, var(--color-highlight) 12%, transparent)" : "transparent",
+      }}
+    >
+      <Code className="w-3.5 h-3.5" />
+    </button>
+  );
+}
 
 export const MermaidBlock = memo(function MermaidBlock({ code, onPreviewClick }: { code: string; onPreviewClick?: (svg: string) => void }): React.JSX.Element {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -100,6 +120,7 @@ export const MermaidBlock = memo(function MermaidBlock({ code, onPreviewClick }:
   const cacheKey = `${theme.id}::${code}`;
   const [svg, setSvg] = useState<string | null>(() => mermaidSvgCache.get(cacheKey) ?? null);
   const [error, setError] = useState<string | null>(null);
+  const [showSource, setShowSource] = useState(false);
 
   /* eslint-disable react-hooks/set-state-in-effect */
   useEffect(() => {
@@ -151,19 +172,139 @@ export const MermaidBlock = memo(function MermaidBlock({ code, onPreviewClick }:
     );
   }
 
+  if (showSource) {
+    return (
+      <div className="group relative rounded-lg border border-[var(--color-border)] bg-[color-mix(in_srgb,var(--color-bg-secondary)_72%,transparent)] my-2 overflow-hidden">
+        <SourceToggleButton active={showSource} onClick={() => setShowSource(false)} />
+        <pre className="p-3 text-xs font-mono whitespace-pre-wrap break-words leading-relaxed overflow-x-auto" style={{ color: "var(--color-text)" }}>{code}</pre>
+      </div>
+    );
+  }
+
   return (
-    <div
-      ref={containerRef}
-      className={`rounded-lg border border-[var(--color-border)] bg-[color-mix(in_srgb,var(--color-bg-secondary)_72%,transparent)] p-3 my-2 overflow-x-auto flex justify-center [&_svg]:max-w-full ${onPreviewClick ? "cursor-pointer hover:border-[var(--color-highlight)] transition-colors" : ""}`}
-      dangerouslySetInnerHTML={{ __html: svg }}
-      onClick={onPreviewClick ? () => {
-        const responsive = svg
-          .replace(/\s*width="[^"]*"/, ' width="100%"')
-          .replace(/\s*height="[^"]*"/, ' height="100%"')
-          .replace(/(<svg[^>]*?)(?=\s*>)/, '$1 style="max-width:90vw;max-height:85vh;width:auto;height:auto;" preserveAspectRatio="xMidYMid meet"');
-        onPreviewClick(responsive);
-      } : undefined}
-    />
+    <div ref={containerRef} className="group relative my-2">
+      <SourceToggleButton active={showSource} onClick={() => setShowSource(true)} />
+      <div
+        className={`rounded-lg border border-[var(--color-border)] bg-[color-mix(in_srgb,var(--color-bg-secondary)_72%,transparent)] p-3 overflow-x-auto flex justify-center [&_svg]:max-w-full ${onPreviewClick ? "cursor-pointer hover:border-[var(--color-highlight)] transition-colors" : ""}`}
+        dangerouslySetInnerHTML={{ __html: svg }}
+        onClick={onPreviewClick ? () => {
+          const responsive = svg
+            .replace(/\s*width="[^"]*"/, ' width="100%"')
+            .replace(/\s*height="[^"]*"/, ' height="100%"')
+            .replace(/(<svg[^>]*?)(?=\s*>)/, '$1 style="max-width:90vw;max-height:85vh;width:auto;height:auto;" preserveAspectRatio="xMidYMid meet"');
+          onPreviewClick(responsive);
+        } : undefined}
+      />
+    </div>
+  );
+});
+
+export const D2Block = memo(function D2Block({
+  code,
+  onPreviewClick,
+}: {
+  code: string;
+  onPreviewClick?: (svg: string) => void;
+}): React.JSX.Element {
+  const [state, setState] = useState<'idle' | 'loading' | 'success' | 'not_installed' | 'error'>(
+    () => d2SvgCache.has(code) ? 'success' : 'idle'
+  );
+  const [svg, setSvg] = useState<string>(() => d2SvgCache.get(code) ?? '');
+  const [errorMsg, setErrorMsg] = useState<string>('');
+  const [showSource, setShowSource] = useState(false);
+  // Keep last successful SVG while debouncing to avoid blank flicker
+  const lastSvgRef = useRef<string>(d2SvgCache.get(code) ?? '');
+
+  useEffect(() => {
+    // If already cached, skip API call entirely
+    if (d2SvgCache.has(code)) {
+      const cached = d2SvgCache.get(code)!;
+      lastSvgRef.current = cached;
+      setSvg(cached);
+      setState('success');
+      return;
+    }
+    // Debounce: wait 800ms after code stops changing before calling API.
+    // This prevents rapid re-renders while AI is streaming.
+    const timer = setTimeout(() => {
+      setState('loading');
+      renderD2(code)
+        .then((result) => { d2SvgCache.set(code, result); lastSvgRef.current = result; setSvg(result); setState('success'); })
+        .catch((err: RenderD2Error) => {
+          if (err.code === 'd2_not_installed') setState('not_installed');
+          else { setErrorMsg(err.message || 'Render failed'); setState('error'); }
+        });
+    }, 800);
+    return () => clearTimeout(timer);
+  }, [code]);
+
+  if (showSource) {
+    return (
+      <div className="group relative rounded-lg border border-[var(--color-border)] bg-[color-mix(in_srgb,var(--color-bg-secondary)_72%,transparent)] my-2 overflow-hidden">
+        <SourceToggleButton active={showSource} onClick={() => setShowSource(false)} />
+        <pre className="p-3 text-xs font-mono whitespace-pre-wrap break-words leading-relaxed overflow-x-auto" style={{ color: "var(--color-text)" }}>{code}</pre>
+      </div>
+    );
+  }
+
+  // While debouncing: show last known SVG if available, otherwise spinner
+  if (state === 'idle' || state === 'loading') {
+    if (lastSvgRef.current) {
+      const responsive = lastSvgRef.current
+        .replace(/\s*width="[^"]*"/, ' width="100%"')
+        .replace(/\s*height="[^"]*"/, ' height="100%"');
+      return (
+        <div className="group relative my-2 opacity-60">
+          <SourceToggleButton active={false} onClick={() => setShowSource(true)} />
+          <div
+            className={`flex items-center justify-center [&_svg]:max-w-full${onPreviewClick ? ' cursor-pointer hover:opacity-80 transition-opacity' : ''}`}
+            dangerouslySetInnerHTML={{ __html: responsive }}
+            onClick={onPreviewClick ? () => onPreviewClick(responsive) : undefined}
+          />
+        </div>
+      );
+    }
+    return (
+      <div className="flex items-center justify-center py-6">
+        <Loader2 className="w-4 h-4 animate-spin" style={{ color: 'var(--color-text-muted)' }} />
+      </div>
+    );
+  }
+
+  if (state === 'not_installed') {
+    return (
+      <div className="group relative rounded-lg px-4 py-3 my-2 text-xs"
+        style={{ background: 'var(--color-bg-secondary)', border: '1px solid var(--color-border)' }}>
+        <SourceToggleButton active={false} onClick={() => setShowSource(true)} />
+        <p className="font-medium mb-1" style={{ color: 'var(--color-text)' }}>d2 not installed</p>
+        <code className="font-mono" style={{ color: 'var(--color-text-muted)' }}>brew install d2</code>
+      </div>
+    );
+  }
+
+  if (state === 'error') {
+    return (
+      <div className="group relative rounded-lg px-4 py-3 my-2 text-xs"
+        style={{ background: 'var(--color-bg-secondary)', border: '1px solid var(--color-border)', color: 'var(--color-error)' }}>
+        <SourceToggleButton active={false} onClick={() => setShowSource(true)} />
+        {errorMsg || 'Render failed'}
+      </div>
+    );
+  }
+
+  const responsive = svg
+    .replace(/\s*width="[^"]*"/, ' width="100%"')
+    .replace(/\s*height="[^"]*"/, ' height="100%"');
+
+  return (
+    <div className="group relative my-2">
+      <SourceToggleButton active={showSource} onClick={() => setShowSource(true)} />
+      <div
+        className={`flex items-center justify-center [&_svg]:max-w-full${onPreviewClick ? ' cursor-pointer hover:opacity-80 transition-opacity' : ''}`}
+        dangerouslySetInnerHTML={{ __html: responsive }}
+        onClick={onPreviewClick ? () => onPreviewClick(svg) : undefined}
+      />
+    </div>
   );
 });
 
@@ -224,6 +365,8 @@ interface MarkdownRendererProps {
   resolveImageUrl?: (src: string) => string;
   /** When provided, clicking a rendered mermaid diagram triggers this callback with the SVG */
   onMermaidClick?: (svg: string) => void;
+  /** When provided, clicking a rendered D2 diagram triggers this callback with the SVG */
+  onD2Click?: (svg: string) => void;
   /** When provided, clicking an inline image triggers this callback with the resolved URL */
   onImageClick?: (url: string) => void;
 }
@@ -310,7 +453,7 @@ function parseFileHref(href: string): { filePath: string; line?: number } | null
   };
 }
 
-export const MarkdownRenderer = memo(function MarkdownRenderer({ content, onFileClick, resolveImageUrl, onMermaidClick, onImageClick }: MarkdownRendererProps) {
+export const MarkdownRenderer = memo(function MarkdownRenderer({ content, onFileClick, resolveImageUrl, onMermaidClick, onImageClick, onD2Click }: MarkdownRendererProps) {
   const components = useMemo((): Components => ({
         h1: ({ children }) => (
           <h1 className="text-lg font-bold text-[var(--color-text)] mt-4 mb-2 first:mt-0">{children}</h1>
@@ -405,6 +548,9 @@ export const MarkdownRenderer = memo(function MarkdownRenderer({ content, onFile
             if (className === "language-mermaid") {
               return <MermaidBlock code={text} onPreviewClick={onMermaidClick} />;
             }
+            if (className === "language-d2") {
+              return <D2Block code={text} onPreviewClick={onD2Click} />;
+            }
             const language = className?.replace(/^language-/, "");
             return <CodeBlock code={text.replace(/\n$/, "")} language={language} />;
           }
@@ -483,7 +629,7 @@ export const MarkdownRenderer = memo(function MarkdownRenderer({ content, onFile
           }
           return <input {...props} />;
         },
-  }), [onFileClick, resolveImageUrl, onMermaidClick, onImageClick]);
+  }), [onFileClick, resolveImageUrl, onMermaidClick, onImageClick, onD2Click]);
 
   return (
     <ReactMarkdown remarkPlugins={[remarkGfm]} components={components}>
