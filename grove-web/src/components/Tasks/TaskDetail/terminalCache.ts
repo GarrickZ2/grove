@@ -20,6 +20,13 @@ export interface CachedTerminal {
   active: boolean;
   /** Callback to fire when WS disconnects while active */
   onDisconnected: (() => void) | null;
+  /**
+   * True once the shell has emitted `\x1b[?2004h` (bracketed-paste enable).
+   * `pasteToTerminal` waits for this flag before sending brackets; otherwise
+   * the escape sequences land before the shell's line editor is ready and get
+   * echoed as literal text.
+   */
+  bracketedPasteReady: boolean;
 }
 
 const cache = new Map<string, CachedTerminal>();
@@ -109,6 +116,59 @@ export function sendInputToTerminal(connectionKeyPrefix: string, text: string): 
       entry.ws.send(text);
       return true;
     }
+  }
+  return false;
+}
+
+/**
+ * Find a cached terminal whose key starts with the given prefix.
+ * Prefers `active` entries; falls back to any entry.
+ */
+function findTerminalByPrefix(prefix: string): CachedTerminal | undefined {
+  for (const [key, entry] of cache.entries()) {
+    if (key.startsWith(prefix) && entry.active) return entry;
+  }
+  for (const [key, entry] of cache.entries()) {
+    if (key.startsWith(prefix)) return entry;
+  }
+  return undefined;
+}
+
+/**
+ * Paste text into the matching terminal without auto-executing newlines.
+ * Waits for:
+ *   1. A cached terminal matching `connectionKeyPrefix` to exist
+ *   2. Its WebSocket to be OPEN
+ *   3. The shell to have enabled bracketed-paste mode
+ *      (signalled by the `\x1b[?2004h` sequence in its output)
+ * Then sends the text wrapped with bracketed-paste markers so multi-line
+ * content sits on the prompt and the user still presses Enter to run it.
+ */
+export async function pasteToTerminal(
+  connectionKeyPrefix: string,
+  text: string,
+  timeoutMs = 8_000,
+): Promise<boolean> {
+  const wrapped = `\x1b[200~${text}\x1b[201~`;
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    const entry = findTerminalByPrefix(connectionKeyPrefix);
+    if (
+      entry &&
+      entry.ws &&
+      entry.ws.readyState === WebSocket.OPEN &&
+      entry.bracketedPasteReady
+    ) {
+      entry.ws.send(wrapped);
+      // Focus so the user sees where the command landed
+      try {
+        entry.terminal.focus();
+      } catch {
+        // ignore — terminal may not be attached to DOM
+      }
+      return true;
+    }
+    await new Promise((r) => setTimeout(r, 100));
   }
   return false;
 }

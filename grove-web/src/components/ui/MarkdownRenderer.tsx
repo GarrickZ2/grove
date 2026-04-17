@@ -1,14 +1,24 @@
 import { Children, isValidElement, useState, useEffect, useRef, useId, memo, useMemo } from "react";
-import { Check, Code, Copy, Loader2 } from "lucide-react";
+import { Check, Code, Copy, FileText, Hash, Loader2, Play, Terminal, WrapText } from "lucide-react";
 import { renderD2 } from "../../api";
 import type { RenderD2Error } from "../../api";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import mermaid from "mermaid";
 import { VSCodeIcon } from "./VSCodeIcon";
-import { highlightCode, normalizeLanguage } from "../Review/syntaxHighlight";
+import { highlightLines, normalizeLanguage } from "../Review/syntaxHighlight";
 import { useTheme } from "../../context/ThemeContext";
 import { openExternalUrl } from "../../utils/openExternal";
+
+/** Languages whose code blocks may be executed in the terminal. */
+const RUNNABLE_SHELL_LANGS = new Set(["bash", "sh", "shell", "zsh"]);
+
+/** Event name for command injection into an active XTerminal. */
+export const TERMINAL_INJECT_EVENT = "grove:terminal-inject";
+
+export interface TerminalInjectDetail {
+  command: string;
+}
 
 // Match file paths like `path/to/file.ext` or `path/to/file.ext:123`.
 // Accept Unicode and other non-ASCII characters in path segments.
@@ -304,16 +314,125 @@ export const D2Block = memo(function D2Block({
   );
 });
 
+/** Language display metadata: friendly label + icon. */
+const LANG_META: Record<string, { label: string; Icon: typeof Code }> = {
+  bash: { label: "bash", Icon: Terminal },
+  sh: { label: "shell", Icon: Terminal },
+  shell: { label: "shell", Icon: Terminal },
+  zsh: { label: "zsh", Icon: Terminal },
+  powershell: { label: "powershell", Icon: Terminal },
+  ps1: { label: "powershell", Icon: Terminal },
+  dockerfile: { label: "dockerfile", Icon: Terminal },
+  makefile: { label: "makefile", Icon: Terminal },
+  javascript: { label: "javascript", Icon: Code },
+  js: { label: "javascript", Icon: Code },
+  jsx: { label: "jsx", Icon: Code },
+  typescript: { label: "typescript", Icon: Code },
+  ts: { label: "typescript", Icon: Code },
+  tsx: { label: "tsx", Icon: Code },
+  python: { label: "python", Icon: Code },
+  py: { label: "python", Icon: Code },
+  rust: { label: "rust", Icon: Code },
+  rs: { label: "rust", Icon: Code },
+  go: { label: "go", Icon: Code },
+  java: { label: "java", Icon: Code },
+  kotlin: { label: "kotlin", Icon: Code },
+  swift: { label: "swift", Icon: Code },
+  cpp: { label: "c++", Icon: Code },
+  c: { label: "c", Icon: Code },
+  ruby: { label: "ruby", Icon: Code },
+  rb: { label: "ruby", Icon: Code },
+  php: { label: "php", Icon: Code },
+  sql: { label: "sql", Icon: Code },
+  json: { label: "json", Icon: Code },
+  yaml: { label: "yaml", Icon: Code },
+  yml: { label: "yaml", Icon: Code },
+  toml: { label: "toml", Icon: Code },
+  html: { label: "html", Icon: Code },
+  css: { label: "css", Icon: Code },
+  scss: { label: "scss", Icon: Code },
+  markdown: { label: "markdown", Icon: FileText },
+  md: { label: "markdown", Icon: FileText },
+  diff: { label: "diff", Icon: Code },
+};
+
+function getLangMeta(lang: string | undefined): { label: string; Icon: typeof Code } {
+  if (!lang) return { label: "text", Icon: FileText };
+  const key = lang.toLowerCase();
+  if (LANG_META[key]) return LANG_META[key];
+  return { label: key, Icon: Code };
+}
+
+/** Header icon button — thin, always-visible, subtle hover. */
+function HeaderButton({
+  onClick,
+  title,
+  icon: Icon,
+  active,
+  hoverTone,
+}: {
+  onClick: () => void;
+  title: string;
+  icon: typeof Code;
+  active?: boolean;
+  hoverTone?: "default" | "accent" | "success";
+}) {
+  const toneColor =
+    hoverTone === "accent"
+      ? "var(--color-highlight)"
+      : hoverTone === "success"
+        ? "var(--color-success)"
+        : "var(--color-text)";
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      title={title}
+      aria-label={title}
+      className="inline-flex h-6 w-6 items-center justify-center rounded-md transition-colors"
+      style={{
+        color: active ? toneColor : "var(--color-text-muted)",
+        background: active ? "color-mix(in srgb, var(--color-text-muted) 10%, transparent)" : "transparent",
+      }}
+      onMouseEnter={(e) => {
+        e.currentTarget.style.color = toneColor;
+        e.currentTarget.style.background = "color-mix(in srgb, var(--color-text-muted) 12%, transparent)";
+      }}
+      onMouseLeave={(e) => {
+        e.currentTarget.style.color = active ? toneColor : "var(--color-text-muted)";
+        e.currentTarget.style.background = active ? "color-mix(in srgb, var(--color-text-muted) 10%, transparent)" : "transparent";
+      }}
+    >
+      <Icon className="h-3.5 w-3.5" />
+    </button>
+  );
+}
+
 function CodeBlock({
   code,
   language,
+  enableRunCommand,
 }: {
   code: string;
   language?: string;
+  enableRunCommand?: boolean;
 }): React.JSX.Element {
   const [copied, setCopied] = useState(false);
+  const [isWrapped, setIsWrapped] = useState(true); // Default: soft-wrap on
+  const [showLineNumbers, setShowLineNumbers] = useState(true);
+
   const normalizedLanguage = normalizeLanguage(language);
-  const highlightedHtml = highlightCode(code, normalizedLanguage);
+  const rawLines = useMemo(() => code.split("\n"), [code]);
+  const highlightedLines = useMemo(
+    () => highlightLines(rawLines, normalizedLanguage),
+    [rawLines, normalizedLanguage],
+  );
+
+  const isRunnable =
+    !!enableRunCommand &&
+    RUNNABLE_SHELL_LANGS.has((normalizedLanguage || language || "").toLowerCase());
+  const { label: langLabel, Icon: LangIcon } = getLangMeta(normalizedLanguage || language);
+  const lineNumWidth = `${String(rawLines.length).length}ch`;
 
   useEffect(() => {
     if (!copied) return;
@@ -330,25 +449,105 @@ function CodeBlock({
     }
   };
 
+  const handleRun = () => {
+    const event = new CustomEvent<TerminalInjectDetail>(TERMINAL_INJECT_EVENT, {
+      detail: { command: code },
+    });
+    window.dispatchEvent(event);
+  };
+
+  // Solid "gutter" color used behind sticky line numbers so code doesn't
+  // scroll into them. Slightly tinted from the chat bg for visible separation.
+  const gutterBg = "color-mix(in srgb, var(--color-text) 4%, var(--color-bg))";
+
   return (
-    <div className="markdown-code-block group relative my-2 overflow-hidden rounded-xl border border-[color-mix(in_srgb,var(--color-border)_90%,transparent)] bg-[color-mix(in_srgb,var(--color-bg-secondary)_92%,var(--color-bg))]">
-      <div className="absolute right-2 top-2 z-10">
-        <button
-          type="button"
-          onClick={handleCopy}
-          className="inline-flex h-8 w-8 items-center justify-center rounded-lg bg-transparent text-[var(--color-text-muted)] opacity-0 transition-all group-hover:opacity-100 hover:text-[var(--color-text)] focus:opacity-100 focus:outline-none"
-          title="Copy code"
-          aria-label={copied ? "Copied" : "Copy code"}
-        >
-          {copied ? <Check className="h-3.5 w-3.5 text-[var(--color-success)]" /> : <Copy className="h-3.5 w-3.5" />}
-        </button>
+    <div
+      className="markdown-code-block my-2 overflow-hidden rounded-xl border"
+      style={{
+        borderColor: "color-mix(in srgb, var(--color-border) 90%, transparent)",
+        background: "transparent",
+      }}
+    >
+      {/* Header bar — subtle gray tint (visible but not overpowering) */}
+      <div
+        className="flex items-center justify-between gap-2 px-3 py-1.5 border-b"
+        style={{
+          borderColor: "color-mix(in srgb, var(--color-border) 80%, transparent)",
+          background: "color-mix(in srgb, var(--color-text) 6%, transparent)",
+        }}
+      >
+        <div className="flex min-w-0 items-center gap-1.5">
+          <LangIcon className="h-3.5 w-3.5 shrink-0" style={{ color: "var(--color-text-muted)" }} />
+          <span
+            className="truncate font-mono text-[11px] lowercase tracking-wide"
+            style={{ color: "var(--color-text-muted)" }}
+          >
+            {langLabel}
+          </span>
+        </div>
+        <div className="flex shrink-0 items-center gap-0.5">
+          <HeaderButton
+            onClick={() => setIsWrapped((v) => !v)}
+            title={isWrapped ? "Disable word wrap" : "Enable word wrap"}
+            icon={WrapText}
+            active={isWrapped}
+          />
+          <HeaderButton
+            onClick={() => setShowLineNumbers((v) => !v)}
+            title={showLineNumbers ? "Hide line numbers" : "Show line numbers"}
+            icon={Hash}
+            active={showLineNumbers}
+          />
+          {isRunnable && (
+            <HeaderButton
+              onClick={handleRun}
+              title="Run in a new Terminal tab"
+              icon={Play}
+              hoverTone="accent"
+            />
+          )}
+          <HeaderButton
+            onClick={handleCopy}
+            title={copied ? "Copied" : "Copy code"}
+            icon={copied ? Check : Copy}
+            hoverTone={copied ? "success" : "default"}
+          />
+        </div>
       </div>
-      <pre className="m-0 overflow-x-auto bg-[color-mix(in_srgb,var(--color-bg-tertiary)_72%,white_18%)] p-4 text-[13px] font-mono leading-6 whitespace-pre text-[var(--color-text)]">
-        <code
-          className="block"
-          dangerouslySetInnerHTML={{ __html: highlightedHtml }}
-        />
-      </pre>
+
+      {/* Code body — transparent so it inherits chat bg */}
+      <div className={isWrapped ? "" : "overflow-x-auto"}>
+        <div
+          className="font-mono text-[13px] leading-6"
+          style={{ color: "var(--color-text)" }}
+        >
+          {rawLines.map((_, i) => {
+            const isFirst = i === 0;
+            const isLast = i === rawLines.length - 1;
+            const edgePad = `${isFirst ? "pt-3 " : ""}${isLast ? "pb-3" : ""}`.trim();
+            return (
+              <div key={i} className="flex items-stretch">
+                {showLineNumbers && (
+                  <span
+                    className={`shrink-0 select-none pr-3 pl-4 text-right sticky left-0 ${edgePad}`}
+                    style={{
+                      color: "color-mix(in srgb, var(--color-text-muted) 60%, transparent)",
+                      minWidth: `calc(${lineNumWidth} + 1.75rem)`,
+                      background: gutterBg,
+                    }}
+                  >
+                    {i + 1}
+                  </span>
+                )}
+                <code
+                  className={`block flex-1 ${showLineNumbers ? "pr-4 pl-3" : "px-4"} ${edgePad} ${isWrapped ? "whitespace-pre-wrap break-all" : "whitespace-pre"}`}
+                  dangerouslySetInnerHTML={{ __html: highlightedLines[i] || "&nbsp;" }}
+                />
+              </div>
+            );
+          })}
+        </div>
+      </div>
     </div>
   );
 }
@@ -365,6 +564,8 @@ interface MarkdownRendererProps {
   onD2Click?: (svg: string) => void;
   /** When provided, clicking an inline image triggers this callback with the resolved URL */
   onImageClick?: (url: string) => void;
+  /** When true, bash/sh/shell code blocks get a Run button that pastes into the active terminal */
+  enableRunCommand?: boolean;
 }
 
 /** Extract filename from a full file path */
@@ -449,7 +650,7 @@ function parseFileHref(href: string): { filePath: string; line?: number } | null
   };
 }
 
-export const MarkdownRenderer = memo(function MarkdownRenderer({ content, onFileClick, resolveImageUrl, onMermaidClick, onImageClick, onD2Click }: MarkdownRendererProps) {
+export const MarkdownRenderer = memo(function MarkdownRenderer({ content, onFileClick, resolveImageUrl, onMermaidClick, onImageClick, onD2Click, enableRunCommand }: MarkdownRendererProps) {
   const components = useMemo((): Components => ({
         h1: ({ children }) => (
           <h1 className="text-lg font-bold text-[var(--color-text)] mt-4 mb-2 first:mt-0">{children}</h1>
@@ -548,7 +749,7 @@ export const MarkdownRenderer = memo(function MarkdownRenderer({ content, onFile
               return <D2Block code={text} onPreviewClick={onD2Click} />;
             }
             const language = className?.replace(/^language-/, "");
-            return <CodeBlock code={text.replace(/\n$/, "")} language={language} />;
+            return <CodeBlock code={text.replace(/\n$/, "")} language={language} enableRunCommand={enableRunCommand} />;
           }
           // Check if inline code looks like a file path
           if (onFileClick) {
@@ -625,7 +826,7 @@ export const MarkdownRenderer = memo(function MarkdownRenderer({ content, onFile
           }
           return <input {...props} />;
         },
-  }), [onFileClick, resolveImageUrl, onMermaidClick, onImageClick, onD2Click]);
+  }), [onFileClick, resolveImageUrl, onMermaidClick, onImageClick, onD2Click, enableRunCommand]);
 
   return (
     <ReactMarkdown remarkPlugins={[remarkGfm]} components={components}>

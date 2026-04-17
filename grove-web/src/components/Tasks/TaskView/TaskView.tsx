@@ -19,7 +19,7 @@ import type { IDELayoutHandle, LayoutMode, AuxPanelType, InfoTabType } from "../
 import { AUX_PANEL_TYPES, INFO_PANEL_TYPES } from "../IDELayout";
 import type { Task } from "../../../data/types";
 import type { PanelType } from "../PanelSystem/types";
-import { sendInputToTerminal } from "../TaskDetail/terminalCache";
+import { sendInputToTerminal, pasteToTerminal } from "../TaskDetail/terminalCache";
 import { useConfig } from "../../../context";
 
 // --- Workspace Bar Dropdown (for overflow actions) ---
@@ -198,6 +198,33 @@ export const TaskView = forwardRef<TaskViewHandle, TaskViewProps>((props, ref) =
     const prefix = `task:${projectId}:${task.id}|`;
     return sendInputToTerminal(prefix, text);
   }, [projectId, task.id]);
+
+  // Handle "Run in Terminal" events from ACP Chat markdown code blocks.
+  // Flow: always create a NEW Terminal tab → switch to Terminal panel → paste
+  // command via bracketed paste (shell treats it as a paste, so multi-line
+  // content sits on the prompt without auto-executing; user still presses
+  // Enter to run).
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent<{ command: string }>).detail;
+      if (!detail?.command) return;
+
+      if (layoutMode === "ide") {
+        const newTabId = ideLayoutRef.current?.addTerminalTab();
+        if (!newTabId) return;
+        const cacheKey = `task:${projectId}:${task.id}|${newTabId}`;
+        void pasteToTerminal(cacheKey, detail.command);
+      } else {
+        // Flex layout: add a fresh terminal panel; paste via task prefix —
+        // the newest-mounted terminal becomes "active" and wins the match.
+        layoutRef.current?.addPanel("terminal");
+        const prefix = `task:${projectId}:${task.id}|`;
+        void pasteToTerminal(prefix, detail.command);
+      }
+    };
+    window.addEventListener("grove:terminal-inject", handler);
+    return () => window.removeEventListener("grove:terminal-inject", handler);
+  }, [layoutMode, projectId, task.id]);
 
   useImperativeHandle(ref, () => ({
     addPanel: handleAddPanel,

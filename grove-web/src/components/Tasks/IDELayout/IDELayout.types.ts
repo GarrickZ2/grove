@@ -30,4 +30,10 @@ export interface IDELayoutHandle {
   selectTabByIndex: (index: number) => "handled" | "no_tabs" | "out_of_range";
   selectAdjacentTab: (delta: number) => boolean;
   closeActiveTab: () => void;
+  /**
+   * Create a new Terminal tab, make it active, and ensure the Terminal aux
+   * panel is visible. Returns the new tab's id (equals the terminal's
+   * instanceId, used as the cache key suffix).
+   */
+  addTerminalTab: () => string;
 }

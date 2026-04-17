@@ -682,7 +682,7 @@ fn create_task_inner(
              ## Presentation Guidelines\n\
              \n\
              - **Documentation**: Write in Markdown format.\n\
-             - **Diagrams**: Use [Mermaid](https://mermaid.js.org/) syntax for diagrams (flowcharts, sequence diagrams, etc.).\n\
+             - **Diagrams**: Use [Mermaid](https://mermaid.js.org/) for flowcharts and sequence diagrams; use [D2](https://d2lang.com/) for architecture and system diagrams.\n\
              - **Demos**: Use JSX/React components for interactive demos and visual presentations.\n",
         );
         std::fs::write(task_dir.join("AGENTS.md"), &agents_md)?;

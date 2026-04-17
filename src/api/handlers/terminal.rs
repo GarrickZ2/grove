@@ -118,13 +118,49 @@ impl IntoResponse for TaskTerminalError {
     }
 }
 
+/// Pick the default shell for the current platform.
+///
+/// Priority:
+/// 1. `GROVE_SHELL` env var (explicit override, e.g. `wsl.exe`, `pwsh`, `git-bash`)
+/// 2. `SHELL` env var (standard on Unix; may be set on Windows with Git Bash/WSL)
+/// 3. Platform default: `powershell.exe` on Windows, `/bin/bash` elsewhere
+///
+/// Returns (shell_path, initial_args) — Windows PowerShell gets UTF-8
+/// init args so CJK output doesn't garble.
+fn pick_default_shell() -> (String, Vec<String>) {
+    if let Ok(shell) = std::env::var("GROVE_SHELL") {
+        return (shell, vec![]);
+    }
+    if let Ok(shell) = std::env::var("SHELL") {
+        return (shell, vec![]);
+    }
+
+    #[cfg(windows)]
+    {
+        (
+            "powershell.exe".to_string(),
+            vec![
+                "-NoLogo".to_string(),
+                "-NoExit".to_string(),
+                "-Command".to_string(),
+                "chcp 65001 > $null; [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new(); $OutputEncoding = [System.Text.UTF8Encoding]::new()".to_string(),
+            ],
+        )
+    }
+    #[cfg(not(windows))]
+    {
+        ("/bin/bash".to_string(), vec![])
+    }
+}
+
 /// Handle the WebSocket connection for a simple shell terminal
 async fn handle_shell_terminal(socket: WebSocket, cwd: String, cols: u16, rows: u16) {
-    // Get the user's default shell
-    let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/bash".to_string());
+    let (shell, args) = pick_default_shell();
 
-    // Create command
     let mut cmd = CommandBuilder::new(&shell);
+    for arg in &args {
+        cmd.arg(arg);
+    }
     cmd.cwd(&cwd);
 
     handle_pty_terminal(socket, cmd, cols, rows).await;

@@ -4,7 +4,7 @@
 use chrono::{DateTime, Utc};
 
 use crate::storage::tasks;
-use crate::storage::workspace::{self as storage, project_hash};
+use crate::storage::workspace::{self as storage, project_hash, ProjectType};
 
 /// 项目信息（带运行时统计）
 #[derive(Debug, Clone)]
@@ -59,6 +59,7 @@ impl WorkspaceState {
 
         self.projects = registered
             .into_iter()
+            .filter(|p| p.project_type != ProjectType::Studio)
             .map(|p| {
                 // 计算任务数（使用项目路径的 hash 作为存储 key）
                 let hash = project_hash(&p.path);

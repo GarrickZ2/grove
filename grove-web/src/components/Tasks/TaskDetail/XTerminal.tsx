@@ -237,6 +237,7 @@ export function XTerminal({
         dataDisposable,
         active: true,
         onDisconnected: () => onDisconnectedRef.current?.(),
+        bracketedPasteReady: false,
       });
     }
 
@@ -291,6 +292,16 @@ export function XTerminal({
       };
 
       ws.onmessage = (event) => {
+        // Track bracketed-paste readiness so pasteToTerminal can wait for the
+        // shell's line editor to be ready. Shell sends `\x1b[?2004h` (on) and
+        // `\x1b[?2004l` (off) around prompts.
+        if (currentCacheKey && typeof event.data === "string") {
+          const entry = getCached(currentCacheKey);
+          if (entry) {
+            if (event.data.includes("\x1b[?2004h")) entry.bracketedPasteReady = true;
+            else if (event.data.includes("\x1b[?2004l")) entry.bracketedPasteReady = false;
+          }
+        }
         terminal.write(event.data);
       };
 
@@ -353,11 +364,18 @@ export function XTerminal({
 
   return (
     <div
-      ref={mountRef}
-      data-hotkeys-terminal
       className="w-full h-full"
-      style={{ backgroundColor: terminalTheme.colors.background }}
+      style={{
+        backgroundColor: terminalTheme.colors.background,
+        padding: "12px 14px",
+      }}
       onClick={() => terminalRef.current?.focus()}
-    />
+    >
+      <div
+        ref={mountRef}
+        data-hotkeys-terminal
+        className="w-full h-full"
+      />
+    </div>
   );
 }

@@ -4566,6 +4566,7 @@ function MessageItem({
               onMermaidClick={onMermaidClick}
               onD2Click={onD2Click}
               onImageClick={onImageClick}
+              enableRunCommand
             />
             {!message.complete && isBusy && (
               <span className="inline-block w-1.5 h-4 ml-0.5 bg-[var(--color-text-muted)] animate-pulse rounded-sm" />

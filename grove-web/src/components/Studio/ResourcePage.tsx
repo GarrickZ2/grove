@@ -938,7 +938,7 @@ export function ResourcePage() {
             />
           </div>
         ) : instructions.trim() ? (
-          <div className="rounded-2xl border p-4 h-full"
+          <div className="rounded-2xl border p-4 min-h-full"
             style={{ borderColor: "var(--color-border)", background: "var(--color-bg)" }}>
             <MarkdownRenderer content={instructions} />
           </div>
@@ -1074,7 +1074,7 @@ export function ResourcePage() {
             />
           </div>
         ) : memory.trim() ? (
-          <div className="rounded-2xl border p-4 h-full"
+          <div className="rounded-2xl border p-4 min-h-full"
             style={{ borderColor: "var(--color-border)", background: "var(--color-bg)" }}>
             <MarkdownRenderer content={memory} />
           </div>

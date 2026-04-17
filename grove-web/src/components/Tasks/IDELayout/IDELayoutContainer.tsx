@@ -298,6 +298,12 @@ export const IDELayoutContainer = forwardRef<IDELayoutHandle, IDELayoutContainer
     const [infoWasResized, setInfoWasResized] = useState(false);
     const navSeqRef = useRef(0);
     const shellRef = useRef<HTMLDivElement>(null);
+    // Keep latest state accessible from imperative handle callbacks without
+    // invalidating the useImperativeHandle cache on every state change.
+    const stateRef = useRef(state);
+    useEffect(() => {
+      stateRef.current = state;
+    }, [state]);
 
     const update = useCallback(
       (partial: Partial<IDELayoutInternalState>) => {
@@ -446,6 +452,36 @@ export const IDELayoutContainer = forwardRef<IDELayoutHandle, IDELayoutContainer
             return { ...prev, auxType: auxTypes[nextIdx] };
           });
           return true;
+        },
+        addTerminalTab: () => {
+          const current = stateRef.current;
+          const terminalWasOpen =
+            current.auxVisible && current.auxType === "terminal";
+
+          // First-time use (user hasn't opened Terminal yet): reuse the
+          // auto-created empty tab instead of spawning a second one.
+          if (!terminalWasOpen && current.terminalTabs.length > 0) {
+            const reusedId = current.terminalTabs[0].id;
+            setState((prev) => ({
+              ...prev,
+              auxType: "terminal",
+              auxVisible: true,
+              terminalActiveId: reusedId,
+            }));
+            return reusedId;
+          }
+
+          // Terminal is already open — spawn a new tab so we don't clobber
+          // whatever the user has running.
+          const newId = `term-run-${Date.now()}-${Math.floor(Math.random() * 10000)}`;
+          setState((prev) => ({
+            ...prev,
+            terminalTabs: [...prev.terminalTabs, { id: newId, label: `Terminal (${prev.terminalTabs.length + 1})` }],
+            terminalActiveId: newId,
+            auxType: "terminal",
+            auxVisible: true,
+          }));
+          return newId;
         },
         closeActiveTab: () => {
           setState((prev) => {
