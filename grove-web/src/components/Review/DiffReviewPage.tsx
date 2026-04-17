@@ -124,7 +124,7 @@ export function DiffReviewPage({ projectId, taskId, embedded, navigateToFile, is
   const [focusFiles, setFocusFiles] = useState<DiffFile[]>([]);
   const fileDiffCacheRef = useRef<Map<string, DiffFile | 'unsupported' | 'error'>>(new Map());
   const loadingDiffsRef = useRef<Set<string>>(new Set());
-  const [, setCacheVersion] = useState(0);
+  const [cacheVersion, setCacheVersion] = useState(0);
   const failedFullFilesRef = useRef<Set<string>>(new Set());
   const [displayMode, setDisplayMode] = useState<'code' | 'split' | 'preview'>('code');
   const [fromVersion, setFromVersion] = useState('target');
@@ -279,6 +279,7 @@ export function DiffReviewPage({ projectId, taskId, embedded, navigateToFile, is
   const baseFiles = (viewMode === 'full' && focusMode) ? focusFiles : sortedDiffFiles;
 
   const displayFiles = useMemo(() => {
+    void cacheVersion; // re-run when diff cache is updated
     if (viewMode !== 'diff' || baseFiles.length === 0) return baseFiles;
     return baseFiles.map(f => {
       const cached = fileDiffCacheRef.current.get(f.new_path);
@@ -287,7 +288,7 @@ export function DiffReviewPage({ projectId, taskId, embedded, navigateToFile, is
       if (cached === 'error') return { ...f, hunks: [], additions: 0, deletions: 0, load_error: true };
       return { ...f, hunks: cached.hunks, additions: cached.additions, deletions: cached.deletions, change_type: cached.change_type, is_binary: cached.is_binary };
     });
-  }, [viewMode, baseFiles]);
+  }, [viewMode, baseFiles, cacheVersion]);
 
   // Use ref to access displayFiles in callbacks without dependency issues
   const displayFilesRef = useRef(displayFiles);
@@ -512,6 +513,7 @@ export function DiffReviewPage({ projectId, taskId, embedded, navigateToFile, is
       const next = new Set(loadingDiffsRef.current);
       next.delete(filePath);
       loadingDiffsRef.current = next;
+      setCacheVersion(v => v + 1);
     }
   }, [projectId, taskId]);
 

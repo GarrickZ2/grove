@@ -21,9 +21,11 @@ export function ImageLightbox({ imageUrl, svgContent, onClose }: ImageLightboxPr
 
   // Reset view when image/svg changes
   useEffect(() => {
+    /* eslint-disable react-hooks/set-state-in-effect */
     setZoom(1);
     setPan({ x: 0, y: 0 });
     setIsPanning(false);
+    /* eslint-enable react-hooks/set-state-in-effect */
     panningRef.current = false;
   }, [imageUrl, svgContent]);
 
@@ -41,7 +43,8 @@ export function ImageLightbox({ imageUrl, svgContent, onClose }: ImageLightboxPr
     return () => window.removeEventListener("keydown", handler);
   }, [imageUrl, svgContent, handleClose]);
 
-  // Wheel zoom/pan — registered imperatively with { passive: false } so preventDefault works
+  // Wheel zoom/pan — registered imperatively with { passive: false } so preventDefault works.
+  // Re-registers when imageUrl/svgContent changes because containerRef.current is null until content renders.
   useEffect(() => {
     const el = containerRef.current;
     if (!el) return;
@@ -57,7 +60,7 @@ export function ImageLightbox({ imageUrl, svgContent, onClose }: ImageLightboxPr
     };
     el.addEventListener("wheel", handler, { passive: false });
     return () => el.removeEventListener("wheel", handler);
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [imageUrl, svgContent]);
 
   return (
     <AnimatePresence>

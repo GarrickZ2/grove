@@ -5,11 +5,32 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.8.9] - 2026-04-15
+## [0.8.9] - 2026-04-16
 
 ### Added
 
-- **Version bump** — patch release for version synchronization
+- **D2 diagram preview** — Studio now renders D2 diagrams inline with a source/preview toggle; All Files nav fixed
+- **Shared Assets file manager** — full file manager for Shared Assets with artifact sync support
+- **ImageLightbox component** — reusable fullscreen lightbox for images, SVG, mermaid, and markdown previews
+- **Lightbox in FilePreviewDrawer & DiffFileView** — click any image/SVG to open fullscreen lightbox with scroll-wheel zoom panning
+- **Preview mode for memory panels** — Project Memory and Workspace Instructions panels now support markdown preview mode
+- **Panel rotation** — clicking a right-panel title promotes it to the main area for focused viewing
+- **Linux GUI release build** — CI now produces a Linux GUI release artifact
+
+### Improved
+
+- **Studio tab icon** — Resource tab renamed to Studio with a Layers icon for clarity
+- **Workspace state persistence** — workspace view state is preserved across tab switches; re-clicking Tasks exits the workspace
+- **Panel height** — main area panels now fill full height correctly (motion.div, section, and preview div)
+
+### Fixed
+
+- **UX polish & stale closures** — code review pass: ESC conflict resolution, stale closure fixes, and UX refinements
+- **Redundant maximize badge** — removed Maximize2 badge from main panel when content is already in main view
+- **Panel rotation polish** — sidebar conditional classes, click padding, and Maximize2 tooltip improvements
+- **Syntax highlighting in FilePreviewDrawer** — code files now render with proper syntax highlighting
+- **ImageLightbox click wiring** — onImageClick correctly wired into MarkdownRenderer in ACP Chat messages
+- **CI lockfile & env var** — fixed pnpm frozen lockfile check and `GROVE_GUI` env var reference in README
 
 ## [0.8.8] - 2026-04-13
 

@@ -212,15 +212,11 @@ export const D2Block = memo(function D2Block({
   const [svg, setSvg] = useState<string>(() => d2SvgCache.get(code) ?? '');
   const [errorMsg, setErrorMsg] = useState<string>('');
   const [showSource, setShowSource] = useState(false);
-  // Keep last successful SVG while debouncing to avoid blank flicker
-  const lastSvgRef = useRef<string>(d2SvgCache.get(code) ?? '');
-
   useEffect(() => {
     // If already cached, skip API call entirely
     if (d2SvgCache.has(code)) {
       const cached = d2SvgCache.get(code)!;
-      lastSvgRef.current = cached;
-      setSvg(cached);
+      setSvg(cached); // eslint-disable-line react-hooks/set-state-in-effect
       setState('success');
       return;
     }
@@ -229,7 +225,7 @@ export const D2Block = memo(function D2Block({
     const timer = setTimeout(() => {
       setState('loading');
       renderD2(code)
-        .then((result) => { d2SvgCache.set(code, result); lastSvgRef.current = result; setSvg(result); setState('success'); })
+        .then((result) => { d2SvgCache.set(code, result); setSvg(result); setState('success'); })
         .catch((err: RenderD2Error) => {
           if (err.code === 'd2_not_installed') setState('not_installed');
           else { setErrorMsg(err.message || 'Render failed'); setState('error'); }
@@ -249,8 +245,8 @@ export const D2Block = memo(function D2Block({
 
   // While debouncing: show last known SVG if available, otherwise spinner
   if (state === 'idle' || state === 'loading') {
-    if (lastSvgRef.current) {
-      const responsive = lastSvgRef.current
+    if (svg) {
+      const responsive = svg
         .replace(/\s*width="[^"]*"/, ' width="100%"')
         .replace(/\s*height="[^"]*"/, ' height="100%"');
       return (
