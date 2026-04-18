@@ -216,6 +216,19 @@ pub fn create_api_router() -> Router {
             "/projects/{id}/tasks/{taskId}/notes",
             get(handlers::tasks::get_notes).put(handlers::tasks::update_notes),
         )
+        // Sketches API
+        .route(
+            "/projects/{id}/tasks/{taskId}/sketches",
+            get(handlers::tasks::list_sketches).post(handlers::tasks::create_sketch),
+        )
+        .route(
+            "/projects/{id}/tasks/{taskId}/sketches/{sketchId}",
+            delete(handlers::tasks::delete_sketch),
+        )
+        .route(
+            "/projects/{id}/tasks/{taskId}/sketches/{sketchId}/rename",
+            post(handlers::tasks::rename_sketch),
+        )
         // Git operations API
         .route(
             "/projects/{id}/tasks/{taskId}/sync",

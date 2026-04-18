@@ -7,6 +7,7 @@ pub mod git_ops;
 pub mod notes;
 pub mod review;
 pub mod sketch_events;
+pub mod sketches;
 pub mod types;
 
 // Re-export all public items so routing table needs zero changes.
@@ -16,5 +17,6 @@ pub use file_explorer::*;
 pub use git_ops::*;
 pub use notes::*;
 pub use review::*;
+pub use sketches::*;
 #[allow(unused_imports)]
 pub use types::*;
