@@ -14,7 +14,23 @@ use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 
 use super::{ensure_task_data_dir, grove_dir};
-use crate::error::Result;
+use crate::error::{GroveError, Result};
+
+/// Validate that `sketch_id` matches the `sketch-<uuid-v4>` shape so it cannot
+/// escape the sketches directory via path separators or `..` components.
+fn validate_sketch_id(sketch_id: &str) -> Result<()> {
+    // sketch-<uuid-v4> where uuid-v4 is 36 chars [0-9a-f-]
+    // "sketch-" (7 chars) + uuid-v4 canonical form (36 chars) = 43 chars.
+    let ok = sketch_id.len() == 43
+        && sketch_id.starts_with("sketch-")
+        && sketch_id[7..]
+            .chars()
+            .all(|c| c.is_ascii_hexdigit() || c == '-');
+    if !ok {
+        return Err(GroveError::storage("invalid sketch id"));
+    }
+    Ok(())
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SketchMeta {
@@ -88,6 +104,10 @@ fn now_iso() -> String {
 
 pub fn create_sketch(project: &str, task_id: &str, name: &str) -> Result<SketchMeta> {
     let id = format!("sketch-{}", uuid::Uuid::new_v4());
+    debug_assert!(
+        validate_sketch_id(&id).is_ok(),
+        "generated id must validate"
+    );
     let now = now_iso();
     let meta = SketchMeta {
         id: id.clone(),
@@ -104,12 +124,14 @@ pub fn create_sketch(project: &str, task_id: &str, name: &str) -> Result<SketchM
 }
 
 pub fn load_scene(project: &str, task_id: &str, sketch_id: &str) -> Result<String> {
+    validate_sketch_id(sketch_id)?;
     let dir = sketches_dir(project, task_id)?;
     let content = std::fs::read_to_string(sketch_path_in(&dir, sketch_id))?;
     Ok(content)
 }
 
 pub fn save_scene(project: &str, task_id: &str, sketch_id: &str, content: &str) -> Result<()> {
+    validate_sketch_id(sketch_id)?;
     let dir = sketches_dir_ensure(project, task_id)?;
     std::fs::write(sketch_path_in(&dir, sketch_id), content)?;
     touch_index(project, task_id, sketch_id)?;
@@ -117,6 +139,7 @@ pub fn save_scene(project: &str, task_id: &str, sketch_id: &str, content: &str) 
 }
 
 pub fn rename_sketch(project: &str, task_id: &str, sketch_id: &str, new_name: &str) -> Result<()> {
+    validate_sketch_id(sketch_id)?;
     let mut index = load_index(project, task_id)?;
     let item = index
         .sketches
@@ -130,6 +153,7 @@ pub fn rename_sketch(project: &str, task_id: &str, sketch_id: &str, new_name: &s
 }
 
 pub fn delete_sketch(project: &str, task_id: &str, sketch_id: &str) -> Result<()> {
+    validate_sketch_id(sketch_id)?;
     let dir = sketches_dir(project, task_id)?;
     let path = sketch_path_in(&dir, sketch_id);
     if path.exists() {
@@ -187,6 +211,7 @@ pub fn apply_element_patch(
     updated: &serde_json::Map<String, serde_json::Value>,
     deleted: &[String],
 ) -> Result<String> {
+    validate_sketch_id(sketch_id)?;
     let raw = load_scene(project, task_id, sketch_id)?;
     let mut scene: serde_json::Value = serde_json::from_str(&raw)?;
     let elements = scene
@@ -237,6 +262,7 @@ pub fn replace_scene(
     sketch_id: &str,
     scene: &serde_json::Value,
 ) -> Result<()> {
+    validate_sketch_id(sketch_id)?;
     let body = serde_json::to_string(scene)?;
     save_scene(project, task_id, sketch_id, &body)
 }
@@ -429,6 +455,13 @@ mod tests {
         let els2 = v2["elements"].as_array().unwrap();
         assert_eq!(els2.len(), 1);
         assert_eq!(els2[0]["id"], "b");
+    }
+
+    #[test]
+    fn load_scene_rejects_path_traversal() {
+        let env = TestEnv::new();
+        let err = load_scene(&env.project, &env.task_id, "../foo");
+        assert!(err.is_err(), "path traversal sketch_id must be rejected");
     }
 
     #[test]
