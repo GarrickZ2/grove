@@ -225,6 +225,7 @@ pub fn create_api_router() -> Router {
             "/projects/{id}/tasks/{taskId}/sketches/{sketchId}",
             get(handlers::tasks::get_scene)
                 .put(handlers::tasks::put_scene)
+                .patch(handlers::tasks::patch_scene)
                 .delete(handlers::tasks::delete_sketch),
         )
         .route(

@@ -114,3 +114,36 @@ pub async fn put_scene(
     });
     Ok(StatusCode::NO_CONTENT)
 }
+
+#[derive(Debug, Deserialize, Default)]
+pub struct PatchSceneRequest {
+    #[serde(default)]
+    pub created: Vec<serde_json::Value>,
+    #[serde(default)]
+    pub updated: serde_json::Map<String, serde_json::Value>,
+    #[serde(default)]
+    pub deleted: Vec<String>,
+}
+
+pub async fn patch_scene(
+    Path((id, task_id, sketch_id)): Path<(String, String, String)>,
+    Json(req): Json<PatchSceneRequest>,
+) -> Result<StatusCode, StatusCode> {
+    let (_project, project_key) = find_project_by_id(&id)?;
+    sketches::apply_element_patch(
+        &project_key,
+        &task_id,
+        &sketch_id,
+        &req.created,
+        &req.updated,
+        &req.deleted,
+    )
+    .map_err(internal)?;
+    broadcast_sketch_event(SketchEvent::SketchUpdated {
+        project: project_key,
+        task_id,
+        sketch_id,
+        source: SketchEventSource::User,
+    });
+    Ok(StatusCode::NO_CONTENT)
+}
