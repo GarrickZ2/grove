@@ -12,6 +12,9 @@ pub enum SketchEvent {
         task_id: String,
         sketch_id: String,
         source: SketchEventSource,
+        /// Full Excalidraw scene JSON after the update. Clients can apply this
+        /// directly without refetching.
+        scene: serde_json::Value,
     },
     IndexChanged {
         project: String,

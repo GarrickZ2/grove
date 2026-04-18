@@ -793,7 +793,7 @@ impl GroveMcpServer {
         let p = params.0;
         blocking_json_result(move || {
             let (_project, key) = find_project_key(&p.project_id)?;
-            crate::storage::sketches::apply_element_patch(
+            let body = crate::storage::sketches::apply_element_patch(
                 &key,
                 &p.task_id,
                 &p.sketch_id,
@@ -802,7 +802,9 @@ impl GroveMcpServer {
                 &p.deleted,
             )
             .map_err(|e| mcp_err(&e.to_string()))?;
-            broadcast_scene_updated(&key, &p.task_id, &p.sketch_id);
+            let scene: serde_json::Value =
+                serde_json::from_str(&body).map_err(|e| mcp_err(&e.to_string()))?;
+            broadcast_scene_updated(&key, &p.task_id, &p.sketch_id, scene);
             Ok(json!({ "ok": true }))
         })
         .await
@@ -822,7 +824,7 @@ impl GroveMcpServer {
             let (_project, key) = find_project_key(&p.project_id)?;
             crate::storage::sketches::replace_scene(&key, &p.task_id, &p.sketch_id, &p.scene)
                 .map_err(|e| mcp_err(&e.to_string()))?;
-            broadcast_scene_updated(&key, &p.task_id, &p.sketch_id);
+            broadcast_scene_updated(&key, &p.task_id, &p.sketch_id, p.scene.clone());
             Ok(json!({ "ok": true }))
         })
         .await
@@ -1406,7 +1408,12 @@ fn broadcast_index_changed(project: &str, task_id: &str) {
     });
 }
 
-fn broadcast_scene_updated(project: &str, task_id: &str, sketch_id: &str) {
+fn broadcast_scene_updated(
+    project: &str,
+    task_id: &str,
+    sketch_id: &str,
+    scene: serde_json::Value,
+) {
     use crate::api::handlers::tasks::sketch_events::{
         broadcast_sketch_event, SketchEvent, SketchEventSource,
     };
@@ -1415,6 +1422,7 @@ fn broadcast_scene_updated(project: &str, task_id: &str, sketch_id: &str) {
         task_id: task_id.to_string(),
         sketch_id: sketch_id.to_string(),
         source: SketchEventSource::Agent,
+        scene,
     });
 }
 

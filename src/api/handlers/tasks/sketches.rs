@@ -111,6 +111,7 @@ pub async fn put_scene(
         task_id,
         sketch_id,
         source: SketchEventSource::User,
+        scene: req.scene,
     });
     Ok(StatusCode::NO_CONTENT)
 }
@@ -130,7 +131,7 @@ pub async fn patch_scene(
     Json(req): Json<PatchSceneRequest>,
 ) -> Result<StatusCode, StatusCode> {
     let (_project, project_key) = find_project_by_id(&id)?;
-    sketches::apply_element_patch(
+    let body = sketches::apply_element_patch(
         &project_key,
         &task_id,
         &sketch_id,
@@ -139,11 +140,13 @@ pub async fn patch_scene(
         &req.deleted,
     )
     .map_err(internal)?;
+    let scene: serde_json::Value = serde_json::from_str(&body).map_err(internal)?;
     broadcast_sketch_event(SketchEvent::SketchUpdated {
         project: project_key,
         task_id,
         sketch_id,
         source: SketchEventSource::User,
+        scene,
     });
     Ok(StatusCode::NO_CONTENT)
 }
