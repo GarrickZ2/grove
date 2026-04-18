@@ -223,7 +223,9 @@ pub fn create_api_router() -> Router {
         )
         .route(
             "/projects/{id}/tasks/{taskId}/sketches/{sketchId}",
-            delete(handlers::tasks::delete_sketch),
+            get(handlers::tasks::get_scene)
+                .put(handlers::tasks::put_scene)
+                .delete(handlers::tasks::delete_sketch),
         )
         .route(
             "/projects/{id}/tasks/{taskId}/sketches/{sketchId}/rename",

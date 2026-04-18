@@ -1,12 +1,17 @@
 //! REST handlers for Studio task sketches.
 
-use axum::{extract::Path, http::StatusCode, Json};
+use axum::{
+    extract::Path,
+    http::StatusCode,
+    response::{IntoResponse, Response},
+    Json,
+};
 use serde::{Deserialize, Serialize};
 
 use crate::storage::sketches;
 
 use super::super::common::find_project_by_id;
-use super::sketch_events::{broadcast_sketch_event, SketchEvent};
+use super::sketch_events::{broadcast_sketch_event, SketchEvent, SketchEventSource};
 
 #[derive(Debug, Serialize)]
 pub struct SketchListResponse {
@@ -71,6 +76,41 @@ pub async fn rename_sketch(
     broadcast_sketch_event(SketchEvent::IndexChanged {
         project: project_key,
         task_id,
+    });
+    Ok(StatusCode::NO_CONTENT)
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UpdateSceneRequest {
+    /// Full Excalidraw scene JSON. Must be a JSON object.
+    pub scene: serde_json::Value,
+}
+
+pub async fn get_scene(
+    Path((id, task_id, sketch_id)): Path<(String, String, String)>,
+) -> Result<Response, StatusCode> {
+    let (_project, project_key) = find_project_by_id(&id)?;
+    let body = sketches::load_scene(&project_key, &task_id, &sketch_id)
+        .map_err(|_| StatusCode::NOT_FOUND)?;
+    Ok((
+        [(axum::http::header::CONTENT_TYPE, "application/json")],
+        body,
+    )
+        .into_response())
+}
+
+pub async fn put_scene(
+    Path((id, task_id, sketch_id)): Path<(String, String, String)>,
+    Json(req): Json<UpdateSceneRequest>,
+) -> Result<StatusCode, StatusCode> {
+    let (_project, project_key) = find_project_by_id(&id)?;
+    let body = serde_json::to_string(&req.scene).map_err(internal)?;
+    sketches::save_scene(&project_key, &task_id, &sketch_id, &body).map_err(internal)?;
+    broadcast_sketch_event(SketchEvent::SketchUpdated {
+        project: project_key,
+        task_id,
+        sketch_id,
+        source: SketchEventSource::User,
     });
     Ok(StatusCode::NO_CONTENT)
 }
