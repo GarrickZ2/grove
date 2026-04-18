@@ -140,6 +140,8 @@ export type {
 export { renderD2 } from './render';
 export type { RenderD2Error } from './render';
 
+export * from './sketches';
+
 export {
   listTaskGroups,
   createTaskGroup,
