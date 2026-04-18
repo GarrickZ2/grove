@@ -5,9 +5,6 @@
 //!     ├── index.json
 //!     └── sketch-<uuid>.excalidraw
 
-// Dead-code is allowed until Milestone B+ wires these into handlers/MCP tools.
-#![allow(dead_code)]
-
 use std::path::{Path, PathBuf};
 
 use once_cell::sync::Lazy;
