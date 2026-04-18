@@ -9,6 +9,7 @@ import {
   GitBranch,
   FileText,
   MessageSquare,
+  Pencil,
 } from "lucide-react";
 import "./ide-layout.css";
 import type {
@@ -31,6 +32,7 @@ import {
   NotesTab,
   CommentsTab,
 } from "../TaskInfoPanel/tabs";
+import { SketchPage } from "../../Studio/SketchPage";
 import { useConfig, useProject } from "../../../context";
 
 const AUX_PANEL_CONFIG: Record<AuxPanelType, { label: string; icon: typeof Terminal }> = {
@@ -38,6 +40,7 @@ const AUX_PANEL_CONFIG: Record<AuxPanelType, { label: string; icon: typeof Termi
   editor: { label: "Editor", icon: FileCode },
   review: { label: "Code Review", icon: Code },
   artifacts: { label: "Artifacts", icon: Package },
+  sketch: { label: "Sketch", icon: Pencil },
 };
 
 const INFO_PANEL_CONFIG: Record<InfoTabType, { label: string; icon: typeof BarChart3 }> = {
@@ -52,6 +55,7 @@ const TOOLBAR_AUX: { type: AuxPanelType; label: string; shortcut: string; icon: 
   { type: "editor", label: "Editor", shortcut: "e", icon: FileCode },
   { type: "review", label: "Code Review", shortcut: "r", icon: Code },
   { type: "artifacts", label: "Artifacts", shortcut: "f", icon: Package },
+  { type: "sketch", label: "Sketch", shortcut: "k", icon: Pencil },
 ];
 
 const TOOLBAR_INFO: { type: InfoTabType; label: string; shortcut: string; icon: typeof BarChart3 }[] = [
@@ -143,6 +147,7 @@ function Toolbar({
   const filteredAux = TOOLBAR_AUX.filter(
     ({ type }) =>
       (type !== "artifacts" || isStudio) &&
+      (type !== "sketch" || isStudio) &&
       (type !== "review" || !isStudio) &&
       (type !== "terminal" || terminalAvailable),
   );
@@ -419,6 +424,7 @@ export const IDELayoutContainer = forwardRef<IDELayoutHandle, IDELayoutContainer
           }
           const visibleAuxTypes = AUX_PANEL_TYPES.filter((type) =>
             (type !== "artifacts" || isStudio) &&
+            (type !== "sketch" || isStudio) &&
             (type !== "review" || !isStudio) &&
             (type !== "terminal" || terminalAvailable)
           );
@@ -438,6 +444,7 @@ export const IDELayoutContainer = forwardRef<IDELayoutHandle, IDELayoutContainer
         selectAdjacentTab: (delta: number) => {
           const auxTypes = AUX_PANEL_TYPES.filter((type) =>
             (type !== "artifacts" || isStudio) &&
+            (type !== "sketch" || isStudio) &&
             (type !== "review" || !isStudio) &&
             (type !== "terminal" || terminalAvailable)
           );
@@ -533,6 +540,9 @@ export const IDELayoutContainer = forwardRef<IDELayoutHandle, IDELayoutContainer
           )}
           {state.auxType === "artifacts" && isStudio && (
             <ArtifactsTab projectId={projectId} task={task} previewRequest={state.artifactPreviewRequest} lastChatIdleAt={state.lastChatIdleAt} isChatBusy={state.isChatBusy} />
+          )}
+          {state.auxType === "sketch" && isStudio && (
+            <SketchPage projectId={projectId} taskId={task.id} />
           )}
         </PanelSlot>
       );

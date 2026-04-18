@@ -1,17 +1,22 @@
 //! Storage for Studio task Excalidraw sketches.
 //!
-//! Layout on disk, per task:
-//!   <task-data-dir>/sketches/
+//! Layout on disk, per task (Studio tasks keep their workdir at
+//! `~/.grove/studios/<project_hash>/tasks/<slug>/`):
+//!   <task-workdir>/sketch/
 //!     ├── index.json
 //!     └── sketch-<uuid>.excalidraw
+//!
+//! Placing sketches under the task workdir (alongside `input/`, `output/`,
+//! `resource/`, `scripts/`) makes them directly visible to the user and
+//! reachable by any agent that runs with cwd = task workdir.
 
 use std::path::{Path, PathBuf};
 
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 
-use super::{ensure_task_data_dir, grove_dir};
 use crate::error::{GroveError, Result};
+use crate::storage::tasks;
 
 /// Validate that `sketch_id` matches the `sketch-<uuid-v4>` shape so it cannot
 /// escape the sketches directory via path separators or `..` components.
@@ -58,19 +63,23 @@ fn default_version() -> u32 {
     1
 }
 
+/// Resolve the task's working directory (the one the user sees in terminal,
+/// containing `input/`, `output/`, etc. for Studio tasks; the git worktree for
+/// regular tasks). Returns error if the task doesn't exist.
+fn task_workdir(project: &str, task_id: &str) -> Result<PathBuf> {
+    let task =
+        tasks::get_task(project, task_id)?.ok_or_else(|| GroveError::storage("task not found"))?;
+    Ok(PathBuf::from(task.worktree_path))
+}
+
 /// Compute the sketches directory path WITHOUT creating it. Use for read paths.
 fn sketches_dir(project: &str, task_id: &str) -> Result<PathBuf> {
-    Ok(grove_dir()
-        .join("projects")
-        .join(project)
-        .join("tasks")
-        .join(task_id)
-        .join("sketches"))
+    Ok(task_workdir(project, task_id)?.join("sketch"))
 }
 
 /// Compute the sketches directory path and ensure it exists. Use for write paths.
 fn sketches_dir_ensure(project: &str, task_id: &str) -> Result<PathBuf> {
-    let dir = ensure_task_data_dir(project, task_id)?.join("sketches");
+    let dir = sketches_dir(project, task_id)?;
     std::fs::create_dir_all(&dir)?;
     Ok(dir)
 }
@@ -268,19 +277,49 @@ pub fn replace_scene(
 mod tests {
     use super::*;
     use crate::storage::grove_dir;
+    use crate::storage::tasks::{save_tasks, Task, TaskStatus};
+    use chrono::Utc;
     use uuid::Uuid;
 
-    /// RAII guard: cleans up the per-test project directory even on panic.
+    /// RAII guard: cleans up the per-test project dir and fake workdir even on panic.
     struct TestEnv {
         project: String,
         task_id: String,
+        workdir: PathBuf,
     }
 
     impl TestEnv {
         fn new() -> Self {
+            let project = format!("test-{}", Uuid::new_v4());
+            let task_id = format!("task-{}", Uuid::new_v4());
+            // Fake task workdir under the project dir so Drop cleans it too.
+            let workdir = grove_dir().join("projects").join(&project).join("workdir");
+            std::fs::create_dir_all(&workdir).unwrap();
+            // Seed a Task so sketches can resolve worktree_path.
+            let now = Utc::now();
+            let task = Task {
+                id: task_id.clone(),
+                name: "test-task".to_string(),
+                branch: "main".to_string(),
+                target: "main".to_string(),
+                worktree_path: workdir.to_string_lossy().to_string(),
+                created_at: now,
+                updated_at: now,
+                status: TaskStatus::Active,
+                multiplexer: "tmux".to_string(),
+                session_name: String::new(),
+                created_by: "user".to_string(),
+                archived_at: None,
+                code_additions: 0,
+                code_deletions: 0,
+                files_changed: 0,
+                is_local: false,
+            };
+            save_tasks(&project, &[task]).unwrap();
             Self {
-                project: format!("test-{}", Uuid::new_v4()),
-                task_id: format!("task-{}", Uuid::new_v4()),
+                project,
+                task_id,
+                workdir,
             }
         }
     }
@@ -303,15 +342,10 @@ mod tests {
     fn load_index_does_not_create_directory() {
         let env = TestEnv::new();
         let _ = load_index(&env.project, &env.task_id).unwrap();
-        let dir = grove_dir()
-            .join("projects")
-            .join(&env.project)
-            .join("tasks")
-            .join(&env.task_id)
-            .join("sketches");
+        let dir = env.workdir.join("sketch");
         assert!(
             !dir.exists(),
-            "load_index on nonexistent task must not create sketches dir"
+            "load_index on nonexistent task must not create sketch dir"
         );
     }
 

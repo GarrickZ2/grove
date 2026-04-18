@@ -4,9 +4,9 @@ import type { Task } from "../../../data/types";
 export type LayoutMode = "flex" | "ide";
 
 // ── Panel Categories ──
-export type AuxPanelType = "terminal" | "editor" | "review" | "artifacts";
+export type AuxPanelType = "terminal" | "editor" | "review" | "artifacts" | "sketch";
 export type InfoTabType = "stats" | "git" | "notes" | "comments";
-export const AUX_PANEL_TYPES: AuxPanelType[] = ["terminal", "editor", "review", "artifacts"];
+export const AUX_PANEL_TYPES: AuxPanelType[] = ["terminal", "editor", "review", "artifacts", "sketch"];
 export const INFO_PANEL_TYPES: InfoTabType[] = ["stats", "git", "notes", "comments"];
 
 export interface ArtifactPreviewRequest {
