@@ -1,6 +1,8 @@
 import { useState } from "react";
 import { Plus, X, Download, Pencil } from "lucide-react";
 import type { SketchMeta } from "../../../api";
+import { SketchContextMenu } from "./SketchContextMenu";
+import { ConfirmDialog } from "../../Dialogs/ConfirmDialog";
 
 interface Props {
   sketches: SketchMeta[];
@@ -23,6 +25,17 @@ export function SketchTabBar({
 }: Props) {
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [draftName, setDraftName] = useState("");
+  const [menu, setMenu] = useState<{ sketchId: string; x: number; y: number } | null>(null);
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+
+  const beginRename = (s: SketchMeta) => {
+    setRenamingId(s.id);
+    setDraftName(s.name);
+  };
+
+  const confirmTarget = confirmDeleteId
+    ? sketches.find((s) => s.id === confirmDeleteId) ?? null
+    : null;
 
   return (
     <div
@@ -39,6 +52,12 @@ export function SketchTabBar({
           <div
             key={s.id}
             onClick={() => !isRenaming && onSelect(s.id)}
+            onContextMenu={(e) => {
+              if (isRenaming) return;
+              e.preventDefault();
+              e.stopPropagation();
+              setMenu({ sketchId: s.id, x: e.clientX, y: e.clientY });
+            }}
             className="group flex items-center gap-1 rounded-md px-2 py-1 text-xs cursor-pointer transition-colors"
             style={{
               background: isActive
@@ -83,13 +102,21 @@ export function SketchTabBar({
               />
             ) : (
               <>
-                <span className="truncate max-w-[160px]">{s.name}</span>
+                <span
+                  className="truncate max-w-[160px]"
+                  onDoubleClick={(e) => {
+                    e.stopPropagation();
+                    beginRename(s);
+                  }}
+                  title="Double-click to rename"
+                >
+                  {s.name}
+                </span>
                 <button
                   type="button"
                   onClick={(e) => {
                     e.stopPropagation();
-                    setRenamingId(s.id);
-                    setDraftName(s.name);
+                    beginRename(s);
                   }}
                   className="opacity-0 group-hover:opacity-100 transition-opacity p-0.5 rounded hover:bg-black/10"
                   title="Rename"
@@ -100,7 +127,7 @@ export function SketchTabBar({
                   type="button"
                   onClick={(e) => {
                     e.stopPropagation();
-                    onDelete(s.id);
+                    setConfirmDeleteId(s.id);
                   }}
                   className="opacity-0 group-hover:opacity-100 transition-opacity p-0.5 rounded hover:bg-black/10"
                   title="Delete"
@@ -147,6 +174,39 @@ export function SketchTabBar({
       >
         <Download className="w-3.5 h-3.5" />
       </button>
+
+      <SketchContextMenu
+        position={menu ? { x: menu.x, y: menu.y } : null}
+        onClose={() => setMenu(null)}
+        onRename={() => {
+          if (!menu) return;
+          const s = sketches.find((x) => x.id === menu.sketchId);
+          if (s) beginRename(s);
+          setMenu(null);
+        }}
+        onDelete={() => {
+          if (!menu) return;
+          setConfirmDeleteId(menu.sketchId);
+          setMenu(null);
+        }}
+      />
+
+      <ConfirmDialog
+        isOpen={!!confirmTarget}
+        title="Delete sketch"
+        message={
+          confirmTarget
+            ? `Delete "${confirmTarget.name}"? This action cannot be undone.`
+            : ""
+        }
+        confirmLabel="Delete"
+        variant="danger"
+        onConfirm={() => {
+          if (confirmDeleteId) onDelete(confirmDeleteId);
+          setConfirmDeleteId(null);
+        }}
+        onCancel={() => setConfirmDeleteId(null)}
+      />
     </div>
   );
 }
