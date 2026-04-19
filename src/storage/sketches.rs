@@ -21,14 +21,13 @@ use crate::storage::tasks;
 /// Validate that `sketch_id` matches the `sketch-<uuid-v4>` shape so it cannot
 /// escape the sketches directory via path separators or `..` components.
 fn validate_sketch_id(sketch_id: &str) -> Result<()> {
-    // sketch-<uuid-v4> where uuid-v4 is 36 chars [0-9a-f-]
-    // "sketch-" (7 chars) + uuid-v4 canonical form (36 chars) = 43 chars.
-    let ok = sketch_id.len() == 43
-        && sketch_id.starts_with("sketch-")
-        && sketch_id[7..]
-            .chars()
-            .all(|c| c.is_ascii_hexdigit() || c == '-');
-    if !ok {
+    // sketch-<uuid-v4>. Parse the UUID strictly so nonsense like
+    // "sketch-----------------------------------" (36 dashes, 43 chars) is
+    // rejected even though it has no path separators.
+    let Some(rest) = sketch_id.strip_prefix("sketch-") else {
+        return Err(GroveError::storage("invalid sketch id"));
+    };
+    if uuid::Uuid::parse_str(rest).is_err() {
         return Err(GroveError::storage("invalid sketch id"));
     }
     Ok(())
@@ -88,8 +87,19 @@ fn index_path_in(dir: &Path) -> PathBuf {
     dir.join("index.json")
 }
 
+/// Per-sketch subdirectory under `sketch/`. Contains `scene.excalidraw` and
+/// optionally `thumb.png`. Keeps all files belonging to one sketch together so
+/// deletion and enumeration are trivial.
+fn sketch_dir_in(dir: &Path, sketch_id: &str) -> PathBuf {
+    dir.join(sketch_id)
+}
+
 fn sketch_path_in(dir: &Path, sketch_id: &str) -> PathBuf {
-    dir.join(format!("{sketch_id}.excalidraw"))
+    sketch_dir_in(dir, sketch_id).join("scene.excalidraw")
+}
+
+fn thumb_png_path_in(dir: &Path, sketch_id: &str) -> PathBuf {
+    sketch_dir_in(dir, sketch_id).join("thumb.png")
 }
 
 static EMPTY_SCENE: Lazy<String> = Lazy::new(|| {
@@ -122,6 +132,7 @@ pub fn create_sketch(project: &str, task_id: &str, name: &str) -> Result<SketchM
         updated_at: now,
     };
     let dir = sketches_dir_ensure(project, task_id)?;
+    std::fs::create_dir_all(sketch_dir_in(&dir, &id))?;
     std::fs::write(sketch_path_in(&dir, &id), EMPTY_SCENE.as_str())?;
     let mut index = load_index(project, task_id)?;
     index.sketches.push(meta.clone());
@@ -132,16 +143,70 @@ pub fn create_sketch(project: &str, task_id: &str, name: &str) -> Result<SketchM
 pub fn load_scene(project: &str, task_id: &str, sketch_id: &str) -> Result<String> {
     validate_sketch_id(sketch_id)?;
     let dir = sketches_dir(project, task_id)?;
-    let content = std::fs::read_to_string(sketch_path_in(&dir, sketch_id))?;
-    Ok(content)
+    match std::fs::read_to_string(sketch_path_in(&dir, sketch_id)) {
+        Ok(content) => Ok(content),
+        // Translate "file missing" into a domain error so the REST handler
+        // surfaces it as 400 ("sketch scene not found") instead of 500.
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Err(GroveError::storage(format!(
+            "sketch '{sketch_id}' scene file not found"
+        ))),
+        Err(e) => Err(e.into()),
+    }
 }
 
+/// Persist the scene to disk. Touches `updated_at` in the index. File mtime
+/// is the source of truth for "is the thumbnail stale?" — see
+/// `load_thumbnail_if_fresh`.
 pub fn save_scene(project: &str, task_id: &str, sketch_id: &str, content: &str) -> Result<()> {
     validate_sketch_id(sketch_id)?;
     let dir = sketches_dir_ensure(project, task_id)?;
+    std::fs::create_dir_all(sketch_dir_in(&dir, sketch_id))?;
     std::fs::write(sketch_path_in(&dir, sketch_id), content)?;
     touch_index(project, task_id, sketch_id)?;
     Ok(())
+}
+
+/// Persist a thumbnail PNG rendered from the scene. No version check — we
+/// rely on file mtimes at read time (`load_thumbnail_if_fresh`) to decide
+/// whether the thumb is up-to-date with the scene.
+pub fn save_thumbnail(
+    project: &str,
+    task_id: &str,
+    sketch_id: &str,
+    png_bytes: &[u8],
+) -> Result<()> {
+    validate_sketch_id(sketch_id)?;
+    let dir = sketches_dir_ensure(project, task_id)?;
+    std::fs::create_dir_all(sketch_dir_in(&dir, sketch_id))?;
+    std::fs::write(thumb_png_path_in(&dir, sketch_id), png_bytes)?;
+    Ok(())
+}
+
+/// Load the thumbnail PNG, but only if its mtime is newer than (or equal to)
+/// the scene file's mtime. Returns `None` when the thumb is missing, or when
+/// the scene has been written more recently (stale thumb).
+pub fn load_thumbnail_if_fresh(
+    project: &str,
+    task_id: &str,
+    sketch_id: &str,
+) -> Result<Option<Vec<u8>>> {
+    validate_sketch_id(sketch_id)?;
+    let dir = sketches_dir(project, task_id)?;
+    let scene_path = sketch_path_in(&dir, sketch_id);
+    let png_path = thumb_png_path_in(&dir, sketch_id);
+    if !png_path.exists() || !scene_path.exists() {
+        return Ok(None);
+    }
+    let scene_mtime = std::fs::metadata(&scene_path).and_then(|m| m.modified());
+    let png_mtime = std::fs::metadata(&png_path).and_then(|m| m.modified());
+    // Strict `>` — on filesystems with second-granularity mtimes (many Linux
+    // FSes, NFS, SMB), a thumb written in the same second as a later scene
+    // write would otherwise be accepted as fresh. `None` here falls back to
+    // the grove-web render path on the next read, which is cheap.
+    match (scene_mtime, png_mtime) {
+        (Ok(s), Ok(p)) if p > s => Ok(Some(std::fs::read(&png_path)?)),
+        _ => Ok(None),
+    }
 }
 
 pub fn rename_sketch(project: &str, task_id: &str, sketch_id: &str, new_name: &str) -> Result<()> {
@@ -161,9 +226,9 @@ pub fn rename_sketch(project: &str, task_id: &str, sketch_id: &str, new_name: &s
 pub fn delete_sketch(project: &str, task_id: &str, sketch_id: &str) -> Result<()> {
     validate_sketch_id(sketch_id)?;
     let dir = sketches_dir(project, task_id)?;
-    let path = sketch_path_in(&dir, sketch_id);
-    if path.exists() {
-        std::fs::remove_file(&path)?;
+    let sub = sketch_dir_in(&dir, sketch_id);
+    if sub.exists() {
+        let _ = std::fs::remove_dir_all(&sub);
     }
     let mut index = load_index(project, task_id)?;
     index.sketches.retain(|m| m.id != sketch_id);
@@ -218,6 +283,64 @@ pub fn apply_element_patch(
     deleted: &[String],
 ) -> Result<String> {
     validate_sketch_id(sketch_id)?;
+
+    // Reject empty-string ids in `deleted`. Element `id`/`containerId` fields
+    // that fail `.as_str()` default to "" during the retain filter below; an
+    // empty string in `deleted` would then match every element with no id /
+    // no containerId, wiping the sketch. `apply_draw` guards with
+    // `!trimmed.is_empty()`; mirror that here.
+    for (i, id) in deleted.iter().enumerate() {
+        if id.is_empty() {
+            return Err(GroveError::storage(format!(
+                "deleted[{i}] is an empty string — every entry must be a real element id"
+            )));
+        }
+    }
+
+    // Validate `created`: each element must have a non-empty string `id`, and
+    // ids must be unique within the batch. Mirrors `apply_draw` so the REST
+    // PATCH path can't silently create anonymous or colliding elements.
+    {
+        let mut seen: std::collections::HashSet<&str> = Default::default();
+        for (i, el) in created.iter().enumerate() {
+            let id = el.get("id").and_then(|v| v.as_str()).unwrap_or("");
+            if id.is_empty() {
+                return Err(GroveError::storage(format!(
+                    "created[{i}] is missing the required `id` field"
+                )));
+            }
+            if !seen.insert(id) {
+                return Err(GroveError::storage(format!(
+                    "duplicate element id '{id}' in `created` — every element must have a unique id"
+                )));
+            }
+        }
+    }
+
+    // Validate `updated`: each patch value must be a JSON object. Non-objects
+    // would be silently dropped during the shallow merge below, which is a
+    // confusing no-op; surface it as an error instead.
+    for (id, patch) in updated.iter() {
+        if !patch.is_object() {
+            return Err(GroveError::storage(format!(
+                "updated['{id}'] must be a JSON object, got {}",
+                if patch.is_null() {
+                    "null"
+                } else if patch.is_array() {
+                    "array"
+                } else if patch.is_string() {
+                    "string"
+                } else if patch.is_number() {
+                    "number"
+                } else if patch.is_boolean() {
+                    "boolean"
+                } else {
+                    "non-object"
+                }
+            )));
+        }
+    }
+
     let raw = load_scene(project, task_id, sketch_id)?;
     let mut scene: serde_json::Value = serde_json::from_str(&raw)?;
     let elements = scene
@@ -225,13 +348,64 @@ pub fn apply_element_patch(
         .and_then(serde_json::Value::as_array_mut)
         .ok_or_else(|| crate::error::GroveError::storage("scene.elements missing"))?;
 
-    // Deletes
+    // Reject `updated` keys that don't match any existing element — silently
+    // no-op'ing on a typo'd id is the worst possible DX (AI gets a 204 and
+    // wonders why nothing changed). Check against the full scene ids, NOT
+    // the post-delete set: updating and deleting the same id in one patch
+    // is nonsensical, so also reject that.
+    if !updated.is_empty() {
+        let scene_ids: std::collections::HashSet<&str> = elements
+            .iter()
+            .filter_map(|el| el.get("id").and_then(|v| v.as_str()))
+            .collect();
+        for id in updated.keys() {
+            if !scene_ids.contains(id.as_str()) {
+                return Err(GroveError::storage(format!(
+                    "updated['{id}'] does not match any element in the scene — check the id or call GET to refresh"
+                )));
+            }
+            if deleted.iter().any(|d| d == id) {
+                return Err(GroveError::storage(format!(
+                    "id '{id}' appears in both `updated` and `deleted` — pick one"
+                )));
+            }
+        }
+    }
+
+    // Reject `created` ids that collide with surviving elements (after deletes).
+    {
+        let surviving_ids: std::collections::HashSet<&str> = elements
+            .iter()
+            .filter_map(|el| {
+                let id = el.get("id").and_then(|v| v.as_str())?;
+                let container_id = el.get("containerId").and_then(|v| v.as_str()).unwrap_or("");
+                let will_delete = deleted.iter().any(|d| d == id || d == container_id);
+                (!will_delete).then_some(id)
+            })
+            .collect();
+        for el in created.iter() {
+            let id = el.get("id").and_then(|v| v.as_str()).unwrap_or("");
+            if surviving_ids.contains(id) {
+                return Err(GroveError::storage(format!(
+                    "created element id '{id}' conflicts with an existing element. Include it in `deleted` first, or pick a fresh id."
+                )));
+            }
+        }
+    }
+
+    // Deletes — also strip bound-text elements whose `containerId` matches a
+    // deleted id (mirrors `apply_draw`). Without this, deleting a labeled
+    // rectangle via patch leaves the label text orphaned on the canvas.
     elements.retain(|el| {
         let id = el
             .get("id")
             .and_then(serde_json::Value::as_str)
             .unwrap_or("");
-        !deleted.iter().any(|d| d == id)
+        let container_id = el
+            .get("containerId")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("");
+        !deleted.iter().any(|d| d == id || d == container_id)
     });
 
     // Updates (shallow merge of provided fields)
@@ -261,7 +435,10 @@ pub fn apply_element_patch(
     Ok(out)
 }
 
-/// Overwrite a sketch's entire scene with the given JSON value.
+/// Overwrite a sketch's entire scene with the given JSON value. Used only by
+/// tests to seed a known starting state; production writes go through
+/// `save_scene` (REST) or `apply_draw` (MCP).
+#[cfg(test)]
 pub fn replace_scene(
     project: &str,
     task_id: &str,
@@ -270,7 +447,292 @@ pub fn replace_scene(
 ) -> Result<()> {
     validate_sketch_id(sketch_id)?;
     let body = serde_json::to_string(scene)?;
-    save_scene(project, task_id, sketch_id, &body)
+    save_scene(project, task_id, sketch_id, &body)?;
+    Ok(())
+}
+
+/// Load a sketch scene as a parsed JSON value.
+pub fn load_scene_value(
+    project: &str,
+    task_id: &str,
+    sketch_id: &str,
+) -> Result<serde_json::Value> {
+    let raw = load_scene(project, task_id, sketch_id)?;
+    Ok(serde_json::from_str(&raw)?)
+}
+
+/// Find a sketch by reference (accepts either a sketch id `sketch-<uuid>` or
+/// a human-readable name). Returns `None` when nothing matches; errors when a
+/// name is ambiguous (multiple sketches share it).
+pub fn resolve_sketch_ref(
+    project: &str,
+    task_id: &str,
+    reference: &str,
+) -> Result<Option<SketchMeta>> {
+    let index = load_index(project, task_id)?;
+    if validate_sketch_id(reference).is_ok() {
+        if let Some(m) = index.sketches.iter().find(|m| m.id == reference) {
+            return Ok(Some(m.clone()));
+        }
+    }
+    let matches: Vec<&SketchMeta> = index
+        .sketches
+        .iter()
+        .filter(|m| m.name == reference)
+        .collect();
+    match matches.len() {
+        0 => Ok(None),
+        1 => Ok(Some(matches[0].clone())),
+        _ => Err(GroveError::storage(format!(
+            "multiple sketches named '{}' — use the sketch id to disambiguate",
+            reference
+        ))),
+    }
+}
+
+/// Resolve a sketch by name, or create a new one if it doesn't exist.
+pub fn get_or_create_by_name(project: &str, task_id: &str, name: &str) -> Result<SketchMeta> {
+    if let Some(m) = resolve_sketch_ref(project, task_id, name)? {
+        return Ok(m);
+    }
+    create_sketch(project, task_id, name)
+}
+
+/// Outcome of a successful `apply_draw` call.
+#[derive(Debug, Clone)]
+pub struct DrawOutcome {
+    /// Newly minted checkpoint id — AI should pass this back via
+    /// `restoreCheckpoint` on the next draw to continue.
+    pub checkpoint_id: String,
+    /// The final scene that was written to disk.
+    pub scene: serde_json::Value,
+    /// Element count after merge.
+    pub element_count: usize,
+    /// Number of new real elements contributed by this call.
+    pub elements_added: usize,
+    /// Number of elements removed by `delete` pseudo-elements.
+    pub elements_deleted: usize,
+    /// Non-fatal warnings (e.g. non-4:3 camera, font size too small).
+    pub warnings: Vec<String>,
+}
+
+const MAX_DRAW_ELEMENT_COUNT: usize = 10_000;
+
+/// Apply a draw call authored by an AI agent.
+///
+/// Grammar (inside the `elements` slice):
+///   - `{"type":"restoreCheckpoint","id":"<cp>"}` — at most one; resolves base
+///     from the checkpoint LRU. Absence = start from empty scene.
+///   - `{"type":"delete","ids":"id1,id2"}` — removes ids (and any bound-text
+///     whose `containerId` matches) from the base.
+///   - `{"type":"cameraUpdate","x","y","width","height"}` — kept for the
+///     widget to animate viewport; does not alter element set. Generates a
+///     warning if aspect ratio isn't ~4:3.
+///   - any other element (`rectangle` / `arrow` / `text` / …) — appended.
+///
+/// Returns a `DrawOutcome` with the merged scene and new checkpoint id; the
+/// scene is already persisted and checkpointed before return.
+pub fn apply_draw(
+    project: &str,
+    task_id: &str,
+    sketch_id: &str,
+    arr: &[serde_json::Value],
+) -> Result<DrawOutcome> {
+    validate_sketch_id(sketch_id)?;
+
+    if arr.len() > MAX_DRAW_ELEMENT_COUNT {
+        return Err(GroveError::storage(format!(
+            "elements array exceeds {MAX_DRAW_ELEMENT_COUNT} item limit"
+        )));
+    }
+
+    let mut restore_id: Option<String> = None;
+    let mut delete_ids: std::collections::HashSet<String> = Default::default();
+    let mut last_camera: Option<serde_json::Value> = None;
+    let mut new_elements: Vec<serde_json::Value> = Vec::new();
+
+    for (i, el) in arr.iter().enumerate() {
+        let t = el.get("type").and_then(|v| v.as_str()).unwrap_or("");
+        match t {
+            "restoreCheckpoint" => {
+                if restore_id.is_some() {
+                    return Err(GroveError::storage(
+                        "only one `restoreCheckpoint` pseudo-element is allowed per call",
+                    ));
+                }
+                let id = el
+                    .get("id")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| {
+                        GroveError::storage("`restoreCheckpoint` requires an `id` field")
+                    })?
+                    .to_string();
+                restore_id = Some(id);
+            }
+            "delete" => {
+                let ids = el
+                    .get("ids")
+                    .and_then(|v| v.as_str())
+                    .or_else(|| el.get("id").and_then(|v| v.as_str()))
+                    .ok_or_else(|| {
+                        GroveError::storage(
+                            "`delete` pseudo-element requires `ids` (comma-separated string)",
+                        )
+                    })?;
+                for id in ids.split(',') {
+                    let trimmed = id.trim();
+                    if !trimmed.is_empty() {
+                        delete_ids.insert(trimmed.to_string());
+                    }
+                }
+            }
+            "cameraUpdate" => {
+                last_camera = Some(el.clone());
+            }
+            "" => {
+                return Err(GroveError::storage(format!(
+                    "element at index {i} is missing the required `type` field"
+                )));
+            }
+            _ => {
+                let id = el.get("id").and_then(|v| v.as_str()).unwrap_or("");
+                if id.is_empty() {
+                    return Err(GroveError::storage(format!(
+                        "element at index {i} (type=\"{t}\") is missing the required `id` field"
+                    )));
+                }
+                new_elements.push(el.clone());
+            }
+        }
+    }
+
+    // Reject duplicate ids among the new elements.
+    {
+        let mut seen: std::collections::HashSet<&str> = Default::default();
+        for el in &new_elements {
+            let id = el.get("id").and_then(|v| v.as_str()).unwrap_or("");
+            if !seen.insert(id) {
+                return Err(GroveError::storage(format!(
+                    "duplicate element id '{id}' in input — every element must have a unique id"
+                )));
+            }
+        }
+    }
+
+    // Resolve base scene.
+    let base_scene: Option<serde_json::Value> = match &restore_id {
+        Some(cp_id) => {
+            let loaded = crate::storage::sketch_checkpoints::load(cp_id)?;
+            Some(loaded.ok_or_else(|| {
+                GroveError::storage(format!(
+                    "checkpoint '{cp_id}' not found (expired or invalid). Call grove_sketch_read to get a fresh checkpoint_id, or draw from scratch without `restoreCheckpoint`."
+                ))
+            })?)
+        }
+        None => None,
+    };
+
+    let base_elements: Vec<serde_json::Value> = base_scene
+        .as_ref()
+        .and_then(|v| v.get("elements"))
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
+    let base_count = base_elements.len();
+
+    // Apply `delete` to base.
+    let base_after_delete: Vec<serde_json::Value> = base_elements
+        .into_iter()
+        .filter(|el| {
+            let id = el.get("id").and_then(|v| v.as_str()).unwrap_or("");
+            let container_id = el.get("containerId").and_then(|v| v.as_str()).unwrap_or("");
+            !delete_ids.contains(id) && !delete_ids.contains(container_id)
+        })
+        .collect();
+    let elements_deleted = base_count - base_after_delete.len();
+
+    // Reject id conflicts between surviving base and new elements.
+    {
+        let base_ids: std::collections::HashSet<&str> = base_after_delete
+            .iter()
+            .filter_map(|el| el.get("id").and_then(|v| v.as_str()))
+            .collect();
+        for el in &new_elements {
+            let id = el.get("id").and_then(|v| v.as_str()).unwrap_or("");
+            if base_ids.contains(id) {
+                return Err(GroveError::storage(format!(
+                    "element id '{id}' conflicts with an existing element in the base. Include it in a `delete` pseudo-element first, or pick a fresh id."
+                )));
+            }
+        }
+    }
+
+    let elements_added = new_elements.len();
+    let mut merged: Vec<serde_json::Value> = base_after_delete;
+    merged.extend(new_elements);
+
+    // Build the final scene — preserve appState/files from whichever source we
+    // have (current on-disk scene as fallback; checkpoint if restoring).
+    let mut scene = serde_json::json!({
+        "type": "excalidraw",
+        "version": 2,
+        "source": "grove",
+        "elements": merged,
+        "appState": { "viewBackgroundColor": "#ffffff", "gridSize": null },
+        "files": {},
+    });
+
+    // Prefer appState/files from the restored checkpoint if present; else from
+    // the existing on-disk scene so user-side viewport/files aren't clobbered.
+    let fallback_scene: Option<serde_json::Value> = base_scene
+        .clone()
+        .or_else(|| load_scene_value(project, task_id, sketch_id).ok());
+    if let Some(fb) = fallback_scene {
+        if let Some(v) = fb.get("appState") {
+            scene["appState"] = v.clone();
+        }
+        if let Some(v) = fb.get("files") {
+            scene["files"] = v.clone();
+        }
+    }
+
+    // Persist scene to task workdir.
+    save_scene(project, task_id, sketch_id, &serde_json::to_string(&scene)?)?;
+
+    // Save a new checkpoint referencing the merged scene.
+    let checkpoint_id = crate::storage::sketch_checkpoints::generate_id();
+    crate::storage::sketch_checkpoints::save(&checkpoint_id, &scene)?;
+
+    // Compute warnings.
+    let mut warnings = Vec::new();
+    if let Some(cam) = last_camera {
+        let w = cam.get("width").and_then(|v| v.as_f64()).unwrap_or(0.0);
+        let h = cam.get("height").and_then(|v| v.as_f64()).unwrap_or(0.0);
+        if w > 0.0 && h > 0.0 {
+            let ratio = w / h;
+            if (ratio - 4.0 / 3.0).abs() > 0.15 {
+                warnings.push(format!(
+                    "cameraUpdate used {}x{} (ratio {:.2}) — prefer 4:3 (e.g. 400x300, 800x600, 1200x900).",
+                    w as i64, h as i64, ratio
+                ));
+            }
+        }
+    }
+
+    let element_count = scene
+        .get("elements")
+        .and_then(|v| v.as_array())
+        .map(|a| a.len())
+        .unwrap_or(0);
+
+    Ok(DrawOutcome {
+        checkpoint_id,
+        scene,
+        element_count,
+        elements_added,
+        elements_deleted,
+        warnings,
+    })
 }
 
 #[cfg(test)]

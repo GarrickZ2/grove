@@ -226,11 +226,24 @@ pub fn create_api_router() -> Router {
             get(handlers::tasks::get_scene)
                 .put(handlers::tasks::put_scene)
                 .patch(handlers::tasks::patch_scene)
-                .delete(handlers::tasks::delete_sketch),
+                .delete(handlers::tasks::delete_sketch)
+                // Dense sketches (hundreds of elements, image fills via
+                // `files`) can exceed Axum's default 2 MB body cap; raise
+                // it for this route. `DefaultBodyLimit` is only evaluated
+                // when a handler extracts the request body, so GET/DELETE
+                // (no body extractor) are unaffected — the limit is in
+                // effect a PUT/PATCH-only policy even though the layer sits
+                // on the full MethodRouter.
+                .layer(DefaultBodyLimit::max(8 * 1024 * 1024)),
         )
         .route(
             "/projects/{id}/tasks/{taskId}/sketches/{sketchId}/rename",
             post(handlers::tasks::rename_sketch),
+        )
+        .route(
+            "/projects/{id}/tasks/{taskId}/sketches/{sketchId}/thumbnail",
+            post(handlers::tasks::upload_sketch_thumbnail)
+                .layer(DefaultBodyLimit::max(4 * 1024 * 1024)),
         )
         .route(
             "/projects/{id}/tasks/{taskId}/sketches/ws",

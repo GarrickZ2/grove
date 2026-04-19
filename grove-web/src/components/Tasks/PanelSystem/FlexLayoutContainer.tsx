@@ -859,7 +859,12 @@ export const FlexLayoutContainer = forwardRef<
       case 'sketch':
         return (
           <div style={{ display: 'flex', flexDirection: 'column', width: '100%', height: '100%', overflow: 'hidden' }}>
-            <SketchPage projectId={projectId} taskId={task.id} />
+            <SketchPage
+              projectId={projectId}
+              taskId={task.id}
+              isChatBusy={isChatBusy}
+              lastChatIdleAt={lastChatIdleAt}
+            />
           </div>
         );
 

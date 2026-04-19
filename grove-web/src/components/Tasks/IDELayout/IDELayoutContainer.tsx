@@ -542,7 +542,12 @@ export const IDELayoutContainer = forwardRef<IDELayoutHandle, IDELayoutContainer
             <ArtifactsTab projectId={projectId} task={task} previewRequest={state.artifactPreviewRequest} lastChatIdleAt={state.lastChatIdleAt} isChatBusy={state.isChatBusy} />
           )}
           {state.auxType === "sketch" && isStudio && (
-            <SketchPage projectId={projectId} taskId={task.id} />
+            <SketchPage
+              projectId={projectId}
+              taskId={task.id}
+              isChatBusy={state.isChatBusy}
+              lastChatIdleAt={state.lastChatIdleAt}
+            />
           )}
         </PanelSlot>
       );

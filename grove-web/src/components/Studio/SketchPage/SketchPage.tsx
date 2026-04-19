@@ -2,15 +2,25 @@ import { useCallback, useEffect, useState } from "react";
 import type { ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/types";
 import { useSketchList } from "./hooks/useSketchList";
 import { useSketchSync } from "./hooks/useSketchSync";
+import { useSketchThumbnail } from "./hooks/useSketchThumbnail";
 import { SketchCanvas } from "./SketchCanvas";
 import { SketchTabBar } from "./SketchTabBar";
 
 interface Props {
   projectId: string;
   taskId: string;
+  /** Whether the ACP chat bound to this task is currently running. Used to
+   * enable Live Preview polling: while the agent is busy, MCP draws land
+   * directly in the task workdir without broadcasting to grove-web (MCP is a
+   * separate OS process), so we refetch the scene on a timer to surface the
+   * changes. Mirrors the Artifacts tab's live-refresh behavior. */
+  isChatBusy?: boolean;
+  /** Monotonic timestamp updated when the chat transitions to idle. Used to
+   * trigger one final refresh after the agent finishes. */
+  lastChatIdleAt?: number;
 }
 
-export function SketchPage({ projectId, taskId }: Props) {
+export function SketchPage({ projectId, taskId, isChatBusy, lastChatIdleAt }: Props) {
   const {
     sketches,
     loading: listLoading,
@@ -26,12 +36,25 @@ export function SketchPage({ projectId, taskId }: Props) {
     void refresh();
   }, [refresh]);
 
-  const { scene, loading: sceneLoading, onLocalChange, remoteTick } = useSketchSync(
+  const {
+    scene,
+    loading: sceneLoading,
+    onLocalChange,
+    remoteTick,
+    refresh: refreshScene,
+    wsConnected,
+  } = useSketchSync(projectId, taskId, activeId, onIndexChanged, {
+    isChatBusy,
+    lastChatIdleAt,
+  });
+
+  useSketchThumbnail({
     projectId,
     taskId,
-    activeId,
-    onIndexChanged,
-  );
+    sketchId: activeId,
+    scene,
+    excalidrawApi: apiRef,
+  });
 
   // Auto-select first sketch after list loads, and re-pick if active was deleted.
   useEffect(() => {
@@ -85,6 +108,15 @@ export function SketchPage({ projectId, taskId }: Props) {
         onDelete={remove}
         onRename={rename}
         onExportPng={handleExport}
+        onRefresh={() => {
+          void refreshScene();
+        }}
+        aiBusy={isChatBusy}
+        // Surface real-time-stream state so the user sees when updates are
+        // paused. `wsConnected` is `undefined` during the initial connect
+        // attempt; the pill only renders when it's explicitly `false`, so
+        // there's no flash on first mount.
+        wsConnected={wsConnected}
       />
       <div className="flex-1 min-h-0">
         {listLoading ? (
@@ -95,11 +127,21 @@ export function SketchPage({ projectId, taskId }: Props) {
           <CenterMessage>Loading sketch…</CenterMessage>
         ) : (
           <SketchCanvas
-            key={activeId}
+            // Force Excalidraw to fully remount on any remote-driven update
+            // (polling / refresh / WS). Excalidraw's imperative updateScene
+            // merges via version reconciliation and does not reliably apply
+            // our cross-process AI-authored writes; remounting with fresh
+            // initialData is the same code path as a full page reload, which
+            // the user already confirmed works. Local user edits are
+            // unaffected because onLocalChange never bumps remoteTick.
+            key={`${activeId}-${remoteTick}`}
             scene={scene}
-            remoteTick={remoteTick}
             onChange={onLocalChange}
             onExcalidrawAPI={setApiRef}
+            // Lock the canvas while the ACP chat is busy: prevents user
+            // edits from racing with AI-authored MCP writes (otherwise the
+            // user's debounced PUT would overwrite AI's additions).
+            locked={isChatBusy}
           />
         )}
       </div>

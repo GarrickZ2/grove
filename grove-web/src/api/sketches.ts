@@ -80,6 +80,41 @@ export async function putSketchScene(
 }
 
 /**
+ * Flush variant used from `beforeunload` / last-chance flush paths. Uses
+ * `fetch(..., { keepalive: true })` so the request survives page unload.
+ * Browser-capped at ~64 KB body; larger scenes silently fall back by
+ * throwing — callers should handle that and drop to a best-effort regular
+ * PUT (which may itself be aborted by the browser on unload).
+ */
+export async function putSketchSceneKeepalive(
+  projectId: string,
+  taskId: string,
+  sketchId: string,
+  scene: unknown,
+): Promise<void> {
+  await apiClient.putKeepalive<{ scene: unknown }>(
+    `/api/v1/projects/${projectId}/tasks/${taskId}/sketches/${sketchId}`,
+    { scene },
+  );
+}
+
+/**
+ * Upload a PNG thumbnail for a sketch. The server writes it unconditionally;
+ * staleness is detected at MCP-read time by comparing file mtimes (thumb vs
+ * scene), so a thumbnail rendered slightly before a new scene write is simply
+ * ignored on read instead of being rejected on write.
+ */
+export async function uploadSketchThumbnail(
+  projectId: string,
+  taskId: string,
+  sketchId: string,
+  png: Blob,
+): Promise<void> {
+  const path = `/api/v1/projects/${projectId}/tasks/${taskId}/sketches/${sketchId}/thumbnail`;
+  await apiClient.postBinary(path, png, 'image/png');
+}
+
+/**
  * Build a WebSocket URL for the sketches live-update endpoint.
  * The caller is responsible for appending HMAC auth (see `appendHmacToUrl`).
  */

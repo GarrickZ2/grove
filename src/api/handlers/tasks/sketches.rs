@@ -1,6 +1,7 @@
 //! REST handlers for Studio task sketches.
 
 use axum::{
+    body::Bytes,
     extract::Path,
     http::StatusCode,
     response::{IntoResponse, Response},
@@ -8,10 +9,44 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 
+use crate::error::GroveError;
 use crate::storage::sketches;
 
 use super::super::common::find_project_by_id;
 use super::sketch_events::{broadcast_sketch_event, SketchEvent, SketchEventSource};
+
+/// Map a storage error from a scene write / patch into an HTTP response that
+/// preserves the detailed message. `GroveError::Storage(_)` values are all
+/// produced by our own validation paths (bad sketch id, missing/duplicate
+/// element id, non-object update, empty-string delete, id conflict, scene
+/// missing elements) and are client bugs → 400 with the message so the AI
+/// agent / UI can self-correct. Everything else (I/O, JSON serde on disk
+/// contents) is a real server failure → 500 without leaking internals.
+fn scene_error_response(e: GroveError) -> (StatusCode, String) {
+    match e {
+        GroveError::Storage(msg) => (StatusCode::BAD_REQUEST, msg),
+        other => {
+            eprintln!("[sketches] server-side scene error: {other}");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "internal server error".to_string(),
+            )
+        }
+    }
+}
+
+/// Project lookup helper that attaches a default body message so 404/5xx
+/// responses carry something more useful than an empty payload. Without this
+/// the frontend's `extractErrorPayload` falls back to the bare status line.
+fn project_err(status: StatusCode) -> (StatusCode, String) {
+    (
+        status,
+        status
+            .canonical_reason()
+            .unwrap_or("request failed")
+            .to_string(),
+    )
+}
 
 #[derive(Debug, Serialize)]
 pub struct SketchListResponse {
@@ -102,10 +137,27 @@ pub async fn get_scene(
 pub async fn put_scene(
     Path((id, task_id, sketch_id)): Path<(String, String, String)>,
     Json(req): Json<UpdateSceneRequest>,
-) -> Result<StatusCode, StatusCode> {
-    let (_project, project_key) = find_project_by_id(&id)?;
-    let body = serde_json::to_string(&req.scene).map_err(internal)?;
-    sketches::save_scene(&project_key, &task_id, &sketch_id, &body).map_err(internal)?;
+) -> Result<StatusCode, (StatusCode, String)> {
+    let (_project, project_key) = find_project_by_id(&id).map_err(project_err)?;
+    // Require an object scene with an `elements` array. Arbitrary JSON values
+    // (null / numbers / bare arrays) would pass through raw and blow up on the
+    // next read.
+    if !req.scene.is_object()
+        || req
+            .scene
+            .get("elements")
+            .and_then(|v| v.as_array())
+            .is_none()
+    {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "scene must be a JSON object with an `elements` array".to_string(),
+        ));
+    }
+    let body =
+        serde_json::to_string(&req.scene).map_err(|e| scene_error_response(GroveError::from(e)))?;
+    sketches::save_scene(&project_key, &task_id, &sketch_id, &body)
+        .map_err(scene_error_response)?;
     broadcast_sketch_event(SketchEvent::SketchUpdated {
         project: project_key,
         task_id,
@@ -129,8 +181,8 @@ pub struct PatchSceneRequest {
 pub async fn patch_scene(
     Path((id, task_id, sketch_id)): Path<(String, String, String)>,
     Json(req): Json<PatchSceneRequest>,
-) -> Result<StatusCode, StatusCode> {
-    let (_project, project_key) = find_project_by_id(&id)?;
+) -> Result<StatusCode, (StatusCode, String)> {
+    let (_project, project_key) = find_project_by_id(&id).map_err(project_err)?;
     let body = sketches::apply_element_patch(
         &project_key,
         &task_id,
@@ -139,8 +191,13 @@ pub async fn patch_scene(
         &req.updated,
         &req.deleted,
     )
-    .map_err(internal)?;
-    let scene: serde_json::Value = serde_json::from_str(&body).map_err(internal)?;
+    // Client-side validation errors (missing id, duplicate id, non-object
+    // update, id collision, empty-string delete) are `GroveError::Storage` →
+    // 400 with message. Real server failures (I/O, on-disk JSON corruption)
+    // stay 500.
+    .map_err(scene_error_response)?;
+    let scene: serde_json::Value =
+        serde_json::from_str(&body).map_err(|e| scene_error_response(GroveError::from(e)))?;
     broadcast_sketch_event(SketchEvent::SketchUpdated {
         project: project_key,
         task_id,
@@ -148,5 +205,28 @@ pub async fn patch_scene(
         source: SketchEventSource::User,
         scene,
     });
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// PNG file signature (first 8 bytes). Rejecting non-PNG uploads prevents a
+/// compromised client from storing arbitrary bytes that MCP would later hand
+/// to the model as `image/png`.
+const PNG_SIGNATURE: [u8; 8] = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];
+
+/// Accept a PNG thumbnail rendered by the web client. Staleness is detected
+/// at MCP-read time via file mtime comparison (see `load_thumbnail_if_fresh`),
+/// so we just write unconditionally here.
+pub async fn upload_sketch_thumbnail(
+    Path((id, task_id, sketch_id)): Path<(String, String, String)>,
+    body: Bytes,
+) -> Result<StatusCode, StatusCode> {
+    let (_project, project_key) = find_project_by_id(&id)?;
+    if body.is_empty() {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+    if body.len() < PNG_SIGNATURE.len() || body[..PNG_SIGNATURE.len()] != PNG_SIGNATURE {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+    sketches::save_thumbnail(&project_key, &task_id, &sketch_id, &body).map_err(internal)?;
     Ok(StatusCode::NO_CONTENT)
 }

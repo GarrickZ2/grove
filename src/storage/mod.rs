@@ -5,6 +5,7 @@ pub mod comments;
 pub mod config;
 pub mod database;
 pub mod notes;
+pub mod sketch_checkpoints;
 pub mod sketches;
 pub mod skills;
 pub mod taskgroups;

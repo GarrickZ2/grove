@@ -51,13 +51,6 @@ without affecting other tasks or the main codebase.
 9. **grove_send_prompt** — Send prompt / respond to permission / cancel turn
 10. **grove_list_chats** — List chat sessions for a task
 
-### Task Sketches (Excalidraw)
-11. **grove_sketch_list** — List sketches in a task
-12. **grove_sketch_new** — Create a new empty sketch
-13. **grove_sketch_read** — Read scene elements (call before modifying)
-14. **grove_sketch_patch** — Create / update / delete elements
-15. **grove_sketch_replace** — Overwrite the whole scene
-
 ## Orchestration Workflow
 1. Find or register the target project
 2. Call `grove_list_agents` to see available worker agents
@@ -73,28 +66,12 @@ without affecting other tasks or the main codebase.
 
 "#;
 
-const EXECUTION_INSTRUCTIONS: &str = r#"
-# Grove - Git Worktree Task Manager
+const CODING_EXECUTION_INSTRUCTIONS: &str = r#"
+# Grove - Coding Task (Git Worktree)
 
-Grove is a TUI application that manages parallel development tasks using Git worktrees and tmux sessions.
-
-## What is a Grove Task?
-
-A Grove "task" represents an isolated development environment:
-- Each task has its own Git worktree (branch + working directory)
-- Each task runs in a dedicated tmux session
-- Tasks are isolated from each other, allowing parallel work
-
-## How to Detect Grove Environment
-
-**IMPORTANT**: Before using any Grove tools, first call `grove_status` to check if you are running inside a Grove task.
-
-- If `in_grove_task` is `true`: You are in a Grove task, and you can use all Grove tools.
-- If `in_grove_task` is `false`: You are NOT in a Grove task. Do NOT use other Grove tools as they will fail.
+You are running inside a **Coding** Grove task: an isolated git worktree + tmux session for parallel development.
 
 ## Available Tools
-
-When inside a Grove task:
 
 1. **grove_status** - Get task context (task_id, branch, target_branch, project)
 2. **grove_read_notes** - Read user-written notes containing context and requirements
@@ -109,7 +86,7 @@ When inside a Grove task:
 
 ## Recommended Workflow
 
-1. Call `grove_status` first to verify you are in a Grove task
+1. Call `grove_status` first to verify the task context
 2. Call `grove_read_notes` to understand user requirements and context
 3. Call `grove_read_review` to check for code review feedback
 4. After addressing review comments, use `grove_reply_review` to respond
@@ -117,55 +94,303 @@ When inside a Grove task:
 
 ## Completing a Task
 
-**IMPORTANT**: ONLY call `grove_complete_task` when the user explicitly asks you to complete the task. NEVER call it automatically or proactively.
+**IMPORTANT**: ONLY call `grove_complete_task` when the user explicitly asks. NEVER call it automatically or proactively.
 - Provide a commit message summarizing your changes
 - The tool will: commit → fetch & rebase target → merge into target branch
 - If rebase conflicts occur, resolve them and call `grove_complete_task` again
-
-## When NOT in Grove
-
-If `grove_status` returns `in_grove_task: false`, inform the user:
-"I'm not running inside a Grove task environment. Grove tools are only available when working within a Grove-managed tmux session. Please start a task from the Grove TUI."
 "#;
 
+const STUDIO_EXECUTION_INSTRUCTIONS: &str = r#"
+# Grove - Studio Task
+
+You are running inside a **Studio** Grove task. Studio tasks are not git worktrees; they give you a persistent working directory with conventional subfolders:
+
+- `input/`    — user-provided input files (read-only starting point)
+- `output/`   — your work products
+- `resource/` — shared project resources (symlink to project-level resource/)
+- `scripts/`  — helper scripts
+- `sketch/`   — Excalidraw sketches (see sketch tools below)
+
+## Available Tools
+
+1. **grove_status** — task context (task_id, project_id, project_name)
+2. **grove_read_notes** — user-written notes (context, requirements)
+3. **grove_sketch_read_me()** — one-time format reference for sketch drawing (CALL ONCE before first draw)
+4. **grove_sketch_list()** — list sketches in this task
+5. **grove_sketch_read(sketch, detail_full?)** — read a sketch by name; returns summary + fresh checkpoint_id
+6. **grove_sketch_draw(sketch, elements)** — draw / modify a sketch; auto-creates if name is new; returns new checkpoint_id
+
+## Sketch Workflow
+
+The sketch tool surface is **checkpoint-driven** — a single `grove_sketch_draw` is both create and update. You never pass whole scenes; you pass an ordered array of element objects (plus optional pseudo-elements) that tell Grove how to merge with prior state.
+
+1. Call `grove_sketch_read_me` once to learn the element format.
+2. For a fresh drawing: `grove_sketch_draw(sketch="my-diagram", elements=[...elements])` — the sketch is created.
+3. Save the returned `checkpoint_id`.
+4. To add more: `grove_sketch_draw(sketch="my-diagram", elements=[{"type":"restoreCheckpoint","id":"<cp>"}, ...new elements])`.
+5. To inspect an existing sketch first: `grove_sketch_read("my-diagram")` — returns a summary and a fresh checkpoint_id.
+
+Checkpoints are retained for the most recent 100 draws (global LRU). You can revert by passing any prior `checkpoint_id` you saved.
+
+## Recommended Workflow
+
+1. `grove_status` to verify task context
+2. `grove_read_notes` to understand requirements
+3. Read `input/` for user-provided files
+4. Work in `output/` and, if visual, the sketch canvas via the tools above
+5. When collaborating on a visual design, prefer sketch tools over describing shapes textually
+"#;
+
+/// Element-format reference returned by `grove_sketch_read_me`. Adapted from
+/// the excalidraw-mcp "cheat sheet" (MIT) with Grove-specific pseudo-elements.
+const SKETCH_READ_ME: &str = r##"# Grove Sketch — Excalidraw Element Format
+
+Thanks for calling `grove_sketch_read_me`! Do NOT call it again in this conversation — the content does not change. Use `grove_sketch_draw` to draw.
+
+## How drawing works in Grove
+
+- One tool, `grove_sketch_draw`, handles both create and update.
+- `elements` is a typed **array of objects** — send it as a real JSON array in the tool call, not as a string. Each object's `type` field discriminates it; the MCP schema validates the shape.
+- Sketches are addressed by **name** (e.g. `"architecture"`). Name doesn't exist → a new sketch is created. Name exists → the call updates it.
+- Each successful draw returns a `checkpoint_id`. Pass it back via `restoreCheckpoint` (first element) on the next call to continue from that state.
+- Up to 100 recent checkpoints are kept (global LRU). You can revert to any earlier checkpoint by reusing its id.
+
+## Grove Pseudo-Elements (place in the `elements` array)
+
+**`restoreCheckpoint`** — at most one, must be first:
+`{"type":"restoreCheckpoint","id":"<checkpoint_id>"}`
+Loads the saved scene and appends your new elements on top.
+
+**`delete`** — remove elements by id:
+`{"type":"delete","ids":"r1,r2,a3"}`
+Comma-separated. Also removes bound-text whose `containerId` matches. Place anywhere; applied to the base scene.
+
+**`cameraUpdate`** — viewport hint for the widget (not drawn):
+`{"type":"cameraUpdate","x":0,"y":0,"width":800,"height":600}`
+Use 4:3 sizes: 400x300, 600x450, 800x600, 1200x900, 1600x1200. Emit BEFORE the elements it frames.
+
+## Color Palette (use consistently)
+
+### Primary strokes (on white)
+| Name | Hex |
+|------|-----|
+| Blue | `#4a9eed` |
+| Amber | `#f59e0b` |
+| Green | `#22c55e` |
+| Red | `#ef4444` |
+| Purple | `#8b5cf6` |
+| Pink | `#ec4899` |
+| Cyan | `#06b6d4` |
+
+### Pastel fills (for shape backgrounds)
+| Color | Hex | Good for |
+|-------|-----|----------|
+| Light Blue | `#a5d8ff` | sources, primary nodes |
+| Light Green | `#b2f2bb` | success, output |
+| Light Orange | `#ffd8a8` | warning, pending |
+| Light Purple | `#d0bfff` | processing, middleware |
+| Light Red | `#ffc9c9` | error, critical |
+| Light Yellow | `#fff3bf` | notes, decisions |
+| Light Teal | `#c3fae8` | storage, data |
+| Light Pink | `#eebefa` | analytics |
+
+Dark mode: start with a huge `{type:"rectangle", x:-4000, y:-3000, width:10000, height:7500, backgroundColor:"#1e1e2e", fillStyle:"solid"}` background element.
+
+## Excalidraw Elements
+
+All elements require: `type`, `id` (unique string), `x`, `y`, `width`, `height`.
+Defaults (omit to save tokens): `strokeColor="#1e1e1e"`, `backgroundColor="transparent"`, `fillStyle="solid"`, `strokeWidth=2`, `roughness=1`, `opacity=100`.
+
+**Rectangle** — `{"type":"rectangle","id":"r1","x":100,"y":100,"width":200,"height":100}`
+Add `"roundness":{"type":3}` for rounded corners, `"backgroundColor":"#a5d8ff","fillStyle":"solid"` for fill.
+
+**Ellipse / Diamond** — same shape as rectangle.
+
+**Labeled shape (PREFERRED for boxes with text)**:
+```
+{"type":"rectangle","id":"r1","x":100,"y":100,"width":200,"height":80,
+ "label":{"text":"Hello","fontSize":20}}
+```
+Works on rectangle/ellipse/diamond. Text auto-centers; container auto-resizes. Saves tokens vs separate text elements.
+
+**Labeled arrow** — add `"label":{"text":"connects"}` to an arrow.
+
+**Standalone text** (titles, annotations only):
+`{"type":"text","id":"t1","x":150,"y":140,"text":"Hello","fontSize":20}`
+`x` is the LEFT edge. To center text at cx: `x = cx - text.length * fontSize * 0.25`.
+
+**Arrow** with points and binding:
+```
+{"type":"arrow","id":"a1","x":300,"y":150,"width":200,"height":0,
+ "points":[[0,0],[200,0]],"endArrowhead":"arrow",
+ "startBinding":{"elementId":"r1","fixedPoint":[1,0.5]},
+ "endBinding":{"elementId":"r2","fixedPoint":[0,0.5]}}
+```
+`fixedPoint`: top=[0.5,0], bottom=[0.5,1], left=[0,0.5], right=[1,0.5].
+`endArrowhead`: `null | "arrow" | "bar" | "dot" | "triangle"`.
+
+## Drawing Order (CRITICAL)
+
+Array order = z-order (first = back, last = front).
+**Emit progressively**: background → shape → its label → its arrows → next shape.
+Draw decorations/art LAST.
+
+## Camera & Sizing
+
+The inline canvas is ~700px wide. Design for that constraint.
+
+**4:3 camera sizes (always use one):**
+- Camera S: 400×300 — zoomed detail (2-3 elements)
+- Camera M: 600×450 — a section
+- Camera L: 800×600 — standard full diagram (DEFAULT)
+- Camera XL: 1200×900 — large overview; minimum readable fontSize 18
+- Camera XXL: 1600×1200 — panorama; minimum readable fontSize 21
+
+**Font size rules:**
+- Body/labels: minimum 16
+- Titles/headings: minimum 20
+- Secondary annotations: minimum 14 (sparingly)
+
+**Element sizing:**
+- Labeled shapes: at least 120×60
+- Leave 20-30px gaps between elements
+
+ALWAYS emit the first `cameraUpdate` BEFORE the elements it frames.
+
+## Full example
+
+```
+[
+  {"type":"cameraUpdate","width":800,"height":600,"x":50,"y":50},
+  {"type":"rectangle","id":"b1","x":100,"y":100,"width":200,"height":100,"roundness":{"type":3},"backgroundColor":"#a5d8ff","fillStyle":"solid","label":{"text":"Start","fontSize":20}},
+  {"type":"rectangle","id":"b2","x":450,"y":100,"width":200,"height":100,"roundness":{"type":3},"backgroundColor":"#b2f2bb","fillStyle":"solid","label":{"text":"End","fontSize":20}},
+  {"type":"arrow","id":"a1","x":300,"y":150,"width":150,"height":0,"points":[[0,0],[150,0]],"endArrowhead":"arrow","startBinding":{"elementId":"b1","fixedPoint":[1,0.5]},"endBinding":{"elementId":"b2","fixedPoint":[0,0.5]}}
+]
+```
+
+## Incremental editing example
+
+First call creates the base and returns `checkpoint_id: "cp-abc…"`.
+To add a third box afterwards:
+```
+[
+  {"type":"restoreCheckpoint","id":"cp-abc..."},
+  {"type":"rectangle","id":"b3","x":800,"y":100,"width":200,"height":100,"backgroundColor":"#ffd8a8","fillStyle":"solid","label":{"text":"Next","fontSize":20}}
+]
+```
+To delete `b1` before adding `b3`: include `{"type":"delete","ids":"b1"}` anywhere.
+
+## Common mistakes to avoid
+
+- **Stringifying `elements`**: send the tool call with `elements` as a JSON array, NOT as a JSON-encoded string. Don't wrap it in extra quotes or escape inner quotes.
+- **Reusing ids**: every element id must be unique. Don't reuse an id after deleting it — always pick a fresh id for replacements.
+- **Camera aspect ratio**: non-4:3 causes distortion. Stick to the sizes above.
+- **Low contrast**: light gray text on white is invisible. Minimum `#757575` on white.
+- **Emoji in text**: Excalidraw's font does not render emoji — avoid them.
+- **Tiny fonts**: below 14 becomes unreadable at display scale.
+
+## Tips
+
+- `cameraUpdate` is great for guiding attention while drawing complex diagrams. Emit multiple to pan/zoom across sections.
+- For dark themes: put a massive dark rectangle at index 0 BEFORE any `cameraUpdate`. Use bright primary colors on top.
+- Save every `checkpoint_id` in your reasoning; reverting is just passing an older id.
+"##;
+
+const UNKNOWN_TASK_INSTRUCTIONS: &str = r#"
+# Grove - Task (unknown type)
+
+Grove task environment variables are set but the project could not be resolved from the database. This usually indicates misconfiguration or a corrupt project entry.
+
+Only two tools are available in this state: `grove_status` and `grove_read_notes`. Call `grove_status` first to see what went wrong and report back to the user.
+"#;
+
+/// What kind of task-environment this MCP server is running in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TaskEnvKind {
+    /// Not in a task (orchestrator mode).
+    NotInTask,
+    /// Inside a Coding (git worktree) task.
+    Coding,
+    /// Inside a Studio task.
+    Studio,
+    /// Inside a task but the project record can't be resolved (corrupt / stale env).
+    InTaskUnknown,
+}
+
+fn current_task_env_kind() -> TaskEnvKind {
+    let Some((_task_id, project_path)) = get_task_context() else {
+        return TaskEnvKind::NotInTask;
+    };
+    let hash = crate::storage::workspace::project_hash(&project_path);
+    match crate::storage::workspace::load_project_by_hash(&hash) {
+        Ok(Some(p)) => match p.project_type {
+            crate::storage::workspace::ProjectType::Studio => TaskEnvKind::Studio,
+            _ => TaskEnvKind::Coding,
+        },
+        _ => TaskEnvKind::InTaskUnknown,
+    }
+}
+
 fn get_instructions() -> &'static str {
-    if get_task_context().is_some() {
-        EXECUTION_INSTRUCTIONS
-    } else {
-        MANAGEMENT_INSTRUCTIONS
+    match current_task_env_kind() {
+        TaskEnvKind::NotInTask => MANAGEMENT_INSTRUCTIONS,
+        TaskEnvKind::Coding => CODING_EXECUTION_INSTRUCTIONS,
+        TaskEnvKind::Studio => STUDIO_EXECUTION_INSTRUCTIONS,
+        TaskEnvKind::InTaskUnknown => UNKNOWN_TASK_INSTRUCTIONS,
     }
 }
 
 fn filter_tools(all: Vec<Tool>) -> Vec<Tool> {
-    let task_scoped_tools: HashSet<&'static str> = HashSet::from([
-        "grove_status",
-        "grove_read_notes",
+    // Visible in every in-task context (Coding, Studio, and the unknown-project
+    // fallback state).
+    let common_in_task: HashSet<&'static str> = HashSet::from(["grove_status", "grove_read_notes"]);
+    // Coding-task-only tools.
+    let coding_only: HashSet<&'static str> = HashSet::from([
         "grove_read_review",
         "grove_reply_review",
         "grove_add_comment",
         "grove_complete_task",
     ]);
-    // Tools usable from both inside and outside a task (sketch tools take
-    // explicit project_id/task_id and are used by worker agents in-task as
-    // well as by the orchestrator).
-    let dual_use_tools: HashSet<&'static str> = HashSet::from([
+    // Studio-task-only tools (also exposed to the orchestrator, see below).
+    let studio_only: HashSet<&'static str> = HashSet::from([
+        "grove_sketch_read_me",
         "grove_sketch_list",
-        "grove_sketch_new",
         "grove_sketch_read",
-        "grove_sketch_patch",
-        "grove_sketch_replace",
+        "grove_sketch_draw",
     ]);
-    if get_task_context().is_some() {
-        all.into_iter()
+    // Union of every in-task tool (used to carve out the orchestrator surface
+    // — orchestrator never sees any in-task tool, including sketch).
+    let any_in_task: HashSet<&str> = common_in_task
+        .iter()
+        .chain(coding_only.iter())
+        .chain(studio_only.iter())
+        .copied()
+        .collect();
+
+    match current_task_env_kind() {
+        TaskEnvKind::NotInTask => {
+            // Orchestrator: everything except in-task tools (sketch included —
+            // sketch is Studio-worker-exclusive).
+            all.into_iter()
+                .filter(|t| !any_in_task.contains(t.name.as_ref()))
+                .collect()
+        }
+        TaskEnvKind::Coding => all
+            .into_iter()
             .filter(|t| {
-                task_scoped_tools.contains(t.name.as_ref())
-                    || dual_use_tools.contains(t.name.as_ref())
+                common_in_task.contains(t.name.as_ref()) || coding_only.contains(t.name.as_ref())
             })
-            .collect()
-    } else {
-        all.into_iter()
-            .filter(|t| !task_scoped_tools.contains(t.name.as_ref()))
-            .collect()
+            .collect(),
+        TaskEnvKind::Studio => all
+            .into_iter()
+            .filter(|t| {
+                common_in_task.contains(t.name.as_ref()) || studio_only.contains(t.name.as_ref())
+            })
+            .collect(),
+        TaskEnvKind::InTaskUnknown => all
+            .into_iter()
+            .filter(|t| common_in_task.contains(t.name.as_ref()))
+            .collect(),
     }
 }
 
@@ -395,45 +620,173 @@ pub struct ListChatsParams {
     pub query: Option<String>,
 }
 
-#[derive(Debug, Deserialize, JsonSchema)]
-pub struct SketchListParams {
-    pub project_id: String,
-    pub task_id: String,
-}
+#[derive(Debug, Deserialize, JsonSchema, Default)]
+pub struct SketchListParams {}
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct SketchReadParams {
-    pub project_id: String,
-    pub task_id: String,
-    pub sketch_id: String,
+    /// Sketch reference — either the sketch name (preferred) or a `sketch-<uuid>` id.
+    pub sketch: String,
+    /// If true, include the full Excalidraw scene JSON in the response.
+    /// Default false — only a summary + current checkpoint_id is returned (saves tokens).
+    #[serde(default)]
+    pub detail_full: bool,
+}
+
+/// Nested label for a shape (auto-centered, auto-resizing text binding).
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+#[schemars(inline)]
+pub struct SketchElementLabel {
+    /// Label text.
+    pub text: String,
+    /// Font size in px. Minimum 14 for readability; 16+ for body, 20+ for titles.
+    #[serde(skip_serializing_if = "Option::is_none", rename = "fontSize")]
+    pub font_size: Option<f64>,
+    /// Text color override (hex). Defaults to the container's strokeColor.
+    #[serde(skip_serializing_if = "Option::is_none", rename = "strokeColor")]
+    pub stroke_color: Option<String>,
+}
+
+/// Rounded-corner descriptor. Use `{"type": 3}` for the standard adaptive rounding.
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+#[schemars(inline)]
+pub struct SketchElementRoundness {
+    /// Rounding algorithm: 3 = adaptive radius (recommended), 2 = proportional.
+    #[serde(rename = "type")]
+    pub kind: u32,
+}
+
+/// Arrow endpoint binding: anchors an arrow tip to a shape at a fixed point.
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+#[schemars(inline)]
+pub struct SketchElementBinding {
+    /// Id of the shape this arrow end is bound to.
+    #[serde(rename = "elementId")]
+    pub element_id: String,
+    /// [0,1]x[0,1] relative coordinate on the shape's bounding box.
+    /// Common values: top=[0.5,0], bottom=[0.5,1], left=[0,0.5], right=[1,0.5].
+    #[serde(skip_serializing_if = "Option::is_none", rename = "fixedPoint")]
+    pub fixed_point: Option<[f64; 2]>,
+}
+
+/// A single Excalidraw element OR one of the three Grove pseudo-elements.
+///
+/// Discriminated by `type`:
+/// - **Real drawn types**: `rectangle`, `ellipse`, `diamond`, `arrow`, `line`,
+///   `text`, `freedraw`. Must have a unique `id`.
+/// - **`cameraUpdate`**: viewport hint (not drawn). Set `x/y/width/height`
+///   (4:3 sizes only — 400x300, 600x450, 800x600, 1200x900, 1600x1200). No `id`.
+/// - **`delete`**: remove base elements by id. Use the `ids` field with a
+///   comma-separated string (e.g. `"r1,a2,t3"`). No `id` of its own.
+/// - **`restoreCheckpoint`**: must be the FIRST element when used. Set `id`
+///   to a checkpoint_id returned by a previous draw to continue from that state.
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+#[schemars(inline)]
+pub struct SketchElement {
+    /// Element type (see struct-level docs for valid values).
+    #[serde(rename = "type")]
+    pub kind: String,
+
+    /// Unique element id within this sketch. Required for drawn elements and
+    /// for `restoreCheckpoint`. Omit on `delete` and `cameraUpdate`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
+
+    /// For `delete`: comma-separated list of element ids to remove
+    /// (e.g. "rect1,arrow2"). Bound-text children are removed automatically.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ids: Option<String>,
+
+    /// Scene x of top-left (or of cameraUpdate's visible area).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub x: Option<f64>,
+    /// Scene y of top-left.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub y: Option<f64>,
+    /// Element width (or cameraUpdate area width).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub width: Option<f64>,
+    /// Element height (or cameraUpdate area height).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub height: Option<f64>,
+
+    /// For arrow/line: array of [dx, dy] points offset from (x, y).
+    /// Example straight arrow: `points: [[0,0],[200,0]]`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub points: Option<Vec<[f64; 2]>>,
+
+    /// For standalone `text` elements: the displayed string.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub text: Option<String>,
+
+    /// For standalone `text` elements: font size in px.
+    #[serde(skip_serializing_if = "Option::is_none", rename = "fontSize")]
+    pub font_size: Option<f64>,
+
+    /// For shapes: attach auto-centered text instead of a separate `text`
+    /// element. PREFERRED for labeled boxes/arrows — saves tokens.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub label: Option<SketchElementLabel>,
+
+    /// Rounded corners on rectangles. Usually `{"type": 3}`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub roundness: Option<SketchElementRoundness>,
+
+    /// Hex stroke color (default `#1e1e1e`).
+    #[serde(skip_serializing_if = "Option::is_none", rename = "strokeColor")]
+    pub stroke_color: Option<String>,
+    /// Hex fill color (default `transparent`).
+    #[serde(skip_serializing_if = "Option::is_none", rename = "backgroundColor")]
+    pub background_color: Option<String>,
+    /// `"solid"` for filled shapes (default `solid` but only shows if backgroundColor is set).
+    #[serde(skip_serializing_if = "Option::is_none", rename = "fillStyle")]
+    pub fill_style: Option<String>,
+    /// Stroke width in px (default 2).
+    #[serde(skip_serializing_if = "Option::is_none", rename = "strokeWidth")]
+    pub stroke_width: Option<f64>,
+    /// `"solid"` | `"dashed"` | `"dotted"` (default `solid`).
+    #[serde(skip_serializing_if = "Option::is_none", rename = "strokeStyle")]
+    pub stroke_style: Option<String>,
+    /// Opacity 0–100 (default 100). Use 30–50 for subtle background zones.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub opacity: Option<f64>,
+    /// Hand-drawn noise amount 0–2 (default 1).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub roughness: Option<f64>,
+
+    /// For arrows: `null` | `"arrow"` | `"bar"` | `"dot"` | `"triangle"`.
+    #[serde(skip_serializing_if = "Option::is_none", rename = "endArrowhead")]
+    pub end_arrowhead: Option<String>,
+    /// Same values as `endArrowhead`.
+    #[serde(skip_serializing_if = "Option::is_none", rename = "startArrowhead")]
+    pub start_arrowhead: Option<String>,
+    /// Bind arrow tail to a shape.
+    #[serde(skip_serializing_if = "Option::is_none", rename = "startBinding")]
+    pub start_binding: Option<SketchElementBinding>,
+    /// Bind arrow head to a shape.
+    #[serde(skip_serializing_if = "Option::is_none", rename = "endBinding")]
+    pub end_binding: Option<SketchElementBinding>,
+
+    /// For bound-text (internal): the container shape's id. Usually set
+    /// automatically when you use the `label` field on a shape.
+    #[serde(skip_serializing_if = "Option::is_none", rename = "containerId")]
+    pub container_id: Option<String>,
+
+    /// Catch-all for any additional Excalidraw fields (seed, strokeDasharray,
+    /// angle, etc.). Pass-through without validation.
+    #[serde(flatten)]
+    pub extra: std::collections::BTreeMap<String, serde_json::Value>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub struct SketchNewParams {
-    pub project_id: String,
-    pub task_id: String,
-    pub name: String,
-}
-
-#[derive(Debug, Deserialize, JsonSchema)]
-pub struct SketchPatchParams {
-    pub project_id: String,
-    pub task_id: String,
-    pub sketch_id: String,
-    #[serde(default)]
-    pub created: Vec<serde_json::Value>,
-    #[serde(default)]
-    pub updated: serde_json::Map<String, serde_json::Value>,
-    #[serde(default)]
-    pub deleted: Vec<String>,
-}
-
-#[derive(Debug, Deserialize, JsonSchema)]
-pub struct SketchReplaceParams {
-    pub project_id: String,
-    pub task_id: String,
-    pub sketch_id: String,
-    pub scene: serde_json::Value,
+pub struct SketchDrawParams {
+    /// Sketch reference — either a name (auto-created if missing) or a `sketch-<uuid>` id.
+    pub sketch: String,
+    /// Ordered array of Excalidraw elements plus Grove pseudo-elements.
+    /// Array order = z-order (first = back, last = front).
+    /// Emit `cameraUpdate` BEFORE the shapes it frames; emit `restoreCheckpoint`
+    /// (if used) as the first item. Call `grove_sketch_read_me` for drawing conventions.
+    pub elements: Vec<SketchElement>,
 }
 
 // ============================================================================
@@ -721,113 +1074,180 @@ impl GroveMcpServer {
         list_chats_impl(p).await
     }
 
-    /// List Excalidraw sketches in a Studio task
+    /// Return the Grove sketch element-format reference (cheat sheet).
+    #[tool(
+        name = "grove_sketch_read_me",
+        description = "Return the Grove sketch drawing reference: Excalidraw element format, color palette, Grove pseudo-elements (restoreCheckpoint / delete / cameraUpdate), camera sizing rules, and worked examples. Call this ONCE before your first `grove_sketch_draw` in a conversation. Do not call it repeatedly — the content does not change."
+    )]
+    async fn grove_sketch_read_me(&self) -> Result<CallToolResult, McpError> {
+        Ok(CallToolResult::success(vec![Content::text(
+            SKETCH_READ_ME.to_string(),
+        )]))
+    }
+
+    /// List Excalidraw sketches in the current Studio task.
     #[tool(
         name = "grove_sketch_list",
-        description = "List Excalidraw sketches in a Studio task. Returns an array of { id, name, created_at, updated_at }."
+        description = "List sketches in the current Studio task. Returns [{id, name, created_at, updated_at}]. No arguments — task is taken from GROVE_* env. Call this before `grove_sketch_read` to find sketches by name."
     )]
     async fn grove_sketch_list(
         &self,
-        params: Parameters<SketchListParams>,
+        _params: Parameters<SketchListParams>,
     ) -> Result<CallToolResult, McpError> {
-        let p = params.0;
         blocking_json_result(move || {
-            let (_project, key) = find_project_key(&p.project_id)?;
-            let index = crate::storage::sketches::load_index(&key, &p.task_id)
+            let (key, task_id) = resolve_current_task()?;
+            let index = crate::storage::sketches::load_index(&key, &task_id)
                 .map_err(|e| mcp_err(&e.to_string()))?;
             Ok(json!({ "sketches": index.sketches }))
         })
         .await
     }
 
-    /// Read the full Excalidraw scene JSON for a sketch
+    /// Read a sketch summary (and optionally the full scene) from the current task.
     #[tool(
         name = "grove_sketch_read",
-        description = "Read the full Excalidraw scene JSON for a sketch. Call this before any update/delete tool to learn current element ids."
+        description = "Read a sketch in the current Studio task. Returns a rendered image (if the web client has uploaded a fresh thumbnail), a summary (element count, type breakdown, content bounds), and a FRESH checkpoint_id you can pass back via `restoreCheckpoint` in grove_sketch_draw. Set detail_full=true to also include the full Excalidraw scene JSON (costs more tokens)."
     )]
     async fn grove_sketch_read(
         &self,
         params: Parameters<SketchReadParams>,
     ) -> Result<CallToolResult, McpError> {
         let p = params.0;
-        blocking_json_result(move || {
-            let (_project, key) = find_project_key(&p.project_id)?;
-            let body = crate::storage::sketches::load_scene(&key, &p.task_id, &p.sketch_id)
-                .map_err(|e| mcp_err(&e.to_string()))?;
-            let value: serde_json::Value =
-                serde_json::from_str(&body).map_err(|e| mcp_err(&e.to_string()))?;
-            Ok(value)
-        })
-        .await
+        let (key, task_id) = resolve_current_task()?;
+        let (text, thumb) =
+            tokio::task::spawn_blocking(move || -> Result<(String, Option<Vec<u8>>), McpError> {
+                read_sketch_to_text(&key, &task_id, &p.sketch, p.detail_full)
+            })
+            .await
+            .map_err(|e| McpError::internal_error(e.to_string(), None))??;
+
+        let mut content = Vec::new();
+        if let Some(png) = thumb {
+            use base64::Engine;
+            let b64 = base64::engine::general_purpose::STANDARD.encode(&png);
+            content.push(Content::image(b64, "image/png"));
+        }
+        content.push(Content::text(text));
+        Ok(CallToolResult::success(content))
     }
 
-    /// Create a new empty sketch
+    /// Draw / modify a sketch in the current Studio task.
     #[tool(
-        name = "grove_sketch_new",
-        description = "Create a new empty sketch in a Studio task. Returns the new sketch's metadata."
+        name = "grove_sketch_draw",
+        description = "Draw or modify a sketch in the current Studio task. `sketch` is the sketch name (auto-created if no sketch with that name exists). `elements` is an ordered array of Excalidraw elements plus Grove pseudo-elements (`restoreCheckpoint` first to continue from a prior state, `delete` to remove elements, `cameraUpdate` for viewport hints). Returns a new checkpoint_id; save it and pass it back via `restoreCheckpoint` on the next call to append incrementally. Call `grove_sketch_read_me` once for the format reference, and `grove_sketch_read` before editing an existing sketch."
     )]
-    async fn grove_sketch_new(
+    async fn grove_sketch_draw(
         &self,
-        params: Parameters<SketchNewParams>,
+        params: Parameters<SketchDrawParams>,
     ) -> Result<CallToolResult, McpError> {
         let p = params.0;
-        blocking_json_result(move || {
-            let (_project, key) = find_project_key(&p.project_id)?;
-            let meta = crate::storage::sketches::create_sketch(&key, &p.task_id, &p.name)
-                .map_err(|e| mcp_err(&e.to_string()))?;
-            broadcast_index_changed(&key, &p.task_id);
-            Ok(serde_json::to_value(meta).unwrap())
-        })
-        .await
-    }
+        let (key, task_id) = resolve_current_task()?;
 
-    /// Apply element-level changes to a sketch
-    #[tool(
-        name = "grove_sketch_patch",
-        description = "Apply element-level changes to a sketch: create (append), update (shallow merge by id), delete (by id). Use grove_sketch_read first to learn current element ids."
-    )]
-    async fn grove_sketch_patch(
-        &self,
-        params: Parameters<SketchPatchParams>,
-    ) -> Result<CallToolResult, McpError> {
-        let p = params.0;
-        blocking_json_result(move || {
-            let (_project, key) = find_project_key(&p.project_id)?;
-            let body = crate::storage::sketches::apply_element_patch(
-                &key,
-                &p.task_id,
-                &p.sketch_id,
-                &p.created,
-                &p.updated,
-                &p.deleted,
-            )
-            .map_err(|e| mcp_err(&e.to_string()))?;
-            let scene: serde_json::Value =
-                serde_json::from_str(&body).map_err(|e| mcp_err(&e.to_string()))?;
-            broadcast_scene_updated(&key, &p.task_id, &p.sketch_id, scene);
-            Ok(json!({ "ok": true }))
-        })
-        .await
-    }
+        // Re-serialize the typed elements into serde_json::Value so the
+        // storage layer doesn't depend on MCP-specific types.
+        let elements: Vec<serde_json::Value> = p
+            .elements
+            .into_iter()
+            .map(serde_json::to_value)
+            .collect::<Result<_, _>>()
+            .map_err(|e| {
+                mcp_err(&format!(
+                    "failed to serialize element for storage layer: {e}"
+                ))
+            })?;
 
-    /// Overwrite a sketch's entire scene
-    #[tool(
-        name = "grove_sketch_replace",
-        description = "Overwrite a sketch's entire scene. Use for large rewrites where patch would be noisier than replace."
-    )]
-    async fn grove_sketch_replace(
-        &self,
-        params: Parameters<SketchReplaceParams>,
-    ) -> Result<CallToolResult, McpError> {
-        let p = params.0;
-        blocking_json_result(move || {
-            let (_project, key) = find_project_key(&p.project_id)?;
-            crate::storage::sketches::replace_scene(&key, &p.task_id, &p.sketch_id, &p.scene)
-                .map_err(|e| mcp_err(&e.to_string()))?;
-            broadcast_scene_updated(&key, &p.task_id, &p.sketch_id, p.scene.clone());
-            Ok(json!({ "ok": true }))
+        let sketch_name = p.sketch;
+        let (meta, outcome, is_new_sketch) = tokio::task::spawn_blocking({
+            let key = key.clone();
+            let task_id = task_id.clone();
+            move || -> Result<_, McpError> {
+                use crate::storage::sketches;
+                let existed = sketches::resolve_sketch_ref(&key, &task_id, &sketch_name)
+                    .map_err(|e| mcp_err(&e.to_string()))?
+                    .is_some();
+                let meta = sketches::get_or_create_by_name(&key, &task_id, &sketch_name)
+                    .map_err(|e| mcp_err(&e.to_string()))?;
+                let outcome = sketches::apply_draw(&key, &task_id, &meta.id, &elements)
+                    .map_err(|e| mcp_err(&e.to_string()))?;
+                Ok((meta, outcome, !existed))
+            }
         })
         .await
+        .map_err(|e| McpError::internal_error(e.to_string(), None))??;
+
+        if is_new_sketch {
+            broadcast_index_changed(&key, &task_id);
+        }
+        broadcast_scene_updated(&key, &task_id, &meta.id, outcome.scene.clone());
+
+        let mut body = String::new();
+        if is_new_sketch {
+            body.push_str(&format!(
+                "Created new sketch \"{}\" (id: {}).\n",
+                meta.name, meta.id
+            ));
+        } else {
+            body.push_str(&format!(
+                "Updated sketch \"{}\" (id: {}).\n",
+                meta.name, meta.id
+            ));
+        }
+        body.push_str(&format!(
+            "- Elements added: {}\n- Elements deleted: {}\n- Total elements: {}\n- New checkpoint: {}\n",
+            outcome.elements_added,
+            outcome.elements_deleted,
+            outcome.element_count,
+            outcome.checkpoint_id,
+        ));
+        for w in &outcome.warnings {
+            body.push_str(&format!("⚠ {w}\n"));
+        }
+        body.push_str(&format!(
+            "\nTo continue editing this sketch, start your next `grove_sketch_draw` call's `elements` array with:\n  {{\"type\":\"restoreCheckpoint\",\"id\":\"{}\"}}\n",
+            outcome.checkpoint_id
+        ));
+
+        let thumb = tokio::task::spawn_blocking({
+            let key = key.clone();
+            let task_id = task_id.clone();
+            let sketch_id = meta.id.clone();
+            move || crate::storage::sketches::load_thumbnail_if_fresh(&key, &task_id, &sketch_id)
+        })
+        .await
+        .ok()
+        .and_then(|r| r.ok())
+        .flatten();
+
+        let mut note = String::new();
+        if thumb.is_none() {
+            note.push_str(
+                "\n(No rendered image attached — the thumbnail is either missing or older than the current scene. Open the sketch tab in the UI to refresh it.)\n",
+            );
+        }
+
+        let structured = json!({
+            "sketch_id": meta.id,
+            "sketch_name": meta.name,
+            "checkpoint_id": outcome.checkpoint_id,
+            "element_count": outcome.element_count,
+            "elements_added": outcome.elements_added,
+            "elements_deleted": outcome.elements_deleted,
+            "warnings": outcome.warnings,
+            "created_new_sketch": is_new_sketch,
+            "image_attached": thumb.is_some(),
+        });
+        body.push_str(&note);
+        body.push_str("\n---\n");
+        body.push_str(&serde_json::to_string_pretty(&structured).unwrap_or_default());
+
+        let mut content = Vec::new();
+        if let Some(png) = thumb {
+            use base64::Engine;
+            let b64 = base64::engine::general_purpose::STANDARD.encode(&png);
+            content.push(Content::image(b64, "image/png"));
+        }
+        content.push(Content::text(body));
+        Ok(CallToolResult::success(content))
     }
 
     /// Read user-written notes for the current task
@@ -1380,27 +1800,20 @@ fn mcp_err(msg: &str) -> McpError {
     McpError::invalid_request(msg.to_string(), None)
 }
 
-/// Resolve a project id (hash or similar) to its `(RegisteredProject, project_key)`.
-/// Mirrors the pattern used by `resolve_project_for_mcp` but returns the whole project
-/// record so callers can use additional fields when needed.
-fn find_project_key(
-    project_id: &str,
-) -> Result<(crate::storage::workspace::RegisteredProject, String), McpError> {
-    let project = match load_project_by_id(project_id) {
-        Ok(Some(p)) => p,
-        Ok(None) => return Err(mcp_err("Project not found")),
-        Err(e) => {
-            return Err(McpError::internal_error(
-                format!("Failed to load project: {e}"),
-                None,
-            ))
-        }
-    };
-    let key = workspace::project_hash(&project.path);
-    Ok((project, key))
+/// Resolve the current Studio task from `GROVE_*` env vars.
+/// Returns `(project_key, task_id)` or a Not-in-task error.
+fn resolve_current_task() -> Result<(String, String), McpError> {
+    let (task_id, project_path) = get_task_context()
+        .ok_or_else(|| mcp_err("Not inside a Grove task: GROVE_TASK_ID / GROVE_PROJECT not set"))?;
+    let project_key = workspace::project_hash(&project_path);
+    Ok((project_key, task_id))
 }
 
 fn broadcast_index_changed(project: &str, task_id: &str) {
+    // In-process broadcast only — the daemon reaches grove-web via its own
+    // WebSocket; MCP writes in a separate OS process, so grove-web discovers
+    // MCP-authored changes through polling while the chat is busy (see
+    // useSketchSync in grove-web).
     use crate::api::handlers::tasks::sketch_events::{broadcast_sketch_event, SketchEvent};
     broadcast_sketch_event(SketchEvent::IndexChanged {
         project: project.to_string(),
@@ -1414,6 +1827,14 @@ fn broadcast_scene_updated(
     sketch_id: &str,
     scene: serde_json::Value,
 ) {
+    // In-process broadcast only — same caveat as `broadcast_index_changed`.
+    // MCP runs in a separate OS process from the web daemon, so this event
+    // NEVER reaches grove-web's WebSocket subscribers. We still emit it so
+    // that if MCP is ever linked into the daemon process (or both run under
+    // the same binary), cross-sketch notifications work without extra code.
+    // Today the real delivery path is grove-web's 2 s polling loop + the
+    // on-idle refresh (see `useSketchSync`). Do not add cross-process
+    // signalling here; use a file-watch or queue instead.
     use crate::api::handlers::tasks::sketch_events::{
         broadcast_sketch_event, SketchEvent, SketchEventSource,
     };
@@ -1432,6 +1853,126 @@ fn error_json(error: &str, message: impl Into<String>) -> serde_json::Value {
         "error": error,
         "message": message.into(),
     })
+}
+
+/// Build the text body for `grove_sketch_read` (summary + fresh checkpoint +
+/// optional full scene JSON) plus an optional PNG thumbnail. Also writes a fresh
+/// checkpoint so the caller receives an id they can use with `restoreCheckpoint`
+/// in a follow-up draw.
+fn read_sketch_to_text(
+    project: &str,
+    task_id: &str,
+    reference: &str,
+    detail_full: bool,
+) -> Result<(String, Option<Vec<u8>>), McpError> {
+    use crate::storage::sketches;
+    let meta_opt = sketches::resolve_sketch_ref(project, task_id, reference)
+        .map_err(|e| mcp_err(&e.to_string()))?;
+    let meta = match meta_opt {
+        Some(m) => m,
+        None => {
+            let index =
+                sketches::load_index(project, task_id).map_err(|e| mcp_err(&e.to_string()))?;
+            let list_str = if index.sketches.is_empty() {
+                "  (no sketches exist yet in this task)".to_string()
+            } else {
+                index
+                    .sketches
+                    .iter()
+                    .map(|m| {
+                        format!(
+                            "  - name: \"{}\" | id: {} | updated: {}",
+                            m.name, m.id, m.updated_at
+                        )
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            };
+            return Err(mcp_err(&format!(
+                "Sketch \"{reference}\" not found in this task.\n\nAvailable sketches:\n{list_str}\n\nUse grove_sketch_draw with a new name to create a new sketch, or pick one of the names above."
+            )));
+        }
+    };
+
+    let scene = sketches::load_scene_value(project, task_id, &meta.id)
+        .map_err(|e| mcp_err(&e.to_string()))?;
+    let empty_vec: Vec<serde_json::Value> = Vec::new();
+    let elements = scene
+        .get("elements")
+        .and_then(|v| v.as_array())
+        .unwrap_or(&empty_vec);
+    let element_count = elements.len();
+
+    let mut type_counts: std::collections::BTreeMap<String, usize> = Default::default();
+    for el in elements.iter() {
+        if let Some(t) = el.get("type").and_then(|v| v.as_str()) {
+            *type_counts.entry(t.to_string()).or_insert(0) += 1;
+        }
+    }
+
+    let mut viewport_hint: Option<(f64, f64, f64, f64)> = None;
+    if !elements.is_empty() {
+        let (mut min_x, mut min_y) = (f64::INFINITY, f64::INFINITY);
+        let (mut max_x, mut max_y) = (f64::NEG_INFINITY, f64::NEG_INFINITY);
+        for el in elements.iter() {
+            let x = el.get("x").and_then(|v| v.as_f64()).unwrap_or(0.0);
+            let y = el.get("y").and_then(|v| v.as_f64()).unwrap_or(0.0);
+            let w = el.get("width").and_then(|v| v.as_f64()).unwrap_or(0.0);
+            let h = el.get("height").and_then(|v| v.as_f64()).unwrap_or(0.0);
+            min_x = min_x.min(x);
+            min_y = min_y.min(y);
+            max_x = max_x.max(x + w);
+            max_y = max_y.max(y + h);
+        }
+        if min_x.is_finite() && max_x > min_x {
+            viewport_hint = Some((min_x, min_y, max_x - min_x, max_y - min_y));
+        }
+    }
+
+    let cp_id = crate::storage::sketch_checkpoints::generate_id();
+    crate::storage::sketch_checkpoints::save(&cp_id, &scene)
+        .map_err(|e| mcp_err(&e.to_string()))?;
+
+    let mut body = format!(
+        "Sketch \"{}\" (id: {})\n- Elements: {}\n",
+        meta.name, meta.id, element_count
+    );
+    if !type_counts.is_empty() {
+        let parts: Vec<String> = type_counts
+            .iter()
+            .map(|(k, v)| format!("{k}: {v}"))
+            .collect();
+        body.push_str(&format!("- By type: {}\n", parts.join(", ")));
+    }
+    body.push_str(&format!("- Last updated: {}\n", meta.updated_at));
+    if let Some((x, y, w, h)) = viewport_hint {
+        body.push_str(&format!(
+            "- Content bounds: x={:.0} y={:.0} w={:.0} h={:.0}\n",
+            x, y, w, h
+        ));
+    }
+    body.push_str(&format!("- Current checkpoint: {cp_id}\n"));
+    body.push_str(&format!(
+        "\nTo modify this sketch, call grove_sketch_draw with:\n  [{{\"type\":\"restoreCheckpoint\",\"id\":\"{cp_id}\"}}, ...your new elements]\n"
+    ));
+
+    if detail_full {
+        body.push_str("\n--- Full Excalidraw scene JSON ---\n");
+        body.push_str(&serde_json::to_string_pretty(&scene).unwrap_or_default());
+    } else {
+        body.push_str("\n(Pass detail_full=true to also receive the complete scene JSON.)\n");
+    }
+
+    let thumb = crate::storage::sketches::load_thumbnail_if_fresh(project, task_id, &meta.id)
+        .ok()
+        .flatten();
+    if thumb.is_none() {
+        body.push_str(
+            "\n(No rendered image attached — the thumbnail is either missing or older than the current scene. Open the sketch tab in the UI to refresh it, or read the scene JSON with detail_full=true.)\n",
+        );
+    }
+
+    Ok((body, thumb))
 }
 
 fn ensure_not_in_grove_task() -> Result<(), McpError> {
@@ -1598,9 +2139,19 @@ fn list_projects_json(query: Option<&str>) -> serde_json::Value {
 }
 
 fn load_project_by_id(project_id: &str) -> Result<Option<workspace::RegisteredProject>, String> {
-    match workspace::load_project_by_hash(project_id).map_err(|e| e.to_string())? {
-        Some(p) if std::path::Path::new(&p.path).exists() => Ok(Some(p)),
-        _ => Ok(None),
+    let Some(p) = workspace::load_project_by_hash(project_id).map_err(|e| e.to_string())? else {
+        return Ok(None);
+    };
+    // Studio projects use virtual `studio://<name>` paths that are not on disk;
+    // check the resolved studio directory instead.
+    let exists = match p.project_type {
+        workspace::ProjectType::Studio => workspace::studio_project_dir(&p.path).exists(),
+        _ => std::path::Path::new(&p.path).exists(),
+    };
+    if exists {
+        Ok(Some(p))
+    } else {
+        Ok(None)
     }
 }
 
@@ -2856,7 +3407,7 @@ mod tests {
     }
 
     #[test]
-    fn filter_tools_outside_task_scoped_returns_complement() {
+    fn filter_tools_outside_task_returns_orchestrator_surface() {
         let _guard = TEST_LOCK.get_or_init(|| Mutex::new(())).blocking_lock();
 
         let mut env = EnvGuard::new();
@@ -2867,6 +3418,7 @@ mod tests {
         let tools = filter_tools(server.tool_router.list_all());
         let names: HashSet<String> = tools.into_iter().map(|t| t.name.to_string()).collect();
 
+        // Management tools are visible to the orchestrator.
         for name in [
             "grove_add_project_by_path",
             "grove_list_projects",
@@ -2885,6 +3437,7 @@ mod tests {
                 name
             );
         }
+        // In-task tools (including sketch — Studio-worker-exclusive) must NOT appear.
         for name in [
             "grove_status",
             "grove_read_notes",
@@ -2892,34 +3445,43 @@ mod tests {
             "grove_reply_review",
             "grove_add_comment",
             "grove_complete_task",
+            "grove_sketch_list",
+            "grove_sketch_new",
+            "grove_sketch_read",
+            "grove_sketch_patch",
+            "grove_sketch_replace",
         ] {
-            assert!(!names.contains(name));
+            assert!(!names.contains(name), "tool '{}' leaked out of task", name);
         }
     }
 
     #[test]
-    fn filter_tools_inside_task_scoped_returns_only_task_scoped() {
+    fn filter_tools_inside_task_with_unknown_project_returns_common_only() {
         let _guard = TEST_LOCK.get_or_init(|| Mutex::new(())).blocking_lock();
 
         let mut env = EnvGuard::new();
         env.set("GROVE_TASK_ID", "task-1");
-        env.set("GROVE_PROJECT", "/tmp/repo");
+        env.set("GROVE_PROJECT", "/tmp/unregistered-path");
 
         let server = GroveMcpServer::new();
         let tools = filter_tools(server.tool_router.list_all());
         let names: HashSet<String> = tools.into_iter().map(|t| t.name.to_string()).collect();
 
+        // Only the always-on in-task pair is visible in this degraded state.
+        for name in ["grove_status", "grove_read_notes"] {
+            assert!(names.contains(name), "expected '{}' in unknown state", name);
+        }
+        // Coding-only, Studio-only, and management tools are all hidden.
         for name in [
-            "grove_status",
-            "grove_read_notes",
             "grove_read_review",
             "grove_reply_review",
             "grove_add_comment",
             "grove_complete_task",
-        ] {
-            assert!(names.contains(name));
-        }
-        for name in [
+            "grove_sketch_list",
+            "grove_sketch_new",
+            "grove_sketch_read",
+            "grove_sketch_patch",
+            "grove_sketch_replace",
             "grove_add_project_by_path",
             "grove_list_projects",
             "grove_create_task",
@@ -2931,7 +3493,11 @@ mod tests {
             "grove_chat_status",
             "grove_list_chats",
         ] {
-            assert!(!names.contains(name));
+            assert!(
+                !names.contains(name),
+                "tool '{}' must be hidden when project is unresolved",
+                name
+            );
         }
     }
 
@@ -2951,15 +3517,15 @@ mod tests {
             );
         }
 
-        // Inside task → execution instructions
+        // Inside task with unregistered project → unknown-task instructions
         {
             let mut env = EnvGuard::new();
             env.set("GROVE_TASK_ID", "task-1");
-            env.set("GROVE_PROJECT", "/tmp/repo");
+            env.set("GROVE_PROJECT", "/tmp/unregistered-path");
             let instr = get_instructions();
             assert!(
-                instr.contains("Git Worktree Task Manager"),
-                "expected execution instructions inside task"
+                instr.contains("Task (unknown type)"),
+                "expected unknown-task instructions when project can't be resolved"
             );
         }
     }

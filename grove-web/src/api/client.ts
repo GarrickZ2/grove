@@ -222,6 +222,10 @@ class ApiClient {
     const response = await fetch(`${this.baseUrl}${path}`, {
       method: 'GET',
       headers: await getSignedHeaders('GET', path),
+      // Grove data is user-specific and changes at any time (MCP writes,
+      // other tabs, background sync). We always want the freshest response;
+      // never let the browser serve a stale cached copy.
+      cache: 'no-store',
     });
 
     if (!response.ok) {
@@ -359,6 +363,58 @@ class ApiClient {
     }
 
     return response.json();
+  }
+
+  /**
+   * POST raw binary data (e.g. a PNG blob) with auth headers and an explicit
+   * Content-Type. Returns `true` on 2xx, `false` on 409 (treat-as-stale).
+   * Throws on other non-2xx responses.
+   */
+  async postBinary(
+    path: string,
+    body: Blob | ArrayBuffer,
+    contentType: string,
+    signal?: AbortSignal,
+  ): Promise<boolean> {
+    const headers = await getAuthOnlyHeaders('POST', path);
+    headers['Content-Type'] = contentType;
+    const response = await fetch(`${this.baseUrl}${path}`, {
+      method: 'POST',
+      headers,
+      body,
+      signal,
+    });
+    if (response.ok) return true;
+    if (response.status === 409) return false;
+    const payload = await extractErrorPayload(response);
+    throw {
+      status: response.status,
+      message: payload.message,
+      data: payload.data,
+    } as ApiError;
+  }
+
+  /**
+   * PUT with `keepalive: true` — survives page unload so we can flush
+   * in-flight debounced saves. Browser caps the body at ~64 KB; callers that
+   * might exceed this should fall back to regular `put`. No-response callers
+   * only.
+   */
+  async putKeepalive<T>(path: string, data: T): Promise<void> {
+    const response = await fetch(`${this.baseUrl}${path}`, {
+      method: 'PUT',
+      headers: await getSignedHeaders('PUT', path),
+      body: JSON.stringify(data),
+      keepalive: true,
+    });
+    if (!response.ok) {
+      const payload = await extractErrorPayload(response);
+      throw {
+        status: response.status,
+        message: payload.message,
+        data: payload.data,
+      } as ApiError;
+    }
   }
 
   async put<T, R>(path: string, data: T): Promise<R> {
