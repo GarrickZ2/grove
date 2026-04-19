@@ -97,7 +97,10 @@ pub async fn render_d2(Json(body): Json<RenderD2Request>) -> Response {
                 (
                     StatusCode::UNPROCESSABLE_ENTITY,
                     "d2_not_installed",
-                    "d2 is not installed. Install it with: brew install d2".to_string(),
+                    format!(
+                        "d2 is not installed. Install it with: {}",
+                        crate::api::handlers::env::D2_INSTALL_CMD
+                    ),
                 )
             } else {
                 (

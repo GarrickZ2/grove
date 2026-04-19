@@ -284,14 +284,37 @@ pub struct AppInfo {
 #[derive(Debug, Serialize)]
 pub struct ApplicationsResponse {
     pub apps: Vec<AppInfo>,
+    /// Platform identifier: "macos", "windows", "linux"
+    pub platform: &'static str,
+}
+
+/// Current platform identifier
+fn current_platform() -> &'static str {
+    if cfg!(target_os = "macos") {
+        "macos"
+    } else if cfg!(target_os = "windows") {
+        "windows"
+    } else {
+        "linux"
+    }
 }
 
 /// GET /api/v1/config/applications
 /// List installed applications (for IDE/Terminal picker)
 pub async fn list_applications() -> Json<ApplicationsResponse> {
+    let platform = current_platform();
+
+    // Windows/Linux: application scanning not yet supported
+    if platform != "macos" {
+        return Json(ApplicationsResponse {
+            apps: Vec::new(),
+            platform,
+        });
+    }
+
     let mut apps = Vec::new();
 
-    // Scan common application directories
+    // Scan common application directories (macOS)
     let app_dirs = [
         "/Applications",
         "/System/Applications",
@@ -331,7 +354,7 @@ pub async fn list_applications() -> Json<ApplicationsResponse> {
     // Remove duplicates (same name from different locations, prefer /Applications)
     apps.dedup_by(|a, b| a.name == b.name);
 
-    Json(ApplicationsResponse { apps })
+    Json(ApplicationsResponse { apps, platform })
 }
 
 /// Try to extract bundle identifier from app's Info.plist

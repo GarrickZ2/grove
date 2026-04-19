@@ -43,6 +43,7 @@ import {
   deleteTask,
   checkCommands,
   getConfig,
+  listApplications,
   initGitRepo,
   type RepoStatusResponse,
   type BranchDetailInfo,
@@ -131,6 +132,7 @@ export function DashboardPage({ onNavigate }: DashboardPageProps) {
   const [agentAvailability, setAgentAvailability] = useState<Record<string, boolean>>({});
   const [terminalAgentConfigured, setTerminalAgentConfigured] = useState(true);
   const [chatAgentConfigured, setChatAgentConfigured] = useState(true);
+  const [serverPlatform, setServerPlatform] = useState<string>("macos");
   const [dismissedTips, setDismissedTips] = useState<Set<string>>(() => {
     try {
       const stored = localStorage.getItem("grove-dismissed-tips");
@@ -229,13 +231,15 @@ export function DashboardPage({ onNavigate }: DashboardPageProps) {
   useEffect(() => {
     const check = async () => {
       try {
-        const [cmdResults, cfg] = await Promise.all([
+        const [cmdResults, cfg, appsResult] = await Promise.all([
           checkCommands(["claude", "codex", "gemini"]),
           getConfig(),
+          listApplications(),
         ]);
         setAgentAvailability(cmdResults);
         setTerminalAgentConfigured(!!cfg.layout?.agent_command);
         setChatAgentConfigured(!!cfg.acp?.agent_command);
+        setServerPlatform(appsResult.platform);
       } catch {
         // silently fail
       }
@@ -633,8 +637,12 @@ export function DashboardPage({ onNavigate }: DashboardPageProps) {
             </div>
             {!isStudio && (
               <div className="flex items-center gap-2 shrink-0">
-                <HeroButton icon={Code2} label="Open IDE" onClick={handleOpenIDE} />
-                <HeroButton icon={TerminalSquare} label="Terminal" onClick={handleOpenTerminal} />
+                {serverPlatform === "macos" && (
+                  <>
+                    <HeroButton icon={Code2} label="Open IDE" onClick={handleOpenIDE} />
+                    <HeroButton icon={TerminalSquare} label="Terminal" onClick={handleOpenTerminal} />
+                  </>
+                )}
                 {isGitRepo && (
                   <HeroButton icon={ArrowUpDown} label="Branches" onClick={() => setShowBranchDrawer(true)} />
                 )}

@@ -21,9 +21,16 @@ Write a spec, let AI code it, review together, merge with confidence. Each task 
 
 **Install:**
 ```bash
+# macOS / Linux / WSL
 brew tap GarrickZ2/grove && brew install grove
 # or
 curl -sSL https://raw.githubusercontent.com/GarrickZ2/grove/master/install.sh | sh
+# or
+cargo install grove-rs
+```
+```powershell
+# Windows (PowerShell)
+irm https://raw.githubusercontent.com/GarrickZ2/grove/master/install.ps1 | iex
 # or
 cargo install grove-rs
 ```
@@ -133,7 +140,13 @@ Native desktop app powered by Tauri 2 WebView. Same frontend as Grove Web, runs 
 
 ![Grove GUI](docs/images/grove-gui.png)
 
-Included by default in macOS release binaries. Linux desktop builds are available from GitHub Releases and require WebKitGTK/GTK runtime libraries. For `cargo install`, enable with `cargo install grove-rs --features gui`.
+GUI availability per platform:
+
+- **macOS** — Included by default in the prebuilt release binaries and the `.dmg` app. Just run `grove gui`.
+- **Linux** — A separate GUI-enabled build is published as `*-unknown-linux-gnu-gui.tar.gz`. Install it via `GROVE_GUI=1` (see Install section). Requires WebKitGTK/GTK runtime libraries.
+- **Windows** — **Not** included in the prebuilt `grove.exe` release binary. To use the GUI on Windows, install from source with the `gui` feature: `cargo install grove-rs --features gui`. Tauri uses the system WebView2 runtime, which ships with Windows 10/11 by default (no extra install needed).
+
+For any platform, `cargo install grove-rs --features gui` builds Grove with GUI support locally.
 
 ---
 
@@ -235,7 +248,7 @@ Single binary with embedded web frontend. No runtime dependencies beyond Git and
 brew tap GarrickZ2/grove && brew install grove
 ```
 
-**Shell** (auto-detect platform):
+**Shell** (macOS / Linux / WSL — auto-detect platform):
 ```bash
 curl -sSL https://raw.githubusercontent.com/GarrickZ2/grove/master/install.sh | sh
 
@@ -245,6 +258,21 @@ curl -sSL https://raw.githubusercontent.com/GarrickZ2/grove/master/install.sh | 
 # Custom install path (default: /usr/local/bin)
 INSTALL_DIR=~/.local/bin curl -sSL https://raw.githubusercontent.com/GarrickZ2/grove/master/install.sh | sh
 ```
+
+> WSL users: use the shell installer above — Grove runs natively under WSL with the Linux binary.
+
+**Windows** (PowerShell):
+```powershell
+irm https://raw.githubusercontent.com/GarrickZ2/grove/master/install.ps1 | iex
+
+# Custom install path (default: %LOCALAPPDATA%\Programs\Grove)
+$env:GROVE_INSTALL_DIR = "C:\Tools\Grove"; irm https://raw.githubusercontent.com/GarrickZ2/grove/master/install.ps1 | iex
+
+# or via cargo
+cargo install grove-rs
+```
+
+The PowerShell script downloads `grove.exe` and adds the install directory to your user `PATH` automatically (no admin required). Note: IDE/Terminal application detection is not yet supported on Windows.
 
 **macOS App**:
 

@@ -2269,9 +2269,14 @@ pub struct ResolvedAgent {
     pub auth_header: Option<String>,
 }
 
-/// Check if a command exists in PATH using `which`.
+/// Check if a command exists in PATH (cross-platform: `where` on Windows, `which` on Unix).
 fn command_exists(cmd: &str) -> bool {
-    std::process::Command::new("which")
+    #[cfg(windows)]
+    let check_cmd = "where";
+    #[cfg(not(windows))]
+    let check_cmd = "which";
+
+    std::process::Command::new(check_cmd)
         .arg(cmd)
         .output()
         .map(|o| o.status.success())

@@ -71,6 +71,7 @@ export interface AppInfo {
 
 interface ApplicationsResponse {
   apps: AppInfo[];
+  platform: string;
 }
 
 // API functions
@@ -82,9 +83,8 @@ export async function patchConfig(patch: ConfigPatch): Promise<Config> {
   return apiClient.patch<ConfigPatch, Config>('/api/v1/config', patch);
 }
 
-export async function listApplications(): Promise<AppInfo[]> {
-  const response = await apiClient.get<ApplicationsResponse>('/api/v1/config/applications');
-  return response.apps;
+export async function listApplications(): Promise<{ apps: AppInfo[]; platform: string }> {
+  return apiClient.get<ApplicationsResponse>('/api/v1/config/applications');
 }
 
 export function getAppIconUrl(app: AppInfo): string {

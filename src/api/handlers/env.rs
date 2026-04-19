@@ -28,12 +28,22 @@ struct DependencyDef {
     install_command: &'static str,
 }
 
+#[cfg(windows)]
+const GIT_INSTALL_CMD: &str = "winget install Git.Git";
+#[cfg(not(windows))]
+const GIT_INSTALL_CMD: &str = "brew install git";
+
+#[cfg(windows)]
+pub const D2_INSTALL_CMD: &str = "winget install Terrastruct.D2";
+#[cfg(not(windows))]
+pub const D2_INSTALL_CMD: &str = "brew install d2";
+
 const DEPENDENCIES: &[DependencyDef] = &[
     DependencyDef {
         name: "git",
         check_cmd: "git",
         check_args: &["--version"],
-        install_command: "brew install git",
+        install_command: GIT_INSTALL_CMD,
     },
     DependencyDef {
         name: "tmux",
@@ -55,27 +65,27 @@ const DEPENDENCIES: &[DependencyDef] = &[
     },
     DependencyDef {
         name: "claude-agent-acp",
-        check_cmd: "which",
-        check_args: &["claude-agent-acp"],
+        check_cmd: "claude-agent-acp",
+        check_args: &[],
         install_command: "npm install -g @agentclientprotocol/claude-agent-acp",
     },
     DependencyDef {
         name: "claude-code-acp",
-        check_cmd: "which",
-        check_args: &["claude-code-acp"],
+        check_cmd: "claude-code-acp",
+        check_args: &[],
         install_command: "npm install -g @agentclientprotocol/claude-agent-acp",
     },
     DependencyDef {
         name: "codex-acp",
-        check_cmd: "which",
-        check_args: &["codex-acp"],
+        check_cmd: "codex-acp",
+        check_args: &[],
         install_command: "npm install -g @zed-industries/codex-acp",
     },
     DependencyDef {
         name: "d2",
         check_cmd: "d2",
         check_args: &["--version"],
-        install_command: "brew install d2",
+        install_command: D2_INSTALL_CMD,
     },
 ];
 
@@ -92,11 +102,8 @@ fn check_dependency(dep: &DependencyDef) -> DependencyStatus {
             if std::env::var("GROVE_TEST_NO_ACP").is_ok() {
                 false
             } else {
-                Command::new(dep.check_cmd)
-                    .args(dep.check_args)
-                    .output()
-                    .map(|o| o.status.success())
-                    .unwrap_or(false)
+                // 使用跨平台的 command_exists（Windows 用 where，Unix 用 which）
+                command_exists(dep.check_cmd)
             }
         }
         _ => {
@@ -238,6 +245,26 @@ const ACP_AGENT_COMMANDS: &[&str] = &[
     "junie",
 ];
 
+/// Check if a command exists on PATH (cross-platform)
+fn command_exists(cmd: &str) -> bool {
+    #[cfg(windows)]
+    {
+        Command::new("where")
+            .arg(cmd)
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false)
+    }
+    #[cfg(not(windows))]
+    {
+        Command::new("which")
+            .arg(cmd)
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false)
+    }
+}
+
 pub async fn check_commands(Json(body): Json<CheckCommandsRequest>) -> Json<CheckCommandsResponse> {
     let test_no_acp = std::env::var("GROVE_TEST_NO_ACP").is_ok();
 
@@ -249,11 +276,7 @@ pub async fn check_commands(Json(body): Json<CheckCommandsRequest>) -> Json<Chec
             if test_no_acp && ACP_AGENT_COMMANDS.contains(&cmd.as_str()) {
                 return (cmd.clone(), false);
             }
-            let exists = Command::new("which")
-                .arg(cmd)
-                .output()
-                .map(|o| o.status.success())
-                .unwrap_or(false);
+            let exists = command_exists(cmd);
             (cmd.clone(), exists)
         })
         .collect();

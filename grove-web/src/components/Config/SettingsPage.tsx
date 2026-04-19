@@ -226,6 +226,7 @@ export function SettingsPage({ config }: SettingsPageProps) {
   const [terminalCommand, setTerminalCommand] = useState("");
   const [applications, setApplications] = useState<AppInfo[]>([]);
   const [isLoadingApps, setIsLoadingApps] = useState(false);
+  const [serverPlatform, setServerPlatform] = useState<string>("macos");
 
   // ACP / Custom agents state
   const [acpAgent, setAcpAgent] = useState("claude"); // Chat mode agent
@@ -486,8 +487,9 @@ export function SettingsPage({ config }: SettingsPageProps) {
   const loadApplications = useCallback(async () => {
     setIsLoadingApps(true);
     try {
-      const apps = await listApplications();
+      const { apps, platform } = await listApplications();
       setApplications(apps);
+      setServerPlatform(platform);
     } catch {
       console.error("Failed to load applications");
     } finally {
@@ -1050,47 +1052,58 @@ env_vars = [
           onToggle={() => toggleSection("devtools")}
         >
           <div className="space-y-6">
-            {/* Default IDE */}
-            <div>
-              <div className="flex items-center gap-2 mb-3 select-none">
-                <Code className="w-4 h-4 text-[var(--color-info)]" />
-                <span className="text-sm font-medium text-[var(--color-text)]">Default IDE</span>
+            {serverPlatform !== "macos" ? (
+              <div className="flex items-center gap-3 p-4 rounded-lg bg-[var(--color-bg-secondary)] border border-[var(--color-border)]">
+                <Info className="w-5 h-5 text-[var(--color-text-muted)] shrink-0" />
+                <p className="text-sm text-[var(--color-text-muted)]">
+                  IDE and terminal application detection is not yet supported on {serverPlatform === "windows" ? "Windows" : "this platform"}.
+                </p>
               </div>
-              <AppPicker
-                options={ideAppOptions}
-                value={ideCommand}
-                onChange={setIdeCommand}
-                placeholder="Select IDE..."
-                applications={applications}
-                isLoadingApps={isLoadingApps}
-                appFilter={(app) =>
-                  // Filter for common IDEs/editors
-                  /code|studio|idea|storm|rider|cursor|zed|sublime|atom|vim|emacs|nova|bbedit|textmate|xcode/i.test(app.name) ||
-                  /com\.(microsoft|jetbrains|apple|sublimehq|github)/i.test(app.bundle_id || "")
-                }
-              />
-            </div>
+            ) : (
+              <>
+                {/* Default IDE */}
+                <div>
+                  <div className="flex items-center gap-2 mb-3 select-none">
+                    <Code className="w-4 h-4 text-[var(--color-info)]" />
+                    <span className="text-sm font-medium text-[var(--color-text)]">Default IDE</span>
+                  </div>
+                  <AppPicker
+                    options={ideAppOptions}
+                    value={ideCommand}
+                    onChange={setIdeCommand}
+                    placeholder="Select IDE..."
+                    applications={applications}
+                    isLoadingApps={isLoadingApps}
+                    appFilter={(app) =>
+                      // Filter for common IDEs/editors
+                      /code|studio|idea|storm|rider|cursor|zed|sublime|atom|vim|emacs|nova|bbedit|textmate|xcode/i.test(app.name) ||
+                      /com\.(microsoft|jetbrains|apple|sublimehq|github)/i.test(app.bundle_id || "")
+                    }
+                  />
+                </div>
 
-            {/* Default Terminal */}
-            <div>
-              <div className="flex items-center gap-2 mb-3 select-none">
-                <Terminal className="w-4 h-4 text-[var(--color-accent)]" />
-                <span className="text-sm font-medium text-[var(--color-text)]">Default Terminal</span>
-              </div>
-              <AppPicker
-                options={terminalAppOptions}
-                value={terminalCommand}
-                onChange={setTerminalCommand}
-                placeholder="System Default"
-                applications={applications}
-                isLoadingApps={isLoadingApps}
-                appFilter={(app) =>
-                  // Filter for terminals
-                  /terminal|iterm|warp|ghostty|kitty|alacritty|hyper|konsole|tilix|wezterm|cmux/i.test(app.name) ||
-                  /com\.(apple\.Terminal|googlecode\.iterm|warp|kovidgoyal|wez|feh)|io\.github\.mlfwka/i.test(app.bundle_id || "")
-                }
-              />
-            </div>
+                {/* Default Terminal */}
+                <div>
+                  <div className="flex items-center gap-2 mb-3 select-none">
+                    <Terminal className="w-4 h-4 text-[var(--color-accent)]" />
+                    <span className="text-sm font-medium text-[var(--color-text)]">Default Terminal</span>
+                  </div>
+                  <AppPicker
+                    options={terminalAppOptions}
+                    value={terminalCommand}
+                    onChange={setTerminalCommand}
+                    placeholder="System Default"
+                    applications={applications}
+                    isLoadingApps={isLoadingApps}
+                    appFilter={(app) =>
+                      // Filter for terminals
+                      /terminal|iterm|warp|ghostty|kitty|alacritty|hyper|konsole|tilix|wezterm|cmux/i.test(app.name) ||
+                      /com\.(apple\.Terminal|googlecode\.iterm|warp|kovidgoyal|wez|feh)|io\.github\.mlfwka/i.test(app.bundle_id || "")
+                    }
+                  />
+                </div>
+              </>
+            )}
 
             {/* Workspace Layout */}
             <div>

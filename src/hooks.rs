@@ -4,7 +4,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::fs;
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
 use std::path::PathBuf;
 use std::process::Command;
 
@@ -189,7 +189,8 @@ pub fn play_sound(sound: &str) {
 
 #[cfg(not(target_os = "macos"))]
 pub fn play_sound(_sound: &str) {
-    // No-op on non-macOS platforms
+    // No-op on Windows (Toast notifications include their own sound)
+    // and Linux (no portable sound API).
 }
 
 /// Send a desktop notification banner.
@@ -225,13 +226,76 @@ pub fn send_banner(title: &str, message: &str) {
     }
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(target_os = "windows")]
 pub fn send_banner(title: &str, message: &str) {
-    // Linux: use notify-send if available
-    Command::new("notify-send")
-        .args([title, message])
+    // Windows 10+ toast notification via PowerShell
+    let icon_attr = ensure_notification_icon()
+        .map(|p| {
+            // Toast XML uses file:/// URIs; backslashes must be forward slashes
+            format!(
+                r#"<image placement="appLogoOverride" src="file:///{}"/>"#,
+                p.to_string_lossy().replace('\\', "/").replace('&', "&amp;"),
+            )
+        })
+        .unwrap_or_default();
+
+    let script = format!(
+        r#"
+[Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] | Out-Null
+[Windows.Data.Xml.Dom.XmlDocument, Windows.Data.Xml.Dom, ContentType = WindowsRuntime] | Out-Null
+$xml = New-Object Windows.Data.Xml.Dom.XmlDocument
+$xml.LoadXml('<toast><visual><binding template="ToastGeneric">{icon}<text>{title}</text><text>{body}</text></binding></visual></toast>')
+$toast = [Windows.UI.Notifications.ToastNotification]::new($xml)
+[Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier("Grove").Show($toast)
+"#,
+        icon = icon_attr,
+        title = xml_escape(title),
+        body = xml_escape(message),
+    );
+    Command::new("powershell")
+        .args(["-NoProfile", "-Command", &script])
         .spawn()
         .ok();
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+pub fn send_banner(title: &str, message: &str) {
+    // Linux: use notify-send if available, with custom icon when present
+    let mut cmd = Command::new("notify-send");
+    if let Some(icon_path) = ensure_notification_icon() {
+        cmd.args(["-i", &icon_path.to_string_lossy()]);
+    }
+    cmd.args([title, message]).spawn().ok();
+}
+
+/// Escape XML special characters and single quotes (for PowerShell single-quoted string).
+#[cfg(target_os = "windows")]
+fn xml_escape(s: &str) -> String {
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('\'', "''")
+}
+
+// ─── Cross-platform notification icon helpers (Windows + Linux) ──────────────
+
+#[cfg(any(target_os = "windows", target_os = "linux"))]
+static NOTIFY_ICON_PNG: &[u8] = include_bytes!("../src-tauri/icons/icon.png");
+
+/// Ensure the Grove notification icon is written to `~/.grove/icons/icon.png`.
+/// Returns the path if successful.
+#[cfg(any(target_os = "windows", target_os = "linux"))]
+fn ensure_notification_icon() -> Option<PathBuf> {
+    let icon_dir = crate::storage::grove_dir().join("icons");
+    let icon_path = icon_dir.join("icon.png");
+
+    if icon_path.exists() {
+        return Some(icon_path);
+    }
+
+    fs::create_dir_all(&icon_dir).ok()?;
+    fs::write(&icon_path, NOTIFY_ICON_PNG).ok()?;
+    Some(icon_path)
 }
 
 // ─── macOS Grove.app bundle for native notifications with custom icon ────────
