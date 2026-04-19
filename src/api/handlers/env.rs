@@ -28,17 +28,48 @@ struct DependencyDef {
     install_command: &'static str,
 }
 
-#[cfg(windows)]
+#[cfg(target_os = "windows")]
 const GIT_INSTALL_CMD: &str = "winget install Git.Git";
-#[cfg(not(windows))]
+#[cfg(target_os = "linux")]
+const GIT_INSTALL_CMD: &str = "sudo apt install git  # or: dnf install git / pacman -S git";
+#[cfg(not(any(target_os = "windows", target_os = "linux")))]
 const GIT_INSTALL_CMD: &str = "brew install git";
 
-#[cfg(windows)]
+// tmux/zellij are filtered out of the dependency list on Windows
+// (see `current_dependencies()`), so the install hints below are only ever
+// surfaced off-Windows. The Windows arm exists only to keep `ALL_DEPENDENCIES`
+// compilable on every target.
+#[cfg(target_os = "windows")]
+const TMUX_INSTALL_CMD: &str = "";
+#[cfg(target_os = "linux")]
+const TMUX_INSTALL_CMD: &str = "sudo apt install tmux  # or: dnf install tmux / pacman -S tmux";
+#[cfg(not(any(target_os = "windows", target_os = "linux")))]
+const TMUX_INSTALL_CMD: &str = "brew install tmux";
+
+#[cfg(target_os = "windows")]
+const ZELLIJ_INSTALL_CMD: &str = "";
+#[cfg(target_os = "linux")]
+const ZELLIJ_INSTALL_CMD: &str = "cargo install zellij  # or: snap install zellij";
+#[cfg(not(any(target_os = "windows", target_os = "linux")))]
+const ZELLIJ_INSTALL_CMD: &str = "brew install zellij";
+
+#[cfg(target_os = "windows")]
+const FZF_INSTALL_CMD: &str = "winget install junegunn.fzf";
+#[cfg(target_os = "linux")]
+const FZF_INSTALL_CMD: &str = "sudo apt install fzf  # or: dnf install fzf / pacman -S fzf";
+#[cfg(not(any(target_os = "windows", target_os = "linux")))]
+const FZF_INSTALL_CMD: &str = "brew install fzf";
+
+#[cfg(target_os = "windows")]
 pub const D2_INSTALL_CMD: &str = "winget install Terrastruct.D2";
-#[cfg(not(windows))]
+#[cfg(target_os = "linux")]
+pub const D2_INSTALL_CMD: &str = "curl -fsSL https://d2lang.com/install.sh | sh -s --";
+#[cfg(not(any(target_os = "windows", target_os = "linux")))]
 pub const D2_INSTALL_CMD: &str = "brew install d2";
 
-const DEPENDENCIES: &[DependencyDef] = &[
+/// All dependencies. tmux/zellij are filtered out on Windows in `current_dependencies()`
+/// since they aren't natively supported there.
+const ALL_DEPENDENCIES: &[DependencyDef] = &[
     DependencyDef {
         name: "git",
         check_cmd: "git",
@@ -49,19 +80,19 @@ const DEPENDENCIES: &[DependencyDef] = &[
         name: "tmux",
         check_cmd: "tmux",
         check_args: &["-V"],
-        install_command: "brew install tmux",
+        install_command: TMUX_INSTALL_CMD,
     },
     DependencyDef {
         name: "zellij",
         check_cmd: "zellij",
         check_args: &["--version"],
-        install_command: "brew install zellij",
+        install_command: ZELLIJ_INSTALL_CMD,
     },
     DependencyDef {
         name: "fzf",
         check_cmd: "fzf",
         check_args: &["--version"],
-        install_command: "brew install fzf",
+        install_command: FZF_INSTALL_CMD,
     },
     DependencyDef {
         name: "claude-agent-acp",
@@ -69,12 +100,8 @@ const DEPENDENCIES: &[DependencyDef] = &[
         check_args: &[],
         install_command: "npm install -g @agentclientprotocol/claude-agent-acp",
     },
-    DependencyDef {
-        name: "claude-code-acp",
-        check_cmd: "claude-code-acp",
-        check_args: &[],
-        install_command: "npm install -g @agentclientprotocol/claude-agent-acp",
-    },
+    // Note: claude-code-acp is the deprecated package name. resolve_agent("claude")
+    // falls back to it transparently, so we don't surface it as a separate dep.
     DependencyDef {
         name: "codex-acp",
         check_cmd: "codex-acp",
@@ -89,34 +116,56 @@ const DEPENDENCIES: &[DependencyDef] = &[
     },
 ];
 
+/// Per-OS dependency list — Windows skips tmux/zellij which aren't natively supported.
+fn current_dependencies() -> Vec<&'static DependencyDef> {
+    ALL_DEPENDENCIES
+        .iter()
+        .filter(|d| {
+            if cfg!(target_os = "windows") {
+                d.name != "tmux" && d.name != "zellij"
+            } else {
+                true
+            }
+        })
+        .collect()
+}
+
 /// ACP adapter dependency names
+// kept in sync with the entries in ALL_DEPENDENCIES: identifies adapters that
+// must NOT be spawned with `--version` (they enter ACP stdio mode and block).
+// Deliberately *different* from ACP_AGENT_COMMANDS below — that one is the
+// broader set of agent CLIs that GROVE_TEST_NO_ACP forces to "not present" in
+// the /check-commands endpoint.
 const ACP_DEP_NAMES: &[&str] = &["claude-agent-acp", "claude-code-acp", "codex-acp"];
 
 fn check_dependency(dep: &DependencyDef) -> DependencyStatus {
-    // 对 tmux 和 zellij 使用 check.rs 中的函数（支持测试环境变量）
-    let installed = match dep.name {
-        "tmux" => crate::check::check_tmux_available(),
-        "zellij" => crate::check::check_zellij_available(),
-        name if ACP_DEP_NAMES.contains(&name) => {
-            // 测试模式：GROVE_TEST_NO_ACP=1 模拟所有 ACP adapter 不存在
-            if std::env::var("GROVE_TEST_NO_ACP").is_ok() {
-                false
+    // ACP adapters 不能用 `--version` 探测（多数会直接进入 stdio 等待 ACP 握手并阻塞），
+    // 因此仅通过 PATH 存在性判断；不存在 / 不需运行的情况优先短路。
+    if ACP_DEP_NAMES.contains(&dep.name) {
+        let installed = if std::env::var("GROVE_TEST_NO_ACP").is_ok() {
+            false
+        } else {
+            crate::check::command_exists(dep.check_cmd)
+        };
+        return DependencyStatus {
+            name: dep.name.to_string(),
+            installed,
+            version: if installed {
+                Some("installed".to_string())
             } else {
-                // 使用跨平台的 command_exists（Windows 用 where，Unix 用 which）
-                command_exists(dep.check_cmd)
-            }
-        }
-        _ => {
-            // 其他依赖直接执行命令检查
-            Command::new(dep.check_cmd)
-                .args(dep.check_args)
-                .output()
-                .map(|o| o.status.success())
-                .unwrap_or(false)
-        }
-    };
+                None
+            },
+            install_command: dep.install_command.to_string(),
+        };
+    }
 
-    if !installed {
+    // tmux / zellij 用 check.rs 中的函数支持 GROVE_TEST_NO_* 环境变量
+    let test_overrides = match dep.name {
+        "tmux" if !crate::check::check_tmux_available() => Some(false),
+        "zellij" if !crate::check::check_zellij_available() => Some(false),
+        _ => None,
+    };
+    if test_overrides == Some(false) {
         return DependencyStatus {
             name: dep.name.to_string(),
             installed: false,
@@ -125,9 +174,8 @@ fn check_dependency(dep: &DependencyDef) -> DependencyStatus {
         };
     }
 
-    // 已安装，获取版本信息
-    let result = Command::new(dep.check_cmd).args(dep.check_args).output();
-    match result {
+    // 其他依赖：单次 spawn 同时获取 installed + 版本，避免在 Windows 上重复进程开销。
+    match Command::new(dep.check_cmd).args(dep.check_args).output() {
         Ok(output) if output.status.success() => {
             let version_str = String::from_utf8_lossy(&output.stdout);
             let version = parse_version(dep.name, version_str.trim());
@@ -138,9 +186,16 @@ fn check_dependency(dep: &DependencyDef) -> DependencyStatus {
                 install_command: dep.install_command.to_string(),
             }
         }
-        _ => DependencyStatus {
+        Ok(_) => DependencyStatus {
+            // 命令存在但退出非 0：仍然算已安装，只是拿不到版本
             name: dep.name.to_string(),
             installed: true,
+            version: None,
+            install_command: dep.install_command.to_string(),
+        },
+        Err(_) => DependencyStatus {
+            name: dep.name.to_string(),
+            installed: false,
             version: None,
             install_command: dep.install_command.to_string(),
         },
@@ -188,7 +243,8 @@ fn parse_version(name: &str, output: &str) -> String {
                 .to_string()
         }
         "claude-agent-acp" | "claude-code-acp" | "codex-acp" => {
-            // `which` returns path, not version — just confirm installed
+            // ACP adapters cannot be probed for a version (they enter stdio mode);
+            // the `installed` value here is provided by check_dependency directly.
             "installed".to_string()
         }
         "d2" => {
@@ -206,14 +262,18 @@ fn parse_version(name: &str, output: &str) -> String {
 
 /// GET /api/v1/env/check - Check all dependencies
 pub async fn check_all() -> Json<EnvCheckResponse> {
-    let dependencies: Vec<DependencyStatus> = DEPENDENCIES.iter().map(check_dependency).collect();
+    let dependencies: Vec<DependencyStatus> = current_dependencies()
+        .into_iter()
+        .map(check_dependency)
+        .collect();
 
     Json(EnvCheckResponse { dependencies })
 }
 
 /// GET /api/v1/env/check/:name - Check single dependency
 pub async fn check_one(Path(name): Path<String>) -> Json<Option<DependencyStatus>> {
-    let dep = DEPENDENCIES.iter().find(|d| d.name == name);
+    let deps = current_dependencies();
+    let dep = deps.into_iter().find(|d| d.name == name);
 
     Json(dep.map(check_dependency))
 }
@@ -245,26 +305,6 @@ const ACP_AGENT_COMMANDS: &[&str] = &[
     "junie",
 ];
 
-/// Check if a command exists on PATH (cross-platform)
-fn command_exists(cmd: &str) -> bool {
-    #[cfg(windows)]
-    {
-        Command::new("where")
-            .arg(cmd)
-            .output()
-            .map(|o| o.status.success())
-            .unwrap_or(false)
-    }
-    #[cfg(not(windows))]
-    {
-        Command::new("which")
-            .arg(cmd)
-            .output()
-            .map(|o| o.status.success())
-            .unwrap_or(false)
-    }
-}
-
 pub async fn check_commands(Json(body): Json<CheckCommandsRequest>) -> Json<CheckCommandsResponse> {
     let test_no_acp = std::env::var("GROVE_TEST_NO_ACP").is_ok();
 
@@ -276,7 +316,7 @@ pub async fn check_commands(Json(body): Json<CheckCommandsRequest>) -> Json<Chec
             if test_no_acp && ACP_AGENT_COMMANDS.contains(&cmd.as_str()) {
                 return (cmd.clone(), false);
             }
-            let exists = command_exists(cmd);
+            let exists = crate::check::command_exists(cmd);
             (cmd.clone(), exists)
         })
         .collect();

@@ -2269,18 +2269,9 @@ pub struct ResolvedAgent {
     pub auth_header: Option<String>,
 }
 
-/// Check if a command exists in PATH (cross-platform: `where` on Windows, `which` on Unix).
+/// Check if a command exists in PATH (cross-platform).
 fn command_exists(cmd: &str) -> bool {
-    #[cfg(windows)]
-    let check_cmd = "where";
-    #[cfg(not(windows))]
-    let check_cmd = "which";
-
-    std::process::Command::new(check_cmd)
-        .arg(cmd)
-        .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false)
+    crate::check::command_exists(cmd)
 }
 
 /// 解析 agent 名称到完整 agent 信息（支持 built-in + custom）
@@ -2288,11 +2279,15 @@ pub fn resolve_agent(agent_name: &str) -> Option<ResolvedAgent> {
     // 1. Built-in agents
     match agent_name.to_lowercase().as_str() {
         "claude" => {
-            // Prefer claude-agent-acp (new name), fallback to claude-code-acp (deprecated)
+            // Prefer claude-agent-acp (new name), fallback to claude-code-acp (deprecated).
+            // If neither is on PATH, return None so callers can surface a clear
+            // "agent not installed" error instead of a generic spawn ENOENT later.
             let command = if command_exists("claude-agent-acp") {
                 "claude-agent-acp"
-            } else {
+            } else if command_exists("claude-code-acp") {
                 "claude-code-acp"
+            } else {
+                return None;
             };
             return Some(ResolvedAgent {
                 agent_type: "local".into(),
@@ -2375,13 +2370,15 @@ pub fn resolve_agent(agent_name: &str) -> Option<ResolvedAgent> {
             });
         }
         "cursor" | "cursor-agent" => {
-            // Auto-detect: prefer "cursor-agent", fall back to "agent"
+            // Auto-detect: prefer "cursor-agent", fall back to "agent".
+            // Return None when neither candidate exists so the UI can show a
+            // clear install hint instead of a spawn failure later.
             let command = if command_exists("cursor-agent") {
                 "cursor-agent"
             } else if command_exists("agent") {
                 "agent"
             } else {
-                "cursor-agent"
+                return None;
             };
             return Some(ResolvedAgent {
                 agent_type: "local".into(),

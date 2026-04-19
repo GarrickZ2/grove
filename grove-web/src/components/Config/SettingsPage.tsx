@@ -226,7 +226,9 @@ export function SettingsPage({ config }: SettingsPageProps) {
   const [terminalCommand, setTerminalCommand] = useState("");
   const [applications, setApplications] = useState<AppInfo[]>([]);
   const [isLoadingApps, setIsLoadingApps] = useState(false);
-  const [serverPlatform, setServerPlatform] = useState<string>("macos");
+  // null = unknown until listApplications() resolves — prevents the IDE/Terminal
+  // pickers from briefly rendering on Windows/Linux during initial load.
+  const [serverPlatform, setServerPlatform] = useState<string | null>(null);
 
   // ACP / Custom agents state
   const [acpAgent, setAcpAgent] = useState("claude"); // Chat mode agent
@@ -1052,11 +1054,19 @@ env_vars = [
           onToggle={() => toggleSection("devtools")}
         >
           <div className="space-y-6">
-            {serverPlatform !== "macos" ? (
+            {serverPlatform === null ? (
+              <div className="flex items-center gap-3 p-4 rounded-lg bg-[var(--color-bg-secondary)] border border-[var(--color-border)]">
+                <p className="text-sm text-[var(--color-text-muted)]">Detecting platform...</p>
+              </div>
+            ) : serverPlatform !== "macos" ? (
               <div className="flex items-center gap-3 p-4 rounded-lg bg-[var(--color-bg-secondary)] border border-[var(--color-border)]">
                 <Info className="w-5 h-5 text-[var(--color-text-muted)] shrink-0" />
                 <p className="text-sm text-[var(--color-text-muted)]">
-                  IDE and terminal application detection is not yet supported on {serverPlatform === "windows" ? "Windows" : "this platform"}.
+                  IDE and terminal application detection is not yet supported on {
+                    serverPlatform === "windows" ? "Windows"
+                    : serverPlatform === "linux" ? "Linux"
+                    : serverPlatform
+                  }.
                 </p>
               </div>
             ) : (

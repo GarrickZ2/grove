@@ -132,7 +132,9 @@ export function DashboardPage({ onNavigate }: DashboardPageProps) {
   const [agentAvailability, setAgentAvailability] = useState<Record<string, boolean>>({});
   const [terminalAgentConfigured, setTerminalAgentConfigured] = useState(true);
   const [chatAgentConfigured, setChatAgentConfigured] = useState(true);
-  const [serverPlatform, setServerPlatform] = useState<string>("macos");
+  // null = unknown until listApplications() resolves — avoids briefly rendering
+  // mac-only buttons (Open IDE / Terminal) on Windows/Linux during initial load.
+  const [serverPlatform, setServerPlatform] = useState<string | null>(null);
   const [dismissedTips, setDismissedTips] = useState<Set<string>>(() => {
     try {
       const stored = localStorage.getItem("grove-dismissed-tips");
@@ -227,22 +229,22 @@ export function DashboardPage({ onNavigate }: DashboardPageProps) {
     }
   };
 
-  // Check agent availability and config for guidance
+  // Check agent availability and config for guidance.
+  // Use allSettled so a single failure (e.g. /check-commands transient error)
+  // doesn't leave serverPlatform unknown forever and hide the IDE/Terminal buttons.
   useEffect(() => {
     const check = async () => {
-      try {
-        const [cmdResults, cfg, appsResult] = await Promise.all([
-          checkCommands(["claude", "codex", "gemini"]),
-          getConfig(),
-          listApplications(),
-        ]);
-        setAgentAvailability(cmdResults);
-        setTerminalAgentConfigured(!!cfg.layout?.agent_command);
-        setChatAgentConfigured(!!cfg.acp?.agent_command);
-        setServerPlatform(appsResult.platform);
-      } catch {
-        // silently fail
+      const [cmdRes, cfgRes, appsRes] = await Promise.allSettled([
+        checkCommands(["claude", "codex", "gemini"]),
+        getConfig(),
+        listApplications(),
+      ]);
+      if (cmdRes.status === "fulfilled") setAgentAvailability(cmdRes.value);
+      if (cfgRes.status === "fulfilled") {
+        setTerminalAgentConfigured(!!cfgRes.value.layout?.agent_command);
+        setChatAgentConfigured(!!cfgRes.value.acp?.agent_command);
       }
+      if (appsRes.status === "fulfilled") setServerPlatform(appsRes.value.platform);
     };
     check();
   }, []);
@@ -643,6 +645,24 @@ export function DashboardPage({ onNavigate }: DashboardPageProps) {
                     <HeroButton icon={TerminalSquare} label="Terminal" onClick={handleOpenTerminal} />
                   </>
                 )}
+                {(serverPlatform === "windows" || serverPlatform === "linux") && (
+                  <>
+                    <HeroButton
+                      icon={Code2}
+                      label="Open IDE"
+                      onClick={handleOpenIDE}
+                      disabled
+                      title={`IDE detection is not yet supported on ${serverPlatform === "windows" ? "Windows" : "Linux"}`}
+                    />
+                    <HeroButton
+                      icon={TerminalSquare}
+                      label="Terminal"
+                      onClick={handleOpenTerminal}
+                      disabled
+                      title={`Terminal detection is not yet supported on ${serverPlatform === "windows" ? "Windows" : "Linux"}`}
+                    />
+                  </>
+                )}
                 {isGitRepo && (
                   <HeroButton icon={ArrowUpDown} label="Branches" onClick={() => setShowBranchDrawer(true)} />
                 )}
@@ -991,10 +1011,23 @@ export function DashboardPage({ onNavigate }: DashboardPageProps) {
 
 /* ─── Sub-components ─── */
 
-function HeroButton({ icon: Icon, label, onClick }: { icon: React.ElementType; label: string; onClick: () => void }) {
+function HeroButton({ icon: Icon, label, onClick, disabled = false, title }: {
+  icon: React.ElementType;
+  label: string;
+  onClick: () => void;
+  disabled?: boolean;
+  title?: string;
+}) {
   return (
-    <button onClick={onClick}
-      className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)]/80 backdrop-blur-sm px-3 py-2 text-sm font-medium text-[var(--color-text)] transition-colors hover:border-[var(--color-highlight)] hover:bg-[var(--color-bg)]"
+    <button
+      onClick={onClick}
+      disabled={disabled}
+      title={title}
+      className={`inline-flex items-center gap-1.5 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)]/80 backdrop-blur-sm px-3 py-2 text-sm font-medium text-[var(--color-text)] transition-colors ${
+        disabled
+          ? "opacity-50 cursor-not-allowed"
+          : "hover:border-[var(--color-highlight)] hover:bg-[var(--color-bg)]"
+      }`}
     >
       <Icon className="h-4 w-4" /> {label}
     </button>

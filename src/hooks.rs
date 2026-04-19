@@ -231,10 +231,14 @@ pub fn send_banner(title: &str, message: &str) {
     // Windows 10+ toast notification via PowerShell
     let icon_attr = ensure_notification_icon()
         .map(|p| {
-            // Toast XML uses file:/// URIs; backslashes must be forward slashes
+            // Toast XML uses file:/// URIs; backslashes must be forward slashes.
+            // Run the path through xml_escape so apostrophes (e.g. usernames like
+            // "O'Brien"), `<`, `>` and `&` don't break the surrounding
+            // PowerShell single-quoted XML string.
+            let uri = p.to_string_lossy().replace('\\', "/");
             format!(
                 r#"<image placement="appLogoOverride" src="file:///{}"/>"#,
-                p.to_string_lossy().replace('\\', "/").replace('&', "&amp;"),
+                xml_escape(&uri),
             )
         })
         .unwrap_or_default();
@@ -252,26 +256,90 @@ $toast = [Windows.UI.Notifications.ToastNotification]::new($xml)
         title = xml_escape(title),
         body = xml_escape(message),
     );
-    Command::new("powershell")
+    // Pin to Windows PowerShell 5.1 — the WinRT type bridge used by this script
+    // is not available in PowerShell 7 / pwsh by default. Falling back to "powershell"
+    // (PATH lookup) lets a user-installed pwsh shim hijack notifications silently.
+    let ps_exe = std::env::var("SystemRoot")
+        .map(|root| {
+            format!(
+                "{}\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+                root
+            )
+        })
+        .unwrap_or_else(|_| "powershell".to_string());
+
+    // Capture stderr to a log file so toast failures aren't completely silent —
+    // and don't use eprintln!, which would scribble onto the TUI's alternate screen.
+    match Command::new(&ps_exe)
         .args(["-NoProfile", "-Command", &script])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::piped())
         .spawn()
-        .ok();
+    {
+        Ok(child) => {
+            // Reap async without blocking the caller.
+            std::thread::spawn(move || {
+                if let Ok(output) = child.wait_with_output() {
+                    if !output.status.success() && !output.stderr.is_empty() {
+                        log_notify_error(&format!(
+                            "toast notification failed: {}",
+                            String::from_utf8_lossy(&output.stderr).trim()
+                        ));
+                    }
+                }
+            });
+        }
+        Err(e) => {
+            log_notify_error(&format!("failed to spawn powershell for toast: {}", e));
+        }
+    }
+}
+
+/// Append a notification-related error to `~/.grove/logs/notify.log`.
+/// Used in lieu of eprintln! so messages don't corrupt the TUI alternate screen.
+#[cfg(target_os = "windows")]
+fn log_notify_error(msg: &str) {
+    use std::io::Write;
+    let log_dir = crate::storage::grove_dir().join("logs");
+    if fs::create_dir_all(&log_dir).is_err() {
+        return;
+    }
+    let log_path = log_dir.join("notify.log");
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&log_path)
+    {
+        let _ = writeln!(f, "{} {}", chrono::Utc::now().to_rfc3339(), msg);
+    }
 }
 
 #[cfg(not(any(target_os = "macos", target_os = "windows")))]
 pub fn send_banner(title: &str, message: &str) {
-    // Linux: use notify-send if available, with custom icon when present
+    // Linux: use notify-send if available, with custom icon when present.
+    // Use `--` so a title/message starting with `-` is not parsed as an option flag.
     let mut cmd = Command::new("notify-send");
     if let Some(icon_path) = ensure_notification_icon() {
         cmd.args(["-i", &icon_path.to_string_lossy()]);
     }
-    cmd.args([title, message]).spawn().ok();
+    cmd.args(["--", title, message]).spawn().ok();
 }
 
 /// Escape XML special characters and single quotes (for PowerShell single-quoted string).
+/// Also collapses CR/LF to spaces and strips control characters that are illegal
+/// in XML 1.0 (would otherwise make `LoadXml` throw).
 #[cfg(target_os = "windows")]
 fn xml_escape(s: &str) -> String {
-    s.replace('&', "&amp;")
+    s.chars()
+        .filter_map(|c| match c {
+            // Allowed whitespace
+            '\t' | '\n' | '\r' => Some(' '),
+            // Strip illegal XML 1.0 control chars
+            '\x00'..='\x08' | '\x0B' | '\x0C' | '\x0E'..='\x1F' => None,
+            other => Some(other),
+        })
+        .collect::<String>()
+        .replace('&', "&amp;")
         .replace('<', "&lt;")
         .replace('>', "&gt;")
         .replace('\'', "''")
@@ -284,17 +352,36 @@ static NOTIFY_ICON_PNG: &[u8] = include_bytes!("../src-tauri/icons/icon.png");
 
 /// Ensure the Grove notification icon is written to `~/.grove/icons/icon.png`.
 /// Returns the path if successful.
+///
+/// Uses a sha256 sentinel file (`icon.png.sha256`) so a future Grove release that
+/// ships a different icon — even one with the same byte length — refreshes the
+/// on-disk copy without manual cleanup.
 #[cfg(any(target_os = "windows", target_os = "linux"))]
 fn ensure_notification_icon() -> Option<PathBuf> {
+    use sha2::{Digest, Sha256};
+
     let icon_dir = crate::storage::grove_dir().join("icons");
     let icon_path = icon_dir.join("icon.png");
+    let sentinel_path = icon_dir.join("icon.png.sha256");
 
-    if icon_path.exists() {
-        return Some(icon_path);
+    let expected_hash = {
+        let mut h = Sha256::new();
+        h.update(NOTIFY_ICON_PNG);
+        hex::encode(h.finalize())
+    };
+
+    let needs_write = !icon_path.exists()
+        || fs::read_to_string(&sentinel_path)
+            .map(|s| s.trim() != expected_hash)
+            .unwrap_or(true);
+
+    if needs_write {
+        fs::create_dir_all(&icon_dir).ok()?;
+        fs::write(&icon_path, NOTIFY_ICON_PNG).ok()?;
+        // Sentinel write is best-effort — a missing sentinel just causes one extra
+        // rewrite next call, no functional break.
+        let _ = fs::write(&sentinel_path, &expected_hash);
     }
-
-    fs::create_dir_all(&icon_dir).ok()?;
-    fs::write(&icon_path, NOTIFY_ICON_PNG).ok()?;
     Some(icon_path)
 }
 

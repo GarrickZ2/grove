@@ -395,6 +395,13 @@ pub struct IconQuery {
 /// GET /api/v1/config/applications/icon?path=<app_path>
 /// Returns the app icon as a 64×64 PNG image
 pub async fn get_app_icon(Query(query): Query<IconQuery>) -> Result<Response<Body>, StatusCode> {
+    // Icon extraction relies on macOS-only `defaults` and `sips`. On other
+    // platforms there is nothing to return — fail fast instead of spawning
+    // missing binaries.
+    if current_platform() != "macos" {
+        return Err(StatusCode::NOT_FOUND);
+    }
+
     let app_path = Path::new(&query.path);
 
     // Validate the path points to a .app bundle

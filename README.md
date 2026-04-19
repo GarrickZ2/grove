@@ -7,7 +7,7 @@
 [![Downloads](https://img.shields.io/crates/d/grove-rs.svg)](https://crates.io/crates/grove-rs)
 [![Rust](https://img.shields.io/badge/rust-1.75+-orange.svg)](https://www.rust-lang.org/)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux-lightgrey.svg)]()
+[![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20%7C%20Windows-lightgrey.svg)]()
 
 ![Grove](docs/images/hero.png)
 
@@ -302,8 +302,8 @@ cp target/release/grove /usr/local/bin/
 ## Requirements
 
 - Git 2.20+
-- tmux 3.0+ or Zellij
-- macOS 12+ or Linux
+- tmux 3.0+ or Zellij (tmux/Zellij not required on Windows)
+- macOS 12+, Linux, or Windows 10/11
 
 ## License
 

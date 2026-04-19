@@ -51,6 +51,24 @@ pub async fn render_d2(Json(body): Json<RenderD2Request>) -> Response {
             .into_response();
     }
 
+    // Classify "not installed" up front via PATH lookup. Spawn-error kinds vary
+    // across platforms (Windows can return PermissionDenied for missing PATHEXT
+    // shims), so relying on ErrorKind::NotFound after spawn is fragile.
+    if !crate::check::command_exists("d2") {
+        let _ = tokio::fs::remove_file(&input_path).await;
+        return (
+            StatusCode::UNPROCESSABLE_ENTITY,
+            Json(RenderD2Error {
+                code: "d2_not_installed".to_string(),
+                message: format!(
+                    "d2 is not installed. Install it with: {}",
+                    crate::api::handlers::env::D2_INSTALL_CMD
+                ),
+            }),
+        )
+            .into_response();
+    }
+
     let result = Command::new("d2")
         .arg(&input_path)
         .arg(&output_path)
