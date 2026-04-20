@@ -152,7 +152,9 @@ function Toolbar({
       (type !== "terminal" || terminalAvailable),
   );
   const filteredInfo = TOOLBAR_INFO.filter(
-    ({ type }) => type !== "git" || !isStudio,
+    ({ type }) =>
+      (type !== "git" || !isStudio) &&
+      (type !== "comments" || !isStudio),
   );
 
   return (
@@ -428,7 +430,11 @@ export const IDELayoutContainer = forwardRef<IDELayoutHandle, IDELayoutContainer
             (type !== "review" || !isStudio) &&
             (type !== "terminal" || terminalAvailable)
           );
-          const visibleInfoTypes = INFO_PANEL_TYPES.filter((type) => type !== "git" || !isStudio);
+          const visibleInfoTypes = INFO_PANEL_TYPES.filter(
+            (type) =>
+              (type !== "git" || !isStudio) &&
+              (type !== "comments" || !isStudio),
+          );
           if (index >= 1 && index <= visibleAuxTypes.length) {
             const type = visibleAuxTypes[index - 1];
             setState((prev) => ({ ...prev, auxType: type, auxVisible: true }));
@@ -596,7 +602,7 @@ export const IDELayoutContainer = forwardRef<IDELayoutHandle, IDELayoutContainer
             {state.infoType === "stats" && <StatsTab projectId={projectId} task={task} />}
             {state.infoType === "git" && !isStudio && <GitTab projectId={projectId} task={task} />}
             {state.infoType === "notes" && <NotesTab projectId={projectId} task={task} />}
-            {state.infoType === "comments" && <CommentsTab projectId={projectId} task={task} />}
+            {state.infoType === "comments" && !isStudio && <CommentsTab projectId={projectId} task={task} />}
           </div>
         </PanelSlot>
       );

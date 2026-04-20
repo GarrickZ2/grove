@@ -239,11 +239,7 @@ export function NotesTab({ projectId, task }: NotesTabProps) {
   return (
     <div className="h-full flex flex-col">
       {/* Header */}
-      <div className="flex items-center justify-between mb-3">
-        <h3 className="text-sm font-medium text-[var(--color-text)] flex items-center gap-2">
-          <FileText className="w-4 h-4" />
-          Task Notes
-        </h3>
+      <div className="flex items-center justify-end mb-3">
         {isEditing ? (
           <div className="flex gap-2">
             <Button variant="ghost" size="sm" onClick={handleCancel} disabled={isSaving}>

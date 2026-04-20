@@ -692,8 +692,8 @@ export const FlexLayoutContainer = forwardRef<
       );
     }
     items.push(
-      { id: 'editor', label: 'Editor', icon: FileCode, onClick: () => addPanel('editor'), shortcut: 'e', separator: true },
-      { id: 'stats', label: 'Info', icon: BarChart3, onClick: () => addPanel('stats') },
+      { id: 'editor', label: 'Editor', icon: FileCode, onClick: () => addPanel('editor'), shortcut: 'e' },
+      { id: 'stats', label: 'Info', icon: BarChart3, onClick: () => addPanel('stats'), separator: true },
     );
     if (!isStudio) {
       items.push({ id: 'git', label: 'Git', icon: GitBranch, onClick: () => addPanel('git') });
