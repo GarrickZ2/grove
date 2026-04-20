@@ -29,6 +29,9 @@ brew tap GarrickZ2/grove && brew install grove
 # Shell (macOS / Linux / WSL)
 curl -sSL https://raw.githubusercontent.com/GarrickZ2/grove/master/install.sh | sh
 
+# Shell — Linux GUI variant (x86_64)
+curl -sSL https://raw.githubusercontent.com/GarrickZ2/grove/master/install.sh | GROVE_GUI=1 sh
+
 # Windows (PowerShell)
 irm https://raw.githubusercontent.com/GarrickZ2/grove/master/install.ps1 | iex
 

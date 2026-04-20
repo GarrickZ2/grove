@@ -21,6 +21,7 @@ import type { Task } from "../../../data/types";
 import type { PanelType } from "../PanelSystem/types";
 import { sendInputToTerminal, pasteToTerminal } from "../TaskDetail/terminalCache";
 import { useConfig } from "../../../context";
+import { useHotkeys } from "../../../hooks";
 
 // --- Workspace Bar Dropdown (for overflow actions) ---
 function OverflowDropdown({ items }: { items: OverflowItem[] }) {
@@ -256,6 +257,35 @@ export const TaskView = forwardRef<TaskViewHandle, TaskViewProps>((props, ref) =
   const isBroken = task.status === "broken";
   const isLocal = task.isLocal === true;
   const canOperate = !isArchived && !isBroken && !isLocal;
+
+  // Panel + git op shortcuts — registered once per active TaskView so every
+  // page that hosts one (TasksPage, BlitzPage, WorkPage) gets consistent
+  // behavior. Previously each page registered its own copy with subtly
+  // different `enabled` conditions, which is how WorkPage ended up with no
+  // shortcuts at all. Gated by `!isArchived` since opening panels on an
+  // archived task still makes sense, but git ops don't.
+  const panelShortcutsEnabled = !isArchived;
+  useHotkeys(
+    [
+      { key: "t", handler: () => handleAddPanel("terminal"), options: { enabled: panelShortcutsEnabled } },
+      { key: "e", handler: () => handleAddPanel("editor"), options: { enabled: panelShortcutsEnabled } },
+      { key: "r", handler: () => handleAddPanel("review"), options: { enabled: panelShortcutsEnabled } },
+      { key: "i", handler: () => handleAddPanel("chat"), options: { enabled: panelShortcutsEnabled } },
+      // Git ops — only bound if the parent actually wired a handler (Studio
+      // has no commit/merge/etc; Work may omit them on non-git projects).
+      { key: "c", handler: () => onCommit?.(), options: { enabled: canOperate && !!onCommit } },
+      { key: "s", handler: () => onSync?.(), options: { enabled: canOperate && !!onSync } },
+      { key: "m", handler: () => onMerge?.(), options: { enabled: canOperate && !!onMerge } },
+      { key: "b", handler: () => onRebase?.(), options: { enabled: canOperate && !!onRebase } },
+      { key: "a", handler: () => onArchive?.(), options: { enabled: canOperate && !!onArchive } },
+      { key: "x", handler: () => onReset?.(), options: { enabled: canOperate && !!onReset } },
+      { key: "Shift+x", handler: () => onClean?.(), options: { enabled: !!onClean } },
+    ],
+    [
+      panelShortcutsEnabled, canOperate, handleAddPanel,
+      onCommit, onSync, onMerge, onRebase, onArchive, onReset, onClean,
+    ],
+  );
 
   const overflowItems = useMemo<OverflowItem[]>(() => [
     ...(!isLocal && onRebase ? [{

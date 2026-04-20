@@ -6,7 +6,6 @@ import { TaskInfoPanel } from "./TaskInfoPanel";
 import { TaskView, type TaskViewHandle } from "./TaskView";
 import { NewTaskDialog } from "./NewTaskDialog";
 import { TaskOperationDialogs } from "./TaskOperationDialogs";
-import { HelpOverlay } from "./HelpOverlay";
 import { Button } from "../ui";
 import { ContextMenu } from "../ui/ContextMenu";
 import { useProject, useCommandPalette } from "../../context";
@@ -425,18 +424,15 @@ export function TasksPage({ initialTaskId, initialViewMode, onNavigationConsumed
       // Actions (work in all modes; xterm focus auto-suppresses via useHotkeys)
       { key: "n", handler: () => setShowNewTaskDialog(true) },
       { key: "Space", handler: navHandlers.openContextMenuAtSelectedTask, options: { enabled: hasTask && notInWorkspace } },
-      { key: "c", handler: opsHandlers.handleCommit, options: { enabled: isActive } },
-      { key: "s", handler: opsHandlers.handleSync, options: { enabled: canOperate } },
-      { key: "m", handler: opsHandlers.handleMerge, options: { enabled: canOperate } },
-      { key: "b", handler: opsHandlers.handleRebase, options: { enabled: canOperate } },
-      { key: "a", handler: opsHandlers.handleArchive, options: { enabled: isActive } },
-      { key: "x", handler: opsHandlers.handleReset, options: { enabled: canOperate } },
-      { key: "Shift+x", handler: opsHandlers.handleClean, options: { enabled: hasTask } },
-      // Panel shortcuts: workspace = add panel, task list = enter workspace + open panel
-      { key: "r", handler: () => pageState.inWorkspace ? handleAddPanel("review") : handleAddPanelFromInfo("review"), options: { enabled: hasTask && isActive } },
-      { key: "e", handler: () => pageState.inWorkspace ? handleAddPanel("editor") : handleAddPanelFromInfo("editor"), options: { enabled: hasTask && isActive } },
-      { key: "i", handler: () => pageState.inWorkspace ? handleAddPanel("chat") : handleAddPanelFromInfo("chat"), options: { enabled: hasTask && isActive } },
-      { key: "t", handler: () => pageState.inWorkspace ? handleAddPanel("terminal") : handleAddPanelFromInfo("terminal"), options: { enabled: hasTask && isActive } },
+      // Panel shortcuts in the task-LIST view: enter workspace + open panel.
+      // The in-workspace versions (and the git ops c/s/m/b/a/x/Shift+x) are
+      // owned by TaskView itself, which is where the workspace lives — that
+      // way every host (Tasks / Blitz / Work) gets the same behavior with
+      // one registration instead of three copies drifting apart.
+      { key: "r", handler: () => handleAddPanelFromInfo("review"), options: { enabled: hasTask && isActive && notInWorkspace } },
+      { key: "e", handler: () => handleAddPanelFromInfo("editor"), options: { enabled: hasTask && isActive && notInWorkspace } },
+      { key: "i", handler: () => handleAddPanelFromInfo("chat"), options: { enabled: hasTask && isActive && notInWorkspace } },
+      { key: "t", handler: () => handleAddPanelFromInfo("terminal"), options: { enabled: hasTask && isActive && notInWorkspace } },
 
       // Search
       {
@@ -445,8 +441,6 @@ export function TasksPage({ initialTaskId, initialViewMode, onNavigationConsumed
         options: { enabled: notInWorkspace },
       },
 
-      // Help
-      { key: "?", handler: () => pageHandlers.setShowHelp(!pageState.showHelp) },
     ],
     [
       navHandlers, pageHandlers, opsHandlers, handleAddPanel, handleAddPanelFromInfo, refreshSelectedProject,
@@ -801,8 +795,6 @@ export function TasksPage({ initialTaskId, initialViewMode, onNavigationConsumed
         onClose={pageHandlers.closeContextMenu}
       />
 
-      {/* Help Overlay */}
-      <HelpOverlay isOpen={pageState.showHelp} onClose={() => pageHandlers.setShowHelp(false)} />
     </motion.div>
   );
 }

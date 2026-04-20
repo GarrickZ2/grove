@@ -14,6 +14,7 @@ import { MissingProjectState } from "./components/Projects/MissingProjectState";
 import { AddProjectDialog } from "./components/Projects/AddProjectDialog";
 import { WelcomePage } from "./components/Welcome";
 import { DiffReviewPage } from "./components/Review";
+import { HelpOverlay } from "./components/Tasks/HelpOverlay";
 import { SkillsPage } from "./components/Skills";
 import { AIPage, GlobalAudioRecorder } from "./components/AI";
 import { ProjectStatsPage } from "./components/Stats/ProjectStatsPage";
@@ -48,6 +49,7 @@ function AppContent() {
   const [isAddingProject, setIsAddingProject] = useState(false);
   const [addProjectError, setAddProjectError] = useState<string | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [showHelp, setShowHelp] = useState(false);
   const { isMobile } = useIsMobile();
   const {
     open: openCommandPalette, openProjectPalette, openTaskPalette,
@@ -94,7 +96,19 @@ function AppContent() {
     { key: "Meta+6", handler: () => setActiveNavItem(5), options: { enabled: isZenMode && !inWorkspace } },
     { key: "Meta+Alt+ArrowUp", handler: () => navigateSidebar(-1, true), options: { enabled: isZenMode && !inWorkspace } },
     { key: "Meta+Alt+ArrowDown", handler: () => navigateSidebar(1, true), options: { enabled: isZenMode && !inWorkspace } },
+    // Help overlay — lives at App level so it works from every page (Tasks,
+    // Work, Dashboard, Skills, …) instead of only when TasksPage happens to
+    // be the visible tab.
+    { key: "?", handler: () => setShowHelp((v) => !v) },
   ], [openCommandPalette, openProjectPalette, openTaskPalette, isZenMode, inWorkspace, navigateSidebar]);
+
+  // Allow any page's "help" button (e.g. Blitz toolbar) to open the same
+  // overlay by dispatching a custom event instead of duplicating state.
+  useEffect(() => {
+    const open = () => setShowHelp(true);
+    window.addEventListener("grove:open-help", open);
+    return () => window.removeEventListener("grove:open-help", open);
+  }, []);
 
   const handleSwitchToZen = useCallback(() => {
     setTasksMode("zen");
@@ -570,6 +584,7 @@ function AppContent() {
         onTaskSelect={handleTaskSelectFromPalette}
       />
       <GlobalAudioRecorder projectId={selectedProject?.id ?? null} />
+      <HelpOverlay isOpen={showHelp} onClose={() => setShowHelp(false)} />
     </div>
   );
 }

@@ -51,8 +51,11 @@ import {
 } from "../../ui";
 import {
   buildMentionItems,
+  buildStudioMentionItems,
   filterMentionItems,
 } from "../../../utils/fileMention";
+import { useProject } from "../../../context/ProjectContext";
+import { listSketches, type SketchMeta } from "../../../api/sketches";
 import type { Task } from "../../../data/types";
 import { getApiHost, appendHmacToUrl } from "../../../api/client";
 import { useAgentQuota } from "../../../hooks";
@@ -509,10 +512,17 @@ function createCommandChip(name: string): HTMLSpanElement {
 }
 
 /** Create a non-editable file chip DOM element */
-function createFileChip(filePath: string, isDir = false): HTMLSpanElement {
+function createFileChip(
+  filePath: string,
+  isDir = false,
+  displayLabel?: string,
+  category?: string,
+): HTMLSpanElement {
   const chip = document.createElement("span");
   chip.contentEditable = "false";
   chip.dataset.file = filePath;
+  if (displayLabel) chip.dataset.label = displayLabel;
+  if (category) chip.dataset.category = category;
   chip.title = filePath;
   chip.style.cssText =
     "display:inline-flex;align-items:center;gap:4px;padding:1px 6px;border-radius:4px;" +
@@ -556,7 +566,11 @@ function createFileChip(filePath: string, isDir = false): HTMLSpanElement {
   chip.appendChild(icon);
 
   const label = document.createElement("span");
-  label.textContent = isDir ? filePath : filePath.split("/").pop() || filePath;
+  if (displayLabel) {
+    label.textContent = displayLabel;
+  } else {
+    label.textContent = isDir ? filePath : filePath.split("/").pop() || filePath;
+  }
   chip.appendChild(label);
 
   const closeBtn = document.createElement("span");
@@ -581,7 +595,13 @@ function getPromptFromEditable(el: HTMLElement): string {
       } else if (node.dataset.ref) {
         parts.push(`[${node.dataset.ref}]`);
       } else if (node.dataset.file) {
-        parts.push(node.dataset.file);
+        // Studio-categorized chips carry a friendly label separate from the
+        // raw path — serialize as "Name(path)" so both the reader and the
+        // agent see what the chip means. Fall back to the bare path for
+        // ordinary file mentions.
+        const file = node.dataset.file;
+        const lbl = node.dataset.label;
+        parts.push(lbl && lbl !== file ? `${lbl}(${file})` : file);
       } else if (node.tagName === "BR") {
         parts.push("\n");
       } else if (node.tagName === "DIV" || node.tagName === "P") {
@@ -906,6 +926,9 @@ export function TaskChat({
   const slashMenuRef = useRef<HTMLDivElement>(null);
   const slashItemRefs = useRef<(HTMLButtonElement | null)[]>([]);
   const [taskFiles, setTaskFiles] = useState<string[]>([]);
+  const [sketchMeta, setSketchMeta] = useState<SketchMeta[]>([]);
+  const { selectedProject } = useProject();
+  const isStudioProject = selectedProject?.projectType === "studio";
   const [showFileMenu, setShowFileMenu] = useState(false);
   const [fileFilter, setFileFilter] = useState("");
   const [fileSelectedIdx, setFileSelectedIdx] = useState(0);
@@ -1002,7 +1025,13 @@ export function TaskChat({
   }, [slashCommands, slashFilter]);
 
   // Build mention items (files + directories) from flat file list
-  const mentionItems = useMemo(() => buildMentionItems(taskFiles), [taskFiles]);
+  const mentionItems = useMemo(
+    () =>
+      isStudioProject
+        ? buildStudioMentionItems(taskFiles, sketchMeta)
+        : buildMentionItems(taskFiles),
+    [isStudioProject, taskFiles, sketchMeta],
+  );
 
   // Filtered files based on @ input
   const filteredFiles = useMemo(
@@ -1093,6 +1122,18 @@ export function TaskChat({
       .then((res) => setTaskFiles(res.files))
       .catch(() => {});
   }, [projectId, task.id]);
+
+  // Studio projects: also load sketches so @ mentions can surface sketch
+  // *names* rather than the on-disk `sketch-<uuid>` directory segments.
+  useEffect(() => {
+    if (!isStudioProject) {
+      setSketchMeta([]);
+      return;
+    }
+    listSketches(projectId, task.id)
+      .then(setSketchMeta)
+      .catch(() => setSketchMeta([]));
+  }, [isStudioProject, projectId, task.id]);
 
   // Dynamically measure the input area height so the messages viewport
   // always has enough bottom padding regardless of expanded input, panels, banners, etc.
@@ -2731,7 +2772,7 @@ export function TaskChat({
 
   /** Insert a file chip at the current cursor position, replacing the @partial text */
   const insertFileAtCursor = useCallback(
-    (filePath: string, isDir?: boolean) => {
+    (filePath: string, isDir?: boolean, displayLabel?: string, category?: string) => {
       const el = editableRef.current;
       if (!el) return;
       const sel = window.getSelection();
@@ -2755,7 +2796,7 @@ export function TaskChat({
       const after = text.slice(offset);
       const parent = node.parentNode;
       if (!parent) return;
-      const chip = createFileChip(filePath, isDir);
+      const chip = createFileChip(filePath, isDir, displayLabel, category);
       const frag = document.createDocumentFragment();
       if (before) frag.appendChild(document.createTextNode(before));
       frag.appendChild(chip);
@@ -3037,7 +3078,12 @@ export function TaskChat({
         if (e.key === "Tab" || (e.key === "Enter" && !e.shiftKey)) {
           e.preventDefault();
           const sel_item = filteredFiles[fileSelectedIdx];
-          insertFileAtCursor(sel_item.path, sel_item.isDir);
+          insertFileAtCursor(
+            sel_item.path,
+            sel_item.isDir,
+            sel_item.displayName,
+            sel_item.category,
+          );
           return;
         }
         if (e.key === "Escape") {

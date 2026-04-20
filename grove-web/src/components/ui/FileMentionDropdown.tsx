@@ -1,8 +1,56 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "framer-motion";
-import { FileText, Folder } from "lucide-react";
-import type { FilteredMentionItem } from "../../utils/fileMention";
+import {
+  FileText,
+  Folder,
+  BookOpen,
+  Brain,
+  Pencil,
+  FileJson,
+  FileCode,
+  Image as ImageIcon,
+  Music,
+  Video,
+  FileArchive,
+  File,
+} from "lucide-react";
+import type { FilteredMentionItem, MentionItem } from "../../utils/fileMention";
+
+/**
+ * Pick an icon for a mention item. Category-intrinsic concepts (Instruction,
+ * Memory, Sketch) get a dedicated icon; otherwise we fall back to the file
+ * extension so `.md`, `.json`, `.png`, audio, video etc. are visually distinct.
+ */
+function iconFor(item: Pick<MentionItem, "category" | "path" | "isDir">) {
+  switch (item.category) {
+    case "Instruction":
+      return BookOpen;
+    case "Memory":
+      return Brain;
+    case "Sketch":
+      return Pencil;
+  }
+  if (item.isDir) return Folder;
+  const dot = item.path.lastIndexOf(".");
+  const ext = dot >= 0 ? item.path.slice(dot + 1).toLowerCase() : "";
+  if (["md", "txt", "rst", "adoc"].includes(ext)) return FileText;
+  if (["json", "yaml", "yml", "toml", "ini"].includes(ext)) return FileJson;
+  if (
+    [
+      "js", "jsx", "ts", "tsx", "py", "rs", "go", "java", "kt", "c", "cc",
+      "cpp", "h", "hpp", "cs", "rb", "php", "swift", "sh", "bash", "zsh",
+      "ps1", "lua", "sql", "html", "css", "scss", "vue", "svelte",
+    ].includes(ext)
+  )
+    return FileCode;
+  if (["png", "jpg", "jpeg", "gif", "webp", "svg", "avif", "bmp", "ico"].includes(ext))
+    return ImageIcon;
+  if (["mp3", "wav", "m4a", "ogg", "flac", "aac"].includes(ext)) return Music;
+  if (["mp4", "mov", "webm", "avi", "mkv", "m4v"].includes(ext)) return Video;
+  if (["zip", "tar", "gz", "bz2", "7z", "rar", "xz"].includes(ext)) return FileArchive;
+  return File;
+}
 import { compactPath } from "../../utils/pathUtils";
 
 /** Render a file path with fuzzy-matched characters highlighted */
@@ -118,7 +166,7 @@ function getCaretCoordinates(
 interface FileMentionDropdownProps {
   items: FilteredMentionItem[];
   selectedIdx: number;
-  onSelect: (path: string, isDir?: boolean) => void;
+  onSelect: (path: string, isDir?: boolean, displayName?: string, category?: string) => void;
   onMouseEnter: (idx: number) => void;
   visible: boolean;
   menuRef?: React.RefObject<HTMLDivElement | null>;
@@ -144,13 +192,15 @@ function DropdownContent({
   return (
     <>
       {items.map((item, i) => {
-        const Icon = item.isDir ? Folder : FileText;
+        const Icon = iconFor(item);
+        const hasFriendlyName = item.displayName !== undefined;
+        const label = item.displayName ?? item.path;
         return (
           <button
-            key={item.path}
+            key={`${item.category ?? ""}-${item.path}`}
             ref={(el) => { itemRefs.current[i] = el; }}
             onMouseDown={(e) => e.preventDefault()}
-            onClick={() => onSelect(item.path, item.isDir)}
+            onClick={() => onSelect(item.path, item.isDir, item.displayName, item.category)}
             onMouseEnter={() => onMouseEnter(i)}
             className={`w-full text-left px-3 py-2 flex items-center gap-2.5 transition-colors ${
               i === selectedIdx
@@ -159,14 +209,21 @@ function DropdownContent({
             }`}
           >
             <Icon className="w-3.5 h-3.5 text-[var(--color-warning)] shrink-0" />
+            {item.category && (
+              <span className="shrink-0 rounded-sm border border-[var(--color-border)] bg-[var(--color-bg-secondary)] px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-[var(--color-text-muted)]">
+                {item.category}
+              </span>
+            )}
             <span className="text-sm text-[var(--color-text)] font-mono truncate min-w-0 flex-1">
-              {item.indices.length > 0 ? (
+              {hasFriendlyName ? (
+                <HighlightedPath path={label} indices={item.indices} />
+              ) : item.indices.length > 0 ? (
                 <SmartPath path={item.path} indices={item.indices} maxLen={55} />
               ) : (
                 <SmartPath path={item.path} indices={[]} maxLen={55} />
               )}
             </span>
-            {item.isDir && (
+            {!item.category && item.isDir && (
               <span className="text-[10px] text-[var(--color-text-muted)] ml-auto shrink-0">dir</span>
             )}
           </button>

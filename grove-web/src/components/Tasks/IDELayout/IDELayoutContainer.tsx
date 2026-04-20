@@ -19,7 +19,7 @@ import type {
   InfoTabType,
   ArtifactPreviewRequest,
 } from "./IDELayout.types";
-import { AUX_PANEL_TYPES, INFO_PANEL_TYPES } from "./IDELayout.types";
+import { AUX_PANEL_TYPES } from "./IDELayout.types";
 import { MultiTabTerminalPanel } from "./MultiTabTerminalPanel";
 import type { FileNavRequest } from "../../Review";
 import { TaskChat } from "../TaskView/TaskChat";
@@ -411,41 +411,41 @@ export const IDELayoutContainer = forwardRef<IDELayoutHandle, IDELayoutContainer
           });
         },
         focusAuxPanel: (type: AuxPanelType) => {
-          setState((prev) => ({ ...prev, auxType: type, auxVisible: true }));
+          // Toggle semantics — matches the toolbar button (`isActive ? hide :
+          // show`). Pressing the same shortcut twice closes the panel the
+          // user just opened, which is what shortcut hotkeys are expected to
+          // do in every IDE.
+          setState((prev) =>
+            prev.auxVisible && prev.auxType === type
+              ? { ...prev, auxVisible: false }
+              : { ...prev, auxType: type, auxVisible: true },
+          );
         },
         focusInfoPanel: (type: InfoTabType) => {
-          setState((prev) => ({ ...prev, infoType: type, infoVisible: true }));
+          setState((prev) =>
+            prev.infoVisible && prev.infoType === type
+              ? { ...prev, infoVisible: false }
+              : { ...prev, infoType: type, infoVisible: true },
+          );
         },
         focusChat: () => {
-          setState((prev) => ({ ...prev, chatVisible: true }));
+          // Same toggle rule for Chat: pressing `i` again hides it unless
+          // that would leave the workbench with no visible surface (no aux,
+          // no info), in which case we force it to stay visible.
+          setState((prev) => {
+            if (!prev.chatVisible) return { ...prev, chatVisible: true };
+            const hasOtherSurface =
+              (prev.auxVisible && !!prev.auxType) || (prev.infoVisible && !!prev.infoType);
+            if (!hasOtherSurface) return prev;
+            return { ...prev, chatVisible: false };
+          });
         },
-        selectTabByIndex: (index: number) => {
-          if (index === 0) {
-            setState((prev) => ({ ...prev, chatVisible: true }));
-            return "handled" as const;
-          }
-          const visibleAuxTypes = AUX_PANEL_TYPES.filter((type) =>
-            (type !== "artifacts" || isStudio) &&
-            (type !== "sketch" || isStudio) &&
-            (type !== "review" || !isStudio) &&
-            (type !== "terminal" || terminalAvailable)
-          );
-          const visibleInfoTypes = INFO_PANEL_TYPES.filter(
-            (type) =>
-              (type !== "git" || !isStudio) &&
-              (type !== "comments" || !isStudio),
-          );
-          if (index >= 1 && index <= visibleAuxTypes.length) {
-            const type = visibleAuxTypes[index - 1];
-            setState((prev) => ({ ...prev, auxType: type, auxVisible: true }));
-            return "handled" as const;
-          }
-          const infoIndex = index - visibleAuxTypes.length - 1;
-          if (infoIndex >= 0 && infoIndex < visibleInfoTypes.length) {
-            setState((prev) => ({ ...prev, infoType: visibleInfoTypes[infoIndex], infoVisible: true }));
-            return "handled" as const;
-          }
-          return "out_of_range" as const;
+        selectTabByIndex: () => {
+          // IDE Layout has no tab concept — Cmd+1..9 should fall through to
+          // the outer sidebar navigation instead of trying to focus an aux
+          // panel. Returning "no_tabs" tells TasksPage's Cmd+1..9 handler to
+          // delegate to onNavByIndex.
+          return "no_tabs" as const;
         },
         selectAdjacentTab: (delta: number) => {
           const auxTypes = AUX_PANEL_TYPES.filter((type) =>

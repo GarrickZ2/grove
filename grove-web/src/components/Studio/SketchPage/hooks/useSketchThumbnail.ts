@@ -71,34 +71,58 @@ export function useSketchThumbnail({
       return;
     }
 
-    if (timerRef.current !== null) {
-      window.clearTimeout(timerRef.current);
-    }
-    const timerId = window.setTimeout(async () => {
-      timerRef.current = null;
+    // Shared render+upload path. Used both by the normal 2s debounce and by
+    // the unmount-flush below. Captures sketchId/api/fp by argument so the
+    // flush path can't race with a stale closure after deps change.
+    const runUpload = async (
+      api: ExcalidrawImperativeAPI,
+      pid: string,
+      tid: string,
+      sid: string,
+      fingerprint: string,
+    ) => {
       try {
         const { exportToBlob } = await import("@excalidraw/excalidraw");
         const blob = await exportToBlob({
-          elements: excalidrawApi.getSceneElements(),
+          elements: api.getSceneElements(),
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          appState: excalidrawApi.getAppState() as any,
-          files: excalidrawApi.getFiles(),
+          appState: api.getAppState() as any,
+          files: api.getFiles(),
           mimeType: "image/png",
           exportPadding: 16,
           maxWidthOrHeight: MAX_PX,
         });
-        await uploadSketchThumbnail(projectId, taskId, sketchId, blob);
-        uploadedFingerprintRef.current = { sketchId, fp };
+        await uploadSketchThumbnail(pid, tid, sid, blob);
+        uploadedFingerprintRef.current = { sketchId: sid, fp: fingerprint };
       } catch (e) {
         console.warn("sketch thumbnail upload failed", e);
       }
+    };
+
+    if (timerRef.current !== null) {
+      window.clearTimeout(timerRef.current);
+    }
+    const timerId = window.setTimeout(() => {
+      timerRef.current = null;
+      void runUpload(excalidrawApi, projectId, taskId, sketchId, fp);
     }, DEBOUNCE_MS);
     timerRef.current = timerId;
 
     return () => {
+      // Cleanup fires on sketch switch, component unmount, or any dep change
+      // that lands before the timer. If a debounced upload was scheduled but
+      // never fired, run it NOW against the values this effect captured so
+      // the latest edits don't end up on disk without a matching thumb (which
+      // would make the server's mtime freshness check reject the thumb and
+      // leave agents with no preview until the user re-opens the sketch).
       if (timerRef.current !== null) {
         window.clearTimeout(timerRef.current);
         timerRef.current = null;
+        // Fire-and-forget — useEffect cleanup can't await. The request is a
+        // normal fetch, which survives React unmount fine (the browser only
+        // aborts in-flight requests on full page unload, which is covered by
+        // useSketchSync's beforeunload path handling the scene save itself).
+        void runUpload(excalidrawApi, projectId, taskId, sketchId, fp);
       }
     };
   }, [projectId, taskId, sketchId, scene, excalidrawApi]);

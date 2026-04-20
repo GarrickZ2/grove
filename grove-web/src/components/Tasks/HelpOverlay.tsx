@@ -92,8 +92,13 @@ export function HelpOverlay({ isOpen, onClose }: HelpOverlayProps) {
 
   useEffect(() => {
     if (!isOpen) return;
+    // NOTE: don't handle "?" here — App's top-level useHotkeys already owns
+    // the toggle. Re-binding the same key at bubble phase inside this effect
+    // re-fires the handler on the SAME keydown that just opened us (useEffect
+    // commits before the browser finishes event dispatch in some React-18
+    // flush paths), closing the overlay the instant it appears.
     const handler = (e: KeyboardEvent) => {
-      if (e.key === "Escape" || e.key === "?") {
+      if (e.key === "Escape") {
         e.preventDefault();
         onClose();
       }

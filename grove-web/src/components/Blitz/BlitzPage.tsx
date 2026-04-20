@@ -5,7 +5,6 @@ import { TaskInfoPanel } from "../Tasks/TaskInfoPanel";
 import { TaskView, type TaskViewHandle } from "../Tasks/TaskView";
 import { CommitDialog, ConfirmDialog, DirtyBranchDialog, MergeDialog } from "../Dialogs";
 import { RebaseDialog } from "../Tasks/dialogs";
-import { HelpOverlay } from "../Tasks/HelpOverlay";
 import { ContextMenu } from "../ui/ContextMenu";
 import { LogoBrand } from "../Layout/LogoBrand";
 import { useNotifications, useCommandPalette } from "../../context";
@@ -489,13 +488,6 @@ export function BlitzPage({ onSwitchToZen, onNavigate }: BlitzPageProps) {
     }
   }, [pageState.inWorkspace, pageHandlers]);
 
-  // Handle adding panel to TaskView
-  const handleAddPanel = useCallback((type: PanelType) => {
-    if (taskViewRef.current) {
-      taskViewRef.current.addPanel(type);
-    }
-  }, []);
-
   // Handle adding panel from Info Panel (enter workspace + open panel)
   const handleAddPanelFromInfo = useCallback((type: PanelType) => {
     pageHandlers.setInWorkspace(true);
@@ -628,23 +620,17 @@ export function BlitzPage({ onSwitchToZen, onNavigate }: BlitzPageProps) {
 
       // Actions (no 'n' for new task in Blitz)
       { key: "Space", handler: navHandlers.openContextMenuAtSelectedTask, options: { enabled: hasTask && notInWorkspace } },
-      { key: "c", handler: opsHandlers.handleCommit, options: { enabled: isActive } },
-      { key: "s", handler: opsHandlers.handleSync, options: { enabled: canOperate } },
-      { key: "m", handler: opsHandlers.handleMerge, options: { enabled: canOperate } },
-      { key: "b", handler: opsHandlers.handleRebase, options: { enabled: canOperate } },
-      { key: "a", handler: opsHandlers.handleArchive, options: { enabled: isActive } },
-      { key: "x", handler: opsHandlers.handleReset, options: { enabled: canOperate } },
-      { key: "Shift+x", handler: opsHandlers.handleClean, options: { enabled: hasTask } },
-      { key: "r", handler: () => pageState.inWorkspace ? handleAddPanel("review") : handleAddPanelFromInfo("review"), options: { enabled: hasTask && isActive } },
-      { key: "e", handler: () => pageState.inWorkspace ? handleAddPanel("editor") : handleAddPanelFromInfo("editor"), options: { enabled: hasTask && isActive } },
-      { key: "i", handler: () => pageState.inWorkspace ? handleAddPanel("chat") : handleAddPanelFromInfo("chat"), options: { enabled: hasTask && isActive } },
-      { key: "t", handler: () => pageState.inWorkspace ? handleAddPanel("terminal") : handleAddPanelFromInfo("terminal"), options: { enabled: hasTask && isActive } },
+      // Panel shortcuts in the task-LIST view: enter workspace + open panel.
+      // In-workspace panel + git op shortcuts are registered by TaskView
+      // itself so every host page has consistent behavior.
+      { key: "r", handler: () => handleAddPanelFromInfo("review"), options: { enabled: hasTask && isActive && notInWorkspace } },
+      { key: "e", handler: () => handleAddPanelFromInfo("editor"), options: { enabled: hasTask && isActive && notInWorkspace } },
+      { key: "i", handler: () => handleAddPanelFromInfo("chat"), options: { enabled: hasTask && isActive && notInWorkspace } },
+      { key: "t", handler: () => handleAddPanelFromInfo("terminal"), options: { enabled: hasTask && isActive && notInWorkspace } },
 
       // Search
       { key: "/", handler: () => searchInputRef.current?.focus(), options: { enabled: notInWorkspace } },
 
-      // Help
-      { key: "?", handler: () => pageHandlers.setShowHelp(!pageState.showHelp) },
     ],
     [
       navHandlers, pageHandlers, opsHandlers, handleCloseTask, handleAddPanelFromInfo, refresh,
@@ -1094,7 +1080,7 @@ export function BlitzPage({ onSwitchToZen, onNavigate }: BlitzPageProps) {
         {/* Help shortcut hint */}
         <div className="px-3 py-2 border-t border-[var(--color-border)]">
           <button
-            onClick={() => pageHandlers.setShowHelp(true)}
+            onClick={() => window.dispatchEvent(new Event("grove:open-help"))}
             className="w-full text-center text-xs text-[var(--color-text-muted)] hover:text-[var(--color-text)] transition-colors"
           >
             Press <kbd className="px-1 py-0.5 text-[10px] font-mono rounded border bg-[var(--color-bg-secondary)] border-[var(--color-border)]">?</kbd> for shortcuts
@@ -1315,8 +1301,6 @@ export function BlitzPage({ onSwitchToZen, onNavigate }: BlitzPageProps) {
         error={opsState.dirtyBranchError}
         onClose={opsHandlers.handleDirtyBranchErrorClose}
       />
-
-      <HelpOverlay isOpen={pageState.showHelp} onClose={() => pageHandlers.setShowHelp(false)} />
 
       <RadioConnectDialog
         open={effectiveShowRadioConnect}
