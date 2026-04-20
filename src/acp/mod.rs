@@ -2418,6 +2418,101 @@ pub fn resolve_agent(agent_name: &str) -> Option<ResolvedAgent> {
         })
 }
 
+/// Priority order for auto-selecting a Chat (ACP) agent when the user hasn't
+/// chosen one or the chosen one is not installed. Kept in sync with
+/// `agentOptions` in `grove-web/src/components/ui/AgentPicker.tsx`.
+const ACP_AGENT_PRIORITY: &[&str] = &[
+    "claude", "codex", "cursor", "gemini", "copilot", "junie", "kimi", "opencode", "qwen",
+    "traecli",
+];
+
+/// Priority order for auto-selecting a Terminal agent. Values are the `id`s
+/// used by `layout.agent_command`; the paired `&str` is the binary name to
+/// probe on PATH.
+const TERMINAL_AGENT_PRIORITY: &[(&str, &str)] = &[
+    ("claude", "claude"),
+    ("codex", "codex"),
+    ("cursor", "cursor-agent"),
+    ("gemini", "gemini"),
+    ("copilot", "copilot"),
+    ("junie", "junie"),
+    ("kimi", "kimi"),
+    ("opencode", "opencode"),
+    ("qwen", "qwen"),
+    ("traecli", "traecli"),
+];
+
+/// Pick the first ACP agent id whose binary is installed on PATH, preferring
+/// user-defined custom agents (which we trust to be runnable).
+pub fn pick_first_available_acp_agent() -> Option<String> {
+    let config = crate::storage::config::load_config();
+    if let Some(custom) = config.acp.custom_agents.first() {
+        return Some(custom.id.clone());
+    }
+    for name in ACP_AGENT_PRIORITY {
+        if resolve_agent(name).is_some() {
+            return Some((*name).to_string());
+        }
+    }
+    None
+}
+
+/// Pick the first Terminal agent id whose launcher binary is on PATH.
+pub fn pick_first_available_terminal_agent() -> Option<String> {
+    for (id, binary) in TERMINAL_AGENT_PRIORITY {
+        if command_exists(binary) {
+            return Some((*id).to_string());
+        }
+    }
+    None
+}
+
+/// Ensure `config.toml` has sensible `acp.agent_command` / `layout.agent_command`
+/// values given the currently-installed CLIs. Runs once at server startup so
+/// first-run users don't get "claude" as the default when Claude Code isn't
+/// installed. Silent no-op if the configured agents are already valid.
+pub fn init_agent_defaults() {
+    let mut config = crate::storage::config::load_config();
+    let mut changed = false;
+
+    let acp_valid = match &config.acp.agent_command {
+        Some(name) if !name.is_empty() => {
+            resolve_agent(name).is_some() || config.acp.custom_agents.iter().any(|a| &a.id == name)
+        }
+        _ => false,
+    };
+    if !acp_valid {
+        if let Some(picked) = pick_first_available_acp_agent() {
+            config.acp.agent_command = Some(picked);
+            changed = true;
+        }
+    }
+
+    let terminal_valid = match &config.layout.agent_command {
+        Some(name) if !name.is_empty() => TERMINAL_AGENT_PRIORITY
+            .iter()
+            .find(|(id, _)| id == name)
+            .map(|(_, binary)| command_exists(binary))
+            .unwrap_or(true),
+        _ => false,
+    };
+    if !terminal_valid {
+        if let Some(picked) = pick_first_available_terminal_agent() {
+            config.layout.agent_command = Some(picked);
+            changed = true;
+        }
+    }
+
+    if changed {
+        if let Err(e) = crate::storage::config::save_config(&config) {
+            eprintln!(
+                "[warning] Failed to persist auto-selected agent defaults: {}",
+                e
+            );
+        }
+    }
+}
+
 /// 发送 ACP 事件通知（声音 + 横幅 + hooks.toml）
 fn notify_acp_event(
     project_key: &str,

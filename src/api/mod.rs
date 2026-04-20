@@ -770,6 +770,11 @@ pub async fn start_server(
     auth: Arc<ServerAuth>,
     tls_mode: crate::cli::web::TlsMode,
 ) -> std::io::Result<()> {
+    // Auto-correct agent defaults based on what's actually installed on PATH.
+    // Runs every server start because the user's environment can change between
+    // sessions (e.g. they install a new CLI).
+    crate::acp::init_agent_defaults();
+
     // Initialize FileWatchers for all live tasks
     init_file_watchers();
 
