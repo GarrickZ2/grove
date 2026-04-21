@@ -409,6 +409,11 @@ async fn handle_acp_ws(socket: WebSocket, session_key: String, config: AcpStartC
     // History is loaded by the frontend via HTTP GET /history (separate path).
     // WS only handles real-time events going forward.
 
+    // Snapshot fields we still need after config is moved into get_or_start_session.
+    let history_project_key = config.project_key.clone();
+    let history_task_id = config.task_id.clone();
+    let history_chat_id = config.chat_id.clone();
+
     // Get or start ACP session (thread managed by acp module)
     let (handle, mut update_rx) = match acp::get_or_start_session(session_key, config).await {
         Ok(r) => r,
@@ -491,15 +496,65 @@ async fn handle_acp_ws(socket: WebSocket, session_key: String, config: AcpStartC
         }
     }
 
-    // Sync permission state on reconnect: if the frontend has stale unresolved
-    // permission messages from history but the backend has no actual pending
-    // permission, send a synthetic PermissionResponse to clear them.
-    if is_existing && !handle.has_pending_permission() {
-        let msg = ServerMessage::PermissionResponse {
-            option_id: "Cancelled".to_string(),
-        };
-        if let Ok(json) = serde_json::to_string(&msg) {
-            let _ = ws_sender.send(Message::Text(json.into())).await;
+    // Sync permission state on reconnect: clear any orphan permission_request in
+    // the persisted history that has no matching response.
+    //
+    // Two独立 cases 都需要兜底：
+    //   1. 后端确实没有 pending（之前就处理过了）—— 历史里却存在未配对的 request
+    //      （比如旧版本的并发 append 竞态导致 response 行损坏，parse 时被丢弃）
+    //   2. 后端 *有* pending，但历史里同样存在更早的、和当前 pending 无关的孤儿
+    //      request（同一个 session 内多次 race 留下的残留）
+    //
+    // 处理策略：
+    //   - 如果存在孤儿，且后端 *无* pending —— 既给前端发一次性 synthetic
+    //     Cancelled（让当前 UI 立即关掉对话框），也把 Cancelled 落盘
+    //     （让下一次 reconnect 不会再读到孤儿）。
+    //   - 如果后端 *有* pending —— 仍然只发 WS 那条 synthetic Cancelled
+    //     给前端清 stale UI，但不动磁盘（不能误吞掉真正在等用户的那条）。
+    if is_existing {
+        if let Some(ref chat_id) = history_chat_id {
+            let history =
+                chat_history::load_history(&history_project_key, &history_task_id, chat_id);
+            let mut unresolved: usize = 0;
+            for evt in &history {
+                match evt {
+                    AcpUpdate::PermissionRequest { .. } => unresolved += 1,
+                    AcpUpdate::PermissionResponse { .. } if unresolved > 0 => unresolved -= 1,
+                    _ => {}
+                }
+            }
+            let backend_pending = handle.has_pending_permission();
+
+            // 给这个新 WS 发 n 条一次性 synthetic Cancelled（不广播、不落盘），
+            // 用来清掉前端 replay 出来的 stale permission dialog。
+            let ws_cancel_count: usize = if unresolved > 0 && !backend_pending {
+                // 有孤儿、后端也不在等 —— 合成 PermissionResponse 走 emit 落盘，
+                // 彻底修掉 history，下次重连就不会再看到这些孤儿。
+                for _ in 0..unresolved {
+                    handle.emit(AcpUpdate::PermissionResponse {
+                        option_id: "Cancelled".to_string(),
+                    });
+                }
+                0
+            } else if unresolved > 0 && backend_pending {
+                // 有孤儿但后端真的在等某个 pending —— 不能合成落盘（会误吞掉
+                // 真 pending 的 tx），只给这个新 WS 发 WS-only Cancelled 清前
+                // 端的 stale dialog；真 pending 会由 agent 的后续行为自然走完。
+                unresolved
+            } else if !backend_pending {
+                // 没孤儿、后端也空闲 —— 兜底发一条，防止前端有 stale UI。
+                1
+            } else {
+                0
+            };
+            for _ in 0..ws_cancel_count {
+                let msg = ServerMessage::PermissionResponse {
+                    option_id: "Cancelled".to_string(),
+                };
+                if let Ok(json) = serde_json::to_string(&msg) {
+                    let _ = ws_sender.send(Message::Text(json.into())).await;
+                }
+            }
         }
     }
 

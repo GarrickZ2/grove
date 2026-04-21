@@ -153,6 +153,42 @@ fn pick_default_shell() -> (String, Vec<String>) {
     }
 }
 
+/// Ensure the PTY child has a sane base environment.
+///
+/// When Grove is launched from Finder / Launchpad (packaged `.app` / DMG),
+/// the parent process inherits only a minimal env, so `LANG`, `LC_*`, `TERM`
+/// and `PATH` are all missing. Without `TERM` zsh's ZLE cannot redraw the
+/// prompt — each keystroke gets re-echoed cumulatively (`ls` → `lslssllss…`)
+/// — and without a UTF-8 locale zsh prints multibyte bytes as `\M-^…`.
+///
+/// We set safe defaults only when the variable is absent, so users who do
+/// have a terminal-inherited env keep their own values.
+fn apply_terminal_env_defaults(cmd: &mut CommandBuilder) {
+    let defaults: &[(&str, &str)] = &[
+        ("TERM", "xterm-256color"),
+        ("LANG", "en_US.UTF-8"),
+        ("LC_ALL", "en_US.UTF-8"),
+        ("LC_CTYPE", "en_US.UTF-8"),
+        ("COLORTERM", "truecolor"),
+    ];
+    for (k, v) in defaults {
+        if std::env::var_os(k).is_none() {
+            cmd.env(k, v);
+        }
+    }
+
+    // PATH can also be empty under a Finder launch — fall back to the
+    // standard macOS/Linux default so `ls`, `git`, etc. resolve. We put
+    // `/opt/homebrew/bin` first so Apple-Silicon Homebrew installs
+    // (`brew`, `node`, `gh`, ...) are reachable.
+    if std::env::var_os("PATH").is_none() {
+        cmd.env(
+            "PATH",
+            "/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin",
+        );
+    }
+}
+
 /// Handle the WebSocket connection for a simple shell terminal
 async fn handle_shell_terminal(socket: WebSocket, cwd: String, cols: u16, rows: u16) {
     let (shell, args) = pick_default_shell();
@@ -162,6 +198,7 @@ async fn handle_shell_terminal(socket: WebSocket, cwd: String, cols: u16, rows: 
         cmd.arg(arg);
     }
     cmd.cwd(&cwd);
+    apply_terminal_env_defaults(&mut cmd);
 
     handle_pty_terminal(socket, cmd, cols, rows).await;
 }
@@ -194,6 +231,7 @@ async fn handle_mux_terminal(socket: WebSocket, params: MuxTerminalParams) {
             cmd.arg("attach-session");
             cmd.arg("-t");
             cmd.arg(&session_name);
+            apply_terminal_env_defaults(&mut cmd);
             handle_pty_terminal(socket, cmd, cols, rows).await;
         }
         SessionType::Zellij => {
@@ -202,6 +240,7 @@ async fn handle_mux_terminal(socket: WebSocket, params: MuxTerminalParams) {
             cmd.env_remove("ZELLIJ");
             cmd.env_remove("ZELLIJ_SESSION_NAME");
             cmd.cwd(&working_dir);
+            apply_terminal_env_defaults(&mut cmd);
 
             if new_session {
                 // New session: use `zellij -s <name>` (mirrors TUI attach_session logic)

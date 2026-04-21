@@ -104,16 +104,29 @@ fn resolve_safe_path(
     Ok(target)
 }
 
-/// Walk a directory tree and return relative paths (non-git fallback)
+/// Walk a directory tree and return relative paths (non-git fallback).
+///
+/// `follow_links(true)` is required for Studio tasks: their `resource/`
+/// entry is a symlink into the Studio-wide shared assets directory, and
+/// without link-following walkdir would report the symlink itself as a
+/// non-file and skip all of its contents — so `@` mentions would never
+/// surface resource files. Using `entry.path().is_file()` (instead of
+/// `file_type().is_file()`) also resolves through symlinks correctly.
 fn list_files_fs(root: &str) -> Vec<String> {
     let root_path = std::path::Path::new(root);
     let mut files = Vec::new();
+    // `max_depth` 做一个保守的兜底：follow_links(true) 下若碰到 `a -> b -> a`
+    // 这种软链循环，walkdir 自己的 loop detection 未必在所有版本都能准确
+    // 识别跨挂载点的 cycle，硬顶一个深度避免无限递归 / 过大的重复输出。
+    // 64 对 @ mention 文件枚举来说绰绰有余。
     for entry in walkdir::WalkDir::new(root_path)
         .min_depth(1)
+        .max_depth(64)
+        .follow_links(true)
         .into_iter()
         .filter_map(|e| e.ok())
     {
-        if entry.file_type().is_file() {
+        if entry.path().is_file() {
             if let Ok(rel) = entry.path().strip_prefix(root_path) {
                 files.push(rel.to_string_lossy().to_string());
             }

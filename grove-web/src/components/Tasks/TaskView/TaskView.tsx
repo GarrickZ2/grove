@@ -277,13 +277,10 @@ export const TaskView = forwardRef<TaskViewHandle, TaskViewProps>((props, ref) =
       { key: "s", handler: () => onSync?.(), options: { enabled: canOperate && !!onSync } },
       { key: "m", handler: () => onMerge?.(), options: { enabled: canOperate && !!onMerge } },
       { key: "b", handler: () => onRebase?.(), options: { enabled: canOperate && !!onRebase } },
-      { key: "a", handler: () => onArchive?.(), options: { enabled: canOperate && !!onArchive } },
-      { key: "x", handler: () => onReset?.(), options: { enabled: canOperate && !!onReset } },
-      { key: "Shift+x", handler: () => onClean?.(), options: { enabled: !!onClean } },
     ],
     [
       panelShortcutsEnabled, canOperate, handleAddPanel,
-      onCommit, onSync, onMerge, onRebase, onArchive, onReset, onClean,
+      onCommit, onSync, onMerge, onRebase,
     ],
   );
 
@@ -294,16 +291,16 @@ export const TaskView = forwardRef<TaskViewHandle, TaskViewProps>((props, ref) =
     }] : []),
     ...(!isLocal && onArchive ? [{
       id: "archive", label: "Archive", icon: Archive, onClick: onArchive,
-      shortcut: "a", variant: "warning" as const, disabled: isBroken || isArchived, separator: true,
+      variant: "warning" as const, disabled: isBroken || isArchived, separator: true,
     }] : []),
     ...(onReset ? [{
       id: "reset", label: "Reset", icon: RotateCcw, onClick: onReset,
-      shortcut: "x", variant: "warning" as const, disabled: isArchived,
+      variant: "warning" as const, disabled: isArchived,
       separator: isLocal,
     }] : []),
     ...(onClean ? [{
       id: "clean", label: "Clean", icon: Trash2, onClick: onClean,
-      shortcut: "⇧X", variant: "danger" as const,
+      variant: "danger" as const,
     }] : []),
   ], [isLocal, onRebase, onArchive, onReset, onClean, canOperate, isBroken, isArchived]);
 

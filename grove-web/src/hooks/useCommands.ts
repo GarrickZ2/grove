@@ -273,7 +273,6 @@ export function buildCommands(options: UseCommandsOptions): Command[] {
           name: "Archive",
           category: "Task Actions",
           icon: Archive,
-          shortcut: "a",
           handler: opsHandlers.handleArchive,
           keywords: ["done", "finish", "close"],
         }, { contexts: { default: -4, tasks: 8, workspace: 14 } }));
@@ -285,7 +284,6 @@ export function buildCommands(options: UseCommandsOptions): Command[] {
           name: "Reset",
           category: "Task Actions",
           icon: RotateCcw,
-          shortcut: "x",
           handler: opsHandlers.handleReset,
           keywords: ["recreate", "worktree"],
         }, { contexts: { default: -8, tasks: 4, workspace: 12 } }));
@@ -297,7 +295,6 @@ export function buildCommands(options: UseCommandsOptions): Command[] {
           name: "Clean (Delete Worktree)",
           category: "Task Actions",
           icon: Trash2,
-          shortcut: "X",
           handler: opsHandlers.handleClean,
           keywords: ["delete", "remove", "destroy"],
         }, { contexts: { default: -10, tasks: -2, workspace: 0 } }));

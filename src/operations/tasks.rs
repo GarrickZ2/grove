@@ -808,17 +808,24 @@ pub fn recover_task(
     let task = tasks::get_archived_task(project_key, task_id)?
         .ok_or_else(|| GroveError::not_found("Archived task not found"))?;
 
-    // 2. Check if branch still exists
-    if !git::branch_exists(repo_path, &task.branch) {
-        return Err(GroveError::git(format!(
-            "Branch '{}' no longer exists. Cannot recover task.",
-            task.branch
-        )));
-    }
+    // Studio tasks have no branch/worktree — recovery is just flipping the
+    // status back. The task folder under ~/.grove/studios/... is preserved
+    // across archive/recover.
+    let is_studio = task.branch.is_empty();
 
-    // 3. Recreate worktree from existing branch
-    let worktree_path = std::path::Path::new(&task.worktree_path);
-    git::create_worktree_from_branch(repo_path, &task.branch, worktree_path)?;
+    if !is_studio {
+        // 2. Check if branch still exists
+        if !git::branch_exists(repo_path, &task.branch) {
+            return Err(GroveError::git(format!(
+                "Branch '{}' no longer exists. Cannot recover task.",
+                task.branch
+            )));
+        }
+
+        // 3. Recreate worktree from existing branch
+        let worktree_path = std::path::Path::new(&task.worktree_path);
+        git::create_worktree_from_branch(repo_path, &task.branch, worktree_path)?;
+    }
 
     // 4. Move task from archived.toml back to tasks.toml
     tasks::recover_task(project_key, task_id)?;

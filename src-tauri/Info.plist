@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>NSDesktopFolderUsageDescription</key>
+    <string>Grove needs access to your Desktop to load Git projects you have registered there.</string>
+    <key>NSDocumentsFolderUsageDescription</key>
+    <string>Grove needs access to your Documents folder to load Git projects you have registered there.</string>
+    <key>NSDownloadsFolderUsageDescription</key>
+    <string>Grove needs access to your Downloads folder to load Git projects you have registered there.</string>
+    <key>NSRemovableVolumesUsageDescription</key>
+    <string>Grove needs access to removable volumes to load Git projects you have registered there.</string>
+    <key>NSNetworkVolumesUsageDescription</key>
+    <string>Grove needs access to network volumes to load Git projects you have registered there.</string>
+    <key>NSAppleEventsUsageDescription</key>
+    <string>Grove uses AppleEvents to launch terminals and editors for your tasks.</string>
+</dict>
+</plist>

@@ -160,13 +160,18 @@ function Feature({ icon: Icon, label, delay }: { icon: typeof GitBranch; label: 
       initial={{ y: 20, opacity: 0 }}
       animate={{ y: 0, opacity: 1 }}
       transition={{ delay, duration: 0.4 }}
-      whileHover={{ y: -4 }}
       className="flex flex-col items-center gap-2 cursor-default"
     >
-      <div className="w-14 h-14 rounded-xl bg-[var(--color-bg-secondary)] border border-[var(--color-border)] flex items-center justify-center hover:border-[var(--color-highlight)]/50 hover:bg-[var(--color-highlight)]/5 transition-colors">
-        <Icon className="w-7 h-7 text-[var(--color-highlight)]" />
-      </div>
-      <span className="text-sm text-[var(--color-text-muted)]">{label}</span>
+      <motion.div
+        whileHover={{ y: -4 }}
+        transition={{ duration: 0.2, ease: "easeOut" }}
+        className="flex flex-col items-center gap-2"
+      >
+        <div className="w-14 h-14 rounded-xl bg-[var(--color-bg-secondary)] border border-[var(--color-border)] flex items-center justify-center hover:border-[var(--color-highlight)]/50 hover:bg-[var(--color-highlight)]/5 transition-colors">
+          <Icon className="w-7 h-7 text-[var(--color-highlight)]" />
+        </div>
+        <span className="text-sm text-[var(--color-text-muted)]">{label}</span>
+      </motion.div>
     </motion.div>
   );
 }

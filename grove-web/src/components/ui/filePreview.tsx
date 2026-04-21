@@ -72,14 +72,26 @@ export function FilePreviewDrawer({
   const [fullscreen, setFullscreen] = useState(false);
   const [showSource, setShowSource] = useState(false);
 
+  // Esc: exit fullscreen first, otherwise close the drawer. Uses capture +
+  // stopImmediatePropagation so the global useHotkeys (which also runs in
+  // capture phase and would close the workspace on Esc) never fires.
   useEffect(() => {
-    if (!fullscreen) return;
     const handler = (e: KeyboardEvent) => {
-      if (e.key === "Escape") { e.preventDefault(); setFullscreen(false); }
+      if (e.key !== "Escape") return;
+      // Let the Lightbox handle Esc when it's open.
+      if (document.querySelector('[data-lightbox-active="true"]')) return;
+      e.preventDefault();
+      e.stopPropagation();
+      e.stopImmediatePropagation();
+      if (fullscreen) {
+        setFullscreen(false);
+      } else {
+        onClose();
+      }
     };
-    window.addEventListener("keydown", handler);
-    return () => window.removeEventListener("keydown", handler);
-  }, [fullscreen]);
+    window.addEventListener("keydown", handler, true);
+    return () => window.removeEventListener("keydown", handler, true);
+  }, [fullscreen, onClose]);
 
   return (
     <>
@@ -94,6 +106,7 @@ export function FilePreviewDrawer({
         />
       )}
       <motion.div
+        data-hotkeys-dialog="true"
         className={fullscreen ? 'fixed inset-0 z-[9998] flex flex-col shadow-2xl' : `absolute inset-y-0 right-0 z-30 ${wide ? 'w-[min(96vw,1100px)]' : 'w-[min(92vw,780px)]'} max-w-full flex flex-col shadow-2xl`}
         style={{
           background: "var(--color-bg)",

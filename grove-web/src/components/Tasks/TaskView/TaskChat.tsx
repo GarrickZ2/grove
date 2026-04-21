@@ -39,12 +39,16 @@ import {
   Eye,
   BookOpen,
   ArrowDown,
+  Sparkles,
+  Plug,
+  Wrench,
+  ChevronUp,
+  ExternalLink,
 } from "lucide-react";
 import {
   Button,
   ImageLightbox,
   MarkdownRenderer,
-  Tooltip,
   VSCodeIcon,
   agentOptions,
   FileMentionDropdown,
@@ -324,6 +328,26 @@ function attachmentLabel(type: "image" | "audio" | "resource", index: number): s
 }
 
 /** Mark all incomplete thinking messages as complete and auto-collapse them */
+/**
+ * Merge locations from a tool_call/tool_call_update into existing ones,
+ * de-duped by (path, line). Preserves insertion order so early-discovered
+ * locations stay on top.
+ */
+function mergeLocations(
+  existing: { path: string; line?: number }[] | undefined,
+  incoming: { path: string; line?: number }[] | undefined,
+): { path: string; line?: number }[] | undefined {
+  if (!incoming || incoming.length === 0) return existing;
+  const base = existing ?? [];
+  const out = [...base];
+  for (const loc of incoming) {
+    if (!out.some((e) => e.path === loc.path && e.line === loc.line)) {
+      out.push(loc);
+    }
+  }
+  return out;
+}
+
 function completeThinking(messages: ChatMessage[]): ChatMessage[] {
   let changed = false;
   const result = messages.map((m) => {
@@ -667,7 +691,8 @@ function reduceHistoryMessages(
             ? {
                 ...m,
                 title: msg.title,
-                locations: msg.locations?.length ? msg.locations : m.locations,
+                // locations 按增量合并，按 (path,line) 去重保序
+                locations: mergeLocations(m.locations, msg.locations),
               }
             : m,
         );
@@ -688,6 +713,23 @@ function reduceHistoryMessages(
       ];
     }
     case "tool_call_update": {
+      // 按 ACP 规范，每条 tool_call_update 的 content 是增量内容，应在已有
+      // content 上追加（去重），而不是覆盖。覆盖会让早期的命令/进度被最终
+      // 的结果/错误挤掉。
+      const mergeContent = (
+        prev: string | undefined,
+        next: string | undefined,
+      ): string | undefined => {
+        if (!next) return prev;
+        if (!prev) return next;
+        // 见后端 compact_events 同名逻辑：三种 agent 行为
+        //   1. 纯增量（next 是 delta）→ 拼接
+        //   2. 累积快照（next 以 prev 为前缀）→ 用 next 替换，避免 O(n²)
+        //   3. 重复广播（next 已包含在 prev 中）→ 跳过
+        if (prev.includes(next)) return prev;
+        if (next.startsWith(prev)) return next;
+        return prev.endsWith("\n") ? prev + next : prev + "\n" + next;
+      };
       const exists = messages.some((m) => m.type === "tool" && m.id === msg.id);
       if (exists) {
         return messages.map((m) =>
@@ -695,8 +737,8 @@ function reduceHistoryMessages(
             ? {
                 ...m,
                 status: msg.status,
-                content: msg.content ?? m.content,
-                locations: msg.locations?.length ? msg.locations : m.locations,
+                content: mergeContent(m.content, msg.content),
+                locations: mergeLocations(m.locations, msg.locations),
               }
             : m,
         );
@@ -1013,14 +1055,14 @@ export function TaskChat({
     }
   }, [activePermissionMessage]);
 
-  // Filtered slash commands based on current input
+  // Filtered slash commands based on current input — match by command name
+  // only (prefix match). Matching against description used to surface noise
+  // like /claude-api ("compaction") or /review when the user typed /compact.
   const filteredSlashCommands = useMemo(() => {
     if (!slashFilter) return slashCommands;
     const lower = slashFilter.toLowerCase();
-    return slashCommands.filter(
-      (c) =>
-        c.name.toLowerCase().includes(lower) ||
-        c.description.toLowerCase().includes(lower),
+    return slashCommands.filter((c) =>
+      c.name.toLowerCase().startsWith(lower),
     );
   }, [slashCommands, slashFilter]);
 
@@ -4166,7 +4208,10 @@ export function TaskChat({
                       } ${!isConnected || isRemoteSession || activePermissionMessage ? "opacity-50 cursor-not-allowed" : ""} ${
                         isTerminalMode ? "font-mono" : ""
                       }`}
-                      style={{ wordBreak: "break-word", whiteSpace: "pre-wrap" }}
+                      style={{
+                        overflowWrap: "anywhere",
+                        whiteSpace: "pre-wrap",
+                      }}
                     />
                   </div>
                 </div>
@@ -4840,6 +4885,157 @@ function isEditTool(message: ToolMessage): boolean {
   return normalizeToolVerb(message.title) === "edit";
 }
 
+/**
+ * Finer-grained kind specifically for Action chip rendering.
+ * Determines the icon + label-extraction strategy per tool.
+ */
+type ActionKind =
+  | "bash"
+  | "bash_output"
+  | "skill"
+  | "todo"
+  | "mcp"
+  | "permission"
+  | "generic";
+
+function classifyActionKind(title: string): ActionKind {
+  const lower = title.toLowerCase().trim();
+  // 注：不匹配 "terminal"（会被 isBackgroundAction 先剔掉，走不到这里）。
+  if (lower === "bash" || lower.startsWith("run ")) return "bash";
+  if (lower === "bash_output") return "bash_output";
+  if (lower === "skill" || lower === "skill_use") return "skill";
+  if (
+    lower === "todo_write" ||
+    lower === "todowrite" ||
+    lower === "update_plan"
+  )
+    return "todo";
+  if (lower.startsWith("mcp__") || lower.startsWith("mcp_")) return "mcp";
+  if (lower.includes("permission")) return "permission";
+  return "generic";
+}
+
+/**
+ * Extract a short, informative label for a non-Edit action chip.
+ * Falls back to tool title when nothing better is derivable.
+ */
+function extractActionChipLabel(
+  message: ToolMessage,
+  kind: ActionKind,
+): string {
+  const content = message.content ?? "";
+  const locations = message.locations ?? [];
+  const firstLoc = locations[0];
+
+  const firstNonEmptyLine = (text: string): string => {
+    for (const raw of text.split("\n")) {
+      const line = raw.trim();
+      if (line) return line;
+    }
+    return "";
+  };
+
+  switch (kind) {
+    case "bash":
+    case "bash_output": {
+      // Content typically starts with the command or its output.
+      // If it looks like a shell command (starts with a letter and no obvious
+      // error/usage prefix), surface its first line. Otherwise fall back to
+      // the tool title so we at least say "bash".
+      const first = firstNonEmptyLine(content);
+      if (!first) return extractRawActionLabel(message);
+      // Heuristic: if first line starts with a known error/usage marker, it's
+      // output not the command — fall back to title so we don't mislabel.
+      if (/^(error|usage|traceback|panic|command not found)/i.test(first)) {
+        return extractRawActionLabel(message);
+      }
+      return first;
+    }
+    case "skill": {
+      // Skill content usually opens with either YAML frontmatter
+      // (--- name: xxx ---) or a JSON-ish `"name": "..."` snippet.
+      const fm = /^---\s*[\s\S]*?\bname:\s*([^\n]+)/.exec(content);
+      if (fm) return `skill · ${fm[1].trim().replace(/["']/g, "")}`;
+      const json = /"name"\s*:\s*"([^"]+)"/.exec(content);
+      if (json) return `skill · ${json[1]}`;
+      const firstHeading = /^#\s+(.+)$/m.exec(content);
+      if (firstHeading) return `skill · ${firstHeading[1]}`;
+      return "skill";
+    }
+    case "todo": {
+      // Content is usually JSON with a todos array; extract counts.
+      try {
+        const parsed = JSON.parse(content);
+        const todos = Array.isArray(parsed)
+          ? parsed
+          : Array.isArray(parsed?.todos)
+            ? parsed.todos
+            : Array.isArray(parsed?.entries)
+              ? parsed.entries
+              : null;
+        if (todos && todos.length > 0) {
+          const inProgress = todos.find(
+            (t: { status?: string }) => t?.status === "in_progress",
+          );
+          const active = inProgress?.content ?? inProgress?.title ?? null;
+          return active
+            ? `${todos.length} todos · ${String(active).slice(0, 40)}`
+            : `${todos.length} todos`;
+        }
+      } catch {
+        /* fall through */
+      }
+      return extractRawActionLabel(message);
+    }
+    case "mcp": {
+      // Title like "mcp__grove__grove_list_projects" → "grove · list_projects"
+      const t = message.title;
+      const parts = t.split("__").filter(Boolean);
+      if (parts.length >= 3 && parts[0].toLowerCase() === "mcp") {
+        const server = parts[1];
+        const fn = parts.slice(2).join("_");
+        // Strip redundant `<server>_` prefix if backend double-namespaces it.
+        const fnPretty = fn.startsWith(`${server}_`)
+          ? fn.slice(server.length + 1)
+          : fn;
+        return `${server} · ${fnPretty}`;
+      }
+      return t;
+    }
+    case "permission":
+      return "Permission request";
+    case "generic":
+    default: {
+      if (firstLoc?.path) {
+        const base = firstLoc.path.split("/").pop() || firstLoc.path;
+        return base;
+      }
+      return extractRawActionLabel(message);
+    }
+  }
+}
+
+function renderActionKindIcon(
+  kind: ActionKind,
+  className = "h-3 w-3 shrink-0",
+) {
+  switch (kind) {
+    case "bash":
+    case "bash_output":
+      return <Terminal className={className} />;
+    case "skill":
+      return <Sparkles className={className} />;
+    case "todo":
+      return <ListTodo className={className} />;
+    case "mcp":
+      return <Plug className={className} />;
+    case "permission":
+      return <ShieldCheck className={className} />;
+    default:
+      return <Wrench className={className} />;
+  }
+}
+
 function isBackgroundAction(message: ToolMessage): boolean {
   const verb = normalizeToolVerb(message.title);
   // Generic "Terminal" events often lack the actual command text and only provide
@@ -5119,12 +5315,19 @@ function summarizeToolSection(tools: ToolSectionItem[], sectionFinished: boolean
     return Array.from(merged.values());
   })();
 
-  const actionItems = foregroundActions.map((tool) => ({
-    key: tool.message.id,
-    label: truncateChipLabel(extractRawActionLabel(tool.message)),
-    fullLabel: extractRawActionLabel(tool.message),
-    status: tool.message.status,
-  }));
+  const actionItems = foregroundActions.map((tool) => {
+    const kind = classifyActionKind(tool.message.title);
+    const derived = extractActionChipLabel(tool.message, kind);
+    return {
+      key: tool.message.id,
+      kind,
+      label: truncateChipLabel(derived),
+      rawTitle: tool.message.title,
+      content: tool.message.content ?? "",
+      locations: tool.message.locations ?? [],
+      status: tool.message.status,
+    };
+  });
 
   const inspectionEntries = collectLocationChips(tools, isBackgroundAction);
   const inspectionFiles = inspectionEntries.filter(
@@ -5202,6 +5405,175 @@ function getStatusChipClasses(status: string, muted = false): string {
   return muted
     ? "bg-[color-mix(in_srgb,var(--color-bg-secondary)_78%,var(--color-bg))] text-[var(--color-text-muted)] border border-[color-mix(in_srgb,var(--color-border)_65%,transparent)]"
     : "bg-[color-mix(in_srgb,var(--color-bg-secondary)_88%,var(--color-bg))] text-[var(--color-text)] border border-[color-mix(in_srgb,var(--color-border)_70%,transparent)]";
+}
+
+type ActionChipItem = {
+  key: string;
+  kind: ActionKind;
+  label: string;
+  rawTitle: string;
+  content: string;
+  locations: { path: string; line?: number }[];
+  status: string;
+};
+
+/** Single clickable / expandable action chip. */
+function ActionChip({
+  item,
+  expanded,
+  onToggleExpand,
+  onFileClick,
+}: {
+  item: ActionChipItem;
+  expanded: boolean;
+  onToggleExpand: () => void;
+  onFileClick?: (
+    filePath: string,
+    line?: number,
+    mode?: "diff" | "full",
+  ) => void;
+}) {
+  const hasContent = item.content.trim().length > 0;
+  const hasLocation = item.locations.length > 0;
+  // Click priority: navigate to first location if one exists; otherwise
+  // toggle inline expand. If neither exists, the chip is still a button
+  // (keeps UI consistent) but click is a no-op.
+  const handleClick = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (hasLocation) {
+      const loc = item.locations[0];
+      onFileClick?.(loc.path, loc.line, "full");
+      return;
+    }
+    if (hasContent) onToggleExpand();
+  };
+  const isInteractive = hasLocation || hasContent;
+  // chip 尾部提示：有 location → 箭头出链（可跳文件）；有 content → Chevron
+  // 指示可展开/已展开；无交互 → 不显示，避免骗点击。
+  const trailingHint = hasLocation ? (
+    <ExternalLink className="h-3 w-3 shrink-0 text-[var(--color-text-muted)] opacity-70" />
+  ) : hasContent ? (
+    expanded ? (
+      <ChevronUp className="h-3 w-3 shrink-0 text-[var(--color-text-muted)]" />
+    ) : (
+      <ChevronDown className="h-3 w-3 shrink-0 text-[var(--color-text-muted)] opacity-70" />
+    )
+  ) : null;
+  return (
+    <button
+      type="button"
+      onClick={handleClick}
+      disabled={!isInteractive}
+      className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] transition-colors ${
+        isInteractive
+          ? "cursor-pointer hover:brightness-110"
+          : "cursor-default"
+      } ${getStatusChipClasses(item.status)}`}
+    >
+      {item.status === "running" ? (
+        <Loader2 className="h-3 w-3 animate-spin text-[var(--color-highlight)] shrink-0" />
+      ) : (
+        renderActionKindIcon(item.kind)
+      )}
+      <span className="truncate max-w-[280px]">{item.label}</span>
+      {trailingHint}
+    </button>
+  );
+}
+
+/**
+ * List of action chips plus per-chip expanded detail panels.
+ * Keeps chips in a flex-wrap row; expanded content panels render below in
+ * insertion order (so visual grouping stays tight).
+ */
+function ActionChipList({
+  items,
+  overflowCount,
+  onShowMore,
+  expandedKeys,
+  onToggleExpand,
+  onFileClick,
+}: {
+  items: ActionChipItem[];
+  overflowCount: number;
+  onShowMore: () => void;
+  expandedKeys: Set<string>;
+  onToggleExpand: (key: string) => void;
+  onFileClick?: (
+    filePath: string,
+    line?: number,
+    mode?: "diff" | "full",
+  ) => void;
+}) {
+  const expandedItems = items.filter((it) => expandedKeys.has(it.key));
+  return (
+    <div className="space-y-2">
+      <div className="flex flex-wrap gap-1.5">
+        {items.map((item) => (
+          <ActionChip
+            key={item.key}
+            item={item}
+            expanded={expandedKeys.has(item.key)}
+            onToggleExpand={() => onToggleExpand(item.key)}
+            onFileClick={onFileClick}
+          />
+        ))}
+        {overflowCount > 0 && (
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              onShowMore();
+            }}
+            className="inline-flex items-center rounded-full border border-[color-mix(in_srgb,var(--color-border)_65%,transparent)] bg-[color-mix(in_srgb,var(--color-bg-secondary)_80%,var(--color-bg))] px-2.5 py-1 text-[11px] text-[var(--color-text-muted)] hover:bg-[color-mix(in_srgb,var(--color-bg-secondary)_95%,var(--color-bg))] hover:text-[var(--color-text)] cursor-pointer transition-colors"
+          >
+            +{overflowCount} more actions
+          </button>
+        )}
+      </div>
+      {expandedItems.length > 0 && (
+        <div className="space-y-2">
+          {expandedItems.map((item) => {
+            const renderMarkdown =
+              item.kind === "skill" ||
+              item.kind === "todo" ||
+              item.kind === "mcp";
+            return (
+              <div
+                key={`${item.key}:expanded`}
+                className="rounded-lg border border-[color-mix(in_srgb,var(--color-border)_60%,transparent)] bg-[color-mix(in_srgb,var(--color-bg-secondary)_58%,transparent)] px-3 py-2"
+              >
+                <div className="flex items-center gap-2 mb-1.5">
+                  <span className="text-[10px] uppercase tracking-[0.08em] text-[var(--color-text-muted)]">
+                    {item.rawTitle || "action"}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onToggleExpand(item.key);
+                    }}
+                    className="ml-auto text-[10px] text-[var(--color-text-muted)] hover:text-[var(--color-text)] cursor-pointer transition-colors"
+                  >
+                    collapse
+                  </button>
+                </div>
+                {renderMarkdown ? (
+                  <div className="text-[12px] leading-[1.45]">
+                    <MarkdownRenderer content={item.content} />
+                  </div>
+                ) : (
+                  <pre className="text-[11px] leading-[1.45] font-mono whitespace-pre-wrap break-all text-[var(--color-text)] m-0">
+                    {item.content || "(no output)"}
+                  </pre>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
 }
 
 function ExpandableFileChipGroup({
@@ -5310,6 +5682,9 @@ function ToolSectionView({
   const [inspectionExpanded, setInspectionExpanded] = useState(false);
   const [actionExpanded, setActionExpanded] = useState(false);
   const [actionItemsExpanded, setActionItemsExpanded] = useState(false);
+  const [expandedActionKeys, setExpandedActionKeys] = useState<Set<string>>(
+    () => new Set(),
+  );
   const hasDetails =
     summary.inspectionEntries.length > 0 ||
     summary.editItems.length > 0 ||
@@ -5489,40 +5864,27 @@ function ToolSectionView({
                   )}
                   {(summary.visibleActionItems.length > 0 ||
                     summary.actionItemOverflow > 0) && (
-                    <div className="flex flex-wrap gap-1.5">
-                      {(actionItemsExpanded ? summary.actionItems : summary.visibleActionItems).map((item) =>
-                        item.fullLabel !== item.label ? (
-                          <Tooltip key={item.key} content={item.fullLabel}>
-                            <span
-                              className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] ${getStatusChipClasses(item.status)}`}
-                            >
-                              {item.status === "running" ? (
-                                <Loader2 className="h-3 w-3 animate-spin text-[var(--color-highlight)]" />
-                              ) : null}
-                              <span>{item.label}</span>
-                            </span>
-                          </Tooltip>
-                        ) : (
-                          <span
-                            key={item.key}
-                            className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] ${getStatusChipClasses(item.status)}`}
-                          >
-                            {item.status === "running" ? (
-                              <Loader2 className="h-3 w-3 animate-spin text-[var(--color-highlight)]" />
-                            ) : null}
-                            <span>{item.label}</span>
-                          </span>
-                        ),
-                      )}
-                      {summary.actionItemOverflow > 0 && !actionItemsExpanded && (
-                        <button
-                          onClick={(e) => { e.stopPropagation(); setActionItemsExpanded(true); }}
-                          className="inline-flex items-center rounded-full border border-[color-mix(in_srgb,var(--color-border)_65%,transparent)] bg-[color-mix(in_srgb,var(--color-bg-secondary)_80%,var(--color-bg))] px-2.5 py-1 text-[11px] text-[var(--color-text-muted)] hover:bg-[color-mix(in_srgb,var(--color-bg-secondary)_95%,var(--color-bg))] hover:text-[var(--color-text)] cursor-pointer transition-colors"
-                        >
-                          +{summary.actionItemOverflow} more actions
-                        </button>
-                      )}
-                    </div>
+                    <ActionChipList
+                      items={
+                        actionItemsExpanded
+                          ? summary.actionItems
+                          : summary.visibleActionItems
+                      }
+                      overflowCount={
+                        actionItemsExpanded ? 0 : summary.actionItemOverflow
+                      }
+                      onShowMore={() => setActionItemsExpanded(true)}
+                      expandedKeys={expandedActionKeys}
+                      onToggleExpand={(key) =>
+                        setExpandedActionKeys((prev) => {
+                          const next = new Set(prev);
+                          if (next.has(key)) next.delete(key);
+                          else next.add(key);
+                          return next;
+                        })
+                      }
+                      onFileClick={onFileClick}
+                    />
                   )}
                 </div>
               )}

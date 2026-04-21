@@ -72,6 +72,7 @@ export function ImageLightbox({ imageUrl, svgContent, onClose }: ImageLightboxPr
           exit={{ opacity: 0 }}
           transition={{ duration: 0.15 }}
           data-lightbox-active="true"
+          data-hotkeys-dialog="true"
           className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/70 backdrop-blur-sm cursor-pointer select-none"
           onClick={handleClose}
           onMouseDown={(e) => {

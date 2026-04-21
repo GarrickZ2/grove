@@ -373,6 +373,12 @@ struct GroveAcpClient {
     file_snapshots: Mutex<HashMap<String, (PathBuf, Option<String>)>>,
     /// Write 工具的 tool_call_id → file_path（用于 PlanFileUpdate 检测）
     write_tool_paths: Mutex<HashMap<String, String>>,
+    /// "plan-like" 工具（如 Trae 的 `todo_write` / `update_plan`）的 tool_call_id：
+    /// 某些 agent 不会对这些 tool 发 `ToolCallUpdate{status=completed}`，而是
+    /// 用紧随其后的 `SessionUpdate::Plan` 事件代表"已应用"。没有人兜底的话，
+    /// 前端这条 tool_call 会永远显示 running。我们在收到 Plan 时把它们合成
+    /// 为 completed。
+    pending_plan_tool_ids: Mutex<Vec<String>>,
 }
 
 #[async_trait::async_trait(?Send)]
@@ -629,6 +635,19 @@ impl acp::Client for GroveAcpClient {
                     }
                 }
 
+                // 追踪 plan-like 工具：Trae 的 `todo_write` / `update_plan` 不走
+                // ToolCallUpdate completed，而是用 SessionUpdate::Plan 代表完成。
+                let lower_title = tool_call.title.to_lowercase();
+                if matches!(
+                    lower_title.as_str(),
+                    "todo_write" | "todowrite" | "update_plan"
+                ) {
+                    self.pending_plan_tool_ids
+                        .lock()
+                        .unwrap()
+                        .push(tool_call.tool_call_id.to_string());
+                }
+
                 // 缓存 Write/Edit 文件快照（locations 在第二个 ToolCall 事件才有路径）
                 let title = &tool_call.title;
                 if title.starts_with("Write") || title.starts_with("Edit") {
@@ -706,6 +725,19 @@ impl acp::Client for GroveAcpClient {
                     }
                 }
 
+                // 若这个 tool_id 是 plan-like（之前记过），并且本次 update
+                // 是终态，从 pending 表里移掉，避免 Plan 事件误触重复完成。
+                if matches!(
+                    status.as_str(),
+                    "completed" | "failed" | "error" | "cancelled"
+                ) {
+                    let tc_id = update.tool_call_id.to_string();
+                    let mut ids = self.pending_plan_tool_ids.lock().unwrap();
+                    if let Some(pos) = ids.iter().position(|x| x == &tc_id) {
+                        ids.swap_remove(pos);
+                    }
+                }
+
                 self.handle.emit(AcpUpdate::ToolCallUpdate {
                     id: update.tool_call_id.to_string(),
                     status: status.clone(),
@@ -770,6 +802,18 @@ impl acp::Client for GroveAcpClient {
                     })
                     .collect();
                 self.handle.emit(AcpUpdate::PlanUpdate { entries });
+                // 给所有已观察到但还没收到 completed 的 plan-like tool_call 合成
+                // 一条 completed ToolCallUpdate，避免前端上 spinner 永远转。
+                let pending_ids: Vec<String> =
+                    std::mem::take(&mut *self.pending_plan_tool_ids.lock().unwrap());
+                for id in pending_ids {
+                    self.handle.emit(AcpUpdate::ToolCallUpdate {
+                        id,
+                        status: "completed".to_string(),
+                        content: None,
+                        locations: Default::default(),
+                    });
+                }
             }
             acp::SessionUpdate::AvailableCommandsUpdate(update) => {
                 let commands = update
@@ -1132,6 +1176,7 @@ async fn run_acp_session(
         adapter,
         file_snapshots: Mutex::new(HashMap::new()),
         write_tool_paths: Mutex::new(HashMap::new()),
+        pending_plan_tool_ids: Mutex::new(Vec::new()),
     };
 
     // 创建 ACP 连接
@@ -1608,15 +1653,17 @@ impl AcpSessionHandle {
     }
 
     /// 响应待处理的权限请求
+    ///
+    /// 顺序：先通知 agent（主效果），再落盘（记账）。即使 agent 侧 rx 已被
+    /// drop（future 被取消）导致 tx.send 失败，用户的选择已经发生过，
+    /// 仍然要记录到 history，保证切回来时前端能正确 resolve 对应 dialog。
     pub fn respond_permission(&self, option_id: String) -> bool {
-        if let Some(tx) = self.pending_permission.lock().unwrap().take() {
-            if tx.send(option_id.clone()).is_ok() {
-                // 记录到历史（磁盘 + 内存），回放时前端可标记为已解决
-                self.emit(AcpUpdate::PermissionResponse { option_id });
-                return true;
-            }
-        }
-        false
+        let Some(tx) = self.pending_permission.lock().unwrap().take() else {
+            return false;
+        };
+        let _ = tx.send(option_id.clone());
+        self.emit(AcpUpdate::PermissionResponse { option_id });
+        true
     }
 
     /// 发送更新并记录到 history buffer（带磁盘持久化）

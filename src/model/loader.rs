@@ -34,6 +34,16 @@ fn ensure_local_task_synced(project_path: &str) -> (Vec<Task>, String) {
         }
     };
 
+    // Studio 项目没有主仓库,不应该创建 Local Task。
+    let project_meta = workspace::load_project_by_hash(&project_key).ok().flatten();
+    let is_studio = matches!(
+        project_meta.as_ref().map(|p| &p.project_type),
+        Some(workspace::ProjectType::Studio)
+    );
+    if is_studio {
+        return (active_tasks, project_key);
+    }
+
     // 非 git 项目无分支概念,传空串
     let is_git = git::is_git_repo(project_path);
     let (current_branch, default_branch) = if is_git {
@@ -45,10 +55,9 @@ fn ensure_local_task_synced(project_path: &str) -> (Vec<Task>, String) {
     };
 
     // 项目名(用作 Local Task 的显示名)
-    let project_name = workspace::load_project_by_hash(&project_key)
-        .ok()
-        .flatten()
-        .map(|p| p.name)
+    let project_name = project_meta
+        .as_ref()
+        .map(|p| p.name.clone())
         .unwrap_or_else(|| {
             Path::new(project_path)
                 .file_name()
