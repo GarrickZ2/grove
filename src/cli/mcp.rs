@@ -306,6 +306,17 @@ To delete `b1` before adding `b3`: include `{"type":"delete","ids":"b1"}` anywhe
 - `cameraUpdate` is great for guiding attention while drawing complex diagrams. Emit multiple to pan/zoom across sections.
 - For dark themes: put a massive dark rectangle at index 0 BEFORE any `cameraUpdate`. Use bright primary colors on top.
 - Save every `checkpoint_id` in your reasoning; reverting is just passing an older id.
+
+## Referencing a sketch in chat (sketch:// chip)
+
+When you want the user to see a sketch you've drawn, write `sketch://<sketch-id>` somewhere in your chat message. The Grove UI renders that as a clickable chip showing the sketch's name; clicking it opens the sketch in the Sketch panel.
+
+- The id must be the full sketch id (e.g. `sketch-550e8400-e29b-41d4-a716-446655440000`), NOT the human name. Get it from the `id` field returned by `grove_sketch_draw` / `grove_sketch_list` / `grove_sketch_read`.
+- Write the URL as bare text (e.g. `Here's the flow: sketch://sketch-xxx`) — do not wrap it in a markdown link. The UI auto-detects bare `sketch://` URLs.
+- One chip per sketch is enough. Don't repeat the same URL throughout a reply.
+- Chips only resolve names for sketches in the current task. A `sketch://` id from a different task renders as "Unknown sketch".
+
+Prefer chips over describing the sketch in prose — the user can click through to see the real canvas.
 "##;
 
 const UNKNOWN_TASK_INSTRUCTIONS: &str = r#"

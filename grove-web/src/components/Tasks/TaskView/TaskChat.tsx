@@ -3616,6 +3616,7 @@ export function TaskChat({
                     agentLabel={agentLabel}
                     projectId={projectId}
                     taskId={task.id}
+                    isStudio={isStudioProject}
                     onToggleThinkingCollapse={toggleThinkingCollapse}
                     onPermissionResponse={handlePermissionResponse}
                     onFileClick={onNavigateToFile}
@@ -3727,6 +3728,7 @@ export function TaskChat({
                             onMermaidClick={setLightboxSvg}
                             onD2Click={setLightboxSvg}
                             onImageClick={setLightboxUrl}
+                            sketchContext={isStudioProject ? { projectId, taskId: task.id } : undefined}
                           />
                         </div>
                       )}
@@ -4497,6 +4499,7 @@ function MessageItem({
   agentLabel,
   projectId,
   taskId,
+  isStudio,
   onToggleThinkingCollapse,
   onPermissionResponse,
   onFileClick,
@@ -4511,6 +4514,7 @@ function MessageItem({
   agentLabel?: string;
   projectId: string;
   taskId: string;
+  isStudio: boolean;
   onToggleThinkingCollapse: (index: number) => void;
   onPermissionResponse?: (optionId: string) => void;
   onFileClick?: (filePath: string, line?: number) => void;
@@ -4519,6 +4523,7 @@ function MessageItem({
   onD2Click?: (svg: string) => void;
   onInsertReference?: (label: string) => void;
 }) {
+  const sketchContext = isStudio ? { projectId, taskId } : undefined;
   const resolveImageUrl = useCallback((src: string) => {
     if (/^https?:\/\//.test(src)) return src;
     return `/api/v1/projects/${projectId}/tasks/${taskId}/file?path=${encodeURIComponent(src)}`;
@@ -4658,6 +4663,7 @@ function MessageItem({
               onD2Click={onD2Click}
               onImageClick={onImageClick}
               enableRunCommand
+              sketchContext={sketchContext}
             />
             {!message.complete && isBusy && (
               <span className="inline-block w-1.5 h-4 ml-0.5 bg-[var(--color-text-muted)] animate-pulse rounded-sm" />

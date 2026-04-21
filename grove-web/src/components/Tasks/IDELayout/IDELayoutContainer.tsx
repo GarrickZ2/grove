@@ -33,6 +33,7 @@ import {
   CommentsTab,
 } from "../TaskInfoPanel/tabs";
 import { SketchPage } from "../../Studio/SketchPage";
+import { OPEN_SKETCH_EVENT, type OpenSketchDetail } from "../../ui/sketchChipCache";
 import { useConfig, useProject } from "../../../context";
 
 const AUX_PANEL_CONFIG: Record<AuxPanelType, { label: string; icon: typeof Terminal }> = {
@@ -346,6 +347,24 @@ export const IDELayoutContainer = forwardRef<IDELayoutHandle, IDELayoutContainer
     const handleChatBecameIdle = useCallback(() => {
       update({ lastChatIdleAt: Date.now() });
     }, [update]);
+
+    // Global listener: a SketchChip click dispatches OPEN_SKETCH_EVENT. When
+    // the target task is this one, open the Sketch aux panel so the chip
+    // feels like navigation. Only Studio tasks have a sketch panel.
+    useEffect(() => {
+      if (!isStudio) return;
+      const handler = (e: Event) => {
+        const detail = (e as CustomEvent<OpenSketchDetail>).detail;
+        if (!detail) return;
+        if (detail.projectId !== projectId || detail.taskId !== task.id) return;
+        setState((prev) => {
+          if (prev.auxVisible && prev.auxType === "sketch") return prev;
+          return { ...prev, auxType: "sketch", auxVisible: true };
+        });
+      };
+      window.addEventListener(OPEN_SKETCH_EVENT, handler);
+      return () => window.removeEventListener(OPEN_SKETCH_EVENT, handler);
+    }, [isStudio, projectId, task.id]);
 
     const handleBusyStateChange = useCallback((busy: boolean) => {
       update({ isChatBusy: busy });

@@ -10,7 +10,7 @@ Reflects version 0.9.0 (2026-04-19).
 ### 1.1 Isolation model
 - Per-task **Git worktree** — each task lives on its own branch in its own directory
 - Per-task **tmux / Zellij session** — persistent, independent terminal environment (Unix)
-- Per-task **spec** (`Task Notes` + injected `GROVE.md`) — agents read intent before touching code
+- Per-task **spec** (`Task Notes`) — agents read intent before touching code
 - Per-task storage directory `~/.grove/projects/<hash>/tasks/<id>/` for chats, notes, reviews, activity, sketches, artifacts
 
 ### 1.2 Non-worktree tasks

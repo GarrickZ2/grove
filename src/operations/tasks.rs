@@ -683,6 +683,7 @@ fn create_task_inner(
              \n\
              - **Documentation**: Write in Markdown format.\n\
              - **Diagrams**: Use [Mermaid](https://mermaid.js.org/) for flowcharts and sequence diagrams; use [D2](https://d2lang.com/) for architecture and system diagrams.\n\
+             - **Sketches**: When you want to show the user a visual — a system diagram, a UI mock, a whiteboard-style explanation — prefer the Grove sketch tools (`grove_sketch_read_me` once, then `grove_sketch_draw`) over ASCII art or lengthy prose descriptions. After drawing, reference the sketch in your chat reply with `sketch://<sketch-id>` (the full id returned by the draw call). Grove renders this as a clickable chip the user can open to see the canvas.\n\
              - **Demos**: Use JSX/React components for interactive demos and visual presentations.\n",
         );
         std::fs::write(task_dir.join("AGENTS.md"), &agents_md)?;

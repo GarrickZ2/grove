@@ -19,6 +19,7 @@ import { TaskEditor } from '../TaskView/TaskEditor';
 import { StatsTab, GitTab, NotesTab, CommentsTab, ArtifactsTab } from '../TaskInfoPanel/tabs';
 import type { ArtifactPreviewRequest } from '../TaskInfoPanel/tabs';
 import { SketchPage } from '../../Studio/SketchPage';
+import { OPEN_SKETCH_EVENT, type OpenSketchDetail } from '../../ui/sketchChipCache';
 import { ContextMenu, type ContextMenuItem } from '../../ui/ContextMenu';
 import { useConfig, useProject } from '../../../context';
 
@@ -398,6 +399,26 @@ export const FlexLayoutContainer = forwardRef<
     );
     focusPanelContent();
   }, [model, focusPanelContent, getAllTabs, createTabNode]);
+
+  // Global listener: a SketchChip click dispatches OPEN_SKETCH_EVENT. When
+  // the target task is this one, ensure the Sketch panel exists and is
+  // focused so the chip feels like navigation. Studio-only.
+  useEffect(() => {
+    if (!isStudio) return;
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent<OpenSketchDetail>).detail;
+      if (!detail) return;
+      if (detail.projectId !== projectId || detail.taskId !== task.id) return;
+      const existing = getAllTabs().find((t) => t.getComponent() === 'sketch');
+      if (existing) {
+        model.doAction(Actions.selectTab(existing.getId()));
+      } else {
+        addPanel('sketch');
+      }
+    };
+    window.addEventListener(OPEN_SKETCH_EVENT, handler);
+    return () => window.removeEventListener(OPEN_SKETCH_EVENT, handler);
+  }, [isStudio, projectId, task.id, model, getAllTabs, addPanel]);
 
   // Ensure a panel of the given type exists. If one already exists, select it.
   // Otherwise, create a new one.

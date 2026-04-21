@@ -110,7 +110,7 @@ export function SkillsPage() {
       </div>
 
       {/* Tab Content */}
-      <div className="flex-1 overflow-y-auto pt-4">
+      <div className={`flex-1 min-h-0 pt-4 ${activeTab === "explore" ? "overflow-hidden" : "overflow-y-auto"}`}>
         {activeTab === "explore" && (
           <ExploreTab
             sources={sources}

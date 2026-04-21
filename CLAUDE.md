@@ -23,7 +23,7 @@ src/
 │   ├── mod.rs           # CLI subcommand definitions
 │   ├── agent.rs         # `grove agent` commands (status/summary/todo/notes)
 │   ├── hooks.rs         # `grove hooks` notification commands
-│   └── init.rs          # Worktree AI integration setup (GROVE.md injection)
+│   └── init.rs          # Worktree AI integration setup 
 ├── git/
 │   └── mod.rs           # Git command wrappers
 ├── tmux/

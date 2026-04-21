@@ -2,10 +2,11 @@ import { Children, isValidElement, useState, useEffect, useRef, useId, memo, use
 import { Check, Code, Copy, FileText, Hash, Loader2, Play, Terminal, WrapText } from "lucide-react";
 import { renderD2 } from "../../api";
 import type { RenderD2Error } from "../../api";
-import ReactMarkdown, { type Components } from "react-markdown";
+import ReactMarkdown, { type Components, defaultUrlTransform } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import mermaid from "mermaid";
 import { VSCodeIcon } from "./VSCodeIcon";
+import { SketchChip } from "./SketchChip";
 import { highlightLines, normalizeLanguage } from "../Review/syntaxHighlight";
 import { useTheme } from "../../context/ThemeContext";
 import { openExternalUrl } from "../../utils/openExternal";
@@ -27,6 +28,26 @@ const FILE_PATH_RE = /^(.+\/[^/]+?\.[A-Za-z0-9]+)(?::(\d+))?[,.]?$/;
 // Match local file hrefs after decoding percent-encoded characters.
 // e.g. "service/foo.go", "/abs/path/中文名.md", or ends with "#L505"
 const FILE_HREF_RE = /^(.+\/[^/]+?\.[A-Za-z0-9]+)(?:[:#]L?(\d+))?$/;
+
+// Matches `sketch-<uuid>`. Used to validate `sketch://` hrefs.
+const SKETCH_ID_RE = /^sketch-[0-9a-f-]+$/i;
+
+// Wrap bare `sketch://sketch-<uuid>` occurrences as markdown autolinks so
+// react-markdown surfaces them through the link renderer, which converts
+// them into <SketchChip>. The negative lookbehind avoids re-wrapping when
+// the URL is already inside `[label](...)` or `[...](...)`.
+const SKETCH_AUTOLINK_RE = /(?<![[(])(sketch:\/\/sketch-[0-9a-f-]+)\b/gi;
+
+function preprocessSketchUrls(content: string): string {
+  if (!content.includes("sketch://")) return content;
+  // Split by fenced code blocks and inline code spans so we don't rewrite
+  // URLs inside code. Odd-indexed parts are the code regions.
+  const parts = content.split(/(```[\s\S]*?```|`[^`\n]+`)/g);
+  for (let i = 0; i < parts.length; i += 2) {
+    parts[i] = parts[i].replace(SKETCH_AUTOLINK_RE, (m) => `[${m}](${m})`);
+  }
+  return parts.join("");
+}
 
 function cssVar(name: string, fallback: string): string {
   if (typeof window === "undefined") return fallback;
@@ -566,6 +587,10 @@ interface MarkdownRendererProps {
   onImageClick?: (url: string) => void;
   /** When true, bash/sh/shell code blocks get a Run button that pastes into the active terminal */
   enableRunCommand?: boolean;
+  /** When provided, `sketch://<sketch-uuid>` references render as a clickable
+   * sketch chip scoped to this Studio task. Chip labels resolve uuid → name
+   * from this task's sketch index; unknown uuids render as a disabled chip. */
+  sketchContext?: { projectId: string; taskId: string };
 }
 
 /** Extract filename from a full file path */
@@ -650,7 +675,11 @@ function parseFileHref(href: string): { filePath: string; line?: number } | null
   };
 }
 
-export const MarkdownRenderer = memo(function MarkdownRenderer({ content, onFileClick, resolveImageUrl, onMermaidClick, onImageClick, onD2Click, enableRunCommand }: MarkdownRendererProps) {
+export const MarkdownRenderer = memo(function MarkdownRenderer({ content, onFileClick, resolveImageUrl, onMermaidClick, onImageClick, onD2Click, enableRunCommand, sketchContext }: MarkdownRendererProps) {
+  const processedContent = useMemo(
+    () => (sketchContext ? preprocessSketchUrls(content) : content),
+    [content, sketchContext],
+  );
   const components = useMemo((): Components => ({
         h1: ({ children }) => (
           <h1 className="text-lg font-bold text-[var(--color-text)] mt-4 mb-2 first:mt-0">{children}</h1>
@@ -683,6 +712,20 @@ export const MarkdownRenderer = memo(function MarkdownRenderer({ content, onFile
           <li className="text-sm text-[var(--color-text)]">{children}</li>
         ),
         a: ({ href, children }) => {
+          // sketch:// chip — render first so bare sketch URLs never fall
+          // through to the file-path heuristic or the plain link renderer.
+          if (sketchContext && href && href.startsWith("sketch://")) {
+            const id = href.slice("sketch://".length);
+            if (SKETCH_ID_RE.test(id)) {
+              return (
+                <SketchChip
+                  projectId={sketchContext.projectId}
+                  taskId={sketchContext.taskId}
+                  sketchId={id}
+                />
+              );
+            }
+          }
           // Check if the link href looks like a file path (not an external URL)
           if (onFileClick && href) {
             const parsedHref = parseFileHref(href);
@@ -826,11 +869,21 @@ export const MarkdownRenderer = memo(function MarkdownRenderer({ content, onFile
           }
           return <input {...props} />;
         },
-  }), [onFileClick, resolveImageUrl, onMermaidClick, onImageClick, onD2Click, enableRunCommand]);
+  }), [onFileClick, resolveImageUrl, onMermaidClick, onImageClick, onD2Click, enableRunCommand, sketchContext]);
 
   return (
-    <ReactMarkdown remarkPlugins={[remarkGfm]} components={components}>
-      {content}
+    <ReactMarkdown
+      remarkPlugins={[remarkGfm]}
+      components={components}
+      // react-markdown's default url transform strips non-safe schemes like
+      // `sketch:` to an empty href, which would hide sketch chips behind a
+      // dead link. Pass sketch:// through untouched; everything else keeps
+      // the default sanitization (js/vbscript/file blocked, etc.).
+      urlTransform={(url) =>
+        url.startsWith("sketch://") ? url : defaultUrlTransform(url)
+      }
+    >
+      {processedContent}
     </ReactMarkdown>
   );
 });

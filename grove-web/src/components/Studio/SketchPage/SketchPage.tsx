@@ -6,6 +6,7 @@ import { useSketchThumbnail } from "./hooks/useSketchThumbnail";
 import { SketchCanvas } from "./SketchCanvas";
 import { SketchTabBar } from "./SketchTabBar";
 import { SketchHistoryDialog } from "./SketchHistoryDialog";
+import { OPEN_SKETCH_EVENT, type OpenSketchDetail, setSketchNames } from "../../ui/sketchChipCache";
 
 interface Props {
   projectId: string;
@@ -67,6 +68,44 @@ export function SketchPage({ projectId, taskId, isChatBusy, lastChatIdleAt }: Pr
     }
   }, [sketches, activeId]);
 
+  // Keep the shared SketchChip name cache in sync with the live sketch index
+  // so newly created / renamed / deleted sketches surface correctly in chat
+  // chips. Replace in place (don't invalidate+refetch) so chips never flash
+  // "Unknown sketch" between the cache wipe and the next fetch — reuse
+  // useSketchList's already-fetched data directly.
+  useEffect(() => {
+    setSketchNames(projectId, taskId, sketches);
+  }, [projectId, taskId, sketches]);
+
+  // Live Preview: while the ACP chat is busy, MCP can create *new* sketches
+  // from its separate OS process. The scene poll in useSketchSync refreshes
+  // the active canvas, but not the sketch index — so a freshly-drawn sketch
+  // would never appear as a tab until the chat went idle (or the user
+  // manually refreshed). Mirror the scene poll by refetching the list on the
+  // same cadence; refresh is cheap and dedup'd on the server.
+  useEffect(() => {
+    if (!isChatBusy) return;
+    const timer = window.setInterval(() => {
+      void refresh();
+    }, 2000);
+    return () => window.clearInterval(timer);
+  }, [isChatBusy, refresh]);
+
+  // Respond to chip clicks elsewhere in the app that request opening a
+  // sketch in this task. Matches on (projectId, taskId); if the requested
+  // sketch exists in the current index, switch the active tab to it.
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent<OpenSketchDetail>).detail;
+      if (!detail) return;
+      if (detail.projectId !== projectId || detail.taskId !== taskId) return;
+      if (!sketches.find((s) => s.id === detail.sketchId)) return;
+      setActiveId(detail.sketchId);
+    };
+    window.addEventListener(OPEN_SKETCH_EVENT, handler);
+    return () => window.removeEventListener(OPEN_SKETCH_EVENT, handler);
+  }, [projectId, taskId, sketches]);
+
   const handleCreate = useCallback(async () => {
     try {
       const meta = await create(`Sketch ${sketches.length + 1}`);
@@ -111,7 +150,11 @@ export function SketchPage({ projectId, taskId, isChatBusy, lastChatIdleAt }: Pr
         onRename={rename}
         onExportPng={handleExport}
         onRefresh={() => {
+          // Manual refresh = "resync with server". Refresh both the active
+          // scene AND the sketch index — otherwise a sketch the agent just
+          // created (via MCP, out-of-process) wouldn't appear as a tab.
           void refreshScene();
+          void refresh();
         }}
         onOpenHistory={() => setHistoryOpen(true)}
         aiBusy={isChatBusy}

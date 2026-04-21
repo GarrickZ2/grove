@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback } from "react";
+import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { Search, Filter, X, SlidersHorizontal, Users, ChevronLeft, ChevronRight } from "lucide-react";
 import { SkillCard } from "./SkillCard";
 import { SkillDetailPanel } from "./SkillDetailPanel";
@@ -6,7 +6,10 @@ import { AgentIcon } from "./AgentIcon";
 import { exploreSkills } from "../../api";
 import type { SkillSource, SkillSummary, AgentDef, InstalledSkill } from "../../api";
 
-const PAGE_SIZE = 15;
+const MIN_CARD_WIDTH = 280;
+const CARD_HEIGHT = 132;
+const GRID_GAP = 12;
+const FALLBACK_PAGE_SIZE = 15;
 
 type StatusFilter = "all" | "not_installed" | "installed" | "update_available";
 
@@ -37,6 +40,44 @@ export function ExploreTab({ sources, agents, installed, projectPath, onInstalle
   const [selectedSkill, setSelectedSkill] = useState<{ source: string; name: string } | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
+  const gridElRef = useRef<HTMLDivElement | null>(null);
+  const roRef = useRef<ResizeObserver | null>(null);
+  const [pageSize, setPageSize] = useState(FALLBACK_PAGE_SIZE);
+
+  const recomputePageSize = useCallback((el: HTMLElement) => {
+    const RESERVED_BOTTOM = 72;
+    const width = el.clientWidth;
+    if (width <= 0) return;
+    const rect = el.getBoundingClientRect();
+    const availableHeight = Math.max(
+      CARD_HEIGHT,
+      window.innerHeight - rect.top - RESERVED_BOTTOM,
+    );
+    const cols = Math.max(1, Math.floor((width + GRID_GAP) / (MIN_CARD_WIDTH + GRID_GAP)));
+    const rows = Math.max(1, Math.floor((availableHeight + GRID_GAP) / (CARD_HEIGHT + GRID_GAP)));
+    setPageSize(Math.max(1, rows * cols));
+  }, []);
+
+  const gridContainerRef = useCallback((el: HTMLDivElement | null) => {
+    if (roRef.current) {
+      roRef.current.disconnect();
+      roRef.current = null;
+    }
+    gridElRef.current = el;
+    if (!el) return;
+    recomputePageSize(el);
+    const ro = new ResizeObserver(() => recomputePageSize(el));
+    ro.observe(el);
+    roRef.current = ro;
+  }, [recomputePageSize]);
+
+  useEffect(() => {
+    const onResize = () => {
+      if (gridElRef.current) recomputePageSize(gridElRef.current);
+    };
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, [recomputePageSize]);
 
   const loadSkills = useCallback(async () => {
     setIsLoading(true);
@@ -164,20 +205,20 @@ export function ExploreTab({ sources, agents, installed, projectPath, onInstalle
 
   // Pagination
   const totalItems = filteredSkills.length;
-  const totalPages = Math.max(1, Math.ceil(totalItems / PAGE_SIZE));
+  const totalPages = Math.max(1, Math.ceil(totalItems / pageSize));
   const safePage = Math.min(currentPage, totalPages);
   const pagedSkills = useMemo(() => {
-    const start = (safePage - 1) * PAGE_SIZE;
-    return filteredSkills.slice(start, start + PAGE_SIZE);
-  }, [filteredSkills, safePage]);
+    const start = (safePage - 1) * pageSize;
+    return filteredSkills.slice(start, start + pageSize);
+  }, [filteredSkills, safePage, pageSize]);
 
   const activeSourceCount = selectedSources.length;
   const activeAgentCount = selectedAgentFilter.length;
   const activeStatusLabel = STATUS_OPTIONS.find((o) => o.value === statusFilter);
 
   return (
-    <div className="h-full">
-      <div className="min-w-0">
+    <div className="h-full flex flex-col">
+      <div className="min-w-0 flex-1 flex flex-col min-h-0">
         {/* Search + Filters */}
         <div className="flex items-center gap-2 mb-4">
           <div className="flex-1 relative select-none">
@@ -254,7 +295,7 @@ export function ExploreTab({ sources, agents, installed, projectPath, onInstalle
             {showSourceFilter && (
               <>
                 <div className="fixed inset-0 z-40" onClick={() => setShowSourceFilter(false)} />
-                <div className="absolute right-0 top-full mt-1 z-50 w-56 bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-lg shadow-xl py-1">
+                <div className="absolute right-0 top-full mt-1 z-50 w-64 bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-lg shadow-xl py-1">
                   {sources.map((source) => (
                     <button
                       key={source.name}
@@ -262,7 +303,7 @@ export function ExploreTab({ sources, agents, installed, projectPath, onInstalle
                       className="w-full flex items-center gap-2 px-3 py-2 text-sm hover:bg-[var(--color-bg-tertiary)] transition-colors"
                     >
                       <div
-                        className={`w-4 h-4 rounded border flex items-center justify-center ${
+                        className={`w-4 h-4 rounded border flex items-center justify-center flex-shrink-0 ${
                           selectedSources.includes(source.name)
                             ? "bg-[var(--color-highlight)] border-[var(--color-highlight)]"
                             : "border-[var(--color-border)]"
@@ -274,8 +315,8 @@ export function ExploreTab({ sources, agents, installed, projectPath, onInstalle
                           </svg>
                         )}
                       </div>
-                      <span className="text-[var(--color-text)]">{source.name}</span>
-                      <span className="ml-auto text-[10px] text-[var(--color-text-muted)]">{source.skill_count}</span>
+                      <span className="flex-1 min-w-0 truncate text-left text-[var(--color-text)]" title={source.name}>{source.name}</span>
+                      <span className="text-[10px] text-[var(--color-text-muted)] flex-shrink-0 tabular-nums">{source.skill_count}</span>
                     </button>
                   ))}
                   {selectedSources.length > 0 && (
@@ -398,11 +439,11 @@ export function ExploreTab({ sources, agents, installed, projectPath, onInstalle
 
         {/* Skill Grid */}
         {isLoading ? (
-          <div className="flex items-center justify-center py-16">
+          <div className="flex-1 flex items-center justify-center py-16">
             <div className="w-5 h-5 border-2 border-[var(--color-highlight)] border-t-transparent rounded-full animate-spin" />
           </div>
         ) : filteredSkills.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-16 text-center">
+          <div className="flex-1 flex flex-col items-center justify-center py-16 text-center">
             <Search className="w-10 h-10 text-[var(--color-text-muted)] mb-3 opacity-40" />
             <p className="text-sm text-[var(--color-text-muted)]">
               {searchQuery || selectedSources.length > 0 || statusFilter !== "all" || selectedAgentFilter.length > 0
@@ -411,8 +452,12 @@ export function ExploreTab({ sources, agents, installed, projectPath, onInstalle
             </p>
           </div>
         ) : (
-          <>
-            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+          <div className="flex-1 flex flex-col min-h-0">
+            <div
+              ref={gridContainerRef}
+              className="flex-1 min-h-0 grid gap-3 content-start overflow-hidden"
+              style={{ gridTemplateColumns: `repeat(auto-fill, minmax(${MIN_CARD_WIDTH}px, 1fr))` }}
+            >
               {pagedSkills.map((skill) => (
                 <SkillCard
                   key={`${skill.source}/${skill.name}`}
@@ -432,9 +477,9 @@ export function ExploreTab({ sources, agents, installed, projectPath, onInstalle
 
             {/* Pagination */}
             {totalPages > 1 && (
-              <div className="flex items-center justify-between mt-6 pt-4 border-t border-[var(--color-border)]">
+              <div className="flex items-center justify-between mt-4 pt-3 border-t border-[var(--color-border)] flex-shrink-0">
                 <span className="text-xs text-[var(--color-text-muted)] select-none">
-                  {(safePage - 1) * PAGE_SIZE + 1}–{Math.min(safePage * PAGE_SIZE, totalItems)} of {totalItems} skills
+                  {(safePage - 1) * pageSize + 1}–{Math.min(safePage * pageSize, totalItems)} of {totalItems} skills
                 </span>
 
                 <div className="flex items-center gap-1.5 select-none">
@@ -474,7 +519,7 @@ export function ExploreTab({ sources, agents, installed, projectPath, onInstalle
                 </div>
               </div>
             )}
-          </>
+          </div>
         )}
       </div>
 
