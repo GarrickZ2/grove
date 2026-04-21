@@ -36,12 +36,28 @@ const LazyExcalidraw = React.lazy(async () => {
     // containerId). AI / MCP writes use the shorthand to save tokens; this
     // pass handles the conversion at load time.
     //
-    // Excalidraw only reads `initialData` on first mount — after that it
-    // drives itself imperatively. Parent re-renders on every keystroke pass
-    // a fresh `initialData` object (reference-new), which would otherwise
-    // re-run `convertToExcalidrawElements` over all elements on each
-    // keystroke. Use a lazy `useState` initializer so the conversion runs
-    // exactly once per mount, then hand Excalidraw a stable reference.
+    // Element-by-element routing: only elements that actually carry the
+    // `label` shorthand go through `convertToExcalidrawElements`; everything
+    // else is handed to Excalidraw verbatim. Two reasons for the split:
+    //
+    // 1. The converter's `newArrowElement()` hardcodes
+    //    `startBinding: null, endBinding: null` in its returned object,
+    //    so any arrow that flows through it loses its `startBinding` /
+    //    `endBinding` — regardless of whether that specific arrow had a
+    //    `label`. Arrows are connective tissue in AI-generated diagrams;
+    //    silently stripping their bindings means users drag a shape and
+    //    the arrows detach.
+    // 2. The converter also isn't idempotent on already-expanded text
+    //    elements with `containerId` — re-running it on each load nudges
+    //    label coordinates a few pixels, causing cumulative drift across
+    //    reloads.
+    //
+    // Converter is called on a filtered subset only (shorthand-bearing
+    // elements) and then we concat the pass-through set behind them so
+    // z-order is preserved.
+    //
+    // Excalidraw only reads `initialData` on first mount — use a lazy
+    // `useState` initializer so this runs exactly once per mount.
     const [transformed] = React.useState<
       { elements: unknown[]; appState?: unknown; files?: unknown } | undefined
     >(() => {
@@ -51,11 +67,32 @@ const LazyExcalidraw = React.lazy(async () => {
         appState?: unknown;
         files?: unknown;
       };
-      const raw = (data.elements ?? []) as Parameters<typeof convertToExcalidrawElements>[0];
-      // Second arg keeps existing ids stable — critical so labels produced
-      // by a prior load (with auto-generated ids) don't duplicate.
-      const elements = convertToExcalidrawElements(raw, { regenerateIds: false });
-      return { ...data, elements };
+      const raw = (data.elements ?? []) as unknown[];
+      if (!Array.isArray(raw) || raw.length === 0) {
+        return { ...data, elements: raw };
+      }
+      const hasShorthand = (el: unknown): boolean =>
+        !!el && typeof el === "object" && "label" in (el as object);
+      const anyShorthand = raw.some(hasShorthand);
+      if (!anyShorthand) {
+        return { ...data, elements: raw };
+      }
+      // Convert only the shorthand-bearing elements; pass all others
+      // through unchanged. Preserve original order so z-order stays
+      // correct.
+      const result: unknown[] = [];
+      for (const el of raw) {
+        if (hasShorthand(el)) {
+          const converted = convertToExcalidrawElements(
+            [el] as Parameters<typeof convertToExcalidrawElements>[0],
+            { regenerateIds: false },
+          );
+          result.push(...converted);
+        } else {
+          result.push(el);
+        }
+      }
+      return { ...data, elements: result };
     });
     const { initialData: _omit, ...rest } = props;
     void _omit;

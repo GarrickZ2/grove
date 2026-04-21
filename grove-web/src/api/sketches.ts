@@ -114,6 +114,49 @@ export async function uploadSketchThumbnail(
   await apiClient.postBinary(path, png, 'image/png');
 }
 
+export interface SketchHistoryEntry {
+  id: string;
+  ts: string;
+  element_count?: number | null;
+  label?: string | null;
+}
+
+export interface SketchHistoryResponse {
+  entries: SketchHistoryEntry[];
+}
+
+/**
+ * List checkpoints available to restore for this sketch. Checkpoints live
+ * per-sketch — the returned list is already scoped to `sketchId`.
+ */
+export async function listSketchHistory(
+  projectId: string,
+  taskId: string,
+  sketchId: string,
+): Promise<SketchHistoryEntry[]> {
+  const data = await apiClient.get<SketchHistoryResponse>(
+    `/api/v1/projects/${projectId}/tasks/${taskId}/sketches/${sketchId}/history`,
+  );
+  return data.entries;
+}
+
+/**
+ * Restore the given checkpoint onto this sketch, overwriting its current
+ * scene. Server broadcasts a `sketch_updated` event (agent source) so
+ * connected clients hard-reload the canvas.
+ */
+export async function restoreSketchCheckpoint(
+  projectId: string,
+  taskId: string,
+  sketchId: string,
+  checkpointId: string,
+): Promise<void> {
+  await apiClient.post<{ checkpoint_id: string }, unknown>(
+    `/api/v1/projects/${projectId}/tasks/${taskId}/sketches/${sketchId}/restore`,
+    { checkpoint_id: checkpointId },
+  );
+}
+
 /**
  * Build a WebSocket URL for the sketches live-update endpoint.
  * The caller is responsible for appending HMAC auth (see `appendHmacToUrl`).

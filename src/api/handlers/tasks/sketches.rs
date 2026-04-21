@@ -208,6 +208,82 @@ pub async fn patch_scene(
     Ok(StatusCode::NO_CONTENT)
 }
 
+#[derive(Debug, Serialize)]
+pub struct SketchHistoryEntry {
+    pub id: String,
+    pub ts: String,
+    pub element_count: Option<usize>,
+    pub label: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct SketchHistoryResponse {
+    pub entries: Vec<SketchHistoryEntry>,
+}
+
+pub async fn list_sketch_history(
+    Path((id, task_id, sketch_id)): Path<(String, String, String)>,
+) -> Result<Json<SketchHistoryResponse>, (StatusCode, String)> {
+    let (_project, project_key) = find_project_by_id(&id).map_err(project_err)?;
+    let entries =
+        crate::storage::sketch_checkpoints::list_entries(&project_key, &task_id, &sketch_id)
+            .map_err(scene_error_response)?
+            .into_iter()
+            .map(|e| SketchHistoryEntry {
+                id: e.id,
+                ts: e.ts,
+                element_count: e.element_count,
+                label: e.label,
+            })
+            .collect();
+    Ok(Json(SketchHistoryResponse { entries }))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct RestoreCheckpointRequest {
+    pub checkpoint_id: String,
+}
+
+pub async fn restore_sketch_checkpoint(
+    Path((id, task_id, sketch_id)): Path<(String, String, String)>,
+    Json(req): Json<RestoreCheckpointRequest>,
+) -> Result<StatusCode, (StatusCode, String)> {
+    let (_project, project_key) = find_project_by_id(&id).map_err(project_err)?;
+    let scene = crate::storage::sketch_checkpoints::load(
+        &project_key,
+        &task_id,
+        &sketch_id,
+        &req.checkpoint_id,
+    )
+    .map_err(scene_error_response)?
+    .ok_or_else(|| {
+        (
+            StatusCode::NOT_FOUND,
+            format!("checkpoint '{}' not found", req.checkpoint_id),
+        )
+    })?;
+    if !scene.is_object() || scene.get("elements").and_then(|v| v.as_array()).is_none() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "checkpoint payload is not a valid scene (missing `elements` array)".to_string(),
+        ));
+    }
+    let body =
+        serde_json::to_string(&scene).map_err(|e| scene_error_response(GroveError::from(e)))?;
+    sketches::save_scene(&project_key, &task_id, &sketch_id, &body)
+        .map_err(scene_error_response)?;
+    // Broadcast as an agent-sourced update so connected clients hard-reload
+    // the scene (matching AI-write behavior).
+    broadcast_sketch_event(SketchEvent::SketchUpdated {
+        project: project_key,
+        task_id,
+        sketch_id,
+        source: SketchEventSource::Agent,
+        scene,
+    });
+    Ok(StatusCode::NO_CONTENT)
+}
+
 /// PNG file signature (first 8 bytes). Rejecting non-PNG uploads prevents a
 /// compromised client from storing arbitrary bytes that MCP would later hand
 /// to the model as `image/png`.

@@ -246,6 +246,14 @@ pub fn create_api_router() -> Router {
                 .layer(DefaultBodyLimit::max(4 * 1024 * 1024)),
         )
         .route(
+            "/projects/{id}/tasks/{taskId}/sketches/{sketchId}/history",
+            get(handlers::tasks::list_sketch_history),
+        )
+        .route(
+            "/projects/{id}/tasks/{taskId}/sketches/{sketchId}/restore",
+            post(handlers::tasks::restore_sketch_checkpoint),
+        )
+        .route(
             "/projects/{id}/tasks/{taskId}/sketches/ws",
             get(handlers::tasks::sketch_ws::ws_handler),
         )

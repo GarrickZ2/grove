@@ -5,6 +5,7 @@ import { useSketchSync } from "./hooks/useSketchSync";
 import { useSketchThumbnail } from "./hooks/useSketchThumbnail";
 import { SketchCanvas } from "./SketchCanvas";
 import { SketchTabBar } from "./SketchTabBar";
+import { SketchHistoryDialog } from "./SketchHistoryDialog";
 
 interface Props {
   projectId: string;
@@ -31,6 +32,7 @@ export function SketchPage({ projectId, taskId, isChatBusy, lastChatIdleAt }: Pr
   } = useSketchList(projectId, taskId);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [apiRef, setApiRef] = useState<ExcalidrawImperativeAPI | null>(null);
+  const [historyOpen, setHistoryOpen] = useState(false);
 
   const onIndexChanged = useCallback(() => {
     void refresh();
@@ -111,6 +113,7 @@ export function SketchPage({ projectId, taskId, isChatBusy, lastChatIdleAt }: Pr
         onRefresh={() => {
           void refreshScene();
         }}
+        onOpenHistory={() => setHistoryOpen(true)}
         aiBusy={isChatBusy}
         // Surface real-time-stream state so the user sees when updates are
         // paused. `wsConnected` is `undefined` during the initial connect
@@ -145,6 +148,22 @@ export function SketchPage({ projectId, taskId, isChatBusy, lastChatIdleAt }: Pr
           />
         )}
       </div>
+      {activeId && (
+        <SketchHistoryDialog
+          isOpen={historyOpen}
+          projectId={projectId}
+          taskId={taskId}
+          sketchId={activeId}
+          sketchName={sketches.find((s) => s.id === activeId)?.name ?? "sketch"}
+          onClose={() => setHistoryOpen(false)}
+          onRestored={() => {
+            // Server broadcasts an agent-source sketch_updated event on
+            // restore, but belt-and-suspenders: kick a manual refresh in
+            // case the WS hasn't delivered yet.
+            void refreshScene();
+          }}
+        />
+      )}
     </div>
   );
 }

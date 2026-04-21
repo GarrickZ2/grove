@@ -102,6 +102,15 @@ fn thumb_png_path_in(dir: &Path, sketch_id: &str) -> PathBuf {
     sketch_dir_in(dir, sketch_id).join("thumb.png")
 }
 
+/// Public accessor for the per-sketch working directory. Used by
+/// `sketch_checkpoints` so it can colocate each sketch's checkpoint store
+/// with the sketch's own files (`scene.excalidraw`, `thumb.png`). Returns
+/// error if the task doesn't exist; does not create the directory.
+pub fn sketch_subdir(project: &str, task_id: &str, sketch_id: &str) -> Result<PathBuf> {
+    validate_sketch_id(sketch_id)?;
+    Ok(sketch_dir_in(&sketches_dir(project, task_id)?, sketch_id))
+}
+
 static EMPTY_SCENE: Lazy<String> = Lazy::new(|| {
     serde_json::json!({
         "type": "excalidraw",
@@ -430,6 +439,11 @@ pub fn apply_element_patch(
         elements.push(el.clone());
     }
 
+    // Backfill `boundElements` on containers referenced by arrow bindings —
+    // keeps the patch path consistent with `apply_draw` so arrows stay
+    // draggable regardless of which entry point wrote them.
+    backfill_bound_elements(elements);
+
     let out = serde_json::to_string(&scene)?;
     save_scene(project, task_id, sketch_id, &out)?;
     Ok(out)
@@ -459,6 +473,72 @@ pub fn load_scene_value(
 ) -> Result<serde_json::Value> {
     let raw = load_scene(project, task_id, sketch_id)?;
     Ok(serde_json::from_str(&raw)?)
+}
+
+/// For every arrow with a `startBinding` / `endBinding`, ensure the bound
+/// container's `boundElements` array lists `{id: arrow.id, type: "arrow"}`.
+/// Excalidraw needs this reverse index to drag arrows along with shapes;
+/// AI-generated scenes routinely omit it, so we fix it up server-side on
+/// every save. Idempotent — repeated calls over the same scene leave it
+/// unchanged.
+fn backfill_bound_elements(elements: &mut [serde_json::Value]) {
+    // First pass: collect (container_id → arrow_id) pairs from arrow bindings.
+    let mut pairs: Vec<(String, String)> = Vec::new();
+    for el in elements.iter() {
+        let t = el.get("type").and_then(|v| v.as_str()).unwrap_or("");
+        if t != "arrow" {
+            continue;
+        }
+        let arrow_id = match el.get("id").and_then(|v| v.as_str()) {
+            Some(s) if !s.is_empty() => s.to_string(),
+            _ => continue,
+        };
+        for key in ["startBinding", "endBinding"] {
+            if let Some(binding) = el.get(key) {
+                if let Some(container_id) = binding.get("elementId").and_then(|v| v.as_str()) {
+                    if !container_id.is_empty() {
+                        pairs.push((container_id.to_string(), arrow_id.clone()));
+                    }
+                }
+            }
+        }
+    }
+    if pairs.is_empty() {
+        return;
+    }
+    // Second pass: for each container mentioned, ensure its boundElements
+    // includes an entry for every arrow that binds to it.
+    for el in elements.iter_mut() {
+        let Some(id) = el.get("id").and_then(|v| v.as_str()).map(|s| s.to_string()) else {
+            continue;
+        };
+        let wanted: Vec<&String> = pairs
+            .iter()
+            .filter_map(|(cid, aid)| if cid == &id { Some(aid) } else { None })
+            .collect();
+        if wanted.is_empty() {
+            continue;
+        }
+        let Some(obj) = el.as_object_mut() else {
+            continue;
+        };
+        let arr = obj
+            .entry("boundElements".to_string())
+            .or_insert_with(|| serde_json::Value::Array(Vec::new()));
+        if !arr.is_array() {
+            *arr = serde_json::Value::Array(Vec::new());
+        }
+        let arr = arr.as_array_mut().expect("checked above");
+        let existing: std::collections::HashSet<String> = arr
+            .iter()
+            .filter_map(|v| v.get("id").and_then(|x| x.as_str()).map(|s| s.to_string()))
+            .collect();
+        for aid in wanted {
+            if !existing.contains(aid) {
+                arr.push(serde_json::json!({ "id": aid, "type": "arrow" }));
+            }
+        }
+    }
 }
 
 /// Find a sketch by reference (accepts either a sketch id `sketch-<uuid>` or
@@ -619,13 +699,16 @@ pub fn apply_draw(
         }
     }
 
-    // Resolve base scene.
+    // Resolve base scene. Checkpoints are scoped per-sketch — a checkpoint
+    // from a different sketch won't resolve here by design, so the AI can't
+    // accidentally (or deliberately) restore sketch A's content onto sketch B.
     let base_scene: Option<serde_json::Value> = match &restore_id {
         Some(cp_id) => {
-            let loaded = crate::storage::sketch_checkpoints::load(cp_id)?;
+            let loaded =
+                crate::storage::sketch_checkpoints::load(project, task_id, sketch_id, cp_id)?;
             Some(loaded.ok_or_else(|| {
                 GroveError::storage(format!(
-                    "checkpoint '{cp_id}' not found (expired or invalid). Call grove_sketch_read to get a fresh checkpoint_id, or draw from scratch without `restoreCheckpoint`."
+                    "checkpoint '{cp_id}' not found for this sketch (expired, invalid, or belongs to a different sketch). Call grove_sketch_read to get a fresh checkpoint_id, or draw from scratch without `restoreCheckpoint`."
                 ))
             })?)
         }
@@ -671,6 +754,14 @@ pub fn apply_draw(
     let mut merged: Vec<serde_json::Value> = base_after_delete;
     merged.extend(new_elements);
 
+    // Auto-backfill `boundElements` on every container referenced by an
+    // arrow's `startBinding` / `endBinding`. AI callers routinely forget
+    // this reverse index even when they set the forward binding, and
+    // Excalidraw needs BOTH sides for dragging the shape to move the arrow
+    // with it. Running this on every draw (including inherited base
+    // elements) keeps the invariant after cross-call edits too.
+    backfill_bound_elements(&mut merged);
+
     // Build the final scene — preserve appState/files from whichever source we
     // have (current on-disk scene as fallback; checkpoint if restoring).
     let mut scene = serde_json::json!({
@@ -699,9 +790,10 @@ pub fn apply_draw(
     // Persist scene to task workdir.
     save_scene(project, task_id, sketch_id, &serde_json::to_string(&scene)?)?;
 
-    // Save a new checkpoint referencing the merged scene.
+    // Save a new checkpoint referencing the merged scene. Scoped to this
+    // sketch so the History dialog can offer per-sketch restore.
     let checkpoint_id = crate::storage::sketch_checkpoints::generate_id();
-    crate::storage::sketch_checkpoints::save(&checkpoint_id, &scene)?;
+    crate::storage::sketch_checkpoints::save(project, task_id, sketch_id, &checkpoint_id, &scene)?;
 
     // Compute warnings.
     let mut warnings = Vec::new();
@@ -964,5 +1056,46 @@ mod tests {
         rename_sketch(&env.project, &env.task_id, &meta.id, "New").unwrap();
         let index = load_index(&env.project, &env.task_id).unwrap();
         assert_eq!(index.sketches[0].name, "New");
+    }
+
+    #[test]
+    fn apply_draw_backfills_bound_elements_on_containers() {
+        let env = TestEnv::new();
+        let meta = create_sketch(&env.project, &env.task_id, "arrows").unwrap();
+        // Draw two rects and one arrow that binds to both — but deliberately
+        // DO NOT set boundElements on the rects. The server should fill them in.
+        let draw = vec![
+            serde_json::json!({"type":"rectangle","id":"r1","x":0,"y":0,"width":100,"height":50}),
+            serde_json::json!({"type":"rectangle","id":"r2","x":200,"y":0,"width":100,"height":50}),
+            serde_json::json!({
+                "type":"arrow","id":"a1","x":100,"y":25,"points":[[0,0],[100,0]],
+                "startBinding":{"elementId":"r1","focus":0,"gap":1},
+                "endBinding":{"elementId":"r2","focus":0,"gap":1},
+            }),
+        ];
+        let outcome = apply_draw(&env.project, &env.task_id, &meta.id, &draw).unwrap();
+        let scene = load_scene_value(&env.project, &env.task_id, &meta.id).unwrap();
+        let els = scene["elements"].as_array().unwrap();
+        let r1 = els.iter().find(|e| e["id"] == "r1").unwrap();
+        let r2 = els.iter().find(|e| e["id"] == "r2").unwrap();
+        let bound1 = r1["boundElements"].as_array().unwrap();
+        let bound2 = r2["boundElements"].as_array().unwrap();
+        assert_eq!(bound1.len(), 1);
+        assert_eq!(bound1[0]["id"], "a1");
+        assert_eq!(bound1[0]["type"], "arrow");
+        assert_eq!(bound2.len(), 1);
+        assert_eq!(bound2[0]["id"], "a1");
+
+        // Replaying via restoreCheckpoint with no new elements must not
+        // duplicate the boundElements entries (idempotent backfill).
+        let draw2 = vec![serde_json::json!({
+            "type": "restoreCheckpoint",
+            "id": outcome.checkpoint_id,
+        })];
+        apply_draw(&env.project, &env.task_id, &meta.id, &draw2).unwrap();
+        let scene = load_scene_value(&env.project, &env.task_id, &meta.id).unwrap();
+        let els = scene["elements"].as_array().unwrap();
+        let r1 = els.iter().find(|e| e["id"] == "r1").unwrap();
+        assert_eq!(r1["boundElements"].as_array().unwrap().len(), 1);
     }
 }

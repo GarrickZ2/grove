@@ -130,7 +130,7 @@ The sketch tool surface is **checkpoint-driven** — a single `grove_sketch_draw
 4. To add more: `grove_sketch_draw(sketch="my-diagram", elements=[{"type":"restoreCheckpoint","id":"<cp>"}, ...new elements])`.
 5. To inspect an existing sketch first: `grove_sketch_read("my-diagram")` — returns a summary and a fresh checkpoint_id.
 
-Checkpoints are retained for the most recent 100 draws (global LRU). You can revert by passing any prior `checkpoint_id` you saved.
+Checkpoints are retained for the most recent 50 draws per sketch (per-sketch LRU). Checkpoints are scoped to the sketch they were created in — passing a `checkpoint_id` from a different sketch will fail.
 
 ## Recommended Workflow
 
@@ -219,15 +219,27 @@ Works on rectangle/ellipse/diamond. Text auto-centers; container auto-resizes. S
 `{"type":"text","id":"t1","x":150,"y":140,"text":"Hello","fontSize":20}`
 `x` is the LEFT edge. To center text at cx: `x = cx - text.length * fontSize * 0.25`.
 
-**Arrow** with points and binding:
+**Arrow** with points and binding (connects two shapes — drags follow):
 ```
 {"type":"arrow","id":"a1","x":300,"y":150,"width":200,"height":0,
  "points":[[0,0],[200,0]],"endArrowhead":"arrow",
- "startBinding":{"elementId":"r1","fixedPoint":[1,0.5]},
- "endBinding":{"elementId":"r2","fixedPoint":[0,0.5]}}
+ "startBinding":{"elementId":"r1","focus":0,"gap":1},
+ "endBinding":{"elementId":"r2","focus":0,"gap":1}}
 ```
-`fixedPoint`: top=[0.5,0], bottom=[0.5,1], left=[0,0.5], right=[1,0.5].
+Non-elbow arrows (the default) bind via `focus` + `gap`:
+- `focus`: -1..1 offset perpendicular to the line at the shape edge; `0` = centered.
+- `gap`: pixel gap from the arrow tip to the shape edge; `1` is a safe default.
+
+⚠️ Do NOT use `fixedPoint` on non-elbow arrows — Excalidraw resets the
+binding to `null` on the next reconcile and the arrow detaches. `fixedPoint`
+is only valid when you also set `"elbowed": true` on the arrow (orthogonal
+elbow routing). For regular arrows, always use `focus` + `gap`.
+
 `endArrowhead`: `null | "arrow" | "bar" | "dot" | "triangle"`.
+
+Note: you do NOT need to set `boundElements` on the target shapes — the
+server back-fills it automatically from the arrow's `startBinding` /
+`endBinding` on save.
 
 ## Drawing Order (CRITICAL)
 
@@ -264,7 +276,7 @@ ALWAYS emit the first `cameraUpdate` BEFORE the elements it frames.
   {"type":"cameraUpdate","width":800,"height":600,"x":50,"y":50},
   {"type":"rectangle","id":"b1","x":100,"y":100,"width":200,"height":100,"roundness":{"type":3},"backgroundColor":"#a5d8ff","fillStyle":"solid","label":{"text":"Start","fontSize":20}},
   {"type":"rectangle","id":"b2","x":450,"y":100,"width":200,"height":100,"roundness":{"type":3},"backgroundColor":"#b2f2bb","fillStyle":"solid","label":{"text":"End","fontSize":20}},
-  {"type":"arrow","id":"a1","x":300,"y":150,"width":150,"height":0,"points":[[0,0],[150,0]],"endArrowhead":"arrow","startBinding":{"elementId":"b1","fixedPoint":[1,0.5]},"endBinding":{"elementId":"b2","fixedPoint":[0,0.5]}}
+  {"type":"arrow","id":"a1","x":300,"y":150,"width":150,"height":0,"points":[[0,0],[150,0]],"endArrowhead":"arrow","startBinding":{"elementId":"b1","focus":0,"gap":1},"endBinding":{"elementId":"b2","focus":0,"gap":1}}
 ]
 ```
 
@@ -656,17 +668,58 @@ pub struct SketchElementRoundness {
     pub kind: u32,
 }
 
-/// Arrow endpoint binding: anchors an arrow tip to a shape at a fixed point.
+/// Arrow endpoint binding: anchors an arrow tip to a shape so dragging the
+/// shape moves the arrow with it.
+///
+/// **Non-elbow arrows (the default)** MUST use `focus` + `gap`. `fixedPoint`
+/// is ignored by Excalidraw on non-elbow arrows and will be reset to `null`
+/// on the next scene reconcile — your binding will silently break.
+///
+/// **Elbow arrows** (`"elbowed": true`) use `fixedPoint` instead. `focus`
+/// and `gap` are not meaningful in that mode.
+///
+/// Safe default for the common case (straight arrow between two shapes):
+/// `{"elementId": "rect1", "focus": 0, "gap": 1}`.
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 #[schemars(inline)]
 pub struct SketchElementBinding {
     /// Id of the shape this arrow end is bound to.
     #[serde(rename = "elementId")]
     pub element_id: String,
-    /// [0,1]x[0,1] relative coordinate on the shape's bounding box.
-    /// Common values: top=[0.5,0], bottom=[0.5,1], left=[0,0.5], right=[1,0.5].
+    /// [-1.0, 1.0] — offset perpendicular to the arrow line at the
+    /// intersection with the shape's edge. `0` = centered on the edge.
+    /// Required for non-elbow arrows.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub focus: Option<f64>,
+    /// Pixel gap between the arrow tip and the shape's edge. Typical
+    /// value: `1`. Required for non-elbow arrows.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub gap: Option<f64>,
+    /// ELBOW ARROWS ONLY. `[0,1]x[0,1]` relative coordinate on the shape's
+    /// bounding box where the elbow arrow tip should dock. Common values:
+    /// top=[0.5,0], bottom=[0.5,1], left=[0,0.5], right=[1,0.5]. Ignored on
+    /// non-elbow arrows — use `focus` + `gap` there instead.
     #[serde(skip_serializing_if = "Option::is_none", rename = "fixedPoint")]
     pub fixed_point: Option<[f64; 2]>,
+    /// Pass-through for any other binding fields (e.g. future Excalidraw
+    /// additions). Keeps the binding forward-compatible.
+    #[serde(flatten)]
+    pub extra: std::collections::BTreeMap<String, serde_json::Value>,
+}
+
+/// Reverse binding on a container (rectangle / ellipse / diamond): lists the
+/// arrows whose `startBinding` / `endBinding` reference this shape. Required
+/// for arrows to follow the shape when it's dragged. `apply_draw` auto-
+/// maintains this array on every draw call, so AI callers may omit it — but
+/// when AI sets it explicitly it's preserved and merged.
+#[derive(Debug, Serialize, Deserialize, JsonSchema, Clone)]
+#[schemars(inline)]
+pub struct SketchBoundElementRef {
+    /// Id of the bound arrow element.
+    pub id: String,
+    /// Element type of the bound element. Almost always `"arrow"`.
+    #[serde(rename = "type")]
+    pub kind: String,
 }
 
 /// A single Excalidraw element OR one of the three Grove pseudo-elements.
@@ -771,6 +824,20 @@ pub struct SketchElement {
     /// automatically when you use the `label` field on a shape.
     #[serde(skip_serializing_if = "Option::is_none", rename = "containerId")]
     pub container_id: Option<String>,
+
+    /// Reverse index of arrows bound to this shape. You do NOT need to set
+    /// this — `apply_draw` auto-fills it from every arrow's
+    /// `startBinding` / `endBinding`. Provided for callers who want to set
+    /// it explicitly; the auto-fill is additive so hand-set entries are
+    /// preserved.
+    #[serde(skip_serializing_if = "Option::is_none", rename = "boundElements")]
+    pub bound_elements: Option<Vec<SketchBoundElementRef>>,
+
+    /// For arrows: `true` routes the arrow as orthogonal elbow segments.
+    /// Required when using `fixedPoint` bindings. Default `false` (straight
+    /// arrows use `focus` + `gap` bindings).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub elbowed: Option<bool>,
 
     /// Catch-all for any additional Excalidraw fields (seed, strokeDasharray,
     /// angle, etc.). Pass-through without validation.
@@ -1930,7 +1997,7 @@ fn read_sketch_to_text(
     }
 
     let cp_id = crate::storage::sketch_checkpoints::generate_id();
-    crate::storage::sketch_checkpoints::save(&cp_id, &scene)
+    crate::storage::sketch_checkpoints::save(project, task_id, &meta.id, &cp_id, &scene)
         .map_err(|e| mcp_err(&e.to_string()))?;
 
     let mut body = format!(
@@ -2978,6 +3045,34 @@ mod tests {
     use tokio::sync::Mutex;
 
     static TEST_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+
+    /// Regression: `focus` and `gap` in arrow bindings must round-trip
+    /// through the typed `SketchElement` schema. Before the fix these fields
+    /// were silently dropped by serde because `SketchElementBinding` only
+    /// modeled `fixedPoint`, leaving Excalidraw's reconciler no valid
+    /// binding → it reset `startBinding`/`endBinding` to `null` on load and
+    /// arrows detached on drag.
+    #[test]
+    fn binding_focus_gap_roundtrip() {
+        let input = serde_json::json!({
+            "type": "arrow",
+            "id": "a1",
+            "x": 0.0, "y": 0.0,
+            "points": [[0.0, 0.0], [100.0, 0.0]],
+            "startBinding": {"elementId": "r1", "focus": 0.0, "gap": 1.0},
+            "endBinding": {"elementId": "r2", "focus": -0.5, "gap": 2.5},
+        });
+        let el: SketchElement = serde_json::from_value(input).unwrap();
+        let out = serde_json::to_value(&el).unwrap();
+        let sb = out.get("startBinding").unwrap();
+        assert_eq!(sb["elementId"], "r1");
+        assert_eq!(sb["focus"], 0.0);
+        assert_eq!(sb["gap"], 1.0);
+        let eb = out.get("endBinding").unwrap();
+        assert_eq!(eb["elementId"], "r2");
+        assert_eq!(eb["focus"], -0.5);
+        assert_eq!(eb["gap"], 2.5);
+    }
 
     // ---- EnvGuard: RAII env-var restore (panic-safe) ----
 

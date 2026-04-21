@@ -1,4 +1,4 @@
-import { useCallback, useRef } from "react";
+import { useCallback, useRef, useState } from "react";
 import { Plus, X } from "lucide-react";
 import type { Task } from "../../../data/types";
 import { XTerminal } from "../TaskDetail/XTerminal";
@@ -34,6 +34,31 @@ export function MultiTabTerminalPanel({
   // Per-mount counter so new tabs get sequential labels from current max
   const counterRef = useRef(tabs.length);
 
+  // Rename state — mirrors the Sketch tab bar's pattern: double-click opens
+  // an inline input; Enter commits, Escape cancels, blur commits-or-cancels.
+  const [renamingId, setRenamingId] = useState<string | null>(null);
+  const [draftName, setDraftName] = useState("");
+
+  const beginRename = useCallback((tab: TerminalTab) => {
+    setRenamingId(tab.id);
+    setDraftName(tab.label);
+  }, []);
+
+  const commitRename = useCallback(
+    (id: string) => {
+      const name = draftName.trim();
+      setRenamingId(null);
+      if (!name) return;
+      const current = tabs.find((t) => t.id === id);
+      if (!current || current.label === name) return;
+      onTabsChange(
+        tabs.map((t) => (t.id === id ? { ...t, label: name } : t)),
+        activeId,
+      );
+    },
+    [draftName, tabs, activeId, onTabsChange],
+  );
+
   const addTab = useCallback(() => {
     counterRef.current += 1;
     const n = counterRef.current;
@@ -64,32 +89,121 @@ export function MultiTabTerminalPanel({
 
   return (
     <div className={`ide-panel-slot ide-panel-slot--${side} ide-panel-slot--terminal`}>
-      {/* Tab bar */}
-      <div className="ide-terminal-tabbar">
-        {tabs.map((tab) => (
-          <button
-            key={tab.id}
-            className={`ide-terminal-tab ${tab.id === activeId ? "ide-terminal-tab--active" : ""}`}
-            onClick={() => switchTab(tab.id)}
-          >
-            <span className="ide-terminal-tab__label">{tab.label}</span>
-            <span
-              className="ide-terminal-tab__close"
-              role="button"
-              onClick={(e) => closeTab(tab.id, e)}
-              title="Close terminal"
+      {/* Tab bar — styled to match `SketchTabBar` for design consistency:
+          rounded chip tabs, inline rename via double-click, always-visible
+          close × on each tab. */}
+      <div
+        className="flex items-center gap-1 px-2 py-1.5 border-b"
+        style={{
+          borderColor: "var(--color-border)",
+          background: "var(--color-bg-secondary)",
+        }}
+      >
+        {tabs.map((tab) => {
+          const isActive = tab.id === activeId;
+          const isRenaming = renamingId === tab.id;
+          return (
+            <div
+              key={tab.id}
+              onClick={() => !isRenaming && switchTab(tab.id)}
+              className="flex items-center gap-1 rounded-md px-2 py-1 text-xs cursor-pointer transition-colors"
+              style={{
+                background: isActive
+                  ? "color-mix(in srgb, var(--color-highlight) 12%, transparent)"
+                  : "transparent",
+                color: isActive ? "var(--color-text)" : "var(--color-text-muted)",
+              }}
+              onMouseEnter={(e) => {
+                if (!isActive) {
+                  e.currentTarget.style.background = "var(--color-bg-tertiary)";
+                }
+              }}
+              onMouseLeave={(e) => {
+                if (!isActive) {
+                  e.currentTarget.style.background = "transparent";
+                }
+              }}
             >
-              <X size={11} />
-            </span>
-          </button>
-        ))}
-        <button className="ide-terminal-tab-add" onClick={addTab} title="New terminal">
-          <Plus size={13} />
+              {isRenaming ? (
+                <input
+                  autoFocus
+                  value={draftName}
+                  onChange={(e) => setDraftName(e.target.value)}
+                  onClick={(e) => e.stopPropagation()}
+                  onBlur={() => commitRename(tab.id)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      (e.currentTarget as HTMLInputElement).blur();
+                    } else if (e.key === "Escape") {
+                      setRenamingId(null);
+                    }
+                  }}
+                  className="bg-transparent outline-none border rounded px-1 text-xs"
+                  style={{
+                    borderColor: "var(--color-border)",
+                    color: "var(--color-text)",
+                  }}
+                />
+              ) : (
+                <>
+                  <span
+                    className="truncate max-w-[160px]"
+                    onDoubleClick={(e) => {
+                      e.stopPropagation();
+                      beginRename(tab);
+                    }}
+                    title="Double-click to rename"
+                  >
+                    {tab.label}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={(e) => closeTab(tab.id, e)}
+                    className="p-0.5 rounded hover:bg-black/10 transition-colors"
+                    title="Close terminal"
+                  >
+                    <X className="w-3 h-3" />
+                  </button>
+                </>
+              )}
+            </div>
+          );
+        })}
+        <button
+          type="button"
+          onClick={addTab}
+          title="New terminal"
+          className="p-1 rounded-md transition-colors"
+          style={{ color: "var(--color-text-muted)" }}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.background = "var(--color-bg-tertiary)";
+            e.currentTarget.style.color = "var(--color-text)";
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.background = "transparent";
+            e.currentTarget.style.color = "var(--color-text-muted)";
+          }}
+        >
+          <Plus className="w-3.5 h-3.5" />
         </button>
-        <div className="ide-terminal-tabbar__spacer" />
+        <div className="flex-1" />
         {onClose && (
-          <button className="ide-terminal-tabbar__close" onClick={onClose} title="Close panel">
-            <X size={14} />
+          <button
+            type="button"
+            onClick={onClose}
+            title="Close panel"
+            className="p-1 rounded-md transition-colors"
+            style={{ color: "var(--color-text-muted)" }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.background = "var(--color-bg-tertiary)";
+              e.currentTarget.style.color = "var(--color-text)";
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.background = "transparent";
+              e.currentTarget.style.color = "var(--color-text-muted)";
+            }}
+          >
+            <X className="w-3.5 h-3.5" />
           </button>
         )}
       </div>

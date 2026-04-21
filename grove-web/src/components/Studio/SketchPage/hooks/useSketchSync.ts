@@ -181,33 +181,43 @@ export function useSketchSync(
     sketchIdRef.current = sketchId;
   }, [sketchId]);
 
-  // Initial load
+  // Track which sketchId the currently-held `scene` belongs to, so
+  // `onLocalChange` can reject onChange callbacks that Excalidraw fires while
+  // a stale scene is briefly visible under a new sketchId (would otherwise
+  // persist sketch A's elements into sketch B's file on tab switch).
+  const loadedSketchIdRef = useRef<string | null>(null);
+
+  // Derived-state reset on sketchId change: wipe `scene` / `loading` in the
+  // same render that flips sketchId, so SketchCanvas never mounts with a
+  // stale `scene` under a new `activeId` even for a single frame. Doing this
+  // in an effect instead would leave one render with the mismatched pair,
+  // and Excalidraw's mount-time onChange would persist sketch A's elements
+  // into sketch B's file (the reported cross-sketch corruption).
+  const [prevSketchId, setPrevSketchId] = useState<string | null>(sketchId);
+  if (prevSketchId !== sketchId) {
+    setPrevSketchId(sketchId);
+    setScene(null);
+    setLoading(sketchId != null);
+  }
+
+  // Initial load — actually fetches the scene after the reset above. Ref
+  // resets live here (render-phase ref writes are forbidden); the guard in
+  // onLocalChange doesn't need a synchronous null-reset because the stale
+  // ref still holds the previous sketchId, so `ref !== sketchId` naturally
+  // rejects mount-time onChange on the newly-rendered canvas.
   useEffect(() => {
     let cancel = false;
-    if (!sketchId) {
-      // Defer state updates so we don't setState synchronously in an effect body.
-      const t = window.setTimeout(() => {
-        if (cancel) return;
-        setScene(null);
-        setLoading(false);
-      }, 0);
-      return () => {
-        cancel = true;
-        window.clearTimeout(t);
-      };
-    }
-    const t = window.setTimeout(() => {
-      if (!cancel) setLoading(true);
-    }, 0);
-    // Reset the fingerprint so loading a new sketch always accepts the first
-    // server response.
+    loadedSketchIdRef.current = null;
     lastFingerprintRef.current = "";
+    if (!sketchId) return () => {
+      cancel = true;
+    };
     void getSketchScene(projectId, taskId, sketchId)
       .then((s) => {
-        if (!cancel) {
-          applyScene(s, false);
-          setLoading(false);
-        }
+        if (cancel) return;
+        applyScene(s, false);
+        loadedSketchIdRef.current = sketchId;
+        setLoading(false);
       })
       .catch((e) => {
         if (!cancel) {
@@ -217,7 +227,6 @@ export function useSketchSync(
       });
     return () => {
       cancel = true;
-      window.clearTimeout(t);
     };
   }, [projectId, taskId, sketchId, applyScene]);
 
@@ -374,6 +383,12 @@ export function useSketchSync(
   const onLocalChange = useCallback(
     (next: unknown) => {
       if (!sketchId) return;
+      // Refuse onChange fired before the current sketch's scene has actually
+      // loaded. Without this, a tab switch can land Excalidraw's mount-time
+      // onChange (firing with whatever scene was in React state) onto the
+      // new sketchId, persisting the previous sketch's elements into this
+      // sketch's file.
+      if (loadedSketchIdRef.current !== sketchId) return;
       // Excalidraw fires onChange for any state change, including transient
       // appState tweaks (cursor position, selection, hover, zoom). We must
       // gate BOTH the PUT and the thumbnail re-render on an actual element

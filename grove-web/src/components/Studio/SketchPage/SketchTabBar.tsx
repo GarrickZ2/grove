@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Plus, X, Download, Pencil, RefreshCw, WifiOff } from "lucide-react";
+import { Plus, X, Download, RefreshCw, WifiOff, History } from "lucide-react";
 import type { SketchMeta } from "../../../api";
 import { SketchContextMenu } from "./SketchContextMenu";
 import { ConfirmDialog } from "../../Dialogs/ConfirmDialog";
@@ -15,6 +15,8 @@ interface Props {
   /** Force-refetch the active sketch's scene from disk. Useful when an AI
    * agent just wrote the sketch but polling hasn't caught up yet. */
   onRefresh?: () => void;
+  /** Open the History dialog to restore a previous scene checkpoint. */
+  onOpenHistory?: () => void;
   /** When true, show a subtle "AI editing" indicator in the tab bar. */
   aiBusy?: boolean;
   /** Realtime WebSocket state. `undefined` = still trying to connect for
@@ -32,6 +34,7 @@ export function SketchTabBar({
   onRename,
   onExportPng,
   onRefresh,
+  onOpenHistory,
   aiBusy,
   wsConnected,
 }: Props) {
@@ -70,7 +73,7 @@ export function SketchTabBar({
               e.stopPropagation();
               setMenu({ sketchId: s.id, x: e.clientX, y: e.clientY });
             }}
-            className="group flex items-center gap-1 rounded-md px-2 py-1 text-xs cursor-pointer transition-colors"
+            className="flex items-center gap-1 rounded-md px-2 py-1 text-xs cursor-pointer transition-colors"
             style={{
               background: isActive
                 ? "color-mix(in srgb, var(--color-highlight) 12%, transparent)"
@@ -128,20 +131,9 @@ export function SketchTabBar({
                   type="button"
                   onClick={(e) => {
                     e.stopPropagation();
-                    beginRename(s);
-                  }}
-                  className="opacity-0 group-hover:opacity-100 transition-opacity p-0.5 rounded hover:bg-black/10"
-                  title="Rename"
-                >
-                  <Pencil className="w-3 h-3" />
-                </button>
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
                     setConfirmDeleteId(s.id);
                   }}
-                  className="opacity-0 group-hover:opacity-100 transition-opacity p-0.5 rounded hover:bg-black/10"
+                  className="p-0.5 rounded hover:bg-black/10 transition-colors"
                   title="Delete"
                 >
                   <X className="w-3 h-3" />
@@ -197,6 +189,25 @@ export function SketchTabBar({
           <WifiOff className="w-3 h-3" />
           Reconnecting…
         </div>
+      )}
+      {onOpenHistory && activeId && (
+        <button
+          type="button"
+          onClick={onOpenHistory}
+          title="History — restore a previous version"
+          className="p-1 rounded-md transition-colors"
+          style={{ color: "var(--color-text-muted)" }}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.background = "var(--color-bg-tertiary)";
+            e.currentTarget.style.color = "var(--color-text)";
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.background = "transparent";
+            e.currentTarget.style.color = "var(--color-text-muted)";
+          }}
+        >
+          <History className="w-3.5 h-3.5" />
+        </button>
       )}
       {onRefresh && activeId && (
         <button
