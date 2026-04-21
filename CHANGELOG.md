@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.2] - 2026-04-20
+
+### Fixed
+
+- **ACP chat history integrity** — atomic `history.jsonl` appends prevent concurrent-write races (`{a}{b}` interleaving); reader now tolerates concatenated JSON
+- **ACP permission lifecycle** — user replies always persist by emitting `PermissionResponse` regardless of oneshot receiver state; orphan `permission_request` entries are cleaned up on WebSocket reconnect across three cases (backend-drained, WS-only with backend pending, stale 1-shot)
+- **ACP tool call updates** — `ToolCallUpdate` content/locations are now merged per ACP spec (increment, superset-replace, dup-skip) instead of overwriting; frontend reducer mirrors this behavior, covered by new `compact_events` unit tests
+- **Plan tool completion** — synthesize `ToolCallUpdate{completed}` for `todo_write` / `update_plan` when `SessionUpdate::Plan` arrives, so Trae plan tools close properly; pending list is cleared on real completion
+- **File explorer symlink loops** — `walkdir` now uses a `max_depth` guard to defend against symlink cycles
+- **Welcome page hover** — separated entrance animation from hover transition so `Feature` icons no longer appear stuck after the cursor leaves
+- **macOS folder-access prompts** — added `NSDesktopFolderUsageDescription`, Documents, Downloads, Removable / Network Volumes, and AppleEvents usage strings to `src-tauri/Info.plist` so TCC shows a clear reason and persists the grant across launches
+
+### Improved
+
+- **Action chip UI** — per-kind icons (bash / skill / todo / mcp / permission), labels derived from content/locations, click-to-expand inline markdown panel, trailing Chevron/ExternalLink affordance, disabled state when non-interactive
+- **Terminal PATH fallback** — `/opt/homebrew/bin` is now included in the fallback PATH
+
 ## [0.9.1] - 2026-04-20
 
 ### Fixed
