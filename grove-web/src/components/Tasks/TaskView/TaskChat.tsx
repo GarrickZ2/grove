@@ -197,6 +197,10 @@ interface PerChatState {
   permissionLevel: string;
   modelOptions: { label: string; value: string }[];
   modeOptions: { label: string; value: string }[];
+  /** Thought-level / reasoning-effort selector (0.11 SessionConfigOption) */
+  thoughtLevelOptions: { label: string; value: string }[];
+  thoughtLevel: string;
+  thoughtLevelConfigId: string;
   planEntries: PlanEntry[];
   slashCommands: SlashCommand[];
   isConnected: boolean;
@@ -217,6 +221,9 @@ function defaultPerChatState(): PerChatState {
     permissionLevel: "",
     modelOptions: [],
     modeOptions: [],
+    thoughtLevelOptions: [],
+    thoughtLevel: "",
+    thoughtLevelConfigId: "",
     planEntries: [],
     slashCommands: [],
     isConnected: false,
@@ -927,6 +934,12 @@ export function TaskChat({
   const [modeOptions, setModeOptions] = useState<
     { label: string; value: string }[]
   >([]);
+  const [thoughtLevel, setThoughtLevel] = useState("");
+  const [thoughtLevelConfigId, setThoughtLevelConfigId] = useState("");
+  const [thoughtLevelOptions, setThoughtLevelOptions] = useState<
+    { label: string; value: string }[]
+  >([]);
+  const [showThoughtLevelMenu, setShowThoughtLevelMenu] = useState(false);
   const [showModelMenu, setShowModelMenu] = useState(false);
   const [showPermMenu, setShowPermMenu] = useState(false);
   const [planEntries, setPlanEntries] = useState<PlanEntry[]>([]);
@@ -965,6 +978,7 @@ export function TaskChat({
   const editableRef = useRef<HTMLDivElement>(null);
   const modelMenuRef = useRef<HTMLDivElement>(null);
   const permMenuRef = useRef<HTMLDivElement>(null);
+  const thoughtLevelMenuRef = useRef<HTMLDivElement>(null);
   const slashMenuRef = useRef<HTMLDivElement>(null);
   const slashItemRefs = useRef<(HTMLButtonElement | null)[]>([]);
   const [taskFiles, setTaskFiles] = useState<string[]>([]);
@@ -1351,6 +1365,11 @@ export function TaskChat({
       )
         setShowPermMenu(false);
       if (
+        thoughtLevelMenuRef.current &&
+        !thoughtLevelMenuRef.current.contains(e.target as Node)
+      )
+        setShowThoughtLevelMenu(false);
+      if (
         chatMenuRef.current &&
         !chatMenuRef.current.contains(e.target as Node)
       )
@@ -1434,6 +1453,9 @@ export function TaskChat({
       permissionLevel,
       modelOptions,
       modeOptions,
+      thoughtLevelOptions,
+      thoughtLevel,
+      thoughtLevelConfigId,
       planEntries,
       slashCommands,
       isConnected,
@@ -1453,6 +1475,9 @@ export function TaskChat({
     permissionLevel,
     modelOptions,
     modeOptions,
+    thoughtLevelOptions,
+    thoughtLevel,
+    thoughtLevelConfigId,
     planEntries,
     slashCommands,
     isConnected,
@@ -1475,6 +1500,9 @@ export function TaskChat({
       setPermissionLevel(cached.permissionLevel);
       setModelOptions(cached.modelOptions);
       setModeOptions(cached.modeOptions);
+      setThoughtLevelOptions(cached.thoughtLevelOptions);
+      setThoughtLevel(cached.thoughtLevel);
+      setThoughtLevelConfigId(cached.thoughtLevelConfigId);
       setPlanEntries(cached.planEntries);
       setSlashCommands(cached.slashCommands);
       setIsConnected(cached.isConnected);
@@ -1494,6 +1522,9 @@ export function TaskChat({
       setPermissionLevel("");
       setModelOptions([]);
       setModeOptions([]);
+      setThoughtLevelOptions([]);
+      setThoughtLevel("");
+      setThoughtLevelConfigId("");
       setPlanEntries([]);
       setSlashCommands([]);
       setIsConnected(false);
@@ -1728,6 +1759,19 @@ export function TaskChat({
                 );
               }
               if (evt.current_model_id) setSelectedModel(evt.current_model_id);
+              if (evt.available_thought_levels?.length) {
+                setThoughtLevelOptions(
+                  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                  evt.available_thought_levels.map((t: any) => ({
+                    label: t.name,
+                    value: t.id,
+                  })),
+                );
+              }
+              if (evt.current_thought_level_id)
+                setThoughtLevel(evt.current_thought_level_id);
+              if (evt.thought_level_config_id)
+                setThoughtLevelConfigId(evt.thought_level_config_id);
               if (evt.prompt_capabilities) {
                 setPromptCaps({
                   image: evt.prompt_capabilities.image ?? false,
@@ -1736,6 +1780,17 @@ export function TaskChat({
                     evt.prompt_capabilities.embedded_context ?? false,
                 });
               }
+              break;
+            case "thought_levels_update":
+              setThoughtLevelOptions(
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                (evt.available ?? []).map((t: any) => ({
+                  label: t.name,
+                  value: t.id,
+                })),
+              );
+              setThoughtLevel(evt.current ?? "");
+              setThoughtLevelConfigId(evt.config_id ?? "");
               break;
             case "busy":
               updateBusy(true);
@@ -1803,6 +1858,20 @@ export function TaskChat({
             );
           }
           if (msg.current_model_id) setSelectedModel(msg.current_model_id);
+          if (msg.available_thought_levels?.length) {
+            setThoughtLevelOptions(
+              msg.available_thought_levels.map(
+                (t: { id: string; name: string }) => ({
+                  label: t.name,
+                  value: t.id,
+                }),
+              ),
+            );
+          }
+          if (msg.current_thought_level_id)
+            setThoughtLevel(msg.current_thought_level_id);
+          if (msg.thought_level_config_id)
+            setThoughtLevelConfigId(msg.thought_level_config_id);
           // Extract prompt capabilities
           if (msg.prompt_capabilities) {
             setPromptCaps({
@@ -1942,6 +2011,18 @@ export function TaskChat({
         case "mode_changed":
           setPermissionLevel(msg.mode_id);
           break;
+        case "thought_levels_update":
+          setThoughtLevelOptions(
+            (msg.available ?? []).map(
+              (t: { id: string; name: string }) => ({
+                label: t.name,
+                value: t.id,
+              }),
+            ),
+          );
+          setThoughtLevel(msg.current ?? "");
+          setThoughtLevelConfigId(msg.config_id ?? "");
+          break;
         case "plan_update": {
           const entries: PlanEntry[] = msg.entries ?? [];
           setPlanEntries(entries);
@@ -2040,6 +2121,17 @@ export function TaskChat({
               }),
             );
           if (msg.current_model_id) state.selectedModel = msg.current_model_id;
+          if (msg.available_thought_levels?.length)
+            state.thoughtLevelOptions = msg.available_thought_levels.map(
+              (t: { id: string; name: string }) => ({
+                label: t.name,
+                value: t.id,
+              }),
+            );
+          if (msg.current_thought_level_id)
+            state.thoughtLevel = msg.current_thought_level_id;
+          if (msg.thought_level_config_id)
+            state.thoughtLevelConfigId = msg.thought_level_config_id;
           if (msg.prompt_capabilities) {
             state.promptCaps = {
               image: msg.prompt_capabilities.image ?? false,
@@ -2048,6 +2140,16 @@ export function TaskChat({
                 msg.prompt_capabilities.embedded_context ?? false,
             };
           }
+          break;
+        case "thought_levels_update":
+          state.thoughtLevelOptions = (msg.available ?? []).map(
+            (t: { id: string; name: string }) => ({
+              label: t.name,
+              value: t.id,
+            }),
+          );
+          state.thoughtLevel = msg.current ?? "";
+          state.thoughtLevelConfigId = msg.config_id ?? "";
           break;
         case "message_chunk":
         case "tool_call":
@@ -4255,6 +4357,7 @@ export function TaskChat({
                         onToggle={() => {
                           setShowModelMenu(!showModelMenu);
                           setShowPermMenu(false);
+                          setShowThoughtLevelMenu(false);
                         }}
                         onSelect={(v) => {
                           setSelectedModel(v);
@@ -4280,6 +4383,7 @@ export function TaskChat({
                         onToggle={() => {
                           setShowPermMenu(!showPermMenu);
                           setShowModelMenu(false);
+                          setShowThoughtLevelMenu(false);
                         }}
                         onSelect={(v) => {
                           setPermissionLevel(v);
@@ -4287,6 +4391,33 @@ export function TaskChat({
                           if (wsRef.current?.readyState === WebSocket.OPEN) {
                             wsRef.current.send(
                               JSON.stringify({ type: "set_mode", mode_id: v }),
+                            );
+                          }
+                        }}
+                      />
+                    )}
+                    {thoughtLevelOptions.length > 0 && thoughtLevelConfigId && (
+                      <DropdownSelect
+                        ref={thoughtLevelMenuRef}
+                        label="Thinking"
+                        options={thoughtLevelOptions}
+                        value={thoughtLevel}
+                        open={showThoughtLevelMenu}
+                        onToggle={() => {
+                          setShowThoughtLevelMenu(!showThoughtLevelMenu);
+                          setShowModelMenu(false);
+                          setShowPermMenu(false);
+                        }}
+                        onSelect={(v) => {
+                          setThoughtLevel(v);
+                          setShowThoughtLevelMenu(false);
+                          if (wsRef.current?.readyState === WebSocket.OPEN) {
+                            wsRef.current.send(
+                              JSON.stringify({
+                                type: "set_thought_level",
+                                config_id: thoughtLevelConfigId,
+                                value_id: v,
+                              }),
                             );
                           }
                         }}
