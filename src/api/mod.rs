@@ -918,6 +918,9 @@ pub async fn start_server(
             tokio::spawn(async {
                 tokio::signal::ctrl_c().await.ok();
                 eprintln!("Forced exit.");
+                // Process::exit skips Drop — flush FileWatcher buffers
+                // explicitly so second-Ctrl-C doesn't lose pending writes.
+                shutdown_file_watchers();
                 std::process::exit(130);
             });
         })

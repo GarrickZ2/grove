@@ -142,7 +142,9 @@ pub async fn delete_group(Path(id): Path<String>) -> impl IntoResponse {
         }
         // Remove the group and save everything in one write
         groups.retain(|g| g.id != id);
-        let _ = taskgroups::save_groups_pub(&groups);
+        if let Err(e) = taskgroups::save_groups_pub(&groups) {
+            return Err((StatusCode::INTERNAL_SERVER_ERROR, e.to_string()));
+        }
         broadcast_radio_event(RadioEvent::GroupChanged);
         return Ok(StatusCode::NO_CONTENT);
     }
@@ -248,13 +250,15 @@ mod tests {
 
     // Use the crate-wide shared test lock so storage and handler tests serialize
     // together (see `crate::storage::database::test_lock` for rationale).
-    fn acquire_lock() -> std::sync::MutexGuard<'static, ()> {
-        crate::storage::database::test_lock()
+    // Returns a tokio guard — these tests await DB handlers, so we must not
+    // hold a std Mutex across `.await`.
+    async fn acquire_lock() -> tokio::sync::MutexGuard<'static, ()> {
+        crate::storage::database::test_lock().lock().await
     }
 
     #[tokio::test]
     async fn test_handler_create_and_list() {
-        let _lock = acquire_lock();
+        let _lock = acquire_lock().await;
 
         // Create via handler
         let resp = create_group(Json(CreateGroupRequest {
@@ -289,7 +293,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_handler_update_and_delete() {
-        let _lock = acquire_lock();
+        let _lock = acquire_lock().await;
 
         // Create
         let group = taskgroups::create_group("handler-ud".to_string(), None).unwrap();
@@ -325,7 +329,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_handler_slots() {
-        let _lock = acquire_lock();
+        let _lock = acquire_lock().await;
 
         let group = taskgroups::create_group("handler-slots".to_string(), None).unwrap();
         let _guard = TestGroup {

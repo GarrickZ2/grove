@@ -306,6 +306,11 @@ export const IDELayoutContainer = forwardRef<IDELayoutHandle, IDELayoutContainer
     const [infoWasResized, setInfoWasResized] = useState(false);
     const navSeqRef = useRef(0);
     const shellRef = useRef<HTMLDivElement>(null);
+    // Tracks which side panel was most recently focused so Cmd+W /
+    // closeActiveTab closes *that* one instead of always preferring info.
+    // Defaults to "info" so behavior matches the previous hardcoded rule
+    // until the user explicitly interacts with the aux panel.
+    const lastFocusedSideRef = useRef<"aux" | "info">("info");
     // Keep latest state accessible from imperative handle callbacks without
     // invalidating the useImperativeHandle cache on every state change.
     const stateRef = useRef(state);
@@ -517,7 +522,16 @@ export const IDELayoutContainer = forwardRef<IDELayoutHandle, IDELayoutContainer
         },
         closeActiveTab: () => {
           setState((prev) => {
-            const next = prev.infoVisible ? { ...prev, infoVisible: false } : { ...prev, auxVisible: false };
+            // Prefer closing the side that was most recently focused. Fall
+            // back to whichever side is visible if the recorded side isn't.
+            const preferAux =
+              (lastFocusedSideRef.current === "aux" && prev.auxVisible) ||
+              (lastFocusedSideRef.current === "info" && !prev.infoVisible && prev.auxVisible);
+            const next = preferAux
+              ? { ...prev, auxVisible: false }
+              : prev.infoVisible
+                ? { ...prev, infoVisible: false }
+                : { ...prev, auxVisible: false };
             if (!next.auxVisible && !next.infoVisible && !next.chatVisible) {
               next.chatVisible = true;
             }
@@ -680,7 +694,15 @@ export const IDELayoutContainer = forwardRef<IDELayoutHandle, IDELayoutContainer
             gridTemplateColumns: gridColumns,
           } as React.CSSProperties}
         >
-          {showAux && renderAuxPanel()}
+          {showAux && (
+            <div
+              style={{ display: "contents" }}
+              onFocusCapture={() => { lastFocusedSideRef.current = "aux"; }}
+              onMouseDownCapture={() => { lastFocusedSideRef.current = "aux"; }}
+            >
+              {renderAuxPanel()}
+            </div>
+          )}
           {showAux && (showChat || showInfo) && (
             <div className="ide-resizer ide-resizer--aux" onPointerDown={(event) => startResize("aux", event)} />
           )}
@@ -692,7 +714,15 @@ export const IDELayoutContainer = forwardRef<IDELayoutHandle, IDELayoutContainer
           {showChat && showInfo && (
             <div className="ide-resizer ide-resizer--info" onPointerDown={(event) => startResize("info", event)} />
           )}
-          {showInfo && renderInfoPanel()}
+          {showInfo && (
+            <div
+              style={{ display: "contents" }}
+              onFocusCapture={() => { lastFocusedSideRef.current = "info"; }}
+              onMouseDownCapture={() => { lastFocusedSideRef.current = "info"; }}
+            >
+              {renderInfoPanel()}
+            </div>
+          )}
         </div>
       </div>
     );

@@ -598,6 +598,10 @@ pub struct StartChatParams {
 /// - `text` → send a prompt (optionally switch mode/model first)
 /// - `permission_option_id` → respond to a pending permission request
 /// - `cancel: true` → cancel the current agent turn
+///
+/// Note: file/image attachments are not currently supported via MCP — prompts
+/// sent through this tool always carry an empty attachment list, both for
+/// local-owned and remote-socket-owned sessions.
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct SendPromptParams {
     /// Project ID (hash)
@@ -3366,7 +3370,7 @@ mod tests {
     }
 
     fn with_isolated_home<T>(f: impl FnOnce(&Path) -> T) -> T {
-        let _guard = test_lock();
+        let _guard = test_lock().blocking_lock();
 
         let temp_home = unique_temp_dir("grove-mcp-home");
         std::fs::create_dir_all(&temp_home).unwrap();
@@ -3608,7 +3612,7 @@ mod tests {
 
     #[test]
     fn filter_tools_outside_task_returns_orchestrator_surface() {
-        let _guard = test_lock();
+        let _guard = test_lock().blocking_lock();
 
         let mut env = EnvGuard::new();
         env.remove("GROVE_TASK_ID");
@@ -3657,7 +3661,7 @@ mod tests {
 
     #[test]
     fn filter_tools_inside_task_with_unknown_project_returns_common_only() {
-        let _guard = test_lock();
+        let _guard = test_lock().blocking_lock();
 
         let mut env = EnvGuard::new();
         env.set("GROVE_TASK_ID", "task-1");
@@ -3703,7 +3707,7 @@ mod tests {
 
     #[test]
     fn get_instructions_switches_on_task_context() {
-        let _guard = test_lock();
+        let _guard = test_lock().blocking_lock();
 
         // Outside task → management instructions
         {
@@ -3734,7 +3738,7 @@ mod tests {
 
     #[tokio::test(flavor = "current_thread")]
     async fn mcp_newline_protocol_smoke_test() {
-        let _guard = test_lock();
+        let _guard = test_lock().lock().await;
 
         let temp_home = unique_temp_dir("grove-mcp-home");
         std::fs::create_dir_all(&temp_home).unwrap();
@@ -3782,7 +3786,7 @@ mod tests {
 
     #[tokio::test(flavor = "current_thread")]
     async fn mcp_management_tools_rejected_inside_task_context() {
-        let _guard = test_lock();
+        let _guard = test_lock().lock().await;
 
         let temp_home = unique_temp_dir("grove-mcp-home");
         std::fs::create_dir_all(&temp_home).unwrap();
@@ -3895,7 +3899,7 @@ mod tests {
 
     #[tokio::test(flavor = "current_thread")]
     async fn mcp_grove_status_returns_full_context() {
-        let _guard = test_lock();
+        let _guard = test_lock().lock().await;
 
         let temp_home = unique_temp_dir("grove-mcp-home");
         std::fs::create_dir_all(&temp_home).unwrap();
@@ -3936,7 +3940,7 @@ mod tests {
 
     #[tokio::test(flavor = "current_thread")]
     async fn mcp_execution_tools_roundtrip() {
-        let _guard = test_lock();
+        let _guard = test_lock().lock().await;
 
         let temp_home = unique_temp_dir("grove-mcp-home");
         std::fs::create_dir_all(&temp_home).unwrap();
@@ -4068,7 +4072,7 @@ mod tests {
     /// Read operations (read_notes, read_review) degrade gracefully.
     #[tokio::test(flavor = "current_thread")]
     async fn mcp_execution_tools_with_nonexistent_task() {
-        let _guard = test_lock();
+        let _guard = test_lock().lock().await;
 
         let temp_home = unique_temp_dir("grove-mcp-home");
         std::fs::create_dir_all(&temp_home).unwrap();
@@ -4172,7 +4176,7 @@ mod tests {
     /// grove_edit_note: management tool roundtrip — write notes, read back via worker context.
     #[tokio::test(flavor = "current_thread")]
     async fn mcp_edit_note_roundtrip() {
-        let _guard = test_lock();
+        let _guard = test_lock().lock().await;
 
         let temp_home = unique_temp_dir("grove-mcp-home");
         std::fs::create_dir_all(&temp_home).unwrap();

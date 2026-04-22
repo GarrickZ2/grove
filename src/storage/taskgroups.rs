@@ -582,7 +582,7 @@ mod tests {
 
     #[test]
     fn test_create_and_load_group() {
-        let _lock = FILE_LOCK_FN();
+        let _lock = FILE_LOCK_FN().blocking_lock();
         let (guard, group) = TestGroup::create("test_create_load", Some("blue".into()));
 
         assert_eq!(group.name, "test_create_load");
@@ -601,7 +601,7 @@ mod tests {
 
     #[test]
     fn test_update_group() {
-        let _lock = FILE_LOCK_FN();
+        let _lock = FILE_LOCK_FN().blocking_lock();
         let (guard, _group) = TestGroup::create("test_update_orig", None);
 
         // Update name only
@@ -631,7 +631,7 @@ mod tests {
 
     #[test]
     fn test_delete_group() {
-        let _lock = FILE_LOCK_FN();
+        let _lock = FILE_LOCK_FN().blocking_lock();
         let group = create_group("test_delete_me".into(), None).unwrap();
         let id = group.id.clone();
 
@@ -648,7 +648,7 @@ mod tests {
 
     #[test]
     fn test_upsert_and_remove_slot() {
-        let _lock = FILE_LOCK_FN();
+        let _lock = FILE_LOCK_FN().blocking_lock();
         let (guard, _group) = TestGroup::create("test_slots", None);
 
         // Add a slot at position 1
@@ -706,7 +706,7 @@ mod tests {
 
     #[test]
     fn test_slot_sorting() {
-        let _lock = FILE_LOCK_FN();
+        let _lock = FILE_LOCK_FN().blocking_lock();
         let (guard, _group) = TestGroup::create("test_slot_sort", None);
 
         // Insert slots in reverse order: 5, 3, 1, 9, 2

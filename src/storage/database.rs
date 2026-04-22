@@ -35,10 +35,15 @@ static DB: Mutex<Option<DbState>> = Mutex::new(None);
 /// through this single shared mutex. Prior to consolidation each module had
 /// its own local `FILE_LOCK`, which only serialized tests within the same
 /// module — cross-module parallelism still produced flaky failures.
+///
+/// Returns a `&'static tokio::sync::Mutex<()>` so both sync and async tests
+/// can serialize without holding a `std::sync::MutexGuard` across `.await`:
+/// - sync `#[test]`: `let _l = test_lock().blocking_lock();`
+/// - async `#[tokio::test]`: `let _l = test_lock().lock().await;`
 #[cfg(test)]
-pub(crate) fn test_lock() -> std::sync::MutexGuard<'static, ()> {
-    static TEST_LOCK: Mutex<()> = Mutex::new(());
-    TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner())
+pub(crate) fn test_lock() -> &'static tokio::sync::Mutex<()> {
+    static TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+    &TEST_LOCK
 }
 
 /// A guard that holds the DB mutex and exposes `&Connection`.
@@ -710,7 +715,7 @@ mod tests {
     /// Run with: cargo test storage::database::tests::dry_run_migration -- --nocapture
     #[test]
     fn dry_run_migration() {
-        let _env_guard = test_lock();
+        let _env_guard = test_lock().blocking_lock();
         let real_grove = dirs::home_dir().unwrap().join(".grove");
         if !real_grove.exists() {
             eprintln!("[skip] No ~/.grove/ found, nothing to test");

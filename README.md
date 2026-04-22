@@ -42,6 +42,12 @@ cargo install grove-rs --features gui  # + native desktop GUI
 
 **Prebuilt binaries** — macOS `.dmg`, Windows `.exe`, Linux `.tar.gz` / `.AppImage`: [Latest release ↗](https://github.com/GarrickZ2/grove/releases/latest)
 
+> macOS tip — if the `.dmg` won't open ("Grove is damaged / can't be verified"), it's Gatekeeper quarantining an unsigned build. Unblock it with:
+>
+> ```bash
+> xattr -rd com.apple.quarantine /Applications/Grove.app
+> ```
+
 **Run:**
 
 ```bash

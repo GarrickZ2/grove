@@ -168,6 +168,16 @@ pub fn load_scene(project: &str, task_id: &str, sketch_id: &str) -> Result<Strin
 /// `load_thumbnail_if_fresh`.
 pub fn save_scene(project: &str, task_id: &str, sketch_id: &str, content: &str) -> Result<()> {
     validate_sketch_id(sketch_id)?;
+    // Require the sketch to exist in the index so a PUT with a random-but-
+    // syntactically-valid uuid can't write an orphan scene file that no
+    // listing would ever surface. `create_sketch` seeds the index before any
+    // writer calls this, so legitimate flows are unaffected.
+    let index = load_index(project, task_id)?;
+    if !index.sketches.iter().any(|m| m.id == sketch_id) {
+        return Err(GroveError::storage(format!(
+            "sketch '{sketch_id}' not found — create it before saving a scene"
+        )));
+    }
     let dir = sketches_dir_ensure(project, task_id)?;
     std::fs::create_dir_all(sketch_dir_in(&dir, sketch_id))?;
     std::fs::write(sketch_path_in(&dir, sketch_id), content)?;

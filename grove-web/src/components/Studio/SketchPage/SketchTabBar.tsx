@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Plus, X, Download, RefreshCw, WifiOff, History } from "lucide-react";
 import type { SketchMeta } from "../../../api";
 import { SketchContextMenu } from "./SketchContextMenu";
@@ -43,10 +43,43 @@ export function SketchTabBar({
   const [menu, setMenu] = useState<{ sketchId: string; x: number; y: number } | null>(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
 
+  // Defer single-click select so a follow-up double-click (rename) can cancel
+  // it — prevents fetching an inactive sketch's scene just to immediately
+  // switch into rename mode on the same tab.
+  const selectTimerRef = useRef<number | null>(null);
+  const scheduleSelect = (id: string) => {
+    if (selectTimerRef.current !== null) {
+      window.clearTimeout(selectTimerRef.current);
+    }
+    selectTimerRef.current = window.setTimeout(() => {
+      selectTimerRef.current = null;
+      onSelect(id);
+    }, 220);
+  };
+  const cancelScheduledSelect = () => {
+    if (selectTimerRef.current !== null) {
+      window.clearTimeout(selectTimerRef.current);
+      selectTimerRef.current = null;
+    }
+  };
+
   const beginRename = (s: SketchMeta) => {
+    cancelScheduledSelect();
     setRenamingId(s.id);
     setDraftName(s.name);
   };
+
+  // Guard against `onSelect` firing after unmount if the user clicks a tab
+  // and then closes the Sketch panel / switches tasks within the 220 ms delay.
+  useEffect(
+    () => () => {
+      if (selectTimerRef.current !== null) {
+        window.clearTimeout(selectTimerRef.current);
+        selectTimerRef.current = null;
+      }
+    },
+    [],
+  );
 
   const confirmTarget = confirmDeleteId
     ? sketches.find((s) => s.id === confirmDeleteId) ?? null
@@ -66,7 +99,17 @@ export function SketchTabBar({
         return (
           <div
             key={s.id}
-            onClick={() => !isRenaming && onSelect(s.id)}
+            onClick={() => {
+              if (isRenaming) return;
+              // Active tab: switch immediately (no fetch cost, no dblclick
+              // ambiguity with itself). Inactive tab: defer so a fast
+              // double-click can cancel the select and go straight to rename.
+              if (isActive) {
+                onSelect(s.id);
+              } else {
+                scheduleSelect(s.id);
+              }
+            }}
             onContextMenu={(e) => {
               if (isRenaming) return;
               e.preventDefault();

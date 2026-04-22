@@ -881,6 +881,26 @@ async fn handle_session_notification(
     Ok(())
 }
 
+/// Emit a synthetic `ThoughtLevelsUpdate` after a successful
+/// `SetSessionConfigOption` round-trip, so the new selection persists to
+/// `SessionMetadata` even when the agent doesn't auto-echo via
+/// `session_update.ConfigOptionUpdate`. Pulls the cached `available` list from
+/// the persisted metadata (if any) to keep dropdown options intact; otherwise
+/// emits an empty list and relies on the next `SessionReady` / update to refill.
+fn emit_thought_level_sync(handle: &AcpSessionHandle, config_id: &str, value_id: &str) {
+    let available = handle
+        .chat_id
+        .as_deref()
+        .and_then(|cid| read_session_metadata(&handle.project_key, &handle.task_id, cid))
+        .map(|meta| meta.available_thought_levels)
+        .unwrap_or_default();
+    handle.emit(AcpUpdate::ThoughtLevelsUpdate {
+        available,
+        current: Some(value_id.to_string()),
+        config_id: Some(config_id.to_string()),
+    });
+}
+
 /// Find the first config option with category == ThoughtLevel, extract its
 /// select options + current value + config id. Returns (available, current, config_id).
 /// MVP: only Ungrouped Select kind is exposed; Grouped / Boolean are ignored so
@@ -1030,7 +1050,9 @@ async fn drive_terminal(
         Ok(status) => {
             let mut es = acp::TerminalExitStatus::new();
             if let Some(code) = status.code() {
-                es = es.exit_code(code.max(0) as u32);
+                // `status.code()` returns Some only on clean exit, where the
+                // code is already non-negative on every supported platform.
+                es = es.exit_code(code as u32);
             }
             es
         }
@@ -1621,11 +1643,18 @@ async fn drive_session(
                                     )).block_task().await;
                                 }
                                 AcpCommand::SetThoughtLevel { config_id, value_id } => {
-                                    let _ = conn.send_request(acp::SetSessionConfigOptionRequest::new(
+                                    let resp = conn.send_request(acp::SetSessionConfigOptionRequest::new(
                                         session_id_arc.clone(),
-                                        acp::SessionConfigId::new(config_id),
-                                        acp::SessionConfigValueId::new(value_id),
+                                        acp::SessionConfigId::new(config_id.clone()),
+                                        acp::SessionConfigValueId::new(value_id.clone()),
                                     )).block_task().await;
+                                    if resp.is_ok() {
+                                        // Optimistically mirror the selection so reconnects
+                                        // see it even if the agent doesn't auto-echo via
+                                        // session_update. The ThoughtLevelsUpdate handler
+                                        // elsewhere in this file persists this to disk.
+                                        emit_thought_level_sync(&handle, &config_id, &value_id);
+                                    }
                                 }
                                 AcpCommand::Prompt { text, attachments, .. } => {
                                     let _ = conn.send_notification(acp::CancelNotification::new(session_id_arc.clone()));
@@ -1729,14 +1758,17 @@ async fn drive_session(
                 config_id,
                 value_id,
             } => {
-                let _ = conn
+                let resp = conn
                     .send_request(acp::SetSessionConfigOptionRequest::new(
                         session_id_arc.clone(),
-                        acp::SessionConfigId::new(config_id),
-                        acp::SessionConfigValueId::new(value_id),
+                        acp::SessionConfigId::new(config_id.clone()),
+                        acp::SessionConfigValueId::new(value_id.clone()),
                     ))
                     .block_task()
                     .await;
+                if resp.is_ok() {
+                    emit_thought_level_sync(&handle, &config_id, &value_id);
+                }
             }
             AcpCommand::Kill => {
                 break;
@@ -2203,8 +2235,8 @@ impl AcpSessionHandle {
                     }
                     _ = kill_rx.recv() => {
                         let _ = child.start_kill();
-                        stdout_done = true;
-                        stderr_done = true;
+                        // Don't break — keep reading until EOF so we don't
+                        // truncate output already queued in the pipe.
                     }
                 }
                 if stdout_done && stderr_done {
@@ -2975,6 +3007,9 @@ mod tests {
             current_mode_id: Some("code".into()),
             available_models: vec![("opus".into(), "Opus".into())],
             current_model_id: Some("opus".into()),
+            available_thought_levels: vec![],
+            current_thought_level_id: None,
+            thought_level_config_id: None,
             prompt_capabilities: PromptCapabilitiesData::default(),
             available_commands: vec![],
         };

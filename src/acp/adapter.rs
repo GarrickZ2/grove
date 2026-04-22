@@ -71,13 +71,14 @@ pub fn generate_file_diff(path: &Path, old: Option<&str>, new: &str) -> String {
 /// Core diff formatting: new file → markdown code block, edit → real unified diff.
 fn format_diff_content(path: &str, old: Option<&str>, new: &str) -> String {
     match old {
-        None | Some("") => {
+        None => {
             // New file: markdown code fence with language from extension
             let lang = path.rsplit('.').next().map(ext_to_lang).unwrap_or("");
             format!("```{lang}\n{new}\n```")
         }
         Some(old_text) => {
-            // Edit: real unified diff with 3 lines of context
+            // Edit (incl. empty-file → non-empty): real unified diff with 3
+            // lines of context.
             build_unified_diff(path, old_text, new)
         }
     }
@@ -165,9 +166,13 @@ fn strip_system_reminders(text: &str) -> String {
 /// Resolve the appropriate adapter based on the agent command.
 pub fn resolve_adapter(agent_command: &str) -> Box<dyn AgentContentAdapter> {
     let cmd = agent_command.rsplit('/').next().unwrap_or(agent_command);
-    match cmd {
-        "claude-agent-acp" | "claude-code-acp" => Box::new(ClaudeAdapter),
-        _ => Box::new(DefaultAdapter),
+    // Match anywhere in the command tail so launchers like
+    // `node claude-code-acp.js` or `claude-code-acp@1.2.3` still resolve
+    // to the Claude adapter and get system-reminder stripping applied.
+    if cmd.contains("claude-code-acp") || cmd.contains("claude-agent-acp") {
+        Box::new(ClaudeAdapter)
+    } else {
+        Box::new(DefaultAdapter)
     }
 }
 

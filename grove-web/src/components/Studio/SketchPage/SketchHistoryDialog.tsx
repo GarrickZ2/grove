@@ -158,7 +158,12 @@ export function SketchHistoryDialog({
       </div>
 
       {confirmTarget && (
-        <DialogShell isOpen onClose={() => setConfirmId(null)} maxWidth="max-w-sm">
+        <DialogShell
+          isOpen
+          onClose={() => setConfirmId(null)}
+          maxWidth="max-w-sm"
+          zIndex={60}
+        >
           <div
             className="p-5 flex flex-col gap-3"
             style={{ background: "var(--color-bg)", color: "var(--color-text)" }}

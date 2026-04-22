@@ -60,9 +60,14 @@ export function SkillsPage() {
     setSources(data);
   }, []);
 
-  const refreshInstalled = useCallback(async () => {
-    const data = await listInstalled();
-    setInstalled(data);
+  // After an install/update, both the installed set AND per-source update
+  // state change (server recomputes `has_remote_updates`/`skill_count`).
+  // Refresh both so "Update Available" badges clear promptly.
+  const refreshAfterInstall = useCallback(async () => {
+    await Promise.all([
+      listInstalled().then(setInstalled),
+      listSources().then(setSources),
+    ]);
   }, []);
 
   if (isLoading) {
@@ -117,7 +122,7 @@ export function SkillsPage() {
             agents={enabledAgents}
             installed={installed}
             projectPath={projectPath}
-            onInstalled={refreshInstalled}
+            onInstalled={refreshAfterInstall}
           />
         )}
         {activeTab === "sources" && (

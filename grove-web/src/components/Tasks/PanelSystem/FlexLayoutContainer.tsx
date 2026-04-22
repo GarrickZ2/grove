@@ -616,6 +616,19 @@ export const FlexLayoutContainer = forwardRef<
 
   // Custom tab rendering (supports double-click rename)
   const renameBlurTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
+
+  // Guard: if the component unmounts while a rename is in its 150ms blur
+  // grace period, cancel the pending commit so it doesn't run against a
+  // disposed FlexLayout model.
+  useEffect(
+    () => () => {
+      if (renameBlurTimer.current) {
+        clearTimeout(renameBlurTimer.current);
+        renameBlurTimer.current = undefined;
+      }
+    },
+    [],
+  );
   const onRenderTab = useCallback((node: TabNode, renderValues: ITabRenderValues) => {
     const component = node.getComponent() || 'terminal';
     const { icon: Icon, color } = getPanelIconAndColor(component);

@@ -79,16 +79,23 @@ export function ExploreTab({ sources, agents, installed, projectPath, onInstalle
     return () => window.removeEventListener("resize", onResize);
   }, [recomputePageSize]);
 
+  // Monotonic request id so a slow in-flight response can't overwrite the
+  // UI with stale skills after a newer search/filter has already resolved.
+  const loadReqIdRef = useRef(0);
+
   const loadSkills = useCallback(async () => {
+    const reqId = ++loadReqIdRef.current;
     setIsLoading(true);
     try {
       const sourceFilter = selectedSources.length > 0 ? selectedSources.join(",") : undefined;
       const data = await exploreSkills(searchQuery || undefined, sourceFilter);
+      if (loadReqIdRef.current !== reqId) return;
       setSkills(data);
     } catch (err) {
+      if (loadReqIdRef.current !== reqId) return;
       console.error("Failed to load skills:", err);
     } finally {
-      setIsLoading(false);
+      if (loadReqIdRef.current === reqId) setIsLoading(false);
     }
   }, [searchQuery, selectedSources]);
 

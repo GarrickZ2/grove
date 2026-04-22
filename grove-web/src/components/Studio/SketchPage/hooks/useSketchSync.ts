@@ -6,6 +6,7 @@ import {
   sketchWsUrl,
 } from "../../../../api";
 import { appendHmacToUrl } from "../../../../api/client";
+import { invalidateSketchNameCache } from "../../../ui/sketchChipCache";
 
 interface SketchEvent {
   type: "sketch_updated" | "index_changed";
@@ -239,10 +240,10 @@ export function useSketchSync(
     // "Reconnecting…" pill doesn't reflect the previous task's state while
     // the new socket handshakes. Deferred via microtask so the effect body
     // doesn't synchronously trigger a cascading render.
+    let closed = false;
     queueMicrotask(() => {
       if (!closed) setWsConnected(undefined);
     });
-    let closed = false;
     let ws: WebSocket | null = null;
     let retryTimer: number | null = null;
     let retryDelay = 1000;
@@ -274,6 +275,11 @@ export function useSketchSync(
         }
         if (data.type === "index_changed") {
           indexChangedRef.current();
+          // Keep the shared sketch-name cache (used by <SketchChip> anywhere
+          // in the app) fresh when another client renames / deletes / creates
+          // a sketch. Without this, chips would show stale names until a
+          // cache miss re-triggered a fetch.
+          invalidateSketchNameCache(projectId, taskId);
         } else if (
           data.type === "sketch_updated" &&
           data.sketch_id === sketchIdRef.current &&

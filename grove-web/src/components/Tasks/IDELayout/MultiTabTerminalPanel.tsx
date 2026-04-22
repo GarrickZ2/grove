@@ -31,8 +31,19 @@ export function MultiTabTerminalPanel({
 }: MultiTabTerminalPanelProps) {
   const { terminalTheme } = useTerminalTheme();
 
-  // Per-mount counter so new tabs get sequential labels from current max
-  const counterRef = useRef(tabs.length);
+  // Per-mount counter so new tabs get sequential labels from the current max.
+  // Initialize from the highest `(N)` suffix already present in the rehydrated
+  // tab list (fallback to `tabs.length`) — otherwise closing middle tabs then
+  // reopening the panel would hand out already-taken labels.
+  const counterRef = useRef(
+    Math.max(
+      tabs.length,
+      ...tabs.map((t) => {
+        const m = /\((\d+)\)\s*$/.exec(t.label);
+        return m ? Number(m[1]) : 0;
+      }),
+    ),
+  );
 
   // Rename state — mirrors the Sketch tab bar's pattern: double-click opens
   // an inline input; Enter commits, Escape cancels, blur commits-or-cancels.

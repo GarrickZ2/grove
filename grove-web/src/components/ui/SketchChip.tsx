@@ -53,7 +53,8 @@ export function SketchChip({ projectId, taskId, sketchId }: Props) {
   const onClick = (e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
-    if (missing || loading || refetching) return;
+    // `disabled` on the <button> already suppresses clicks in all three
+    // loading/missing/refetching states — no extra runtime guard needed.
     window.dispatchEvent(
       new CustomEvent<OpenSketchDetail>(OPEN_SKETCH_EVENT, {
         detail: { projectId, taskId, sketchId },

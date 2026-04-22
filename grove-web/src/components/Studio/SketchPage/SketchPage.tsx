@@ -59,12 +59,17 @@ export function SketchPage({ projectId, taskId, isChatBusy, lastChatIdleAt }: Pr
     excalidrawApi: apiRef,
   });
 
-  // Auto-select first sketch after list loads, and re-pick if active was deleted.
+  // Auto-select first sketch after list loads, and re-pick if the active
+  // sketch was deleted. Only act on a non-empty list to avoid jumping the
+  // selection to `null` and then immediately back to `sketches[0]` during the
+  // transient window after a WS `index_changed` when `useSketchList` is
+  // between invalidation and refetch (empty array briefly observed).
   useEffect(() => {
-    if (!activeId && sketches.length > 0) {
+    if (sketches.length === 0) return;
+    if (!activeId) {
       setActiveId(sketches[0].id);
-    } else if (activeId && !sketches.find((s) => s.id === activeId)) {
-      setActiveId(sketches[0]?.id ?? null);
+    } else if (!sketches.some((s) => s.id === activeId)) {
+      setActiveId(sketches[0].id);
     }
   }, [sketches, activeId]);
 
@@ -77,19 +82,19 @@ export function SketchPage({ projectId, taskId, isChatBusy, lastChatIdleAt }: Pr
     setSketchNames(projectId, taskId, sketches);
   }, [projectId, taskId, sketches]);
 
-  // Live Preview: while the ACP chat is busy, MCP can create *new* sketches
-  // from its separate OS process. The scene poll in useSketchSync refreshes
-  // the active canvas, but not the sketch index — so a freshly-drawn sketch
-  // would never appear as a tab until the chat went idle (or the user
-  // manually refreshed). Mirror the scene poll by refetching the list on the
-  // same cadence; refresh is cheap and dedup'd on the server.
+  // Live Preview fallback: while the ACP chat is busy, MCP can create *new*
+  // sketches from its separate OS process. Normally the WS `index_changed`
+  // broadcast routed through useSketchSync → onIndexChanged is what refreshes
+  // the tab list. Only poll as a fallback when the WS is NOT connected so we
+  // don't double-refresh (and don't flood the server on every task).
   useEffect(() => {
     if (!isChatBusy) return;
+    if (wsConnected === true) return;
     const timer = window.setInterval(() => {
       void refresh();
     }, 2000);
     return () => window.clearInterval(timer);
-  }, [isChatBusy, refresh]);
+  }, [isChatBusy, refresh, wsConnected]);
 
   // Respond to chip clicks elsewhere in the app that request opening a
   // sketch in this task. Matches on (projectId, taskId); if the requested

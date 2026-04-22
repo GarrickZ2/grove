@@ -42,6 +42,9 @@ function preprocessSketchUrls(content: string): string {
   if (!content.includes("sketch://")) return content;
   // Split by fenced code blocks and inline code spans so we don't rewrite
   // URLs inside code. Odd-indexed parts are the code regions.
+  // Note: an author-written `sketch://...` wrapped in inline backticks is
+  // kept as a <code> span by design — authors opt out of chip rendering by
+  // quoting it. Only non-code occurrences become clickable chips.
   const parts = content.split(/(```[\s\S]*?```|`[^`\n]+`)/g);
   for (let i = 0; i < parts.length; i += 2) {
     parts[i] = parts[i].replace(SKETCH_AUTOLINK_RE, (m) => `[${m}](${m})`);
