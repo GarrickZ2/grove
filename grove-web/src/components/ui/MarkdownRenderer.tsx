@@ -49,6 +49,27 @@ function preprocessSketchUrls(content: string): string {
   return parts.join("");
 }
 
+// Match inline code spans whose content, after collapsing whitespace, is a
+// bare http(s) URL. Agents (notably claude-code ACP) sometimes wrap long
+// links in backticks, which would render as a non-clickable `<code>` span.
+// We unwrap them so remark-gfm autolinks the URL into a normal `<a>`.
+// - Single-backtick inline spans only (skip ``` fences elsewhere).
+// - Allow newlines/whitespace inside the span; we strip them.
+const INLINE_CODE_URL_RE = /`([^`]+?)`/g;
+
+function preprocessInlineCodeUrls(content: string): string {
+  if (!content.includes("`")) return content;
+  // Don't touch fenced code blocks; only rewrite inline spans outside them.
+  const parts = content.split(/(```[\s\S]*?```)/g);
+  for (let i = 0; i < parts.length; i += 2) {
+    parts[i] = parts[i].replace(INLINE_CODE_URL_RE, (m, inner: string) => {
+      const collapsed = inner.replace(/\s+/g, "");
+      return /^https?:\/\/\S+$/.test(collapsed) ? collapsed : m;
+    });
+  }
+  return parts.join("");
+}
+
 function cssVar(name: string, fallback: string): string {
   if (typeof window === "undefined") return fallback;
   const value = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
@@ -676,10 +697,11 @@ function parseFileHref(href: string): { filePath: string; line?: number } | null
 }
 
 export const MarkdownRenderer = memo(function MarkdownRenderer({ content, onFileClick, resolveImageUrl, onMermaidClick, onImageClick, onD2Click, enableRunCommand, sketchContext }: MarkdownRendererProps) {
-  const processedContent = useMemo(
-    () => (sketchContext ? preprocessSketchUrls(content) : content),
-    [content, sketchContext],
-  );
+  const processedContent = useMemo(() => {
+    let out = preprocessInlineCodeUrls(content);
+    if (sketchContext) out = preprocessSketchUrls(out);
+    return out;
+  }, [content, sketchContext]);
   const components = useMemo((): Components => ({
         h1: ({ children }) => (
           <h1 className="text-lg font-bold text-[var(--color-text)] mt-4 mb-2 first:mt-0">{children}</h1>
@@ -783,6 +805,25 @@ export const MarkdownRenderer = memo(function MarkdownRenderer({ content, onFile
         ),
         code: ({ className, children }) => {
           const text = extractText(children);
+          // Auto-linkify any code span whose content is a bare http(s) URL —
+          // even if the agent injected whitespace/newlines inside the
+          // backticks, which would otherwise push it into the block branch
+          // below. We collapse internal whitespace to reconstruct the URL.
+          const collapsed = text.replace(/\s+/g, "");
+          if (!className?.startsWith("language-") && /^https?:\/\/\S+$/.test(collapsed)) {
+            return (
+              <a
+                href={collapsed}
+                className="text-[var(--color-highlight)] hover:underline break-all cursor-pointer font-mono text-xs"
+                onClick={(e) => {
+                  e.preventDefault();
+                  openExternalUrl(collapsed);
+                }}
+              >
+                {collapsed}
+              </a>
+            );
+          }
           const isBlock = className?.startsWith("language-") || text.includes("\n");
           if (isBlock) {
             if (className === "language-mermaid") {
@@ -810,7 +851,7 @@ export const MarkdownRenderer = memo(function MarkdownRenderer({ content, onFile
             }
           }
           return (
-            <code className="px-1 py-0.5 rounded bg-[var(--color-bg-tertiary)] text-[var(--color-highlight)] text-xs font-mono">
+            <code className="px-1 py-0.5 rounded bg-[var(--color-bg-tertiary)] text-[var(--color-highlight)] text-xs font-mono break-all">
               {children}
             </code>
           );

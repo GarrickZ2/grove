@@ -19,11 +19,13 @@ function getTauriInternals(): TauriInternals | null {
 export function openExternalUrl(url: string): void {
   const tauri = getTauriInternals();
   if (tauri) {
-    // tauri-plugin-shell exposes the "open" sub-command via invoke
-    tauri.invoke("plugin:shell|open", { path: url }).catch((err: unknown) => {
-      console.error("[openExternalUrl] Tauri shell open failed:", err);
-      // Fallback: try window.open anyway
-      window.open(url, "_blank", "noopener,noreferrer");
+    // Prefer our own `open_external_url` command (no capability-scope gotchas).
+    // Fall back to tauri-plugin-shell's built-in open if unavailable.
+    tauri.invoke("open_external_url", { url }).catch((primaryErr: unknown) => {
+      console.warn("[openExternalUrl] custom command failed, falling back:", primaryErr);
+      tauri.invoke("plugin:shell|open", { path: url }).catch((err: unknown) => {
+        console.error("[openExternalUrl] Tauri shell open failed:", err);
+      });
     });
   } else {
     window.open(url, "_blank", "noopener,noreferrer");

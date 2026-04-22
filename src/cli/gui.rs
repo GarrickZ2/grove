@@ -9,6 +9,31 @@ use std::sync::Arc;
 
 const DAEMON_ENV: &str = "GROVE_GUI_DAEMON";
 
+/// Open an http(s) URL in the OS default browser.
+///
+/// Tauri 2's `plugin:shell|open` requires a scope validator that is
+/// awkward to wire through capability files, so we ship a tiny custom
+/// command that shells out to the platform opener directly. Only
+/// http/https URLs are accepted.
+#[tauri::command]
+fn open_external_url(url: String) -> Result<(), String> {
+    if !(url.starts_with("http://") || url.starts_with("https://")) {
+        return Err(format!("refused non-http(s) url: {url}"));
+    }
+    #[cfg(target_os = "macos")]
+    let cmd = ("open", vec![url.as_str()]);
+    #[cfg(target_os = "windows")]
+    let cmd = ("cmd", vec!["/C", "start", "", url.as_str()]);
+    #[cfg(all(unix, not(target_os = "macos")))]
+    let cmd = ("xdg-open", vec![url.as_str()]);
+
+    std::process::Command::new(cmd.0)
+        .args(cmd.1)
+        .spawn()
+        .map(|_| ())
+        .map_err(|e| e.to_string())
+}
+
 /// Try to daemonize the GUI process so the terminal is released immediately.
 ///
 /// Returns `true` if the current process is the **parent** that spawned a
@@ -205,6 +230,7 @@ pub async fn execute(port: u16) {
 
     let tauri_result = tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
+        .invoke_handler(tauri::generate_handler![open_external_url])
         .setup(move |app| {
             // Create a window pointing to our HTTP server
             let url = format!("http://localhost:{}", actual_port);
