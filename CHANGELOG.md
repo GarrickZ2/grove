@@ -5,6 +5,26 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.3] - 2026-04-21
+
+### Added
+
+- **Thought-level selector** — reasoning-effort dropdown surfaced end-to-end: ACP backend plumbs the selector, MCP exposes it via `grove_chat_status` / `grove_send_prompt`, and the web chat control bar renders a per-chat dropdown
+- **Sketch chips in chat** — `sketch://` references render as clickable chips that open the referenced sketch
+
+### Improved
+
+- **ACP 0.11 upgrade** — migrated to `agent-client-protocol` 0.11 builder API
+- **Chat reliability** — second Ctrl-C now force-exits to escape a hung graceful shutdown
+- **Test stability** — consolidated DB test locks to fix parallel flakiness
+
+### Fixed
+
+- **Sketch UX** — per-sketch history, correct arrow bindings, cross-sketch state leak, and tab UX issues
+- **ACP placeholder bubbles** — empty-text thought chunks are skipped so no blank bubbles appear
+- **GUI inline-code URLs** — inline-code URLs now wrap and are clickable in the GUI
+- **Review follow-ups** — three rounds of code-review fixes across the v0.9.2..HEAD range
+
 ## [0.9.2] - 2026-04-20
 
 ### Fixed
