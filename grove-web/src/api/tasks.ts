@@ -665,6 +665,29 @@ export function uploadArtifacts(projectId: string, taskId: string, files: File[]
   return artifactApi(projectId, taskId).upload(files) as Promise<ArtifactFile[]>;
 }
 
+export async function createArtifactLink(
+  projectId: string,
+  taskId: string,
+  payload: { name: string; url: string; description?: string; path?: string },
+): Promise<ArtifactFile> {
+  return apiClient.post<typeof payload, ArtifactFile>(
+    `/api/v1/projects/${projectId}/tasks/${taskId}/artifacts/link`,
+    payload,
+  );
+}
+
+export async function updateArtifactLink(
+  projectId: string,
+  taskId: string,
+  oldPath: string,
+  payload: { name: string; url: string; description?: string },
+): Promise<ArtifactFile> {
+  return apiClient.patch<typeof payload, ArtifactFile>(
+    `/api/v1/projects/${projectId}/tasks/${taskId}/artifacts/link?path=${encodeURIComponent(oldPath)}`,
+    payload,
+  );
+}
+
 export async function syncArtifactToResource(
   projectId: string,
   taskId: string,

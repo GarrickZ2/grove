@@ -53,12 +53,15 @@ function preprocessSketchUrls(content: string): string {
 }
 
 // Match inline code spans whose content, after collapsing whitespace, is a
-// bare http(s) URL. Agents (notably claude-code ACP) sometimes wrap long
-// links in backticks, which would render as a non-clickable `<code>` span.
-// We unwrap them so remark-gfm autolinks the URL into a normal `<a>`.
+// bare http(s) URL or a `sketch://sketch-<uuid>` ref. Agents (notably
+// claude-code ACP) often wrap links in backticks without meaning "this is
+// code" — that would render as a non-clickable `<code>` span and, for
+// sketch refs, suppress chip rendering downstream. We unwrap so remark-gfm
+// autolinks http(s), and so preprocessSketchUrls can wrap sketch refs.
 // - Single-backtick inline spans only (skip ``` fences elsewhere).
 // - Allow newlines/whitespace inside the span; we strip them.
 const INLINE_CODE_URL_RE = /`([^`]+?)`/g;
+const SKETCH_BARE_RE = /^sketch:\/\/sketch-[0-9a-f-]+$/i;
 
 function preprocessInlineCodeUrls(content: string): string {
   if (!content.includes("`")) return content;
@@ -67,7 +70,9 @@ function preprocessInlineCodeUrls(content: string): string {
   for (let i = 0; i < parts.length; i += 2) {
     parts[i] = parts[i].replace(INLINE_CODE_URL_RE, (m, inner: string) => {
       const collapsed = inner.replace(/\s+/g, "");
-      return /^https?:\/\/\S+$/.test(collapsed) ? collapsed : m;
+      if (/^https?:\/\/\S+$/.test(collapsed)) return collapsed;
+      if (SKETCH_BARE_RE.test(collapsed)) return collapsed;
+      return m;
     });
   }
   return parts.join("");

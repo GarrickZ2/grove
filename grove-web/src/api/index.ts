@@ -7,7 +7,7 @@ export type { AppInfo, CustomAgent } from './config';
 
 export { checkAllDependencies, checkCommands } from './env';
 
-export { listProjects, getProject, addProject, deleteProject, getProjectStats, getBranches, getRemotes, openIDE, openTerminal, initGitRepo, createNewProject, listResources, uploadResource, deleteResource, previewResource, resourceDownloadUrl, getInstructions, updateInstructions, getMemory, updateMemory, listResourceWorkdirs, addResourceWorkdir, deleteResourceWorkdir, openResourceWorkdir, createResourceFolder, moveResource } from './projects';
+export { listProjects, getProject, addProject, deleteProject, getProjectStats, getBranches, getRemotes, openIDE, openTerminal, initGitRepo, createNewProject, listResources, uploadResource, deleteResource, previewResource, resourceDownloadUrl, getInstructions, updateInstructions, getMemory, updateMemory, listResourceWorkdirs, addResourceWorkdir, deleteResourceWorkdir, openResourceWorkdir, createResourceFolder, moveResource, createResourceLink, updateResourceLink } from './projects';
 export type {
   ProjectListItem,
   ProjectResponse,
@@ -53,6 +53,8 @@ export {
   artifactDownloadUrl,
   deleteArtifact,
   uploadArtifacts,
+  createArtifactLink,
+  updateArtifactLink,
   syncArtifactToResource,
   listArtifactWorkdirs,
   addArtifactWorkdir,
@@ -138,6 +140,8 @@ export type {
 } from './skills';
 
 export { renderD2 } from './render';
+export { fetchUrlMetadata } from './url';
+export type { UrlMetadata } from './url';
 export type { RenderD2Error } from './render';
 
 export * from './sketches';

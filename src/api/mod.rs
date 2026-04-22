@@ -75,6 +75,11 @@ pub fn create_api_router() -> Router {
         .route("/env/check-commands", post(handlers::env::check_commands))
         // Diagram rendering API
         .route("/render/d2", post(handlers::render::render_d2))
+        // URL metadata (used by Add Link dialog)
+        .route(
+            "/url/metadata",
+            post(handlers::url_metadata::fetch_url_metadata),
+        )
         // Folder selection API
         .route("/browse-folder", get(handlers::folder::browse_folder))
         // Read file API (for Plan File rendering)
@@ -160,6 +165,11 @@ pub fn create_api_router() -> Router {
         .route(
             "/projects/{id}/resource/move",
             post(handlers::projects::move_resource),
+        )
+        .route(
+            "/projects/{id}/resource/link",
+            post(handlers::projects::create_resource_link)
+                .patch(handlers::projects::update_resource_link),
         )
         .route(
             "/projects/{id}/instructions",
@@ -323,6 +333,11 @@ pub fn create_api_router() -> Router {
         .route(
             "/projects/{id}/tasks/{taskId}/artifacts/sync-to-resource",
             post(handlers::tasks::sync_artifact_to_resource),
+        )
+        .route(
+            "/projects/{id}/tasks/{taskId}/artifacts/link",
+            post(handlers::tasks::create_artifact_link)
+                .patch(handlers::tasks::update_artifact_link),
         )
         .route(
             "/projects/{id}/tasks/{taskId}/open-folder",

@@ -107,6 +107,19 @@ export interface SketchNameMeta {
  * Files that are purely agent-internal (AGENTS.md, CLAUDE.md, GEMINI.md,
  * internal/, scripts/) are hidden — they aren't user-authored content.
  */
+const LINK_SUFFIX = ".link.json";
+
+/** Strip the `.link.json` sidecar suffix so mention chips show a clean name. */
+function stripLinkSuffix(name: string): string {
+  return name.toLowerCase().endsWith(LINK_SUFFIX)
+    ? name.slice(0, name.length - LINK_SUFFIX.length)
+    : name;
+}
+
+function isLink(path: string): boolean {
+  return path.toLowerCase().endsWith(LINK_SUFFIX);
+}
+
 export function buildStudioMentionItems(
   files: string[],
   sketches: SketchNameMeta[],
@@ -145,17 +158,41 @@ export function buildStudioMentionItems(
     }
     if (file.startsWith("input/")) {
       const name = stripPrefix(file, "input/");
-      if (name) push({ path: file, isDir: false, displayName: name, category: "Input" });
+      if (name) {
+        const linky = isLink(name);
+        push({
+          path: file,
+          isDir: false,
+          displayName: linky ? stripLinkSuffix(name) : name,
+          category: linky ? "Input · Link" : "Input",
+        });
+      }
       continue;
     }
     if (file.startsWith("output/")) {
       const name = stripPrefix(file, "output/");
-      if (name) push({ path: file, isDir: false, displayName: name, category: "Output" });
+      if (name) {
+        const linky = isLink(name);
+        push({
+          path: file,
+          isDir: false,
+          displayName: linky ? stripLinkSuffix(name) : name,
+          category: linky ? "Output · Link" : "Output",
+        });
+      }
       continue;
     }
     if (file.startsWith("resource/")) {
       const name = stripPrefix(file, "resource/");
-      if (name) push({ path: file, isDir: false, displayName: name, category: "Shared Resource" });
+      if (name) {
+        const linky = isLink(name);
+        push({
+          path: file,
+          isDir: false,
+          displayName: linky ? stripLinkSuffix(name) : name,
+          category: linky ? "Shared Resource · Link" : "Shared Resource",
+        });
+      }
       continue;
     }
     if (file.startsWith("sketch/")) {

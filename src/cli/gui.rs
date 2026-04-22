@@ -34,6 +34,46 @@ fn open_external_url(url: String) -> Result<(), String> {
         .map_err(|e| e.to_string())
 }
 
+/// Show a native "Save As" dialog, download the given http(s) URL, and
+/// write its bytes to the chosen path.
+///
+/// Returns `Ok(Some(path))` on success, `Ok(None)` if the user cancelled
+/// the dialog, or `Err(msg)` on failure. Only http/https is accepted.
+#[tauri::command]
+async fn download_file_dialog(
+    url: String,
+    suggested_name: String,
+) -> Result<Option<String>, String> {
+    if !(url.starts_with("http://") || url.starts_with("https://")) {
+        return Err(format!("refused non-http(s) url: {url}"));
+    }
+
+    let handle = rfd::AsyncFileDialog::new()
+        .set_file_name(&suggested_name)
+        .save_file()
+        .await;
+    let Some(file) = handle else {
+        return Ok(None);
+    };
+    let path = file.path().to_path_buf();
+
+    let url_for_blocking = url;
+    let path_for_blocking = path.clone();
+    tokio::task::spawn_blocking(move || -> Result<(), String> {
+        let resp = ureq::get(&url_for_blocking)
+            .call()
+            .map_err(|e| e.to_string())?;
+        let mut reader = resp.into_reader();
+        let mut out = std::fs::File::create(&path_for_blocking).map_err(|e| e.to_string())?;
+        std::io::copy(&mut reader, &mut out).map_err(|e| e.to_string())?;
+        Ok(())
+    })
+    .await
+    .map_err(|e| e.to_string())??;
+
+    Ok(Some(path.display().to_string()))
+}
+
 /// Try to daemonize the GUI process so the terminal is released immediately.
 ///
 /// Returns `true` if the current process is the **parent** that spawned a
@@ -230,7 +270,10 @@ pub async fn execute(port: u16) {
 
     let tauri_result = tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
-        .invoke_handler(tauri::generate_handler![open_external_url])
+        .invoke_handler(tauri::generate_handler![
+            open_external_url,
+            download_file_dialog
+        ])
         .setup(move |app| {
             // Create a window pointing to our HTTP server
             let url = format!("http://localhost:{}", actual_port);

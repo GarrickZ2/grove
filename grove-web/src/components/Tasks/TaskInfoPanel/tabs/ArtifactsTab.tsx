@@ -4,11 +4,12 @@ import { motion, AnimatePresence } from "framer-motion";
 import {
   Download, Trash2, Eye,
   Loader2, Upload, MoreHorizontal, FolderOpen, RefreshCw, ArrowUpFromLine,
+  Link as LinkIcon, Edit3,
 } from "lucide-react";
 import type { Task } from "../../../../data/types";
 import {
   listArtifacts, previewArtifact, artifactDownloadUrl, deleteArtifact,
-  uploadArtifacts, syncArtifactToResource, listArtifactWorkdirs, addArtifactWorkdir, deleteArtifactWorkdir, openArtifactWorkdir,
+  uploadArtifacts, createArtifactLink, updateArtifactLink, syncArtifactToResource, listArtifactWorkdirs, addArtifactWorkdir, deleteArtifactWorkdir, openArtifactWorkdir,
   listResources,
   type ArtifactFile, type ArtifactWorkDirectoryEntry,
 } from "../../../../api";
@@ -23,7 +24,12 @@ import {
   formatSize,
   formatTime,
   FileConflictDialog,
+  AddLinkDialog,
+  isLinkFile,
+  linkDisplayName,
+  parseLinkFile,
 } from "../../../ui";
+import { openExternalUrl } from "../../../../utils/openExternal";
 
 interface ArtifactsTabProps {
   projectId?: string;
@@ -69,6 +75,11 @@ export function ArtifactsTab({ projectId, task, previewRequest, lastChatIdleAt, 
 
   const [isUploading, setIsUploading] = useState(false);
   const isUploadingRef = useRef(false);
+  const [addLinkOpen, setAddLinkOpen] = useState(false);
+  const [editLink, setEditLink] = useState<{
+    file: ArtifactFile;
+    initial: { name: string; url: string; description?: string };
+  } | null>(null);
   const [isDragOver, setIsDragOver] = useState(false);
   const dragCountRef = useRef(0);
   const [uploadsOpen, setUploadsOpen] = useState(true);
@@ -338,7 +349,43 @@ export function ArtifactsTab({ projectId, task, previewRequest, lastChatIdleAt, 
 
   const handleDownload = useCallback((file: ArtifactFile) => {
     if (!projectId || file.is_dir) return;
-    downloadViaIframe(artifactDownloadUrl(projectId, task.id, file.directory, file.path));
+    downloadViaIframe(
+      artifactDownloadUrl(projectId, task.id, file.directory, file.path),
+      file.name,
+    );
+  }, [projectId, task.id]);
+
+  const handleOpenLink = useCallback(async (file: ArtifactFile) => {
+    if (!projectId) return;
+    try {
+      const raw = await previewArtifact(projectId, task.id, file.directory, file.path);
+      const parsed = parseLinkFile(raw);
+      if (!parsed) {
+        setError("Malformed link file");
+        return;
+      }
+      openExternalUrl(parsed.url);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to open link");
+    }
+  }, [projectId, task.id]);
+
+  const handleEditLink = useCallback(async (file: ArtifactFile) => {
+    if (!projectId) return;
+    try {
+      const raw = await previewArtifact(projectId, task.id, file.directory, file.path);
+      const parsed = parseLinkFile(raw);
+      if (!parsed) {
+        setError("Malformed link file");
+        return;
+      }
+      setEditLink({
+        file,
+        initial: { name: parsed.name, url: parsed.url, description: parsed.description },
+      });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to load link");
+    }
   }, [projectId, task.id]);
 
   const handleDelete = useCallback(async (file: ArtifactFile) => {
@@ -513,6 +560,7 @@ export function ArtifactsTab({ projectId, task, previewRequest, lastChatIdleAt, 
             onToggle={() => setUploadsOpen(!uploadsOpen)}
             onRefresh={uploadsTab === "uploads" ? () => { void loadFiles(); } : loadWorkdirs}
             onUpload={uploadsTab === "uploads" ? () => fileInputRef.current?.click() : handleAddWorkdir}
+            onAddLink={uploadsTab === "uploads" ? () => setAddLinkOpen(true) : undefined}
             onOpenFolder={uploadsTab === "uploads" ? () => handleOpenFolder("input") : undefined}
             isUploading={uploadsTab === "uploads" ? isUploading : isAddingWorkdir}
             uploadLabel={uploadsTab === "uploads" ? "Upload" : "Add Folder"}
@@ -536,7 +584,7 @@ export function ArtifactsTab({ projectId, task, previewRequest, lastChatIdleAt, 
                 {inputFiles.filter(f => !f.is_dir).map((file) => (
                   <FileCard key={file.path} file={file} projectId={projectId} taskId={task.id}
                     onPreview={handlePreview} onDownload={handleDownload} onDelete={handleDelete} allowDelete
-                    onSyncToResource={handleSyncToResource} />
+                    onSyncToResource={handleSyncToResource} onOpenLink={handleOpenLink} onEditLink={handleEditLink} />
                 ))}
                 {inputFileCount === 0 && (
                   <button onClick={() => fileInputRef.current?.click()}
@@ -666,7 +714,7 @@ export function ArtifactsTab({ projectId, task, previewRequest, lastChatIdleAt, 
               ) : (
                 <FileCard key={entry.path} file={entry} projectId={projectId} taskId={task.id}
                   onPreview={handlePreview} onDownload={handleDownload}
-                  onSyncToResource={handleSyncToResource} />
+                  onSyncToResource={handleSyncToResource} onOpenLink={handleOpenLink} onEditLink={handleEditLink} />
               )
             ))}
             {outputFileCount === 0 && (
@@ -723,6 +771,30 @@ export function ArtifactsTab({ projectId, task, previewRequest, lastChatIdleAt, 
           </motion.div>
         )}
       </AnimatePresence>
+      <AddLinkDialog
+        open={addLinkOpen}
+        title="Add Link to Uploads"
+        onClose={() => setAddLinkOpen(false)}
+        onSubmit={async (payload) => {
+          if (!projectId) return;
+          await createArtifactLink(projectId, task.id, payload);
+          await loadFiles();
+          setToastMessage(`Added link "${payload.name}"`);
+        }}
+      />
+      <AddLinkDialog
+        open={!!editLink}
+        title="Edit Link"
+        submitLabel="Save"
+        initial={editLink?.initial}
+        onClose={() => setEditLink(null)}
+        onSubmit={async (payload) => {
+          if (!projectId || !editLink) return;
+          await updateArtifactLink(projectId, task.id, editLink.file.path, payload);
+          await loadFiles();
+          setToastMessage(`Updated link "${payload.name}"`);
+        }}
+      />
     </div>
   );
 }
@@ -755,6 +827,7 @@ function SectionHeader({
   isOpen,
   onToggle,
   onUpload,
+  onAddLink,
   onOpenFolder,
   onRefresh,
   isUploading,
@@ -768,6 +841,7 @@ function SectionHeader({
   isOpen?: boolean;
   onToggle?: () => void;
   onUpload?: () => void;
+  onAddLink?: () => void;
   onOpenFolder?: () => void;
   onRefresh?: () => void;
   isUploading?: boolean;
@@ -832,6 +906,17 @@ function SectionHeader({
             onMouseEnter={e => { e.currentTarget.style.background = "var(--color-bg-tertiary)"; e.currentTarget.style.color = "var(--color-text)"; }}
             onMouseLeave={e => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.color = "var(--color-text-muted)"; }}>
             <FolderOpen className="w-3.5 h-3.5" />
+          </button>
+        )}
+        {isOpen !== false && onAddLink && (
+          <button onClick={onAddLink}
+            className="flex items-center gap-1 px-2.5 py-1 rounded text-[11px] font-medium transition-colors"
+            title="Add Link"
+            style={{ color: "var(--color-text-muted)", border: "1px solid var(--color-border)", background: "none" }}
+            onMouseEnter={e => { e.currentTarget.style.color = "var(--color-text)"; e.currentTarget.style.borderColor = "var(--color-text-muted)"; }}
+            onMouseLeave={e => { e.currentTarget.style.color = "var(--color-text-muted)"; e.currentTarget.style.borderColor = "var(--color-border)"; }}>
+            <LinkIcon className="w-3 h-3" />
+            Add Link
           </button>
         )}
         {isOpen !== false && onUpload && (
@@ -928,16 +1013,20 @@ function FolderEntryRow({
 /* ─── FileCard ─── */
 
 function FileCard({
-  file, projectId, taskId, onPreview, onDownload, onDelete, allowDelete, onSyncToResource,
+  file, projectId, taskId, onPreview, onDownload, onDelete, allowDelete, onSyncToResource, onOpenLink, onEditLink,
 }: {
   file: ArtifactFile; projectId?: string; taskId: string;
   onPreview: (f: ArtifactFile) => void; onDownload: (f: ArtifactFile) => void;
   onDelete?: (f: ArtifactFile) => void; allowDelete?: boolean;
   onSyncToResource?: (f: ArtifactFile) => void;
+  onOpenLink?: (f: ArtifactFile) => void;
+  onEditLink?: (f: ArtifactFile) => void;
 }) {
-  const canPreview = canPreviewFile(file.name);
+  const isLink = isLinkFile(file.name);
+  const canPreview = !isLink && canPreviewFile(file.name);
   const ext = getExtBadge(file.name);
-  const isImage = getPreviewType(file.name) === "image";
+  const isImage = !isLink && getPreviewType(file.name) === "image";
+  const displayName = isLink ? linkDisplayName(file.name) : (file.path.includes("/") ? file.path : file.name);
   const [showMenu, setShowMenu] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
   const btnRef = useRef<HTMLButtonElement>(null);
@@ -964,11 +1053,16 @@ function FileCard({
   return (
     <div
       className="group flex items-center gap-3 px-3 py-2 rounded-lg transition-all cursor-pointer"
-      onClick={() => canPreview ? onPreview(file) : onDownload(file)}
+      onClick={() => isLink ? onOpenLink?.(file) : canPreview ? onPreview(file) : onDownload(file)}
       onMouseEnter={e => e.currentTarget.style.background = "var(--color-bg-secondary)"}
       onMouseLeave={e => e.currentTarget.style.background = "transparent"}
     >
-      {isImage && projectId ? (
+      {isLink ? (
+        <div className="w-9 h-9 rounded-lg flex items-center justify-center shrink-0"
+          style={{ background: "color-mix(in srgb, var(--color-highlight) 10%, transparent)", border: "1px solid color-mix(in srgb, var(--color-highlight) 25%, transparent)" }}>
+          <LinkIcon className="w-4 h-4" style={{ color: "var(--color-highlight)" }} />
+        </div>
+      ) : isImage && projectId ? (
         <div className="w-9 h-9 rounded-lg overflow-hidden shrink-0"
           style={{ background: "var(--color-bg-tertiary)", border: "1px solid var(--color-border)" }}>
           <img src={artifactDownloadUrl(projectId, taskId, file.directory, file.path)} alt="" className="w-full h-full object-cover" />
@@ -982,7 +1076,7 @@ function FileCard({
 
       <div className="flex-1 min-w-0">
         <span className="text-[13px] truncate font-medium block">
-          {file.path.includes("/") ? file.path : file.name}
+          {displayName}
         </span>
         <div className="flex items-center gap-1.5 mt-0.5">
           {ext && (
@@ -991,11 +1085,17 @@ function FileCard({
               {ext}
             </span>
           )}
-          <span className="text-[11px] tabular-nums" style={{ color: "var(--color-text-muted)" }}>{formatSize(file.size)}</span>
-          {file.modified_at && (
+          {isLink ? (
+            <span className="text-[11px] truncate" style={{ color: "var(--color-text-muted)" }}>external link</span>
+          ) : (
             <>
-              <span style={{ color: "var(--color-border)" }}>·</span>
-              <span className="text-[11px]" style={{ color: "var(--color-text-muted)", opacity: 0.6 }}>{formatTime(file.modified_at)}</span>
+              <span className="text-[11px] tabular-nums" style={{ color: "var(--color-text-muted)" }}>{formatSize(file.size)}</span>
+              {file.modified_at && (
+                <>
+                  <span style={{ color: "var(--color-border)" }}>·</span>
+                  <span className="text-[11px]" style={{ color: "var(--color-text-muted)", opacity: 0.6 }}>{formatTime(file.modified_at)}</span>
+                </>
+              )}
             </>
           )}
         </div>
@@ -1011,6 +1111,22 @@ function FileCard({
       {showMenu && menuPos && createPortal(
         <div ref={menuRef} className="fixed z-[9999] min-w-[140px] rounded-lg shadow-lg py-1"
           style={{ top: menuPos.top, left: menuPos.left, background: "var(--color-bg)", border: "1px solid var(--color-border)" }}>
+          {isLink && onOpenLink && (
+            <button onClick={(e) => { e.stopPropagation(); setShowMenu(false); onOpenLink(file); }}
+              className="w-full flex items-center gap-2 px-3 py-1.5 text-xs transition-colors"
+              onMouseEnter={e => e.currentTarget.style.background = "var(--color-bg-secondary)"}
+              onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
+              <LinkIcon className="w-3.5 h-3.5" /> Open in browser
+            </button>
+          )}
+          {isLink && onEditLink && (
+            <button onClick={(e) => { e.stopPropagation(); setShowMenu(false); onEditLink(file); }}
+              className="w-full flex items-center gap-2 px-3 py-1.5 text-xs transition-colors"
+              onMouseEnter={e => e.currentTarget.style.background = "var(--color-bg-secondary)"}
+              onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
+              <Edit3 className="w-3.5 h-3.5" /> Edit
+            </button>
+          )}
           {canPreview && (
             <button onClick={(e) => { e.stopPropagation(); setShowMenu(false); onPreview(file); }}
               className="w-full flex items-center gap-2 px-3 py-1.5 text-xs transition-colors"
@@ -1019,12 +1135,14 @@ function FileCard({
               <Eye className="w-3.5 h-3.5" /> Preview
             </button>
           )}
-          <button onClick={(e) => { e.stopPropagation(); setShowMenu(false); onDownload(file); }}
-            className="w-full flex items-center gap-2 px-3 py-1.5 text-xs transition-colors"
-            onMouseEnter={e => e.currentTarget.style.background = "var(--color-bg-secondary)"}
-            onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
-            <Download className="w-3.5 h-3.5" /> Download
-          </button>
+          {!isLink && (
+            <button onClick={(e) => { e.stopPropagation(); setShowMenu(false); onDownload(file); }}
+              className="w-full flex items-center gap-2 px-3 py-1.5 text-xs transition-colors"
+              onMouseEnter={e => e.currentTarget.style.background = "var(--color-bg-secondary)"}
+              onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
+              <Download className="w-3.5 h-3.5" /> Download
+            </button>
+          )}
           {onSyncToResource && (
             <button onClick={(e) => { e.stopPropagation(); setShowMenu(false); onSyncToResource(file); }}
               className="w-full flex items-center gap-2 px-3 py-1.5 text-xs transition-colors"

@@ -38,7 +38,7 @@ path = "src/main.rs"
 
 [features]
 default = []
-gui = ["dep:tauri", "dep:tauri-plugin-shell", "dep:tauri-build"]
+gui = ["dep:tauri", "dep:tauri-plugin-shell", "dep:tauri-build", "dep:rfd"]
 
 [dependencies]
 ratatui = "0.29"
@@ -87,6 +87,7 @@ tokio-tungstenite = { version = "0.26", default-features = false, features = ["c
 # GUI (Tauri) - optional
 tauri = { version = "2", optional = true , features = [] }
 tauri-plugin-shell = { version = "2", optional = true }
+rfd = { version = "0.15", optional = true }
 rusqlite = { version = "0.34", features = ["bundled"] }
 similar = "2.7.0"
 getrandom = "0.2"

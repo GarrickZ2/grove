@@ -19,5 +19,6 @@ pub mod taskgroups;
 pub mod tasks;
 pub mod terminal;
 pub mod update;
+pub mod url_metadata;
 pub mod version;
 pub mod walkie_talkie;

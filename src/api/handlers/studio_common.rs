@@ -362,6 +362,253 @@ pub struct UploadedFile {
     pub is_dir: bool,
 }
 
+/// Payload for creating a `.link.json` sidecar. Shared between artifact
+/// and resource link handlers.
+#[derive(Debug, Deserialize)]
+pub struct CreateLinkRequest {
+    pub name: String,
+    pub url: String,
+    #[serde(default)]
+    pub description: Option<String>,
+    /// Optional subdirectory relative to the base dir (e.g. for nested resource folders).
+    #[serde(default)]
+    pub path: Option<String>,
+}
+
+/// Write a `<slug>.link.json` file into `base_dir` (optionally into a
+/// relative subdir). Returns the UploadedFile descriptor so callers can
+/// shape it into the API response they need.
+///
+/// Fails on invalid URL, missing name, or path traversal attempts.
+pub fn write_link_file(
+    base_dir: &Path,
+    sub_path: Option<&str>,
+    name: &str,
+    url: &str,
+    description: Option<&str>,
+) -> Result<UploadedFile, ApiErr> {
+    let trimmed_name = name.trim();
+    if trimmed_name.is_empty() {
+        return Err(ApiError::bad_request("Name is required"));
+    }
+    let trimmed_url = url.trim();
+    if !(trimmed_url.starts_with("http://") || trimmed_url.starts_with("https://")) {
+        return Err(ApiError::bad_request("URL must be http(s)"));
+    }
+
+    let dest_dir = match sub_path {
+        Some(sub) if !sub.is_empty() => base_dir.join(sub),
+        _ => base_dir.to_path_buf(),
+    };
+    fs::create_dir_all(&dest_dir).map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ApiError {
+                error: format!("Failed to create directory: {e}"),
+            }),
+        )
+    })?;
+
+    // Slugify to a safe filename and disambiguate on collision.
+    let base_slug = slugify_for_filename(trimmed_name);
+    let mut filename = format!("{base_slug}.link.json");
+    let mut counter = 1;
+    while dest_dir.join(&filename).exists() {
+        counter += 1;
+        filename = format!("{base_slug}-{counter}.link.json");
+        if counter > 999 {
+            return Err(ApiError::bad_request("Too many links with the same name"));
+        }
+    }
+
+    let file_path = dest_dir.join(&filename);
+    let created_at = Utc::now().to_rfc3339();
+    let payload = serde_json::json!({
+        "name": trimmed_name,
+        "url": trimmed_url,
+        "description": description.map(|d| d.trim()).filter(|d| !d.is_empty()),
+        "created_at": created_at,
+    });
+    let body = serde_json::to_vec_pretty(&payload).map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ApiError {
+                error: format!("Failed to serialize link: {e}"),
+            }),
+        )
+    })?;
+    fs::write(&file_path, &body).map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ApiError {
+                error: format!("Failed to write link file: {e}"),
+            }),
+        )
+    })?;
+
+    let relative_path = match sub_path {
+        Some(sub) if !sub.is_empty() => format!("{}/{}", sub.trim_end_matches('/'), filename),
+        _ => filename.clone(),
+    };
+    Ok(UploadedFile {
+        name: filename,
+        path: relative_path,
+        size: body.len() as u64,
+        modified_at: created_at,
+        is_dir: false,
+    })
+}
+
+/// Convert a human name into a filename-safe slug. Preserves unicode
+/// word chars; collapses everything else to `-`.
+fn slugify_for_filename(input: &str) -> String {
+    let mut out = String::with_capacity(input.len());
+    let mut last_dash = false;
+    for ch in input.chars() {
+        if ch.is_alphanumeric() || ch == '_' {
+            out.push(ch);
+            last_dash = false;
+        } else if !last_dash {
+            out.push('-');
+            last_dash = true;
+        }
+    }
+    let trimmed = out.trim_matches('-');
+    if trimmed.is_empty() {
+        "link".to_string()
+    } else {
+        trimmed.to_string()
+    }
+}
+
+/// Update an existing `.link.json` file in place. The original `created_at`
+/// is preserved; everything else is overwritten. If the new name resolves
+/// to a different filename, the old file is moved to the new path.
+///
+/// `old_relative_path` must point at an existing `.link.json` inside
+/// `base_dir` (validated via containment check).
+pub fn update_link_file(
+    base_dir: &Path,
+    old_relative_path: &str,
+    new_name: &str,
+    new_url: &str,
+    new_description: Option<&str>,
+) -> Result<UploadedFile, ApiErr> {
+    let trimmed_name = new_name.trim();
+    if trimmed_name.is_empty() {
+        return Err(ApiError::bad_request("Name is required"));
+    }
+    let trimmed_url = new_url.trim();
+    if !(trimmed_url.starts_with("http://") || trimmed_url.starts_with("https://")) {
+        return Err(ApiError::bad_request("URL must be http(s)"));
+    }
+
+    let old_full = validate_path_containment(base_dir, &base_dir.join(old_relative_path))?;
+    if !old_full.is_file() {
+        return Err(ApiError::not_found("Link file not found"));
+    }
+    if !old_full
+        .file_name()
+        .and_then(|n| n.to_str())
+        .map(|n| n.to_ascii_lowercase().ends_with(".link.json"))
+        .unwrap_or(false)
+    {
+        return Err(ApiError::bad_request("Target is not a link file"));
+    }
+
+    // Preserve original created_at from the existing JSON so users don't
+    // lose provenance after an edit. Falls back to now() on malformed input.
+    let old_bytes = fs::read(&old_full).map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ApiError {
+                error: format!("Failed to read link file: {e}"),
+            }),
+        )
+    })?;
+    let created_at = serde_json::from_slice::<serde_json::Value>(&old_bytes)
+        .ok()
+        .and_then(|v| {
+            v.get("created_at")
+                .and_then(|c| c.as_str())
+                .map(|s| s.to_string())
+        })
+        .unwrap_or_else(|| Utc::now().to_rfc3339());
+
+    // Resolve the new filename inside the SAME directory as the old file,
+    // so editing a link in a resource subfolder keeps it there.
+    let parent_dir = old_full.parent().unwrap_or(base_dir).to_path_buf();
+    let base_slug = slugify_for_filename(trimmed_name);
+    let mut new_filename = format!("{base_slug}.link.json");
+    let old_filename = old_full
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("")
+        .to_string();
+    let mut counter = 1;
+    while new_filename != old_filename && parent_dir.join(&new_filename).exists() {
+        counter += 1;
+        new_filename = format!("{base_slug}-{counter}.link.json");
+        if counter > 999 {
+            return Err(ApiError::bad_request("Too many links with the same name"));
+        }
+    }
+    let new_full = parent_dir.join(&new_filename);
+
+    let payload = serde_json::json!({
+        "name": trimmed_name,
+        "url": trimmed_url,
+        "description": new_description.map(|d| d.trim()).filter(|d| !d.is_empty()),
+        "created_at": created_at,
+    });
+    let body = serde_json::to_vec_pretty(&payload).map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ApiError {
+                error: format!("Failed to serialize link: {e}"),
+            }),
+        )
+    })?;
+
+    // Write new then remove old — if the rename straddles a mv the old path
+    // is different, and we want the write to succeed before we delete.
+    fs::write(&new_full, &body).map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ApiError {
+                error: format!("Failed to write link file: {e}"),
+            }),
+        )
+    })?;
+    if new_full != old_full {
+        if let Err(e) = fs::remove_file(&old_full) {
+            // Best-effort: if we can't remove the old file, surface it so
+            // users aren't left with two copies silently.
+            return Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiError {
+                    error: format!("Wrote new link but failed to remove old file: {e}"),
+                }),
+            ));
+        }
+    }
+
+    // Compute the path relative to base_dir (preserving subfolder prefix).
+    let rel = new_full
+        .strip_prefix(base_dir)
+        .unwrap_or(&new_full)
+        .to_string_lossy()
+        .replace('\\', "/");
+    let meta = fs::metadata(&new_full).ok();
+    Ok(UploadedFile {
+        name: new_filename,
+        path: rel,
+        size: meta.as_ref().map(|m| m.len()).unwrap_or(body.len() as u64),
+        modified_at: Utc::now().to_rfc3339(),
+        is_dir: false,
+    })
+}
+
 /// Validate `target_path` is an absolute, existing directory and create a
 /// symlink to it inside `workdir_dir`. Returns the new entry.
 pub fn create_workdir_symlink(

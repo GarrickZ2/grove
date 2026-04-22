@@ -562,7 +562,8 @@ function createFileChip(
     "font-size:12px;font-weight:500;color:var(--color-warning);" +
     "margin:0 2px;user-select:none;vertical-align:baseline;line-height:1.5;";
 
-  // Icon (Folder or File)
+  const isLink = filePath.toLowerCase().endsWith(".link.json");
+  // Icon (Link / Folder / File)
   const icon = document.createElementNS("http://www.w3.org/2000/svg", "svg");
   icon.setAttribute("width", "12");
   icon.setAttribute("height", "12");
@@ -573,15 +574,29 @@ function createFileChip(
   icon.setAttribute("stroke-linecap", "round");
   icon.setAttribute("stroke-linejoin", "round");
   icon.style.cssText = "flex-shrink:0;";
-  const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
-  if (isDir) {
-    // Lucide Folder icon
+  if (isLink) {
+    // Lucide Link icon (two connected chain segments)
+    const p1 = document.createElementNS("http://www.w3.org/2000/svg", "path");
+    p1.setAttribute(
+      "d",
+      "M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71",
+    );
+    const p2 = document.createElementNS("http://www.w3.org/2000/svg", "path");
+    p2.setAttribute(
+      "d",
+      "M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71",
+    );
+    icon.appendChild(p1);
+    icon.appendChild(p2);
+  } else if (isDir) {
+    const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
     path.setAttribute(
       "d",
       "M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z",
     );
+    icon.appendChild(path);
   } else {
-    // Lucide FileText icon
+    const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
     path.setAttribute(
       "d",
       "M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z",
@@ -591,9 +606,9 @@ function createFileChip(
       "polyline",
     );
     poly.setAttribute("points", "14 2 14 8 20 8");
+    icon.appendChild(path);
     icon.appendChild(poly);
   }
-  icon.appendChild(path);
   chip.appendChild(icon);
 
   const label = document.createElement("span");

@@ -238,6 +238,27 @@ export function moveResource(id: string, from: string, to: string, options?: { f
   return resourceApi(id).move(from, to, options);
 }
 
+export async function createResourceLink(
+  id: string,
+  payload: { name: string; url: string; description?: string; path?: string },
+): Promise<ResourceFile> {
+  return apiClient.post<typeof payload, ResourceFile>(
+    `/api/v1/projects/${id}/resource/link`,
+    payload,
+  );
+}
+
+export async function updateResourceLink(
+  id: string,
+  oldPath: string,
+  payload: { name: string; url: string; description?: string },
+): Promise<ResourceFile> {
+  return apiClient.patch<typeof payload, ResourceFile>(
+    `/api/v1/projects/${id}/resource/link?path=${encodeURIComponent(oldPath)}`,
+    payload,
+  );
+}
+
 export async function getInstructions(id: string): Promise<{ content: string }> {
   return apiClient.get<{ content: string }>(`/api/v1/projects/${id}/instructions`);
 }

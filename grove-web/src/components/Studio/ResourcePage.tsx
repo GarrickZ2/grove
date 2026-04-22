@@ -6,12 +6,13 @@ import {
   FolderOpen, Save, FileText, RefreshCw, Sparkles,
   Search, ArrowRight, Files, ShieldCheck, Clock3, Plus, X, Brain,
   FolderPlus, ChevronRight, Pencil, Check, CornerLeftUp, Edit3,
+  Link as LinkIcon,
 } from "lucide-react";
 import { useProject } from "../../context";
 import {
   listResources, uploadResource, deleteResource,
   previewResource, resourceDownloadUrl,
-  createResourceFolder, moveResource,
+  createResourceFolder, moveResource, createResourceLink, updateResourceLink,
   getInstructions, updateInstructions,
   getMemory, updateMemory,
   listResourceWorkdirs, addResourceWorkdir, deleteResourceWorkdir, openResourceWorkdir,
@@ -29,8 +30,13 @@ import {
   formatSize,
   formatTime,
   FileConflictDialog,
+  AddLinkDialog,
+  isLinkFile,
+  linkDisplayName,
+  parseLinkFile,
   type FileConflictState,
 } from "../ui";
+import { openExternalUrl } from "../../utils/openExternal";
 
 const DRAG_TYPE = "application/x-grove-resource-path";
 
@@ -96,6 +102,11 @@ export function ResourcePage() {
   const [isLoadingWorkdirs, setIsLoadingWorkdirs] = useState(true);
   const [workdirError, setWorkdirError] = useState<string | null>(null);
   const [isAddingWorkdir, setIsAddingWorkdir] = useState(false);
+  const [addLinkOpen, setAddLinkOpen] = useState(false);
+  const [editLink, setEditLink] = useState<{
+    file: ResourceFile;
+    initial: { name: string; url: string; description?: string };
+  } | null>(null);
 
   // File manager state
   const [currentPath, setCurrentPath] = useState("");
@@ -452,8 +463,41 @@ export function ResourcePage() {
 
   const handleDownload = (file: ResourceFile) => {
     if (!projectId || file.is_dir) return;
-    downloadViaIframe(resourceDownloadUrl(projectId, file.path));
+    downloadViaIframe(resourceDownloadUrl(projectId, file.path), file.name);
   };
+
+  const handleOpenLink = useCallback(async (file: ResourceFile) => {
+    if (!projectId) return;
+    try {
+      const raw = await previewResource(projectId, file.path);
+      const parsed = parseLinkFile(raw);
+      if (!parsed) {
+        setFileError("Malformed link file");
+        return;
+      }
+      openExternalUrl(parsed.url);
+    } catch (err) {
+      setFileError(err instanceof Error ? err.message : "Failed to open link");
+    }
+  }, [projectId]);
+
+  const handleEditLink = useCallback(async (file: ResourceFile) => {
+    if (!projectId) return;
+    try {
+      const raw = await previewResource(projectId, file.path);
+      const parsed = parseLinkFile(raw);
+      if (!parsed) {
+        setFileError("Malformed link file");
+        return;
+      }
+      setEditLink({
+        file,
+        initial: { name: parsed.name, url: parsed.url, description: parsed.description },
+      });
+    } catch (err) {
+      setFileError(err instanceof Error ? err.message : "Failed to load link");
+    }
+  }, [projectId]);
 
   const navigateTo = (path: string) => {
     setCurrentPath(path);
@@ -549,6 +593,17 @@ export function ResourcePage() {
                 onMouseLeave={e => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.color = "var(--color-text-muted)"; }}
                 title="New folder">
                 <FolderPlus className="w-4 h-4" />
+              </button>
+            )}
+            {activeTab === "uploads" && (
+              <button
+                onClick={() => setAddLinkOpen(true)}
+                className="p-2 rounded-lg transition-colors"
+                style={{ color: "var(--color-text-muted)" }}
+                onMouseEnter={e => { e.currentTarget.style.background = "var(--color-bg-tertiary)"; e.currentTarget.style.color = "var(--color-text)"; }}
+                onMouseLeave={e => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.color = "var(--color-text-muted)"; }}
+                title="Add Link">
+                <LinkIcon className="w-4 h-4" />
               </button>
             )}
             <button
@@ -770,6 +825,8 @@ export function ResourcePage() {
                       onPreview={handlePreview}
                       onDownload={handleDownload}
                       onDelete={handleDelete}
+                      onOpenLink={handleOpenLink}
+                      onEditLink={handleEditLink}
                       onStartRename={() => { setRenamingPath(file.path); setRenameValue(file.name); }}
                       onRenameChange={setRenameValue}
                       onRenameConfirm={() => handleRenameFile(file.path, renameValue)}
@@ -1174,6 +1231,32 @@ export function ResourcePage() {
         )}
       </AnimatePresence>
 
+      <AddLinkDialog
+        open={addLinkOpen}
+        title="Add Link to Shared Assets"
+        onClose={() => setAddLinkOpen(false)}
+        onSubmit={async (payload) => {
+          if (!projectId) return;
+          await createResourceLink(projectId, {
+            ...payload,
+            path: currentPath || undefined,
+          });
+          await loadFiles();
+        }}
+      />
+      <AddLinkDialog
+        open={!!editLink}
+        title="Edit Link"
+        submitLabel="Save"
+        initial={editLink?.initial}
+        onClose={() => setEditLink(null)}
+        onSubmit={async (payload) => {
+          if (!projectId || !editLink) return;
+          await updateResourceLink(projectId, editLink.file.path, payload);
+          await loadFiles();
+        }}
+      />
+
       {/* Page header */}
       <section
         className="rounded-2xl border px-4 py-3 sm:px-5"
@@ -1538,7 +1621,7 @@ function ResourceFolderRow({
 
 function ResourceFileRow({
   file, isRenaming, renameValue, renameInputRef,
-  onPreview, onDownload, onDelete,
+  onPreview, onDownload, onDelete, onOpenLink, onEditLink,
   onStartRename, onRenameChange, onRenameConfirm, onRenameCancel,
   onDragStart, onMoveToParent,
 }: {
@@ -1549,6 +1632,8 @@ function ResourceFileRow({
   onPreview: (f: ResourceFile) => void;
   onDownload: (f: ResourceFile) => void;
   onDelete: (f: ResourceFile) => void;
+  onOpenLink?: (f: ResourceFile) => void;
+  onEditLink?: (f: ResourceFile) => void;
   onStartRename: () => void;
   onRenameChange: (v: string) => void;
   onRenameConfirm: () => void;
@@ -1556,8 +1641,10 @@ function ResourceFileRow({
   onDragStart: (e: React.DragEvent) => void;
   onMoveToParent?: () => void;
 }) {
-  const canPreview = canPreviewFile(file.name);
+  const isLink = isLinkFile(file.name);
+  const canPreview = !isLink && canPreviewFile(file.name);
   const ext = getExtBadge(file.name);
+  const displayLabel = isLink ? linkDisplayName(file.name) : file.name;
   const [showMenu, setShowMenu] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
   const btnRef = useRef<HTMLButtonElement>(null);
@@ -1581,7 +1668,11 @@ function ResourceFileRow({
         background: "color-mix(in srgb, var(--color-bg) 44%, transparent)",
         cursor: isRenaming ? "default" : "grab",
       }}
-      onClick={() => { if (!isRenaming) { if (canPreview) onPreview(file); else onDownload(file); } }}
+      onClick={() => {
+        if (isRenaming) return;
+        if (isLink) { onOpenLink?.(file); return; }
+        if (canPreview) onPreview(file); else onDownload(file);
+      }}
       onDragStart={onDragStart}
       onMouseEnter={e => {
         e.currentTarget.style.background = "var(--color-bg-tertiary)";
@@ -1592,8 +1683,13 @@ function ResourceFileRow({
         e.currentTarget.style.borderColor = "color-mix(in srgb, var(--color-border) 75%, transparent)";
       }}>
       <div className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0"
-        style={{ background: "var(--color-bg)" }}>
-        <VSCodeIcon filename={file.name} size={16} />
+        style={{
+          background: isLink ? "color-mix(in srgb, var(--color-highlight) 10%, transparent)" : "var(--color-bg)",
+          border: isLink ? "1px solid color-mix(in srgb, var(--color-highlight) 25%, transparent)" : undefined,
+        }}>
+        {isLink
+          ? <LinkIcon className="w-4 h-4" style={{ color: "var(--color-highlight)" }} />
+          : <VSCodeIcon filename={file.name} size={16} />}
       </div>
       <div className="flex-1 min-w-0" onClick={e => { if (isRenaming) e.stopPropagation(); }}>
         {isRenaming ? (
@@ -1622,7 +1718,7 @@ function ResourceFileRow({
         ) : (
           <>
             <div className="flex items-center gap-2">
-              <span className="text-[13px] font-medium truncate block">{file.name}</span>
+              <span className="text-[13px] font-medium truncate block">{displayLabel}</span>
               {ext && (
                 <span className="shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em]"
                   style={{
@@ -1634,9 +1730,15 @@ function ResourceFileRow({
               )}
             </div>
             <div className="flex items-center gap-2 mt-1">
-              <span className="text-[11px] tabular-nums" style={{ color: "var(--color-text-muted)" }}>{formatSize(file.size)}</span>
-              <span className="text-[11px] opacity-60" style={{ color: "var(--color-text-muted)" }}>•</span>
-              <span className="text-[11px] opacity-60" style={{ color: "var(--color-text-muted)" }}>{formatTime(file.modified_at)}</span>
+              {isLink ? (
+                <span className="text-[11px] truncate" style={{ color: "var(--color-text-muted)" }}>external link</span>
+              ) : (
+                <>
+                  <span className="text-[11px] tabular-nums" style={{ color: "var(--color-text-muted)" }}>{formatSize(file.size)}</span>
+                  <span className="text-[11px] opacity-60" style={{ color: "var(--color-text-muted)" }}>•</span>
+                  <span className="text-[11px] opacity-60" style={{ color: "var(--color-text-muted)" }}>{formatTime(file.modified_at)}</span>
+                </>
+              )}
             </div>
           </>
         )}
@@ -1661,6 +1763,24 @@ function ResourceFileRow({
       {showMenu && menuPos && createPortal(
         <div ref={menuRef} className="fixed z-[9999] min-w-[140px] rounded-lg shadow-lg py-1"
           style={{ top: menuPos.top, left: menuPos.left, background: "var(--color-bg)", border: "1px solid var(--color-border)" }}>
+          {isLink && onOpenLink && (
+            <button
+              onClick={(e) => { e.stopPropagation(); setShowMenu(false); onOpenLink(file); }}
+              className="w-full flex items-center gap-2 px-3 py-1.5 text-xs transition-colors"
+              onMouseEnter={e => e.currentTarget.style.background = "var(--color-bg-secondary)"}
+              onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
+              <LinkIcon className="w-3.5 h-3.5" /> Open in browser
+            </button>
+          )}
+          {isLink && onEditLink && (
+            <button
+              onClick={(e) => { e.stopPropagation(); setShowMenu(false); onEditLink(file); }}
+              className="w-full flex items-center gap-2 px-3 py-1.5 text-xs transition-colors"
+              onMouseEnter={e => e.currentTarget.style.background = "var(--color-bg-secondary)"}
+              onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
+              <Edit3 className="w-3.5 h-3.5" /> Edit
+            </button>
+          )}
           {canPreview && (
             <button
               onClick={(e) => { e.stopPropagation(); setShowMenu(false); onPreview(file); }}
@@ -1670,20 +1790,24 @@ function ResourceFileRow({
               <Eye className="w-3.5 h-3.5" /> Preview
             </button>
           )}
-          <button
-            onClick={(e) => { e.stopPropagation(); setShowMenu(false); onDownload(file); }}
-            className="w-full flex items-center gap-2 px-3 py-1.5 text-xs transition-colors"
-            onMouseEnter={e => e.currentTarget.style.background = "var(--color-bg-secondary)"}
-            onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
-            <Download className="w-3.5 h-3.5" /> Download
-          </button>
-          <button
-            onClick={(e) => { e.stopPropagation(); setShowMenu(false); onStartRename(); }}
-            className="w-full flex items-center gap-2 px-3 py-1.5 text-xs transition-colors"
-            onMouseEnter={e => e.currentTarget.style.background = "var(--color-bg-secondary)"}
-            onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
-            <Pencil className="w-3.5 h-3.5" /> Rename
-          </button>
+          {!isLink && (
+            <button
+              onClick={(e) => { e.stopPropagation(); setShowMenu(false); onDownload(file); }}
+              className="w-full flex items-center gap-2 px-3 py-1.5 text-xs transition-colors"
+              onMouseEnter={e => e.currentTarget.style.background = "var(--color-bg-secondary)"}
+              onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
+              <Download className="w-3.5 h-3.5" /> Download
+            </button>
+          )}
+          {!isLink && (
+            <button
+              onClick={(e) => { e.stopPropagation(); setShowMenu(false); onStartRename(); }}
+              className="w-full flex items-center gap-2 px-3 py-1.5 text-xs transition-colors"
+              onMouseEnter={e => e.currentTarget.style.background = "var(--color-bg-secondary)"}
+              onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
+              <Pencil className="w-3.5 h-3.5" /> Rename
+            </button>
+          )}
           {onMoveToParent && (
             <button
               onClick={(e) => { e.stopPropagation(); setShowMenu(false); onMoveToParent(); }}

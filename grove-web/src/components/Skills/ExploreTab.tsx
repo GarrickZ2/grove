@@ -462,7 +462,7 @@ export function ExploreTab({ sources, agents, installed, projectPath, onInstalle
           <div className="flex-1 flex flex-col min-h-0">
             <div
               ref={gridContainerRef}
-              className="flex-1 min-h-0 grid gap-3 content-start overflow-hidden"
+              className="flex-1 min-h-0 grid gap-3 content-start overflow-hidden pt-1"
               style={{ gridTemplateColumns: `repeat(auto-fill, minmax(${MIN_CARD_WIDTH}px, 1fr))` }}
             >
               {pagedSkills.map((skill) => (

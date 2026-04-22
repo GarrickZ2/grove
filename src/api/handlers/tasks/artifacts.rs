@@ -337,6 +337,88 @@ pub async fn upload_artifact(
     Ok(Json(files))
 }
 
+/// POST /api/v1/projects/{id}/tasks/{taskId}/artifacts/link
+///
+/// Create a `.link.json` sidecar under `input/` for an external URL. The
+/// link file is listed alongside regular files; agents read it to resolve
+/// the URL and fetch its content.
+pub async fn create_artifact_link(
+    Path((id, task_id)): Path<(String, String)>,
+    Json(request): Json<studio_common::CreateLinkRequest>,
+) -> Result<Json<ArtifactFile>, ApiErr> {
+    let (project, project_key) = find_project_by_id(&id).map_err(|s| {
+        (
+            s,
+            Json(ApiError {
+                error: "Project not found".to_string(),
+            }),
+        )
+    })?;
+    let task_dir = resolve_task_dir(&project, &project_key, &task_id).ok_or_else(task_not_found)?;
+    let input_dir = task_dir.join("input");
+
+    let uploaded = studio_common::write_link_file(
+        &input_dir,
+        request.path.as_deref(),
+        &request.name,
+        &request.url,
+        request.description.as_deref(),
+    )?;
+
+    Ok(Json(ArtifactFile {
+        name: uploaded.name,
+        path: uploaded.path,
+        directory: "input".to_string(),
+        size: uploaded.size,
+        modified_at: uploaded.modified_at,
+        is_dir: false,
+    }))
+}
+
+#[derive(serde::Deserialize)]
+pub struct UpdateLinkQuery {
+    pub path: String,
+}
+
+/// PATCH /api/v1/projects/{id}/tasks/{taskId}/artifacts/link?path=<old>
+///
+/// Overwrite the `.link.json` at `path` with new name/url/description. The
+/// file may be renamed if the new name resolves to a different filename;
+/// the original `created_at` is preserved.
+pub async fn update_artifact_link(
+    Path((id, task_id)): Path<(String, String)>,
+    Query(query): Query<UpdateLinkQuery>,
+    Json(request): Json<studio_common::CreateLinkRequest>,
+) -> Result<Json<ArtifactFile>, ApiErr> {
+    let (project, project_key) = find_project_by_id(&id).map_err(|s| {
+        (
+            s,
+            Json(ApiError {
+                error: "Project not found".to_string(),
+            }),
+        )
+    })?;
+    let task_dir = resolve_task_dir(&project, &project_key, &task_id).ok_or_else(task_not_found)?;
+    let input_dir = task_dir.join("input");
+
+    let updated = studio_common::update_link_file(
+        &input_dir,
+        &query.path,
+        &request.name,
+        &request.url,
+        request.description.as_deref(),
+    )?;
+
+    Ok(Json(ArtifactFile {
+        name: updated.name,
+        path: updated.path,
+        directory: "input".to_string(),
+        size: updated.size,
+        modified_at: updated.modified_at,
+        is_dir: false,
+    }))
+}
+
 /// POST /api/v1/projects/{id}/tasks/{taskId}/artifacts/sync-to-resource
 pub async fn sync_artifact_to_resource(
     Path((id, task_id)): Path<(String, String)>,

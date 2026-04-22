@@ -8,15 +8,59 @@ import { ImageLightbox } from "./ImageLightbox";
 
 
 export function getExtBadge(name: string): string {
+  // `.link.json` sidecars are rendered as link items; show "LINK" instead
+  // of the literal "JSON" extension.
+  if (name.toLowerCase().endsWith(".link.json")) return "LINK";
   return name.split(".").pop()?.toUpperCase() || "";
 }
 
-export function downloadViaIframe(url: string) {
-  const iframe = document.createElement("iframe");
-  iframe.style.display = "none";
-  iframe.src = url;
-  document.body.appendChild(iframe);
-  setTimeout(() => iframe.remove(), 10000);
+type TauriInternals = {
+  invoke: (cmd: string, args?: Record<string, unknown>) => Promise<unknown>;
+};
+
+function getTauriInternals(): TauriInternals | null {
+  const w = window as Window & { __TAURI_INTERNALS__?: TauriInternals };
+  return w.__TAURI_INTERNALS__ ?? null;
+}
+
+function fallbackDownloadViaAnchor(url: string, suggestedName?: string) {
+  // <a download> works in Tauri's webview for same-origin URLs, unlike
+  // <iframe src>, which the webview treats as a navigation attempt.
+  const a = document.createElement("a");
+  a.href = url;
+  if (suggestedName) a.download = suggestedName;
+  a.rel = "noopener";
+  a.style.display = "none";
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(() => a.remove(), 1000);
+}
+
+export function downloadViaIframe(url: string, suggestedName?: string) {
+  const tauri = getTauriInternals();
+  if (tauri) {
+    // In the Tauri desktop build, browser-style downloads don't reach the
+    // OS download manager. Route through a native save dialog instead.
+    const name = suggestedName ?? inferNameFromUrl(url);
+    tauri
+      .invoke("download_file_dialog", { url, suggestedName: name })
+      .catch((err) => {
+        console.error("[downloadFile] Tauri save dialog failed:", err);
+        fallbackDownloadViaAnchor(url, name);
+      });
+    return;
+  }
+  fallbackDownloadViaAnchor(url, suggestedName);
+}
+
+function inferNameFromUrl(url: string): string {
+  try {
+    const u = new URL(url, window.location.origin);
+    const parts = u.pathname.split("/").filter(Boolean);
+    return decodeURIComponent(parts[parts.length - 1] ?? "download");
+  } catch {
+    return "download";
+  }
 }
 
 export function getPreviewType(fileName: string): "image" | "text" | null {

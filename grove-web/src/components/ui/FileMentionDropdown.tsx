@@ -14,6 +14,7 @@ import {
   Video,
   FileArchive,
   File,
+  Link as LinkIcon,
 } from "lucide-react";
 import type { FilteredMentionItem, MentionItem } from "../../utils/fileMention";
 
@@ -23,6 +24,7 @@ import type { FilteredMentionItem, MentionItem } from "../../utils/fileMention";
  * extension so `.md`, `.json`, `.png`, audio, video etc. are visually distinct.
  */
 function iconFor(item: Pick<MentionItem, "category" | "path" | "isDir">) {
+  if (item.path.toLowerCase().endsWith(".link.json")) return LinkIcon;
   switch (item.category) {
     case "Instruction":
       return BookOpen;

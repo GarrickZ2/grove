@@ -167,6 +167,69 @@ pub async fn upload_resource(
     Ok(Json(files))
 }
 
+/// POST /api/v1/projects/{id}/resource/link
+///
+/// Create a `.link.json` sidecar in `resource/` for an external URL.
+pub async fn create_resource_link(
+    Path(id): Path<String>,
+    Json(request): Json<studio_common::CreateLinkRequest>,
+) -> Result<Json<ResourceFile>, (StatusCode, Json<ApiError>)> {
+    let (_project, studio_dir) = resolve_studio_dir(&id)?;
+    let resource_dir = studio_dir.join("resource");
+    if let Some(sub) = request.path.as_deref() {
+        if !sub.is_empty() {
+            validate_relative_path(sub)?;
+        }
+    }
+
+    let uploaded = studio_common::write_link_file(
+        &resource_dir,
+        request.path.as_deref(),
+        &request.name,
+        &request.url,
+        request.description.as_deref(),
+    )?;
+
+    Ok(Json(ResourceFile {
+        name: uploaded.name,
+        path: uploaded.path,
+        size: uploaded.size,
+        modified_at: uploaded.modified_at,
+        is_dir: false,
+    }))
+}
+
+#[derive(serde::Deserialize)]
+pub struct UpdateLinkQuery {
+    pub path: String,
+}
+
+/// PATCH /api/v1/projects/{id}/resource/link?path=<old>
+pub async fn update_resource_link(
+    Path(id): Path<String>,
+    Query(query): Query<UpdateLinkQuery>,
+    Json(request): Json<studio_common::CreateLinkRequest>,
+) -> Result<Json<ResourceFile>, (StatusCode, Json<ApiError>)> {
+    let (_project, studio_dir) = resolve_studio_dir(&id)?;
+    let resource_dir = studio_dir.join("resource");
+
+    let updated = studio_common::update_link_file(
+        &resource_dir,
+        &query.path,
+        &request.name,
+        &request.url,
+        request.description.as_deref(),
+    )?;
+
+    Ok(Json(ResourceFile {
+        name: updated.name,
+        path: updated.path,
+        size: updated.size,
+        modified_at: updated.modified_at,
+        is_dir: false,
+    }))
+}
+
 /// DELETE /api/v1/projects/{id}/resource
 pub async fn delete_resource(
     Path(id): Path<String>,
