@@ -7,6 +7,7 @@ import { SketchCanvas } from "./SketchCanvas";
 import { SketchTabBar } from "./SketchTabBar";
 import { SketchHistoryDialog } from "./SketchHistoryDialog";
 import { OPEN_SKETCH_EVENT, type OpenSketchDetail, setSketchNames } from "../../ui/sketchChipCache";
+import { readLastActiveTab, writeLastActiveTab } from "../../../utils/lastActiveTab";
 
 interface Props {
   projectId: string;
@@ -32,6 +33,16 @@ export function SketchPage({ projectId, taskId, isChatBusy, lastChatIdleAt }: Pr
     refresh,
   } = useSketchList(projectId, taskId);
   const [activeId, setActiveId] = useState<string | null>(null);
+
+  // Setter used for user-driven selection changes: updates state AND persists
+  // the new tab so it's restored next time the panel reopens.
+  const selectAndPersist = useCallback(
+    (id: string) => {
+      setActiveId(id);
+      writeLastActiveTab("sketch", projectId, taskId, id);
+    },
+    [projectId, taskId],
+  );
   const [apiRef, setApiRef] = useState<ExcalidrawImperativeAPI | null>(null);
   const [historyOpen, setHistoryOpen] = useState(false);
 
@@ -67,11 +78,21 @@ export function SketchPage({ projectId, taskId, isChatBusy, lastChatIdleAt }: Pr
   useEffect(() => {
     if (sketches.length === 0) return;
     if (!activeId) {
-      setActiveId(sketches[0].id);
+      // Prefer the last-active sketch remembered from a prior visit; fall
+      // back to the first sketch when no memory exists or the remembered
+      // sketch has been deleted.
+      const remembered = readLastActiveTab("sketch", projectId, taskId);
+      const restoredId =
+        remembered && sketches.some((s) => s.id === remembered)
+          ? remembered
+          : sketches[0].id;
+      setActiveId(restoredId);
     } else if (!sketches.some((s) => s.id === activeId)) {
-      setActiveId(sketches[0].id);
+      const fallbackId = sketches[0].id;
+      setActiveId(fallbackId);
+      writeLastActiveTab("sketch", projectId, taskId, fallbackId);
     }
-  }, [sketches, activeId]);
+  }, [sketches, activeId, projectId, taskId]);
 
   // Keep the shared SketchChip name cache in sync with the live sketch index
   // so newly created / renamed / deleted sketches surface correctly in chat
@@ -105,20 +126,20 @@ export function SketchPage({ projectId, taskId, isChatBusy, lastChatIdleAt }: Pr
       if (!detail) return;
       if (detail.projectId !== projectId || detail.taskId !== taskId) return;
       if (!sketches.find((s) => s.id === detail.sketchId)) return;
-      setActiveId(detail.sketchId);
+      selectAndPersist(detail.sketchId);
     };
     window.addEventListener(OPEN_SKETCH_EVENT, handler);
     return () => window.removeEventListener(OPEN_SKETCH_EVENT, handler);
-  }, [projectId, taskId, sketches]);
+  }, [projectId, taskId, sketches, selectAndPersist]);
 
   const handleCreate = useCallback(async () => {
     try {
       const meta = await create(`Sketch ${sketches.length + 1}`);
-      setActiveId(meta.id);
+      selectAndPersist(meta.id);
     } catch (e) {
       console.error("create sketch failed", e);
     }
-  }, [create, sketches.length]);
+  }, [create, sketches.length, selectAndPersist]);
 
   const handleExport = useCallback(async () => {
     if (!apiRef) return;
@@ -149,7 +170,7 @@ export function SketchPage({ projectId, taskId, isChatBusy, lastChatIdleAt }: Pr
       <SketchTabBar
         sketches={sketches}
         activeId={activeId}
-        onSelect={setActiveId}
+        onSelect={selectAndPersist}
         onCreate={handleCreate}
         onDelete={remove}
         onRename={rename}

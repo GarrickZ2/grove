@@ -109,6 +109,15 @@ export function ArtifactsTab({ projectId, task, previewRequest, lastChatIdleAt, 
       .then((content) => {
         if (seq !== liveRefreshSeqRef.current) return;
         lastGoodContentRef.current = content;
+        // Short-circuit when content is unchanged: skipping setState keeps
+        // the preview DOM stable, which preserves the user's scroll
+        // position across Live Preview polls. A real content change still
+        // re-renders (and may shift scroll), which is acceptable.
+        const prev = previewFileRef.current;
+        if (prev && prev.content === content) {
+          setPreviewError(null);
+          return;
+        }
         setPreviewFile({ file, content });
         setPreviewError(null);
       })
@@ -251,7 +260,14 @@ export function ArtifactsTab({ projectId, task, previewRequest, lastChatIdleAt, 
     try {
       const content = await previewArtifact(projectId, task.id, file.directory, file.path);
       lastGoodContentRef.current = content;
-      setPreviewFile({ file, content });
+      // Skip setState when the previewed file and its content are unchanged.
+      // This covers the busy→idle final refresh (line 283) where the agent
+      // didn't actually touch this file — unconditional setState would
+      // re-render FilePreviewDrawer and reset the user's scroll position.
+      const prev = previewFileRef.current;
+      if (!prev || prev.file.path !== file.path || prev.content !== content) {
+        setPreviewFile({ file, content });
+      }
     } catch (err) {
       const message = err && typeof err === 'object' && 'message' in err
         ? (err as { message: string }).message
@@ -272,8 +288,13 @@ export function ArtifactsTab({ projectId, task, previewRequest, lastChatIdleAt, 
     const busy = !!isChatBusy;
     previousChatBusyRef.current = busy;
     if (!wasBusy || busy || !previewFile) return;
-    void handlePreview(previewFile.file, true);
-  }, [isChatBusy, previewFile, handlePreview]);
+    // Use the silent refresher (no loading toggle, no setState when content
+    // is unchanged) so the busy→idle final refresh doesn't unmount the
+    // preview DOM and reset the user's scroll position. handlePreview is
+    // still used for the manual Refresh button where a spinner is expected.
+    const seq = ++liveRefreshSeqRef.current;
+    refreshPreviewContent(previewFile.file, seq);
+  }, [isChatBusy, previewFile, refreshPreviewContent]);
 
   const [pendingPreview, setPendingPreview] = useState<string | null>(null);
 

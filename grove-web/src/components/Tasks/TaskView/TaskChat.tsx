@@ -60,6 +60,7 @@ import {
 } from "../../../utils/fileMention";
 import { useProject } from "../../../context/ProjectContext";
 import { listSketches, type SketchMeta } from "../../../api/sketches";
+import { readLastActiveTab, writeLastActiveTab } from "../../../utils/lastActiveTab";
 import type { Task } from "../../../data/types";
 import { getApiHost, appendHmacToUrl } from "../../../api/client";
 import { useAgentQuota } from "../../../hooks";
@@ -211,6 +212,10 @@ interface PerChatState {
   planFileContent: string;
   isRemoteSession: boolean;
   remoteOwnerName: string;
+  /** Unsent composer draft — innerHTML of the contentEditable input,
+   * preserves text plus any slash/file chips. Restored on chat switch so a
+   * half-typed message isn't lost when the user peeks at another chat. */
+  draftHtml: string;
 }
 
 function defaultPerChatState(): PerChatState {
@@ -234,6 +239,7 @@ function defaultPerChatState(): PerChatState {
     promptCaps: { image: false, audio: false, embeddedContext: false },
     planFilePath: "",
     planFileContent: "",
+    draftHtml: "",
   };
 }
 
@@ -1084,14 +1090,16 @@ export function TaskChat({
     }
   }, [activePermissionMessage]);
 
-  // Filtered slash commands based on current input — match by command name
-  // only (prefix match). Matching against description used to surface noise
-  // like /claude-api ("compaction") or /review when the user typed /compact.
+  // Filtered slash commands based on current input — substring match on
+  // command name only. Name-only avoids the old noise bug where matching
+  // against description surfaced /review when the user typed /compact.
+  // Substring (vs. prefix) gives middle-match support: `/view` finds
+  // `/review`, `/plan` finds `/superpowers:write-plan`.
   const filteredSlashCommands = useMemo(() => {
     if (!slashFilter) return slashCommands;
     const lower = slashFilter.toLowerCase();
     return slashCommands.filter((c) =>
-      c.name.toLowerCase().startsWith(lower),
+      c.name.toLowerCase().includes(lower),
     );
   }, [slashCommands, slashFilter]);
 
@@ -1481,6 +1489,7 @@ export function TaskChat({
       planFileContent,
       isRemoteSession,
       remoteOwnerName,
+      draftHtml: editableRef.current?.innerHTML ?? "",
     });
   }, [
     activeChatId,
@@ -1563,6 +1572,19 @@ export function TaskChat({
     attachCountersRef.current = buildAttachmentCounters(restoredMessages);
     // Point wsRef to this chat's WebSocket
     wsRef.current = wsMapRef.current.get(chatId) ?? null;
+    // Restore the unsent composer draft for this chat. innerHTML round-trip
+    // preserves slash/file chips because click handlers are delegated on the
+    // editable container, not attached to individual chip DOM nodes.
+    const draftHtml = cached?.draftHtml ?? "";
+    const el = editableRef.current;
+    if (el) {
+      el.innerHTML = draftHtml;
+      // Refresh hasContent since we bypassed onInput; attachments were just
+      // cleared above, so drive the flag off the draft alone.
+      const text = el.textContent?.trim() || "";
+      const hasChips = el.querySelector("[data-command],[data-file]") !== null;
+      setHasContent(text.length > 0 || hasChips);
+    }
   }, [updateBusy]);
 
   // ─── Load chats on mount ───────────────────────────────────────────────
@@ -1595,11 +1617,18 @@ export function TaskChat({
           chatList.some((c) => c.id === pending.chatId)
         ) {
           setActiveChatId(pending.chatId);
+          writeLastActiveTab("chat", projectId, task.id, pending.chatId);
           delete (window as unknown as Record<string, unknown>).__grove_pending_chat;
         } else {
-          // Select last chat by default
-          const lastChat = chatList[chatList.length - 1];
-          setActiveChatId(lastChat.id);
+          // Prefer the last-active chat remembered from a prior visit; fall
+          // back to the last chat in the list when no memory exists or the
+          // remembered chat has been deleted.
+          const remembered = readLastActiveTab("chat", projectId, task.id);
+          const restoredId =
+            remembered && chatList.some((c) => c.id === remembered)
+              ? remembered
+              : chatList[chatList.length - 1].id;
+          setActiveChatId(restoredId);
         }
       } catch (err) {
         console.error("Failed to load chats:", err);
@@ -2276,6 +2305,7 @@ export function TaskChat({
       if (chatId === activeChatId) return;
       saveCurrentChatState();
       setActiveChatId(chatId);
+      writeLastActiveTab("chat", projectId, task.id, chatId);
       activeChatIdRef.current = chatId; // Sync ref immediately so WS messages route correctly
       restoreChatState(chatId);
       setShowChatMenu(false);
@@ -2283,7 +2313,7 @@ export function TaskChat({
       await connectChatWs(chatId);
       wsRef.current = wsMapRef.current.get(chatId) ?? null;
     },
-    [activeChatId, saveCurrentChatState, restoreChatState, connectChatWs],
+    [activeChatId, projectId, task.id, saveCurrentChatState, restoreChatState, connectChatWs],
   );
   switchChatRef.current = switchChat;
 
@@ -2355,6 +2385,7 @@ export function TaskChat({
           if (chatId === activeChatId && updated.length > 0) {
             const next = updated[updated.length - 1];
             setActiveChatId(next.id);
+            writeLastActiveTab("chat", projectId, task.id, next.id);
             restoreChatState(next.id);
           }
           return updated;
@@ -3992,7 +4023,11 @@ export function TaskChat({
                   >
                     {filteredSlashCommands.map((cmd, i) => (
                       <button
-                        key={cmd.name}
+                        // Include index because multiple skills may share the
+                        // same name (user + plugin /review etc). Duplicate
+                        // React keys break reconciliation and leave orphan
+                        // DOM nodes that filter can no longer remove.
+                        key={`${cmd.name}-${i}`}
                         ref={(el) => {
                           slashItemRefs.current[i] = el;
                         }}
@@ -4318,7 +4353,7 @@ export function TaskChat({
                         composingRef.current = false;
                         handleInput();
                       }}
-                      className={`overflow-y-auto py-2 text-sm leading-7 text-[var(--color-text)] focus:outline-none flex-1 ${
+                      className={`overflow-y-auto py-2 text-sm leading-6 text-[var(--color-text)] focus:outline-none flex-1 ${
                         isTerminalMode ? "pr-4" : "px-4"
                       } ${
                         isInputExpanded
