@@ -7,12 +7,51 @@
 //! - `Busy`、`Error`、`SessionEnded`、`SessionReady`、`AvailableCommands`、`QueueUpdate` 不持久化
 
 use std::fs;
-use std::io::{BufRead, Write};
+use std::io::{BufRead, Seek, SeekFrom, Write};
 use std::path::PathBuf;
 
 use chrono::{DateTime, Utc};
 
 use crate::acp::AcpUpdate;
+
+/// 单个 `ToolCallUpdate.content` 写入/读取时的最大字节数。超过的部分硬截断。
+const MAX_TOOL_CONTENT_BYTES: usize = 32 * 1024;
+
+/// `load_history` 只读文件尾部这么多字节，避免超大 history.jsonl 把内存打爆。
+const MAX_HISTORY_READ_BYTES: u64 = 50 * 1024 * 1024;
+
+/// 截断标记，附加在被截断的 content 末尾。
+const TRUNCATED_MARKER: &str = "\n...[truncated]";
+
+/// 对 `ToolCallUpdate.content` 做硬截断：超过 `MAX_TOOL_CONTENT_BYTES` 的尾部
+/// 直接砍掉，附加 `TRUNCATED_MARKER`。在 UTF-8 char 边界截断。
+fn truncate_tool_content(content: &mut Option<String>) {
+    if let Some(s) = content {
+        if s.len() > MAX_TOOL_CONTENT_BYTES {
+            let mut cut = MAX_TOOL_CONTENT_BYTES;
+            while cut > 0 && !s.is_char_boundary(cut) {
+                cut -= 1;
+            }
+            s.truncate(cut);
+            s.push_str(TRUNCATED_MARKER);
+        }
+    }
+}
+
+/// 对事件做原地截断（目前只处理 `ToolCallUpdate.content`）。
+fn truncate_update_in_place(update: &mut AcpUpdate) {
+    if let AcpUpdate::ToolCallUpdate { content, .. } = update {
+        truncate_tool_content(content);
+    }
+}
+
+/// 判断事件是否需要截断（超大 content）。用来决定是否 clone。
+fn needs_truncation(update: &AcpUpdate) -> bool {
+    matches!(
+        update,
+        AcpUpdate::ToolCallUpdate { content: Some(c), .. } if c.len() > MAX_TOOL_CONTENT_BYTES
+    )
+}
 
 /// 获取 history.jsonl 路径
 fn history_file_path(project: &str, task_id: &str, chat_id: &str) -> PathBuf {
@@ -53,7 +92,13 @@ pub fn append_event(project: &str, task_id: &str, chat_id: &str, event: &AcpUpda
 
     match fs::OpenOptions::new().create(true).append(true).open(&path) {
         Ok(mut f) => {
-            append_json_line(&mut f, event);
+            if needs_truncation(event) {
+                let mut owned = event.clone();
+                truncate_update_in_place(&mut owned);
+                append_json_line(&mut f, &owned);
+            } else {
+                append_json_line(&mut f, event);
+            }
         }
         Err(e) => {
             eprintln!("[chat_history] Failed to open {}: {}", path.display(), e);
@@ -71,15 +116,37 @@ fn append_json_line(f: &mut fs::File, event: &AcpUpdate) {
     }
 }
 
-/// 从磁盘加载完整 chat 历史
+/// 从磁盘加载 chat 历史。
+///
+/// 为了防止超大 history.jsonl 把内存打爆，只读文件尾部
+/// `MAX_HISTORY_READ_BYTES` 字节。如果在中间 seek，会丢弃第一条不完整的行，
+/// 从下一个 `\n` 开始解析。
+///
+/// 另外对每条事件的 `ToolCallUpdate.content` 做兜底截断，保护历史文件里
+/// 已经写入的超大 content（在截断逻辑上线前生成的）。
 pub fn load_history(project: &str, task_id: &str, chat_id: &str) -> Vec<AcpUpdate> {
     let path = history_file_path(project, task_id, chat_id);
-    let file = match fs::File::open(&path) {
+    let mut file = match fs::File::open(&path) {
         Ok(f) => f,
         Err(_) => return Vec::new(),
     };
 
-    let reader = std::io::BufReader::new(file);
+    let file_len = file.metadata().map(|m| m.len()).unwrap_or(0);
+    let mut skip_partial_first_line = false;
+    if file_len > MAX_HISTORY_READ_BYTES {
+        let start = file_len - MAX_HISTORY_READ_BYTES;
+        if file.seek(SeekFrom::Start(start)).is_ok() {
+            skip_partial_first_line = true;
+        }
+    }
+
+    let mut reader = std::io::BufReader::new(file);
+    if skip_partial_first_line {
+        // 丢弃从 seek 位置到下一个 '\n' 之间的残缺行
+        let mut discard = Vec::new();
+        let _ = reader.read_until(b'\n', &mut discard);
+    }
+
     let mut history = Vec::new();
 
     for line in reader.lines() {
@@ -97,7 +164,8 @@ pub fn load_history(project: &str, task_id: &str, chat_id: &str) -> Vec<AcpUpdat
         let mut last_err: Option<serde_json::Error> = None;
         for item in stream {
             match item {
-                Ok(update) => {
+                Ok(mut update) => {
+                    truncate_update_in_place(&mut update);
                     history.push(update);
                     parsed_any = true;
                 }
@@ -742,6 +810,70 @@ mod tests {
             update, "line1\nline2\nline3",
             "cumulative snapshots should not self-concatenate"
         );
+    }
+
+    /// `truncate_tool_content` 对超过 `MAX_TOOL_CONTENT_BYTES` 的内容硬截断，
+    /// 并附上 truncated 标记；小于阈值的不动。
+    #[test]
+    fn test_truncate_tool_content_hard_cuts_oversize() {
+        // 未超阈值：不动
+        let mut small = Some("hello".to_string());
+        truncate_tool_content(&mut small);
+        assert_eq!(small.as_deref(), Some("hello"));
+
+        // 超阈值：截断到 MAX_TOOL_CONTENT_BYTES + marker
+        let big = "a".repeat(MAX_TOOL_CONTENT_BYTES + 5_000);
+        let mut content = Some(big);
+        truncate_tool_content(&mut content);
+        let truncated = content.unwrap();
+        assert_eq!(
+            truncated.len(),
+            MAX_TOOL_CONTENT_BYTES + TRUNCATED_MARKER.len()
+        );
+        assert!(truncated.ends_with(TRUNCATED_MARKER));
+    }
+
+    /// 超大 content 在 char 边界截断，不会产生非法 UTF-8。
+    #[test]
+    fn test_truncate_tool_content_respects_utf8_boundary() {
+        // 用 3 字节字符填充，使阈值附近正好落在字符中间
+        let ch = "世"; // 3 bytes in UTF-8
+        let count = MAX_TOOL_CONTENT_BYTES / 3 + 100;
+        let s: String = ch.repeat(count);
+        let mut content = Some(s);
+        truncate_tool_content(&mut content);
+        let truncated = content.unwrap();
+        // 验证仍然是合法 UTF-8（is_char_boundary 已保证，这里主要是类型上 String）
+        assert!(truncated.ends_with(TRUNCATED_MARKER));
+        // 截断后的前缀也应是合法 UTF-8 字符的整数倍
+        let prefix = &truncated[..truncated.len() - TRUNCATED_MARKER.len()];
+        assert!(prefix.chars().all(|c| c == '世'));
+    }
+
+    /// `needs_truncation` 只在 ToolCallUpdate.content 超阈值时返回 true。
+    #[test]
+    fn test_needs_truncation_detects_only_oversize_tool_content() {
+        let small = AcpUpdate::ToolCallUpdate {
+            id: "t1".into(),
+            status: "completed".into(),
+            content: Some("tiny".into()),
+            locations: vec![],
+        };
+        assert!(!needs_truncation(&small));
+
+        let big = AcpUpdate::ToolCallUpdate {
+            id: "t1".into(),
+            status: "completed".into(),
+            content: Some("x".repeat(MAX_TOOL_CONTENT_BYTES + 1)),
+            locations: vec![],
+        };
+        assert!(needs_truncation(&big));
+
+        // 其他类型的事件即使带长字符串，也不触发（当前只针对 tool content）
+        let long_msg = AcpUpdate::MessageChunk {
+            text: "x".repeat(MAX_TOOL_CONTENT_BYTES + 1),
+        };
+        assert!(!needs_truncation(&long_msg));
     }
 
     /// locations 合并：同 (path,line) 去重，不同的累加并保持插入顺序。

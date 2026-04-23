@@ -662,6 +662,23 @@ fn create_task_inner(
              `memory.md` is a shared project memory file. It persists across all tasks and\n\
              accumulates knowledge that would otherwise be lost between sessions.\n\
              \n\
+             ### CRITICAL rules — read carefully\n\
+             \n\
+             1. **This `memory.md` is the ONLY memory file you should read or write.** Do NOT\n\
+                read or write your own built-in memory files (e.g. Claude's\n\
+                `~/.claude/.../MEMORY.md`, Gemini's personal memory, or any other\n\
+                agent-private memory system). All memory for this project lives in the\n\
+                `memory.md` shown here. If your tooling would normally write to a private\n\
+                memory location, redirect that content into this file instead.\n\
+             \n\
+             2. **NEVER overwrite `memory.md` with a Write/full-file-replace operation.**\n\
+                The file may already contain an index structure, links to other notes, and\n\
+                entries written by past sessions — a full overwrite will silently destroy\n\
+                that structure. ALWAYS update it with Edit (targeted string replacement) or\n\
+                Append (adding new content at the end). If you need to restructure it, read\n\
+                the full current content first, then make surgical Edits — do not regenerate\n\
+                it from scratch.\n\
+             \n\
              ### On start\n\
              Read `memory.md` before doing anything else. Use it to understand:\n\
              - Project conventions and patterns the team uses\n\
@@ -677,7 +694,8 @@ fn create_task_inner(
              - You made a significant architectural or design decision\n\
              - You learned something about the user's preferences\n\
              \n\
-             Write concisely. Append new insights — do not delete entries unless they are clearly\n\
+             Write concisely. Append new insights (or Edit existing entries in place) — do\n\
+             NOT rewrite the whole file, and do not delete entries unless they are clearly\n\
              outdated or wrong.\n\n\
              ## Presentation Guidelines\n\
              \n\

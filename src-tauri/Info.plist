@@ -14,5 +14,9 @@
     <string>Grove needs access to network volumes to load Git projects you have registered there.</string>
     <key>NSAppleEventsUsageDescription</key>
     <string>Grove uses AppleEvents to launch terminals and editors for your tasks.</string>
+    <key>NSMicrophoneUsageDescription</key>
+    <string>Grove needs microphone access to transcribe your voice into text for AI prompts.</string>
+    <key>NSSpeechRecognitionUsageDescription</key>
+    <string>Grove uses speech recognition to transcribe your voice into text.</string>
 </dict>
 </plist>

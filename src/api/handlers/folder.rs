@@ -72,6 +72,27 @@ pub async fn browse_folder() -> Json<BrowseFolderResponse> {
         }
     }
 
+    // On Windows, use PowerShell's FolderBrowserDialog
+    #[cfg(target_os = "windows")]
+    {
+        let script = "Add-Type -AssemblyName System.Windows.Forms; \
+                      $f = New-Object System.Windows.Forms.FolderBrowserDialog; \
+                      $f.Description = 'Select Git Repository Folder'; \
+                      if ($f.ShowDialog() -eq 'OK') { Write-Output $f.SelectedPath }";
+        let output = Command::new("powershell")
+            .args(["-NoProfile", "-NonInteractive", "-Command", script])
+            .output();
+
+        if let Ok(output) = output {
+            if output.status.success() {
+                let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                if !path.is_empty() {
+                    return Json(BrowseFolderResponse { path: Some(path) });
+                }
+            }
+        }
+    }
+
     // User cancelled or command failed
     Json(BrowseFolderResponse { path: None })
 }

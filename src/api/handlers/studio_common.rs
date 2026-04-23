@@ -644,7 +644,7 @@ pub fn create_workdir_symlink(
     })
 }
 
-/// Open a path in the system file manager (macOS `open` / Linux `xdg-open`).
+/// Open a path in the system file manager (macOS `open` / Linux `xdg-open` / Windows `explorer`).
 pub fn open_in_file_manager(path: &Path) {
     #[cfg(target_os = "macos")]
     {
@@ -653,6 +653,10 @@ pub fn open_in_file_manager(path: &Path) {
     #[cfg(target_os = "linux")]
     {
         let _ = std::process::Command::new("xdg-open").arg(path).spawn();
+    }
+    #[cfg(target_os = "windows")]
+    {
+        let _ = std::process::Command::new("explorer").arg(path).spawn();
     }
 }
 
