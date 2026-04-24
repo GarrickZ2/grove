@@ -145,6 +145,7 @@ export type { UrlMetadata } from './url';
 export type { RenderD2Error } from './render';
 
 export * from './sketches';
+export type { DisplayItem } from './studio-types';
 
 export {
   listTaskGroups,

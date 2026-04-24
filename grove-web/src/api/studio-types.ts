@@ -18,3 +18,12 @@ export interface StudioWorkDirEntry {
   target_path: string;
   exists: boolean;
 }
+
+/**
+ * Merged display item for unified Uploads + Work Directory lists.
+ * Used by ArtifactsTab and ResourcePage to render a single list
+ * that mixes uploaded files with linked work-directory entries.
+ */
+export type DisplayItem<T extends StudioFileEntry = StudioFileEntry> =
+  | { type: "file"; data: T }
+  | { type: "workdir"; data: StudioWorkDirEntry };

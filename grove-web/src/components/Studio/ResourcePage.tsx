@@ -4,7 +4,7 @@ import { AnimatePresence, motion } from "framer-motion";
 import {
   Trash2, Upload, Loader2, MoreHorizontal, Download, Eye,
   FolderOpen, Save, FileText, RefreshCw, Sparkles,
-  Search, ArrowRight, Files, ShieldCheck, Clock3, Plus, X, Brain,
+  Search, ArrowRight, Files, ShieldCheck, Clock3, X, Brain,
   FolderPlus, ChevronRight, Pencil, Check, CornerLeftUp, Edit3,
   Link as LinkIcon,
 } from "lucide-react";
@@ -19,6 +19,7 @@ import {
   type ResourceFile, type WorkDirectoryEntry,
 } from "../../api";
 import { apiClient } from "../../api/client";
+import type { DisplayItem } from "../../api/studio-types";
 import {
   VSCodeIcon,
   FilePreviewDrawer,
@@ -96,13 +97,12 @@ export function ResourcePage() {
   const dragCountRef = useRef(0);
   const isMoveInProgressRef = useRef(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const [activeTab, setActiveTab] = useState<"uploads" | "workdir">("uploads");
   const [mainPanel, setMainPanel] = useState<"assets" | "instructions" | "memory">("assets");
   const [workdirs, setWorkdirs] = useState<WorkDirectoryEntry[]>([]);
   const [isLoadingWorkdirs, setIsLoadingWorkdirs] = useState(true);
   const [workdirError, setWorkdirError] = useState<string | null>(null);
-  const [isAddingWorkdir, setIsAddingWorkdir] = useState(false);
   const [addLinkOpen, setAddLinkOpen] = useState(false);
+  const [isAddingWorkdir, setIsAddingWorkdir] = useState(false);
   const [editLink, setEditLink] = useState<{
     file: ResourceFile;
     initial: { name: string; url: string; description?: string };
@@ -149,6 +149,23 @@ export function ResourcePage() {
       if (a.is_dir !== b.is_dir) return a.is_dir ? -1 : 1;
       return a.name.localeCompare(b.name);
     });
+
+  const filteredWorkdirs = workdirs.filter((w) =>
+    w.name.toLowerCase().includes(searchQuery.toLowerCase()),
+  );
+
+  const mergedItems: DisplayItem<ResourceFile>[] = [
+    ...filteredWorkdirs.map<DisplayItem<ResourceFile>>((w) => ({ type: "workdir", data: w })),
+    ...filteredFiles.map<DisplayItem<ResourceFile>>((f) => ({ type: "file", data: f })),
+  ];
+  mergedItems.sort((a, b) => {
+    const aIsDirLike = a.type === "workdir" || (a.type === "file" && a.data.is_dir);
+    const bIsDirLike = b.type === "workdir" || (b.type === "file" && b.data.is_dir);
+    if (aIsDirLike !== bIsDirLike) return aIsDirLike ? -1 : 1;
+    const aName = a.type === "workdir" ? a.data.name : a.data.name;
+    const bName = b.type === "workdir" ? b.data.name : b.data.name;
+    return aName.localeCompare(bName);
+  });
 
   const totalBytes = fileOnlyList.reduce((sum, file) => sum + file.size, 0);
   const latestUpdate = fileOnlyList.reduce<string | null>((latest, file) => {
@@ -351,7 +368,6 @@ export function ResourcePage() {
       if (!data.path) return;
       await addResourceWorkdir(projectId, data.path);
       await loadWorkdirs();
-      setActiveTab("workdir");
     } catch (err) {
       setWorkdirError(err instanceof Error ? err.message : "Failed to add folder");
     } finally {
@@ -424,18 +440,13 @@ export function ResourcePage() {
     e.preventDefault();
     dragCountRef.current = 0;
     setIsDragOver(false);
-    // Ignore internal drag-drop (file row → folder)
     if (e.dataTransfer.types.includes(DRAG_TYPE)) return;
-    if (activeTab === "workdir") {
-      setWorkdirError("Drag-and-drop folders are not supported for Work Directory yet. Use Add Folder.");
-      return;
-    }
     if (dropContainsDirectory(e.dataTransfer)) {
-      setFileError("Folders are not supported in Uploads. Use Work Directory and Add Folder.");
+      setFileError("Folders are not supported in drag-and-drop upload. Use Add Folder to link a directory.");
       return;
     }
     if (e.dataTransfer.files.length > 0) handleUpload(e.dataTransfer.files);
-  }, [activeTab, handleUpload]);
+  }, [handleUpload]);
 
   const insertTemplate = (content: string) => {
     setInstructions((current) => {
@@ -545,38 +556,19 @@ export function ResourcePage() {
                     color: "var(--color-text-muted)",
                     background: "var(--color-bg)",
                   }}>
-                  {activeTab === "uploads" ? filteredFiles.length : workdirs.length}
+                  {mergedItems.length}
                 </span>
               </div>
               {isMain && (
                 <p className="mt-1 text-xs" style={{ color: "var(--color-text-muted)" }}>
-                  {activeTab === "uploads"
-                    ? <>Reusable files available to all tasks through <span className="font-mono">resource/</span></>
-                    : <>Read-only local folders linked into this Studio</>}
+                  Reusable files and linked folders available to all tasks through <span className="font-mono">resource/</span>
                 </p>
               )}
             </div>
           </div>
 
           <div className="flex items-center gap-2">
-            <div className="inline-flex rounded-xl border p-1"
-              style={{ borderColor: "var(--color-border)", background: "var(--color-bg)" }}>
-              {(["uploads", "workdir"] as const).map((tab) => (
-                <button
-                  key={tab}
-                  onClick={() => { setActiveTab(tab); if (tab === "uploads") navigateTo(""); }}
-                  className={`rounded-lg px-3 py-1.5 text-xs font-medium transition-colors ${
-                    activeTab === tab ? "text-white" : ""
-                  }`}
-                  style={activeTab === tab
-                    ? { background: "var(--color-highlight)" }
-                    : { color: "var(--color-text-muted)" }}
-                >
-                  {tab === "uploads" ? "Uploads" : "Work Directory"}
-                </button>
-              ))}
-            </div>
-            <button onClick={activeTab === "uploads" ? loadFiles : loadWorkdirs}
+            <button onClick={() => { loadFiles(); loadWorkdirs(); }}
               className="p-2 rounded-lg transition-colors"
               style={{ color: "var(--color-text-muted)" }}
               onMouseEnter={e => { e.currentTarget.style.background = "var(--color-bg-tertiary)"; e.currentTarget.style.color = "var(--color-text)"; }}
@@ -584,111 +576,97 @@ export function ResourcePage() {
               title="Refresh">
               <RefreshCw className="w-4 h-4" />
             </button>
-            {activeTab === "uploads" && (
-              <button
-                onClick={() => { setIsCreatingFolder(true); setNewFolderName(""); }}
-                className="p-2 rounded-lg transition-colors"
-                style={{ color: "var(--color-text-muted)" }}
-                onMouseEnter={e => { e.currentTarget.style.background = "var(--color-bg-tertiary)"; e.currentTarget.style.color = "var(--color-text)"; }}
-                onMouseLeave={e => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.color = "var(--color-text-muted)"; }}
-                title="New folder">
-                <FolderPlus className="w-4 h-4" />
-              </button>
-            )}
-            {activeTab === "uploads" && (
-              <button
-                onClick={() => setAddLinkOpen(true)}
-                className="p-2 rounded-lg transition-colors"
-                style={{ color: "var(--color-text-muted)" }}
-                onMouseEnter={e => { e.currentTarget.style.background = "var(--color-bg-tertiary)"; e.currentTarget.style.color = "var(--color-text)"; }}
-                onMouseLeave={e => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.color = "var(--color-text-muted)"; }}
-                title="Add Link">
-                <LinkIcon className="w-4 h-4" />
-              </button>
-            )}
             <button
-              onClick={() => activeTab === "uploads" ? fileInputRef.current?.click() : handleAddWorkdir()}
-              disabled={activeTab === "uploads" ? isUploading : isAddingWorkdir}
+              onClick={() => { setIsCreatingFolder(true); setNewFolderName(""); }}
+              className="p-2 rounded-lg transition-colors"
+              style={{ color: "var(--color-text-muted)" }}
+              onMouseEnter={e => { e.currentTarget.style.background = "var(--color-bg-tertiary)"; e.currentTarget.style.color = "var(--color-text)"; }}
+              onMouseLeave={e => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.color = "var(--color-text-muted)"; }}
+              title="New folder">
+              <FolderPlus className="w-4 h-4" />
+            </button>
+            <button
+              onClick={() => setAddLinkOpen(true)}
+              className="p-2 rounded-lg transition-colors"
+              style={{ color: "var(--color-text-muted)" }}
+              onMouseEnter={e => { e.currentTarget.style.background = "var(--color-bg-tertiary)"; e.currentTarget.style.color = "var(--color-text)"; }}
+              onMouseLeave={e => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.color = "var(--color-text-muted)"; }}
+              title="Add Link">
+              <LinkIcon className="w-4 h-4" />
+            </button>
+            <button
+              onClick={() => fileInputRef.current?.click()}
+              disabled={isUploading}
               className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors disabled:opacity-50"
               style={{ color: "var(--color-highlight)", background: "color-mix(in srgb, var(--color-highlight) 10%, transparent)" }}
               onMouseEnter={e => e.currentTarget.style.background = "color-mix(in srgb, var(--color-highlight) 18%, transparent)"}
               onMouseLeave={e => e.currentTarget.style.background = "color-mix(in srgb, var(--color-highlight) 10%, transparent)"}>
-              {(activeTab === "uploads" ? isUploading : isAddingWorkdir)
+              {isUploading
                 ? <Loader2 className="w-4 h-4 animate-spin" />
-                : activeTab === "uploads" ? <Upload className="w-4 h-4" /> : <Plus className="w-4 h-4" />}
-              {activeTab === "uploads" ? "Upload" : "Add Folder"}
+                : <Upload className="w-4 h-4" />}
+              Upload
+            </button>
+            <button
+              onClick={handleAddWorkdir}
+              disabled={isAddingWorkdir}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors disabled:opacity-50"
+              style={{ color: "var(--color-text-muted)", background: "var(--color-bg)" }}
+              onMouseEnter={e => { e.currentTarget.style.background = "var(--color-bg-tertiary)"; e.currentTarget.style.color = "var(--color-text)"; }}
+              onMouseLeave={e => { e.currentTarget.style.background = "var(--color-bg)"; e.currentTarget.style.color = "var(--color-text-muted)"; }}>
+              {isAddingWorkdir
+                ? <Loader2 className="w-4 h-4 animate-spin" />
+                : <FolderOpen className="w-4 h-4" />}
+              Add Folder
             </button>
           </div>
         </div>
 
-        {/* Breadcrumb (uploads tab) — also acts as drop targets to move files up */}
-        {activeTab === "uploads" && (
-          <BreadcrumbNav
-            currentPath={currentPath}
-            breadcrumbSegments={breadcrumbSegments}
-            onNavigate={navigateTo}
-            onDropToPath={handleMoveFile}
-          />
-        )}
+        <BreadcrumbNav
+          currentPath={currentPath}
+          breadcrumbSegments={breadcrumbSegments}
+          onNavigate={navigateTo}
+          onDropToPath={handleMoveFile}
+        />
 
-        {activeTab === "uploads" ? (
-          <div className="grid gap-2 lg:grid-cols-[minmax(0,1fr)_auto]">
-            <label
-              className="flex items-center gap-2 rounded-xl border px-3 py-2"
-              style={{ borderColor: "var(--color-border)", background: "color-mix(in srgb, var(--color-bg) 46%, transparent)" }}
-            >
-              <Search className="w-4 h-4 shrink-0" style={{ color: "var(--color-text-muted)" }} />
-              <input
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="Search files"
-                className="w-full bg-transparent text-sm outline-none"
-                style={{ color: "var(--color-text)" }}
-              />
-            </label>
-            <div className="flex items-center gap-2 text-xs" style={{ color: "var(--color-text-muted)" }}>
-              <span className="rounded-full px-2.5 py-1" style={{ background: "var(--color-bg)" }}>
-                {filteredFiles.length} visible
-              </span>
-              <span className="rounded-full px-2.5 py-1" style={{ background: "var(--color-bg)" }}>
-                Shared across studio
-              </span>
-            </div>
-          </div>
-        ) : (
+        <div className="grid gap-2 lg:grid-cols-[minmax(0,1fr)_auto]">
+          <label
+            className="flex items-center gap-2 rounded-xl border px-3 py-2"
+            style={{ borderColor: "var(--color-border)", background: "color-mix(in srgb, var(--color-bg) 46%, transparent)" }}
+          >
+            <Search className="w-4 h-4 shrink-0" style={{ color: "var(--color-text-muted)" }} />
+            <input
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Search files"
+              className="w-full bg-transparent text-sm outline-none"
+              style={{ color: "var(--color-text)" }}
+            />
+          </label>
           <div className="flex items-center gap-2 text-xs" style={{ color: "var(--color-text-muted)" }}>
             <span className="rounded-full px-2.5 py-1" style={{ background: "var(--color-bg)" }}>
-              Read-only soft links
+              {mergedItems.length} items
             </span>
             <span className="rounded-full px-2.5 py-1" style={{ background: "var(--color-bg)" }}>
-              Local folders stay in place
+              Shared across studio
             </span>
           </div>
-        )}
+        </div>
       </div>
 
       <div className="flex-1 min-h-0 p-3">
-        {activeTab === "uploads" && isLoadingFiles ? (
+        {isLoadingFiles || isLoadingWorkdirs ? (
           <div className="flex items-center justify-center py-16">
             <Loader2 className="w-5 h-5 animate-spin" style={{ color: "var(--color-text-muted)" }} />
           </div>
-        ) : activeTab === "workdir" && isLoadingWorkdirs ? (
-          <div className="flex items-center justify-center py-16">
-            <Loader2 className="w-5 h-5 animate-spin" style={{ color: "var(--color-text-muted)" }} />
-          </div>
-        ) : activeTab === "uploads" && fileError ? (
+        ) : fileError || workdirError ? (
           <div className="flex flex-col items-center justify-center gap-3 rounded-2xl border border-dashed py-14 text-center"
             style={{ borderColor: "var(--color-border)" }}>
-            <p className="text-sm" style={{ color: "var(--color-error)" }}>{fileError}</p>
-            <button onClick={loadFiles} className="text-sm hover:underline" style={{ color: "var(--color-highlight)" }}>Retry</button>
+            {fileError && <p className="text-sm" style={{ color: "var(--color-error)" }}>{fileError}</p>}
+            {workdirError && <p className="text-sm" style={{ color: "var(--color-error)" }}>{workdirError}</p>}
+            {fileError && <button onClick={loadFiles} className="text-sm hover:underline" style={{ color: "var(--color-highlight)" }}>Retry files</button>}
+            {workdirError && <button onClick={loadWorkdirs} className="text-sm hover:underline" style={{ color: "var(--color-highlight)" }}>Retry folders</button>}
           </div>
-        ) : activeTab === "workdir" && workdirError ? (
-          <div className="flex flex-col items-center justify-center gap-3 rounded-2xl border border-dashed py-14 text-center"
-            style={{ borderColor: "var(--color-border)" }}>
-            <p className="text-sm" style={{ color: "var(--color-error)" }}>{workdirError}</p>
-            <button onClick={loadWorkdirs} className="text-sm hover:underline" style={{ color: "var(--color-highlight)" }}>Retry</button>
-          </div>
-        ) : activeTab === "uploads" && files.length === 0 && !isCreatingFolder ? (
+        ) : mergedItems.length === 0 && !isCreatingFolder ? (
           <button onClick={() => fileInputRef.current?.click()}
             className="w-full h-full min-h-[200px] rounded-2xl cursor-pointer transition-all flex flex-col items-center justify-center gap-3 px-6 text-center"
             style={{
@@ -704,7 +682,7 @@ export function ResourcePage() {
             <div>
               <p className="text-base font-semibold">Build a shared resource library</p>
               <p className="mt-2 text-sm max-w-md" style={{ color: "var(--color-text-muted)" }}>
-                Drag files here or browse from disk. Uploaded assets become instantly available to every task in this Studio.
+                Drag files here or browse from disk. Upload assets or link local folders — both become instantly available to every task in this Studio.
               </p>
             </div>
             <div className="inline-flex items-center gap-1.5 text-sm font-medium"
@@ -712,30 +690,7 @@ export function ResourcePage() {
               Browse files <ArrowRight className="w-4 h-4" />
             </div>
           </button>
-        ) : activeTab === "workdir" && workdirs.length === 0 ? (
-          <button onClick={handleAddWorkdir}
-            className="w-full h-full min-h-[200px] rounded-2xl cursor-pointer transition-all flex flex-col items-center justify-center gap-3 px-6 text-center"
-            style={{
-              border: "1px dashed color-mix(in srgb, var(--color-highlight) 26%, var(--color-border))",
-              background: "linear-gradient(180deg, color-mix(in srgb, var(--color-highlight) 5%, transparent), transparent)",
-            }}
-          >
-            <div className="w-12 h-12 rounded-xl flex items-center justify-center"
-              style={{ background: "color-mix(in srgb, var(--color-highlight) 12%, transparent)" }}>
-              <FolderOpen className="w-6 h-6" style={{ color: "var(--color-highlight)" }} />
-            </div>
-            <div>
-              <p className="text-base font-semibold">Link a local Work Directory</p>
-              <p className="mt-2 text-sm max-w-md" style={{ color: "var(--color-text-muted)" }}>
-                Choose a local folder and expose it to this Studio as a read-only soft link without copying files.
-              </p>
-            </div>
-            <div className="inline-flex items-center gap-1.5 text-sm font-medium"
-              style={{ color: "var(--color-highlight)" }}>
-              Add Folder <ArrowRight className="w-4 h-4" />
-            </div>
-          </button>
-        ) : activeTab === "uploads" && filteredFiles.length === 0 && !isCreatingFolder && searchQuery ? (
+        ) : mergedItems.length === 0 && !isCreatingFolder && searchQuery ? (
           <div className="flex flex-col items-center justify-center gap-3 rounded-[22px] border py-14 text-center"
             style={{ borderColor: "var(--color-border)", background: "color-mix(in srgb, var(--color-bg) 40%, transparent)" }}>
             <Search className="w-5 h-5" style={{ color: "var(--color-text-muted)" }} />
@@ -750,105 +705,97 @@ export function ResourcePage() {
           </div>
         ) : (
           <div className="h-full overflow-y-auto pr-1 [scrollbar-width:none] hover:[scrollbar-width:thin] [&::-webkit-scrollbar]:w-0 hover:[&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-[var(--color-border)]">
-            {activeTab === "uploads" ? (
-              <div className="space-y-2">
-                {/* New folder inline input */}
-                {isCreatingFolder && (
-                  <div className="flex items-center gap-2 rounded-2xl border px-3 py-2.5"
-                    style={{ borderColor: "var(--color-highlight)", background: "color-mix(in srgb, var(--color-highlight) 6%, var(--color-bg))" }}>
-                    <div className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0"
-                      style={{ background: "color-mix(in srgb, var(--color-highlight) 14%, transparent)" }}>
-                      <FolderOpen className="w-4 h-4" style={{ color: "var(--color-highlight)" }} />
-                    </div>
-                    <input
-                      ref={newFolderInputRef}
-                      value={newFolderName}
-                      onChange={e => setNewFolderName(e.target.value)}
-                      onKeyDown={e => {
-                        if (e.key === "Enter") handleCreateFolder();
-                        if (e.key === "Escape") { setIsCreatingFolder(false); setNewFolderName(""); }
-                      }}
-                      placeholder="Folder name"
-                      className="flex-1 bg-transparent text-sm outline-none font-medium"
-                      style={{ color: "var(--color-text)" }}
-                    />
-                    <button onClick={handleCreateFolder}
-                      className="p-1.5 rounded-md transition-colors"
-                      style={{ color: "var(--color-highlight)" }}
-                      onMouseEnter={e => e.currentTarget.style.background = "var(--color-bg-tertiary)"}
-                      onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
-                      <Check className="w-3.5 h-3.5" />
-                    </button>
-                    <button onClick={() => { setIsCreatingFolder(false); setNewFolderName(""); }}
-                      className="p-1.5 rounded-md transition-colors"
-                      style={{ color: "var(--color-text-muted)" }}
-                      onMouseEnter={e => e.currentTarget.style.background = "var(--color-bg-tertiary)"}
-                      onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
-                      <X className="w-3.5 h-3.5" />
-                    </button>
+            <div className="space-y-2">
+              {isCreatingFolder && (
+                <div className="flex items-center gap-2 rounded-2xl border px-3 py-2.5"
+                  style={{ borderColor: "var(--color-highlight)", background: "color-mix(in srgb, var(--color-highlight) 6%, var(--color-bg))" }}>
+                  <div className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0"
+                    style={{ background: "color-mix(in srgb, var(--color-highlight) 14%, transparent)" }}>
+                    <FolderOpen className="w-4 h-4" style={{ color: "var(--color-highlight)" }} />
                   </div>
-                )}
-                {filteredFiles.map(file => (
-                  file.is_dir ? (
-                    <ResourceFolderRow
-                      key={file.path}
-                      file={file}
-                      isRenaming={renamingPath === file.path}
-                      renameValue={renameValue}
-                      renameInputRef={renamingPath === file.path ? renameInputRef : undefined}
-                      onEnter={() => navigateTo(file.path)}
-                      onStartRename={() => { setRenamingPath(file.path); setRenameValue(file.name); }}
-                      onRenameChange={setRenameValue}
-                      onRenameConfirm={() => handleRenameFile(file.path, renameValue)}
-                      onRenameCancel={() => setRenamingPath(null)}
-                      onDelete={() => handleDelete(file)}
-                      onDragStart={(e) => { e.dataTransfer.setData(DRAG_TYPE, file.path); e.dataTransfer.effectAllowed = "move"; }}
-                      onMoveToParent={currentPath ? () => handleMoveFile(file.path, currentPath.split("/").slice(0, -1).join("/")) : undefined}
-                      onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); }}
-                      onDrop={(e) => {
-                        e.preventDefault();
-                        e.stopPropagation();
-                        const fromPath = e.dataTransfer.getData(DRAG_TYPE);
-                        // prevent drop onto self or own descendant
-                        if (fromPath && fromPath !== file.path && !fromPath.startsWith(file.path + "/")) {
-                          handleMoveFile(fromPath, file.path);
-                        }
-                      }}
-                    />
-                  ) : (
-                    <ResourceFileRow
-                      key={file.path}
-                      file={file}
-                      isRenaming={renamingPath === file.path}
-                      renameValue={renameValue}
-                      renameInputRef={renamingPath === file.path ? renameInputRef : undefined}
-                      onPreview={handlePreview}
-                      onDownload={handleDownload}
-                      onDelete={handleDelete}
-                      onOpenLink={handleOpenLink}
-                      onEditLink={handleEditLink}
-                      onStartRename={() => { setRenamingPath(file.path); setRenameValue(file.name); }}
-                      onRenameChange={setRenameValue}
-                      onRenameConfirm={() => handleRenameFile(file.path, renameValue)}
-                      onRenameCancel={() => setRenamingPath(null)}
-                      onDragStart={(e) => { e.dataTransfer.setData(DRAG_TYPE, file.path); e.dataTransfer.effectAllowed = "move"; }}
-                      onMoveToParent={currentPath ? () => handleMoveFile(file.path, currentPath.split("/").slice(0, -1).join("/")) : undefined}
-                    />
-                  )
-                ))}
-              </div>
-            ) : (
-              <div className="space-y-2">
-                {workdirs.map((entry) => (
+                  <input
+                    ref={newFolderInputRef}
+                    value={newFolderName}
+                    onChange={e => setNewFolderName(e.target.value)}
+                    onKeyDown={e => {
+                      if (e.key === "Enter") handleCreateFolder();
+                      if (e.key === "Escape") { setIsCreatingFolder(false); setNewFolderName(""); }
+                    }}
+                    placeholder="Folder name"
+                    className="flex-1 bg-transparent text-sm outline-none font-medium"
+                    style={{ color: "var(--color-text)" }}
+                  />
+                  <button onClick={handleCreateFolder}
+                    className="p-1.5 rounded-md transition-colors"
+                    style={{ color: "var(--color-highlight)" }}
+                    onMouseEnter={e => e.currentTarget.style.background = "var(--color-bg-tertiary)"}
+                    onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
+                    <Check className="w-3.5 h-3.5" />
+                  </button>
+                  <button onClick={() => { setIsCreatingFolder(false); setNewFolderName(""); }}
+                    className="p-1.5 rounded-md transition-colors"
+                    style={{ color: "var(--color-text-muted)" }}
+                    onMouseEnter={e => e.currentTarget.style.background = "var(--color-bg-tertiary)"}
+                    onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              )}
+              {mergedItems.map(item =>
+                item.type === "workdir" ? (
                   <WorkDirectoryRow
-                    key={entry.name}
-                    entry={entry}
+                    key={`wd-${item.data.name}`}
+                    entry={item.data}
                     onOpen={handleOpenWorkdir}
                     onDelete={handleDeleteWorkdir}
                   />
-                ))}
-              </div>
-            )}
+                ) : item.data.is_dir ? (
+                  <ResourceFolderRow
+                    key={item.data.path}
+                    file={item.data}
+                    isRenaming={renamingPath === item.data.path}
+                    renameValue={renameValue}
+                    renameInputRef={renamingPath === item.data.path ? renameInputRef : undefined}
+                    onEnter={() => navigateTo(item.data.path)}
+                    onStartRename={() => { setRenamingPath(item.data.path); setRenameValue(item.data.name); }}
+                    onRenameChange={setRenameValue}
+                    onRenameConfirm={() => handleRenameFile(item.data.path, renameValue)}
+                    onRenameCancel={() => setRenamingPath(null)}
+                    onDelete={() => handleDelete(item.data)}
+                    onDragStart={(e) => { e.dataTransfer.setData(DRAG_TYPE, item.data.path); e.dataTransfer.effectAllowed = "move"; }}
+                    onMoveToParent={currentPath ? () => handleMoveFile(item.data.path, currentPath.split("/").slice(0, -1).join("/")) : undefined}
+                    onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); }}
+                    onDrop={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      const fromPath = e.dataTransfer.getData(DRAG_TYPE);
+                      if (fromPath && fromPath !== item.data.path && !fromPath.startsWith(item.data.path + "/")) {
+                        handleMoveFile(fromPath, item.data.path);
+                      }
+                    }}
+                  />
+                ) : (
+                  <ResourceFileRow
+                    key={item.data.path}
+                    file={item.data}
+                    isRenaming={renamingPath === item.data.path}
+                    renameValue={renameValue}
+                    renameInputRef={renamingPath === item.data.path ? renameInputRef : undefined}
+                    onPreview={handlePreview}
+                    onDownload={handleDownload}
+                    onDelete={handleDelete}
+                    onOpenLink={handleOpenLink}
+                    onEditLink={handleEditLink}
+                    onStartRename={() => { setRenamingPath(item.data.path); setRenameValue(item.data.name); }}
+                    onRenameChange={setRenameValue}
+                    onRenameConfirm={() => handleRenameFile(item.data.path, renameValue)}
+                    onRenameCancel={() => setRenamingPath(null)}
+                    onDragStart={(e) => { e.dataTransfer.setData(DRAG_TYPE, item.data.path); e.dataTransfer.effectAllowed = "move"; }}
+                    onMoveToParent={currentPath ? () => handleMoveFile(item.data.path, currentPath.split("/").slice(0, -1).join("/")) : undefined}
+                  />
+                )
+              )}
+            </div>
           </div>
         )}
       </div>
@@ -1180,7 +1127,7 @@ export function ResourcePage() {
       }}
     >
       {/* Hidden file input */}
-      <input ref={fileInputRef} type="file" multiple className="hidden"
+      <input ref={fileInputRef} type="file" multiple className="hidden" disabled={isUploading}
         onChange={(e) => { if (e.target.files) handleUpload(e.target.files); e.target.value = ""; }} />
 
       {/* Drag overlay */}
@@ -1188,11 +1135,9 @@ export function ResourcePage() {
         <div className="fixed inset-0 z-50 flex items-center justify-center pointer-events-none"
           style={{ background: "color-mix(in srgb, var(--color-highlight) 10%, transparent)", border: "2px dashed var(--color-highlight)" }}>
           <div className="flex flex-col items-center gap-2">
-            {activeTab === "uploads"
-              ? <Upload className="w-8 h-8" style={{ color: "var(--color-highlight)" }} />
-              : <FolderOpen className="w-8 h-8" style={{ color: "var(--color-highlight)" }} />}
+            <Upload className="w-8 h-8" style={{ color: "var(--color-highlight)" }} />
             <p className="text-sm font-medium" style={{ color: "var(--color-highlight)" }}>
-              {activeTab === "uploads" ? "Drop files to upload" : "Use Add Folder for Work Directory"}
+              Drop files to upload
             </p>
           </div>
         </div>
@@ -1306,7 +1251,7 @@ export function ResourcePage() {
               />
               <HeroStat
                 icon={ShieldCheck}
-                label="Work Directory"
+                label="Linked Folders"
                 value={String(workdirs.length)}
                 subtext={workdirs.length > 0 ? "Read-only linked folders" : "No linked folders"}
               />

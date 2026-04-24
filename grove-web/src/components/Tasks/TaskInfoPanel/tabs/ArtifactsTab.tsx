@@ -4,14 +4,14 @@ import { motion, AnimatePresence } from "framer-motion";
 import {
   Download, Trash2, Eye,
   Loader2, Upload, MoreHorizontal, FolderOpen, RefreshCw, ArrowUpFromLine,
-  Link as LinkIcon, Edit3,
+  Link as LinkIcon, Edit3, Plus,
 } from "lucide-react";
 import type { Task } from "../../../../data/types";
 import {
   listArtifacts, previewArtifact, artifactDownloadUrl, deleteArtifact,
   uploadArtifacts, createArtifactLink, updateArtifactLink, syncArtifactToResource, listArtifactWorkdirs, addArtifactWorkdir, deleteArtifactWorkdir, openArtifactWorkdir,
   listResources,
-  type ArtifactFile, type ArtifactWorkDirectoryEntry,
+  type ArtifactFile, type ArtifactWorkDirectoryEntry, type DisplayItem,
 } from "../../../../api";
 import { apiClient } from "../../../../api/client";
 import {
@@ -87,7 +87,6 @@ export function ArtifactsTab({ projectId, task, previewRequest, lastChatIdleAt, 
   const dragCountRef = useRef(0);
   const [uploadsOpen, setUploadsOpen] = useState(true);
   const [downloadsOpen, setDownloadsOpen] = useState(true);
-  const [uploadsTab, setUploadsTab] = useState<"uploads" | "workdir">("uploads");
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [workdirs, setWorkdirs] = useState<ArtifactWorkDirectoryEntry[]>([]);
   const [isLoadingWorkdirs, setIsLoadingWorkdirs] = useState(true);
@@ -203,16 +202,12 @@ export function ArtifactsTab({ projectId, task, previewRequest, lastChatIdleAt, 
     e.preventDefault();
     dragCountRef.current = 0;
     setIsDragOver(false);
-    if (uploadsTab === "workdir") {
-      setError("Drag-and-drop folders are not supported for Work Directory yet. Use Add Folder.");
-      return;
-    }
     if (dropContainsDirectory(e.dataTransfer)) {
-      setError("Folders are not supported in Uploads. Use Work Directory and Add Folder.");
+      setError("Folders are not supported in drag-and-drop. Use the Add button.");
       return;
     }
     if (e.dataTransfer.files.length > 0) handleUpload(e.dataTransfer.files);
-  }, [handleUpload, uploadsTab]);
+  }, [handleUpload]);
 
   const handleAddWorkdir = useCallback(async () => {
     if (!projectId) return;
@@ -222,7 +217,7 @@ export function ArtifactsTab({ projectId, task, previewRequest, lastChatIdleAt, 
       if (!data.path) return;
       await addArtifactWorkdir(projectId, task.id, data.path);
       await loadWorkdirs();
-      setUploadsTab("workdir");
+      setToastMessage(`Added folder "${data.path.split("/").pop()}"`);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to add folder");
     } finally {
@@ -362,7 +357,6 @@ export function ArtifactsTab({ projectId, task, previewRequest, lastChatIdleAt, 
 
     if (target.directory === "input") {
       setUploadsOpen(true);
-      setUploadsTab("uploads");
     } else if (target.directory === "output") {
       setDownloadsOpen(true);
       setCurrentOutputPath(parentPath(target.path));
@@ -534,6 +528,25 @@ export function ArtifactsTab({ projectId, task, previewRequest, lastChatIdleAt, 
     document.body.style.userSelect = "none";
   }, [splitRatio]);
 
+  const inputFileCount = inputFiles.filter(f => !f.is_dir).length;
+  const outputFileCount = outputFiles.filter(f => !f.is_dir).length;
+  const uploadDisplayItems = useMemo<DisplayItem<ArtifactFile>[]>(() => {
+    const items: DisplayItem<ArtifactFile>[] = [];
+    for (const wd of workdirs) {
+      items.push({ type: "workdir", data: wd });
+    }
+    for (const f of inputFiles) {
+      if (!f.is_dir) items.push({ type: "file", data: f });
+    }
+    items.sort((a, b) => {
+      const aIsDir = a.type === "workdir" ? 0 : 1;
+      const bIsDir = b.type === "workdir" ? 0 : 1;
+      if (aIsDir !== bIsDir) return aIsDir - bIsDir;
+      return a.data.name.localeCompare(b.data.name);
+    });
+    return items;
+  }, [workdirs, inputFiles]);
+
   if (isLoading) {
     return (
       <div className="flex items-center justify-center h-full">
@@ -550,9 +563,6 @@ export function ArtifactsTab({ projectId, task, previewRequest, lastChatIdleAt, 
       </div>
     );
   }
-
-  const inputFileCount = inputFiles.filter(f => !f.is_dir).length;
-  const outputFileCount = outputFiles.filter(f => !f.is_dir).length;
   const outputEntries = getDirectChildren(outputFiles, currentOutputPath);
 
   return (
@@ -598,11 +608,9 @@ export function ArtifactsTab({ projectId, task, previewRequest, lastChatIdleAt, 
         <div className="absolute inset-0 z-10 flex items-center justify-center rounded-lg pointer-events-none"
           style={{ background: "color-mix(in srgb, var(--color-highlight) 10%, transparent)", border: "2px dashed var(--color-highlight)" }}>
           <div className="flex flex-col items-center gap-2">
-            {uploadsTab === "uploads"
-              ? <Upload className="w-8 h-8" style={{ color: "var(--color-highlight)" }} />
-              : <FolderOpen className="w-8 h-8" style={{ color: "var(--color-highlight)" }} />}
+            <Upload className="w-8 h-8" style={{ color: "var(--color-highlight)" }} />
             <p className="text-sm font-medium" style={{ color: "var(--color-highlight)" }}>
-              {uploadsTab === "uploads" ? "Drop files to upload" : "Use Add Folder for Work Directory"}
+              Drop files to upload
             </p>
           </div>
         </div>
@@ -631,23 +639,18 @@ export function ArtifactsTab({ projectId, task, previewRequest, lastChatIdleAt, 
         }}>
           <SectionHeader
             title="Uploads"
-            count={uploadsTab === "uploads" ? inputFileCount : workdirs.length}
+            count={inputFileCount + workdirs.length}
             isOpen={uploadsOpen}
             onToggle={() => setUploadsOpen(!uploadsOpen)}
-            onRefresh={uploadsTab === "uploads" ? () => { void loadFiles(); } : loadWorkdirs}
-            onUpload={uploadsTab === "uploads" ? () => fileInputRef.current?.click() : handleAddWorkdir}
-            onAddLink={uploadsTab === "uploads" ? () => setAddLinkOpen(true) : undefined}
-            onOpenFolder={uploadsTab === "uploads" ? () => handleOpenFolder("input") : undefined}
-            isUploading={uploadsTab === "uploads" ? isUploading : isAddingWorkdir}
-            uploadLabel={uploadsTab === "uploads" ? "Upload" : "Add Folder"}
-            tabs={[
-              { key: "uploads", label: "Uploads" },
-              { key: "workdir", label: "Work Directory" },
-            ]}
-            activeTab={uploadsTab}
-            onTabChange={(tab) => setUploadsTab(tab as "uploads" | "workdir")}
+            onRefresh={() => { void loadFiles(); loadWorkdirs(); }}
+            onUpload={() => fileInputRef.current?.click()}
+            isUploading={isUploading}
+            onAddFolder={handleAddWorkdir}
+            isAddingFolder={isAddingWorkdir}
+            onAddLink={() => setAddLinkOpen(true)}
+            onOpenFolder={() => handleOpenFolder("input")}
           />
-          <div className="overflow-y-auto px-3 pt-3 pb-3 flex flex-col" style={{
+          <div className="overflow-y-auto px-3 pt-3 pb-3 flex flex-col gap-2" style={{
             flex: uploadsOpen ? "1 1 0%" : "0 0 0px",
             opacity: uploadsOpen ? 1 : 0,
             transition: "flex 0.25s ease, opacity 0.2s ease",
@@ -655,19 +658,19 @@ export function ArtifactsTab({ projectId, task, previewRequest, lastChatIdleAt, 
             scrollbarColor: "var(--color-border) transparent",
             overflow: uploadsOpen ? undefined : "hidden",
           }}>
-            {uploadsTab === "uploads" ? (
-              <>
-                {inputFiles.filter(f => !f.is_dir).map((file) => (
-                  <FileCard key={file.path} file={file} projectId={projectId} taskId={task.id}
-                    onPreview={handlePreview} onDownload={handleDownload} onDelete={handleDelete} allowDelete
-                    onSyncToResource={handleSyncToResource} onOpenLink={handleOpenLink} onEditLink={handleEditLink} />
-                ))}
-                {inputFileCount === 0 && (
-                  <button onClick={() => fileInputRef.current?.click()}
-                    className="w-full flex-1 rounded-lg cursor-pointer transition-all flex flex-col items-center justify-center gap-2 px-4"
-                    style={{ border: "1.5px dashed var(--color-border)", minHeight: "100%" }}
-                    onMouseEnter={e => { e.currentTarget.style.borderColor = "var(--color-text-muted)"; e.currentTarget.style.background = "color-mix(in srgb, var(--color-text) 3%, transparent)"; }}
-                    onMouseLeave={e => { e.currentTarget.style.borderColor = "var(--color-border)"; e.currentTarget.style.background = "transparent"; }}>
+            {isLoadingWorkdirs ? (
+              <div className="flex items-center justify-center min-h-[80px]">
+                <Loader2 className="w-4 h-4 animate-spin" style={{ color: "var(--color-text-muted)" }} />
+              </div>
+            ) : uploadDisplayItems.length === 0 ? (
+              <button
+                className="w-full flex-1 rounded-lg cursor-pointer transition-all flex flex-col items-center justify-center gap-2 px-4"
+                style={{ border: "1.5px dashed var(--color-border)", minHeight: "100%" }}
+                onMouseEnter={e => { e.currentTarget.style.borderColor = "var(--color-text-muted)"; e.currentTarget.style.background = "color-mix(in srgb, var(--color-text) 3%, transparent)"; }}
+                onMouseLeave={e => { e.currentTarget.style.borderColor = "var(--color-border)"; e.currentTarget.style.background = "transparent"; }}>
+                <div className="flex items-center gap-4">
+                  <div className="flex flex-col items-center gap-1.5 cursor-pointer"
+                    onClick={(e) => { e.stopPropagation(); fileInputRef.current?.click(); }}>
                     <div className="w-8 h-8 rounded-lg flex items-center justify-center"
                       style={{ background: "var(--color-bg-secondary)", border: "1px solid var(--color-border)" }}>
                       <Upload className="w-4 h-4" style={{ color: "var(--color-text-muted)" }} />
@@ -675,44 +678,35 @@ export function ArtifactsTab({ projectId, task, previewRequest, lastChatIdleAt, 
                     <p className="text-[12px] font-medium" style={{ color: "var(--color-text-muted)" }}>
                       Drop files to upload
                     </p>
-                    <p className="text-[11px]" style={{ color: "var(--color-text-muted)", opacity: 0.5 }}>
-                      or click to browse
+                  </div>
+                  <span className="text-[11px]" style={{ color: "var(--color-text-muted)", opacity: 0.3 }}>or</span>
+                  <div className="flex flex-col items-center gap-1.5 cursor-pointer"
+                    onClick={(e) => { e.stopPropagation(); void handleAddWorkdir(); }}>
+                    <div className="w-8 h-8 rounded-lg flex items-center justify-center"
+                      style={{ background: "var(--color-bg-secondary)", border: "1px solid var(--color-border)" }}>
+                      <Plus className="w-4 h-4" style={{ color: "var(--color-text-muted)" }} />
+                    </div>
+                    <p className="text-[12px] font-medium" style={{ color: "var(--color-text-muted)" }}>
+                      Add a folder
                     </p>
-                  </button>
-                )}
-              </>
-            ) : isLoadingWorkdirs ? (
-              <div className="flex items-center justify-center min-h-[80px]">
-                <Loader2 className="w-4 h-4 animate-spin" style={{ color: "var(--color-text-muted)" }} />
-              </div>
-            ) : workdirs.length === 0 ? (
-              <button onClick={handleAddWorkdir}
-                className="w-full flex-1 rounded-lg cursor-pointer transition-all flex flex-col items-center justify-center gap-2 px-4"
-                style={{ border: "1.5px dashed var(--color-border)", minHeight: "100%" }}
-                onMouseEnter={e => { e.currentTarget.style.borderColor = "var(--color-text-muted)"; e.currentTarget.style.background = "color-mix(in srgb, var(--color-text) 3%, transparent)"; }}
-                onMouseLeave={e => { e.currentTarget.style.borderColor = "var(--color-border)"; e.currentTarget.style.background = "transparent"; }}>
-                <div className="w-8 h-8 rounded-lg flex items-center justify-center"
-                  style={{ background: "var(--color-bg-secondary)", border: "1px solid var(--color-border)" }}>
-                  <FolderOpen className="w-4 h-4" style={{ color: "var(--color-text-muted)" }} />
+                  </div>
                 </div>
-                <p className="text-[12px] font-medium" style={{ color: "var(--color-text-muted)" }}>
-                  Add a folder
-                </p>
-                <p className="text-[11px]" style={{ color: "var(--color-text-muted)", opacity: 0.5 }}>
-                  Link a read-only directory
-                </p>
               </button>
             ) : (
-              <div className="space-y-2">
-                {workdirs.map((entry) => (
+              uploadDisplayItems.map((item) =>
+                item.type === "workdir" ? (
                   <WorkDirectoryCard
-                    key={entry.name}
-                    entry={entry}
+                    key={`wd-${item.data.name}`}
+                    entry={item.data}
                     onOpen={handleOpenWorkdir}
                     onDelete={handleDeleteWorkdir}
                   />
-                ))}
-              </div>
+                ) : (
+                  <FileCard key={`f-${item.data.directory}/${item.data.path}`} file={item.data} projectId={projectId} taskId={task.id}
+                    onPreview={handlePreview} onDownload={handleDownload} onDelete={handleDelete} allowDelete
+                    onSyncToResource={handleSyncToResource} onOpenLink={handleOpenLink} onEditLink={handleEditLink} />
+                )
+              )
             )}
           </div>
         </div>
@@ -907,7 +901,8 @@ function SectionHeader({
   onOpenFolder,
   onRefresh,
   isUploading,
-  uploadLabel,
+  onAddFolder,
+  isAddingFolder,
   tabs,
   activeTab,
   onTabChange,
@@ -921,7 +916,8 @@ function SectionHeader({
   onOpenFolder?: () => void;
   onRefresh?: () => void;
   isUploading?: boolean;
-  uploadLabel?: string;
+  onAddFolder?: () => void;
+  isAddingFolder?: boolean;
   tabs?: { key: string; label: string }[];
   activeTab?: string;
   onTabChange?: (tab: string) => void;
@@ -995,6 +991,16 @@ function SectionHeader({
             Add Link
           </button>
         )}
+        {isOpen !== false && onAddFolder && (
+          <button onClick={onAddFolder} disabled={isAddingFolder}
+            className="flex items-center gap-1 px-2.5 py-1 rounded text-[11px] font-medium transition-colors disabled:opacity-50"
+            style={{ color: "var(--color-text-muted)", border: "1px solid var(--color-border)", background: "none" }}
+            onMouseEnter={e => { e.currentTarget.style.color = "var(--color-text)"; e.currentTarget.style.borderColor = "var(--color-text-muted)"; }}
+            onMouseLeave={e => { e.currentTarget.style.color = "var(--color-text-muted)"; e.currentTarget.style.borderColor = "var(--color-border)"; }}>
+            {isAddingFolder ? <Loader2 className="w-3 h-3 animate-spin" /> : <FolderOpen className="w-3 h-3" />}
+            Add Folder
+          </button>
+        )}
         {isOpen !== false && onUpload && (
           <button onClick={onUpload} disabled={isUploading}
             className="flex items-center gap-1 px-2.5 py-1 rounded text-[11px] font-medium transition-colors disabled:opacity-50"
@@ -1002,7 +1008,7 @@ function SectionHeader({
             onMouseEnter={e => { e.currentTarget.style.color = "var(--color-text)"; e.currentTarget.style.borderColor = "var(--color-text-muted)"; }}
             onMouseLeave={e => { e.currentTarget.style.color = "var(--color-text-muted)"; e.currentTarget.style.borderColor = "var(--color-border)"; }}>
             {isUploading ? <Loader2 className="w-3 h-3 animate-spin" /> : <Upload className="w-3 h-3" />}
-            {uploadLabel || "Upload"}
+            Upload
           </button>
         )}
       </div>
