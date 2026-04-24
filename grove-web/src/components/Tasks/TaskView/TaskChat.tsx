@@ -44,6 +44,7 @@ import {
   Wrench,
   ChevronUp,
   ExternalLink,
+  Bookmark,
 } from "lucide-react";
 import {
   Button,
@@ -78,6 +79,7 @@ import {
   getChatHistory,
   takeControl,
   readFile,
+  updateNotes,
 } from "../../../api";
 import type { ChatSessionResponse, CustomAgent } from "../../../api";
 import { openExternalUrl } from "../../../utils/openExternal";
@@ -1035,6 +1037,8 @@ export function TaskChat({
   const [isRemoteSession, setIsRemoteSession] = useState(false);
   const [remoteOwnerName, setRemoteOwnerName] = useState("");
   const [isTakingControl, setIsTakingControl] = useState(false);
+  const [isSavingToNote, setIsSavingToNote] = useState(false);
+  const [saveToNoteDone, setSaveToNoteDone] = useState(false);
   const pollingOffsetRef = useRef(0);
   const pollingTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -2560,6 +2564,24 @@ export function TaskChat({
     }
   }, [activeChatId, isTakingControl, projectId, task.id, connectChatWs]);
 
+  const handleSavePlanToNote = useCallback(async () => {
+    if (!planFileContent || isSavingToNote) return;
+    setIsSavingToNote(true);
+    setSaveToNoteDone(false);
+    try {
+      await updateNotes(projectId, task.id, planFileContent);
+      setSaveToNoteDone(true);
+      setTimeout(() => setSaveToNoteDone(false), 2000);
+    } catch {
+      setMessages((prev) => [
+        ...prev,
+        { type: "system", content: "Failed to save plan to note." },
+      ]);
+    } finally {
+      setIsSavingToNote(false);
+    }
+  }, [planFileContent, isSavingToNote, projectId, task.id]);
+
   const handleSend = useCallback(async () => {
     const el = editableRef.current;
     if (!el) return;
@@ -3867,8 +3889,25 @@ export function TaskChat({
 
                       {activeComposerPanel === "plan" && (
                         <div className="space-y-2">
-                          <div className="text-[11px] uppercase tracking-[0.08em] text-[var(--color-text-muted)]">
-                            {planFilePath.split("/").pop()}
+                          <div className="flex items-center justify-between">
+                            <div className="text-[11px] uppercase tracking-[0.08em] text-[var(--color-text-muted)]">
+                              {planFilePath.split("/").pop()}
+                            </div>
+                            <button
+                              onClick={handleSavePlanToNote}
+                              disabled={isSavingToNote}
+                              className="flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] text-[var(--color-highlight)] transition-colors hover:bg-[var(--color-bg-tertiary)] disabled:opacity-50"
+                              title="Save plan to task note"
+                            >
+                              {isSavingToNote ? (
+                                <Loader2 className="h-3 w-3 animate-spin" />
+                              ) : saveToNoteDone ? (
+                                <CheckCircle2 className="h-3 w-3" />
+                              ) : (
+                                <Bookmark className="h-3 w-3" />
+                              )}
+                              <span>{saveToNoteDone ? "Saved" : "Save To Note"}</span>
+                            </button>
                           </div>
                           <MarkdownRenderer
                             content={planFileContent}
