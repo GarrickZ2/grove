@@ -57,6 +57,26 @@ function resolveResetsIn(w: UsageWindow): string {
   return "—";
 }
 
+/** Parse total window duration in seconds from label like "5h limit", "daily", etc. */
+function parseWindowTotalSeconds(label: string): number | null {
+  const hourMatch = label.match(/(\d+(?:\.\d+)?)\s*h/i);
+  if (hourMatch) return Math.round(parseFloat(hourMatch[1]) * 3600);
+  const minMatch = label.match(/(\d+)\s*m(?:in)?\b/i);
+  if (minMatch) return parseInt(minMatch[1], 10) * 60;
+  if (/daily/i.test(label)) return 86400;
+  if (/weekly/i.test(label)) return 86400 * 7;
+  if (/monthly/i.test(label)) return 86400 * 30;
+  return null;
+}
+
+/** Compute safe guard %: the minimum remaining % you should have to stay on pace. */
+function computeSafeGuard(w: UsageWindow): number | null {
+  if (w.resets_in_seconds == null || w.resets_in_seconds <= 0) return null;
+  const total = parseWindowTotalSeconds(w.label);
+  if (!total || total <= 0) return null;
+  return Math.max(0, Math.min(100, Math.round((w.resets_in_seconds / total) * 100)));
+}
+
 interface Rect {
   top: number;
   left: number;
@@ -320,9 +340,10 @@ function PopoverCard({
       {/* Windows */}
       <div className="mt-2.5 space-y-2.5">
         {usage.windows.map((w, idx) => {
-          // Backend already rounds and clamps; belt-and-suspenders.
           const pct = Math.max(0, Math.min(100, Math.round(w.percentage_remaining)));
           const color = quotaHealthColor(pct);
+          const safeGuard = computeSafeGuard(w);
+          const isSafe = safeGuard != null && pct >= safeGuard;
           return (
             <div key={`${w.label}-${idx}`} className="space-y-1">
               <div className="flex items-baseline justify-between gap-2">
@@ -336,12 +357,13 @@ function PopoverCard({
                   {pct}% remaining
                 </span>
               </div>
-              {/* Progress bar — thin, rounded, theme-tinted track */}
               <div
-                className="h-1 w-full overflow-hidden rounded-full"
+                className="relative h-2 w-full"
                 style={{
                   backgroundColor:
                     "color-mix(in srgb, var(--color-text-muted) 20%, transparent)",
+                  borderRadius: 4,
+                  overflow: "visible",
                 }}
                 role="progressbar"
                 aria-valuenow={pct}
@@ -350,15 +372,44 @@ function PopoverCard({
                 aria-label={`${w.label}: ${pct}% remaining`}
               >
                 <div
-                  className="h-full rounded-full transition-[width] duration-300"
+                  className="absolute left-0 top-0 h-full transition-[width] duration-300"
                   style={{
                     width: `${pct}%`,
                     backgroundColor: color,
+                    borderRadius: 4,
                   }}
                 />
+                {safeGuard != null && (
+                  <div
+                    className="absolute top-[-3px] bottom-[-3px]"
+                    style={{
+                      left: `calc(${safeGuard}% - 1px)`,
+                      width: 2,
+                      backgroundColor: isSafe
+                        ? "var(--color-success)"
+                        : "var(--color-error)",
+                      opacity: 0.9,
+                      borderRadius: 1,
+                    }}
+                  />
+                )}
               </div>
               <div className="flex items-center justify-between text-[10px] text-[var(--color-text-muted)]">
-                <span>Resets in</span>
+                <span>
+                  {safeGuard != null ? (
+                    <span
+                      style={{
+                        color: isSafe
+                          ? "var(--color-success)"
+                          : "var(--color-error)",
+                      }}
+                    >
+                      {isSafe ? "● On pace" : "▲ Above pace"} · {safeGuard}% guard
+                    </span>
+                  ) : (
+                    "Resets in"
+                  )}
+                </span>
                 <span className="tabular-nums">{resolveResetsIn(w)}</span>
               </div>
             </div>
