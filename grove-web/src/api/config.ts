@@ -42,6 +42,10 @@ export interface CustomAgent {
 export interface AcpConfig {
   agent_command?: string;
   custom_agents: CustomAgent[];
+  /** Frontend chat view message window. 0 means Unlimited. */
+  render_window_limit: number;
+  /** Prune when the frontend chat view reaches this many UI messages. */
+  render_window_trigger: number;
 }
 
 export interface Config {

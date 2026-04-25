@@ -63,6 +63,7 @@ import {
   filterMentionItems,
 } from "../../../utils/fileMention";
 import { useProject } from "../../../context/ProjectContext";
+import { useConfig } from "../../../context/ConfigContext";
 import { usePreviewComments, type PreviewCommentDraft } from "../../../context";
 import { PreviewSearchBar } from "../../Review/PreviewSearchBar";
 import { useDomSearch } from "../../Review/useDomSearch";
@@ -201,6 +202,8 @@ const AGENT_PICKER_VIEWPORT_MARGIN = 8;
 /** Per-chat cached state (preserved across chat switches) */
 interface PerChatState {
   messages: ChatMessage[];
+  hiddenMessageCount: number;
+  attachmentCounters: AttachmentCounters;
   isBusy: boolean;
   selectedModel: string;
   permissionLevel: string;
@@ -229,6 +232,8 @@ interface PerChatState {
 function defaultPerChatState(): PerChatState {
   return {
     messages: [],
+    hiddenMessageCount: 0,
+    attachmentCounters: { image: 0, audio: 0, resource: 0 },
     isBusy: false,
     selectedModel: "",
     permissionLevel: "",
@@ -410,6 +415,63 @@ function appendSystemMessage(
   const last = messages[messages.length - 1];
   if (last?.type === "system" && last.content === content) return messages;
   return [...messages, { type: "system", content }];
+}
+
+type ChatRenderWindowSettings = {
+  limit: number;
+  trigger: number;
+};
+
+function normalizeChatRenderWindowSettings(
+  limit?: number,
+  trigger?: number,
+): ChatRenderWindowSettings {
+  const normalizedLimit = Number.isFinite(limit)
+    ? Math.max(0, Math.floor(limit ?? 0))
+    : 0;
+  const normalizedTrigger = Number.isFinite(trigger)
+    ? Math.max(0, Math.floor(trigger ?? 0))
+    : 0;
+
+  if (normalizedLimit === 0) {
+    return {
+      limit: 0,
+      trigger: normalizedTrigger || 1500,
+    };
+  }
+
+  return {
+    limit: normalizedLimit,
+    trigger:
+      normalizedTrigger > normalizedLimit
+        ? normalizedTrigger
+        : normalizedLimit + 500,
+  };
+}
+
+function pruneChatViewMessages(
+  messages: ChatMessage[],
+  hiddenMessageCount: number,
+  settings: ChatRenderWindowSettings,
+): { messages: ChatMessage[]; hiddenMessageCount: number; pruned: boolean } {
+  if (
+    settings.limit <= 0 ||
+    settings.trigger <= settings.limit ||
+    messages.length < settings.trigger
+  ) {
+    return { messages, hiddenMessageCount, pruned: false };
+  }
+
+  const removeCount = messages.length - settings.limit;
+  if (removeCount <= 0) {
+    return { messages, hiddenMessageCount, pruned: false };
+  }
+
+  return {
+    messages: messages.slice(removeCount),
+    hiddenMessageCount: hiddenMessageCount + removeCount,
+    pruned: true,
+  };
 }
 
 function buildDefaultSessionTitle() {
@@ -967,6 +1029,8 @@ export function TaskChat({
   // ─── Active chat's live state ─────────────────────────────────────────
   const [isConnected, setIsConnected] = useState(false);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [hiddenMessageCount, setHiddenMessageCount] = useState(0);
+  const hiddenMessageCountRef = useRef(0);
   const [hasContent, setHasContent] = useState(false);
   const [isBusy, setIsBusy] = useState(false);
   const busyRef = useRef(false);
@@ -1037,8 +1101,38 @@ export function TaskChat({
   const taskFilesFetchTimeRef = useRef(0);
   const taskFilesLoadingRef = useRef(false);
   const { selectedProject } = useProject();
+  const { config: appConfig } = useConfig();
   const { drafts: previewCommentDrafts, removeDraft: removePreviewCommentDraft, clearDrafts: clearPreviewCommentDrafts } = usePreviewComments();
   const isStudioProject = selectedProject?.projectType === "studio";
+  const chatRenderWindowSettings = useMemo(
+    () =>
+      normalizeChatRenderWindowSettings(
+        appConfig?.acp?.render_window_limit,
+        appConfig?.acp?.render_window_trigger,
+      ),
+    [
+      appConfig?.acp?.render_window_limit,
+      appConfig?.acp?.render_window_trigger,
+    ],
+  );
+  const updateHiddenMessageCount = useCallback((value: number) => {
+    hiddenMessageCountRef.current = value;
+    setHiddenMessageCount(value);
+  }, []);
+  const pruneActiveChatMessages = useCallback(
+    (nextMessages: ChatMessage[]) => {
+      const pruned = pruneChatViewMessages(
+        nextMessages,
+        hiddenMessageCountRef.current,
+        chatRenderWindowSettings,
+      );
+      if (pruned.pruned) {
+        updateHiddenMessageCount(pruned.hiddenMessageCount);
+      }
+      return pruned.messages;
+    },
+    [chatRenderWindowSettings, updateHiddenMessageCount],
+  );
   const [showFileMenu, setShowFileMenu] = useState(false);
   const [fileFilter, setFileFilter] = useState("");
   const [fileSelectedIdx, setFileSelectedIdx] = useState(0);
@@ -1579,6 +1673,8 @@ export function TaskChat({
     if (!activeChatId) return;
     perChatStateRef.current.set(activeChatId, {
       messages,
+      hiddenMessageCount,
+      attachmentCounters: { ...attachCountersRef.current },
       isBusy,
       selectedModel,
       permissionLevel,
@@ -1602,6 +1698,7 @@ export function TaskChat({
   }, [
     activeChatId,
     messages,
+    hiddenMessageCount,
     isBusy,
     selectedModel,
     permissionLevel,
@@ -1627,6 +1724,7 @@ export function TaskChat({
     const cached = perChatStateRef.current.get(chatId);
     if (cached) {
       setMessages(cached.messages);
+      updateHiddenMessageCount(cached.hiddenMessageCount);
       updateBusy(cached.isBusy);
       setSelectedModel(cached.selectedModel);
       setPermissionLevel(cached.permissionLevel);
@@ -1649,6 +1747,7 @@ export function TaskChat({
       setRemoteOwnerName(cached.remoteOwnerName);
     } else {
       setMessages([]);
+      updateHiddenMessageCount(0);
       updateBusy(false);
       setSelectedModel("");
       setPermissionLevel("");
@@ -1677,7 +1776,8 @@ export function TaskChat({
       return [];
     });
     const restoredMessages = perChatStateRef.current.get(chatId)?.messages ?? [];
-    attachCountersRef.current = buildAttachmentCounters(restoredMessages);
+    attachCountersRef.current =
+      cached?.attachmentCounters ?? buildAttachmentCounters(restoredMessages);
     // Point wsRef to this chat's WebSocket
     wsRef.current = wsMapRef.current.get(chatId) ?? null;
     // Restore the unsent composer draft for this chat. innerHTML round-trip
@@ -1693,7 +1793,7 @@ export function TaskChat({
       const hasChips = el.querySelector("[data-command],[data-file]") !== null;
       setHasContent(text.length > 0 || hasChips);
     }
-  }, [updateBusy]);
+  }, [updateBusy, updateHiddenMessageCount]);
 
   // ─── Load chats on mount ───────────────────────────────────────────────
 
@@ -1882,9 +1982,18 @@ export function TaskChat({
         for (const evt of buffered) {
           msgs = reduceHistoryMessages(msgs, evt);
         }
+        const attachmentCounters = buildAttachmentCounters(msgs);
+        const prunedHistory = pruneChatViewMessages(
+          msgs,
+          0,
+          chatRenderWindowSettings,
+        );
+        msgs = prunedHistory.messages;
         setMessages(msgs);
-        // Rebuild attachment counters from the full message history
-        attachCountersRef.current = buildAttachmentCounters(msgs);
+        updateHiddenMessageCount(prunedHistory.hiddenMessageCount);
+        // Keep attachment numbering based on full history, even when old
+        // rendered messages are hidden from the view.
+        attachCountersRef.current = attachmentCounters;
         // Process non-message side effects from buffered events
         for (const evt of buffered) {
           switch (evt.type) {
@@ -1969,7 +2078,7 @@ export function TaskChat({
         wsEventBufferRef.current = [];
       }
     })();
-  }, [activeChatId, connectChatWs, projectId, task.id, updateBusy]);
+  }, [activeChatId, connectChatWs, projectId, task.id, updateBusy, chatRenderWindowSettings, updateHiddenMessageCount]);
 
   // Cleanup all WebSockets on unmount
   useEffect(() => {
@@ -2124,13 +2233,18 @@ export function TaskChat({
             }
             return null;
           });
-          setMessages((prev) => reduceHistoryMessages(prev, msg));
+          setMessages((prev) =>
+            pruneActiveChatMessages(reduceHistoryMessages(prev, msg)),
+          );
           updateBusy(false);
           onChatBecameIdle?.();
           break;
         case "busy":
           updateBusy(msg.value);
-          if (!msg.value) onChatBecameIdle?.();
+          if (!msg.value) {
+            setMessages((prev) => pruneActiveChatMessages(prev));
+            onChatBecameIdle?.();
+          }
           break;
         case "error": {
           const isStalePermission = msg.message?.includes("No pending permission");
@@ -2238,14 +2352,16 @@ export function TaskChat({
           terminalRunningRef.current = false;
           updateBusy(false);
           onChatBecameIdle?.();
-          setMessages((prev) => reduceHistoryMessages(prev, msg));
+          setMessages((prev) =>
+            pruneActiveChatMessages(reduceHistoryMessages(prev, msg)),
+          );
           break;
         case "session_ended":
           setIsConnected(false);
           break;
       }
     },
-    [onConnectedProp, enableAutoStickToBottom, onChatBecameIdle, updateBusy],
+    [onConnectedProp, enableAutoStickToBottom, onChatBecameIdle, updateBusy, pruneActiveChatMessages],
   );
 
   /** Buffer a server message into the per-chat cache (for non-active chats) */
@@ -2315,7 +2431,14 @@ export function TaskChat({
         case "terminal_chunk":
         case "terminal_complete":
           state.messages = reduceHistoryMessages(state.messages, msg);
-          if (msg.type === "complete") {
+          if (msg.type === "complete" || msg.type === "terminal_complete") {
+            const pruned = pruneChatViewMessages(
+              state.messages,
+              state.hiddenMessageCount,
+              chatRenderWindowSettings,
+            );
+            state.messages = pruned.messages;
+            state.hiddenMessageCount = pruned.hiddenMessageCount;
             state.isBusy = false;
           }
           break;
@@ -2324,6 +2447,15 @@ export function TaskChat({
           break;
         case "busy":
           state.isBusy = msg.value;
+          if (!msg.value) {
+            const pruned = pruneChatViewMessages(
+              state.messages,
+              state.hiddenMessageCount,
+              chatRenderWindowSettings,
+            );
+            state.messages = pruned.messages;
+            state.hiddenMessageCount = pruned.hiddenMessageCount;
+          }
           break;
         case "plan_update":
           state.planEntries = msg.entries ?? [];
@@ -2343,7 +2475,7 @@ export function TaskChat({
       }
       perChatStateRef.current.set(chatId, state);
     },
-    [],
+    [chatRenderWindowSettings],
   );
 
   // Keep refs in sync so connectChatWs WS handlers always call latest versions
@@ -3949,6 +4081,11 @@ export function TaskChat({
             className="relative z-0 h-full min-h-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-none px-4 pt-4"
           >
             <div className="flex w-full flex-col gap-3">
+              {hiddenMessageCount > 0 && (
+                <div className="mx-auto max-w-[720px] rounded-md border border-[var(--color-border)] bg-[var(--color-bg-secondary)] px-3 py-2 text-center text-xs text-[var(--color-text-muted)]">
+                  {hiddenMessageCount.toLocaleString()} earlier messages are hidden from this view. Full history is still saved.
+                </div>
+              )}
               {renderItems.map((item, idx) =>
                 item.kind === "single" ? (
                   <MessageItem

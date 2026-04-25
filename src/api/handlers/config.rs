@@ -56,6 +56,8 @@ pub struct AutoLinkConfigDto {
 pub struct AcpConfigDto {
     pub agent_command: Option<String>,
     pub custom_agents: Vec<CustomAgentDto>,
+    pub render_window_limit: u32,
+    pub render_window_trigger: u32,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -111,6 +113,8 @@ impl From<&Config> for ConfigResponse {
                         auth_header: a.auth_header.clone(),
                     })
                     .collect(),
+                render_window_limit: config.acp.render_window_limit,
+                render_window_trigger: config.acp.render_window_trigger,
             },
             terminal_multiplexer: config.terminal_multiplexer.to_string(),
         }
@@ -133,6 +137,8 @@ pub struct ConfigPatchRequest {
 pub struct AcpConfigPatch {
     pub agent_command: Option<String>,
     pub custom_agents: Option<Vec<CustomAgentDto>>,
+    pub render_window_limit: Option<u32>,
+    pub render_window_trigger: Option<u32>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -257,6 +263,13 @@ pub async fn patch_config(
                 })
                 .collect();
         }
+        if let Some(limit) = acp_patch.render_window_limit {
+            config.acp.render_window_limit = limit;
+        }
+        if let Some(trigger) = acp_patch.render_window_trigger {
+            config.acp.render_window_trigger = trigger;
+        }
+        config.acp.normalize();
     }
 
     // Save config

@@ -71,8 +71,12 @@ pub struct CustomAgent {
     pub auth_header: Option<String>,
 }
 
+fn default_acp_render_window_trigger() -> u32 {
+    1500
+}
+
 /// ACP (Agent Client Protocol) 配置
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AcpConfig {
     /// Agent 命令 (e.g., "claude")
     #[serde(default)]
@@ -83,6 +87,39 @@ pub struct AcpConfig {
     /// 自定义 Agents
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub custom_agents: Vec<CustomAgent>,
+    /// Frontend chat view message window. 0 means unlimited.
+    #[serde(default)]
+    pub render_window_limit: u32,
+    /// Prune when the frontend chat view reaches this many UI messages.
+    #[serde(default = "default_acp_render_window_trigger")]
+    pub render_window_trigger: u32,
+}
+
+impl Default for AcpConfig {
+    fn default() -> Self {
+        Self {
+            agent_command: None,
+            agent_args: Vec::new(),
+            custom_agents: Vec::new(),
+            render_window_limit: 0,
+            render_window_trigger: default_acp_render_window_trigger(),
+        }
+    }
+}
+
+impl AcpConfig {
+    pub fn normalize(&mut self) {
+        if self.render_window_limit == 0 {
+            if self.render_window_trigger == 0 {
+                self.render_window_trigger = default_acp_render_window_trigger();
+            }
+            return;
+        }
+
+        if self.render_window_trigger <= self.render_window_limit {
+            self.render_window_trigger = self.render_window_limit.saturating_add(500);
+        }
+    }
 }
 
 /// 上次使用的启动模式命令（用于 `grove` 无参数时重放）
@@ -425,6 +462,7 @@ pub fn save_config(config: &Config) -> Result<()> {
     // 规范化配置(去重、去空)
     let mut normalized_config = config.clone();
     normalized_config.auto_link.normalize();
+    normalized_config.acp.normalize();
 
     let path = config_path();
     let content = toml::to_string_pretty(&normalized_config)?;

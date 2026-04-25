@@ -41,12 +41,16 @@ export function AudioPanel({
   const [isEditingPrompt, setIsEditingPrompt] = useState(false);
   const [draftPromptGlobal, setDraftPromptGlobal] = useState(settings.revisePromptGlobal);
   const [draftPromptProject, setDraftPromptProject] = useState(settings.revisePromptProject);
+  const [draftMinDuration, setDraftMinDuration] = useState(String(settings.minDuration));
+  const [draftMaxDuration, setDraftMaxDuration] = useState(String(settings.maxDuration));
   const promptEditorRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
     setAudio(settings);
     setDraftPromptGlobal(settings.revisePromptGlobal);
     setDraftPromptProject(settings.revisePromptProject);
+    setDraftMinDuration(String(settings.minDuration));
+    setDraftMaxDuration(String(settings.maxDuration));
   }, [settings]);
 
   const onSettingsSavedRef = useRef(onSettingsSaved);
@@ -63,6 +67,28 @@ export function AudioPanel({
   const patchAudio = <K extends keyof AudioSettings>(key: K, value: AudioSettings[K]) => {
     patchAudioState((prev) => ({ ...prev, [key]: value }));
   };
+
+  const commitMinDuration = useCallback(() => {
+    const parsed = Number(draftMinDuration);
+    const next = Number.isFinite(parsed)
+      ? Math.max(1, Math.min(10, Math.floor(parsed)))
+      : audio.minDuration;
+    setDraftMinDuration(String(next));
+    if (next !== audio.minDuration) {
+      patchAudio("minDuration", next);
+    }
+  }, [audio.minDuration, draftMinDuration]);
+
+  const commitMaxDuration = useCallback(() => {
+    const parsed = Number(draftMaxDuration);
+    const next = Number.isFinite(parsed)
+      ? Math.max(10, Math.min(300, Math.floor(parsed)))
+      : audio.maxDuration;
+    setDraftMaxDuration(String(next));
+    if (next !== audio.maxDuration) {
+      patchAudio("maxDuration", next);
+    }
+  }, [audio.maxDuration, draftMaxDuration]);
 
   useEffect(() => {
     if (!recordingTarget) return;
@@ -375,8 +401,16 @@ export function AudioPanel({
                     type="number"
                     min={1}
                     max={10}
-                    value={audio.minDuration}
-                    onChange={(e) => patchAudio("minDuration", Math.max(1, Math.min(10, Number(e.target.value))))}
+                    value={draftMinDuration}
+                    onChange={(e) => setDraftMinDuration(e.target.value)}
+                    onBlur={commitMinDuration}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") e.currentTarget.blur();
+                      if (e.key === "Escape") {
+                        setDraftMinDuration(String(audio.minDuration));
+                        e.currentTarget.blur();
+                      }
+                    }}
                     disabled={!audio.enabled}
                     className="h-10 w-20 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] px-3 text-sm text-[var(--color-text)] focus:outline-none focus:border-[var(--color-highlight)] focus:ring-1 focus:ring-[var(--color-highlight)]"
                   />
@@ -393,8 +427,16 @@ export function AudioPanel({
                     type="number"
                     min={10}
                     max={300}
-                    value={audio.maxDuration}
-                    onChange={(e) => patchAudio("maxDuration", Math.max(10, Math.min(300, Number(e.target.value))))}
+                    value={draftMaxDuration}
+                    onChange={(e) => setDraftMaxDuration(e.target.value)}
+                    onBlur={commitMaxDuration}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") e.currentTarget.blur();
+                      if (e.key === "Escape") {
+                        setDraftMaxDuration(String(audio.maxDuration));
+                        e.currentTarget.blur();
+                      }
+                    }}
                     disabled={!audio.enabled}
                     className="h-10 w-20 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] px-3 text-sm text-[var(--color-text)] focus:outline-none focus:border-[var(--color-highlight)] focus:ring-1 focus:ring-[var(--color-highlight)]"
                   />

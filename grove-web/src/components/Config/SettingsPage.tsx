@@ -229,6 +229,10 @@ export function SettingsPage({ config }: SettingsPageProps) {
   const [acpAgent, setAcpAgent] = useState("claude"); // Chat mode agent
   const [customAgents, setCustomAgents] = useState<CustomAgent[]>([]);
   const [showCustomAgentModal, setShowCustomAgentModal] = useState(false);
+  const [chatRenderWindowLimit, setChatRenderWindowLimit] = useState(0);
+  const [chatRenderWindowTrigger, setChatRenderWindowTrigger] = useState(1500);
+  const [chatRenderWindowLimitDraft, setChatRenderWindowLimitDraft] = useState("0");
+  const [chatRenderWindowTriggerDraft, setChatRenderWindowTriggerDraft] = useState("1500");
 
   // Agent command availability: command name → exists on PATH
   const [commandAvailability, setCommandAvailability] = useState<Record<string, boolean>>({});
@@ -347,6 +351,12 @@ export function SettingsPage({ config }: SettingsPageProps) {
       if (cfg.acp?.custom_agents) {
         setCustomAgents(cfg.acp.custom_agents);
       }
+      const renderWindowLimit = cfg.acp?.render_window_limit ?? 0;
+      const renderWindowTrigger = cfg.acp?.render_window_trigger ?? 1500;
+      setChatRenderWindowLimit(renderWindowLimit);
+      setChatRenderWindowTrigger(renderWindowTrigger);
+      setChatRenderWindowLimitDraft(String(renderWindowLimit));
+      setChatRenderWindowTriggerDraft(String(renderWindowTrigger));
 
       setIsLoaded(true);
     } catch {
@@ -446,6 +456,11 @@ export function SettingsPage({ config }: SettingsPageProps) {
         terminal_multiplexer: terminalMultiplexer,
         acp: {
           agent_command: acpAgent || undefined,
+          render_window_limit: chatRenderWindowLimit,
+          render_window_trigger:
+            chatRenderWindowLimit > 0
+              ? Math.max(chatRenderWindowTrigger, chatRenderWindowLimit + 1)
+              : chatRenderWindowTrigger || 1500,
         },
         auto_link: {
           patterns: autoLinkPatterns,
@@ -457,7 +472,7 @@ export function SettingsPage({ config }: SettingsPageProps) {
     } catch {
       console.error("Failed to save config");
     }
-  }, [isLoaded, selectedLayout, agentCommand, acpAgent, customLayouts, selectedCustomLayoutId, customLayoutsLoaded, ideCommand, terminalCommand, terminalMultiplexer, webTerminalMode, workspaceLayout, autoLinkPatterns, refreshGlobalConfig]);
+  }, [isLoaded, selectedLayout, agentCommand, acpAgent, chatRenderWindowLimit, chatRenderWindowTrigger, customLayouts, selectedCustomLayoutId, customLayoutsLoaded, ideCommand, terminalCommand, terminalMultiplexer, webTerminalMode, workspaceLayout, autoLinkPatterns, refreshGlobalConfig]);
 
   // Handle theme change with immediate save
   const handleThemeChange = useCallback((newThemeId: string) => {
@@ -479,7 +494,7 @@ export function SettingsPage({ config }: SettingsPageProps) {
     }, 500); // 500ms debounce
 
     return () => clearTimeout(timer);
-  }, [selectedLayout, agentCommand, acpAgent, customLayouts, selectedCustomLayoutId, customLayoutsLoaded, ideCommand, terminalCommand, terminalMultiplexer, webTerminalMode, workspaceLayout, autoLinkPatterns, isLoaded, saveConfig]);
+  }, [selectedLayout, agentCommand, acpAgent, chatRenderWindowLimit, chatRenderWindowTrigger, customLayouts, selectedCustomLayoutId, customLayoutsLoaded, ideCommand, terminalCommand, terminalMultiplexer, webTerminalMode, workspaceLayout, autoLinkPatterns, isLoaded, saveConfig]);
 
   // Load applications list
   const loadApplications = useCallback(async () => {
@@ -607,6 +622,59 @@ export function SettingsPage({ config }: SettingsPageProps) {
     }
   }, [isLoaded, commandAvailability, agentCommand, acpAgent, terminalAgentOptions, chatAgentOptions]);
 
+  const suggestedChatRenderWindowTrigger = useCallback((limit: number) => {
+    return Math.max(limit + 1, Math.ceil(limit * 1.5));
+  }, []);
+
+  const commitChatRenderWindowLimit = useCallback((value: string) => {
+    const parsed = Number(value);
+    const nextLimit = Number.isFinite(parsed) ? Math.max(0, Math.floor(parsed)) : 0;
+    setChatRenderWindowLimit(nextLimit);
+    setChatRenderWindowLimitDraft(String(nextLimit));
+    if (nextLimit > 0) {
+      setChatRenderWindowTrigger((current) =>
+        current > nextLimit ? current : suggestedChatRenderWindowTrigger(nextLimit),
+      );
+      setChatRenderWindowTriggerDraft((current) => {
+        const currentNumber = Number(current);
+        const nextTrigger =
+          Number.isFinite(currentNumber) && currentNumber > nextLimit
+            ? Math.floor(currentNumber)
+            : suggestedChatRenderWindowTrigger(nextLimit);
+        return String(nextTrigger);
+      });
+    }
+  }, [suggestedChatRenderWindowTrigger]);
+
+  const commitChatRenderWindowTrigger = useCallback((value: string) => {
+    const parsed = Number(value);
+    const nextTrigger = Number.isFinite(parsed) ? Math.max(0, Math.floor(parsed)) : 0;
+    const normalizedTrigger =
+      chatRenderWindowLimit > 0
+        ? Math.max(nextTrigger, chatRenderWindowLimit + 1)
+        : nextTrigger || 1500;
+    setChatRenderWindowTrigger(normalizedTrigger);
+    setChatRenderWindowTriggerDraft(String(normalizedTrigger));
+  }, [chatRenderWindowLimit]);
+
+  const setChatRenderWindowMode = useCallback((mode: "unlimited" | "custom") => {
+    if (mode === "unlimited") {
+      setChatRenderWindowLimit(0);
+      setChatRenderWindowLimitDraft("0");
+      return;
+    }
+    setChatRenderWindowLimit((current) => {
+      const next = current > 0 ? current : 1000;
+      setChatRenderWindowLimitDraft(String(next));
+      return next;
+    });
+    setChatRenderWindowTrigger((current) => {
+      const next = current > 1000 ? current : 1500;
+      setChatRenderWindowTriggerDraft(String(next));
+      return next;
+    });
+  }, []);
+
   const claudeCodeConfig = JSON.stringify(
     {
       mcpServers: {
@@ -675,6 +743,78 @@ env_vars = [
                 customAgents={customAgents}
                 onManageCustomAgents={() => setShowCustomAgentModal(true)}
               />
+            </div>
+
+            {/* Chat render window */}
+            <div className="space-y-2">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <div className="text-xs font-medium text-[var(--color-text-muted)] uppercase tracking-wider select-none">Chat Render Window</div>
+                  <div className="mt-0.5 text-xs text-[var(--color-text-muted)]">
+                    {chatRenderWindowLimit > 0
+                      ? `Keep latest ${chatRenderWindowLimit.toLocaleString()} messages`
+                      : "Keep the full conversation in view"}
+                  </div>
+                </div>
+                <div className="inline-flex rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] p-0.5">
+                  <button
+                    type="button"
+                    onClick={() => setChatRenderWindowMode("unlimited")}
+                    className={`rounded px-3 py-1.5 text-xs font-medium transition-colors ${
+                      chatRenderWindowLimit === 0
+                        ? "bg-[var(--color-highlight)] text-white"
+                        : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
+                    }`}
+                  >
+                    Unlimited
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setChatRenderWindowMode("custom")}
+                    className={`rounded px-3 py-1.5 text-xs font-medium transition-colors ${
+                      chatRenderWindowLimit > 0
+                        ? "bg-[var(--color-highlight)] text-white"
+                        : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
+                    }`}
+                  >
+                    Custom
+                  </button>
+                </div>
+              </div>
+              {chatRenderWindowLimit > 0 && (
+                <div className="flex flex-wrap items-center gap-2 text-sm text-[var(--color-text-muted)]">
+                  <span>Prune at</span>
+                  <label className="inline-flex items-center">
+                    <input
+                      type="number"
+                      min={1}
+                      step={100}
+                      value={chatRenderWindowLimitDraft}
+                      onChange={(e) => setChatRenderWindowLimitDraft(e.target.value)}
+                      onBlur={() => commitChatRenderWindowLimit(chatRenderWindowLimitDraft)}
+                      className="h-8 w-24 rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-2 text-sm text-[var(--color-text)] outline-none focus:border-[var(--color-highlight)]"
+                      aria-label="Chat render window view size limit"
+                    />
+                  </label>
+                  <span>messages when view reaches</span>
+                  <label className="inline-flex items-center">
+                    <input
+                      type="number"
+                      min={chatRenderWindowLimit + 1}
+                      step={100}
+                      value={chatRenderWindowTriggerDraft}
+                      onChange={(e) => setChatRenderWindowTriggerDraft(e.target.value)}
+                      onBlur={() => commitChatRenderWindowTrigger(chatRenderWindowTriggerDraft)}
+                      className="h-8 w-24 rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-2 text-sm text-[var(--color-text)] outline-none focus:border-[var(--color-highlight)]"
+                      aria-label="Chat render window prune trigger size"
+                    />
+                  </label>
+                  <span>messages.</span>
+                </div>
+              )}
+              <p className="text-xs leading-relaxed text-[var(--color-text-muted)]">
+                Custom hides older UI messages after a turn completes. Full chat history remains saved.
+              </p>
             </div>
           </div>
         </Section>
