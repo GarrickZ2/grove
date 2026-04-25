@@ -1672,9 +1672,8 @@ async fn drive_session(
                     }
                 };
 
-                handle.emit(AcpUpdate::Busy { value: false });
-
                 if got_kill {
+                    handle.emit(AcpUpdate::Busy { value: false });
                     handle.emit(AcpUpdate::Error {
                         message: "Session killed".to_string(),
                     });
@@ -1684,9 +1683,6 @@ async fn drive_session(
                 match result {
                     Ok(resp) => {
                         if next_prompt.is_none() {
-                            handle.emit(AcpUpdate::Complete {
-                                stop_reason: format!("{:?}", resp.stop_reason),
-                            });
                             let summary = handle
                                 .last_assistant_text
                                 .lock()
@@ -1701,9 +1697,16 @@ async fn drive_session(
                                 &summary,
                                 "Glass",
                             );
+                            handle.emit(AcpUpdate::Busy { value: false });
+                            handle.emit(AcpUpdate::Complete {
+                                stop_reason: format!("{:?}", resp.stop_reason),
+                            });
+                        } else {
+                            handle.emit(AcpUpdate::Busy { value: false });
                         }
                     }
                     Err(e) => {
+                        handle.emit(AcpUpdate::Busy { value: false });
                         if next_prompt.is_none() {
                             handle.emit(AcpUpdate::Error {
                                 message: format!("Prompt error: {}", e),
@@ -2848,7 +2851,7 @@ pub fn init_agent_defaults() {
     }
 }
 
-/// 发送 ACP 事件通知（声音 + 横幅 + hooks.toml）
+/// 发送 ACP 事件通知（声音 + 横幅 + SQLite 通知存储）
 fn notify_acp_event(
     project_key: &str,
     task_id: &str,
@@ -2879,15 +2882,13 @@ fn notify_acp_event(
     let banner_msg = format!("{} — {}", task_name, message);
     hooks::send_banner(&title, &banner_msg);
 
-    // 更新 hooks.toml（web 前端轮询会展示）
+    // 更新通知存储；helper 会顺带广播 HookAdded 让前端纯 push 刷新。
     let level = if title_suffix.contains("Permission") {
         NotificationLevel::Warn
     } else {
         NotificationLevel::Notice
     };
-    let mut hooks_file = hooks::load_hooks(project_key);
-    hooks_file.update(task_id, level, Some(message.to_string()));
-    let _ = hooks::save_hooks(project_key, &hooks_file);
+    hooks::update_hook(project_key, task_id, level, Some(message.to_string()));
 }
 
 /// Truncate a string to at most `max_chars` Unicode characters, appending "…" if truncated.

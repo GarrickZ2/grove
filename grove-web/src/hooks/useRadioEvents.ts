@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { RadioEvent, TargetMode } from "../api/walkieTalkie";
 import { getApiHost, appendHmacToUrl } from "../api/client";
 
@@ -7,14 +7,144 @@ export interface RadioEventCallbacks {
   onFocusTarget?: (projectId: string, taskId: string, target: TargetMode) => void;
   onTerminalInput?: (projectId: string, taskId: string, text: string) => void;
   onPromptSent?: (projectId: string, taskId: string) => void;
+  onTaskStatus?: (
+    projectId: string,
+    taskId: string,
+    status: "idle" | "busy" | "disconnected",
+  ) => void;
+  onHookAdded?: (projectId: string, taskId: string) => void;
+  /** Fired when the shared WS opens or reopens after a disconnect. Useful for
+   *  consumers who need to re-sync state after a missed-events window. */
+  onConnected?: () => void;
 }
 
 const RECONNECT_BASE_DELAY = 3000;
 const RECONNECT_MAX_DELAY = 30000;
 
+// ─── Module-level singleton shared across all useRadioEvents() callers ──────
+// Each component that mounts the hook adds its callback bag to `subscribers`.
+// We keep exactly one WebSocket open as long as at least one subscriber is
+// mounted; opening N parallel sockets per page (one per consumer) was the
+// previous behavior and wasted server-side resources.
+
+interface SubscriberRef {
+  current: RadioEventCallbacks;
+}
+
+const subscribers = new Set<SubscriberRef>();
+let sharedWs: WebSocket | null = null;
+let intentionalClose = false;
+let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+let reconnectAttempts = 0;
+let radioClientCount = 0;
+const clientCountListeners = new Set<(n: number) => void>();
+
+function notifyClientCount() {
+  for (const l of clientCountListeners) l(radioClientCount);
+}
+
+function dispatch(event: RadioEvent) {
+  switch (event.type) {
+    case "focus_task":
+      for (const s of subscribers) s.current.onFocusTask?.(event.project_id, event.task_id, event.target);
+      break;
+    case "focus_target":
+      for (const s of subscribers) s.current.onFocusTarget?.(event.project_id, event.task_id, event.target);
+      break;
+    case "terminal_input":
+      for (const s of subscribers) s.current.onTerminalInput?.(event.project_id, event.task_id, event.text);
+      break;
+    case "prompt_sent":
+      for (const s of subscribers) s.current.onPromptSent?.(event.project_id, event.task_id);
+      break;
+    case "task_status":
+      for (const s of subscribers) s.current.onTaskStatus?.(event.project_id, event.task_id, event.agent_status);
+      break;
+    case "hook_added":
+      for (const s of subscribers) s.current.onHookAdded?.(event.project_id, event.task_id);
+      break;
+    case "client_connected":
+      radioClientCount += 1;
+      notifyClientCount();
+      break;
+    case "client_disconnected":
+      radioClientCount = Math.max(0, radioClientCount - 1);
+      notifyClientCount();
+      break;
+    case "client_count":
+      if ("count" in event && typeof (event as Record<string, unknown>).count === "number") {
+        radioClientCount = (event as RadioEvent & { count: number }).count;
+        notifyClientCount();
+      }
+      break;
+  }
+}
+
+async function openSharedWs() {
+  if (sharedWs) return;
+  const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+  const host = getApiHost();
+  const url = await appendHmacToUrl(`${protocol}//${host}/api/v1/radio/events/ws`);
+  // A second caller may have raced us — bail if so.
+  if (sharedWs) return;
+
+  const ws = new WebSocket(url);
+  sharedWs = ws;
+  intentionalClose = false;
+
+  ws.onopen = () => {
+    reconnectAttempts = 0;
+    // Notify subscribers so they can do a one-shot re-sync (covers events
+    // missed during the disconnect window — e.g. hooks fired while offline).
+    for (const s of subscribers) s.current.onConnected?.();
+  };
+
+  ws.onmessage = (event) => {
+    try {
+      const data: RadioEvent = JSON.parse(event.data);
+      dispatch(data);
+    } catch {
+      // ignore malformed
+    }
+  };
+
+  ws.onclose = () => {
+    sharedWs = null;
+    radioClientCount = 0;
+    notifyClientCount();
+    if (intentionalClose || subscribers.size === 0) return;
+    const delay = Math.min(
+      RECONNECT_BASE_DELAY * Math.pow(2, reconnectAttempts),
+      RECONNECT_MAX_DELAY,
+    );
+    reconnectAttempts += 1;
+    reconnectTimer = setTimeout(() => {
+      reconnectTimer = null;
+      void openSharedWs();
+    }, delay);
+  };
+
+  ws.onerror = () => {
+    // onclose fires after onerror
+  };
+}
+
+function maybeCloseSharedWs() {
+  if (subscribers.size > 0) return;
+  intentionalClose = true;
+  if (reconnectTimer) {
+    clearTimeout(reconnectTimer);
+    reconnectTimer = null;
+  }
+  if (sharedWs) {
+    sharedWs.close();
+    sharedWs = null;
+  }
+}
+
 /**
  * Hook for desktop Blitz to receive radio control events.
- * Connects to /radio/events/ws and forwards events to callbacks.
+ * All callers share a single WebSocket connection at the module level.
  * Returns the number of connected Radio clients (phones).
  */
 export function useRadioEvents(callbacks: RadioEventCallbacks): { radioClients: number } {
@@ -23,103 +153,22 @@ export function useRadioEvents(callbacks: RadioEventCallbacks): { radioClients: 
     callbacksRef.current = callbacks;
   });
 
-  const [radioClients, setRadioClients] = useState(0);
-
-  const wsRef = useRef<WebSocket | null>(null);
-  const intentionalCloseRef = useRef(false);
-  const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const reconnectAttemptsRef = useRef(0);
-  const connectRef = useRef<() => Promise<void>>(null!);
-
-  const connect = useCallback(async () => {
-    const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-    const host = getApiHost();
-    const url = await appendHmacToUrl(
-      `${protocol}//${host}/api/v1/radio/events/ws`,
-    );
-
-    const ws = new WebSocket(url);
-    wsRef.current = ws;
-
-    ws.onopen = () => {
-      reconnectAttemptsRef.current = 0;
-    };
-
-    ws.onmessage = (event) => {
-      try {
-        const data: RadioEvent = JSON.parse(event.data);
-        switch (data.type) {
-          case "focus_task":
-            callbacksRef.current.onFocusTask?.(data.project_id, data.task_id, data.target);
-            break;
-          case "focus_target":
-            callbacksRef.current.onFocusTarget?.(data.project_id, data.task_id, data.target);
-            break;
-          case "terminal_input":
-            callbacksRef.current.onTerminalInput?.(data.project_id, data.task_id, data.text);
-            break;
-          case "prompt_sent":
-            callbacksRef.current.onPromptSent?.(data.project_id, data.task_id);
-            break;
-          case "client_connected":
-            setRadioClients((prev) => prev + 1);
-            break;
-          case "client_disconnected":
-            setRadioClients((prev) => Math.max(0, prev - 1));
-            break;
-          case "client_count":
-            if ("count" in data && typeof (data as Record<string, unknown>).count === "number") {
-              setRadioClients((data as RadioEvent & { count: number }).count);
-            }
-            break;
-        }
-      } catch {
-        // ignore malformed
-      }
-    };
-
-    ws.onclose = () => {
-      wsRef.current = null;
-      setRadioClients(0);
-      if (!intentionalCloseRef.current) {
-        const delay = Math.min(
-          RECONNECT_BASE_DELAY * Math.pow(2, reconnectAttemptsRef.current),
-          RECONNECT_MAX_DELAY,
-        );
-        reconnectAttemptsRef.current++;
-        reconnectTimerRef.current = setTimeout(() => {
-          reconnectTimerRef.current = null;
-          connectRef.current();
-        }, delay);
-      }
-    };
-
-    ws.onerror = () => {
-      // onclose fires after onerror
-    };
-  }, []);
+  const [radioClients, setRadioClients] = useState(radioClientCount);
 
   useEffect(() => {
-    connectRef.current = connect;
-  });
-
-  useEffect(() => {
-    intentionalCloseRef.current = false;
-    reconnectAttemptsRef.current = 0;
-    connect();
+    subscribers.add(callbacksRef);
+    const listener = (n: number) => setRadioClients(n);
+    clientCountListeners.add(listener);
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setRadioClients(radioClientCount);
+    void openSharedWs();
 
     return () => {
-      intentionalCloseRef.current = true;
-      if (reconnectTimerRef.current) {
-        clearTimeout(reconnectTimerRef.current);
-        reconnectTimerRef.current = null;
-      }
-      if (wsRef.current) {
-        wsRef.current.close();
-        wsRef.current = null;
-      }
+      subscribers.delete(callbacksRef);
+      clientCountListeners.delete(listener);
+      maybeCloseSharedWs();
     };
-  }, [connect]);
+  }, []);
 
   return { radioClients };
 }

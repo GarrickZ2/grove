@@ -142,22 +142,8 @@ pub fn execute(level: HookLevel) {
         hooks::send_banner(&title, &banner_msg);
     }
 
-    // 无条件记录到 hooks 文件（当用户 detach 回到 Grove 时会被清除）
-    update_hooks_file(&project_path, &task_id, level.level(), message);
-}
-
-/// 更新 hooks.toml 文件
-fn update_hooks_file(
-    project_path: &str,
-    task_id: &str,
-    level: NotificationLevel,
-    message: Option<String>,
-) {
-    use crate::storage::workspace::project_hash;
-
-    let project_key = project_hash(project_path);
-
-    let mut hooks_file = hooks::load_hooks(&project_key);
-    hooks_file.update(task_id, level, message);
-    let _ = hooks::save_hooks(&project_key, &hooks_file);
+    // 无条件记录到通知存储（当用户 detach 回到 Grove 时会被清除）；
+    // update_hook 会广播 HookAdded 让 grove server 上的前端立即刷新。
+    let project_key = crate::storage::workspace::project_hash(&project_path);
+    hooks::update_hook(&project_key, &task_id, level.level(), message);
 }

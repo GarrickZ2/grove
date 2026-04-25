@@ -1,7 +1,8 @@
-import { createContext, useContext, useState, useEffect, useCallback, useRef } from "react";
+import { createContext, useContext, useState, useCallback } from "react";
 import type { ReactNode } from "react";
 import { listAllHooks, dismissHook } from "../api/hooks";
 import type { HookEntryResponse } from "../api/hooks";
+import { useRadioEvents } from "../hooks/useRadioEvents";
 
 interface NotificationContextType {
   notifications: HookEntryResponse[];
@@ -13,11 +14,8 @@ interface NotificationContextType {
 
 const NotificationContext = createContext<NotificationContextType | undefined>(undefined);
 
-const POLL_INTERVAL = 5000; // 5 seconds
-
 export function NotificationProvider({ children }: { children: ReactNode }) {
   const [notifications, setNotifications] = useState<HookEntryResponse[]>([]);
-  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const fetchNotifications = useCallback(async () => {
     try {
@@ -42,17 +40,22 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
     [notifications]
   );
 
-  // Initial fetch + polling
-  useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    fetchNotifications();
-    intervalRef.current = setInterval(fetchNotifications, POLL_INTERVAL);
-    return () => {
-      if (intervalRef.current) {
-        clearInterval(intervalRef.current);
-      }
-    };
-  }, [fetchNotifications]);
+  // Pure-push refresh:
+  //   - `hook_added` fires whenever any code path writes a notification
+  //     (ACP completion, `grove hooks` CLI, future MCP server, …).
+  //   - `onConnected` fires on initial WS open AND on every reconnect — also
+  //     serves as the initial-load trigger so we don't double-fetch on mount.
+  //     If the WS never opens (e.g. server down), the badge stays empty,
+  //     which is the correct fail-closed behaviour.
+  // No polling: the event channel is the single source of truth.
+  useRadioEvents({
+    onHookAdded: useCallback(() => {
+      void fetchNotifications();
+    }, [fetchNotifications]),
+    onConnected: useCallback(() => {
+      void fetchNotifications();
+    }, [fetchNotifications]),
+  });
 
   return (
     <NotificationContext.Provider

@@ -1,6 +1,7 @@
 //! Hook 通知系统
 
 use chrono::{DateTime, Utc};
+use rusqlite::params;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::fs;
@@ -9,7 +10,7 @@ use std::path::PathBuf;
 use std::process::Command;
 
 use crate::error::Result;
-use crate::storage::{self, tasks, workspace::project_hash};
+use crate::storage::{database, tasks, workspace::project_hash};
 
 /// 通知级别
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -30,41 +31,18 @@ pub struct HookEntry {
     pub message: Option<String>,
 }
 
-/// 向后兼容的反序列化：支持旧格式（裸字符串）和新格式（table）
-#[derive(Debug, Clone, Deserialize)]
-#[serde(untagged)]
-enum HookEntryCompat {
-    /// 新格式：完整 HookEntry table
-    Full(HookEntry),
-    /// 旧格式：裸 NotificationLevel 字符串
-    Legacy(NotificationLevel),
-}
-
-impl From<HookEntryCompat> for HookEntry {
-    fn from(compat: HookEntryCompat) -> Self {
-        match compat {
-            HookEntryCompat::Full(entry) => entry,
-            HookEntryCompat::Legacy(level) => HookEntry {
-                level,
-                timestamp: Utc::now(),
-                message: None,
-            },
-        }
-    }
-}
-
-/// 向后兼容的反序列化中间结构
-#[derive(Debug, Clone, Deserialize)]
-struct HooksFileCompat {
-    #[serde(default)]
-    tasks: HashMap<String, HookEntryCompat>,
-}
-
 /// Hooks 文件结构
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct HooksFile {
     #[serde(default)]
     pub tasks: HashMap<String, HookEntry>,
+}
+
+#[derive(Debug, Clone)]
+pub struct HookNotificationRecord {
+    pub project_key: String,
+    pub task_id: String,
+    pub entry: HookEntry,
 }
 
 impl HooksFile {
@@ -84,56 +62,173 @@ impl HooksFile {
     }
 }
 
-/// 加载项目的 hooks 文件（向后兼容旧格式）
-pub fn load_hooks(project_key: &str) -> HooksFile {
-    let project_dir = storage::grove_dir().join("projects").join(project_key);
-    let hooks_path = project_dir.join("hooks.toml");
-
-    if hooks_path.exists() {
-        let content = match fs::read_to_string(&hooks_path) {
-            Ok(s) => s,
-            Err(_) => return HooksFile::default(),
-        };
-
-        // 先尝试新格式
-        if let Ok(file) = toml::from_str::<HooksFile>(&content) {
-            return file;
-        }
-
-        // 回退到兼容格式（处理旧的裸字符串值）
-        if let Ok(compat) = toml::from_str::<HooksFileCompat>(&content) {
-            return HooksFile {
-                tasks: compat
-                    .tasks
-                    .into_iter()
-                    .map(|(k, v)| (k, HookEntry::from(v)))
-                    .collect(),
-            };
-        }
-
-        HooksFile::default()
-    } else {
-        HooksFile::default()
+fn level_to_str(level: NotificationLevel) -> &'static str {
+    match level {
+        NotificationLevel::Notice => "notice",
+        NotificationLevel::Warn => "warn",
+        NotificationLevel::Critical => "critical",
     }
 }
 
-/// 保存项目的 hooks 文件
-pub fn save_hooks(project_key: &str, hooks: &HooksFile) -> Result<()> {
-    let project_dir = storage::grove_dir().join("projects").join(project_key);
-    fs::create_dir_all(&project_dir)?;
+fn level_from_str(value: &str) -> Option<NotificationLevel> {
+    match value {
+        "notice" => Some(NotificationLevel::Notice),
+        "warn" => Some(NotificationLevel::Warn),
+        "critical" => Some(NotificationLevel::Critical),
+        _ => None,
+    }
+}
 
-    let hooks_path = project_dir.join("hooks.toml");
-    let content = toml::to_string_pretty(hooks)?;
-    fs::write(&hooks_path, content)?;
+/// 加载项目的 hook 通知
+pub fn load_hooks(project_key: &str) -> HooksFile {
+    let conn = database::connection();
+    let mut stmt = match conn.prepare(
+        "SELECT task_id, level, timestamp, message
+         FROM hook_notifications
+         WHERE project_key = ?1",
+    ) {
+        Ok(stmt) => stmt,
+        Err(_) => return HooksFile::default(),
+    };
+
+    let rows = match stmt.query_map(params![project_key], |row| {
+        let task_id: String = row.get(0)?;
+        let level: String = row.get(1)?;
+        let timestamp: String = row.get(2)?;
+        let message: Option<String> = row.get(3)?;
+        Ok((task_id, level, timestamp, message))
+    }) {
+        Ok(rows) => rows,
+        Err(_) => return HooksFile::default(),
+    };
+
+    let mut hooks = HooksFile::default();
+    for row in rows.flatten() {
+        let (task_id, level, timestamp, message) = row;
+        let Some(level) = level_from_str(&level) else {
+            continue;
+        };
+        let timestamp = DateTime::parse_from_rfc3339(&timestamp)
+            .map(|dt| dt.with_timezone(&Utc))
+            .unwrap_or_else(|_| Utc::now());
+        hooks.tasks.insert(
+            task_id,
+            HookEntry {
+                level,
+                timestamp,
+                message,
+            },
+        );
+    }
+    hooks
+}
+
+/// 加载所有项目的 hook 通知，按时间倒序返回。
+pub fn load_all_hooks() -> Vec<HookNotificationRecord> {
+    let conn = database::connection();
+    let mut stmt = match conn.prepare(
+        "SELECT project_key, task_id, level, timestamp, message
+         FROM hook_notifications
+         ORDER BY timestamp DESC",
+    ) {
+        Ok(stmt) => stmt,
+        Err(_) => return Vec::new(),
+    };
+
+    let rows = match stmt.query_map(params![], |row| {
+        let project_key: String = row.get(0)?;
+        let task_id: String = row.get(1)?;
+        let level: String = row.get(2)?;
+        let timestamp: String = row.get(3)?;
+        let message: Option<String> = row.get(4)?;
+        Ok((project_key, task_id, level, timestamp, message))
+    }) {
+        Ok(rows) => rows,
+        Err(_) => return Vec::new(),
+    };
+
+    rows.flatten()
+        .filter_map(|(project_key, task_id, level, timestamp, message)| {
+            let level = level_from_str(&level)?;
+            let timestamp = DateTime::parse_from_rfc3339(&timestamp)
+                .map(|dt| dt.with_timezone(&Utc))
+                .unwrap_or_else(|_| Utc::now());
+            Some(HookNotificationRecord {
+                project_key,
+                task_id,
+                entry: HookEntry {
+                    level,
+                    timestamp,
+                    message,
+                },
+            })
+        })
+        .collect()
+}
+
+/// 保存项目的 hook 通知
+pub fn save_hooks(project_key: &str, hooks: &HooksFile) -> Result<()> {
+    let conn = database::connection();
+    let tx = conn.unchecked_transaction()?;
+    tx.execute(
+        "DELETE FROM hook_notifications WHERE project_key = ?1",
+        params![project_key],
+    )?;
+    for (task_id, entry) in &hooks.tasks {
+        tx.execute(
+            "INSERT INTO hook_notifications (project_key, task_id, level, timestamp, message)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![
+                project_key,
+                task_id,
+                level_to_str(entry.level),
+                entry.timestamp.to_rfc3339(),
+                entry.message
+            ],
+        )?;
+    }
+    tx.commit()?;
     Ok(())
 }
 
 /// 删除指定 task 的 hook 通知
 pub fn remove_task_hook(project_key: &str, task_id: &str) {
+    let conn = database::connection();
+    let _ = conn.execute(
+        "DELETE FROM hook_notifications WHERE project_key = ?1 AND task_id = ?2",
+        params![project_key, task_id],
+    );
+}
+
+/// 写入一条新通知并通过 radio 广播 `HookAdded`。所有 hook 写入路径
+/// （ACP notify、`grove hooks` CLI、未来的 MCP server）都应走这里，
+/// 确保前端能够纯 push 刷新，无需轮询。
+///
+/// `save_hooks` 失败不会向上传递（调用方都把 hook 写入当成 fire-and-forget），
+/// 但会打到 stderr 让运维 / 用户能看到 —— 静默吞 IO 错误会让通知丢失却没线索。
+pub fn update_hook(
+    project_key: &str,
+    task_id: &str,
+    level: NotificationLevel,
+    message: Option<String>,
+) {
     let mut hooks = load_hooks(project_key);
-    if hooks.tasks.remove(task_id).is_some() {
-        // 静默保存，忽略错误
-        let _ = save_hooks(project_key, &hooks);
+    hooks.update(task_id, level, message);
+    match save_hooks(project_key, &hooks) {
+        Ok(()) => {
+            crate::api::handlers::walkie_talkie::broadcast_radio_event(
+                crate::api::handlers::walkie_talkie::RadioEvent::HookAdded {
+                    project_id: project_key.to_string(),
+                    task_id: task_id.to_string(),
+                },
+            );
+        }
+        Err(e) => {
+            eprintln!(
+                "hooks: failed to save hook for {}/{}: {}",
+                project_key, task_id, e
+            );
+        }
     }
 }
 
@@ -523,79 +618,60 @@ pub fn ensure_grove_app() -> PathBuf {
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_deserialize_old_format() {
-        let old = r#"[tasks]
-handle-tt-account-unbind = "notice"
-"#;
-        // New HooksFile format should fail (expects table, not string)
-        let result = toml::from_str::<HooksFile>(old);
-        println!("Direct HooksFile parse: {:?}", result);
+    struct HomeGuard(String);
 
-        // Compat format should work
-        let compat = toml::from_str::<HooksFileCompat>(old);
-        println!("Compat parse: {:?}", compat);
-        assert!(compat.is_ok(), "Compat format should parse old hooks.toml");
-
-        let compat = compat.unwrap();
-        let hooks = HooksFile {
-            tasks: compat
-                .tasks
-                .into_iter()
-                .map(|(k, v)| (k, HookEntry::from(v)))
-                .collect(),
-        };
-        assert_eq!(hooks.tasks.len(), 1);
-        assert_eq!(
-            hooks.tasks["handle-tt-account-unbind"].level,
-            NotificationLevel::Notice
-        );
+    impl Drop for HomeGuard {
+        fn drop(&mut self) {
+            std::env::set_var("HOME", &self.0);
+        }
     }
 
     #[test]
-    fn test_deserialize_new_format() {
-        let new = r#"[tasks.demo-task]
-level = "notice"
-timestamp = "2026-02-06T15:25:11.594286Z"
-"#;
-        let result = toml::from_str::<HooksFile>(new);
-        println!("New format parse: {:?}", result);
-        assert!(
-            result.is_ok(),
-            "New format should parse: {:?}",
-            result.err()
-        );
+    fn test_save_load_remove_roundtrip() {
+        let _lock = crate::storage::database::test_lock().blocking_lock();
+        let original_home = std::env::var("HOME").unwrap_or_default();
+        let _home_guard = HomeGuard(original_home);
+        let temp_home = std::env::temp_dir().join(format!(
+            "grove-hooks-test-{}-{}",
+            std::process::id(),
+            Utc::now().timestamp_nanos_opt().unwrap_or_default()
+        ));
+        std::env::set_var("HOME", &temp_home);
 
-        let hooks = result.unwrap();
-        assert_eq!(hooks.tasks.len(), 1);
-        assert_eq!(hooks.tasks["demo-task"].level, NotificationLevel::Notice);
-    }
-
-    #[test]
-    fn test_roundtrip() {
         let mut hooks = HooksFile::default();
         hooks.update("test-task", NotificationLevel::Warn, Some("hello".into()));
 
-        let serialized = toml::to_string_pretty(&hooks).unwrap();
-        println!("Serialized:\n{}", serialized);
+        save_hooks("project-a", &hooks).unwrap();
+        let loaded = load_hooks("project-a");
 
-        let deserialized = toml::from_str::<HooksFile>(&serialized);
-        println!("Deserialized: {:?}", deserialized);
-        assert!(
-            deserialized.is_ok(),
-            "Roundtrip should work: {:?}",
-            deserialized.err()
+        assert_eq!(loaded.tasks.len(), 1);
+        assert_eq!(loaded.tasks["test-task"].level, NotificationLevel::Warn);
+        assert_eq!(loaded.tasks["test-task"].message.as_deref(), Some("hello"));
+
+        remove_task_hook("project-a", "test-task");
+        assert!(load_hooks("project-a").tasks.is_empty());
+
+        let _ = std::fs::remove_dir_all(temp_home);
+    }
+
+    #[test]
+    fn test_update_keeps_existing_higher_level() {
+        let mut hooks = HooksFile::default();
+        hooks.update(
+            "test-task",
+            NotificationLevel::Critical,
+            Some("critical".into()),
+        );
+        hooks.update(
+            "test-task",
+            NotificationLevel::Notice,
+            Some("notice".into()),
         );
 
-        let deserialized = deserialized.unwrap();
-        assert_eq!(deserialized.tasks.len(), 1);
+        assert_eq!(hooks.tasks["test-task"].level, NotificationLevel::Critical);
         assert_eq!(
-            deserialized.tasks["test-task"].level,
-            NotificationLevel::Warn
-        );
-        assert_eq!(
-            deserialized.tasks["test-task"].message.as_deref(),
-            Some("hello")
+            hooks.tasks["test-task"].message.as_deref(),
+            Some("critical")
         );
     }
 }

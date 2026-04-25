@@ -3,6 +3,7 @@
 use axum::{extract::Path, http::StatusCode, Json};
 use chrono::{DateTime, Utc};
 use serde::Serialize;
+use std::collections::{HashMap, HashSet};
 
 use crate::hooks::{self, NotificationLevel};
 use crate::storage::{tasks, workspace};
@@ -34,45 +35,89 @@ pub struct HooksListResponse {
 
 /// GET /hooks — list all hook notifications across all projects
 pub async fn list_all_hooks() -> Result<Json<HooksListResponse>, StatusCode> {
-    let projects = workspace::load_projects().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-
-    let mut all_hooks: Vec<HookEntryResponse> = Vec::new();
-
-    for project in &projects {
-        let project_key = workspace::project_hash(&project.path);
-        let hooks_file = hooks::load_hooks_with_cleanup(&project.path);
-
-        if hooks_file.tasks.is_empty() {
-            continue;
-        }
-
-        // Load task data to get task names
-        let active_tasks = tasks::load_tasks(&project_key).unwrap_or_default();
-        let archived_tasks = tasks::load_archived_tasks(&project_key).unwrap_or_default();
-
-        for (task_id, entry) in &hooks_file.tasks {
-            // Find task name
-            let task_name = active_tasks
-                .iter()
-                .chain(archived_tasks.iter())
-                .find(|t| t.id == *task_id)
-                .map(|t| t.name.clone())
-                .unwrap_or_else(|| task_id.clone());
-
-            all_hooks.push(HookEntryResponse {
-                task_id: task_id.clone(),
-                task_name,
-                level: level_to_string(entry.level),
-                timestamp: entry.timestamp,
-                message: entry.message.clone(),
-                project_id: project_key.clone(),
-                project_name: project.name.clone(),
-            });
-        }
+    let records = hooks::load_all_hooks();
+    if records.is_empty() {
+        return Ok(Json(HooksListResponse {
+            hooks: Vec::new(),
+            total: 0,
+        }));
     }
 
-    // Sort by timestamp descending (newest first)
-    all_hooks.sort_by_key(|b| std::cmp::Reverse(b.timestamp));
+    let projects = workspace::load_projects().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let project_names: HashMap<String, String> = projects
+        .iter()
+        .map(|project| (workspace::project_hash(&project.path), project.name.clone()))
+        .collect();
+
+    let mut all_hooks: Vec<HookEntryResponse> = Vec::new();
+    // `None` value means we tried to load this project's tasks and failed —
+    // we must NOT treat any of its hooks as stale, otherwise an unrelated IO
+    // error would silently destroy valid hook records on disk.
+    let mut task_names_by_project: HashMap<String, Option<HashMap<String, String>>> =
+        HashMap::new();
+    let mut stale_notifications = Vec::new();
+
+    for record in records {
+        let Some(project_name) = project_names.get(&record.project_key) else {
+            // Project no longer registered — drop the orphan hook so it doesn't
+            // sit in the DB forever.
+            stale_notifications.push((record.project_key, record.task_id));
+            continue;
+        };
+
+        let task_names = task_names_by_project
+            .entry(record.project_key.clone())
+            .or_insert_with(|| {
+                let active = tasks::load_tasks(&record.project_key).ok()?;
+                let archived = tasks::load_archived_tasks(&record.project_key).ok()?;
+                Some(
+                    active
+                        .iter()
+                        .chain(archived.iter())
+                        .map(|task| (task.id.clone(), task.name.clone()))
+                        .collect(),
+                )
+            });
+
+        // Load failed → keep the hook visible (with placeholder name) and skip
+        // stale cleanup for this project entirely.
+        let Some(task_names) = task_names.as_ref() else {
+            all_hooks.push(HookEntryResponse {
+                task_id: record.task_id,
+                task_name: "(unknown task)".to_string(),
+                level: level_to_string(record.entry.level),
+                timestamp: record.entry.timestamp,
+                message: record.entry.message,
+                project_id: record.project_key,
+                project_name: project_name.clone(),
+            });
+            continue;
+        };
+
+        let Some(task_name) = task_names.get(&record.task_id) else {
+            stale_notifications.push((record.project_key, record.task_id));
+            continue;
+        };
+
+        all_hooks.push(HookEntryResponse {
+            task_id: record.task_id,
+            task_name: task_name.clone(),
+            level: level_to_string(record.entry.level),
+            timestamp: record.entry.timestamp,
+            message: record.entry.message,
+            project_id: record.project_key,
+            project_name: project_name.clone(),
+        });
+    }
+
+    if !stale_notifications.is_empty() {
+        let mut seen = HashSet::new();
+        for (project_key, task_id) in stale_notifications {
+            if seen.insert((project_key.clone(), task_id.clone())) {
+                hooks::remove_task_hook(&project_key, &task_id);
+            }
+        }
+    }
 
     let total = all_hooks.len() as u32;
     Ok(Json(HooksListResponse {

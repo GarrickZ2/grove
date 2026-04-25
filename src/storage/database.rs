@@ -133,6 +133,19 @@ fn create_schema(conn: &Connection) -> Result<()> {
         CREATE INDEX IF NOT EXISTS ix_task_group_slots_task
             ON task_group_slots (project_id, task_id);
 
+        -- Hook notifications
+        CREATE TABLE IF NOT EXISTS hook_notifications (
+            project_key TEXT NOT NULL,
+            task_id     TEXT NOT NULL,
+            level       TEXT NOT NULL,
+            timestamp   TEXT NOT NULL,
+            message     TEXT,
+            PRIMARY KEY (project_key, task_id)
+        );
+
+        CREATE INDEX IF NOT EXISTS ix_hook_notifications_timestamp
+            ON hook_notifications (timestamp DESC);
+
         -- AI Providers
         CREATE TABLE IF NOT EXISTS ai_providers (
             id            TEXT PRIMARY KEY,

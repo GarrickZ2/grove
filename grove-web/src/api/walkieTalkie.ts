@@ -32,6 +32,8 @@ export type RadioEvent =
   | { type: "focus_target"; project_id: string; task_id: string; target: TargetMode }
   | { type: "terminal_input"; project_id: string; task_id: string; text: string }
   | { type: "prompt_sent"; project_id: string; task_id: string }
+  | { type: "task_status"; project_id: string; task_id: string; agent_status: "idle" | "busy" | "disconnected" }
+  | { type: "hook_added"; project_id: string; task_id: string }
   | { type: "client_connected" }
   | { type: "client_disconnected" }
   | { type: "client_count"; count: number }

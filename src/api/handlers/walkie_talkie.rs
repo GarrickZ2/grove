@@ -59,6 +59,11 @@ pub enum RadioEvent {
         task_id: String,
         busy: bool,
     },
+    /// A new hook notification was written to the DB — desktop should refetch
+    /// the notification list. Replaces the old 30s safety-net poll: hooks
+    /// fired by detached agents, CLI commands, or busy ACP sessions all flow
+    /// through this push event so the UI stays current without polling.
+    HookAdded { project_id: String, task_id: String },
     /// Radio user set an active target (chat session or terminal) — desktop should switch view.
     FocusTarget {
         project_id: String,
@@ -141,6 +146,10 @@ enum ServerMessage {
         project_id: String,
         task_id: String,
         agent_status: String,
+    },
+    HookAdded {
+        project_id: String,
+        task_id: String,
     },
     PromptSent {
         group_id: String,
@@ -330,6 +339,12 @@ pub async fn handle_walkie_talkie_ws_inner(socket: WebSocket) {
                     Ok(RadioEvent::ThemeChanged) => {
                         let theme_name = crate::storage::config::load_config().theme.name;
                         let _ = msg_tx.send(ServerMessage::ThemeChanged { theme: theme_name });
+                    }
+                    Ok(RadioEvent::HookAdded { project_id, task_id }) => {
+                        let _ = msg_tx.send(ServerMessage::HookAdded {
+                            project_id,
+                            task_id,
+                        });
                     }
                     Ok(RadioEvent::TaskBusy { project_id, task_id, busy }) => {
                         // Real-time status push from ACP session
