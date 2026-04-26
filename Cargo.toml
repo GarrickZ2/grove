@@ -114,6 +114,7 @@ tauri-build = { version = "2", features = [], optional = true }
 
 [dev-dependencies]
 tempfile = "3"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 
 # Config for 'cargo dist'
 [workspace.metadata.dist]

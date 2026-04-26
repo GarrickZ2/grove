@@ -367,6 +367,26 @@ pub async fn start_listener(base_port: u16, max_attempts: u16) -> std::io::Resul
 
 // ─── Router builder ───────────────────────────────────────────────────────────
 
+/// Test-only variant of [`build_router`] that runs the server in **stateless +
+/// JSON-response** mode so test clients can issue one-shot tool calls and read
+/// plain JSON without managing `Mcp-Session-Id` headers or parsing SSE frames.
+/// rmcp 1.3 only honors `json_response` in stateless mode (stateful POSTs are
+/// always streamed as SSE per the MCP spec). Real ACP agents in production
+/// connect to the stateful router built by [`build_router`].
+#[cfg(test)]
+fn build_router_json_for_test() -> Router {
+    let session_manager = Arc::new(LocalSessionManager::default());
+    let config = StreamableHttpServerConfig::default()
+        .with_stateful_mode(false)
+        .with_json_response(true);
+    let svc: StreamableHttpService<AgentGraphMcpService, LocalSessionManager> =
+        StreamableHttpService::new(|| Ok(AgentGraphMcpService::new()), session_manager, config);
+    let svc_clone = svc.clone();
+    Router::new()
+        .route_service("/mcp/{token}", svc)
+        .route_service("/mcp/{token}/", svc_clone)
+}
+
 /// Build the loopback-only axum router serving the agent_graph MCP listener.
 ///
 /// Mount `POST /mcp/{token}` (plus `GET` / `DELETE` for the Streamable HTTP
@@ -517,5 +537,181 @@ mod tests {
         assert!(names.contains(&"grove_agent_contacts".to_string()));
         assert!(names.contains(&"grove_agent_capability".to_string()));
         assert_eq!(names.len(), 5);
+    }
+
+    /// End-to-end test of the HTTP transport: real axum listener bound on a
+    /// 127.0.0.1 port, real MCP `initialize` → `tools/list` → `tools/call
+    /// grove_agent_contacts` over HTTP via `reqwest`. Exercises the full
+    /// caller-resolution path (URL token → chat_id → ToolContext → SQLite).
+    #[tokio::test]
+    async fn http_e2e_initialize_and_contacts() {
+        use crate::storage::database::test_lock;
+        use chrono::Utc;
+
+        let _l = test_lock().lock().await;
+
+        // Sandbox HOME so SQLite writes to a temp dir.
+        let tmp = tempfile::tempdir().expect("tmpdir");
+        let prev_home = std::env::var_os("HOME");
+        // SAFETY: serialized via test_lock; restored on Drop.
+        unsafe {
+            std::env::set_var("HOME", tmp.path());
+        }
+        struct HomeGuard {
+            prev: Option<std::ffi::OsString>,
+        }
+        impl Drop for HomeGuard {
+            fn drop(&mut self) {
+                unsafe {
+                    if let Some(p) = self.prev.take() {
+                        std::env::set_var("HOME", p);
+                    } else {
+                        std::env::remove_var("HOME");
+                    }
+                }
+            }
+        }
+        let _hg = HomeGuard { prev: prev_home };
+
+        // Seed two chats + an A→B edge so contacts has data to return.
+        {
+            let conn = crate::storage::database::connection();
+            conn.execute(
+                "INSERT OR REPLACE INTO session
+                 (session_id, project, task_id, title, agent, acp_session_id, duty, created_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, NULL, ?6, ?7)",
+                rusqlite::params![
+                    "chat-A",
+                    "p",
+                    "t",
+                    "Alice",
+                    "claude",
+                    Some("dispatcher"),
+                    Utc::now().to_rfc3339(),
+                ],
+            )
+            .expect("seed A");
+            conn.execute(
+                "INSERT OR REPLACE INTO session
+                 (session_id, project, task_id, title, agent, acp_session_id, duty, created_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, NULL, ?6, ?7)",
+                rusqlite::params![
+                    "chat-B",
+                    "p",
+                    "t",
+                    "Bob",
+                    "claude",
+                    Some("worker"),
+                    Utc::now().to_rfc3339(),
+                ],
+            )
+            .expect("seed B");
+            crate::storage::agent_graph::add_edge(&conn, "t", "chat-A", "chat-B", None)
+                .expect("edge");
+        }
+
+        // Spin up a local axum listener with the agent_graph router (independent
+        // of `start_listener`'s OnceCell port to avoid clashing with other tests).
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind");
+        let port = listener.local_addr().expect("addr").port();
+        let app = build_router_json_for_test();
+        let server = tokio::spawn(async move {
+            let _ = axum::serve(listener, app).await;
+        });
+
+        // Bind a fresh token to chat-A.
+        let token = "test-tok-e2e";
+        register_token(token, "chat-A");
+        let url = format!("http://127.0.0.1:{port}/mcp/{token}");
+
+        let client = reqwest::Client::new();
+
+        // ── 1. initialize ────────────────────────────────────────────────
+        let init_req = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {
+                "protocolVersion": "2025-06-18",
+                "capabilities": {},
+                "clientInfo": { "name": "grove-test-client", "version": "0.0.0" }
+            }
+        });
+        let init_resp = client
+            .post(&url)
+            .header("accept", "application/json, text/event-stream")
+            .header("mcp-protocol-version", "2025-06-18")
+            .json(&init_req)
+            .send()
+            .await
+            .expect("initialize POST");
+        assert!(
+            init_resp.status().is_success(),
+            "initialize: {:?}",
+            init_resp.status()
+        );
+        // In stateless test mode there is no session header; ignore it.
+        let _ = init_resp.text().await;
+
+        // ── 2. tools/list ────────────────────────────────────────────────
+        let list_req = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 2,
+            "method": "tools/list",
+            "params": {}
+        });
+        let list_resp = client
+            .post(&url)
+            .header("accept", "application/json, text/event-stream")
+            .header("mcp-protocol-version", "2025-06-18")
+            .json(&list_req)
+            .send()
+            .await
+            .expect("tools/list POST");
+        assert!(list_resp.status().is_success());
+        let list_body: String = list_resp.text().await.expect("body");
+        // Body may be JSON or SSE-framed. Inspect for tool names.
+        for tool in [
+            "grove_agent_spawn",
+            "grove_agent_send",
+            "grove_agent_reply",
+            "grove_agent_contacts",
+            "grove_agent_capability",
+        ] {
+            assert!(list_body.contains(tool), "tools/list missing {tool}");
+        }
+
+        // ── 3. tools/call grove_agent_contacts ───────────────────────────
+        let call_req = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 3,
+            "method": "tools/call",
+            "params": {
+                "name": "grove_agent_contacts",
+                "arguments": {}
+            }
+        });
+        let call_resp = client
+            .post(&url)
+            .header("accept", "application/json, text/event-stream")
+            .header("mcp-protocol-version", "2025-06-18")
+            .json(&call_req)
+            .send()
+            .await
+            .expect("tools/call POST");
+        assert!(call_resp.status().is_success());
+        let call_body: String = call_resp.text().await.expect("body");
+        // Spec §4 ContactsOutput: self.session_id == "chat-A", can_contact has chat-B.
+        assert!(call_body.contains("chat-A"), "self chat-A in {call_body}");
+        assert!(
+            call_body.contains("chat-B"),
+            "can_contact chat-B in {call_body}"
+        );
+        assert!(call_body.contains("dispatcher"), "self.duty in {call_body}");
+
+        unregister_token(token);
+        server.abort();
     }
 }

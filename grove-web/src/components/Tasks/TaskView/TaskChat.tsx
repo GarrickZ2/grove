@@ -71,7 +71,7 @@ import { listSketches, type SketchMeta } from "../../../api/sketches";
 import { readLastActiveTab, writeLastActiveTab } from "../../../utils/lastActiveTab";
 import type { Task } from "../../../data/types";
 import { getApiHost, appendHmacToUrl } from "../../../api/client";
-import { useAgentQuota } from "../../../hooks";
+import { useAgentQuota, useRadioEvents } from "../../../hooks";
 import { AgentQuotaPopover } from "./AgentQuotaPopover";
 import { quotaBadgePercent, quotaHealthColor } from "./quotaColors";
 import {
@@ -1847,6 +1847,24 @@ export function TaskChat({
       cancelled = true;
     };
   }, [projectId, task.id]);
+
+  // ─── Auto-refetch chat list on RadioEvent::ChatListChanged ─────────────
+  // Fired by the `grove_agent_spawn` MCP tool after a sibling session is
+  // spawned. Without this hook, an agent-spawned chat would be invisible in
+  // the UI until the user manually refreshed.
+  useRadioEvents({
+    onChatListChanged: (evtProjectId, evtTaskId) => {
+      if (evtProjectId !== projectId || evtTaskId !== task.id) return;
+      void (async () => {
+        try {
+          const fresh = await listChats(projectId, task.id);
+          setChats(fresh);
+        } catch (err) {
+          console.error("Failed to refetch chats after ChatListChanged:", err);
+        }
+      })();
+    },
+  });
 
   // ─── External chat switch (Radio → Blitz) ──────────────────────────────
 

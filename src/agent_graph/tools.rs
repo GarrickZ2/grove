@@ -934,4 +934,238 @@ mod tests {
         assert_eq!(s.chars().count(), 161);
         assert!(s.ends_with('…'));
     }
+
+    // ─── Integration tests (mock cmd loop, real handle, real broadcast) ──────
+    //
+    // These exercise the full send / reply / busy-queue paths end-to-end up to
+    // (but not including) the real ACP subprocess. They use the
+    // `acp::new_handle_for_test` helper which wires a minimal mock cmd loop
+    // that emits `UserMessage` on `Prompt` commands — the same observable
+    // behaviour as the real `run_acp_session` cmd loop.
+
+    async fn drain_until<F>(rx: &mut broadcast::Receiver<AcpUpdate>, mut f: F) -> AcpUpdate
+    where
+        F: FnMut(&AcpUpdate) -> bool,
+    {
+        let deadline = tokio::time::Instant::now() + tokio::time::Duration::from_secs(2);
+        loop {
+            let now = tokio::time::Instant::now();
+            if now >= deadline {
+                panic!("timed out waiting for matching AcpUpdate");
+            }
+            match tokio::time::timeout(deadline - now, rx.recv()).await {
+                Ok(Ok(u)) => {
+                    if f(&u) {
+                        return u;
+                    }
+                }
+                Ok(Err(broadcast::error::RecvError::Lagged(_))) => continue,
+                Ok(Err(broadcast::error::RecvError::Closed)) => panic!("broadcast closed"),
+                Err(_) => panic!("timed out waiting for matching AcpUpdate"),
+            }
+        }
+    }
+
+    use tokio::sync::broadcast;
+
+    #[tokio::test]
+    async fn send_idle_broadcasts_user_message_with_sender() {
+        let _l = test_lock().lock().await;
+        let _h = TempHome::new();
+        seed_chat("p", "t", "chat-A", "Alice", Some("dispatcher"));
+        seed_chat("p", "t", "chat-B", "Bob", Some("worker"));
+        let conn = database::connection();
+        seed_edge(&conn, "t", "chat-A", "chat-B");
+        drop(conn);
+
+        // Mock B's session handle so send_prompt is observable.
+        let key_b = "p:t:chat-B".to_string();
+        let (_handle_b, mut rx_b, _guard_b) = acp::new_handle_for_test(&key_b, "p", "t", "chat-B");
+
+        let cx = ToolContext::new("chat-A".into());
+        let out = grove_agent_send(
+            &cx,
+            SendInput {
+                to: "chat-B".into(),
+                message: "hello from A".into(),
+                duty: None,
+                config: None,
+            },
+        )
+        .await
+        .expect("send ok");
+        assert!(out.msg_id.starts_with("msg-"));
+
+        // Wait for the UserMessage event from the mock cmd loop.
+        let event = drain_until(&mut rx_b, |u| matches!(u, AcpUpdate::UserMessage { .. })).await;
+        match event {
+            AcpUpdate::UserMessage { text, sender, .. } => {
+                assert!(
+                    text.contains("[from:Alice · session=chat-A · kind=send]"),
+                    "missing prefix in {text:?}"
+                );
+                assert!(text.ends_with("hello from A"));
+                assert_eq!(sender.as_deref(), Some("agent:chat-A"));
+            }
+            other => panic!("expected UserMessage, got {:?}", other),
+        }
+
+        // Pending message persisted to SQLite.
+        let conn = database::connection();
+        let p = graph_db::get_pending_message(&conn, &out.msg_id)
+            .expect("query pending")
+            .expect("row exists");
+        assert_eq!(p.from_session, "chat-A");
+        assert_eq!(p.to_session, "chat-B");
+        assert_eq!(p.body, "hello from A");
+    }
+
+    #[tokio::test]
+    async fn send_busy_queues_with_sender_preserved() {
+        let _l = test_lock().lock().await;
+        let _h = TempHome::new();
+        seed_chat("p", "t", "chat-A", "Alice", Some("dispatcher"));
+        seed_chat("p", "t", "chat-B", "Bob", Some("worker"));
+        let conn = database::connection();
+        seed_edge(&conn, "t", "chat-A", "chat-B");
+        drop(conn);
+
+        let key_b = "p:t:chat-B".to_string();
+        let (handle_b, mut rx_b, _guard_b) = acp::new_handle_for_test(&key_b, "p", "t", "chat-B");
+        // Mark B busy so the tool routes through the queue.
+        handle_b
+            .is_busy
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+
+        let cx = ToolContext::new("chat-A".into());
+        grove_agent_send(
+            &cx,
+            SendInput {
+                to: "chat-B".into(),
+                message: "queued msg".into(),
+                duty: None,
+                config: None,
+            },
+        )
+        .await
+        .expect("send ok");
+
+        let event = drain_until(&mut rx_b, |u| matches!(u, AcpUpdate::QueueUpdate { .. })).await;
+        match event {
+            AcpUpdate::QueueUpdate { messages } => {
+                assert_eq!(messages.len(), 1, "queue should have 1 msg");
+                assert!(
+                    messages[0].text.contains("[from:Alice"),
+                    "prefix in queued message"
+                );
+                assert_eq!(messages[0].sender.as_deref(), Some("agent:chat-A"));
+            }
+            other => panic!("expected QueueUpdate, got {:?}", other),
+        }
+
+        // Drain remaining events; ensure no UserMessage was broadcast (busy → queued).
+        let mut saw_user = false;
+        while let Ok(u) = rx_b.try_recv() {
+            if matches!(u, AcpUpdate::UserMessage { .. }) {
+                saw_user = true;
+            }
+        }
+        assert!(!saw_user, "busy session should not broadcast UserMessage");
+    }
+
+    #[tokio::test]
+    async fn busy_dequeue_preserves_sender_via_handle_path() {
+        // Verify the cmd-loop dequeue path that fires after a turn ends keeps
+        // the sender intact (this exercises the change in
+        // `try_enqueue_prompt(text, attachments, sender)` from Commit 1).
+        let _l = test_lock().lock().await;
+        let _h = TempHome::new();
+        seed_chat("p", "t", "chat-A", "Alice", Some("d"));
+        seed_chat("p", "t", "chat-B", "Bob", Some("w"));
+        let conn = database::connection();
+        seed_edge(&conn, "t", "chat-A", "chat-B");
+        drop(conn);
+
+        let key_b = "p:t:chat-B".to_string();
+        let (handle_b, mut rx_b, _guard_b) = acp::new_handle_for_test(&key_b, "p", "t", "chat-B");
+        handle_b
+            .is_busy
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+
+        let cx = ToolContext::new("chat-A".into());
+        grove_agent_send(
+            &cx,
+            SendInput {
+                to: "chat-B".into(),
+                message: "delayed msg".into(),
+                duty: None,
+                config: None,
+            },
+        )
+        .await
+        .expect("send ok");
+
+        // Let the QueueUpdate land first, then simulate "turn ended → resume queue".
+        drain_until(&mut rx_b, |u| matches!(u, AcpUpdate::QueueUpdate { .. })).await;
+        handle_b
+            .is_busy
+            .store(false, std::sync::atomic::Ordering::Relaxed);
+        handle_b.resume_queue();
+
+        // Now we should see a UserMessage with sender preserved.
+        let event = drain_until(&mut rx_b, |u| matches!(u, AcpUpdate::UserMessage { .. })).await;
+        match event {
+            AcpUpdate::UserMessage { text, sender, .. } => {
+                assert!(text.contains("[from:Alice"));
+                assert_eq!(sender.as_deref(), Some("agent:chat-A"));
+            }
+            other => panic!("expected UserMessage, got {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn reply_consumes_ticket_and_injects_to_origin() {
+        let _l = test_lock().lock().await;
+        let _h = TempHome::new();
+        seed_chat("p", "t", "chat-A", "Alice", Some("d"));
+        seed_chat("p", "t", "chat-B", "Bob", Some("w"));
+        let conn = database::connection();
+        seed_edge(&conn, "t", "chat-A", "chat-B");
+        // Pre-stage a pending message A→B that B will reply to.
+        graph_db::insert_pending_message(&conn, "msg-1", "t", "chat-A", "chat-B", "do x")
+            .expect("p1");
+        drop(conn);
+
+        // Mock A so we can observe the reply being injected back to it.
+        let key_a = "p:t:chat-A".to_string();
+        let (_handle_a, mut rx_a, _guard_a) = acp::new_handle_for_test(&key_a, "p", "t", "chat-A");
+
+        let cx_b = ToolContext::new("chat-B".into());
+        let out = grove_agent_reply(
+            &cx_b,
+            ReplyInput {
+                msg_id: "msg-1".into(),
+                message: "done".into(),
+            },
+        )
+        .await
+        .expect("reply ok");
+        assert!(!out.delivered_at.is_empty());
+
+        let event = drain_until(&mut rx_a, |u| matches!(u, AcpUpdate::UserMessage { .. })).await;
+        match event {
+            AcpUpdate::UserMessage { text, sender, .. } => {
+                assert!(text.contains("[from:Bob · session=chat-B · kind=reply]"));
+                assert!(text.ends_with("done"));
+                assert_eq!(sender.as_deref(), Some("agent:chat-B"));
+            }
+            other => panic!("expected UserMessage, got {:?}", other),
+        }
+
+        // Pending row consumed.
+        let conn = database::connection();
+        assert!(graph_db::get_pending_message(&conn, "msg-1")
+            .expect("query")
+            .is_none());
+    }
 }

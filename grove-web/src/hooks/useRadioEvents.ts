@@ -13,6 +13,11 @@ export interface RadioEventCallbacks {
     status: "idle" | "busy" | "disconnected",
   ) => void;
   onHookAdded?: (projectId: string, taskId: string) => void;
+  /** Fired when the chat list under a task changes — typically after the
+   *  `grove_agent_spawn` MCP tool creates a sibling session. Consumers should
+   *  refetch the task's chat list (e.g. `listChats(projectId, taskId)`) so the
+   *  new chat appears in the UI without manual refresh. */
+  onChatListChanged?: (projectId: string, taskId: string) => void;
   /** Fired when the shared WS opens or reopens after a disconnect. Useful for
    *  consumers who need to re-sync state after a missed-events window. */
   onConnected?: () => void;
@@ -62,6 +67,10 @@ function dispatch(event: RadioEvent) {
       break;
     case "hook_added":
       for (const s of subscribers) s.current.onHookAdded?.(event.project_id, event.task_id);
+      break;
+    case "chat_list_changed":
+      for (const s of subscribers)
+        s.current.onChatListChanged?.(event.project_id, event.task_id);
       break;
     case "client_connected":
       radioClientCount += 1;

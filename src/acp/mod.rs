@@ -2358,6 +2358,107 @@ pub fn session_exists(key: &str) -> bool {
         .unwrap_or(false)
 }
 
+/// Test helper: build an `AcpSessionHandle` wired to a minimal in-process mock
+/// cmd loop so agent_graph integration tests can exercise the real
+/// `send_prompt` / `queue_message` paths without spawning an ACP subprocess.
+///
+/// The mock loop drains `cmd_rx` and:
+/// - On `AcpCommand::Prompt`: emits `AcpUpdate::UserMessage` (matching the real
+///   cmd loop at `run_acp_session`'s top-level `Prompt` arm) followed by
+///   `AcpUpdate::Busy { value: false }`. **Does not** drive any ACP wire.
+/// - On `AcpCommand::Kill`: exits the loop.
+/// - All other commands are silently dropped.
+///
+/// Registers the handle in `ACP_SESSIONS` under `key` so
+/// `get_session_handle(key)` works during the test. The handle is unregistered
+/// when the test drops the returned guard.
+#[cfg(test)]
+pub fn new_handle_for_test(
+    key: &str,
+    project_key: &str,
+    task_id: &str,
+    chat_id: &str,
+) -> (
+    Arc<AcpSessionHandle>,
+    broadcast::Receiver<AcpUpdate>,
+    TestSessionGuard,
+) {
+    let (update_tx, update_rx) = broadcast::channel::<AcpUpdate>(256);
+    let (cmd_tx, mut cmd_rx) = mpsc::channel::<AcpCommand>(32);
+
+    let handle = Arc::new(AcpSessionHandle {
+        key: key.to_string(),
+        update_tx: update_tx.clone(),
+        cmd_tx,
+        agent_info: std::sync::RwLock::new(Some((
+            "session-test".into(),
+            "claude".into(),
+            "test".into(),
+        ))),
+        pending_permission: Mutex::new(None),
+        permission_lock: tokio::sync::Mutex::new(()),
+        project_key: project_key.to_string(),
+        task_id: task_id.to_string(),
+        chat_id: Some(chat_id.to_string()),
+        suppress_emit: std::sync::atomic::AtomicBool::new(false),
+        pending_queue: Mutex::new(Vec::new()),
+        queue_paused: std::sync::atomic::AtomicBool::new(false),
+        current_mode_id: Mutex::new(None),
+        working_dir: "/tmp".to_string(),
+        terminal_kill_tx: Mutex::new(None),
+        is_busy: std::sync::atomic::AtomicBool::new(false),
+        last_assistant_text: Mutex::new(String::new()),
+    });
+
+    if let Ok(mut sessions) = ACP_SESSIONS.write() {
+        sessions.insert(key.to_string(), handle.clone());
+    }
+
+    let handle_for_loop = handle.clone();
+    tokio::spawn(async move {
+        while let Some(cmd) = cmd_rx.recv().await {
+            match cmd {
+                AcpCommand::Prompt {
+                    text,
+                    attachments,
+                    sender,
+                    terminal,
+                } => {
+                    handle_for_loop.emit(AcpUpdate::UserMessage {
+                        text,
+                        attachments,
+                        sender,
+                        terminal,
+                    });
+                    handle_for_loop.emit(AcpUpdate::Busy { value: false });
+                }
+                AcpCommand::Kill => break,
+                _ => {}
+            }
+        }
+    });
+
+    let guard = TestSessionGuard {
+        key: key.to_string(),
+    };
+    (handle, update_rx, guard)
+}
+
+/// RAII guard that unregisters a test session handle on drop.
+#[cfg(test)]
+pub struct TestSessionGuard {
+    key: String,
+}
+
+#[cfg(test)]
+impl Drop for TestSessionGuard {
+    fn drop(&mut self) {
+        if let Ok(mut sessions) = ACP_SESSIONS.write() {
+            sessions.remove(&self.key);
+        }
+    }
+}
+
 /// 终止 ACP 会话
 pub fn kill_session(key: &str) -> crate::error::Result<()> {
     let handle = {
