@@ -372,3 +372,29 @@ pub struct ArtifactQuery {
     pub path: String,
     pub dir: String,
 }
+
+#[derive(Debug, Serialize)]
+pub struct GraphResponse {
+    pub nodes: Vec<GraphNode>,
+    pub edges: Vec<GraphEdge>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct GraphNode {
+    pub chat_id: String,
+    pub name: String,
+    pub agent: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub duty: Option<String>,
+    pub status: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct GraphEdge {
+    pub edge_id: i64,
+    pub from: String,
+    pub to: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub purpose: Option<String>,
+    pub state: String,
+}

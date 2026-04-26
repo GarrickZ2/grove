@@ -5,7 +5,7 @@ import type { IJsonModel, ITabRenderValues, ITabSetRenderValues, IJsonRowNode, I
 import {
   Terminal, MessageSquare, Code, FileCode, BarChart3, GitBranch, FileText,
   MessageCircle, X, XCircle, Trash2,
-  Plus, Maximize, Minimize2, FolderOpen, Pencil,
+  Plus, Maximize, Minimize2, FolderOpen, Pencil, Network,
 } from 'lucide-react';
 import 'flexlayout-react/style/light.css';
 import './flexlayout-theme.css';
@@ -16,6 +16,7 @@ import { TaskTerminal } from '../TaskView/TaskTerminal';
 import { TaskChat } from '../TaskView/TaskChat';
 import { TaskCodeReview } from '../TaskView/TaskCodeReview';
 import { TaskEditor } from '../TaskView/TaskEditor';
+import { TaskGraph } from '../TaskView/TaskGraph';
 import { StatsTab, GitTab, NotesTab, CommentsTab, ArtifactsTab } from '../TaskInfoPanel/tabs';
 import type { ArtifactPreviewRequest } from '../TaskInfoPanel/tabs';
 import { SketchPage } from '../../Studio/SketchPage';
@@ -216,6 +217,7 @@ export const FlexLayoutContainer = forwardRef<
     chat: 0,
     review: 0,
     editor: 0,
+    graph: 0,
     stats: 0,
     git: 0,
     notes: 0,
@@ -231,6 +233,7 @@ export const FlexLayoutContainer = forwardRef<
       chat: 'Chat',
       review: 'Code Review',
       editor: 'Editor',
+      graph: 'Graph',
       stats: 'Info',
       git: 'Git',
       notes: 'Notes',
@@ -597,6 +600,8 @@ export const FlexLayoutContainer = forwardRef<
         return { icon: Code, color: 'var(--color-highlight)' };
       case 'editor':
         return { icon: FileCode, color: 'var(--color-warning)' };
+      case 'graph':
+        return { icon: Network, color: 'var(--color-accent)' };
       case 'stats':
         return { icon: BarChart3, color: 'var(--color-accent)' };
       case 'git':
@@ -727,6 +732,7 @@ export const FlexLayoutContainer = forwardRef<
     }
     items.push(
       { id: 'editor', label: 'Editor', icon: FileCode, onClick: () => addPanel('editor'), shortcut: 'e' },
+      { id: 'graph', label: 'Graph', icon: Network, onClick: () => addPanel('graph') },
       { id: 'stats', label: 'Info', icon: BarChart3, onClick: () => addPanel('stats'), separator: true },
     );
     if (!isStudio) {
@@ -852,6 +858,13 @@ export const FlexLayoutContainer = forwardRef<
               hideHeader={true}
               fullscreen={true}
             />
+          </div>
+        );
+
+      case 'graph':
+        return (
+          <div style={{ display: 'flex', flexDirection: 'column', width: '100%', height: '100%', overflow: 'hidden' }}>
+            <TaskGraph projectId={projectId} taskId={task.id} />
           </div>
         );
 

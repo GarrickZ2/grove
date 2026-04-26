@@ -221,6 +221,10 @@ pub fn create_api_router() -> Router {
             "/projects/{id}/tasks/{taskId}/recover",
             post(handlers::tasks::recover_task),
         )
+        .route(
+            "/projects/{id}/tasks/{taskId}/graph",
+            get(handlers::tasks::get_task_graph),
+        )
         // Notes API
         .route(
             "/projects/{id}/tasks/{taskId}/notes",

@@ -3,7 +3,7 @@
  */
 
 // 面板类型枚举
-export type PanelType = 'terminal' | 'chat' | 'review' | 'editor'
+export type PanelType = 'terminal' | 'chat' | 'review' | 'editor' | 'graph'
   | 'stats' | 'git' | 'notes' | 'comments' | 'artifacts' | 'sketch';
 
 // 面板实例配置

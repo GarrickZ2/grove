@@ -10,6 +10,7 @@ import {
   FileText,
   MessageSquare,
   Pencil,
+  Network,
 } from "lucide-react";
 import "./ide-layout.css";
 import type {
@@ -25,6 +26,7 @@ import type { FileNavRequest } from "../../Review";
 import { TaskChat } from "../TaskView/TaskChat";
 import { TaskCodeReview } from "../TaskView/TaskCodeReview";
 import { TaskEditor } from "../TaskView/TaskEditor";
+import { TaskGraph } from "../TaskView/TaskGraph";
 import {
   ArtifactsTab,
   StatsTab,
@@ -40,6 +42,7 @@ const AUX_PANEL_CONFIG: Record<AuxPanelType, { label: string; icon: typeof Termi
   terminal: { label: "Terminal", icon: Terminal },
   editor: { label: "Editor", icon: FileCode },
   review: { label: "Code Review", icon: Code },
+  graph: { label: "Graph", icon: Network },
   artifacts: { label: "Artifacts", icon: Package },
   sketch: { label: "Sketch", icon: Pencil },
 };
@@ -55,6 +58,7 @@ const TOOLBAR_AUX: { type: AuxPanelType; label: string; shortcut: string; icon: 
   { type: "terminal", label: "Terminal", shortcut: "t", icon: Terminal },
   { type: "editor", label: "Editor", shortcut: "e", icon: FileCode },
   { type: "review", label: "Code Review", shortcut: "r", icon: Code },
+  { type: "graph", label: "Graph", shortcut: "g", icon: Network },
   { type: "artifacts", label: "Artifacts", shortcut: "f", icon: Package },
   { type: "sketch", label: "Sketch", shortcut: "k", icon: Pencil },
 ];
@@ -570,6 +574,9 @@ export const IDELayoutContainer = forwardRef<IDELayoutHandle, IDELayoutContainer
         >
           {state.auxType === "editor" && (
             <TaskEditor projectId={projectId} taskId={task.id} hideHeader fullscreen onClose={() => update({ auxVisible: false })} />
+          )}
+          {state.auxType === "graph" && (
+            <TaskGraph projectId={projectId} taskId={task.id} />
           )}
           {state.auxType === "review" && !isStudio && (
             <TaskCodeReview

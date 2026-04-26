@@ -270,6 +270,7 @@ export const TaskView = forwardRef<TaskViewHandle, TaskViewProps>((props, ref) =
       { key: "t", handler: () => handleAddPanel("terminal"), options: { enabled: panelShortcutsEnabled } },
       { key: "e", handler: () => handleAddPanel("editor"), options: { enabled: panelShortcutsEnabled } },
       { key: "r", handler: () => handleAddPanel("review"), options: { enabled: panelShortcutsEnabled } },
+      { key: "g", handler: () => handleAddPanel("graph"), options: { enabled: panelShortcutsEnabled } },
       { key: "i", handler: () => handleAddPanel("chat"), options: { enabled: panelShortcutsEnabled } },
       // Git ops — only bound if the parent actually wired a handler (Studio
       // has no commit/merge/etc; Work may omit them on non-git projects).
