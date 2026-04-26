@@ -387,6 +387,24 @@ pub struct GraphNode {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub duty: Option<String>,
     pub status: String,
+    /// Count of pending messages where this node is the recipient.
+    pub pending_in: usize,
+    /// Count of pending messages where this node is the sender.
+    pub pending_out: usize,
+    /// Pending messages involving this node, with sender/receiver names resolved.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub pending_messages: Vec<PendingMessageInfo>,
+}
+
+/// A pending message summary for hover cards.
+#[derive(Debug, Clone, Serialize)]
+pub struct PendingMessageInfo {
+    pub from: String,
+    pub from_name: String,
+    pub to: String,
+    pub to_name: String,
+    /// First 120 chars of the message body.
+    pub body_excerpt: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -397,4 +415,7 @@ pub struct GraphEdge {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub purpose: Option<String>,
     pub state: String,
+    /// Pending message on this edge, if any.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pending_message: Option<PendingMessageInfo>,
 }

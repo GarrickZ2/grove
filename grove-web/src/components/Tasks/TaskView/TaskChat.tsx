@@ -2575,6 +2575,17 @@ export function TaskChat({
   );
   switchChatRef.current = switchChat;
 
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const { chatId } = (e as CustomEvent<{ chatId: string }>).detail;
+      if (chatId && chats.some((c) => c.id === chatId)) {
+        switchChat(chatId);
+      }
+    };
+    window.addEventListener("grove:select-chat", handler);
+    return () => window.removeEventListener("grove:select-chat", handler);
+  }, [chats, switchChat]);
+
   // ─── New chat creation ─────────────────────────────────────────────────
 
   const handleNewChatWithAgent = useCallback(

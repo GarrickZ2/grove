@@ -23,6 +23,61 @@ fn build_graph_response(project_key: &str, task_id: &str) -> Option<GraphRespons
         .map(|p| (p.from_session.clone(), p.to_session.clone()))
         .collect();
 
+    // Build a name lookup from chat_id → display name.
+    let name_map: std::collections::HashMap<String, String> = chats
+        .iter()
+        .map(|c| (c.id.clone(), c.title.clone()))
+        .collect();
+
+    let resolve_name =
+        |id: &str| -> String { name_map.get(id).cloned().unwrap_or_else(|| id.to_string()) };
+
+    let make_excerpt = |body: &str| -> String {
+        if body.len() > 120 {
+            let end = body.floor_char_boundary(120);
+            format!("{}…", &body[..end])
+        } else {
+            body.to_string()
+        }
+    };
+
+    // Index pending messages by (from, to) for edge lookup, and by session for node lookup.
+    let pending_by_pair: std::collections::HashMap<
+        (String, String),
+        &graph_db::AgentPendingMessage,
+    > = pending_messages
+        .iter()
+        .map(|p| ((p.from_session.clone(), p.to_session.clone()), p))
+        .collect();
+
+    let mut pending_in_map: std::collections::HashMap<String, usize> =
+        std::collections::HashMap::new();
+    let mut pending_out_map: std::collections::HashMap<String, usize> =
+        std::collections::HashMap::new();
+    let mut pending_msgs_map: std::collections::HashMap<String, Vec<PendingMessageInfo>> =
+        std::collections::HashMap::new();
+
+    for p in &pending_messages {
+        *pending_in_map.entry(p.to_session.clone()).or_insert(0) += 1;
+        *pending_out_map.entry(p.from_session.clone()).or_insert(0) += 1;
+
+        let info = PendingMessageInfo {
+            from: p.from_session.clone(),
+            from_name: resolve_name(&p.from_session),
+            to: p.to_session.clone(),
+            to_name: resolve_name(&p.to_session),
+            body_excerpt: make_excerpt(&p.body),
+        };
+        pending_msgs_map
+            .entry(p.from_session.clone())
+            .or_default()
+            .push(info.clone());
+        pending_msgs_map
+            .entry(p.to_session.clone())
+            .or_default()
+            .push(info);
+    }
+
     let mut nodes = Vec::with_capacity(chats.len());
     let mut node_status_map = std::collections::HashMap::new();
 
@@ -48,6 +103,9 @@ fn build_graph_response(project_key: &str, task_id: &str) -> Option<GraphRespons
             agent: chat.agent.clone(),
             duty: chat.duty.clone(),
             status: status.to_string(),
+            pending_in: *pending_in_map.get(&chat.id).unwrap_or(&0),
+            pending_out: *pending_out_map.get(&chat.id).unwrap_or(&0),
+            pending_messages: pending_msgs_map.remove(&chat.id).unwrap_or_default(),
         });
     }
 
@@ -69,12 +127,23 @@ fn build_graph_response(project_key: &str, task_id: &str) -> Option<GraphRespons
             "idle"
         };
 
+        let pending_message = pending_by_pair
+            .get(&(edge.from_session.clone(), edge.to_session.clone()))
+            .map(|p| PendingMessageInfo {
+                from: p.from_session.clone(),
+                from_name: resolve_name(&p.from_session),
+                to: p.to_session.clone(),
+                to_name: resolve_name(&p.to_session),
+                body_excerpt: make_excerpt(&p.body),
+            });
+
         graph_edges.push(GraphEdge {
             edge_id: edge.edge_id,
             from: edge.from_session.clone(),
             to: edge.to_session.clone(),
             purpose: edge.purpose.clone(),
             state: state.to_string(),
+            pending_message,
         });
     }
 
@@ -176,6 +245,9 @@ mod tests {
             assert_eq!(resp.nodes.len(), 1);
             assert_eq!(resp.nodes[0].chat_id, "chat-1");
             assert_eq!(resp.nodes[0].status, "disconnected");
+            assert_eq!(resp.nodes[0].pending_in, 0);
+            assert_eq!(resp.nodes[0].pending_out, 0);
+            assert!(resp.nodes[0].pending_messages.is_empty());
             assert!(resp.edges.is_empty());
         });
     }
@@ -207,7 +279,12 @@ mod tests {
                 let eid = graph_db::add_edge(&conn, task_id, "chat-1", "chat-2", Some("delegate"))
                     .unwrap();
                 graph_db::insert_pending_message(
-                    &conn, "msg-1", task_id, "chat-1", "chat-2", "Hello",
+                    &conn,
+                    "msg-1",
+                    task_id,
+                    "chat-1",
+                    "chat-2",
+                    "Hello, please review this.",
                 )
                 .unwrap();
                 eid
@@ -219,6 +296,26 @@ mod tests {
             assert_eq!(resp.edges[0].edge_id, edge_id);
             assert_eq!(resp.edges[0].state, "blocked");
             assert_eq!(resp.edges[0].purpose.as_deref(), Some("delegate"));
+
+            let sender = &resp.nodes[0];
+            assert_eq!(sender.chat_id, "chat-1");
+            assert_eq!(sender.pending_in, 0);
+            assert_eq!(sender.pending_out, 1);
+            assert_eq!(sender.pending_messages.len(), 1);
+            assert_eq!(sender.pending_messages[0].from_name, "Chat 1");
+            assert_eq!(sender.pending_messages[0].to_name, "Chat 2");
+            assert!(sender.pending_messages[0].body_excerpt.contains("Hello"));
+
+            let receiver = &resp.nodes[1];
+            assert_eq!(receiver.chat_id, "chat-2");
+            assert_eq!(receiver.pending_in, 1);
+            assert_eq!(receiver.pending_out, 0);
+            assert_eq!(receiver.pending_messages.len(), 1);
+
+            let edge_pending = resp.edges[0].pending_message.as_ref().unwrap();
+            assert_eq!(edge_pending.from_name, "Chat 1");
+            assert_eq!(edge_pending.to_name, "Chat 2");
+            assert_eq!(edge_pending.body_excerpt, "Hello, please review this.");
         });
     }
 }
