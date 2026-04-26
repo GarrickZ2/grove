@@ -887,6 +887,7 @@ pub async fn create_chat(
         agent,
         acp_session_id: None,
         created_at: now,
+        duty: None,
     };
 
     tasks::add_chat_session(&project_key, &task_id, chat.clone())

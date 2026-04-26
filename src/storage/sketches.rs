@@ -854,6 +854,7 @@ mod tests {
 
     impl TestEnv {
         fn new() -> Self {
+            let _lock = crate::storage::database::test_lock().blocking_lock();
             let project = format!("test-{}", Uuid::new_v4());
             let task_id = format!("task-{}", Uuid::new_v4());
             // Fake task workdir under the project dir so Drop cleans it too.

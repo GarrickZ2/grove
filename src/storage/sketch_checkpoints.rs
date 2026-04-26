@@ -268,6 +268,7 @@ mod tests {
 
     impl Env {
         fn new() -> Self {
+            let _lock = crate::storage::database::test_lock().blocking_lock();
             let project = format!("test-{}", Uuid::new_v4());
             let task_id = format!("task-{}", Uuid::new_v4());
             let workdir = grove_dir().join("projects").join(&project).join("workdir");

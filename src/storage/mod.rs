@@ -1,9 +1,11 @@
+pub mod agent_graph;
 pub mod ai;
 pub mod chat_attachments;
 pub mod chat_history;
 pub mod comments;
 pub mod config;
 pub mod database;
+pub mod migrate_chats;
 pub mod notes;
 pub mod sketch_checkpoints;
 pub mod sketches;
@@ -12,12 +14,26 @@ pub mod taskgroups;
 pub mod tasks;
 pub mod workspace;
 
+use std::cell::RefCell;
 use std::path::{Path, PathBuf};
 
 use crate::error::Result;
 
+thread_local! {
+    static GROVE_DIR_OVERRIDE: RefCell<Option<PathBuf>> = const { RefCell::new(None) };
+}
+
+/// Override the grove directory for the current thread (used in tests).
+#[cfg(test)]
+pub fn set_grove_dir_override(path: Option<PathBuf>) {
+    GROVE_DIR_OVERRIDE.with(|o| *o.borrow_mut() = path);
+}
+
 /// 获取 ~/.grove/ 目录路径
 pub fn grove_dir() -> PathBuf {
+    if let Some(path) = GROVE_DIR_OVERRIDE.with(|o| o.borrow().clone()) {
+        return path;
+    }
     dirs::home_dir()
         .expect("Cannot find home directory")
         .join(".grove")

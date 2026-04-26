@@ -65,6 +65,7 @@ fn ensure_storage_version() {
     if version == Some(CURRENT_STORAGE_VERSION) {
         // Up to date — just ensure DB is initialized
         let _ = storage::database::connection();
+        storage::database::run_agent_graph_startup_maintenance();
         return;
     }
 
@@ -76,7 +77,7 @@ fn ensure_storage_version() {
             .join("agents.toml")
             .exists();
 
-    // Chain migrations: None/1.0 → 1.1 → 2.0 → 2.1
+    // Chain migrations: None/1.0 → 1.1 → 2.0 → 2.1 → 2.2
     match version {
         Some("1.0") | None => {
             if has_legacy_files {
@@ -103,6 +104,11 @@ fn ensure_storage_version() {
                 eprintln!("Migrating storage v2.0 → v2.1...");
             }
         }
+        Some("2.1") => {
+            // v2.1 → v2.2: Agent Graph schema + chats.toml migration
+            // Schema is handled by CREATE TABLE IF NOT EXISTS in connection().
+            let _ = storage::database::connection();
+        }
         Some(v) => {
             eprintln!(
                 "Unknown storage version: {}. Expected {}.",
@@ -116,6 +122,8 @@ fn ensure_storage_version() {
     let mut config = storage::config::load_config();
     config.storage_version = Some(CURRENT_STORAGE_VERSION.to_string());
     let _ = storage::config::save_config(&config);
+
+    storage::database::run_agent_graph_startup_maintenance();
 }
 
 /// 启动 TUI 界面

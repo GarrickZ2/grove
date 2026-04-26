@@ -1,10 +1,11 @@
 use std::path::PathBuf;
 
 use chrono::{DateTime, Utc};
+use rusqlite::{params, OptionalExtension};
 use serde::{Deserialize, Serialize};
 
 use super::ensure_project_dir;
-use crate::error::Result;
+use crate::error::{GroveError, Result};
 
 /// Local Task 的固定 ID
 pub const LOCAL_TASK_ID: &str = "_local";
@@ -23,6 +24,9 @@ pub struct ChatSession {
     pub acp_session_id: Option<String>,
     /// 创建时间
     pub created_at: DateTime<Utc>,
+    /// 职能描述（Agent Graph 引入）。一旦设定，AI 不可改；仅用户可改。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub duty: Option<String>,
 }
 
 /// 任务状态
@@ -214,7 +218,14 @@ pub fn recover_task(project: &str, task_id: &str) -> Result<()> {
 pub fn remove_task(project: &str, task_id: &str) -> Result<()> {
     let mut tasks = load_tasks(project)?;
     tasks.retain(|t| t.id != task_id);
-    save_tasks(project, &tasks)
+    save_tasks(project, &tasks)?;
+
+    let conn = crate::storage::database::connection();
+    let tx = conn.unchecked_transaction()?;
+    crate::storage::agent_graph::cascade_delete_for_task(&tx, project, task_id)?;
+    tx.commit()?;
+
+    Ok(())
 }
 
 /// 更新归档任务的代码统计快照
@@ -239,7 +250,14 @@ pub fn update_archived_task_code_stats(
 pub fn remove_archived_task(project: &str, task_id: &str) -> Result<()> {
     let mut archived = load_archived_tasks(project)?;
     archived.retain(|t| t.id != task_id);
-    save_archived_tasks(project, &archived)
+    save_archived_tasks(project, &archived)?;
+
+    let conn = crate::storage::database::connection();
+    let tx = conn.unchecked_transaction()?;
+    crate::storage::agent_graph::cascade_delete_for_task(&tx, project, task_id)?;
+    tx.commit()?;
+
+    Ok(())
 }
 
 /// 更新任务的 target branch
@@ -304,20 +322,23 @@ pub fn generate_chat_id() -> String {
 
 /// Chat 列表容器 (用于 TOML 序列化)
 #[derive(Debug, Default, Serialize, Deserialize)]
-struct ChatsFile {
+pub(crate) struct ChatsFile {
     #[serde(default)]
-    chats: Vec<ChatSession>,
+    pub(crate) chats: Vec<ChatSession>,
 }
 
 /// 获取 chats.toml 路径: ~/.grove/projects/{project}/tasks/{task_id}/chats/chats.toml
-fn chats_file_path(project: &str, task_id: &str) -> Result<PathBuf> {
+pub(crate) fn chats_file_path(project: &str, task_id: &str) -> Result<PathBuf> {
     let dir = super::ensure_task_data_dir(project, task_id)?.join("chats");
     std::fs::create_dir_all(&dir)?;
     Ok(dir.join("chats.toml"))
 }
 
-/// 加载 task 的所有 chat sessions（含自动迁移）
-pub fn load_chat_sessions(project: &str, task_id: &str) -> Result<Vec<ChatSession>> {
+#[allow(dead_code)]
+pub(crate) fn load_chat_sessions_from_toml(
+    project: &str,
+    task_id: &str,
+) -> Result<Vec<ChatSession>> {
     let path = chats_file_path(project, task_id)?;
     if path.exists() {
         let file: ChatsFile = super::load_toml(&path)?;
@@ -327,7 +348,7 @@ pub fn load_chat_sessions(project: &str, task_id: &str) -> Result<Vec<ChatSessio
     Ok(Vec::new())
 }
 
-/// 保存 chat sessions 到 chats.toml
+#[allow(dead_code)]
 fn save_chat_sessions(project: &str, task_id: &str, chats: &[ChatSession]) -> Result<()> {
     let path = chats_file_path(project, task_id)?;
     let file = ChatsFile {
@@ -336,20 +357,65 @@ fn save_chat_sessions(project: &str, task_id: &str, chats: &[ChatSession]) -> Re
     super::save_toml(&path, &file)
 }
 
+fn row_to_chat_session(row: &rusqlite::Row<'_>) -> rusqlite::Result<ChatSession> {
+    let created_at: String = row.get(4)?;
+    let created_at = DateTime::parse_from_rfc3339(&created_at)
+        .map(|dt| dt.with_timezone(&Utc))
+        .unwrap_or_else(|_| Utc::now());
+
+    Ok(ChatSession {
+        id: row.get(0)?,
+        title: row.get(1)?,
+        agent: row.get(2)?,
+        acp_session_id: row.get(3)?,
+        created_at,
+        duty: row.get(5)?,
+    })
+}
+
+/// 加载 task 的所有 chat sessions
+pub fn load_chat_sessions(project: &str, task_id: &str) -> Result<Vec<ChatSession>> {
+    let conn = crate::storage::database::connection();
+    let mut stmt = conn.prepare(
+        "SELECT session_id, title, agent, acp_session_id, created_at, duty
+         FROM session
+         WHERE project = ?1 AND task_id = ?2
+         ORDER BY created_at ASC",
+    )?;
+    let chats = stmt
+        .query_map(params![project, task_id], row_to_chat_session)?
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+    Ok(chats)
+}
+
 /// 添加 ChatSession
 pub fn add_chat_session(project: &str, task_id: &str, chat: ChatSession) -> Result<()> {
-    let mut chats = load_chat_sessions(project, task_id)?;
-    chats.push(chat);
-    save_chat_sessions(project, task_id, &chats)
+    let conn = crate::storage::database::connection();
+    conn.execute(
+        "INSERT OR REPLACE INTO session
+         (session_id, project, task_id, title, agent, acp_session_id, duty, created_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+        params![
+            chat.id,
+            project,
+            task_id,
+            chat.title,
+            chat.agent,
+            chat.acp_session_id,
+            chat.duty,
+            chat.created_at.to_rfc3339(),
+        ],
+    )?;
+    Ok(())
 }
 
 /// 更新 ChatSession 的标题
 pub fn update_chat_title(project: &str, task_id: &str, chat_id: &str, title: &str) -> Result<()> {
-    let mut chats = load_chat_sessions(project, task_id)?;
-    if let Some(chat) = chats.iter_mut().find(|c| c.id == chat_id) {
-        chat.title = title.to_string();
-        save_chat_sessions(project, task_id, &chats)?;
-    }
+    let conn = crate::storage::database::connection();
+    conn.execute(
+        "UPDATE session SET title = ?1 WHERE project = ?2 AND task_id = ?3 AND session_id = ?4",
+        params![title, project, task_id, chat_id],
+    )?;
     Ok(())
 }
 
@@ -360,19 +426,59 @@ pub fn update_chat_acp_session_id(
     chat_id: &str,
     session_id: &str,
 ) -> Result<()> {
-    let mut chats = load_chat_sessions(project, task_id)?;
-    if let Some(chat) = chats.iter_mut().find(|c| c.id == chat_id) {
-        chat.acp_session_id = Some(session_id.to_string());
-        save_chat_sessions(project, task_id, &chats)?;
+    let conn = crate::storage::database::connection();
+    conn.execute(
+        "UPDATE session
+         SET acp_session_id = ?1
+         WHERE project = ?2 AND task_id = ?3 AND session_id = ?4",
+        params![session_id, project, task_id, chat_id],
+    )?;
+    Ok(())
+}
+
+/// 更新 ChatSession 的 duty，并实现 Duty Lock。
+#[allow(dead_code)]
+pub fn update_chat_duty(
+    project: &str,
+    task_id: &str,
+    chat_id: &str,
+    duty: Option<String>,
+) -> Result<()> {
+    let conn = crate::storage::database::connection();
+    let existing: Option<Option<String>> = conn
+        .query_row(
+            "SELECT duty FROM session WHERE project = ?1 AND task_id = ?2 AND session_id = ?3",
+            params![project, task_id, chat_id],
+            |row| row.get(0),
+        )
+        .optional()?;
+
+    let Some(existing_duty) = existing else {
+        return Ok(());
+    };
+
+    if duty.is_some() && existing_duty.is_some() {
+        return Err(GroveError::storage("chat duty is locked"));
     }
+
+    conn.execute(
+        "UPDATE session SET duty = ?1 WHERE project = ?2 AND task_id = ?3 AND session_id = ?4",
+        params![duty, project, task_id, chat_id],
+    )?;
     Ok(())
 }
 
 /// 删除 ChatSession
 pub fn delete_chat_session(project: &str, task_id: &str, chat_id: &str) -> Result<()> {
-    let mut chats = load_chat_sessions(project, task_id)?;
-    chats.retain(|c| c.id != chat_id);
-    save_chat_sessions(project, task_id, &chats)
+    let conn = crate::storage::database::connection();
+    let tx = conn.unchecked_transaction()?;
+    crate::storage::agent_graph::cascade_delete_for_session(&tx, chat_id)?;
+    tx.execute(
+        "DELETE FROM session WHERE project = ?1 AND task_id = ?2 AND session_id = ?3",
+        params![project, task_id, chat_id],
+    )?;
+    tx.commit()?;
+    Ok(())
 }
 
 /// 获取 task 的某个 chat session
@@ -381,8 +487,17 @@ pub fn get_chat_session(
     task_id: &str,
     chat_id: &str,
 ) -> Result<Option<ChatSession>> {
-    let chats = load_chat_sessions(project, task_id)?;
-    Ok(chats.into_iter().find(|c| c.id == chat_id))
+    let conn = crate::storage::database::connection();
+    let chat = conn
+        .query_row(
+            "SELECT session_id, title, agent, acp_session_id, created_at, duty
+             FROM session
+             WHERE project = ?1 AND task_id = ?2 AND session_id = ?3",
+            params![project, task_id, chat_id],
+            row_to_chat_session,
+        )
+        .optional()?;
+    Ok(chat)
 }
 
 /// 根据 task_id 获取任务（从 tasks.toml）
@@ -574,5 +689,60 @@ mod tests {
         std::thread::sleep(std::time::Duration::from_millis(1));
         let hash2 = generate_time_hash();
         assert_ne!(hash1, hash2);
+    }
+
+    #[test]
+    fn test_chat_session_old_toml_without_duty() {
+        let old_toml = r#"
+id = "chat-abc123"
+title = "Test Chat"
+agent = "claude"
+created_at = "2025-01-01T00:00:00Z"
+"#;
+        let session: ChatSession = toml::from_str(old_toml).expect("old toml should parse");
+        assert_eq!(session.id, "chat-abc123");
+        assert!(session.duty.is_none());
+        assert!(session.acp_session_id.is_none());
+    }
+
+    #[test]
+    fn test_chat_session_duty_none_no_emit() {
+        let session = ChatSession {
+            id: "chat-xyz789".to_string(),
+            title: "Test".to_string(),
+            agent: "codex".to_string(),
+            acp_session_id: None,
+            created_at: chrono::DateTime::parse_from_rfc3339("2025-06-01T12:00:00Z")
+                .unwrap()
+                .to_utc(),
+            duty: None,
+        };
+        let toml_str = toml::to_string(&session).unwrap();
+        assert!(
+            !toml_str.contains("duty"),
+            "duty=None should not emit: {}",
+            toml_str
+        );
+    }
+
+    #[test]
+    fn test_chat_session_duty_some_roundtrip() {
+        let mut session = ChatSession {
+            id: "chat-abc".to_string(),
+            title: "Reviewer".to_string(),
+            agent: "claude".to_string(),
+            acp_session_id: Some("acp-123".to_string()),
+            created_at: chrono::DateTime::parse_from_rfc3339("2025-06-01T00:00:00Z")
+                .unwrap()
+                .to_utc(),
+            duty: Some("code review".to_string()),
+        };
+        let toml_str = toml::to_string(&session).unwrap();
+        let restored: ChatSession = toml::from_str(&toml_str).unwrap();
+        assert_eq!(restored.duty, Some("code review".to_string()));
+
+        session.duty = None;
+        let toml_str2 = toml::to_string(&session).unwrap();
+        assert!(!toml_str2.contains("duty"));
     }
 }

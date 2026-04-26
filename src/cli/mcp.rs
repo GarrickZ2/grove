@@ -2476,6 +2476,7 @@ async fn start_chat_impl(p: StartChatParams) -> Result<CallToolResult, McpError>
         agent: agent_name.clone(),
         acp_session_id: None,
         created_at: now,
+        duty: None,
     };
 
     tasks::add_chat_session(&project_key, &p.task_id, chat)

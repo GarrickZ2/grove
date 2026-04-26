@@ -13,7 +13,7 @@ use std::sync::Mutex;
 use super::grove_dir;
 use crate::error::Result;
 
-pub const CURRENT_STORAGE_VERSION: &str = "2.1";
+pub const CURRENT_STORAGE_VERSION: &str = "2.2";
 
 /// Database state: caches connection + its path so we can detect HOME changes.
 struct DbState {
@@ -255,6 +255,44 @@ fn create_schema(conn: &Connection) -> Result<()> {
             PRIMARY KEY (repo_key, repo_path, project_path, agent_id),
             FOREIGN KEY (repo_key, repo_path) REFERENCES skill_installed(repo_key, repo_path) ON DELETE CASCADE
         );
+
+        -- Agent Graph: Session (corresponds to ChatSession struct)
+        CREATE TABLE IF NOT EXISTS session (
+            session_id     TEXT PRIMARY KEY,
+            project        TEXT NOT NULL,
+            task_id        TEXT NOT NULL,
+            title          TEXT NOT NULL,
+            agent          TEXT NOT NULL,
+            acp_session_id TEXT,
+            duty           TEXT,
+            created_at     TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_session_task ON session(project, task_id);
+
+        -- Agent Graph: Edge (dependency between sessions)
+        CREATE TABLE IF NOT EXISTS agent_edge (
+            edge_id      INTEGER PRIMARY KEY AUTOINCREMENT,
+            task_id      TEXT NOT NULL,
+            from_session TEXT NOT NULL,
+            to_session   TEXT NOT NULL,
+            purpose      TEXT,
+            created_at   TEXT NOT NULL,
+            UNIQUE (from_session, to_session)
+        );
+        CREATE INDEX IF NOT EXISTS idx_edge_from ON agent_edge(from_session);
+        CREATE INDEX IF NOT EXISTS idx_edge_to ON agent_edge(to_session);
+
+        -- Agent Graph: Pending messages between sessions
+        CREATE TABLE IF NOT EXISTS agent_pending_message (
+            msg_id       TEXT PRIMARY KEY,
+            task_id      TEXT NOT NULL,
+            from_session TEXT NOT NULL,
+            to_session   TEXT NOT NULL,
+            body         TEXT NOT NULL,
+            created_at   TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_pending_to ON agent_pending_message(to_session);
+        CREATE UNIQUE INDEX IF NOT EXISTS uniq_pending_pair ON agent_pending_message(from_session, to_session);
     ",
     )?;
 
@@ -297,6 +335,33 @@ pub fn migrate_from_files() {
     migrate_skills_all();
 
     let _ = super::taskgroups::ensure_system_groups();
+}
+
+pub fn run_agent_graph_startup_maintenance() {
+    {
+        let conn = connection();
+        if let Err(e) = super::migrate_chats::migrate_chats_toml_to_sqlite(&conn) {
+            eprintln!("[warning] chats.toml migration failed: {}", e);
+        }
+    }
+
+    {
+        let conn = connection();
+        match super::agent_graph::gc_orphans(&conn) {
+            Ok(stats)
+                if stats.sessions_deleted > 0
+                    || stats.edges_deleted > 0
+                    || stats.pending_messages_deleted > 0 =>
+            {
+                eprintln!(
+                    "[warning] agent graph GC removed {} session(s), {} edge(s), {} pending message(s)",
+                    stats.sessions_deleted, stats.edges_deleted, stats.pending_messages_deleted
+                );
+            }
+            Ok(_) => {}
+            Err(e) => eprintln!("[warning] agent graph GC failed: {}", e),
+        }
+    }
 }
 
 fn migrate_projects(conn: &Connection) {

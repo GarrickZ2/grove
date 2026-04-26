@@ -71,14 +71,13 @@ pub fn generate_file_diff(path: &Path, old: Option<&str>, new: &str) -> String {
 /// Core diff formatting: new file → markdown code block, edit → real unified diff.
 fn format_diff_content(path: &str, old: Option<&str>, new: &str) -> String {
     match old {
-        None => {
+        None | Some("") => {
             // New file: markdown code fence with language from extension
             let lang = path.rsplit('.').next().map(ext_to_lang).unwrap_or("");
             format!("```{lang}\n{new}\n```")
         }
         Some(old_text) => {
-            // Edit (incl. empty-file → non-empty): real unified diff with 3
-            // lines of context.
+            // Edit: real unified diff with 3 lines of context.
             build_unified_diff(path, old_text, new)
         }
     }
