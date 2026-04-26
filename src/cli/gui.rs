@@ -244,6 +244,20 @@ pub async fn execute(port: u16) {
         // Initialize FileWatchers for all live tasks
         api::init_file_watchers();
 
+        // Start the agent_graph MCP listener (loopback-only). Non-fatal on failure.
+        match api::handlers::agent_graph_mcp::start_listener(
+            api::handlers::agent_graph_mcp::DEFAULT_BASE_PORT,
+            api::handlers::agent_graph_mcp::DEFAULT_MAX_ATTEMPTS,
+        )
+        .await
+        {
+            Ok(port) => println!("[agent_graph_mcp] listener on http://127.0.0.1:{port}"),
+            Err(e) => eprintln!(
+                "[agent_graph_mcp] failed to bind listener: {} — agent_graph tools disabled",
+                e
+            ),
+        }
+
         let auth = std::sync::Arc::new(api::auth::ServerAuth::no_auth());
         let app = api::create_router(None, auth);
 

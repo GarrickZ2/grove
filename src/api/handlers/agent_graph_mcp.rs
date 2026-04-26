@@ -25,7 +25,7 @@
 //! [`set_listener_port`], and call [`register_token`] / [`unregister_token`]
 //! around each ACP session lifecycle.
 
-#![allow(dead_code)] // listener startup happens in Commit 3
+#![allow(dead_code)] // some helpers are exercised only in part 4 integration tests
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -320,6 +320,51 @@ fn tool_error(err: AgentGraphError) -> CallToolResult {
     CallToolResult::error(vec![Content::text(text)])
 }
 
+// ─── Listener bootstrap ───────────────────────────────────────────────────────
+
+/// Default base port. The listener tries this first then increments via
+/// [`crate::api::bind_with_fallback`]. Chosen to be far from the public web UI
+/// port (3000–3100) and the macOS dynamic-port range (49152+) to make the
+/// agent-side MCP URL visible in `lsof` / `netstat` distinct from Grove's
+/// frontend.
+pub const DEFAULT_BASE_PORT: u16 = 17900;
+
+/// Default attempts to find a free port (`base_port` … `base_port + 99`).
+pub const DEFAULT_MAX_ATTEMPTS: u16 = 100;
+
+/// Start the loopback-only agent_graph MCP listener.
+///
+/// **Idempotent**: subsequent calls after the first successful boot are no-ops
+/// and return the previously chosen port. Concurrent first calls are safe — the
+/// `OnceCell` ensures only one listener is spawned.
+///
+/// Binds `127.0.0.1:<port>` via [`crate::api::bind_with_fallback`] and spawns
+/// `axum::serve` in a background task that runs for the process's lifetime.
+/// The chosen port is published via [`set_listener_port`]; subsequent ACP
+/// session spawns read it via [`build_mcp_url`] when constructing
+/// `NewSessionRequest.mcp_servers`.
+///
+/// On bind failure the function returns the std::io::Error and **does not** set
+/// the port — callers may retry with a different base. Grove's main start-up
+/// path treats bind failure as non-fatal: log a warning and continue without
+/// agent_graph (the rest of the API server still works; the in-process tools
+/// just become unavailable).
+pub async fn start_listener(base_port: u16, max_attempts: u16) -> std::io::Result<u16> {
+    if let Some(existing) = listener_port() {
+        return Ok(existing);
+    }
+    let (listener, actual_port) =
+        crate::api::bind_with_fallback("127.0.0.1", base_port, max_attempts).await?;
+    set_listener_port(actual_port);
+    let app = build_router();
+    tokio::spawn(async move {
+        if let Err(e) = axum::serve(listener, app).await {
+            eprintln!("[agent_graph_mcp] listener error: {}", e);
+        }
+    });
+    Ok(actual_port)
+}
+
 // ─── Router builder ───────────────────────────────────────────────────────────
 
 /// Build the loopback-only axum router serving the agent_graph MCP listener.
@@ -434,6 +479,27 @@ mod tests {
     fn router_compiles() {
         // Just smoke-check that we can build the router without panicking.
         let _ = build_router();
+    }
+
+    #[tokio::test]
+    async fn start_listener_binds_loopback_and_publishes_port() {
+        // Use a high base port unlikely to collide; start_listener is idempotent
+        // so re-runs of the test suite won't double-bind.
+        let port = start_listener(28900, 50).await.expect("listener");
+        assert!(port >= 28900);
+        assert_eq!(listener_port(), Some(port));
+        let url = build_mcp_url("any-token").expect("url");
+        assert_eq!(url, format!("http://127.0.0.1:{port}/mcp/any-token"));
+
+        // Second call must return the existing port (idempotent).
+        let port2 = start_listener(28999, 1).await.expect("idempotent");
+        assert_eq!(port2, port);
+
+        // Sanity: connect to the listener with a TCP probe; the bind should be live.
+        let addr = format!("127.0.0.1:{port}");
+        let _stream = tokio::net::TcpStream::connect(&addr)
+            .await
+            .expect("loopback reachable");
     }
 
     #[test]

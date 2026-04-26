@@ -398,6 +398,57 @@ fn grove_mcp_server(env_vars: &HashMap<String, String>) -> crate::error::Result<
     ))
 }
 
+/// Build the `mcp_servers` list for `NewSessionRequest` / `LoadSessionRequest`.
+///
+/// Always includes the existing stdio `grove mcp` (orchestrator tools). When
+/// `agent_graph_token` is `Some` and the in-process MCP HTTP listener is
+/// running, **also** appends a second entry — the loopback Streamable HTTP
+/// MCP that exposes the 5 agent_graph tools. The two MCP servers run in
+/// parallel; their tool sets don't overlap (`grove_*` orchestrator vs
+/// `grove_agent_*` graph) so the agent sees them as one combined toolbox.
+///
+/// The HTTP entry is silently skipped when the listener hasn't booted (e.g.
+/// `grove acp` standalone mode, tests). In that case the agent only sees
+/// stdio tools — agent_graph features become unavailable but the session
+/// still works for normal chat.
+fn build_mcp_servers(
+    env_vars: &HashMap<String, String>,
+    agent_graph_token: Option<&str>,
+) -> crate::error::Result<Vec<acp::McpServer>> {
+    let mut servers = vec![grove_mcp_server(env_vars)?];
+    if let Some(token) = agent_graph_token {
+        if let Some(url) = crate::api::handlers::agent_graph_mcp::build_mcp_url(token) {
+            servers.push(acp::McpServer::Http(acp::McpServerHttp::new(
+                "grove_agent_graph",
+                url,
+            )));
+        }
+    }
+    Ok(servers)
+}
+
+/// RAII guard that unregisters the agent_graph MCP token on Drop. Created in
+/// `drive_session` and held for the session's lifetime; dropping it (whether
+/// the session exits cleanly, errors out, or panics) frees the token slot.
+struct AgentGraphTokenGuard {
+    token: String,
+}
+
+impl AgentGraphTokenGuard {
+    fn new(token: String) -> Self {
+        Self { token }
+    }
+    fn token(&self) -> &str {
+        &self.token
+    }
+}
+
+impl Drop for AgentGraphTokenGuard {
+    fn drop(&mut self) {
+        let _ = crate::api::handlers::agent_graph_mcp::unregister_token(&self.token);
+    }
+}
+
 /// 单个 terminal 实例的状态
 struct TerminalState {
     /// Send to this channel to request process kill
@@ -1425,6 +1476,18 @@ async fn drive_session(
         acp::Error::internal_error().data(format!("{}", e))
     }
 
+    // Allocate an agent_graph MCP token if this session has a chat_id (per-chat
+    // sessions are the only ones that participate in the graph). The token
+    // binds (URL token → caller_chat_id) for the in-process HTTP MCP listener;
+    // the guard unregisters on drop, no matter how drive_session exits.
+    let _agent_graph_token_guard: Option<AgentGraphTokenGuard> =
+        config.chat_id.as_ref().map(|chat_id| {
+            let token = uuid::Uuid::new_v4().to_string();
+            crate::api::handlers::agent_graph_mcp::register_token(&token, chat_id);
+            AgentGraphTokenGuard::new(token)
+        });
+    let agent_graph_token: Option<&str> = _agent_graph_token_guard.as_ref().map(|g| g.token());
+
     // 初始化连接
     let init_resp = conn
         .send_request(
@@ -1488,10 +1551,11 @@ async fn drive_session(
                     cid,
                 );
             }
-            let mcp = grove_mcp_server(&config.env_vars).map_err(to_acp_err)?;
+            let mcp_servers =
+                build_mcp_servers(&config.env_vars, agent_graph_token).map_err(to_acp_err)?;
             let resp = conn
                 .send_request(
-                    acp::NewSessionRequest::new(&config.working_dir).mcp_servers(vec![mcp]),
+                    acp::NewSessionRequest::new(&config.working_dir).mcp_servers(mcp_servers),
                 )
                 .block_task()
                 .await?;
@@ -1514,10 +1578,11 @@ async fn drive_session(
             .suppress_emit
             .store(true, std::sync::atomic::Ordering::Relaxed);
         let load_result = {
-            let mcp = grove_mcp_server(&config.env_vars).map_err(to_acp_err)?;
+            let mcp_servers =
+                build_mcp_servers(&config.env_vars, agent_graph_token).map_err(to_acp_err)?;
             conn.send_request(
                 acp::LoadSessionRequest::new(acp::SessionId::new(&*saved_id), &config.working_dir)
-                    .mcp_servers(vec![mcp]),
+                    .mcp_servers(mcp_servers),
             )
             .block_task()
             .await

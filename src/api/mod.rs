@@ -798,6 +798,26 @@ pub async fn start_server(
     // sessions (e.g. they install a new CLI).
     crate::acp::init_agent_defaults();
 
+    // Start the in-process agent_graph MCP listener (loopback-only). Failure to
+    // bind is non-fatal — the rest of the server still boots; ACP sessions will
+    // simply spawn without agent_graph tools available.
+    match crate::api::handlers::agent_graph_mcp::start_listener(
+        crate::api::handlers::agent_graph_mcp::DEFAULT_BASE_PORT,
+        crate::api::handlers::agent_graph_mcp::DEFAULT_MAX_ATTEMPTS,
+    )
+    .await
+    {
+        Ok(port) => {
+            println!("[agent_graph_mcp] listener on http://127.0.0.1:{port}");
+        }
+        Err(e) => {
+            eprintln!(
+                "[agent_graph_mcp] failed to bind listener: {} — agent_graph tools disabled",
+                e
+            );
+        }
+    }
+
     // Initialize FileWatchers for all live tasks
     init_file_watchers();
 
