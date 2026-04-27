@@ -225,6 +225,26 @@ pub fn create_api_router() -> Router {
             "/projects/{id}/tasks/{taskId}/graph",
             get(handlers::tasks::get_task_graph),
         )
+        .route(
+            "/projects/{id}/tasks/{taskId}/graph/spawn",
+            post(handlers::tasks::graph_spawn),
+        )
+        .route(
+            "/projects/{id}/tasks/{taskId}/graph/edges",
+            post(handlers::tasks::graph_add_edge),
+        )
+        .route(
+            "/projects/{id}/tasks/{taskId}/graph/edges/{edge_id}",
+            patch(handlers::tasks::graph_update_edge).delete(handlers::tasks::graph_delete_edge),
+        )
+        .route(
+            "/projects/{id}/tasks/{taskId}/graph/edges/{edge_id}/remind",
+            post(handlers::tasks::graph_remind),
+        )
+        .route(
+            "/projects/{id}/tasks/{taskId}/graph/chats/{chat_id}/duty",
+            patch(handlers::tasks::graph_update_duty),
+        )
         // Notes API
         .route(
             "/projects/{id}/tasks/{taskId}/notes",

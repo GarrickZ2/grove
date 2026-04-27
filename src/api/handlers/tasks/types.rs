@@ -419,3 +419,36 @@ pub struct GraphEdge {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub pending_message: Option<PendingMessageInfo>,
 }
+
+#[derive(Debug, Deserialize)]
+pub struct SpawnNodeRequest {
+    pub from_chat_id: Option<String>,
+    pub agent: String,
+    pub name: String,
+    pub duty: Option<String>,
+    pub purpose: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct AddEdgeRequest {
+    pub from: String,
+    pub to: String,
+    pub duty: Option<String>,
+    pub purpose: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UpdateEdgePurposeRequest {
+    pub purpose: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UpdateChatDutyRequest {
+    pub duty: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct GraphErrorResponse {
+    pub error: String,
+    pub code: String,
+}

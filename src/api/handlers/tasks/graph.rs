@@ -3,6 +3,7 @@
 use axum::{extract::Path, http::StatusCode, Json};
 
 use crate::acp;
+use crate::agent_graph::user_ops;
 use crate::api::handlers::common;
 use crate::storage::{agent_graph as graph_db, database, tasks};
 
@@ -170,6 +171,236 @@ pub async fn get_task_graph(
     result.map(Json).ok_or(StatusCode::NOT_FOUND)
 }
 
+fn graph_error(code: &str, message: &str) -> (StatusCode, Json<GraphErrorResponse>) {
+    let status = match code {
+        "name_taken" | "duplicate_edge" => StatusCode::CONFLICT,
+        "cycle_would_form"
+        | "bidirectional_edge"
+        | "same_task_required"
+        | "no_pending_to_remind"
+        | "target_is_busy" => StatusCode::BAD_REQUEST,
+        "target_not_found" | "endpoint_not_found" => StatusCode::NOT_FOUND,
+        _ => StatusCode::INTERNAL_SERVER_ERROR,
+    };
+    (
+        status,
+        Json(GraphErrorResponse {
+            error: message.to_string(),
+            code: code.to_string(),
+        }),
+    )
+}
+
+/// POST /api/v1/projects/{id}/tasks/{taskId}/graph/spawn
+pub async fn graph_spawn(
+    Path((id, task_id)): Path<(String, String)>,
+    Json(body): Json<SpawnNodeRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<GraphErrorResponse>)> {
+    let (_project, project_key) = common::find_project_by_id(&id)
+        .map_err(|_| graph_error("target_not_found", "Project not found"))?;
+
+    let pk = project_key.clone();
+    let tid = task_id.clone();
+    let from = body.from_chat_id.clone();
+    let agent = body.agent.clone();
+    let name = body.name.clone();
+    let duty = body.duty.clone();
+    let purpose = body.purpose.clone();
+
+    let result = user_ops::user_spawn_node(
+        &pk,
+        &tid,
+        from.as_deref(),
+        &agent,
+        &name,
+        duty.as_deref(),
+        purpose.as_deref(),
+    )
+    .await;
+
+    match result {
+        Ok(r) => Ok(Json(serde_json::json!({
+            "chat_id": r.chat_id,
+            "name": r.name,
+            "duty": r.duty,
+            "agent": r.agent,
+        }))),
+        Err(e) => {
+            let code = if e.contains("name_taken") {
+                "name_taken"
+            } else if e.contains("timeout") {
+                "timeout"
+            } else if e.contains("agent_spawn") {
+                "agent_spawn_failed"
+            } else {
+                "internal_error"
+            };
+            Err(graph_error(code, &e))
+        }
+    }
+}
+
+/// POST /api/v1/projects/{id}/tasks/{taskId}/graph/edges
+pub async fn graph_add_edge(
+    Path((id, task_id)): Path<(String, String)>,
+    Json(body): Json<AddEdgeRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<GraphErrorResponse>)> {
+    let (_project, project_key) = common::find_project_by_id(&id)
+        .map_err(|_| graph_error("target_not_found", "Project not found"))?;
+
+    if let Some(ref d) = body.duty {
+        let sessions = tasks::load_chat_sessions(&project_key, &task_id)
+            .map_err(|_| graph_error("internal_error", "Failed to load sessions"))?;
+        if let Some(target) = sessions.iter().find(|s| s.id == body.to) {
+            if target.duty.is_none() {
+                tasks::update_chat_duty(&project_key, &task_id, &body.to, Some(d.clone()))
+                    .map_err(|e| {
+                        let s = e.to_string();
+                        if s.contains("locked") {
+                            graph_error("duty_forbidden", "Duty is locked")
+                        } else {
+                            graph_error("internal_error", &s)
+                        }
+                    })?;
+            }
+        }
+    }
+
+    let result = user_ops::user_add_edge(&task_id, &body.from, &body.to, body.purpose.as_deref());
+
+    match result {
+        Ok(edge_id) => Ok(Json(serde_json::json!({ "edge_id": edge_id }))),
+        Err(e) => {
+            let code = if e.contains("cycle") {
+                "cycle_would_form"
+            } else if e.contains("bidirectional") {
+                "bidirectional_edge"
+            } else if e.contains("duplicate") {
+                "duplicate_edge"
+            } else if e.contains("same_task") {
+                "same_task_required"
+            } else if e.contains("not_found") {
+                "target_not_found"
+            } else {
+                "internal_error"
+            };
+            Err(graph_error(code, &e))
+        }
+    }
+}
+
+/// PATCH /api/v1/projects/{id}/tasks/{taskId}/graph/edges/{edge_id}
+pub async fn graph_update_edge(
+    Path((id, task_id, edge_id_str)): Path<(String, String, String)>,
+    Json(body): Json<UpdateEdgePurposeRequest>,
+) -> Result<StatusCode, (StatusCode, Json<GraphErrorResponse>)> {
+    let edge_id: i64 = edge_id_str
+        .parse()
+        .map_err(|_| graph_error("bad_request", "edge_id must be a number"))?;
+    let (_project, _project_key) = common::find_project_by_id(&id)
+        .map_err(|_| graph_error("target_not_found", "Project not found"))?;
+
+    let conn = database::connection();
+    let edge = graph_db::get_edge(&conn, edge_id)
+        .map_err(|_| graph_error("internal_error", "DB error"))?;
+    match edge {
+        Some(e) if e.task_id == task_id => {
+            graph_db::update_edge_purpose(&conn, edge_id, body.purpose.as_deref())
+                .map_err(|_| graph_error("internal_error", "DB error"))?;
+            Ok(StatusCode::NO_CONTENT)
+        }
+        Some(_) => Err(graph_error(
+            "target_not_found",
+            "Edge not found in this task",
+        )),
+        None => Err(graph_error("target_not_found", "Edge not found")),
+    }
+}
+
+/// DELETE /api/v1/projects/{id}/tasks/{taskId}/graph/edges/{edge_id}
+pub async fn graph_delete_edge(
+    Path((id, task_id, edge_id_str)): Path<(String, String, String)>,
+) -> Result<StatusCode, (StatusCode, Json<GraphErrorResponse>)> {
+    let edge_id: i64 = edge_id_str
+        .parse()
+        .map_err(|_| graph_error("bad_request", "edge_id must be a number"))?;
+    let (_project, _project_key) = common::find_project_by_id(&id)
+        .map_err(|_| graph_error("target_not_found", "Project not found"))?;
+
+    let conn = database::connection();
+    let edge = graph_db::get_edge(&conn, edge_id)
+        .map_err(|_| graph_error("internal_error", "DB error"))?;
+    match edge {
+        Some(e) if e.task_id == task_id => {
+            graph_db::delete_edge(&conn, edge_id)
+                .map_err(|_| graph_error("internal_error", "DB error"))?;
+            Ok(StatusCode::NO_CONTENT)
+        }
+        Some(_) => Err(graph_error(
+            "target_not_found",
+            "Edge not found in this task",
+        )),
+        None => Err(graph_error("target_not_found", "Edge not found")),
+    }
+}
+
+/// POST /api/v1/projects/{id}/tasks/{taskId}/graph/edges/{edge_id}/remind
+pub async fn graph_remind(
+    Path((id, task_id, edge_id_str)): Path<(String, String, String)>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<GraphErrorResponse>)> {
+    let edge_id: i64 = match edge_id_str.parse() {
+        Ok(v) => v,
+        Err(_) => {
+            return Err(graph_error("bad_request", "edge_id must be a number"));
+        }
+    };
+    let (_project, project_key) = match common::find_project_by_id(&id) {
+        Ok(v) => v,
+        Err(_) => {
+            return Err(graph_error("target_not_found", "Project not found"));
+        }
+    };
+
+    let result = user_ops::user_remind(&project_key, &task_id, edge_id).await;
+    match result {
+        Ok(()) => Ok(Json(serde_json::json!({}))),
+        Err(e) => {
+            let code = if e.contains("no_pending") {
+                "no_pending_to_remind"
+            } else if e.contains("busy") {
+                "target_is_busy"
+            } else if e.contains("not_found") {
+                "target_not_found"
+            } else if e.contains("timeout") {
+                "timeout"
+            } else {
+                "internal_error"
+            };
+            Err(graph_error(code, &e))
+        }
+    }
+}
+
+/// PATCH /api/v1/projects/{id}/tasks/{taskId}/graph/chats/{chat_id}/duty
+pub async fn graph_update_duty(
+    Path((id, task_id, chat_id)): Path<(String, String, String)>,
+    Json(body): Json<UpdateChatDutyRequest>,
+) -> Result<StatusCode, (StatusCode, Json<GraphErrorResponse>)> {
+    let (_project, project_key) = common::find_project_by_id(&id)
+        .map_err(|_| graph_error("target_not_found", "Project not found"))?;
+
+    tasks::update_chat_duty(&project_key, &task_id, &chat_id, body.duty.clone()).map_err(|e| {
+        let s = e.to_string();
+        if s.contains("locked") {
+            graph_error("duty_forbidden", "Duty is locked")
+        } else {
+            graph_error("internal_error", &s)
+        }
+    })?;
+
+    Ok(StatusCode::NO_CONTENT)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -317,5 +548,139 @@ mod tests {
             assert_eq!(edge_pending.to_name, "Chat 2");
             assert_eq!(edge_pending.body_excerpt, "Hello, please review this.");
         });
+    }
+
+    #[test]
+    fn add_edge_happy() {
+        with_temp_home(|_project_id, task_id| {
+            let chat1 = ChatSession {
+                id: "chat-a".to_string(),
+                title: "Chat A".to_string(),
+                agent: "claude".to_string(),
+                acp_session_id: None,
+                created_at: chrono::Utc::now(),
+                duty: None,
+            };
+            let chat2 = ChatSession {
+                id: "chat-b".to_string(),
+                title: "Chat B".to_string(),
+                agent: "codex".to_string(),
+                acp_session_id: None,
+                created_at: chrono::Utc::now(),
+                duty: None,
+            };
+            add_chat_session("proj-1", task_id, chat1).unwrap();
+            add_chat_session("proj-1", task_id, chat2).unwrap();
+
+            let result = user_ops::user_add_edge(task_id, "chat-a", "chat-b", Some("delegate"));
+            assert!(result.is_ok(), "add_edge should succeed: {:?}", result);
+            let edge_id = result.unwrap();
+            assert!(edge_id > 0);
+        });
+    }
+
+    #[test]
+    fn add_edge_rejects_cycle() {
+        with_temp_home(|_project_id, task_id| {
+            for (id, name) in [("a", "A"), ("b", "B"), ("c", "C")] {
+                let chat = ChatSession {
+                    id: id.to_string(),
+                    title: name.to_string(),
+                    agent: "claude".to_string(),
+                    acp_session_id: None,
+                    created_at: chrono::Utc::now(),
+                    duty: None,
+                };
+                add_chat_session("proj-1", task_id, chat).unwrap();
+            }
+
+            user_ops::user_add_edge(task_id, "a", "b", None).unwrap();
+            user_ops::user_add_edge(task_id, "b", "c", None).unwrap();
+
+            let err = user_ops::user_add_edge(task_id, "c", "a", None).unwrap_err();
+            assert!(
+                err.contains("cycle_would_form"),
+                "expected cycle error, got: {}",
+                err
+            );
+        });
+    }
+
+    #[test]
+    fn update_edge_purpose_happy() {
+        with_temp_home(|_project_id, task_id| {
+            let chat1 = ChatSession {
+                id: "chat-x".to_string(),
+                title: "X".to_string(),
+                agent: "claude".to_string(),
+                acp_session_id: None,
+                created_at: chrono::Utc::now(),
+                duty: None,
+            };
+            let chat2 = ChatSession {
+                id: "chat-y".to_string(),
+                title: "Y".to_string(),
+                agent: "codex".to_string(),
+                acp_session_id: None,
+                created_at: chrono::Utc::now(),
+                duty: None,
+            };
+            add_chat_session("proj-1", task_id, chat1).unwrap();
+            add_chat_session("proj-1", task_id, chat2).unwrap();
+
+            let edge_id =
+                user_ops::user_add_edge(task_id, "chat-x", "chat-y", Some("initial")).unwrap();
+
+            let conn = connection();
+            graph_db::update_edge_purpose(&conn, edge_id, Some("updated")).unwrap();
+            let edge = graph_db::get_edge(&conn, edge_id).unwrap().unwrap();
+            assert_eq!(edge.purpose.as_deref(), Some("updated"));
+        });
+    }
+
+    #[test]
+    fn delete_edge_happy() {
+        with_temp_home(|_project_id, task_id| {
+            let chat1 = ChatSession {
+                id: "chat-d1".to_string(),
+                title: "D1".to_string(),
+                agent: "claude".to_string(),
+                acp_session_id: None,
+                created_at: chrono::Utc::now(),
+                duty: None,
+            };
+            let chat2 = ChatSession {
+                id: "chat-d2".to_string(),
+                title: "D2".to_string(),
+                agent: "codex".to_string(),
+                acp_session_id: None,
+                created_at: chrono::Utc::now(),
+                duty: None,
+            };
+            add_chat_session("proj-1", task_id, chat1).unwrap();
+            add_chat_session("proj-1", task_id, chat2).unwrap();
+
+            let edge_id = user_ops::user_add_edge(task_id, "chat-d1", "chat-d2", None).unwrap();
+
+            let conn = connection();
+            graph_db::delete_edge(&conn, edge_id).unwrap();
+            assert!(graph_db::get_edge(&conn, edge_id).unwrap().is_none());
+        });
+    }
+
+    #[test]
+    fn graph_error_status_codes() {
+        let (status, resp) = graph_error("name_taken", "Name taken");
+        assert_eq!(status, StatusCode::CONFLICT);
+        assert_eq!(resp.code, "name_taken");
+
+        let (status, _) = graph_error("cycle_would_form", "Cycle");
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+
+        let (status, _) = graph_error("target_not_found", "Not found");
+        assert_eq!(status, StatusCode::NOT_FOUND);
+
+        let (status, _) = graph_error("internal_error", "Oops");
+        assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
     }
 }

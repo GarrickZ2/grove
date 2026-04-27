@@ -32,3 +32,4 @@
 pub mod error;
 pub mod inject;
 pub mod tools;
+pub mod user_ops;
