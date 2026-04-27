@@ -1320,10 +1320,14 @@ export function TaskChat({
   const taskChatRootRef = useRef<HTMLDivElement>(null);
   // Composer width budget — when the chat panel is squeezed (e.g. opened
   // alongside a Graph / Editor split), drop the Model / Mode / Thinking
-  // dropdowns so the Send button doesn't get clipped. Threshold is the
-  // narrowest width at which all three pills + send still fit comfortably.
-  const COMPOSER_OPTIONS_MIN_WIDTH = 420;
+  // dropdowns so the Send button doesn't get clipped. Two tiers: below
+  // HIDE_ALL we drop everything; between HIDE_ALL and HIDE_THINKING we
+  // keep Model + Mode but drop the Thinking pill (which was added later
+  // and tips the row over the edge in mid-width panels).
+  const COMPOSER_HIDE_ALL_WIDTH = 420;
+  const COMPOSER_HIDE_THINKING_WIDTH = 560;
   const [composerNarrow, setComposerNarrow] = useState(false);
+  const [composerHideThinking, setComposerHideThinking] = useState(false);
 
   // ─── Read-only observation mode state ──────────────────────────────────
   const [isRemoteSession, setIsRemoteSession] = useState(false);
@@ -1673,7 +1677,8 @@ export function TaskChat({
     if (!el || typeof ResizeObserver === "undefined") return;
     const ro = new ResizeObserver(() => {
       const w = el.getBoundingClientRect().width;
-      setComposerNarrow(w > 0 && w < COMPOSER_OPTIONS_MIN_WIDTH);
+      setComposerNarrow(w > 0 && w < COMPOSER_HIDE_ALL_WIDTH);
+      setComposerHideThinking(w > 0 && w < COMPOSER_HIDE_THINKING_WIDTH);
     });
     ro.observe(el);
     return () => ro.disconnect();
@@ -5211,7 +5216,7 @@ export function TaskChat({
                         }}
                       />
                     )}
-                    {!composerNarrow && thoughtLevelOptions.length > 0 && thoughtLevelConfigId && (
+                    {!composerHideThinking && thoughtLevelOptions.length > 0 && thoughtLevelConfigId && (
                       <DropdownSelect
                         ref={thoughtLevelMenuRef}
                         label="Thinking"

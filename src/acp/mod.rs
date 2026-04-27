@@ -997,10 +997,21 @@ fn extract_thought_level(
     config_options: &[acp::SessionConfigOption],
 ) -> (Vec<(String, String)>, Option<String>, Option<String>) {
     for opt in config_options {
-        if !matches!(
+        // Standard category is ThoughtLevel, but claude-agent-acp v0.31.0
+        // emits a non-standard `"effort"` string which serde lowers into
+        // SessionConfigOptionCategory::Other("effort"). Accept both.
+        let is_thought_level = matches!(
             opt.category,
             Some(acp::SessionConfigOptionCategory::ThoughtLevel)
-        ) {
+        );
+        let is_effort_other = matches!(
+            &opt.category,
+            Some(acp::SessionConfigOptionCategory::Other(s))
+                if s.eq_ignore_ascii_case("effort")
+                    || s.eq_ignore_ascii_case("thought_level")
+                    || s.eq_ignore_ascii_case("thoughtLevel")
+        );
+        if !is_thought_level && !is_effort_other {
             continue;
         }
         let acp::SessionConfigKind::Select(select) = &opt.kind else {
