@@ -36,6 +36,7 @@ pub async fn execute(agent: String, cwd: String) {
         agent_type: resolved.agent_type,
         remote_url: resolved.url,
         remote_auth: resolved.auth_header,
+        suppress_initial_connecting: false,
     };
 
     let (handle, mut update_rx) = match acp::get_or_start_session("cli".to_string(), config).await {

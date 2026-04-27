@@ -436,6 +436,24 @@ export const FlexLayoutContainer = forwardRef<
     }
   }, [model, getAllTabs, addPanel, focusPanelContent]);
 
+  // Global listener: TaskGraph "Open Chat" button dispatches grove:open-chat.
+  // Ensures the Chat panel exists and selects it.
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent<{ chatId?: string }>).detail;
+      ensurePanel('chat');
+      if (detail?.chatId) {
+        setTimeout(() => {
+          window.dispatchEvent(
+            new CustomEvent("grove:select-chat", { detail: { chatId: detail.chatId } }),
+          );
+        }, 100);
+      }
+    };
+    window.addEventListener("grove:open-chat", handler);
+    return () => window.removeEventListener("grove:open-chat", handler);
+  }, [ensurePanel]);
+
   // Select a tab by its visual index (0-based) across all tabsets.
   // Returns: "handled" if tab was selected, "no_tabs" if workspace has no tabs,
   // "out_of_range" if index exceeds the number of open tabs.

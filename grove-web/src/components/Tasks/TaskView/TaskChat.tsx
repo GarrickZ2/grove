@@ -48,6 +48,7 @@ import {
   ChevronUp,
   ExternalLink,
   Bookmark,
+  User,
 } from "lucide-react";
 import {
   Button,
@@ -1339,6 +1340,29 @@ export function TaskChat({
     if (custom) return Terminal;
     return MessageSquare;
   };
+
+  // Resolve a message sender id ("user" | "agent:<chat_id>" | other) into a
+  // human-readable label + an icon component. For agent-to-agent injects
+  // (sender = "agent:<chat_id>") we look up the chat's title and agent kind
+  // so the receiving panel shows e.g. "测试子 Session" with the codex icon
+  // instead of the raw "agent:chat-0daa3a" + generic robot.
+  const resolveSender = useCallback(
+    (sender?: string): { label: string; Icon: React.ComponentType<{ size?: number; className?: string }> } => {
+      if (!sender) return { label: "", Icon: Bot };
+      if (sender === "user") return { label: "user", Icon: User };
+      if (sender.startsWith("agent:")) {
+        const chatId = sender.slice("agent:".length);
+        const chat = chats.find((c) => c.id === chatId);
+        if (chat) {
+          return { label: chat.title, Icon: getChatIcon(chat.agent) };
+        }
+      }
+      return { label: sender, Icon: Bot };
+    },
+    // getChatIcon closes over agentOptions (constant) + customAgents (state).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [chats, customAgents],
+  );
 
   // Resolve agent label and icon from active chat's agent
   useEffect(() => {
@@ -4126,6 +4150,7 @@ export function TaskChat({
                     projectId={projectId}
                     taskId={task.id}
                     isStudio={isStudioProject}
+                    resolveSender={resolveSender}
                     onToggleThinkingCollapse={toggleThinkingCollapse}
                     onPermissionResponse={handlePermissionResponse}
                     onFileClick={onNavigateToFile}
@@ -5172,6 +5197,7 @@ const MessageItem = memo(function MessageItem({
   onMermaidClick,
   onD2Click,
   onInsertReference,
+  resolveSender,
 }: {
   message: ChatMessage;
   index: number;
@@ -5187,6 +5213,10 @@ const MessageItem = memo(function MessageItem({
   onMermaidClick?: (svg: string) => void;
   onD2Click?: (svg: string) => void;
   onInsertReference?: (label: string) => void;
+  resolveSender?: (sender?: string) => {
+    label: string;
+    Icon: React.ComponentType<{ size?: number; className?: string }>;
+  };
 }) {
   const sketchContext = isStudio ? { projectId, taskId } : undefined;
   const resolveImageUrl = useCallback((src: string) => {
@@ -5222,12 +5252,22 @@ const MessageItem = memo(function MessageItem({
       return (
         <div className="flex justify-end">
           <div className="max-w-[80%]">
-            {message.sender && (
-              <div className="text-[10px] text-[var(--color-text-muted)] text-right mb-0.5 px-1 flex items-center justify-end gap-1">
-                <Bot className="w-2.5 h-2.5" />
-                {message.sender}
-              </div>
-            )}
+            {message.sender && (() => {
+              const resolved = resolveSender?.(message.sender) ?? {
+                label: message.sender,
+                Icon: Bot,
+              };
+              const SenderIcon = resolved.Icon;
+              return (
+                <div
+                  className="text-[10px] text-[var(--color-text-muted)] text-right mb-0.5 px-1 flex items-center justify-end gap-1"
+                  title={message.sender}
+                >
+                  <SenderIcon size={10} className="shrink-0" />
+                  <span className="truncate max-w-[200px]">{resolved.label}</span>
+                </div>
+              );
+            })()}
             <div className="rounded-2xl px-3.5 py-2.5 bg-[color-mix(in_srgb,var(--color-bg-tertiary)_78%,transparent)] border border-[color-mix(in_srgb,var(--color-border)_72%,transparent)] text-sm text-[var(--color-text)] shadow-[0_10px_30px_rgba(0,0,0,0.08)]">
               {message.attachments?.map((att, i) =>
                 att.type === "image" && att.previewUrl ? (

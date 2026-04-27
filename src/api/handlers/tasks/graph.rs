@@ -33,14 +33,7 @@ fn build_graph_response(project_key: &str, task_id: &str) -> Option<GraphRespons
     let resolve_name =
         |id: &str| -> String { name_map.get(id).cloned().unwrap_or_else(|| id.to_string()) };
 
-    let make_excerpt = |body: &str| -> String {
-        if body.len() > 120 {
-            let end = body.floor_char_boundary(120);
-            format!("{}…", &body[..end])
-        } else {
-            body.to_string()
-        }
-    };
+    let make_excerpt = crate::agent_graph::pending_body_excerpt;
 
     // Index pending messages by (from, to) for edge lookup, and by session for node lookup.
     let pending_by_pair: std::collections::HashMap<
@@ -397,6 +390,39 @@ pub async fn graph_update_duty(
             graph_error("internal_error", &s)
         }
     })?;
+
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// POST /api/v1/projects/{id}/tasks/{taskId}/graph/chats/{chat_id}/message
+///
+/// Send a direct user message to a chat from the graph popup card. Mirrors the
+/// chat panel's send button — the message is queued if the target session is
+/// busy, otherwise sent as a fresh prompt.
+pub async fn graph_send_message(
+    Path((id, task_id, chat_id)): Path<(String, String, String)>,
+    Json(body): Json<SendChatMessageRequest>,
+) -> Result<StatusCode, (StatusCode, Json<GraphErrorResponse>)> {
+    let (_project, project_key) = common::find_project_by_id(&id)
+        .map_err(|_| graph_error("target_not_found", "Project not found"))?;
+
+    let text = body.text.trim();
+    if text.is_empty() {
+        return Err(graph_error("bad_request", "text must not be empty"));
+    }
+
+    user_ops::user_send_message(&project_key, &task_id, &chat_id, text)
+        .await
+        .map_err(|e| {
+            let code = if e.contains("target_not_available") {
+                "target_not_found"
+            } else if e.contains("timeout") {
+                "timeout"
+            } else {
+                "internal_error"
+            };
+            graph_error(code, &e)
+        })?;
 
     Ok(StatusCode::NO_CONTENT)
 }

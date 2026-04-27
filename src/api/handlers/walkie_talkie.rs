@@ -81,6 +81,32 @@ pub enum RadioEvent {
     /// auto-refreshes when an agent spawns a sibling session. (Commit 1 of WO-006.)
     #[allow(dead_code)]
     ChatListChanged { project_id: String, task_id: String },
+    /// Per-chat status transition for the agent graph view. Carries chat_id so
+    /// consumers can update a single node without re-fetching the whole graph.
+    /// Status string is one of: "connecting" | "idle" | "busy" |
+    /// "permission_required" | "disconnected" (matches NodeStatus on the wire).
+    #[allow(dead_code)]
+    ChatStatus {
+        project_id: String,
+        task_id: String,
+        chat_id: String,
+        status: String,
+    },
+    /// A pending agent-to-agent message ticket was inserted or deleted. Carries
+    /// enough metadata for the graph view to update its in-memory pending map
+    /// (and re-derive edge state) without hitting `GET /graph`.
+    /// `op` is one of: "inserted" | "deleted".
+    #[allow(dead_code)]
+    PendingChanged {
+        project_id: String,
+        task_id: String,
+        msg_id: String,
+        from_chat_id: String,
+        to_chat_id: String,
+        op: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        body_excerpt: Option<String>,
+    },
 }
 
 /// Target mode for Radio: either a specific chat session or the terminal.
@@ -173,6 +199,24 @@ enum ServerMessage {
     },
     ThemeChanged {
         theme: String,
+    },
+    /// Mirror of `RadioEvent::ChatStatus` — see that variant for semantics.
+    ChatStatus {
+        project_id: String,
+        task_id: String,
+        chat_id: String,
+        status: String,
+    },
+    /// Mirror of `RadioEvent::PendingChanged`.
+    PendingChanged {
+        project_id: String,
+        task_id: String,
+        msg_id: String,
+        from_chat_id: String,
+        to_chat_id: String,
+        op: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        body_excerpt: Option<String>,
     },
 }
 
@@ -351,19 +395,52 @@ pub async fn handle_walkie_talkie_ws_inner(socket: WebSocket) {
                             task_id,
                         });
                     }
+                    Ok(RadioEvent::ChatStatus { project_id, task_id, chat_id, status }) => {
+                        // Per-chat granularity — never dedup. Pure state push.
+                        let _ = msg_tx.send(ServerMessage::ChatStatus {
+                            project_id,
+                            task_id,
+                            chat_id,
+                            status,
+                        });
+                    }
+                    Ok(RadioEvent::PendingChanged {
+                        project_id,
+                        task_id,
+                        msg_id,
+                        from_chat_id,
+                        to_chat_id,
+                        op,
+                        body_excerpt,
+                    }) => {
+                        let _ = msg_tx.send(ServerMessage::PendingChanged {
+                            project_id,
+                            task_id,
+                            msg_id,
+                            from_chat_id,
+                            to_chat_id,
+                            op,
+                            body_excerpt,
+                        });
+                    }
                     Ok(RadioEvent::TaskBusy { project_id, task_id, busy }) => {
-                        // Real-time status push from ACP session
+                        // Real-time status push from ACP session.
+                        //
+                        // We used to dedup by (project, task) → status, but that
+                        // collapses per-chat transitions inside the same task:
+                        // if chat-A is busy and chat-B flips busy↔idle, the
+                        // (p,t) status stays "busy" the whole time and chat-B's
+                        // events get swallowed — the graph view (which is
+                        // chat-grained) then misses refreshes. Always forward
+                        // so chat-level subscribers can re-pull.
                         let status = if busy { "busy" } else { "idle" };
                         let key = (project_id.clone(), task_id.clone());
-                        let changed = last_statuses.get(&key).is_none_or(|prev| prev != status);
-                        if changed {
-                            let _ = msg_tx.send(ServerMessage::TaskStatus {
-                                project_id,
-                                task_id,
-                                agent_status: status.to_string(),
-                            });
-                            last_statuses.insert(key, status.to_string());
-                        }
+                        let _ = msg_tx.send(ServerMessage::TaskStatus {
+                            project_id,
+                            task_id,
+                            agent_status: status.to_string(),
+                        });
+                        last_statuses.insert(key, status.to_string());
                     }
                     _ => {}
                 }

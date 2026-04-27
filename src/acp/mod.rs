@@ -27,6 +27,13 @@ use tokio::sync::{broadcast, mpsc};
 use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
 
 /// 全局 ACP 会话注册表
+/// Keys whose `get_or_start_session` is currently in-flight. Used to serialize
+/// concurrent spawn attempts for the same session key (TOCTOU between the
+/// initial read of `ACP_SESSIONS` and the spawn thread's write).
+static STARTING_SESSIONS: once_cell::sync::Lazy<
+    std::sync::Mutex<std::collections::HashSet<String>>,
+> = once_cell::sync::Lazy::new(|| std::sync::Mutex::new(std::collections::HashSet::new()));
+
 static ACP_SESSIONS: once_cell::sync::Lazy<RwLock<HashMap<String, Arc<AcpSessionHandle>>>> =
     once_cell::sync::Lazy::new(|| RwLock::new(HashMap::new()));
 
@@ -375,6 +382,12 @@ pub struct AcpStartConfig {
     pub remote_url: Option<String>,
     /// Remote Authorization header
     pub remote_auth: Option<String>,
+    /// Skip the automatic `ChatStatus("connecting")` broadcast on session
+    /// registration. Set this when the caller has already broadcast it (e.g.
+    /// `user_spawn_node` does it before fire-and-forget `get_or_start_session`
+    /// to avoid a disconnected→connecting flicker) so the WS doesn't carry a
+    /// duplicate event.
+    pub suppress_initial_connecting: bool,
 }
 
 /// Build Grove's own MCP server config for ACP session setup.
@@ -1154,18 +1167,65 @@ pub async fn get_or_start_session(
     key: String,
     config: AcpStartConfig,
 ) -> crate::error::Result<(Arc<AcpSessionHandle>, broadcast::Receiver<AcpUpdate>)> {
-    // 复用已存在的会话
-    if let Ok(sessions) = ACP_SESSIONS.read() {
-        if let Some(handle) = sessions.get(&key) {
-            let rx = handle.subscribe();
-            return Ok((handle.clone(), rx));
+    // Serialize concurrent get_or_start for the same key. Without this, two
+    // callers can both pass the read check below before either gets a chance
+    // to insert, then both spawn full ACP subprocesses; the second insert
+    // overwrites the first handle and the first ACP subprocess becomes
+    // orphaned (commands sent through the registered handle never reach it).
+    //
+    // Strategy: check the sessions map; if absent, atomically claim a slot
+    // in STARTING_SESSIONS. Other concurrent callers see the claim, sleep
+    // briefly, and retry — by then the winner has either finished registering
+    // (cache hit on retry) or failed (claim released, retrying caller wins).
+    loop {
+        if let Ok(sessions) = ACP_SESSIONS.read() {
+            if let Some(handle) = sessions.get(&key) {
+                let rx = handle.subscribe();
+                return Ok((handle.clone(), rx));
+            }
         }
+        let claimed = {
+            let mut starting = STARTING_SESSIONS.lock().unwrap();
+            if starting.contains(&key) {
+                false
+            } else {
+                starting.insert(key.clone());
+                true
+            }
+        };
+        if claimed {
+            break;
+        }
+        // Another caller is currently spawning this key — yield and retry.
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
     }
 
     // 创建新会话 — 线程和 LocalSet 由模块管理
     let (result_tx, result_rx) = tokio::sync::oneshot::channel();
 
+    // Move the spawn-claim ownership INTO the std::thread closure. If the
+    // guard sat on the calling future, a cancelled caller (tokio::spawn
+    // dropped, HTTP client disconnects, await timeout, etc.) would release
+    // the claim while the thread races to insert into ACP_SESSIONS — the
+    // second concurrent caller would then start a parallel ACP subprocess,
+    // exactly the TOCTOU the claim was added to prevent.
+    let starting_key_for_thread = key.clone();
+
     std::thread::spawn(move || {
+        // RAII: release the spawn claim at thread exit (covers normal exit
+        // AND panic). Concurrent retries between insertion and thread exit
+        // are short-circuited by the ACP_SESSIONS.read() check at the top
+        // of get_or_start_session.
+        struct StartGuard(String);
+        impl Drop for StartGuard {
+            fn drop(&mut self) {
+                if let Ok(mut s) = STARTING_SESSIONS.lock() {
+                    s.remove(&self.0);
+                }
+            }
+        }
+        let _start_guard = StartGuard(starting_key_for_thread);
+
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             let rt = tokio::runtime::Builder::new_current_thread()
                 .enable_all()
@@ -1204,6 +1264,64 @@ pub async fn get_or_start_session(
                     sessions.insert(key.clone(), handle.clone());
                 }
 
+                // RAII cleanup: if anything below this point panics, we MUST
+                // remove the dead handle from ACP_SESSIONS and broadcast
+                // disconnected so the UI doesn't keep a stuck-on-busy node
+                // pointing at a handle whose cmd_tx receiver was dropped.
+                struct EndGuard {
+                    key: String,
+                    project_key: String,
+                    task_id: String,
+                    chat_id: Option<String>,
+                    finalized: bool,
+                }
+                impl Drop for EndGuard {
+                    fn drop(&mut self) {
+                        if self.finalized {
+                            return;
+                        }
+                        if let Ok(mut sessions) = ACP_SESSIONS.write() {
+                            sessions.remove(&self.key);
+                        }
+                        if let Some(ref cid) = self.chat_id {
+                            use crate::api::handlers::walkie_talkie::{
+                                broadcast_radio_event, RadioEvent,
+                            };
+                            broadcast_radio_event(RadioEvent::ChatStatus {
+                                project_id: self.project_key.clone(),
+                                task_id: self.task_id.clone(),
+                                chat_id: cid.clone(),
+                                status: "disconnected".to_string(),
+                            });
+                            cleanup_socket_files(&self.project_key, &self.task_id, cid);
+                        }
+                    }
+                }
+                let mut end_guard = EndGuard {
+                    key: key_clone.clone(),
+                    project_key: config.project_key.clone(),
+                    task_id: config.task_id.clone(),
+                    chat_id: config.chat_id.clone(),
+                    finalized: false,
+                };
+
+                // Announce "connecting" the moment the handle is registered,
+                // unless the caller already broadcast it (skips a duplicate
+                // event on the user_spawn_node fire-and-forget path).
+                if !config.suppress_initial_connecting {
+                    if let Some(ref chat_id) = config.chat_id {
+                        use crate::api::handlers::walkie_talkie::{
+                            broadcast_radio_event, RadioEvent,
+                        };
+                        broadcast_radio_event(RadioEvent::ChatStatus {
+                            project_id: config.project_key.clone(),
+                            task_id: config.task_id.clone(),
+                            chat_id: chat_id.clone(),
+                            status: "connecting".to_string(),
+                        });
+                    }
+                }
+
                 // 启动 socket listener（在 LocalSet 内 spawn_local，Unix only）
                 #[cfg(unix)]
                 if let Some(chat_id) = &config.chat_id {
@@ -1226,11 +1344,23 @@ pub async fn get_or_start_session(
                 }
                 let _ = update_tx.send(AcpUpdate::SessionEnded);
 
-                // 清理：从全局表移除 + 删除 socket 文件
+                // Normal-exit cleanup. Mark EndGuard finalized FIRST so any
+                // panic during the cleanup ops below doesn't trigger Drop's
+                // duplicate disconnected broadcast. EndGuard exists to handle
+                // panics inside run_acp_session above; once we've reached
+                // this point we own the cleanup explicitly.
+                end_guard.finalized = true;
                 if let Ok(mut sessions) = ACP_SESSIONS.write() {
                     sessions.remove(&key_clone);
                 }
                 if let Some(ref cid) = session_chat_id {
+                    use crate::api::handlers::walkie_talkie::{broadcast_radio_event, RadioEvent};
+                    broadcast_radio_event(RadioEvent::ChatStatus {
+                        project_id: session_project_key.clone(),
+                        task_id: session_task_id.clone(),
+                        chat_id: cid.clone(),
+                        status: "disconnected".to_string(),
+                    });
                     cleanup_socket_files(&session_project_key, &session_task_id, cid);
                 }
             }));
@@ -1951,6 +2081,19 @@ impl AcpSessionHandle {
         self.pending_permission.lock().unwrap().is_some()
     }
 
+    /// Derive the current chat-grained node status from in-memory handle
+    /// state. Mirrors the status string used on the wire by `RadioEvent::ChatStatus`
+    /// and what `GET /graph` computes per node — keep in sync with both.
+    pub fn derive_node_status(&self) -> &'static str {
+        if self.has_pending_permission() {
+            "permission_required"
+        } else if self.is_busy.load(std::sync::atomic::Ordering::Relaxed) {
+            "busy"
+        } else {
+            "idle"
+        }
+    }
+
     /// 响应待处理的权限请求
     ///
     /// 顺序：先通知 agent（主效果），再落盘（记账）。即使 agent 侧 rx 已被
@@ -1962,6 +2105,17 @@ impl AcpSessionHandle {
         };
         let _ = tx.send(option_id.clone());
         self.emit(AcpUpdate::PermissionResponse { option_id });
+        // Permission gone — announce the post-take status so graph nodes can
+        // leave the orange "permission_required" state immediately.
+        if let Some(ref chat_id) = self.chat_id {
+            use crate::api::handlers::walkie_talkie::{broadcast_radio_event, RadioEvent};
+            broadcast_radio_event(RadioEvent::ChatStatus {
+                project_id: self.project_key.clone(),
+                task_id: self.task_id.clone(),
+                chat_id: chat_id.clone(),
+                status: self.derive_node_status().to_string(),
+            });
+        }
         true
     }
 
@@ -2073,6 +2227,32 @@ impl AcpSessionHandle {
                 task_id: self.task_id.clone(),
                 busy: *value,
             });
+        }
+
+        // Chat-grained status push for the agent graph view. Anchored at the
+        // central emit() point so every transition that flows through
+        // AcpUpdate gets surfaced exactly once. Permission set is covered by
+        // the PermissionRequest variant; permission take is broadcast from
+        // respond_permission() because that path never emits an AcpUpdate
+        // that would land here for that purpose.
+        if let Some(ref chat_id) = self.chat_id {
+            let next_status: Option<&'static str> = match &update {
+                AcpUpdate::SessionReady { .. } => Some(self.derive_node_status()),
+                AcpUpdate::Busy { value: true } => Some("busy"),
+                AcpUpdate::Busy { value: false } => Some(self.derive_node_status()),
+                AcpUpdate::PermissionRequest { .. } => Some("permission_required"),
+                AcpUpdate::SessionEnded => Some("disconnected"),
+                _ => None,
+            };
+            if let Some(status) = next_status {
+                use crate::api::handlers::walkie_talkie::{broadcast_radio_event, RadioEvent};
+                broadcast_radio_event(RadioEvent::ChatStatus {
+                    project_id: self.project_key.clone(),
+                    task_id: self.task_id.clone(),
+                    chat_id: chat_id.clone(),
+                    status: status.to_string(),
+                });
+            }
         }
 
         // Turn 结束时 compact 磁盘历史

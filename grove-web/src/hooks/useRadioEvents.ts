@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import type { RadioEvent, TargetMode } from "../api/walkieTalkie";
+import type { RadioEvent, TargetMode, NodeStatus } from "../api/walkieTalkie";
 import { getApiHost, appendHmacToUrl } from "../api/client";
 
 export interface RadioEventCallbacks {
@@ -18,6 +18,27 @@ export interface RadioEventCallbacks {
    *  refetch the task's chat list (e.g. `listChats(projectId, taskId)`) so the
    *  new chat appears in the UI without manual refresh. */
   onChatListChanged?: (projectId: string, taskId: string) => void;
+  /** Per-chat status transition (chat-grained, no dedup). Drives the agent
+   *  graph's in-memory node status machine. */
+  onChatStatus?: (
+    projectId: string,
+    taskId: string,
+    chatId: string,
+    status: NodeStatus,
+  ) => void;
+  /** Pending agent-to-agent message ticket inserted/deleted. Drives the agent
+   *  graph's in-memory pending pair set so edge state can be derived locally. */
+  onPendingChanged?: (
+    projectId: string,
+    taskId: string,
+    payload: {
+      msg_id: string;
+      from_chat_id: string;
+      to_chat_id: string;
+      op: "inserted" | "deleted";
+      body_excerpt?: string;
+    },
+  ) => void;
   /** Fired when the shared WS opens or reopens after a disconnect. Useful for
    *  consumers who need to re-sync state after a missed-events window. */
   onConnected?: () => void;
@@ -71,6 +92,25 @@ function dispatch(event: RadioEvent) {
     case "chat_list_changed":
       for (const s of subscribers)
         s.current.onChatListChanged?.(event.project_id, event.task_id);
+      break;
+    case "chat_status":
+      for (const s of subscribers)
+        s.current.onChatStatus?.(
+          event.project_id,
+          event.task_id,
+          event.chat_id,
+          event.status,
+        );
+      break;
+    case "pending_changed":
+      for (const s of subscribers)
+        s.current.onPendingChanged?.(event.project_id, event.task_id, {
+          msg_id: event.msg_id,
+          from_chat_id: event.from_chat_id,
+          to_chat_id: event.to_chat_id,
+          op: event.op,
+          body_excerpt: event.body_excerpt,
+        });
       break;
     case "client_connected":
       radioClientCount += 1;
@@ -162,14 +202,14 @@ export function useRadioEvents(callbacks: RadioEventCallbacks): { radioClients: 
     callbacksRef.current = callbacks;
   });
 
-  const [radioClients, setRadioClients] = useState(radioClientCount);
+  // Lazy initializer pulls the current module-level count at mount, so we
+  // don't need a setState-in-effect call to re-sync.
+  const [radioClients, setRadioClients] = useState(() => radioClientCount);
 
   useEffect(() => {
     subscribers.add(callbacksRef);
     const listener = (n: number) => setRadioClients(n);
     clientCountListeners.add(listener);
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    setRadioClients(radioClientCount);
     void openSharedWs();
 
     return () => {

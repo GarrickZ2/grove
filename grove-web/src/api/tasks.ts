@@ -446,6 +446,23 @@ export async function updateChatTitle(
 }
 
 /**
+ * Send a direct user message to a chat node from the graph popup.
+ * Mirrors what the chat panel send button does, but routed through a
+ * graph-scoped REST endpoint so it works without the chat WS being open.
+ */
+export async function sendGraphChatMessage(
+  projectId: string,
+  taskId: string,
+  chatId: string,
+  text: string,
+): Promise<void> {
+  await apiClient.post<{ text: string }, void>(
+    `/api/v1/projects/${projectId}/tasks/${taskId}/graph/chats/${chatId}/message`,
+    { text },
+  );
+}
+
+/**
  * Delete a chat
  */
 export async function deleteChat(

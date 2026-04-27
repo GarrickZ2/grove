@@ -245,6 +245,10 @@ pub fn create_api_router() -> Router {
             "/projects/{id}/tasks/{taskId}/graph/chats/{chat_id}/duty",
             patch(handlers::tasks::graph_update_duty),
         )
+        .route(
+            "/projects/{id}/tasks/{taskId}/graph/chats/{chat_id}/message",
+            post(handlers::tasks::graph_send_message),
+        )
         // Notes API
         .route(
             "/projects/{id}/tasks/{taskId}/notes",

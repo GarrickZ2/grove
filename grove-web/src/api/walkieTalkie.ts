@@ -27,12 +27,36 @@ export type WalkieTalkieServerMessage =
 
 // ─── Radio Events (Desktop ← Radio) ───────────────────────────────────────
 
+export type NodeStatus =
+  | "connecting"
+  | "idle"
+  | "busy"
+  | "permission_required"
+  | "disconnected";
+
 export type RadioEvent =
   | { type: "focus_task"; project_id: string; task_id: string; target?: TargetMode }
   | { type: "focus_target"; project_id: string; task_id: string; target: TargetMode }
   | { type: "terminal_input"; project_id: string; task_id: string; text: string }
   | { type: "prompt_sent"; project_id: string; task_id: string }
   | { type: "task_status"; project_id: string; task_id: string; agent_status: "idle" | "busy" | "disconnected" }
+  | {
+      type: "chat_status";
+      project_id: string;
+      task_id: string;
+      chat_id: string;
+      status: NodeStatus;
+    }
+  | {
+      type: "pending_changed";
+      project_id: string;
+      task_id: string;
+      msg_id: string;
+      from_chat_id: string;
+      to_chat_id: string;
+      op: "inserted" | "deleted";
+      body_excerpt?: string;
+    }
   | { type: "hook_added"; project_id: string; task_id: string }
   | { type: "chat_list_changed"; project_id: string; task_id: string }
   | { type: "client_connected" }

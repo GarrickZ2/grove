@@ -43,6 +43,7 @@ export {
   listChats,
   createChat,
   updateChatTitle,
+  sendGraphChatMessage,
   deleteChat,
   uploadChatAttachment,
   getChatHistory,

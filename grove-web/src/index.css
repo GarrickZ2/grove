@@ -234,6 +234,35 @@ body {
   will-change: transform;
 }
 
+/* Graph node "busy" pulse — surrounds a busy agent's avatar with an
+ * expanding-fading ring so users can spot in-flight work at a glance. */
+@keyframes graph-node-busy-pulse {
+  0% {
+    transform: scale(1);
+    opacity: 0.55;
+  }
+  100% {
+    transform: scale(1.45);
+    opacity: 0;
+  }
+}
+.graph-node-busy-pulse {
+  transform-origin: center;
+  transform-box: fill-box;
+  animation: graph-node-busy-pulse 1.4s ease-out infinite;
+}
+
+/* Edge "in-flight" marching ants — message is mid-delivery (target busy
+ * processing it), so the dashes flow along the line in the arrow direction. */
+@keyframes graph-edge-march {
+  to {
+    stroke-dashoffset: -16;
+  }
+}
+.graph-edge-in-flight {
+  animation: graph-edge-march 1.2s linear infinite;
+}
+
 /* Blitz mode: Show shortcuts when Command key is pressed */
 body.blitz-command-pressed .blitz-shortcut {
   opacity: 1 !important;

@@ -59,13 +59,32 @@ pub async fn user_spawn_node(
         }
     }
 
-    // 5. Start ACP
-    let project = workspace::load_project_by_hash(project_key)
-        .map_err(|e| format!("load_project: {}", e))?
-        .ok_or_else(|| "project_not_found".to_string())?;
-    let task = tasks::get_task(project_key, task_id)
-        .map_err(|e| format!("get_task: {}", e))?
-        .ok_or_else(|| "task_not_found".to_string())?;
+    // 5. Build ACP launch config. Rollback the chat (and its auto-edge) if
+    //    project / task lookup fails — at this point the chat row exists in
+    //    the DB but no ChatListChanged has fired yet, so the UI would never
+    //    see it on a normal session and we'd leave orphan rows behind.
+    let project = match workspace::load_project_by_hash(project_key) {
+        Ok(Some(p)) => p,
+        Ok(None) => {
+            let _ = tasks::delete_chat_session(project_key, task_id, &new_chat_id);
+            return Err("project_not_found".to_string());
+        }
+        Err(e) => {
+            let _ = tasks::delete_chat_session(project_key, task_id, &new_chat_id);
+            return Err(format!("load_project: {}", e));
+        }
+    };
+    let task = match tasks::get_task(project_key, task_id) {
+        Ok(Some(t)) => t,
+        Ok(None) => {
+            let _ = tasks::delete_chat_session(project_key, task_id, &new_chat_id);
+            return Err("task_not_found".to_string());
+        }
+        Err(e) => {
+            let _ = tasks::delete_chat_session(project_key, task_id, &new_chat_id);
+            return Err(format!("get_task: {}", e));
+        }
+    };
 
     let env_vars = crate::api::handlers::acp::build_grove_env(
         project_key,
@@ -86,36 +105,85 @@ pub async fn user_spawn_node(
         agent_type: resolved.agent_type,
         remote_url: resolved.url,
         remote_auth: resolved.auth_header,
+        suppress_initial_connecting: true,
     };
 
-    let (_handle, mut rx) = acp::get_or_start_session(session_key, config)
-        .await
-        .map_err(|e| format!("start_session: {}", e))?;
-
-    let ready = tokio::time::timeout(Duration::from_secs(90), async {
-        loop {
-            match rx.recv().await {
-                Ok(AcpUpdate::SessionReady { .. }) => return Ok::<_, String>(()),
-                Ok(AcpUpdate::Error { message }) => return Err(format!("acp_error: {}", message)),
-                Ok(AcpUpdate::SessionEnded) => return Err("session_ended".to_string()),
-                Err(_) => return Err("session_terminated".to_string()),
-                Ok(_) => continue,
-            }
-        }
-    })
-    .await;
-    ready.map_err(|_| "timeout".to_string())??;
-
-    // 6. Set duty
+    // 6. Set duty BEFORE the broadcast so the new chat row is fully formed
+    //    when consumers refetch in response to ChatListChanged. Rollback the
+    //    chat (and its auto-edge) on failure so we don't leave orphan rows
+    //    invisible to the UI (no ChatListChanged would have fired yet).
     if let Some(d) = duty {
-        tasks::update_chat_duty(project_key, task_id, &new_chat_id, Some(d.to_string()))
-            .map_err(|e| format!("update_duty: {}", e))?;
+        if let Err(e) =
+            tasks::update_chat_duty(project_key, task_id, &new_chat_id, Some(d.to_string()))
+        {
+            let _ = tasks::delete_chat_session(project_key, task_id, &new_chat_id);
+            return Err(format!("update_duty: {}", e));
+        }
     }
 
-    // 7. Broadcast
+    // 7. Broadcast topology change + initial connecting status immediately —
+    //    frontend graph picks up the new node before ACP has even started, so
+    //    the user sees the node in "connecting" the moment they hit Create
+    //    (no flicker through "disconnected" while waiting for the ACP thread
+    //    to register the handle and emit its own ChatStatus).
     broadcast_radio_event(RadioEvent::ChatListChanged {
         project_id: project_key.to_string(),
         task_id: task_id.to_string(),
+    });
+    broadcast_radio_event(RadioEvent::ChatStatus {
+        project_id: project_key.to_string(),
+        task_id: task_id.to_string(),
+        chat_id: new_chat_id.clone(),
+        status: "connecting".to_string(),
+    });
+
+    // 8. Fire-and-forget ACP spawn. The session's lifecycle (connecting →
+    //    idle / disconnected) reaches the UI through `RadioEvent::ChatStatus`
+    //    pushed from acp/mod.rs at session registration and SessionReady, so
+    //    no one else has to wait on us. Log failures — the node will sit at
+    //    "disconnected" until the user retries by opening the chat.
+    let project_key_clone = project_key.to_string();
+    let task_id_clone = task_id.to_string();
+    let new_chat_id_clone = new_chat_id.clone();
+    tokio::spawn(async move {
+        let (_handle, mut rx) = match acp::get_or_start_session(session_key, config).await {
+            Ok(t) => t,
+            Err(e) => {
+                eprintln!(
+                    "[user_spawn_node] start_session failed (project={} task={} chat={}): {}",
+                    project_key_clone, task_id_clone, new_chat_id_clone, e,
+                );
+                return;
+            }
+        };
+        // Drain SessionReady / errors with the same 90s budget — purely so
+        // the eprintln below tells ops what happened. UI doesn't depend on
+        // this future at all.
+        let wait = tokio::time::timeout(Duration::from_secs(90), async {
+            loop {
+                match rx.recv().await {
+                    Ok(AcpUpdate::SessionReady { .. }) => return Ok::<_, String>(()),
+                    Ok(AcpUpdate::Error { message }) => {
+                        return Err(format!("acp_error: {}", message))
+                    }
+                    Ok(AcpUpdate::SessionEnded) => return Err("session_ended".to_string()),
+                    Err(_) => return Err("session_terminated".to_string()),
+                    Ok(_) => continue,
+                }
+            }
+        })
+        .await;
+        let msg: Option<String> = match wait {
+            Ok(Ok(())) => None,
+            Ok(Err(m)) => Some(m),
+            Err(_) => Some("timeout waiting for SessionReady".to_string()),
+        };
+        if let Some(m) = msg {
+            eprintln!(
+                "[user_spawn_node] session never reached ready (project={} task={} chat={}): {}",
+                project_key_clone, task_id_clone, new_chat_id_clone, m
+            );
+        }
     });
 
     Ok(SpawnResult {
@@ -157,8 +225,14 @@ pub async fn user_send_message(
     target_chat_id: &str,
     text: &str,
 ) -> Result<(), String> {
-    let key = format!("{}:{}:{}", project_key, task_id, target_chat_id);
-    let handle = acp::get_session_handle(&key).ok_or_else(|| "target_not_available".to_string())?;
+    // Reuse the MCP path's spawn-on-demand: if the target's ACP isn't
+    // running, start it synchronously and wait for SessionReady. Without
+    // this, user-side direct send would fail on disconnected nodes that
+    // an AI peer could still talk to via grove_agent_send — confusing.
+    let handle =
+        crate::agent_graph::tools::ensure_target_handle(project_key, task_id, target_chat_id)
+            .await
+            .map_err(|e| e.code().to_string())?;
 
     if handle.is_busy.load(std::sync::atomic::Ordering::Relaxed) {
         let messages = handle.queue_message(QueuedMessage {

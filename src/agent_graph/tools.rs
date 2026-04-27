@@ -106,16 +106,52 @@ pub async fn grove_agent_send(cx: &ToolContext, input: SendInput) -> AgentGraphR
         .map_err(AgentGraphError::from)?;
     }
 
+    // Announce the new pending ticket so graph clients can flip the edge
+    // state without polling /graph. body_excerpt mirrors what GET /graph
+    // would compute for the popup card (shared helper guarantees identical
+    // output across event push and REST re-hydration).
+    broadcast_radio_event(RadioEvent::PendingChanged {
+        project_id: caller_project.clone(),
+        task_id: caller_task.clone(),
+        msg_id: msg_id.clone(),
+        from_chat_id: caller_chat.id.clone(),
+        to_chat_id: target_chat.id.clone(),
+        op: "inserted".to_string(),
+        body_excerpt: Some(super::pending_body_excerpt(&input.message)),
+    });
+
     // 投递：busy → 排队；idle → send_prompt 同步 broadcast UserMessage
-    deliver_to_session(
+    // Includes synchronous spawn-on-demand if the target session is offline.
+    // On any failure we MUST roll back the pending row we just inserted —
+    // otherwise the sender's edge stays stuck in "blocked" forever for a
+    // message that never reached the target's queue. The MCP error returned
+    // is the source of truth for the calling AI: success ⇒ delivered.
+    let delivery = deliver_to_session(
         &caller_project,
         &caller_task,
         &target_chat.id,
         &caller_chat,
         InjectKind::Send,
         &input.message,
+        Some(&msg_id),
     )
-    .await?;
+    .await;
+    if let Err(e) = delivery {
+        {
+            let conn = database::connection();
+            let _ = graph_db::delete_pending_message(&conn, &msg_id);
+        }
+        broadcast_radio_event(RadioEvent::PendingChanged {
+            project_id: caller_project.clone(),
+            task_id: caller_task.clone(),
+            msg_id: msg_id.clone(),
+            from_chat_id: caller_chat.id.clone(),
+            to_chat_id: target_chat.id.clone(),
+            op: "deleted".to_string(),
+            body_excerpt: None,
+        });
+        return Err(e);
+    }
 
     Ok(SendOutput {
         msg_id,
@@ -159,12 +195,8 @@ pub async fn grove_agent_reply(
         return Err(AgentGraphError::SameTaskRequired);
     }
 
-    // 投递到原发送方（pending.from_session）
-    let from_chat = tasks::find_chat_session(&pending.from_session)
-        .map_err(AgentGraphError::from)?
-        .ok_or(AgentGraphError::TargetNotFound)?
-        .2;
-
+    // 投递到原发送方（pending.from_session）。这条 chat 的存活性由
+    // ensure_target_handle 内部 find_chat_session 校验，不在这里重复 lookup。
     deliver_to_session(
         &caller_project,
         &caller_task,
@@ -172,6 +204,7 @@ pub async fn grove_agent_reply(
         &caller_chat,
         InjectKind::Reply,
         &input.message,
+        None,
     )
     .await?;
 
@@ -180,7 +213,15 @@ pub async fn grove_agent_reply(
         let conn = database::connection();
         graph_db::delete_pending_message(&conn, &input.msg_id).map_err(AgentGraphError::from)?;
     }
-    let _ = from_chat; // suppress unused warning if compile path changes
+    broadcast_radio_event(RadioEvent::PendingChanged {
+        project_id: caller_project.clone(),
+        task_id: caller_task.clone(),
+        msg_id: input.msg_id.clone(),
+        from_chat_id: pending.from_session.clone(),
+        to_chat_id: pending.to_session.clone(),
+        op: "deleted".to_string(),
+        body_excerpt: None,
+    });
 
     Ok(ReplyOutput {
         delivered_at: Utc::now().to_rfc3339(),
@@ -290,21 +331,7 @@ pub async fn grove_agent_contacts(
 }
 
 fn excerpt(body: &str) -> String {
-    const LIMIT: usize = 160;
-    let mut chars = body.chars();
-    let mut out = String::new();
-    let mut taken = 0;
-    for c in chars.by_ref() {
-        out.push(c);
-        taken += 1;
-        if taken >= LIMIT {
-            break;
-        }
-    }
-    if chars.next().is_some() {
-        out.push('…');
-    }
-    out
+    super::excerpt_chars(body, 160)
 }
 
 // ─── grove_agent_capability ───────────────────────────────────────────────────
@@ -455,6 +482,7 @@ pub async fn grove_agent_spawn(
         agent_type: resolved.agent_type,
         remote_url: resolved.url,
         remote_auth: resolved.auth_header,
+        suppress_initial_connecting: false,
     };
 
     let start_res = acp::get_or_start_session(session_key, config).await;
@@ -549,10 +577,14 @@ async fn deliver_to_session(
     caller_chat: &tasks::ChatSession,
     kind: InjectKind,
     body: &str,
+    msg_id: Option<&str>,
 ) -> AgentGraphResult<()> {
-    let target_handle = locate_target_handle(project_key, task_id, target_chat_id)?;
+    // Synchronous spawn-on-demand: if the target session isn't running, start
+    // it and wait for SessionReady before delivering. Errors here mean the
+    // message was NOT queued — the caller MUST treat that as a failure.
+    let target_handle = ensure_target_handle(project_key, task_id, target_chat_id).await?;
 
-    let injected = build_injected_prompt(&caller_chat.id, &caller_chat.title, kind, body);
+    let injected = build_injected_prompt(&caller_chat.id, &caller_chat.title, kind, body, msg_id);
     let sender = format!("agent:{}", caller_chat.id);
 
     if target_handle
@@ -580,13 +612,91 @@ async fn deliver_to_session(
     Ok(())
 }
 
-fn locate_target_handle(
+/// Ensure an ACP session handle exists for `target_chat_id` — returning the
+/// running handle if it's already up, otherwise synchronously spawning the
+/// agent subprocess for that chat record and waiting for `SessionReady` (with
+/// timeout). Mirrors `grove_agent_spawn`'s startup flow but operates on an
+/// existing chat row rather than creating one.
+///
+/// Errors map cleanly to MCP error codes so the calling AI knows whether the
+/// message reached the target's queue (`Ok(handle)` followed by successful
+/// `deliver_to_session`) or never made it (any error from this function).
+pub(crate) async fn ensure_target_handle(
     project_key: &str,
     task_id: &str,
     target_chat_id: &str,
 ) -> AgentGraphResult<Arc<AcpSessionHandle>> {
-    let key = format!("{}:{}:{}", project_key, task_id, target_chat_id);
-    acp::get_session_handle(&key).ok_or(AgentGraphError::TargetNotAvailable)
+    let session_key = format!("{}:{}:{}", project_key, task_id, target_chat_id);
+    if let Some(h) = acp::get_session_handle(&session_key) {
+        return Ok(h);
+    }
+
+    // No handle — spawn the agent subprocess for this chat. We need:
+    // - the chat record (for the agent kind)
+    // - the project record (for workspace path / name → env vars)
+    // - the task record (for working_dir + env vars)
+    let (_, _, target_chat) = tasks::find_chat_session(target_chat_id)
+        .map_err(AgentGraphError::from)?
+        .ok_or(AgentGraphError::TargetNotFound)?;
+    let project = workspace::load_project_by_hash(project_key)
+        .map_err(AgentGraphError::from)?
+        .ok_or_else(|| AgentGraphError::Internal("project not registered".into()))?;
+    let task = tasks::get_task(project_key, task_id)
+        .map_err(AgentGraphError::from)?
+        .ok_or_else(|| AgentGraphError::Internal("target task vanished".into()))?;
+
+    let resolved =
+        acp::resolve_agent(&target_chat.agent).ok_or(AgentGraphError::AgentSpawnFailed)?;
+
+    let env_vars = crate::api::handlers::acp::build_grove_env(
+        project_key,
+        &project.path,
+        &project.name,
+        &task,
+    );
+    let working_dir = std::path::PathBuf::from(&task.worktree_path);
+    let config = AcpStartConfig {
+        agent_command: resolved.command,
+        agent_name: resolved.agent_name,
+        agent_args: resolved.args,
+        working_dir,
+        env_vars,
+        project_key: project_key.to_string(),
+        task_id: task_id.to_string(),
+        chat_id: Some(target_chat_id.to_string()),
+        agent_type: resolved.agent_type,
+        remote_url: resolved.url,
+        remote_auth: resolved.auth_header,
+        suppress_initial_connecting: false,
+    };
+
+    let (handle, mut rx) = acp::get_or_start_session(session_key.clone(), config)
+        .await
+        .map_err(|e| AgentGraphError::Internal(format!("spawn ACP session failed: {}", e)))?;
+
+    // Wait for SessionReady with the same 90s budget grove_agent_spawn uses.
+    // SessionReady → Ok; SessionEnded / Error / Lagged → propagate as a clean
+    // failure so the caller knows nothing was delivered.
+    let wait = tokio::time::timeout(Duration::from_secs(90), async {
+        loop {
+            match rx.recv().await {
+                Ok(AcpUpdate::SessionReady { .. }) => return Ok::<(), AgentGraphError>(()),
+                Ok(AcpUpdate::Error { message }) => {
+                    return Err(AgentGraphError::Internal(format!("acp error: {}", message)))
+                }
+                Ok(AcpUpdate::SessionEnded) => return Err(AgentGraphError::SessionTerminated),
+                Ok(_) => continue,
+                Err(_) => return Err(AgentGraphError::SessionTerminated),
+            }
+        }
+    })
+    .await;
+
+    match wait {
+        Ok(Ok(())) => Ok(handle),
+        Ok(Err(e)) => Err(e),
+        Err(_) => Err(AgentGraphError::Timeout),
+    }
 }
 
 #[cfg(test)]
@@ -1035,10 +1145,11 @@ mod tests {
         match event {
             AcpUpdate::UserMessage { text, sender, .. } => {
                 assert!(
-                    text.contains("[from:Alice · session=chat-A · kind=send]"),
+                    text.starts_with("[from:Alice · session=chat-A · kind=send · msg_id="),
                     "missing prefix in {text:?}"
                 );
-                assert!(text.ends_with("hello from A"));
+                assert!(text.contains("\n\nhello from A"));
+                assert!(text.contains("grove_agent_reply"));
                 assert_eq!(sender.as_deref(), Some("agent:chat-A"));
             }
             other => panic!("expected UserMessage, got {:?}", other),

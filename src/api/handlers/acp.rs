@@ -913,6 +913,15 @@ pub async fn update_chat(
         .map_err(|e| AcpError::Internal(e.to_string()))?
         .ok_or(AcpError::NotFound("Chat not found".to_string()))?;
 
+    // Notify other surfaces (graph, chat header in another pane, sidebar) that
+    // the chat roster changed so they refetch and pick up the new title.
+    crate::api::handlers::walkie_talkie::broadcast_radio_event(
+        crate::api::handlers::walkie_talkie::RadioEvent::ChatListChanged {
+            project_id: project_id.clone(),
+            task_id: task_id.clone(),
+        },
+    );
+
     Ok(Json(ChatSessionResponse::from(&chat)))
 }
 
@@ -1042,6 +1051,7 @@ pub async fn chat_ws_handler(
         agent_type: resolved.agent_type,
         remote_url: resolved.url,
         remote_auth: resolved.auth_header,
+        suppress_initial_connecting: false,
     };
 
     Ok(ws.on_upgrade(move |socket| handle_acp_ws(socket, session_key, config)))

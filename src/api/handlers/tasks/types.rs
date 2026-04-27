@@ -447,6 +447,11 @@ pub struct UpdateChatDutyRequest {
     pub duty: Option<String>,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct SendChatMessageRequest {
+    pub text: String,
+}
+
 #[derive(Debug, Serialize)]
 pub struct GraphErrorResponse {
     pub error: String,

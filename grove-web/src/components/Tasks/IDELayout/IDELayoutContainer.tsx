@@ -375,6 +375,22 @@ export const IDELayoutContainer = forwardRef<IDELayoutHandle, IDELayoutContainer
       return () => window.removeEventListener(OPEN_SKETCH_EVENT, handler);
     }, [isStudio, projectId, task.id]);
 
+    useEffect(() => {
+      const handler = (e: Event) => {
+        const detail = (e as CustomEvent<{ chatId?: string }>).detail;
+        update({ chatVisible: true });
+        if (detail?.chatId) {
+          setTimeout(() => {
+            window.dispatchEvent(
+              new CustomEvent("grove:select-chat", { detail: { chatId: detail.chatId } }),
+            );
+          }, 100);
+        }
+      };
+      window.addEventListener("grove:open-chat", handler);
+      return () => window.removeEventListener("grove:open-chat", handler);
+    }, [update]);
+
     const handleBusyStateChange = useCallback((busy: boolean) => {
       update({ isChatBusy: busy });
     }, [update]);
