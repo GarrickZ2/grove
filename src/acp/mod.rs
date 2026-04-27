@@ -3211,38 +3211,53 @@ pub fn init_agent_defaults() {
     }
 }
 
-/// 发送 ACP 事件通知（声音 + 横幅 + SQLite 通知存储）
+/// 发送 ACP 事件通知（根据 hooks 配置决定是否播放声音、发送横幅）
 fn notify_acp_event(
     project_key: &str,
     task_id: &str,
     title_suffix: &str,
     message: &str,
-    sound: &str,
+    default_sound: &str,
 ) {
     use crate::hooks::{self, NotificationLevel};
-    use crate::storage::tasks as task_storage;
+    use crate::storage::{config, tasks as task_storage};
 
-    // 播放声音
-    hooks::play_sound(sound);
+    let cfg = config::load_config().hooks;
+    if !cfg.enabled {
+        return;
+    }
 
-    // 查询 project 名称和 task 名称用于横幅
-    let project_name = crate::storage::workspace::load_project_by_hash(project_key)
-        .ok()
-        .flatten()
-        .map(|p| p.name)
-        .unwrap_or_else(|| "Grove".to_string());
-    let task_name = task_storage::get_task(project_key, task_id)
-        .ok()
-        .flatten()
-        .map(|t| t.name)
-        .unwrap_or_else(|| task_id.to_string());
+    let sound = if cfg.sound_enabled {
+        Some(if cfg.sound.is_empty() {
+            default_sound
+        } else {
+            &cfg.sound
+        })
+    } else {
+        None
+    };
 
-    // 发送系统横幅
-    let title = format!("{} - {}", project_name, title_suffix);
-    let banner_msg = format!("{} — {}", task_name, message);
-    hooks::send_banner(&title, &banner_msg);
+    if let Some(s) = sound {
+        hooks::play_sound(s);
+    }
 
-    // 更新通知存储；helper 会顺带广播 HookAdded 让前端纯 push 刷新。
+    if cfg.banner {
+        let project_name = crate::storage::workspace::load_project_by_hash(project_key)
+            .ok()
+            .flatten()
+            .map(|p| p.name)
+            .unwrap_or_else(|| "Grove".to_string());
+        let task_name = task_storage::get_task(project_key, task_id)
+            .ok()
+            .flatten()
+            .map(|t| t.name)
+            .unwrap_or_else(|| task_id.to_string());
+
+        let title = format!("{} - {}", project_name, title_suffix);
+        let banner_msg = format!("{} — {}", task_name, message);
+        hooks::send_banner(&title, &banner_msg);
+    }
+
     let level = if title_suffix.contains("Permission") {
         NotificationLevel::Warn
     } else {

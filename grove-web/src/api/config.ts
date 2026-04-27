@@ -48,6 +48,13 @@ export interface AcpConfig {
   render_window_trigger: number;
 }
 
+export interface HooksConfig {
+  enabled: boolean;
+  banner: boolean;
+  sound_enabled: boolean;
+  sound: string;
+}
+
 export interface Config {
   theme: ThemeConfig;
   layout: LayoutConfig;
@@ -55,6 +62,7 @@ export interface Config {
   terminal_multiplexer: string; // "tmux" | "zellij"
   auto_link: AutoLinkConfig;
   acp: AcpConfig;
+  hooks: HooksConfig;
 }
 
 interface ConfigPatch {
@@ -64,6 +72,7 @@ interface ConfigPatch {
   terminal_multiplexer?: string;
   auto_link?: Partial<AutoLinkConfig>;
   acp?: Partial<AcpConfig>;
+  hooks?: Partial<HooksConfig>;
 }
 
 // Application info for picker
@@ -93,4 +102,8 @@ export async function listApplications(): Promise<{ apps: AppInfo[]; platform: s
 
 export function getAppIconUrl(app: AppInfo): string {
   return `/api/v1/config/applications/icon?path=${encodeURIComponent(app.path)}`;
+}
+
+export async function previewHookSound(sound: string): Promise<void> {
+  return apiClient.post<{ sound: string }, void>('/api/v1/hooks/preview', { sound });
 }

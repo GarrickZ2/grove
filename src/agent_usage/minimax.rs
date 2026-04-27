@@ -96,12 +96,11 @@ pub(super) fn fetch_with_token(token: &str) -> Result<AgentUsage, String> {
         let model = entry.model_name.unwrap_or_else(|| "unknown".to_string());
 
         // Interval window
-        if let (Some(total), Some(used)) = (
+        if let (Some(total), Some(remaining)) = (
             entry.current_interval_total_count,
             entry.current_interval_usage_count,
         ) {
             if total > 0 {
-                let remaining = total.saturating_sub(used);
                 let pct = clamp_percent((remaining as f32 / total as f32) * 100.0);
                 let total_window_seconds = match (entry.start_time, entry.end_time) {
                     (Some(s), Some(e)) if e > s => Some((e - s) / 1000),
@@ -122,18 +121,17 @@ pub(super) fn fetch_with_token(token: &str) -> Result<AgentUsage, String> {
                 });
                 usage.extras.push(ExtraInfo {
                     label: format!("{} interval", model),
-                    value: format!("{} / {} used", used, total),
+                    value: format!("{} / {} left", remaining, total),
                 });
             }
         }
 
         // Weekly window
-        if let (Some(total), Some(used)) = (
+        if let (Some(total), Some(remaining)) = (
             entry.current_weekly_total_count,
             entry.current_weekly_usage_count,
         ) {
             if total > 0 {
-                let remaining = total.saturating_sub(used);
                 let pct = clamp_percent((remaining as f32 / total as f32) * 100.0);
                 let total_window_seconds = match (entry.weekly_start_time, entry.weekly_end_time) {
                     (Some(s), Some(e)) if e > s => Some((e - s) / 1000),
@@ -154,7 +152,7 @@ pub(super) fn fetch_with_token(token: &str) -> Result<AgentUsage, String> {
                 });
                 usage.extras.push(ExtraInfo {
                     label: format!("{} weekly", model),
-                    value: format!("{} / {} used", used, total),
+                    value: format!("{} / {} left", remaining, total),
                 });
             }
         }

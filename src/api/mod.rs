@@ -437,6 +437,7 @@ pub fn create_api_router() -> Router {
         )
         // Hooks API
         .route("/hooks", get(handlers::hooks::list_all_hooks))
+        .route("/hooks/preview", post(handlers::hooks::preview_sound))
         .route(
             "/projects/{id}/hooks/{taskId}",
             delete(handlers::hooks::dismiss_hook),

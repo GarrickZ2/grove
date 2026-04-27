@@ -48,6 +48,7 @@ import {
   ChevronUp,
   ExternalLink,
   Bookmark,
+  Search,
   User,
 } from "lucide-react";
 import {
@@ -5146,40 +5147,98 @@ const DropdownSelect = ({
   open: boolean;
   onToggle: () => void;
   onSelect: (value: string) => void;
-}) => (
-  <div className="relative" ref={ref}>
-    <button
-      onClick={onToggle}
-      className="inline-flex h-7 items-center gap-1 rounded-full bg-[var(--color-bg)] px-2.5 text-[11px] text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-bg-tertiary)] transition-colors"
-    >
-      <span className="chatbox-dropdown-label opacity-70">{label}</span>
-      <span className="max-w-40 truncate text-[var(--color-text)]">
-        {options.find((o) => o.value === value)?.label ?? "Default"}
-      </span>
-      <ChevronDown className="w-3 h-3 opacity-70" />
-    </button>
-    {open && (
-      <div className="absolute bottom-full right-0 mb-1 min-w-44 max-h-64 overflow-y-auto rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] shadow-lg py-1 z-50">
-        {options.map((opt) => (
-          <button
-            key={opt.value}
-            onClick={() => onSelect(opt.value)}
-            className={`w-full text-left px-3 py-1.5 text-sm flex items-center justify-between hover:bg-[var(--color-bg-tertiary)] transition-colors ${
-              value === opt.value
-                ? "text-[var(--color-text)]"
-                : "text-[var(--color-text-muted)]"
-            }`}
-          >
-            <span>{opt.label}</span>
-            {value === opt.value && (
-              <span className="text-[var(--color-highlight)]">✓</span>
-            )}
-          </button>
-        ))}
-      </div>
-    )}
-  </div>
-);
+}) => {
+  const [searchQuery, setSearchQuery] = useState("");
+  const searchInputRef = useRef<HTMLInputElement>(null);
+  const enableSearch = options.length > 5;
+
+  useEffect(() => {
+    if (open && enableSearch) {
+      requestAnimationFrame(() => {
+        searchInputRef.current?.focus();
+      });
+    }
+  }, [open, enableSearch]);
+
+  useEffect(() => {
+    if (!open) {
+      setSearchQuery("");
+    }
+  }, [open]);
+
+  const filteredOptions = useMemo(() => {
+    if (!searchQuery || !enableSearch) return options;
+    const q = searchQuery.toLowerCase();
+    return options.filter((o) => o.label.toLowerCase().includes(q));
+  }, [options, searchQuery, enableSearch]);
+
+  const handleSearchKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === "Escape") {
+      if (searchQuery) {
+        setSearchQuery("");
+      } else {
+        onToggle();
+      }
+      e.stopPropagation();
+    }
+  };
+
+  return (
+    <div className="relative" ref={ref}>
+      <button
+        onClick={onToggle}
+        className="inline-flex h-7 items-center gap-1 rounded-full bg-[var(--color-bg)] px-2.5 text-[11px] text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-bg-tertiary)] transition-colors"
+      >
+        <span className="chatbox-dropdown-label opacity-70">{label}</span>
+        <span className="max-w-40 truncate text-[var(--color-text)]">
+          {options.find((o) => o.value === value)?.label ?? "Default"}
+        </span>
+        <ChevronDown className="w-3 h-3 opacity-70" />
+      </button>
+      {open && (
+        <div className="absolute bottom-full right-0 mb-1 min-w-44 max-h-64 overflow-y-auto rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] shadow-lg py-1 z-50">
+          {enableSearch && (
+            <div className="px-2 pt-1.5 pb-1 border-b border-[var(--color-border)]">
+              <div className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-[var(--color-bg-secondary)]">
+                <Search className="w-3 h-3 text-[var(--color-text-muted)] flex-shrink-0" />
+                <input
+                  ref={searchInputRef}
+                  type="text"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  onKeyDown={handleSearchKeyDown}
+                  placeholder="Search..."
+                  className="flex-1 bg-transparent text-xs text-[var(--color-text)] placeholder-[var(--color-text-muted)] outline-none min-w-0"
+                />
+              </div>
+            </div>
+          )}
+          {filteredOptions.map((opt) => (
+            <button
+              key={opt.value}
+              onClick={() => onSelect(opt.value)}
+              className={`w-full text-left px-3 py-1.5 text-sm flex items-center justify-between hover:bg-[var(--color-bg-tertiary)] transition-colors ${
+                value === opt.value
+                  ? "text-[var(--color-text)]"
+                  : "text-[var(--color-text-muted)]"
+              }`}
+            >
+              <span>{opt.label}</span>
+              {value === opt.value && (
+                <span className="text-[var(--color-highlight)]">✓</span>
+              )}
+            </button>
+          ))}
+          {enableSearch && filteredOptions.length === 0 && (
+            <div className="px-3 py-2 text-xs text-[var(--color-text-muted)] text-center">
+              No matches
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+};
 
 /** Individual message rendering */
 const MessageItem = memo(function MessageItem({

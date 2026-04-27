@@ -20,8 +20,17 @@ pub struct ConfigResponse {
     pub web: WebConfigDto,
     pub auto_link: AutoLinkConfigDto,
     pub acp: AcpConfigDto,
+    pub hooks: HooksConfigDto,
     /// Terminal 模式使用的复用器 ("tmux" | "zellij")
     pub terminal_multiplexer: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct HooksConfigDto {
+    pub enabled: bool,
+    pub banner: bool,
+    pub sound_enabled: bool,
+    pub sound: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -116,6 +125,12 @@ impl From<&Config> for ConfigResponse {
                 render_window_limit: config.acp.render_window_limit,
                 render_window_trigger: config.acp.render_window_trigger,
             },
+            hooks: HooksConfigDto {
+                enabled: config.hooks.enabled,
+                banner: config.hooks.banner,
+                sound_enabled: config.hooks.sound_enabled,
+                sound: config.hooks.sound.clone(),
+            },
             terminal_multiplexer: config.terminal_multiplexer.to_string(),
         }
     }
@@ -129,8 +144,17 @@ pub struct ConfigPatchRequest {
     pub web: Option<WebConfigPatch>,
     pub auto_link: Option<AutoLinkConfigPatch>,
     pub acp: Option<AcpConfigPatch>,
+    pub hooks: Option<HooksConfigPatch>,
     /// Terminal 模式使用的复用器 ("tmux" | "zellij")
     pub terminal_multiplexer: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct HooksConfigPatch {
+    pub enabled: Option<bool>,
+    pub banner: Option<bool>,
+    pub sound_enabled: Option<bool>,
+    pub sound: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -270,6 +294,22 @@ pub async fn patch_config(
             config.acp.render_window_trigger = trigger;
         }
         config.acp.normalize();
+    }
+
+    // Apply hooks patch
+    if let Some(hooks_patch) = patch.hooks {
+        if let Some(enabled) = hooks_patch.enabled {
+            config.hooks.enabled = enabled;
+        }
+        if let Some(banner) = hooks_patch.banner {
+            config.hooks.banner = banner;
+        }
+        if let Some(sound_enabled) = hooks_patch.sound_enabled {
+            config.hooks.sound_enabled = sound_enabled;
+        }
+        if let Some(sound) = hooks_patch.sound {
+            config.hooks.sound = sound;
+        }
     }
 
     // Save config

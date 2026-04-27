@@ -75,6 +75,42 @@ fn default_acp_render_window_trigger() -> u32 {
     1500
 }
 
+/// Hooks 通知配置
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HooksConfig {
+    /// 是否启用 ACP Chat 通知
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    /// 是否发送桌面通知横幅
+    #[serde(default = "default_true")]
+    pub banner: bool,
+    /// 是否播放声音
+    #[serde(default = "default_true")]
+    pub sound_enabled: bool,
+    /// 声音名称（macOS 系统声音，如 "Glass", "Purr"）
+    #[serde(default = "default_sound")]
+    pub sound: String,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+fn default_sound() -> String {
+    "Glass".to_string()
+}
+
+impl Default for HooksConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            banner: true,
+            sound_enabled: true,
+            sound: default_sound(),
+        }
+    }
+}
+
 /// ACP (Agent Client Protocol) 配置
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AcpConfig {
@@ -206,6 +242,8 @@ pub struct Config {
     pub auto_link: AutoLinkConfig,
     #[serde(default)]
     pub acp: AcpConfig,
+    #[serde(default)]
+    pub hooks: HooksConfig,
 
     /// Storage layout version (None = legacy, "1.0" = task-centric layout)
     #[serde(default, skip_serializing_if = "Option::is_none")]

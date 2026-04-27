@@ -2,7 +2,7 @@
 
 export type { ApiError } from './client';
 
-export { getConfig, patchConfig, listApplications, getAppIconUrl } from './config';
+export { getConfig, patchConfig, listApplications, getAppIconUrl, previewHookSound } from './config';
 export type { AppInfo, CustomAgent } from './config';
 
 export { checkAllDependencies, checkCommands } from './env';

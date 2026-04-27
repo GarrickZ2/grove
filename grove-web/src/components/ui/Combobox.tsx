@@ -24,6 +24,7 @@ interface DropdownPosition {
   top: number;
   left: number;
   width: number;
+  maxHeight: number;
 }
 
 export function Combobox({
@@ -54,10 +55,22 @@ export function Combobox({
   const updateDropdownPosition = useCallback(() => {
     if (triggerRef.current) {
       const rect = triggerRef.current.getBoundingClientRect();
+      const gap = 4;
+      const viewportPadding = 8;
+      const preferredMaxHeight = 240;
+      const availableBelow = window.innerHeight - rect.bottom - gap - viewportPadding;
+      const availableAbove = rect.top - gap - viewportPadding;
+      const opensUp = availableBelow < preferredMaxHeight && availableAbove > availableBelow;
+      const maxHeight = Math.max(
+        96,
+        Math.min(preferredMaxHeight, opensUp ? availableAbove : availableBelow)
+      );
+
       setDropdownPosition({
-        top: rect.bottom + 4,
+        top: opensUp ? rect.top - gap - maxHeight : rect.bottom + gap,
         left: rect.left,
         width: rect.width,
+        maxHeight,
       });
     }
   }, []);
@@ -154,9 +167,10 @@ export function Combobox({
             top: dropdownPosition.top,
             left: dropdownPosition.left,
             width: dropdownPosition.width,
+            maxHeight: dropdownPosition.maxHeight,
             zIndex: 9999,
           }}
-          className="py-1 bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-lg shadow-lg"
+          className="py-1 bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-lg shadow-lg overflow-y-auto"
         >
           {allOptions.map((option) => (
             <button

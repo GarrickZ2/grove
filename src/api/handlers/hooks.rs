@@ -2,7 +2,7 @@
 
 use axum::{extract::Path, http::StatusCode, Json};
 use chrono::{DateTime, Utc};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 
 use crate::hooks::{self, NotificationLevel};
@@ -129,6 +129,17 @@ pub async fn list_all_hooks() -> Result<Json<HooksListResponse>, StatusCode> {
 /// DELETE /projects/{id}/hooks/{taskId} — dismiss a single hook notification
 pub async fn dismiss_hook(Path((project_id, task_id)): Path<(String, String)>) -> StatusCode {
     hooks::remove_task_hook(&project_id, &task_id);
+    StatusCode::NO_CONTENT
+}
+
+#[derive(Debug, Deserialize)]
+pub struct PreviewSoundRequest {
+    pub sound: String,
+}
+
+/// POST /hooks/preview — play a system sound for preview
+pub async fn preview_sound(Json(req): Json<PreviewSoundRequest>) -> StatusCode {
+    hooks::play_sound(&req.sound);
     StatusCode::NO_CONTENT
 }
 

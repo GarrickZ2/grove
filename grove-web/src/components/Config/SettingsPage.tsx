@@ -8,8 +8,6 @@ import {
   ChevronDown,
   Check,
   Copy,
-  AlertCircle,
-  AlertTriangle,
   Info,
   ExternalLink,
   RefreshCw,
@@ -21,6 +19,7 @@ import {
   Plus,
   X,
   MessageSquare,
+  Volume2,
 } from "lucide-react";
 import { Button, Combobox, AppPicker, AgentPicker, agentOptions, ideAppOptions, terminalAppOptions, CustomAgentModal } from "../ui";
 import type { ComboboxOption } from "../ui";
@@ -28,6 +27,7 @@ import { useTheme, themes, useConfig } from "../../context";
 import {
   getConfig,
   patchConfig,
+  previewHookSound,
   checkAllDependencies,
   checkCommands,
   listApplications,
@@ -146,20 +146,12 @@ const paneTypeLabels: Record<PaneType, string> = {
   custom: "Cmd",
 };
 
-// Notification levels
-const notificationLevels = [
-  { level: "notice", icon: Info, color: "var(--color-info)", title: "Notice" },
-  { level: "warn", icon: AlertTriangle, color: "var(--color-warning)", title: "Warning" },
-  { level: "critical", icon: AlertCircle, color: "var(--color-error)", title: "Critical" },
-];
-
 // Note: Agent options are imported from AgentPicker
 // IDE and Terminal options are imported from AppPicker
 
 // Sound options for hooks (macOS system sounds)
 const soundOptions: ComboboxOption[] = [
-  { id: "off", label: "Off", value: "" },
-  { id: "default", label: "Default", value: "default" },
+  { id: "none", label: "NONE", value: "none" },
   { id: "Basso", label: "Basso", value: "Basso" },
   { id: "Blow", label: "Blow", value: "Blow" },
   { id: "Bottle", label: "Bottle", value: "Bottle" },
@@ -253,20 +245,16 @@ export function SettingsPage({ config }: SettingsPageProps) {
   const [customLayoutsLoaded, setCustomLayoutsLoaded] = useState(false); // Track if custom layouts were loaded from API
   const [isLayoutEditorOpen, setIsLayoutEditorOpen] = useState(false);
 
-  // Hooks state - for command generator
-  const [hookLevel, setHookLevel] = useState<"notice" | "warn" | "critical">("notice");
-  const [hookBanner, setHookBanner] = useState(true);
-  const [hookSound, setHookSound] = useState("default"); // empty = off, or sound name
-  const [hookMessage, setHookMessage] = useState("");
+  const [hooksEnabled, setHooksEnabled] = useState(true);
+  const [hooksBanner, setHooksBanner] = useState(true);
+  const [hooksSoundEnabled, setHooksSoundEnabled] = useState(true);
+  const [hooksSound, setHooksSound] = useState("Glass");
 
   // MCP state
   const [copiedField, setCopiedField] = useState<string | null>(null);
 
   // AutoLink state
   const [autoLinkPatterns, setAutoLinkPatterns] = useState<string[]>([]);
-
-  // Generate hook command based on selections
-  const hookCommand = `grove hooks ${hookLevel}${hookBanner ? " --banner" : ""}${hookSound ? ` --sound ${hookSound}` : ""}${hookMessage ? ` --message "${hookMessage}"` : ""}`;
 
   const toggleSection = (id: string) => {
     setOpenSections((prev) => {
@@ -357,6 +345,13 @@ export function SettingsPage({ config }: SettingsPageProps) {
       setChatRenderWindowTrigger(renderWindowTrigger);
       setChatRenderWindowLimitDraft(String(renderWindowLimit));
       setChatRenderWindowTriggerDraft(String(renderWindowTrigger));
+
+      if (cfg.hooks) {
+        setHooksEnabled(cfg.hooks.enabled);
+        setHooksBanner(cfg.hooks.banner);
+        setHooksSoundEnabled(cfg.hooks.sound_enabled);
+        setHooksSound(cfg.hooks.sound || "Glass");
+      }
 
       setIsLoaded(true);
     } catch {
@@ -465,6 +460,12 @@ export function SettingsPage({ config }: SettingsPageProps) {
         auto_link: {
           patterns: autoLinkPatterns,
         },
+        hooks: {
+          enabled: hooksEnabled,
+          banner: hooksBanner,
+          sound_enabled: hooksSoundEnabled,
+          sound: hooksSound,
+        },
       };
       await patchConfig(patch);
       // Refresh the global config cache so other pages see the changes immediately
@@ -472,7 +473,7 @@ export function SettingsPage({ config }: SettingsPageProps) {
     } catch {
       console.error("Failed to save config");
     }
-  }, [isLoaded, selectedLayout, agentCommand, acpAgent, chatRenderWindowLimit, chatRenderWindowTrigger, customLayouts, selectedCustomLayoutId, customLayoutsLoaded, ideCommand, terminalCommand, terminalMultiplexer, webTerminalMode, workspaceLayout, autoLinkPatterns, refreshGlobalConfig]);
+  }, [isLoaded, selectedLayout, agentCommand, acpAgent, chatRenderWindowLimit, chatRenderWindowTrigger, customLayouts, selectedCustomLayoutId, customLayoutsLoaded, ideCommand, terminalCommand, terminalMultiplexer, webTerminalMode, workspaceLayout, autoLinkPatterns, hooksEnabled, hooksBanner, hooksSoundEnabled, hooksSound, refreshGlobalConfig]);
 
   // Handle theme change with immediate save
   const handleThemeChange = useCallback((newThemeId: string) => {
@@ -494,7 +495,7 @@ export function SettingsPage({ config }: SettingsPageProps) {
     }, 500); // 500ms debounce
 
     return () => clearTimeout(timer);
-  }, [selectedLayout, agentCommand, acpAgent, chatRenderWindowLimit, chatRenderWindowTrigger, customLayouts, selectedCustomLayoutId, customLayoutsLoaded, ideCommand, terminalCommand, terminalMultiplexer, webTerminalMode, workspaceLayout, autoLinkPatterns, isLoaded, saveConfig]);
+  }, [selectedLayout, agentCommand, acpAgent, chatRenderWindowLimit, chatRenderWindowTrigger, customLayouts, selectedCustomLayoutId, customLayoutsLoaded, ideCommand, terminalCommand, terminalMultiplexer, webTerminalMode, workspaceLayout, autoLinkPatterns, hooksEnabled, hooksBanner, hooksSoundEnabled, hooksSound, isLoaded, saveConfig]);
 
   // Load applications list
   const loadApplications = useCallback(async () => {
@@ -1493,115 +1494,98 @@ env_vars = [
         {/* Hooks Section */}
         <Section
           id="hooks"
-          title="Hooks"
-          description="Generate notification commands for agents"
+          title="Notification"
+          description="ACP Chat notification settings"
           icon={Bell}
           iconColor="var(--color-warning)"
           isOpen={openSections.hooks}
           onToggle={() => toggleSection("hooks")}
         >
-          <div className="space-y-4">
-            {/* Level Selection */}
+          <div className="space-y-5">
             <div>
-              <div className="text-sm font-medium text-[var(--color-text-muted)] mb-2 select-none">Level</div>
+              <div className="text-sm font-medium text-[var(--color-text-muted)] mb-2 select-none">Enabled</div>
               <div className="flex gap-2">
-                {notificationLevels.map(({ level, icon: Icon, color, title }) => {
-                  const isSelected = hookLevel === level;
+                {[true, false].map((value) => {
+                  const isSelected = hooksEnabled === value;
                   return (
                     <motion.button
-                      key={level}
+                      key={value ? "on" : "off"}
                       whileHover={{ scale: 1.02 }}
                       whileTap={{ scale: 0.98 }}
-                      onClick={() => setHookLevel(level as "notice" | "warn" | "critical")}
-                      className={`flex-1 flex items-center justify-center gap-2 px-3 py-2.5 rounded-lg border transition-all
+                      onClick={() => setHooksEnabled(value)}
+                      className={`flex-1 px-3 py-2 rounded-lg border text-sm transition-all
                         ${isSelected
-                          ? "border-[var(--color-highlight)] bg-[var(--color-highlight)]/10"
-                          : "border-[var(--color-border)] bg-[var(--color-bg-secondary)] hover:border-[var(--color-text-muted)]"
+                          ? "border-[var(--color-highlight)] bg-[var(--color-highlight)]/10 text-[var(--color-text)]"
+                          : "border-[var(--color-border)] bg-[var(--color-bg-secondary)] text-[var(--color-text-muted)] hover:border-[var(--color-text-muted)]"
                         }`}
                     >
-                      <Icon className="w-4 h-4" style={{ color: isSelected ? color : "var(--color-text-muted)" }} />
-                      <span className={`text-sm ${isSelected ? "text-[var(--color-text)]" : "text-[var(--color-text-muted)]"}`}>
-                        {title}
-                      </span>
+                      {value ? "On" : "Off"}
                     </motion.button>
                   );
                 })}
               </div>
             </div>
 
-            {/* Banner & Sound Options */}
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <div className="text-sm font-medium text-[var(--color-text-muted)] mb-2 select-none">Banner</div>
-                <div className="flex gap-2">
-                  {[true, false].map((value) => {
-                    const isSelected = hookBanner === value;
-                    return (
-                      <motion.button
-                        key={value ? "on" : "off"}
-                        whileHover={{ scale: 1.02 }}
-                        whileTap={{ scale: 0.98 }}
-                        onClick={() => setHookBanner(value)}
-                        className={`flex-1 px-3 py-2 rounded-lg border text-sm transition-all
-                          ${isSelected
-                            ? "border-[var(--color-highlight)] bg-[var(--color-highlight)]/10 text-[var(--color-text)]"
-                            : "border-[var(--color-border)] bg-[var(--color-bg-secondary)] text-[var(--color-text-muted)] hover:border-[var(--color-text-muted)]"
-                          }`}
-                      >
-                        {value ? "On" : "Off"}
-                      </motion.button>
-                    );
-                  })}
+            {hooksEnabled && (
+              <>
+                <div>
+                  <div className="text-sm font-medium text-[var(--color-text-muted)] mb-2 select-none">System Banner</div>
+                  <div className="flex gap-2">
+                    {[true, false].map((value) => {
+                      const isSelected = hooksBanner === value;
+                      return (
+                        <motion.button
+                          key={value ? "on" : "off"}
+                          whileHover={{ scale: 1.02 }}
+                          whileTap={{ scale: 0.98 }}
+                          onClick={() => setHooksBanner(value)}
+                          className={`flex-1 px-3 py-2 rounded-lg border text-sm transition-all
+                            ${isSelected
+                              ? "border-[var(--color-highlight)] bg-[var(--color-highlight)]/10 text-[var(--color-text)]"
+                              : "border-[var(--color-border)] bg-[var(--color-bg-secondary)] text-[var(--color-text-muted)] hover:border-[var(--color-text-muted)]"
+                            }`}
+                        >
+                          {value ? "On" : "Off"}
+                        </motion.button>
+                      );
+                    })}
+                  </div>
                 </div>
-              </div>
-              <div>
-                <div className="text-sm font-medium text-[var(--color-text-muted)] mb-2 select-none">Sound</div>
-                <Combobox
-                  options={soundOptions}
-                  value={hookSound}
-                  onChange={setHookSound}
-                  placeholder="Select sound..."
-                  allowCustom={false}
-                />
-              </div>
-            </div>
 
-            {/* Message */}
-            <div>
-              <div className="text-sm font-medium text-[var(--color-text-muted)] mb-2 select-none">Message</div>
-              <input
-                type="text"
-                value={hookMessage}
-                onChange={(e) => setHookMessage(e.target.value)}
-                placeholder="e.g., Task completed..."
-                className="w-full px-3 py-2 text-sm bg-[var(--color-bg-secondary)] text-[var(--color-text)] border border-[var(--color-border)] rounded-lg focus:outline-none focus:ring-1 focus:ring-[var(--color-highlight)] placeholder:text-[var(--color-text-muted)]"
-              />
-              <p className="text-xs text-[var(--color-text-muted)] mt-1 select-none">
-                Optional message included with the notification.
-              </p>
-            </div>
+                <div>
+                  <div className="text-sm font-medium text-[var(--color-text-muted)] mb-2 select-none">Sound</div>
+                  <div className="flex gap-2">
+                    <div className="flex-1">
+                      <Combobox
+                        options={soundOptions}
+                        value={hooksSoundEnabled ? hooksSound : "none"}
+                        onChange={(value) => {
+                          if (value === "none") {
+                            setHooksSoundEnabled(false);
+                            return;
+                          }
 
-            {/* Generated Command */}
-            <div>
-              <div className="text-sm font-medium text-[var(--color-text-muted)] mb-2 select-none">Generated Command</div>
-              <div className="flex items-center gap-2 p-3 bg-[var(--color-bg-secondary)] rounded-lg border border-[var(--color-border)]">
-                <code className="flex-1 text-sm text-[var(--color-highlight)] font-mono">{hookCommand}</code>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => handleCopy("hook-command", hookCommand)}
-                >
-                  {copiedField === "hook-command" ? (
-                    <Check className="w-4 h-4 text-[var(--color-success)]" />
-                  ) : (
-                    <Copy className="w-4 h-4" />
-                  )}
-                </Button>
-              </div>
-              <p className="text-xs text-[var(--color-text-muted)] mt-2 select-none">
-                Add this command to your agent's workflow to send notifications to Grove.
-              </p>
-            </div>
+                          setHooksSoundEnabled(true);
+                          setHooksSound(value);
+                        }}
+                        placeholder="Select sound..."
+                        allowCustom={false}
+                      />
+                    </div>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => previewHookSound(hooksSound)}
+                      title="Preview sound"
+                      disabled={!hooksSoundEnabled}
+                      className="h-9 w-9 !p-0 rounded-xl"
+                    >
+                      <Volume2 className="w-4 h-4" />
+                    </Button>
+                  </div>
+                </div>
+              </>
+            )}
           </div>
         </Section>
 

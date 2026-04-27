@@ -74,6 +74,7 @@ interface Rect {
   top: number;
   left: number;
   width: number;
+  maxHeight: number;
   placement: "top" | "bottom";
 }
 
@@ -115,20 +116,25 @@ export function AgentQuotaPopover({
     const desiredWidth = Math.max(MIN_WIDTH, Math.min(MAX_WIDTH, r.width));
     const width = Math.min(desiredWidth, available);
 
-    // Measured height of the popover if rendered, otherwise an estimate.
-    const popoverHeight = popoverRef.current?.offsetHeight ?? 260;
-    const spaceAbove = r.top - POPOVER_GAP;
+    const viewportH = window.innerHeight;
+    const measuredHeight = popoverRef.current?.offsetHeight ?? 0;
+    const popoverHeight = measuredHeight > 0 ? measuredHeight : 300;
+    const spaceAbove = Math.max(0, r.top - POPOVER_GAP - VIEWPORT_PADDING);
+    const spaceBelow = Math.max(0, viewportH - r.bottom - POPOVER_GAP - VIEWPORT_PADDING);
     const placement: "top" | "bottom" =
-      spaceAbove >= popoverHeight + VIEWPORT_PADDING ? "top" : "bottom";
+      spaceAbove >= popoverHeight || spaceAbove >= spaceBelow ? "top" : "bottom";
+    const availableHeight = placement === "top" ? spaceAbove : spaceBelow;
+    const maxHeight = Math.max(120, Math.min(popoverHeight, availableHeight));
     const rawTop =
       placement === "top"
-        ? r.top - POPOVER_GAP - popoverHeight
+        ? r.top - POPOVER_GAP - maxHeight
         : r.bottom + POPOVER_GAP;
-    const top = Math.max(VIEWPORT_PADDING, rawTop);
+    const maxTop = Math.max(VIEWPORT_PADDING, viewportH - maxHeight - VIEWPORT_PADDING);
+    const top = Math.max(VIEWPORT_PADDING, Math.min(rawTop, maxTop));
 
     const maxLeft = Math.max(VIEWPORT_PADDING, viewportW - width - VIEWPORT_PADDING);
     const left = Math.max(VIEWPORT_PADDING, Math.min(r.left, maxLeft));
-    setRect({ top, left, width, placement });
+    setRect({ top, left, width, maxHeight, placement });
   }, [anchorRef]);
 
   const cancelHide = () => {
@@ -264,6 +270,8 @@ export function AgentQuotaPopover({
                   top: rect.top,
                   left: rect.left,
                   width: rect.width,
+                  maxHeight: rect.maxHeight,
+                  overflowY: "auto",
                   zIndex: 120,
                 }}
                 onMouseEnter={handlePopoverEnter}
