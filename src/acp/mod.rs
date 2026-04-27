@@ -44,8 +44,10 @@ pub struct AcpSessionHandle {
     cmd_tx: mpsc::Sender<AcpCommand>,
     /// Agent info stored after initialization: (session_id, name, version)
     pub agent_info: std::sync::RwLock<Option<(String, String, String)>>,
-    /// 待处理的权限请求响应 channel
-    pending_permission: Mutex<Option<tokio::sync::oneshot::Sender<String>>>,
+    /// 待处理的权限请求响应 channel + 它的 id（来源是 ACP tool_call.id）。
+    /// id 用来在 reconcile 时把这条 live pending 与 history 中的 PermissionRequest
+    /// 精确匹配 —— 同 id 的留给前端响应，其它 unresolved 落 Cancelled。
+    pending_permission: Mutex<Option<(String, tokio::sync::oneshot::Sender<String>)>>,
     /// 序列化权限请求：同一时刻只能有一个 permission 等待用户响应
     permission_lock: tokio::sync::Mutex<()>,
     /// 项目 key（用于磁盘持久化路径）
@@ -142,13 +144,21 @@ pub enum AcpUpdate {
         content: Option<String>,
         locations: Vec<(String, Option<u32>)>,
     },
-    /// 权限请求（带选项，等待用户交互）
+    /// 权限请求（带选项，等待用户交互）。`id` 是 ACP tool_call.id，
+    /// 用于把后续的 PermissionResponse 精确对应到这条 Request；老历史里的
+    /// 事件没有这个字段，反序列化时落到空串，reconcile 视为 legacy orphan。
     PermissionRequest {
+        #[serde(default)]
+        id: String,
         description: String,
         options: Vec<PermOptionData>,
     },
     /// 用户对权限请求的响应（记录到历史用于回放）
-    PermissionResponse { option_id: String },
+    PermissionResponse {
+        #[serde(default)]
+        id: String,
+        option_id: String,
+    },
     /// 本轮处理结束
     Complete { stop_reason: String },
     /// Agent busy 状态变化
@@ -512,6 +522,7 @@ async fn handle_request_permission(
 ) -> acp::Result<acp::RequestPermissionResponse> {
     let _guard = state.handle.permission_lock.lock().await;
 
+    let request_id = args.tool_call.tool_call_id.to_string();
     let desc = args.tool_call.fields.title.clone().unwrap_or_default();
     let options: Vec<PermOptionData> = args
         .options
@@ -530,9 +541,15 @@ async fn handle_request_permission(
         .collect();
 
     let (tx, rx) = tokio::sync::oneshot::channel();
-    state.handle.pending_permission.lock().unwrap().replace(tx);
+    state
+        .handle
+        .pending_permission
+        .lock()
+        .unwrap()
+        .replace((request_id.clone(), tx));
 
     state.handle.emit(AcpUpdate::PermissionRequest {
+        id: request_id,
         description: desc.clone(),
         options,
     });
@@ -2081,6 +2098,16 @@ impl AcpSessionHandle {
         self.pending_permission.lock().unwrap().is_some()
     }
 
+    /// 当前 live pending permission 的 id（来自 ACP tool_call_id）。
+    /// reconcile 用它把 history unresolved 的那条与 live tx 精确匹配。
+    pub fn pending_permission_id(&self) -> Option<String> {
+        self.pending_permission
+            .lock()
+            .unwrap()
+            .as_ref()
+            .map(|(id, _)| id.clone())
+    }
+
     /// Derive the current chat-grained node status from in-memory handle
     /// state. Mirrors the status string used on the wire by `RadioEvent::ChatStatus`
     /// and what `GET /graph` computes per node — keep in sync with both.
@@ -2100,11 +2127,11 @@ impl AcpSessionHandle {
     /// drop（future 被取消）导致 tx.send 失败，用户的选择已经发生过，
     /// 仍然要记录到 history，保证切回来时前端能正确 resolve 对应 dialog。
     pub fn respond_permission(&self, option_id: String) -> bool {
-        let Some(tx) = self.pending_permission.lock().unwrap().take() else {
+        let Some((id, tx)) = self.pending_permission.lock().unwrap().take() else {
             return false;
         };
         let _ = tx.send(option_id.clone());
-        self.emit(AcpUpdate::PermissionResponse { option_id });
+        self.emit(AcpUpdate::PermissionResponse { id, option_id });
         // Permission gone — announce the post-take status so graph nodes can
         // leave the orange "permission_required" state immediately.
         if let Some(ref chat_id) = self.chat_id {

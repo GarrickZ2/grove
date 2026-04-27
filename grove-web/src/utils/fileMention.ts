@@ -1,5 +1,12 @@
 // Shared utilities for @ file mention feature (used by Chat and Notes)
 
+/**
+ * Discriminator for the mention dropdown item kind. Files (default) coexist
+ * with three agent-graph kinds (spawn / send / reply) inside the same `@`
+ * popover so the user picks one entry-point per `@`.
+ */
+export type MentionKind = "file" | "agent_spawn" | "agent_send" | "agent_reply";
+
 export interface MentionItem {
   path: string;
   isDir: boolean;
@@ -14,6 +21,20 @@ export interface MentionItem {
    * Absent for generic file mentions.
    */
   category?: string;
+  /** Mention kind. Defaults to "file" when omitted. */
+  kind?: MentionKind;
+  /** Agent-graph: session id (kinds: agent_send / agent_reply). */
+  sessionId?: string;
+  /** Agent-graph: pending-message id (kind: agent_reply). */
+  msgId?: string;
+  /** Agent-graph: target session duty hint (kind: agent_send). */
+  duty?: string;
+  /** Agent-graph: short body excerpt for pending replies. */
+  bodyPreview?: string;
+  /** Agent-graph: agent id used by the spawn template (kind: agent_spawn). */
+  agentName?: string;
+  /** Agent-graph: agent icon id when known (kind: agent_spawn). */
+  agentIconId?: string;
 }
 
 export interface FilteredMentionItem extends MentionItem {
@@ -90,6 +111,76 @@ export function filterMentionItems(
     .filter((r) => r.match)
     .sort((a, b) => b.score - a.score)
     .slice(0, limit);
+}
+
+/**
+ * Build agent-graph mention items from a `mention-candidates` response.
+ * Order matters: pending replies first (most urgent — someone is waiting on
+ * caller), then outgoing (existing reachable sessions), then spawn agents.
+ *
+ * Name collision rule: when an agent shares a name with an existing session,
+ * the session is sorted before the agent so it gets default highlight.
+ */
+/**
+ * Build agent-graph @-mention items.
+ *
+ * Spawn candidates are passed in by the caller from `acpAgentOptions` (the
+ * same source the "New chat" picker uses) so icons and labels are
+ * automatically aligned with the rest of the UI — no second list to keep in
+ * sync with skills builtins.
+ */
+export function buildAgentMentionItems(input: {
+  spawnAgents: { value: string; label: string }[];
+  outgoing: { session_id: string; name: string; agent: string; duty?: string }[];
+  pending_replies: {
+    session_id: string;
+    name: string;
+    agent: string;
+    msg_id: string;
+    body_preview: string;
+  }[];
+}): MentionItem[] {
+  const items: MentionItem[] = [];
+
+  for (const p of input.pending_replies) {
+    items.push({
+      kind: "agent_reply",
+      path: `@${p.name}`, // synthetic key for de-dup
+      isDir: false,
+      displayName: p.name,
+      category: "Pending reply",
+      sessionId: p.session_id,
+      msgId: p.msg_id,
+      bodyPreview: p.body_preview,
+      agentName: p.agent,
+    });
+  }
+
+  for (const o of input.outgoing) {
+    items.push({
+      kind: "agent_send",
+      path: `@@${o.name}-${o.session_id}`,
+      isDir: false,
+      displayName: o.name,
+      category: "Send to session",
+      sessionId: o.session_id,
+      duty: o.duty,
+      agentName: o.agent,
+    });
+  }
+
+  for (const a of input.spawnAgents) {
+    items.push({
+      kind: "agent_spawn",
+      path: `@spawn-${a.value}`,
+      isDir: false,
+      displayName: a.label,
+      category: "Spawn agent",
+      agentName: a.value,
+    });
+  }
+
+  return items;
 }
 
 /** Metadata needed to resolve sketch dir names in Studio mention items. */

@@ -194,16 +194,27 @@ pub fn cancel_unresolved_events(project: &str, task_id: &str, chat_id: &str) -> 
         return 0;
     }
 
-    let mut unresolved_permissions = 0usize;
+    let mut unresolved_permission_ids: Vec<String> = Vec::new();
     let mut unresolved_tools: std::collections::HashMap<String, Vec<(String, Option<u32>)>> =
         std::collections::HashMap::new();
     let mut unresolved_terminals = 0usize;
 
     for event in &history {
         match event {
-            AcpUpdate::PermissionRequest { .. } => unresolved_permissions += 1,
-            AcpUpdate::PermissionResponse { .. } if unresolved_permissions > 0 => {
-                unresolved_permissions -= 1;
+            AcpUpdate::PermissionRequest { id, .. } => {
+                unresolved_permission_ids.push(id.clone());
+            }
+            AcpUpdate::PermissionResponse { id, .. } => {
+                // Match by id when present (id-aware path). When the response
+                // carries a legacy empty id, fall back to the FIFO behaviour
+                // so old histories drained one-for-one keep working.
+                if !id.is_empty() {
+                    if let Some(pos) = unresolved_permission_ids.iter().rposition(|qid| qid == id) {
+                        unresolved_permission_ids.remove(pos);
+                    }
+                } else if !unresolved_permission_ids.is_empty() {
+                    unresolved_permission_ids.pop();
+                }
             }
             AcpUpdate::ToolCall { id, locations, .. } => {
                 unresolved_tools.insert(id.clone(), locations.clone());
@@ -224,7 +235,8 @@ pub fn cancel_unresolved_events(project: &str, task_id: &str, chat_id: &str) -> 
         }
     }
 
-    let unresolved_total = unresolved_permissions + unresolved_tools.len() + unresolved_terminals;
+    let unresolved_total =
+        unresolved_permission_ids.len() + unresolved_tools.len() + unresolved_terminals;
     if unresolved_total == 0 {
         return 0;
     }
@@ -233,10 +245,11 @@ pub fn cancel_unresolved_events(project: &str, task_id: &str, chat_id: &str) -> 
     let file = fs::OpenOptions::new().create(true).append(true).open(&path);
     match file {
         Ok(mut f) => {
-            for _ in 0..unresolved_permissions {
+            for id in &unresolved_permission_ids {
                 append_json_line(
                     &mut f,
                     &AcpUpdate::PermissionResponse {
+                        id: id.clone(),
                         option_id: "Cancelled".to_string(),
                     },
                 );
@@ -267,6 +280,30 @@ pub fn cancel_unresolved_events(project: &str, task_id: &str, chat_id: &str) -> 
     }
 
     unresolved_total
+}
+
+/// Compute the set of unresolved permission request ids in `history`. ids are
+/// returned in original insertion order so callers can deterministically pick
+/// which one to keep / cancel. Legacy entries (empty `id`) collapse against
+/// each other in FIFO order, mirroring `cancel_unresolved_events`.
+pub fn unresolved_permission_ids(history: &[AcpUpdate]) -> Vec<String> {
+    let mut unresolved: Vec<String> = Vec::new();
+    for event in history {
+        match event {
+            AcpUpdate::PermissionRequest { id, .. } => unresolved.push(id.clone()),
+            AcpUpdate::PermissionResponse { id, .. } => {
+                if !id.is_empty() {
+                    if let Some(pos) = unresolved.iter().rposition(|qid| qid == id) {
+                        unresolved.remove(pos);
+                    }
+                } else if !unresolved.is_empty() {
+                    unresolved.pop();
+                }
+            }
+            _ => {}
+        }
+    }
+    unresolved
 }
 
 /// 清空 chat 历史文件（新 session 时调用）
@@ -523,6 +560,111 @@ pub fn compact_events(events: Vec<AcpUpdate>) -> Vec<AcpUpdate> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn perm_req(id: &str) -> AcpUpdate {
+        AcpUpdate::PermissionRequest {
+            id: id.into(),
+            description: format!("desc-{}", id),
+            options: Vec::new(),
+        }
+    }
+
+    fn perm_resp(id: &str, option: &str) -> AcpUpdate {
+        AcpUpdate::PermissionResponse {
+            id: id.into(),
+            option_id: option.into(),
+        }
+    }
+
+    #[test]
+    fn unresolved_ids_pairs_by_id() {
+        // X resolved, Y not — only Y stays unresolved.
+        let history = vec![perm_req("X"), perm_req("Y"), perm_resp("X", "allow_once")];
+        assert_eq!(unresolved_permission_ids(&history), vec!["Y".to_string()]);
+    }
+
+    #[test]
+    fn unresolved_ids_legacy_empty_id_drains_fifo() {
+        // Pre-id history (legacy): empty-id response cancels the oldest unresolved.
+        let history = vec![perm_req(""), perm_req(""), perm_resp("", "Cancelled")];
+        assert_eq!(unresolved_permission_ids(&history).len(), 1);
+    }
+
+    #[test]
+    fn unresolved_ids_response_for_unknown_id_is_noop() {
+        // Late-arriving response carrying an id that doesn't match any
+        // outstanding request — leave history alone.
+        let history = vec![perm_req("A"), perm_resp("B", "Cancelled")];
+        assert_eq!(unresolved_permission_ids(&history), vec!["A".to_string()]);
+    }
+
+    #[test]
+    fn unresolved_ids_keeps_insertion_order() {
+        let history = vec![perm_req("X"), perm_req("Y"), perm_req("Z")];
+        assert_eq!(
+            unresolved_permission_ids(&history),
+            vec!["X".to_string(), "Y".to_string(), "Z".to_string()],
+        );
+    }
+
+    /// Simulates the `handle_acp_ws` reconcile loop: for each unresolved id,
+    /// emit Cancelled unless it matches the live backend pending. Mirrors the
+    /// real WS code so behaviour stays in lockstep with this test fixture.
+    fn reconcile_orphans(history: &[AcpUpdate], live_id: Option<&str>) -> Vec<String> {
+        unresolved_permission_ids(history)
+            .into_iter()
+            .filter(|id| Some(id.as_str()) != live_id)
+            .collect()
+    }
+
+    #[test]
+    fn case_1_mcp_bootstrap_then_open_keeps_live_dialog() {
+        // history has the same id as backend live pending → reconcile cancels nothing.
+        let history = vec![perm_req("X")];
+        assert!(reconcile_orphans(&history, Some("X")).is_empty());
+    }
+
+    #[test]
+    fn case_2_orphan_no_live_gets_cancelled() {
+        // history has unresolved id, backend has nothing → cancel as orphan.
+        let history = vec![perm_req("X")];
+        assert_eq!(reconcile_orphans(&history, None), vec!["X".to_string()]);
+    }
+
+    #[test]
+    fn case_3_orphan_different_live_keeps_live_only() {
+        // Old orphan Y in history, live pending X (no history entry yet).
+        // Y should be cancelled; X remains live.
+        let history = vec![perm_req("Y")];
+        assert_eq!(
+            reconcile_orphans(&history, Some("X")),
+            vec!["Y".to_string()]
+        );
+    }
+
+    #[test]
+    fn case_4_legacy_empty_id_orphan_cancelled() {
+        let history = vec![perm_req("")];
+        assert_eq!(reconcile_orphans(&history, None), vec!["".to_string()]);
+    }
+
+    #[test]
+    fn case_5_already_resolved_is_noop() {
+        let history = vec![perm_req("X"), perm_resp("X", "allow_once")];
+        assert!(reconcile_orphans(&history, None).is_empty());
+        assert!(reconcile_orphans(&history, Some("X")).is_empty());
+    }
+
+    #[test]
+    fn unresolved_ids_all_resolved_returns_empty() {
+        let history = vec![
+            perm_req("X"),
+            perm_req("Y"),
+            perm_resp("Y", "allow_once"),
+            perm_resp("X", "Cancelled"),
+        ];
+        assert!(unresolved_permission_ids(&history).is_empty());
+    }
 
     #[test]
     fn test_compact_merges_message_chunks() {

@@ -249,6 +249,10 @@ pub fn create_api_router() -> Router {
             "/projects/{id}/tasks/{taskId}/graph/chats/{chat_id}/message",
             post(handlers::tasks::graph_send_message),
         )
+        .route(
+            "/projects/{id}/tasks/{taskId}/graph/chats/{chat_id}/mention-candidates",
+            get(handlers::tasks::mention_candidates),
+        )
         // Notes API
         .route(
             "/projects/{id}/tasks/{taskId}/notes",

@@ -44,6 +44,7 @@ export {
   createChat,
   updateChatTitle,
   sendGraphChatMessage,
+  getMentionCandidates,
   deleteChat,
   uploadChatAttachment,
   getChatHistory,
@@ -73,6 +74,10 @@ export type {
   ArtifactsResponse,
   ArtifactWorkDirectoryEntry,
   DirEntry,
+  MentionAgent,
+  MentionOutgoing,
+  MentionPendingReply,
+  MentionCandidatesResponse,
 } from './tasks';
 
 export {

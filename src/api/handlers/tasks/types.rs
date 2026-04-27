@@ -457,3 +457,42 @@ pub struct GraphErrorResponse {
     pub error: String,
     pub code: String,
 }
+
+/// Candidate for spawning a brand-new agent session via @-mention.
+#[derive(Debug, Serialize)]
+pub struct MentionAgent {
+    pub name: String,
+    pub display_name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub icon_id: Option<String>,
+}
+
+/// Candidate for sending a message to an existing reachable session
+/// (caller has an outgoing edge to it).
+#[derive(Debug, Serialize)]
+pub struct MentionOutgoing {
+    pub session_id: String,
+    pub name: String,
+    /// Underlying agent id (e.g. "claude", "codex") so the dropdown can
+    /// render the correct agent icon.
+    pub agent: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub duty: Option<String>,
+}
+
+/// Candidate for replying to a session that is currently waiting on caller.
+#[derive(Debug, Serialize)]
+pub struct MentionPendingReply {
+    pub session_id: String,
+    pub name: String,
+    pub agent: String,
+    pub msg_id: String,
+    pub body_preview: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct MentionCandidatesResponse {
+    pub agents: Vec<MentionAgent>,
+    pub outgoing: Vec<MentionOutgoing>,
+    pub pending_replies: Vec<MentionPendingReply>,
+}

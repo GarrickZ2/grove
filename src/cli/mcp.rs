@@ -3089,6 +3089,7 @@ fn extract_pending_permission(events: &[acp::AcpUpdate]) -> Option<serde_json::V
             acp::AcpUpdate::PermissionRequest {
                 description,
                 options,
+                ..
             } if last_perm_req.is_none() => {
                 last_perm_req = Some((description.clone(), options.clone()));
                 last_perm_req_pos = Some(i);

@@ -445,6 +445,50 @@ export async function updateChatTitle(
   );
 }
 
+// ── @-mention candidates (agent-graph) ──────────────────────────────────
+
+export interface MentionAgent {
+  name: string;
+  display_name: string;
+  icon_id?: string;
+}
+
+export interface MentionOutgoing {
+  session_id: string;
+  name: string;
+  agent: string;
+  duty?: string;
+}
+
+export interface MentionPendingReply {
+  session_id: string;
+  name: string;
+  agent: string;
+  msg_id: string;
+  body_preview: string;
+}
+
+export interface MentionCandidatesResponse {
+  agents: MentionAgent[];
+  outgoing: MentionOutgoing[];
+  pending_replies: MentionPendingReply[];
+}
+
+/**
+ * Fetch @-mention candidates for the chat composer: agents that can be
+ * spawned, sessions reachable via outgoing edges, and senders waiting on a
+ * reply from this chat.
+ */
+export async function getMentionCandidates(
+  projectId: string,
+  taskId: string,
+  chatId: string,
+): Promise<MentionCandidatesResponse> {
+  return apiClient.get<MentionCandidatesResponse>(
+    `/api/v1/projects/${projectId}/tasks/${taskId}/graph/chats/${chatId}/mention-candidates`,
+  );
+}
+
 /**
  * Send a direct user message to a chat node from the graph popup.
  * Mirrors what the chat panel send button does, but routed through a

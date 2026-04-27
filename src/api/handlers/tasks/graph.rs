@@ -5,6 +5,7 @@ use axum::{extract::Path, http::StatusCode, Json};
 use crate::acp;
 use crate::agent_graph::user_ops;
 use crate::api::handlers::common;
+use crate::storage::skills;
 use crate::storage::{agent_graph as graph_db, database, tasks};
 
 use super::types::*;
@@ -427,6 +428,131 @@ pub async fn graph_send_message(
     Ok(StatusCode::NO_CONTENT)
 }
 
+/// GET /api/v1/projects/{id}/tasks/{taskId}/graph/chats/{chat_id}/mention-candidates
+///
+/// Returns three candidate groups for the @-mention dropdown in the chat
+/// composer: agents that can be spawned, sessions reachable via outgoing edges
+/// (can be sent to), and senders currently waiting for a reply from the caller
+/// (can be replied to).
+pub async fn mention_candidates(
+    Path((id, task_id, chat_id)): Path<(String, String, String)>,
+) -> Result<Json<MentionCandidatesResponse>, StatusCode> {
+    let (_project, project_key) = common::find_project_by_id(&id)?;
+
+    let pk = project_key.clone();
+    let tid = task_id.clone();
+    let cid = chat_id.clone();
+
+    let result = tokio::task::spawn_blocking(move || build_mention_candidates(&pk, &tid, &cid))
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    result.map(Json).ok_or(StatusCode::NOT_FOUND)
+}
+
+fn build_mention_candidates(
+    project_key: &str,
+    task_id: &str,
+    chat_id: &str,
+) -> Option<MentionCandidatesResponse> {
+    // Verify caller chat exists and belongs to this task — guards against
+    // cross-task probes that would otherwise return another task's contacts.
+    let chats = tasks::load_chat_sessions(project_key, task_id).ok()?;
+    if !chats.iter().any(|c| c.id == chat_id) {
+        return None;
+    }
+
+    let conn = database::connection();
+    let outgoing_edges = graph_db::outgoing_for_session(&conn, chat_id).ok()?;
+    let pending = graph_db::pending_replies_for(&conn, chat_id).ok()?;
+    drop(conn);
+
+    // Outgoing candidates = every other session in the same task (whether or
+    // not an edge exists). The user's mental model is "any chat in the task
+    // is mentionable"; the spec §6 send template instructs the AI to use
+    // grove_agent_send, which will surface no_edge if missing — that's a
+    // dispatch-time concern, not a discovery-time one. Edge-backed sessions
+    // are listed first so they sort above the rest.
+    let edge_ids: std::collections::HashSet<String> = outgoing_edges
+        .iter()
+        .map(|c| c.to_session_id.clone())
+        .collect();
+
+    let agents = skills::get_all_agents()
+        .into_iter()
+        .filter(|a| a.enabled)
+        .map(|a| MentionAgent {
+            name: a.id.clone(),
+            display_name: a.display_name,
+            icon_id: a.icon_id,
+        })
+        .collect();
+
+    // Build chat lookup tables: id → (name, agent).
+    let chat_meta: std::collections::HashMap<String, (String, String)> = chats
+        .iter()
+        .map(|c| (c.id.clone(), (c.title.clone(), c.agent.clone())))
+        .collect();
+
+    // Edge-backed first (in their existing edge order), then the remaining
+    // same-task sessions (excluding caller and pending-reply senders, since
+    // those already appear under their own group).
+    let pending_ids: std::collections::HashSet<String> =
+        pending.iter().map(|p| p.from_session.clone()).collect();
+
+    let mut outgoing: Vec<MentionOutgoing> = outgoing_edges
+        .into_iter()
+        .map(|c| {
+            let agent = chat_meta
+                .get(&c.to_session_id)
+                .map(|(_, a)| a.clone())
+                .unwrap_or_default();
+            MentionOutgoing {
+                session_id: c.to_session_id,
+                name: c.to_session_name,
+                agent,
+                duty: c.to_session_duty,
+            }
+        })
+        .collect();
+
+    for chat in &chats {
+        if chat.id == chat_id || edge_ids.contains(&chat.id) || pending_ids.contains(&chat.id) {
+            continue;
+        }
+        outgoing.push(MentionOutgoing {
+            session_id: chat.id.clone(),
+            name: chat.title.clone(),
+            agent: chat.agent.clone(),
+            duty: chat.duty.clone(),
+        });
+    }
+
+    let make_excerpt = crate::agent_graph::pending_body_excerpt;
+    let pending_replies = pending
+        .into_iter()
+        .map(|p| {
+            let (name, agent) = chat_meta
+                .get(&p.from_session)
+                .cloned()
+                .unwrap_or_else(|| (p.from_session.clone(), String::new()));
+            MentionPendingReply {
+                session_id: p.from_session,
+                name,
+                agent,
+                msg_id: p.msg_id,
+                body_preview: make_excerpt(&p.body),
+            }
+        })
+        .collect();
+
+    Some(MentionCandidatesResponse {
+        agents,
+        outgoing,
+        pending_replies,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -691,6 +817,187 @@ mod tests {
             let conn = connection();
             graph_db::delete_edge(&conn, edge_id).unwrap();
             assert!(graph_db::get_edge(&conn, edge_id).unwrap().is_none());
+        });
+    }
+
+    #[test]
+    fn mention_candidates_happy() {
+        with_temp_home(|project_id, task_id| {
+            let chat_a = ChatSession {
+                id: "chat-a".to_string(),
+                title: "Caller".to_string(),
+                agent: "claude".to_string(),
+                acp_session_id: None,
+                created_at: chrono::Utc::now(),
+                duty: None,
+            };
+            let chat_b = ChatSession {
+                id: "chat-b".to_string(),
+                title: "Frontend-Tester".to_string(),
+                agent: "codex".to_string(),
+                acp_session_id: None,
+                created_at: chrono::Utc::now(),
+                duty: Some("frontend tests".to_string()),
+            };
+            let chat_c = ChatSession {
+                id: "chat-c".to_string(),
+                title: "Backend-Designer".to_string(),
+                agent: "codex".to_string(),
+                acp_session_id: None,
+                created_at: chrono::Utc::now(),
+                duty: None,
+            };
+            add_chat_session(project_id, task_id, chat_a).unwrap();
+            add_chat_session(project_id, task_id, chat_b).unwrap();
+            add_chat_session(project_id, task_id, chat_c).unwrap();
+
+            // chat-a → chat-b (outgoing edge)
+            user_ops::user_add_edge(task_id, "chat-a", "chat-b", Some("delegate")).unwrap();
+            // chat-c → chat-a edge so chat-c can have an in-flight message
+            // pending caller's reply.
+            user_ops::user_add_edge(task_id, "chat-c", "chat-a", None).unwrap();
+            {
+                let conn = connection();
+                graph_db::insert_pending_message(
+                    &conn,
+                    "msg-789",
+                    task_id,
+                    "chat-c",
+                    "chat-a",
+                    "Need design feedback",
+                )
+                .unwrap();
+            }
+
+            let resp = build_mention_candidates(project_id, task_id, "chat-a").unwrap();
+
+            // outgoing: chat-b
+            assert_eq!(resp.outgoing.len(), 1);
+            assert_eq!(resp.outgoing[0].session_id, "chat-b");
+            assert_eq!(resp.outgoing[0].name, "Frontend-Tester");
+            assert_eq!(resp.outgoing[0].agent, "codex");
+            assert_eq!(resp.outgoing[0].duty.as_deref(), Some("frontend tests"));
+
+            // pending_replies: from chat-c
+            assert_eq!(resp.pending_replies.len(), 1);
+            assert_eq!(resp.pending_replies[0].session_id, "chat-c");
+            assert_eq!(resp.pending_replies[0].name, "Backend-Designer");
+            assert_eq!(resp.pending_replies[0].agent, "codex");
+            assert_eq!(resp.pending_replies[0].msg_id, "msg-789");
+            assert!(resp.pending_replies[0]
+                .body_preview
+                .contains("Need design feedback"));
+
+            // agents list: at least one builtin (claude/codex) is always present
+            assert!(!resp.agents.is_empty());
+        });
+    }
+
+    #[test]
+    fn mention_candidates_includes_edgeless_same_task_sessions() {
+        with_temp_home(|project_id, task_id| {
+            // caller + two siblings, no edges anywhere — siblings should
+            // still surface so the user can @-mention by name.
+            for (id, name, agent) in [
+                ("caller", "Caller", "claude"),
+                ("sib-1", "Sibling One", "codex"),
+                ("sib-2", "Sibling Two", "gemini"),
+            ] {
+                add_chat_session(
+                    project_id,
+                    task_id,
+                    ChatSession {
+                        id: id.to_string(),
+                        title: name.to_string(),
+                        agent: agent.to_string(),
+                        acp_session_id: None,
+                        created_at: chrono::Utc::now(),
+                        duty: None,
+                    },
+                )
+                .unwrap();
+            }
+
+            let resp = build_mention_candidates(project_id, task_id, "caller").unwrap();
+            // Caller excluded; both siblings present with their agent kind.
+            let names: std::collections::HashSet<_> =
+                resp.outgoing.iter().map(|o| o.name.clone()).collect();
+            assert_eq!(names.len(), 2);
+            assert!(names.contains("Sibling One"));
+            assert!(names.contains("Sibling Two"));
+            let by_name: std::collections::HashMap<_, _> = resp
+                .outgoing
+                .iter()
+                .map(|o| (o.name.clone(), o.agent.clone()))
+                .collect();
+            assert_eq!(
+                by_name.get("Sibling One").map(String::as_str),
+                Some("codex")
+            );
+            assert_eq!(
+                by_name.get("Sibling Two").map(String::as_str),
+                Some("gemini")
+            );
+        });
+    }
+
+    #[test]
+    fn mention_candidates_empty_graph() {
+        with_temp_home(|project_id, task_id| {
+            let chat = ChatSession {
+                id: "chat-solo".to_string(),
+                title: "Solo".to_string(),
+                agent: "claude".to_string(),
+                acp_session_id: None,
+                created_at: chrono::Utc::now(),
+                duty: None,
+            };
+            add_chat_session(project_id, task_id, chat).unwrap();
+
+            let resp = build_mention_candidates(project_id, task_id, "chat-solo").unwrap();
+            assert!(resp.outgoing.is_empty());
+            assert!(resp.pending_replies.is_empty());
+            assert!(!resp.agents.is_empty());
+        });
+    }
+
+    #[test]
+    fn mention_candidates_rejects_cross_task_chat() {
+        with_temp_home(|project_id, task_id| {
+            // Add a different task with a chat — querying that chat under
+            // the wrong task_id must return None instead of leaking data.
+            let other_task = Task {
+                id: "task-2".to_string(),
+                name: "Other".to_string(),
+                branch: "feature/other".to_string(),
+                target: "main".to_string(),
+                worktree_path: "/tmp/other".to_string(),
+                created_at: chrono::Utc::now(),
+                updated_at: chrono::Utc::now(),
+                status: TaskStatus::Active,
+                multiplexer: "tmux".to_string(),
+                session_name: String::new(),
+                created_by: "test".to_string(),
+                archived_at: None,
+                code_additions: 0,
+                code_deletions: 0,
+                files_changed: 0,
+                is_local: false,
+            };
+            add_task(project_id, other_task).unwrap();
+
+            let chat_in_other = ChatSession {
+                id: "chat-other".to_string(),
+                title: "Other".to_string(),
+                agent: "claude".to_string(),
+                acp_session_id: None,
+                created_at: chrono::Utc::now(),
+                duty: None,
+            };
+            add_chat_session(project_id, "task-2", chat_in_other).unwrap();
+
+            // Querying chat-other under task_id (not task-2) must return None.
+            assert!(build_mention_candidates(project_id, task_id, "chat-other").is_none());
         });
     }
 

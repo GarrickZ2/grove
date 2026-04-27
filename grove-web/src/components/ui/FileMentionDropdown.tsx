@@ -15,15 +15,27 @@ import {
   FileArchive,
   File,
   Link as LinkIcon,
+  Bot,
 } from "lucide-react";
 import type { FilteredMentionItem, MentionItem } from "../../utils/fileMention";
+import { agentOptions } from "./AgentPicker";
 
 /**
  * Pick an icon for a mention item. Category-intrinsic concepts (Instruction,
  * Memory, Sketch) get a dedicated icon; otherwise we fall back to the file
  * extension so `.md`, `.json`, `.png`, audio, video etc. are visually distinct.
  */
-function iconFor(item: Pick<MentionItem, "category" | "path" | "isDir">) {
+function iconFor(
+  item: Pick<MentionItem, "category" | "path" | "isDir" | "kind" | "agentName">,
+) {
+  // Agent-graph kinds: render the underlying agent's brand icon when known.
+  if (item.kind && item.kind !== "file") {
+    const agent = item.agentName
+      ? agentOptions.find((o) => o.value === item.agentName || o.id === item.agentName)
+      : undefined;
+    if (agent?.icon) return agent.icon;
+    return Bot;
+  }
   if (item.path.toLowerCase().endsWith(".link.json")) return LinkIcon;
   switch (item.category) {
     case "Instruction":
@@ -213,7 +225,12 @@ const MentionRow = memo(function MentionRow({
           : "hover:bg-[var(--color-bg-secondary)]"
       }`}
     >
-      {createElement(iconFor(item), { className: "w-3.5 h-3.5 text-[var(--color-warning)] shrink-0" })}
+      {createElement(iconFor(item), {
+        className:
+          item.kind && item.kind !== "file"
+            ? "w-3.5 h-3.5 shrink-0"
+            : "w-3.5 h-3.5 text-[var(--color-warning)] shrink-0",
+      })}
       {item.category && (
         <span className="shrink-0 rounded-sm border border-[var(--color-border)] bg-[var(--color-bg-secondary)] px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-[var(--color-text-muted)]">
           {item.category}

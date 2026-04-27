@@ -47,8 +47,12 @@ enum ClientMessage {
         config_id: String,
         value_id: String,
     },
-    /// Respond to a permission request
+    /// Respond to a permission request. `id` is the request id (ACP tool_call_id)
+    /// so the server can verify the response targets the live pending tx and not
+    /// a stale dialog the frontend was still rendering from history.
     PermissionResponse {
+        #[serde(default)]
+        id: String,
         option_id: String,
     },
     /// Add a message to the pending queue
@@ -120,10 +124,12 @@ enum ServerMessage {
         locations: Vec<LocationMsg>,
     },
     PermissionRequest {
+        id: String,
         description: String,
         options: Vec<PermOptionMsg>,
     },
     PermissionResponse {
+        id: String,
         option_id: String,
     },
     Complete {
@@ -319,9 +325,11 @@ impl From<AcpUpdate> for ServerMessage {
                     .collect(),
             },
             AcpUpdate::PermissionRequest {
+                id,
                 description,
                 options,
             } => ServerMessage::PermissionRequest {
+                id,
                 description,
                 options: options
                     .into_iter()
@@ -332,8 +340,8 @@ impl From<AcpUpdate> for ServerMessage {
                     })
                     .collect(),
             },
-            AcpUpdate::PermissionResponse { option_id } => {
-                ServerMessage::PermissionResponse { option_id }
+            AcpUpdate::PermissionResponse { id, option_id } => {
+                ServerMessage::PermissionResponse { id, option_id }
             }
             AcpUpdate::Complete { stop_reason } => ServerMessage::Complete { stop_reason },
             AcpUpdate::Busy { value } => ServerMessage::Busy { value },
@@ -552,64 +560,32 @@ async fn handle_acp_ws(socket: WebSocket, session_key: String, config: AcpStartC
         }
     }
 
-    // Sync permission state on reconnect: clear any orphan permission_request in
-    // the persisted history that has no matching response.
+    // Reconcile permission state on every WS connect (both fresh and reattach).
     //
-    // Two独立 cases 都需要兜底：
-    //   1. 后端确实没有 pending（之前就处理过了）—— 历史里却存在未配对的 request
-    //      （比如旧版本的并发 append 竞态导致 response 行损坏，parse 时被丢弃）
-    //   2. 后端 *有* pending，但历史里同样存在更早的、和当前 pending 无关的孤儿
-    //      request（同一个 session 内多次 race 留下的残留）
+    // History 与 backend live state 之间唯一的对账规则：每条 history 中
+    // unresolved 的 PermissionRequest，按 id 与 backend 的 live pending 比对：
+    //   - 同 id → 它就是 live pending 本身，留给前端按 history 渲染并响应；
+    //     前端 GET /history 里那条 PermissionRequest 就是 dialog 的来源。
+    //   - 异 id 或 backend 无 pending → 真孤儿（进程崩、take-control kill、
+    //     旧 session 没人响应就关闭等），通过 emit 落盘 + 广播 Cancelled，
+    //     下次重连就不会再看到。
     //
-    // 处理策略：
-    //   - 如果存在孤儿，且后端 *无* pending —— 既给前端发一次性 synthetic
-    //     Cancelled（让当前 UI 立即关掉对话框），也把 Cancelled 落盘
-    //     （让下一次 reconnect 不会再读到孤儿）。
-    //   - 如果后端 *有* pending —— 仍然只发 WS 那条 synthetic Cancelled
-    //     给前端清 stale UI，但不动磁盘（不能误吞掉真正在等用户的那条）。
+    // 不再发 WS-only synthetic Cancelled —— 所有 cancel 都走 emit，确保多 WS
+    // 视图状态一致。
     if is_existing {
         if let Some(ref chat_id) = history_chat_id {
             let history =
                 chat_history::load_history(&history_project_key, &history_task_id, chat_id);
-            let mut unresolved: usize = 0;
-            for evt in &history {
-                match evt {
-                    AcpUpdate::PermissionRequest { .. } => unresolved += 1,
-                    AcpUpdate::PermissionResponse { .. } if unresolved > 0 => unresolved -= 1,
-                    _ => {}
+            let unresolved_ids = chat_history::unresolved_permission_ids(&history);
+            let live_id = handle.pending_permission_id();
+            for id in unresolved_ids {
+                if Some(&id) == live_id.as_ref() {
+                    continue;
                 }
-            }
-            let backend_pending = handle.has_pending_permission();
-
-            // 给这个新 WS 发 n 条一次性 synthetic Cancelled（不广播、不落盘），
-            // 用来清掉前端 replay 出来的 stale permission dialog。
-            let ws_cancel_count: usize = if unresolved > 0 && !backend_pending {
-                // 有孤儿、后端也不在等 —— 合成 PermissionResponse 走 emit 落盘，
-                // 彻底修掉 history，下次重连就不会再看到这些孤儿。
-                for _ in 0..unresolved {
-                    handle.emit(AcpUpdate::PermissionResponse {
-                        option_id: "Cancelled".to_string(),
-                    });
-                }
-                0
-            } else if unresolved > 0 && backend_pending {
-                // 有孤儿但后端真的在等某个 pending —— 不能合成落盘（会误吞掉
-                // 真 pending 的 tx），只给这个新 WS 发 WS-only Cancelled 清前
-                // 端的 stale dialog；真 pending 会由 agent 的后续行为自然走完。
-                unresolved
-            } else if !backend_pending {
-                // 没孤儿、后端也空闲 —— 兜底发一条，防止前端有 stale UI。
-                1
-            } else {
-                0
-            };
-            for _ in 0..ws_cancel_count {
-                let msg = ServerMessage::PermissionResponse {
+                handle.emit(AcpUpdate::PermissionResponse {
+                    id,
                     option_id: "Cancelled".to_string(),
-                };
-                if let Ok(json) = serde_json::to_string(&msg) {
-                    let _ = ws_sender.send(Message::Text(json.into())).await;
-                }
+                });
             }
         }
     }
@@ -697,8 +673,21 @@ async fn handle_acp_ws(socket: WebSocket, session_key: String, config: AcpStartC
                                     .set_thought_level(config_id, value_id)
                                     .await;
                             }
-                            ClientMessage::PermissionResponse { option_id } => {
-                                if !handle_for_input.respond_permission(option_id) {
+                            ClientMessage::PermissionResponse { id, option_id } => {
+                                // Reject responses targeting a stale dialog —
+                                // when the frontend rendered it from history but
+                                // the live pending has moved on or never matched.
+                                let live_id = handle_for_input.pending_permission_id();
+                                if !id.is_empty()
+                                    && live_id.as_deref() != Some(id.as_str())
+                                {
+                                    handle_for_input.emit(AcpUpdate::Error {
+                                        message: format!(
+                                            "Permission request {} is no longer pending",
+                                            id
+                                        ),
+                                    });
+                                } else if !handle_for_input.respond_permission(option_id) {
                                     handle_for_input.emit(AcpUpdate::Error {
                                         message: "No pending permission request".to_string(),
                                     });

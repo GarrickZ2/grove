@@ -41,6 +41,23 @@ function AppContent() {
   const [tasksMode, setTasksMode] = useState<TasksMode>("zen");
   const [tasksExitSignal, setTasksExitSignal] = useState(0);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  // Auto-collapse sidebar when the viewport is too narrow to host an expanded
+  // sidebar (256px) plus the workspace's minimum content width. Keeps the
+  // chat composer / panel system from being squeezed below their min-widths.
+  // User's explicit collapse preference still takes precedence; we only force
+  // collapse in the auto direction.
+  const [viewportTooNarrowForSidebar, setViewportTooNarrowForSidebar] = useState(false);
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const SIDEBAR_EXPANDED_PX = 256;
+    const CONTENT_MIN_PX = 900;
+    const THRESHOLD = SIDEBAR_EXPANDED_PX + CONTENT_MIN_PX;
+    const update = () => setViewportTooNarrowForSidebar(window.innerWidth < THRESHOLD);
+    update();
+    window.addEventListener("resize", update);
+    return () => window.removeEventListener("resize", update);
+  }, []);
+  const effectiveSidebarCollapsed = sidebarCollapsed || viewportTooNarrowForSidebar;
   const [hasExitedWelcome, setHasExitedWelcome] = useState(false);
   const [navigationData, setNavigationData] = useState<Record<string, unknown> | null>(null);
   const { selectedProject, currentProjectId, isLoading, selectProject, projects, addProject, createNewProject, refreshProjects, refreshSelectedProject } = useProject();
@@ -391,7 +408,7 @@ function AppContent() {
   const sidebarProps = {
     activeItem,
     onItemClick: handleItemClick,
-    collapsed: sidebarCollapsed,
+    collapsed: effectiveSidebarCollapsed,
     onToggleCollapse: () => setSidebarCollapsed(!sidebarCollapsed),
     onManageProjects: (tab?: "coding" | "studio") => handleNavigate("projects", { tab }),
     onAddProject: (studioMode?: "studio") => {

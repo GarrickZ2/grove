@@ -63,7 +63,10 @@ import {
   buildMentionItems,
   buildStudioMentionItems,
   filterMentionItems,
+  buildAgentMentionItems,
 } from "../../../utils/fileMention";
+import type { MentionItem } from "../../../utils/fileMention";
+import { getMentionCandidates } from "../../../api";
 import { useProject } from "../../../context/ProjectContext";
 import { useConfig } from "../../../context/ConfigContext";
 import { usePreviewComments, type PreviewCommentDraft } from "../../../context";
@@ -139,6 +142,8 @@ interface PermOption {
 
 type PermissionMessage = {
   type: "permission";
+  /** Server-assigned id (ACP tool_call_id). Empty for legacy events. */
+  id: string;
   description: string;
   options: PermOption[];
   resolved?: string; // selected option name when resolved
@@ -583,18 +588,37 @@ function resolveLatestPendingPermission(
   messages: ChatMessage[],
   optionId: string,
   fallbackResolvedName: string,
+  /**
+   * Request id (ACP tool_call_id). When present, exactly target the matching
+   * permission so concurrent / out-of-order responses can't accidentally close
+   * an unrelated dialog. Falls back to FIFO matching when empty (legacy
+   * history events without ids).
+   */
+  requestId?: string,
 ): ChatMessage[] {
   let targetIndex = -1;
 
-  for (let i = messages.length - 1; i >= 0; i -= 1) {
-    const message = messages[i];
-    if (message.type !== "permission" || message.resolved) continue;
-    if (message.options.some((option) => option.option_id === optionId)) {
-      targetIndex = i;
-      break;
+  if (requestId) {
+    for (let i = messages.length - 1; i >= 0; i -= 1) {
+      const message = messages[i];
+      if (message.type !== "permission" || message.resolved) continue;
+      if (message.id === requestId) {
+        targetIndex = i;
+        break;
+      }
     }
-    if (targetIndex === -1) {
-      targetIndex = i;
+    if (targetIndex === -1) return messages;
+  } else {
+    for (let i = messages.length - 1; i >= 0; i -= 1) {
+      const message = messages[i];
+      if (message.type !== "permission" || message.resolved) continue;
+      if (message.options.some((option) => option.option_id === optionId)) {
+        targetIndex = i;
+        break;
+      }
+      if (targetIndex === -1) {
+        targetIndex = i;
+      }
     }
   }
 
@@ -729,6 +753,78 @@ function createFileChip(
   return chip;
 }
 
+/**
+ * Create an agent-graph @-mention pill. Three kinds, all rendered as a single
+ * non-editable inline atom. Metadata is stored on dataset attrs and consumed
+ * by `getPromptFromEditable` at send time to expand into the spec §6 template
+ * string.
+ */
+function createAgentMentionChip(item: MentionItem): HTMLSpanElement {
+  const chip = document.createElement("span");
+  chip.contentEditable = "false";
+  chip.dataset.mentionKind = item.kind ?? "file";
+  // Per-kind metadata; absent fields are simply not serialized.
+  if (item.sessionId) chip.dataset.sessionId = item.sessionId;
+  if (item.msgId) chip.dataset.msgId = item.msgId;
+  if (item.duty != null) chip.dataset.duty = item.duty;
+  if (item.agentName) chip.dataset.agentName = item.agentName;
+  if (item.displayName) chip.dataset.displayName = item.displayName;
+
+  const isPending = item.kind === "agent_reply";
+  const accent = isPending
+    ? "var(--color-error, #ef4444)"
+    : "var(--color-accent, var(--color-highlight))";
+  chip.style.cssText =
+    "display:inline-flex;align-items:center;gap:4px;padding:1px 6px;border-radius:4px;" +
+    `background:color-mix(in srgb,${accent} 15%,transparent);` +
+    `border:1px solid color-mix(in srgb,${accent} 35%,transparent);` +
+    `font-size:12px;font-weight:500;color:${accent};` +
+    "margin:0 2px;user-select:none;vertical-align:baseline;line-height:1.5;";
+  if (item.kind === "agent_send" && item.duty) {
+    chip.title = `${item.displayName ?? ""} — ${item.duty}`;
+  }
+
+  const label = document.createElement("span");
+  const name = item.displayName ?? item.agentName ?? "";
+  label.textContent = isPending ? `@${name} ⚠` : `@${name}`;
+  chip.appendChild(label);
+
+  const closeBtn = document.createElement("span");
+  closeBtn.dataset.chipClose = "true";
+  closeBtn.textContent = "×";
+  closeBtn.style.cssText =
+    "margin-left:2px;cursor:pointer;opacity:0.6;font-size:13px;line-height:1;";
+  chip.appendChild(closeBtn);
+
+  return chip;
+}
+
+/**
+ * Expand an agent-graph @-mention chip into the spec §6 template string. The
+ * resulting text is what the AI receiving the prompt sees — Grove never calls
+ * the underlying `grove_agent_*` tools itself; the AI decides whether to.
+ */
+function expandAgentMentionChip(node: HTMLElement): string {
+  const kind = node.dataset.mentionKind;
+  if (kind === "agent_spawn") {
+    const agent = node.dataset.agentName ?? node.dataset.displayName ?? "";
+    return `@[agent=${agent} · use grove_agent_spawn to create a Session, then grove_agent_send to dispatch]`;
+  }
+  if (kind === "agent_send") {
+    const id = node.dataset.sessionId ?? "";
+    const name = node.dataset.displayName ?? "";
+    const duty = node.dataset.duty ?? "";
+    return `@[session id=${id}, name=${name}, duty="${duty}" · use grove_agent_send(to="${id}") to dispatch]`;
+  }
+  if (kind === "agent_reply") {
+    const id = node.dataset.sessionId ?? "";
+    const name = node.dataset.displayName ?? "";
+    const msg = node.dataset.msgId ?? "";
+    return `@[session id=${id}, name=${name}, pending_msg=${msg} · use grove_agent_reply(msg_id="${msg}") to respond]`;
+  }
+  return "";
+}
+
 /** Extract prompt text from a contentEditable element, converting chips to /command */
 function getPromptFromEditable(el: HTMLElement): string {
   const parts: string[] = [];
@@ -736,7 +832,9 @@ function getPromptFromEditable(el: HTMLElement): string {
     if (node.nodeType === Node.TEXT_NODE) {
       parts.push(node.textContent || "");
     } else if (node instanceof HTMLElement) {
-      if (node.dataset.command) {
+      if (node.dataset.mentionKind && node.dataset.mentionKind !== "file") {
+        parts.push(expandAgentMentionChip(node));
+      } else if (node.dataset.command) {
         parts.push(`/${node.dataset.command}`);
       } else if (node.dataset.ref) {
         parts.push(`[${node.dataset.ref}]`);
@@ -883,6 +981,7 @@ function reduceHistoryMessages(
         ...messages,
         {
           type: "permission",
+          id: typeof msg.id === "string" ? msg.id : "",
           description: msg.description,
           options: msg.options ?? [],
         },
@@ -892,6 +991,7 @@ function reduceHistoryMessages(
         messages,
         msg.option_id,
         msg.option_id,
+        typeof msg.id === "string" ? msg.id : undefined,
       );
     case "complete": {
       const completed = completeThinking(messages);
@@ -1139,6 +1239,9 @@ export function TaskChat({
   const [fileFilter, setFileFilter] = useState("");
   const [fileSelectedIdx, setFileSelectedIdx] = useState(0);
   const fileMenuRef = useRef<HTMLDivElement>(null);
+  // Agent-graph @-mention candidates (spawn / send / reply). Cohabits the
+  // same `@` popover as file mentions — see `combinedMentionItems`.
+  const [agentMentionItems, setAgentMentionItems] = useState<MentionItem[]>([]);
   const [promptCaps, setPromptCaps] = useState<PromptCaps>({
     image: false,
     audio: false,
@@ -1163,6 +1266,12 @@ export function TaskChat({
   const inputAreaRef = useRef<HTMLDivElement>(null);
   const chatboxContainerRef = useRef<HTMLDivElement>(null);
   const taskChatRootRef = useRef<HTMLDivElement>(null);
+  // Composer width budget — when the chat panel is squeezed (e.g. opened
+  // alongside a Graph / Editor split), drop the Model / Mode / Thinking
+  // dropdowns so the Send button doesn't get clipped. Threshold is the
+  // narrowest width at which all three pills + send still fit comfortably.
+  const COMPOSER_OPTIONS_MIN_WIDTH = 420;
+  const [composerNarrow, setComposerNarrow] = useState(false);
 
   // ─── Read-only observation mode state ──────────────────────────────────
   const [isRemoteSession, setIsRemoteSession] = useState(false);
@@ -1288,13 +1397,21 @@ export function TaskChat({
     [isStudioProject, taskFiles, sketchMeta],
   );
 
+  // Combined `@` mention list — agent-graph candidates first (more salient
+  // for inter-session work), then files. Single dropdown, single fuzzy
+  // filter, three+ groups via `category`.
+  const combinedMentionItems = useMemo(
+    () => [...agentMentionItems, ...mentionItems],
+    [agentMentionItems, mentionItems],
+  );
+
   // Filtered files based on @ input. Defer the filter string so the fuzzy
   // match (O(n) over potentially thousands of files) runs at low priority and
   // doesn't block typing.
   const deferredFileFilter = useDeferredValue(fileFilter);
   const filteredFiles = useMemo(
-    () => filterMentionItems(mentionItems, deferredFileFilter),
-    [mentionItems, deferredFileFilter],
+    () => filterMentionItems(combinedMentionItems, deferredFileFilter),
+    [combinedMentionItems, deferredFileFilter],
   );
 
   // Check ACP agent availability on mount
@@ -1430,6 +1547,43 @@ export function TaskChat({
     refreshTaskFilesIfNeeded();
   }, [projectId, task.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Refresh agent-graph @-mention candidates whenever the active chat changes
+  // or the user opens the popover. Spawn candidates come from `acpAgentOptions`
+  // (same source as the "+" new-chat picker) so icons line up; send / reply
+  // candidates come from the backend's contacts view of the caller chat.
+  const refreshAgentMentionCandidates = useCallback(() => {
+    if (!activeChatId) {
+      setAgentMentionItems([]);
+      return;
+    }
+    const spawnAgents = acpAgentOptions
+      .filter((o) => !o.disabled)
+      .map((o) => ({ value: o.value, label: o.label }));
+    getMentionCandidates(projectId, task.id, activeChatId)
+      .then((resp) => {
+        setAgentMentionItems(
+          buildAgentMentionItems({
+            spawnAgents,
+            outgoing: resp.outgoing,
+            pending_replies: resp.pending_replies,
+          }),
+        );
+      })
+      .catch(() => {
+        setAgentMentionItems(
+          buildAgentMentionItems({
+            spawnAgents,
+            outgoing: [],
+            pending_replies: [],
+          }),
+        );
+      });
+  }, [projectId, task.id, activeChatId, acpAgentOptions]);
+
+  useEffect(() => {
+    refreshAgentMentionCandidates();
+  }, [refreshAgentMentionCandidates]);
+
   // Studio: also load sketches so @ mentions can surface sketch names
   useEffect(() => {
     if (!isStudioProject) {
@@ -1457,6 +1611,20 @@ export function TaskChat({
     applyPadding();
     return () => ro.disconnect();
   }, [activeChatId]);
+
+  // Watch the chatbox container width — flip to narrow mode when the
+  // composer can't comfortably fit the Model / Mode / Thinking dropdowns
+  // alongside the input + Send button.
+  useEffect(() => {
+    const el = chatboxContainerRef.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(() => {
+      const w = el.getBoundingClientRect().width;
+      setComposerNarrow(w > 0 && w < COMPOSER_OPTIONS_MIN_WIDTH);
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
 
   const scrollMessagesToBottom = useCallback(
     (behavior: ScrollBehavior = "smooth") => {
@@ -3131,13 +3299,22 @@ export function TaskChat({
     setEditingPendingValue("");
   }, []);
 
-  /** Respond to a permission request */
-  const handlePermissionResponse = useCallback((optionId: string) => {
-    if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
-    wsRef.current.send(
-      JSON.stringify({ type: "permission_response", option_id: optionId }),
-    );
-  }, []);
+  /** Respond to a permission request. `requestId` correlates with the server's
+   * live pending permission so a stale dialog (rendered from history but
+   * already cancelled by reconcile) can't be silently accepted. */
+  const handlePermissionResponse = useCallback(
+    (optionId: string, requestId: string) => {
+      if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
+      wsRef.current.send(
+        JSON.stringify({
+          type: "permission_response",
+          id: requestId,
+          option_id: optionId,
+        }),
+      );
+    },
+    [],
+  );
 
   /** Detect /slash or @file at cursor position in contentEditable */
   const handleInput = useCallback(() => {
@@ -3243,8 +3420,9 @@ export function TaskChat({
       }
       if (/\s/.test(text[i])) break;
     }
-    if (atIdx >= 0 && taskFiles.length > 0) {
+    if (atIdx >= 0 && (taskFiles.length > 0 || agentMentionItems.length > 0)) {
       refreshTaskFilesIfNeeded();
+      refreshAgentMentionCandidates();
       setFileFilter(text.slice(atIdx + 1, offset));
       setShowFileMenu(true);
       setFileSelectedIdx(0);
@@ -3264,7 +3442,9 @@ export function TaskChat({
     isBusy,
     slashCommands.length,
     taskFiles.length,
+    agentMentionItems.length,
     refreshTaskFilesIfNeeded,
+    refreshAgentMentionCandidates,
   ]);
 
   /** Insert a command chip at the current cursor position, replacing the /partial text */
@@ -3313,7 +3493,14 @@ export function TaskChat({
     [checkContent],
   );
 
-  /** Insert a file chip at the current cursor position, replacing the @partial text */
+  /**
+   * Insert a chip at the cursor position, replacing the `@partial` text.
+   * Routes to the appropriate chip kind:
+   *   - file mentions → file chip (existing path/displayName/category)
+   *   - agent_spawn / agent_send / agent_reply → agent-graph mention chip
+   * Lookups by `(path, category)` are unique within `filteredFiles` because
+   * agent-graph items use synthetic path keys.
+   */
   const insertFileAtCursor = useCallback(
     (filePath: string, isDir?: boolean, displayLabel?: string, category?: string) => {
       const el = editableRef.current;
@@ -3339,7 +3526,15 @@ export function TaskChat({
       const after = text.slice(offset);
       const parent = node.parentNode;
       if (!parent) return;
-      const chip = createFileChip(filePath, isDir, displayLabel, category);
+
+      const matched = filteredFiles.find(
+        (f) => f.path === filePath && (f.category ?? "") === (category ?? ""),
+      );
+      const chip =
+        matched && matched.kind && matched.kind !== "file"
+          ? createAgentMentionChip(matched)
+          : createFileChip(filePath, isDir, displayLabel, category);
+
       const frag = document.createDocumentFragment();
       if (before) frag.appendChild(document.createTextNode(before));
       frag.appendChild(chip);
@@ -3354,7 +3549,7 @@ export function TaskChat({
       setShowFileMenu(false);
       checkContent();
     },
-    [checkContent],
+    [checkContent, filteredFiles],
   );
 
   /** Delegated click handler for chip close buttons */
@@ -3363,7 +3558,7 @@ export function TaskChat({
       const target = e.target as HTMLElement;
       if (target.dataset.chipClose || target.closest("[data-chip-close]")) {
         e.preventDefault();
-        const chip = target.closest("[data-command],[data-file]");
+        const chip = target.closest("[data-command],[data-file],[data-mention-kind]");
         if (chip) {
           chip.remove();
           checkContent();
@@ -3457,7 +3652,9 @@ export function TaskChat({
           const offset = sel.anchorOffset;
           const isChipEl = (n: Node): n is HTMLElement =>
             n instanceof HTMLElement &&
-            (n.dataset.command !== undefined || n.dataset.file !== undefined);
+            (n.dataset.command !== undefined ||
+              n.dataset.file !== undefined ||
+              n.dataset.mentionKind !== undefined);
 
           // Case A: Cursor at start of text node — chip is previous sibling → delete chip
           if (anchor.nodeType === Node.TEXT_NODE && offset === 0) {
@@ -4449,7 +4646,10 @@ export function TaskChat({
                                 <button
                                   key={opt.option_id}
                                   onClick={() =>
-                                    handlePermissionResponse(opt.option_id)
+                                    handlePermissionResponse(
+                                      opt.option_id,
+                                      activePermissionMessage.id,
+                                    )
                                   }
                                   className="flex w-full items-center justify-between rounded-xl border border-[color-mix(in_srgb,var(--color-warning)_18%,transparent)] bg-[color-mix(in_srgb,var(--color-warning)_7%,transparent)] px-3 py-2.5 text-left transition-colors hover:bg-[color-mix(in_srgb,var(--color-warning)_12%,transparent)]"
                                 >
@@ -4909,7 +5109,7 @@ export function TaskChat({
                     </span>
                   </div>
                   <div className="chatbox-footer-right flex items-center gap-2 shrink-0 select-none">
-                    {modelOptions.length > 0 && (
+                    {!composerNarrow && modelOptions.length > 0 && (
                       <DropdownSelect
                         ref={modelMenuRef}
                         label="Model"
@@ -4935,7 +5135,7 @@ export function TaskChat({
                         }}
                       />
                     )}
-                    {modeOptions.length > 0 && (
+                    {!composerNarrow && modeOptions.length > 0 && (
                       <DropdownSelect
                         ref={permMenuRef}
                         label="Mode"
@@ -4958,7 +5158,7 @@ export function TaskChat({
                         }}
                       />
                     )}
-                    {thoughtLevelOptions.length > 0 && thoughtLevelConfigId && (
+                    {!composerNarrow && thoughtLevelOptions.length > 0 && thoughtLevelConfigId && (
                       <DropdownSelect
                         ref={thoughtLevelMenuRef}
                         label="Thinking"
@@ -5266,7 +5466,7 @@ const MessageItem = memo(function MessageItem({
   taskId: string;
   isStudio: boolean;
   onToggleThinkingCollapse: (index: number) => void;
-  onPermissionResponse?: (optionId: string) => void;
+  onPermissionResponse?: (optionId: string, requestId: string) => void;
   onFileClick?: (filePath: string, line?: number) => void;
   onImageClick?: (url: string) => void;
   onMermaidClick?: (svg: string) => void;
@@ -5530,7 +5730,7 @@ function PermissionCard({
   onRespond,
 }: {
   message: PermissionMessage;
-  onRespond?: (optionId: string) => void;
+  onRespond?: (optionId: string, requestId: string) => void;
 }) {
   const isResolved = !!message.resolved;
   const isCancelled =
@@ -5600,7 +5800,7 @@ function PermissionCard({
           {allowOptions.map((opt) => (
             <button
               key={opt.option_id}
-              onClick={() => onRespond?.(opt.option_id)}
+              onClick={() => onRespond?.(opt.option_id, message.id)}
               className="px-3 py-1 rounded-md text-xs font-medium transition-colors bg-[var(--color-success)] text-white hover:opacity-80"
               style={{
                 backgroundColor:
@@ -5613,7 +5813,7 @@ function PermissionCard({
           {rejectOptions.map((opt) => (
             <button
               key={opt.option_id}
-              onClick={() => onRespond?.(opt.option_id)}
+              onClick={() => onRespond?.(opt.option_id, message.id)}
               className="px-3 py-1 rounded-md text-xs font-medium transition-colors border border-[var(--color-border)] text-[var(--color-text-muted)] hover:bg-[var(--color-bg)] hover:text-[var(--color-error)]"
             >
               {opt.name}
