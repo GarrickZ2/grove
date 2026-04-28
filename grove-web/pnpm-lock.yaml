@@ -23,6 +23,9 @@ importers:
       '@xterm/xterm':
         specifier: ^6.0.0
         version: 6.0.0
+      d3-force:
+        specifier: ^3.0.0
+        version: 3.0.0
       flexlayout-react:
         specifier: ^0.8.18
         version: 0.8.18(react-dom@19.2.4(react@19.2.4))(react@19.2.4)
@@ -63,6 +66,9 @@ importers:
       '@tailwindcss/vite':
         specifier: ^4.1.18
         version: 4.1.18(vite@7.3.1(@types/node@24.10.11)(jiti@2.6.1)(lightningcss@1.30.2))
+      '@types/d3-force':
+        specifier: ^3.0.10
+        version: 3.0.10
       '@types/node':
         specifier: ^24.10.1
         version: 24.10.11
