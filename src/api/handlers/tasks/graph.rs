@@ -14,11 +14,11 @@ fn build_graph_response(project_key: &str, task_id: &str) -> Option<GraphRespons
     let chats = tasks::load_chat_sessions(project_key, task_id).ok()?;
     let edges = {
         let conn = database::connection();
-        graph_db::list_edges_for_task(&conn, task_id).ok()?
+        graph_db::list_edges_for_task(&conn, project_key, task_id).ok()?
     };
     let pending_messages = {
         let conn = database::connection();
-        graph_db::list_pending_for_task(&conn, task_id).ok()?
+        graph_db::list_pending_for_task(&conn, project_key, task_id).ok()?
     };
     let pending_pairs: std::collections::HashSet<(String, String)> = pending_messages
         .iter()
@@ -242,45 +242,64 @@ pub async fn graph_add_edge(
     let (_project, project_key) = common::find_project_by_id(&id)
         .map_err(|_| graph_error("target_not_found", "Project not found"))?;
 
+    // H4: 先 add_edge (含 cycle / duplicate / same_task / endpoint 校验)，
+    // 校验通过再写 duty。否则 edge 失败时 duty 已被锁住、edge 不存在，
+    // 用户该 chat 的 duty 永久无法再设。
+    let edge_id = user_ops::user_add_edge(
+        &project_key,
+        &task_id,
+        &body.from,
+        &body.to,
+        body.purpose.as_deref(),
+    )
+    .map_err(|e| {
+        let code = if e.contains("cycle") {
+            "cycle_would_form"
+        } else if e.contains("bidirectional") {
+            "bidirectional_edge"
+        } else if e.contains("duplicate") {
+            "duplicate_edge"
+        } else if e.contains("same_task") {
+            "same_task_required"
+        } else if e.contains("not_found") {
+            "target_not_found"
+        } else {
+            "internal_error"
+        };
+        graph_error(code, &e)
+    })?;
+
     if let Some(ref d) = body.duty {
-        let sessions = tasks::load_chat_sessions(&project_key, &task_id)
-            .map_err(|_| graph_error("internal_error", "Failed to load sessions"))?;
+        let sessions = tasks::load_chat_sessions(&project_key, &task_id).map_err(|_| {
+            // edge 已建，duty 还没尝试 — 这里失败也得回滚 edge
+            let conn = crate::storage::database::connection();
+            let _ = crate::storage::agent_graph::delete_edge(&conn, edge_id);
+            graph_error("internal_error", "Failed to load sessions")
+        })?;
         if let Some(target) = sessions.iter().find(|s| s.id == body.to) {
             if target.duty.is_none() {
-                tasks::update_chat_duty(&project_key, &task_id, &body.to, Some(d.clone()))
-                    .map_err(|e| {
-                        let s = e.to_string();
-                        if s.contains("locked") {
-                            graph_error("duty_forbidden", "Duty is locked")
-                        } else {
-                            graph_error("internal_error", &s)
-                        }
-                    })?;
+                let duty_res = tasks::update_chat_duty(
+                    &project_key,
+                    &task_id,
+                    &body.to,
+                    Some(d.clone()),
+                    true, // 用户路径
+                );
+                if let Err(e) = duty_res {
+                    // M-N3: duty 失败时 best-effort 回滚 edge，避免客户端重试
+                    // 撞 duplicate_edge 又得手动清理。
+                    let conn = crate::storage::database::connection();
+                    let _ = crate::storage::agent_graph::delete_edge(&conn, edge_id);
+                    return Err(match e.storage_tag() {
+                        Some("duty_locked") => graph_error("duty_forbidden", "Duty is locked"),
+                        _ => graph_error("internal_error", &e.to_string()),
+                    });
+                }
             }
         }
     }
 
-    let result = user_ops::user_add_edge(&task_id, &body.from, &body.to, body.purpose.as_deref());
-
-    match result {
-        Ok(edge_id) => Ok(Json(serde_json::json!({ "edge_id": edge_id }))),
-        Err(e) => {
-            let code = if e.contains("cycle") {
-                "cycle_would_form"
-            } else if e.contains("bidirectional") {
-                "bidirectional_edge"
-            } else if e.contains("duplicate") {
-                "duplicate_edge"
-            } else if e.contains("same_task") {
-                "same_task_required"
-            } else if e.contains("not_found") {
-                "target_not_found"
-            } else {
-                "internal_error"
-            };
-            Err(graph_error(code, &e))
-        }
-    }
+    Ok(Json(serde_json::json!({ "edge_id": edge_id })))
 }
 
 /// PATCH /api/v1/projects/{id}/tasks/{taskId}/graph/edges/{edge_id}
@@ -291,14 +310,14 @@ pub async fn graph_update_edge(
     let edge_id: i64 = edge_id_str
         .parse()
         .map_err(|_| graph_error("bad_request", "edge_id must be a number"))?;
-    let (_project, _project_key) = common::find_project_by_id(&id)
+    let (_project, project_key) = common::find_project_by_id(&id)
         .map_err(|_| graph_error("target_not_found", "Project not found"))?;
 
     let conn = database::connection();
     let edge = graph_db::get_edge(&conn, edge_id)
         .map_err(|_| graph_error("internal_error", "DB error"))?;
     match edge {
-        Some(e) if e.task_id == task_id => {
+        Some(e) if e.task_id == task_id && e.project == project_key => {
             graph_db::update_edge_purpose(&conn, edge_id, body.purpose.as_deref())
                 .map_err(|_| graph_error("internal_error", "DB error"))?;
             Ok(StatusCode::NO_CONTENT)
@@ -318,14 +337,14 @@ pub async fn graph_delete_edge(
     let edge_id: i64 = edge_id_str
         .parse()
         .map_err(|_| graph_error("bad_request", "edge_id must be a number"))?;
-    let (_project, _project_key) = common::find_project_by_id(&id)
+    let (_project, project_key) = common::find_project_by_id(&id)
         .map_err(|_| graph_error("target_not_found", "Project not found"))?;
 
     let conn = database::connection();
     let edge = graph_db::get_edge(&conn, edge_id)
         .map_err(|_| graph_error("internal_error", "DB error"))?;
     match edge {
-        Some(e) if e.task_id == task_id => {
+        Some(e) if e.task_id == task_id && e.project == project_key => {
             graph_db::delete_edge(&conn, edge_id)
                 .map_err(|_| graph_error("internal_error", "DB error"))?;
             Ok(StatusCode::NO_CONTENT)
@@ -383,14 +402,14 @@ pub async fn graph_update_duty(
     let (_project, project_key) = common::find_project_by_id(&id)
         .map_err(|_| graph_error("target_not_found", "Project not found"))?;
 
-    tasks::update_chat_duty(&project_key, &task_id, &chat_id, body.duty.clone()).map_err(|e| {
-        let s = e.to_string();
-        if s.contains("locked") {
-            graph_error("duty_forbidden", "Duty is locked")
-        } else {
-            graph_error("internal_error", &s)
-        }
-    })?;
+    // M9: 用户编辑路径，传 force=true 跳过 duty lock 检查（lock 仅约束 AI）。
+    tasks::update_chat_duty(&project_key, &task_id, &chat_id, body.duty.clone(), true).map_err(
+        |e| match e.storage_tag() {
+            Some("duty_locked") => graph_error("duty_forbidden", "Duty is locked"),
+            Some("chat_not_found") => graph_error("target_not_found", "Chat not found"),
+            _ => graph_error("internal_error", &e.to_string()),
+        },
+    )?;
 
     Ok(StatusCode::NO_CONTENT)
 }
@@ -410,6 +429,13 @@ pub async fn graph_send_message(
     let text = body.text.trim();
     if text.is_empty() {
         return Err(graph_error("bad_request", "text must not be empty"));
+    }
+
+    let exists = tasks::get_chat_session(&project_key, &task_id, &chat_id)
+        .map_err(|e| graph_error("internal_error", &e.to_string()))?
+        .is_some();
+    if !exists {
+        return Err(graph_error("target_not_found", "Chat not found"));
     }
 
     user_ops::user_send_message(&project_key, &task_id, &chat_id, text)
@@ -659,8 +685,15 @@ mod tests {
 
             let edge_id = {
                 let conn = connection();
-                let eid = graph_db::add_edge(&conn, task_id, "chat-1", "chat-2", Some("delegate"))
-                    .unwrap();
+                let eid = graph_db::add_edge(
+                    &conn,
+                    project_id,
+                    task_id,
+                    "chat-1",
+                    "chat-2",
+                    Some("delegate"),
+                )
+                .unwrap();
                 graph_db::insert_pending_message(
                     &conn,
                     "msg-1",
@@ -704,7 +737,7 @@ mod tests {
 
     #[test]
     fn add_edge_happy() {
-        with_temp_home(|_project_id, task_id| {
+        with_temp_home(|project_id, task_id| {
             let chat1 = ChatSession {
                 id: "chat-a".to_string(),
                 title: "Chat A".to_string(),
@@ -724,7 +757,8 @@ mod tests {
             add_chat_session("proj-1", task_id, chat1).unwrap();
             add_chat_session("proj-1", task_id, chat2).unwrap();
 
-            let result = user_ops::user_add_edge(task_id, "chat-a", "chat-b", Some("delegate"));
+            let result =
+                user_ops::user_add_edge(project_id, task_id, "chat-a", "chat-b", Some("delegate"));
             assert!(result.is_ok(), "add_edge should succeed: {:?}", result);
             let edge_id = result.unwrap();
             assert!(edge_id > 0);
@@ -733,7 +767,7 @@ mod tests {
 
     #[test]
     fn add_edge_rejects_cycle() {
-        with_temp_home(|_project_id, task_id| {
+        with_temp_home(|project_id, task_id| {
             for (id, name) in [("a", "A"), ("b", "B"), ("c", "C")] {
                 let chat = ChatSession {
                     id: id.to_string(),
@@ -746,10 +780,10 @@ mod tests {
                 add_chat_session("proj-1", task_id, chat).unwrap();
             }
 
-            user_ops::user_add_edge(task_id, "a", "b", None).unwrap();
-            user_ops::user_add_edge(task_id, "b", "c", None).unwrap();
+            user_ops::user_add_edge(project_id, task_id, "a", "b", None).unwrap();
+            user_ops::user_add_edge(project_id, task_id, "b", "c", None).unwrap();
 
-            let err = user_ops::user_add_edge(task_id, "c", "a", None).unwrap_err();
+            let err = user_ops::user_add_edge(project_id, task_id, "c", "a", None).unwrap_err();
             assert!(
                 err.contains("cycle_would_form"),
                 "expected cycle error, got: {}",
@@ -760,7 +794,7 @@ mod tests {
 
     #[test]
     fn update_edge_purpose_happy() {
-        with_temp_home(|_project_id, task_id| {
+        with_temp_home(|project_id, task_id| {
             let chat1 = ChatSession {
                 id: "chat-x".to_string(),
                 title: "X".to_string(),
@@ -781,7 +815,8 @@ mod tests {
             add_chat_session("proj-1", task_id, chat2).unwrap();
 
             let edge_id =
-                user_ops::user_add_edge(task_id, "chat-x", "chat-y", Some("initial")).unwrap();
+                user_ops::user_add_edge(project_id, task_id, "chat-x", "chat-y", Some("initial"))
+                    .unwrap();
 
             let conn = connection();
             graph_db::update_edge_purpose(&conn, edge_id, Some("updated")).unwrap();
@@ -792,7 +827,7 @@ mod tests {
 
     #[test]
     fn delete_edge_happy() {
-        with_temp_home(|_project_id, task_id| {
+        with_temp_home(|project_id, task_id| {
             let chat1 = ChatSession {
                 id: "chat-d1".to_string(),
                 title: "D1".to_string(),
@@ -812,7 +847,8 @@ mod tests {
             add_chat_session("proj-1", task_id, chat1).unwrap();
             add_chat_session("proj-1", task_id, chat2).unwrap();
 
-            let edge_id = user_ops::user_add_edge(task_id, "chat-d1", "chat-d2", None).unwrap();
+            let edge_id =
+                user_ops::user_add_edge(project_id, task_id, "chat-d1", "chat-d2", None).unwrap();
 
             let conn = connection();
             graph_db::delete_edge(&conn, edge_id).unwrap();
@@ -852,10 +888,11 @@ mod tests {
             add_chat_session(project_id, task_id, chat_c).unwrap();
 
             // chat-a → chat-b (outgoing edge)
-            user_ops::user_add_edge(task_id, "chat-a", "chat-b", Some("delegate")).unwrap();
+            user_ops::user_add_edge(project_id, task_id, "chat-a", "chat-b", Some("delegate"))
+                .unwrap();
             // chat-c → chat-a edge so chat-c can have an in-flight message
             // pending caller's reply.
-            user_ops::user_add_edge(task_id, "chat-c", "chat-a", None).unwrap();
+            user_ops::user_add_edge(project_id, task_id, "chat-c", "chat-a", None).unwrap();
             {
                 let conn = connection();
                 graph_db::insert_pending_message(

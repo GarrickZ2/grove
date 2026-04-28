@@ -33,6 +33,16 @@ export function useDomSearch(
   const marksRef = useRef<HTMLElement[]>([]);
   const supportsHighlight = typeof CSS !== "undefined" && "highlights" in CSS;
 
+  useEffect(() => {
+    if (!supportsHighlight || document.getElementById("grove-search-highlight-style")) return;
+    const style = document.createElement("style");
+    style.id = "grove-search-highlight-style";
+    style.textContent =
+      "::highlight(grove-search){background-color:color-mix(in srgb, var(--color-warning) 55%, transparent);color:inherit;}" +
+      "::highlight(grove-search-current){background-color:color-mix(in srgb, var(--color-warning) 90%, transparent);color:#1a1a1a;}";
+    document.head.appendChild(style);
+  }, [supportsHighlight]);
+
   const clearHighlights = useCallback(() => {
     if (supportsHighlight) {
       try {

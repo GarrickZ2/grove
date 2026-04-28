@@ -84,7 +84,7 @@ pub async fn create(Json(body): Json<CustomAgentInput>) -> impl IntoResponse {
     validate_base(&body.base_agent)?;
     match custom_agent::create(body) {
         Ok(item) => Ok((StatusCode::CREATED, Json(CustomAgentDto::from(item)))),
-        Err(e) => Err((StatusCode::INTERNAL_SERVER_ERROR, e.to_string())),
+        Err(e) => Err(map_persona_error(&e)),
     }
 }
 
@@ -136,7 +136,16 @@ pub async fn update(
             StatusCode::NOT_FOUND,
             format!("custom agent '{}' not found", id),
         )),
-        Err(e) => Err((StatusCode::INTERNAL_SERVER_ERROR, e.to_string())),
+        Err(e) => Err(map_persona_error(&e)),
+    }
+}
+
+/// 把 storage 层抛的 tagged error 映射到合适的 HTTP code，避免把"用户输入
+/// 不存在的 base_agent"这种 4xx 当成 500 报。
+fn map_persona_error(e: &crate::error::GroveError) -> (StatusCode, String) {
+    match e.storage_tag() {
+        Some("unknown_base_agent") => (StatusCode::BAD_REQUEST, e.to_string()),
+        _ => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
     }
 }
 

@@ -387,16 +387,7 @@ body.blitz-command-pressed .blitz-shortcut {
   box-shadow: none !important;
 }
 
-/* Preview search highlights — uses CSS Custom Highlight API where supported,
-   otherwise falls back to <mark data-grove-search-mark> elements. */
-::highlight(grove-search) {
-  background-color: color-mix(in srgb, var(--color-warning) 55%, transparent);
-  color: inherit;
-}
-::highlight(grove-search-current) {
-  background-color: color-mix(in srgb, var(--color-warning) 90%, transparent);
-  color: #1a1a1a;
-}
+/* Preview search fallback for browsers without the CSS Custom Highlight API. */
 mark[data-grove-search-mark] {
   background-color: color-mix(in srgb, var(--color-warning) 55%, transparent);
   color: inherit;

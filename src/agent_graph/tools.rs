@@ -18,6 +18,8 @@ use crate::storage::{agent_graph as graph_db, database, tasks, workspace};
 
 pub type AgentGraphResult<T> = Result<T, AgentGraphError>;
 
+pub(crate) const ACP_SESSION_READY_TIMEOUT: Duration = Duration::from_secs(90);
+
 /// caller 视角的工具上下文。每次 HTTP MCP `tools/call` 解析 token 后构造一份。
 #[derive(Debug, Clone)]
 pub struct ToolContext {
@@ -75,6 +77,7 @@ pub async fn grove_agent_send(cx: &ToolContext, input: SendInput) -> AgentGraphR
     }
 
     // duty 三态
+    let mut duty_set_by_this_call = false;
     match (&target_chat.duty, &input.duty) {
         (Some(_), Some(_)) => return Err(AgentGraphError::DutyForbidden),
         (None, None) => return Err(AgentGraphError::DutyRequired),
@@ -84,8 +87,10 @@ pub async fn grove_agent_send(cx: &ToolContext, input: SendInput) -> AgentGraphR
                 &target_task,
                 &target_chat.id,
                 Some(new_duty.clone()),
+                false,
             )
             .map_err(AgentGraphError::from)?;
+            duty_set_by_this_call = true;
         }
         (Some(_), None) => {
             // 目标已有 duty，且本次没传，正常路径
@@ -141,6 +146,12 @@ pub async fn grove_agent_send(cx: &ToolContext, input: SendInput) -> AgentGraphR
         {
             let conn = database::connection();
             let _ = graph_db::delete_pending_message(&conn, &msg_id);
+        }
+        // M6: 如果 duty 是本次调用刚设上的，delivery 失败时把它一起回滚，
+        // 否则下次重试会撞 DutyForbidden。
+        if duty_set_by_this_call {
+            let _ =
+                tasks::update_chat_duty(&target_project, &target_task, &target_chat.id, None, true);
         }
         broadcast_radio_event(RadioEvent::PendingChanged {
             project_id: caller_project.clone(),
@@ -341,6 +352,9 @@ pub async fn grove_agent_contacts(
         })
         .collect();
 
+    // H5: Persona / custom_agent 是 user-scoped（按用户 grove 安装维度），故意全局
+    // 可见、跨 task / project — 用户在任一 task 创建的 persona 应能在其它 task 复用。
+    // 这是有意行为，不做 project 过滤；MCP instructions 已说明（agent_graph_mcp.rs）。
     let available_custom_agents = crate::storage::custom_agent::list()
         .unwrap_or_default()
         .into_iter()
@@ -504,6 +518,7 @@ pub async fn grove_agent_spawn(
         let conn = database::connection();
         let edge_res = graph_db::add_edge(
             &conn,
+            &project_key,
             &task_id,
             &caller_chat.id,
             &new_chat_id,
@@ -555,8 +570,8 @@ pub async fn grove_agent_spawn(
         }
     };
 
-    // 等 SessionReady，超时 90s
-    let ready = tokio::time::timeout(Duration::from_secs(90), async {
+    // 等 SessionReady
+    let ready = tokio::time::timeout(ACP_SESSION_READY_TIMEOUT, async {
         loop {
             match rx.recv().await {
                 Ok(AcpUpdate::SessionReady {
@@ -596,12 +611,14 @@ pub async fn grove_agent_spawn(
         }
     };
 
-    // duty lock
+    // duty lock — spawn 路径首次设置，force=false 即可（既然 chat 是刚建的，
+    // 不会撞 lock；保留 force=false 防御万一并发）。
     tasks::update_chat_duty(
         &project_key,
         &task_id,
         &new_chat_id,
         Some(input.duty.clone()),
+        false,
     )
     .map_err(AgentGraphError::from)?;
 
@@ -651,29 +668,103 @@ async fn deliver_to_session(
     );
     let sender = format!("agent:{}", caller_chat.id);
 
-    if target_handle
+    // Atomically claim the busy slot. compare_exchange closes the race where
+    // two concurrent callers both observe is_busy=false and both fall through
+    // to send_prompt — the second one would silently get treated as a queued
+    // continuation by the cmd loop instead of an explicit queue entry the
+    // user can see.
+    let claimed = target_handle
         .is_busy
-        .load(std::sync::atomic::Ordering::Relaxed)
-    {
+        .compare_exchange(
+            false,
+            true,
+            std::sync::atomic::Ordering::AcqRel,
+            std::sync::atomic::Ordering::Acquire,
+        )
+        .is_ok();
+    if !claimed {
         let messages = target_handle.queue_message(QueuedMessage {
             text: injected,
             attachments: Vec::new(),
             sender: Some(sender),
         });
         target_handle.emit(AcpUpdate::QueueUpdate { messages });
-    } else {
-        let send_res = tokio::time::timeout(
-            Duration::from_secs(10),
-            target_handle.send_prompt(injected, Vec::new(), Some(sender), false),
-        )
-        .await;
-        match send_res {
-            Ok(Ok(())) => {}
-            Ok(Err(e)) => return Err(AgentGraphError::Internal(format!("send_prompt: {}", e))),
-            Err(_) => return Err(AgentGraphError::Timeout),
+        return Ok(());
+    }
+
+    let send_res = tokio::time::timeout(
+        Duration::from_secs(10),
+        target_handle.send_prompt(injected, Vec::new(), Some(sender), false),
+    )
+    .await;
+    match send_res {
+        Ok(Ok(())) => Ok(()),
+        Ok(Err(e)) => {
+            // Release the claim so future calls aren't permanently blocked.
+            // The cmd loop will re-assert is_busy when it actually picks up
+            // the next prompt.
+            target_handle
+                .is_busy
+                .store(false, std::sync::atomic::Ordering::Release);
+            Err(AgentGraphError::Internal(format!("send_prompt: {}", e)))
+        }
+        Err(_) => {
+            target_handle
+                .is_busy
+                .store(false, std::sync::atomic::Ordering::Release);
+            Err(AgentGraphError::Timeout)
         }
     }
-    Ok(())
+}
+
+/// 用户在图上点 "remind" 时的投递入口。已经组装好 grove-meta envelope，
+/// 这里负责 spawn-on-demand + busy 判断 + CAS 并发。语义上与 deliver_to_session
+/// 几乎相同，但消息已经是 envelope，sender 标记成 "user:remind"。
+pub async fn deliver_user_remind(
+    project_key: &str,
+    task_id: &str,
+    target_chat_id: &str,
+    injected: String,
+) -> std::result::Result<(), String> {
+    let target_handle = ensure_target_handle(project_key, task_id, target_chat_id)
+        .await
+        .map_err(|e| e.code().to_string())?;
+
+    let claimed = target_handle
+        .is_busy
+        .compare_exchange(
+            false,
+            true,
+            std::sync::atomic::Ordering::AcqRel,
+            std::sync::atomic::Ordering::Acquire,
+        )
+        .is_ok();
+    if !claimed {
+        // Reminder 不入队 — 用户感知不到队列里多一条 reminder，反而更困惑。
+        // 若 target busy，直接拒绝，让 UI 显示 "target_is_busy"。
+        return Err("target_is_busy".to_string());
+    }
+
+    let send_res = tokio::time::timeout(
+        Duration::from_secs(10),
+        target_handle.send_prompt(injected, Vec::new(), Some("user:remind".to_string()), false),
+    )
+    .await;
+    match send_res {
+        Ok(Ok(())) => Ok(()),
+        Ok(Err(e)) => {
+            target_handle
+                .is_busy
+                .store(false, std::sync::atomic::Ordering::Release);
+            Err(format!("send_prompt: {}", e))
+        }
+        Err(_) => {
+            target_handle
+                .is_busy
+                .store(false, std::sync::atomic::Ordering::Release);
+            Err("timeout".to_string())
+        }
+    }
 }
 
 /// Ensure an ACP session handle exists for `target_chat_id` — returning the
@@ -758,10 +849,10 @@ pub(crate) async fn ensure_target_handle(
         .await
         .map_err(|e| AgentGraphError::Internal(format!("spawn ACP session failed: {}", e)))?;
 
-    // Wait for SessionReady with the same 90s budget grove_agent_spawn uses.
+    // Wait for SessionReady with the same budget grove_agent_spawn uses.
     // SessionReady → Ok; SessionEnded / Error / Lagged → propagate as a clean
     // failure so the caller knows nothing was delivered.
-    let wait = tokio::time::timeout(Duration::from_secs(90), async {
+    let wait = tokio::time::timeout(ACP_SESSION_READY_TIMEOUT, async {
         loop {
             match rx.recv().await {
                 Ok(AcpUpdate::SessionReady { .. }) => return Ok::<(), AgentGraphError>(()),
@@ -839,7 +930,7 @@ mod tests {
     }
 
     fn seed_edge(conn: &Connection, task_id: &str, from: &str, to: &str) {
-        graph_db::add_edge(conn, task_id, from, to, None).expect("edge");
+        graph_db::add_edge(conn, "p", task_id, from, to, None).expect("edge");
     }
 
     #[tokio::test]

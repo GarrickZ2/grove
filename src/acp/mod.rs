@@ -1331,21 +1331,25 @@ pub async fn get_or_start_session(
                         if self.finalized {
                             return;
                         }
-                        if let Ok(mut sessions) = ACP_SESSIONS.write() {
-                            sessions.remove(&self.key);
-                        }
-                        if let Some(ref cid) = self.chat_id {
-                            use crate::api::handlers::walkie_talkie::{
-                                broadcast_radio_event, RadioEvent,
-                            };
-                            broadcast_radio_event(RadioEvent::ChatStatus {
-                                project_id: self.project_key.clone(),
-                                task_id: self.task_id.clone(),
-                                chat_id: cid.clone(),
-                                status: "disconnected".to_string(),
-                            });
-                            cleanup_socket_files(&self.project_key, &self.task_id, cid);
-                        }
+                        // Guard against double-panic: if we're already
+                        // unwinding, catch_unwind prevents abort.
+                        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                            if let Ok(mut sessions) = ACP_SESSIONS.write() {
+                                sessions.remove(&self.key);
+                            }
+                            if let Some(ref cid) = self.chat_id {
+                                use crate::api::handlers::walkie_talkie::{
+                                    broadcast_radio_event, RadioEvent,
+                                };
+                                broadcast_radio_event(RadioEvent::ChatStatus {
+                                    project_id: self.project_key.clone(),
+                                    task_id: self.task_id.clone(),
+                                    chat_id: cid.clone(),
+                                    status: "disconnected".to_string(),
+                                });
+                                cleanup_socket_files(&self.project_key, &self.task_id, cid);
+                            }
+                        }));
                     }
                 }
                 let mut end_guard = EndGuard {
@@ -1381,7 +1385,9 @@ pub async fn get_or_start_session(
                 }
 
                 // 发送 handle 给调用方（在启动会话循环之前）
-                let _ = result_tx.send(Ok((handle.clone(), update_rx)));
+                if result_tx.send(Ok((handle.clone(), update_rx))).is_err() {
+                    eprintln!("[ACP] result_tx send failed — caller dropped before session started (key={})", key_clone);
+                }
 
                 // 运行会话循环（阻塞直到 Kill 或错误）
                 let session_project_key = config.project_key.clone();
@@ -2601,10 +2607,19 @@ impl AcpSessionHandle {
             .store(false, std::sync::atomic::Ordering::Relaxed);
         // 尝试发送队列中的第一条消息（如果 agent 空闲会被处理）
         if let Some(next_msg) = self.pop_queue_front() {
-            self.emit(AcpUpdate::QueueUpdate {
-                messages: self.get_queue(),
-            });
-            self.try_enqueue_prompt(next_msg.text, next_msg.attachments, next_msg.sender);
+            // M5: try_enqueue_prompt 在 cmd_tx 满 / closed 时会失败 — 失败时
+            // 把消息回插队首，避免出队但未送达的"幽灵丢失"。
+            let text = next_msg.text.clone();
+            let attachments = next_msg.attachments.clone();
+            let sender = next_msg.sender.clone();
+            if self.try_enqueue_prompt(text, attachments, sender) {
+                self.emit(AcpUpdate::QueueUpdate {
+                    messages: self.get_queue(),
+                });
+            } else {
+                let mut q = self.pending_queue.lock().unwrap();
+                q.insert(0, next_msg);
+            }
         }
     }
 
@@ -2783,6 +2798,9 @@ pub fn new_handle_for_test(
                         sender,
                         terminal,
                     });
+                    // 与 prod cmd loop 对齐：先 emit Busy{true}，再 Busy{false}。
+                    // 让 C1 CAS 路径在测试里能真实地与 emit-store 路径交互。
+                    handle_for_loop.emit(AcpUpdate::Busy { value: true });
                     handle_for_loop.emit(AcpUpdate::Busy { value: false });
                 }
                 AcpCommand::Kill => break,

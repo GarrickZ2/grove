@@ -313,9 +313,9 @@ pub fn create_local_task(
     }
 }
 
-/// 生成 chat ID ("chat-XXXXXX")
+/// 生成全局唯一 chat/session ID ("chat-<uuid>")
 pub fn generate_chat_id() -> String {
-    format!("chat-{}", generate_time_hash())
+    format!("chat-{}", uuid::Uuid::new_v4().simple())
 }
 
 // ========== Chat Session 存储 (独立 chats.toml) ==========
@@ -391,10 +391,28 @@ pub fn load_chat_sessions(project: &str, task_id: &str) -> Result<Vec<ChatSessio
 /// 添加 ChatSession
 pub fn add_chat_session(project: &str, task_id: &str, chat: ChatSession) -> Result<()> {
     let conn = crate::storage::database::connection();
+    let existing: Option<(String, String)> = conn
+        .query_row(
+            "SELECT project, task_id FROM session WHERE session_id = ?1",
+            params![chat.id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .optional()?;
+    if let Some((existing_project, existing_task)) = existing {
+        if existing_project != project || existing_task != task_id {
+            return Err(GroveError::storage("duplicate session_id"));
+        }
+    }
     conn.execute(
-        "INSERT OR REPLACE INTO session
+        "INSERT INTO session
          (session_id, project, task_id, title, agent, acp_session_id, duty, created_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+         ON CONFLICT(session_id) DO UPDATE SET
+            title = excluded.title,
+            agent = excluded.agent,
+            acp_session_id = excluded.acp_session_id,
+            duty = excluded.duty,
+            created_at = excluded.created_at",
         params![
             chat.id,
             project,
@@ -443,6 +461,7 @@ pub fn update_chat_duty(
     task_id: &str,
     chat_id: &str,
     duty: Option<String>,
+    force: bool,
 ) -> Result<()> {
     let conn = crate::storage::database::connection();
     let existing: Option<Option<String>> = conn
@@ -454,11 +473,18 @@ pub fn update_chat_duty(
         .optional()?;
 
     let Some(existing_duty) = existing else {
-        return Ok(());
+        return Err(GroveError::storage_tagged(
+            "chat_not_found",
+            "chat_not_found",
+        ));
     };
 
-    if duty.is_some() && existing_duty.is_some() {
-        return Err(GroveError::storage("chat duty is locked"));
+    // AI 不可改 duty（一旦设置就锁定）；用户编辑路径传 `force = true` 绕过此检查。
+    if !force && duty.is_some() && existing_duty.is_some() {
+        return Err(GroveError::storage_tagged(
+            "duty_locked",
+            "chat duty is locked",
+        ));
     }
 
     conn.execute(
@@ -739,6 +765,15 @@ mod tests {
         std::thread::sleep(std::time::Duration::from_millis(1));
         let hash2 = generate_time_hash();
         assert_ne!(hash1, hash2);
+    }
+
+    #[test]
+    fn test_generate_chat_id_is_uuid_backed() {
+        let id = generate_chat_id();
+        let uuid = id.strip_prefix("chat-").expect("chat prefix");
+
+        assert_eq!(uuid.len(), 32);
+        assert!(uuid.chars().all(|c| c.is_ascii_hexdigit()));
     }
 
     #[test]

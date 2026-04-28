@@ -23,6 +23,9 @@ use serde_json::json;
 pub enum InjectKind {
     Send,
     Reply,
+    /// 用户从图上发起的"催办"提示。携带原 msg_id，让目标 agent 知道
+    /// 这是对一条已存在 pending 的提醒，而不是新 user 请求。
+    Remind,
 }
 
 impl InjectKind {
@@ -30,6 +33,7 @@ impl InjectKind {
         match self {
             Self::Send => "send",
             Self::Reply => "reply",
+            Self::Remind => "remind",
         }
     }
 
@@ -37,6 +41,7 @@ impl InjectKind {
         match self {
             Self::Send => "agent_inject_send",
             Self::Reply => "agent_inject_reply",
+            Self::Remind => "user_remind",
         }
     }
 }
@@ -92,9 +97,10 @@ pub fn build_custom_agent_init_prompt(
     // `</user-system-prompt>` inside the prompt doesn't truncate the
     // wrapper from the agent's perspective. The nonce is purely framing —
     // the agent doesn't need to know it.
+    // Nonce 直接拼到标签名内，避免在闭合标签上挂属性（不合法的 XML）。
     let nonce = uuid::Uuid::new_v4().simple().to_string();
-    let open = format!("<user-system-prompt id=\"{}\">", nonce);
-    let close = format!("</user-system-prompt id=\"{}\">", nonce);
+    let open = format!("<user-system-prompt-{}>", nonce);
+    let close = format!("</user-system-prompt-{}>", nonce);
     let wrapped = format!(
         "The user has configured this Custom Agent (\"{name}\") with the \
          following system prompt. Treat it as your operating instructions for \
@@ -151,6 +157,19 @@ pub fn build_injected_prompt(
             name = sender_name,
             sid = sender_chat_id,
         ),
+        (InjectKind::Remind, Some(id)) => format!(
+            "REMINDER (not a new request): the user is asking you to look at the \
+             pending message from session \"{name}\" (id={sid}, msg_id={id}). \
+             Reply via `grove_agent_reply` with that msg_id when ready.",
+            name = sender_name,
+            sid = sender_chat_id,
+        ),
+        (InjectKind::Remind, None) => format!(
+            "REMINDER (not a new request): the user is nudging you about the \
+             pending message from session \"{name}\" (id={sid}).",
+            name = sender_name,
+            sid = sender_chat_id,
+        ),
     };
 
     let payload = json!({
@@ -161,7 +180,7 @@ pub fn build_injected_prompt(
             name: sender_name,
             agent: sender_agent,
             msg_id: match kind {
-                InjectKind::Send => msg_id,
+                InjectKind::Send | InjectKind::Remind => msg_id,
                 InjectKind::Reply => None,
             },
         },
@@ -169,7 +188,11 @@ pub fn build_injected_prompt(
     });
 
     let envelope = serde_json::to_string(&payload).expect("envelope serializes");
-    format!("<grove-meta>{envelope}</grove-meta>\n\n{body}")
+    if body.is_empty() {
+        format!("<grove-meta>{envelope}</grove-meta>")
+    } else {
+        format!("<grove-meta>{envelope}</grove-meta>\n\n{body}")
+    }
 }
 
 #[cfg(test)]

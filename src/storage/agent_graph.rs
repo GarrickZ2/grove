@@ -12,6 +12,7 @@ use crate::error::{GroveError, Result};
 #[allow(dead_code)]
 pub struct AgentEdge {
     pub edge_id: i64,
+    pub project: String,
     pub task_id: String,
     pub from_session: String,
     pub to_session: String,
@@ -48,24 +49,40 @@ pub struct GcStats {
     pub pending_messages_deleted: usize,
 }
 
+/// Storage 层业务错误码（稳定 API），与 `AgentGraphError` 上层枚举一一对应。
 #[allow(dead_code)]
-fn storage_error(token: &str) -> GroveError {
-    GroveError::storage(token)
+pub mod tag {
+    pub const ENDPOINT_NOT_FOUND: &str = "endpoint_not_found";
+    pub const SAME_TASK_REQUIRED: &str = "same_task_required";
+    pub const DUPLICATE_EDGE: &str = "duplicate_edge";
+    pub const BIDIRECTIONAL_EDGE: &str = "bidirectional_edge";
+    pub const CYCLE_WOULD_FORM: &str = "cycle_would_form";
+    pub const NO_EDGE: &str = "no_edge";
+    pub const PREVIOUS_MESSAGE_PENDING: &str = "previous_message_pending";
+    pub const DUPLICATE_MSG_ID: &str = "duplicate_msg_id";
+    pub const PENDING_MESSAGE_NOT_FOUND: &str = "pending_message_not_found";
+    pub const DUTY_LOCKED: &str = "duty_locked";
+}
+
+#[allow(dead_code)]
+fn storage_error(token: &'static str) -> GroveError {
+    GroveError::storage_tagged(token, token)
 }
 
 #[allow(dead_code)]
 fn row_to_edge(row: &rusqlite::Row<'_>) -> rusqlite::Result<AgentEdge> {
-    let created_at: String = row.get(5)?;
+    let created_at: String = row.get(6)?;
     let created_at = DateTime::parse_from_rfc3339(&created_at)
         .map(|dt| dt.with_timezone(&Utc))
         .unwrap_or_else(|_| Utc::now());
 
     Ok(AgentEdge {
         edge_id: row.get(0)?,
-        task_id: row.get(1)?,
-        from_session: row.get(2)?,
-        to_session: row.get(3)?,
-        purpose: row.get(4)?,
+        project: row.get(1)?,
+        task_id: row.get(2)?,
+        from_session: row.get(3)?,
+        to_session: row.get(4)?,
+        purpose: row.get(5)?,
         created_at,
     })
 }
@@ -102,6 +119,7 @@ fn row_to_outgoing_contact(row: &rusqlite::Row<'_>) -> rusqlite::Result<Outgoing
 #[allow(dead_code)]
 pub fn add_edge(
     conn: &Connection,
+    project: &str,
     task_id: &str,
     from_session: &str,
     to_session: &str,
@@ -109,26 +127,30 @@ pub fn add_edge(
 ) -> Result<i64> {
     let tx = conn.unchecked_transaction()?;
 
-    let from_task: Option<String> = tx
+    let from_scope: Option<(String, String)> = tx
         .query_row(
-            "SELECT task_id FROM session WHERE session_id = ?1",
+            "SELECT project, task_id FROM session WHERE session_id = ?1",
             [from_session],
-            |row| row.get(0),
+            |row| Ok((row.get(0)?, row.get(1)?)),
         )
         .optional()?;
-    let to_task: Option<String> = tx
+    let to_scope: Option<(String, String)> = tx
         .query_row(
-            "SELECT task_id FROM session WHERE session_id = ?1",
+            "SELECT project, task_id FROM session WHERE session_id = ?1",
             [to_session],
-            |row| row.get(0),
+            |row| Ok((row.get(0)?, row.get(1)?)),
         )
         .optional()?;
 
-    let (Some(from_task), Some(to_task)) = (from_task, to_task) else {
+    let (Some(from_scope), Some(to_scope)) = (from_scope, to_scope) else {
         return Err(storage_error("endpoint_not_found"));
     };
 
-    if from_task != task_id || to_task != task_id {
+    if from_scope.0 != project
+        || to_scope.0 != project
+        || from_scope.1 != task_id
+        || to_scope.1 != task_id
+    {
         return Err(storage_error("same_task_required"));
     }
 
@@ -160,14 +182,15 @@ pub fn add_edge(
         || tx
             .query_row(
                 "WITH RECURSIVE reachable(s) AS (
-                   SELECT to_session FROM agent_edge WHERE from_session = ?1
+                   SELECT to_session FROM agent_edge WHERE project = ?1 AND task_id = ?2 AND from_session = ?3
                    UNION
                    SELECT e.to_session
                    FROM agent_edge e
                    JOIN reachable r ON e.from_session = r.s
+                   WHERE e.project = ?1 AND e.task_id = ?2
                  )
-                 SELECT 1 FROM reachable WHERE s = ?2",
-                params![to_session, from_session],
+                 SELECT 1 FROM reachable WHERE s = ?4",
+                params![project, task_id, to_session, from_session],
                 |_| Ok(()),
             )
             .optional()?
@@ -177,9 +200,10 @@ pub fn add_edge(
     }
 
     tx.execute(
-        "INSERT INTO agent_edge (task_id, from_session, to_session, purpose, created_at)
-         VALUES (?1, ?2, ?3, ?4, ?5)",
+        "INSERT INTO agent_edge (project, task_id, from_session, to_session, purpose, created_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
         params![
+            project,
             task_id,
             from_session,
             to_session,
@@ -231,7 +255,7 @@ pub fn update_edge_purpose(conn: &Connection, edge_id: i64, purpose: Option<&str
 pub fn get_edge(conn: &Connection, edge_id: i64) -> Result<Option<AgentEdge>> {
     let edge = conn
         .query_row(
-            "SELECT edge_id, task_id, from_session, to_session, purpose, created_at
+            "SELECT edge_id, project, task_id, from_session, to_session, purpose, created_at
              FROM agent_edge
              WHERE edge_id = ?1",
             [edge_id],
@@ -243,15 +267,19 @@ pub fn get_edge(conn: &Connection, edge_id: i64) -> Result<Option<AgentEdge>> {
 
 /// 取某 task 下所有边（用于 graph 渲染）。
 #[allow(dead_code)]
-pub fn list_edges_for_task(conn: &Connection, task_id: &str) -> Result<Vec<AgentEdge>> {
+pub fn list_edges_for_task(
+    conn: &Connection,
+    project: &str,
+    task_id: &str,
+) -> Result<Vec<AgentEdge>> {
     let mut stmt = conn.prepare(
-        "SELECT edge_id, task_id, from_session, to_session, purpose, created_at
+        "SELECT edge_id, project, task_id, from_session, to_session, purpose, created_at
          FROM agent_edge
-         WHERE task_id = ?1
+         WHERE project = ?1 AND task_id = ?2
          ORDER BY edge_id ASC",
     )?;
     let edges = stmt
-        .query_map([task_id], row_to_edge)?
+        .query_map(params![project, task_id], row_to_edge)?
         .collect::<std::result::Result<Vec<_>, _>>()?;
     Ok(edges)
 }
@@ -272,17 +300,16 @@ pub fn insert_pending_message(
 ) -> Result<()> {
     let tx = conn.unchecked_transaction()?;
 
-    let edge_exists = tx
+    let edge_project: Option<String> = tx
         .query_row(
-            "SELECT 1 FROM agent_edge WHERE from_session = ?1 AND to_session = ?2",
-            params![from_session, to_session],
-            |_| Ok(()),
+            "SELECT project FROM agent_edge WHERE task_id = ?1 AND from_session = ?2 AND to_session = ?3",
+            params![task_id, from_session, to_session],
+            |row| row.get(0),
         )
-        .optional()?
-        .is_some();
-    if !edge_exists {
+        .optional()?;
+    let Some(edge_project) = edge_project else {
         return Err(storage_error("no_edge"));
-    }
+    };
 
     let pending_exists = tx
         .query_row(
@@ -308,18 +335,28 @@ pub fn insert_pending_message(
         return Err(storage_error("duplicate_msg_id"));
     }
 
-    tx.execute(
-        "INSERT INTO agent_pending_message (msg_id, task_id, from_session, to_session, body, created_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+    // M3: 校验后仍有竞态可能命中 UNIQUE 约束（uniq_pending_pair 或 PRIMARY KEY）。
+    // 显式把约束错误映射回业务错误码，让上层 From<GroveError> 能正确归类；
+    // tx 在 Err 路径上 Drop 时自动 rollback（rusqlite 默认行为）。
+    let insert_res = tx.execute(
+        "INSERT INTO agent_pending_message (msg_id, project, task_id, from_session, to_session, body, created_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
         params![
             msg_id,
+            edge_project,
             task_id,
             from_session,
             to_session,
             body,
             Utc::now().to_rfc3339(),
         ],
-    )?;
+    );
+    if let Err(rusqlite::Error::SqliteFailure(err, _)) = &insert_res {
+        if err.code == rusqlite::ErrorCode::ConstraintViolation {
+            return Err(storage_error("previous_message_pending"));
+        }
+    }
+    insert_res?;
     tx.commit()?;
     Ok(())
 }
@@ -355,15 +392,19 @@ pub fn get_pending_message(conn: &Connection, msg_id: &str) -> Result<Option<Age
 
 /// 取某 task 下所有 pending message（用于 graph 渲染时计算边的状态）。
 #[allow(dead_code)]
-pub fn list_pending_for_task(conn: &Connection, task_id: &str) -> Result<Vec<AgentPendingMessage>> {
+pub fn list_pending_for_task(
+    conn: &Connection,
+    project: &str,
+    task_id: &str,
+) -> Result<Vec<AgentPendingMessage>> {
     let mut stmt = conn.prepare(
         "SELECT msg_id, task_id, from_session, to_session, body, created_at
          FROM agent_pending_message
-         WHERE task_id = ?1
+         WHERE project = ?1 AND task_id = ?2
          ORDER BY created_at ASC",
     )?;
     let msgs = stmt
-        .query_map([task_id], row_to_pending)?
+        .query_map(params![project, task_id], row_to_pending)?
         .collect::<std::result::Result<Vec<_>, _>>()?;
     Ok(msgs)
 }
@@ -388,7 +429,7 @@ pub fn outgoing_for_session(conn: &Connection, session_id: &str) -> Result<Vec<O
 #[allow(dead_code)]
 pub fn incoming_for_session(conn: &Connection, session_id: &str) -> Result<Vec<AgentEdge>> {
     let mut stmt = conn.prepare(
-        "SELECT edge_id, task_id, from_session, to_session, purpose, created_at
+        "SELECT edge_id, project, task_id, from_session, to_session, purpose, created_at
          FROM agent_edge
          WHERE to_session = ?1
          ORDER BY created_at ASC",
@@ -448,10 +489,13 @@ pub fn cascade_delete_for_session(conn: &Connection, session_id: &str) -> Result
 /// 删除 task 时的级联清理：删除该 project + task 下所有 session / edge / pending_message。
 pub fn cascade_delete_for_task(conn: &Connection, project: &str, task_id: &str) -> Result<()> {
     conn.execute(
-        "DELETE FROM agent_pending_message WHERE task_id = ?1",
-        [task_id],
+        "DELETE FROM agent_pending_message WHERE project = ?1 AND task_id = ?2",
+        params![project, task_id],
     )?;
-    conn.execute("DELETE FROM agent_edge WHERE task_id = ?1", [task_id])?;
+    conn.execute(
+        "DELETE FROM agent_edge WHERE project = ?1 AND task_id = ?2",
+        params![project, task_id],
+    )?;
     conn.execute(
         "DELETE FROM session WHERE project = ?1 AND task_id = ?2",
         params![project, task_id],
@@ -460,28 +504,14 @@ pub fn cascade_delete_for_task(conn: &Connection, project: &str, task_id: &str) 
 }
 
 /// 启动时清理孤儿 session / edge / pending_message。
+///
+/// M7: 反向扫描 — 只 enumerate 已有 session 的 (project, task)，再针对每个去
+/// 检查 task 是否还存在。100+ projects 时启动避免 O(N projects × N tasks)。
+/// L3 安全性：load_tasks 出 IO 错误时跳过该 task（保留 sessions），不再因
+/// 短暂权限错误而误删 — 通过 result.is_ok() 区分 "无 task" vs "读不到"。
 pub fn gc_orphans(conn: &Connection) -> Result<GcStats> {
-    let mut valid = std::collections::HashSet::new();
-    let projects_dir = crate::storage::grove_dir().join("projects");
-    if let Ok(projects) = std::fs::read_dir(projects_dir) {
-        for project in projects.flatten() {
-            if !project.path().is_dir() {
-                continue;
-            }
-            let project_id = project.file_name().to_string_lossy().to_string();
-
-            for task in crate::storage::tasks::load_tasks(&project_id).unwrap_or_default() {
-                valid.insert((project_id.clone(), task.id));
-            }
-            for task in crate::storage::tasks::load_archived_tasks(&project_id).unwrap_or_default()
-            {
-                valid.insert((project_id.clone(), task.id));
-            }
-        }
-    }
-
-    let sessions: Vec<(String, String)> = {
-        let mut stmt = conn.prepare("SELECT project, task_id FROM session")?;
+    let session_keys: Vec<(String, String)> = {
+        let mut stmt = conn.prepare("SELECT DISTINCT project, task_id FROM session")?;
         let rows = stmt.query_map([], |row| {
             Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
         })?;
@@ -490,8 +520,26 @@ pub fn gc_orphans(conn: &Connection) -> Result<GcStats> {
 
     let tx = conn.unchecked_transaction()?;
     let mut sessions_deleted = 0;
-    for (project, task_id) in sessions {
-        if !valid.contains(&(project.clone(), task_id.clone())) {
+    for (project, task_id) in session_keys {
+        let active = crate::storage::tasks::load_tasks(&project);
+        let archived = crate::storage::tasks::load_archived_tasks(&project);
+        // 区分 "读不到" 与 "明确不存在"：任一 IO 错误都跳过 GC，
+        // 避免短暂权限错 / 文件被锁导致误删该 project 全部 sessions。
+        if active.is_err() || archived.is_err() {
+            eprintln!("[gc_orphans] skip project={} (toml read failed)", project);
+            continue;
+        }
+        let exists = active
+            .as_ref()
+            .ok()
+            .map(|v| v.iter().any(|t| t.id == task_id))
+            .unwrap_or(false)
+            || archived
+                .as_ref()
+                .ok()
+                .map(|v| v.iter().any(|t| t.id == task_id))
+                .unwrap_or(false);
+        if !exists {
             sessions_deleted += tx.execute(
                 "DELETE FROM session WHERE project = ?1 AND task_id = ?2",
                 params![project, task_id],
@@ -524,19 +572,49 @@ pub fn gc_orphans(conn: &Connection) -> Result<GcStats> {
 mod tests {
     use super::*;
 
+    const PROJECT: &str = "project-a";
+
     fn test_conn() -> Connection {
         let conn = Connection::open_in_memory().unwrap();
         crate::storage::database::create_schema(&conn).unwrap();
         conn
     }
 
+    fn add_edge(
+        conn: &Connection,
+        task_id: &str,
+        from_session: &str,
+        to_session: &str,
+        purpose: Option<&str>,
+    ) -> Result<i64> {
+        super::add_edge(conn, PROJECT, task_id, from_session, to_session, purpose)
+    }
+
+    fn list_edges_for_task(conn: &Connection, task_id: &str) -> Result<Vec<AgentEdge>> {
+        super::list_edges_for_task(conn, PROJECT, task_id)
+    }
+
+    fn list_pending_for_task(conn: &Connection, task_id: &str) -> Result<Vec<AgentPendingMessage>> {
+        super::list_pending_for_task(conn, PROJECT, task_id)
+    }
+
     fn insert_session(conn: &Connection, session_id: &str, task_id: &str) {
+        insert_session_in_project(conn, PROJECT, session_id, task_id);
+    }
+
+    fn insert_session_in_project(
+        conn: &Connection,
+        project: &str,
+        session_id: &str,
+        task_id: &str,
+    ) {
         conn.execute(
             "INSERT INTO session
              (session_id, project, task_id, title, agent, acp_session_id, duty, created_at)
-             VALUES (?1, 'project-a', ?2, ?3, 'codex', NULL, NULL, ?4)",
+             VALUES (?1, ?2, ?3, ?4, 'codex', NULL, NULL, ?5)",
             params![
                 session_id,
+                project,
                 task_id,
                 format!("Session {session_id}"),
                 Utc::now().to_rfc3339(),
@@ -555,8 +633,15 @@ mod tests {
         conn.execute(
             "INSERT INTO session
              (session_id, project, task_id, title, agent, acp_session_id, duty, created_at)
-             VALUES (?1, 'project-a', ?2, ?3, 'codex', NULL, ?4, ?5)",
-            params![session_id, task_id, title, duty, Utc::now().to_rfc3339()],
+             VALUES (?1, ?2, ?3, ?4, 'codex', NULL, ?5, ?6)",
+            params![
+                session_id,
+                PROJECT,
+                task_id,
+                title,
+                duty,
+                Utc::now().to_rfc3339()
+            ],
         )
         .unwrap();
     }
@@ -650,9 +735,9 @@ mod tests {
         let edge_id = add_edge(&conn, "task-1", "a", "b", None).unwrap();
         conn.execute(
             "INSERT INTO agent_pending_message
-             (msg_id, task_id, from_session, to_session, body, created_at)
-             VALUES ('msg-1', 'task-1', 'a', 'b', 'hello', ?1)",
-            [Utc::now().to_rfc3339()],
+             (msg_id, project, task_id, from_session, to_session, body, created_at)
+             VALUES ('msg-1', ?1, 'task-1', 'a', 'b', 'hello', ?2)",
+            params![PROJECT, Utc::now().to_rfc3339()],
         )
         .unwrap();
 
@@ -771,9 +856,9 @@ mod tests {
         // B→A edge inserted via raw SQL since add_edge rejects bidirectional,
         // but insert_pending_message only checks edge existence, not direction constraints.
         conn.execute(
-            "INSERT INTO agent_edge (task_id, from_session, to_session, purpose, created_at)
-             VALUES ('task-1', 'b', 'a', NULL, ?1)",
-            [Utc::now().to_rfc3339()],
+            "INSERT INTO agent_edge (project, task_id, from_session, to_session, purpose, created_at)
+             VALUES (?1, 'task-1', 'b', 'a', NULL, ?2)",
+            params![PROJECT, Utc::now().to_rfc3339()],
         )
         .unwrap();
 
@@ -873,10 +958,11 @@ mod tests {
     ) {
         conn.execute(
             "INSERT INTO agent_pending_message
-             (msg_id, task_id, from_session, to_session, body, created_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+             (msg_id, project, task_id, from_session, to_session, body, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
             params![
                 msg_id,
+                PROJECT,
                 task_id,
                 from_session,
                 to_session,
@@ -987,5 +1073,52 @@ mod tests {
         assert!(incoming_for_session(&conn, "missing").unwrap().is_empty());
         assert!(pending_replies_for(&conn, "missing").unwrap().is_empty());
         assert!(awaiting_reply_for(&conn, "missing").unwrap().is_empty());
+    }
+
+    #[test]
+    fn graph_rows_are_project_scoped_when_task_ids_match() {
+        let conn = test_conn();
+        insert_session_in_project(&conn, "project-a", "a1", "shared-task");
+        insert_session_in_project(&conn, "project-a", "a2", "shared-task");
+        insert_session_in_project(&conn, "project-b", "b1", "shared-task");
+        insert_session_in_project(&conn, "project-b", "b2", "shared-task");
+
+        super::add_edge(&conn, "project-a", "shared-task", "a1", "a2", None).unwrap();
+        super::add_edge(&conn, "project-b", "shared-task", "b1", "b2", None).unwrap();
+        insert_pending_message(&conn, "msg-a", "shared-task", "a1", "a2", "a").unwrap();
+        insert_pending_message(&conn, "msg-b", "shared-task", "b1", "b2", "b").unwrap();
+
+        assert_eq!(
+            super::list_edges_for_task(&conn, "project-a", "shared-task")
+                .unwrap()
+                .len(),
+            1
+        );
+        assert_eq!(
+            super::list_pending_for_task(&conn, "project-a", "shared-task")
+                .unwrap()
+                .len(),
+            1
+        );
+
+        cascade_delete_for_task(&conn, "project-a", "shared-task").unwrap();
+
+        assert_eq!(
+            super::list_edges_for_task(&conn, "project-b", "shared-task")
+                .unwrap()
+                .len(),
+            1
+        );
+        assert_eq!(
+            super::list_pending_for_task(&conn, "project-b", "shared-task")
+                .unwrap()
+                .len(),
+            1
+        );
+        assert!(
+            super::list_edges_for_task(&conn, "project-a", "shared-task")
+                .unwrap()
+                .is_empty()
+        );
     }
 }

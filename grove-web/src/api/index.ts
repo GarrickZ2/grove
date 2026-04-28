@@ -56,6 +56,13 @@ export {
   createChat,
   updateChatTitle,
   sendGraphChatMessage,
+  getTaskGraph,
+  spawnGraphNode,
+  addGraphEdge,
+  updateGraphChatDuty,
+  updateGraphEdgePurpose,
+  deleteGraphEdge,
+  remindGraphEdge,
   getMentionCandidates,
   deleteChat,
   uploadChatAttachment,
@@ -90,6 +97,10 @@ export type {
   MentionOutgoing,
   MentionPendingReply,
   MentionCandidatesResponse,
+  GraphResponse,
+  GraphNodeResponse,
+  GraphEdgeResponse,
+  GraphPendingMessageInfo,
 } from './tasks';
 
 export {

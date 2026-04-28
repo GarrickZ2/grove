@@ -135,7 +135,15 @@ pub fn try_get_persona(agent: &str) -> Result<Option<CustomAgent>> {
 }
 
 /// 创建。生成新的 id 并填充时间戳，返回创建后的完整记录。
+///
+/// L7: 校验 base_agent 必须是已知 ACP agent，避免到 spawn 时才发现未知 base 失败。
 pub fn create(input: CustomAgentInput) -> Result<CustomAgent> {
+    if crate::acp::resolve_agent(&input.base_agent).is_none() {
+        return Err(crate::error::GroveError::storage_tagged(
+            "unknown_base_agent",
+            format!("unknown base_agent: {}", input.base_agent),
+        ));
+    }
     let conn = crate::storage::database::connection();
     let id = format!("ca-{}", uuid::Uuid::new_v4());
     let now = Utc::now();
@@ -171,10 +179,32 @@ pub fn create(input: CustomAgentInput) -> Result<CustomAgent> {
 }
 
 /// 更新（只覆盖 patch 里 Some 的字段）。返回更新后的记录；id 不存在时返回 None。
+///
+/// H7: 用事务包裹 read-modify-write，并以 UPDATE 影响行数判定记录是否还在，
+/// 避免并发 delete 导致返回 stale 数据（旧实现先 SELECT 再 UPDATE，
+/// 命中 zero rows 时仍返回 Ok(Some(stale))）。
 pub fn update(id: &str, patch: CustomAgentPatch) -> Result<Option<CustomAgent>> {
-    let Some(mut existing) = get(id)? else {
+    // 与 create 一致：patch 改 base_agent 时校验合法，避免到 spawn 才炸。
+    if let Some(ref new_base) = patch.base_agent {
+        if crate::acp::resolve_agent(new_base).is_none() {
+            return Err(crate::error::GroveError::storage_tagged(
+                "unknown_base_agent",
+                format!("unknown base_agent: {}", new_base),
+            ));
+        }
+    }
+    let conn = crate::storage::database::connection();
+    let tx = conn.unchecked_transaction()?;
+
+    let sql = format!("SELECT {} FROM custom_agent WHERE id = ?1", SELECT_COLS);
+    let existing_opt: Option<CustomAgent> = {
+        let mut stmt = tx.prepare(&sql)?;
+        stmt.query_row(params![id], row_to_agent).optional()?
+    };
+    let Some(mut existing) = existing_opt else {
         return Ok(None);
     };
+
     if let Some(name) = patch.name {
         existing.name = name;
     }
@@ -199,8 +229,7 @@ pub fn update(id: &str, patch: CustomAgentPatch) -> Result<Option<CustomAgent>> 
     existing.updated_at = Utc::now();
     let updated_s = existing.updated_at.to_rfc3339();
 
-    let conn = crate::storage::database::connection();
-    conn.execute(
+    let n = tx.execute(
         "UPDATE custom_agent SET
             name = ?2, base_agent = ?3, model = ?4, mode = ?5, effort = ?6,
             duty = ?7, system_prompt = ?8, updated_at = ?9
@@ -217,7 +246,13 @@ pub fn update(id: &str, patch: CustomAgentPatch) -> Result<Option<CustomAgent>> 
             updated_s,
         ],
     )?;
-    Ok(Some(existing))
+    tx.commit()?;
+    if n == 0 {
+        // 并发 delete 在 SELECT 与 UPDATE 之间发生
+        Ok(None)
+    } else {
+        Ok(Some(existing))
+    }
 }
 
 /// 删除。返回 true 表示有行被删除。

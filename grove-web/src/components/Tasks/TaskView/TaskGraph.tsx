@@ -10,6 +10,13 @@ import { motion, AnimatePresence } from "framer-motion";
 import {
   updateChatTitle,
   sendGraphChatMessage,
+  getTaskGraph,
+  spawnGraphNode,
+  addGraphEdge,
+  updateGraphChatDuty,
+  updateGraphEdgePurpose,
+  deleteGraphEdge,
+  remindGraphEdge,
   checkCommands,
   getConfig,
   deleteChat,
@@ -79,6 +86,27 @@ interface GraphEdge {
 interface GraphData {
   nodes: GraphNode[];
   edges: GraphEdge[];
+}
+
+function graphApiError(e: unknown): { code: string; message: string } {
+  if (e && typeof e === "object") {
+    const data = (e as { data?: unknown }).data;
+    if (data && typeof data === "object") {
+      const payload = data as { code?: unknown; error?: unknown; message?: unknown };
+      return {
+        code: typeof payload.code === "string" ? payload.code : "internal_error",
+        message:
+          typeof payload.error === "string"
+            ? payload.error
+            : typeof payload.message === "string"
+              ? payload.message
+              : String(e),
+      };
+    }
+    const message = (e as { message?: unknown }).message;
+    if (typeof message === "string") return { code: "internal_error", message };
+  }
+  return { code: "internal_error", message: String(e) };
 }
 
 interface SimNode extends SimulationNodeDatum {
@@ -315,10 +343,15 @@ export function TaskGraph({ projectId, taskId }: TaskGraphProps) {
   }, [acpAgentAvailability, acpAvailabilityLoaded]);
   const [toast, setToast] = useState<{ message: string; type: "error" | "success" } | null>(null);
 
+  useEffect(() => {
+    if (!toast) return;
+    const timer = setTimeout(() => setToast(null), toast.type === "error" ? 4000 : 2000);
+    return () => clearTimeout(timer);
+  }, [toast]);
+
   const showError = useCallback((code: string, message: string) => {
     const hint = ERROR_HINTS[code] || message;
     setToast({ message: hint, type: "error" });
-    setTimeout(() => setToast(null), 4000);
   }, []);
 
   const handleDirectSend = useCallback(
@@ -330,7 +363,6 @@ export function TaskGraph({ projectId, taskId }: TaskGraphProps) {
         await sendGraphChatMessage(projectId, taskId, chatId, trimmed);
         setDirectMessage("");
         setToast({ message: "Message sent", type: "success" });
-        setTimeout(() => setToast(null), 1800);
         // No manual refresh — the backend's ChatStatus(busy)/PendingChanged
         // events drive the graph. Calling refreshGraph here would race the
         // events and could overwrite live state with stale /graph data.
@@ -352,9 +384,7 @@ export function TaskGraph({ projectId, taskId }: TaskGraphProps) {
     fetchSeqRef.current += 1;
     const mySeq = fetchSeqRef.current;
     try {
-      const res = await fetch(`/api/v1/projects/${projectId}/tasks/${taskId}/graph`);
-      if (!res.ok) return;
-      const raw = (await res.json()) as GraphData;
+      const raw = (await getTaskGraph(projectId, taskId)) as GraphData;
       // Drop iff: a newer fetch was issued after us (it'll deliver fresher
       // data), OR an event was processed while we were in flight (its
       // mutation is on top of older state than ours and ours is older than
@@ -443,27 +473,18 @@ export function TaskGraph({ projectId, taskId }: TaskGraphProps) {
     if (!spawnBubble || !spawnBubble.agent || !spawnBubble.name.trim()) return;
     setSpawnLoading(true);
     try {
-      const res = await fetch(`/api/v1/projects/${projectId}/tasks/${taskId}/graph/spawn`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
+      await spawnGraphNode(projectId, taskId, {
           from_chat_id: spawnBubble.fromChatId ?? null,
           agent: spawnBubble.agent,
           name: spawnBubble.name.trim(),
           duty: spawnBubble.duty.trim() || undefined,
-        }),
       });
-      if (!res.ok) {
-        const err = await res.json();
-        showError(err.code, err.error);
-        return;
-      }
       setSpawnBubble(null);
       refreshGraph();
       setToast({ message: "Node created", type: "success" });
-      setTimeout(() => setToast(null), 2000);
     } catch (e) {
-      showError("internal_error", String(e));
+      const err = graphApiError(e);
+      showError(err.code, err.message);
     } finally {
       setSpawnLoading(false);
     }
@@ -477,27 +498,18 @@ export function TaskGraph({ projectId, taskId }: TaskGraphProps) {
     ): Promise<boolean> => {
       setEdgeLoading(true);
       try {
-        const res = await fetch(`/api/v1/projects/${projectId}/tasks/${taskId}/graph/edges`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
+        await addGraphEdge(projectId, taskId, {
             from,
             to,
             duty: opts?.duty?.trim() || undefined,
             purpose: opts?.purpose?.trim() || undefined,
-          }),
         });
-        if (!res.ok) {
-          const err = await res.json();
-          showError(err.code, err.error);
-          return false;
-        }
         refreshGraph();
         setToast({ message: "Connection created", type: "success" });
-        setTimeout(() => setToast(null), 2000);
         return true;
       } catch (e) {
-        showError("internal_error", String(e));
+        const err = graphApiError(e);
+        showError(err.code, err.message);
         return false;
       } finally {
         setEdgeLoading(false);
@@ -563,24 +575,12 @@ export function TaskGraph({ projectId, taskId }: TaskGraphProps) {
   const handleUpdateDuty = useCallback(
     async (chatId: string, duty: string) => {
       try {
-        const res = await fetch(
-          `/api/v1/projects/${projectId}/tasks/${taskId}/graph/chats/${chatId}/duty`,
-          {
-            method: "PATCH",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ duty: duty || undefined }),
-          },
-        );
-        if (!res.ok) {
-          const err = await res.json();
-          showError(err.code, err.error);
-          return;
-        }
+        await updateGraphChatDuty(projectId, taskId, chatId, duty || undefined);
         refreshGraph();
         setToast({ message: "Duty updated", type: "success" });
-        setTimeout(() => setToast(null), 2000);
       } catch (e) {
-        showError("internal_error", String(e));
+        const err = graphApiError(e);
+        showError(err.code, err.message);
       }
     },
     [projectId, taskId, showError, refreshGraph],
@@ -589,22 +589,11 @@ export function TaskGraph({ projectId, taskId }: TaskGraphProps) {
   const handleUpdatePurpose = useCallback(
     async (edgeId: number, purpose: string) => {
       try {
-        const res = await fetch(
-          `/api/v1/projects/${projectId}/tasks/${taskId}/graph/edges/${edgeId}`,
-          {
-            method: "PATCH",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ purpose: purpose || undefined }),
-          },
-        );
-        if (!res.ok) {
-          const err = await res.json();
-          showError(err.code, err.error);
-          return;
-        }
+        await updateGraphEdgePurpose(projectId, taskId, edgeId, purpose || undefined);
         refreshGraph();
       } catch (e) {
-        showError("internal_error", String(e));
+        const err = graphApiError(e);
+        showError(err.code, err.message);
       }
     },
     [projectId, taskId, showError, refreshGraph],
@@ -615,21 +604,13 @@ export function TaskGraph({ projectId, taskId }: TaskGraphProps) {
       // Confirmation now happens in the toolbar `confirm-delete-edge` mode
       // before this is invoked — no second window.confirm.
       try {
-        const res = await fetch(
-          `/api/v1/projects/${projectId}/tasks/${taskId}/graph/edges/${edgeId}`,
-          { method: "DELETE" },
-        );
-        if (!res.ok) {
-          const err = await res.json();
-          showError(err.code, err.error);
-          return;
-        }
+        await deleteGraphEdge(projectId, taskId, edgeId);
         setSelectedEdge(null);
         refreshGraph();
         setToast({ message: "Connection deleted", type: "success" });
-        setTimeout(() => setToast(null), 2000);
       } catch (e) {
-        showError("internal_error", String(e));
+        const err = graphApiError(e);
+        showError(err.code, err.message);
       }
     },
     [projectId, taskId, showError, refreshGraph],
@@ -638,20 +619,12 @@ export function TaskGraph({ projectId, taskId }: TaskGraphProps) {
   const handleRemind = useCallback(
     async (edgeId: number) => {
       try {
-        const res = await fetch(
-          `/api/v1/projects/${projectId}/tasks/${taskId}/graph/edges/${edgeId}/remind`,
-          { method: "POST" },
-        );
-        if (!res.ok) {
-          const err = await res.json();
-          showError(err.code, err.error);
-          return;
-        }
+        await remindGraphEdge(projectId, taskId, edgeId);
         refreshGraph();
         setToast({ message: "Reminder sent", type: "success" });
-        setTimeout(() => setToast(null), 2000);
       } catch (e) {
-        showError("internal_error", String(e));
+        const err = graphApiError(e);
+        showError(err.code, err.message);
       }
     },
     [projectId, taskId, showError, refreshGraph],
@@ -662,9 +635,7 @@ export function TaskGraph({ projectId, taskId }: TaskGraphProps) {
       fetchSeqRef.current += 1;
       const mySeq = fetchSeqRef.current;
       try {
-        const res = await fetch(`/api/v1/projects/${projectId}/tasks/${taskId}/graph`);
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const raw = (await res.json()) as GraphData;
+        const raw = (await getTaskGraph(projectId, taskId)) as GraphData;
         if (mySeq < fetchSeqRef.current || mySeq <= discardFetchUpToRef.current) return;
         const sanitized: GraphData = {
           nodes: (raw.nodes ?? []).map((n) => ({
@@ -1261,7 +1232,6 @@ export function TaskGraph({ projectId, taskId }: TaskGraphProps) {
                 const validity = checkEdgeValidity(fromId, toId);
                 if (!validity.ok) {
                   setToast({ message: validity.reason, type: "error" });
-                  setTimeout(() => setToast(null), 3000);
                   return;
                 }
                 const toNode = data?.nodes.find((n) => n.chat_id === toId);
@@ -1428,7 +1398,6 @@ export function TaskGraph({ projectId, taskId }: TaskGraphProps) {
                             const validity = checkEdgeValidity(fromId, droppedOnNodeId);
                             if (!validity.ok) {
                               setToast({ message: validity.reason, type: "error" });
-                              setTimeout(() => setToast(null), 3000);
                             } else {
                               const toNode = data?.nodes.find((n) => n.chat_id === droppedOnNodeId);
                               if (toNode?.duty) {
@@ -1765,34 +1734,21 @@ export function TaskGraph({ projectId, taskId }: TaskGraphProps) {
           if (!agent || !name.trim()) return;
           setSpawnLoading(true);
           try {
-            const res = await fetch(
-              `/api/v1/projects/${projectId}/tasks/${taskId}/graph/spawn`,
-              {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                  from_chat_id: fromChatId,
-                  agent,
-                  name: name.trim(),
-                  duty: duty.trim() || undefined,
-                  // purpose only travels along an edge — drop it for orphan
-                  // spawns where there's no edge to label.
-                  purpose:
-                    fromChatId && purpose.trim() ? purpose.trim() : undefined,
-                }),
-              },
-            );
-            if (!res.ok) {
-              const err = await res.json();
-              showError(err.code, err.error);
-              return;
-            }
+            await spawnGraphNode(projectId, taskId, {
+              from_chat_id: fromChatId,
+              agent,
+              name: name.trim(),
+              duty: duty.trim() || undefined,
+              // purpose only travels along an edge — drop it for orphan
+              // spawns where there's no edge to label.
+              purpose: fromChatId && purpose.trim() ? purpose.trim() : undefined,
+            });
             setToolbarMode(null);
             refreshGraph();
             setToast({ message: "Node created", type: "success" });
-            setTimeout(() => setToast(null), 2000);
           } catch (e) {
-            showError("internal_error", String(e));
+            const err = graphApiError(e);
+            showError(err.code, err.message);
           } finally {
             setSpawnLoading(false);
           }
@@ -1813,7 +1769,6 @@ export function TaskGraph({ projectId, taskId }: TaskGraphProps) {
             setToolbarMode(null);
             refreshGraph();
             setToast({ message: "Session deleted", type: "success" });
-            setTimeout(() => setToast(null), 2000);
           } catch (e) {
             showError("internal_error", String(e));
           }
@@ -2013,11 +1968,11 @@ function GraphContextToolbar(props: ToolbarProps) {
               <SendForm
                 placeholder={
                   nodeStatus === "disconnected"
-                    ? "Agent disconnected"
+                    ? `Start and send to ${node.name}…`
                     : `Send to ${node.name}…`
                 }
                 value={directMessage}
-                disabled={sendingMessage || nodeStatus === "disconnected"}
+                disabled={sendingMessage}
                 sending={sendingMessage}
                 onChange={onDirectMessageChange}
                 onSend={() => {
@@ -2332,7 +2287,6 @@ function NodeContextSection({
 }) {
   const Icon = agentIconComponent(node.agent);
   const dotColor = STATUS_COLORS[status] || STATUS_COLORS.disconnected;
-  const isDisconnected = status === "disconnected";
   return (
     <>
       <div className="flex items-center gap-2 min-w-0">
@@ -2356,8 +2310,7 @@ function NodeContextSection({
           icon={<Send className="w-3.5 h-3.5" />}
           label="Send"
           onClick={onSendClick}
-          disabled={isDisconnected}
-          disabledTitle="Agent disconnected"
+          disabled={false}
         />
         <ToolbarButton
           icon={<GitBranch className="w-3.5 h-3.5" />}

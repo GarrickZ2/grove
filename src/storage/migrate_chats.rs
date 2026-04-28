@@ -19,7 +19,6 @@ pub fn migrate_chats_toml_to_sqlite(conn: &Connection) -> Result<()> {
         return Ok(());
     }
 
-    let timestamp = Utc::now().format("%Y%m%d%H%M%S").to_string();
     let projects = match std::fs::read_dir(&projects_dir) {
         Ok(entries) => entries,
         Err(e) => {
@@ -54,7 +53,7 @@ pub fn migrate_chats_toml_to_sqlite(conn: &Connection) -> Result<()> {
                 continue;
             }
 
-            match migrate_one_task(conn, &project_id, &task_id, &chats_path, &timestamp) {
+            match migrate_one_task(conn, &project_id, &task_id, &chats_path) {
                 Ok(count) => eprintln!(
                     "  [migrate] chats.toml → session: {}/{} ({} chats)",
                     project_id, task_id, count
@@ -110,18 +109,16 @@ fn migrate_one_task(
     project_id: &str,
     task_id: &str,
     chats_path: &std::path::Path,
-    timestamp: &str,
 ) -> Result<usize> {
     let file: crate::storage::tasks::ChatsFile = crate::storage::load_toml(chats_path)?;
-    let count = file.chats.len();
 
     let tx = conn.unchecked_transaction()?;
+    let mut migrated = 0;
     for chat in &file.chats {
-        tx.execute(
-            "INSERT INTO session
+        let rows = tx.execute(
+            "INSERT OR IGNORE INTO session
              (session_id, project, task_id, title, agent, acp_session_id, duty, created_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
-             ON CONFLICT(session_id) DO NOTHING",
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
             params![
                 chat.id,
                 project_id,
@@ -133,15 +130,18 @@ fn migrate_one_task(
                 chat.created_at.to_rfc3339(),
             ],
         )?;
+        if rows == 0 {
+            eprintln!(
+                "[warning] chats.toml migration: chat id '{}' already exists in session table, skipping {}/{}",
+                chat.id, project_id, task_id
+            );
+        } else {
+            migrated += 1;
+        }
     }
     tx.commit()?;
-
-    let bak_path = chats_path.with_file_name(format!("chats.toml.bak.{}", timestamp));
-    if !bak_path.exists() {
-        std::fs::rename(chats_path, bak_path)?;
-    }
-
-    Ok(count)
+    // 不再 rename chats.toml；新服务只读 SQLite session 表，留着旧文件做应急备份。
+    Ok(migrated)
 }
 
 #[cfg(test)]
@@ -210,10 +210,13 @@ mod tests {
     }
 
     #[test]
-    fn migrates_chats_toml_and_renames_backup() {
+    fn migrates_chats_toml_to_sqlite() {
         with_temp_home(|home| {
             let chats_dir = home.join(".grove/projects/project-1/tasks/task-1/chats");
             std::fs::create_dir_all(&chats_dir).unwrap();
+            let old_chat_dir = chats_dir.join("chat-1");
+            std::fs::create_dir_all(&old_chat_dir).unwrap();
+            std::fs::write(old_chat_dir.join("history.jsonl"), "{}\n").unwrap();
             let chats_path = chats_dir.join("chats.toml");
             crate::storage::save_toml(
                 &chats_path,
@@ -230,14 +233,49 @@ mod tests {
                 .query_row("SELECT COUNT(*) FROM session", [], |row| row.get(0))
                 .unwrap();
             assert_eq!(count, 1);
-            assert!(!chats_path.exists());
-            assert!(std::fs::read_dir(&chats_dir)
+            let migrated_id: String = conn
+                .query_row("SELECT session_id FROM session", [], |row| row.get(0))
+                .unwrap();
+            assert_eq!(migrated_id, "chat-1");
+            assert!(old_chat_dir.exists());
+            assert!(old_chat_dir.join("history.jsonl").exists());
+            // chats.toml 已不再被 rename — 新流程只读 SQLite，留着旧文件做备份。
+            assert!(chats_path.exists());
+        });
+    }
+
+    #[test]
+    fn migration_remaps_duplicate_legacy_chat_ids_across_tasks() {
+        with_temp_home(|home| {
+            for task_id in ["task-1", "task-2"] {
+                let chats_dir = home
+                    .join(".grove/projects/project-1/tasks")
+                    .join(task_id)
+                    .join("chats");
+                std::fs::create_dir_all(chats_dir.join("chat-1")).unwrap();
+                crate::storage::save_toml(
+                    &chats_dir.join("chats.toml"),
+                    &crate::storage::tasks::ChatsFile {
+                        chats: vec![chat("chat-1", None)],
+                    },
+                )
+                .unwrap();
+            }
+
+            let conn = connection();
+            migrate_chats_toml_to_sqlite(&conn).unwrap();
+
+            let mut stmt = conn
+                .prepare("SELECT session_id FROM session ORDER BY task_id")
+                .unwrap();
+            let ids = stmt
+                .query_map([], |row| row.get::<_, String>(0))
                 .unwrap()
-                .flatten()
-                .any(|entry| entry
-                    .file_name()
-                    .to_string_lossy()
-                    .starts_with("chats.toml.bak.")));
+                .collect::<std::result::Result<Vec<_>, _>>()
+                .unwrap();
+
+            assert_eq!(ids.len(), 1);
+            assert_eq!(ids[0], "chat-1");
         });
     }
 
@@ -270,12 +308,32 @@ mod tests {
     fn duty_lock_rejects_second_some_but_allows_clear() {
         with_temp_home(|_| {
             add_chat_session("project-1", "task-1", chat("chat-1", None)).unwrap();
-            update_chat_duty("project-1", "task-1", "chat-1", Some("review".to_string())).unwrap();
-            assert!(
-                update_chat_duty("project-1", "task-1", "chat-1", Some("plan".to_string()))
-                    .is_err()
-            );
-            update_chat_duty("project-1", "task-1", "chat-1", None).unwrap();
+            update_chat_duty(
+                "project-1",
+                "task-1",
+                "chat-1",
+                Some("review".to_string()),
+                false,
+            )
+            .unwrap();
+            assert!(update_chat_duty(
+                "project-1",
+                "task-1",
+                "chat-1",
+                Some("plan".to_string()),
+                false
+            )
+            .is_err());
+            // force=true 用户路径，应允许覆盖
+            update_chat_duty(
+                "project-1",
+                "task-1",
+                "chat-1",
+                Some("plan2".to_string()),
+                true,
+            )
+            .unwrap();
+            update_chat_duty("project-1", "task-1", "chat-1", None, false).unwrap();
             assert!(get_chat_session("project-1", "task-1", "chat-1")
                 .unwrap()
                 .unwrap()
@@ -292,15 +350,15 @@ mod tests {
 
             let conn = connection();
             conn.execute(
-                "INSERT INTO agent_edge (task_id, from_session, to_session, purpose, created_at)
-                 VALUES ('task-1', 'chat-1', 'chat-2', 'handoff', '2026-01-01T00:00:00Z')",
+                "INSERT INTO agent_edge (project, task_id, from_session, to_session, purpose, created_at)
+                 VALUES ('project-1', 'task-1', 'chat-1', 'chat-2', 'handoff', '2026-01-01T00:00:00Z')",
                 [],
             )
             .unwrap();
             conn.execute(
                 "INSERT INTO agent_pending_message
-                 (msg_id, task_id, from_session, to_session, body, created_at)
-                 VALUES ('msg-1', 'task-1', 'chat-2', 'chat-1', 'hello', '2026-01-01T00:00:00Z')",
+                 (msg_id, project, task_id, from_session, to_session, body, created_at)
+                 VALUES ('msg-1', 'project-1', 'task-1', 'chat-2', 'chat-1', 'hello', '2026-01-01T00:00:00Z')",
                 [],
             )
             .unwrap();
@@ -335,15 +393,15 @@ mod tests {
 
             let conn = connection();
             conn.execute(
-                "INSERT INTO agent_edge (task_id, from_session, to_session, purpose, created_at)
-                 VALUES ('task-1', 'chat-1', 'chat-2', 'handoff', '2026-01-01T00:00:00Z')",
+                "INSERT INTO agent_edge (project, task_id, from_session, to_session, purpose, created_at)
+                 VALUES ('project-1', 'task-1', 'chat-1', 'chat-2', 'handoff', '2026-01-01T00:00:00Z')",
                 [],
             )
             .unwrap();
             conn.execute(
                 "INSERT INTO agent_pending_message
-                 (msg_id, task_id, from_session, to_session, body, created_at)
-                 VALUES ('msg-1', 'task-1', 'chat-1', 'chat-2', 'hello', '2026-01-01T00:00:00Z')",
+                 (msg_id, project, task_id, from_session, to_session, body, created_at)
+                 VALUES ('msg-1', 'project-1', 'task-1', 'chat-1', 'chat-2', 'hello', '2026-01-01T00:00:00Z')",
                 [],
             )
             .unwrap();

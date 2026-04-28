@@ -11,6 +11,8 @@ use crate::storage::{agent_graph as graph_db, database, tasks, workspace};
 use chrono::Utc;
 use std::time::Duration;
 
+use super::tools::ACP_SESSION_READY_TIMEOUT;
+
 pub struct SpawnResult {
     pub chat_id: String,
     pub name: String,
@@ -73,7 +75,9 @@ pub async fn user_spawn_node(
     // 4. Optional edge
     if let Some(from_id) = from_chat_id {
         let conn = database::connection();
-        if let Err(e) = graph_db::add_edge(&conn, task_id, from_id, &new_chat_id, purpose) {
+        if let Err(e) =
+            graph_db::add_edge(&conn, project_key, task_id, from_id, &new_chat_id, purpose)
+        {
             let _ = tasks::delete_chat_session(project_key, task_id, &new_chat_id);
             return Err(format!("add_edge: {}", e));
         }
@@ -134,9 +138,13 @@ pub async fn user_spawn_node(
     //    chat (and its auto-edge) on failure so we don't leave orphan rows
     //    invisible to the UI (no ChatListChanged would have fired yet).
     if let Some(d) = duty {
-        if let Err(e) =
-            tasks::update_chat_duty(project_key, task_id, &new_chat_id, Some(d.to_string()))
-        {
+        if let Err(e) = tasks::update_chat_duty(
+            project_key,
+            task_id,
+            &new_chat_id,
+            Some(d.to_string()),
+            true, // 用户路径，允许覆盖
+        ) {
             let _ = tasks::delete_chat_session(project_key, task_id, &new_chat_id);
             return Err(format!("update_duty: {}", e));
         }
@@ -167,20 +175,29 @@ pub async fn user_spawn_node(
     let task_id_clone = task_id.to_string();
     let new_chat_id_clone = new_chat_id.clone();
     tokio::spawn(async move {
+        // H2: 任何启动失败 / SessionReady 等不到都广播一次 disconnected，
+        // 让前端图上能看到死节点而不是停在 "connecting"。
+        let broadcast_disconnected = |msg: &str| {
+            eprintln!(
+                "[user_spawn_node] (project={} task={} chat={}): {}",
+                project_key_clone, task_id_clone, new_chat_id_clone, msg
+            );
+            broadcast_radio_event(RadioEvent::ChatStatus {
+                project_id: project_key_clone.clone(),
+                task_id: task_id_clone.clone(),
+                chat_id: new_chat_id_clone.clone(),
+                status: "disconnected".to_string(),
+            });
+        };
+
         let (_handle, mut rx) = match acp::get_or_start_session(session_key, config).await {
             Ok(t) => t,
             Err(e) => {
-                eprintln!(
-                    "[user_spawn_node] start_session failed (project={} task={} chat={}): {}",
-                    project_key_clone, task_id_clone, new_chat_id_clone, e,
-                );
+                broadcast_disconnected(&format!("start_session failed: {}", e));
                 return;
             }
         };
-        // Drain SessionReady / errors with the same 90s budget — purely so
-        // the eprintln below tells ops what happened. UI doesn't depend on
-        // this future at all.
-        let wait = tokio::time::timeout(Duration::from_secs(90), async {
+        let wait = tokio::time::timeout(ACP_SESSION_READY_TIMEOUT, async {
             loop {
                 match rx.recv().await {
                     Ok(AcpUpdate::SessionReady { .. }) => return Ok::<_, String>(()),
@@ -194,16 +211,10 @@ pub async fn user_spawn_node(
             }
         })
         .await;
-        let msg: Option<String> = match wait {
-            Ok(Ok(())) => None,
-            Ok(Err(m)) => Some(m),
-            Err(_) => Some("timeout waiting for SessionReady".to_string()),
-        };
-        if let Some(m) = msg {
-            eprintln!(
-                "[user_spawn_node] session never reached ready (project={} task={} chat={}): {}",
-                project_key_clone, task_id_clone, new_chat_id_clone, m
-            );
+        match wait {
+            Ok(Ok(())) => {}
+            Ok(Err(m)) => broadcast_disconnected(&format!("session never ready: {}", m)),
+            Err(_) => broadcast_disconnected("timeout waiting for SessionReady"),
         }
     });
 
@@ -216,27 +227,28 @@ pub async fn user_spawn_node(
 }
 
 pub fn user_add_edge(
+    project_key: &str,
     task_id: &str,
     from_session: &str,
     to_session: &str,
     purpose: Option<&str>,
 ) -> Result<i64, String> {
     let conn = database::connection();
-    graph_db::add_edge(&conn, task_id, from_session, to_session, purpose).map_err(|e| {
-        let s = e.to_string();
-        if s.contains("cycle_would_form") {
-            "cycle_would_form".to_string()
-        } else if s.contains("bidirectional_edge") {
-            "bidirectional_edge".to_string()
-        } else if s.contains("duplicate_edge") {
-            "duplicate_edge".to_string()
-        } else if s.contains("same_task_required") {
-            "same_task_required".to_string()
-        } else if s.contains("endpoint_not_found") {
-            "target_not_found".to_string()
-        } else {
-            format!("internal_error: {}", s)
-        }
+    graph_db::add_edge(
+        &conn,
+        project_key,
+        task_id,
+        from_session,
+        to_session,
+        purpose,
+    )
+    .map_err(|e| match e.storage_tag() {
+        Some("cycle_would_form") => "cycle_would_form".to_string(),
+        Some("bidirectional_edge") => "bidirectional_edge".to_string(),
+        Some("duplicate_edge") => "duplicate_edge".to_string(),
+        Some("same_task_required") => "same_task_required".to_string(),
+        Some("endpoint_not_found") => "target_not_found".to_string(),
+        _ => format!("internal_error: {}", e),
     })
 }
 
@@ -255,28 +267,51 @@ pub async fn user_send_message(
             .await
             .map_err(|e| e.code().to_string())?;
 
-    if handle.is_busy.load(std::sync::atomic::Ordering::Relaxed) {
+    // CAS-claim is_busy to close the race with concurrent dispatchers.
+    let claimed = handle
+        .is_busy
+        .compare_exchange(
+            false,
+            true,
+            std::sync::atomic::Ordering::AcqRel,
+            std::sync::atomic::Ordering::Acquire,
+        )
+        .is_ok();
+    if !claimed {
         let messages = handle.queue_message(QueuedMessage {
             text: text.to_string(),
             attachments: Vec::new(),
             sender: Some("user".to_string()),
         });
         handle.emit(AcpUpdate::QueueUpdate { messages });
-    } else {
-        tokio::time::timeout(
-            Duration::from_secs(10),
-            handle.send_prompt(
-                text.to_string(),
-                Vec::new(),
-                Some("user".to_string()),
-                false,
-            ),
-        )
-        .await
-        .map_err(|_| "timeout".to_string())?
-        .map_err(|e| format!("send_prompt: {}", e))?;
+        return Ok(());
     }
-    Ok(())
+
+    let res = tokio::time::timeout(
+        Duration::from_secs(10),
+        handle.send_prompt(
+            text.to_string(),
+            Vec::new(),
+            Some("user".to_string()),
+            false,
+        ),
+    )
+    .await;
+    match res {
+        Ok(Ok(())) => Ok(()),
+        Ok(Err(e)) => {
+            handle
+                .is_busy
+                .store(false, std::sync::atomic::Ordering::Release);
+            Err(format!("send_prompt: {}", e))
+        }
+        Err(_) => {
+            handle
+                .is_busy
+                .store(false, std::sync::atomic::Ordering::Release);
+            Err("timeout".to_string())
+        }
+    }
 }
 
 pub async fn user_remind(project_key: &str, task_id: &str, edge_id: i64) -> Result<(), String> {
@@ -286,7 +321,7 @@ pub async fn user_remind(project_key: &str, task_id: &str, edge_id: i64) -> Resu
             .map_err(|e| format!("get_edge: {}", e))?
             .ok_or_else(|| "target_not_found".to_string())?;
 
-        let pending = graph_db::list_pending_for_task(&conn, task_id)
+        let pending = graph_db::list_pending_for_task(&conn, project_key, task_id)
             .map_err(|e| format!("list_pending: {}", e))?
             .into_iter()
             .find(|p| p.from_session == edge.from_session && p.to_session == edge.to_session)
@@ -295,29 +330,22 @@ pub async fn user_remind(project_key: &str, task_id: &str, edge_id: i64) -> Resu
         (edge.from_session, edge.to_session, pending.msg_id)
     };
 
-    let key = format!("{}:{}:{}", project_key, task_id, to_session);
-    let handle = acp::get_session_handle(&key).ok_or_else(|| "target_not_available".to_string())?;
-
-    if handle.is_busy.load(std::sync::atomic::Ordering::Relaxed) {
-        return Err("target_is_busy".to_string());
-    }
-
-    let sender_name = tasks::load_chat_sessions(project_key, task_id)
+    let sender_chat = tasks::load_chat_sessions(project_key, task_id)
         .ok()
-        .and_then(|chats| {
-            chats
-                .iter()
-                .find(|c| c.id == from_session)
-                .map(|c| c.title.clone())
-        })
-        .unwrap_or_else(|| from_session.clone());
+        .and_then(|chats| chats.into_iter().find(|c| c.id == from_session))
+        .ok_or_else(|| "sender_not_found".to_string())?;
 
-    let prompt = format!(
-        "[Remind] The message from {} (msg: {}) is still awaiting your reply. Please check and respond.",
-        sender_name, msg_id
+    // M11: 用 grove-meta envelope 包 reminder，目标 agent 能区分 reminder vs 新 user 请求。
+    let injected = crate::agent_graph::inject::build_injected_prompt(
+        &sender_chat.id,
+        &sender_chat.title,
+        &sender_chat.agent,
+        crate::agent_graph::inject::InjectKind::Remind,
+        "", // body 空，全部信息由 system-prompt 承载
+        Some(&msg_id),
     );
 
-    user_send_message(project_key, task_id, &to_session, &prompt).await?;
-    // TODO(WO-009): broadcast RadioEvent for pending status change
-    Ok(())
+    // 直接送达（包括 spawn-on-demand + busy 判定 + CAS 并发保护）
+    crate::agent_graph::tools::deliver_user_remind(project_key, task_id, &to_session, injected)
+        .await
 }

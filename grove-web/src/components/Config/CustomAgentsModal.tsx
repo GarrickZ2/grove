@@ -115,6 +115,13 @@ export function CustomAgentsModal({
   const [busy, setBusy] = useState(false);
   const { isMobile } = useIsMobile();
 
+  // Refs for keyboard handler so it always calls the latest closures without
+  // re-adding the document listener on every render.
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
+  const cancelEditRef = useRef<() => void>(() => {});
+  const saveEditRef = useRef<() => Promise<void>>(async () => {});
+
   // Keyboard a11y — Esc unwinds inner state in layers (delete confirm →
   // editing form → modal close), so users don't lose unsaved work to a
   // single keystroke. Cmd/Ctrl+Enter saves the form when in editing mode.
@@ -129,20 +136,18 @@ export function CustomAgentsModal({
         }
         if (editingId) {
           e.preventDefault();
-          cancelEdit();
+          cancelEditRef.current();
           return;
         }
         e.preventDefault();
-        onClose();
+        onCloseRef.current();
       } else if ((e.metaKey || e.ctrlKey) && e.key === "Enter" && editingId && form) {
         e.preventDefault();
-        void saveEdit();
+        void saveEditRef.current();
       }
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
-    // saveEdit / cancelEdit close over editing state — re-bind on changes.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen, editingId, form, confirmDeleteId]);
 
   // Sync from props on open. Drafts are dropped on close.
@@ -323,6 +328,8 @@ export function CustomAgentsModal({
       setBusy(false);
     }
   };
+  cancelEditRef.current = cancelEdit;
+  saveEditRef.current = saveEdit;
 
   // Inline delete --------------------------------------------------------
 

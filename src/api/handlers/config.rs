@@ -12,6 +12,10 @@ use std::path::Path;
 
 use crate::storage::config::{self, Config, CustomAgentServer, CustomLayoutConfig, ThemeConfig};
 
+/// M6: serialize PATCH /api/v1/config 调用，避免并发 PATCH 互相覆盖
+/// (load → mutate → save 三段不是原子的)。
+static CONFIG_WRITE_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
 /// GET /api/v1/config response
 #[derive(Debug, Serialize)]
 pub struct ConfigResponse {
@@ -209,6 +213,7 @@ pub async fn get_config() -> Json<ConfigResponse> {
 pub async fn patch_config(
     Json(patch): Json<ConfigPatchRequest>,
 ) -> Result<Json<ConfigResponse>, StatusCode> {
+    let _guard = CONFIG_WRITE_LOCK.lock().await;
     let mut config = config::load_config();
 
     // Apply theme patch
@@ -469,8 +474,21 @@ pub async fn get_app_icon(Query(query): Query<IconQuery>) -> Result<Response<Bod
 
     let app_path = Path::new(&query.path);
 
-    // Validate the path points to a .app bundle
-    if !app_path.exists() || app_path.extension().and_then(|e| e.to_str()) != Some("app") {
+    // L6: 防路径穿越 — 必须是绝对路径、规范化（无 `..`）、扩展名为 .app。
+    // 这条 endpoint 把 path 喂给 sips/defaults 子进程，宽松校验有命令拼接风险。
+    if !app_path.is_absolute() {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+    if app_path
+        .components()
+        .any(|c| matches!(c, std::path::Component::ParentDir))
+    {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+    if app_path.extension().and_then(|e| e.to_str()) != Some("app") {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+    if !app_path.exists() {
         return Err(StatusCode::NOT_FOUND);
     }
 

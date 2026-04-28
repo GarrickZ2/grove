@@ -270,11 +270,15 @@ pub(crate) fn create_schema(conn: &Connection) -> Result<()> {
         CREATE INDEX IF NOT EXISTS idx_session_task ON session(project, task_id);
 
         -- Agent Graph: Edge (dependency between sessions)
+        -- H6: FK to session(session_id) ON DELETE CASCADE — referential
+        -- integrity at the DB layer; cascade_delete_for_session 仍保留作为
+        -- 跨表 broadcast 的统一入口，但 DB 层会兜底所有遗漏路径。
         CREATE TABLE IF NOT EXISTS agent_edge (
             edge_id      INTEGER PRIMARY KEY AUTOINCREMENT,
+            project      TEXT NOT NULL DEFAULT '',
             task_id      TEXT NOT NULL,
-            from_session TEXT NOT NULL,
-            to_session   TEXT NOT NULL,
+            from_session TEXT NOT NULL REFERENCES session(session_id) ON DELETE CASCADE,
+            to_session   TEXT NOT NULL REFERENCES session(session_id) ON DELETE CASCADE,
             purpose      TEXT,
             created_at   TEXT NOT NULL,
             UNIQUE (from_session, to_session)
@@ -285,9 +289,10 @@ pub(crate) fn create_schema(conn: &Connection) -> Result<()> {
         -- Agent Graph: Pending messages between sessions
         CREATE TABLE IF NOT EXISTS agent_pending_message (
             msg_id       TEXT PRIMARY KEY,
+            project      TEXT NOT NULL DEFAULT '',
             task_id      TEXT NOT NULL,
-            from_session TEXT NOT NULL,
-            to_session   TEXT NOT NULL,
+            from_session TEXT NOT NULL REFERENCES session(session_id) ON DELETE CASCADE,
+            to_session   TEXT NOT NULL REFERENCES session(session_id) ON DELETE CASCADE,
             body         TEXT NOT NULL,
             created_at   TEXT NOT NULL
         );
@@ -315,6 +320,110 @@ pub(crate) fn create_schema(conn: &Connection) -> Result<()> {
     let _ = conn.execute_batch(
         "ALTER TABLE projects ADD COLUMN project_type TEXT NOT NULL DEFAULT 'repo';",
     );
+    let _ =
+        conn.execute_batch("ALTER TABLE agent_edge ADD COLUMN project TEXT NOT NULL DEFAULT '';");
+    let _ = conn.execute_batch(
+        "ALTER TABLE agent_pending_message ADD COLUMN project TEXT NOT NULL DEFAULT '';",
+    );
+    conn.execute_batch(
+        "UPDATE agent_edge
+         SET project = COALESCE((SELECT s.project FROM session s WHERE s.session_id = agent_edge.from_session), project)
+         WHERE project = '';
+         UPDATE agent_pending_message
+         SET project = COALESCE((SELECT e.project FROM agent_edge e
+                                 WHERE e.from_session = agent_pending_message.from_session
+                                   AND e.to_session = agent_pending_message.to_session), project)
+         WHERE project = '';
+         CREATE INDEX IF NOT EXISTS idx_edge_task ON agent_edge(project, task_id);
+         CREATE INDEX IF NOT EXISTS idx_pending_task ON agent_pending_message(project, task_id);",
+    )?;
+
+    // H6: 旧库的 agent_edge / agent_pending_message 缺 FK；SQLite 不支持
+    // ALTER TABLE 加 FK，所以做一次表重建。仅在 sqlite_master 中检测到这些
+    // 表无 REFERENCES 时执行；用 sql 字段的 LIKE 判定，不依赖 PRAGMA。
+    let needs_fk_migrate: bool = conn
+        .query_row(
+            "SELECT COUNT(*) FROM sqlite_master
+             WHERE type='table' AND name IN ('agent_edge','agent_pending_message')
+               AND sql NOT LIKE '%REFERENCES session%'",
+            [],
+            |row| row.get::<_, i64>(0),
+        )
+        .unwrap_or(0)
+        > 0;
+    if needs_fk_migrate {
+        // M-N4: 迁移会丢弃引用了不存在 session 的孤儿行 — 提前算一下要被丢的数量，
+        // 让 ops 在升级日志里能看到。后续 gc_orphans 也会兜底。
+        let orphan_edges: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM agent_edge
+                 WHERE from_session NOT IN (SELECT session_id FROM session)
+                    OR to_session   NOT IN (SELECT session_id FROM session)",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap_or(0);
+        let orphan_pending: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM agent_pending_message
+                 WHERE from_session NOT IN (SELECT session_id FROM session)
+                    OR to_session   NOT IN (SELECT session_id FROM session)",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap_or(0);
+        if orphan_edges > 0 || orphan_pending > 0 {
+            eprintln!(
+                "[fk_migrate] dropping {} orphan edges and {} orphan pending messages \
+                 (referenced sessions no longer exist)",
+                orphan_edges, orphan_pending
+            );
+        }
+        conn.execute_batch(
+            "BEGIN;
+             CREATE TABLE agent_edge__new (
+                 edge_id      INTEGER PRIMARY KEY AUTOINCREMENT,
+                 project      TEXT NOT NULL DEFAULT '',
+                 task_id      TEXT NOT NULL,
+                 from_session TEXT NOT NULL REFERENCES session(session_id) ON DELETE CASCADE,
+                 to_session   TEXT NOT NULL REFERENCES session(session_id) ON DELETE CASCADE,
+                 purpose      TEXT,
+                 created_at   TEXT NOT NULL,
+                 UNIQUE (from_session, to_session)
+             );
+             INSERT INTO agent_edge__new
+                 SELECT edge_id, project, task_id, from_session, to_session, purpose, created_at
+                 FROM agent_edge
+                 WHERE from_session IN (SELECT session_id FROM session)
+                   AND to_session   IN (SELECT session_id FROM session);
+             DROP TABLE agent_edge;
+             ALTER TABLE agent_edge__new RENAME TO agent_edge;
+             CREATE INDEX IF NOT EXISTS idx_edge_from ON agent_edge(from_session);
+             CREATE INDEX IF NOT EXISTS idx_edge_to   ON agent_edge(to_session);
+             CREATE INDEX IF NOT EXISTS idx_edge_task ON agent_edge(project, task_id);
+
+             CREATE TABLE agent_pending_message__new (
+                 msg_id       TEXT PRIMARY KEY,
+                 project      TEXT NOT NULL DEFAULT '',
+                 task_id      TEXT NOT NULL,
+                 from_session TEXT NOT NULL REFERENCES session(session_id) ON DELETE CASCADE,
+                 to_session   TEXT NOT NULL REFERENCES session(session_id) ON DELETE CASCADE,
+                 body         TEXT NOT NULL,
+                 created_at   TEXT NOT NULL
+             );
+             INSERT INTO agent_pending_message__new
+                 SELECT msg_id, project, task_id, from_session, to_session, body, created_at
+                 FROM agent_pending_message
+                 WHERE from_session IN (SELECT session_id FROM session)
+                   AND to_session   IN (SELECT session_id FROM session);
+             DROP TABLE agent_pending_message;
+             ALTER TABLE agent_pending_message__new RENAME TO agent_pending_message;
+             CREATE INDEX IF NOT EXISTS idx_pending_to   ON agent_pending_message(to_session);
+             CREATE UNIQUE INDEX IF NOT EXISTS uniq_pending_pair ON agent_pending_message(from_session, to_session);
+             CREATE INDEX IF NOT EXISTS idx_pending_task ON agent_pending_message(project, task_id);
+             COMMIT;",
+        )?;
+    }
 
     Ok(())
 }

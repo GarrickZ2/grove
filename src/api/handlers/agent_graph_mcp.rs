@@ -153,6 +153,9 @@ Custom Agents (personas):
 - The spawn behaves exactly like a normal base-agent spawn except the new
   session is pre-seeded with the persona's system prompt on Create. Resume
   paths see no extra prompt.
+- Personas are user-scoped (per Grove install), not task-scoped. The same
+  `available_custom_agents` is visible to every session in every task — by
+  design, so a persona created in one task can be reused elsewhere.
 
 Constraints:
 - send requires an existing edge (no_edge if missing); single-in-flight per A→B
@@ -218,7 +221,7 @@ impl AgentGraphMcpService {
 
     #[tool(
         name = "grove_agent_send",
-        description = "Deliver a message to another Session in your task. Requires a caller→to outgoing edge. The target sees the message as a user prompt with a `[from:<name> · session=<id> · kind=send]` prefix. If the target is busy, the message is queued and visible in its pending list; it dequeues automatically when the current turn ends. Single-in-flight: cannot send a second message before the previous one is replied to."
+        description = "Deliver a message to another Session in your task. Requires a caller→to outgoing edge. The target sees the message as a user prompt wrapped in a `<grove-meta>{...}</grove-meta>` envelope (JSON inside). The envelope's `system-prompt` field carries the human-readable framing (sender name, session id, kind=send, msg_id) and the `message` field carries your raw text. If the target is busy, the message is queued and visible in its pending list; it dequeues automatically when the current turn ends. Single-in-flight: cannot send a second message before the previous one is replied to."
     )]
     async fn grove_agent_send_tool(
         &self,
@@ -234,7 +237,7 @@ impl AgentGraphMcpService {
 
     #[tool(
         name = "grove_agent_reply",
-        description = "Reply to a pending message addressed to you. Consumes the reply ticket. The replier-side gets a user prompt with `[from:<name> · session=<id> · kind=reply]` prefix. No edge requirement; reply is always permitted on a valid ticket."
+        description = "Reply to a pending message addressed to you. Consumes the reply ticket. The original sender receives the reply wrapped in a `<grove-meta>{...}</grove-meta>` envelope (JSON), with `system-prompt` describing the reply framing (sender, session id, kind=reply, msg_id) and `message` carrying your raw text. No edge requirement; reply is always permitted on a valid ticket."
     )]
     async fn grove_agent_reply_tool(
         &self,
@@ -266,7 +269,7 @@ impl AgentGraphMcpService {
 
     #[tool(
         name = "grove_agent_capability",
-        description = "Inspect a session's available models, modes, and thought_levels. The session must be in your task and currently online (its session.json exists)."
+        description = "Inspect a session's available models, modes, and thought_levels. The session must be in your task and currently online (its session.json exists). NOTE: this tool does NOT auto-spawn — if you get AgentOffline, send the target a message via grove_agent_send first to wake it, then re-query."
     )]
     async fn grove_agent_capability_tool(
         &self,
@@ -615,7 +618,7 @@ mod tests {
                 ],
             )
             .expect("seed B");
-            crate::storage::agent_graph::add_edge(&conn, "t", "chat-A", "chat-B", None)
+            crate::storage::agent_graph::add_edge(&conn, "p", "t", "chat-A", "chat-B", None)
                 .expect("edge");
         }
 

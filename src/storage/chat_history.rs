@@ -350,10 +350,20 @@ fn write_history(project: &str, task_id: &str, chat_id: &str, events: &[AcpUpdat
     }
     drop(writer);
 
-    // 原子替换
+    // 原子替换；L8: rename 跨设备失败时退化为 copy + remove。
     if let Err(e) = fs::rename(&tmp, &path) {
-        eprintln!("[chat_history] compact: failed to rename: {}", e);
-        let _ = fs::remove_file(&tmp);
+        match fs::copy(&tmp, &path) {
+            Ok(_) => {
+                let _ = fs::remove_file(&tmp);
+            }
+            Err(copy_err) => {
+                eprintln!(
+                    "[chat_history] compact: rename failed ({}) and copy fallback failed ({})",
+                    e, copy_err
+                );
+                let _ = fs::remove_file(&tmp);
+            }
+        }
     }
 }
 

@@ -99,27 +99,22 @@ impl std::error::Error for AgentGraphError {}
 
 impl From<crate::error::GroveError> for AgentGraphError {
     fn from(e: crate::error::GroveError) -> Self {
-        // Storage layer raises tagged tokens via `storage_error`; map back when we recognize.
-        let s = e.to_string();
-        if s.contains("no_edge") {
-            return Self::NoEdge;
+        // Storage 层用 GroveError::StorageTagged 抛业务错误码，
+        // 这里精确 match tag，不再依赖字符串包含。
+        if let Some(tag) = e.storage_tag() {
+            return match tag {
+                "no_edge" => Self::NoEdge,
+                "previous_message_pending" => Self::PreviousMessagePending,
+                "same_task_required" => Self::SameTaskRequired,
+                "cycle_would_form" => Self::CycleWouldForm,
+                "endpoint_not_found" => Self::TargetNotFound,
+                "duty_locked" => Self::DutyForbidden,
+                "unknown_base_agent" => Self::AgentSpawnFailed,
+                "duplicate_edge" | "bidirectional_edge" => Self::Internal(e.to_string()),
+                _ => Self::Internal(e.to_string()),
+            };
         }
-        if s.contains("previous_message_pending") {
-            return Self::PreviousMessagePending;
-        }
-        if s.contains("same_task_required") {
-            return Self::SameTaskRequired;
-        }
-        if s.contains("cycle_would_form") {
-            return Self::CycleWouldForm;
-        }
-        if s.contains("endpoint_not_found") {
-            return Self::TargetNotFound;
-        }
-        if s.contains("duty is locked") {
-            return Self::DutyForbidden;
-        }
-        Self::Internal(s)
+        Self::Internal(e.to_string())
     }
 }
 

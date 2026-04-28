@@ -200,7 +200,7 @@ export function useRadioEvents(callbacks: RadioEventCallbacks): { radioClients: 
   const callbacksRef = useRef(callbacks);
   useEffect(() => {
     callbacksRef.current = callbacks;
-  });
+  }, [callbacks]);
 
   // Lazy initializer pulls the current module-level count at mount, so we
   // don't need a setState-in-effect call to re-sync.

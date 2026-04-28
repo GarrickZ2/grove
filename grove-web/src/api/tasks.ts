@@ -506,6 +506,136 @@ export async function sendGraphChatMessage(
   );
 }
 
+export interface GraphPendingMessageInfo {
+  from: string;
+  from_name: string;
+  to: string;
+  to_name: string;
+  body_excerpt: string;
+}
+
+export interface GraphNodeResponse {
+  chat_id: string;
+  name: string;
+  agent: string;
+  duty?: string;
+  status: string;
+  pending_in: number;
+  pending_out: number;
+  pending_messages: GraphPendingMessageInfo[];
+}
+
+export interface GraphEdgeResponse {
+  edge_id: number;
+  from: string;
+  to: string;
+  purpose?: string;
+  state: string;
+  pending_message?: GraphPendingMessageInfo;
+}
+
+export interface GraphResponse {
+  nodes: GraphNodeResponse[];
+  edges: GraphEdgeResponse[];
+}
+
+export interface SpawnGraphNodeRequest {
+  from_chat_id?: string | null;
+  agent: string;
+  name: string;
+  duty?: string;
+  purpose?: string;
+}
+
+export interface SpawnGraphNodeResponse {
+  chat_id: string;
+  name: string;
+  duty?: string;
+  agent: string;
+}
+
+export interface AddGraphEdgeRequest {
+  from: string;
+  to: string;
+  duty?: string;
+  purpose?: string;
+}
+
+export async function getTaskGraph(
+  projectId: string,
+  taskId: string,
+): Promise<GraphResponse> {
+  return apiClient.get<GraphResponse>(
+    `/api/v1/projects/${projectId}/tasks/${taskId}/graph`,
+  );
+}
+
+export async function spawnGraphNode(
+  projectId: string,
+  taskId: string,
+  body: SpawnGraphNodeRequest,
+): Promise<SpawnGraphNodeResponse> {
+  return apiClient.post<SpawnGraphNodeRequest, SpawnGraphNodeResponse>(
+    `/api/v1/projects/${projectId}/tasks/${taskId}/graph/spawn`,
+    body,
+  );
+}
+
+export async function addGraphEdge(
+  projectId: string,
+  taskId: string,
+  body: AddGraphEdgeRequest,
+): Promise<{ edge_id: number }> {
+  return apiClient.post<AddGraphEdgeRequest, { edge_id: number }>(
+    `/api/v1/projects/${projectId}/tasks/${taskId}/graph/edges`,
+    body,
+  );
+}
+
+export async function updateGraphChatDuty(
+  projectId: string,
+  taskId: string,
+  chatId: string,
+  duty?: string,
+): Promise<void> {
+  await apiClient.patch<{ duty?: string }, void>(
+    `/api/v1/projects/${projectId}/tasks/${taskId}/graph/chats/${chatId}/duty`,
+    { duty },
+  );
+}
+
+export async function updateGraphEdgePurpose(
+  projectId: string,
+  taskId: string,
+  edgeId: number,
+  purpose?: string,
+): Promise<void> {
+  await apiClient.patch<{ purpose?: string }, void>(
+    `/api/v1/projects/${projectId}/tasks/${taskId}/graph/edges/${edgeId}`,
+    { purpose },
+  );
+}
+
+export async function deleteGraphEdge(
+  projectId: string,
+  taskId: string,
+  edgeId: number,
+): Promise<void> {
+  await apiClient.delete(
+    `/api/v1/projects/${projectId}/tasks/${taskId}/graph/edges/${edgeId}`,
+  );
+}
+
+export async function remindGraphEdge(
+  projectId: string,
+  taskId: string,
+  edgeId: number,
+): Promise<void> {
+  await apiClient.postNoContent(
+    `/api/v1/projects/${projectId}/tasks/${taskId}/graph/edges/${edgeId}/remind`,
+  );
+}
+
 /**
  * Delete a chat
  */
