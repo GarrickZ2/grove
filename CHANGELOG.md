@@ -5,6 +5,42 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.0] - 2026-04-27
+
+### Added
+
+- **Agent Graph (DAG of agents)** — full feature stack: SQLite storage with FK + cycle detection, single-in-flight pending messages per (from, to), per-session DAG queries, edge CRUD with bidirectional/cycle/same-task guards, HTTP MCP listener (Streamable HTTP transport) injected into ACP `NewSessionRequest`, 5 MCP tools (`grove_agent_spawn` / `_send` / `_reply` / `_contacts` / `_capability`), event-driven state machine with chat-grained `ChatStatus` / `PendingChanged` / `ChatListChanged` push, and `<grove-meta>` envelope wrapping for all agent-to-agent prompts
+- **Agent Graph web UI** — d3-force rendering tab, full editing layer (spawn / connect / duty / delete), @-mention picker, hover cards with pending message data, floating context toolbar (replaces popup card), permission id-aware reconcile, narrow-width composer/sidebar fixes
+- **Custom Agents (personas)** — user-defined persona layer over base agents with per-persona model/mode/effort/system-prompt; system prompt injected on Create via `<user-system-prompt-{nonce}>` envelope; `available_custom_agents` exposed to peers via `grove_agent_contacts`
+- **User-driven graph operations** — graph spawn endpoint, edge add/delete with auto-`PendingChanged` events, `grove_user_remind` (envelope-wrapped reminder distinct from new user prompt), per-chat duty PATCH endpoint with `force=true` user override
+- **Agent usage / quota** — provider-based quota system with 6 new agents and safe-guard water-level marker on the progress bar
+- **Hooks Configuration** — UI to configure hook commands; notification sound split into Agent Response / Permission Required tracks
+- **Chat polish** — Save To Note button in Plan sub-panel, Cmd+F in-panel search for Preview & Chat, link resources for Artifacts & Shared Assets, preview comments on artifact / review previews, `sketch://` chips, unified Uploads + Working Directory list, agent quota refresh on idle (vs 60s polling)
+
+### Improved
+
+- **ACP** — zero-config ACP via npx fallback; claude-agent-acp effort selector + toolbar fit; chat history caps tool content at 32KB and tail-reads large files; Cursor Agent / Junie support with unified agent icons
+- **Storage** — SQLite-backed hooks; chat_history `compact` rename falls back to copy on cross-device EXDEV; `gc_orphans` reverse-scans (only checks tasks with sessions) and skips on IO errors instead of mass-deleting
+- **HTTP API hardening** — `get_app_icon` rejects non-absolute and `..` paths; `patch_config` serialized via async mutex to prevent concurrent overwrites
+- **`grove-meta` envelopes** — agent-to-agent prompts now carry structured JSON (`type` / `data` / `system-prompt`) inside `<grove-meta>` tags; receiving frontend renders meta-aware chips
+- **Project add navigation, draft preservation, last tab memory** — minor UX fixes across web
+
+### Fixed
+
+- **Agent Graph review fixes (two rounds)**
+  - **Concurrency** — `is_busy` Relaxed-load-then-branch race in `deliver_to_session` / `user_send_message` replaced with `compare_exchange(false, true)` CAS; failure path stores false to release the claim
+  - **Storage error model** — new `GroveError::StorageTagged { tag, msg }`; storage layer raises stable tags via `storage_tagged`; `From<GroveError> for AgentGraphError` matches tags exactly instead of `String::contains`
+  - **Migration safety** — dropped fragile `chats.toml` rename in `migrate_chats` (new service reads SQLite only); FK constraints added to `agent_edge` / `agent_pending_message` with table-rebuild migration that pre-counts and logs orphan rows being dropped
+  - **Atomicity** — `graph_add_edge` now validates the edge before writing duty (and rolls back the edge on duty failure); `grove_agent_send` rolls back duty when delivery fails after a fresh duty assignment; `custom_agent::update` wrapped in transaction with row-affected check
+  - **Concurrency / queue** — `resume_queue` re-inserts the popped message at the head when `try_enqueue_prompt` fails; `insert_pending_message` maps SQLite UNIQUE constraint failures to `previous_message_pending` instead of opaque internal errors
+  - **User vs AI duty lock** — `update_chat_duty` gains `force: bool`; user-facing PATCH path uses `force=true`, AI tool paths use `false`; closes the bug where users couldn't edit a duty once any AI had set it
+  - **MCP tool descriptions** — rewritten to describe the `<grove-meta>` envelope and warn that `grove_agent_capability` does not auto-spawn
+  - **`user_remind` envelope** — new `InjectKind::Remind`, `deliver_user_remind` helper with same CAS / spawn-on-demand semantics; receiver can distinguish reminder from a fresh user request
+  - **`</user-system-prompt id=...>` invalid XML** — closing tag attribute removed; nonce now baked into the tag name
+  - **HTTP error mapping** — `unknown_base_agent` returns 400 instead of 500 for `POST/PATCH /custom-agents`
+  - **`user_spawn_node` failure visibility** — broadcasts `ChatStatus("disconnected")` instead of only `eprintln`, so UI nodes don't hang in `connecting`
+- **Test infra** — mock cmd loop now emits `Busy{true}` before `Busy{false}` to mirror prod behavior
+
 ## [0.9.3] - 2026-04-21
 
 ### Added
