@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.1] - 2026-04-28
+
+### Added
+
+- **`grove mcp-bridge` subcommand** — stdio↔HTTP bridge for ACP agents that ignore MCP servers injected via `NewSessionRequest.mcp_servers` (Trae and similar). Users wire `command: "grove", args: ["mcp-bridge"]` into the agent's own MCP config; the bridge reads JSON-RPC from stdin, POSTs to the in-process agent_graph MCP HTTP listener, decodes SSE responses with byte-level UTF-8 buffering across chunk boundaries, and forwards results to stdout. Each request runs on its own task; configurable timeout via `GROVE_MCP_BRIDGE_TIMEOUT_SECS` (default 300s).
+
+### Improved
+
+- **Token / port discovery for MCP** — agent_graph token is now generated BEFORE the agent subprocess is spawned and injected into env vars (`GROVE_MCP_TOKEN`, `GROVE_MCP_PORT`), so children of the agent process (like `grove mcp-bridge`) inherit them. Listener boot atomically writes `~/.grove/mcp.port` (`<port> <pid>`) for ad-hoc fallback discovery, with cross-platform pid health check to detect stale files from a prior Grove process.
+- **Agent Graph layout preservation** — the graph view no longer rearranges existing nodes when new nodes / edges arrive (post spawn / send / chat-status flip). User drags persist; synthetic pins added by the layout effect are tracked separately and released on `sim.on("end")` instead of a fixed timeout.
+- **Marketing site** — index.html hero now showcases Agent Graph; new sub-blocks under § 02 AGENTS (Agent Graph) and § 03 STUDIO (a real Studio task in flight). README updated to match.
+
+### Fixed
+
+- **PATCH 204 "Internal Error" on graph edge purpose edits** — `apiClient.patch` was calling `response.json()` unconditionally, throwing `SyntaxError` on the empty 204 body even though the backend wrote successfully. Aligned with `put` / `delete` / `post` (text empty → `undefined`, otherwise `JSON.parse`).
+- **`AgentGraphTokenGuard` dead code** — token lifetime moved entirely to `run_acp_session::EarlyTokenGuard`; the orphaned struct + Drop impl removed so future maintainers can't accidentally double-unregister.
+
 ## [0.10.0] - 2026-04-27
 
 ### Added
