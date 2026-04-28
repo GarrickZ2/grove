@@ -473,28 +473,6 @@ fn build_mcp_servers(
     Ok(servers)
 }
 
-/// RAII guard that unregisters the agent_graph MCP token on Drop. Created in
-/// `drive_session` and held for the session's lifetime; dropping it (whether
-/// the session exits cleanly, errors out, or panics) frees the token slot.
-struct AgentGraphTokenGuard {
-    token: String,
-}
-
-impl AgentGraphTokenGuard {
-    fn new(token: String) -> Self {
-        Self { token }
-    }
-    fn token(&self) -> &str {
-        &self.token
-    }
-}
-
-impl Drop for AgentGraphTokenGuard {
-    fn drop(&mut self) {
-        let _ = crate::api::handlers::agent_graph_mcp::unregister_token(&self.token);
-    }
-}
-
 /// 单个 terminal 实例的状态
 struct TerminalState {
     /// Send to this channel to request process kill
@@ -1442,9 +1420,40 @@ pub async fn get_or_start_session(
 /// 运行 ACP 会话的主循环
 async fn run_acp_session(
     handle: Arc<AcpSessionHandle>,
-    config: AcpStartConfig,
+    mut config: AcpStartConfig,
     cmd_rx: mpsc::Receiver<AcpCommand>,
 ) -> crate::error::Result<()> {
+    // 提前生成 agent_graph MCP token —— 在 spawn 子进程之前注册并塞进 env。
+    // 这样 `grove mcp-bridge`（agent 自己孩子的孩子，比如 Trae 不接受 ACP 注入
+    // 的 MCP 时由用户在 Trae mcp 配置里指向我们）只要从 env 读 GROVE_MCP_TOKEN
+    // / GROVE_MCP_PORT 就能找到 listener，不依赖 ACP NewSessionRequest.
+    let agent_graph_token: Option<String> = config.chat_id.as_ref().map(|chat_id| {
+        let token = uuid::Uuid::new_v4().to_string();
+        crate::api::handlers::agent_graph_mcp::register_token(&token, chat_id);
+        token
+    });
+    if let Some(token) = agent_graph_token.as_deref() {
+        config
+            .env_vars
+            .insert("GROVE_MCP_TOKEN".to_string(), token.to_string());
+    }
+    if let Some(port) = crate::api::handlers::agent_graph_mcp::listener_port() {
+        config
+            .env_vars
+            .insert("GROVE_MCP_PORT".to_string(), port.to_string());
+    }
+    // RAII guard for the token — drops on any return path below, mirroring
+    // the prior in-`drive_session` lifetime.
+    struct EarlyTokenGuard(Option<String>);
+    impl Drop for EarlyTokenGuard {
+        fn drop(&mut self) {
+            if let Some(t) = self.0.take() {
+                let _ = crate::api::handlers::agent_graph_mcp::unregister_token(&t);
+            }
+        }
+    }
+    let _early_token_guard = EarlyTokenGuard(agent_graph_token.clone());
+
     // 根据 agent_type 分支获取 reader/writer（使用 trait object 统一类型）
     let child: Option<tokio::process::Child>;
     // 0.11 ByteStreams 要求 Send + 'static;grove 的子进程 pipe 和 DuplexStream 都满足。
@@ -1710,17 +1719,13 @@ async fn drive_session(
         acp::Error::internal_error().data(format!("{}", e))
     }
 
-    // Allocate an agent_graph MCP token if this session has a chat_id (per-chat
-    // sessions are the only ones that participate in the graph). The token
-    // binds (URL token → caller_chat_id) for the in-process HTTP MCP listener;
-    // the guard unregisters on drop, no matter how drive_session exits.
-    let _agent_graph_token_guard: Option<AgentGraphTokenGuard> =
-        config.chat_id.as_ref().map(|chat_id| {
-            let token = uuid::Uuid::new_v4().to_string();
-            crate::api::handlers::agent_graph_mcp::register_token(&token, chat_id);
-            AgentGraphTokenGuard::new(token)
-        });
-    let agent_graph_token: Option<&str> = _agent_graph_token_guard.as_ref().map(|g| g.token());
+    // The agent_graph MCP token is generated and registered in `run_acp_session`
+    // BEFORE the agent subprocess is spawned, so that the token is present in
+    // the agent's environment (`GROVE_MCP_TOKEN`) — needed by `grove mcp-bridge`
+    // children. We just read it back from env_vars here. The lifetime/cleanup
+    // of the registration is owned by `run_acp_session`'s EarlyTokenGuard.
+    let agent_graph_token: Option<&str> =
+        config.env_vars.get("GROVE_MCP_TOKEN").map(String::as_str);
 
     // 初始化连接
     let init_resp = conn

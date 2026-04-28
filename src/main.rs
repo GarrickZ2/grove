@@ -289,6 +289,9 @@ fn main() -> io::Result<()> {
                     }
                 });
         }
+        Commands::McpBridge => {
+            std::process::exit(cli::mcp_bridge::run());
+        }
         Commands::Fp => {
             #[cfg(windows)]
             {

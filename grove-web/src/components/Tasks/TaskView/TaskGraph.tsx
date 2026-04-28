@@ -118,6 +118,15 @@ interface SimNode extends SimulationNodeDatum {
   pending_in: number;
   pending_out: number;
   pending_messages: PendingMessageInfo[];
+  /**
+   * `true` if this node's fx/fy was set by the layout-preservation effect
+   * (not by the user dragging). When the simulation settles we clear these
+   * synthetic pins so the node is free again. Distinguishing user-set pins
+   * from synthetic ones is critical for re-runs that fire before the prior
+   * release callback (otherwise the synthetic pin gets promoted to a
+   * "user pin" and never releases).
+   */
+  syntheticPin?: boolean;
 }
 
 interface SimLink {
@@ -188,6 +197,12 @@ export function TaskGraph({ projectId, taskId }: TaskGraphProps) {
   const [hoveredNodeId, setHoveredNodeId] = useState<string | null>(null);
   const simRef = useRef<Simulation<SimNode, SimLink> | null>(null);
   const nodesRef = useRef<SimNode[]>([]);
+  // Tracks whether at least one non-empty node set has been laid out. The
+  // first such build runs with full alpha=1 so the layout actually forms;
+  // subsequent builds use a low alpha to avoid rearranging existing positions.
+  // `nodesRef.current.length === 0` is NOT a reliable proxy because data can
+  // arrive empty first (loading state) and then populated.
+  const hasBuiltOnceRef = useRef(false);
   const linksRef = useRef<SimLink[]>([]);
   const [view, setView] = useState({ x: 0, y: 0, k: 1 });
   const [tick, setTick] = useState(0);
@@ -673,7 +688,52 @@ export function TaskGraph({ projectId, taskId }: TaskGraphProps) {
     const nodeCount = Math.max(data.nodes.length, 1);
     const radius = Math.min(170, Math.max(48, nodeCount * 22));
 
+    // Preserve manual layout: for nodes that already exist in nodesRef, copy
+    // the prior x/y (and fx/fy if the user dragged them). Only brand-new
+    // nodes get an initial circular position, and we synthetically pin
+    // existing nodes via fx/fy so the new force run can't shove them around —
+    // only the new nodes settle. Without this, every graph refresh (after a
+    // spawn / send / chat-status flip) re-simulates from scratch and undoes
+    // the user's arrangement.
+    //
+    // We use the `syntheticPin` flag to tell synthetic pins (added by THIS
+    // effect) apart from user-set pins (added by the drag handler). Without
+    // the flag, a back-to-back data refresh during the release timer would
+    // see fx/fy still set and treat it as a user pin — which would never
+    // release.
+    const priorById = new Map<string, SimNode>();
+    for (const p of nodesRef.current) priorById.set(p.id, p);
+    const hasNodes = data.nodes.length > 0;
+    const isFirstBuild = hasNodes && !hasBuiltOnceRef.current;
+    if (hasNodes) hasBuiltOnceRef.current = true;
+
     const nodes: SimNode[] = data.nodes.map((n, index) => {
+      const prior = priorById.get(n.chat_id);
+      if (prior) {
+        // Existing node — keep its position. If the user already dragged it,
+        // preserve the user pin (fx/fy + syntheticPin=false). Otherwise add
+        // a synthetic pin around its current position to defend against the
+        // re-sim, releasable on settle.
+        const userPinned =
+          prior.fx != null && prior.fy != null && prior.syntheticPin !== true;
+        return {
+          id: n.chat_id,
+          name: n.name,
+          agent: n.agent,
+          duty: n.duty,
+          status: n.status,
+          pending_in: n.pending_in,
+          pending_out: n.pending_out,
+          pending_messages: n.pending_messages,
+          x: prior.x,
+          y: prior.y,
+          fx: userPinned ? prior.fx : prior.x,
+          fy: userPinned ? prior.fy : prior.y,
+          syntheticPin: !userPinned,
+        };
+      }
+      // New node — drop near the center on a small ring so the simulation
+      // can pull it into place without distorting existing layout.
       const angle = (index / nodeCount) * Math.PI * 2;
       return {
         id: n.chat_id,
@@ -688,6 +748,7 @@ export function TaskGraph({ projectId, taskId }: TaskGraphProps) {
         y: VIEWBOX_HEIGHT / 2 + Math.sin(angle) * radius,
         fx: undefined,
         fy: undefined,
+        syntheticPin: false,
       };
     });
 
@@ -702,6 +763,10 @@ export function TaskGraph({ projectId, taskId }: TaskGraphProps) {
 
     nodesRef.current = nodes;
     linksRef.current = links;
+
+    // Stop the prior simulation before creating a new one so we don't have
+    // two ticking at once.
+    simRef.current?.stop();
 
     const sim = forceSimulation<SimNode>(nodes)
       .force("charge", forceManyBody().strength(-180))
@@ -719,7 +784,27 @@ export function TaskGraph({ projectId, taskId }: TaskGraphProps) {
       .alphaDecay(0.04)
       .on("tick", () => {
         setTick((t) => t + 1);
+      })
+      .on("end", () => {
+        // Sim has converged — release every synthetic pin in one pass. User
+        // pins are kept (syntheticPin === false). Doing this on `end` instead
+        // of a fixed timeout means slow-converging layouts stay stable until
+        // they're actually done, and fast ones release immediately.
+        for (const n of nodes) {
+          if (n.syntheticPin) {
+            n.fx = undefined;
+            n.fy = undefined;
+            n.syntheticPin = false;
+          }
+        }
       });
+
+    // On incremental rebuilds use a low alpha — we just want the new nodes
+    // to find their place, not redo the whole layout. First build keeps
+    // alpha=1 (default) so the layout actually forms.
+    if (!isFirstBuild) {
+      sim.alpha(0.3).restart();
+    }
 
     simRef.current = sim;
 
@@ -1174,6 +1259,9 @@ export function TaskGraph({ projectId, taskId }: TaskGraphProps) {
                     didDrag = true;
                     draggedNode.fx = draggedNode.x;
                     draggedNode.fy = draggedNode.y;
+                    // Mark this as a user pin (not synthetic) so the layout
+                    // effect won't release it on sim end.
+                    draggedNode.syntheticPin = false;
                     simRef.current.alpha(0.12).restart();
                   }
 

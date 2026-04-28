@@ -10,11 +10,13 @@
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20%7C%20Windows-lightgrey.svg)]()
 
-![Grove](docs/images/home-hero-studio.png)
+![Grove](docs/images/graph.png)
 
 Grove is a workspace for you and your AI development team. Write a spec, send a sketch, hold a button and talk — every major coding agent runs in parallel, every change goes through review, every merge is a decision someone made. From your terminal, your browser, your desktop, or your phone.
 
 > Grove treats **Studio** — the space where designers, PMs, and brand folks shape the product alongside AI — as a first-class surface. Code review is rigorous. But the product isn't just "a review tool that also has chat."
+>
+> And with **Agent Graph**, your AI team is a typed DAG, not a single chat. A planner spawns a coder. The coder spawns a reviewer. Every cross-agent message is structured, logged, and scoped per task.
 
 ---
 
@@ -71,6 +73,16 @@ Grove speaks ACP — ten agents built in, three more (Hermes, Kiro, OpenClaw) wi
 **Ready for ACP:** Hermes · Kiro · OpenClaw
 **Bring your own:** any binary that speaks ACP over stdio, or any HTTP endpoint.
 
+### 🧠 Agent Graph — agents that talk to each other
+
+A planner spawns a coder. The coder spawns a reviewer. The reviewer replies. Grove makes that workflow a first-class object: a typed **DAG of agents**, exchanging structured messages, scoped per task. No bash glue, no string-concat orchestration, no leaky cross-task context.
+
+- **Visual DAG editor** — drag to connect, edit duties, send messages from a hover card
+- **5 MCP tools** — `grove_agent_spawn` · `_send` · `_reply` · `_contacts` · `_capability` — every agent in the graph can use them
+- **Custom Agents (personas)** — base agent + your model / mode / effort / system prompt; reusable across tasks
+- **Single-in-flight per edge**, cycle detection, per-task isolation enforced at the DB layer
+- **`<grove-meta>` envelopes** — every cross-agent prompt is a structured payload, not glued strings
+
 ### 🎨 Studio — for everyone on the team
 
 Studio is the room inside Grove where non-coders join the AI workflow. Upload shared assets (hard-linked across worktrees), edit Project Memory and Workspace Instructions without touching the CLI, draw on a real Excalidraw canvas agents can read, and watch artifacts (D2 diagrams, Mermaid, images, code, HTML) render inline as the agents produce them.
@@ -103,7 +115,7 @@ Install a skill once, every installed agent gets smarter. Expose Grove via `grov
 
 Grove serves three kinds of people on the same project:
 
-- **Power developers** — Web IDE with FlexLayout, Blitz across projects, 10 agents in parallel; TUI when you want it.
+- **Power developers** — Web IDE with FlexLayout, Blitz across projects, 10 agents in parallel, Agent Graph to orchestrate them; TUI when you want it.
 - **Visual thinkers** — IDE Layout, Sketch canvases agents can read, click-through reviews, inline D2 / Mermaid.
 - **Non-technical collaborators** — Studio to manage assets and memory; Radio to drive AI by voice from a phone. No terminal. No git. Still shipping.
 

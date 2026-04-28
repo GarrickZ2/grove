@@ -8,13 +8,13 @@
 
 <meta property="og:title" content="Grove — Where humans and AI agents build together">
 <meta property="og:description" content="AI development, for everyone — not just coders.">
-<meta property="og:image" content="images/home-hero-studio.png">
+<meta property="og:image" content="images/graph.png">
 <meta property="og:type" content="website">
 
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:title" content="Grove — Where humans and AI agents build together">
 <meta name="twitter:description" content="AI development, for everyone — not just coders.">
-<meta name="twitter:image" content="images/home-hero-studio.png">
+<meta name="twitter:image" content="images/graph.png">
 
 <link rel="icon" type="image/svg+xml" href="favicon.svg">
 <link rel="icon" type="image/png" href="favicon.png">
@@ -76,10 +76,10 @@
 
     <div data-animate>
       <figure class="asset-shot">
-        <img src="images/home-hero-studio.png" alt="Grove Studio — a non-coder shaping the NoteKeeper product alongside AI agents" loading="eager" />
+        <img src="images/graph.png" alt="Agent Graph — DAG view of agents in a task with edges, duties, and pending messages" loading="eager" />
         <figcaption>
           <span class="cap-num">FIG. 01</span>
-          <span class="cap-text">A Studio task — where non-coders shape the product alongside their AI team.</span>
+          <span class="cap-text">Agent Graph — your AI team, drawn as a graph. Spawn, connect, send.</span>
         </figcaption>
       </figure>
     </div>
@@ -202,6 +202,38 @@
         </figure>
       </div>
     </div>
+
+    <!-- AGENTS · sub-block: Agent Graph -->
+    <div class="feature reverse" id="graph">
+      <div class="feat-visual" data-animate>
+        <figure class="asset-shot">
+          <img src="images/graph.png" alt="Agent Graph — DAG view of agents in a task with edges, duties, and pending messages" loading="lazy" />
+          <figcaption>
+            <span class="cap-num">FIG. 02b</span>
+            <span class="cap-text">Agent Graph — your AI team, drawn as a graph. Spawn, connect, send.</span>
+          </figcaption>
+        </figure>
+      </div>
+      <div class="feat-copy" data-animate>
+        <div class="eyebrow">Coordinate</div>
+        <h3>Agents that <span class="br-moss">talk to each other</span>.</h3>
+        <p class="feat-lede">
+          A planner spawns a coder. The coder spawns a reviewer. The reviewer
+          replies. Grove's <strong>Agent Graph</strong> makes that workflow a
+          first-class object: a typed DAG of agents exchanging structured
+          messages, scoped per task. No bash glue, no string-concat
+          orchestration, no leaky cross-task context.
+        </p>
+        <ul>
+          <li>Visual DAG editor — drag to connect, edit duties, send messages from a hover card</li>
+          <li>5 MCP tools — <code>spawn</code> · <code>send</code> · <code>reply</code> · <code>contacts</code> · <code>capability</code></li>
+          <li>Custom Agents (personas) — base agent + your model, mode, effort, system prompt; reusable across tasks</li>
+          <li>Single-in-flight per edge, cycle detection, per-task isolation enforced at the DB layer</li>
+          <li><code>&lt;grove-meta&gt;</code> envelopes — every cross-agent prompt is a structured payload, not glued strings</li>
+        </ul>
+        <div style="margin-top:24px;"><a class="btn ghost" href="agents.html#graph">Read more →</a></div>
+      </div>
+    </div>
   </section>
 
   <!-- § 03 · STUDIO PEEK -->
@@ -235,6 +267,37 @@
           <li>Inline D2 + Mermaid rendering, image lightbox, markdown preview</li>
         </ul>
         <div style="margin-top:24px;"><a class="btn ghost" href="studio.html">Read more →</a></div>
+      </div>
+    </div>
+
+    <!-- STUDIO · sub-block: A real Studio task -->
+    <div class="feature">
+      <div class="feat-copy" data-animate>
+        <div class="eyebrow">In practice</div>
+        <h3>What a Studio task <span class="italic-soft">actually looks like</span>.</h3>
+        <p class="feat-lede">
+          A non-coder shaping <strong>NoteKeeper</strong> — a notes app for a small
+          team — alongside Claude. The brief lives in chat. The artifact panel
+          renders the live HTML the agent is writing. Files-being-edited and
+          file-not-yet-read warnings sit inline so reviewers can spot
+          hallucinated edits before they ship.
+        </p>
+        <ul>
+          <li>Artifact preview — HTML / D2 / Mermaid / images render as the agent writes them</li>
+          <li>Plan + Editing Files cards — see exactly what the agent is touching, in order</li>
+          <li>Reply-in-language hint — the brief drives the response language</li>
+          <li>Same chat, same task, same surface for every persona on the team</li>
+        </ul>
+        <div style="margin-top:24px;"><a class="btn ghost" href="studio.html">Read more →</a></div>
+      </div>
+      <div class="feat-visual" data-animate>
+        <figure class="asset-shot">
+          <img src="images/home-hero-studio.png" alt="Studio task — a non-coder shaping the NoteKeeper notes app alongside Claude, with the artifact panel rendering live HTML" loading="lazy" />
+          <figcaption>
+            <span class="cap-num">FIG. 03b</span>
+            <span class="cap-text">A Studio task in flight — brief on the right, live artifact in the middle, files panel on the left.</span>
+          </figcaption>
+        </figure>
       </div>
     </div>
   </section>

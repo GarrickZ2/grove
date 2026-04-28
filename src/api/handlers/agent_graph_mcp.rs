@@ -90,8 +90,112 @@ static LISTENER_PORT: OnceCell<u16> = OnceCell::new();
 /// [`bind_with_fallback`](crate::api::bind_with_fallback) picks a free 127.0.0.1
 /// port. Subsequent calls are silently ignored — the port is fixed for the
 /// process's lifetime.
+///
+/// On the first successful set we also write `~/.grove/mcp.port`
+/// (`<port> <pid>\n`) so external processes — most importantly
+/// `grove mcp-bridge` running as a child of an agent that doesn't accept
+/// ACP-injected MCP — can find the listener without reading from the parent's
+/// env. We deliberately skip the write on subsequent calls (e.g. from tests
+/// that re-call this) to avoid clobbering a previously written port. Multiple
+/// concurrent Grove instances last-writer-wins; bridge's pid health check (see
+/// [`read_port_file_validated`]) catches stale entries.
+///
+/// Best-effort write: failure is logged and ignored — the bridge will fall
+/// back to env-only discovery when env vars are present.
 pub fn set_listener_port(port: u16) {
-    let _ = LISTENER_PORT.set(port);
+    if LISTENER_PORT.set(port).is_err() {
+        // Already set (idempotent path); don't touch the file.
+        return;
+    }
+    let path = crate::storage::grove_dir().join("mcp.port");
+    let payload = format!("{} {}\n", port, std::process::id());
+    if let Err(e) = atomic_write(&path, payload.as_bytes()) {
+        eprintln!(
+            "[agent_graph_mcp] warning: failed to write {}: {}",
+            path.display(),
+            e
+        );
+    }
+}
+
+/// Atomic write via tmp + rename so concurrent readers never see a half-line.
+fn atomic_write(target: &std::path::Path, contents: &[u8]) -> std::io::Result<()> {
+    let parent = target
+        .parent()
+        .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidInput, "no parent dir"))?;
+    std::fs::create_dir_all(parent)?;
+    let tmp = parent.join(format!(".mcp.port.{}.tmp", std::process::id()));
+    std::fs::write(&tmp, contents)?;
+    std::fs::rename(&tmp, target)
+}
+
+/// Path to the `mcp.port` file. Used by `grove mcp-bridge` to discover the
+/// running Grove server's MCP HTTP listener port.
+pub fn port_file_path() -> std::path::PathBuf {
+    crate::storage::grove_dir().join("mcp.port")
+}
+
+/// Read `mcp.port` and validate the recorded pid is still alive. Returns the
+/// port on success. `Err(reason)` covers unreadable file, malformed content,
+/// dead pid (stale file from a prior Grove process), and IO errors.
+///
+/// Used by `grove mcp-bridge` as the env-fallback discovery path.
+pub fn read_port_file_validated() -> Result<u16, String> {
+    let path = port_file_path();
+    let raw =
+        std::fs::read_to_string(&path).map_err(|e| format!("read {}: {}", path.display(), e))?;
+    let mut tokens = raw.split_whitespace();
+    let port_s = tokens.next().ok_or("empty port file")?;
+    let port: u16 = port_s
+        .parse()
+        .map_err(|e| format!("parse port {:?}: {}", port_s, e))?;
+    // pid is optional in the spec; if absent, accept the port without health check.
+    if let Some(pid_s) = tokens.next() {
+        let pid: u32 = pid_s
+            .parse()
+            .map_err(|e| format!("parse pid {:?}: {}", pid_s, e))?;
+        if !pid_alive(pid) {
+            return Err(format!(
+                "stale {}: pid {} no longer running — start `grove web` / `grove gui` first",
+                path.display(),
+                pid
+            ));
+        }
+    }
+    Ok(port)
+}
+
+/// Cross-platform "is this pid running" check. Best-effort.
+#[cfg(unix)]
+fn pid_alive(pid: u32) -> bool {
+    // signal 0 doesn't deliver, just probes for the process. ESRCH = dead;
+    // EPERM = exists but we can't signal it (still alive).
+    unsafe {
+        libc::kill(pid as libc::pid_t, 0) == 0
+            || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
+    }
+}
+
+#[cfg(windows)]
+fn pid_alive(pid: u32) -> bool {
+    // OpenProcess with PROCESS_QUERY_LIMITED_INFORMATION; if it succeeds the
+    // pid is at least reserved. Close handle immediately.
+    use std::os::windows::io::RawHandle;
+    extern "system" {
+        fn OpenProcess(access: u32, inherit: i32, pid: u32) -> *mut std::ffi::c_void;
+        fn CloseHandle(h: *mut std::ffi::c_void) -> i32;
+    }
+    const PROCESS_QUERY_LIMITED_INFORMATION: u32 = 0x1000;
+    let h = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) };
+    if h.is_null() {
+        false
+    } else {
+        unsafe {
+            CloseHandle(h);
+        }
+        let _ = h as RawHandle;
+        true
+    }
 }
 
 /// The MCP listener port if the listener has started. `None` before the

@@ -5,6 +5,7 @@ pub mod diff;
 pub mod fp;
 pub mod hooks;
 pub mod mcp;
+pub mod mcp_bridge;
 pub mod migrate;
 pub mod web;
 
@@ -35,6 +36,13 @@ pub enum Commands {
     },
     /// Start MCP server (stdio transport) for AI integration
     Mcp,
+    /// Stdio↔HTTP bridge for the agent_graph MCP. Used by ACP agents whose
+    /// MCP client doesn't accept ACP-injected MCP servers (e.g. Trae) — the
+    /// user wires `command = "grove", args = ["mcp-bridge"]` into the agent's
+    /// own MCP config; the bridge inherits `GROVE_MCP_TOKEN` / `GROVE_MCP_PORT`
+    /// from the parent agent process and forwards stdio JSON-RPC to the
+    /// running Grove server's HTTP MCP listener.
+    McpBridge,
     /// Interactive file picker using fzf
     Fp,
     /// Start the web UI server (API + frontend)

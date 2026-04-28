@@ -279,7 +279,12 @@ class ApiClient {
       } as ApiError;
     }
 
-    return response.json();
+    // 204 No Content / empty body 路径：response.json() 会抛 SyntaxError，
+    // callers that declared `Promise<void>` 不需要 body。与 put / delete /
+    // post 同样模式：先取 text，empty 则返 undefined，否则 JSON.parse。
+    const text = await response.text();
+    if (text) return JSON.parse(text) as R;
+    return undefined as R;
   }
 
   async post<T, R>(path: string, data?: T): Promise<R> {
