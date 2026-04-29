@@ -296,7 +296,7 @@ pub async fn execute(port: u16) {
     // Build and run Tauri application
     println!("Grove GUI: Launching desktop window...");
 
-    let tauri_result = tauri::Builder::default()
+    let tauri_app = tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .invoke_handler(tauri::generate_handler![
             open_external_url,
@@ -319,17 +319,54 @@ pub async fn execute(port: u16) {
             .build()?;
             Ok(())
         })
-        .run(tauri::generate_context!());
+        .build(tauri::generate_context!());
 
-    match tauri_result {
-        Ok(()) => {
-            println!("Grove GUI closed.");
-        }
+    let tauri_app = match tauri_app {
+        Ok(app) => app,
         Err(e) => {
             eprintln!("Tauri error: {}", e);
             std::process::exit(1);
         }
-    }
+    };
+
+    // On macOS we want Cmd+W (and the red traffic light) to hide the
+    // window instead of terminating the process, so clicking the Dock
+    // icon can bring it back. Quit still works via Cmd+Q / Dock → Quit,
+    // which Tauri delivers as RunEvent::ExitRequested.
+    tauri_app.run(|app_handle, event| {
+        #[cfg(target_os = "macos")]
+        {
+            use tauri::Manager;
+            match event {
+                tauri::RunEvent::WindowEvent {
+                    label,
+                    event: tauri::WindowEvent::CloseRequested { api, .. },
+                    ..
+                } => {
+                    if let Some(window) = app_handle.get_webview_window(&label) {
+                        api.prevent_close();
+                        let _ = window.hide();
+                    }
+                }
+                tauri::RunEvent::Reopen {
+                    has_visible_windows: false,
+                    ..
+                } => {
+                    if let Some(window) = app_handle.get_webview_window("main") {
+                        let _ = window.show();
+                        let _ = window.set_focus();
+                    }
+                }
+                _ => {}
+            }
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            let _ = (app_handle, event);
+        }
+    });
+
+    println!("Grove GUI closed.");
 
     // Abort the server task when Tauri exits and check for panic
     server_handle.abort();
