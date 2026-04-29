@@ -54,16 +54,35 @@ pub enum RadioEvent {
     /// Theme changed on desktop.
     ThemeChanged,
     /// An ACP session's busy state changed — push status to Radio clients.
+    ///
+    /// `prompt` and `started_at` are populated when `busy=true` so menubar tray
+    /// consumers can render a "running" card without a follow-up DB query.
+    /// They're `None` for `busy=false` transitions and for legacy publishers
+    /// that don't supply enrichment yet.
     TaskBusy {
         project_id: String,
         task_id: String,
         busy: bool,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        prompt: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        started_at: Option<i64>,
     },
     /// A new hook notification was written to the DB — desktop should refetch
     /// the notification list. Replaces the old 30s safety-net poll: hooks
     /// fired by detached agents, CLI commands, or busy ACP sessions all flow
     /// through this push event so the UI stays current without polling.
-    HookAdded { project_id: String, task_id: String },
+    ///
+    /// `level` and `message` are populated when known so menubar tray consumers
+    /// can render a "done" card without re-reading the hooks file.
+    HookAdded {
+        project_id: String,
+        task_id: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        level: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        message: Option<String>,
+    },
     /// Radio user set an active target (chat session or terminal) — desktop should switch view.
     FocusTarget {
         project_id: String,
@@ -91,6 +110,11 @@ pub enum RadioEvent {
         task_id: String,
         chat_id: String,
         status: String,
+        /// Populated when `status="permission_required"` so menubar tray and
+        /// other consumers can render the request without an extra round-trip
+        /// to the ACP session handle.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        permission: Option<PermissionInfo>,
     },
     /// A pending agent-to-agent message ticket was inserted or deleted. Carries
     /// enough metadata for the graph view to update its in-memory pending map
@@ -115,6 +139,18 @@ pub enum RadioEvent {
 pub enum TargetMode {
     Chat { chat_id: String },
     Terminal,
+}
+
+/// Lightweight description of a pending ACP permission request, attached to
+/// `RadioEvent::ChatStatus` when `status="permission_required"` so passive
+/// listeners (menubar tray, future surfaces) can render the request without
+/// holding the ACP session handle.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PermissionInfo {
+    /// Short human-readable summary of what's being asked, e.g. tool call title.
+    pub description: String,
+    /// Number of options offered (Allow / Always / Deny variants).
+    pub option_count: usize,
 }
 
 /// Global broadcast channel for radio events.
@@ -181,6 +217,10 @@ enum ServerMessage {
     HookAdded {
         project_id: String,
         task_id: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        level: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        message: Option<String>,
     },
     PromptSent {
         group_id: String,
@@ -206,6 +246,8 @@ enum ServerMessage {
         task_id: String,
         chat_id: String,
         status: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        permission: Option<PermissionInfo>,
     },
     /// Mirror of `RadioEvent::PendingChanged`.
     PendingChanged {
@@ -389,19 +431,22 @@ pub async fn handle_walkie_talkie_ws_inner(socket: WebSocket) {
                         let theme_name = crate::storage::config::load_config().theme.name;
                         let _ = msg_tx.send(ServerMessage::ThemeChanged { theme: theme_name });
                     }
-                    Ok(RadioEvent::HookAdded { project_id, task_id }) => {
+                    Ok(RadioEvent::HookAdded { project_id, task_id, level, message }) => {
                         let _ = msg_tx.send(ServerMessage::HookAdded {
                             project_id,
                             task_id,
+                            level,
+                            message,
                         });
                     }
-                    Ok(RadioEvent::ChatStatus { project_id, task_id, chat_id, status }) => {
+                    Ok(RadioEvent::ChatStatus { project_id, task_id, chat_id, status, permission }) => {
                         // Per-chat granularity — never dedup. Pure state push.
                         let _ = msg_tx.send(ServerMessage::ChatStatus {
                             project_id,
                             task_id,
                             chat_id,
                             status,
+                            permission,
                         });
                     }
                     Ok(RadioEvent::PendingChanged {
@@ -423,7 +468,7 @@ pub async fn handle_walkie_talkie_ws_inner(socket: WebSocket) {
                             body_excerpt,
                         });
                     }
-                    Ok(RadioEvent::TaskBusy { project_id, task_id, busy }) => {
+                    Ok(RadioEvent::TaskBusy { project_id, task_id, busy, .. }) => {
                         // Real-time status push from ACP session.
                         //
                         // We used to dedup by (project, task) → status, but that

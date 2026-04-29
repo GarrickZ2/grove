@@ -1333,6 +1333,7 @@ pub async fn get_or_start_session(
                                     task_id: self.task_id.clone(),
                                     chat_id: cid.clone(),
                                     status: "disconnected".to_string(),
+                                    permission: None,
                                 });
                                 cleanup_socket_files(&self.project_key, &self.task_id, cid);
                             }
@@ -1360,6 +1361,7 @@ pub async fn get_or_start_session(
                             task_id: config.task_id.clone(),
                             chat_id: chat_id.clone(),
                             status: "connecting".to_string(),
+                            permission: None,
                         });
                     }
                 }
@@ -1404,6 +1406,7 @@ pub async fn get_or_start_session(
                         task_id: session_task_id.clone(),
                         chat_id: cid.clone(),
                         status: "disconnected".to_string(),
+                        permission: None,
                     });
                     cleanup_socket_files(&session_project_key, &session_task_id, cid);
                 }
@@ -2358,6 +2361,7 @@ impl AcpSessionHandle {
                 task_id: self.task_id.clone(),
                 chat_id: chat_id.clone(),
                 status: self.derive_node_status().to_string(),
+                permission: None,
             });
         }
         true
@@ -2466,10 +2470,21 @@ impl AcpSessionHandle {
             self.is_busy
                 .store(*value, std::sync::atomic::Ordering::Relaxed);
             use crate::api::handlers::walkie_talkie::{broadcast_radio_event, RadioEvent};
+            // Tag the busy=true edge with a wall-clock timestamp so menubar
+            // tray can render an elapsed-time meter without polling. `prompt`
+            // stays None at this layer — enrichment will be wired in a later
+            // commit when send_prompt() starts caching the latest user text.
+            let started_at = if *value {
+                Some(chrono::Utc::now().timestamp_millis())
+            } else {
+                None
+            };
             broadcast_radio_event(RadioEvent::TaskBusy {
                 project_id: self.project_key.clone(),
                 task_id: self.task_id.clone(),
                 busy: *value,
+                prompt: None,
+                started_at,
             });
         }
 
@@ -2480,14 +2495,26 @@ impl AcpSessionHandle {
         // respond_permission() because that path never emits an AcpUpdate
         // that would land here for that purpose.
         if let Some(ref chat_id) = self.chat_id {
-            let next_status: Option<&'static str> = match &update {
-                AcpUpdate::SessionReady { .. } => Some(self.derive_node_status()),
-                AcpUpdate::Busy { value: true } => Some("busy"),
-                AcpUpdate::Busy { value: false } => Some(self.derive_node_status()),
-                AcpUpdate::PermissionRequest { .. } => Some("permission_required"),
-                AcpUpdate::SessionEnded => Some("disconnected"),
-                _ => None,
-            };
+            use crate::api::handlers::walkie_talkie::PermissionInfo;
+            let (next_status, permission): (Option<&'static str>, Option<PermissionInfo>) =
+                match &update {
+                    AcpUpdate::SessionReady { .. } => (Some(self.derive_node_status()), None),
+                    AcpUpdate::Busy { value: true } => (Some("busy"), None),
+                    AcpUpdate::Busy { value: false } => (Some(self.derive_node_status()), None),
+                    AcpUpdate::PermissionRequest {
+                        description,
+                        options,
+                        ..
+                    } => (
+                        Some("permission_required"),
+                        Some(PermissionInfo {
+                            description: description.clone(),
+                            option_count: options.len(),
+                        }),
+                    ),
+                    AcpUpdate::SessionEnded => (Some("disconnected"), None),
+                    _ => (None, None),
+                };
             if let Some(status) = next_status {
                 use crate::api::handlers::walkie_talkie::{broadcast_radio_event, RadioEvent};
                 broadcast_radio_event(RadioEvent::ChatStatus {
@@ -2495,6 +2522,7 @@ impl AcpSessionHandle {
                     task_id: self.task_id.clone(),
                     chat_id: chat_id.clone(),
                     status: status.to_string(),
+                    permission,
                 });
             }
         }

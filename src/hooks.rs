@@ -213,13 +213,20 @@ pub fn update_hook(
     message: Option<String>,
 ) {
     let mut hooks = load_hooks(project_key);
-    hooks.update(task_id, level, message);
+    hooks.update(task_id, level, message.clone());
     match save_hooks(project_key, &hooks) {
         Ok(()) => {
+            let level_str = match level {
+                NotificationLevel::Notice => "notice",
+                NotificationLevel::Warn => "warn",
+                NotificationLevel::Critical => "critical",
+            };
             crate::api::handlers::walkie_talkie::broadcast_radio_event(
                 crate::api::handlers::walkie_talkie::RadioEvent::HookAdded {
                     project_id: project_key.to_string(),
                     task_id: task_id.to_string(),
+                    level: Some(level_str.to_string()),
+                    message,
                 },
             );
         }
