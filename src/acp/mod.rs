@@ -2509,7 +2509,16 @@ impl AcpSessionHandle {
                         Some("permission_required"),
                         Some(PermissionInfo {
                             description: description.clone(),
-                            option_count: options.len(),
+                            options: options
+                                .iter()
+                                .map(|o| {
+                                    crate::api::handlers::walkie_talkie::PermissionOptionInfo {
+                                        option_id: o.option_id.clone(),
+                                        name: o.name.clone(),
+                                        kind: o.kind.clone(),
+                                    }
+                                })
+                                .collect(),
                         }),
                     ),
                     AcpUpdate::SessionEnded => (Some("disconnected"), None),

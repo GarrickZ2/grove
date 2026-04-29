@@ -301,7 +301,12 @@ pub async fn execute(port: u16) {
         .invoke_handler(tauri::generate_handler![
             open_external_url,
             download_file_dialog,
-            toggle_devtools
+            toggle_devtools,
+            crate::tray::tray_get_events,
+            crate::tray::tray_dismiss,
+            crate::tray::tray_resolve_permission,
+            crate::tray::tray_open_main,
+            crate::tray::tray_hide_popover,
         ])
         .setup(move |app| {
             // Create a window pointing to our HTTP server
@@ -317,6 +322,12 @@ pub async fn execute(port: u16) {
             .center()
             .disable_drag_drop_handler()
             .build()?;
+
+            // Register menubar tray + popover. Failure here should not block
+            // the main window from launching — log and continue.
+            if let Err(e) = crate::tray::init(&app.handle().clone(), actual_port) {
+                eprintln!("[Grove] failed to initialize menubar tray: {}", e);
+            }
             Ok(())
         })
         .build(tauri::generate_context!());
@@ -334,6 +345,22 @@ pub async fn execute(port: u16) {
     // icon can bring it back. Quit still works via Cmd+Q / Dock → Quit,
     // which Tauri delivers as RunEvent::ExitRequested.
     tauri_app.run(|app_handle, event| {
+        // Hide tray popover when it loses focus — applies on every platform
+        // so the popover behaves like a transient menu bar attachment.
+        if let tauri::RunEvent::WindowEvent {
+            label,
+            event: tauri::WindowEvent::Focused(false),
+            ..
+        } = &event
+        {
+            if label == "tray-popover" {
+                use tauri::Manager;
+                if let Some(win) = app_handle.get_webview_window("tray-popover") {
+                    let _ = win.hide();
+                }
+            }
+        }
+
         #[cfg(target_os = "macos")]
         {
             use tauri::Manager;
@@ -343,6 +370,8 @@ pub async fn execute(port: u16) {
                     event: tauri::WindowEvent::CloseRequested { api, .. },
                     ..
                 } => {
+                    // Tray popover should hide on close, just like the main
+                    // window — never let it tear down the process.
                     if let Some(window) = app_handle.get_webview_window(&label) {
                         api.prevent_close();
                         let _ = window.hide();

@@ -149,8 +149,20 @@ pub enum TargetMode {
 pub struct PermissionInfo {
     /// Short human-readable summary of what's being asked, e.g. tool call title.
     pub description: String,
-    /// Number of options offered (Allow / Always / Deny variants).
-    pub option_count: usize,
+    /// Options offered to the user. Carried inline so the tray can resolve the
+    /// request directly via `respond_permission(option_id)` without holding
+    /// the live ACP handle.
+    pub options: Vec<PermissionOptionInfo>,
+}
+
+/// A single option in a permission request — mirror of `PermOptionData` in
+/// `acp::history::AcpUpdate::PermissionRequest` but flattened for wire use.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PermissionOptionInfo {
+    pub option_id: String,
+    pub name: String,
+    /// One of: "allow_once" | "allow_always" | "reject_once" | "reject_always".
+    pub kind: String,
 }
 
 /// Global broadcast channel for radio events.
@@ -163,6 +175,13 @@ static RADIO_EVENTS: Lazy<broadcast::Sender<RadioEvent>> = Lazy::new(|| {
 /// Broadcast a radio event to all desktop listeners.
 pub fn broadcast_radio_event(event: RadioEvent) {
     let _ = RADIO_EVENTS.send(event);
+}
+
+/// Subscribe to the global radio events channel. Used by in-process consumers
+/// (currently the menubar tray) that need a tokio receiver without going
+/// through a WebSocket.
+pub fn subscribe_radio_events() -> broadcast::Receiver<RadioEvent> {
+    RADIO_EVENTS.subscribe()
 }
 
 // ─── Client → Server Messages ───────────────────────────────────────────────

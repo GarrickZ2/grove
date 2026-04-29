@@ -29,6 +29,8 @@ mod storage;
 #[cfg(not(windows))]
 mod theme;
 mod tmux;
+#[cfg(feature = "gui")]
+mod tray;
 #[cfg(not(windows))]
 mod ui;
 #[cfg(not(windows))]
