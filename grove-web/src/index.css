@@ -112,6 +112,16 @@ body {
   color: white;
 }
 
+/* Tray popover: indeterminate progress bar sweep */
+@keyframes barSlide {
+  0% {
+    background-position: -50% 0;
+  }
+  100% {
+    background-position: 150% 0;
+  }
+}
+
 /* Aurora background animation for Blitz mode */
 @keyframes aurora {
   0%, 100% {

@@ -300,7 +300,7 @@ fn ensure_popover(app: &AppHandle, port: u16) -> tauri::Result<()> {
     if app.get_webview_window(POPOVER_LABEL).is_some() {
         return Ok(());
     }
-    let url = format!("http://localhost:{}/?page=tray-popover", port);
+    let url = format!("http://localhost:{}/tray.html", port);
     let builder = WebviewWindowBuilder::new(
         app,
         POPOVER_LABEL,

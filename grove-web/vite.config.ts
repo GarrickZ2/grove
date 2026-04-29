@@ -11,6 +11,7 @@ export default defineConfig({
       input: {
         main: resolve(__dirname, 'index.html'),
         radio: resolve(__dirname, 'radio.html'),
+        tray: resolve(__dirname, 'tray.html'),
       },
     },
   },
