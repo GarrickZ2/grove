@@ -119,7 +119,25 @@ fn now_ms() -> i64 {
     chrono::Utc::now().timestamp_millis()
 }
 
+/// Snapshot of which categories the user has enabled for the tray surface.
+/// Loaded fresh on every event so config changes take effect without restart.
+struct TrayFilters {
+    show_permission: bool,
+    show_running: bool,
+    show_done: bool,
+}
+
+fn current_filters() -> TrayFilters {
+    let cfg = crate::storage::config::load_config();
+    TrayFilters {
+        show_permission: cfg.notifications.tray_show_permission,
+        show_running: cfg.notifications.tray_show_running,
+        show_done: cfg.notifications.tray_show_done,
+    }
+}
+
 fn apply_event(store: &mut EventStore, event: RadioEvent) -> bool {
+    let filters = current_filters();
     match event {
         RadioEvent::ChatStatus {
             project_id,
@@ -129,6 +147,9 @@ fn apply_event(store: &mut EventStore, event: RadioEvent) -> bool {
             permission,
         } => {
             if status == "permission_required" {
+                if !filters.show_permission {
+                    return false;
+                }
                 if let Some(p) = permission {
                     let id = format!("perm-{}-{}", chat_id, now_ms());
                     store.permissions.insert(
@@ -147,7 +168,9 @@ fn apply_event(store: &mut EventStore, event: RadioEvent) -> bool {
                 }
                 false
             } else {
-                // Any non-pending status clears a stale permission entry.
+                // Any non-pending status clears a stale permission entry —
+                // do this regardless of filter so re-enabling never surfaces
+                // a stale request that's already been resolved upstream.
                 store.permissions.remove(&chat_id).is_some()
             }
         }
@@ -160,6 +183,9 @@ fn apply_event(store: &mut EventStore, event: RadioEvent) -> bool {
         } => {
             let key = (project_id.clone(), task_id.clone());
             if busy {
+                if !filters.show_running {
+                    return false;
+                }
                 let id = format!("run-{}-{}", task_id, now_ms());
                 store.running.insert(
                     key,
@@ -182,6 +208,9 @@ fn apply_event(store: &mut EventStore, event: RadioEvent) -> bool {
             level,
             message,
         } => {
+            if !filters.show_done {
+                return false;
+            }
             let id = format!("done-{}-{}", task_id, now_ms());
             if store.done.len() >= DONE_CAP {
                 store.done.pop_back();

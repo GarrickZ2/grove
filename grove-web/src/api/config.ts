@@ -57,6 +57,19 @@ export interface HooksConfig {
   permission_sound: string;
 }
 
+export interface NotificationsConfig {
+  /** Whether the menubar tray icon is enabled at all. */
+  tray_enabled: boolean;
+  tray_show_permission: boolean;
+  tray_show_done: boolean;
+  tray_show_running: boolean;
+  /** Whether macOS / system notifications fire at all. */
+  notification_enabled: boolean;
+  notification_show_permission: boolean;
+  notification_show_done: boolean;
+  notification_show_running: boolean;
+}
+
 export interface Config {
   theme: ThemeConfig;
   layout: LayoutConfig;
@@ -65,6 +78,7 @@ export interface Config {
   auto_link: AutoLinkConfig;
   acp: AcpConfig;
   hooks: HooksConfig;
+  notifications: NotificationsConfig;
 }
 
 interface ConfigPatch {
@@ -75,6 +89,7 @@ interface ConfigPatch {
   auto_link?: Partial<AutoLinkConfig>;
   acp?: Partial<AcpConfig>;
   hooks?: Partial<HooksConfig>;
+  notifications?: Partial<NotificationsConfig>;
 }
 
 // Application info for picker

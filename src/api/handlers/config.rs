@@ -25,8 +25,21 @@ pub struct ConfigResponse {
     pub auto_link: AutoLinkConfigDto,
     pub acp: AcpConfigDto,
     pub hooks: HooksConfigDto,
+    pub notifications: NotificationsConfigDto,
     /// Terminal 模式使用的复用器 ("tmux" | "zellij")
     pub terminal_multiplexer: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct NotificationsConfigDto {
+    pub tray_enabled: bool,
+    pub tray_show_permission: bool,
+    pub tray_show_done: bool,
+    pub tray_show_running: bool,
+    pub notification_enabled: bool,
+    pub notification_show_permission: bool,
+    pub notification_show_done: bool,
+    pub notification_show_running: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -139,6 +152,16 @@ impl From<&Config> for ConfigResponse {
                 permission_sound_enabled: config.hooks.permission_sound_enabled,
                 permission_sound: config.hooks.permission_sound.clone(),
             },
+            notifications: NotificationsConfigDto {
+                tray_enabled: config.notifications.tray_enabled,
+                tray_show_permission: config.notifications.tray_show_permission,
+                tray_show_done: config.notifications.tray_show_done,
+                tray_show_running: config.notifications.tray_show_running,
+                notification_enabled: config.notifications.notification_enabled,
+                notification_show_permission: config.notifications.notification_show_permission,
+                notification_show_done: config.notifications.notification_show_done,
+                notification_show_running: config.notifications.notification_show_running,
+            },
             terminal_multiplexer: config.terminal_multiplexer.to_string(),
         }
     }
@@ -153,8 +176,21 @@ pub struct ConfigPatchRequest {
     pub auto_link: Option<AutoLinkConfigPatch>,
     pub acp: Option<AcpConfigPatch>,
     pub hooks: Option<HooksConfigPatch>,
+    pub notifications: Option<NotificationsConfigPatch>,
     /// Terminal 模式使用的复用器 ("tmux" | "zellij")
     pub terminal_multiplexer: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct NotificationsConfigPatch {
+    pub tray_enabled: Option<bool>,
+    pub tray_show_permission: Option<bool>,
+    pub tray_show_done: Option<bool>,
+    pub tray_show_running: Option<bool>,
+    pub notification_enabled: Option<bool>,
+    pub notification_show_permission: Option<bool>,
+    pub notification_show_done: Option<bool>,
+    pub notification_show_running: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -326,6 +362,34 @@ pub async fn patch_config(
         }
         if let Some(permission_sound) = hooks_patch.permission_sound {
             config.hooks.permission_sound = permission_sound;
+        }
+    }
+
+    // Apply notifications patch
+    if let Some(n) = patch.notifications {
+        if let Some(v) = n.tray_enabled {
+            config.notifications.tray_enabled = v;
+        }
+        if let Some(v) = n.tray_show_permission {
+            config.notifications.tray_show_permission = v;
+        }
+        if let Some(v) = n.tray_show_done {
+            config.notifications.tray_show_done = v;
+        }
+        if let Some(v) = n.tray_show_running {
+            config.notifications.tray_show_running = v;
+        }
+        if let Some(v) = n.notification_enabled {
+            config.notifications.notification_enabled = v;
+        }
+        if let Some(v) = n.notification_show_permission {
+            config.notifications.notification_show_permission = v;
+        }
+        if let Some(v) = n.notification_show_done {
+            config.notifications.notification_show_done = v;
+        }
+        if let Some(v) = n.notification_show_running {
+            config.notifications.notification_show_running = v;
         }
     }
 

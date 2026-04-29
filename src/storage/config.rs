@@ -259,6 +259,8 @@ pub struct Config {
     pub acp: AcpConfig,
     #[serde(default)]
     pub hooks: HooksConfig,
+    #[serde(default)]
+    pub notifications: NotificationsConfig,
 
     /// Storage layout version (None = legacy, "1.0" = task-centric layout)
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -286,6 +288,49 @@ pub struct Config {
 
     #[serde(skip_serializing, default)]
     enabled_modes: Vec<String>,
+}
+
+/// Menubar tray + macOS notifications config. The two surfaces are
+/// independently togglable per category so users can pair them however they
+/// like (e.g. tray for permissions, system notifications for completions).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NotificationsConfig {
+    /// Whether the menubar tray icon is enabled at all.
+    #[serde(default = "default_true")]
+    pub tray_enabled: bool,
+    #[serde(default = "default_true")]
+    pub tray_show_permission: bool,
+    #[serde(default = "default_true")]
+    pub tray_show_done: bool,
+    #[serde(default = "default_true")]
+    pub tray_show_running: bool,
+
+    /// Whether macOS / system notifications fire at all.
+    #[serde(default)]
+    pub notification_enabled: bool,
+    #[serde(default = "default_true")]
+    pub notification_show_permission: bool,
+    #[serde(default = "default_true")]
+    pub notification_show_done: bool,
+    /// System notifications for running sessions are disabled by default —
+    /// they fire continuously and would be too noisy.
+    #[serde(default)]
+    pub notification_show_running: bool,
+}
+
+impl Default for NotificationsConfig {
+    fn default() -> Self {
+        Self {
+            tray_enabled: true,
+            tray_show_permission: true,
+            tray_show_done: true,
+            tray_show_running: true,
+            notification_enabled: false,
+            notification_show_permission: true,
+            notification_show_done: true,
+            notification_show_running: false,
+        }
+    }
 }
 
 /// MCP Server 配置（预留扩展）

@@ -323,10 +323,14 @@ pub async fn execute(port: u16) {
             .disable_drag_drop_handler()
             .build()?;
 
-            // Register menubar tray + popover. Failure here should not block
-            // the main window from launching — log and continue.
-            if let Err(e) = crate::tray::init(&app.handle().clone(), actual_port) {
-                eprintln!("[Grove] failed to initialize menubar tray: {}", e);
+            // Register menubar tray + popover. Gated by config so users who
+            // dislike the menubar surface can opt out cleanly. Failure here
+            // should not block the main window from launching — log only.
+            let cfg = crate::storage::config::load_config();
+            if cfg.notifications.tray_enabled {
+                if let Err(e) = crate::tray::init(&app.handle().clone(), actual_port) {
+                    eprintln!("[Grove] failed to initialize menubar tray: {}", e);
+                }
             }
             Ok(())
         })

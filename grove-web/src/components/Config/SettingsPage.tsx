@@ -206,6 +206,7 @@ export function SettingsPage({ config }: SettingsPageProps) {
     autolink: false,
     layout: false,
     hooks: false,
+    tray: false,
     mcp: false,
   });
 
@@ -263,6 +264,16 @@ export function SettingsPage({ config }: SettingsPageProps) {
   const [hooksResponseSound, setHooksResponseSound] = useState("Glass");
   const [hooksPermissionSoundEnabled, setHooksPermissionSoundEnabled] = useState(true);
   const [hooksPermissionSound, setHooksPermissionSound] = useState("Purr");
+
+  // Notifications (menubar tray + system notifications)
+  const [trayEnabled, setTrayEnabled] = useState(true);
+  const [trayShowPermission, setTrayShowPermission] = useState(true);
+  const [trayShowDone, setTrayShowDone] = useState(true);
+  const [trayShowRunning, setTrayShowRunning] = useState(true);
+  const [systemNotifEnabled, setSystemNotifEnabled] = useState(false);
+  const [systemNotifShowPermission, setSystemNotifShowPermission] = useState(true);
+  const [systemNotifShowDone, setSystemNotifShowDone] = useState(true);
+  const [systemNotifShowRunning, setSystemNotifShowRunning] = useState(false);
 
   // MCP state
   const [copiedField, setCopiedField] = useState<string | null>(null);
@@ -367,6 +378,17 @@ export function SettingsPage({ config }: SettingsPageProps) {
         setHooksResponseSound(cfg.hooks.response_sound || "Glass");
         setHooksPermissionSoundEnabled(cfg.hooks.permission_sound_enabled);
         setHooksPermissionSound(cfg.hooks.permission_sound || "Purr");
+      }
+
+      if (cfg.notifications) {
+        setTrayEnabled(cfg.notifications.tray_enabled);
+        setTrayShowPermission(cfg.notifications.tray_show_permission);
+        setTrayShowDone(cfg.notifications.tray_show_done);
+        setTrayShowRunning(cfg.notifications.tray_show_running);
+        setSystemNotifEnabled(cfg.notifications.notification_enabled);
+        setSystemNotifShowPermission(cfg.notifications.notification_show_permission);
+        setSystemNotifShowDone(cfg.notifications.notification_show_done);
+        setSystemNotifShowRunning(cfg.notifications.notification_show_running);
       }
 
       setIsLoaded(true);
@@ -484,6 +506,16 @@ export function SettingsPage({ config }: SettingsPageProps) {
           permission_sound_enabled: hooksPermissionSoundEnabled,
           permission_sound: hooksPermissionSound,
         },
+        notifications: {
+          tray_enabled: trayEnabled,
+          tray_show_permission: trayShowPermission,
+          tray_show_done: trayShowDone,
+          tray_show_running: trayShowRunning,
+          notification_enabled: systemNotifEnabled,
+          notification_show_permission: systemNotifShowPermission,
+          notification_show_done: systemNotifShowDone,
+          notification_show_running: systemNotifShowRunning,
+        },
       };
       await patchConfig(patch);
       // Refresh the global config cache so other pages see the changes immediately
@@ -491,7 +523,7 @@ export function SettingsPage({ config }: SettingsPageProps) {
     } catch {
       console.error("Failed to save config");
     }
-  }, [isLoaded, selectedLayout, agentCommand, acpAgent, chatRenderWindowLimit, chatRenderWindowTrigger, customLayouts, selectedCustomLayoutId, customLayoutsLoaded, ideCommand, terminalCommand, terminalMultiplexer, webTerminalMode, workspaceLayout, autoLinkPatterns, hooksEnabled, hooksBanner, hooksResponseSoundEnabled, hooksResponseSound, hooksPermissionSoundEnabled, hooksPermissionSound, refreshGlobalConfig]);
+  }, [isLoaded, selectedLayout, agentCommand, acpAgent, chatRenderWindowLimit, chatRenderWindowTrigger, customLayouts, selectedCustomLayoutId, customLayoutsLoaded, ideCommand, terminalCommand, terminalMultiplexer, webTerminalMode, workspaceLayout, autoLinkPatterns, hooksEnabled, hooksBanner, hooksResponseSoundEnabled, hooksResponseSound, hooksPermissionSoundEnabled, hooksPermissionSound, trayEnabled, trayShowPermission, trayShowDone, trayShowRunning, systemNotifEnabled, systemNotifShowPermission, systemNotifShowDone, systemNotifShowRunning, refreshGlobalConfig]);
 
   // Handle theme change with immediate save
   const handleThemeChange = useCallback((newThemeId: string) => {
@@ -513,7 +545,7 @@ export function SettingsPage({ config }: SettingsPageProps) {
     }, 500); // 500ms debounce
 
     return () => clearTimeout(timer);
-  }, [selectedLayout, agentCommand, acpAgent, chatRenderWindowLimit, chatRenderWindowTrigger, customLayouts, selectedCustomLayoutId, customLayoutsLoaded, ideCommand, terminalCommand, terminalMultiplexer, webTerminalMode, workspaceLayout, autoLinkPatterns, hooksEnabled, hooksBanner, hooksResponseSoundEnabled, hooksResponseSound, hooksPermissionSoundEnabled, hooksPermissionSound, isLoaded, saveConfig]);
+  }, [selectedLayout, agentCommand, acpAgent, chatRenderWindowLimit, chatRenderWindowTrigger, customLayouts, selectedCustomLayoutId, customLayoutsLoaded, ideCommand, terminalCommand, terminalMultiplexer, webTerminalMode, workspaceLayout, autoLinkPatterns, hooksEnabled, hooksBanner, hooksResponseSoundEnabled, hooksResponseSound, hooksPermissionSoundEnabled, hooksPermissionSound, trayEnabled, trayShowPermission, trayShowDone, trayShowRunning, systemNotifEnabled, systemNotifShowPermission, systemNotifShowDone, systemNotifShowRunning, isLoaded, saveConfig]);
 
   // Load applications list
   const loadApplications = useCallback(async () => {
@@ -1703,6 +1735,46 @@ env_vars = [
           </div>
         </Section>
 
+        {/* Menubar Tray + System Notifications Section */}
+        <Section
+          id="tray"
+          title="Menubar & System Notifications"
+          description="Surface pending permissions, running sessions, and completed turns outside the main window"
+          icon={Bell}
+          iconColor="var(--color-info)"
+          isOpen={openSections.tray}
+          onToggle={() => toggleSection("tray")}
+        >
+          <div className="space-y-6">
+            <NotifChannel
+              title="Menubar Tray"
+              subtitle="Persistent popover anchored to the menubar icon"
+              enabled={trayEnabled}
+              onEnabledChange={setTrayEnabled}
+              showPermission={trayShowPermission}
+              onShowPermissionChange={setTrayShowPermission}
+              showDone={trayShowDone}
+              onShowDoneChange={setTrayShowDone}
+              showRunning={trayShowRunning}
+              onShowRunningChange={setTrayShowRunning}
+              note="Disabling the tray takes effect on next Grove launch."
+            />
+            <NotifChannel
+              title="System Notifications"
+              subtitle="Native OS banner / notification center"
+              enabled={systemNotifEnabled}
+              onEnabledChange={setSystemNotifEnabled}
+              showPermission={systemNotifShowPermission}
+              onShowPermissionChange={setSystemNotifShowPermission}
+              showDone={systemNotifShowDone}
+              onShowDoneChange={setSystemNotifShowDone}
+              showRunning={systemNotifShowRunning}
+              onShowRunningChange={setSystemNotifShowRunning}
+              note="Running notifications are off by default — they fire continuously and would be noisy."
+            />
+          </div>
+        </Section>
+
         {/* MCP Server Section */}
         <Section
           id="mcp"
@@ -1829,5 +1901,143 @@ env_vars = [
         }}
       />
     </motion.div>
+  );
+}
+
+// ─── Notification channel sub-card ──────────────────────────────────────────
+
+interface NotifChannelProps {
+  title: string;
+  subtitle: string;
+  enabled: boolean;
+  onEnabledChange: (v: boolean) => void;
+  showPermission: boolean;
+  onShowPermissionChange: (v: boolean) => void;
+  showDone: boolean;
+  onShowDoneChange: (v: boolean) => void;
+  showRunning: boolean;
+  onShowRunningChange: (v: boolean) => void;
+  note?: string;
+}
+
+function NotifChannel({
+  title,
+  subtitle,
+  enabled,
+  onEnabledChange,
+  showPermission,
+  onShowPermissionChange,
+  showDone,
+  onShowDoneChange,
+  showRunning,
+  onShowRunningChange,
+  note,
+}: NotifChannelProps) {
+  return (
+    <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)] p-4">
+      <div className="flex items-start justify-between gap-3 mb-3">
+        <div>
+          <div className="text-sm font-semibold text-[var(--color-text)]">{title}</div>
+          <div className="text-xs text-[var(--color-text-muted)] mt-0.5">{subtitle}</div>
+        </div>
+        <ToggleSwitch checked={enabled} onChange={onEnabledChange} />
+      </div>
+      <AnimatePresence initial={false}>
+        {enabled ? (
+          <motion.div
+            initial={{ opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: "auto" }}
+            exit={{ opacity: 0, height: 0 }}
+            transition={{ duration: 0.18 }}
+            className="overflow-hidden"
+          >
+            <div className="mt-2 space-y-2.5 border-t border-[color-mix(in_srgb,var(--color-border)_60%,transparent)] pt-3">
+              <CategoryToggle
+                label="Permission required"
+                description="Pending tool-call approvals"
+                accent="var(--color-warning)"
+                checked={showPermission}
+                onChange={onShowPermissionChange}
+              />
+              <CategoryToggle
+                label="Turn completed"
+                description="Hooks fired by finished agent turns"
+                accent="var(--color-highlight)"
+                checked={showDone}
+                onChange={onShowDoneChange}
+              />
+              <CategoryToggle
+                label="Running session"
+                description="Tasks actively processing a prompt"
+                accent="var(--color-info)"
+                checked={showRunning}
+                onChange={onShowRunningChange}
+              />
+            </div>
+            {note ? (
+              <div className="mt-3 text-[11px] italic text-[var(--color-text-muted)]">{note}</div>
+            ) : null}
+          </motion.div>
+        ) : null}
+      </AnimatePresence>
+    </div>
+  );
+}
+
+function CategoryToggle({
+  label,
+  description,
+  accent,
+  checked,
+  onChange,
+}: {
+  label: string;
+  description: string;
+  accent: string;
+  checked: boolean;
+  onChange: (v: boolean) => void;
+}) {
+  return (
+    <div className="flex items-center justify-between gap-3 py-1">
+      <div className="flex items-center gap-2.5">
+        <span
+          className="h-1.5 w-1.5 rounded-full"
+          style={{ background: accent, boxShadow: `0 0 6px ${accent}` }}
+        />
+        <div>
+          <div className="text-[13px] text-[var(--color-text)]">{label}</div>
+          <div className="text-[11px] text-[var(--color-text-muted)]">{description}</div>
+        </div>
+      </div>
+      <ToggleSwitch checked={checked} onChange={onChange} />
+    </div>
+  );
+}
+
+function ToggleSwitch({
+  checked,
+  onChange,
+}: {
+  checked: boolean;
+  onChange: (v: boolean) => void;
+}) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={checked}
+      onClick={() => onChange(!checked)}
+      className="relative h-[20px] w-[34px] rounded-full border transition-all"
+      style={{
+        background: checked ? "color-mix(in srgb, var(--color-highlight) 70%, transparent)" : "var(--color-bg-tertiary)",
+        borderColor: checked ? "var(--color-highlight)" : "var(--color-border)",
+      }}
+    >
+      <motion.span
+        className="absolute top-[1px] block h-[16px] w-[16px] rounded-full"
+        animate={{ left: checked ? 15 : 1, background: checked ? "#ffffff" : "var(--color-text-muted)" }}
+        transition={{ type: "spring", stiffness: 500, damping: 30 }}
+      />
+    </button>
   );
 }
