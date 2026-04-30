@@ -25,7 +25,6 @@ import {
 } from "lucide-react";
 import { Button, Combobox, AppPicker, AgentPicker, agentOptions, ideAppOptions, terminalAppOptions, CustomAgentModal } from "../ui";
 import type { ComboboxOption } from "../ui";
-import { applyAcpAvailability, getAcpAvailabilityCommands } from "../../data/agents";
 import { useTheme, themes, useConfig } from "../../context";
 import {
   getConfig,
@@ -33,9 +32,11 @@ import {
   previewHookSound,
   checkAllDependencies,
   checkCommands,
+  listBaseAgents,
   listApplications,
   listCustomAgents,
   type AppInfo,
+  type BaseAgent,
   type CustomAgentServer,
   type CustomAgentPersona,
 } from "../../api";
@@ -234,6 +235,8 @@ export function SettingsPage({ config }: SettingsPageProps) {
   const [showCustomAgentsModal, setShowCustomAgentsModal] = useState(false);
   const [customAgentPersonas, setCustomAgentPersonas] = useState<CustomAgentPersona[]>([]);
   const [customAgentPersonasLoading, setCustomAgentPersonasLoading] = useState(false);
+  const [baseAgents, setBaseAgents] = useState<BaseAgent[]>([]);
+  const [baseAgentsLoading, setBaseAgentsLoading] = useState(true);
   const [chatRenderWindowLimit, setChatRenderWindowLimit] = useState(0);
   const [chatRenderWindowTrigger, setChatRenderWindowTrigger] = useState(1500);
   const [chatRenderWindowLimitDraft, setChatRenderWindowLimitDraft] = useState("0");
@@ -448,7 +451,6 @@ export function SettingsPage({ config }: SettingsPageProps) {
   // Check agent command availability
   const checkAgentCommands = useCallback(async () => {
     const cmds = new Set<string>();
-    for (const cmd of getAcpAvailabilityCommands()) cmds.add(cmd);
     for (const opt of agentOptions) {
       if (opt.terminalCheck) cmds.add(opt.terminalCheck);
     }
@@ -457,6 +459,29 @@ export function SettingsPage({ config }: SettingsPageProps) {
       setCommandAvailability(results);
     } catch {
       // API not available, assume all available
+    }
+  }, []);
+
+  const loadBaseAgents = useCallback(async () => {
+    setBaseAgentsLoading(true);
+    try {
+      const agents = await listBaseAgents();
+      setBaseAgents(agents);
+    } catch {
+      // Fall back to static list so the UI stays functional when the backend is unavailable.
+      // Mark all as available (fail-open) — the user will get an error when they actually try to use one.
+      setBaseAgents(
+        agentOptions
+          .filter((opt) => opt.acpCheck)
+          .map((opt) => ({
+            id: opt.id,
+            display_name: opt.label,
+            icon_id: opt.id,
+            available: true,
+          })),
+      );
+    } finally {
+      setBaseAgentsLoading(false);
     }
   }, []);
 
@@ -579,8 +604,9 @@ export function SettingsPage({ config }: SettingsPageProps) {
     checkDependencies();
     loadApplications();
     checkAgentCommands();
+    loadBaseAgents();
     loadCustomAgentPersonas();
-  }, [loadConfig, checkDependencies, loadApplications, checkAgentCommands, loadCustomAgentPersonas]);
+  }, [loadConfig, checkDependencies, loadApplications, checkAgentCommands, loadBaseAgents, loadCustomAgentPersonas]);
 
   // Terminal availability
   const tmuxInstalled = depStates["tmux"]?.status === "installed";
@@ -614,8 +640,14 @@ export function SettingsPage({ config }: SettingsPageProps) {
   }, [isLoaded, isChecking, depStates, webTerminalMode, hasMultiplexer, terminalMultiplexer, tmuxInstalled, zellijInstalled]);
 
   // Filter and mark agent options based on mode + command availability
-  const customAgentIds = customAgents.map(a => a.id);
   const hasAvailability = Object.keys(commandAvailability).length > 0;
+  const baseAgentStatusById = useMemo(() => {
+    const map = new Map<string, BaseAgent>();
+    for (const agent of baseAgents) {
+      map.set(agent.id, agent);
+    }
+    return map;
+  }, [baseAgents]);
 
   // Terminal Agent 选项（检测 terminalCheck 命令）
   const terminalAgentOptions = useMemo(() => agentOptions.map(a => {
@@ -627,15 +659,26 @@ export function SettingsPage({ config }: SettingsPageProps) {
     return a;
   }), [commandAvailability, hasAvailability]);
 
-  // Chat Agent 选项（仅 ACP 兼容 + 检测 acpCheck 命令，支持 fallback + npx）
-  const chatAgentOptions = useMemo(() => agentOptions
-    .filter(a => !!a.acpCheck || customAgentIds.includes(a.id))
-    .map(a => {
-      const opt = applyAcpAvailability(a, commandAvailability, hasAvailability);
-      return opt.disabled
-        ? { ...opt, disabledReason: `${opt.disabledReason?.replace(" not found", "")} not found — install to enable` }
-        : opt;
-    }), [commandAvailability, hasAvailability, customAgentIds]);
+  // Chat Agent 选项：ACP base agent availability comes from backend.
+  const chatAgentOptions = useMemo(() => {
+    return baseAgents.map((base) => {
+      const local = agentOptions.find((a) => a.value === base.id || a.id === base.id);
+      const option = local ?? {
+        id: base.id,
+        label: base.display_name,
+        value: base.id,
+      };
+      return base.available
+        ? { ...option, label: base.display_name, value: base.id }
+        : {
+            ...option,
+            label: base.display_name,
+            value: base.id,
+            disabled: true,
+            disabledReason: `${base.unavailable_reason ?? "not available"} — install to enable`,
+          };
+    });
+  }, [baseAgents]);
 
   // Feature availability (auto-derived from dependencies)
   const isTerminalAvailable = canUseTerminal;
@@ -650,10 +693,11 @@ export function SettingsPage({ config }: SettingsPageProps) {
 
   // Auto-correct agent selection: pick first available, or clear if none available
   useEffect(() => {
-    if (!isLoaded || Object.keys(commandAvailability).length === 0) return;
+    if (!isLoaded) return;
+    const hasTerminalAvailability = Object.keys(commandAvailability).length > 0;
 
     // Terminal Agent
-    if (agentCommand) {
+    if (hasTerminalAvailability && agentCommand) {
       const currentAgent = agentOptions.find(a => a.id === agentCommand);
       const cmd = currentAgent?.terminalCheck;
       if (cmd && commandAvailability[cmd] === false) {
@@ -662,18 +706,15 @@ export function SettingsPage({ config }: SettingsPageProps) {
       }
     }
 
-    // Chat Agent (check terminalCheck + acpCheck/acpFallback/npx)
-    if (acpAgent) {
-      const currentAgent = agentOptions.find(a => a.id === acpAgent);
-      const available = currentAgent
-        ? !applyAcpAvailability(currentAgent, commandAvailability, true).disabled
-        : false;
-      if (currentAgent?.acpCheck && !available) {
+    // Chat Agent availability is backend-derived from /agents/base.
+    if (baseAgents.length > 0 && acpAgent) {
+      const currentBaseAgent = baseAgentStatusById.get(acpAgent);
+      if (currentBaseAgent && !currentBaseAgent.available) {
         const firstAvailable = chatAgentOptions.find(a => !a.disabled);
-        setAcpAgent(firstAvailable?.id ?? "");
+        setAcpAgent(firstAvailable?.value ?? "");
       }
     }
-  }, [isLoaded, commandAvailability, agentCommand, acpAgent, terminalAgentOptions, chatAgentOptions]);
+  }, [isLoaded, commandAvailability, agentCommand, acpAgent, terminalAgentOptions, chatAgentOptions, baseAgentStatusById, baseAgents.length]);
 
   const suggestedChatRenderWindowTrigger = useCallback((limit: number) => {
     return Math.max(limit + 1, Math.ceil(limit * 1.5));
@@ -787,14 +828,20 @@ env_vars = [
             {/* Default Coding Agent */}
             <div>
               <div className="text-xs font-medium text-[var(--color-text-muted)] mb-2 uppercase tracking-wider select-none">Default Coding Agent</div>
-              <AgentPicker
-                value={acpAgent}
-                onChange={setAcpAgent}
-                options={chatAgentOptions}
-                allowCustom={false}
-                placeholder="Select agent..."
-                customAgents={customAgents}
-              />
+              {baseAgentsLoading ? (
+                <div className="h-10 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-secondary)] px-3 flex items-center text-sm text-[var(--color-text-muted)]">
+                  Loading agents...
+                </div>
+              ) : (
+                <AgentPicker
+                  value={acpAgent}
+                  onChange={setAcpAgent}
+                  options={chatAgentOptions}
+                  allowCustom={false}
+                  placeholder="Select agent..."
+                  customAgents={customAgents}
+                />
+              )}
             </div>
 
             {/* Custom Agent entry buttons */}

@@ -1,11 +1,7 @@
-// Dead-code allow: the public surface is consumed by Commit 2 (HTTP MCP listener)
-// and Commit 3 (per-session URL injection); during Commit 1 nothing inside Grove
-// calls these symbols yet. Tests exercise the validation paths.
-#![allow(dead_code)]
-
 //! Agent Graph — agent-to-agent communication tools.
 //!
-//! 5 tools (`grove_agent_spawn` / `_send` / `_reply` / `_contacts` / `_capability`)
+//! Tools (`grove_agent_spawn` / `_send` / `_reply` / `_contacts` / `_capability`
+//! / `_get_spawn_candidates`)
 //! used by ACP agents inside a Grove task to communicate with sibling sessions
 //! over the agent_graph DAG.
 //!

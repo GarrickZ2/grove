@@ -1,4 +1,4 @@
-//! Spec §4 错误码 — 5 工具共用的 error 类型。
+//! Spec §4 错误码 — agent_graph 工具共用的 error 类型。
 
 use std::fmt;
 
@@ -34,8 +34,6 @@ pub enum AgentGraphError {
     CallerUnknown,
     /// 跨 task 通讯被拒
     SameTaskRequired,
-    /// 目标 ACP session handle 不在本进程内（remote 场景，本 WO 不支持）
-    TargetNotAvailable,
     /// 内部错误（DB / IO / 逻辑分支兜底）。message 给运维看。
     Internal(String),
 }
@@ -58,7 +56,6 @@ impl AgentGraphError {
             Self::NameTaken => "name_taken",
             Self::CallerUnknown => "caller_unknown",
             Self::SameTaskRequired => "same_task_required",
-            Self::TargetNotAvailable => "target_not_available",
             Self::Internal(_) => "internal_error",
         }
     }
@@ -80,7 +77,6 @@ impl AgentGraphError {
             Self::NameTaken => "another session in this task already uses that name",
             Self::CallerUnknown => "caller chat_id is not registered with Grove",
             Self::SameTaskRequired => "agent_graph is per-task; from and to must be in the same task",
-            Self::TargetNotAvailable => "target session is not running in this Grove process",
             Self::Internal(_) => "internal error in Grove; check server logs",
         }
     }

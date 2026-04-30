@@ -3,6 +3,7 @@
 pub mod acp;
 pub mod agent_graph_mcp;
 pub mod agent_usage;
+pub mod agents;
 pub mod ai;
 pub mod common;
 pub mod config;

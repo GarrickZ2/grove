@@ -14,7 +14,7 @@ use super::error::AgentGraphError;
 use super::inject::{build_injected_prompt, InjectKind};
 use crate::acp::{self, AcpSessionHandle, AcpStartConfig, AcpUpdate, QueuedMessage};
 use crate::api::handlers::walkie_talkie::{broadcast_radio_event, RadioEvent};
-use crate::storage::{agent_graph as graph_db, database, tasks, workspace};
+use crate::storage::{agent_graph as graph_db, custom_agent, database, tasks, workspace};
 
 pub type AgentGraphResult<T> = Result<T, AgentGraphError>;
 
@@ -53,10 +53,6 @@ pub struct SendInput {
     /// Required only when the target session has no duty yet; forbidden otherwise.
     #[serde(default)]
     pub duty: Option<String>,
-    /// Optional override of target's model / mode / thought_level (not yet implemented).
-    #[serde(default)]
-    #[schemars(skip)]
-    pub config: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -434,6 +430,95 @@ pub async fn grove_agent_capability(
     })
 }
 
+// ─── grove_agent_get_spawn_candidates ────────────────────────────────────────
+
+#[derive(Debug, Clone, Deserialize, JsonSchema, Default)]
+pub struct GetSpawnCandidatesInput {}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SpawnCandidateKind {
+    Base,
+    CustomServer,
+    Persona,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct SpawnCandidate {
+    /// Value to pass as `grove_agent_spawn.agent`.
+    pub id: String,
+    pub kind: SpawnCandidateKind,
+    pub display_name: String,
+    /// Underlying ACP agent/server id. For personas, this is the persona's
+    /// `base_agent`; for base/custom-server entries it equals `id`.
+    pub base_agent: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub duty: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub icon_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct GetSpawnCandidatesOutput {
+    pub candidates: Vec<SpawnCandidate>,
+}
+
+/// Return the currently spawnable ACP targets visible to an agent graph caller.
+///
+/// The returned `id` is deliberately the same value accepted by
+/// `grove_agent_spawn.agent`. Personas include their default duty, but never
+/// expose their system prompt.
+pub async fn grove_agent_get_spawn_candidates(
+    cx: &ToolContext,
+    _input: GetSpawnCandidatesInput,
+) -> AgentGraphResult<GetSpawnCandidatesOutput> {
+    // Validate that the token-bound caller is still a live chat in a task.
+    let _ = cx.caller_context()?;
+
+    let mut candidates = Vec::new();
+
+    for base in acp::available_base_acp_agents() {
+        candidates.push(SpawnCandidate {
+            id: base.id.to_string(),
+            kind: SpawnCandidateKind::Base,
+            display_name: base.display_name.to_string(),
+            base_agent: base.id.to_string(),
+            duty: None,
+            icon_id: Some(base.icon_id.to_string()),
+        });
+    }
+
+    let config = crate::storage::config::load_config();
+    for server in config.acp.custom_agents {
+        if acp::resolve_agent(&server.id).is_some() {
+            candidates.push(SpawnCandidate {
+                id: server.id.clone(),
+                kind: SpawnCandidateKind::CustomServer,
+                display_name: server.name,
+                base_agent: server.id,
+                duty: None,
+                icon_id: None,
+            });
+        }
+    }
+
+    let personas = custom_agent::list().map_err(AgentGraphError::from)?;
+    for persona in personas {
+        if acp::resolve_agent(&persona.base_agent).is_some() {
+            candidates.push(SpawnCandidate {
+                id: persona.id,
+                kind: SpawnCandidateKind::Persona,
+                display_name: persona.name,
+                base_agent: persona.base_agent,
+                duty: persona.duty,
+                icon_id: None,
+            });
+        }
+    }
+
+    Ok(GetSpawnCandidatesOutput { candidates })
+}
+
 // ─── grove_agent_spawn ────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
@@ -514,23 +599,24 @@ pub async fn grove_agent_spawn(
         .map_err(AgentGraphError::from)?;
 
     // 自动建 caller→new edge（带 purpose）
-    {
+    let caller_to_child_edge_id = {
         let conn = database::connection();
-        let edge_res = graph_db::add_edge(
+        match graph_db::add_edge(
             &conn,
             &project_key,
             &task_id,
             &caller_chat.id,
             &new_chat_id,
             input.purpose.as_deref(),
-        );
-        if let Err(e) = edge_res {
-            // 回滚 chat
-            drop(conn);
-            let _ = tasks::delete_chat_session(&project_key, &task_id, &new_chat_id);
-            return Err(AgentGraphError::from(e));
+        ) {
+            Ok(id) => id,
+            Err(e) => {
+                // 回滚 chat
+                let _ = tasks::delete_chat_session(&project_key, &task_id, &new_chat_id);
+                return Err(AgentGraphError::from(e));
+            }
         }
-    }
+    };
 
     // 启动 ACP 子进程
     let env_vars = crate::api::handlers::acp::build_grove_env(
@@ -557,12 +643,18 @@ pub async fn grove_agent_spawn(
         persona_injection,
     };
 
-    let start_res = acp::get_or_start_session(session_key, config).await;
+    let start_res = acp::get_or_start_session(session_key.clone(), config).await;
     let (_handle, mut rx) = match start_res {
         Ok(t) => t,
         Err(e) => {
-            // 回滚 chat + edge
+            // 回滚 chat + edge，并通知前端刷新（客户端可能通过轮询已看到新 chat）
             let _ = tasks::delete_chat_session(&project_key, &task_id, &new_chat_id);
+            let conn = database::connection();
+            let _ = graph_db::delete_edge(&conn, caller_to_child_edge_id);
+            broadcast_radio_event(RadioEvent::ChatListChanged {
+                project_id: project_key.clone(),
+                task_id: task_id.clone(),
+            });
             return Err(AgentGraphError::Internal(format!(
                 "spawn ACP session failed: {}",
                 e
@@ -603,24 +695,47 @@ pub async fn grove_agent_spawn(
         Ok(Ok(t)) => t,
         Ok(Err(e)) => {
             let _ = tasks::delete_chat_session(&project_key, &task_id, &new_chat_id);
+            let conn = database::connection();
+            let _ = graph_db::delete_edge(&conn, caller_to_child_edge_id);
+            let _ = acp::kill_session(&session_key);
+            broadcast_radio_event(RadioEvent::ChatListChanged {
+                project_id: project_key.clone(),
+                task_id: task_id.clone(),
+            });
             return Err(e);
         }
         Err(_) => {
             let _ = tasks::delete_chat_session(&project_key, &task_id, &new_chat_id);
+            let conn = database::connection();
+            let _ = graph_db::delete_edge(&conn, caller_to_child_edge_id);
+            let _ = acp::kill_session(&session_key);
+            broadcast_radio_event(RadioEvent::ChatListChanged {
+                project_id: project_key.clone(),
+                task_id: task_id.clone(),
+            });
             return Err(AgentGraphError::Timeout);
         }
     };
 
     // duty lock — spawn 路径首次设置，force=false 即可（既然 chat 是刚建的，
     // 不会撞 lock；保留 force=false 防御万一并发）。
-    tasks::update_chat_duty(
+    if let Err(e) = tasks::update_chat_duty(
         &project_key,
         &task_id,
         &new_chat_id,
         Some(input.duty.clone()),
         false,
-    )
-    .map_err(AgentGraphError::from)?;
+    ) {
+        let _ = tasks::delete_chat_session(&project_key, &task_id, &new_chat_id);
+        let conn = database::connection();
+        let _ = graph_db::delete_edge(&conn, caller_to_child_edge_id);
+        let _ = acp::kill_session(&session_key);
+        broadcast_radio_event(RadioEvent::ChatListChanged {
+            project_id: project_key.clone(),
+            task_id: task_id.clone(),
+        });
+        return Err(AgentGraphError::from(e));
+    }
 
     // 通知前端 chat 列表变更（用户需求：前端自动看到新 chat）
     broadcast_radio_event(RadioEvent::ChatListChanged {
@@ -945,7 +1060,6 @@ mod tests {
                 to: "chat-other".into(),
                 message: "hi".into(),
                 duty: None,
-                config: None,
             },
         )
         .await
@@ -965,7 +1079,6 @@ mod tests {
                 to: "chat-missing".into(),
                 message: "hi".into(),
                 duty: Some("x".into()),
-                config: None,
             },
         )
         .await
@@ -986,7 +1099,6 @@ mod tests {
                 to: "chat-B".into(),
                 message: "hi".into(),
                 duty: Some("x".into()),
-                config: None,
             },
         )
         .await
@@ -1011,7 +1123,6 @@ mod tests {
                 to: "chat-B".into(),
                 message: "hi".into(),
                 duty: None, // 没传 duty 但 B 也没 duty
-                config: None,
             },
         )
         .await
@@ -1036,7 +1147,6 @@ mod tests {
                 to: "chat-B".into(),
                 message: "hi".into(),
                 duty: Some("override".into()),
-                config: None,
             },
         )
         .await
@@ -1058,7 +1168,6 @@ mod tests {
                 to: "chat-B".into(),
                 message: "hi".into(),
                 duty: None,
-                config: None,
             },
         )
         .await
@@ -1087,7 +1196,6 @@ mod tests {
                 to: "chat-B".into(),
                 message: "second".into(),
                 duty: None,
-                config: None,
             },
         )
         .await
@@ -1308,7 +1416,6 @@ mod tests {
                 to: "chat-B".into(),
                 message: "hello from A".into(),
                 duty: None,
-                config: None,
             },
         )
         .await
@@ -1368,7 +1475,6 @@ mod tests {
                 to: "chat-B".into(),
                 message: "queued msg".into(),
                 duty: None,
-                config: None,
             },
         )
         .await
@@ -1424,7 +1530,6 @@ mod tests {
                 to: "chat-B".into(),
                 message: "delayed msg".into(),
                 duty: None,
-                config: None,
             },
         )
         .await

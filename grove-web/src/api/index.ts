@@ -5,6 +5,9 @@ export type { ApiError } from './client';
 export { getConfig, patchConfig, listApplications, getAppIconUrl, previewHookSound } from './config';
 export type { AppInfo, CustomAgentServer } from './config';
 
+export { listBaseAgents } from './agents';
+export type { BaseAgent } from './agents';
+
 export {
   listCustomAgents,
   createCustomAgent,

@@ -29,14 +29,6 @@ pub enum InjectKind {
 }
 
 impl InjectKind {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Send => "send",
-            Self::Reply => "reply",
-            Self::Remind => "remind",
-        }
-    }
-
     fn envelope_type(self) -> &'static str {
         match self {
             Self::Send => "agent_inject_send",

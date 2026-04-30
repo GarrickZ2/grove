@@ -463,7 +463,7 @@ fn grove_mcp_server(env_vars: &HashMap<String, String>) -> crate::error::Result<
 /// Always includes the existing stdio `grove mcp` (orchestrator tools). When
 /// `agent_graph_token` is `Some` and the in-process MCP HTTP listener is
 /// running, **also** appends a second entry — the loopback Streamable HTTP
-/// MCP that exposes the 5 agent_graph tools. The two MCP servers run in
+/// MCP that exposes the agent_graph tools. The two MCP servers run in
 /// parallel; their tool sets don't overlap (`grove_*` orchestrator vs
 /// `grove_agent_*` graph) so the agent sees them as one combined toolbox.
 ///
@@ -2119,7 +2119,10 @@ async fn drive_session(
                     buf.clear();
                 }
 
-                let mut content_blocks: Vec<acp::ContentBlock> = vec![text.into()];
+                let mut content_blocks: Vec<acp::ContentBlock> = Vec::new();
+                if !text.is_empty() {
+                    content_blocks.push(text.into());
+                }
                 for block in &attachments {
                     content_blocks.push(to_acp_content_block(block));
                 }
@@ -3403,16 +3406,185 @@ pub struct ResolvedAgent {
     pub auth_header: Option<String>,
 }
 
+/// Built-in ACP agent metadata. This catalog is the source of truth for base
+/// agent discovery; runtime availability still comes from `resolve_agent`.
+#[derive(Debug, Clone, Copy)]
+pub struct BuiltinAcpAgent {
+    pub id: &'static str,
+    pub display_name: &'static str,
+    pub icon_id: &'static str,
+    pub aliases: &'static [&'static str],
+}
+
+#[derive(Debug, Clone)]
+pub struct BaseAcpAgentStatus {
+    pub agent: BuiltinAcpAgent,
+    pub available: bool,
+    pub unavailable_reason: Option<String>,
+}
+
+const BUILTIN_ACP_AGENTS: &[BuiltinAcpAgent] = &[
+    BuiltinAcpAgent {
+        id: "claude",
+        display_name: "Claude Code",
+        icon_id: "claude",
+        aliases: &[],
+    },
+    BuiltinAcpAgent {
+        id: "codex",
+        display_name: "Codex",
+        icon_id: "openai",
+        aliases: &[],
+    },
+    BuiltinAcpAgent {
+        id: "cursor",
+        display_name: "Cursor",
+        icon_id: "cursor",
+        aliases: &["cursor-agent"],
+    },
+    BuiltinAcpAgent {
+        id: "gemini",
+        display_name: "Gemini",
+        icon_id: "gemini",
+        aliases: &[],
+    },
+    BuiltinAcpAgent {
+        id: "copilot",
+        display_name: "GitHub Copilot",
+        icon_id: "copilot",
+        aliases: &["gh copilot", "gh-copilot"],
+    },
+    BuiltinAcpAgent {
+        id: "junie",
+        display_name: "Junie",
+        icon_id: "junie",
+        aliases: &[],
+    },
+    BuiltinAcpAgent {
+        id: "kimi",
+        display_name: "Kimi",
+        icon_id: "kimi",
+        aliases: &[],
+    },
+    BuiltinAcpAgent {
+        id: "opencode",
+        display_name: "OpenCode",
+        icon_id: "opencode",
+        aliases: &[],
+    },
+    BuiltinAcpAgent {
+        id: "qwen",
+        display_name: "Qwen",
+        icon_id: "qwen",
+        aliases: &[],
+    },
+    BuiltinAcpAgent {
+        id: "traecli",
+        display_name: "Trae",
+        icon_id: "trae",
+        aliases: &[],
+    },
+];
+
+pub fn builtin_acp_agents() -> &'static [BuiltinAcpAgent] {
+    BUILTIN_ACP_AGENTS
+}
+
+pub fn available_base_acp_agents() -> Vec<BuiltinAcpAgent> {
+    base_acp_agent_statuses()
+        .into_iter()
+        .filter(|status| status.available)
+        .map(|status| status.agent)
+        .collect()
+}
+
+pub fn base_acp_agent_statuses() -> Vec<BaseAcpAgentStatus> {
+    builtin_acp_agents()
+        .iter()
+        .copied()
+        .map(|agent| {
+            let unavailable_reason = builtin_acp_unavailable_reason(agent.id);
+            BaseAcpAgentStatus {
+                agent,
+                available: unavailable_reason.is_none(),
+                unavailable_reason,
+            }
+        })
+        .collect()
+}
+
+fn canonical_builtin_acp_agent(agent_name: &str) -> Option<&'static str> {
+    let normalized = agent_name.to_lowercase();
+    builtin_acp_agents()
+        .iter()
+        .find(|agent| {
+            agent.id == normalized || agent.aliases.iter().any(|alias| *alias == normalized)
+        })
+        .map(|agent| agent.id)
+}
+
 /// Check if a command exists in PATH (cross-platform).
 fn command_exists(cmd: &str) -> bool {
     crate::check::command_exists(cmd)
 }
 
+fn missing_command(cmd: &str) -> Option<String> {
+    if command_exists(cmd) {
+        None
+    } else {
+        Some(format!("{cmd} not found"))
+    }
+}
+
+fn builtin_acp_unavailable_reason(agent_name: &str) -> Option<String> {
+    let canonical = canonical_builtin_acp_agent(agent_name)?;
+    match canonical {
+        "claude" => {
+            if !command_exists("claude") {
+                return Some("claude not found".to_string());
+            }
+            if command_exists("claude-agent-acp")
+                || command_exists("claude-code-acp")
+                || command_exists("npx")
+            {
+                None
+            } else {
+                Some("claude-agent-acp, claude-code-acp, or npx not found".to_string())
+            }
+        }
+        "codex" => {
+            if !command_exists("codex") {
+                return Some("codex not found".to_string());
+            }
+            if command_exists("codex-acp") || command_exists("npx") {
+                None
+            } else {
+                Some("codex-acp or npx not found".to_string())
+            }
+        }
+        "cursor" => {
+            if command_exists("cursor-agent") || command_exists("agent") {
+                None
+            } else {
+                Some("cursor-agent or agent not found".to_string())
+            }
+        }
+        "gemini" => missing_command("gemini"),
+        "copilot" => missing_command("copilot"),
+        "junie" => missing_command("junie"),
+        "kimi" => missing_command("kimi"),
+        "opencode" => missing_command("opencode"),
+        "qwen" => missing_command("qwen"),
+        "traecli" => missing_command("traecli"),
+        _ => Some(format!("unsupported agent: {agent_name}")),
+    }
+}
+
 /// 解析 agent 名称到完整 agent 信息（支持 built-in + custom）
 pub fn resolve_agent(agent_name: &str) -> Option<ResolvedAgent> {
     // 1. Built-in agents
-    match agent_name.to_lowercase().as_str() {
-        "claude" => {
+    match canonical_builtin_acp_agent(agent_name) {
+        Some("claude") => {
             if !command_exists("claude") {
                 return None;
             }
@@ -3437,7 +3609,10 @@ pub fn resolve_agent(agent_name: &str) -> Option<ResolvedAgent> {
                 auth_header: None,
             });
         }
-        "traecli" => {
+        Some("traecli") => {
+            if !command_exists("traecli") {
+                return None;
+            }
             return Some(ResolvedAgent {
                 agent_type: "local".into(),
                 agent_name: "traecli".into(),
@@ -3447,7 +3622,7 @@ pub fn resolve_agent(agent_name: &str) -> Option<ResolvedAgent> {
                 auth_header: None,
             });
         }
-        "codex" => {
+        Some("codex") => {
             if !command_exists("codex") {
                 return None;
             }
@@ -3467,7 +3642,10 @@ pub fn resolve_agent(agent_name: &str) -> Option<ResolvedAgent> {
                 auth_header: None,
             });
         }
-        "kimi" => {
+        Some("kimi") => {
+            if !command_exists("kimi") {
+                return None;
+            }
             return Some(ResolvedAgent {
                 agent_type: "local".into(),
                 agent_name: "kimi".into(),
@@ -3477,7 +3655,10 @@ pub fn resolve_agent(agent_name: &str) -> Option<ResolvedAgent> {
                 auth_header: None,
             });
         }
-        "gemini" => {
+        Some("gemini") => {
+            if !command_exists("gemini") {
+                return None;
+            }
             return Some(ResolvedAgent {
                 agent_type: "local".into(),
                 agent_name: "gemini".into(),
@@ -3487,7 +3668,10 @@ pub fn resolve_agent(agent_name: &str) -> Option<ResolvedAgent> {
                 auth_header: None,
             });
         }
-        "qwen" => {
+        Some("qwen") => {
+            if !command_exists("qwen") {
+                return None;
+            }
             return Some(ResolvedAgent {
                 agent_type: "local".into(),
                 agent_name: "qwen".into(),
@@ -3497,7 +3681,10 @@ pub fn resolve_agent(agent_name: &str) -> Option<ResolvedAgent> {
                 auth_header: None,
             });
         }
-        "opencode" => {
+        Some("opencode") => {
+            if !command_exists("opencode") {
+                return None;
+            }
             return Some(ResolvedAgent {
                 agent_type: "local".into(),
                 agent_name: "opencode".into(),
@@ -3507,7 +3694,10 @@ pub fn resolve_agent(agent_name: &str) -> Option<ResolvedAgent> {
                 auth_header: None,
             });
         }
-        "copilot" | "gh copilot" | "gh-copilot" => {
+        Some("copilot") => {
+            if !command_exists("copilot") {
+                return None;
+            }
             return Some(ResolvedAgent {
                 agent_type: "local".into(),
                 agent_name: "copilot".into(),
@@ -3517,7 +3707,10 @@ pub fn resolve_agent(agent_name: &str) -> Option<ResolvedAgent> {
                 auth_header: None,
             });
         }
-        "junie" => {
+        Some("junie") => {
+            if !command_exists("junie") {
+                return None;
+            }
             return Some(ResolvedAgent {
                 agent_type: "local".into(),
                 agent_name: "junie".into(),
@@ -3527,7 +3720,7 @@ pub fn resolve_agent(agent_name: &str) -> Option<ResolvedAgent> {
                 auth_header: None,
             });
         }
-        "cursor" | "cursor-agent" => {
+        Some("cursor") => {
             let command = if command_exists("cursor-agent") {
                 "cursor-agent"
             } else if command_exists("agent") {
@@ -3563,14 +3756,6 @@ pub fn resolve_agent(agent_name: &str) -> Option<ResolvedAgent> {
         })
 }
 
-/// Priority order for auto-selecting a Chat (ACP) agent when the user hasn't
-/// chosen one or the chosen one is not installed. Kept in sync with
-/// `agentOptions` in `grove-web/src/components/ui/AgentPicker.tsx`.
-const ACP_AGENT_PRIORITY: &[&str] = &[
-    "claude", "codex", "cursor", "gemini", "copilot", "junie", "kimi", "opencode", "qwen",
-    "traecli",
-];
-
 /// Priority order for auto-selecting a Terminal agent. Values are the `id`s
 /// used by `layout.agent_command`; the paired `&str` is the binary name to
 /// probe on PATH.
@@ -3594,9 +3779,9 @@ pub fn pick_first_available_acp_agent() -> Option<String> {
     if let Some(custom) = config.acp.custom_agents.first() {
         return Some(custom.id.clone());
     }
-    for name in ACP_AGENT_PRIORITY {
-        if resolve_agent(name).is_some() {
-            return Some((*name).to_string());
+    for agent in available_base_acp_agents() {
+        if resolve_agent(agent.id).is_some() {
+            return Some(agent.id.to_string());
         }
     }
     None

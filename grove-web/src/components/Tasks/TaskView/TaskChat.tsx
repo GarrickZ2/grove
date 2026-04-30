@@ -59,11 +59,7 @@ import {
   FileMentionDropdown,
   AgentPickerMenuItems,
 } from "../../ui";
-import {
-  agentOptions,
-  applyAcpAvailability,
-  getAcpAvailabilityCommands,
-} from "../../../data/agents";
+import { agentOptions } from "../../../data/agents";
 import {
   buildMentionItems,
   buildStudioMentionItems,
@@ -103,14 +99,14 @@ import {
   deleteChat,
   uploadChatAttachment,
   getTaskFiles,
-  checkCommands,
   getChatHistory,
   takeControl,
   readFile,
   updateNotes,
   listCustomAgents,
+  listBaseAgents,
 } from "../../../api";
-import type { ChatSessionResponse, CustomAgentServer, CustomAgentPersona } from "../../../api";
+import type { ChatSessionResponse, CustomAgentServer, CustomAgentPersona, BaseAgent } from "../../../api";
 import { openExternalUrl } from "../../../utils/openExternal";
 import "./task-chat.css";
 
@@ -463,6 +459,44 @@ function appendSystemMessage(
   const last = messages[messages.length - 1];
   if (last?.type === "system" && last.content === content) return messages;
   return [...messages, { type: "system", content }];
+}
+
+const MAX_IMAGE_BYTES = 5 * 1024 * 1024; // 5 MB — Claude API limit
+const MAX_IMAGE_DIMENSION = 2048;
+
+/** Resize + compress an image blob to JPEG via Canvas. Reduces dimensions first,
+ *  then lowers JPEG quality in steps until the result fits within MAX_IMAGE_BYTES. */
+async function compressImageViaCanvas(source: File | Blob): Promise<Blob> {
+  const objectUrl = URL.createObjectURL(source);
+  const img = new Image();
+  img.src = objectUrl;
+  await img.decode();
+  URL.revokeObjectURL(objectUrl);
+
+  let w = img.naturalWidth;
+  let h = img.naturalHeight;
+  if (w > MAX_IMAGE_DIMENSION || h > MAX_IMAGE_DIMENSION) {
+    const ratio = Math.min(MAX_IMAGE_DIMENSION / w, MAX_IMAGE_DIMENSION / h);
+    w = Math.round(w * ratio);
+    h = Math.round(h * ratio);
+  }
+
+  const canvas = document.createElement("canvas");
+  canvas.width = w;
+  canvas.height = h;
+  canvas.getContext("2d")!.drawImage(img, 0, 0, w, h);
+
+  let quality = 0.85;
+  let blob: Blob | null = null;
+  while (quality >= 0.3) {
+    blob = await new Promise<Blob | null>((resolve) =>
+      canvas.toBlob(resolve, "image/jpeg", quality),
+    );
+    if (!blob || blob.size <= MAX_IMAGE_BYTES) break;
+    quality -= 0.1;
+  }
+  if (!blob) throw new Error("Canvas compression failed");
+  return blob;
 }
 
 type ChatRenderWindowSettings = {
@@ -1203,9 +1237,7 @@ export function TaskChat({
   const [editTitleValue, setEditTitleValue] = useState("");
   const chatMenuRef = useRef<HTMLDivElement>(null);
   const [showAgentPicker, setShowAgentPicker] = useState(false);
-  const [acpAgentAvailability, setAcpAgentAvailability] = useState<
-    Record<string, boolean>
-  >({});
+  const [baseAgents, setBaseAgents] = useState<BaseAgent[]>([]);
   const [acpAvailabilityLoaded, setAcpAvailabilityLoaded] = useState(false);
   const [customAgents, setCustomAgents] = useState<CustomAgentServer[]>([]);
   const [customAgentPersonas, setCustomAgentPersonas] = useState<CustomAgentPersona[]>([]);
@@ -1533,13 +1565,13 @@ export function TaskChat({
     [combinedMentionItems, deferredFileFilter],
   );
 
-  // Check ACP agent availability on mount
+  // Check ACP agent availability on mount via backend (consistent with SettingsPage)
   useEffect(() => {
     let cancelled = false;
     const checkAvailability = async () => {
       try {
-        const [cmdResults, cfg, personas] = await Promise.all([
-          checkCommands(getAcpAvailabilityCommands()),
+        const [agents, cfg, personas] = await Promise.all([
+          listBaseAgents(),
           getConfig(),
           // Centralized loader — only the most-recent in-flight request
           // wins the icon-registry write, so a stale fetch from a previous
@@ -1549,11 +1581,26 @@ export function TaskChat({
           ),
         ]);
         if (cancelled) return;
-        setAcpAgentAvailability(cmdResults);
+        setBaseAgents(agents);
         setCustomAgents(cfg.acp?.custom_agents ?? []);
         setCustomAgentPersonas(personas);
-      } catch {
-        /* fail-open */
+      } catch (err) {
+        // Fall back to static list so the picker stays functional when the backend is unavailable.
+        // Mark all as available (fail-open) — the user will get an error if they try to use one
+        // that isn't actually installed.
+        console.warn("[TaskChat] availability check failed, fail-open:", err);
+        if (!cancelled) {
+          setBaseAgents(
+            agentOptions
+              .filter((opt) => opt.acpCheck)
+              .map((opt) => ({
+                id: opt.id,
+                display_name: opt.label,
+                icon_id: opt.id,
+                available: true,
+              })),
+          );
+        }
       }
       if (!cancelled) setAcpAvailabilityLoaded(true);
     };
@@ -1563,12 +1610,25 @@ export function TaskChat({
     };
   }, []);
 
-  // Compute available ACP agent options
+  // Compute available ACP agent options from backend availability (consistent with SettingsPage)
   const acpAgentOptions = useMemo(() => {
-    return agentOptions
-      .filter((opt) => opt.acpCheck)
-      .map((opt) => applyAcpAvailability(opt, acpAgentAvailability, acpAvailabilityLoaded));
-  }, [acpAgentAvailability, acpAvailabilityLoaded]);
+    if (!acpAvailabilityLoaded) {
+      return agentOptions.filter((opt) => opt.acpCheck);
+    }
+    return baseAgents.map((base) => {
+      const local = agentOptions.find((a) => a.value === base.id || a.id === base.id);
+      const option = local ?? { id: base.id, label: base.display_name, value: base.id };
+      return base.available
+        ? { ...option, label: base.display_name, value: base.id }
+        : {
+            ...option,
+            label: base.display_name,
+            value: base.id,
+            disabled: true,
+            disabledReason: `${base.unavailable_reason ?? "not available"} — install to enable`,
+          };
+    });
+  }, [baseAgents, acpAvailabilityLoaded]);
 
   const getChatIcon = (agentId: string) => {
     // Custom Agent Server (user-configured remote / local) takes precedence
@@ -3095,28 +3155,94 @@ export function TaskChat({
         return;
       }
 
-      const reader = new FileReader();
-      reader.onload = () => {
-        const dataUrl = reader.result as string;
-        const base64 = dataUrl.split(",")[1];
-        const attType: "image" | "audio" = file.type.startsWith("image/") ? "image" : "audio";
-        const previewUrl = attType === "image"
-          ? URL.createObjectURL(file)
-          : undefined;
-        const label = attachmentLabel(attType, ++attachCountersRef.current[attType]);
-        setAttachments((prev) => [
-          ...prev,
-          {
-            type: attType,
-            data: base64,
-            mimeType: file.type,
-            name: file.name,
-            label,
-            previewUrl,
-          },
-        ]);
-      };
-      reader.readAsDataURL(file);
+      if (file.type.startsWith("audio/")) {
+        const reader = new FileReader();
+        reader.onload = () => {
+          const dataUrl = reader.result as string;
+          const base64 = dataUrl.split(",")[1];
+          const label = attachmentLabel("audio", ++attachCountersRef.current.audio);
+          setAttachments((prev) => [
+            ...prev,
+            { type: "audio", data: base64, mimeType: file.type, name: file.name, label },
+          ]);
+        };
+        reader.readAsDataURL(file);
+        return;
+      }
+
+      // Image handling: pass through supported formats, convert others via Canvas
+      const SUPPORTED_IMAGE_TYPES = new Set(["image/jpeg", "image/png", "image/gif", "image/webp"]);
+      if (SUPPORTED_IMAGE_TYPES.has(file.type)) {
+        // GIF: never re-encode via Canvas (would lose animation)
+        if (file.type === "image/gif" && file.size > MAX_IMAGE_BYTES) {
+          setMessages((prev) =>
+            appendSystemMessage(prev, `GIF 文件过大（${(file.size / 1024 / 1024).toFixed(1)} MB），请压缩后重试。`),
+          );
+          return;
+        }
+
+        // Oversized image: compress to JPEG via Canvas
+        if (file.size > MAX_IMAGE_BYTES) {
+          try {
+            const blob = await compressImageViaCanvas(file);
+            const reader = new FileReader();
+            reader.onload = () => {
+              const dataUrl = reader.result as string;
+              const base64 = dataUrl.split(",")[1];
+              const previewUrl = URL.createObjectURL(blob);
+              const label = attachmentLabel("image", ++attachCountersRef.current.image);
+              const compressedName = file.name.replace(/\.[^.]+$/, ".jpg");
+              setAttachments((prev) => [
+                ...prev,
+                { type: "image", data: base64, mimeType: "image/jpeg", name: compressedName, label, previewUrl },
+              ]);
+            };
+            reader.readAsDataURL(blob);
+          } catch {
+            setMessages((prev) =>
+              appendSystemMessage(prev, `图片压缩失败（${file.name}），请手动压缩后重试。`),
+            );
+          }
+          return;
+        }
+
+        // Small supported image: pass through directly
+        const reader = new FileReader();
+        reader.onload = () => {
+          const dataUrl = reader.result as string;
+          const base64 = dataUrl.split(",")[1];
+          const previewUrl = URL.createObjectURL(file);
+          const label = attachmentLabel("image", ++attachCountersRef.current.image);
+          setAttachments((prev) => [
+            ...prev,
+            { type: "image", data: base64, mimeType: file.type, name: file.name, label, previewUrl },
+          ]);
+        };
+        reader.readAsDataURL(file);
+        return;
+      }
+
+      // Unsupported image format — try Canvas decode/convert to JPEG (with size cap)
+      try {
+        const blob = await compressImageViaCanvas(file);
+        const reader = new FileReader();
+        reader.onload = () => {
+          const dataUrl = reader.result as string;
+          const base64 = dataUrl.split(",")[1];
+          const previewUrl = URL.createObjectURL(blob);
+          const label = attachmentLabel("image", ++attachCountersRef.current.image);
+          const convertedName = file.name.replace(/\.[^.]+$/, ".jpg");
+          setAttachments((prev) => [
+            ...prev,
+            { type: "image", data: base64, mimeType: "image/jpeg", name: convertedName, label, previewUrl },
+          ]);
+        };
+        reader.readAsDataURL(blob);
+      } catch {
+        setMessages((prev) =>
+          appendSystemMessage(prev, `不支持的图片格式（${file.name}），请转换为 JPEG 或 PNG 后重试。`),
+        );
+      }
     },
     [],
   );
@@ -3783,6 +3909,13 @@ export function TaskChat({
       // Default: plain text paste
       e.preventDefault();
       const text = e.clipboardData.getData("text/plain");
+      // Large text: convert to .txt attachment to avoid freezing contentEditable
+      if (text.length > 10 * 1024) {
+        const blob = new Blob([text], { type: "text/plain" });
+        const file = new File([blob], "pasted-text.txt", { type: "text/plain" });
+        void addFileAsAttachment(file);
+        return;
+      }
       document.execCommand("insertText", false, text);
       checkContent();
     },

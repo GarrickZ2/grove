@@ -1,4 +1,4 @@
-//! Streamable HTTP MCP listener — exposes the 5 `agent_graph` tools to ACP agents.
+//! Streamable HTTP MCP listener — exposes the `agent_graph` tools to ACP agents.
 //!
 //! WO-006 part 2 of 4. This module is the HTTP transport layer; the tool logic
 //! lives in `crate::agent_graph::tools` and is transport-agnostic.
@@ -17,15 +17,13 @@
 //!   When that agent calls a tool, the handler reads the token out of
 //!   `RequestContext.extensions[Parts]` and looks up the caller — no env var
 //!   dependency, no `acp:` URL hacks, no Proxy / Conductor.
-//! - Two MCP servers run in parallel for each ACP agent: this HTTP one (5 agent
+//! - Two MCP servers run in parallel for each ACP agent: this HTTP one (agent
 //!   graph tools) and the existing `grove mcp` stdio (orchestrator tools).
 //!   Tool names don't collide.
 //!
 //! Commit 3 will start this listener at Grove boot, store the chosen port via
 //! [`set_listener_port`], and call [`register_token`] / [`unregister_token`]
 //! around each ACP session lifecycle.
-
-#![allow(dead_code)] // some helpers are exercised only in part 4 integration tests
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -45,9 +43,9 @@ use std::sync::RwLock;
 
 use crate::agent_graph::error::AgentGraphError;
 use crate::agent_graph::tools::{
-    grove_agent_capability, grove_agent_contacts, grove_agent_reply, grove_agent_send,
-    grove_agent_spawn, CapabilityInput, ContactsInput, ReplyInput, SendInput, SpawnInput,
-    ToolContext,
+    grove_agent_capability, grove_agent_contacts, grove_agent_get_spawn_candidates,
+    grove_agent_reply, grove_agent_send, grove_agent_spawn, CapabilityInput, ContactsInput,
+    GetSpawnCandidatesInput, ReplyInput, SendInput, SpawnInput, ToolContext,
 };
 
 // ─── Token map (token → caller_chat_id) ───────────────────────────────────────
@@ -193,7 +191,6 @@ fn pid_alive(pid: u32) -> bool {
         unsafe {
             CloseHandle(h);
         }
-        let _ = h as RawHandle;
         true
     }
 }
@@ -213,7 +210,7 @@ pub fn build_mcp_url(token: &str) -> Option<String> {
 
 // ─── MCP service ──────────────────────────────────────────────────────────────
 
-/// rmcp service that exposes the 5 `agent_graph` tools over Streamable HTTP.
+/// rmcp service that exposes the `agent_graph` tools over Streamable HTTP.
 ///
 /// One instance is constructed per session (rmcp `service_factory`). It carries
 /// no per-session state — all caller resolution happens at tool-call time via
@@ -248,12 +245,15 @@ not need to pass it. All tools operate within the caller's task only.
 - grove_agent_reply:   reply to a pending message you received
 - grove_agent_contacts: list who you can reach, who's awaiting your reply, who you're awaiting
 - grove_agent_capability: inspect models / modes / thought_levels of any session in your task
+- grove_agent_get_spawn_candidates: list spawnable base agents, custom ACP servers, and personas
 
 Custom Agents (personas):
 - The user can configure "Custom Agents" in Settings — each is a base agent
   (claude / codex / etc) preset with a model, mode, effort, and a system prompt.
 - `grove_agent_contacts` returns a `available_custom_agents[]` list. To spawn
   one of them, pass that entry's `id` (e.g. "ca-...") as `grove_agent_spawn.agent`.
+- `grove_agent_get_spawn_candidates` is the preferred discovery tool when you
+  need every spawn target, including base agents and custom ACP servers.
 - The spawn behaves exactly like a normal base-agent spawn except the new
   session is pre-seeded with the persona's system prompt on Create. Resume
   paths see no extra prompt.
@@ -382,6 +382,22 @@ impl AgentGraphMcpService {
     ) -> Result<CallToolResult, McpError> {
         let cx = caller_context_from_parts(&parts)?;
         match grove_agent_capability(&cx, input).await {
+            Ok(out) => json_success(&out),
+            Err(e) => Ok(tool_error(e)),
+        }
+    }
+
+    #[tool(
+        name = "grove_agent_get_spawn_candidates",
+        description = "List the currently spawnable targets for grove_agent_spawn: base agents, custom ACP servers, and personas. Returns the exact id to pass as grove_agent_spawn.agent plus any default duty for personas. Does not expose persona system prompts."
+    )]
+    async fn grove_agent_get_spawn_candidates_tool(
+        &self,
+        Parameters(input): Parameters<GetSpawnCandidatesInput>,
+        Extension(parts): Extension<Parts>,
+    ) -> Result<CallToolResult, McpError> {
+        let cx = caller_context_from_parts(&parts)?;
+        match grove_agent_get_spawn_candidates(&cx, input).await {
             Ok(out) => json_success(&out),
             Err(e) => Ok(tool_error(e)),
         }
@@ -639,7 +655,7 @@ mod tests {
     }
 
     #[test]
-    fn list_tools_returns_five() {
+    fn list_tools_returns_graph_tools() {
         let svc = AgentGraphMcpService::new();
         let names: Vec<String> = svc
             .tool_router
@@ -652,7 +668,8 @@ mod tests {
         assert!(names.contains(&"grove_agent_reply".to_string()));
         assert!(names.contains(&"grove_agent_contacts".to_string()));
         assert!(names.contains(&"grove_agent_capability".to_string()));
-        assert_eq!(names.len(), 5);
+        assert!(names.contains(&"grove_agent_get_spawn_candidates".to_string()));
+        assert_eq!(names.len(), 6);
     }
 
     /// End-to-end test of the HTTP transport: real axum listener bound on a
@@ -724,6 +741,20 @@ mod tests {
             .expect("seed B");
             crate::storage::agent_graph::add_edge(&conn, "p", "t", "chat-A", "chat-B", None)
                 .expect("edge");
+            conn.execute(
+                "INSERT OR REPLACE INTO custom_agent
+                 (id, name, base_agent, model, mode, effort, duty, system_prompt, created_at, updated_at)
+                 VALUES (?1, ?2, ?3, NULL, NULL, NULL, ?4, ?5, ?6, ?6)",
+                rusqlite::params![
+                    "ca-reviewer",
+                    "Reviewer",
+                    "traecli",
+                    Some("review implementation and tests"),
+                    "do not expose this prompt",
+                    Utc::now().to_rfc3339(),
+                ],
+            )
+            .expect("seed persona");
         }
 
         // Spin up a local axum listener with the agent_graph router (independent
@@ -795,6 +826,7 @@ mod tests {
             "grove_agent_reply",
             "grove_agent_contacts",
             "grove_agent_capability",
+            "grove_agent_get_spawn_candidates",
         ] {
             assert!(list_body.contains(tool), "tools/list missing {tool}");
         }
@@ -826,6 +858,50 @@ mod tests {
             "can_contact chat-B in {call_body}"
         );
         assert!(call_body.contains("dispatcher"), "self.duty in {call_body}");
+
+        // ── 4. tools/call grove_agent_get_spawn_candidates ──────────────
+        let candidates_req = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 4,
+            "method": "tools/call",
+            "params": {
+                "name": "grove_agent_get_spawn_candidates",
+                "arguments": {}
+            }
+        });
+        let candidates_resp = client
+            .post(&url)
+            .header("accept", "application/json, text/event-stream")
+            .header("mcp-protocol-version", "2025-06-18")
+            .json(&candidates_req)
+            .send()
+            .await
+            .expect("tools/call spawn candidates POST");
+        assert!(candidates_resp.status().is_success());
+        let candidates_body: String = candidates_resp.text().await.expect("body");
+        if let Some(base) = crate::acp::available_base_acp_agents().first() {
+            assert!(
+                candidates_body.contains(base.id),
+                "available base agent {} missing from {candidates_body}",
+                base.id
+            );
+            assert!(
+                candidates_body.contains("base"),
+                "base candidate kind missing from {candidates_body}"
+            );
+        }
+        assert!(
+            candidates_body.contains("ca-reviewer"),
+            "persona id in {candidates_body}"
+        );
+        assert!(
+            candidates_body.contains("review implementation and tests"),
+            "persona duty in {candidates_body}"
+        );
+        assert!(
+            !candidates_body.contains("do not expose this prompt"),
+            "persona system prompt leaked in {candidates_body}"
+        );
 
         unregister_token(token);
         server.abort();

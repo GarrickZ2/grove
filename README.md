@@ -99,7 +99,7 @@ Grove speaks ACP — ten agents built in, three more (Hermes, Kiro, OpenClaw) wi
 A planner spawns a coder. The coder spawns a reviewer. The reviewer replies. Grove makes that workflow a first-class object: a typed **DAG of agents**, exchanging structured messages, scoped per task. No bash glue, no string-concat orchestration, no leaky cross-task context.
 
 - **Visual DAG editor** — drag to connect, edit duties, send messages from a hover card
-- **5 MCP tools** — `grove_agent_spawn` · `_send` · `_reply` · `_contacts` · `_capability` — every agent in the graph can use them
+- **6 MCP tools** — `grove_agent_spawn` · `_send` · `_reply` · `_contacts` · `_capability` · `_get_spawn_candidates` — every agent in the graph can use them
 - **Custom Agents (personas)** — base agent + your model / mode / effort / system prompt; reusable across tasks
 - **Single-in-flight per edge**, cycle detection, per-task isolation enforced at the DB layer
 - **`<grove-meta>` envelopes** — every cross-agent prompt is a structured payload, not glued strings

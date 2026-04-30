@@ -295,15 +295,26 @@ function AppContent() {
     ]);
     const applyNavigate = (p: NavigatePayload) => {
       const { route, project_id, task_id, chat_id } = p;
-      if (project_id) {
-        const target = projectsRef.current.find((pr) => pr.id === project_id);
-        if (target) selectProjectRef.current(target);
-      }
+      const project = project_id
+        ? projectsRef.current.find((pr) => pr.id === project_id)
+        : undefined;
+      if (project) selectProjectRef.current(project);
       setHasExitedWelcome(true);
+
+      // For local tasks (studio tasks), navigate to "work" instead of "tasks"
+      // because local tasks live in the Work page, not the Task list.
+      let effectiveRoute = route;
+      if (task_id && route === "tasks") {
+        const task = project?.tasks?.find((t) => t.id === task_id);
+        if (task?.isLocal) {
+          effectiveRoute = "work";
+        }
+      }
+
       // Guard against typos / future nav-id renames so the tray can't
       // silently put the user on a page that doesn't exist.
-      setActiveItem(allowedRoutes.has(route) ? route : "dashboard");
-      if (task_id) {
+      setActiveItem(allowedRoutes.has(effectiveRoute) ? effectiveRoute : "dashboard");
+      if (task_id && effectiveRoute !== "work") {
         // viewMode "terminal" makes TasksPage drop into Workspace mode
         // (chat / terminal panes) — what the user expects when clicking
         // Open from the tray.
