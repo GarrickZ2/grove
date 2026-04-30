@@ -50,6 +50,23 @@ interface AgentInjectData {
   agent?: string;
 }
 
+interface PreviewCommentData {
+  index?: number;
+  total?: number;
+  source?: string;
+  filePath?: string;
+  fileName?: string;
+  rendererId?: string;
+  locator?: {
+    selector?: string;
+    tagName?: string;
+    id?: string;
+    className?: string;
+    text?: string;
+  };
+  comment?: string;
+}
+
 /**
  * Neutral pill style — readable in any theme. Type is conveyed by the brand
  * icon (and the small reply glyph for `mention_reply`), not by tinted color.
@@ -154,6 +171,63 @@ function renderUserRemindBadge(env: GroveMetaEnvelope): ReactNode {
   );
 }
 
+function renderPreviewCommentCard(env: GroveMetaEnvelope): ReactNode {
+  const data = env.data as unknown as PreviewCommentData;
+  const filePath = data.filePath || "";
+  const fileName = data.fileName || filePath.split("/").pop() || "Preview";
+  const dir = filePath.endsWith(fileName)
+    ? filePath.slice(0, Math.max(0, filePath.length - fileName.length - 1))
+    : "";
+  const locator = data.locator || {};
+  const element = locator.selector || locator.tagName || data.rendererId || "preview element";
+  const countLabel = typeof data.index === "number" && typeof data.total === "number"
+    ? `${data.index}/${data.total}`
+    : "Preview";
+
+  return (
+    <div
+      className="my-2 overflow-hidden rounded-lg border border-[var(--color-border)] bg-[color-mix(in_srgb,var(--color-bg-secondary)_78%,transparent)] text-[var(--color-text)]"
+      title={env.systemPrompt}
+    >
+      <div className="flex items-center justify-between gap-3 border-b border-[var(--color-border)] px-3 py-2">
+        <div className="flex min-w-0 items-center gap-2">
+          <span className="shrink-0 rounded-md bg-[color-mix(in_srgb,var(--color-highlight)_14%,transparent)] px-1.5 py-0.5 text-[10px] font-semibold text-[var(--color-highlight)]">
+            {countLabel}
+          </span>
+          <span className="truncate text-[12px] font-semibold" title={filePath}>
+            {fileName}
+          </span>
+          {dir && (
+            <span className="truncate text-[10px] text-[var(--color-text-muted)]" title={filePath}>
+              {dir}
+            </span>
+          )}
+        </div>
+        {data.source && (
+          <span className="shrink-0 text-[10px] uppercase tracking-wide text-[var(--color-text-muted)]">
+            {data.source}
+          </span>
+        )}
+      </div>
+      <div className="space-y-1.5 px-3 py-2.5">
+        <div className="whitespace-pre-wrap break-words text-[12.5px] leading-snug">
+          {data.comment || env.systemPrompt}
+        </div>
+        <div className="flex flex-wrap items-center gap-1.5 text-[10px] text-[var(--color-text-muted)]">
+          <code className="max-w-full truncate rounded border border-[var(--color-border)] bg-[var(--color-bg-tertiary)] px-1.5 py-0.5">
+            {element}
+          </code>
+          {locator.text && (
+            <span className="max-w-full truncate" title={locator.text}>
+              {locator.text}
+            </span>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export const GROVE_META_RENDERERS: Record<string, Renderer> = {
   mention_spawn: (env) => renderMentionSpawn(env),
   mention_send: (env) => renderMentionSend(env),
@@ -161,6 +235,7 @@ export const GROVE_META_RENDERERS: Record<string, Renderer> = {
   agent_inject_send: (env) => renderAgentInjectBadge(env, "send"),
   agent_inject_reply: (env) => renderAgentInjectBadge(env, "reply"),
   user_remind: (env) => renderUserRemindBadge(env),
+  preview_comment: (env) => renderPreviewCommentCard(env),
 };
 
 /** Render an envelope, falling back to `systemPrompt` text on unknown type or

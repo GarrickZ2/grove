@@ -377,26 +377,50 @@ function attachmentLabel(type: "image" | "audio" | "resource", index: number): s
   return `${prefix} #${index}`;
 }
 
-function formatPreviewCommentPrompt(comments: PreviewCommentDraft[]): string {
+function previewCommentElementLabel(draft: PreviewCommentDraft): string {
+  return `${draft.locator.tagName}${draft.locator.id ? `#${draft.locator.id}` : ""}${draft.locator.className ? `.${draft.locator.className.split(/\s+/).slice(0, 3).join(".")}` : ""}`;
+}
+
+function previewCommentSystemPrompt(draft: PreviewCommentDraft, index: number, total: number): string {
   const lines = [
-    "Please address these preview comments. Each comment points to a rendered preview element and includes locator details from the preview DOM.",
-    "",
+    `Preview comment ${index} of ${total}: address this rendered preview feedback.`,
+    `File: ${draft.filePath}`,
+    `Source: ${draft.source}`,
+    `Renderer: ${draft.rendererId}`,
+    `Element: ${previewCommentElementLabel(draft)}`,
   ];
+  if (draft.locator.selector) lines.push(`CSS selector: ${draft.locator.selector}`);
+  if (draft.locator.xpath) lines.push(`XPath: ${draft.locator.xpath}`);
+  if (draft.locator.text) lines.push(`Visible text: ${draft.locator.text}`);
+  if (draft.locator.html) lines.push(`HTML snippet: ${draft.locator.html}`);
+  lines.push(`Comment: ${draft.comment}`);
+  return lines.join("\n");
+}
 
-  for (const [idx, draft] of comments.entries()) {
-    lines.push(`${idx + 1}. ${draft.filePath}`);
-    lines.push(`   Source: ${draft.source}`);
-    lines.push(`   Renderer: ${draft.rendererId}`);
-    lines.push(`   Element: ${draft.locator.tagName}${draft.locator.id ? `#${draft.locator.id}` : ""}${draft.locator.className ? `.${draft.locator.className.split(/\s+/).slice(0, 3).join(".")}` : ""}`);
-    if (draft.locator.selector) lines.push(`   CSS selector: ${draft.locator.selector}`);
-    if (draft.locator.xpath) lines.push(`   XPath: ${draft.locator.xpath}`);
-    if (draft.locator.text) lines.push(`   Visible text: ${draft.locator.text}`);
-    if (draft.locator.html) lines.push(`   HTML snippet: ${draft.locator.html}`);
-    lines.push(`   Comment: ${draft.comment}`);
-    lines.push("");
-  }
+function formatPreviewCommentPrompt(comments: PreviewCommentDraft[]): string {
+  const total = comments.length;
+  const tags = comments.map((draft, idx) =>
+    buildGroveMetaTag(
+      "preview_comment",
+      {
+        index: idx + 1,
+        total,
+        source: draft.source,
+        filePath: draft.filePath,
+        fileName: draft.fileName,
+        rendererId: draft.rendererId,
+        locator: draft.locator as unknown as Record<string, unknown>,
+        comment: draft.comment,
+      },
+      previewCommentSystemPrompt(draft, idx + 1, total),
+    ),
+  );
 
-  return lines.join("\n").trim();
+  return [
+    "Please address these preview comments.",
+    "",
+    ...tags,
+  ].join("\n").trim();
 }
 
 /** Mark all incomplete thinking messages as complete and auto-collapse them */
@@ -5600,56 +5624,50 @@ const DropdownSelect = ({
  * type's pretty React renderer (mention pill / inject badge / future kinds).
  * Plain text segments keep `whitespace-pre-wrap` so user formatting survives.
  *
- * Inline vs block layout is decided per envelope type — pills stay inline,
- * inject badges flow as their own paragraph above remaining text.
+ * Inline vs block layout is decided per envelope type — pills stay inline;
+ * block meta renders in sequence, with pure whitespace separators suppressed.
  */
 function UserMessageBody({ content }: { content: string }) {
   const segments = parseGroveMetaSegments(content);
   if (segments.length === 0) {
     return <div className="whitespace-pre-wrap break-words">{content}</div>;
   }
-  // Hoist top-level inject badges out of the prose flow so they sit above the
-  // body line. Inline mention pills stay where they appear.
-  const blockBadges: React.ReactNode[] = [];
-  const inlineBody: React.ReactNode[] = [];
+  const nodes: React.ReactNode[] = [];
+  let inlineBody: React.ReactNode[] = [];
+
+  const flushInline = (key: string) => {
+    if (inlineBody.length === 0) return;
+    nodes.push(
+      <div key={key} className="whitespace-pre-wrap break-words">
+        {inlineBody}
+      </div>,
+    );
+    inlineBody = [];
+  };
+
   segments.forEach((seg, i) => {
     if (seg.kind === "text") {
-      if (seg.content) inlineBody.push(<span key={`t-${i}`}>{seg.content}</span>);
+      if (!seg.content) return;
+      if (seg.content.trim() === "") return;
+      inlineBody.push(<span key={`t-${i}`}>{seg.content}</span>);
       return;
     }
-    const isInjectBadge = seg.envelope.type.startsWith("agent_inject_");
+    const isBlockMeta =
+      seg.envelope.type.startsWith("agent_inject_") ||
+      seg.envelope.type === "preview_comment";
     const node = renderGroveMetaEnvelope(seg.envelope, {
-      layout: isInjectBadge ? "block" : "inline",
+      layout: isBlockMeta ? "block" : "inline",
     });
-    if (isInjectBadge) {
-      blockBadges.push(<div key={`b-${i}`}>{node}</div>);
+    if (isBlockMeta) {
+      flushInline(`inline-before-${i}`);
+      nodes.push(<div key={`b-${i}`}>{node}</div>);
     } else {
       inlineBody.push(<span key={`m-${i}`}>{node}</span>);
     }
   });
-  // Trim a single leading newline from the first inline text segment when a
-  // block badge was hoisted out — keeps the body from starting with a blank
-  // line just because the envelope was followed by `\n\n`.
-  if (blockBadges.length > 0 && inlineBody.length > 0) {
-    const first = inlineBody[0];
-    if (typeof first === "object" && first && "props" in first) {
-      const props = (first as React.ReactElement<{ children?: React.ReactNode }>).props;
-      if (typeof props.children === "string") {
-        const trimmed = props.children.replace(/^\s*\n+/, "");
-        if (trimmed !== props.children) {
-          inlineBody[0] = <span key="trimmed">{trimmed}</span>;
-        }
-      }
-    }
-  }
-  return (
-    <>
-      {blockBadges}
-      {inlineBody.length > 0 && (
-        <div className="whitespace-pre-wrap break-words">{inlineBody}</div>
-      )}
-    </>
-  );
+  flushInline("inline-tail");
+
+  return <>{nodes}</>;
 }
 
 /** Individual message rendering */
