@@ -55,10 +55,10 @@ pub enum RadioEvent {
     ThemeChanged,
     /// An ACP session's busy state changed — push status to Radio clients.
     ///
-    /// `prompt` and `started_at` are populated when `busy=true` so menubar tray
-    /// consumers can render a "running" card without a follow-up DB query.
-    /// They're `None` for `busy=false` transitions and for legacy publishers
-    /// that don't supply enrichment yet.
+    /// TODO: `prompt` and `started_at` are forward-compatible scaffolding —
+    /// no current consumer reads them. Tray gets prompt + started_at via
+    /// `ChatStatus` instead (chat-grained, not task-grained). Either delete
+    /// these fields or wire a consumer.
     TaskBusy {
         project_id: String,
         task_id: String,
@@ -115,6 +115,25 @@ pub enum RadioEvent {
         /// to the ACP session handle.
         #[serde(skip_serializing_if = "Option::is_none")]
         permission: Option<PermissionInfo>,
+        /// Display name fields, populated by the chat-grained publisher in
+        /// `acp/mod.rs::emit()`. All optional for backward compat — old
+        /// publishers (e.g. `agent_graph/user_ops.rs::user_spawn_node`) leave
+        /// them None and consumers fall back to the raw IDs.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        project_name: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        task_name: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        chat_title: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        agent: Option<String>,
+        /// User prompt text — populated when status transitions to "busy".
+        #[serde(skip_serializing_if = "Option::is_none")]
+        prompt: Option<String>,
+        /// Final assistant message text — populated when status transitions
+        /// to "idle" after a busy phase.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        message: Option<String>,
     },
     /// A pending agent-to-agent message ticket was inserted or deleted. Carries
     /// enough metadata for the graph view to update its in-memory pending map
@@ -175,13 +194,6 @@ static RADIO_EVENTS: Lazy<broadcast::Sender<RadioEvent>> = Lazy::new(|| {
 /// Broadcast a radio event to all desktop listeners.
 pub fn broadcast_radio_event(event: RadioEvent) {
     let _ = RADIO_EVENTS.send(event);
-}
-
-/// Subscribe to the global radio events channel. Used by in-process consumers
-/// (currently the menubar tray) that need a tokio receiver without going
-/// through a WebSocket.
-pub fn subscribe_radio_events() -> broadcast::Receiver<RadioEvent> {
-    RADIO_EVENTS.subscribe()
 }
 
 // ─── Client → Server Messages ───────────────────────────────────────────────
@@ -267,6 +279,18 @@ enum ServerMessage {
         status: String,
         #[serde(skip_serializing_if = "Option::is_none")]
         permission: Option<PermissionInfo>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        project_name: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        task_name: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        chat_title: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        agent: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        prompt: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        message: Option<String>,
     },
     /// Mirror of `RadioEvent::PendingChanged`.
     PendingChanged {
@@ -458,7 +482,7 @@ pub async fn handle_walkie_talkie_ws_inner(socket: WebSocket) {
                             message,
                         });
                     }
-                    Ok(RadioEvent::ChatStatus { project_id, task_id, chat_id, status, permission }) => {
+                    Ok(RadioEvent::ChatStatus { project_id, task_id, chat_id, status, permission, project_name, task_name, chat_title, agent, prompt, message }) => {
                         // Per-chat granularity — never dedup. Pure state push.
                         let _ = msg_tx.send(ServerMessage::ChatStatus {
                             project_id,
@@ -466,6 +490,12 @@ pub async fn handle_walkie_talkie_ws_inner(socket: WebSocket) {
                             chat_id,
                             status,
                             permission,
+                            project_name,
+                            task_name,
+                            chat_title,
+                            agent,
+                            prompt,
+                            message,
                         });
                     }
                     Ok(RadioEvent::PendingChanged {

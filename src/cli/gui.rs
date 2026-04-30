@@ -302,11 +302,11 @@ pub async fn execute(port: u16) {
             open_external_url,
             download_file_dialog,
             toggle_devtools,
-            crate::tray::tray_get_events,
-            crate::tray::tray_dismiss,
             crate::tray::tray_resolve_permission,
             crate::tray::tray_open_main,
-            crate::tray::tray_hide_popover,
+            crate::tray::tray_open_settings,
+            crate::tray::tray_open_task,
+            crate::tray::tray_take_pending_navigate,
         ])
         .setup(move |app| {
             // Create a window pointing to our HTTP server
@@ -349,6 +349,8 @@ pub async fn execute(port: u16) {
     // icon can bring it back. Quit still works via Cmd+Q / Dock → Quit,
     // which Tauri delivers as RunEvent::ExitRequested.
     tauri_app.run(|app_handle, event| {
+        use tauri::Manager;
+
         // Hide tray popover when it loses focus — applies on every platform
         // so the popover behaves like a transient menu bar attachment.
         if let tauri::RunEvent::WindowEvent {
@@ -358,8 +360,24 @@ pub async fn execute(port: u16) {
         } = &event
         {
             if label == "tray-popover" {
-                use tauri::Manager;
                 if let Some(win) = app_handle.get_webview_window("tray-popover") {
+                    let _ = win.hide();
+                }
+            }
+        }
+
+        // Cross-platform: tray-popover close → hide, never quit the app.
+        // (On Windows/Linux without this guard an Alt+F4 on the popover
+        // would terminate the whole Grove process.)
+        if let tauri::RunEvent::WindowEvent {
+            label,
+            event: tauri::WindowEvent::CloseRequested { api, .. },
+            ..
+        } = &event
+        {
+            if label == "tray-popover" {
+                if let Some(win) = app_handle.get_webview_window("tray-popover") {
+                    api.prevent_close();
                     let _ = win.hide();
                 }
             }
@@ -367,18 +385,21 @@ pub async fn execute(port: u16) {
 
         #[cfg(target_os = "macos")]
         {
-            use tauri::Manager;
             match event {
                 tauri::RunEvent::WindowEvent {
                     label,
                     event: tauri::WindowEvent::CloseRequested { api, .. },
                     ..
                 } => {
-                    // Tray popover should hide on close, just like the main
-                    // window — never let it tear down the process.
-                    if let Some(window) = app_handle.get_webview_window(&label) {
-                        api.prevent_close();
-                        let _ = window.hide();
+                    // macOS: red traffic light hides instead of quits, so
+                    // re-clicking the Dock icon brings the window back.
+                    // Skip tray-popover here — the cross-platform handler
+                    // above already took care of it.
+                    if label != "tray-popover" {
+                        if let Some(window) = app_handle.get_webview_window(&label) {
+                            api.prevent_close();
+                            let _ = window.hide();
+                        }
                     }
                 }
                 tauri::RunEvent::Reopen {

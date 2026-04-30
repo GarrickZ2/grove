@@ -33,6 +33,11 @@ import type { PanelType } from "./PanelSystem/types";
 interface TasksPageProps {
   /** Initial task ID to select (from navigation) */
   initialTaskId?: string;
+  /** Initial chat ID to focus inside the selected task (from navigation —
+   *  e.g. tray popover Open with a specific chat). TaskView consumption
+   *  is a TODO: chat selection lives several layers below in the
+   *  flex/IDE layout, not yet wired through this prop. */
+  initialChatId?: string;
   /** Initial view mode to use (from navigation, e.g. "terminal") */
   initialViewMode?: string;
   /** Callback when navigation data has been consumed */
@@ -46,7 +51,11 @@ interface TasksPageProps {
   exitWorkspaceSignal?: number;
 }
 
-export function TasksPage({ initialTaskId, initialViewMode, onNavigationConsumed, onNavByIndex, initialOpenNewTask, exitWorkspaceSignal }: TasksPageProps) {
+export function TasksPage({ initialTaskId, initialChatId, initialViewMode, onNavigationConsumed, onNavByIndex, initialOpenNewTask, exitWorkspaceSignal }: TasksPageProps) {
+  // TODO: thread initialChatId down to TaskView's chat panel so the tray
+  // can deep-link to a specific chat session. Currently consumed at
+  // boundary only.
+  void initialChatId;
   const { selectedProject, refreshSelectedProject } = useProject();
   const prevProjectIdRef = useRef<string | undefined>(selectedProject?.id);
   const isStudio = selectedProject?.projectType === "studio";

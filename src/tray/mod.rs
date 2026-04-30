@@ -1,18 +1,14 @@
 //! macOS-first menubar tray for Grove.
 //!
-//! The tray subscribes to the global `RADIO_EVENTS` broadcast and maintains a
-//! small in-memory `EventStore` of three event categories — pending
-//! permissions, running sessions, and completed turns. A hidden popover
-//! webview window renders the store; clicking the tray icon toggles it.
-//!
-//! State is intentionally **non-persistent**: restarting Grove clears all
-//! tray events. This matches user expectations (events are transient) and
-//! avoids the bookkeeping cost of a separate "read/unread" persistence layer.
+//! Pure click-driven popover: tray icon click → toggle the list popover.
+//! No auto-popup, no toast, no transparency tricks. The popover is a
+//! standard rectangular webview window that React paints inside. All
+//! "Open" actions just bring the main Grove window to the foreground —
+//! no deep-linking, no cross-window navigation events.
 
-use serde::Serialize;
-use std::collections::{HashMap, VecDeque};
-use std::sync::{Arc, Mutex};
+use std::sync::Mutex;
 
+use serde::{Deserialize, Serialize};
 use tauri::{
     image::Image,
     menu::{Menu, MenuEvent, MenuItem},
@@ -20,271 +16,56 @@ use tauri::{
     AppHandle, Emitter, Manager, WebviewUrl, WebviewWindowBuilder,
 };
 
-use crate::api::handlers::walkie_talkie::{PermissionOptionInfo, RadioEvent};
+/// Wire schema for `tray:navigate` events and the pending-navigate stash.
+/// Typed (rather than raw JSON Value) so schema drift between Rust and
+/// React side surfaces at compile time on the Rust side.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NavigatePayload {
+    route: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    project_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    task_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    chat_id: Option<String>,
+}
+
+struct PendingEntry {
+    payload: NavigatePayload,
+    stashed_at_ms: i64,
+}
+
+/// Last `tray:navigate` payload, kept in case the main window's listener
+/// wasn't registered yet when the event fired (the listen() call resolves
+/// asynchronously). The frontend calls `tray_take_pending_navigate` on
+/// mount to replay any missed navigation. TTL prevents a future re-mount
+/// (e.g. theme switch causing AppContent churn) from silently replaying
+/// a stale Open click hours later.
+static PENDING_NAVIGATE: Mutex<Option<PendingEntry>> = Mutex::new(None);
+
+/// 5 minutes — generous enough to cover cold-start delays (auth gate,
+/// React mount under heavy CPU load) while still preventing replay of
+/// hours-old clicks after a long suspend / late re-mount.
+const PENDING_NAVIGATE_TTL_MS: i64 = 300_000;
+
+fn record_navigate(payload: NavigatePayload) {
+    if let Ok(mut slot) = PENDING_NAVIGATE.lock() {
+        *slot = Some(PendingEntry {
+            payload,
+            stashed_at_ms: chrono::Utc::now().timestamp_millis(),
+        });
+    }
+}
 
 const TRAY_ICON_BYTES: &[u8] = include_bytes!("../../src-tauri/icons/32x32.png");
 const POPOVER_LABEL: &str = "tray-popover";
 const POPOVER_WIDTH: f64 = 400.0;
 const POPOVER_HEIGHT: f64 = 580.0;
-const DONE_CAP: usize = 50;
-
-// ─── EventStore ─────────────────────────────────────────────────────────────
-
-#[derive(Debug, Clone, Serialize)]
-pub struct PermissionEvent {
-    pub id: String,
-    pub project_id: String,
-    pub task_id: String,
-    pub chat_id: String,
-    pub description: String,
-    pub options: Vec<PermissionOptionInfo>,
-    pub created_at: i64,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct RunningEvent {
-    pub id: String,
-    pub project_id: String,
-    pub task_id: String,
-    pub prompt: Option<String>,
-    pub started_at: i64,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct DoneEvent {
-    pub id: String,
-    pub project_id: String,
-    pub task_id: String,
-    pub level: Option<String>,
-    pub message: Option<String>,
-    pub created_at: i64,
-}
-
-#[derive(Debug, Default, Clone, Serialize)]
-pub struct EventSnapshot {
-    pub permissions: Vec<PermissionEvent>,
-    pub running: Vec<RunningEvent>,
-    pub done: Vec<DoneEvent>,
-}
-
-#[derive(Debug, Default)]
-struct EventStore {
-    /// keyed by chat_id — only one pending permission per chat at a time.
-    permissions: HashMap<String, PermissionEvent>,
-    /// keyed by (project_id, task_id) — coarse-grained running indicator.
-    /// A task is "running" iff any chat under it is busy. Counted by ref so
-    /// transitions on multiple chats don't prematurely clear the entry.
-    running: HashMap<(String, String), RunningEvent>,
-    /// FIFO with cap, newest at front.
-    done: VecDeque<DoneEvent>,
-}
-
-impl EventStore {
-    fn snapshot(&self) -> EventSnapshot {
-        let mut permissions: Vec<_> = self.permissions.values().cloned().collect();
-        permissions.sort_by_key(|p| std::cmp::Reverse(p.created_at));
-        let mut running: Vec<_> = self.running.values().cloned().collect();
-        running.sort_by_key(|r| r.started_at);
-        let done: Vec<_> = self.done.iter().cloned().collect();
-        EventSnapshot {
-            permissions,
-            running,
-            done,
-        }
-    }
-
-    fn pending_permission_count(&self) -> usize {
-        self.permissions.len()
-    }
-}
-
-#[derive(Clone)]
-pub struct TrayState {
-    store: Arc<Mutex<EventStore>>,
-    app: AppHandle,
-}
-
-impl TrayState {
-    fn emit_change(&self) {
-        let snapshot = self.store.lock().unwrap().snapshot();
-        let _ = self.app.emit("tray:events", &snapshot);
-        let pending = self.store.lock().unwrap().pending_permission_count();
-        update_tray_title(&self.app, pending);
-    }
-}
-
-// ─── RadioEvent → store mutation ────────────────────────────────────────────
-
-fn now_ms() -> i64 {
-    chrono::Utc::now().timestamp_millis()
-}
-
-/// Snapshot of which categories the user has enabled for the tray surface.
-/// Loaded fresh on every event so config changes take effect without restart.
-struct TrayFilters {
-    show_permission: bool,
-    show_running: bool,
-    show_done: bool,
-}
-
-fn current_filters() -> TrayFilters {
-    let cfg = crate::storage::config::load_config();
-    TrayFilters {
-        show_permission: cfg.notifications.tray_show_permission,
-        show_running: cfg.notifications.tray_show_running,
-        show_done: cfg.notifications.tray_show_done,
-    }
-}
-
-fn apply_event(store: &mut EventStore, event: RadioEvent) -> bool {
-    let filters = current_filters();
-    match event {
-        RadioEvent::ChatStatus {
-            project_id,
-            task_id,
-            chat_id,
-            status,
-            permission,
-        } => {
-            if status == "permission_required" {
-                if !filters.show_permission {
-                    return false;
-                }
-                if let Some(p) = permission {
-                    let id = format!("perm-{}-{}", chat_id, now_ms());
-                    store.permissions.insert(
-                        chat_id.clone(),
-                        PermissionEvent {
-                            id,
-                            project_id,
-                            task_id,
-                            chat_id,
-                            description: p.description,
-                            options: p.options,
-                            created_at: now_ms(),
-                        },
-                    );
-                    return true;
-                }
-                false
-            } else {
-                // Any non-pending status clears a stale permission entry —
-                // do this regardless of filter so re-enabling never surfaces
-                // a stale request that's already been resolved upstream.
-                store.permissions.remove(&chat_id).is_some()
-            }
-        }
-        RadioEvent::TaskBusy {
-            project_id,
-            task_id,
-            busy,
-            prompt,
-            started_at,
-        } => {
-            let key = (project_id.clone(), task_id.clone());
-            if busy {
-                if !filters.show_running {
-                    return false;
-                }
-                let id = format!("run-{}-{}", task_id, now_ms());
-                store.running.insert(
-                    key,
-                    RunningEvent {
-                        id,
-                        project_id,
-                        task_id,
-                        prompt,
-                        started_at: started_at.unwrap_or_else(now_ms),
-                    },
-                );
-                true
-            } else {
-                store.running.remove(&key).is_some()
-            }
-        }
-        RadioEvent::HookAdded {
-            project_id,
-            task_id,
-            level,
-            message,
-        } => {
-            if !filters.show_done {
-                return false;
-            }
-            let id = format!("done-{}-{}", task_id, now_ms());
-            if store.done.len() >= DONE_CAP {
-                store.done.pop_back();
-            }
-            store.done.push_front(DoneEvent {
-                id,
-                project_id,
-                task_id,
-                level,
-                message,
-                created_at: now_ms(),
-            });
-            true
-        }
-        _ => false,
-    }
-}
 
 // ─── Tauri commands ─────────────────────────────────────────────────────────
 
 #[tauri::command]
-pub fn tray_get_events(state: tauri::State<'_, TrayState>) -> EventSnapshot {
-    state.store.lock().unwrap().snapshot()
-}
-
-#[tauri::command]
-pub fn tray_dismiss(
-    state: tauri::State<'_, TrayState>,
-    category: String,
-    id: String,
-) -> Result<(), String> {
-    let mut changed = false;
-    {
-        let mut store = state.store.lock().unwrap();
-        match category.as_str() {
-            "permission" => {
-                let key = store
-                    .permissions
-                    .iter()
-                    .find(|(_, p)| p.id == id)
-                    .map(|(k, _)| k.clone());
-                if let Some(k) = key {
-                    store.permissions.remove(&k);
-                    changed = true;
-                }
-            }
-            "running" => {
-                let key = store
-                    .running
-                    .iter()
-                    .find(|(_, r)| r.id == id)
-                    .map(|(k, _)| k.clone());
-                if let Some(k) = key {
-                    store.running.remove(&k);
-                    changed = true;
-                }
-            }
-            "done" => {
-                let before = store.done.len();
-                store.done.retain(|d| d.id != id);
-                changed = store.done.len() != before;
-            }
-            _ => return Err(format!("unknown category: {}", category)),
-        }
-    }
-    if changed {
-        state.emit_change();
-    }
-    Ok(())
-}
-
-#[tauri::command]
 pub fn tray_resolve_permission(
-    state: tauri::State<'_, TrayState>,
     project_id: String,
     task_id: String,
     chat_id: String,
@@ -296,31 +77,115 @@ pub fn tray_resolve_permission(
     if !handle.respond_permission(option_id) {
         return Err("no pending permission to respond to".to_string());
     }
-    // Remove from store immediately — the ChatStatus broadcast will follow,
-    // but the user expects instant feedback.
-    {
-        let mut store = state.store.lock().unwrap();
-        store.permissions.remove(&chat_id);
-    }
-    state.emit_change();
     Ok(())
 }
 
+/// Bring the main Grove window forward. Used by header ↗ button — lands
+/// on the Tasks page.
 #[tauri::command]
 pub fn tray_open_main(app: AppHandle) -> Result<(), String> {
-    if let Some(win) = app.get_webview_window("main") {
-        let _ = win.show();
-        let _ = win.unminimize();
-        let _ = win.set_focus();
-    }
-    hide_popover(&app);
+    surface_main(&app);
+    let payload = NavigatePayload {
+        route: "tasks".into(),
+        project_id: None,
+        task_id: None,
+        chat_id: None,
+    };
+    let _ = app.emit_to("main", "tray:navigate", &payload);
+    record_navigate(payload);
     Ok(())
 }
 
+/// Bring the main Grove window forward AND switch to Settings. Used by
+/// the header ⚙ button.
 #[tauri::command]
-pub fn tray_hide_popover(app: AppHandle) -> Result<(), String> {
-    hide_popover(&app);
+pub fn tray_open_settings(app: AppHandle) -> Result<(), String> {
+    surface_main(&app);
+    let payload = NavigatePayload {
+        route: "settings".into(),
+        project_id: None,
+        task_id: None,
+        chat_id: None,
+    };
+    let _ = app.emit_to("main", "tray:navigate", &payload);
+    record_navigate(payload);
     Ok(())
+}
+
+/// Bring the main window forward AND navigate to a specific project / task
+/// (and optionally chat). Used by per-card Open buttons.
+#[tauri::command]
+pub fn tray_open_task(
+    app: AppHandle,
+    project_id: String,
+    task_id: String,
+    chat_id: Option<String>,
+) -> Result<(), String> {
+    surface_main(&app);
+    let payload = NavigatePayload {
+        route: "tasks".into(),
+        project_id: Some(project_id),
+        task_id: Some(task_id),
+        chat_id,
+    };
+    let _ = app.emit_to("main", "tray:navigate", &payload);
+    record_navigate(payload);
+    Ok(())
+}
+
+/// Drain and return the pending tray:navigate payload (if any). Drops
+/// stash entries older than `PENDING_NAVIGATE_TTL_MS` so a delayed mount
+/// (e.g. theme switch causing AppContent re-mount hours after the click)
+/// doesn't silently replay stale Open clicks.
+#[tauri::command]
+pub fn tray_take_pending_navigate() -> Option<NavigatePayload> {
+    let now = chrono::Utc::now().timestamp_millis();
+    PENDING_NAVIGATE.lock().ok().and_then(|mut slot| {
+        let entry = slot.take()?;
+        let age = now - entry.stashed_at_ms;
+        if age < PENDING_NAVIGATE_TTL_MS {
+            Some(entry.payload)
+        } else {
+            // Expired entry dropped silently — log a breadcrumb so users
+            // who report "I clicked Open and nothing happened" have a
+            // hint in the GUI log.
+            eprintln!(
+                "[tray] dropping expired pending navigate ({}ms old, TTL {}ms)",
+                age, PENDING_NAVIGATE_TTL_MS
+            );
+            None
+        }
+    })
+}
+
+fn surface_main(app: &AppHandle) {
+    if let Some(popover) = app.get_webview_window(POPOVER_LABEL) {
+        let _ = popover.hide();
+    }
+    if let Some(win) = app.get_webview_window("main") {
+        let _ = win.unminimize();
+        let _ = win.show();
+        let _ = win.set_focus();
+        #[cfg(target_os = "macos")]
+        activate_app_macos();
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn activate_app_macos() {
+    // `[NSApp activateIgnoringOtherApps:YES]` — bring the whole Grove app
+    // forward across other apps. Tauri's set_focus alone only focuses
+    // within the current app.
+    use objc2::msg_send;
+    use objc2::runtime::{AnyClass, AnyObject, Bool};
+    unsafe {
+        if let Some(cls) = AnyClass::get("NSApplication") {
+            let app: *mut AnyObject = msg_send![cls, sharedApplication];
+            if !app.is_null() {
+                let _: () = msg_send![app, activateIgnoringOtherApps: Bool::YES];
+            }
+        }
+    }
 }
 
 // ─── Popover window ─────────────────────────────────────────────────────────
@@ -329,8 +194,12 @@ fn ensure_popover(app: &AppHandle, port: u16) -> tauri::Result<()> {
     if app.get_webview_window(POPOVER_LABEL).is_some() {
         return Ok(());
     }
-    let url = format!("http://localhost:{}/tray.html", port);
-    let builder = WebviewWindowBuilder::new(
+    // Match the protocol the API server is binding (set by start_server in
+    // gui.rs). Currently always http for local-loopback GUI mode but read
+    // the env var so HTTPS support won't silently break.
+    let protocol = std::env::var("GROVE_PROTOCOL").unwrap_or_else(|_| "http".to_string());
+    let url = format!("{}://localhost:{}/tray.html", protocol, port);
+    WebviewWindowBuilder::new(
         app,
         POPOVER_LABEL,
         WebviewUrl::External(url.parse().expect("valid popover URL")),
@@ -340,10 +209,11 @@ fn ensure_popover(app: &AppHandle, port: u16) -> tauri::Result<()> {
     .resizable(false)
     .decorations(false)
     .skip_taskbar(true)
-    .always_on_top(true)
-    .visible(false);
-
-    builder.build()?;
+    // No `.always_on_top(true)` — when the user clicks Open we want the
+    // main window to actually become foreground; an always-on-top popover
+    // can shadow that activation on macOS.
+    .visible(false)
+    .build()?;
     Ok(())
 }
 
@@ -357,8 +227,7 @@ fn show_popover_at(app: &AppHandle, anchor: Option<(f64, f64)>) {
     let Some(win) = app.get_webview_window(POPOVER_LABEL) else {
         return;
     };
-    let pos = compute_popover_position(app, anchor);
-    if let Some((x, y)) = pos {
+    if let Some((x, y)) = compute_popover_position(app, anchor) {
         let _ = win.set_position(tauri::PhysicalPosition::new(x, y));
     }
     let _ = win.show();
@@ -367,8 +236,7 @@ fn show_popover_at(app: &AppHandle, anchor: Option<(f64, f64)>) {
 
 fn toggle_popover(app: &AppHandle, anchor: Option<(f64, f64)>) {
     if let Some(win) = app.get_webview_window(POPOVER_LABEL) {
-        let visible = win.is_visible().unwrap_or(false);
-        if visible {
+        if win.is_visible().unwrap_or(false) {
             let _ = win.hide();
         } else {
             show_popover_at(app, anchor);
@@ -376,20 +244,18 @@ fn toggle_popover(app: &AppHandle, anchor: Option<(f64, f64)>) {
     }
 }
 
-/// Compute popover top-left in physical pixels.
-///
-/// Strategy by platform:
-/// - **macOS**: anchor below the tray icon, horizontally centered on the
-///   icon, with a small gap. Falls back to top-right of the primary monitor.
-/// - **Windows**: bottom-right of the primary monitor (taskbar tray area).
-/// - **Linux**: centered on the primary monitor (tray coords are unreliable
-///   across desktop environments).
 fn compute_popover_position(app: &AppHandle, anchor: Option<(f64, f64)>) -> Option<(f64, f64)> {
-    let monitor = app.primary_monitor().ok().flatten().or_else(|| {
-        app.available_monitors()
-            .ok()
-            .and_then(|v| v.into_iter().next())
-    })?;
+    // Pick the monitor the tray icon is actually on (multi-display setups
+    // can have menubar on a non-primary screen). Fall back to primary or
+    // first available if anchor isn't usable.
+    let monitor = anchor
+        .and_then(|(x, y)| app.monitor_from_point(x, y).ok().flatten())
+        .or_else(|| app.primary_monitor().ok().flatten())
+        .or_else(|| {
+            app.available_monitors()
+                .ok()
+                .and_then(|v| v.into_iter().next())
+        })?;
     let scale = monitor.scale_factor();
     let mon_pos = monitor.position();
     let mon_size = monitor.size();
@@ -405,7 +271,6 @@ fn compute_popover_position(app: &AppHandle, anchor: Option<(f64, f64)>) -> Opti
                 ty + 4.0 * scale,
             )
         } else {
-            // Fallback: top-right corner under menubar
             (
                 mon_pos.x as f64 + mon_size.width as f64 - popover_w_phys - 8.0 * scale,
                 mon_pos.y as f64 + 28.0 * scale,
@@ -431,32 +296,9 @@ fn compute_popover_position(app: &AppHandle, anchor: Option<(f64, f64)>) -> Opti
     }
 }
 
-// ─── Tray icon registration ─────────────────────────────────────────────────
+// ─── Init ──────────────────────────────────────────────────────────────────
 
-fn update_tray_title(app: &AppHandle, pending: usize) {
-    if let Some(tray) = app.tray_by_id("grove-tray") {
-        let title = if pending > 0 {
-            format!(" {}", pending)
-        } else {
-            String::new()
-        };
-        let _ = tray.set_title(Some(&title));
-    }
-}
-
-/// Initialize the tray icon, popover, event subscriber, and Tauri state.
-///
-/// Call from `tauri::Builder::setup`. Idempotent — calling twice is a no-op
-/// because Tauri rejects duplicate window/tray IDs.
 pub fn init(app: &AppHandle, port: u16) -> tauri::Result<()> {
-    let store = Arc::new(Mutex::new(EventStore::default()));
-    let state = TrayState {
-        store: store.clone(),
-        app: app.clone(),
-    };
-    app.manage(state.clone());
-
-    // Build menu — used as right-click on macOS, primary on Windows/Linux.
     let menu = Menu::with_items(
         app,
         &[
@@ -511,36 +353,9 @@ pub fn init(app: &AppHandle, port: u16) -> tauri::Result<()> {
         })
         .build(app)?;
 
-    // Build popover window upfront (hidden) so first click is fast.
     if let Err(e) = ensure_popover(app, port) {
         eprintln!("[tray] failed to create popover window: {}", e);
     }
-
-    // Spawn event subscriber on the existing tokio runtime.
-    let state_for_loop = state.clone();
-    tauri::async_runtime::spawn(async move {
-        let mut rx = crate::api::handlers::walkie_talkie::subscribe_radio_events();
-        loop {
-            match rx.recv().await {
-                Ok(event) => {
-                    let changed = {
-                        let mut store = state_for_loop.store.lock().unwrap();
-                        apply_event(&mut store, event)
-                    };
-                    if changed {
-                        state_for_loop.emit_change();
-                    }
-                }
-                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
-                    // Dropped events — keep going. On lag the in-memory store
-                    // may briefly diverge from truth; the next emission will
-                    // bring it back in line.
-                    continue;
-                }
-                Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
-            }
-        }
-    });
 
     Ok(())
 }

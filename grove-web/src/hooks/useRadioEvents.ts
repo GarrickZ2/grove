@@ -19,12 +19,16 @@ export interface RadioEventCallbacks {
    *  new chat appears in the UI without manual refresh. */
   onChatListChanged?: (projectId: string, taskId: string) => void;
   /** Per-chat status transition (chat-grained, no dedup). Drives the agent
-   *  graph's in-memory node status machine. */
+   *  graph's in-memory node status machine. The 5th argument carries the
+   *  full event payload (with optional `permission`, `project_name`,
+   *  `task_name`, `chat_title`, `agent` fields) for consumers that need
+   *  display details — existing 4-arg callers keep working unchanged. */
   onChatStatus?: (
     projectId: string,
     taskId: string,
     chatId: string,
     status: NodeStatus,
+    payload?: Extract<RadioEvent, { type: "chat_status" }>,
   ) => void;
   /** Pending agent-to-agent message ticket inserted/deleted. Drives the agent
    *  graph's in-memory pending pair set so edge state can be derived locally. */
@@ -100,6 +104,7 @@ function dispatch(event: RadioEvent) {
           event.task_id,
           event.chat_id,
           event.status,
+          event,
         );
       break;
     case "pending_changed":

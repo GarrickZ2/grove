@@ -122,6 +122,19 @@ body {
   }
 }
 
+/* Tray popover: pulsing ring around the agent chip while a chat is running */
+@keyframes trayPulseRing {
+  0% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--color-highlight) 60%, transparent);
+  }
+  70% {
+    box-shadow: 0 0 0 6px color-mix(in srgb, var(--color-highlight) 0%, transparent);
+  }
+  100% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--color-highlight) 0%, transparent);
+  }
+}
+
 /* Aurora background animation for Blitz mode */
 @keyframes aurora {
   0%, 100% {

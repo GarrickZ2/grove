@@ -206,7 +206,6 @@ export function SettingsPage({ config }: SettingsPageProps) {
     autolink: false,
     layout: false,
     hooks: false,
-    tray: false,
     mcp: false,
   });
 
@@ -1730,48 +1729,41 @@ env_vars = [
                     </Button>
                   </div>
                 </div>
+
+                {/* Menubar tray + System notifications — share the same Notification surface */}
+                <div className="pt-2 space-y-4 border-t border-[color-mix(in_srgb,var(--color-border)_60%,transparent)]">
+                  <div className="text-sm font-medium text-[var(--color-text-muted)] mt-3 select-none">
+                    Menubar & System
+                  </div>
+                  <NotifChannel
+                    title="Menubar Tray"
+                    subtitle="Persistent popover anchored to the menubar icon"
+                    enabled={trayEnabled}
+                    onEnabledChange={setTrayEnabled}
+                    showPermission={trayShowPermission}
+                    onShowPermissionChange={setTrayShowPermission}
+                    showDone={trayShowDone}
+                    onShowDoneChange={setTrayShowDone}
+                    showRunning={trayShowRunning}
+                    onShowRunningChange={setTrayShowRunning}
+                    note="Disabling the tray takes effect on next Grove launch."
+                  />
+                  <NotifChannel
+                    title="System Notifications"
+                    subtitle="Native OS banner / notification center"
+                    enabled={systemNotifEnabled}
+                    onEnabledChange={setSystemNotifEnabled}
+                    showPermission={systemNotifShowPermission}
+                    onShowPermissionChange={setSystemNotifShowPermission}
+                    showDone={systemNotifShowDone}
+                    onShowDoneChange={setSystemNotifShowDone}
+                    showRunning={systemNotifShowRunning}
+                    onShowRunningChange={setSystemNotifShowRunning}
+                    note="Running notifications are off by default — they fire continuously and would be noisy."
+                  />
+                </div>
               </>
             )}
-          </div>
-        </Section>
-
-        {/* Menubar Tray + System Notifications Section */}
-        <Section
-          id="tray"
-          title="Menubar & System Notifications"
-          description="Surface pending permissions, running sessions, and completed turns outside the main window"
-          icon={Bell}
-          iconColor="var(--color-info)"
-          isOpen={openSections.tray}
-          onToggle={() => toggleSection("tray")}
-        >
-          <div className="space-y-6">
-            <NotifChannel
-              title="Menubar Tray"
-              subtitle="Persistent popover anchored to the menubar icon"
-              enabled={trayEnabled}
-              onEnabledChange={setTrayEnabled}
-              showPermission={trayShowPermission}
-              onShowPermissionChange={setTrayShowPermission}
-              showDone={trayShowDone}
-              onShowDoneChange={setTrayShowDone}
-              showRunning={trayShowRunning}
-              onShowRunningChange={setTrayShowRunning}
-              note="Disabling the tray takes effect on next Grove launch."
-            />
-            <NotifChannel
-              title="System Notifications"
-              subtitle="Native OS banner / notification center"
-              enabled={systemNotifEnabled}
-              onEnabledChange={setSystemNotifEnabled}
-              showPermission={systemNotifShowPermission}
-              onShowPermissionChange={setSystemNotifShowPermission}
-              showDone={systemNotifShowDone}
-              onShowDoneChange={setSystemNotifShowDone}
-              showRunning={systemNotifShowRunning}
-              onShowRunningChange={setSystemNotifShowRunning}
-              note="Running notifications are off by default — they fire continuously and would be noisy."
-            />
           </div>
         </Section>
 

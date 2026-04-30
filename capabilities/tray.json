@@ -1,0 +1,13 @@
+{
+  "$schema": "https://schema.tauri.app/config/2/schema.json",
+  "identifier": "tray-popover",
+  "description": "Menubar tray popover — invokes tray_* commands only; no event listening.",
+  "windows": ["tray-popover"],
+  "local": true,
+  "remote": {
+    "urls": ["http://localhost:*"]
+  },
+  "permissions": [
+    "core:default"
+  ]
+}

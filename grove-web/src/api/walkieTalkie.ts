@@ -46,6 +46,20 @@ export type RadioEvent =
       task_id: string;
       chat_id: string;
       status: NodeStatus;
+      /** Populated when status==="permission_required". */
+      permission?: {
+        description: string;
+        options: Array<{ option_id: string; name: string; kind: string }>;
+      };
+      /** Display fields filled by acp/mod.rs::emit() for menubar tray etc. */
+      project_name?: string;
+      task_name?: string;
+      chat_title?: string;
+      agent?: string;
+      /** User prompt — populated when status==="busy". */
+      prompt?: string;
+      /** Final assistant message — populated when status==="idle" after busy. */
+      message?: string;
     }
   | {
       type: "pending_changed";

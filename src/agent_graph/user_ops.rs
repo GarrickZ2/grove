@@ -165,6 +165,12 @@ pub async fn user_spawn_node(
         chat_id: new_chat_id.clone(),
         status: "connecting".to_string(),
         permission: None,
+        project_name: None,
+        task_name: None,
+        chat_title: None,
+        agent: None,
+        prompt: None,
+        message: None,
     });
 
     // 8. Fire-and-forget ACP spawn. The session's lifecycle (connecting →
@@ -189,6 +195,12 @@ pub async fn user_spawn_node(
                 chat_id: new_chat_id_clone.clone(),
                 status: "disconnected".to_string(),
                 permission: None,
+                project_name: None,
+                task_name: None,
+                chat_title: None,
+                agent: None,
+                prompt: None,
+                message: None,
             });
         };
 

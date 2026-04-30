@@ -311,7 +311,10 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
   // Track system dark mode for auto theme
   const [systemIsDark, setSystemIsDark] = useState<boolean>(getSystemIsDark);
 
-  // Load theme from backend config on mount
+  // Load theme from backend config on mount and on focus regain.
+  // The focus listener exists so secondary entry points (e.g. the menubar
+  // tray popover) pick up theme changes the user makes in the main window
+  // without needing their own broadcast subscription.
   useEffect(() => {
     const loadTheme = async () => {
       try {
@@ -340,6 +343,18 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     };
 
     loadTheme();
+    const onFocus = () => {
+      loadTheme();
+    };
+    const onVisible = () => {
+      if (document.visibilityState === "visible") loadTheme();
+    };
+    window.addEventListener("focus", onFocus);
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      window.removeEventListener("focus", onFocus);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
   }, []);
 
   // Listen for system theme changes

@@ -72,6 +72,11 @@ pub struct AcpSessionHandle {
     pub is_busy: std::sync::atomic::AtomicBool,
     /// 最近一轮 agent 回复的累积文本（用于 Complete 通知摘要）
     last_assistant_text: Mutex<String>,
+    /// Latest user prompt text for this chat. Set when an `AcpCommand::Prompt`
+    /// is dispatched; surfaced on the wire via `RadioEvent::ChatStatus.prompt`
+    /// when the chat transitions to `busy` so passive listeners (menubar tray)
+    /// can show what the agent is currently working on.
+    last_user_prompt: Mutex<Option<String>>,
 }
 
 /// 发送给 ACP 后台任务的命令
@@ -524,6 +529,57 @@ struct AcpClientState {
     pending_plan_tool_ids: Mutex<Vec<String>>,
 }
 
+/// Build a richer permission description by extracting the most useful
+/// payload field out of the agent's `raw_input` JSON. Bash tools report
+/// `{"command": "..."}`; file tools report `{"file_path": "..."}` or
+/// similar. Anything else falls back to a short JSON snippet.
+fn enrich_permission_description(title: &str, raw_input: &Option<serde_json::Value>) -> String {
+    let detail = raw_input.as_ref().and_then(|v| {
+        // If the agent passed a bare string for raw_input, surface it
+        // directly — `serde_json::to_string` would wrap it in extra
+        // quotes ("foo" → "\"foo\"") which looks ugly in the row.
+        if let serde_json::Value::String(s) = v {
+            return if s.trim().is_empty() {
+                None
+            } else {
+                Some(s.clone())
+            };
+        }
+        // Try common keys first — these are the ones that actually mean
+        // something to a user scanning the popover.
+        for key in ["command", "file_path", "path", "url", "query", "pattern"] {
+            if let Some(s) = v.get(key).and_then(|x| x.as_str()) {
+                if !s.trim().is_empty() {
+                    return Some(s.to_string());
+                }
+            }
+        }
+        // Fallback: stringify the whole object, capped to keep the row tidy.
+        let s = serde_json::to_string(v).ok()?;
+        if s == "null" || s == "{}" || s == "[]" {
+            None
+        } else {
+            Some(s)
+        }
+    });
+    match (title.is_empty(), detail) {
+        (true, None) => String::from("(no description)"),
+        (true, Some(d)) => truncate_for_row(&d, 240),
+        (false, None) => title.to_string(),
+        (false, Some(d)) => format!("{} · {}", title, truncate_for_row(&d, 240)),
+    }
+}
+
+fn truncate_for_row(s: &str, limit: usize) -> String {
+    if s.chars().count() <= limit {
+        s.to_string()
+    } else {
+        let mut out: String = s.chars().take(limit).collect();
+        out.push('…');
+        out
+    }
+}
+
 /// 权限请求 handler。序列化:同一时刻只能有一个 permission 等待用户响应,
 /// 后续请求会在 `permission_lock` 上排队。
 async fn handle_request_permission(
@@ -533,7 +589,12 @@ async fn handle_request_permission(
     let _guard = state.handle.permission_lock.lock().await;
 
     let request_id = args.tool_call.tool_call_id.to_string();
-    let desc = args.tool_call.fields.title.clone().unwrap_or_default();
+    let title = args.tool_call.fields.title.clone().unwrap_or_default();
+    // Enrich the description with the actual command / file path from
+    // raw_input so the tray popover shows "bash · ls -la" instead of just
+    // "bash". Falls back gracefully if raw_input is missing or not the
+    // shape we expect.
+    let desc = enrich_permission_description(&title, &args.tool_call.fields.raw_input);
     let options: Vec<PermOptionData> = args
         .options
         .iter()
@@ -1295,6 +1356,7 @@ pub async fn get_or_start_session(
                     terminal_kill_tx: Mutex::new(None),
                     is_busy: std::sync::atomic::AtomicBool::new(false),
                     last_assistant_text: Mutex::new(String::new()),
+        last_user_prompt: Mutex::new(None),
                 });
 
                 // 注册到全局表
@@ -1334,6 +1396,12 @@ pub async fn get_or_start_session(
                                     chat_id: cid.clone(),
                                     status: "disconnected".to_string(),
                                     permission: None,
+                                    project_name: None,
+                                    task_name: None,
+                                    chat_title: None,
+                                    agent: None,
+                                    prompt: None,
+                                    message: None,
                                 });
                                 cleanup_socket_files(&self.project_key, &self.task_id, cid);
                             }
@@ -1362,6 +1430,12 @@ pub async fn get_or_start_session(
                             chat_id: chat_id.clone(),
                             status: "connecting".to_string(),
                             permission: None,
+                            project_name: None,
+                            task_name: None,
+                            chat_title: None,
+                            agent: None,
+                            prompt: None,
+                            message: None,
                         });
                     }
                 }
@@ -1407,6 +1481,12 @@ pub async fn get_or_start_session(
                         chat_id: cid.clone(),
                         status: "disconnected".to_string(),
                         permission: None,
+                        project_name: None,
+                        task_name: None,
+                        chat_title: None,
+                        agent: None,
+                        prompt: None,
+                        message: None,
                     });
                     cleanup_socket_files(&session_project_key, &session_task_id, cid);
                 }
@@ -2028,6 +2108,12 @@ async fn drive_session(
                     sender,
                     terminal,
                 });
+                // Stash the user prompt BEFORE emitting Busy so the
+                // ChatStatus broadcast triggered by Busy=true can pick it
+                // up. (emit() is synchronous, so the order matters.)
+                if let Ok(mut buf) = handle.last_user_prompt.lock() {
+                    *buf = Some(text.clone());
+                }
                 handle.emit(AcpUpdate::Busy { value: true });
                 if let Ok(mut buf) = handle.last_assistant_text.lock() {
                     buf.clear();
@@ -2362,6 +2448,12 @@ impl AcpSessionHandle {
                 chat_id: chat_id.clone(),
                 status: self.derive_node_status().to_string(),
                 permission: None,
+                project_name: None,
+                task_name: None,
+                chat_title: None,
+                agent: None,
+                prompt: None,
+                message: None,
             });
         }
         true
@@ -2526,12 +2618,67 @@ impl AcpSessionHandle {
                 };
             if let Some(status) = next_status {
                 use crate::api::handlers::walkie_talkie::{broadcast_radio_event, RadioEvent};
+                // Resolve display names so consumers (menubar tray, etc.)
+                // don't have to round-trip storage. Lookups are cheap and
+                // happen only on actual transitions, not on every message.
+                let project_name =
+                    crate::storage::workspace::load_projects()
+                        .ok()
+                        .and_then(|projs| {
+                            projs
+                                .iter()
+                                .find(|p| {
+                                    crate::storage::workspace::project_hash(&p.path)
+                                        == self.project_key
+                                })
+                                .map(|p| p.name.clone())
+                        });
+                let task_name = crate::storage::tasks::load_tasks(&self.project_key)
+                    .ok()
+                    .and_then(|tasks| {
+                        tasks
+                            .into_iter()
+                            .find(|t| t.id == self.task_id)
+                            .map(|t| t.name)
+                    });
+                let (chat_title, agent) =
+                    crate::storage::tasks::load_chat_sessions(&self.project_key, &self.task_id)
+                        .ok()
+                        .and_then(|chats| chats.into_iter().find(|c| &c.id == chat_id))
+                        .map(|c| (Some(c.title), Some(c.agent)))
+                        .unwrap_or((None, None));
+                // Pull cached chat-turn texts for the wire payload. `prompt`
+                // is meaningful when the chat is going *into* busy; `message`
+                // is meaningful when it leaves a busy phase. Picking them
+                // here (rather than at the publishing-status switch) keeps
+                // both fields harmless for unrelated transitions —
+                // unrelated subscribers ignore them.
+                let prompt = if status == "busy" {
+                    self.last_user_prompt.lock().ok().and_then(|p| p.clone())
+                } else {
+                    None
+                };
+                let message = if status == "idle" {
+                    self.last_assistant_text
+                        .lock()
+                        .ok()
+                        .map(|s| s.clone())
+                        .filter(|s| !s.is_empty())
+                } else {
+                    None
+                };
                 broadcast_radio_event(RadioEvent::ChatStatus {
                     project_id: self.project_key.clone(),
                     task_id: self.task_id.clone(),
                     chat_id: chat_id.clone(),
                     status: status.to_string(),
                     permission,
+                    project_name,
+                    task_name,
+                    chat_title,
+                    agent,
+                    prompt,
+                    message,
                 });
             }
         }
@@ -2878,6 +3025,7 @@ pub fn new_handle_for_test(
         terminal_kill_tx: Mutex::new(None),
         is_busy: std::sync::atomic::AtomicBool::new(false),
         last_assistant_text: Mutex::new(String::new()),
+        last_user_prompt: Mutex::new(None),
     });
 
     if let Ok(mut sessions) = ACP_SESSIONS.write() {

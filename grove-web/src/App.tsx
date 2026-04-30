@@ -1,5 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
+import { listen } from "@tauri-apps/api/event";
+import { invoke } from "@tauri-apps/api/core";
 import { Sidebar } from "./components/Layout/Sidebar";
 import { MobileHeader } from "./components/Layout/MobileHeader";
 import { MobileDrawer } from "./components/Layout/MobileDrawer";
@@ -263,6 +265,89 @@ function AppContent() {
     }
   }, [currentProjectId, selectedProject, hasExitedWelcome]);
 
+  // Tray popover navigation. Rust emits `tray:navigate` with a route and
+  // optional project/task/chat ids. Listener is registered ONCE; refs
+  // hold the latest projects + selectProject so re-mounts don't drop
+  // events arriving in the gap.
+  const projectsRef = useRef(projects);
+  const selectProjectRef = useRef(selectProject);
+  useEffect(() => {
+    projectsRef.current = projects;
+  }, [projects]);
+  useEffect(() => {
+    selectProjectRef.current = selectProject;
+  }, [selectProject]);
+  useEffect(() => {
+    // Apply a tray:navigate payload to local nav state. Used from both the
+    // event listener and the initial drain of any pending event the Rust
+    // side stashed before `listen()` resolved.
+    type NavigatePayload = {
+      route: string;
+      project_id?: string | null;
+      task_id?: string | null;
+      chat_id?: string | null;
+    };
+    const allowedRoutes = new Set<string>([
+      ...REPO_NAV_IDS,
+      ...STUDIO_NAV_IDS,
+      "settings",
+      "projects",
+    ]);
+    const applyNavigate = (p: NavigatePayload) => {
+      const { route, project_id, task_id, chat_id } = p;
+      if (project_id) {
+        const target = projectsRef.current.find((pr) => pr.id === project_id);
+        if (target) selectProjectRef.current(target);
+      }
+      setHasExitedWelcome(true);
+      // Guard against typos / future nav-id renames so the tray can't
+      // silently put the user on a page that doesn't exist.
+      setActiveItem(allowedRoutes.has(route) ? route : "dashboard");
+      if (task_id) {
+        // viewMode "terminal" makes TasksPage drop into Workspace mode
+        // (chat / terminal panes) — what the user expects when clicking
+        // Open from the tray.
+        setNavigationData({
+          taskId: task_id,
+          chatId: chat_id ?? undefined,
+          viewMode: "terminal",
+        });
+      } else {
+        setNavigationData(null);
+      }
+    };
+
+    // 1. Drain any tray:navigate that Rust stashed before this listener
+    //    was alive (covers the async-listen race).
+    invoke<NavigatePayload | null>("tray_take_pending_navigate")
+      .then((p) => {
+        if (p) applyNavigate(p);
+      })
+      .catch(() => {
+        /* not running in Tauri or command unavailable — silently skip */
+      });
+
+    // 2. Subscribe for live events. StrictMode-safe: cancellation flag so
+    //    a teardown during the async registration doesn't leak the
+    //    listener.
+    let cancelled = false;
+    let unlistenFn: (() => void) | null = null;
+    listen<NavigatePayload>("tray:navigate", (e) => applyNavigate(e.payload))
+      .then((fn) => {
+        if (cancelled) {
+          fn();
+        } else {
+          unlistenFn = fn;
+        }
+      })
+      .catch((err) => console.warn("[tray:navigate] listen failed:", err));
+    return () => {
+      cancelled = true;
+      if (unlistenFn) unlistenFn();
+    };
+  }, []);
+
+
   const handleNavigate = (page: string, data?: Record<string, unknown>) => {
     if (data?.projectId) {
       const target = projects.find((p) => p.id === data.projectId);
@@ -453,6 +538,7 @@ function AppContent() {
           >
             <TasksPage
               initialTaskId={navigationData?.taskId as string | undefined}
+              initialChatId={navigationData?.chatId as string | undefined}
               initialViewMode={navigationData?.viewMode as string | undefined}
               initialOpenNewTask={navigationData?.openNewTask as boolean | undefined}
               onNavigationConsumed={() => setNavigationData(null)}
@@ -560,6 +646,7 @@ function AppContent() {
               >
                 <TasksPage
                   initialTaskId={navigationData?.taskId as string | undefined}
+                  initialChatId={navigationData?.chatId as string | undefined}
                   initialViewMode={navigationData?.viewMode as string | undefined}
                   initialOpenNewTask={navigationData?.openNewTask as boolean | undefined}
                   onNavigationConsumed={() => setNavigationData(null)}

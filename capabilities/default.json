@@ -1,0 +1,17 @@
+{
+  "$schema": "https://schema.tauri.app/config/2/schema.json",
+  "identifier": "default",
+  "description": "Main window capabilities — full app surface (shell, file dialog, devtools).",
+  "windows": ["main"],
+  "local": true,
+  "remote": {
+    "urls": ["http://localhost:*"]
+  },
+  "permissions": [
+    "core:default",
+    "core:event:default",
+    "core:event:allow-listen",
+    "core:event:allow-unlisten",
+    "shell:allow-open"
+  ]
+}

@@ -5974,30 +5974,30 @@ function PermissionCard({
   if (isResolved) {
     return (
       <div
-        className={`flex items-center gap-2 py-1.5 px-3 rounded-lg text-xs border ${
+        className={`flex items-start gap-2 py-1.5 px-3 rounded-lg text-xs border min-w-0 ${
           isCancelled
             ? "bg-[color-mix(in_srgb,var(--color-warning)_8%,transparent)] border-[color-mix(in_srgb,var(--color-warning)_24%,transparent)]"
             : "bg-[var(--color-bg-tertiary)] border-[var(--color-border)]"
         }`}
       >
         {isCancelled ? (
-          <AlertTriangle className="w-3.5 h-3.5 text-[var(--color-warning)] shrink-0" />
+          <AlertTriangle className="w-3.5 h-3.5 text-[var(--color-warning)] shrink-0 mt-0.5" />
         ) : isAllowed ? (
-          <ShieldCheck className="w-3.5 h-3.5 text-[var(--color-success)] shrink-0" />
+          <ShieldCheck className="w-3.5 h-3.5 text-[var(--color-success)] shrink-0 mt-0.5" />
         ) : (
-          <ShieldX className="w-3.5 h-3.5 text-[var(--color-error)] shrink-0" />
+          <ShieldX className="w-3.5 h-3.5 text-[var(--color-error)] shrink-0 mt-0.5" />
         )}
         <span
-          className={
+          className={`flex-1 min-w-0 break-all ${
             isCancelled
               ? "text-[color-mix(in_srgb,var(--color-warning)_92%,white_6%)]"
               : "text-[var(--color-text-muted)]"
-          }
+          }`}
         >
           {message.description}
         </span>
         <span
-          className={`ml-auto text-[10px] ${isCancelled ? "text-[var(--color-warning)]" : "text-[var(--color-text-muted)] opacity-70"}`}
+          className={`text-[10px] text-right break-all max-w-[40%] ${isCancelled ? "text-[var(--color-warning)]" : "text-[var(--color-text-muted)] opacity-70"}`}
         >
           {message.resolved}
         </span>
