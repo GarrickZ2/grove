@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.3] - 2026-04-30
+
+### Added
+
+- **Menubar tray** — macOS-first menubar tray with a React popover, chat-grained state stream, and a Settings panel for tray and system notification preferences.
+- **Agent graph tools** — `spawn`, `send`, `reply`, and `contacts` actions exposed over MCP HTTP transport, enabling orchestrator agents to drive agent-graph interactions programmatically.
+
+### Improved
+
+- **Preview comments as Grove meta cards** — comment blocks in the preview pane now render as styled Grove meta cards for cleaner visual hierarchy.
+
+### Fixed
+
+- **ACP agent availability checks** — stale availability status for ACP agents is now resolved correctly.
+- **Config field cleanup** — removed dead `hooks.banner/enabled` fields and addressed follow-up findings from the ACP review.
+
 ## [0.10.2] - 2026-04-28
 
 ### Added
