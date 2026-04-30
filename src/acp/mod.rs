@@ -3413,6 +3413,9 @@ pub fn resolve_agent(agent_name: &str) -> Option<ResolvedAgent> {
     // 1. Built-in agents
     match agent_name.to_lowercase().as_str() {
         "claude" => {
+            if !command_exists("claude") {
+                return None;
+            }
             let (command, args): (&str, Vec<String>) = if command_exists("claude-agent-acp") {
                 ("claude-agent-acp", vec![])
             } else if command_exists("claude-code-acp") {
@@ -3445,6 +3448,9 @@ pub fn resolve_agent(agent_name: &str) -> Option<ResolvedAgent> {
             });
         }
         "codex" => {
+            if !command_exists("codex") {
+                return None;
+            }
             let (command, args): (&str, Vec<String>) = if command_exists("codex-acp") {
                 ("codex-acp", vec![])
             } else if command_exists("npx") {

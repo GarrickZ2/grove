@@ -25,6 +25,7 @@ import {
 } from "lucide-react";
 import { Button, Combobox, AppPicker, AgentPicker, agentOptions, ideAppOptions, terminalAppOptions, CustomAgentModal } from "../ui";
 import type { ComboboxOption } from "../ui";
+import { applyAcpAvailability, getAcpAvailabilityCommands } from "../../data/agents";
 import { useTheme, themes, useConfig } from "../../context";
 import {
   getConfig,
@@ -447,11 +448,9 @@ export function SettingsPage({ config }: SettingsPageProps) {
   // Check agent command availability
   const checkAgentCommands = useCallback(async () => {
     const cmds = new Set<string>();
-    cmds.add("npx");
+    for (const cmd of getAcpAvailabilityCommands()) cmds.add(cmd);
     for (const opt of agentOptions) {
       if (opt.terminalCheck) cmds.add(opt.terminalCheck);
-      if (opt.acpCheck) cmds.add(opt.acpCheck);
-      if (opt.acpFallback) cmds.add(opt.acpFallback);
     }
     try {
       const results = await checkCommands([...cmds]);
@@ -632,20 +631,10 @@ export function SettingsPage({ config }: SettingsPageProps) {
   const chatAgentOptions = useMemo(() => agentOptions
     .filter(a => !!a.acpCheck || customAgentIds.includes(a.id))
     .map(a => {
-      if (!hasAvailability) return a;
-      const terminalOk = a.terminalCheck ? commandAvailability[a.terminalCheck] !== false : true;
-      const acpOk = (a.acpCheck && commandAvailability[a.acpCheck]) || (a.acpFallback && commandAvailability[a.acpFallback]);
-      const npxOk = !!a.npxPackage && commandAvailability["npx"];
-      const available = terminalOk && (acpOk || npxOk);
-      if (a.acpCheck && !available) {
-        const missing = !terminalOk
-          ? a.terminalCheck
-          : !npxOk && !acpOk
-            ? "npx"
-            : a.acpCheck;
-        return { ...a, disabled: true, disabledReason: `${missing} not found — install to enable` };
-      }
-      return a;
+      const opt = applyAcpAvailability(a, commandAvailability, hasAvailability);
+      return opt.disabled
+        ? { ...opt, disabledReason: `${opt.disabledReason?.replace(" not found", "")} not found — install to enable` }
+        : opt;
     }), [commandAvailability, hasAvailability, customAgentIds]);
 
   // Feature availability (auto-derived from dependencies)
@@ -676,10 +665,9 @@ export function SettingsPage({ config }: SettingsPageProps) {
     // Chat Agent (check terminalCheck + acpCheck/acpFallback/npx)
     if (acpAgent) {
       const currentAgent = agentOptions.find(a => a.id === acpAgent);
-      const terminalOk = currentAgent?.terminalCheck ? commandAvailability[currentAgent.terminalCheck] !== false : true;
-      const acpOk = (currentAgent?.acpCheck && commandAvailability[currentAgent.acpCheck]) || (currentAgent?.acpFallback && commandAvailability[currentAgent.acpFallback]);
-      const npxOk = !!currentAgent?.npxPackage && commandAvailability["npx"];
-      const available = terminalOk && (acpOk || npxOk);
+      const available = currentAgent
+        ? !applyAcpAvailability(currentAgent, commandAvailability, true).disabled
+        : false;
       if (currentAgent?.acpCheck && !available) {
         const firstAvailable = chatAgentOptions.find(a => !a.disabled);
         setAcpAgent(firstAvailable?.id ?? "");

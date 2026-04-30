@@ -25,7 +25,12 @@ import {
 import type { CustomAgentServer, CustomAgentPersona } from "../../../api";
 import type { NodeStatus } from "../../../api/walkieTalkie";
 import { useRadioEvents } from "../../../hooks/useRadioEvents";
-import { AgentPicker, agentOptions } from "../../ui/AgentPicker";
+import { AgentPicker } from "../../ui/AgentPicker";
+import {
+  agentOptions,
+  applyAcpAvailability,
+  getAcpAvailabilityCommands,
+} from "../../../data/agents";
 import {
   agentIconComponent,
   agentIconUrl,
@@ -319,10 +324,8 @@ export function TaskGraph({ projectId, taskId }: TaskGraphProps) {
     let cancelled = false;
     (async () => {
       try {
-        const acpCheckCmds = new Set<string>();
-        for (const opt of agentOptions) if (opt.acpCheck) acpCheckCmds.add(opt.acpCheck);
         const [cmdResults, cfg, personas] = await Promise.all([
-          checkCommands([...acpCheckCmds]),
+          checkCommands(getAcpAvailabilityCommands()),
           getConfig(),
           loadCustomAgentPersonasIcon(() =>
             listCustomAgents().catch(() => [] as CustomAgentPersona[]),
@@ -346,14 +349,7 @@ export function TaskGraph({ projectId, taskId }: TaskGraphProps) {
   const acpAgentOptions = useMemo(() => {
     return agentOptions
       .filter((opt) => opt.acpCheck)
-      .map((opt) => {
-        if (!acpAvailabilityLoaded) return opt;
-        const cmd = opt.acpCheck!;
-        if (acpAgentAvailability[cmd] === false) {
-          return { ...opt, disabled: true, disabledReason: `${cmd} not found` };
-        }
-        return opt;
-      })
+      .map((opt) => applyAcpAvailability(opt, acpAgentAvailability, acpAvailabilityLoaded))
       .filter((opt) => !opt.disabled);
   }, [acpAgentAvailability, acpAvailabilityLoaded]);
   const [toast, setToast] = useState<{ message: string; type: "error" | "success" } | null>(null);

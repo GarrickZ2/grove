@@ -56,10 +56,14 @@ import {
   ImageLightbox,
   MarkdownRenderer,
   VSCodeIcon,
-  agentOptions,
   FileMentionDropdown,
   AgentPickerMenuItems,
 } from "../../ui";
+import {
+  agentOptions,
+  applyAcpAvailability,
+  getAcpAvailabilityCommands,
+} from "../../../data/agents";
 import {
   buildMentionItems,
   buildStudioMentionItems,
@@ -1510,12 +1514,8 @@ export function TaskChat({
     let cancelled = false;
     const checkAvailability = async () => {
       try {
-        const acpCheckCmds = new Set<string>();
-        for (const opt of agentOptions) {
-          if (opt.acpCheck) acpCheckCmds.add(opt.acpCheck);
-        }
         const [cmdResults, cfg, personas] = await Promise.all([
-          checkCommands([...acpCheckCmds]),
+          checkCommands(getAcpAvailabilityCommands()),
           getConfig(),
           // Centralized loader — only the most-recent in-flight request
           // wins the icon-registry write, so a stale fetch from a previous
@@ -1543,14 +1543,7 @@ export function TaskChat({
   const acpAgentOptions = useMemo(() => {
     return agentOptions
       .filter((opt) => opt.acpCheck)
-      .map((opt) => {
-        if (!acpAvailabilityLoaded) return opt;
-        const cmd = opt.acpCheck!;
-        if (acpAgentAvailability[cmd] === false) {
-          return { ...opt, disabled: true, disabledReason: `${cmd} not found` };
-        }
-        return opt;
-      });
+      .map((opt) => applyAcpAvailability(opt, acpAgentAvailability, acpAvailabilityLoaded));
   }, [acpAgentAvailability, acpAvailabilityLoaded]);
 
   const getChatIcon = (agentId: string) => {

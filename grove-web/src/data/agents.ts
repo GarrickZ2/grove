@@ -56,3 +56,44 @@ export const agentOptions: AgentOption[] = [
   { id: "traecli", label: "Trae", value: "traecli", icon: Trae.Color, terminalCheck: "traecli", acpCheck: "traecli" },
   { id: "windsurf", label: "Windsurf", value: "windsurf", icon: Windsurf, terminalCheck: "windsurf", acpCheck: "windsurf" },
 ];
+
+export function getAcpAvailabilityCommands(options: AgentOption[] = agentOptions): string[] {
+  const commands = new Set<string>();
+  for (const opt of options) {
+    if (!opt.acpCheck) continue;
+    if (opt.terminalCheck) commands.add(opt.terminalCheck);
+    if (opt.acpCheck) commands.add(opt.acpCheck);
+    if (opt.acpFallback) commands.add(opt.acpFallback);
+    if (opt.npxPackage) commands.add("npx");
+  }
+  return [...commands];
+}
+
+export function applyAcpAvailability(
+  opt: AgentOption,
+  availability: Record<string, boolean>,
+  loaded: boolean,
+): AgentOption {
+  if (!loaded || !opt.acpCheck) return opt;
+
+  const terminalOk = opt.terminalCheck ? availability[opt.terminalCheck] !== false : true;
+  const acpOk =
+    (opt.acpCheck && availability[opt.acpCheck] === true) ||
+    (opt.acpFallback && availability[opt.acpFallback] === true);
+  const npxOk = !!opt.npxPackage && availability["npx"] === true;
+  const available = terminalOk && (acpOk || npxOk);
+
+  if (available) return opt;
+
+  const missing = !terminalOk
+    ? opt.terminalCheck
+    : opt.acpFallback
+      ? `${opt.acpCheck} or ${opt.acpFallback}${opt.npxPackage ? " or npx" : ""}`
+      : `${opt.acpCheck}${opt.npxPackage ? " or npx" : ""}`;
+
+  return {
+    ...opt,
+    disabled: true,
+    disabledReason: `${missing} not found`,
+  };
+}
