@@ -178,6 +178,7 @@ const ERROR_HINTS: Record<string, string> = {
   same_task_required: "Cannot connect across tasks",
   target_not_found: "Target not found",
   no_pending_to_remind: "No pending message to remind",
+  target_not_idle: "Target is not idle",
   target_is_busy: "Target is busy",
   duty_forbidden: "Duty is locked",
   timeout: "Operation timed out",
@@ -1796,6 +1797,12 @@ export function TaskGraph({ projectId, taskId }: TaskGraphProps) {
           if (!e) return null;
           return deriveEdgeState(e.from, e.to);
         })()}
+        edgeTargetStatus={(() => {
+          if (selectedEdge == null) return null;
+          const e = data?.edges.find((ed) => ed.edge_id === selectedEdge);
+          if (!e) return null;
+          return getNodeStatus(e.to);
+        })()}
         nodeNameById={(id) =>
           data?.nodes.find((n) => n.chat_id === id)?.name ?? id
         }
@@ -1968,6 +1975,8 @@ interface ToolbarProps {
   nodeStatus: string | null;
   /** Live state of `edge`. `null` when no edge is selected. */
   edgeState: "idle" | "in_flight" | "blocked" | null;
+  /** Live status of the selected edge's target node. */
+  edgeTargetStatus: NodeStatus | null;
   nodeNameById: (id: string) => string;
   directMessage: string;
   sendingMessage: boolean;
@@ -2023,6 +2032,7 @@ function GraphContextToolbar(props: ToolbarProps) {
     edge,
     nodeStatus,
     edgeState,
+    edgeTargetStatus,
     nodeNameById,
     directMessage,
     sendingMessage,
@@ -2286,6 +2296,7 @@ function GraphContextToolbar(props: ToolbarProps) {
               <EdgeContextSection
                 edge={edge}
                 edgeState={edgeState}
+                targetStatus={edgeTargetStatus}
                 fromName={nodeNameById(edge.from)}
                 toName={nodeNameById(edge.to)}
                 onEditClick={() => onEditEdge(edge)}
@@ -2373,13 +2384,13 @@ function EmptyContextSection({ onNewSession }: { onNewSession: () => void }) {
       <button
         type="button"
         onClick={onNewSession}
-        className="flex items-center gap-1.5 h-7 px-3 rounded-full bg-[var(--color-highlight)] text-[12px] font-medium text-white hover:opacity-90 transition-opacity shadow-sm"
+        className="flex items-center gap-1.5 h-7 px-3 rounded-full bg-[var(--color-highlight)] text-[12px] font-medium text-white hover:opacity-90 transition-opacity shadow-sm shrink-0 whitespace-nowrap"
         title="Create a new session"
       >
         <Plus className="w-3.5 h-3.5" />
         <span>New Session</span>
       </button>
-      <span className="text-[11px] text-[var(--color-text-muted)] whitespace-nowrap">
+      <span className="text-[11px] text-[var(--color-text-muted)] truncate min-w-0">
         Click a node to switch chat · double-click to edit · drag to rearrange
       </span>
     </>
@@ -2421,7 +2432,7 @@ function NodeContextSection({
           {status}
         </span>
       </div>
-      <div className="ml-2 flex items-center gap-1">
+      <div className="ml-2 flex items-center gap-1 shrink-0">
         <ToolbarButton
           icon={<Send className="w-3.5 h-3.5" />}
           label="Send"
@@ -2700,6 +2711,7 @@ function SpawnForm({
 function EdgeContextSection({
   edge,
   edgeState,
+  targetStatus,
   fromName,
   toName,
   onEditClick,
@@ -2708,23 +2720,20 @@ function EdgeContextSection({
 }: {
   edge: GraphEdge;
   edgeState: "idle" | "in_flight" | "blocked" | null;
+  targetStatus: NodeStatus | null;
   fromName: string;
   toName: string;
   onEditClick: () => void;
   onRemindClick: () => void;
   onDeleteClick: () => void;
 }) {
-  const hasPending = !!edge.pending_message;
-  // Remind only makes sense when the target is *blocked* on this pending
-  // message — i.e. has acknowledged it but isn't actively working on it.
-  // While the target is `in_flight` (busy), reminding is noise; while `idle`
-  // there's nothing to remind about. Disable accordingly.
-  const canRemind = hasPending && edgeState === "blocked";
+  const hasPending = edgeState !== null && edgeState !== "idle";
+  const canRemind = hasPending && targetStatus === "idle";
   const remindDisabledTitle = !hasPending
     ? "No pending message on this edge"
-    : edgeState === "in_flight"
-      ? "Target session is currently working — no need to remind"
-      : "Nothing to remind";
+    : targetStatus === "busy"
+      ? "Target session is currently working"
+      : "Target session is not idle";
   return (
     <>
       <div className="flex items-center gap-2 min-w-0 flex-1 text-[12px]">
@@ -2895,14 +2904,14 @@ function ConfirmDeleteRow({
         type="button"
         onClick={onCancel}
         autoFocus
-        className="h-7 px-3 text-[11.5px] font-medium rounded-full border border-[var(--color-border)] text-[var(--color-text)] hover:bg-[var(--color-bg-tertiary)] transition-colors"
+        className="h-7 px-3 text-[11.5px] font-medium rounded-full border border-[var(--color-border)] text-[var(--color-text)] hover:bg-[var(--color-bg-tertiary)] transition-colors shrink-0 whitespace-nowrap"
       >
         Cancel
       </button>
       <button
         type="button"
         onClick={onConfirm}
-        className="h-7 px-3 text-[11.5px] font-medium rounded-full bg-[var(--color-error)] text-white hover:opacity-90 transition-opacity"
+        className="h-7 px-3 text-[11.5px] font-medium rounded-full bg-[var(--color-error)] text-white hover:opacity-90 transition-opacity shrink-0 whitespace-nowrap"
       >
         Confirm Delete
       </button>

@@ -12,6 +12,8 @@
     "core:event:default",
     "core:event:allow-listen",
     "core:event:allow-unlisten",
+    "global-shortcut:allow-register",
+    "global-shortcut:allow-unregister",
     "shell:allow-open"
   ]
 }

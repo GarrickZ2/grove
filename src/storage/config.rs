@@ -81,12 +81,6 @@ fn default_acp_render_window_trigger() -> u32 {
 /// Hooks 通知配置
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HooksConfig {
-    /// 是否启用 ACP Chat 通知（主开关）
-    #[serde(default = "default_true")]
-    pub enabled: bool,
-    /// 是否发送桌面通知横幅
-    #[serde(default = "default_true")]
-    pub banner: bool,
     /// Agent Response 声音开关（Chat Turn End）
     #[serde(default = "default_true", alias = "sound_enabled")]
     pub response_sound_enabled: bool,
@@ -116,8 +110,6 @@ fn default_permission_sound() -> String {
 impl Default for HooksConfig {
     fn default() -> Self {
         Self {
-            enabled: true,
-            banner: true,
             response_sound_enabled: true,
             response_sound: default_response_sound(),
             permission_sound_enabled: true,
@@ -360,6 +352,9 @@ pub struct WebConfig {
     ///   - "ide": 固定三栏 IDE 布局 (Chat-centric)
     #[serde(default)]
     pub workspace_layout: Option<String>,
+    /// GUI-only global shortcut for showing or hiding the main window.
+    #[serde(default)]
+    pub show_hide_window_shortcut: Option<String>,
 }
 
 /// 自定义布局配置

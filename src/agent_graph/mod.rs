@@ -1,7 +1,6 @@
 //! Agent Graph — agent-to-agent communication tools.
 //!
-//! Tools (`grove_agent_spawn` / `_send` / `_reply` / `_contacts` / `_capability`
-//! / `_get_spawn_candidates`)
+//! Tools (`grove_agent_spawn` / `_send` / `_reply` / `_contacts` / `_capability`)
 //! used by ACP agents inside a Grove task to communicate with sibling sessions
 //! over the agent_graph DAG.
 //!

@@ -296,6 +296,7 @@ pub async fn user_send_message(
             text: text.to_string(),
             attachments: Vec::new(),
             sender: Some("user".to_string()),
+            config: Some(handle.snapshot_config()),
         });
         handle.emit(AcpUpdate::QueueUpdate { messages });
         return Ok(());

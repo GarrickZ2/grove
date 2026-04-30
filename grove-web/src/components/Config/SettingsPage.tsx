@@ -3,6 +3,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import {
   Terminal,
   LayoutGrid,
+  Keyboard,
   Bell,
   Plug,
   ChevronDown,
@@ -47,6 +48,7 @@ import {
   loadCustomAgentPersonas as loadCustomAgentPersonasIcon,
 } from "../../utils/agentIcon";
 import { useIsMobile } from "../../hooks";
+import { formatShortcut } from "../AI/utils";
 
 interface SettingsPageProps {
   config: {
@@ -250,6 +252,8 @@ export function SettingsPage({ config }: SettingsPageProps) {
   // Web terminal backend: "multiplexer" (default) | "direct"
   const [webTerminalMode, setWebTerminalMode] = useState("multiplexer");
   const [workspaceLayout, setWorkspaceLayout] = useState<"flex" | "ide">("flex");
+  const [showHideWindowShortcut, setShowHideWindowShortcut] = useState("");
+  const [isRecordingWindowShortcut, setIsRecordingWindowShortcut] = useState(false);
 
   const lastTerminalMuxRef = useRef<string>("tmux");
   const defaultAppliedRef = useRef(false);
@@ -261,8 +265,6 @@ export function SettingsPage({ config }: SettingsPageProps) {
   const [customLayoutsLoaded, setCustomLayoutsLoaded] = useState(false); // Track if custom layouts were loaded from API
   const [isLayoutEditorOpen, setIsLayoutEditorOpen] = useState(false);
 
-  const [hooksEnabled, setHooksEnabled] = useState(true);
-  const [hooksBanner, setHooksBanner] = useState(true);
   const [hooksResponseSoundEnabled, setHooksResponseSoundEnabled] = useState(true);
   const [hooksResponseSound, setHooksResponseSound] = useState("Glass");
   const [hooksPermissionSoundEnabled, setHooksPermissionSoundEnabled] = useState(true);
@@ -321,6 +323,7 @@ export function SettingsPage({ config }: SettingsPageProps) {
       lastTerminalMuxRef.current = cfg.terminal_multiplexer || "tmux";
       setWebTerminalMode(cfg.web.terminal_mode || "multiplexer");
       setWorkspaceLayout(cfg.web.workspace_layout || "ide");
+      setShowHideWindowShortcut(cfg.web.show_hide_window_shortcut || "");
 
       // Load theme - sync with context
       // API stores theme id (e.g., "dark", "tokyo-night")
@@ -375,8 +378,6 @@ export function SettingsPage({ config }: SettingsPageProps) {
       setChatRenderWindowTriggerDraft(String(renderWindowTrigger));
 
       if (cfg.hooks) {
-        setHooksEnabled(cfg.hooks.enabled);
-        setHooksBanner(cfg.hooks.banner);
         setHooksResponseSoundEnabled(cfg.hooks.response_sound_enabled);
         setHooksResponseSound(cfg.hooks.response_sound || "Glass");
         setHooksPermissionSoundEnabled(cfg.hooks.permission_sound_enabled);
@@ -508,6 +509,7 @@ export function SettingsPage({ config }: SettingsPageProps) {
           terminal: terminalCommand || undefined,
           terminal_mode: webTerminalMode,
           workspace_layout: workspaceLayout,
+          show_hide_window_shortcut: showHideWindowShortcut,
         },
         terminal_multiplexer: terminalMultiplexer,
         acp: {
@@ -522,8 +524,6 @@ export function SettingsPage({ config }: SettingsPageProps) {
           patterns: autoLinkPatterns,
         },
         hooks: {
-          enabled: hooksEnabled,
-          banner: hooksBanner,
           response_sound_enabled: hooksResponseSoundEnabled,
           response_sound: hooksResponseSound,
           permission_sound_enabled: hooksPermissionSoundEnabled,
@@ -546,7 +546,7 @@ export function SettingsPage({ config }: SettingsPageProps) {
     } catch {
       console.error("Failed to save config");
     }
-  }, [isLoaded, selectedLayout, agentCommand, acpAgent, chatRenderWindowLimit, chatRenderWindowTrigger, customLayouts, selectedCustomLayoutId, customLayoutsLoaded, ideCommand, terminalCommand, terminalMultiplexer, webTerminalMode, workspaceLayout, autoLinkPatterns, hooksEnabled, hooksBanner, hooksResponseSoundEnabled, hooksResponseSound, hooksPermissionSoundEnabled, hooksPermissionSound, trayEnabled, trayShowPermission, trayShowDone, trayShowRunning, systemNotifEnabled, systemNotifShowPermission, systemNotifShowDone, systemNotifShowRunning, refreshGlobalConfig]);
+  }, [isLoaded, selectedLayout, agentCommand, acpAgent, chatRenderWindowLimit, chatRenderWindowTrigger, customLayouts, selectedCustomLayoutId, customLayoutsLoaded, ideCommand, terminalCommand, terminalMultiplexer, webTerminalMode, workspaceLayout, showHideWindowShortcut, autoLinkPatterns, hooksResponseSoundEnabled, hooksResponseSound, hooksPermissionSoundEnabled, hooksPermissionSound, trayEnabled, trayShowPermission, trayShowDone, trayShowRunning, systemNotifEnabled, systemNotifShowPermission, systemNotifShowDone, systemNotifShowRunning, refreshGlobalConfig]);
 
   // Handle theme change with immediate save
   const handleThemeChange = useCallback((newThemeId: string) => {
@@ -568,7 +568,29 @@ export function SettingsPage({ config }: SettingsPageProps) {
     }, 500); // 500ms debounce
 
     return () => clearTimeout(timer);
-  }, [selectedLayout, agentCommand, acpAgent, chatRenderWindowLimit, chatRenderWindowTrigger, customLayouts, selectedCustomLayoutId, customLayoutsLoaded, ideCommand, terminalCommand, terminalMultiplexer, webTerminalMode, workspaceLayout, autoLinkPatterns, hooksEnabled, hooksBanner, hooksResponseSoundEnabled, hooksResponseSound, hooksPermissionSoundEnabled, hooksPermissionSound, trayEnabled, trayShowPermission, trayShowDone, trayShowRunning, systemNotifEnabled, systemNotifShowPermission, systemNotifShowDone, systemNotifShowRunning, isLoaded, saveConfig]);
+  }, [selectedLayout, agentCommand, acpAgent, chatRenderWindowLimit, chatRenderWindowTrigger, customLayouts, selectedCustomLayoutId, customLayoutsLoaded, ideCommand, terminalCommand, terminalMultiplexer, webTerminalMode, workspaceLayout, showHideWindowShortcut, autoLinkPatterns, hooksResponseSoundEnabled, hooksResponseSound, hooksPermissionSoundEnabled, hooksPermissionSound, trayEnabled, trayShowPermission, trayShowDone, trayShowRunning, systemNotifEnabled, systemNotifShowPermission, systemNotifShowDone, systemNotifShowRunning, isLoaded, saveConfig]);
+
+  useEffect(() => {
+    if (!isRecordingWindowShortcut) return;
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      event.preventDefault();
+      event.stopPropagation();
+
+      if (event.key === "Escape") {
+        setIsRecordingWindowShortcut(false);
+        return;
+      }
+
+      const shortcut = formatShortcut(event);
+      if (!shortcut) return;
+      setShowHideWindowShortcut(shortcut);
+      setIsRecordingWindowShortcut(false);
+    };
+
+    window.addEventListener("keydown", handleKeyDown, true);
+    return () => window.removeEventListener("keydown", handleKeyDown, true);
+  }, [isRecordingWindowShortcut]);
 
   // Load applications list
   const loadApplications = useCallback(async () => {
@@ -795,6 +817,54 @@ env_vars = [
   "GROVE_PROJECT_NAME",
   "GROVE_PROJECT"
 ]`;
+
+  const isTauriGui = !!((window as Window & {
+    __TAURI__?: unknown;
+    __TAURI_INTERNALS__?: unknown;
+  }).__TAURI__ || (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__);
+  const windowShortcutControl = isTauriGui ? (
+    <div>
+      <div className="flex items-center gap-2 mb-3 select-none">
+        <Keyboard className="w-4 h-4 text-[var(--color-highlight)]" />
+        <span className="text-sm font-medium text-[var(--color-text)]">Show or Hide Window</span>
+      </div>
+      <div className="flex items-center gap-2">
+        <div className="flex h-10 min-w-0 flex-1 items-center rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-secondary)] px-3 text-sm text-[var(--color-text)]">
+          {isRecordingWindowShortcut ? (
+            <span className="text-[var(--color-highlight)]">Press shortcut...</span>
+          ) : showHideWindowShortcut ? (
+            showHideWindowShortcut
+          ) : (
+            <span className="text-[var(--color-text-muted)]">Not set</span>
+          )}
+        </div>
+        {showHideWindowShortcut && (
+          <button
+            type="button"
+            onClick={() => {
+              setShowHideWindowShortcut("");
+              setIsRecordingWindowShortcut(false);
+            }}
+            className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-secondary)] text-[var(--color-text-muted)] transition-colors hover:border-[var(--color-error)]/60 hover:text-[var(--color-error)]"
+            title="Clear shortcut"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        )}
+        <button
+          type="button"
+          onClick={() => setIsRecordingWindowShortcut((value) => !value)}
+          className={`inline-flex h-10 shrink-0 items-center justify-center rounded-lg border px-3 text-xs font-medium transition-colors ${
+            isRecordingWindowShortcut
+              ? "border-[var(--color-highlight)] bg-[var(--color-highlight)]/10 text-[var(--color-highlight)]"
+              : "border-[var(--color-border)] bg-[var(--color-bg-secondary)] text-[var(--color-text)] hover:border-[var(--color-highlight)]/50"
+          }`}
+        >
+          {isRecordingWindowShortcut ? "Cancel" : "Record"}
+        </button>
+      </div>
+    </div>
+  ) : null;
 
   return (
     <motion.div
@@ -1289,6 +1359,8 @@ env_vars = [
               </>
             )}
 
+            {windowShortcutControl}
+
             {/* Workspace Layout */}
             <div>
               <div className="flex items-center gap-2 mb-3 select-none">
@@ -1364,7 +1436,7 @@ env_vars = [
               {/* 模式输入列表 */}
               <div className="space-y-2 mb-4">
                 {autoLinkPatterns.map((pattern, index) => (
-                  <div key={index} className="flex items-center gap-2">
+                  <div key={`${index}_${pattern}`} className="flex items-center gap-2">
                     <input
                       type="text"
                       value={pattern}
@@ -1648,157 +1720,120 @@ env_vars = [
           isOpen={openSections.hooks}
           onToggle={() => toggleSection("hooks")}
         >
-          <div className="space-y-5">
-            <div>
-              <div className="text-sm font-medium text-[var(--color-text-muted)] mb-2 select-none">Enabled</div>
-              <div className="flex gap-2">
-                {[true, false].map((value) => {
-                  const isSelected = hooksEnabled === value;
-                  return (
-                    <motion.button
-                      key={value ? "on" : "off"}
-                      whileHover={{ scale: 1.02 }}
-                      whileTap={{ scale: 0.98 }}
-                      onClick={() => setHooksEnabled(value)}
-                      className={`flex-1 px-3 py-2 rounded-lg border text-sm transition-all
-                        ${isSelected
-                          ? "border-[var(--color-highlight)] bg-[var(--color-highlight)]/10 text-[var(--color-text)]"
-                          : "border-[var(--color-border)] bg-[var(--color-bg-secondary)] text-[var(--color-text-muted)] hover:border-[var(--color-text-muted)]"
-                        }`}
-                    >
-                      {value ? "On" : "Off"}
-                    </motion.button>
-                  );
-                })}
+          <div className="space-y-4">
+            {/* System Notifications card — sound + banner per event type */}
+            <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)] p-4">
+              <div className="flex items-start justify-between gap-3 mb-3">
+                <div>
+                  <div className="text-sm font-semibold text-[var(--color-text)]">System Notifications</div>
+                  <div className="text-xs text-[var(--color-text-muted)] mt-0.5">Native OS banner and sounds for agent events</div>
+                </div>
+                <ToggleSwitch checked={systemNotifEnabled} onChange={setSystemNotifEnabled} />
               </div>
+              <AnimatePresence initial={false}>
+                {systemNotifEnabled ? (
+                  <motion.div
+                    initial={{ opacity: 0, height: 0 }}
+                    animate={{ opacity: 1, height: "auto" }}
+                    exit={{ opacity: 0, height: 0 }}
+                    transition={{ duration: 0.18 }}
+                    className="overflow-hidden"
+                  >
+                    <div className="mt-2 space-y-2.5 border-t border-[color-mix(in_srgb,var(--color-border)_60%,transparent)] pt-3">
+                      {/* Permission required */}
+                      <div className="flex items-center gap-3">
+                        <span className="flex-shrink-0 inline-block w-2 h-2 rounded-full bg-[var(--color-warning)]" />
+                        <div className="flex-1 min-w-0">
+                          <div className="text-[13px] text-[var(--color-text)]">Permission required</div>
+                          <div className="text-[11px] text-[var(--color-text-muted)]">When the agent needs your approval for an action</div>
+                        </div>
+                        <AnimatePresence initial={false}>
+                          {systemNotifShowPermission && (
+                            <motion.div
+                              initial={{ opacity: 0, width: 0 }}
+                              animate={{ opacity: 1, width: "auto" }}
+                              exit={{ opacity: 0, width: 0 }}
+                              transition={{ duration: 0.15 }}
+                              className="overflow-hidden flex-shrink-0 flex items-center gap-1"
+                            >
+                              <div className="w-[140px]">
+                                <Combobox
+                                  options={soundOptions}
+                                  value={hooksPermissionSoundEnabled ? hooksPermissionSound : "none"}
+                                  onChange={(value) => {
+                                    if (value === "none") { setHooksPermissionSoundEnabled(false); return; }
+                                    setHooksPermissionSoundEnabled(true);
+                                    setHooksPermissionSound(value);
+                                  }}
+                                  placeholder="Sound..."
+                                  allowCustom={false}
+                                />
+                              </div>
+                              <button onClick={() => previewHookSound(hooksPermissionSound)} title={!hooksPermissionSoundEnabled ? "Select a sound to preview" : "Preview sound"} disabled={!hooksPermissionSoundEnabled} className="h-8 w-8 flex-shrink-0 flex items-center justify-center rounded-md text-[var(--color-text-muted)] hover:text-[var(--color-text)] disabled:opacity-40 transition-colors">
+                                <Volume2 className="w-3.5 h-3.5" />
+                              </button>
+                            </motion.div>
+                          )}
+                        </AnimatePresence>
+                        <ToggleSwitch checked={systemNotifShowPermission} onChange={setSystemNotifShowPermission} />
+                      </div>
+                      {/* Turn completed */}
+                      <div className="flex items-center gap-3">
+                        <span className="flex-shrink-0 inline-block w-2 h-2 rounded-full bg-[var(--color-highlight)]" />
+                        <div className="flex-1 min-w-0">
+                          <div className="text-[13px] text-[var(--color-text)]">Turn completed</div>
+                          <div className="text-[11px] text-[var(--color-text-muted)]">When the agent finishes responding to a prompt</div>
+                        </div>
+                        <AnimatePresence initial={false}>
+                          {systemNotifShowDone && (
+                            <motion.div
+                              initial={{ opacity: 0, width: 0 }}
+                              animate={{ opacity: 1, width: "auto" }}
+                              exit={{ opacity: 0, width: 0 }}
+                              transition={{ duration: 0.15 }}
+                              className="overflow-hidden flex-shrink-0 flex items-center gap-1"
+                            >
+                              <div className="w-[140px]">
+                                <Combobox
+                                  options={soundOptions}
+                                  value={hooksResponseSoundEnabled ? hooksResponseSound : "none"}
+                                  onChange={(value) => {
+                                    if (value === "none") { setHooksResponseSoundEnabled(false); return; }
+                                    setHooksResponseSoundEnabled(true);
+                                    setHooksResponseSound(value);
+                                  }}
+                                  placeholder="Sound..."
+                                  allowCustom={false}
+                                />
+                              </div>
+                              <button onClick={() => previewHookSound(hooksResponseSound)} title={!hooksResponseSoundEnabled ? "Select a sound to preview" : "Preview sound"} disabled={!hooksResponseSoundEnabled} className="h-8 w-8 flex-shrink-0 flex items-center justify-center rounded-md text-[var(--color-text-muted)] hover:text-[var(--color-text)] disabled:opacity-40 transition-colors">
+                                <Volume2 className="w-3.5 h-3.5" />
+                              </button>
+                            </motion.div>
+                          )}
+                        </AnimatePresence>
+                        <ToggleSwitch checked={systemNotifShowDone} onChange={setSystemNotifShowDone} />
+                      </div>
+                    </div>
+                  </motion.div>
+                ) : null}
+              </AnimatePresence>
             </div>
 
-            {hooksEnabled && (
-              <>
-                <div>
-                  <div className="text-sm font-medium text-[var(--color-text-muted)] mb-2 select-none">System Banner</div>
-                  <div className="flex gap-2">
-                    {[true, false].map((value) => {
-                      const isSelected = hooksBanner === value;
-                      return (
-                        <motion.button
-                          key={value ? "on" : "off"}
-                          whileHover={{ scale: 1.02 }}
-                          whileTap={{ scale: 0.98 }}
-                          onClick={() => setHooksBanner(value)}
-                          className={`flex-1 px-3 py-2 rounded-lg border text-sm transition-all
-                            ${isSelected
-                              ? "border-[var(--color-highlight)] bg-[var(--color-highlight)]/10 text-[var(--color-text)]"
-                              : "border-[var(--color-border)] bg-[var(--color-bg-secondary)] text-[var(--color-text-muted)] hover:border-[var(--color-text-muted)]"
-                            }`}
-                        >
-                          {value ? "On" : "Off"}
-                        </motion.button>
-                      );
-                    })}
-                  </div>
-                </div>
-
-                <div>
-                  <div className="text-sm font-medium text-[var(--color-text-muted)] mb-2 select-none">Agent Response</div>
-                  <p className="text-xs text-[var(--color-text-muted)] mb-2 select-none">When the agent finishes responding to a prompt</p>
-                  <div className="flex gap-2">
-                    <div className="flex-1">
-                      <Combobox
-                        options={soundOptions}
-                        value={hooksResponseSoundEnabled ? hooksResponseSound : "none"}
-                        onChange={(value) => {
-                          if (value === "none") {
-                            setHooksResponseSoundEnabled(false);
-                            return;
-                          }
-                          setHooksResponseSoundEnabled(true);
-                          setHooksResponseSound(value);
-                        }}
-                        placeholder="Select sound..."
-                        allowCustom={false}
-                      />
-                    </div>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => previewHookSound(hooksResponseSound)}
-                      title="Preview sound"
-                      disabled={!hooksResponseSoundEnabled}
-                      className="h-9 w-9 !p-0 rounded-xl"
-                    >
-                      <Volume2 className="w-4 h-4" />
-                    </Button>
-                  </div>
-                </div>
-
-                <div>
-                  <div className="text-sm font-medium text-[var(--color-text-muted)] mb-2 select-none">Agent Permission Required</div>
-                  <p className="text-xs text-[var(--color-text-muted)] mb-2 select-none">When the agent needs your approval for an action</p>
-                  <div className="flex gap-2">
-                    <div className="flex-1">
-                      <Combobox
-                        options={soundOptions}
-                        value={hooksPermissionSoundEnabled ? hooksPermissionSound : "none"}
-                        onChange={(value) => {
-                          if (value === "none") {
-                            setHooksPermissionSoundEnabled(false);
-                            return;
-                          }
-                          setHooksPermissionSoundEnabled(true);
-                          setHooksPermissionSound(value);
-                        }}
-                        placeholder="Select sound..."
-                        allowCustom={false}
-                      />
-                    </div>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => previewHookSound(hooksPermissionSound)}
-                      title="Preview sound"
-                      disabled={!hooksPermissionSoundEnabled}
-                      className="h-9 w-9 !p-0 rounded-xl"
-                    >
-                      <Volume2 className="w-4 h-4" />
-                    </Button>
-                  </div>
-                </div>
-
-                {/* Menubar tray + System notifications — share the same Notification surface */}
-                <div className="pt-2 space-y-4 border-t border-[color-mix(in_srgb,var(--color-border)_60%,transparent)]">
-                  <div className="text-sm font-medium text-[var(--color-text-muted)] mt-3 select-none">
-                    Menubar & System
-                  </div>
-                  <NotifChannel
-                    title="Menubar Tray"
-                    subtitle="Persistent popover anchored to the menubar icon"
-                    enabled={trayEnabled}
-                    onEnabledChange={setTrayEnabled}
-                    showPermission={trayShowPermission}
-                    onShowPermissionChange={setTrayShowPermission}
-                    showDone={trayShowDone}
-                    onShowDoneChange={setTrayShowDone}
-                    showRunning={trayShowRunning}
-                    onShowRunningChange={setTrayShowRunning}
-                    note="Disabling the tray takes effect on next Grove launch."
-                  />
-                  <NotifChannel
-                    title="System Notifications"
-                    subtitle="Native OS banner / notification center"
-                    enabled={systemNotifEnabled}
-                    onEnabledChange={setSystemNotifEnabled}
-                    showPermission={systemNotifShowPermission}
-                    onShowPermissionChange={setSystemNotifShowPermission}
-                    showDone={systemNotifShowDone}
-                    onShowDoneChange={setSystemNotifShowDone}
-                    showRunning={systemNotifShowRunning}
-                    onShowRunningChange={setSystemNotifShowRunning}
-                    note="Running notifications are off by default — they fire continuously and would be noisy."
-                  />
-                </div>
-              </>
-            )}
+            {/* Menubar Tray */}
+            <NotifChannel
+              title="Menubar Tray"
+              subtitle="Persistent popover anchored to the menubar icon"
+              enabled={trayEnabled}
+              onEnabledChange={setTrayEnabled}
+              showPermission={trayShowPermission}
+              onShowPermissionChange={setTrayShowPermission}
+              showDone={trayShowDone}
+              onShowDoneChange={setTrayShowDone}
+              showRunning={trayShowRunning}
+              onShowRunningChange={setTrayShowRunning}
+              note="Disabling the tray takes effect on next Grove launch."
+            />
           </div>
         </Section>
 
@@ -1942,8 +1977,8 @@ interface NotifChannelProps {
   onShowPermissionChange: (v: boolean) => void;
   showDone: boolean;
   onShowDoneChange: (v: boolean) => void;
-  showRunning: boolean;
-  onShowRunningChange: (v: boolean) => void;
+  showRunning?: boolean;
+  onShowRunningChange?: (v: boolean) => void;
   note?: string;
 }
 
@@ -1993,13 +2028,15 @@ function NotifChannel({
                 checked={showDone}
                 onChange={onShowDoneChange}
               />
-              <CategoryToggle
-                label="Running session"
-                description="Tasks actively processing a prompt"
-                accent="var(--color-info)"
-                checked={showRunning}
-                onChange={onShowRunningChange}
-              />
+              {showRunning !== undefined && onShowRunningChange && (
+                <CategoryToggle
+                  label="Running session"
+                  description="Tasks actively processing a prompt"
+                  accent="var(--color-info)"
+                  checked={showRunning}
+                  onChange={onShowRunningChange}
+                />
+              )}
             </div>
             {note ? (
               <div className="mt-3 text-[11px] italic text-[var(--color-text-muted)]">{note}</div>

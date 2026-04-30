@@ -17,11 +17,24 @@ export function quotaHealthColor(percentRemaining: number): string {
   return "var(--color-success)";
 }
 
+const FIVE_HOUR_SECONDS = 5 * 60 * 60;
+
+function isFiveHourWindow(label: string): boolean {
+  return /\b5\s*(?:h|hours?)\b/i.test(label);
+}
+
 /**
- * Chat badge display policy: prefer the short-term "5h limit" window when it
+ * Chat badge display policy: prefer the short-term 5-hour token budget when it
  * exists, otherwise fall back to the backend aggregate.
  */
 export function quotaBadgePercent(usage: AgentUsage): number {
-  const preferred = usage.windows.find((window) => window.label === "5h limit");
+  const fiveHourWindows = usage.windows.filter((window) => {
+    if (window.total_window_seconds === FIVE_HOUR_SECONDS) {
+      return true;
+    }
+    return isFiveHourWindow(window.label);
+  });
+  const preferred =
+    fiveHourWindows.find((window) => /\btokens?\b/i.test(window.label)) ?? fiveHourWindows[0];
   return preferred?.percentage_remaining ?? usage.percentage_remaining;
 }

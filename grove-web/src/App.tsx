@@ -24,7 +24,7 @@ import { UpdateBanner } from "./components/ui/UpdateBanner";
 import { CommandPalette } from "./components/ui/CommandPalette";
 import { ProjectCommandPalette } from "./components/ui/ProjectCommandPalette";
 import { TaskCommandPalette } from "./components/ui/TaskCommandPalette";
-import { ThemeProvider, ProjectProvider, TerminalThemeProvider, NotificationProvider, ConfigProvider, CommandPaletteProvider, PreviewCommentProvider, useProject, useCommandPalette, useTheme } from "./context";
+import { ThemeProvider, ProjectProvider, TerminalThemeProvider, NotificationProvider, ConfigProvider, CommandPaletteProvider, PreviewCommentProvider, useProject, useCommandPalette, useTheme, useConfig } from "./context";
 import { AuthGate } from "./components/AuthGate";
 import type { Task } from "./data/types";
 import { mockConfig } from "./data/mockData";
@@ -78,6 +78,7 @@ function AppContent() {
     inWorkspace,
   } = useCommandPalette();
   const { theme } = useTheme();
+  const { config: globalConfig } = useConfig();
   const navItems: readonly string[] = selectedProject?.projectType === "studio" ? STUDIO_NAV_IDS : REPO_NAV_IDS;
 
   const setActiveNavItem = (index: number) => {
@@ -128,6 +129,56 @@ function AppContent() {
     window.addEventListener("grove:open-help", open);
     return () => window.removeEventListener("grove:open-help", open);
   }, []);
+
+  useEffect(() => {
+    const isTauri = !!((window as Window & {
+      __TAURI__?: unknown;
+      __TAURI_INTERNALS__?: unknown;
+    }).__TAURI__ || (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__);
+    const shortcut = globalConfig?.web?.show_hide_window_shortcut || "";
+    if (!isTauri || !shortcut) return;
+
+    const tauriShortcut = shortcut
+      .split("+")
+      .map((part) => part === "Cmd" ? "CommandOrControl" : part === "Ctrl" ? "Control" : part)
+      .join("+");
+    let registered = false;
+    let disposed = false;
+    const unregisterShortcut = () => {
+      import("@tauri-apps/plugin-global-shortcut")
+        .then(({ unregister }) => unregister(tauriShortcut))
+        .catch((err) => console.error("Failed to unregister window shortcut:", err));
+    };
+
+    import("@tauri-apps/plugin-global-shortcut")
+      .then(({ register }) => {
+        if (disposed) return false;
+        return register(tauriShortcut, (event) => {
+          if (event.state === "Pressed") {
+            invoke("toggle_main_window_visibility").catch((err) => {
+              console.error("Failed to toggle Grove window:", err);
+            });
+          }
+        }).then(() => true);
+      })
+      .then((didRegister) => {
+        if (!didRegister) return;
+        if (disposed) {
+          unregisterShortcut();
+          return;
+        }
+        registered = true;
+      })
+      .catch((err) => {
+        if (!disposed) console.error("Failed to register window shortcut:", err);
+      });
+
+    return () => {
+      disposed = true;
+      if (!registered) return;
+      unregisterShortcut();
+    };
+  }, [globalConfig?.web?.show_hide_window_shortcut]);
 
   const handleSwitchToZen = useCallback(() => {
     setTasksMode("zen");
@@ -301,12 +352,16 @@ function AppContent() {
       if (project) selectProjectRef.current(project);
       setHasExitedWelcome(true);
 
-      // For local tasks (studio tasks), navigate to "work" instead of "tasks"
-      // because local tasks live in the Work page, not the Task list.
+      // For local tasks, navigate to "work" instead of "tasks".
+      // Local tasks always have id "_local" (backend constant LOCAL_TASK_ID).
+      // The projects list uses convertProjectListItem which sets localTask: null,
+      // so we cannot rely on project.localTask here — check the id directly.
       let effectiveRoute = route;
       if (task_id && route === "tasks") {
         const task = project?.tasks?.find((t) => t.id === task_id);
-        if (task?.isLocal) {
+        const isLocalTask =
+          task?.isLocal || task_id === "_local";
+        if (isLocalTask) {
           effectiveRoute = "work";
         }
       }
@@ -360,13 +415,27 @@ function AppContent() {
 
 
   const handleNavigate = (page: string, data?: Record<string, unknown>) => {
+    let targetProject = selectedProject;
     if (data?.projectId) {
-      const target = projects.find((p) => p.id === data.projectId);
-      if (target) {
-        selectProject(target);
+      const found = projects.find((p) => p.id === data.projectId);
+      if (found) {
+        selectProject(found);
+        targetProject = found;
       }
     }
-    setActiveItem(page);
+    // Redirect local tasks to "work" page.
+    // Local tasks always have id "_local" (backend constant LOCAL_TASK_ID).
+    // targetProject may come from the minimal project list (localTask: null),
+    // so checking the id directly is the reliable fallback.
+    let effectivePage = page;
+    if (page === "tasks" && data?.taskId) {
+      const task = targetProject?.tasks?.find((t) => t.id === data.taskId);
+      const isLocalTask =
+        task?.isLocal ||
+        data.taskId === "_local";
+      if (isLocalTask) effectivePage = "work";
+    }
+    setActiveItem(effectivePage);
     setNavigationData(data ?? null);
   };
 

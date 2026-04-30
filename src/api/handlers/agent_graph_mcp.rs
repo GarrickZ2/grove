@@ -43,9 +43,9 @@ use std::sync::RwLock;
 
 use crate::agent_graph::error::AgentGraphError;
 use crate::agent_graph::tools::{
-    grove_agent_capability, grove_agent_contacts, grove_agent_get_spawn_candidates,
-    grove_agent_reply, grove_agent_send, grove_agent_spawn, CapabilityInput, ContactsInput,
-    GetSpawnCandidatesInput, ReplyInput, SendInput, SpawnInput, ToolContext,
+    grove_agent_capability, grove_agent_contacts, grove_agent_reply, grove_agent_send,
+    grove_agent_spawn, CapabilityInput, ContactsInput, ReplyInput, SendInput, SpawnInput,
+    ToolContext,
 };
 
 // ─── Token map (token → caller_chat_id) ───────────────────────────────────────
@@ -178,7 +178,6 @@ fn pid_alive(pid: u32) -> bool {
 fn pid_alive(pid: u32) -> bool {
     // OpenProcess with PROCESS_QUERY_LIMITED_INFORMATION; if it succeeds the
     // pid is at least reserved. Close handle immediately.
-    use std::os::windows::io::RawHandle;
     extern "system" {
         fn OpenProcess(access: u32, inherit: i32, pid: u32) -> *mut std::ffi::c_void;
         fn CloseHandle(h: *mut std::ffi::c_void) -> i32;
@@ -243,23 +242,18 @@ not need to pass it. All tools operate within the caller's task only.
 - grove_agent_spawn:   create a new sibling session and auto-establish caller→child edge
 - grove_agent_send:    deliver a message to a session you have an outgoing edge to
 - grove_agent_reply:   reply to a pending message you received
-- grove_agent_contacts: list who you can reach, who's awaiting your reply, who you're awaiting
+- grove_agent_contacts: list who you can reach, pending messages, and all spawnable targets
 - grove_agent_capability: inspect models / modes / thought_levels of any session in your task
-- grove_agent_get_spawn_candidates: list spawnable base agents, custom ACP servers, and personas
 
-Custom Agents (personas):
-- The user can configure "Custom Agents" in Settings — each is a base agent
-  (claude / codex / etc) preset with a model, mode, effort, and a system prompt.
-- `grove_agent_contacts` returns a `available_custom_agents[]` list. To spawn
-  one of them, pass that entry's `id` (e.g. "ca-...") as `grove_agent_spawn.agent`.
-- `grove_agent_get_spawn_candidates` is the preferred discovery tool when you
-  need every spawn target, including base agents and custom ACP servers.
-- The spawn behaves exactly like a normal base-agent spawn except the new
-  session is pre-seeded with the persona's system prompt on Create. Resume
-  paths see no extra prompt.
-- Personas are user-scoped (per Grove install), not task-scoped. The same
-  `available_custom_agents` is visible to every session in every task — by
-  design, so a persona created in one task can be reused elsewhere.
+Spawning agents (grove_agent_contacts.can_spawn[]):
+- `grove_agent_contacts` returns a `can_spawn[]` list covering every target you can pass to
+  `grove_agent_spawn.agent`: built-in base agents, user-configured custom ACP servers, and
+  user-defined personas (base agents pre-seeded with a system prompt).
+- To spawn any of them, pass the entry's `id` as `grove_agent_spawn.agent`.
+- Persona entries include a `duty` field (the persona's pre-set duty) and never expose the
+  system prompt.
+- Personas are user-scoped (per Grove install), not task-scoped — by design, so a persona
+  created in one task can be reused elsewhere.
 
 Constraints:
 - send requires an existing edge (no_edge if missing); single-in-flight per A→B
@@ -357,7 +351,7 @@ impl AgentGraphMcpService {
 
     #[tool(
         name = "grove_agent_contacts",
-        description = "Return your own metadata, who you can contact (outgoing edges), pending replies you owe, and pending messages awaiting reply from others."
+        description = "Return your own metadata, who you can contact (outgoing edges), pending replies you owe, pending messages awaiting reply from others, and all spawnable targets (base agents, custom servers, personas) via can_spawn[]."
     )]
     async fn grove_agent_contacts_tool(
         &self,
@@ -382,22 +376,6 @@ impl AgentGraphMcpService {
     ) -> Result<CallToolResult, McpError> {
         let cx = caller_context_from_parts(&parts)?;
         match grove_agent_capability(&cx, input).await {
-            Ok(out) => json_success(&out),
-            Err(e) => Ok(tool_error(e)),
-        }
-    }
-
-    #[tool(
-        name = "grove_agent_get_spawn_candidates",
-        description = "List the currently spawnable targets for grove_agent_spawn: base agents, custom ACP servers, and personas. Returns the exact id to pass as grove_agent_spawn.agent plus any default duty for personas. Does not expose persona system prompts."
-    )]
-    async fn grove_agent_get_spawn_candidates_tool(
-        &self,
-        Parameters(input): Parameters<GetSpawnCandidatesInput>,
-        Extension(parts): Extension<Parts>,
-    ) -> Result<CallToolResult, McpError> {
-        let cx = caller_context_from_parts(&parts)?;
-        match grove_agent_get_spawn_candidates(&cx, input).await {
             Ok(out) => json_success(&out),
             Err(e) => Ok(tool_error(e)),
         }
@@ -668,8 +646,7 @@ mod tests {
         assert!(names.contains(&"grove_agent_reply".to_string()));
         assert!(names.contains(&"grove_agent_contacts".to_string()));
         assert!(names.contains(&"grove_agent_capability".to_string()));
-        assert!(names.contains(&"grove_agent_get_spawn_candidates".to_string()));
-        assert_eq!(names.len(), 6);
+        assert_eq!(names.len(), 5);
     }
 
     /// End-to-end test of the HTTP transport: real axum listener bound on a
@@ -826,7 +803,6 @@ mod tests {
             "grove_agent_reply",
             "grove_agent_contacts",
             "grove_agent_capability",
-            "grove_agent_get_spawn_candidates",
         ] {
             assert!(list_body.contains(tool), "tools/list missing {tool}");
         }
@@ -851,57 +827,35 @@ mod tests {
             .expect("tools/call POST");
         assert!(call_resp.status().is_success());
         let call_body: String = call_resp.text().await.expect("body");
-        // Spec §4 ContactsOutput: self.session_id == "chat-A", can_contact has chat-B.
+        // Spec §4 ContactsOutput: self.session_id == "chat-A", can_contact has chat-B,
+        // can_spawn includes available base agents and seeded persona.
         assert!(call_body.contains("chat-A"), "self chat-A in {call_body}");
         assert!(
             call_body.contains("chat-B"),
             "can_contact chat-B in {call_body}"
         );
         assert!(call_body.contains("dispatcher"), "self.duty in {call_body}");
-
-        // ── 4. tools/call grove_agent_get_spawn_candidates ──────────────
-        let candidates_req = serde_json::json!({
-            "jsonrpc": "2.0",
-            "id": 4,
-            "method": "tools/call",
-            "params": {
-                "name": "grove_agent_get_spawn_candidates",
-                "arguments": {}
-            }
-        });
-        let candidates_resp = client
-            .post(&url)
-            .header("accept", "application/json, text/event-stream")
-            .header("mcp-protocol-version", "2025-06-18")
-            .json(&candidates_req)
-            .send()
-            .await
-            .expect("tools/call spawn candidates POST");
-        assert!(candidates_resp.status().is_success());
-        let candidates_body: String = candidates_resp.text().await.expect("body");
+        // can_spawn: persona seeded in setup must appear with duty but without system prompt.
+        assert!(
+            call_body.contains("ca-reviewer"),
+            "can_spawn persona id in {call_body}"
+        );
+        assert!(
+            call_body.contains("review implementation and tests"),
+            "can_spawn persona duty in {call_body}"
+        );
+        assert!(
+            !call_body.contains("do not expose this prompt"),
+            "persona system prompt leaked in {call_body}"
+        );
+        // can_spawn: available base agents must appear with kind=base.
         if let Some(base) = crate::acp::available_base_acp_agents().first() {
             assert!(
-                candidates_body.contains(base.id),
-                "available base agent {} missing from {candidates_body}",
+                call_body.contains(base.id),
+                "can_spawn base agent {} missing from {call_body}",
                 base.id
             );
-            assert!(
-                candidates_body.contains("base"),
-                "base candidate kind missing from {candidates_body}"
-            );
         }
-        assert!(
-            candidates_body.contains("ca-reviewer"),
-            "persona id in {candidates_body}"
-        );
-        assert!(
-            candidates_body.contains("review implementation and tests"),
-            "persona duty in {candidates_body}"
-        );
-        assert!(
-            !candidates_body.contains("do not expose this prompt"),
-            "persona system prompt leaked in {candidates_body}"
-        );
 
         unregister_token(token);
         server.abort();

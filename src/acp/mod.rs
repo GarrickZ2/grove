@@ -62,8 +62,14 @@ pub struct AcpSessionHandle {
     pending_queue: Mutex<Vec<QueuedMessage>>,
     /// 队列暂停标志（用户正在编辑队列消息时暂停 auto-send）
     queue_paused: std::sync::atomic::AtomicBool,
-    /// 当前 agent mode id（用于 PlanFileUpdate 检测）
+    /// 当前 agent mode id（用于 PlanFileUpdate 检测和 QueuedConfig 快照）
     current_mode_id: Mutex<Option<String>>,
+    /// 当前 agent model id（用于 QueuedConfig 快照）
+    current_model_id: Mutex<Option<String>>,
+    /// 当前 thought-level value id（用于 QueuedConfig 快照）
+    current_thought_level_id: Mutex<Option<String>>,
+    /// Config option id for thought-level（agent 自定义，用于 SetThoughtLevel 命令）
+    thought_level_config_id: Mutex<Option<String>>,
     /// Task 工作目录（用于用户直接执行 terminal 命令）
     pub working_dir: String,
     /// 用户终端命令的 kill channel（Shell 模式）
@@ -183,6 +189,8 @@ pub enum AcpUpdate {
     },
     /// Mode 变更通知
     ModeChanged { mode_id: String },
+    /// Model 变更通知（乐观更新，与 ModeChanged 对称）
+    ModelChanged { model_id: String },
     /// Thought-level selector updated (push from agent via ConfigOptionUpdate,
     /// or echo after a SetThoughtLevel roundtrip). Empty available vec means
     /// the agent dropped the selector.
@@ -301,6 +309,22 @@ pub enum ContentBlockData {
     },
 }
 
+/// Model / mode / thought-level 快照，随 QueuedMessage 一起存储，
+/// 在出队时重新应用，确保每条消息使用正确的配置。
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct QueuedConfig {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mode: Option<String>,
+    /// Thought-level value id（e.g. "high"）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thought_level: Option<String>,
+    /// Config option id for thought-level（agent 自定义，e.g. "effort_level"）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thought_level_config_id: Option<String>,
+}
+
 /// 队列中的待发送消息（支持附件）
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct QueuedMessage {
@@ -312,6 +336,9 @@ pub struct QueuedMessage {
     /// 区分 user / agent-injected 消息。Phase 2 引入。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sender: Option<String>,
+    /// 出队时重新应用的 config 快照（model / mode / thought_level）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub config: Option<QueuedConfig>,
 }
 
 /// Session 元数据（写入 session.json，供其他进程发现）
@@ -1047,6 +1074,8 @@ async fn handle_session_notification(
 /// the persisted metadata (if any) to keep dropdown options intact; otherwise
 /// emits an empty list and relies on the next `SessionReady` / update to refill.
 fn emit_thought_level_sync(handle: &AcpSessionHandle, config_id: &str, value_id: &str) {
+    *handle.current_thought_level_id.lock().unwrap() = Some(value_id.to_string());
+    *handle.thought_level_config_id.lock().unwrap() = Some(config_id.to_string());
     let available = handle
         .chat_id
         .as_deref()
@@ -1352,6 +1381,9 @@ pub async fn get_or_start_session(
                     pending_queue: Mutex::new(Vec::new()),
                     queue_paused: std::sync::atomic::AtomicBool::new(false),
                     current_mode_id: Mutex::new(None),
+                    current_model_id: Mutex::new(None),
+                    current_thought_level_id: Mutex::new(None),
+                    thought_level_config_id: Mutex::new(None),
                     working_dir: config.working_dir.to_string_lossy().to_string(),
                     terminal_kill_tx: Mutex::new(None),
                     is_busy: std::sync::atomic::AtomicBool::new(false),
@@ -2078,6 +2110,9 @@ async fn drive_session(
     }
 
     *handle.current_mode_id.lock().unwrap() = current_mode_id.clone();
+    *handle.current_model_id.lock().unwrap() = current_model_id.clone();
+    *handle.current_thought_level_id.lock().unwrap() = current_thought_level_id.clone();
+    *handle.thought_level_config_id.lock().unwrap() = thought_level_config_id.clone();
 
     handle.emit(AcpUpdate::SessionReady {
         session_id,
@@ -2138,7 +2173,8 @@ async fn drive_session(
 
                 let cancel_deadline: std::cell::Cell<Option<tokio::time::Instant>> =
                     std::cell::Cell::new(None);
-                let mut next_prompt: Option<(String, Vec<ContentBlockData>)> = None;
+                let mut next_prompt: Option<(String, Vec<ContentBlockData>, Option<String>, bool)> =
+                    None;
                 let mut got_kill = false;
 
                 let result = loop {
@@ -2165,6 +2201,8 @@ async fn drive_session(
                                     )).block_task().await;
                                 }
                                 AcpCommand::SetModel { model_id } => {
+                                    *handle.current_model_id.lock().unwrap() = Some(model_id.clone());
+                                    handle.emit(AcpUpdate::ModelChanged { model_id: model_id.clone() });
                                     let _ = conn.send_request(acp::SetSessionModelRequest::new(
                                         session_id_arc.clone(),
                                         acp::ModelId::new(model_id),
@@ -2184,10 +2222,10 @@ async fn drive_session(
                                         emit_thought_level_sync(&handle, &config_id, &value_id);
                                     }
                                 }
-                                AcpCommand::Prompt { text, attachments, .. } => {
+                                AcpCommand::Prompt { text, attachments, sender, terminal } => {
                                     let _ = conn.send_notification(acp::CancelNotification::new(session_id_arc.clone()));
                                     cancel_deadline.set(Some(tokio::time::Instant::now() + std::time::Duration::from_secs(10)));
-                                    next_prompt = Some((text, attachments));
+                                    next_prompt = Some((text, attachments, sender, terminal));
                                 }
                                 AcpCommand::Kill => {
                                     got_kill = true;
@@ -2241,26 +2279,32 @@ async fn drive_session(
                     }
                 }
 
-                if let Some((text, attachments)) = next_prompt {
+                if let Some((text, attachments, sender, terminal)) = next_prompt {
                     let _ = handle.cmd_tx.try_send(AcpCommand::Prompt {
                         text,
                         attachments,
-                        sender: None,
-                        terminal: false,
+                        sender,
+                        terminal,
                     });
                 } else if !handle
                     .queue_paused
                     .load(std::sync::atomic::Ordering::Relaxed)
                 {
                     if let Some(next_msg) = handle.pop_queue_front() {
-                        handle.emit(AcpUpdate::QueueUpdate {
-                            messages: handle.get_queue(),
-                        });
-                        handle.try_enqueue_prompt(
-                            next_msg.text,
-                            next_msg.attachments,
-                            next_msg.sender,
-                        );
+                        // M5: emit QueueUpdate only after successful enqueue.
+                        // On failure, re-insert at front so the message isn't lost.
+                        let text = next_msg.text.clone();
+                        let attachments = next_msg.attachments.clone();
+                        let sender = next_msg.sender.clone();
+                        let config = next_msg.config.clone();
+                        if handle.try_enqueue_prompt(text, attachments, sender, config) {
+                            handle.emit(AcpUpdate::QueueUpdate {
+                                messages: handle.get_queue(),
+                            });
+                        } else {
+                            let mut q = handle.pending_queue.lock().unwrap();
+                            q.insert(0, next_msg);
+                        }
                     }
                 }
             }
@@ -2281,6 +2325,10 @@ async fn drive_session(
                     .await;
             }
             AcpCommand::SetModel { model_id } => {
+                *handle.current_model_id.lock().unwrap() = Some(model_id.clone());
+                handle.emit(AcpUpdate::ModelChanged {
+                    model_id: model_id.clone(),
+                });
                 let _ = conn
                     .send_request(acp::SetSessionModelRequest::new(
                         session_id_arc.clone(),
@@ -2510,6 +2558,14 @@ impl AcpSessionHandle {
                                 .unwrap_or_default(),
                         },
                     );
+                }
+                AcpUpdate::ModelChanged { model_id } => {
+                    if let Some(mut meta) =
+                        read_session_metadata(&self.project_key, &self.task_id, chat_id)
+                    {
+                        meta.current_model_id = Some(model_id.clone());
+                        write_session_metadata(&self.project_key, &self.task_id, chat_id, &meta);
+                    }
                 }
                 AcpUpdate::ThoughtLevelsUpdate {
                     available,
@@ -2830,13 +2886,54 @@ impl AcpSessionHandle {
         }
     }
 
-    /// 非阻塞发送 prompt 命令（队列 auto-send 使用）
+    /// 非阻塞发送 prompt 命令（队列 auto-send 使用）。
+    /// 如果 config 不为空，先依次发送 SetModel / SetMode / SetThoughtLevel，
+    /// 再发送 Prompt，确保配置在本轮生效。
+    /// 注意：config 命令和 Prompt 命令各自独立发送至无界有界 channel，无法原子提交。
+    /// 若某条 config 命令成功但后续命令失败（channel 已满），config 已生效但 Prompt
+    /// 未送达。调用方检查返回 false 时需将消息回插队首；config 的提前生效属于可接受的
+    /// 最终一致性，不会导致消息丢失。
     fn try_enqueue_prompt(
         &self,
         text: String,
         attachments: Vec<ContentBlockData>,
         sender: Option<String>,
+        config: Option<QueuedConfig>,
     ) -> bool {
+        if let Some(cfg) = config {
+            if let Some(model) = cfg.model {
+                if self
+                    .cmd_tx
+                    .try_send(AcpCommand::SetModel { model_id: model })
+                    .is_err()
+                {
+                    return false;
+                }
+            }
+            if let Some(mode) = cfg.mode {
+                if self
+                    .cmd_tx
+                    .try_send(AcpCommand::SetMode { mode_id: mode })
+                    .is_err()
+                {
+                    return false;
+                }
+            }
+            if let (Some(config_id), Some(value_id)) =
+                (cfg.thought_level_config_id, cfg.thought_level)
+            {
+                if self
+                    .cmd_tx
+                    .try_send(AcpCommand::SetThoughtLevel {
+                        config_id,
+                        value_id,
+                    })
+                    .is_err()
+                {
+                    return false;
+                }
+            }
+        }
         self.cmd_tx
             .try_send(AcpCommand::Prompt {
                 text,
@@ -2845,6 +2942,16 @@ impl AcpSessionHandle {
                 terminal: false,
             })
             .is_ok()
+    }
+
+    /// 返回当前 model id 快照（用于 QueuedConfig）
+    pub fn snapshot_config(&self) -> QueuedConfig {
+        QueuedConfig {
+            model: self.current_model_id.lock().unwrap().clone(),
+            mode: self.current_mode_id.lock().unwrap().clone(),
+            thought_level: self.current_thought_level_id.lock().unwrap().clone(),
+            thought_level_config_id: self.thought_level_config_id.lock().unwrap().clone(),
+        }
     }
 
     /// 暂停队列 auto-send（用户正在编辑队列消息）
@@ -2864,7 +2971,8 @@ impl AcpSessionHandle {
             let text = next_msg.text.clone();
             let attachments = next_msg.attachments.clone();
             let sender = next_msg.sender.clone();
-            if self.try_enqueue_prompt(text, attachments, sender) {
+            let config = next_msg.config.clone();
+            if self.try_enqueue_prompt(text, attachments, sender, config) {
                 self.emit(AcpUpdate::QueueUpdate {
                     messages: self.get_queue(),
                 });
@@ -3024,6 +3132,9 @@ pub fn new_handle_for_test(
         pending_queue: Mutex::new(Vec::new()),
         queue_paused: std::sync::atomic::AtomicBool::new(false),
         current_mode_id: Mutex::new(None),
+        current_model_id: Mutex::new(None),
+        current_thought_level_id: Mutex::new(None),
+        thought_level_config_id: Mutex::new(None),
         working_dir: "/tmp".to_string(),
         terminal_kill_tx: Mutex::new(None),
         is_busy: std::sync::atomic::AtomicBool::new(false),
@@ -3852,7 +3963,9 @@ enum AcpNotificationEvent {
     PermissionRequired,
 }
 
-/// 发送 ACP 事件通知（根据 hooks 配置决定是否播放声音、发送横幅）
+/// 发送 ACP 事件通知。
+/// notification_enabled 是主开关，notification_show_* 是每个事件类型的子开关，
+/// 子开关同时控制声音和系统横幅，声音内容仍从 hooks config 读取。
 fn notify_acp_event(
     project_key: &str,
     task_id: &str,
@@ -3863,41 +3976,60 @@ fn notify_acp_event(
     use crate::hooks::{self, NotificationLevel};
     use crate::storage::{config, tasks as task_storage};
 
-    let cfg = config::load_config().hooks;
-    if !cfg.enabled {
+    let full_cfg = config::load_config();
+    let hooks_cfg = full_cfg.hooks;
+    let notif_cfg = full_cfg.notifications;
+
+    // 主开关 + 事件子开关决定本次是否触发任何通知
+    let event_enabled = notif_cfg.notification_enabled
+        && match event {
+            AcpNotificationEvent::TurnComplete => notif_cfg.notification_show_done,
+            AcpNotificationEvent::PermissionRequired => notif_cfg.notification_show_permission,
+        };
+
+    if !event_enabled {
+        let level = if title_suffix.contains("Permission") {
+            NotificationLevel::Warn
+        } else {
+            NotificationLevel::Notice
+        };
+        // External shell hooks always fire regardless of in-app notification settings —
+        // they are a separate mechanism from the tray/system-banner notification system.
+        hooks::update_hook(project_key, task_id, level, Some(message.to_string()));
         return;
     }
 
+    // ── 声音 ──────────────────────────────────────────────────────────────
     let sound = match event {
         AcpNotificationEvent::TurnComplete => {
-            if cfg.response_sound_enabled {
-                Some(if cfg.response_sound.is_empty() {
+            if hooks_cfg.response_sound_enabled {
+                Some(if hooks_cfg.response_sound.is_empty() {
                     "Glass"
                 } else {
-                    &cfg.response_sound
+                    &hooks_cfg.response_sound
                 })
             } else {
                 None
             }
         }
         AcpNotificationEvent::PermissionRequired => {
-            if cfg.permission_sound_enabled {
-                Some(if cfg.permission_sound.is_empty() {
+            if hooks_cfg.permission_sound_enabled {
+                Some(if hooks_cfg.permission_sound.is_empty() {
                     "Purr"
                 } else {
-                    &cfg.permission_sound
+                    &hooks_cfg.permission_sound
                 })
             } else {
                 None
             }
         }
     };
-
     if let Some(s) = sound {
         hooks::play_sound(s);
     }
 
-    if cfg.banner {
+    // ── 系统横幅 ───────────────────────────────────────────────────────────
+    {
         let project_name = crate::storage::workspace::load_project_by_hash(project_key)
             .ok()
             .flatten()

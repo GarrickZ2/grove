@@ -30,6 +30,24 @@ fn toggle_devtools(window: tauri::WebviewWindow) {
 }
 
 #[tauri::command]
+fn toggle_main_window_visibility(app: tauri::AppHandle) -> Result<(), String> {
+    use tauri::Manager;
+
+    let window = app
+        .get_webview_window("main")
+        .ok_or_else(|| "main window not found".to_string())?;
+
+    if window.is_visible().map_err(|e| e.to_string())? {
+        window.hide().map_err(|e| e.to_string())?;
+    } else {
+        window.show().map_err(|e| e.to_string())?;
+        window.set_focus().map_err(|e| e.to_string())?;
+    }
+
+    Ok(())
+}
+
+#[tauri::command]
 fn open_external_url(url: String) -> Result<(), String> {
     if !(url.starts_with("http://") || url.starts_with("https://")) {
         return Err(format!("refused non-http(s) url: {url}"));
@@ -298,10 +316,12 @@ pub async fn execute(port: u16) {
 
     let tauri_app = tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .invoke_handler(tauri::generate_handler![
             open_external_url,
             download_file_dialog,
             toggle_devtools,
+            toggle_main_window_visibility,
             crate::tray::tray_resolve_permission,
             crate::tray::tray_open_main,
             crate::tray::tray_open_settings,

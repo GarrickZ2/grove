@@ -2746,6 +2746,9 @@ export function TaskChat({
         case "mode_changed":
           setPermissionLevel(msg.mode_id);
           break;
+        case "model_changed":
+          setSelectedModel(msg.model_id);
+          break;
         case "thought_levels_update":
           setThoughtLevelOptions(
             (msg.available ?? []).map(
@@ -5708,9 +5711,9 @@ const DropdownSelect = ({
         <ChevronDown className="w-3 h-3 opacity-70" />
       </button>
       {open && (
-        <div className="absolute bottom-full right-0 mb-1 min-w-44 max-h-64 overflow-y-auto rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] shadow-lg py-1 z-50">
+        <div className="absolute bottom-full right-0 mb-1 min-w-44 max-h-64 flex flex-col rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] shadow-lg py-1 z-50">
           {enableSearch && (
-            <div className="px-2 pt-1.5 pb-1 border-b border-[var(--color-border)]">
+            <div className="px-2 pt-1.5 pb-1 border-b border-[var(--color-border)] flex-shrink-0">
               <div className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-[var(--color-bg-secondary)]">
                 <Search className="w-3 h-3 text-[var(--color-text-muted)] flex-shrink-0" />
                 <input
@@ -5725,6 +5728,7 @@ const DropdownSelect = ({
               </div>
             </div>
           )}
+          <div className="overflow-y-auto flex-1">
           {filteredOptions.map((opt) => (
             <button
               key={opt.value}
@@ -5746,6 +5750,7 @@ const DropdownSelect = ({
               No matches
             </div>
           )}
+          </div>
         </div>
       )}
     </div>

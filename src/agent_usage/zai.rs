@@ -88,9 +88,13 @@ pub(super) fn fetch_with_token(token: &str) -> Result<AgentUsage, String> {
         ));
     }
 
-    let data = body.data.ok_or("missing data block")?;
-    let limits = data.limits.ok_or("missing limits array")?;
+    let mut data = body.data.ok_or("missing data block")?;
+    let limits = data.limits.take().ok_or("missing limits array")?;
 
+    build_usage(data, limits)
+}
+
+fn build_usage(data: DataBlock, limits: Vec<LimitEntry>) -> Result<AgentUsage, String> {
     let mut usage = AgentUsage::new("zai");
     let plan = data
         .plan_name
@@ -109,28 +113,14 @@ pub(super) fn fetch_with_token(token: &str) -> Result<AgentUsage, String> {
             Some("TIME_LIMIT") => "Calls",
             _ => continue,
         };
-        // Compute structured window length AND a human-readable suffix.
-        // unit=2 (weeks) is rendered as "N×7 days" per user request.
-        // unit=4 is months in z.ai's API; approximate as 30 days for the
-        // safe-guard line. Unknown units yield `secs_per_unit = 0` so the
-        // frontend skips the safe-guard line — surfacing the bar without a
-        // bogus pace mark is safer than guessing the window length.
         let num = entry.number.unwrap_or(0);
-        let (display_num, display_unit, secs_per_unit): (u32, &str, i64) =
-            match entry.unit.unwrap_or(0) {
-                1 => (num, "days", 86400),
-                2 => (num.saturating_mul(7), "days", 86400),
-                3 => (num, "hours", 3600),
-                4 => (num.saturating_mul(30), "days", 86400),
-                5 => (num, "minutes", 60),
-                _ => (num, "units", 0),
-            };
-        let total_window_seconds = if secs_per_unit > 0 && display_num > 0 {
-            Some(i64::from(display_num) * secs_per_unit)
+        let (display_num, display_unit, total_window_seconds) = window_parts(entry.unit, num);
+        let window_desc = if display_num == 1 {
+            format!("{} {}", display_num, display_unit)
         } else {
-            None
+            format!("{} {}s", display_num, display_unit)
         };
-        let window_desc = format!("{} {}", display_num, display_unit);
+
         // API convention: `percentage` is used %, so remaining = 100 - percentage.
         let pct_used = entry.percentage.unwrap_or(0.0);
         let pct_remaining = clamp_percent((100.0 - pct_used) as f32);
@@ -171,4 +161,70 @@ pub(super) fn fetch_with_token(token: &str) -> Result<AgentUsage, String> {
     }
 
     usage.finalize().ok_or_else(|| "no usage windows".into())
+}
+
+fn window_parts(unit: Option<u32>, number: u32) -> (u32, &'static str, Option<i64>) {
+    let num = number.max(1);
+    match unit.unwrap_or(1) {
+        // z.ai calls this unit in the API payload, but the product displays it
+        // as a weekly quota window.
+        1 => (num, "week", Some(i64::from(num) * 7 * 86400)),
+        2 => (num, "day", Some(i64::from(num) * 86400)),
+        3 => (num, "hour", Some(i64::from(num) * 3600)),
+        // Monthly windows are only used for pace guidance, so 30 days is close
+        // enough and avoids parsing label text on the frontend.
+        4 => (num, "month", Some(i64::from(num) * 30 * 86400)),
+        5 => (num, "minute", Some(i64::from(num) * 60)),
+        _ => (num, "unit", None),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn limit(entry_type: &str, unit: Option<u32>, number: u32, percentage: f64) -> LimitEntry {
+        LimitEntry {
+            entry_type: Some(entry_type.to_string()),
+            unit,
+            number: Some(number),
+            usage: None,
+            current_value: None,
+            remaining: None,
+            percentage: Some(percentage),
+            next_reset_time: None,
+        }
+    }
+
+    #[test]
+    fn maps_zai_unit_one_to_weekly_window() {
+        let data = DataBlock {
+            limits: None,
+            plan_name: Some("Coding Plan".to_string()),
+            plan: None,
+            plan_type: None,
+            package_name: None,
+        };
+        let usage = build_usage(data, vec![limit("TOKENS_LIMIT", Some(1), 1, 54.0)]).unwrap();
+
+        assert_eq!(usage.windows[0].label, "Tokens (1 week)");
+        assert_eq!(usage.windows[0].percentage_remaining, 46.0);
+        assert_eq!(usage.windows[0].total_window_seconds, Some(7 * 86400));
+    }
+
+    #[test]
+    fn labels_short_token_window_as_hours() {
+        let data = DataBlock {
+            limits: None,
+            plan_name: None,
+            plan: None,
+            plan_type: None,
+            package_name: None,
+        };
+        let usage = build_usage(data, vec![limit("TOKENS_LIMIT", Some(3), 5, 1.0)]).unwrap();
+
+        assert_eq!(usage.windows[0].label, "Tokens (5 hours)");
+        assert_eq!(usage.windows[0].percentage_remaining, 99.0);
+        assert_eq!(usage.windows[0].total_window_seconds, Some(5 * 3600));
+    }
 }

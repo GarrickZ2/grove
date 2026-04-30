@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 
 use super::error::AgentGraphError;
 use super::inject::{build_injected_prompt, InjectKind};
-use crate::acp::{self, AcpSessionHandle, AcpStartConfig, AcpUpdate, QueuedMessage};
+use crate::acp::{self, AcpSessionHandle, AcpStartConfig, AcpUpdate, QueuedConfig, QueuedMessage};
 use crate::api::handlers::walkie_talkie::{broadcast_radio_event, RadioEvent};
 use crate::storage::{agent_graph as graph_db, custom_agent, database, tasks, workspace};
 
@@ -42,6 +42,28 @@ impl ToolContext {
 
 // ─── grove_agent_send ─────────────────────────────────────────────────────────
 
+/// Optional config overrides applied to the target session before message delivery.
+/// Use `grove_agent_capability` to discover which values are valid for a session.
+/// Config is applied atomically with delivery: the target session is started on demand
+/// if offline, then the override is applied before the message is sent or queued.
+/// If the message is queued (session busy), the config snapshot travels with the
+/// message and is re-applied at dequeue time.
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
+pub struct SendConfig {
+    /// Model id to switch to (e.g. `"claude-opus-4-5"`).
+    /// Must be one of `grove_agent_capability.available.models[][0]`.
+    #[serde(default)]
+    pub model: Option<String>,
+    /// Mode id to switch to (e.g. `"auto"`).
+    /// Must be one of `grove_agent_capability.available.modes[][0]`.
+    #[serde(default)]
+    pub mode: Option<String>,
+    /// Thought-level value id (e.g. `"high"`).
+    /// Must be one of `grove_agent_capability.available.thought_levels[][0]`.
+    #[serde(default)]
+    pub thought_level: Option<String>,
+}
+
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
 pub struct SendInput {
     /// Target session id (chat_id of the recipient).
@@ -53,6 +75,10 @@ pub struct SendInput {
     /// Required only when the target session has no duty yet; forbidden otherwise.
     #[serde(default)]
     pub duty: Option<String>,
+    /// Optional model / mode / thought-level overrides applied to the target
+    /// session before delivery. Use `grove_agent_capability` to discover valid values.
+    #[serde(default)]
+    pub config: Option<SendConfig>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -123,7 +149,8 @@ pub async fn grove_agent_send(cx: &ToolContext, input: SendInput) -> AgentGraphR
     });
 
     // 投递：busy → 排队；idle → send_prompt 同步 broadcast UserMessage
-    // Includes synchronous spawn-on-demand if the target session is offline.
+    // Config 覆盖（model / mode / thought_level）在 deliver_to_session 内部完成，
+    // 确保离线 session 唤醒后也能正确应用。
     // On any failure we MUST roll back the pending row we just inserted —
     // otherwise the sender's edge stays stuck in "blocked" forever for a
     // message that never reached the target's queue. The MCP error returned
@@ -136,6 +163,7 @@ pub async fn grove_agent_send(cx: &ToolContext, input: SendInput) -> AgentGraphR
         InjectKind::Send,
         &input.message,
         Some(&msg_id),
+        input.config.clone(),
     )
     .await;
     if let Err(e) = delivery {
@@ -213,6 +241,7 @@ pub async fn grove_agent_reply(
         InjectKind::Reply,
         &input.message,
         None,
+        None,
     )
     .await?;
 
@@ -273,22 +302,39 @@ pub struct ContactsAwaitingReply {
     pub sent_at: String,
 }
 
-/// Custom Agent (persona) the caller can spawn via `grove_agent_spawn` —
-/// pass `id` as the `agent` argument; backend resolves to the underlying
-/// base_agent and injects the persona's system prompt on session create.
-///
-/// Note: personas are scoped to the user, NOT to a project or task — every
-/// session in every task can see the full list. This is intentional: a
-/// persona is a reusable identity, and surfacing them globally lets an AI
-/// in any context propose spawning e.g. "QA Reviewer" without first being
-/// told it exists. The cross-task visibility is by design, not a leak.
+/// Kind of spawnable target returned in `can_spawn`.
 #[derive(Debug, Clone, Serialize)]
-pub struct ContactsAvailableCustomAgent {
+#[serde(rename_all = "snake_case")]
+pub enum CanSpawnKind {
+    /// System built-in ACP agent (e.g. "claude", "codex").
+    Base,
+    /// User-configured custom ACP server.
+    CustomServer,
+    /// User-defined persona: a base agent pre-seeded with a system prompt.
+    Persona,
+}
+
+/// An entry in `ContactsOutput.can_spawn` — a target the caller can pass
+/// as the `agent` argument to `grove_agent_spawn`.
+///
+/// Personas are user-scoped (per Grove install), not task-scoped. Every
+/// session in every task sees the full persona list — by design, so a persona
+/// created in one task can be reused elsewhere.
+#[derive(Debug, Clone, Serialize)]
+pub struct ContactsCanSpawn {
+    /// Value to pass as `grove_agent_spawn.agent`.
     pub id: String,
-    pub name: String,
+    pub kind: CanSpawnKind,
+    pub display_name: String,
+    /// Underlying base agent id. For personas, this is the persona's
+    /// `base_agent`; for base/custom-server entries it equals `id`.
     pub base_agent: String,
+    /// Pre-set duty for personas (not exposed for base/custom-server).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub duty: Option<String>,
+    /// Icon hint (base agents only).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub icon_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -298,11 +344,10 @@ pub struct ContactsOutput {
     pub can_contact: Vec<ContactsCanContact>,
     pub pending_replies: Vec<ContactsPendingReply>,
     pub awaiting_reply: Vec<ContactsAwaitingReply>,
-    /// Personas configured in Settings. Use `id` as the `agent` arg of
-    /// `grove_agent_spawn` to start a sibling session pre-seeded with the
-    /// persona's system prompt.
+    /// All targets the caller can pass as `grove_agent_spawn.agent`:
+    /// base agents, custom ACP servers, and personas — in that order.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub available_custom_agents: Vec<ContactsAvailableCustomAgent>,
+    pub can_spawn: Vec<ContactsCanSpawn>,
 }
 
 pub async fn grove_agent_contacts(
@@ -348,19 +393,43 @@ pub async fn grove_agent_contacts(
         })
         .collect();
 
-    // H5: Persona / custom_agent 是 user-scoped（按用户 grove 安装维度），故意全局
-    // 可见、跨 task / project — 用户在任一 task 创建的 persona 应能在其它 task 复用。
-    // 这是有意行为，不做 project 过滤；MCP instructions 已说明（agent_graph_mcp.rs）。
-    let available_custom_agents = crate::storage::custom_agent::list()
-        .unwrap_or_default()
-        .into_iter()
-        .map(|p| ContactsAvailableCustomAgent {
-            id: p.id,
-            name: p.name,
-            base_agent: p.base_agent,
-            duty: p.duty,
-        })
-        .collect();
+    // can_spawn: base agents → custom servers → personas (user-scoped, cross-task by design)
+    let mut can_spawn: Vec<ContactsCanSpawn> = Vec::new();
+    for base in acp::available_base_acp_agents() {
+        can_spawn.push(ContactsCanSpawn {
+            id: base.id.to_string(),
+            kind: CanSpawnKind::Base,
+            display_name: base.display_name.to_string(),
+            base_agent: base.id.to_string(),
+            duty: None,
+            icon_id: Some(base.icon_id.to_string()),
+        });
+    }
+    let config = crate::storage::config::load_config();
+    for server in config.acp.custom_agents {
+        if acp::resolve_agent(&server.id).is_some() {
+            can_spawn.push(ContactsCanSpawn {
+                id: server.id.clone(),
+                kind: CanSpawnKind::CustomServer,
+                display_name: server.name,
+                base_agent: server.id,
+                duty: None,
+                icon_id: None,
+            });
+        }
+    }
+    for persona in custom_agent::list().unwrap_or_default() {
+        if acp::resolve_agent(&persona.base_agent).is_some() {
+            can_spawn.push(ContactsCanSpawn {
+                id: persona.id,
+                kind: CanSpawnKind::Persona,
+                display_name: persona.name,
+                base_agent: persona.base_agent,
+                duty: persona.duty,
+                icon_id: None,
+            });
+        }
+    }
 
     Ok(ContactsOutput {
         self_: ContactsSelf {
@@ -372,7 +441,7 @@ pub async fn grove_agent_contacts(
         can_contact,
         pending_replies,
         awaiting_reply,
-        available_custom_agents,
+        can_spawn,
     })
 }
 
@@ -430,101 +499,12 @@ pub async fn grove_agent_capability(
     })
 }
 
-// ─── grove_agent_get_spawn_candidates ────────────────────────────────────────
-
-#[derive(Debug, Clone, Deserialize, JsonSchema, Default)]
-pub struct GetSpawnCandidatesInput {}
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum SpawnCandidateKind {
-    Base,
-    CustomServer,
-    Persona,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct SpawnCandidate {
-    /// Value to pass as `grove_agent_spawn.agent`.
-    pub id: String,
-    pub kind: SpawnCandidateKind,
-    pub display_name: String,
-    /// Underlying ACP agent/server id. For personas, this is the persona's
-    /// `base_agent`; for base/custom-server entries it equals `id`.
-    pub base_agent: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub duty: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub icon_id: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct GetSpawnCandidatesOutput {
-    pub candidates: Vec<SpawnCandidate>,
-}
-
-/// Return the currently spawnable ACP targets visible to an agent graph caller.
-///
-/// The returned `id` is deliberately the same value accepted by
-/// `grove_agent_spawn.agent`. Personas include their default duty, but never
-/// expose their system prompt.
-pub async fn grove_agent_get_spawn_candidates(
-    cx: &ToolContext,
-    _input: GetSpawnCandidatesInput,
-) -> AgentGraphResult<GetSpawnCandidatesOutput> {
-    // Validate that the token-bound caller is still a live chat in a task.
-    let _ = cx.caller_context()?;
-
-    let mut candidates = Vec::new();
-
-    for base in acp::available_base_acp_agents() {
-        candidates.push(SpawnCandidate {
-            id: base.id.to_string(),
-            kind: SpawnCandidateKind::Base,
-            display_name: base.display_name.to_string(),
-            base_agent: base.id.to_string(),
-            duty: None,
-            icon_id: Some(base.icon_id.to_string()),
-        });
-    }
-
-    let config = crate::storage::config::load_config();
-    for server in config.acp.custom_agents {
-        if acp::resolve_agent(&server.id).is_some() {
-            candidates.push(SpawnCandidate {
-                id: server.id.clone(),
-                kind: SpawnCandidateKind::CustomServer,
-                display_name: server.name,
-                base_agent: server.id,
-                duty: None,
-                icon_id: None,
-            });
-        }
-    }
-
-    let personas = custom_agent::list().map_err(AgentGraphError::from)?;
-    for persona in personas {
-        if acp::resolve_agent(&persona.base_agent).is_some() {
-            candidates.push(SpawnCandidate {
-                id: persona.id,
-                kind: SpawnCandidateKind::Persona,
-                display_name: persona.name,
-                base_agent: persona.base_agent,
-                duty: persona.duty,
-                icon_id: None,
-            });
-        }
-    }
-
-    Ok(GetSpawnCandidatesOutput { candidates })
-}
-
 // ─── grove_agent_spawn ────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
 pub struct SpawnInput {
     /// Base agent kind (e.g. "claude", "codex", "opencode") OR a Custom Agent
-    /// (persona) id from `grove_agent_contacts.available_custom_agents[].id`.
+    /// (persona) id from `grove_agent_contacts.can_spawn[].id`.
     /// When you pass a persona id the spawn will start that persona's
     /// underlying base agent and seed it with the user-defined system prompt.
     pub agent: String,
@@ -759,6 +739,7 @@ pub async fn grove_agent_spawn(
 
 // ─── 共用：注入到目标 session（busy → queue, idle → send_prompt） ─────────────
 
+#[allow(clippy::too_many_arguments)]
 async fn deliver_to_session(
     project_key: &str,
     task_id: &str,
@@ -767,11 +748,47 @@ async fn deliver_to_session(
     kind: InjectKind,
     body: &str,
     msg_id: Option<&str>,
+    config: Option<SendConfig>,
 ) -> AgentGraphResult<()> {
     // Synchronous spawn-on-demand: if the target session isn't running, start
     // it and wait for SessionReady before delivering. Errors here mean the
     // message was NOT queued — the caller MUST treat that as a failure.
     let target_handle = ensure_target_handle(project_key, task_id, target_chat_id).await?;
+
+    // Apply config now that the session is guaranteed online (covers the offline case).
+    // We also build a QueuedConfig snapshot to re-apply if the message ends up queued.
+    let queued_config = if let Some(cfg) = &config {
+        if let Some(ref model) = cfg.model {
+            let _ = target_handle.set_model(model.clone()).await;
+        }
+        if let Some(ref mode) = cfg.mode {
+            let _ = target_handle.set_mode(mode.clone()).await;
+        }
+        let thought_level_config_id =
+            acp::read_session_metadata(project_key, task_id, target_chat_id)
+                .and_then(|m| m.thought_level_config_id);
+        if let (Some(ref thought_level), Some(ref config_id)) =
+            (&cfg.thought_level, &thought_level_config_id)
+        {
+            let _ = target_handle
+                .set_thought_level(config_id.clone(), thought_level.clone())
+                .await;
+        } else if cfg.thought_level.is_some() && thought_level_config_id.is_none() {
+            eprintln!(
+                "[ACP] deliver_to_session: thought_level requested but thought_level_config_id \
+                 not yet in session.json for chat {target_chat_id} — thought_level will also be \
+                 skipped at dequeue (config_id snapshot is None)"
+            );
+        }
+        Some(QueuedConfig {
+            model: cfg.model.clone(),
+            mode: cfg.mode.clone(),
+            thought_level: cfg.thought_level.clone(),
+            thought_level_config_id,
+        })
+    } else {
+        None
+    };
 
     let injected = build_injected_prompt(
         &caller_chat.id,
@@ -802,6 +819,7 @@ async fn deliver_to_session(
             text: injected,
             attachments: Vec::new(),
             sender: Some(sender),
+            config: queued_config,
         });
         target_handle.emit(AcpUpdate::QueueUpdate { messages });
         return Ok(());
@@ -841,9 +859,12 @@ pub async fn deliver_user_remind(
     target_chat_id: &str,
     injected: String,
 ) -> std::result::Result<(), String> {
-    let target_handle = ensure_target_handle(project_key, task_id, target_chat_id)
-        .await
-        .map_err(|e| e.code().to_string())?;
+    let session_key = format!("{}:{}:{}", project_key, task_id, target_chat_id);
+    let target_handle =
+        acp::get_session_handle(&session_key).ok_or_else(|| "target_not_idle".to_string())?;
+    if target_handle.derive_node_status() != "idle" {
+        return Err("target_not_idle".to_string());
+    }
 
     let claimed = target_handle
         .is_busy
@@ -1060,6 +1081,7 @@ mod tests {
                 to: "chat-other".into(),
                 message: "hi".into(),
                 duty: None,
+                config: None,
             },
         )
         .await
@@ -1079,6 +1101,7 @@ mod tests {
                 to: "chat-missing".into(),
                 message: "hi".into(),
                 duty: Some("x".into()),
+                config: None,
             },
         )
         .await
@@ -1099,6 +1122,7 @@ mod tests {
                 to: "chat-B".into(),
                 message: "hi".into(),
                 duty: Some("x".into()),
+                config: None,
             },
         )
         .await
@@ -1123,6 +1147,7 @@ mod tests {
                 to: "chat-B".into(),
                 message: "hi".into(),
                 duty: None, // 没传 duty 但 B 也没 duty
+                config: None,
             },
         )
         .await
@@ -1147,6 +1172,7 @@ mod tests {
                 to: "chat-B".into(),
                 message: "hi".into(),
                 duty: Some("override".into()),
+                config: None,
             },
         )
         .await
@@ -1168,6 +1194,7 @@ mod tests {
                 to: "chat-B".into(),
                 message: "hi".into(),
                 duty: None,
+                config: None,
             },
         )
         .await
@@ -1196,6 +1223,7 @@ mod tests {
                 to: "chat-B".into(),
                 message: "second".into(),
                 duty: None,
+                config: None,
             },
         )
         .await
@@ -1416,6 +1444,7 @@ mod tests {
                 to: "chat-B".into(),
                 message: "hello from A".into(),
                 duty: None,
+                config: None,
             },
         )
         .await
@@ -1475,6 +1504,7 @@ mod tests {
                 to: "chat-B".into(),
                 message: "queued msg".into(),
                 duty: None,
+                config: None,
             },
         )
         .await
@@ -1530,6 +1560,7 @@ mod tests {
                 to: "chat-B".into(),
                 message: "delayed msg".into(),
                 duty: None,
+                config: None,
             },
         )
         .await

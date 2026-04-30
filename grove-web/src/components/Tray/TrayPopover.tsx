@@ -140,7 +140,10 @@ export function TrayPopover() {
     const reload = async () => {
       try {
         const res = await fetch("/api/v1/config");
-        if (!res.ok) return;
+        if (!res.ok) {
+          console.error("[TrayPopover] Failed to fetch config:", res.status);
+          return;
+        }
         const cfg = await res.json();
         if (cancelled || !cfg.notifications) return;
         setShow({
@@ -305,7 +308,8 @@ export function TrayPopover() {
   const showPerms = show.permission;
   const showRunning = show.running;
   const showDone = show.done;
-  const totalRunning = showRunning ? runList.length : 0;
+  // totalRunning always reflects actual agent state regardless of show/hide filters
+  const totalRunning = Array.from(chats.values()).filter((c) => c.status === "running").length;
   const totalPending = showPerms ? permList.length : 0;
   const totalAll = totalRunning + totalPending + (showDone ? doneList.length : 0);
 
@@ -576,7 +580,7 @@ function ChatRow({ item, now, onResolve, onOpen, onDismiss }: RowProps) {
             <div className="mt-2 ml-[30px]">
               {preview ? (
                 <div
-                  className={`text-[12px] leading-snug whitespace-pre-wrap ${isPerm ? "text-[var(--color-text)]" : "text-[color-mix(in_srgb,var(--color-text)_88%,transparent)]"}`}
+                  className={`text-[12px] leading-snug whitespace-pre-wrap max-h-[160px] overflow-y-auto ${isPerm ? "text-[var(--color-text)]" : "text-[color-mix(in_srgb,var(--color-text)_88%,transparent)]"}`}
                 >
                   {preview}
                 </div>
@@ -605,6 +609,17 @@ function ChatRow({ item, now, onResolve, onOpen, onDismiss }: RowProps) {
                       </button>
                     );
                   })}
+                  <div className="flex justify-end mt-1">
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onOpen();
+                      }}
+                      className="inline-flex items-center gap-1 px-3 py-1 text-[11px] font-medium text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-bg-tertiary)] transition-colors"
+                    >
+                      Open <ExternalLink size={11} className="opacity-80" />
+                    </button>
+                  </div>
                 </div>
               ) : (
                 <div className="mt-2 flex justify-end gap-1.5">

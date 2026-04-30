@@ -158,6 +158,9 @@ enum ServerMessage {
     ModeChanged {
         mode_id: String,
     },
+    ModelChanged {
+        model_id: String,
+    },
     ThoughtLevelsUpdate {
         #[serde(skip_serializing_if = "Vec::is_empty")]
         available: Vec<ThoughtLevelOption>,
@@ -362,6 +365,7 @@ impl From<AcpUpdate> for ServerMessage {
                 terminal,
             },
             AcpUpdate::ModeChanged { mode_id } => ServerMessage::ModeChanged { mode_id },
+            AcpUpdate::ModelChanged { model_id } => ServerMessage::ModelChanged { model_id },
             AcpUpdate::ThoughtLevelsUpdate {
                 available,
                 current,
@@ -694,10 +698,13 @@ async fn handle_acp_ws(socket: WebSocket, session_key: String, config: AcpStartC
                                 }
                             }
                             ClientMessage::QueueMessage { text, attachments } => {
+                                // 快照当前 config，确保出队时使用正确的 model/mode/thought_level
+                                let config = Some(handle_for_input.snapshot_config());
                                 let messages = handle_for_input.queue_message(QueuedMessage {
                                     text,
                                     attachments,
                                     sender: None,
+                                    config,
                                 });
                                 handle_for_input.emit(AcpUpdate::QueueUpdate { messages });
                             }

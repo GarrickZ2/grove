@@ -23,6 +23,8 @@ export interface WebConfig {
   terminal_mode?: string;
   /** Workspace layout mode: "flex" (default) | "ide" */
   workspace_layout?: "flex" | "ide";
+  /** GUI-only global shortcut for showing or hiding the main window. */
+  show_hide_window_shortcut?: string;
 }
 
 export interface AutoLinkConfig {
@@ -49,8 +51,6 @@ export interface AcpConfig {
 }
 
 export interface HooksConfig {
-  enabled: boolean;
-  banner: boolean;
   response_sound_enabled: boolean;
   response_sound: string;
   permission_sound_enabled: boolean;

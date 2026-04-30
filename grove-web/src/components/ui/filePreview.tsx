@@ -1,7 +1,8 @@
 /* eslint-disable react-refresh/only-export-components */
 import { useState, useEffect, useId, useMemo, useRef } from "react";
+import { createPortal } from "react-dom";
 import { motion } from "framer-motion";
-import { Code, Download, Eye, Loader2, Maximize2, MessageSquarePlus, Minimize2, RefreshCw, Trash2, X } from "lucide-react";
+import { Code, Download, Expand, Eye, Loader2, Maximize2, MessageSquarePlus, Minimize2, RefreshCw, Shrink, Trash2, X } from "lucide-react";
 import { getPreviewRenderer, type PreviewCommentMarker } from "../Review/previewRenderers";
 import { highlightCode, detectLanguage } from "../Review/syntaxHighlight";
 import { PreviewSearchBar } from "../Review/PreviewSearchBar";
@@ -131,6 +132,7 @@ export function FilePreviewDrawer({
   const [lightboxUrl, setLightboxUrl] = useState<string | null>(null);
   const [lightboxSvg, setLightboxSvg] = useState<string | null>(null);
   const [fullscreen, setFullscreen] = useState(false);
+  const [groveFullscreen, setGroveFullscreen] = useState(false);
   const [showSource, setShowSource] = useState(false);
   const [commentMode, setCommentMode] = useState(false);
   // Stabilize markers by value-hash so iframe postMessage effect doesn't fire on
@@ -257,7 +259,7 @@ export function FilePreviewDrawer({
     };
   }, [fileName]);
 
-  // Esc: exit fullscreen first, otherwise close the drawer. Uses capture +
+  // Esc: exit true fullscreen first, then panel fullscreen, otherwise close the drawer. Uses capture +
   // stopImmediatePropagation so the global useHotkeys (which also runs in
   // capture phase and would close the workspace on Esc) never fires.
   useEffect(() => {
@@ -272,7 +274,9 @@ export function FilePreviewDrawer({
       e.preventDefault();
       e.stopPropagation();
       e.stopImmediatePropagation();
-      if (fullscreen) {
+      if (groveFullscreen) {
+        setGroveFullscreen(false);
+      } else if (fullscreen) {
         setFullscreen(false);
       } else {
         onClose();
@@ -280,7 +284,7 @@ export function FilePreviewDrawer({
     };
     window.addEventListener("keydown", handler, true);
     return () => window.removeEventListener("keydown", handler, true);
-  }, [fullscreen, onClose, pendingLocator]);
+  }, [fullscreen, groveFullscreen, onClose, pendingLocator]);
 
   useEffect(() => {
     if (!commentable) return;
@@ -366,9 +370,9 @@ export function FilePreviewDrawer({
     closeCommentModal();
   };
 
-  return (
+  const drawer = (
     <>
-      {!fullscreen && (
+      {!fullscreen && !groveFullscreen && (
         <motion.div
           className="absolute inset-0 z-20 bg-black/20"
           onClick={onClose}
@@ -391,10 +395,10 @@ export function FilePreviewDrawer({
             }
           }
         }}
-        className={`outline-none ${fullscreen ? 'fixed inset-0 z-[9998] flex flex-col shadow-2xl' : `absolute inset-y-0 right-0 z-30 ${wide ? 'w-[min(96vw,1100px)]' : 'w-[min(92vw,780px)]'} max-w-full flex flex-col shadow-2xl`}`}
+        className={`outline-none ${fullscreen || groveFullscreen ? 'fixed inset-0 z-[9998] flex flex-col shadow-2xl' : `absolute inset-y-0 right-0 z-30 ${wide ? 'w-[min(96vw,1100px)]' : 'w-[min(92vw,780px)]'} max-w-full flex flex-col shadow-2xl`}`}
         style={{
           background: "var(--color-bg)",
-          ...(fullscreen ? {} : { borderLeft: "1px solid var(--color-border)" }),
+          ...(fullscreen || groveFullscreen ? {} : { borderLeft: "1px solid var(--color-border)" }),
         }}
         initial={{ x: "100%" }}
         animate={{ x: 0 }}
@@ -477,12 +481,22 @@ export function FilePreviewDrawer({
             <button
               onClick={() => setFullscreen(f => !f)}
               className="p-1.5 rounded-md transition-colors"
-              title={fullscreen ? "Exit fullscreen" : "Fullscreen"}
+              title={fullscreen ? "Exit panel fullscreen" : "Panel fullscreen"}
               style={{ color: "var(--color-text-muted)" }}
               onMouseEnter={(e) => e.currentTarget.style.background = "var(--color-bg-tertiary)"}
               onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}
             >
               {fullscreen ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
+            </button>
+            <button
+              onClick={() => setGroveFullscreen(f => !f)}
+              className="p-1.5 rounded-md transition-colors"
+              title={groveFullscreen ? "Exit Grove fullscreen" : "Grove fullscreen"}
+              style={{ color: "var(--color-text-muted)" }}
+              onMouseEnter={(e) => e.currentTarget.style.background = "var(--color-bg-tertiary)"}
+              onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}
+            >
+              {groveFullscreen ? <Shrink className="w-4 h-4" /> : <Expand className="w-4 h-4" />}
             </button>
             <button
               onClick={onClose}
@@ -650,4 +664,8 @@ export function FilePreviewDrawer({
       />
     </>
   );
+
+  return groveFullscreen && typeof document !== "undefined"
+    ? createPortal(drawer, document.body)
+    : drawer;
 }

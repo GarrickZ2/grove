@@ -172,6 +172,7 @@ fn graph_error(code: &str, message: &str) -> (StatusCode, Json<GraphErrorRespons
         | "bidirectional_edge"
         | "same_task_required"
         | "no_pending_to_remind"
+        | "target_not_idle"
         | "target_is_busy" => StatusCode::BAD_REQUEST,
         "target_not_found" | "endpoint_not_found" => StatusCode::NOT_FOUND,
         _ => StatusCode::INTERNAL_SERVER_ERROR,
