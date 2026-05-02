@@ -114,7 +114,8 @@ fn build_usage(data: DataBlock, limits: Vec<LimitEntry>) -> Result<AgentUsage, S
             _ => continue,
         };
         let num = entry.number.unwrap_or(0);
-        let (display_num, display_unit, total_window_seconds) = window_parts(entry.unit, num);
+        let (display_num, display_unit, total_window_seconds) =
+            window_parts(entry.entry_type.as_deref(), entry.unit, num);
         let window_desc = if display_num == 1 {
             format!("{} {}", display_num, display_unit)
         } else {
@@ -163,11 +164,13 @@ fn build_usage(data: DataBlock, limits: Vec<LimitEntry>) -> Result<AgentUsage, S
     usage.finalize().ok_or_else(|| "no usage windows".into())
 }
 
-fn window_parts(unit: Option<u32>, number: u32) -> (u32, &'static str, Option<i64>) {
+fn window_parts(
+    entry_type: Option<&str>,
+    unit: Option<u32>,
+    number: u32,
+) -> (u32, &'static str, Option<i64>) {
     let num = number.max(1);
-    match unit.unwrap_or(1) {
-        // z.ai calls this unit in the API payload, but the product displays it
-        // as a weekly quota window.
+    match unit.unwrap_or(0) {
         1 => (num, "week", Some(i64::from(num) * 7 * 86400)),
         2 => (num, "day", Some(i64::from(num) * 86400)),
         3 => (num, "hour", Some(i64::from(num) * 3600)),
@@ -175,6 +178,7 @@ fn window_parts(unit: Option<u32>, number: u32) -> (u32, &'static str, Option<i6
         // enough and avoids parsing label text on the frontend.
         4 => (num, "month", Some(i64::from(num) * 30 * 86400)),
         5 => (num, "minute", Some(i64::from(num) * 60)),
+        _ if entry_type == Some("TOKENS_LIMIT") && num == 1 => (num, "week", Some(7 * 86400)),
         _ => (num, "unit", None),
     }
 }
@@ -210,6 +214,37 @@ mod tests {
         assert_eq!(usage.windows[0].label, "Tokens (1 week)");
         assert_eq!(usage.windows[0].percentage_remaining, 46.0);
         assert_eq!(usage.windows[0].total_window_seconds, Some(7 * 86400));
+    }
+
+    #[test]
+    fn maps_zai_unknown_single_token_bucket_to_weekly_window() {
+        let data = DataBlock {
+            limits: None,
+            plan_name: Some("Coding Plan".to_string()),
+            plan: None,
+            plan_type: None,
+            package_name: None,
+        };
+        let usage = build_usage(data, vec![limit("TOKENS_LIMIT", Some(0), 1, 6.0)]).unwrap();
+
+        assert_eq!(usage.windows[0].label, "Tokens (1 week)");
+        assert_eq!(usage.windows[0].percentage_remaining, 94.0);
+        assert_eq!(usage.windows[0].total_window_seconds, Some(7 * 86400));
+    }
+
+    #[test]
+    fn keeps_unknown_single_call_bucket_as_unit() {
+        let data = DataBlock {
+            limits: None,
+            plan_name: Some("Coding Plan".to_string()),
+            plan: None,
+            plan_type: None,
+            package_name: None,
+        };
+        let usage = build_usage(data, vec![limit("TIME_LIMIT", Some(99), 1, 0.0)]).unwrap();
+
+        assert_eq!(usage.windows[0].label, "Calls (1 unit)");
+        assert_eq!(usage.windows[0].total_window_seconds, None);
     }
 
     #[test]
