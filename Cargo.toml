@@ -39,6 +39,9 @@ path = "src/main.rs"
 [features]
 default = []
 gui = ["dep:tauri", "dep:tauri-plugin-shell", "dep:tauri-plugin-global-shortcut", "dep:tauri-build", "dep:rfd"]
+# Enables /api/v1/perf/sysinfo (process RSS + CPU%) for the perf-build
+# frontend. Off by default — release ships without sysinfo dep or handler.
+perf-monitor = ["dep:sysinfo", "dep:tracing", "dep:tracing-subscriber"]
 
 [dependencies]
 ratatui = "0.29"
@@ -92,6 +95,9 @@ tauri = { version = "2", optional = true , features = ["devtools", "tray-icon", 
 tauri-plugin-shell = { version = "2", optional = true }
 tauri-plugin-global-shortcut = { version = "2", optional = true }
 rfd = { version = "0.15", optional = true }
+sysinfo = { version = "0.32", optional = true }
+tracing = { version = "0.1", optional = true }
+tracing-subscriber = { version = "0.3", optional = true, features = ["registry"] }
 rusqlite = { version = "0.34", features = ["bundled"] }
 similar = "2.7.0"
 getrandom = "0.2"
@@ -110,6 +116,9 @@ url = "2"
 # `grove mcp-bridge` 子命令需要：HTTP 客户端 + SSE stream 解码。
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
 futures-util = "0.3"
+
+# Read macOS Info.plist files in-process (avoid forking `defaults`).
+plist = "1"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
@@ -147,3 +156,9 @@ install-updater = false
 # macOS-only deps (used by tray module to call NSApp.activateIgnoringOtherApps).
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = { version = "0.5" }
+
+# Profile used by `make flamegraph`: release optimizations + line-number
+# debuginfo so samply can symbolicate frames. Doesn't affect normal `cargo
+# build --release` (release ships from dist-workspace anyway).
+[profile.release]
+debug = "line-tables-only"

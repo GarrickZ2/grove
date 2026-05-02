@@ -8,6 +8,10 @@ import { installExternalLinkInterceptor } from './utils/openExternal'
 installTauriDevtoolsShortcut()
 installExternalLinkInterceptor()
 
+if (import.meta.env.MODE === "perf") {
+  void import("./perf").then(({ startPerfMonitor }) => startPerfMonitor())
+}
+
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <App />

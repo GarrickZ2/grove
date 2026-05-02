@@ -3,6 +3,10 @@
 pub mod auth;
 pub mod error;
 pub mod handlers;
+#[cfg(feature = "perf-monitor")]
+pub mod perf_middleware;
+#[cfg(feature = "perf-monitor")]
+pub mod perf_tracing;
 pub mod radio_server;
 mod state;
 pub mod tls;
@@ -35,7 +39,7 @@ pub(crate) struct FrontendAssets;
 
 /// Create the API router
 pub fn create_api_router() -> Router {
-    Router::new()
+    let v1 = Router::new()
         // Version API
         .route("/version", get(handlers::version::get_version))
         // Agent usage quota API (Claude Code / Codex / Gemini)
@@ -83,7 +87,29 @@ pub fn create_api_router() -> Router {
         // Environment API
         .route("/env/check", get(handlers::env::check_all))
         .route("/env/check/{name}", get(handlers::env::check_one))
-        .route("/env/check-commands", post(handlers::env::check_commands))
+        .route("/env/check-commands", post(handlers::env::check_commands));
+
+    // Process-level perf metrics (RSS + CPU%) and per-handler timing
+    // stats for the perf-build frontend. Only registered when the
+    // `perf-monitor` cargo feature is on.
+    #[cfg(feature = "perf-monitor")]
+    let v1 = v1
+        .route("/perf/sysinfo", get(handlers::perf::sysinfo_handler))
+        .route(
+            "/perf/handler-stats",
+            get(handlers::perf::handler_stats_handler),
+        )
+        .route(
+            "/perf/handler-stats/reset",
+            post(handlers::perf::handler_stats_reset),
+        )
+        .route("/perf/traces", get(handlers::perf::list_traces_handler))
+        .route(
+            "/perf/traces/{trace_id}",
+            get(handlers::perf::get_trace_handler),
+        );
+
+    let v1 = v1
         // Diagram rendering API
         .route("/render/d2", post(handlers::render::render_d2))
         // URL metadata (used by Add Link dialog)
@@ -590,7 +616,12 @@ pub fn create_api_router() -> Router {
         .route(
             "/radio/events/ws",
             get(handlers::walkie_talkie::radio_events_ws_handler),
-        )
+        );
+
+    #[cfg(feature = "perf-monitor")]
+    let v1 = v1.layer(middleware::from_fn(perf_middleware::perf_timing_middleware));
+
+    v1
 }
 
 /// Serve embedded static files

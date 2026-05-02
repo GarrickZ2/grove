@@ -1,107 +1,62 @@
 # Grove - Project Guide
 
-## Overview
+## What Grove Is
 
-Grove is a Rust TUI application for managing Git Worktrees + tmux sessions, designed for parallel AI coding agent workflows.
+Grove is a workspace for humans + AI agents to build software together. Single Rust binary; multiple surfaces; opinionated on rigorous review and structured agent collaboration.
+
+**Headline features**:
+- **Every coding agent in parallel** — 10 built-in (Claude Code, Codex, Gemini CLI, Copilot, Cursor, Junie, Trae, Kimi, Qwen, OpenCode), 3 more ACP-ready (Hermes, Kiro, OpenClaw), plus BYO via ACP-over-stdio or HTTP. Each task = its own git worktree + terminal session, so agents don't collide.
+- **Agent Graph** — typed DAG of agents exchanging structured `<grove-meta>` messages. Planner spawns coder; coder spawns reviewer. 6 MCP tools (`grove_agent_spawn` / `_send` / `_reply` / `_contacts` / `_capability` / `_get_spawn_candidates`).
+- **Studio** — first-class surface for non-coders (designers, PMs, brand). Excalidraw canvases agents can read, shared assets hard-linked across worktrees, Project Memory + Workspace Instructions editor.
+- **Code Review** — threaded resolvable comments, AI batch-fixer, commit → rebase → merge → archive in one step with squash-merge detection.
+- **Five surfaces from one binary**: TUI · Web · GUI · Mobile (LAN + HMAC) · Radio (voice walkie-talkie from phone).
+
+The Web IDE is the main event (FlexLayout, 10 panel types, IDE Layout mode, ⌘K palette). The TUI is the original keyboard-first surface — still here, still fast.
+
+**Positioning**: Grove serves three audiences on the same project — power devs (10 agents in parallel + Agent Graph), visual thinkers (Studio + sketch-driven workflow), non-technical collaborators (no terminal, no git, ship via Studio + Radio).
 
 ## Tech Stack
 
-- **Language**: Rust 2021 Edition
-- **TUI Framework**: ratatui 0.29
-- **Terminal Backend**: crossterm 0.28
-- **Config**: toml + serde
-- **Time**: chrono
+- **Backend**: Rust 2021, axum (HTTP/WS), tokio, ratatui (TUI), Tauri 2 (desktop shell)
+- **Frontend** (`grove-web/`): React 19, TypeScript 5.9, Vite 7, TailwindCSS 4, FlexLayout, Excalidraw, Monaco, xterm.js
+- **Protocols**: ACP (Agent Client Protocol) for agent integration; MCP for tool-exposing servers
+- **Storage**: TOML files + SQLite (`rusqlite` bundled) under `~/.grove/`
+- **Embedded assets**: `rust-embed` 8 (debug → reads from filesystem; release → baked into binary)
 
 ## Project Structure
 
 ```
 src/
-├── main.rs              # Entry point, terminal initialization
-├── app.rs               # App state management, core logic
-├── event.rs             # Keyboard event handling
-├── cli/
-│   ├── mod.rs           # CLI subcommand definitions
-│   ├── agent.rs         # `grove agent` commands (status/summary/todo/notes)
-│   ├── hooks.rs         # `grove hooks` notification commands
-│   └── init.rs          # Worktree AI integration setup 
-├── git/
-│   └── mod.rs           # Git command wrappers
-├── tmux/
-│   └── mod.rs           # tmux session management
-├── storage/
-│   ├── mod.rs
-│   ├── config.rs        # Global config read/write
-│   ├── tasks.rs         # Task data persistence
-│   ├── workspace.rs     # Project registration
-│   ├── ai_data.rs       # AI summary & TODO persistence
-│   └── notes.rs         # Task notes persistence
-├── model/
-│   ├── mod.rs
-│   ├── worktree.rs      # Worktree/Task data structures
-│   ├── workspace.rs     # Workspace state (grid navigation, filtering)
-│   └── loader.rs        # Data loading logic
-├── theme/
-│   ├── mod.rs           # Theme enum, ThemeColors struct
-│   ├── colors.rs        # 8 theme color definitions (including accent palettes)
-│   └── detect.rs        # System dark/light mode detection
-└── ui/
-    ├── mod.rs
-    ├── workspace.rs     # Workspace view
-    ├── project.rs       # Project view
-    └── components/      # Reusable UI components
-        ├── workspace_list.rs  # Card grid with gradient color blocks
-        ├── worktree_list.rs
-        ├── preview_panel.rs   # Side panel (Git/AI/Notes tabs)
-        ├── header.rs
-        ├── footer.rs
-        ├── tabs.rs
-        ├── toast.rs
-        ├── theme_selector.rs
-        ├── help_panel.rs
-        ├── new_task_dialog.rs
-        ├── add_project_dialog.rs
-        ├── delete_project_dialog.rs
-        ├── confirm_dialog.rs
-        ├── input_confirm_dialog.rs
-        ├── branch_selector.rs
-        ├── merge_dialog.rs
-        └── ...
-```
+├── main.rs                # Entry point + binary mode dispatch
+├── app.rs                 # TUI app state + core logic
+├── event.rs               # TUI keyboard handling
+├── cli/                   # Subcommands: gui, mcp, acp, web, hooks, migrate, ...
+├── api/                   # axum HTTP/WS API (consumed by GUI + external)
+│   ├── mod.rs             # Router, embedded-asset serving
+│   ├── handlers/          # Per-feature route handlers
+│   ├── perf_middleware.rs # ⓘ perf-monitor: per-route timing histogram
+│   └── perf_tracing.rs    # ⓘ perf-monitor: tracing collector
+├── git/                   # Git CLI wrappers
+├── tmux/                  # tmux session management
+├── acp/                   # ACP (Agent Client Protocol) integration
+├── agent_graph/           # Inter-agent spawn / send / reply tools
+├── storage/               # Persistence (config, tasks, notes, ai_data, workspace)
+├── model/                 # Data structures (Worktree, Task, Workspace)
+├── theme/                 # 8 themes + dark/light detection
+├── tray/                  # macOS tray icon
+├── update/                # Self-update
+└── ui/                    # TUI widgets
 
-### Web Frontend Structure
-
-```
 grove-web/src/
-├── main.tsx                # Entry point
-├── App.tsx                 # Root component
-├── api/                    # Backend API clients
-│   ├── client.ts
-│   ├── config.ts
-│   └── index.ts
-├── components/             # React components
-│   ├── Blitz/              # Blitz mode (cross-project view)
-│   │   └── BlitzPage.tsx   # ~675 lines (refactored)
-│   ├── Tasks/              # Zen mode (single-project view)
-│   │   └── TasksPage.tsx   # ~610 lines (refactored)
-│   ├── Config/             # Settings page
-│   ├── Terminal/           # Terminal integration
-│   ├── Editor/             # Code editor integration
-│   └── ui/                 # Reusable UI components
-│       ├── ContextMenu.tsx
-│       ├── Dialog.tsx
-│       └── ...
-├── hooks/                  # Custom React hooks
-│   ├── index.ts
-│   ├── useHotkeys.ts       # Keyboard shortcuts
-│   ├── useTaskPageState.ts # Page state management (~250 lines)
-│   ├── useTaskNavigation.ts # j/k navigation (~70 lines)
-│   ├── usePostMergeArchive.ts # Post-merge workflow (~160 lines)
-│   └── useTaskOperations.ts # All task operations (~450 lines)
-├── utils/                  # Utility functions
-│   ├── archiveHelpers.tsx  # Archive confirmation builder
-│   └── taskOperationUtils.ts # Context menu builder
-└── data/
-    └── types.ts            # TypeScript type definitions
+├── main.tsx               # React entry
+├── App.tsx                # Root component, theme/auth/project providers
+├── api/                   # Backend API clients
+├── components/            # React components (Tasks, Blitz, Studio, Editor, ...)
+│   └── Tasks/TaskView/TaskChat.tsx  # ⚠ ~7000 LOC, hot path for perf work
+├── context/               # React contexts
+├── hooks/                 # useTaskPageState, useTaskOperations, ...
+├── perf/                  # ⓘ Perf monitor (perf build only; tree-shaken in prod)
+└── utils/                 # Shared helpers
 ```
 
 ## Core Concepts
@@ -109,249 +64,229 @@ grove-web/src/
 ### Hierarchy
 
 ```
-Workspace (multiple projects)
-└── Project (single git repo)
-    └── Task (worktree + tmux session)
+Workspace (multiple projects) → Project (git repo) → Task (worktree + tmux session)
 ```
 
 ### Entry Logic
 
-- Run `grove` outside git repo → Workspace view
-- Run `grove` inside git repo → Project view
+- `grove` outside a git repo → Workspace view
+- `grove` inside a git repo → Project view
+- `grove --features gui -- gui` → Tauri GUI window
 
 ### Task States
 
 - `Live (●)` — tmux session running
 - `Idle (○)` — no active session
 - `Merged (✓)` — merged to target branch
+- `Conflict / Broken / Archived` — see `model/worktree.rs`
 
-## Commands
+## Build & Run
 
-```bash
-cargo build            # Build
-cargo run              # Run
-cargo check            # Check
-cargo build --release  # Release build
+Use the **Makefile** for everything common — `make` lists targets.
+
 ```
+make run            # web (prod) + cargo run --features gui -- gui
+make perf           # web (perf) + cargo run --features gui,perf-monitor -- gui
+make perf-run       # cargo run only (skip web rebuild)
+make web-perf       # web build with perf monitor wired in
+make web            # web build (clean prod)
+make web-dev        # vite dev server (proxy /api → 3001)
+make tui            # cargo run (no GUI, no web build)
+make check          # cargo check across all feature combos
+make fmt / lint     # cargo fmt / cargo clippy -D warnings
+make ci             # full pre-push: fmt + clippy + test + web-lint + web build
+make clean          # cargo clean + rm dist
+```
+
+### Cargo Features
+
+- `gui` — Tauri GUI shell + webview (the desktop app)
+- `perf-monitor` — Backend perf instrumentation: sysinfo endpoint, per-handler timing middleware, in-memory tracing collector, `/api/v1/perf/*` routes
+
+Production releases ship with `gui` only. `perf-monitor` is dev-only.
 
 ## Data Storage
 
-All data stored in `~/.grove/`:
-
 ```
 ~/.grove/
-├── config.toml           # Theme config
-└── projects/
-    └── <path-hash>/      # Hash of project path
-        ├── project.toml  # Project metadata
-        ├── tasks.toml    # Active tasks
-        ├── archived.toml # Archived tasks
-        ├── ai/
-        │   └── <task-id>/
-        │       ├── summary.md   # AI agent summary
-        │       └── todo.json    # AI agent TODO list
-        └── notes/
-            └── <task-id>.md     # User-provided task notes
+├── config.toml                    # Theme + global settings
+└── projects/<path-hash>/
+    ├── project.toml               # Project metadata
+    ├── tasks.toml                 # Active tasks
+    ├── archived.toml              # Archived tasks
+    ├── ai/<task-id>/{summary.md, todo.json}
+    └── notes/<task-id>.md
 ```
 
-## Development Guidelines
+## Web Frontend
 
-### Completion Summary (IMPORTANT)
+### Build
 
-**After completing any code modifications, ALWAYS provide a clear summary to the user:**
-
-1. **Frontend Changes** — If `grove-web/` was modified:
-   - Explicitly state: "✅ `npm run build` executed successfully" (if you ran it)
-   - OR state: "⚠️ You need to run `npm run build` in `grove-web/`" (if you didn't run it)
-
-2. **Backend Changes** — If Rust code (`src/`) was modified:
-   - Explicitly state: "⚠️ Rust backend needs rebuild - run `cargo build --release` and restart server"
-   - OR state: "✅ No backend changes - no need to restart Rust server"
-
-3. **Example Summary Format**:
-   ```
-   ## Build Status
-   - ✅ npm run build: Completed successfully
-   - ⚠️ Rust backend: Needs rebuild (modified src/api/handlers/tasks.rs)
-   ```
-
-This helps the user immediately know what actions they need to take without having to guess or re-read the entire conversation.
-
-### Rust Source Code Checks (REQUIRED)
-
-When modifying Rust source files, always run:
-
-```bash
-cargo fmt --all
+```
+cd grove-web && npm run build       # → grove-web/dist (clean prod, no perf code)
+cd grove-web && npm run build:perf  # → grove-web/dist (with perf monitor)
 ```
 
-### Web Frontend Development
+The Rust binary embeds `grove-web/dist`. In **debug builds** (`cargo run`) the embed reads from disk on each request — rebuilding the web frontend takes effect without re-compiling Rust. In **release builds** the dist is baked into the binary.
 
-When modifying the web frontend (`grove-web/`):
+### Hooks Architecture
 
-1. **Always build after changes** — Run `npm run build` in the `grove-web/` directory after making any frontend code changes to ensure the build is successful
-2. **Check for TypeScript errors** — The build process runs `tsc -b` first, catching type errors
-3. **Location** — All web frontend code is in the `grove-web/` directory
+`grove-web/src/hooks/` centralizes shared task-page logic so Blitz mode (`BlitzPage.tsx`) and Zen mode (`TasksPage.tsx`) don't duplicate code:
 
-```bash
-cd grove-web
-npm run build  # Build frontend after changes
+- `useTaskPageState` — selection, panels, search, messages
+- `useTaskNavigation` — j/k navigation, context menu positioning
+- `useTaskOperations` — commit / merge / archive / sync / rebase / reset / clean
+- `usePostMergeArchive` — post-merge archive workflow
+
+### Component Pattern (Rust UI)
+
+```rust
+pub fn render(frame: &mut Frame, area: Rect, data: &Data, colors: &ThemeColors) { ... }
 ```
 
-### Web Frontend Hooks Architecture
+Always read colors from `ThemeColors`, never hardcode `Color::Yellow` etc. Each theme defines `accent_palette: [Color; 10]` for gradient blocks.
 
-The web frontend uses a custom hooks architecture to eliminate code duplication between Blitz mode (`BlitzPage.tsx`) and Zen mode (`TasksPage.tsx`):
+## Perf Monitoring System
 
-**Core Hooks** (`grove-web/src/hooks/`):
+Grove ships an in-house perf monitor that's **only included in dev/perf builds**. Production users see nothing.
 
-1. **`useTaskPageState`** (~250 lines) — Manages all page-level state:
-   - Task selection (`selectedTask`, `viewMode`)
-   - UI panels (`reviewOpen`, `editorOpen`, `showHelp`)
-   - Messages and search (`operationMessage`, `searchQuery`)
-   - Returns: `[TaskPageState, TaskPageHandlers]`
+### Two-layer gating (zero overhead in prod)
 
-2. **`useTaskNavigation`** (~70 lines) — Handles keyboard navigation:
-   - j/k navigation (`selectNextTask`, `selectPreviousTask`)
-   - Context menu positioning (`openContextMenuAtSelectedTask`)
-   - Requires: tasks array, selection state, view mode
+| Layer | Mechanism | When active |
+|---|---|---|
+| Frontend | Vite mode `perf` (`if (import.meta.env.MODE === "perf")`) | `npm run build:perf` only — vite tree-shakes the entire `src/perf/` tree from `npm run build` output |
+| Backend | Cargo feature `perf-monitor` (`#[cfg(feature = "perf-monitor")]`) | `cargo build --features perf-monitor` only — release binaries omit the dep, routes, and middleware |
 
-3. **`usePostMergeArchive`** (~160 lines) — Post-merge archive workflow:
-   - Archive dialog after successful merge
-   - Supports cross-project operations (Blitz mode)
-   - Handles archive confirmation and cleanup
-   - Returns: `[PostMergeArchiveState, PostMergeArchiveHandlers]`
+### How to use
 
-4. **`useTaskOperations`** (~450 lines) — All task Git operations:
-   - Commit, Merge, Archive, Sync, Rebase, Reset, Clean
-   - Dialog state management for each operation
-   - Loading states, error handling, API calls
-   - Returns: `[TaskOperationsState, TaskOperationsHandlers]`
+```
+make perf           # full rebuild + run with monitoring
+```
 
-**Usage Pattern**:
+Then in the Tauri window:
+- **Right-click → Inspect** (or Cmd+Opt+I / Ctrl+Shift+I / F12) — open webview devtools
+- **Ctrl+Shift+P** — toggle the perf panel (or click the floating dot bottom-right)
 
-```typescript
-import {
-  useTaskPageState,
-  useTaskNavigation,
-  usePostMergeArchive,
-  useTaskOperations,
-} from "../../hooks";
+### Panel tabs
 
-function TaskPage() {
-  const [pageState, pageHandlers] = useTaskPageState();
-  const [opsState, opsHandlers] = useTaskOperations({
-    projectId: selectedProject?.id ?? null,
-    selectedTask: pageState.selectedTask,
-    onRefresh: refreshSelectedProject,
-    onShowMessage: pageHandlers.showMessage,
-    onTaskArchived: () => { /* cleanup */ },
-    onTaskMerged: (taskId, taskName) => {
-      postMergeHandlers.triggerPostMergeArchive(taskId, taskName);
-    },
-  });
-  const [postMergeState, postMergeHandlers] = usePostMergeArchive({...});
-  const navHandlers = useTaskNavigation({...});
+| Tab | Source | What it shows |
+|---|---|---|
+| timeline | Frontend | All events in time order: longtask / event / fetch / ws / mark / react-render |
+| memory | Backend (sysinfo) | RSS + CPU% trend lines, latest values |
+| renders | Frontend (React Profiler) | Per-component commit times, sorted by total cost |
+| network | Frontend | fetch + WS latency, top 50 |
+| backend | Backend (axum middleware) | Per-route P50/P95/P99/max + count, sorted by P95 |
 
-  // Use state and handlers in JSX
-  return <div>{/* ... */}</div>;
+Click a row in **backend** to expand recent traces for that route. Click any trace to see the span tree (Gantt-style).
+
+### Adding tracing to a slow handler
+
+Workflow: notice in `backend` tab that some route is slow → add `#[tracing::instrument]` to its handler → rebuild → re-trigger → look at trace detail → fix → remove the instrument.
+
+```rust
+// Wrap a whole handler. cfg_attr means prod binaries don't even compile the macro.
+#[cfg_attr(feature = "perf-monitor", tracing::instrument(skip_all, fields(project_id = %id)))]
+pub async fn get_status(Path(id): Path<String>) -> Result<...> {
+    // Sub-spans for finer breakdown:
+    #[cfg(feature = "perf-monitor")]
+    let _s = tracing::info_span!("parse_output", lines = output.len()).entered();
+    parse_git_output(&output)?;
+    // _s drops at end of scope, span closes
 }
 ```
 
-**Utility Functions** (`grove-web/src/utils/`):
+Notes:
+- Use `skip_all` to avoid serialising large args; pull only what you need into `fields(...)`.
+- Sub-spans need `#[cfg(feature = "perf-monitor")]` because the inner code references `tracing::info_span!`. Top-level handler attribute can use `cfg_attr` instead — cleaner.
+- Each route keeps the most recent **50 traces** (ring buffer, ~1-2KB each). `/perf/*` endpoints are excluded so the panel doesn't observe itself.
+- Delete the instrument once you're done optimizing — keeps prod-equivalent code clean.
 
-- **`archiveHelpers.tsx`** — Archive confirmation message builder, error handling
-- **`taskOperationUtils.ts`** — Context menu builder, task state checkers
+### Perf endpoints (perf-monitor build only)
 
-**Benefits**:
-- Eliminated ~850 lines of duplicate code between Blitz and Zen modes
-- Single source of truth for all task operations
-- Full TypeScript type safety and IDE autocomplete
-- Easier to add new operations or fix bugs (change once, apply everywhere)
-
-### UI Component Pattern
-
-All UI components follow the same pattern:
-
-```rust
-pub fn render(frame: &mut Frame, area: Rect, data: &Data, colors: &ThemeColors) {
-    // Render using ratatui widgets
-}
+```
+GET  /api/v1/perf/sysinfo                — process RSS + CPU%
+GET  /api/v1/perf/handler-stats          — per-route latency histogram
+POST /api/v1/perf/handler-stats/reset    — clear histogram (use before a measurement)
+GET  /api/v1/perf/traces?route=<key>     — recent trace list for a route
+GET  /api/v1/perf/traces/{trace_id}      — full span tree for one trace
 ```
 
-### Event Handling
-
-Events are handled in `event.rs`, dispatched by priority:
-1. Popup events (help, dialogs, etc.)
-2. Mode events (Workspace / Project)
-
-### Color Usage
-
-Always use `ThemeColors` struct fields, never hardcode colors:
-
-```rust
-// Good
-Style::default().fg(colors.highlight)
-
-// Bad
-Style::default().fg(Color::Yellow)
-```
-
-Each theme defines an `accent_palette: [Color; 10]` for workspace card gradient blocks. Use `colors.accent_palette` instead of hardcoded color arrays.
-
-### Pre-commit Checks
-
-A pre-commit hook is provided in `.githooks/pre-commit`. It runs the following checks before each commit:
-
-1. **`cargo fmt --all -- --check`** — code must be formatted
-2. **`cargo clippy -- -D warnings`** — no clippy warnings allowed
-3. **`cargo test`** — all tests must pass
-4. **`npx eslint src/ --max-warnings 0`** — no ESLint errors or warnings in `grove-web/`
-5. **Version bump** — `Cargo.toml` version must differ from `master` (skipped when committing on master itself)
-
-Activate the hook with:
-
-```bash
-git config core.hooksPath .githooks
-```
-
-### Git Commit Guidelines
-
-**IMPORTANT: Commit Discipline**
-
-- **One commit per bug fix or feature** — Do not create commits for every small change. Group related changes into a single, cohesive commit.
-- **Each commit should be self-contained** — A commit should represent a complete bug fix or feature that makes sense on its own.
-- **Examples:**
-  - ✅ Good: One commit for "fix(web): optimize panel switching and animations" that includes all related animation fixes
-  - ✅ Good: One commit for "feat(editor): add file system operations" that includes context menu, dialogs, and API handlers
-  - ❌ Bad: Multiple commits for "fix terminal layout", "fix terminal fullscreen", "fix terminal animation" when they're all part of the same issue
-  - ❌ Bad: Separate commits for "add context menu UI" and "add context menu handlers" when they're part of the same feature
-
-If you find yourself creating multiple commits in quick succession for the same logical change, you should combine them using `git rebase -i` or `git commit --amend`.
-
-### Git Operations
-
-All git operations are wrapped in `src/git/mod.rs`, using `std::process::Command` to call git CLI.
-
-### tmux Operations
-
-All tmux operations are wrapped in `src/tmux/mod.rs`.
+Reset the histogram before measuring an isolated operation; otherwise the cold-start burst skews percentiles.
 
 ## CLI Subcommands
 
-CLI subcommands are defined in `src/cli/`:
+- `grove` — Smart start: resumes your last mode
+- `grove tui` — Keyboard-first terminal UI
+- `grove web` — Browser IDE on `http://localhost:3001`
+- `grove gui` — Native desktop window (requires `--features gui` build)
+- `grove mobile` — LAN access for phone / tablet (HMAC-signed requests)
+- `grove mcp` — MCP server (stdio) for orchestrator agents
+- `grove acp` — Headless ACP bridge
+- `grove hooks <level>` — Send notification (`notice` / `warn` / `critical`)
+- `grove register` / `grove remove` — Manage registered projects
+- `grove migrate` — Legacy storage migration
 
-- `grove hooks <level>` — send notification hooks (notice/warn/critical)
-- `grove mcp` — run Grove as an MCP server for orchestrator agents
-- `grove acp` — headless ACP bridge
-- `grove register` / `grove remove` — manage registered projects
-- `grove migrate` — migrate legacy storage
+## AI Integration Flow (per-task)
 
-### AI Integration Flow
+1. Task is created → git worktree (Coding) or `~/.grove/studios/<project>/tasks/<task>/` (Studio)
+2. tmux/Zellij session is launched with env vars: `GROVE_PROJECT`, `GROVE_TASK_ID`, `GROVE_TASK_NAME`, `GROVE_BRANCH`, `GROVE_TARGET`, `GROVE_PROJECT_NAME`
+3. Agents in the task call back to Grove via the built-in MCP server (read notes, reply to reviews, complete the task)
 
-When a task is created:
-1. Git worktree is created (Coding Task) or folder structure under `~/.grove/studios/<project>/tasks/<task>/` (Studio Task)
-2. tmux/Zellij session is created with `GROVE_*` environment variables (`GROVE_PROJECT`, `GROVE_TASK_ID`, `GROVE_TASK_NAME`, `GROVE_BRANCH`, `GROVE_TARGET`, `GROVE_PROJECT_NAME`)
-3. Agents running inside the task read these env vars and can call Grove via the built-in MCP server for context (read notes, reply to reviews, complete the task)
+## Development Guidelines
+
+### Completion Summary (Required)
+
+After any code change, end your response with explicit build status:
+
+```
+## Build Status
+- ✅/⚠️ npm run build (or build:perf): ...
+- ✅/⚠️ Rust backend: needs/doesn't need rebuild
+```
+
+So the user knows what to run without re-reading the conversation.
+
+### Rust Checks (Required Before Commit)
+
+```
+make ci             # one shot: fmt + clippy + test + web-lint + web build
+```
+
+The pre-commit hook (`.githooks/pre-commit`) runs:
+
+1. `cargo fmt --all -- --check`
+2. `cargo clippy -- -D warnings`
+3. `cargo test`
+4. `npx eslint src/ --max-warnings 0` (in `grove-web/`)
+5. Version bump check (Cargo.toml differs from `master`, except on `master` itself)
+
+Activate it once per clone:
+
+```
+git config core.hooksPath .githooks
+```
+
+### Commit Discipline
+
+- One commit per bug fix or feature — group related changes
+- Each commit self-contained
+- Don't combine "add UI" and "add handlers" into separate commits if they're one feature
+- Use `git rebase -i` / `--amend` to consolidate if you slipped
+
+### Theme Colors
+
+```rust
+Style::default().fg(colors.highlight)   // ✅
+Style::default().fg(Color::Yellow)      // ❌
+```
+
+### Event Handling (TUI)
+
+`event.rs` dispatches by priority: popups (help, dialogs) → mode events (Workspace / Project).
+
+### Git / tmux
+
+All shell-out wrappers live in `src/git/mod.rs` and `src/tmux/mod.rs` — don't call `Command` from elsewhere.
 
 ## TODO
 

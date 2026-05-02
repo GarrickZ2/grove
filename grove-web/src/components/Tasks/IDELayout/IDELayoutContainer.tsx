@@ -24,6 +24,7 @@ import { AUX_PANEL_TYPES } from "./IDELayout.types";
 import { MultiTabTerminalPanel } from "./MultiTabTerminalPanel";
 import type { FileNavRequest } from "../../Review";
 import { TaskChat } from "../TaskView/TaskChat";
+import { OptionalPerfProfiler } from "../../../perf/profilerShim";
 import { TaskCodeReview } from "../TaskView/TaskCodeReview";
 import { TaskEditor } from "../TaskView/TaskEditor";
 import { TaskGraph } from "../TaskView/TaskGraph";
@@ -611,13 +612,15 @@ export const IDELayoutContainer = forwardRef<IDELayoutHandle, IDELayoutContainer
 
     const renderChat = () => {
       return (
-        <TaskChat
-          projectId={projectId} task={task} fullscreen
-          onNavigateToFile={handleNavigateToFile}
-          onChatBecameIdle={handleChatBecameIdle}
-          onUserMessageSent={handleChatBecameIdle}
-          onBusyStateChange={handleBusyStateChange}
-        />
+        <OptionalPerfProfiler id="TaskChat">
+          <TaskChat
+            projectId={projectId} task={task} fullscreen
+            onNavigateToFile={handleNavigateToFile}
+            onChatBecameIdle={handleChatBecameIdle}
+            onUserMessageSent={handleChatBecameIdle}
+            onBusyStateChange={handleBusyStateChange}
+          />
+        </OptionalPerfProfiler>
       );
     };
 

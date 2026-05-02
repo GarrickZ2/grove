@@ -4,8 +4,17 @@ import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 
 // https://vite.dev/config/
-export default defineConfig({
+export default defineConfig(({ mode }) => ({
   plugins: [react(), tailwindcss()],
+  // In perf mode, swap react-dom for the profiling-enabled build so
+  // <Profiler onRender> actually fires in our perf-build bundle. The
+  // alias is gated on mode === "perf" so a normal `npm run build` is
+  // bit-for-bit identical to before.
+  resolve: mode === 'perf' ? {
+    alias: {
+      'react-dom/client': 'react-dom/profiling',
+    },
+  } : undefined,
   build: {
     rollupOptions: {
       input: {
@@ -26,4 +35,4 @@ export default defineConfig({
       },
     },
   },
-})
+}))

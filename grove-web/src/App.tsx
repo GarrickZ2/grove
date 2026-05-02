@@ -26,6 +26,7 @@ import { ProjectCommandPalette } from "./components/ui/ProjectCommandPalette";
 import { TaskCommandPalette } from "./components/ui/TaskCommandPalette";
 import { ThemeProvider, ProjectProvider, TerminalThemeProvider, NotificationProvider, ConfigProvider, CommandPaletteProvider, PreviewCommentProvider, useProject, useCommandPalette, useTheme, useConfig } from "./context";
 import { AuthGate } from "./components/AuthGate";
+import { OptionalPerfProfiler } from "./perf/profilerShim";
 import type { Task } from "./data/types";
 import { mockConfig } from "./data/mockData";
 import { getConfig, patchConfig, checkCommands, openIDE, openTerminal } from "./api";
@@ -802,7 +803,9 @@ function App() {
               <NotificationProvider>
                 <CommandPaletteProvider>
                   <PreviewCommentProvider>
-                    <AppContent />
+                    <OptionalPerfProfiler id="App">
+                      <AppContent />
+                    </OptionalPerfProfiler>
                   </PreviewCommentProvider>
                 </CommandPaletteProvider>
               </NotificationProvider>

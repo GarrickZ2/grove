@@ -14,6 +14,7 @@ import type { PanelType, TabNodeConfig } from './types';
 import type { FileNavRequest } from '../../Review';
 import { TaskTerminal } from '../TaskView/TaskTerminal';
 import { TaskChat } from '../TaskView/TaskChat';
+import { OptionalPerfProfiler } from '../../../perf/profilerShim';
 import { TaskCodeReview } from '../TaskView/TaskCodeReview';
 import { TaskEditor } from '../TaskView/TaskEditor';
 import { TaskGraph } from '../TaskView/TaskGraph';
@@ -832,16 +833,18 @@ export const FlexLayoutContainer = forwardRef<
       case 'chat':
         return (
           <div style={{ display: 'flex', flexDirection: 'column', width: '100%', height: '100%' }}>
-            <TaskChat
-              key={`${projectId}:${task.id}`}
-              projectId={projectId}
-              task={task}
-              fullscreen={true}
-              onNavigateToFile={navigateToFile}
-              onChatBecameIdle={handleChatBecameIdle}
-              onUserMessageSent={handleChatBecameIdle}
-              onBusyStateChange={handleBusyStateChange}
-            />
+            <OptionalPerfProfiler id="TaskChat">
+              <TaskChat
+                key={`${projectId}:${task.id}`}
+                projectId={projectId}
+                task={task}
+                fullscreen={true}
+                onNavigateToFile={navigateToFile}
+                onChatBecameIdle={handleChatBecameIdle}
+                onUserMessageSent={handleChatBecameIdle}
+                onBusyStateChange={handleBusyStateChange}
+              />
+            </OptionalPerfProfiler>
           </div>
         );
 

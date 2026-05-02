@@ -173,6 +173,9 @@ fn main() -> io::Result<()> {
         }
     }
 
+    #[cfg(feature = "perf-monitor")]
+    api::perf_tracing::install();
+
     // Set up panic hook to restore terminal state on panic (TUI only)
     #[cfg(not(windows))]
     let original_hook = panic::take_hook();

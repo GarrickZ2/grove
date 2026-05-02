@@ -87,6 +87,7 @@ import { useDomSearch } from "../../Review/useDomSearch";
 import { listSketches, type SketchMeta } from "../../../api/sketches";
 import { readLastActiveTab, writeLastActiveTab } from "../../../utils/lastActiveTab";
 import type { Task } from "../../../data/types";
+import { perfMark } from "../../../perf/marks";
 import { getApiHost, appendHmacToUrl } from "../../../api/client";
 import { useAgentQuota, useRadioEvents } from "../../../hooks";
 import { AgentQuotaPopover } from "./AgentQuotaPopover";
@@ -1377,6 +1378,10 @@ export function TaskChat({
       );
       if (pruned.pruned) {
         updateHiddenMessageCount(pruned.hiddenMessageCount);
+        perfMark("TaskChat:prune", {
+          hidden: pruned.hiddenMessageCount,
+          remaining: pruned.messages.length,
+        });
       }
       return pruned.messages;
     },
@@ -3017,6 +3022,7 @@ export function TaskChat({
   const switchChat = useCallback(
     async (chatId: string) => {
       if (chatId === activeChatId) return;
+      perfMark("TaskChat:switchChat", { from: activeChatId, to: chatId });
       saveCurrentChatState();
       setActiveChatId(chatId);
       writeLastActiveTab("chat", projectId, task.id, chatId);
@@ -3209,7 +3215,37 @@ export function TaskChat({
           return;
         }
 
-        // Small supported image: pass through directly
+        // Check dimensions even for small files — Claude enforces a 2000px limit in multi-image requests
+        const dimCheckUrl = URL.createObjectURL(file);
+        const dimImg = new Image();
+        dimImg.src = dimCheckUrl;
+        await dimImg.decode().catch(() => {});
+        URL.revokeObjectURL(dimCheckUrl);
+        if (dimImg.naturalWidth > MAX_IMAGE_DIMENSION || dimImg.naturalHeight > MAX_IMAGE_DIMENSION) {
+          try {
+            const blob = await compressImageViaCanvas(file);
+            const reader = new FileReader();
+            reader.onload = () => {
+              const dataUrl = reader.result as string;
+              const base64 = dataUrl.split(",")[1];
+              const previewUrl = URL.createObjectURL(blob);
+              const label = attachmentLabel("image", ++attachCountersRef.current.image);
+              const resizedName = file.name.replace(/\.[^.]+$/, ".jpg");
+              setAttachments((prev) => [
+                ...prev,
+                { type: "image", data: base64, mimeType: "image/jpeg", name: resizedName, label, previewUrl },
+              ]);
+            };
+            reader.readAsDataURL(blob);
+          } catch {
+            setMessages((prev) =>
+              appendSystemMessage(prev, `Image is too large and resizing failed (${file.name}). Please resize it manually and try again.`),
+            );
+          }
+          return;
+        }
+
+        // Small supported image with acceptable dimensions: pass through directly
         const reader = new FileReader();
         reader.onload = () => {
           const dataUrl = reader.result as string;
