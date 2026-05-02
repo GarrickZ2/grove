@@ -1,6 +1,5 @@
-import { Circle, CheckCircle, AlertTriangle, XCircle, ChevronUp, ChevronDown, Laptop, Zap, Code } from "lucide-react";
+import { Archive, ChevronUp, ChevronDown, Laptop, Zap, Code } from "lucide-react";
 import type { BlitzTask } from "../../data/types";
-import type { TaskStatus } from "../../data/types";
 import { useIsMobile } from "../../hooks";
 
 interface BlitzTaskListItemProps {
@@ -47,27 +46,6 @@ function getNotificationColor(level: string): string {
   }
 }
 
-function getStatusConfig(status: TaskStatus): {
-  icon: typeof Circle;
-  color: string;
-  label: string;
-} {
-  switch (status) {
-    case "live":
-      return { icon: Circle, color: "var(--color-success)", label: "Live" };
-    case "idle":
-      return { icon: Circle, color: "var(--color-text-muted)", label: "Idle" };
-    case "merged":
-      return { icon: CheckCircle, color: "var(--color-info)", label: "Merged" };
-    case "conflict":
-      return { icon: AlertTriangle, color: "var(--color-error)", label: "Conflict" };
-    case "broken":
-      return { icon: XCircle, color: "var(--color-error)", label: "Broken" };
-    case "archived":
-      return { icon: Circle, color: "var(--color-text-muted)", label: "Archived" };
-  }
-}
-
 export function BlitzTaskListItem({
   blitzTask,
   isSelected,
@@ -88,7 +66,6 @@ export function BlitzTaskListItem({
   isLast,
 }: BlitzTaskListItemProps) {
   const { task, projectName } = blitzTask;
-  const statusConfig = getStatusConfig(task.status);
   const { isTouchDevice } = useIsMobile();
 
   return (
@@ -218,10 +195,11 @@ export function BlitzTaskListItem({
               </span>
             )}
 
-            {/* Status label (only for non-live/idle states) */}
-            {task.status !== "live" && task.status !== "idle" && (
-              <span className="text-xs font-medium" style={{ color: statusConfig.color }}>
-                {statusConfig.label}
+            {/* Archived badge */}
+            {task.status === "archived" && (
+              <span className="flex items-center gap-1 text-xs font-medium" style={{ color: "var(--color-text-muted)" }}>
+                <Archive className="w-3 h-3" />
+                Archived
               </span>
             )}
           </div>

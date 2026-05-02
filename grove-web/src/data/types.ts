@@ -1,8 +1,9 @@
 // Project type
 export type ProjectType = 'repo' | 'studio';
 
-// Task status types
-export type TaskStatus = 'live' | 'idle' | 'merged' | 'conflict' | 'broken' | 'archived';
+// Task status types — grove-web only uses two states:
+// 'archived' = explicitly archived; 'active' = everything else
+export type TaskStatus = 'active' | 'archived';
 
 export interface Commit {
   hash: string;
@@ -19,10 +20,6 @@ export interface Task {
   branch: string;
   target: string;
   status: TaskStatus;
-  additions: number;
-  deletions: number;
-  filesChanged: number;
-  commits: Commit[];
   createdAt: Date;
   updatedAt: Date;
   multiplexer: string;
@@ -102,9 +99,6 @@ export interface CommitFileChange {
 
 export interface Stats {
   totalTasks: number;
-  liveTasks: number;
-  idleTasks: number;
-  mergedTasks: number;
   archivedTasks: number;
   recentActivity: ActivityItem[];
   fileEdits: FileEdit[];

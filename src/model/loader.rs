@@ -146,33 +146,6 @@ pub fn load_local_task(project_path: &str) -> Option<Worktree> {
     ))
 }
 
-/// 同时加载 worktree 列表和 Local Task,只做一次 `ensure_local_task_synced`
-///
-/// 当调用方(例如 API `get_project`)需要两者时,应该使用此函数而不是分别调用
-/// [`load_worktrees`] + [`load_local_task`],以避免重复的 git I/O 和 TOML 读写。
-pub fn load_worktrees_and_local(project_path: &str) -> (Vec<Worktree>, Option<Worktree>) {
-    let (active_tasks, project_key) = ensure_local_task_synced(project_path);
-    let merging_commit = git::merging_commit(project_path);
-
-    // 拆分 Local 与 worktree
-    let (local_tasks, worktree_tasks): (Vec<&Task>, Vec<&Task>) =
-        active_tasks.iter().partition(|t| t.is_local);
-
-    // 并行转换 worktree 列表
-    use rayon::prelude::*;
-    let mut worktrees: Vec<Worktree> = worktree_tasks
-        .par_iter()
-        .map(|task| task_to_worktree(task, &project_key, project_path, merging_commit.as_deref()))
-        .collect();
-    worktrees.sort_by_key(|b| std::cmp::Reverse(b.updated_at));
-
-    let local = local_tasks
-        .first()
-        .map(|task| task_to_worktree(task, &project_key, project_path, merging_commit.as_deref()));
-
-    (worktrees, local)
-}
-
 /// 加载归档任务(懒加载)
 pub fn load_archived_worktrees(project_path: &str) -> Vec<Worktree> {
     let project_key = project_hash(project_path);

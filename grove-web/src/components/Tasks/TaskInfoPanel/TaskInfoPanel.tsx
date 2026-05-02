@@ -98,8 +98,7 @@ export function TaskInfoPanel({
   const isStudio = selectedProject?.projectType === "studio";
   const TABS = isStudio ? STUDIO_TABS : REPO_TABS;
   const isArchived = task.status === "archived";
-  const isBroken = task.status === "broken";
-  const canOperate = !isArchived && !isBroken;
+  const canOperate = !isArchived;
   const [internalTab, setInternalTab] = useState<TabType>("stats");
   const [expanded, setExpanded] = useState(false);
 
@@ -336,7 +335,7 @@ export function TaskInfoPanel({
                     icon: Archive,
                     onClick: onArchive,
                     variant: "warning" as const,
-                    disabled: isBroken,
+                    disabled: false,
                   }] : []),
                   ...(onReset ? [{
                     id: "reset",
@@ -431,7 +430,7 @@ export function TaskInfoPanel({
                       icon: Archive,
                       onClick: onArchive,
                       variant: "warning" as const,
-                      disabled: isBroken,
+                      disabled: false,
                     }] : []),
                     ...(onReset ? [{
                       id: "reset",

@@ -29,8 +29,6 @@ import { getRemotes, getBranches as apiGetBranches } from "../../api";
 interface BranchWithTasks {
   name: string;
   taskCount: number;
-  liveTasks: number;
-  idleTasks: number;
   tasks: Task[];
 }
 
@@ -300,8 +298,6 @@ export function BranchDrawer({
       result.push({
         name: branchName,
         taskCount: nonArchived.length,
-        liveTasks: nonArchived.filter(t => t.status === "live").length,
-        idleTasks: nonArchived.filter(t => t.status === "idle").length,
         tasks: branchTasks, // all tasks including archived
       });
     });
@@ -684,18 +680,11 @@ function TaskBranchItem({
           </span>
         </div>
         <div className="flex items-center gap-2 flex-shrink-0">
-          {/* Task count badges */}
+          {/* Task count badge */}
           <div className="flex items-center gap-1">
-            {branchWithTasks.liveTasks > 0 && (
-              <span className="flex items-center gap-0.5 text-xs px-1.5 py-0.5 rounded-full bg-[var(--color-success)]/20 text-[var(--color-success)]">
-                <Circle className="w-2 h-2 fill-current" />
-                {branchWithTasks.liveTasks}
-              </span>
-            )}
-            {branchWithTasks.idleTasks > 0 && (
-              <span className="flex items-center gap-0.5 text-xs px-1.5 py-0.5 rounded-full bg-[var(--color-text-muted)]/20 text-[var(--color-text-muted)]">
-                <Circle className="w-2 h-2" />
-                {branchWithTasks.idleTasks}
+            {branchWithTasks.taskCount > 0 && (
+              <span className="text-xs px-1.5 py-0.5 rounded-full bg-[var(--color-highlight)]/15 text-[var(--color-highlight)]">
+                {branchWithTasks.taskCount}
               </span>
             )}
           </div>
@@ -816,9 +805,9 @@ function TaskRow({ task, isExpanded, isCurrent, onToggle, onTaskClick, onTaskReb
         className="w-full flex items-center gap-2 px-2 py-1.5 text-sm rounded-md transition-colors text-left text-[var(--color-text)] hover:bg-[var(--color-bg)] cursor-pointer"
       >
         <Circle className={`w-2.5 h-2.5 flex-shrink-0 ${
-          task.status === "live"
-            ? "fill-[var(--color-success)] text-[var(--color-success)]"
-            : "text-[var(--color-text-muted)]"
+          task.status === "archived"
+            ? "text-[var(--color-text-muted)]"
+            : "fill-[var(--color-highlight)] text-[var(--color-highlight)]"
         }`} />
         <span className="truncate flex-1">{task.name}</span>
         {isExpanded ? (

@@ -85,7 +85,6 @@ export function buildContextMenuItems(
   }
 
   // Active task menu — build dynamically based on available handlers
-  const canOperate = task.status !== "broken";
   const items: ContextMenuItem[] = [];
 
   // Enter workspace
@@ -117,7 +116,6 @@ export function buildContextMenuItems(
       icon: GitBranchPlus,
       variant: "default",
       onClick: handlers.onRebase,
-      disabled: !canOperate,
     });
   }
   if (handlers.onSync) {
@@ -127,7 +125,6 @@ export function buildContextMenuItems(
       icon: RefreshCw,
       variant: "default",
       onClick: handlers.onSync,
-      disabled: !canOperate,
     });
   }
   if (handlers.onMerge) {
@@ -137,7 +134,6 @@ export function buildContextMenuItems(
       icon: GitMerge,
       variant: "default",
       onClick: handlers.onMerge,
-      disabled: !canOperate,
     });
   }
 
@@ -155,7 +151,6 @@ export function buildContextMenuItems(
       icon: Archive,
       variant: "warning",
       onClick: handlers.onArchive,
-      disabled: task.status === "broken",
     });
   }
   if (handlers.onReset) {

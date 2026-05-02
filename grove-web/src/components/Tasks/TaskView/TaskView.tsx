@@ -254,9 +254,8 @@ export const TaskView = forwardRef<TaskViewHandle, TaskViewProps>((props, ref) =
 
   // Overflow menu items
   const isArchived = task.status === "archived";
-  const isBroken = task.status === "broken";
   const isLocal = task.isLocal === true;
-  const canOperate = !isArchived && !isBroken && !isLocal;
+  const canOperate = !isArchived && !isLocal;
 
   // Panel + git op shortcuts — registered once per active TaskView so every
   // page that hosts one (TasksPage, BlitzPage, WorkPage) gets consistent
@@ -292,7 +291,7 @@ export const TaskView = forwardRef<TaskViewHandle, TaskViewProps>((props, ref) =
     }] : []),
     ...(!isLocal && onArchive ? [{
       id: "archive", label: "Archive", icon: Archive, onClick: onArchive,
-      variant: "warning" as const, disabled: isBroken || isArchived, separator: true,
+      variant: "warning" as const, disabled: isArchived, separator: true,
     }] : []),
     ...(onReset ? [{
       id: "reset", label: "Reset", icon: RotateCcw, onClick: onReset,
@@ -303,7 +302,7 @@ export const TaskView = forwardRef<TaskViewHandle, TaskViewProps>((props, ref) =
       id: "clean", label: "Clean", icon: Trash2, onClick: onClean,
       variant: "danger" as const,
     }] : []),
-  ], [isLocal, onRebase, onArchive, onReset, onClean, canOperate, isBroken, isArchived]);
+  ], [isLocal, onRebase, onArchive, onReset, onClean, canOperate, isArchived]);
 
   const workspaceLeading = useMemo(() => onBack ? (
     <div className="flex items-center gap-2.5 text-[12.5px] shrink-0">

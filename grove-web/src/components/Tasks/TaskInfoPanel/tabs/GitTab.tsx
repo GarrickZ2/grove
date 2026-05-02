@@ -62,9 +62,9 @@ export function GitTab({ projectId, task }: GitTabProps) {
     );
   }
 
-  const additions = diffData?.total_additions ?? task.additions;
-  const deletions = diffData?.total_deletions ?? task.deletions;
-  const filesChanged = diffData?.files.length ?? task.filesChanged;
+  const additions = diffData?.total_additions ?? 0;
+  const deletions = diffData?.total_deletions ?? 0;
+  const filesChanged = diffData?.files.length ?? 0;
   const commits = commitsData?.commits ?? [];
 
   return (

@@ -52,10 +52,6 @@ interface TasksPageProps {
 }
 
 export function TasksPage({ initialTaskId, initialChatId, initialViewMode, onNavigationConsumed, onNavByIndex, initialOpenNewTask, exitWorkspaceSignal }: TasksPageProps) {
-  // TODO: thread initialChatId down to TaskView's chat panel so the tray
-  // can deep-link to a specific chat session. Currently consumed at
-  // boundary only.
-  void initialChatId;
   const { selectedProject, refreshSelectedProject } = useProject();
   const prevProjectIdRef = useRef<string | undefined>(selectedProject?.id);
   const isStudio = selectedProject?.projectType === "studio";
@@ -164,9 +160,29 @@ export function TasksPage({ initialTaskId, initialChatId, initialViewMode, onNav
       pageHandlers.setInWorkspace(true);
     }
 
+    // Navigate to the specific chat session if provided (tray deep-link).
+    // Uses the same __grove_pending_chat + grove:switch-chat pattern as
+    // BlitzPage so both the "workspace just mounted" and "already mounted"
+    // cases are handled.
+    if (initialChatId && selectedProject) {
+      const projectId = selectedProject.id;
+      const taskId = initialTaskId;
+      const chatId = initialChatId;
+      (window as unknown as Record<string, unknown>).__grove_pending_chat = {
+        projectId,
+        taskId,
+        chatId,
+      };
+      window.dispatchEvent(
+        new CustomEvent("grove:switch-chat", {
+          detail: { projectId, taskId, chatId },
+        }),
+      );
+    }
+
     // Consume the navigation data so it doesn't re-trigger
     onNavigationConsumed?.();
-  }, [initialTaskId, initialViewMode, activeTasks, pageState.selectedTask?.id, onNavigationConsumed, pageHandlers]);
+  }, [initialTaskId, initialChatId, initialViewMode, activeTasks, pageState.selectedTask?.id, onNavigationConsumed, pageHandlers, selectedProject]);
 
   // Exit workspace when Tasks tab is re-clicked (signal from App.tsx).
   // Use a ref for inWorkspace so the effect only fires on signal changes but
@@ -344,7 +360,7 @@ export function TasksPage({ initialTaskId, initialChatId, initialViewMode, onNav
   const hasTask = !!pageState.selectedTask;
   const isActive = hasTask && pageState.selectedTask!.status !== "archived";
   const isArchived = hasTask && pageState.selectedTask!.status === "archived";
-  const canOperate = isActive && pageState.selectedTask!.status !== "broken";
+  const canOperate = isActive;
   const notInWorkspace = !pageState.inWorkspace;
 
   // Workspace keyboard shortcuts (higher priority than App-level)

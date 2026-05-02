@@ -1,6 +1,6 @@
-import { Circle, CheckCircle, AlertTriangle, XCircle, Archive, MoreVertical, Laptop, Zap, Code } from "lucide-react";
+import { Archive, MoreVertical, Laptop, Zap, Code } from "lucide-react";
 import { useIsMobile } from "../../../hooks";
-import type { Task, TaskStatus } from "../../../data/types";
+import type { Task } from "../../../data/types";
 
 interface TaskListItemProps {
   task: Task;
@@ -35,55 +35,7 @@ function getNotificationColor(level: string): string {
   }
 }
 
-function getStatusConfig(status: TaskStatus): {
-  icon: typeof Circle;
-  color: string;
-  label: string;
-  pulse?: boolean;
-} {
-  switch (status) {
-    case "live":
-      return {
-        icon: Circle,
-        color: "var(--color-success)",
-        label: "Live",
-        pulse: true,
-      };
-    case "idle":
-      return {
-        icon: Circle,
-        color: "var(--color-text-muted)",
-        label: "Idle",
-      };
-    case "merged":
-      return {
-        icon: CheckCircle,
-        color: "#a855f7",
-        label: "Merged",
-      };
-    case "conflict":
-      return {
-        icon: AlertTriangle,
-        color: "var(--color-error)",
-        label: "Conflict",
-      };
-    case "broken":
-      return {
-        icon: XCircle,
-        color: "var(--color-error)",
-        label: "Broken",
-      };
-    case "archived":
-      return {
-        icon: Archive,
-        color: "var(--color-text-muted)",
-        label: "Archived",
-      };
-  }
-}
-
 export function TaskListItem({ task, isSelected, onClick, onDoubleClick, onContextMenu, notification }: TaskListItemProps) {
-  const statusConfig = getStatusConfig(task.status);
   const { isMobile, isTouchDevice } = useIsMobile();
 
   return (
@@ -177,13 +129,14 @@ export function TaskListItem({ task, isSelected, onClick, onDoubleClick, onConte
               </span>
             )}
 
-            {/* Status label (only for non-live/idle states) */}
-            {task.status !== "live" && task.status !== "idle" && (
+            {/* Archived badge */}
+            {task.status === "archived" && (
               <span
-                className="text-xs font-medium"
-                style={{ color: statusConfig.color }}
+                className="flex items-center gap-1 text-xs font-medium"
+                style={{ color: "var(--color-text-muted)" }}
               >
-                {statusConfig.label}
+                <Archive className="w-3 h-3" />
+                Archived
               </span>
             )}
           </div>

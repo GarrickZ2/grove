@@ -12,7 +12,9 @@ export function ImageLightbox({ imageUrl, svgContent, onClose }: ImageLightboxPr
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const [isPanning, setIsPanning] = useState(false);
+  const isResetVisible = zoom !== 1 || pan.x !== 0 || pan.y !== 0;
   const panningRef = useRef(false);
+  const panMovedRef = useRef(false);
   const panStartRef = useRef({ x: 0, y: 0, panX: 0, panY: 0 });
   const containerRef = useRef<HTMLDivElement>(null);
   // Keep zoom in a ref so the wheel handler (registered imperatively) always reads the latest value
@@ -27,6 +29,7 @@ export function ImageLightbox({ imageUrl, svgContent, onClose }: ImageLightboxPr
     setIsPanning(false);
     /* eslint-enable react-hooks/set-state-in-effect */
     panningRef.current = false;
+    panMovedRef.current = false;
   }, [imageUrl, svgContent]);
 
   const reset = useCallback(() => { setZoom(1); setPan({ x: 0, y: 0 }); }, []);
@@ -54,7 +57,7 @@ export function ImageLightbox({ imageUrl, svgContent, onClose }: ImageLightboxPr
       if (e.metaKey || e.ctrlKey) {
         const delta = e.deltaY > 0 ? -0.15 : 0.15;
         setZoom((z) => Math.min(10, Math.max(0.2, z + delta * z)));
-      } else if (zoomRef.current > 1) {
+      } else {
         setPan((p) => ({ x: p.x - e.deltaX, y: p.y - e.deltaY }));
       }
     };
@@ -73,12 +76,21 @@ export function ImageLightbox({ imageUrl, svgContent, onClose }: ImageLightboxPr
           transition={{ duration: 0.15 }}
           data-lightbox-active="true"
           data-hotkeys-dialog="true"
-          className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/70 backdrop-blur-sm cursor-pointer select-none"
-          onClick={handleClose}
+          className={`fixed inset-0 z-[9999] flex items-center justify-center bg-black/70 backdrop-blur-sm select-none ${isPanning ? "cursor-grabbing" : "cursor-grab"}`}
+          onClick={(e) => {
+            if (panMovedRef.current) {
+              e.preventDefault();
+              e.stopPropagation();
+              panMovedRef.current = false;
+              return;
+            }
+            handleClose();
+          }}
           onMouseDown={(e) => {
-            if (zoom <= 1) return;
+            if (e.button !== 0 || (e.target as HTMLElement).closest("button")) return;
             e.preventDefault();
             panningRef.current = true;
+            panMovedRef.current = false;
             setIsPanning(true);
             panStartRef.current = { x: e.clientX, y: e.clientY, panX: pan.x, panY: pan.y };
           }}
@@ -86,6 +98,7 @@ export function ImageLightbox({ imageUrl, svgContent, onClose }: ImageLightboxPr
             if (!panningRef.current) return;
             const dx = e.clientX - panStartRef.current.x;
             const dy = e.clientY - panStartRef.current.y;
+            if (Math.hypot(dx, dy) > 3) panMovedRef.current = true;
             setPan({ x: panStartRef.current.panX + dx, y: panStartRef.current.panY + dy });
           }}
           onMouseUp={() => { panningRef.current = false; setIsPanning(false); }}
@@ -100,7 +113,7 @@ export function ImageLightbox({ imageUrl, svgContent, onClose }: ImageLightboxPr
           </button>
 
           {/* Zoom reset button */}
-          {zoom > 1 && (
+          {isResetVisible && (
             <button
               onClick={(e) => { e.stopPropagation(); reset(); }}
               className="absolute top-4 left-4 h-9 px-3 rounded-full bg-black/50 text-white/80 hover:text-white hover:bg-black/70 flex items-center justify-center gap-1.5 text-xs font-medium transition-colors z-10"
@@ -116,7 +129,10 @@ export function ImageLightbox({ imageUrl, svgContent, onClose }: ImageLightboxPr
               transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
               transition: isPanning ? "none" : "transform 0.15s ease-out",
             }}
-            onClick={(e) => e.stopPropagation()}
+            onClick={(e) => {
+              e.stopPropagation();
+              panMovedRef.current = false;
+            }}
           >
             {imageUrl ? (
               <motion.img
@@ -126,7 +142,7 @@ export function ImageLightbox({ imageUrl, svgContent, onClose }: ImageLightboxPr
                 exit={{ scale: 0.9, opacity: 0 }}
                 transition={{ duration: 0.15 }}
                 src={imageUrl}
-                className="max-w-[90vw] max-h-[90vh] object-contain rounded-lg shadow-2xl cursor-default"
+                className={`max-w-[90vw] max-h-[90vh] object-contain rounded-lg shadow-2xl ${isPanning ? "cursor-grabbing" : "cursor-grab"}`}
                 alt=""
               />
             ) : svgContent ? (
@@ -136,7 +152,7 @@ export function ImageLightbox({ imageUrl, svgContent, onClose }: ImageLightboxPr
                 animate={{ scale: 1, opacity: 1 }}
                 exit={{ scale: 0.9, opacity: 0 }}
                 transition={{ duration: 0.15 }}
-                className="w-[90vw] h-[90vh] flex items-center justify-center rounded-lg bg-[var(--color-bg-secondary)] shadow-2xl cursor-default [&_svg]:max-w-[88vw] [&_svg]:max-h-[88vh]"
+                className={`w-[90vw] h-[90vh] flex items-center justify-center rounded-lg bg-[var(--color-bg-secondary)] shadow-2xl ${isPanning ? "cursor-grabbing" : "cursor-grab"} [&_svg]:max-w-[88vw] [&_svg]:max-h-[88vh]`}
                 dangerouslySetInnerHTML={{ __html: svgContent }}
               />
             ) : null}

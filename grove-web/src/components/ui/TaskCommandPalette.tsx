@@ -168,11 +168,6 @@ export function TaskCommandPalette({ isOpen, onClose, tasks, selectedTask, onTas
                           </div>
                         </div>
                         <div className="flex items-center gap-2 flex-shrink-0">
-                          {task.filesChanged > 0 && (
-                            <span className="text-xs text-[var(--color-text-muted)]">
-                              {task.filesChanged} file{task.filesChanged !== 1 ? "s" : ""}
-                            </span>
-                          )}
                           {isCurrent && (
                             <span className="text-xs text-[var(--color-highlight)]">current</span>
                           )}

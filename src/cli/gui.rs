@@ -37,7 +37,29 @@ fn toggle_main_window_visibility(app: tauri::AppHandle) -> Result<(), String> {
         .get_webview_window("main")
         .ok_or_else(|| "main window not found".to_string())?;
 
+    #[cfg(target_os = "macos")]
+    if macos_app_is_hidden() {
+        macos_unhide_app();
+        window.show().map_err(|e| e.to_string())?;
+        window.set_focus().map_err(|e| e.to_string())?;
+        macos_activate_app();
+        return Ok(());
+    }
+
     if window.is_visible().map_err(|e| e.to_string())? {
+        #[cfg(target_os = "macos")]
+        {
+            if window.is_fullscreen().map_err(|e| e.to_string())? {
+                if macos_app_is_active() {
+                    macos_hide_app();
+                } else {
+                    window.show().map_err(|e| e.to_string())?;
+                    window.set_focus().map_err(|e| e.to_string())?;
+                    macos_activate_app();
+                }
+                return Ok(());
+            }
+        }
         window.hide().map_err(|e| e.to_string())?;
     } else {
         window.show().map_err(|e| e.to_string())?;
@@ -45,6 +67,78 @@ fn toggle_main_window_visibility(app: tauri::AppHandle) -> Result<(), String> {
     }
 
     Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn macos_shared_app() -> Option<*mut objc2::runtime::AnyObject> {
+    use objc2::msg_send;
+    use objc2::runtime::{AnyClass, AnyObject};
+    unsafe {
+        let cls = AnyClass::get("NSApplication")?;
+        let app: *mut AnyObject = msg_send![cls, sharedApplication];
+        (!app.is_null()).then_some(app)
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn macos_app_is_hidden() -> bool {
+    use objc2::msg_send;
+    use objc2::runtime::Bool;
+    let Some(app) = macos_shared_app() else {
+        return false;
+    };
+    unsafe {
+        let hidden: Bool = msg_send![app, isHidden];
+        hidden.as_bool()
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn macos_app_is_active() -> bool {
+    use objc2::msg_send;
+    use objc2::runtime::Bool;
+    let Some(app) = macos_shared_app() else {
+        return false;
+    };
+    unsafe {
+        let active: Bool = msg_send![app, isActive];
+        active.as_bool()
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn macos_activate_app() {
+    use objc2::msg_send;
+    use objc2::runtime::Bool;
+    if let Some(app) = macos_shared_app() {
+        unsafe {
+            let _: () = msg_send![app, activateIgnoringOtherApps: Bool::YES];
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn macos_hide_app() {
+    use objc2::msg_send;
+    use objc2::runtime::AnyObject;
+    if let Some(app) = macos_shared_app() {
+        unsafe {
+            let nil: *mut AnyObject = std::ptr::null_mut();
+            let _: () = msg_send![app, hide: nil];
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn macos_unhide_app() {
+    use objc2::msg_send;
+    use objc2::runtime::AnyObject;
+    if let Some(app) = macos_shared_app() {
+        unsafe {
+            let nil: *mut AnyObject = std::ptr::null_mut();
+            let _: () = msg_send![app, unhide: nil];
+        }
+    }
 }
 
 #[tauri::command]

@@ -257,37 +257,43 @@ pub async fn get_project(Path(id): Path<String>) -> Result<Json<ProjectResponse>
         }));
     }
 
-    let (all_tasks, local_task, current_branch, is_git_usable): (
+    // Load all tasks directly from DB — no git subprocess calls.
+    // Status detection (live/idle/merged/conflict) is TUI-only; web only needs
+    // archived vs active, which is stored in the DB.
+    let (all_tasks, local_task, current_branch, is_git_repo): (
         Vec<TaskResponse>,
         Option<TaskResponse>,
         String,
         bool,
     ) = tokio::task::spawn_blocking(move || {
-        let is_git_usable = git::is_git_usable(&project_path);
+        let project_key = workspace::project_hash(&project_path);
 
-        let (active, local) = loader::load_worktrees_and_local(&project_path);
-        let archived = loader::load_archived_worktrees(&project_path);
+        // Filesystem-only check — no git subprocess.
+        let is_git_repo = std::path::Path::new(&project_path).join(".git").exists();
 
-        use rayon::prelude::*;
-        let mut all_tasks: Vec<TaskResponse> = active
+        let active_tasks = tasks::load_tasks(&project_key).unwrap_or_default();
+        let archived_tasks = tasks::load_archived_tasks(&project_key).unwrap_or_default();
+
+        // Split local task out; it is not included in the main task list.
+        let local_task_db = active_tasks.iter().find(|t| t.is_local).cloned();
+
+        // current_branch from DB (stored by TUI sync); empty string for non-git projects.
+        let current_branch = local_task_db
+            .as_ref()
+            .map(|t| t.branch.clone())
+            .unwrap_or_default();
+
+        let mut all_tasks: Vec<TaskResponse> = active_tasks
             .iter()
-            .chain(archived.iter())
-            .collect::<Vec<_>>()
-            .par_iter()
-            .map(|wt| common::worktree_to_response(wt))
+            .filter(|t| !t.is_local)
+            .chain(archived_tasks.iter())
+            .map(storage_task_to_response)
             .collect();
-
         all_tasks.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
 
-        let local_task = local.map(|wt| common::worktree_to_response(&wt));
+        let local_task = local_task_db.as_ref().map(storage_task_to_response);
 
-        let current_branch = if is_git_usable {
-            git::current_branch(&project_path).unwrap_or_else(|_| "unknown".to_string())
-        } else {
-            String::new()
-        };
-
-        (all_tasks, local_task, current_branch, is_git_usable)
+        (all_tasks, local_task, current_branch, is_git_repo)
     })
     .await
     .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
@@ -300,7 +306,7 @@ pub async fn get_project(Path(id): Path<String>) -> Result<Json<ProjectResponse>
         tasks: all_tasks,
         local_task,
         added_at,
-        is_git_repo: is_git_usable,
+        is_git_repo,
         exists: true,
         project_type,
     }))

@@ -1,6 +1,6 @@
 import { createContext, useContext, useState, useEffect, useCallback, useRef } from "react";
 import type { ReactNode } from "react";
-import type { Project, Task, TaskStatus } from "../data/types";
+import type { Project, Task } from "../data/types";
 import {
   listProjects,
   getProject,
@@ -49,16 +49,7 @@ function convertTask(task: TaskResponse): Task {
     name: task.name,
     branch: task.branch,
     target: task.target,
-    status: task.status as TaskStatus,
-    additions: task.additions,
-    deletions: task.deletions,
-    filesChanged: task.files_changed,
-    commits: task.commits.map((c) => ({
-      hash: c.hash,
-      message: c.message,
-      author: "author", // API doesn't provide author yet
-      date: new Date(), // API provides time_ago, not exact date
-    })),
+    status: task.status === "archived" ? "archived" : "active",
     createdAt: new Date(task.created_at),
     updatedAt: new Date(task.updated_at),
     multiplexer: task.multiplexer || "tmux",

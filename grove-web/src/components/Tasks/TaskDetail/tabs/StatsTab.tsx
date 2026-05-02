@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
 import { Calendar, GitCommit, FileCode, Clock, Activity, Loader2, GitBranch, Info } from "lucide-react";
-import { getTaskStats, getDiff, type TaskStatsResponse, type DiffResponse } from "../../../../api";
+import { getTaskStats, getDiff, getCommits, type TaskStatsResponse, type DiffResponse, type CommitsResponse } from "../../../../api";
 import type { Task } from "../../../../data/types";
 import { compactPath } from "../../../../utils/pathUtils";
 
@@ -116,26 +116,30 @@ function formatRelativeTime(isoString: string): string {
 export function StatsTab({ projectId, task }: StatsTabProps) {
   const [stats, setStats] = useState<TaskStatsResponse | null>(null);
   const [diffData, setDiffData] = useState<DiffResponse | null>(null);
+  const [commitsData, setCommitsData] = useState<CommitsResponse | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   const additions = diffData?.total_additions ?? 0;
   const deletions = diffData?.total_deletions ?? 0;
   const filesChanged = diffData?.files.length ?? 0;
+  const commits = commitsData?.commits ?? [];
 
-  // Load task stats and diff data from API
+  // Load task stats, diff data, and commits from API
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setIsLoading(true);
-     
+
     setError(null);
     Promise.all([
       getTaskStats(projectId, task.id),
       getDiff(projectId, task.id).catch(() => null),
+      getCommits(projectId, task.id).catch(() => null),
     ])
-      .then(([statsRes, diffRes]) => {
+      .then(([statsRes, diffRes, commitsRes]) => {
         setStats(statsRes);
         setDiffData(diffRes);
+        setCommitsData(commitsRes);
       })
       .catch((err) => {
         console.error("Failed to load task stats:", err);
@@ -203,8 +207,8 @@ export function StatsTab({ projectId, task }: StatsTabProps) {
         <StatCard
           icon={GitCommit}
           label="Commits"
-          value={task.commits.length}
-          subValue={task.commits.length > 0 ? `Latest: ${task.commits[0]?.message.slice(0, 30)}...` : "No commits"}
+          value={commits.length}
+          subValue={commits.length > 0 ? `Latest: ${commits[0]?.message.slice(0, 30)}...` : "No commits"}
           delay={0.1}
         />
         <StatCard
@@ -457,7 +461,7 @@ export function StatsTab({ projectId, task }: StatsTabProps) {
       )}
 
       {/* Commit Timeline */}
-      {task.commits.length > 0 && (
+      {commits.length > 0 && (
         <motion.div
           initial={{ opacity: 0, y: 10 }}
           animate={{ opacity: 1, y: 0 }}
@@ -471,7 +475,7 @@ export function StatsTab({ projectId, task }: StatsTabProps) {
 
             {/* Commits */}
             <div className="space-y-3">
-              {task.commits.map((commit, index) => (
+              {commits.map((commit, index) => (
                 <div key={commit.hash} className="flex items-start gap-3 relative">
                   <div
                     className="w-4 h-4 rounded-full border-2 border-[var(--color-highlight)] bg-[var(--color-bg)] flex-shrink-0 z-10"
@@ -486,7 +490,7 @@ export function StatsTab({ projectId, task }: StatsTabProps) {
                     <div className="flex items-center gap-2 text-xs text-[var(--color-text-muted)] mt-0.5">
                       <code className="font-mono">{commit.hash.slice(0, 7)}</code>
                       <span>•</span>
-                      <span>{formatDate(commit.date, commit.timeAgo)}</span>
+                      <span>{commit.time_ago}</span>
                     </div>
                   </div>
                 </div>

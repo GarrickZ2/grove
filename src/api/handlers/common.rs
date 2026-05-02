@@ -2,11 +2,10 @@
 
 use axum::http::StatusCode;
 
-use crate::git;
 use crate::model;
 use crate::storage::workspace;
 
-use super::projects::{CommitResponse, TaskResponse};
+use super::projects::TaskResponse;
 
 /// Convert [`model::WorktreeStatus`] to the string the frontend expects.
 pub(crate) fn status_to_string(status: &model::WorktreeStatus) -> &'static str {
@@ -23,16 +22,6 @@ pub(crate) fn status_to_string(status: &model::WorktreeStatus) -> &'static str {
 
 /// Convert [`model::Worktree`] to [`TaskResponse`].
 pub(crate) fn worktree_to_response(wt: &model::Worktree) -> TaskResponse {
-    let commits = git::recent_log(&wt.path, &wt.target, 10)
-        .unwrap_or_default()
-        .into_iter()
-        .map(|log| CommitResponse {
-            hash: log.hash,
-            message: log.message,
-            time_ago: log.time_ago,
-        })
-        .collect();
-
     TaskResponse {
         id: wt.id.clone(),
         name: wt.task_name.clone(),
@@ -42,7 +31,7 @@ pub(crate) fn worktree_to_response(wt: &model::Worktree) -> TaskResponse {
         additions: 0,
         deletions: 0,
         files_changed: 0,
-        commits,
+        commits: Vec::new(),
         created_at: wt.created_at.to_rfc3339(),
         updated_at: wt.updated_at.to_rfc3339(),
         path: wt.path.clone(),

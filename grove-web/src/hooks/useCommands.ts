@@ -197,7 +197,7 @@ export function buildCommands(options: UseCommandsOptions): Command[] {
     if (taskActions) {
       const { selectedTask, inWorkspace, opsHandlers, onEnterWorkspace, onOpenPanel, onSwitchInfoTab, onRefresh, onNewTask, isStudio: studioMode } = taskActions;
       const isActive = selectedTask && selectedTask.status !== "archived";
-      const canOperate = isActive && selectedTask.status !== "broken";
+      const canOperate = isActive;
 
       if (onNewTask) {
         commands.push(withRanking({

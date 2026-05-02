@@ -568,7 +568,7 @@ export function BlitzPage({ onSwitchToZen, onNavigate }: BlitzPageProps) {
 
   const hasTask = !!selectedTask;
   const isActive = hasTask && selectedTask.status !== "archived";
-  const canOperate = isActive && selectedTask.status !== "broken";
+  const canOperate = isActive;
   const notInWorkspace = !pageState.inWorkspace;
 
   // Workspace keyboard shortcuts (higher priority than Blitz task selection)
