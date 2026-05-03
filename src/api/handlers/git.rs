@@ -30,15 +30,11 @@ pub struct RepoStatusResponse {
     pub has_remote: bool,
 }
 
-/// Branch info with ahead/behind
 #[derive(Debug, Serialize)]
 pub struct BranchDetailInfo {
     pub name: String,
     pub is_local: bool,
     pub is_current: bool,
-    pub last_commit: Option<String>,
-    pub ahead: Option<u32>,
-    pub behind: Option<u32>,
 }
 
 /// Branches list response
@@ -273,31 +269,20 @@ pub async fn get_branches(
     };
 
     if remote == "local" {
-        // Fetch only local branches
         let local_branches =
             git::list_branches(&project_path).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
         for name in &local_branches {
-            // Filter out Grove-managed branches
             if grove_branches.contains(name) {
                 continue;
             }
-
-            let is_current = name == &current_branch;
-            let last_commit = git_cmd(&project_path, &["rev-parse", "--short", name]).ok();
-            let (ahead, behind) = get_ahead_behind(&project_path, name);
-
             branches.push(BranchDetailInfo {
                 name: name.clone(),
                 is_local: true,
-                is_current,
-                last_commit,
-                ahead,
-                behind,
+                is_current: name == &current_branch,
             });
         }
     } else {
-        // Fetch branches from specific remote
         let remote_output = git_cmd(
             &project_path,
             &[
@@ -316,25 +301,17 @@ pub async fn get_branches(
             .filter(|s| !s.is_empty() && !s.contains("HEAD"))
             .collect();
 
-        // Get local branches to check for duplicates
         let local_branches = git::list_branches(&project_path).unwrap_or_default();
 
         for name in &remote_branches {
-            // Check if local version exists (strip remote prefix)
             let local_name = name.strip_prefix(&format!("{}/", remote)).unwrap_or(name);
             if local_branches.contains(&local_name.to_string()) {
                 continue;
             }
-
-            let last_commit = git_cmd(&project_path, &["rev-parse", "--short", name]).ok();
-
             branches.push(BranchDetailInfo {
                 name: name.clone(),
                 is_local: false,
                 is_current: false,
-                last_commit,
-                ahead: None,
-                behind: None,
             });
         }
     }

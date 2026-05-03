@@ -152,18 +152,16 @@ pub fn is_git_repo(path: &str) -> bool {
     git_cmd_check(path, &["rev-parse", "--git-dir"])
 }
 
-/// 检查仓库是否至少有一个 commit(HEAD 能被 verify)
+/// 检查 git 状态是否可用(是 git 仓库且至少有一个 commit)。
 ///
-/// 只有 `is_git_repo` 返回 true 但 `has_any_commit` 返回 false 的情况是
-/// "未完成初始化" 的 git 仓库(比如刚 `git init` 还没 commit),此时大多数
-/// git 查询(`current_branch`, `log` 等)会失败。
-pub fn has_any_commit(path: &str) -> bool {
-    git_cmd_check(path, &["rev-parse", "--verify", "HEAD"])
-}
-
-/// 检查 git 状态是否可用(是 git 仓库且至少有一个 commit)
+/// 用 `gix` 进程内实现,不 fork git 子进程:
+/// - `gix::open` 成功 → 是 git 仓库 (worktree/submodule 也认)
+/// - `head_id()` 成功 → HEAD 解析得到一个 commit (空 repo 这里会失败)
 pub fn is_git_usable(path: &str) -> bool {
-    is_git_repo(path) && has_any_commit(path)
+    match gix::open(path) {
+        Ok(repo) => repo.head_id().is_ok(),
+        Err(_) => false,
+    }
 }
 
 /// 检查当前路径是否是一个 worktree (而不是主 repo)

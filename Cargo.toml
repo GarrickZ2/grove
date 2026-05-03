@@ -120,6 +120,9 @@ futures-util = "0.3"
 # Read macOS Info.plist files in-process (avoid forking `defaults`).
 plist = "1"
 
+# In-process git for hot read paths (avoid fork+exec). Write/network ops still use CLI.
+gix = { version = "0.66", default-features = false, features = ["max-performance-safe"] }
+
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 

@@ -28,38 +28,21 @@ struct DependencyDef {
     install_command: &'static str,
 }
 
-#[cfg(target_os = "windows")]
-const GIT_INSTALL_CMD: &str = "winget install Git.Git";
-#[cfg(target_os = "linux")]
-const GIT_INSTALL_CMD: &str = "sudo apt install git  # or: dnf install git / pacman -S git";
-#[cfg(not(any(target_os = "windows", target_os = "linux")))]
-const GIT_INSTALL_CMD: &str = "brew install git";
-
-// tmux/zellij are filtered out of the dependency list on Windows
-// (see `current_dependencies()`), so the install hints below are only ever
-// surfaced off-Windows. The Windows arm exists only to keep `ALL_DEPENDENCIES`
-// compilable on every target.
-#[cfg(target_os = "windows")]
-const TMUX_INSTALL_CMD: &str = "";
+// 这个 endpoint 只服务 grove-web,而 grove-web 只消费 tmux + zellij 状态
+// (用来判断 terminal multiplexer 是否可用)。git 通过功能调用失败暴露,
+// fzf 仅 `grove fp` CLI 命令使用,d2 在 Preview 渲染时另起检查 ——
+// 都不需要走这个 HTTP 接口。
 #[cfg(target_os = "linux")]
 const TMUX_INSTALL_CMD: &str = "sudo apt install tmux  # or: dnf install tmux / pacman -S tmux";
 #[cfg(not(any(target_os = "windows", target_os = "linux")))]
 const TMUX_INSTALL_CMD: &str = "brew install tmux";
 
-#[cfg(target_os = "windows")]
-const ZELLIJ_INSTALL_CMD: &str = "";
 #[cfg(target_os = "linux")]
 const ZELLIJ_INSTALL_CMD: &str = "cargo install zellij  # or: snap install zellij";
 #[cfg(not(any(target_os = "windows", target_os = "linux")))]
 const ZELLIJ_INSTALL_CMD: &str = "brew install zellij";
 
-#[cfg(target_os = "windows")]
-const FZF_INSTALL_CMD: &str = "winget install junegunn.fzf";
-#[cfg(target_os = "linux")]
-const FZF_INSTALL_CMD: &str = "sudo apt install fzf  # or: dnf install fzf / pacman -S fzf";
-#[cfg(not(any(target_os = "windows", target_os = "linux")))]
-const FZF_INSTALL_CMD: &str = "brew install fzf";
-
+// D2 install hint — used by render.rs when D2 is missing during preview render.
 #[cfg(target_os = "windows")]
 pub const D2_INSTALL_CMD: &str = "winget install Terrastruct.D2";
 #[cfg(target_os = "linux")]
@@ -67,15 +50,10 @@ pub const D2_INSTALL_CMD: &str = "curl -fsSL https://d2lang.com/install.sh | sh 
 #[cfg(not(any(target_os = "windows", target_os = "linux")))]
 pub const D2_INSTALL_CMD: &str = "brew install d2";
 
-/// All dependencies. tmux/zellij are filtered out on Windows in `current_dependencies()`
-/// since they aren't natively supported there.
+/// Dependencies that grove-web actually consumes. Windows is left empty
+/// since neither tmux nor zellij is natively supported there.
+#[cfg(not(target_os = "windows"))]
 const ALL_DEPENDENCIES: &[DependencyDef] = &[
-    DependencyDef {
-        name: "git",
-        check_cmd: "git",
-        check_args: &["--version"],
-        install_command: GIT_INSTALL_CMD,
-    },
     DependencyDef {
         name: "tmux",
         check_cmd: "tmux",
@@ -88,32 +66,13 @@ const ALL_DEPENDENCIES: &[DependencyDef] = &[
         check_args: &["--version"],
         install_command: ZELLIJ_INSTALL_CMD,
     },
-    DependencyDef {
-        name: "fzf",
-        check_cmd: "fzf",
-        check_args: &["--version"],
-        install_command: FZF_INSTALL_CMD,
-    },
-    DependencyDef {
-        name: "d2",
-        check_cmd: "d2",
-        check_args: &["--version"],
-        install_command: D2_INSTALL_CMD,
-    },
 ];
 
-/// Per-OS dependency list — Windows skips tmux/zellij which aren't natively supported.
-fn current_dependencies() -> Vec<&'static DependencyDef> {
+#[cfg(target_os = "windows")]
+const ALL_DEPENDENCIES: &[DependencyDef] = &[];
+
+fn current_dependencies() -> &'static [DependencyDef] {
     ALL_DEPENDENCIES
-        .iter()
-        .filter(|d| {
-            if cfg!(target_os = "windows") {
-                d.name != "tmux" && d.name != "zellij"
-            } else {
-                true
-            }
-        })
-        .collect()
 }
 
 fn check_dependency(dep: &DependencyDef) -> DependencyStatus {
@@ -220,18 +179,25 @@ fn parse_version(name: &str, output: &str) -> String {
 
 /// GET /api/v1/env/check - Check all dependencies
 pub async fn check_all() -> Json<EnvCheckResponse> {
-    let dependencies: Vec<DependencyStatus> = current_dependencies()
-        .into_iter()
-        .map(check_dependency)
-        .collect();
+    use rayon::prelude::*;
+
+    // Sync `Command::output()` per dep — push off the tokio runtime and
+    // run them in parallel so cold spawns don't add up.
+    let dependencies = tokio::task::spawn_blocking(|| {
+        current_dependencies()
+            .par_iter()
+            .map(check_dependency)
+            .collect::<Vec<_>>()
+    })
+    .await
+    .unwrap_or_default();
 
     Json(EnvCheckResponse { dependencies })
 }
 
 /// GET /api/v1/env/check/:name - Check single dependency
 pub async fn check_one(Path(name): Path<String>) -> Json<Option<DependencyStatus>> {
-    let deps = current_dependencies();
-    let dep = deps.into_iter().find(|d| d.name == name);
+    let dep = current_dependencies().iter().find(|d| d.name == name);
 
     Json(dep.map(check_dependency))
 }

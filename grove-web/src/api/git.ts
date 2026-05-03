@@ -21,9 +21,6 @@ export interface BranchDetailInfo {
   name: string;
   is_local: boolean;
   is_current: boolean;
-  last_commit: string | null;
-  ahead: number | null;
-  behind: number | null;
 }
 
 interface BranchesDetailResponse {

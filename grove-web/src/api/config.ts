@@ -79,6 +79,7 @@ export interface Config {
   acp: AcpConfig;
   hooks: HooksConfig;
   notifications: NotificationsConfig;
+  platform: string; // "macos" | "windows" | "linux"
 }
 
 interface ConfigPatch {

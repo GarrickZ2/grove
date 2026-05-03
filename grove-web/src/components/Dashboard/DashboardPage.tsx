@@ -43,7 +43,6 @@ import {
   deleteTask,
   checkCommands,
   getConfig,
-  listApplications,
   initGitRepo,
   type RepoStatusResponse,
   type BranchDetailInfo,
@@ -77,11 +76,6 @@ function convertBranch(branch: BranchDetailInfo): Branch {
     name: branch.name,
     isLocal: branch.is_local,
     isCurrent: branch.is_current,
-    lastCommit: branch.last_commit || undefined,
-    aheadBehind:
-      branch.ahead !== null && branch.behind !== null
-        ? { ahead: branch.ahead, behind: branch.behind }
-        : undefined,
   };
 }
 
@@ -133,7 +127,7 @@ export function DashboardPage({ onNavigate }: DashboardPageProps) {
   const [agentAvailability, setAgentAvailability] = useState<Record<string, boolean>>({});
   const [terminalAgentConfigured, setTerminalAgentConfigured] = useState(true);
   const [chatAgentConfigured, setChatAgentConfigured] = useState(true);
-  // null = unknown until listApplications() resolves — avoids briefly rendering
+  // null = unknown until getConfig() resolves — avoids briefly rendering
   // mac-only buttons (Open IDE / Terminal) on Windows/Linux during initial load.
   const [serverPlatform, setServerPlatform] = useState<string | null>(null);
   const [dismissedTips, setDismissedTips] = useState<Set<string>>(() => {
@@ -235,17 +229,16 @@ export function DashboardPage({ onNavigate }: DashboardPageProps) {
   // doesn't leave serverPlatform unknown forever and hide the IDE/Terminal buttons.
   useEffect(() => {
     const check = async () => {
-      const [cmdRes, cfgRes, appsRes] = await Promise.allSettled([
+      const [cmdRes, cfgRes] = await Promise.allSettled([
         checkCommands(["claude", "codex", "gemini"]),
         getConfig(),
-        listApplications(),
       ]);
       if (cmdRes.status === "fulfilled") setAgentAvailability(cmdRes.value);
       if (cfgRes.status === "fulfilled") {
         setTerminalAgentConfigured(!!cfgRes.value.layout?.agent_command);
         setChatAgentConfigured(!!cfgRes.value.acp?.agent_command);
+        setServerPlatform(cfgRes.value.platform);
       }
-      if (appsRes.status === "fulfilled") setServerPlatform(appsRes.value.platform);
     };
     check();
   }, []);

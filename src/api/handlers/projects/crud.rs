@@ -125,10 +125,10 @@ pub async fn list_projects() -> Result<Json<ProjectListResponse>, StatusCode> {
 
     let mut auto_registered = false;
     if let Some(ref cwd) = cwd {
-        let cwd_str = cwd.to_string_lossy().to_string();
-        if git::is_git_repo(&cwd_str) {
-            if let Ok(git_root) = git::repo_root(&cwd_str) {
-                let name = std::path::Path::new(&git_root)
+        if let Ok(repo) = gix::discover(cwd) {
+            if let Some(work_dir) = repo.work_dir() {
+                let git_root = work_dir.to_string_lossy().to_string();
+                let name = work_dir
                     .file_name()
                     .map(|n| n.to_string_lossy().to_string())
                     .unwrap_or_else(|| "Unknown".to_string());
@@ -161,8 +161,9 @@ pub async fn list_projects() -> Result<Json<ProjectListResponse>, StatusCode> {
         }
     }
 
+    use rayon::prelude::*;
     let items: Vec<ProjectListItem> = projects
-        .iter()
+        .par_iter()
         .map(|p| {
             let id = workspace::project_hash(&p.path);
             let task_count = count_project_tasks(&id);

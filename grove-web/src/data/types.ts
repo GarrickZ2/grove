@@ -72,8 +72,6 @@ export interface Branch {
   name: string;
   isLocal: boolean;
   isCurrent: boolean;
-  lastCommit?: string;
-  aheadBehind?: { ahead: number; behind: number };
 }
 
 // Repository status

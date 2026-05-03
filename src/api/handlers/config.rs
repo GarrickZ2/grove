@@ -8,7 +8,7 @@ use axum::Json;
 use serde::{Deserialize, Serialize};
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use crate::storage::config::{self, Config, CustomAgentServer, CustomLayoutConfig, ThemeConfig};
 
@@ -28,6 +28,10 @@ pub struct ConfigResponse {
     pub notifications: NotificationsConfigDto,
     /// Terminal 模式使用的复用器 ("tmux" | "zellij")
     pub terminal_multiplexer: String,
+    /// Server platform identifier ("macos" | "windows" | "linux"). Lets the
+    /// frontend gate platform-specific UI (IDE picker, Terminal picker)
+    /// without doing a separate `listApplications` round-trip.
+    pub platform: &'static str,
 }
 
 #[derive(Debug, Serialize)]
@@ -161,6 +165,7 @@ impl From<&Config> for ConfigResponse {
                 notification_show_running: config.notifications.notification_show_running,
             },
             terminal_multiplexer: config.terminal_multiplexer.to_string(),
+            platform: current_platform(),
         }
     }
 }
@@ -437,7 +442,6 @@ fn current_platform() -> &'static str {
 pub async fn list_applications() -> Json<ApplicationsResponse> {
     let platform = current_platform();
 
-    // Windows/Linux: application scanning not yet supported
     if platform != "macos" {
         return Json(ApplicationsResponse {
             apps: Vec::new(),
@@ -445,76 +449,74 @@ pub async fn list_applications() -> Json<ApplicationsResponse> {
         });
     }
 
-    let mut apps = Vec::new();
+    // Sync FS work + parallel plist parsing — push off the tokio runtime.
+    let apps = tokio::task::spawn_blocking(scan_macos_apps)
+        .await
+        .unwrap_or_default();
 
-    // Scan common application directories (macOS)
+    Json(ApplicationsResponse { apps, platform })
+}
+
+fn scan_macos_apps() -> Vec<AppInfo> {
+    use rayon::prelude::*;
+
     let app_dirs = [
         "/Applications",
         "/System/Applications",
         "/System/Applications/Utilities",
     ];
-
-    // Also check user's Applications folder
     let home_apps = dirs::home_dir().map(|h| h.join("Applications"));
 
+    let mut entries: Vec<PathBuf> = Vec::new();
     for dir_path in app_dirs
         .iter()
         .map(|s| Path::new(*s))
         .chain(home_apps.iter().map(|p| p.as_path()))
     {
-        if let Ok(entries) = std::fs::read_dir(dir_path) {
-            for entry in entries.flatten() {
+        if let Ok(rd) = std::fs::read_dir(dir_path) {
+            for entry in rd.flatten() {
                 let path = entry.path();
                 if path.extension().is_some_and(|ext| ext == "app") {
-                    if let Some(name) = path.file_stem().and_then(|s| s.to_str()) {
-                        // Try to get bundle identifier from Info.plist
-                        let bundle_id = get_bundle_id(&path);
-
-                        apps.push(AppInfo {
-                            name: name.to_string(),
-                            path: path.to_string_lossy().to_string(),
-                            bundle_id,
-                        });
-                    }
+                    entries.push(path);
                 }
             }
         }
     }
 
-    // Sort by name
+    let mut apps: Vec<AppInfo> = entries
+        .par_iter()
+        .filter_map(|path| {
+            let name = path.file_stem()?.to_str()?.to_string();
+            let bundle_id = get_bundle_id(path);
+            Some(AppInfo {
+                name,
+                path: path.to_string_lossy().to_string(),
+                bundle_id,
+            })
+        })
+        .collect();
+
     apps.sort_by_key(|a| a.name.to_lowercase());
-
-    // Remove duplicates (same name from different locations, prefer /Applications)
     apps.dedup_by(|a, b| a.name == b.name);
-
-    Json(ApplicationsResponse { apps, platform })
+    apps
 }
 
 /// Try to extract bundle identifier from app's Info.plist
 fn get_bundle_id(app_path: &Path) -> Option<String> {
-    let plist_path = app_path.join("Contents/Info.plist");
-    get_plist_value(&plist_path, "CFBundleIdentifier")
+    read_plist_string(&app_path.join("Contents/Info.plist"), "CFBundleIdentifier")
 }
 
-/// Read a single key from a plist file using macOS `defaults` command
-fn get_plist_value(plist_path: &Path, key: &str) -> Option<String> {
-    if !plist_path.exists() {
-        return None;
+/// Read a string-valued key from a plist file (in-process, no subprocess).
+/// `plist::Value::from_file` already returns Err for missing files, so we
+/// don't gate on `exists()` first — saves one stat per app.
+fn read_plist_string(plist_path: &Path, key: &str) -> Option<String> {
+    let value = plist::Value::from_file(plist_path).ok()?;
+    let s = value.as_dictionary()?.get(key)?.as_string()?.trim();
+    if s.is_empty() {
+        None
+    } else {
+        Some(s.to_string())
     }
-
-    let output = std::process::Command::new("defaults")
-        .args(["read", &plist_path.to_string_lossy(), key])
-        .output()
-        .ok()?;
-
-    if output.status.success() {
-        let val = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        if !val.is_empty() {
-            return Some(val);
-        }
-    }
-
-    None
 }
 
 // --- App Icon API ---
@@ -648,8 +650,8 @@ fn extract_app_icon_to_file(app_path: &Path, output_path: &Path) -> Option<Vec<u
 
     // Read CFBundleIconFile (or CFBundleIconName) from Info.plist
     let plist_path = app_path.join("Contents/Info.plist");
-    let icon_file_name = get_plist_value(&plist_path, "CFBundleIconFile")
-        .or_else(|| get_plist_value(&plist_path, "CFBundleIconName"));
+    let icon_file_name = read_plist_string(&plist_path, "CFBundleIconFile")
+        .or_else(|| read_plist_string(&plist_path, "CFBundleIconName"));
 
     // Try to find the .icns file
     let icns_path = if let Some(icon_name) = icon_file_name {
