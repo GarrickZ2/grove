@@ -4,6 +4,7 @@ import type { Project } from "../../data/types";
 import { getProjectStyle } from "../../utils/projectStyle";
 import { compactPath } from "../../utils/pathUtils";
 import { useTheme } from "../../context";
+import { OptionalPerfProfiler } from "../../perf/profilerShim";
 
 interface ProjectCardProps {
   project: Project;
@@ -14,7 +15,15 @@ interface ProjectCardProps {
   compact?: boolean;
 }
 
-export function ProjectCard({ project, isSelected, onSelect, onDoubleClick, onDelete, compact }: ProjectCardProps) {
+export function ProjectCard(props: ProjectCardProps) {
+  return (
+    <OptionalPerfProfiler id={`ProjectCard:${props.project.id.slice(0, 8)}`}>
+      <ProjectCardInner {...props} />
+    </OptionalPerfProfiler>
+  );
+}
+
+function ProjectCardInner({ project, isSelected, onSelect, onDoubleClick, onDelete, compact }: ProjectCardProps) {
   const { theme } = useTheme();
   // Use taskCount from list response, fallback to calculating from tasks array
   const taskCount = project.taskCount ?? project.tasks.length;

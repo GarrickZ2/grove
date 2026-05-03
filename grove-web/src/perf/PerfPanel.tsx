@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { perfRecorder } from "./recorder";
-import type { PerfEventKind, PerfSnapshot } from "./types";
+import type { PerfEvent, PerfEventKind, PerfSnapshot } from "./types";
 
 type Tab = "timeline" | "memory" | "renders" | "network" | "backend";
 
@@ -63,6 +63,52 @@ export function PerfPanel() {
   const [open, setOpen] = useState(false);
   const [tab, setTab] = useState<Tab>("timeline");
   const [kindFilter, setKindFilter] = useState<KindFilter>("all");
+  const [size, setSize] = useState<{ w: number; h: number }>(() => {
+    try {
+      const raw = localStorage.getItem("grove:perf-panel-size");
+      if (raw) {
+        const parsed = JSON.parse(raw) as { w: number; h: number };
+        if (typeof parsed.w === "number" && typeof parsed.h === "number") {
+          return parsed;
+        }
+      }
+    } catch {
+      /* ignore */
+    }
+    return { w: 560, h: Math.round(window.innerHeight * 0.7) };
+  });
+
+  useEffect(() => {
+    try {
+      localStorage.setItem("grove:perf-panel-size", JSON.stringify(size));
+    } catch {
+      /* ignore */
+    }
+  }, [size]);
+
+  const startResize = (e: React.MouseEvent) => {
+    e.preventDefault();
+    const startX = e.clientX;
+    const startY = e.clientY;
+    const startW = size.w;
+    const startH = size.h;
+    const onMove = (ev: MouseEvent) => {
+      // Panel is anchored bottom-right, so dragging the top-left handle
+      // up/left grows the panel.
+      const dw = startX - ev.clientX;
+      const dh = startY - ev.clientY;
+      setSize({
+        w: Math.max(360, Math.min(window.innerWidth - 24, startW + dw)),
+        h: Math.max(240, Math.min(window.innerHeight - 60, startH + dh)),
+      });
+    };
+    const onUp = () => {
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+    };
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+  };
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -144,8 +190,8 @@ export function PerfPanel() {
             position: "fixed",
             right: 8,
             bottom: 36,
-            width: 560,
-            maxHeight: "70vh",
+            width: size.w,
+            height: size.h,
             zIndex: 999999,
             background: "#0b0e14",
             color: "#e6e6e6",
@@ -158,6 +204,22 @@ export function PerfPanel() {
             boxShadow: "0 20px 50px rgba(0,0,0,0.5)",
           }}
         >
+          {/* Resize handle: drag the top-left corner to grow the panel up/left */}
+          <div
+            onMouseDown={startResize}
+            title="Drag to resize"
+            style={{
+              position: "absolute",
+              top: -4,
+              left: -4,
+              width: 14,
+              height: 14,
+              cursor: "nwse-resize",
+              zIndex: 1,
+              background:
+                "linear-gradient(135deg, transparent 45%, rgba(255,255,255,0.4) 45%, rgba(255,255,255,0.4) 55%, transparent 55%)",
+            }}
+          />
           <div
             style={{
               display: "flex",
@@ -306,7 +368,14 @@ function BackendTab({ open }: { open: boolean }) {
         <tbody>
           {stats.map((r) => {
             const isErr = r.last_status >= 400;
-            const isSlow = r.p95_ms >= 100;
+            // Local loopback handler — no network RTT, so the bar is stricter
+            // than browser-network thresholds.
+            const p95Color =
+              r.p95_ms >= 200
+                ? "#ef4444"
+                : r.p95_ms >= 50
+                  ? "#f59e0b"
+                  : "#e6e6e6";
             const isExpanded = expandedRoute === r.route;
             return (
               <Fragment key={r.route}>
@@ -340,7 +409,7 @@ function BackendTab({ open }: { open: boolean }) {
                     style={{
                       padding: "4px",
                       textAlign: "right",
-                      color: isSlow ? "#ef4444" : "#e6e6e6",
+                      color: p95Color,
                     }}
                   >
                     {r.p95_ms.toFixed(1)}
@@ -463,15 +532,27 @@ function TraceDetailModal({
   onClose: () => void;
 }) {
   const totalUs = Math.max(trace.total_us, 1);
-  // Build child map
+  // Build child map. Defensively drop self-parent edges and references to
+  // span ids that don't exist in this trace — tracing span ids can collide
+  // across traces in our ring buffer collector, and a stray cycle would
+  // otherwise blow the stack via the recursive renderSpan below.
+  const validIds = new Set<number>(trace.spans.map((s) => s.id));
   const childrenOf = new Map<number | null, SpanRecord[]>();
   for (const s of trace.spans) {
-    const parent = s.parent_id ?? null;
+    let parent: number | null = s.parent_id ?? null;
+    if (parent === s.id) parent = null; // self-loop → treat as root
+    if (parent !== null && !validIds.has(parent)) parent = null; // dangling
     const arr = childrenOf.get(parent) ?? [];
     arr.push(s);
     childrenOf.set(parent, arr);
   }
+  // Cap depth so even if our defenses miss a cycle the panel stays alive.
+  const MAX_DEPTH = 64;
+  const rendered = new Set<number>();
   const renderSpan = (s: SpanRecord, depth: number): React.ReactNode => {
+    if (depth > MAX_DEPTH) return null;
+    if (rendered.has(s.id)) return null;
+    rendered.add(s.id);
     const left = (s.start_us / totalUs) * 100;
     const width = Math.max(0.5, (s.duration_us / totalUs) * 100);
     const fields = Object.entries(s.fields)
@@ -637,39 +718,7 @@ function TimelineTab({
       <table style={{ width: "100%", borderCollapse: "collapse" }}>
         <tbody>
           {filtered.map((e, i) => (
-            <tr
-              key={i}
-              style={{
-                borderBottom: "1px solid rgba(255,255,255,0.05)",
-              }}
-            >
-              <td style={{ padding: "2px 4px", color: "#6b7280", width: 60 }}>
-                {(e.ts / 1000).toFixed(1)}s
-              </td>
-              <td style={{ padding: "2px 4px", width: 90 }}>
-                <span
-                  style={{
-                    color: KIND_COLORS[e.kind],
-                    fontWeight: 600,
-                  }}
-                >
-                  {e.kind}
-                </span>
-              </td>
-              <td style={{ padding: "2px 4px", color: "#d1d5db" }}>
-                {e.name}
-              </td>
-              <td
-                style={{
-                  padding: "2px 4px",
-                  textAlign: "right",
-                  color: e.duration >= 50 ? "#ef4444" : "#9ca3af",
-                  width: 70,
-                }}
-              >
-                {e.duration > 0 ? `${e.duration.toFixed(1)}ms` : ""}
-              </td>
-            </tr>
+            <TimelineRow key={i} event={e} allEvents={snapshot.events} />
           ))}
           {filtered.length === 0 && (
             <tr>
@@ -680,6 +729,189 @@ function TimelineTab({
           )}
         </tbody>
       </table>
+    </div>
+  );
+}
+
+function TimelineRow({
+  event: e,
+  allEvents,
+}: {
+  event: PerfEvent;
+  allEvents: PerfEvent[];
+}) {
+  const [open, setOpen] = useState(false);
+  const expandable =
+    e.kind === "event" || e.kind === "longtask" || e.kind === "react-render";
+
+  // For event rows, surface the breakdown right in the main row so the
+  // user doesn't even have to click — that's the whole reason they opened
+  // the panel.
+  const meta = (e.meta ?? {}) as Record<string, unknown>;
+  const inputDelay = typeof meta.inputDelay === "number" ? meta.inputDelay : null;
+  const processingTime =
+    typeof meta.processingTime === "number" ? meta.processingTime : null;
+  const presentationDelay =
+    typeof meta.presentationDelay === "number" ? meta.presentationDelay : null;
+  const target = typeof meta.target === "string" ? meta.target : null;
+
+  // For an event row, find what was happening in the same time window so
+  // the user can correlate the freeze with renders / fetches / longtasks.
+  const window = useMemo(() => {
+    if (!open || e.kind !== "event") return [];
+    const start = e.ts - 50;
+    const end = e.ts + e.duration + 50;
+    return allEvents
+      .filter(
+        (x) =>
+          x !== e &&
+          x.ts >= start &&
+          x.ts <= end &&
+          x.kind !== "memory" &&
+          x.kind !== "event",
+      )
+      .sort((a, b) => a.ts - b.ts);
+  }, [open, e, allEvents]);
+
+  return (
+    <>
+      <tr
+        onClick={() => expandable && setOpen((v) => !v)}
+        style={{
+          borderBottom: "1px solid rgba(255,255,255,0.05)",
+          cursor: expandable ? "pointer" : "default",
+        }}
+      >
+        <td style={{ padding: "2px 4px", color: "#6b7280", width: 60 }}>
+          {(e.ts / 1000).toFixed(1)}s
+        </td>
+        <td style={{ padding: "2px 4px", width: 90 }}>
+          {expandable && (
+            <span style={{ color: "#6b7280", marginRight: 2 }}>
+              {open ? "▾" : "▸"}
+            </span>
+          )}
+          <span style={{ color: KIND_COLORS[e.kind], fontWeight: 600 }}>
+            {e.kind}
+          </span>
+        </td>
+        <td style={{ padding: "2px 4px", color: "#d1d5db" }}>
+          {e.name}
+          {target && (
+            <span style={{ color: "#6b7280", marginLeft: 6 }}>→ {target}</span>
+          )}
+          {processingTime !== null && (
+            <span style={{ color: "#6b7280", marginLeft: 6, fontSize: 10 }}>
+              (delay {inputDelay?.toFixed(0)} · handler{" "}
+              <span
+                style={{
+                  color:
+                    processingTime > 100 ? "#ef4444" : processingTime > 16 ? "#f59e0b" : "#9ca3af",
+                  fontWeight: 600,
+                }}
+              >
+                {processingTime.toFixed(0)}
+              </span>{" "}
+              · paint{" "}
+              <span
+                style={{
+                  color:
+                    presentationDelay && presentationDelay > 100
+                      ? "#ef4444"
+                      : "#9ca3af",
+                }}
+              >
+                {presentationDelay?.toFixed(0)}
+              </span>{" "}
+              ms)
+            </span>
+          )}
+        </td>
+        <td
+          style={{
+            padding: "2px 4px",
+            textAlign: "right",
+            color: e.duration >= 50 ? "#ef4444" : "#9ca3af",
+            width: 70,
+          }}
+        >
+          {e.duration > 0 ? `${e.duration.toFixed(1)}ms` : ""}
+        </td>
+      </tr>
+      {open && (
+        <tr style={{ background: "rgba(255,255,255,0.02)" }}>
+          <td colSpan={4} style={{ padding: "6px 12px" }}>
+            {e.kind === "event" && (
+              <EventBreakdown event={e} window={window} />
+            )}
+            {e.kind !== "event" && (
+              <pre style={{ fontSize: 10, color: "#9ca3af", margin: 0 }}>
+                {JSON.stringify(e.meta ?? {}, null, 2)}
+              </pre>
+            )}
+          </td>
+        </tr>
+      )}
+    </>
+  );
+}
+
+function EventBreakdown({
+  event: e,
+  window,
+}: {
+  event: PerfEvent;
+  window: PerfEvent[];
+}) {
+  const meta = (e.meta ?? {}) as Record<string, unknown>;
+  const inputDelay = typeof meta.inputDelay === "number" ? meta.inputDelay : 0;
+  const processingTime =
+    typeof meta.processingTime === "number" ? meta.processingTime : 0;
+  const presentationDelay =
+    typeof meta.presentationDelay === "number" ? meta.presentationDelay : 0;
+  const total = Math.max(1, inputDelay + processingTime + presentationDelay);
+
+  const dominant =
+    processingTime > inputDelay && processingTime > presentationDelay
+      ? "JS handler / sync render is the bottleneck — look at what setState chain ran"
+      : presentationDelay > processingTime
+        ? "Paint / layout dominates — check for huge DOM commits or sync layouts"
+        : "Mostly input delay — main thread was busy when input arrived (look at events just before)";
+
+  return (
+    <div style={{ fontSize: 11, color: "#d1d5db" }}>
+      <div style={{ display: "flex", height: 14, borderRadius: 3, overflow: "hidden", marginBottom: 6 }}>
+        <div style={{ width: `${(inputDelay / total) * 100}%`, background: "#6b7280" }} title={`input delay ${inputDelay.toFixed(0)}ms`} />
+        <div style={{ width: `${(processingTime / total) * 100}%`, background: "#ef4444" }} title={`handler ${processingTime.toFixed(0)}ms`} />
+        <div style={{ width: `${(presentationDelay / total) * 100}%`, background: "#f59e0b" }} title={`paint ${presentationDelay.toFixed(0)}ms`} />
+      </div>
+      <div style={{ color: "#9ca3af", marginBottom: 6 }}>{dominant}</div>
+      <div style={{ color: "#9ca3af", marginBottom: 4, fontSize: 10 }}>
+        what happened in the same window:
+      </div>
+      {window.length === 0 && (
+        <div style={{ color: "#6b7280", fontSize: 10 }}>
+          nothing else recorded in this time range — the slow code is not
+          wrapped by Profiler / no longtask hit threshold. Add{" "}
+          <code style={{ background: "#1f2937", padding: "0 4px" }}>
+            perfMark()
+          </code>{" "}
+          inside the suspect handler.
+        </div>
+      )}
+      {window.map((x, i) => (
+        <div
+          key={i}
+          style={{ display: "flex", gap: 8, fontFamily: "monospace", fontSize: 10 }}
+        >
+          <span style={{ color: "#6b7280", width: 60 }}>
+            +{(x.ts - e.ts).toFixed(0)}ms
+          </span>
+          <span style={{ color: KIND_COLORS[x.kind], width: 80 }}>{x.kind}</span>
+          <span style={{ color: "#d1d5db", flex: 1 }}>{x.name}</span>
+          <span style={{ color: "#9ca3af" }}>{x.duration.toFixed(0)}ms</span>
+        </div>
+      ))}
     </div>
   );
 }

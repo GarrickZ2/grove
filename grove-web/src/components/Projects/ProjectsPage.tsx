@@ -9,6 +9,7 @@ import { useProject } from "../../context";
 import { useIsMobile } from "../../hooks";
 import { filterProjectsByType } from "../../utils/projectFilter";
 import type { Project } from "../../data/types";
+import { OptionalPerfProfiler } from "../../perf/profilerShim";
 
 interface ProjectsPageProps {
   onNavigate?: (page: string) => void;
@@ -173,6 +174,7 @@ export function ProjectsPage({ onNavigate, initialTab }: ProjectsPageProps) {
   const currentTab = tabMeta[activeTab];
 
   return (
+    <OptionalPerfProfiler id="ProjectsPage">
     <motion.div
       initial={{ opacity: 0, y: 20 }}
       animate={{ opacity: 1, y: 0 }}
@@ -258,5 +260,6 @@ export function ProjectsPage({ onNavigate, initialTab }: ProjectsPageProps) {
         isLoading={isDeleting}
       />
     </motion.div>
+    </OptionalPerfProfiler>
   );
 }
