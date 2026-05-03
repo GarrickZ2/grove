@@ -2,6 +2,7 @@ import { useEffect, useRef, useMemo } from "react";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebLinksAddon } from "@xterm/addon-web-links";
+import { WebglAddon } from "@xterm/addon-webgl";
 import "@xterm/xterm/css/xterm.css";
 import { useTerminalTheme } from "../../../context";
 import { appendHmacToUrl } from "../../../api/client";
@@ -220,6 +221,21 @@ export function XTerminal({
     terminal.loadAddon(webLinksAddon);
 
     terminal.open(container);
+
+    // GPU-accelerated renderer. Big win for high-throughput output (build
+    // logs, streaming AI tokens, large file dumps) and high-DPI displays.
+    // Must run AFTER terminal.open() because it needs a real canvas context.
+    // Falls back gracefully — if context creation fails or the GPU later
+    // drops the context, we just dispose the addon and xterm reverts to
+    // the DOM/canvas renderer.
+    try {
+      const webgl = new WebglAddon();
+      webgl.onContextLoss(() => webgl.dispose());
+      terminal.loadAddon(webgl);
+    } catch (err) {
+      console.warn("[xterm] WebGL renderer unavailable, using DOM fallback", err);
+    }
+
     terminalRef.current = terminal;
     fitAddon.fit();
 
