@@ -300,9 +300,32 @@ pub async fn get_commits(
         })
         .ok_or(StatusCode::NOT_FOUND)?;
 
-    let log_entries = git::recent_log(&task.worktree_path, &task.target, 50).unwrap_or_default();
+    let Ok(mut repo) = gix::open(&task.worktree_path) else {
+        return Ok(Json(CommitsResponse {
+            commits: Vec::new(),
+            total: 0,
+            skip_versions: 0,
+        }));
+    };
+    repo.object_cache_size_if_unset(64 * 1024 * 1024);
 
+    let log_entries = git::gix_log_target_to_head(&repo, &task.target, 50).unwrap_or_default();
     let total = log_entries.len() as u32;
+
+    // skip_versions: 顶部连续多少条 commit 的 tree 与 HEAD 的 tree 相同。
+    // gix log 返回的第一条就是 HEAD,其 tree_id 即可作为基准 —— 无需再查。
+    let dirty = git::has_uncommitted_changes(&task.worktree_path).unwrap_or(false);
+    let skip_versions = if dirty {
+        0u32
+    } else if let Some(head_tree) = log_entries.first().map(|e| e.tree_id.clone()) {
+        log_entries
+            .iter()
+            .take_while(|e| e.tree_id == head_tree)
+            .count() as u32
+    } else {
+        // No commits between target..HEAD: matches old "tree_hash(HEAD) failed" branch.
+        1
+    };
 
     let commits: Vec<CommitEntry> = log_entries
         .into_iter()
@@ -312,20 +335,6 @@ pub async fn get_commits(
             time_ago: entry.time_ago,
         })
         .collect();
-
-    let dirty = git::has_uncommitted_changes(&task.worktree_path).unwrap_or(false);
-    let skip_versions = if dirty {
-        0u32
-    } else if let Ok(head_tree) = git::tree_hash(&task.worktree_path, "HEAD") {
-        commits
-            .iter()
-            .take_while(|c| {
-                git::tree_hash(&task.worktree_path, &c.hash).ok().as_ref() == Some(&head_tree)
-            })
-            .count() as u32
-    } else {
-        1
-    };
 
     Ok(Json(CommitsResponse {
         commits,

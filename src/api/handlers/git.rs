@@ -128,40 +128,51 @@ fn git_cmd(path: &str, args: &[&str]) -> crate::error::Result<String> {
     }
 }
 
-/// Get commits ahead/behind for a branch relative to origin
+/// Get commits ahead/behind for a branch relative to origin in a single git call.
+///
+/// Uses `git rev-list --left-right --count branch...origin/branch` which returns
+/// "<ahead>\t<behind>" in one fork. Returns (None, None) if origin/branch is missing
+/// or branch is unknown.
 fn get_ahead_behind(path: &str, branch: &str) -> (Option<u32>, Option<u32>) {
-    let origin_ref = format!("origin/{}", branch);
-
-    // Check if origin ref exists
-    if git_cmd(path, &["rev-parse", "--verify", &origin_ref]).is_err() {
+    if branch == "unknown" || branch.is_empty() {
         return (None, None);
     }
-
-    // Get ahead count
-    let ahead = git_cmd(
-        path,
-        &[
-            "rev-list",
-            "--count",
-            &format!("{}..{}", origin_ref, branch),
-        ],
-    )
-    .ok()
-    .and_then(|s| s.parse().ok());
-
-    // Get behind count
-    let behind = git_cmd(
-        path,
-        &[
-            "rev-list",
-            "--count",
-            &format!("{}..{}", branch, origin_ref),
-        ],
-    )
-    .ok()
-    .and_then(|s| s.parse().ok());
-
+    let spec = format!("{}...origin/{}", branch, branch);
+    let output = match git_cmd(path, &["rev-list", "--left-right", "--count", &spec]) {
+        Ok(s) => s,
+        Err(_) => return (None, None),
+    };
+    let mut parts = output.split_whitespace();
+    let ahead = parts.next().and_then(|s| s.parse().ok());
+    let behind = parts.next().and_then(|s| s.parse().ok());
     (ahead, behind)
+}
+
+/// Single `git status --porcelain` call → both uncommitted count and conflict flag.
+fn uncommitted_and_conflicts(path: &str) -> (u32, bool) {
+    let output = match git_cmd(path, &["status", "--porcelain"]) {
+        Ok(s) => s,
+        Err(_) => return (0, false),
+    };
+    let mut count: u32 = 0;
+    let mut conflict = false;
+    for line in output.lines() {
+        if line.trim().is_empty() {
+            continue;
+        }
+        count += 1;
+        if !conflict {
+            let bytes = line.as_bytes();
+            if bytes.len() >= 2 {
+                let x = bytes[0];
+                let y = bytes[1];
+                if matches!((x, y), (b'U', _) | (_, b'U') | (b'A', b'A') | (b'D', b'D')) {
+                    conflict = true;
+                }
+            }
+        }
+    }
+    (count, conflict)
 }
 
 // ============================================================================
@@ -170,34 +181,66 @@ fn get_ahead_behind(path: &str, branch: &str) -> (Option<u32>, Option<u32>) {
 
 /// GET /api/v1/projects/{id}/git/status
 /// Get repository git status
+#[cfg_attr(
+    feature = "perf-monitor",
+    tracing::instrument(skip_all, fields(project_id = %id))
+)]
 pub async fn get_status(Path(id): Path<String>) -> Result<Json<RepoStatusResponse>, StatusCode> {
+    #[cfg(feature = "perf-monitor")]
+    let _s = tracing::info_span!("find_project_path").entered();
     let project_path = find_project_path(&id)?;
+    #[cfg(feature = "perf-monitor")]
+    drop(_s);
 
-    let current_branch =
-        git::current_branch(&project_path).unwrap_or_else(|_| "unknown".to_string());
+    // Open gix repo once — shared by current_branch / has_remote / stash_count.
+    #[cfg(feature = "perf-monitor")]
+    let _s = tracing::info_span!("gix_open").entered();
+    let gix_repo = gix::open(&project_path).ok();
+    #[cfg(feature = "perf-monitor")]
+    drop(_s);
 
-    // Get ahead/behind from origin
-    let (ahead, behind) = get_ahead_behind(&project_path, &current_branch);
+    #[cfg(feature = "perf-monitor")]
+    let _s = tracing::info_span!("current_branch").entered();
+    let current_branch = gix_repo
+        .as_ref()
+        .and_then(git::gix_current_branch)
+        .unwrap_or_else(|| "unknown".to_string());
+    #[cfg(feature = "perf-monitor")]
+    drop(_s);
 
-    // Determine if origin exists for this branch
-    let has_origin = ahead.is_some() || behind.is_some();
+    #[cfg(feature = "perf-monitor")]
+    let _s = tracing::info_span!("remote_get_url").entered();
+    let has_remote = gix_repo.as_ref().map(git::gix_has_origin).unwrap_or(false);
+    #[cfg(feature = "perf-monitor")]
+    drop(_s);
 
-    // Determine if the repo has an `origin` remote configured at all
-    let has_remote = git_cmd(&project_path, &["remote", "get-url", "origin"]).is_ok();
+    #[cfg(feature = "perf-monitor")]
+    let _s = tracing::info_span!("stash_count").entered();
+    let stash_count = gix_repo.as_ref().map(git::gix_stash_count).unwrap_or(0) as u32;
+    #[cfg(feature = "perf-monitor")]
+    drop(_s);
 
-    // Get uncommitted count
-    let uncommitted = git::uncommitted_count(&project_path).unwrap_or(0) as u32;
+    // Single rev-list call gives ahead + behind + has_origin in one fork.
+    #[cfg(feature = "perf-monitor")]
+    let _s = tracing::info_span!("ahead_behind").entered();
+    let (ahead_opt, behind_opt) = get_ahead_behind(&project_path, &current_branch);
+    let has_origin = ahead_opt.is_some() || behind_opt.is_some();
+    let ahead = ahead_opt.unwrap_or(0);
+    let behind = behind_opt.unwrap_or(0);
+    #[cfg(feature = "perf-monitor")]
+    drop(_s);
 
-    // Get stash count
-    let stash_count = git::stash_count(&project_path).unwrap_or(0) as u32;
-
-    // Check for conflicts
-    let has_conflicts = git::has_conflicts(&project_path);
+    // Single `git status --porcelain` call gives uncommitted + has_conflicts.
+    #[cfg(feature = "perf-monitor")]
+    let _s = tracing::info_span!("status_porcelain").entered();
+    let (uncommitted, has_conflicts) = uncommitted_and_conflicts(&project_path);
+    #[cfg(feature = "perf-monitor")]
+    drop(_s);
 
     Ok(Json(RepoStatusResponse {
         current_branch,
-        ahead: ahead.unwrap_or(0),
-        behind: behind.unwrap_or(0),
+        ahead,
+        behind,
         uncommitted,
         stash_count,
         has_conflicts,
@@ -354,43 +397,64 @@ pub async fn get_commits(
     Query(params): Query<CommitQueryParams>,
 ) -> Result<Json<RepoCommitsResponse>, StatusCode> {
     let project_path = find_project_path(&id)?;
-
     let limit = params.limit.unwrap_or(20).min(100);
-    let limit_str = format!("-{}", limit);
-    let mut args = vec!["log", &limit_str, "--format=%H\t%s\t%an\t%cr"];
-    // Validate `since` to only allow alphanumeric, spaces, hyphens, and colons (date-like values)
-    if let Some(ref since) = params.since {
-        if since.len() <= 50
-            && since
-                .chars()
-                .all(|c| c.is_alphanumeric() || " -:/.".contains(c))
-        {
-            args.push("--since");
-            args.push(since);
-        }
-    }
 
-    let output = git_cmd(&project_path, &args).unwrap_or_default();
+    // Convert frontend's "1 week ago"-style strings to a Unix-timestamp cutoff.
+    // Unrecognized formats fall through to no filter (matches the previous
+    // behavior of silently dropping invalid `since`).
+    let min_committer_time = params
+        .since
+        .as_deref()
+        .and_then(parse_relative_since)
+        .map(|secs| chrono::Utc::now().timestamp() - secs);
 
-    let commits: Vec<RepoCommitEntry> = output
-        .lines()
-        .filter(|l| !l.is_empty())
-        .filter_map(|line| {
-            let parts: Vec<&str> = line.splitn(4, '\t').collect();
-            if parts.len() >= 4 {
-                Some(RepoCommitEntry {
-                    hash: parts[0].to_string(),
-                    message: parts[1].to_string(),
-                    author: parts[2].to_string(),
-                    time_ago: parts[3].to_string(),
-                })
-            } else {
-                None
-            }
+    let Ok(mut repo) = gix::open(&project_path) else {
+        return Ok(Json(RepoCommitsResponse {
+            commits: Vec::new(),
+        }));
+    };
+    // 64 MiB object cache 让连续 commit decode 命中已解压数据。
+    repo.object_cache_size_if_unset(64 * 1024 * 1024);
+
+    let entries = git::gix_recent_log(&repo, limit, min_committer_time).unwrap_or_default();
+
+    let commits: Vec<RepoCommitEntry> = entries
+        .into_iter()
+        .map(|e| RepoCommitEntry {
+            hash: e.hash,
+            message: e.message,
+            author: e.author,
+            time_ago: e.time_ago,
         })
         .collect();
 
     Ok(Json(RepoCommitsResponse { commits }))
+}
+
+/// Parse strings like "1 week ago", "2 days ago", "3 months ago" into a
+/// duration-in-seconds offset. Returns None on anything unrecognized.
+///
+/// Only the subset of git's `--since` syntax that the frontend actually emits.
+/// We deliberately keep this small: the previous shell-out variant accepted
+/// almost anything and let git complain or silently no-op; matching that
+/// behavior is good enough.
+fn parse_relative_since(s: &str) -> Option<i64> {
+    let s = s.trim().to_ascii_lowercase();
+    let s = s.strip_suffix(" ago").unwrap_or(&s);
+    let mut parts = s.split_whitespace();
+    let n: i64 = parts.next()?.parse().ok()?;
+    let unit = parts.next()?;
+    let secs_per_unit: i64 = match unit.trim_end_matches('s') {
+        "second" => 1,
+        "minute" | "min" => 60,
+        "hour" => 3600,
+        "day" => 86_400,
+        "week" => 7 * 86_400,
+        "month" => 30 * 86_400,
+        "year" => 365 * 86_400,
+        _ => return None,
+    };
+    Some(n * secs_per_unit)
 }
 
 /// POST /api/v1/projects/{id}/git/checkout

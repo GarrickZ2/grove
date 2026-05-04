@@ -118,6 +118,180 @@ pub fn current_branch(repo_path: &str) -> Result<String> {
     git_cmd(repo_path, &["rev-parse", "--abbrev-ref", "HEAD"])
 }
 
+/// gix 版当前分支名(in-process,无 fork)。
+/// detached HEAD 时返回 None。
+pub fn gix_current_branch(repo: &gix::Repository) -> Option<String> {
+    let name = repo.head_name().ok().flatten()?;
+    let short = name.shorten().to_string();
+    Some(short)
+}
+
+/// gix 版「是否配了 origin remote」(in-process,无 fork)。
+pub fn gix_has_origin(repo: &gix::Repository) -> bool {
+    repo.find_remote("origin").is_ok()
+}
+
+/// gix 版 stash 数量(读 refs/stash 的 reflog 条目数)。
+/// 没有 stash ref 时返回 0。
+pub fn gix_stash_count(repo: &gix::Repository) -> usize {
+    let Ok(reference) = repo.find_reference("refs/stash") else {
+        return 0;
+    };
+    match reference.log_iter().all() {
+        Ok(Some(iter)) => iter.filter_map(|r| r.ok()).count(),
+        _ => 0,
+    }
+}
+
+/// gix log walk 的单条记录。
+///
+/// 比 `git log --format=...` 多带 `tree_id` —— 调用方可直接用它做 tree
+/// 对比(例如 `skip_versions` 检测),避免每个 commit 再发一次 `rev-parse`。
+#[derive(Debug, Clone)]
+pub struct GixLogEntry {
+    pub hash: String,
+    pub message: String,
+    pub author: String,
+    pub time_ago: String,
+    pub committer_time: i64,
+    pub tree_id: String,
+}
+
+fn extract_log_entry(commit: &gix::Commit<'_>) -> Option<GixLogEntry> {
+    let hash = commit.id().to_hex().to_string();
+    let message = {
+        let raw = commit.message_raw_sloppy();
+        let bytes: &[u8] = raw.as_ref();
+        let line_end = bytes
+            .iter()
+            .position(|&b| b == b'\n')
+            .unwrap_or(bytes.len());
+        String::from_utf8_lossy(&bytes[..line_end]).into_owned()
+    };
+    let author = commit
+        .author()
+        .ok()
+        .map(|sig| sig.name.to_string())
+        .unwrap_or_default();
+    let committer_time = commit
+        .committer()
+        .ok()
+        .map(|sig| sig.time.seconds)
+        .unwrap_or(0);
+    let tree_id = commit.tree_id().ok()?.to_hex().to_string();
+    let time_ago = chrono::DateTime::<chrono::Utc>::from_timestamp(committer_time, 0)
+        .map(crate::model::format_relative_time)
+        .unwrap_or_default();
+    Some(GixLogEntry {
+        hash,
+        message,
+        author,
+        time_ago,
+        committer_time,
+        tree_id,
+    })
+}
+
+/// gix 版 `git log -<count> [--since=<seconds>]`(in-process,无 fork)。
+///
+/// `min_committer_time`: 仅保留 committer_time >= 该值的 commit;`None` 不过滤。
+pub fn gix_recent_log(
+    repo: &gix::Repository,
+    count: usize,
+    min_committer_time: Option<i64>,
+) -> Result<Vec<GixLogEntry>> {
+    let head_id = repo
+        .head_id()
+        .map_err(|e| GroveError::git(format!("HEAD not found: {}", e)))?;
+    let walk = repo
+        .rev_walk([head_id])
+        .use_commit_graph(true)
+        .all()
+        .map_err(|e| GroveError::git(format!("rev_walk failed: {}", e)))?;
+
+    let mut out = Vec::with_capacity(count);
+    for info in walk {
+        if out.len() >= count {
+            break;
+        }
+        let Ok(info) = info else { continue };
+
+        // Fast path: when commit-graph is in use, `info.commit_time` is set
+        // without decoding the commit object. rev_walk yields newest-first,
+        // so the first commit older than the cutoff means we're done.
+        if let Some(min_t) = min_committer_time {
+            if let Some(t) = info.commit_time {
+                if t < min_t {
+                    break;
+                }
+            }
+        }
+
+        let Ok(object) = repo.find_object(info.id) else {
+            continue;
+        };
+        let Ok(commit) = object.try_into_commit() else {
+            continue;
+        };
+        let Some(entry) = extract_log_entry(&commit) else {
+            continue;
+        };
+        // Belt-and-suspenders: when there's no commit-graph, info.commit_time
+        // is None, so we still need this post-decode filter.
+        if let Some(min_t) = min_committer_time {
+            if entry.committer_time < min_t {
+                break;
+            }
+        }
+        out.push(entry);
+    }
+    Ok(out)
+}
+
+/// gix 版 `git log <target>..HEAD -<count>`(in-process,无 fork)。
+///
+/// 用 `selected` filter 在到达 `target` commit 时停止下溯,等价于典型用例
+/// (任务 worktree 从 target 分支线性拉出)的 `target..HEAD` 语义。如果
+/// HEAD 与 target 之间存在合并,行为等价于 git 的 `^target` 排除规则。
+pub fn gix_log_target_to_head(
+    repo: &gix::Repository,
+    target: &str,
+    count: usize,
+) -> Result<Vec<GixLogEntry>> {
+    use gix::bstr::BStr;
+    let head_id = repo
+        .head_id()
+        .map_err(|e| GroveError::git(format!("HEAD not found: {}", e)))?;
+    let target_id = repo
+        .rev_parse_single(BStr::new(target.as_bytes()))
+        .map_err(|e| GroveError::git(format!("target ref {} not found: {}", target, e)))?
+        .detach();
+
+    let walk = repo
+        .rev_walk([head_id])
+        .use_commit_graph(true)
+        .selected(move |oid| *oid != *target_id)
+        .map_err(|e| GroveError::git(format!("rev_walk failed: {}", e)))?;
+
+    let mut out = Vec::with_capacity(count);
+    for info in walk {
+        if out.len() >= count {
+            break;
+        }
+        let Ok(info) = info else { continue };
+        let Ok(object) = repo.find_object(info.id) else {
+            continue;
+        };
+        let Ok(commit) = object.try_into_commit() else {
+            continue;
+        };
+        if let Some(entry) = extract_log_entry(&commit) {
+            out.push(entry);
+        }
+    }
+    Ok(out)
+}
+
 /// 获取仓库的 default branch（main/master 等）
 /// 优先从 origin/HEAD 推断，fallback 检查 main/master 是否存在
 pub fn default_branch(repo_path: &str) -> String {
@@ -716,31 +890,28 @@ pub fn checkout_branch(worktree_path: &str, branch: &str) -> Result<()> {
 /// Commit log entry
 #[derive(Debug, Clone)]
 pub struct LogEntry {
-    pub hash: String,
     pub time_ago: String,
     pub message: String,
 }
 
 /// 获取最近的 commit 日志
-/// 执行: git log --format="%H\t%cr\t%s" -n {count} {target}..HEAD
+/// 执行: git log --format="%cr\t%s" -n {count} {target}..HEAD
 pub fn recent_log(worktree_path: &str, target: &str, count: usize) -> Result<Vec<LogEntry>> {
     let range = format!("{}..HEAD", target);
     let n = format!("-{}", count);
-    let output = git_cmd(worktree_path, &["log", "--format=%H\t%cr\t%s", &n, &range])?;
+    let output = git_cmd(worktree_path, &["log", "--format=%cr\t%s", &n, &range])?;
     Ok(output
         .lines()
         .filter(|l| !l.is_empty())
         .map(|line| {
-            let parts: Vec<&str> = line.splitn(3, '\t').collect();
-            if parts.len() == 3 {
+            let parts: Vec<&str> = line.splitn(2, '\t').collect();
+            if parts.len() == 2 {
                 LogEntry {
-                    hash: parts[0].to_string(),
-                    time_ago: parts[1].to_string(),
-                    message: parts[2].to_string(),
+                    time_ago: parts[0].to_string(),
+                    message: parts[1].to_string(),
                 }
             } else {
                 LogEntry {
-                    hash: String::new(),
                     time_ago: String::new(),
                     message: line.to_string(),
                 }
@@ -920,13 +1091,6 @@ pub fn diff_stat_range(
             }
         })
         .collect())
-}
-
-/// 获取指定 ref 的 tree hash
-/// 执行: git rev-parse {ref}^{tree}
-pub fn tree_hash(repo_path: &str, git_ref: &str) -> Result<String> {
-    let spec = format!("{}^{{tree}}", git_ref);
-    git_cmd(repo_path, &["rev-parse", &spec])
 }
 
 /// 获取未提交文件数量

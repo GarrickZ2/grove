@@ -268,6 +268,9 @@ fn main() -> io::Result<()> {
     );
     if needs_storage {
         ensure_storage_version();
+        // 一次性地把当前工作目录(若为 git 仓库)登记成 project。
+        // 旧逻辑放在 GET /projects handler 里,每次请求要 80ms+,纯属浪费。
+        storage::workspace::auto_register_cwd_if_git_repo();
     }
 
     // 统一调度

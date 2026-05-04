@@ -176,6 +176,32 @@ pub fn add_project(name: &str, path: &str) -> Result<()> {
     add_project_with_type(name, path, ProjectType::Repo)
 }
 
+/// 启动时调用一次:如果 cwd 处于一个 git 仓库内,把它的 work_dir 注册为 project。
+///
+/// 设计意图:用户在终端 `cd` 进仓库后启动 grove,自动把仓库登记进来。
+/// 这是**启动期**操作 —— 不要在 HTTP handler 里反复调用,因为
+/// `gix::discover` + `add_project` 的"已存在"分支加在一起在大型仓库
+/// 上能跑到 80ms+。
+pub fn auto_register_cwd_if_git_repo() {
+    let Ok(cwd) = std::env::current_dir() else {
+        return;
+    };
+    let Ok(repo) = gix::discover(&cwd) else {
+        return;
+    };
+    let Some(work_dir) = repo.work_dir() else {
+        return;
+    };
+    let git_root = work_dir.to_string_lossy().to_string();
+    let name = work_dir
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_else(|| "Unknown".to_string());
+
+    // "already registered" 当成成功 —— 我们只需要保证仓库在 DB 里。
+    let _ = add_project(&name, &git_root);
+}
+
 /// 添加指定类型的项目
 pub fn add_project_with_type(name: &str, path: &str, project_type: ProjectType) -> Result<()> {
     let resolved_path = if project_type == ProjectType::Studio {

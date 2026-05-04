@@ -120,29 +120,15 @@ pub(crate) fn list_resource_files(
 
 /// Validate that a symlink entry points inside the given directory
 /// GET /api/v1/projects
+#[cfg_attr(feature = "perf-monitor", tracing::instrument(skip_all))]
 pub async fn list_projects() -> Result<Json<ProjectListResponse>, StatusCode> {
     let cwd = std::env::current_dir().ok();
 
-    let mut auto_registered = false;
-    if let Some(ref cwd) = cwd {
-        if let Ok(repo) = gix::discover(cwd) {
-            if let Some(work_dir) = repo.work_dir() {
-                let git_root = work_dir.to_string_lossy().to_string();
-                let name = work_dir
-                    .file_name()
-                    .map(|n| n.to_string_lossy().to_string())
-                    .unwrap_or_else(|| "Unknown".to_string());
-
-                match workspace::add_project(&name, &git_root) {
-                    Ok(_) => auto_registered = true,
-                    Err(e) if e.to_string().contains("already registered") => {}
-                    Err(_) => {}
-                }
-            }
-        }
-    }
-
+    #[cfg(feature = "perf-monitor")]
+    let _s = tracing::info_span!("load_projects").entered();
     let projects = workspace::load_projects().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    #[cfg(feature = "perf-monitor")]
+    drop(_s);
 
     let current_project_id = cwd.as_ref().and_then(|cwd| {
         projects.iter().find_map(|p| {
@@ -155,29 +141,65 @@ pub async fn list_projects() -> Result<Json<ProjectListResponse>, StatusCode> {
         })
     });
 
-    if auto_registered {
-        if let Some(ref id) = current_project_id {
-            eprintln!("Auto-registered current directory as project: {}", id);
-        }
-    }
-
     use rayon::prelude::*;
+
+    #[cfg(feature = "perf-monitor")]
+    let total_count_ns = std::sync::atomic::AtomicU64::new(0);
+    #[cfg(feature = "perf-monitor")]
+    let total_exists_ns = std::sync::atomic::AtomicU64::new(0);
+    #[cfg(feature = "perf-monitor")]
+    let total_git_ns = std::sync::atomic::AtomicU64::new(0);
+
+    #[cfg(feature = "perf-monitor")]
+    let _s = tracing::info_span!(
+        "enrich_projects",
+        n_projects = projects.len(),
+        count_ms = tracing::field::Empty,
+        exists_ms = tracing::field::Empty,
+        git_ms = tracing::field::Empty,
+    )
+    .entered();
     let items: Vec<ProjectListItem> = projects
         .par_iter()
         .map(|p| {
             let id = workspace::project_hash(&p.path);
+
+            #[cfg(feature = "perf-monitor")]
+            let _t = std::time::Instant::now();
             let task_count = count_project_tasks(&id);
+            #[cfg(feature = "perf-monitor")]
+            total_count_ns.fetch_add(
+                _t.elapsed().as_nanos() as u64,
+                std::sync::atomic::Ordering::Relaxed,
+            );
+
             let is_studio = p.project_type == workspace::ProjectType::Studio;
+
+            #[cfg(feature = "perf-monitor")]
+            let _t = std::time::Instant::now();
             let exists = if is_studio {
                 workspace::studio_project_dir(&p.path).exists()
             } else {
                 std::path::Path::new(&p.path).exists()
             };
+            #[cfg(feature = "perf-monitor")]
+            total_exists_ns.fetch_add(
+                _t.elapsed().as_nanos() as u64,
+                std::sync::atomic::Ordering::Relaxed,
+            );
+
+            #[cfg(feature = "perf-monitor")]
+            let _t = std::time::Instant::now();
             let is_git_repo = if is_studio {
                 false
             } else {
                 exists && git::is_git_usable(&p.path)
             };
+            #[cfg(feature = "perf-monitor")]
+            total_git_ns.fetch_add(
+                _t.elapsed().as_nanos() as u64,
+                std::sync::atomic::Ordering::Relaxed,
+            );
 
             ProjectListItem {
                 id,
@@ -192,6 +214,24 @@ pub async fn list_projects() -> Result<Json<ProjectListResponse>, StatusCode> {
             }
         })
         .collect();
+    #[cfg(feature = "perf-monitor")]
+    {
+        let span = tracing::Span::current();
+        span.record(
+            "count_ms",
+            total_count_ns.load(std::sync::atomic::Ordering::Relaxed) / 1_000_000,
+        );
+        span.record(
+            "exists_ms",
+            total_exists_ns.load(std::sync::atomic::Ordering::Relaxed) / 1_000_000,
+        );
+        span.record(
+            "git_ms",
+            total_git_ns.load(std::sync::atomic::Ordering::Relaxed) / 1_000_000,
+        );
+    }
+    #[cfg(feature = "perf-monitor")]
+    drop(_s);
 
     Ok(Json(ProjectListResponse {
         projects: items,

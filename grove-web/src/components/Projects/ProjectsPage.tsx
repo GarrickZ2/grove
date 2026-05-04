@@ -179,7 +179,7 @@ export function ProjectsPage({ onNavigate, initialTab }: ProjectsPageProps) {
       initial={{ opacity: 0, y: 20 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.3 }}
-      className="h-full"
+      className="h-full overflow-y-auto pl-1 pr-3"
     >
       {/* Header */}
       <div className="flex items-center justify-between mb-6">

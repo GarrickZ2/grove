@@ -579,7 +579,7 @@ export function DashboardPage({ onNavigate }: DashboardPageProps) {
       </AnimatePresence>
 
       {/* ── Two-column layout ── */}
-      <div className={`flex-1 min-h-0 grid grid-cols-1 gap-5 items-stretch ${isGitRepo ? "xl:grid-cols-[1fr_340px]" : ""}`}>
+      <div className={`flex-1 min-h-0 grid grid-cols-1 gap-5 items-stretch ${isGitRepo ? "lg:grid-cols-[minmax(0,1fr)_minmax(260px,340px)]" : ""}`}>
 
         {/* ── Left column ── */}
         <div className="flex flex-col gap-5 min-h-0">

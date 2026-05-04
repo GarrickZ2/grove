@@ -1603,7 +1603,7 @@ export function TaskGraph({ projectId, taskId }: TaskGraphProps) {
 
         return (
           <div
-            className="absolute z-40 rounded-xl border border-[color-mix(in_srgb,var(--color-border)_55%,transparent)] bg-[color-mix(in_srgb,var(--color-bg-secondary)_92%,transparent)] backdrop-blur-xl shadow-[0_12px_40px_rgba(0,0,0,0.18)] overflow-hidden"
+            className="absolute z-40 rounded-xl border border-[color-mix(in_srgb,var(--color-border)_55%,transparent)] bg-[var(--color-bg-secondary)] shadow-[0_12px_40px_rgba(0,0,0,0.18)] overflow-hidden"
             style={{ left, top, width: bubbleW }}
             onMouseDown={(e) => e.stopPropagation()}
             onClick={(e) => e.stopPropagation()}
@@ -1720,7 +1720,7 @@ export function TaskGraph({ projectId, taskId }: TaskGraphProps) {
 
         return (
           <div
-            className="absolute z-40 rounded-xl border border-[color-mix(in_srgb,var(--color-border)_55%,transparent)] bg-[color-mix(in_srgb,var(--color-bg-secondary)_92%,transparent)] backdrop-blur-xl shadow-[0_12px_40px_rgba(0,0,0,0.18)] overflow-hidden"
+            className="absolute z-40 rounded-xl border border-[color-mix(in_srgb,var(--color-border)_55%,transparent)] bg-[var(--color-bg-secondary)] shadow-[0_12px_40px_rgba(0,0,0,0.18)] overflow-hidden"
             style={{ left, top, width: bubbleW }}
             onMouseDown={(e) => e.stopPropagation()}
             onClick={(e) => e.stopPropagation()}
@@ -2015,15 +2015,27 @@ interface ToolbarProps {
 
 const FLOAT_PILL =
   "rounded-3xl select-none border border-[color-mix(in_srgb,var(--color-border)_70%,transparent)] " +
-  "bg-[color-mix(in_srgb,var(--color-bg)_82%,transparent)] backdrop-blur-xl " +
+  // Opaque bg (no backdrop-blur). Blur introduced a one-frame
+  // bleed-through on mount/mode-change because the GPU layer for
+  // backdrop-filter is created lazily — during that first frame the
+  // semi-transparent bg lets graph content show through, then snaps
+  // clean once blur is established. Solid bg eliminates that flash.
+  "bg-[var(--color-bg-secondary)] " +
   "shadow-[0_10px_32px_rgba(0,0,0,0.16),0_2px_8px_rgba(0,0,0,0.06)] " +
   "overflow-hidden";
 
+// Spring keeps the morphing pill feeling alive. restDelta/restSpeed
+// tightened to sub-pixel so framer-motion considers the spring at-rest
+// only when it's truly aligned — eliminates the "last-frame teleport"
+// that happens when the spring stops at a near-rest position a few px
+// off from the final measured layout.
 const MODE_TRANSITION = {
   type: "spring" as const,
   stiffness: 380,
   damping: 32,
   mass: 0.8,
+  restDelta: 0.001,
+  restSpeed: 0.001,
 };
 
 function GraphContextToolbar(props: ToolbarProps) {
@@ -2067,16 +2079,25 @@ function GraphContextToolbar(props: ToolbarProps) {
   // Cancellation when the selection moves elsewhere is handled upstream by
   // the click handler that changed the selection.
   const activeKey = mode?.kind ?? (node ? "node" : edge ? "edge" : "empty");
+  // Hide the bottom-right zoom widget whenever the centered toolbar is
+  // displaying a wide form (spawn/edit/edit-edge are 420px wide). The
+  // two would otherwise overlap on anything smaller than a wide
+  // monitor. Pinch / scroll / keyboard zoom still work without the
+  // buttons.
+  const hideZoomWidget =
+    mode?.kind === "spawn" ||
+    mode?.kind === "edit" ||
+    mode?.kind === "edit-edge";
 
   return (
     <>
       <motion.div
         layout
         transition={MODE_TRANSITION}
-        // Reserve ~210px on each side so the centered context toolbar never
-        // overlaps the bottom-right zoom widget (or any future bottom-left
-        // affordance). 1.5rem of breathing room is kept from the viewport edge.
-        className={`absolute bottom-5 left-1/2 -translate-x-1/2 z-40 max-w-[calc(100%-26rem)] ${FLOAT_PILL}`}
+        // Cap at 640px on big monitors, 2rem breathing room from
+        // viewport edges. The zoom widget auto-hides when this toolbar
+        // shows a wide form, so we don't reserve space for it here.
+        className={`absolute bottom-5 left-1/2 -translate-x-1/2 z-40 max-w-[min(calc(100%-2rem),640px)] ${FLOAT_PILL}`}
         style={{ originY: 1 }}
       >
         <AnimatePresence mode="popLayout" initial={false}>
@@ -2084,9 +2105,9 @@ function GraphContextToolbar(props: ToolbarProps) {
             <motion.div
               key="send"
               layout
-              initial={{ opacity: 0, y: 6 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: 6 }}
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
               transition={MODE_TRANSITION}
               className="px-3 py-2"
             >
@@ -2114,11 +2135,11 @@ function GraphContextToolbar(props: ToolbarProps) {
             <motion.div
               key="edit"
               layout
-              initial={{ opacity: 0, y: 6 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: 6 }}
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
               transition={MODE_TRANSITION}
-              className="p-3 w-[420px]"
+              className="p-3 w-[min(420px,calc(100vw-3rem))]"
             >
               <EditForm
                 name={mode.name}
@@ -2144,11 +2165,11 @@ function GraphContextToolbar(props: ToolbarProps) {
             <motion.div
               key="spawn"
               layout
-              initial={{ opacity: 0, y: 6 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: 6 }}
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
               transition={MODE_TRANSITION}
-              className="p-3 w-[420px]"
+              className="p-3 w-[min(420px,calc(100vw-3rem))]"
             >
               <SpawnForm
                 agent={mode.agent}
@@ -2199,11 +2220,11 @@ function GraphContextToolbar(props: ToolbarProps) {
             <motion.div
               key="edit-edge"
               layout
-              initial={{ opacity: 0, y: 6 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: 6 }}
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
               transition={MODE_TRANSITION}
-              className="p-3 w-[420px]"
+              className="p-3 w-[min(420px,calc(100vw-3rem))]"
             >
               <EditEdgeForm
                 purpose={mode.purpose}
@@ -2223,9 +2244,9 @@ function GraphContextToolbar(props: ToolbarProps) {
             <motion.div
               key="confirm-del-node"
               layout
-              initial={{ opacity: 0, y: 6 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: 6 }}
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
               transition={MODE_TRANSITION}
               className="flex items-center gap-2 px-3 py-2"
             >
@@ -2248,9 +2269,9 @@ function GraphContextToolbar(props: ToolbarProps) {
             <motion.div
               key="confirm-del-edge"
               layout
-              initial={{ opacity: 0, y: 6 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: 6 }}
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
               transition={MODE_TRANSITION}
               className="flex items-center gap-2 px-3 py-2"
             >
@@ -2265,9 +2286,9 @@ function GraphContextToolbar(props: ToolbarProps) {
             <motion.div
               key={`node-${node.chat_id}`}
               layout
-              initial={{ opacity: 0, y: 6 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: 6 }}
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
               transition={MODE_TRANSITION}
               className="flex items-center gap-2 px-3 py-2"
             >
@@ -2287,9 +2308,9 @@ function GraphContextToolbar(props: ToolbarProps) {
             <motion.div
               key={`edge-${edge.edge_id}`}
               layout
-              initial={{ opacity: 0, y: 6 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: 6 }}
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
               transition={MODE_TRANSITION}
               className="flex items-center gap-2 px-3 py-2"
             >
@@ -2309,9 +2330,9 @@ function GraphContextToolbar(props: ToolbarProps) {
             <motion.div
               key="empty"
               layout
-              initial={{ opacity: 0, y: 6 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: 6 }}
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
               transition={MODE_TRANSITION}
               className="flex items-center gap-2 px-3 py-2"
             >
@@ -2339,7 +2360,10 @@ function GraphContextToolbar(props: ToolbarProps) {
       <motion.div
         layout
         transition={MODE_TRANSITION}
-        className={`absolute bottom-5 right-5 z-40 flex items-center gap-0.5 px-1.5 py-1.5 ${FLOAT_PILL}`}
+        // Hidden whenever the centered toolbar is showing a wide form
+        // (spawn/edit/edit-edge), since they would otherwise overlap.
+        // Pinch / scroll / keyboard zoom still work without the buttons.
+        className={`absolute bottom-5 right-5 z-40 ${hideZoomWidget ? "hidden" : "flex"} items-center gap-0.5 px-1.5 py-1.5 ${FLOAT_PILL}`}
         key={`zoom-${activeKey}`}
       >
         <button

@@ -83,7 +83,9 @@ import { useProject } from "../../../context/ProjectContext";
 import { useConfig } from "../../../context/ConfigContext";
 import { usePreviewComments, type PreviewCommentDraft } from "../../../context";
 import { PreviewSearchBar } from "../../Review/PreviewSearchBar";
-import { useDomSearch } from "../../Review/useDomSearch";
+import { Virtuoso, type VirtuosoHandle } from "react-virtuoso";
+import { useChatSearch } from "./useChatSearch";
+import { useTypewriter } from "./useTypewriter";
 import { listSketches, type SketchMeta } from "../../../api/sketches";
 import { readLastActiveTab, writeLastActiveTab } from "../../../utils/lastActiveTab";
 import type { Task } from "../../../data/types";
@@ -323,6 +325,31 @@ function buildRenderItems(messages: ChatMessage[]): RenderItem[] {
   });
   flush();
   return items;
+}
+
+/** Flatten a render item to a plain text blob for data-layer chat search. */
+function extractRenderItemText(item: RenderItem): string {
+  if (item.kind === "single") {
+    const m = item.message;
+    switch (m.type) {
+      case "user":
+        return [m.sender ?? "", m.content].filter(Boolean).join("\n");
+      case "assistant":
+      case "thinking":
+      case "system":
+        return m.content;
+      case "tool":
+        return [m.title, m.content ?? ""].filter(Boolean).join("\n");
+      case "permission":
+        return m.description;
+      case "terminal_output":
+        return m.chunks.join("");
+    }
+  } else {
+    return item.tools
+      .map((t) => [t.message.title, t.message.content ?? ""].filter(Boolean).join("\n"))
+      .join("\n");
+  }
 }
 
 function getAutoScrollTailSignature(messages: ChatMessage[]): string {
@@ -1338,8 +1365,18 @@ export function TaskChat({
     className?: string;
   }> | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
-  const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesViewportRef = useRef<HTMLDivElement>(null);
+  const virtuosoRef = useRef<VirtuosoHandle>(null);
+  // Bumped whenever Virtuoso renders a different range of items. Drives
+  // useChatSearch's "re-apply highlights to freshly mounted DOM" effect.
+  const [renderToken, setRenderToken] = useState(0);
+  // Footer height = current input area height + slack. Stored in state so
+  // Virtuoso can pad the bottom of the scroll area, ensuring the last
+  // message is never obscured by the input composer. Initial value is
+  // intentionally generous (composer with banners / multiline / panels can
+  // be 240–400 px tall) so the first paint doesn't briefly hide the tail
+  // before ResizeObserver fires.
+  const [inputAreaHeight, setInputAreaHeight] = useState(220);
   const editableRef = useRef<HTMLDivElement>(null);
   const modelMenuRef = useRef<HTMLDivElement>(null);
   const permMenuRef = useRef<HTMLDivElement>(null);
@@ -1506,7 +1543,7 @@ export function TaskChat({
 
   // ── Chat search (Cmd/Ctrl+F) ────────────────────────────────────────
   // Skip thinking blocks (data-grove-search-skip) and our own UI.
-  const chatSearch = useDomSearch(messagesViewportRef, chatSearchOpen ? chatSearchQuery : "", chatSearchOpen);
+  // chatSearch is wired below once `renderItems` is computed.
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if (e.key !== "f" || !(e.metaKey || e.ctrlKey)) return;
@@ -1801,20 +1838,20 @@ export function TaskChat({
       .catch(() => setSketchMeta([]));
   }, [isStudioProject, projectId, task.id]);
 
-  // Dynamically measure the input area height so the messages viewport
-  // always has enough bottom padding regardless of expanded input, panels, banners, etc.
-  // We write directly to the DOM style to avoid a React state update → re-render → layout jump.
+  // Dynamically measure the input area height. With Virtuoso, we feed this
+  // into the Footer component's height so the last message is never
+  // obscured by the composer (banners, expanded input, etc. all change
+  // this value over time).
   useEffect(() => {
     const el = inputAreaRef.current;
     if (!el || typeof ResizeObserver === "undefined") return;
-    const applyPadding = () => {
-      const viewport = messagesViewportRef.current;
-      if (!viewport) return;
-      viewport.style.paddingBottom = `${el.getBoundingClientRect().height + 16}px`;
+    const apply = () => {
+      const h = el.getBoundingClientRect().height;
+      setInputAreaHeight((prev) => (Math.abs(prev - h) > 1 ? h : prev));
     };
-    const ro = new ResizeObserver(applyPadding);
+    const ro = new ResizeObserver(apply);
     ro.observe(el);
-    applyPadding();
+    apply();
     return () => ro.disconnect();
   }, [activeChatId]);
 
@@ -1833,13 +1870,59 @@ export function TaskChat({
     return () => ro.disconnect();
   }, []);
 
+  // Set while a programmatic scrollToIndex is in flight. Virtuoso fires
+  // isScrolling(true) for ANY scroll (including ours), which would
+  // otherwise let a transient atBottom=false (caused by layout reflow
+  // during the same window) wrongly disable auto-stick. We clear it on
+  // the next animation frames so any post-scroll bottom flutter is also
+  // ignored.
+  const programmaticScrollRef = useRef(false);
+  const programmaticScrollClearTimerRef = useRef<number | null>(null);
+  const markProgrammaticScroll = useCallback(() => {
+    programmaticScrollRef.current = true;
+    if (programmaticScrollClearTimerRef.current !== null) {
+      cancelAnimationFrame(programmaticScrollClearTimerRef.current);
+    }
+    // Two rAFs covers: (1) the scroll-induced isScrolling burst, (2) any
+    // atBottomStateChange that fires immediately after the scroll lands.
+    // Note: ~32ms total. A user wheel/touch scroll arriving in this
+    // window will be absorbed (their atBottom=false is ignored). Trade
+    // is intentional — the alternative is letting layout reflow during
+    // streaming auto-scroll wrongly disable auto-stick.
+    programmaticScrollClearTimerRef.current = requestAnimationFrame(() => {
+      programmaticScrollClearTimerRef.current = requestAnimationFrame(() => {
+        programmaticScrollRef.current = false;
+        programmaticScrollClearTimerRef.current = null;
+      });
+    });
+  }, []);
+
+  // Cancel any pending programmatic-scroll-clear rAFs on unmount so the
+  // closure doesn't fire against a torn-down component.
+  useEffect(() => {
+    return () => {
+      if (programmaticScrollClearTimerRef.current !== null) {
+        cancelAnimationFrame(programmaticScrollClearTimerRef.current);
+        programmaticScrollClearTimerRef.current = null;
+      }
+    };
+  }, []);
+
   const scrollMessagesToBottom = useCallback(
     (behavior: ScrollBehavior = "smooth") => {
-      const viewport = messagesViewportRef.current;
-      if (!viewport) return;
-      viewport.scrollTo({ top: viewport.scrollHeight, behavior });
+      const handle = virtuosoRef.current;
+      if (!handle) return; // Virtuoso not mounted yet — no useful fallback.
+      // Virtuoso accepts only "auto" | "smooth"; coerce "instant" → "auto".
+      const vBehavior: "auto" | "smooth" =
+        behavior === "smooth" ? "smooth" : "auto";
+      markProgrammaticScroll();
+      handle.scrollToIndex({
+        index: "LAST",
+        align: "end",
+        behavior: vBehavior,
+      });
     },
-    [],
+    [markProgrammaticScroll],
   );
 
   const enableAutoStickToBottom = useCallback(
@@ -1851,73 +1934,37 @@ export function TaskChat({
     [scrollMessagesToBottom],
   );
 
-  // Track user-initiated scroll-up via wheel/touch events.
-  // Only user wheel-up can DISABLE auto-stick; IntersectionObserver only
-  // re-enables it when user scrolls back to bottom.
-  useEffect(() => {
-    const viewport = messagesViewportRef.current;
-    if (!viewport) return;
-
-    const handleWheel = (e: WheelEvent) => {
-      if (e.deltaY < 0) {
-        // User is scrolling UP → disable auto-stick
-        autoStickToBottomRef.current = false;
-      }
-    };
-
-    let touchStartY = 0;
-    const handleTouchStart = (e: TouchEvent) => {
-      touchStartY = e.touches[0]?.clientY ?? 0;
-    };
-    const handleTouchMove = (e: TouchEvent) => {
-      const currentY = e.touches[0]?.clientY ?? 0;
-      if (currentY > touchStartY) {
-        // Finger moving down = scrolling UP → disable auto-stick
-        autoStickToBottomRef.current = false;
-      }
-    };
-
-    viewport.addEventListener("wheel", handleWheel, { passive: true });
-    viewport.addEventListener("touchstart", handleTouchStart, { passive: true });
-    viewport.addEventListener("touchmove", handleTouchMove, { passive: true });
-    return () => {
-      viewport.removeEventListener("wheel", handleWheel);
-      viewport.removeEventListener("touchstart", handleTouchStart);
-      viewport.removeEventListener("touchmove", handleTouchMove);
-    };
-  }, [activeChatId]);
-
-  useEffect(() => {
-    const viewport = messagesViewportRef.current;
-    const bottomMarker = messagesEndRef.current;
-    if (!viewport || !bottomMarker || typeof IntersectionObserver === "undefined") {
-      return;
+  // Auto-stick state is driven by Virtuoso callbacks. To distinguish
+  // "user actively scrolled away" from "layout reflow nudged us off
+  // bottom" (e.g. composer grew by a line, banner appeared), we only
+  // disable auto-stick when atBottom flips while isScrolling is true —
+  // i.e. there's a live user-driven scroll in progress. Re-enabling
+  // happens unconditionally when atBottom becomes true.
+  const isUserScrollingRef = useRef(false);
+  const handleIsScrolling = useCallback((scrolling: boolean) => {
+    isUserScrollingRef.current = scrolling;
+  }, []);
+  const handleAtBottomStateChange = useCallback((atBottom: boolean) => {
+    if (atBottom) {
+      autoStickToBottomRef.current = true;
+      // Chat-switch reveal: as soon as Virtuoso confirms we're at bottom,
+      // fade the list in (vs waiting the hard fallback timeout).
+      onPositionedAtBottomRef.current?.();
+    } else if (
+      isUserScrollingRef.current &&
+      !programmaticScrollRef.current
+    ) {
+      autoStickToBottomRef.current = false;
     }
+    setShowScrollToBottom(!atBottom && messagesCountRef.current > 0);
+  }, []);
 
-    const observer = new IntersectionObserver(
-      ([entry]) => {
-        const isAtBottom = entry?.isIntersecting ?? false;
-        // Only re-enable auto-stick when bottom marker becomes visible
-        // (user scrolled back to bottom). Never disable it here — only
-        // wheel/touch handlers disable auto-stick.
-        if (isAtBottom) {
-          autoStickToBottomRef.current = true;
-        }
-        // Only show button when user has actively scrolled up (autoStick is false).
-        // This prevents the button from flashing during initial load / chat switch.
-        setShowScrollToBottom(!isAtBottom && !autoStickToBottomRef.current && messagesCountRef.current > 0);
-      },
-      {
-        root: viewport,
-        threshold: 0,
-        rootMargin: "0px 0px 48px 0px",
-      },
-    );
-
-    observer.observe(bottomMarker);
-    return () => observer.disconnect();
-  }, [activeChatId]);
-
+  // The tail-signature autoscroll path used to fire scrollMessagesToBottom
+  // on every streaming token. With Virtuoso, `followOutput` already
+  // handles "follow new content while at bottom", and running BOTH causes
+  // the two scroll commands to fight each other (visible chunkiness).
+  // We keep the signature memo only because the chat-switch effect reads
+  // autoScrollTailSignatureRef to seed prevAutoScrollTailRef.
   const autoScrollTailSignature = useMemo(
     () => getAutoScrollTailSignature(messages),
     [messages],
@@ -1925,34 +1972,69 @@ export function TaskChat({
   const prevAutoScrollTailRef = useRef(autoScrollTailSignature);
   const autoScrollTailSignatureRef = useRef(autoScrollTailSignature);
   autoScrollTailSignatureRef.current = autoScrollTailSignature;
-  useEffect(() => {
-    const previousTail = prevAutoScrollTailRef.current;
-    const tailChanged = autoScrollTailSignature !== previousTail;
-    if (tailChanged && autoStickToBottomRef.current) {
-      // During streaming (incomplete assistant/thinking messages), use instant
-      // scroll to prevent smooth animation from falling behind rapid updates.
-      const lastMsg = messages[messages.length - 1];
-      const isStreaming =
-        lastMsg &&
-        (lastMsg.type === "assistant" || lastMsg.type === "thinking") &&
-        !lastMsg.complete;
-      scrollMessagesToBottom(
-        suppressNextSmoothScrollRef.current || isStreaming ? "auto" : "smooth",
-      );
-    }
-    suppressNextSmoothScrollRef.current = false;
-    prevAutoScrollTailRef.current = autoScrollTailSignature;
-  }, [autoScrollTailSignature, scrollMessagesToBottom, messages]);
 
+  // Pin to bottom once per chat. Markdown messages have wildly variable
+  // heights (code blocks, mermaid, images) that only stabilize after
+  // their content actually renders — sometimes 5–10 frames after Virtuoso
+  // mounts the row. A single scrollToIndex on mount lands at whatever
+  // position Virtuoso ESTIMATED, which is usually wrong. Solution: retry
+  // the scroll across ~12 animation frames (~200ms) so we keep snapping
+  // to the (continuously updating) real bottom until heights settle.
+  const initialPinChatIdRef = useRef<string | null>(null);
+  // While true, the Virtuoso list is rendered invisibly so the user
+  // doesn't see the "first row → snap to last row" flash. Revealed as
+  // soon as either (a) atBottomStateChange confirms we landed at the
+  // bottom, or (b) a hard fallback timeout fires.
+  const [chatPositioning, setChatPositioning] = useState(false);
+  const positioningCancelRef = useRef<(() => void) | null>(null);
+  // Called by handleAtBottomStateChange below as soon as the chat-switch
+  // scroll lands. Cleared once revealed.
+  const onPositionedAtBottomRef = useRef<(() => void) | null>(null);
   useEffect(() => {
+    if (messages.length === 0) return;
+    if (initialPinChatIdRef.current === activeChatId) return;
+    initialPinChatIdRef.current = activeChatId;
     suppressNextSmoothScrollRef.current = true;
     prevAutoScrollTailRef.current = autoScrollTailSignatureRef.current;
-    requestAnimationFrame(() => {
-      autoStickToBottomRef.current = true;
+    autoStickToBottomRef.current = true;
+    setShowScrollToBottom(false);
+    setChatPositioning(true);
+
+    let cancelled = false;
+    let rafId: number | null = null;
+    let revealTimer: number | null = null;
+    let attempts = 0;
+    const MAX_ATTEMPTS = 12;
+    const HARD_FALLBACK_MS = 180;
+
+    const reveal = () => {
+      if (cancelled) return;
+      onPositionedAtBottomRef.current = null;
+      setChatPositioning(false);
+    };
+    onPositionedAtBottomRef.current = reveal;
+    // Fallback in case atBottomStateChange never fires (e.g. very tall
+    // images that haven't loaded — would otherwise stay blank forever).
+    revealTimer = window.setTimeout(reveal, HARD_FALLBACK_MS);
+
+    const tick = () => {
+      if (cancelled) return;
       scrollMessagesToBottom("auto");
-      setShowScrollToBottom(false);
-    });
-  }, [activeChatId, scrollMessagesToBottom]);
+      attempts += 1;
+      if (attempts < MAX_ATTEMPTS) {
+        rafId = requestAnimationFrame(tick);
+      }
+    };
+    rafId = requestAnimationFrame(tick);
+
+    positioningCancelRef.current = () => {
+      cancelled = true;
+      if (rafId !== null) cancelAnimationFrame(rafId);
+      if (revealTimer !== null) clearTimeout(revealTimer);
+      onPositionedAtBottomRef.current = null;
+    };
+    return () => positioningCancelRef.current?.();
+  }, [activeChatId, messages.length, scrollMessagesToBottom]);
 
   // Auto-scroll slash menu to keep selected item visible
   useEffect(() => {
@@ -4285,6 +4367,105 @@ export function TaskChat({
   }, []);
 
   const renderItems = useMemo(() => buildRenderItems(messages), [messages]);
+  const lastMessageType = messages[messages.length - 1]?.type;
+
+  // Data-layer chat search — works across the full conversation, not just
+  // what's currently rendered by Virtuoso. Navigation calls
+  // virtuosoRef.scrollToIndex; highlights are re-applied each time
+  // Virtuoso renders a different range (renderToken bumps).
+  const chatSearch = useChatSearch({
+    items: renderItems,
+    query: chatSearchOpen ? chatSearchQuery : "",
+    enabled: chatSearchOpen,
+    extractText: extractRenderItemText,
+    virtuosoRef,
+    scrollerRef: messagesViewportRef,
+    renderToken,
+  });
+
+  // ─── Memoized Virtuoso plumbing ──────────────────────────────────────
+  // Virtuoso treats the `components` prop as render config — when its
+  // identity changes, Header/Footer subtrees are unmounted and remounted.
+  // During streaming the parent re-renders many times per second, so we
+  // memoize Header/Footer/components on the only inputs that actually
+  // affect their rendered output.
+
+  const VirtuosoHeader = useMemo(() => {
+    const Header = () =>
+      hiddenMessageCount > 0 ? (
+        <div className="px-4 pt-4">
+          <div className="mx-auto max-w-[720px] rounded-md border border-[var(--color-border)] bg-[var(--color-bg-secondary)] px-3 py-2 text-center text-xs text-[var(--color-text-muted)]">
+            {hiddenMessageCount.toLocaleString()} earlier messages are hidden
+            from this view. Full history is still saved.
+          </div>
+        </div>
+      ) : (
+        <div className="h-4" />
+      );
+    return Header;
+  }, [hiddenMessageCount]);
+
+  const VirtuosoFooter = useMemo(() => {
+    const showThinking =
+      isBusy &&
+      lastMessageType !== "assistant" &&
+      lastMessageType !== "terminal_output";
+    const spacerHeight = inputAreaHeight + 16;
+    const Footer = () => (
+      <div>
+        {showThinking && (
+          <div className="flex items-center gap-2 px-4 py-2 text-sm text-[var(--color-text-muted)]">
+            <Loader2 className="w-4 h-4 animate-spin" />
+            <span>Thinking...</span>
+          </div>
+        )}
+        {/* Spacer: keeps the last row above the floating composer. Sized
+            from the live ResizeObserver on inputAreaRef. */}
+        <div style={{ height: spacerHeight }} />
+      </div>
+    );
+    return Footer;
+  }, [isBusy, lastMessageType, inputAreaHeight]);
+
+  const virtuosoComponents = useMemo(
+    () => ({ Header: VirtuosoHeader, Footer: VirtuosoFooter }),
+    [VirtuosoHeader, VirtuosoFooter],
+  );
+
+  // Only bump renderToken (which forces useChatSearch to re-apply
+  // highlights to freshly mounted DOM) when search is open. Otherwise
+  // streaming would thrash the parent at every Virtuoso paint.
+  const handleItemsRendered = useMemo(
+    () =>
+      chatSearchOpen
+        ? () => setRenderToken((t) => t + 1)
+        : undefined,
+    [chatSearchOpen],
+  );
+
+  // followOutput callback. Always use "smooth" — Virtuoso coalesces
+  // successive smooth scrolls into one continuous animation, which makes
+  // streaming tokens feel like flowing text rather than chunk-by-chunk
+  // jumps. (The old DOM-based scroll used "auto" during streaming because
+  // smooth scrollTo() couldn't keep up with rapid setState; that
+  // limitation doesn't apply to Virtuoso's internal scroll scheduler.)
+  const handleFollowOutput = useCallback((isAtBottom: boolean) => {
+    return isAtBottom ? ("smooth" as const) : (false as const);
+  }, []);
+
+  // Typewriter reveals text via setState INSIDE MessageItem — the
+  // `messages` array reference doesn't change, so Virtuoso's
+  // followOutput never fires. We watch totalListHeightChanged
+  // (which DOES fire when the streaming row grows) and re-anchor to
+  // bottom while auto-stick is on.
+  const handleTotalListHeightChanged = useCallback(() => {
+    if (!autoStickToBottomRef.current) return;
+    virtuosoRef.current?.scrollToIndex({
+      index: "LAST",
+      align: "end",
+      behavior: "smooth",
+    });
+  }, []);
 
   // Track the message index where the current busy turn started
   const turnStartIndexRef = useRef(0);
@@ -4708,21 +4889,41 @@ export function TaskChat({
         </div>
 
         <div className="relative min-h-0 min-w-0 flex-1">
-          {/* Messages */}
-          <div
-            ref={messagesViewportRef}
-            className="relative z-0 h-full min-h-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-none px-4 pt-4"
-          >
-            <div className="flex w-full flex-col gap-3">
-              {hiddenMessageCount > 0 && (
-                <div className="mx-auto max-w-[720px] rounded-md border border-[var(--color-border)] bg-[var(--color-bg-secondary)] px-3 py-2 text-center text-xs text-[var(--color-text-muted)]">
-                  {hiddenMessageCount.toLocaleString()} earlier messages are hidden from this view. Full history is still saved.
-                </div>
-              )}
-              {renderItems.map((item, idx) =>
-                item.kind === "single" ? (
+          {/* Messages — virtualized via react-virtuoso so multi-thousand
+              message conversations stay snappy. Virtuoso owns the scroll
+              container; we hand it the renderItems array and let it
+              mount/unmount rows as the viewport moves. */}
+          <Virtuoso
+            // Force-remount per chat so each chat starts with a clean
+            // scroll position (no carry-over from the previous chat).
+            // Initial bottom-pinning is handled imperatively below in
+            // the activeChatId/renderItems.length effect — Virtuoso's
+            // initialTopMostItemIndex is unreliable when data loads
+            // async after mount.
+            key={activeChatId}
+            ref={virtuosoRef}
+            data={renderItems}
+            scrollerRef={(ref) => {
+              messagesViewportRef.current = ref as HTMLDivElement | null;
+            }}
+            className="relative z-0 h-full min-h-0 flex-1 overscroll-none"
+            // Hide the list while we're scrolling it to the bottom on
+            // chat switch — otherwise the user sees "first row visible,
+            // then snap to last row" which is jarring.
+            style={{
+              opacity: chatPositioning ? 0 : 1,
+              transition: chatPositioning ? "none" : "opacity 120ms ease-out",
+            }}
+            increaseViewportBy={{ top: 600, bottom: 1200 }}
+            followOutput={handleFollowOutput}
+            atBottomStateChange={handleAtBottomStateChange}
+            atBottomThreshold={48}
+            isScrolling={handleIsScrolling}
+            totalListHeightChanged={handleTotalListHeightChanged}
+            itemContent={(idx, item) =>
+              item.kind === "single" ? (
+                <div className="px-4 pt-3">
                   <MessageItem
-                    key={`m-${item.index}`}
                     message={item.message}
                     index={item.index}
                     isBusy={isBusy}
@@ -4739,9 +4940,10 @@ export function TaskChat({
                     onD2Click={setLightboxSvg}
                     onInsertReference={insertAttachmentReference}
                   />
-                ) : (
+                </div>
+              ) : (
+                <div className="px-4 pt-3">
                   <ToolSectionView
-                    key={`ts-${item.sectionId}`}
                     sectionId={item.sectionId}
                     tools={item.tools}
                     expanded={expandedSections.has(item.sectionId)}
@@ -4750,19 +4952,17 @@ export function TaskChat({
                     onToggleSection={toggleSection}
                     onFileClick={onNavigateToFile}
                   />
-                ),
-              )}
-              {isBusy &&
-                messages[messages.length - 1]?.type !== "assistant" &&
-                messages[messages.length - 1]?.type !== "terminal_output" && (
-                  <div className="flex items-center gap-2 py-1 text-sm text-[var(--color-text-muted)]">
-                    <Loader2 className="w-4 h-4 animate-spin" />
-                    <span>Thinking...</span>
-                  </div>
-                )}
-              <div ref={messagesEndRef} className="h-px w-full shrink-0" />
-            </div>
-          </div>
+                </div>
+              )
+            }
+            computeItemKey={(_idx, item) =>
+              item.kind === "single"
+                ? `m-${item.index}`
+                : `ts-${item.sectionId}`
+            }
+            itemsRendered={handleItemsRendered}
+            components={virtuosoComponents}
+          />
 
           {/* Input */}
           <div ref={inputAreaRef} className="pointer-events-none absolute inset-x-0 bottom-0 z-10 px-3 pb-4 pt-2">
@@ -5882,6 +6082,16 @@ const MessageItem = memo(function MessageItem({
   };
 }) {
   const sketchContext = isStudio ? { projectId, taskId } : undefined;
+  // Typewriter reveal for streaming assistant/thinking text. Hook must
+  // be called unconditionally; for other message types (or any
+  // non-busy chat — i.e. history loads) we feed instant=true so it's
+  // effectively a no-op and the full content shows immediately.
+  const isTextStream =
+    message.type === "assistant" || message.type === "thinking";
+  const streamRaw = isTextStream ? message.content : "";
+  const streamInstant =
+    !isTextStream || message.complete || !isBusy;
+  const streamDisplay = useTypewriter(streamRaw, streamInstant);
   const resolveImageUrl = useCallback((src: string) => {
     if (/^https?:\/\//.test(src) || src.startsWith("data:")) return src;
     // Strip `file://` so the backend gets a plain absolute path.
@@ -6029,14 +6239,17 @@ const MessageItem = memo(function MessageItem({
           </div>
         </div>
       );
-    case "assistant":
+    case "assistant": {
+      // Use the typewriter-revealed text while streaming; once complete
+      // the hook returns the full content immediately.
+      const shown = message.complete ? message.content : streamDisplay;
       // Skip empty/whitespace-only assistant messages
-      if (!message.content.trim()) return null;
+      if (!shown.trim()) return null;
       return (
         <div className="flex justify-start">
           <div className="max-w-[82%] text-sm text-[var(--color-text)]">
             <MarkdownRenderer
-              content={message.content}
+              content={shown}
               onFileClick={onFileClick}
               resolveImageUrl={resolveImageUrl}
               onMermaidClick={onMermaidClick}
@@ -6051,6 +6264,7 @@ const MessageItem = memo(function MessageItem({
           </div>
         </div>
       );
+    }
     case "thinking":
       return (
         <div className="flex justify-start" data-grove-search-skip="true">
@@ -6071,7 +6285,7 @@ const MessageItem = memo(function MessageItem({
             </button>
             {!message.collapsed && (
               <div className="ml-5 rounded-lg px-3 py-2 bg-[var(--color-bg-tertiary)] text-xs text-[var(--color-text-muted)] italic whitespace-pre-wrap max-h-40 overflow-y-auto">
-                {message.content}
+                {message.complete ? message.content : streamDisplay}
               </div>
             )}
           </div>
