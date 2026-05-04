@@ -439,22 +439,36 @@ pub async fn get_commits(
 /// almost anything and let git complain or silently no-op; matching that
 /// behavior is good enough.
 fn parse_relative_since(s: &str) -> Option<i64> {
+    use chrono::Months;
     let s = s.trim().to_ascii_lowercase();
     let s = s.strip_suffix(" ago").unwrap_or(&s);
     let mut parts = s.split_whitespace();
     let n: i64 = parts.next()?.parse().ok()?;
+    if n < 0 {
+        return None;
+    }
     let unit = parts.next()?;
-    let secs_per_unit: i64 = match unit.trim_end_matches('s') {
-        "second" => 1,
-        "minute" | "min" => 60,
-        "hour" => 3600,
-        "day" => 86_400,
-        "week" => 7 * 86_400,
-        "month" => 30 * 86_400,
-        "year" => 365 * 86_400,
-        _ => return None,
-    };
-    Some(n * secs_per_unit)
+    match unit.trim_end_matches('s') {
+        "second" => Some(n),
+        "minute" | "min" => n.checked_mul(60),
+        "hour" => n.checked_mul(3600),
+        "day" => n.checked_mul(86_400),
+        "week" => n.checked_mul(7 * 86_400),
+        // Month/year: use calendar-aware subtraction so the cutoff matches the
+        // user's intent (e.g. "1 month ago" on March 31 → Feb 28/29, not -30d).
+        "month" => {
+            let now = chrono::Utc::now();
+            now.checked_sub_months(Months::new(n.try_into().ok()?))
+                .map(|then| (now - then).num_seconds())
+        }
+        "year" => {
+            let months = n.checked_mul(12)?;
+            let now = chrono::Utc::now();
+            now.checked_sub_months(Months::new(months.try_into().ok()?))
+                .map(|then| (now - then).num_seconds())
+        }
+        _ => None,
+    }
 }
 
 /// POST /api/v1/projects/{id}/git/checkout

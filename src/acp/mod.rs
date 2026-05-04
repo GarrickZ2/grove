@@ -655,6 +655,7 @@ async fn handle_request_permission(
     notify_acp_event(
         &state.project_key,
         &state.task_id,
+        state.chat_id.as_deref(),
         "Permission Required",
         &desc,
         AcpNotificationEvent::PermissionRequired,
@@ -2257,6 +2258,7 @@ async fn drive_session(
                             notify_acp_event(
                                 &config.project_key,
                                 &config.task_id,
+                                config.chat_id.as_deref(),
                                 "Task Complete",
                                 &summary,
                                 AcpNotificationEvent::TurnComplete,
@@ -3969,6 +3971,7 @@ enum AcpNotificationEvent {
 fn notify_acp_event(
     project_key: &str,
     task_id: &str,
+    chat_id: Option<&str>,
     title_suffix: &str,
     message: &str,
     event: AcpNotificationEvent,
@@ -3995,7 +3998,13 @@ fn notify_acp_event(
         };
         // External shell hooks always fire regardless of in-app notification settings —
         // they are a separate mechanism from the tray/system-banner notification system.
-        hooks::update_hook(project_key, task_id, level, Some(message.to_string()));
+        hooks::update_hook(
+            project_key,
+            task_id,
+            level,
+            Some(message.to_string()),
+            chat_id.map(str::to_string),
+        );
         return;
     }
 
@@ -4051,7 +4060,13 @@ fn notify_acp_event(
     } else {
         NotificationLevel::Notice
     };
-    hooks::update_hook(project_key, task_id, level, Some(message.to_string()));
+    hooks::update_hook(
+        project_key,
+        task_id,
+        level,
+        Some(message.to_string()),
+        chat_id.map(str::to_string),
+    );
 }
 
 /// Truncate a string to at most `max_chars` Unicode characters, appending "…" if truncated.

@@ -604,6 +604,7 @@ pub async fn grove_agent_spawn(
         &project.path,
         &project.name,
         &task,
+        Some(&new_chat_id),
     );
     let working_dir = std::path::PathBuf::from(&task.worktree_path);
     let session_key = format!("{}:{}:{}", project_key, task_id, new_chat_id);
@@ -963,6 +964,7 @@ pub(crate) async fn ensure_target_handle(
         &project.path,
         &project.name,
         &task,
+        Some(target_chat_id),
     );
     let working_dir = std::path::PathBuf::from(&task.worktree_path);
     let config = AcpStartConfig {

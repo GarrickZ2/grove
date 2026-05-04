@@ -21,6 +21,9 @@ pub struct HookEntryResponse {
     pub message: Option<String>,
     pub project_id: String,
     pub project_name: String,
+    /// None for legacy entries written before hooks tracked chat context.
+    /// Frontend falls back to navigating to the task only when null.
+    pub chat_id: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -90,6 +93,7 @@ pub async fn list_all_hooks() -> Result<Json<HooksListResponse>, StatusCode> {
                 message: record.entry.message,
                 project_id: record.project_key,
                 project_name: project_name.clone(),
+                chat_id: record.entry.chat_id,
             });
             continue;
         };
@@ -107,6 +111,7 @@ pub async fn list_all_hooks() -> Result<Json<HooksListResponse>, StatusCode> {
             message: record.entry.message,
             project_id: record.project_key,
             project_name: project_name.clone(),
+            chat_id: record.entry.chat_id,
         });
     }
 

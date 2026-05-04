@@ -56,6 +56,14 @@ pub async fn perf_timing_middleware(req: Request, next: Next) -> Response<Body> 
         .get::<MatchedPath>()
         .map(|m| m.as_str().to_owned())
         .unwrap_or_else(|| req.uri().path().to_owned());
+
+    // Don't record perf endpoints — they're polled by the panel itself and
+    // would inflate sample counts / pollute the histogram. The v1 router is
+    // mounted under `/api/v1`, so MatchedPath includes that prefix.
+    if route.contains("/perf/") {
+        return next.run(req).await;
+    }
+
     let method = req.method().clone();
     let key = format!("{} {}", method, route);
 

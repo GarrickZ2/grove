@@ -309,8 +309,9 @@ pub async fn get_project(Path(id): Path<String>) -> Result<Json<ProjectResponse>
     ) = tokio::task::spawn_blocking(move || {
         let project_key = workspace::project_hash(&project_path);
 
-        // Filesystem-only check — no git subprocess.
-        let is_git_repo = std::path::Path::new(&project_path).join(".git").exists();
+        // gix-based check — no git subprocess. Requires HEAD to resolve, so freshly
+        // `git init`'d repos with no commits report false (frontend gates git UI on this).
+        let is_git_repo = git::is_git_usable(&project_path);
 
         let active_tasks = tasks::load_tasks(&project_key).unwrap_or_default();
         let archived_tasks = tasks::load_archived_tasks(&project_key).unwrap_or_default();

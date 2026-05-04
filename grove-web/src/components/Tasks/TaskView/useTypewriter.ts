@@ -24,8 +24,16 @@ export function useTypewriter(
   const targetRef = useRef(target);
 
   // Sync target ref (must be in effect — refs cannot be mutated during render).
+  // Also reset `revealed` when target changes to something that's not a
+  // prefix-extension of what's currently displayed, so the typewriter restarts
+  // from char 0 rather than appearing to jump mid-stream.
   useEffect(() => {
+    const prev = targetRef.current;
     targetRef.current = target;
+    if (target.length > 0 && !target.startsWith(prev.slice(0, Math.min(prev.length, target.length)))) {
+      /* eslint-disable-next-line react-hooks/set-state-in-effect */
+      setRevealed(0);
+    }
   }, [target]);
 
   // Drive the reveal animation. If the target shrinks below the

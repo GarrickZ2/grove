@@ -14,6 +14,8 @@ export interface HookEntryResponse {
   message: string | null;
   project_id: string;
   project_name: string;
+  /** null for legacy entries written before hooks tracked chat context. */
+  chat_id: string | null;
 }
 
 interface HooksListResponse {

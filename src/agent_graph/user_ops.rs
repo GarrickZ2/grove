@@ -115,6 +115,7 @@ pub async fn user_spawn_node(
         &project.path,
         &project.name,
         &task,
+        Some(&new_chat_id),
     );
     let session_key = format!("{}:{}:{}", project_key, task_id, new_chat_id);
     let config = AcpStartConfig {

@@ -139,6 +139,7 @@ mod tests {
             level: NotificationLevel::Notice,
             message: Some("Test message".to_string()),
             timestamp: Utc::now(),
+            chat_id: None,
         }
     }
 

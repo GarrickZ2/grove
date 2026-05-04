@@ -96,22 +96,13 @@ function patchWebSocket(): () => void {
         });
       });
       // Per-message processing time is dominated by app handlers (which run
-      // synchronously off `onmessage`). Wrap addEventListener for "message"
-      // so each handler invocation is timed.
-      const origAdd = this.addEventListener.bind(this);
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (this as any).addEventListener = (
-        type: string,
-        listener: EventListenerOrEventListenerObject,
-        options?: boolean | AddEventListenerOptions,
-      ) => {
-        if (type !== "message" || typeof listener !== "function") {
-          return origAdd(type, listener, options);
-        }
-        const wrapped: EventListener = (ev) => {
+      // synchronously off `onmessage`). Time both `onmessage = ...` assignments
+      // and `addEventListener("message", ...)` registrations.
+      const wrapMessageListener = (listener: EventListener): EventListener => {
+        return (ev) => {
           const t0 = performance.now();
           try {
-            (listener as EventListener)(ev);
+            listener(ev);
           } finally {
             const dt = performance.now() - t0;
             if (dt >= 4) {
@@ -125,8 +116,43 @@ function patchWebSocket(): () => void {
             }
           }
         };
-        return origAdd(type, wrapped, options);
       };
+
+      const origAdd = this.addEventListener.bind(this);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (this as any).addEventListener = (
+        type: string,
+        listener: EventListenerOrEventListenerObject,
+        options?: boolean | AddEventListenerOptions,
+      ) => {
+        if (type !== "message" || typeof listener !== "function") {
+          return origAdd(type, listener, options);
+        }
+        return origAdd(type, wrapMessageListener(listener as EventListener), options);
+      };
+
+      // Patch the `onmessage` setter — almost every consumer in this codebase
+      // assigns `ws.onmessage = ...` rather than going through addEventListener,
+      // so without this hook the network tab would show zero message events.
+      let userHandler: ((this: WebSocket, ev: MessageEvent) => unknown) | null = null;
+      let wrapped: EventListener | null = null;
+      Object.defineProperty(this, "onmessage", {
+        configurable: true,
+        get: () => userHandler,
+        set: (fn) => {
+          if (wrapped) {
+            this.removeEventListener("message", wrapped);
+            wrapped = null;
+          }
+          userHandler = typeof fn === "function" ? fn : null;
+          if (userHandler) {
+            const bound = userHandler.bind(this) as EventListener;
+            wrapped = wrapMessageListener(bound);
+            // Skip our own addEventListener override — it would double-wrap.
+            origAdd("message", wrapped);
+          }
+        },
+      });
     }
   }
   // eslint-disable-next-line @typescript-eslint/no-explicit-any

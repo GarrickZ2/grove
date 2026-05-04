@@ -57,6 +57,30 @@ function insertTextIntoContentEditable(el: HTMLElement, text: string) {
 /** How long the PTT key must be held before recording starts (ms) */
 const PTT_ACTIVATION_DELAY_MS = 300;
 
+const STATUS_HINTS: Record<number, string> = {
+  400: "Bad request — check transcribe provider config",
+  401: "Unauthorized — check API key",
+  403: "Forbidden — provider rejected the request",
+  413: "Recording too large",
+  429: "Rate limited — slow down",
+  502: "Provider unreachable",
+  503: "Provider unavailable",
+};
+
+function formatTranscribeError(err: unknown): string {
+  if (!err || typeof err !== "object") return "Transcription failed";
+  const e = err as { status?: number; message?: string };
+  const parts: string[] = [];
+  if (typeof e.status === "number") {
+    const hint = STATUS_HINTS[e.status];
+    parts.push(hint ? `${e.status}: ${hint}` : `HTTP ${e.status}`);
+  }
+  if (e.message && e.message.trim()) {
+    parts.push(e.message.trim().slice(0, 120));
+  }
+  return parts.length > 0 ? parts.join(" — ") : "Transcription failed";
+}
+
 export type IndicatorStatus = "idle" | "warming" | "recording" | "processing" | "error";
 
 interface GlobalAudioRecorderProps {
@@ -117,12 +141,19 @@ export function GlobalAudioRecorder({ projectId }: GlobalAudioRecorderProps) {
     activeElementRef.current = document.activeElement;
   }, []);
 
-  // Auto-clear error after 4 seconds
+  // Auto-clear error after 4 seconds. Tracks BOTH our transcribe-side error
+  // and the recorder's own error (mic permission etc.) — otherwise a denied
+  // mic shows the pill forever because the recorder stays in "error" state
+  // until the next start() call.
+  const recorderErrorActive = recorder.status === "error" || !!recorder.error;
   useEffect(() => {
-    if (!errorMessage) return;
-    const t = setTimeout(() => setErrorMessage(null), 4000);
+    if (!errorMessage && !recorderErrorActive) return;
+    const t = setTimeout(() => {
+      setErrorMessage(null);
+      if (recorderErrorActive) recorder.cancel();
+    }, 4000);
     return () => clearTimeout(t);
-  }, [errorMessage]);
+  }, [errorMessage, recorderErrorActive, recorder]);
 
   const handleRecordingComplete = useCallback(async (blob: Blob) => {
     // #2: Client-side size check (25 MB, matches backend limit)
@@ -157,15 +188,20 @@ export function GlobalAudioRecorder({ projectId }: GlobalAudioRecorderProps) {
       }
     } catch (err) {
       if (!controller.signal.aborted) {
-        const msg = err && typeof err === "object" && "message" in err
-          ? (err as { message: string }).message
-          : "Transcription failed";
+        // Surface as much detail as the backend gave us. Generic
+        // "Transcription failed" hides whether the cause was a missing
+        // provider config (400), upstream API outage (502), oversized
+        // payload (413), or anything else — and that distinction is
+        // exactly what the user needs to fix their setup.
+        const msg = formatTranscribeError(err);
+        console.error("[audio] transcribe failed:", err);
         setErrorMessage(msg);
       }
     } finally {
-      if (!controller.signal.aborted) {
-        setTranscribing(false);
-      }
+      // Clear transcribing even on abort so the indicator can transition
+      // out of "processing" — otherwise a cancel would leave the spinner
+      // stuck and block the next recording's status calculation.
+      setTranscribing(false);
     }
   }, [projectId]);
 
@@ -230,6 +266,10 @@ export function GlobalAudioRecorder({ projectId }: GlobalAudioRecorderProps) {
         event.stopPropagation();
         if (status === "idle" || status === "error") {
           captureActiveElement();
+          // Clear any lingering error from a previous attempt — guarantees the
+          // pill goes away as soon as the user retries, even if the 4s timer
+          // hasn't fired yet for some reason.
+          setErrorMessage(null);
           recorderRef.current.start();
         } else if (status === "recording") {
           handleToggleStop();
@@ -249,6 +289,7 @@ export function GlobalAudioRecorder({ projectId }: GlobalAudioRecorderProps) {
         }
         if ((status === "idle" || status === "error") && !pttActiveRef.current) {
           captureActiveElement();
+          setErrorMessage(null);
           pttActiveRef.current = true;
           setPttWarming(true);
           setPttWarmElapsed(0);
@@ -312,6 +353,12 @@ export function GlobalAudioRecorder({ projectId }: GlobalAudioRecorderProps) {
   if (transcribing) indicatorStatus = "processing";
   if (errorMessage && !transcribing) indicatorStatus = "error";
 
+  // Prefer the recorder's own error (mic permission denied, codec missing,
+  // etc.) over our generic message — Tauri webviews on macOS commonly fail
+  // here when microphone permission hasn't been granted, and the user needs
+  // to see the actual reason to fix it.
+  const indicatorErrorMessage = errorMessage ?? recorder.error;
+
   return (
     <RecordingIndicator
       status={indicatorStatus}
@@ -319,7 +366,7 @@ export function GlobalAudioRecorder({ projectId }: GlobalAudioRecorderProps) {
       maxDuration={settings.maxDuration}
       frequencyData={recorder.frequencyData}
       warmingProgress={pttWarmElapsed / PTT_ACTIVATION_DELAY_MS}
-      errorMessage={errorMessage}
+      errorMessage={indicatorErrorMessage}
       onStop={handleToggleStop}
       onCancel={() => {
         cancelPTTWarming();

@@ -1256,6 +1256,12 @@ export function TaskChat({
   const sessionModeStorageKey = `taskchat:session-mode:${projectId}`;
   // ─── Multi-chat state ───────────────────────────────────────────────────
   const [chats, setChats] = useState<ChatSessionResponse[]>([]);
+  // Mirror of `chats` for stable callbacks/event handlers that shouldn't
+  // re-register every time the chat list changes.
+  const chatsRef = useRef<ChatSessionResponse[]>([]);
+  useEffect(() => {
+    chatsRef.current = chats;
+  }, [chats]);
   const [activeChatId, setActiveChatId] = useState<string | null>(null);
   const [showChatMenu, setShowChatMenu] = useState(false);
   const [editingTitle, setEditingTitle] = useState<{
@@ -2358,6 +2364,31 @@ export function TaskChat({
           }
 
           setChats(fresh);
+
+          // If a tray/notification deep-link was waiting on this chat to
+          // appear (race: Open clicked before grove_agent_spawn's chat is in
+          // listChats yet), satisfy it now.
+          const pending = (window as unknown as Record<string, unknown>)
+            .__grove_pending_chat as
+            | { projectId: string; taskId: string; chatId: string }
+            | undefined;
+          if (
+            pending &&
+            pending.projectId === projectId &&
+            pending.taskId === task.id &&
+            freshIds.has(pending.chatId)
+          ) {
+            const targetId = pending.chatId;
+            delete (window as unknown as Record<string, unknown>).__grove_pending_chat;
+            setActiveChatId(targetId);
+            activeChatIdRef.current = targetId;
+            writeLastActiveTab("chat", projectId, task.id, targetId);
+            restoreChatState(targetId);
+            await connectChatWs(targetId);
+            wsRef.current = wsMapRef.current.get(targetId) ?? null;
+            return;
+          }
+
           const current = activeChatIdRef.current;
           if (current && freshIds.has(current)) return;
 
@@ -2388,9 +2419,21 @@ export function TaskChat({
   useEffect(() => {
     const handler = (e: Event) => {
       const detail = (e as CustomEvent).detail;
-      if (detail?.projectId === projectId && detail?.taskId === task.id && detail?.chatId) {
-        switchChatRef.current(detail.chatId);
+      if (!detail?.chatId) return;
+      if (detail.projectId !== projectId || detail.taskId !== task.id) return;
+      // If the target chat isn't in our list yet (just spawned, MCP write
+      // hasn't propagated to listChats), park it as pending so the
+      // ChatListChanged handler picks it up. Otherwise switch immediately.
+      const known = chatsRef.current.some((c) => c.id === detail.chatId);
+      if (!known) {
+        (window as unknown as Record<string, unknown>).__grove_pending_chat = {
+          projectId: detail.projectId,
+          taskId: detail.taskId,
+          chatId: detail.chatId,
+        };
+        return;
       }
+      switchChatRef.current(detail.chatId);
     };
     window.addEventListener("grove:switch-chat", handler);
     return () => window.removeEventListener("grove:switch-chat", handler);
@@ -4435,10 +4478,31 @@ export function TaskChat({
   // Only bump renderToken (which forces useChatSearch to re-apply
   // highlights to freshly mounted DOM) when search is open. Otherwise
   // streaming would thrash the parent at every Virtuoso paint.
+  // Trailing-debounce so a streaming turn with search open doesn't trigger a
+  // full DOM re-walk on every paint.
+  const renderTokenBumpTimerRef = useRef<number | null>(null);
+  // Cancel any in-flight bump when search closes (or unmounts), so we don't
+  // wake the parent for nothing after the user dismisses the search bar.
+  useEffect(() => {
+    return () => {
+      if (renderTokenBumpTimerRef.current !== null) {
+        window.clearTimeout(renderTokenBumpTimerRef.current);
+        renderTokenBumpTimerRef.current = null;
+      }
+    };
+  }, [chatSearchOpen]);
   const handleItemsRendered = useMemo(
     () =>
       chatSearchOpen
-        ? () => setRenderToken((t) => t + 1)
+        ? () => {
+            if (renderTokenBumpTimerRef.current !== null) {
+              window.clearTimeout(renderTokenBumpTimerRef.current);
+            }
+            renderTokenBumpTimerRef.current = window.setTimeout(() => {
+              renderTokenBumpTimerRef.current = null;
+              setRenderToken((t) => t + 1);
+            }, 100);
+          }
         : undefined,
     [chatSearchOpen],
   );
@@ -6023,7 +6087,15 @@ function UserMessageBody({ content }: { content: string }) {
     if (seg.kind === "text") {
       if (!seg.content) return;
       if (seg.content.trim() === "") return;
-      inlineBody.push(<span key={`t-${i}`}>{seg.content}</span>);
+      // Strip leading newlines when this text segment immediately follows a
+      // meta envelope. Source from agent_graph CLI/MCP often has `\n\n` after
+      // `</grove-meta>` for raw-string readability, but pre-wrap renders
+      // those as visible blank lines above the body text.
+      const prev = segments[i - 1];
+      const text =
+        prev && prev.kind === "meta" ? seg.content.replace(/^\n+/, "") : seg.content;
+      if (!text) return;
+      inlineBody.push(<span key={`t-${i}`}>{text}</span>);
       return;
     }
     const isBlockMeta =

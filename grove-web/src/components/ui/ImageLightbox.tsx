@@ -57,7 +57,9 @@ export function ImageLightbox({ imageUrl, svgContent, onClose }: ImageLightboxPr
       if (e.metaKey || e.ctrlKey) {
         const delta = e.deltaY > 0 ? -0.15 : 0.15;
         setZoom((z) => Math.min(10, Math.max(0.2, z + delta * z)));
-      } else {
+      } else if (zoomRef.current > 1) {
+        // Only pan when zoomed in — at zoom 1 there's nothing to reveal,
+        // and accidental two-finger swipes shouldn't push the image away.
         setPan((p) => ({ x: p.x - e.deltaX, y: p.y - e.deltaY }));
       }
     };
@@ -131,7 +133,6 @@ export function ImageLightbox({ imageUrl, svgContent, onClose }: ImageLightboxPr
             }}
             onClick={(e) => {
               e.stopPropagation();
-              panMovedRef.current = false;
             }}
           >
             {imageUrl ? (

@@ -250,15 +250,16 @@ pub fn gix_recent_log(
 
 /// gix 版 `git log <target>..HEAD -<count>`(in-process,无 fork)。
 ///
-/// 用 `selected` filter 在到达 `target` commit 时停止下溯,等价于典型用例
-/// (任务 worktree 从 target 分支线性拉出)的 `target..HEAD` 语义。如果
-/// HEAD 与 target 之间存在合并,行为等价于 git 的 `^target` 排除规则。
+/// 等价于 `git log target..HEAD` = `HEAD ^target`:排除 target 自身及其全部
+/// 祖先。先用一次有界的祖先遍历建立排除集,再从 HEAD 走 commit-time 顺序。
 pub fn gix_log_target_to_head(
     repo: &gix::Repository,
     target: &str,
     count: usize,
 ) -> Result<Vec<GixLogEntry>> {
     use gix::bstr::BStr;
+    use std::collections::HashSet;
+
     let head_id = repo
         .head_id()
         .map_err(|e| GroveError::git(format!("HEAD not found: {}", e)))?;
@@ -267,18 +268,42 @@ pub fn gix_log_target_to_head(
         .map_err(|e| GroveError::git(format!("target ref {} not found: {}", target, e)))?
         .detach();
 
+    // Build the exclusion set: target plus its ancestors. Bounded to keep this
+    // cheap on huge histories — past the cap we may include a few extra commits
+    // that git would have excluded, which is preferable to walking forever.
+    const ANCESTOR_CAP: usize = 20_000;
+    let mut excluded: HashSet<gix::ObjectId> = HashSet::new();
+    excluded.insert(target_id);
+    if let Ok(target_walk) = repo.rev_walk([target_id]).use_commit_graph(true).all() {
+        for (i, info) in target_walk.enumerate() {
+            if i >= ANCESTOR_CAP {
+                break;
+            }
+            if let Ok(info) = info {
+                excluded.insert(info.id);
+            }
+        }
+    }
+
+    let excluded_for_filter = excluded.clone();
     let walk = repo
         .rev_walk([head_id])
         .use_commit_graph(true)
-        .selected(move |oid| *oid != *target_id)
+        .selected(move |oid| !excluded_for_filter.contains(oid))
         .map_err(|e| GroveError::git(format!("rev_walk failed: {}", e)))?;
 
+    // Hard cap on iterations to prevent runaway when `selected` filter doesn't
+    // prune (e.g. excluded commits' parents are still visited then filtered).
+    let iter_cap = count.saturating_mul(20).max(2_000);
     let mut out = Vec::with_capacity(count);
-    for info in walk {
-        if out.len() >= count {
+    for (i, info) in walk.enumerate() {
+        if out.len() >= count || i >= iter_cap {
             break;
         }
         let Ok(info) = info else { continue };
+        if excluded.contains(&info.id) {
+            continue;
+        }
         let Ok(object) = repo.find_object(info.id) else {
             continue;
         };

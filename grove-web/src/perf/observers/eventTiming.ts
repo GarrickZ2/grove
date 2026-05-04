@@ -66,6 +66,10 @@ export function installEventTimingObserver(): () => void {
 /**
  * Build a short, human-readable selector for the event target so the timeline
  * row shows WHICH element was clicked, not just "BUTTON".
+ *
+ * Note: by the time PerformanceObserver fires, `el` may already be detached
+ * from the DOM (e.g. modal dismissed). DOM property reads still succeed but
+ * `textContent` may be stale relative to what was actually visible.
  */
 function describeTarget(el: Element | null): string | null {
   if (!el) return null;

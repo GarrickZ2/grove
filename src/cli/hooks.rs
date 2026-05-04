@@ -144,6 +144,9 @@ pub fn execute(level: HookLevel) {
 
     // 无条件记录到通知存储（当用户 detach 回到 Grove 时会被清除）；
     // update_hook 会广播 HookAdded 让 grove server 上的前端立即刷新。
+    // GROVE_CHAT_ID 是可选的:在 chat 上下文(ACP/agent spawn)启动的 session
+    // 才会注入,纯 task-level shell 没有 → 前端跳转 fallback 只到 task。
     let project_key = crate::storage::workspace::project_hash(&project_path);
-    hooks::update_hook(&project_key, &task_id, level.level(), message);
+    let chat_id = env::var("GROVE_CHAT_ID").ok().filter(|s| !s.is_empty());
+    hooks::update_hook(&project_key, &task_id, level.level(), message, chat_id);
 }

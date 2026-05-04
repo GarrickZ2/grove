@@ -393,10 +393,34 @@ export const IDELayoutContainer = forwardRef<IDELayoutHandle, IDELayoutContainer
     const startResize = useCallback((side: "aux" | "info", event: React.PointerEvent<HTMLDivElement>) => {
       event.preventDefault();
       const startX = event.clientX;
-      const startAuxWidth = auxWidth;
-      const startInfoWidth = infoWidth;
       const shellWidth = shellRef.current?.getBoundingClientRect().width ?? window.innerWidth;
       const maxSideWidth = Math.max(320, Math.floor(shellWidth * 0.62));
+
+      // Use the actually-rendered panel width as the baseline. When the layout
+      // is using the default fr-ratio (auxWasResized/infoWasResized = false),
+      // auxWidth/infoWidth state doesn't match the visible width, so starting
+      // from the state value would cause the panel to jump on first drag.
+      // The aux/info side is wrapped in a `display: contents` div, which has
+      // no layout box (getBoundingClientRect returns 0). Drill into the first
+      // child (or fall back to the sibling itself for non-wrapped panels like
+      // chat/terminal).
+      const measureSibling = (el: Element | null): number | null => {
+        if (!el) return null;
+        const node = el as HTMLElement;
+        const rect = node.getBoundingClientRect();
+        if (rect.width > 0) return rect.width;
+        const child = node.firstElementChild as HTMLElement | null;
+        return child ? child.getBoundingClientRect().width : null;
+      };
+      const resizerEl = event.currentTarget;
+      const startAuxWidth =
+        side === "aux"
+          ? measureSibling(resizerEl.previousElementSibling) ?? auxWidth
+          : auxWidth;
+      const startInfoWidth =
+        side === "info"
+          ? measureSibling(resizerEl.nextElementSibling) ?? infoWidth
+          : infoWidth;
 
       const handlePointerMove = (moveEvent: PointerEvent) => {
         if (side === "aux") {

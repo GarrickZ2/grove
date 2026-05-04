@@ -815,6 +815,7 @@ pub(crate) fn build_grove_env(
     project_path: &str,
     project_name: &str,
     task: &tasks::Task,
+    chat_id: Option<&str>,
 ) -> HashMap<String, String> {
     let mut env = HashMap::new();
     env.insert("GROVE_TASK_ID".into(), task.id.clone());
@@ -825,6 +826,9 @@ pub(crate) fn build_grove_env(
     env.insert("GROVE_PROJECT_NAME".into(), project_name.into());
     env.insert("GROVE_PROJECT".into(), project_path.into());
     env.insert("GROVE_PROJECT_KEY".into(), project_key.into());
+    if let Some(cid) = chat_id {
+        env.insert("GROVE_CHAT_ID".into(), cid.into());
+    }
     env
 }
 
@@ -1070,7 +1074,13 @@ pub async fn chat_ws_handler(
         effective_agent
     )))?;
 
-    let env_vars = build_grove_env(&project_key, &project_path, &project_name, &task);
+    let env_vars = build_grove_env(
+        &project_key,
+        &project_path,
+        &project_name,
+        &task,
+        Some(&chat_id),
+    );
     let working_dir = std::path::PathBuf::from(&task.worktree_path);
     let session_key = format!("{}:{}:{}", project_key, task_id, chat_id);
 

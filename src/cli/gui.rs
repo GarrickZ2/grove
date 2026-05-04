@@ -83,62 +83,77 @@ fn macos_shared_app() -> Option<*mut objc2::runtime::AnyObject> {
 #[cfg(target_os = "macos")]
 fn macos_app_is_hidden() -> bool {
     use objc2::msg_send;
+    use objc2::rc::autoreleasepool;
     use objc2::runtime::Bool;
-    let Some(app) = macos_shared_app() else {
-        return false;
-    };
-    unsafe {
-        let hidden: Bool = msg_send![app, isHidden];
-        hidden.as_bool()
-    }
+    autoreleasepool(|_| {
+        let Some(app) = macos_shared_app() else {
+            return false;
+        };
+        unsafe {
+            let hidden: Bool = msg_send![app, isHidden];
+            hidden.as_bool()
+        }
+    })
 }
 
 #[cfg(target_os = "macos")]
 fn macos_app_is_active() -> bool {
     use objc2::msg_send;
+    use objc2::rc::autoreleasepool;
     use objc2::runtime::Bool;
-    let Some(app) = macos_shared_app() else {
-        return false;
-    };
-    unsafe {
-        let active: Bool = msg_send![app, isActive];
-        active.as_bool()
-    }
+    autoreleasepool(|_| {
+        let Some(app) = macos_shared_app() else {
+            return false;
+        };
+        unsafe {
+            let active: Bool = msg_send![app, isActive];
+            active.as_bool()
+        }
+    })
 }
 
 #[cfg(target_os = "macos")]
 fn macos_activate_app() {
     use objc2::msg_send;
+    use objc2::rc::autoreleasepool;
     use objc2::runtime::Bool;
-    if let Some(app) = macos_shared_app() {
-        unsafe {
-            let _: () = msg_send![app, activateIgnoringOtherApps: Bool::YES];
+    autoreleasepool(|_| {
+        if let Some(app) = macos_shared_app() {
+            unsafe {
+                let _: () = msg_send![app, activateIgnoringOtherApps: Bool::YES];
+            }
         }
-    }
+    });
 }
 
 #[cfg(target_os = "macos")]
 fn macos_hide_app() {
     use objc2::msg_send;
+    use objc2::rc::autoreleasepool;
     use objc2::runtime::AnyObject;
-    if let Some(app) = macos_shared_app() {
-        unsafe {
-            let nil: *mut AnyObject = std::ptr::null_mut();
-            let _: () = msg_send![app, hide: nil];
+    autoreleasepool(|_| {
+        if let Some(app) = macos_shared_app() {
+            unsafe {
+                let nil: *mut AnyObject = std::ptr::null_mut();
+                let _: () = msg_send![app, hide: nil];
+            }
         }
-    }
+    });
 }
 
 #[cfg(target_os = "macos")]
 fn macos_unhide_app() {
     use objc2::msg_send;
+    use objc2::rc::autoreleasepool;
     use objc2::runtime::AnyObject;
-    if let Some(app) = macos_shared_app() {
-        unsafe {
-            let nil: *mut AnyObject = std::ptr::null_mut();
-            let _: () = msg_send![app, unhide: nil];
+    autoreleasepool(|_| {
+        if let Some(app) = macos_shared_app() {
+            unsafe {
+                let nil: *mut AnyObject = std::ptr::null_mut();
+                let _: () = msg_send![app, unhide: nil];
+            }
         }
-    }
+    });
 }
 
 #[tauri::command]
@@ -425,7 +440,7 @@ pub async fn execute(port: u16) {
         .setup(move |app| {
             // Create a window pointing to our HTTP server
             let url = format!("http://localhost:{}", actual_port);
-            tauri::WebviewWindowBuilder::new(
+            let main_window = tauri::WebviewWindowBuilder::new(
                 app,
                 "main",
                 tauri::WebviewUrl::External(url.parse().unwrap()),
@@ -436,6 +451,59 @@ pub async fn execute(port: u16) {
             .center()
             .disable_drag_drop_handler()
             .build()?;
+
+            // WKWebView on macOS does NOT expose `navigator.mediaDevices` by
+            // default — getUserMedia returns "undefined is not an object" and
+            // voice transcription silently fails. Flip the private WKPreferences
+            // SPI keys to enable it. These keys are not in the public WebKit
+            // API but are widely used; Apple-distributed apps may want to
+            // gate this off, but Grove ships outside the App Store.
+            #[cfg(target_os = "macos")]
+            {
+                let _ = main_window.with_webview(|webview| {
+                    use objc2::msg_send;
+                    use objc2::rc::autoreleasepool;
+                    use objc2::runtime::AnyObject;
+                    autoreleasepool(|_| unsafe {
+                        let wk: *mut AnyObject = webview.inner().cast();
+                        if wk.is_null() {
+                            return;
+                        }
+                        let cfg: *mut AnyObject = msg_send![wk, configuration];
+                        if cfg.is_null() {
+                            return;
+                        }
+                        let prefs: *mut AnyObject = msg_send![cfg, preferences];
+                        if prefs.is_null() {
+                            return;
+                        }
+                        // NSNumber(true) for setValue:forKey:
+                        let ns_number_cls = match objc2::runtime::AnyClass::get("NSNumber") {
+                            Some(c) => c,
+                            None => return,
+                        };
+                        let true_num: *mut AnyObject =
+                            msg_send![ns_number_cls, numberWithBool: true];
+
+                        let set_key = |key: &str| {
+                            let nsstr_cls = match objc2::runtime::AnyClass::get("NSString") {
+                                Some(c) => c,
+                                None => return,
+                            };
+                            let key_c = std::ffi::CString::new(key).unwrap();
+                            let key_obj: *mut AnyObject =
+                                msg_send![nsstr_cls, stringWithUTF8String: key_c.as_ptr()];
+                            if key_obj.is_null() {
+                                return;
+                            }
+                            let _: () = msg_send![prefs, setValue: true_num forKey: key_obj];
+                        };
+                        set_key("mediaDevicesEnabled");
+                        set_key("mediaStreamEnabled");
+                        set_key("peerConnectionEnabled");
+                    });
+                });
+            }
 
             // Register menubar tray + popover. Gated by config so users who
             // dislike the menubar surface can opt out cleanly. Failure here

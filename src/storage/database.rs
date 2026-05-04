@@ -140,6 +140,7 @@ pub(crate) fn create_schema(conn: &Connection) -> Result<()> {
             level       TEXT NOT NULL,
             timestamp   TEXT NOT NULL,
             message     TEXT,
+            chat_id     TEXT,
             PRIMARY KEY (project_key, task_id)
         );
 
@@ -320,6 +321,9 @@ pub(crate) fn create_schema(conn: &Connection) -> Result<()> {
     let _ = conn.execute_batch(
         "ALTER TABLE projects ADD COLUMN project_type TEXT NOT NULL DEFAULT 'repo';",
     );
+    // chat_id is nullable: pre-migration rows have no chat context, and the
+    // notification UI falls back to navigating to the task only when NULL.
+    let _ = conn.execute_batch("ALTER TABLE hook_notifications ADD COLUMN chat_id TEXT;");
     let _ =
         conn.execute_batch("ALTER TABLE agent_edge ADD COLUMN project TEXT NOT NULL DEFAULT '';");
     let _ = conn.execute_batch(

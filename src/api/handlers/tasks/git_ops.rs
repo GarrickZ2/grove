@@ -323,8 +323,8 @@ pub async fn get_commits(
             .take_while(|e| e.tree_id == head_tree)
             .count() as u32
     } else {
-        // No commits between target..HEAD: matches old "tree_hash(HEAD) failed" branch.
-        1
+        // No commits between target..HEAD — worktree is at exactly target.
+        0
     };
 
     let commits: Vec<CommitEntry> = log_entries

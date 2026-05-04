@@ -21,7 +21,10 @@ pub enum NotificationLevel {
     Critical = 2,
 }
 
-/// Hook 通知条目（增强版：level + timestamp + message）
+/// Hook 通知条目（增强版：level + timestamp + message + chat_id）
+///
+/// `chat_id` 是后加的字段:旧记录(以及未在 chat 上下文里触发的 hook)为 None,
+/// 前端 fallback 只跳到 task 不跳 chat session。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HookEntry {
     pub level: NotificationLevel,
@@ -29,6 +32,8 @@ pub struct HookEntry {
     pub timestamp: DateTime<Utc>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub message: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub chat_id: Option<String>,
 }
 
 /// Hooks 文件结构
@@ -47,7 +52,13 @@ pub struct HookNotificationRecord {
 
 impl HooksFile {
     /// 更新 task 的通知（只保留更高级别）
-    pub fn update(&mut self, task_id: &str, level: NotificationLevel, message: Option<String>) {
+    pub fn update(
+        &mut self,
+        task_id: &str,
+        level: NotificationLevel,
+        message: Option<String>,
+        chat_id: Option<String>,
+    ) {
         let current_level = self.tasks.get(task_id).map(|e| e.level);
         if current_level.is_none() || level > current_level.unwrap() {
             self.tasks.insert(
@@ -56,6 +67,7 @@ impl HooksFile {
                     level,
                     timestamp: Utc::now(),
                     message,
+                    chat_id,
                 },
             );
         }
@@ -83,7 +95,7 @@ fn level_from_str(value: &str) -> Option<NotificationLevel> {
 pub fn load_hooks(project_key: &str) -> HooksFile {
     let conn = database::connection();
     let mut stmt = match conn.prepare(
-        "SELECT task_id, level, timestamp, message
+        "SELECT task_id, level, timestamp, message, chat_id
          FROM hook_notifications
          WHERE project_key = ?1",
     ) {
@@ -96,7 +108,8 @@ pub fn load_hooks(project_key: &str) -> HooksFile {
         let level: String = row.get(1)?;
         let timestamp: String = row.get(2)?;
         let message: Option<String> = row.get(3)?;
-        Ok((task_id, level, timestamp, message))
+        let chat_id: Option<String> = row.get(4)?;
+        Ok((task_id, level, timestamp, message, chat_id))
     }) {
         Ok(rows) => rows,
         Err(_) => return HooksFile::default(),
@@ -104,7 +117,7 @@ pub fn load_hooks(project_key: &str) -> HooksFile {
 
     let mut hooks = HooksFile::default();
     for row in rows.flatten() {
-        let (task_id, level, timestamp, message) = row;
+        let (task_id, level, timestamp, message, chat_id) = row;
         let Some(level) = level_from_str(&level) else {
             continue;
         };
@@ -117,6 +130,7 @@ pub fn load_hooks(project_key: &str) -> HooksFile {
                 level,
                 timestamp,
                 message,
+                chat_id,
             },
         );
     }
@@ -127,7 +141,7 @@ pub fn load_hooks(project_key: &str) -> HooksFile {
 pub fn load_all_hooks() -> Vec<HookNotificationRecord> {
     let conn = database::connection();
     let mut stmt = match conn.prepare(
-        "SELECT project_key, task_id, level, timestamp, message
+        "SELECT project_key, task_id, level, timestamp, message, chat_id
          FROM hook_notifications
          ORDER BY timestamp DESC",
     ) {
@@ -141,28 +155,32 @@ pub fn load_all_hooks() -> Vec<HookNotificationRecord> {
         let level: String = row.get(2)?;
         let timestamp: String = row.get(3)?;
         let message: Option<String> = row.get(4)?;
-        Ok((project_key, task_id, level, timestamp, message))
+        let chat_id: Option<String> = row.get(5)?;
+        Ok((project_key, task_id, level, timestamp, message, chat_id))
     }) {
         Ok(rows) => rows,
         Err(_) => return Vec::new(),
     };
 
     rows.flatten()
-        .filter_map(|(project_key, task_id, level, timestamp, message)| {
-            let level = level_from_str(&level)?;
-            let timestamp = DateTime::parse_from_rfc3339(&timestamp)
-                .map(|dt| dt.with_timezone(&Utc))
-                .unwrap_or_else(|_| Utc::now());
-            Some(HookNotificationRecord {
-                project_key,
-                task_id,
-                entry: HookEntry {
-                    level,
-                    timestamp,
-                    message,
-                },
-            })
-        })
+        .filter_map(
+            |(project_key, task_id, level, timestamp, message, chat_id)| {
+                let level = level_from_str(&level)?;
+                let timestamp = DateTime::parse_from_rfc3339(&timestamp)
+                    .map(|dt| dt.with_timezone(&Utc))
+                    .unwrap_or_else(|_| Utc::now());
+                Some(HookNotificationRecord {
+                    project_key,
+                    task_id,
+                    entry: HookEntry {
+                        level,
+                        timestamp,
+                        message,
+                        chat_id,
+                    },
+                })
+            },
+        )
         .collect()
 }
 
@@ -176,14 +194,15 @@ pub fn save_hooks(project_key: &str, hooks: &HooksFile) -> Result<()> {
     )?;
     for (task_id, entry) in &hooks.tasks {
         tx.execute(
-            "INSERT INTO hook_notifications (project_key, task_id, level, timestamp, message)
-             VALUES (?1, ?2, ?3, ?4, ?5)",
+            "INSERT INTO hook_notifications (project_key, task_id, level, timestamp, message, chat_id)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
             params![
                 project_key,
                 task_id,
                 level_to_str(entry.level),
                 entry.timestamp.to_rfc3339(),
-                entry.message
+                entry.message,
+                entry.chat_id,
             ],
         )?;
     }
@@ -211,9 +230,10 @@ pub fn update_hook(
     task_id: &str,
     level: NotificationLevel,
     message: Option<String>,
+    chat_id: Option<String>,
 ) {
     let mut hooks = load_hooks(project_key);
-    hooks.update(task_id, level, message.clone());
+    hooks.update(task_id, level, message.clone(), chat_id);
     match save_hooks(project_key, &hooks) {
         Ok(()) => {
             let level_str = match level {
@@ -646,7 +666,12 @@ mod tests {
         std::env::set_var("HOME", &temp_home);
 
         let mut hooks = HooksFile::default();
-        hooks.update("test-task", NotificationLevel::Warn, Some("hello".into()));
+        hooks.update(
+            "test-task",
+            NotificationLevel::Warn,
+            Some("hello".into()),
+            None,
+        );
 
         save_hooks("project-a", &hooks).unwrap();
         let loaded = load_hooks("project-a");
@@ -668,11 +693,13 @@ mod tests {
             "test-task",
             NotificationLevel::Critical,
             Some("critical".into()),
+            None,
         );
         hooks.update(
             "test-task",
             NotificationLevel::Notice,
             Some("notice".into()),
+            None,
         );
 
         assert_eq!(hooks.tasks["test-task"].level, NotificationLevel::Critical);
