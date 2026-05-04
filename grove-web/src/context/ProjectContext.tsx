@@ -115,9 +115,8 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
       setError("Failed to load projects");
       setProjects([]);
       setCurrentProjectId(null);
-    } finally {
-      if (isInitial) setIsLoading(false);
     }
+    if (isInitial) setIsLoading(false);
   }, []);
 
   // Load full project data when selected
@@ -133,13 +132,17 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
 
   // Initial load
   useEffect(() => {
-    loadProjects();
+    void (async () => {
+      await loadProjects();
+    })();
   }, [loadProjects]);
 
   // Track selectedProject in a ref so the auto-select effect can read it
   // without re-triggering when it changes (which would cause a loop).
   const selectedProjectRef = useRef(selectedProject);
-  selectedProjectRef.current = selectedProject;
+  useEffect(() => {
+    selectedProjectRef.current = selectedProject;
+  });
 
   // Auto-select project after projects are loaded
   // Priority: currentProjectId (from server cwd) > savedProjectId > first project

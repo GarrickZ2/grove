@@ -63,22 +63,44 @@ export function useAgentQuota(
   // Drop the model for agents whose quota pool doesn't depend on it.
   const effectiveModel = agentId && MODEL_AWARE_AGENTS.has(agentId) ? model : undefined;
 
+  // For model-aware multi-provider agents (opencode), the previously cached
+  // value belongs to a different upstream pool — clear it during render when
+  // agentId changes so the popover doesn't briefly mix old plan/extras with
+  // the new agent. This is the documented "Adjusting state on prop change"
+  // pattern: https://react.dev/reference/react/useState#storing-information-from-previous-renders
+  const [prevAgentId, setPrevAgentId] = useState(agentId);
+  if (prevAgentId !== agentId) {
+    setPrevAgentId(agentId);
+    if (agentId && MODEL_AWARE_AGENTS.has(agentId)) {
+      setCached(null);
+    }
+  }
+
   const fetchData = useCallback(async (agent: string, force: boolean, m?: string) => {
     if (!SUPPORTED_AGENTS.has(agent)) return;
-    const requestId = ++requestIdRef.current;
+    requestIdRef.current += 1;
+    const requestId = requestIdRef.current;
+    // Yield a microtask before flipping to "refreshing" so this is not a
+    // synchronous setState when called from an effect body.
+    await Promise.resolve();
+    if (requestId !== requestIdRef.current) return; // superseded already
     setRefreshing(true);
+    let result: AgentUsage | null = null;
+    let failed = false;
     try {
-      const result = await getAgentUsage(agent, force, m);
-      if (requestId !== requestIdRef.current) return; // stale
-      setCached(result);
-    } finally {
-      // Always clear the flag for the *latest* request so the UI can never
-      // get stuck in a "refreshing" state, even if a stale response returns
-      // after a newer request was already completed.
-      if (requestId === requestIdRef.current) {
-        setRefreshing(false);
-      }
+      result = await getAgentUsage(agent, force, m);
+    } catch (err) {
+      // Surface fetch failures via console; the UI hides the badge when
+      // there is no cached usage matching the active agent.
+      console.error('[useAgentQuota] fetch failed', err);
+      failed = true;
     }
+    if (requestId !== requestIdRef.current) return; // stale
+    if (!failed && result !== null) setCached(result);
+    // Always clear the flag for the *latest* request so the UI can never
+    // get stuck in a "refreshing" state, even if a stale response returns
+    // after a newer request was already completed.
+    setRefreshing(false);
   }, []);
 
   useEffect(() => {
@@ -88,14 +110,6 @@ export function useAgentQuota(
       requestIdRef.current += 1;
       initialFetchStartedRef.current = false;
       return;
-    }
-
-    // For model-aware multi-provider agents (opencode), the previous cached
-    // value belongs to a different upstream pool — clear it before the new
-    // fetch resolves so the popover doesn't briefly mix old plan/extras with
-    // the new model name.
-    if (MODEL_AWARE_AGENTS.has(agentId)) {
-      setCached(null);
     }
 
     initialFetchStartedRef.current = true;

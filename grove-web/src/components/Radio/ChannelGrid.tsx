@@ -79,7 +79,10 @@ function ChannelButton({
       holdingRef.current = true;
       dragStartYRef.current = startY;
       pointerIdRef.current = pointerId;
-      try { buttonRef.current?.setPointerCapture(pointerId); } catch { /* pointer may already be released */ }
+      const btn = buttonRef.current;
+      if (btn) {
+        try { btn.setPointerCapture(pointerId); } catch { /* pointer may already be released */ }
+      }
       onHoldStart(position);
     }, 300);
   }, [position, taskName, onHoldStart]);

@@ -44,9 +44,9 @@ export function XTerminal({
   onDisconnected,
   instanceId,
 }: XTerminalProps) {
+  "use no memo";
   const { terminalTheme } = useTerminalTheme();
   const terminalThemeRef = useRef(terminalTheme);
-  terminalThemeRef.current = terminalTheme;
   const mountRef = useRef<HTMLDivElement>(null);
   const terminalRef = useRef<Terminal | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
@@ -55,8 +55,19 @@ export function XTerminal({
   // Store callbacks in refs to avoid re-render issues
   const onConnectedRef = useRef(onConnected);
   const onDisconnectedRef = useRef(onDisconnected);
-  onConnectedRef.current = onConnected;
-  onDisconnectedRef.current = onDisconnected;
+
+  // Sync prop/context values into refs in effects (cannot mutate refs during
+  // render). Refs are only consumed by async ws/event callbacks that run
+  // after commit, so the one-tick delay is safe.
+  useEffect(() => {
+    terminalThemeRef.current = terminalTheme;
+  }, [terminalTheme]);
+  useEffect(() => {
+    onConnectedRef.current = onConnected;
+  }, [onConnected]);
+  useEffect(() => {
+    onDisconnectedRef.current = onDisconnected;
+  }, [onDisconnected]);
 
   // Memoize connection key to detect when we need to reconnect
   const connectionKey = useMemo(() => {
@@ -379,7 +390,7 @@ export function XTerminal({
       fitAddonRef.current = null;
       wsRef.current = null;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- intentional: connectionKey + cacheKey gate the full reconnect; reading other props live via refs
   }, [connectionKey, cacheKey]);
 
   // Live theme switching without reconnecting WebSocket

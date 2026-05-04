@@ -22,13 +22,23 @@ interface AddLinkDialogProps {
 }
 
 function deriveFallbackName(url: string): string {
+  let u: URL;
   try {
-    const u = new URL(url);
-    const tail = u.pathname.split("/").filter(Boolean).pop();
-    return tail ? `${u.hostname} · ${decodeURIComponent(tail)}` : u.hostname;
+    u = new URL(url);
   } catch {
     return "";
   }
+  const tail = u.pathname.split("/").filter(Boolean).pop();
+  if (tail) {
+    let decoded: string;
+    try {
+      decoded = decodeURIComponent(tail);
+    } catch {
+      decoded = tail;
+    }
+    return `${u.hostname} · ${decoded}`;
+  }
+  return u.hostname;
 }
 
 export function AddLinkDialog({ open, title = "Add Link", initial, submitLabel, onClose, onSubmit }: AddLinkDialogProps) {
@@ -37,13 +47,23 @@ export function AddLinkDialog({ open, title = "Add Link", initial, submitLabel, 
   const [description, setDescription] = useState("");
   const [nameTouched, setNameTouched] = useState(false);
   const [metadataLoading, setMetadataLoading] = useState(false);
+  // prev-url marker so we can flip the loading flag synchronously during
+  // render when the URL changes (set-state-during-render pattern), avoiding
+  // a setState-in-effect cascade-render warning while still showing the
+  // spinner during the 400ms debounce.
+  const [prevUrlForLoading, setPrevUrlForLoading] = useState(url);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const urlInputRef = useRef<HTMLInputElement | null>(null);
 
   // Reset state on open/close so a cancelled dialog doesn't leak stale input.
-  useEffect(() => {
-    if (!open) return;
+  // Uses the documented "Adjusting state on prop change" pattern (compared to
+  // a stored marker) so the reset doesn't sit inside an effect.
+  // https://react.dev/reference/react/useState#storing-information-from-previous-renders
+  const [lastOpenKey, setLastOpenKey] = useState<{ open: boolean; initial: typeof initial } | null>(null);
+  const justOpened = open && (lastOpenKey?.open !== open || lastOpenKey?.initial !== initial);
+  if (justOpened) {
+    setLastOpenKey({ open, initial });
     setUrl(initial?.url ?? "");
     setName(initial?.name ?? "");
     setDescription(initial?.description ?? "");
@@ -53,33 +73,64 @@ export function AddLinkDialog({ open, title = "Add Link", initial, submitLabel, 
     setMetadataLoading(false);
     setSubmitting(false);
     setError(null);
-    // Focus the URL field so users can immediately paste
-    queueMicrotask(() => urlInputRef.current?.focus());
+  } else if (!open && lastOpenKey?.open) {
+    setLastOpenKey({ open, initial });
+  }
+  // Focus the URL field so users can immediately paste, after the reset above.
+  useEffect(() => {
+    if (open) urlInputRef.current?.focus();
   }, [open, initial]);
+
+  // `name` is read inside the metadata-fetch effect only as a gate (skip if
+  // already filled). Keep it in a ref so we read the latest value without
+  // re-firing the effect on every keystroke.
+  const nameRef = useRef(name);
+  useEffect(() => {
+    nameRef.current = name;
+  });
+
+  // Sync `metadataLoading` to `true` synchronously when the URL changes to
+  // a new candidate fetch target. Done during render via the prev-prop
+  // pattern so we get UX feedback during the 400ms debounce without
+  // triggering an in-effect setState cascade-render warning. Ref read
+  // (`nameRef.current`) is intentionally avoided here — fall back to `name`
+  // state directly to stay render-pure.
+  if (url !== prevUrlForLoading) {
+    setPrevUrlForLoading(url);
+    if (open && !nameTouched && !name.trim() && /^https?:\/\/\S+$/i.test(url.trim())) {
+      if (!metadataLoading) setMetadataLoading(true);
+    }
+  }
 
   // Debounced metadata fetch. Skipped entirely when the Name field already
   // has content (edit mode, or user typed a name first) — no point spending
   // a network round-trip and flashing a spinner when we won't use the result.
   useEffect(() => {
     if (!open) return;
-    if (nameTouched || name.trim()) return;
+    if (nameTouched || nameRef.current.trim()) return;
     const trimmed = url.trim();
     if (!/^https?:\/\/\S+$/i.test(trimmed)) return;
 
     let cancelled = false;
-    setMetadataLoading(true);
     const handle = setTimeout(async () => {
+      if (cancelled) return;
+      let metaTitle: string | null = null;
+      let metaFailed = false;
       try {
         const meta = await fetchUrlMetadata(trimmed);
-        if (cancelled) return;
-        const chosen = meta.title.trim() || deriveFallbackName(trimmed);
-        setName(chosen);
+        metaTitle = meta.title.trim();
       } catch {
-        if (cancelled) return;
-        setName(deriveFallbackName(trimmed));
-      } finally {
-        if (!cancelled) setMetadataLoading(false);
+        metaFailed = true;
       }
+      if (cancelled) return;
+      let chosen: string;
+      if (metaFailed) {
+        chosen = deriveFallbackName(trimmed);
+      } else {
+        chosen = metaTitle || deriveFallbackName(trimmed);
+      }
+      setName(chosen);
+      setMetadataLoading(false);
     }, 400);
 
     return () => {
@@ -87,9 +138,6 @@ export function AddLinkDialog({ open, title = "Add Link", initial, submitLabel, 
       clearTimeout(handle);
       setMetadataLoading(false);
     };
-    // `name` intentionally excluded from deps — including it would re-fire
-    // on every keystroke; we only read it once to gate the fetch.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [url, open, nameTouched]);
 
   if (!open) return null;
@@ -101,23 +149,29 @@ export function AddLinkDialog({ open, title = "Add Link", initial, submitLabel, 
     if (!canSubmit) return;
     setSubmitting(true);
     setError(null);
+    const trimmedDesc = description.trim();
+    const payload = {
+      name: name.trim(),
+      url: url.trim(),
+      description: trimmedDesc ? trimmedDesc : undefined,
+    };
+    let succeeded = false;
+    let caught: unknown = null;
     try {
-      await onSubmit({
-        name: name.trim(),
-        url: url.trim(),
-        description: description.trim() || undefined,
-      });
-      onClose();
+      await onSubmit(payload);
+      succeeded = true;
     } catch (err) {
-      const apiErr = err as ApiError;
-      setError(
-        typeof apiErr?.message === "string" && apiErr.message
-          ? apiErr.message
-          : "Failed to add link",
-      );
-    } finally {
-      setSubmitting(false);
+      caught = err;
     }
+    if (!succeeded) {
+      const apiErr = caught as ApiError | null;
+      const msg = apiErr?.message;
+      const errorText =
+        typeof msg === "string" && msg ? msg : "Failed to add link";
+      setError(errorText);
+    }
+    setSubmitting(false);
+    if (succeeded) onClose();
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {

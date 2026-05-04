@@ -84,19 +84,25 @@ export function ExploreTab({ sources, agents, installed, projectPath, onInstalle
   const loadReqIdRef = useRef(0);
 
   const loadSkills = useCallback(async () => {
-    const reqId = ++loadReqIdRef.current;
+    loadReqIdRef.current += 1;
+    const reqId = loadReqIdRef.current;
     setIsLoading(true);
+    const sourceFilter = selectedSources.length > 0 ? selectedSources.join(",") : undefined;
+    const queryArg = searchQuery ? searchQuery : undefined;
+    let data: Awaited<ReturnType<typeof exploreSkills>> | null = null;
+    let loadErr: unknown = null;
     try {
-      const sourceFilter = selectedSources.length > 0 ? selectedSources.join(",") : undefined;
-      const data = await exploreSkills(searchQuery || undefined, sourceFilter);
-      if (loadReqIdRef.current !== reqId) return;
-      setSkills(data);
+      data = await exploreSkills(queryArg, sourceFilter);
     } catch (err) {
-      if (loadReqIdRef.current !== reqId) return;
-      console.error("Failed to load skills:", err);
-    } finally {
-      if (loadReqIdRef.current === reqId) setIsLoading(false);
+      loadErr = err;
     }
+    if (loadReqIdRef.current !== reqId) return;
+    if (loadErr) {
+      console.error("Failed to load skills:", loadErr);
+    } else if (data) {
+      setSkills(data);
+    }
+    setIsLoading(false);
   }, [searchQuery, selectedSources]);
 
   // Debounced search
@@ -105,10 +111,14 @@ export function ExploreTab({ sources, agents, installed, projectPath, onInstalle
     return () => clearTimeout(timer);
   }, [loadSkills]);
 
-  // Reset page when filters change
-  useEffect(() => {
+  // Reset page when filters change. Use a "previous filter snapshot" tracker
+  // computed during render instead of an effect, to avoid setState-in-effect.
+  const filterSig = `${searchQuery}|${selectedSources.join(",")}|${statusFilter}|${selectedAgentFilter.join(",")}`;
+  const [prevFilterSig, setPrevFilterSig] = useState(filterSig);
+  if (prevFilterSig !== filterSig) {
+    setPrevFilterSig(filterSig);
     setCurrentPage(1);
-  }, [searchQuery, selectedSources, statusFilter, selectedAgentFilter]);
+  }
 
   const toggleSourceFilter = (name: string) => {
     setSelectedSources((prev) =>

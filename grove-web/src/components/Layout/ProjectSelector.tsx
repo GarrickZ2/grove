@@ -54,12 +54,14 @@ export function ProjectSelector({ collapsed, onManageProjects, onAddProject, onP
   const [searchQuery, setSearchQuery] = useState("");
   const [activeProjectId, setActiveProjectId] = useState<string | null>(null);
   const [typeFilter, setTypeFilter] = useState<"coding" | "studio">(() => {
+    let stored: string | null = null;
     try {
-      const stored = localStorage.getItem("projectSelectorTab");
-      return stored === "coding" || stored === "studio" ? stored : "coding";
+      stored = localStorage.getItem("projectSelectorTab");
     } catch {
       return "coding";
     }
+    if (stored === "coding" || stored === "studio") return stored;
+    return "coding";
   });
 
   const handleSetTypeFilter = (tab: "coding" | "studio") => {

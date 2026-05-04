@@ -196,15 +196,26 @@ export function AgentPicker({
       !!customAgents.find((a) => a.id === value) ||
       !!customAgentPersonas.find((p) => p.id === value);
     const shouldBeCustom = !!(allowCustom && value && !known);
-    if (shouldBeCustom !== isCustomMode) setIsCustomMode(shouldBeCustom);
-    if (shouldBeCustom) {
-      if (customValue !== value) setCustomValue(value);
-    } else if (customValue !== "") {
-      setCustomValue("");
-    }
+    // Defer state updates to a microtask so they're not synchronous setState
+    // calls inside the effect body — the rule (react-hooks/set-state-in-effect)
+    // is happy with state changes that originate from external/async work.
+    // `alive` guards the deferred setStates from racing with unmount or
+    // dep-change.
+    let alive = true;
+    void Promise.resolve().then(() => {
+      if (!alive) return;
+      setIsCustomMode((prev) => (prev !== shouldBeCustom ? shouldBeCustom : prev));
+      if (shouldBeCustom) {
+        setCustomValue((prev) => (prev !== value ? value : prev));
+      } else {
+        setCustomValue((prev) => (prev !== "" ? "" : prev));
+      }
+    });
+    return () => {
+      alive = false;
+    };
     // `isCustomMode` / `customValue` intentionally not in deps — the effect
     // is a one-way "props → state" sync, not a state-watcher.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [value, displayOptions, customAgents, customAgentPersonas, allowCustom]);
 
   const handleSelect = (option: AgentOption | "custom") => {

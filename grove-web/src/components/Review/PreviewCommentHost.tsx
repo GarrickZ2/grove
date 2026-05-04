@@ -193,10 +193,12 @@ export function PreviewCommentHost({ previewComment, children }: Props) {
           try { el = content.querySelector(m.selector); } catch { /* noop */ }
         }
         if (!el && m.xpath) {
+          let r: XPathResult | null = null;
           try {
-            const r = document.evaluate(m.xpath, content, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null);
-            if (r?.singleNodeValue && r.singleNodeValue.nodeType === 1) el = r.singleNodeValue as Element;
+            r = document.evaluate(m.xpath, content, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null);
           } catch { /* noop */ }
+          const node = r ? r.singleNodeValue : null;
+          if (node && node.nodeType === 1) el = node as Element;
         }
         if (el) {
           const rect = el.getBoundingClientRect();
@@ -221,10 +223,12 @@ export function PreviewCommentHost({ previewComment, children }: Props) {
         let el: Element | null = null;
         if (m.selector) { try { el = content.querySelector(m.selector); } catch { /* noop */ } }
         if (!el && m.xpath) {
+          let r: XPathResult | null = null;
           try {
-            const r = document.evaluate(m.xpath, content, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null);
-            if (r?.singleNodeValue && r.singleNodeValue.nodeType === 1) el = r.singleNodeValue as Element;
+            r = document.evaluate(m.xpath, content, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null);
           } catch { /* noop */ }
+          const node = r ? r.singleNodeValue : null;
+          if (node && node.nodeType === 1) el = node as Element;
         }
         if (!el) stale.push(m.id);
       }

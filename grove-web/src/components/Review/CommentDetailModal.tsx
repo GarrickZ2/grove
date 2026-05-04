@@ -52,12 +52,17 @@ export function CommentDetailModal({
   const showReplyFormRef = useRef(showReplyForm);
   const editingCommentRef = useRef(editingComment);
   const editingReplyIdRef = useRef(editingReplyId);
-  // eslint-disable-next-line react-hooks/refs
-  showReplyFormRef.current = showReplyForm;
-  // eslint-disable-next-line react-hooks/refs
-  editingCommentRef.current = editingComment;
-  // eslint-disable-next-line react-hooks/refs
-  editingReplyIdRef.current = editingReplyId;
+  // Mirror state into refs so the layered-Escape keydown handler (mounted
+  // once below) reads the latest values without re-binding the listener.
+  useEffect(() => {
+    showReplyFormRef.current = showReplyForm;
+  }, [showReplyForm]);
+  useEffect(() => {
+    editingCommentRef.current = editingComment;
+  }, [editingComment]);
+  useEffect(() => {
+    editingReplyIdRef.current = editingReplyId;
+  }, [editingReplyId]);
 
   const replyTextareaRef = useRef<HTMLTextAreaElement>(null);
   const editCommentTextareaRef = useRef<HTMLTextAreaElement>(null);

@@ -131,10 +131,18 @@ export function DashboardPage({ onNavigate }: DashboardPageProps) {
   // mac-only buttons (Open IDE / Terminal) on Windows/Linux during initial load.
   const [serverPlatform, setServerPlatform] = useState<string | null>(null);
   const [dismissedTips, setDismissedTips] = useState<Set<string>>(() => {
+    let stored: string | null = null;
     try {
-      const stored = localStorage.getItem("grove-dismissed-tips");
-      return stored ? new Set(JSON.parse(stored)) : new Set();
-    } catch { return new Set(); }
+      stored = localStorage.getItem("grove-dismissed-tips");
+    } catch {
+      return new Set();
+    }
+    if (!stored) return new Set();
+    try {
+      return new Set(JSON.parse(stored));
+    } catch {
+      return new Set();
+    }
   });
 
   const loadGitStatus = useCallback(async () => {
@@ -149,15 +157,14 @@ export function DashboardPage({ onNavigate }: DashboardPageProps) {
 
   const loadBranches = useCallback(async () => {
     if (!selectedProject) return;
+    setIsBranchesLoading(true);
     try {
-      setIsBranchesLoading(true);
       const branchesRes = await getGitBranches(selectedProject.id);
       setBranches(branchesRes.branches.map(convertBranch));
     } catch (err) {
       console.error("Failed to load branches:", err);
-    } finally {
-      setIsBranchesLoading(false);
     }
+    setIsBranchesLoading(false);
   }, [selectedProject]);
 
   const loadCommits = useCallback(async () => {
@@ -199,7 +206,7 @@ export function DashboardPage({ onNavigate }: DashboardPageProps) {
   }, [selectedProject, loadGitStatus, loadBranches, loadCommits, loadStats]);
 
   useEffect(() => {
-    loadGitData();
+    Promise.resolve().then(loadGitData);
   }, [loadGitData]);
 
   // Initialize git for non-git projects
@@ -219,9 +226,8 @@ export function DashboardPage({ onNavigate }: DashboardPageProps) {
     } catch (err) {
       console.error("Failed to initialize git:", err);
       showMessage("Failed to initialize git repository");
-    } finally {
-      setIsInitializingGit(false);
     }
+    setIsInitializingGit(false);
   };
 
   // Check agent availability and config for guidance.
@@ -291,7 +297,7 @@ export function DashboardPage({ onNavigate }: DashboardPageProps) {
       showMessage(result.message);
       if (result.success) await loadGitData();
     } catch { showMessage("Pull failed"); }
-    finally { setIsOperating(false); }
+    setIsOperating(false);
   };
 
   const handlePush = async () => {
@@ -302,7 +308,7 @@ export function DashboardPage({ onNavigate }: DashboardPageProps) {
       showMessage(result.message);
       if (result.success) await loadGitData();
     } catch { showMessage("Push failed"); }
-    finally { setIsOperating(false); }
+    setIsOperating(false);
   };
 
   const handleCommit = () => {
@@ -318,7 +324,7 @@ export function DashboardPage({ onNavigate }: DashboardPageProps) {
       showMessage(result.message);
       if (result.success) { setShowCommitDialog(false); await loadGitData(); }
     } catch { showMessage("Commit failed"); }
-    finally { setIsOperating(false); }
+    setIsOperating(false);
   };
 
   const handleFetch = async () => {
@@ -329,7 +335,7 @@ export function DashboardPage({ onNavigate }: DashboardPageProps) {
       showMessage(result.message);
       if (result.success) await loadGitData();
     } catch { showMessage("Fetch failed"); }
-    finally { setIsOperating(false); }
+    setIsOperating(false);
   };
 
   const handleCheckout = async (branch: Branch) => {
@@ -340,7 +346,7 @@ export function DashboardPage({ onNavigate }: DashboardPageProps) {
       showMessage(result.message);
       if (result.success) { await loadGitData(); await refreshSelectedProject(); }
     } catch { showMessage("Checkout failed"); }
-    finally { setIsOperating(false); }
+    setIsOperating(false);
   };
 
   const handleNewBranch = () => setShowNewBranchDialog(true);
@@ -353,7 +359,8 @@ export function DashboardPage({ onNavigate }: DashboardPageProps) {
       showMessage(result.message);
       if (result.success) { await loadGitData(); if (checkout) await refreshSelectedProject(); }
     } catch { showMessage("Create branch failed"); }
-    finally { setIsOperating(false); setShowNewBranchDialog(false); }
+    setIsOperating(false);
+    setShowNewBranchDialog(false);
   };
 
   const handleRenameBranch = (branch: Branch) => { setSelectedBranch(branch); setShowRenameBranchDialog(true); };
@@ -366,7 +373,9 @@ export function DashboardPage({ onNavigate }: DashboardPageProps) {
       showMessage(result.message);
       if (result.success) await loadGitData();
     } catch { showMessage("Rename failed"); }
-    finally { setIsOperating(false); setShowRenameBranchDialog(false); setSelectedBranch(null); }
+    setIsOperating(false);
+    setShowRenameBranchDialog(false);
+    setSelectedBranch(null);
   };
 
   const handleDeleteBranch = (branch: Branch) => { setSelectedBranch(branch); setShowDeleteDialog(true); };
@@ -379,7 +388,9 @@ export function DashboardPage({ onNavigate }: DashboardPageProps) {
       showMessage(result.message);
       if (result.success) await loadGitData();
     } catch { showMessage("Delete failed"); }
-    finally { setIsOperating(false); setShowDeleteDialog(false); setSelectedBranch(null); }
+    setIsOperating(false);
+    setShowDeleteDialog(false);
+    setSelectedBranch(null);
   };
 
   const handleMergeBranch = (branch: Branch) => { showMessage(`Merge ${branch.name}: not yet implemented`); };
@@ -399,12 +410,26 @@ export function DashboardPage({ onNavigate }: DashboardPageProps) {
   const handleConfirmTaskRebase = async (newTarget: string) => {
     if (!selectedProject || !taskOpTask || isOperating) return;
     setIsOperating(true);
+    let result: Awaited<ReturnType<typeof rebaseToTask>> | null = null;
+    let failed = false;
     try {
-      const result = await rebaseToTask(selectedProject.id, taskOpTask.id, newTarget);
-      showMessage(result.success ? (result.message || `Rebased onto ${newTarget}`) : (result.message || "Rebase failed"));
-      if (result.success) { setShowTaskRebaseDialog(false); setTaskOpTask(null); await refreshSelectedProject(); }
-    } catch { showMessage("Rebase failed"); }
-    finally { setIsOperating(false); }
+      result = await rebaseToTask(selectedProject.id, taskOpTask.id, newTarget);
+    } catch {
+      failed = true;
+    }
+    if (failed || !result) {
+      showMessage("Rebase failed");
+    } else {
+      const successMsg = result.message || `Rebased onto ${newTarget}`;
+      const failMsg = result.message || "Rebase failed";
+      showMessage(result.success ? successMsg : failMsg);
+      if (result.success) {
+        setShowTaskRebaseDialog(false);
+        setTaskOpTask(null);
+        await refreshSelectedProject();
+      }
+    }
+    setIsOperating(false);
   };
 
   const handleTaskArchive = (task: Task) => { setTaskOpTask(task); setShowTaskArchiveDialog(true); };
@@ -413,7 +438,9 @@ export function DashboardPage({ onNavigate }: DashboardPageProps) {
     setIsOperating(true);
     try { await archiveTask(selectedProject.id, taskOpTask.id); showMessage(`Archived "${taskOpTask.name}"`); await refreshSelectedProject(); }
     catch { showMessage("Archive failed"); }
-    finally { setIsOperating(false); setShowTaskArchiveDialog(false); setTaskOpTask(null); }
+    setIsOperating(false);
+    setShowTaskArchiveDialog(false);
+    setTaskOpTask(null);
   };
 
   const handleTaskClean = (task: Task) => { setTaskOpTask(task); setShowTaskCleanDialog(true); };
@@ -422,14 +449,16 @@ export function DashboardPage({ onNavigate }: DashboardPageProps) {
     setIsOperating(true);
     try { await recoverTask(selectedProject.id, task.id); showMessage(`Recovered "${task.name}"`); await refreshSelectedProject(); }
     catch { showMessage("Recover failed"); }
-    finally { setIsOperating(false); }
+    setIsOperating(false);
   };
   const handleConfirmTaskClean = async () => {
     if (!selectedProject || !taskOpTask || isOperating) return;
     setIsOperating(true);
     try { await deleteTask(selectedProject.id, taskOpTask.id); showMessage(`Cleaned "${taskOpTask.name}"`); await refreshSelectedProject(); }
     catch { showMessage("Clean failed"); }
-    finally { setIsOperating(false); setShowTaskCleanDialog(false); setTaskOpTask(null); }
+    setIsOperating(false);
+    setShowTaskCleanDialog(false);
+    setTaskOpTask(null);
   };
 
   const dismissTip = (id: string) => {

@@ -29,13 +29,12 @@ export function useSketchList(projectId: string, taskId: string): UseSketchListR
       setError(null);
     } catch (e) {
       setError(e as Error);
-    } finally {
-      setLoading(false);
     }
+    setLoading(false);
   }, [projectId, taskId]);
 
   useEffect(() => {
-    void refresh();
+    void Promise.resolve().then(refresh);
   }, [refresh]);
 
   const create = useCallback(

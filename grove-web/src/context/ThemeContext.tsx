@@ -317,21 +317,28 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
   // without needing their own broadcast subscription.
   useEffect(() => {
     const loadTheme = async () => {
+      let response: Response | null = null;
       try {
-        const response = await fetch("/api/v1/config");
-        if (response.ok) {
-          const config = await response.json();
-          if (config.theme?.theme) {
-            const themeId = config.theme.theme.toLowerCase();
-            const found = themes.find((t) => t.id === themeId);
-            if (found) {
-              setSelectedThemeId(themeId);
-              return;
-            }
-          }
-        }
+        response = await fetch("/api/v1/config");
       } catch (error) {
         console.error("Failed to load theme from config:", error);
+      }
+      if (response && response.ok) {
+        let config: { theme?: { theme?: string } } | null = null;
+        try {
+          config = await response.json();
+        } catch (error) {
+          console.error("Failed to parse theme config:", error);
+        }
+        const themeRaw = config?.theme?.theme;
+        if (themeRaw) {
+          const themeId = themeRaw.toLowerCase();
+          const found = themes.find((t) => t.id === themeId);
+          if (found) {
+            setSelectedThemeId(themeId);
+            return;
+          }
+        }
       }
 
       // Fallback to localStorage if API fails

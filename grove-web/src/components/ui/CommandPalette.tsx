@@ -56,25 +56,47 @@ export function CommandPalette() {
     [groups]
   );
 
-  // Reset state when opening
+  // Reset state on open transition. Uses the "Adjusting state on prop change"
+  // pattern so the reset doesn't sit inside an effect.
+  // https://react.dev/reference/react/useState#storing-information-from-previous-renders
+  const [wasOpen, setWasOpen] = useState(isOpen);
+  if (isOpen && !wasOpen) {
+    setWasOpen(true);
+    setSearchQuery("");
+    setHighlightedIndex(0);
+    let raw: string | null = null;
+    try {
+      raw = window.localStorage.getItem(COMMAND_PALETTE_USAGE_KEY);
+    } catch {
+      raw = null;
+    }
+    let parsed: CommandUsageMap = {};
+    if (raw) {
+      try {
+        parsed = JSON.parse(raw) as CommandUsageMap;
+      } catch {
+        parsed = {};
+      }
+    }
+    setUsageStats(parsed);
+  } else if (!isOpen && wasOpen) {
+    setWasOpen(false);
+  }
+  // Focus the input after open transition (ref access lives in an effect).
   useEffect(() => {
     if (isOpen) {
-      setSearchQuery("");
-      setHighlightedIndex(0);
-      try {
-        const raw = window.localStorage.getItem(COMMAND_PALETTE_USAGE_KEY);
-        setUsageStats(raw ? JSON.parse(raw) as CommandUsageMap : {});
-      } catch {
-        setUsageStats({});
-      }
-      requestAnimationFrame(() => inputRef.current?.focus());
+      const raf = requestAnimationFrame(() => inputRef.current?.focus());
+      return () => cancelAnimationFrame(raf);
     }
   }, [isOpen]);
 
-  // Reset highlight on search change
-  useEffect(() => {
+  // Reset highlight on search change. "Adjusting state on prop change"
+  // pattern so we don't setState from an effect.
+  const [lastSearchQuery, setLastSearchQuery] = useState(searchQuery);
+  if (lastSearchQuery !== searchQuery) {
+    setLastSearchQuery(searchQuery);
     setHighlightedIndex(0);
-  }, [searchQuery]);
+  }
 
   // Scroll highlighted item into view
   useEffect(() => {
@@ -154,8 +176,17 @@ export function CommandPalette() {
     [flatCommands, highlightedIndex, handleSelect, close]
   );
 
-  // Track flat index across groups for highlighting
-  let flatIndex = -1;
+  // Track flat index across groups for highlighting. Precompute the starting
+  // flat index of each group so the inner map can derive its own index without
+  // mutating a captured counter (Compiler-incompatible).
+  const groupStartIndices: number[] = [];
+  {
+    let acc = 0;
+    for (const g of groups) {
+      groupStartIndices.push(acc);
+      acc += g.commands.length;
+    }
+  }
 
   return (
     <AnimatePresence>
@@ -205,7 +236,7 @@ export function CommandPalette() {
                     No commands found
                   </div>
                 ) : (
-                  groups.map((group) => (
+                  groups.map((group, groupIdx) => (
                     <div key={group.key}>
                       {/* Category Header */}
                       <div className="px-4 pt-2 pb-1">
@@ -214,9 +245,8 @@ export function CommandPalette() {
                         </span>
                       </div>
                       {/* Commands */}
-                      {group.commands.map((cmd) => {
-                        flatIndex++;
-                        const idx = flatIndex;
+                      {group.commands.map((cmd, cmdIdx) => {
+                        const idx = groupStartIndices[groupIdx] + cmdIdx;
                         const Icon = cmd.icon;
                         return (
                           <button

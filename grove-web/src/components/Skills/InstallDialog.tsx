@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback } from "react";
+import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { X, Globe, FolderOpen, Link2, Info, AlertTriangle, Loader2 } from "lucide-react";
 import { Button } from "../ui";
@@ -76,18 +76,23 @@ export function InstallDialog({
   const allInstalled = agents.length > 0 && agents.every((a) => installedAgentIds.has(a.id));
   const noneInstalled = installedAgentIds.size === 0;
 
-  // Initialize scope only when the dialog opens (not on every data refresh)
-  useEffect(() => {
-    if (!isOpen) return;
-    if (installedRecord && installedRecord.agents.length > 0) {
-      const hasProject = installedRecord.agents.some((a) => a.scope === "project");
-      setScope(hasProject ? "project" : "global");
-    } else {
-      setScope("global");
+  // Initialize scope only when the dialog opens (not on every data refresh).
+  // Derive from a "previous isOpen" tracker so the reset happens during the
+  // render where isOpen flips from false → true, avoiding setState-in-effect.
+  const [wasOpen, setWasOpen] = useState(isOpen);
+  if (isOpen !== wasOpen) {
+    setWasOpen(isOpen);
+    if (isOpen) {
+      if (installedRecord && installedRecord.agents.length > 0) {
+        const hasProject = installedRecord.agents.some((a) => a.scope === "project");
+        setScope(hasProject ? "project" : "global");
+      } else {
+        setScope("global");
+      }
+      setError(null);
+      setConflictInfo(null);
     }
-    setError(null);
-    setConflictInfo(null);
-  }, [isOpen, installedRecord]);
+  }
 
   // Escape to close
   useEffect(() => {
@@ -114,6 +119,12 @@ export function InstallDialog({
     }),
     [repoKey, sourceName, skillName, repoPath, relativePath, scope, projectPath],
   );
+
+  // Self-references via refs to support recursive force-retry from conflict
+  // dialog without violating react-hooks/immutability ("accessed before
+  // declared") on the useCallback identifier.
+  const handleAgentActionRef = useRef<(agentId: string, action: "install" | "uninstall", force?: boolean) => Promise<void>>(() => Promise.resolve());
+  const handleInstallAllRef = useRef<(force?: boolean) => Promise<void>>(() => Promise.resolve());
 
   // Per-agent install/uninstall
   const handleAgentAction = useCallback(
@@ -146,14 +157,13 @@ export function InstallDialog({
           setConflictInfo({
             source: data.conflict_source_name,
             skill: data.conflict_skill_name,
-            force: () => handleAgentAction(agentId, action, true),
+            force: () => { void handleAgentActionRef.current(agentId, action, true); },
           });
         } else {
           setError(apiErr.message || `${action} failed`);
         }
-      } finally {
-        setWorkingAgentId(null);
       }
+      setWorkingAgentId(null);
     },
     [agentShareMap, installedAgentIds, commonInstallParams, onInstalled],
   );
@@ -176,17 +186,22 @@ export function InstallDialog({
           setConflictInfo({
             source: data.conflict_source_name,
             skill: data.conflict_skill_name,
-            force: () => handleInstallAll(true),
+            force: () => { void handleInstallAllRef.current(true); },
           });
         } else {
           setError(apiErr.message || "Install failed");
         }
-      } finally {
-        setWorkingAll(null);
       }
+      setWorkingAll(null);
     },
     [agents, commonInstallParams, onInstalled],
   );
+
+  // Keep the recursion refs pointing at the latest callbacks.
+  useEffect(() => {
+    handleAgentActionRef.current = handleAgentAction;
+    handleInstallAllRef.current = handleInstallAll;
+  });
 
   // Uninstall All — only for the current scope (send empty agents list)
   const handleUninstallAll = useCallback(async () => {
@@ -198,9 +213,8 @@ export function InstallDialog({
       onInstalled();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Uninstall failed");
-    } finally {
-      setWorkingAll(null);
     }
+    setWorkingAll(null);
   }, [commonInstallParams, onInstalled]);
 
   // Group agents for rendering: shared-path groups + independent agents

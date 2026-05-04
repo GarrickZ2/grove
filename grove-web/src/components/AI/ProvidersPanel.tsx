@@ -114,9 +114,8 @@ export function ProvidersPanel({ providers, onCreate, onUpdate, onDelete, onVeri
       setIsCreating(false);
     } catch (e) {
       setOperationError(e instanceof Error ? e.message : "Failed to save provider");
-    } finally {
-      setSaving(false);
     }
+    setSaving(false);
   };
 
   const handleCancel = () => {
@@ -143,22 +142,29 @@ export function ProvidersPanel({ providers, onCreate, onUpdate, onDelete, onVeri
     if (verifyingId) return;
 
     setVerifyingId(providerId);
+    const draft = editingDraft;
+    const draftIsTarget = draft !== null && draft.id === providerId;
+    const pendingApiKey = draftIsTarget && draft.apiKey ? draft.apiKey : null;
+    let result: { status: string; message: string } | null = null;
+    let error: unknown = null;
     try {
       // If editing and there's a new apiKey, save it first
-      if (editingDraft?.id === providerId && editingDraft.apiKey) {
-        await onUpdate(providerId, { apiKey: editingDraft.apiKey });
+      if (pendingApiKey) {
+        await onUpdate(providerId, { apiKey: pendingApiKey });
       }
-      const result = await onVerify(providerId);
-      if (editingDraft?.id === providerId) {
-        setEditingDraft((current) =>
-          current ? { ...current, status: result.status as ProviderStatus } : current,
-        );
-      }
+      result = await onVerify(providerId);
     } catch (e) {
-      setOperationError(e instanceof Error ? e.message : "Failed to verify provider");
-    } finally {
-      setVerifyingId(null);
+      error = e;
     }
+    if (error) {
+      setOperationError(error instanceof Error ? error.message : "Failed to verify provider");
+    } else if (result && draftIsTarget) {
+      const status = result.status as ProviderStatus;
+      setEditingDraft((current) =>
+        current ? { ...current, status } : current,
+      );
+    }
+    setVerifyingId(null);
   };
 
   return (

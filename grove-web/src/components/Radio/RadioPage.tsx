@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useRef } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useWalkieTalkie } from "../../hooks/useWalkieTalkie";
 import { useAudioRecorder } from "../../hooks/useAudioRecorder";
 import { getAudioSettings, transcribeAudio } from "../../api/ai";
@@ -98,8 +98,8 @@ export function RadioPage() {
     ? (state.availableChats.find((c) => c.id === currentSelectedChatId) ?? state.activeChat)
     : state.activeChat;
 
-  // Build TargetMode for the current slot
-  const buildTarget = useCallback((): TargetMode => {
+  // Build TargetMode for the current slot. Plain function — Compiler memoizes.
+  const buildTarget = (): TargetMode => {
     if (currentTargetMode === "terminal") {
       return { mode: "terminal" };
     }
@@ -108,7 +108,7 @@ export function RadioPage() {
       return { mode: "chat", chat_id: chatId };
     }
     return { mode: "terminal" }; // fallback if no chat available
-  }, [currentTargetMode, effectiveActiveChat]);
+  };
 
   // Refs to capture group/position at recording start (avoids stale closures)
   const recordingGroupRef = useRef<string | null>(null);
@@ -131,7 +131,9 @@ export function RadioPage() {
   useEffect(() => { autoSendRef.current = autoSend; }, [autoSend]);
   useEffect(() => { groupsRef.current = state.groups; }, [state.groups]);
   useEffect(() => { audioMinDurationRef.current = audioMinDuration; }, [audioMinDuration]);
-  useEffect(() => { buildTargetRef.current = buildTarget; }, [buildTarget]);
+  // No dep array — buildTarget is now a plain (Compiler-memoized) function,
+  // so we just keep the ref in sync on every commit.
+  useEffect(() => { buildTargetRef.current = buildTarget; });
   useEffect(() => { slotKeyRef.current = slotKey; }, [slotKey]);
   useEffect(() => { currentGroupIdRef.current = state.currentGroupId; }, [state.currentGroupId]);
   useEffect(() => { currentPositionRef.current = state.currentPosition; }, [state.currentPosition]);
@@ -143,16 +145,29 @@ export function RadioPage() {
     typeof state.lastPromptStatus
   >(null);
 
-  useEffect(() => {
+  // Mirror the latest non-null prompt status into local visible state, and
+  // schedule it to auto-clear after 3 seconds. The state sync uses the
+  // "Adjusting state on prop change" pattern; the timer (a side-effect on an
+  // external system) lives in an effect so it's set/cleared off-render.
+  // https://react.dev/reference/react/useState#storing-information-from-previous-renders
+  const [lastSyncedPromptStatus, setLastSyncedPromptStatus] = useState(
+    state.lastPromptStatus,
+  );
+  if (lastSyncedPromptStatus !== state.lastPromptStatus) {
+    setLastSyncedPromptStatus(state.lastPromptStatus);
     if (state.lastPromptStatus) {
       setVisiblePromptStatus(state.lastPromptStatus);
-      if (statusTimerRef.current) clearTimeout(statusTimerRef.current);
-      statusTimerRef.current = setTimeout(() => {
-        setVisiblePromptStatus(null);
-      }, 3000);
     }
+  }
+  useEffect(() => {
+    if (!state.lastPromptStatus) return;
+    const timer = setTimeout(() => {
+      setVisiblePromptStatus(null);
+    }, 3000);
+    statusTimerRef.current = timer;
     return () => {
-      if (statusTimerRef.current) clearTimeout(statusTimerRef.current);
+      clearTimeout(timer);
+      if (statusTimerRef.current === timer) statusTimerRef.current = null;
     };
   }, [state.lastPromptStatus]);
 
@@ -162,94 +177,86 @@ export function RadioPage() {
 
   // ── Mode / Session switching ─────────────────────────────────────────────
 
-  const handleTargetModeChange = useCallback(
-    (mode: TargetModeType) => {
-      const sk = slotKeyRef.current;
-      const gid = currentGroupIdRef.current;
-      const pos = currentPositionRef.current;
-      if (!sk || !gid || pos === null) return;
-      setTargetModes((prev) => ({ ...prev, [sk]: mode }));
-      // Broadcast to Blitz so it can preemptively switch panel
-      const chatId = effectiveActiveChatRef.current?.id;
-      const target: TargetMode = mode === "terminal" || !chatId
-        ? { mode: "terminal" }
-        : { mode: "chat", chat_id: chatId };
-      actions.setTarget(gid, pos, target);
-    },
-    [actions],
-  );
+  // Plain handlers — React Compiler auto-memoizes and treats ref.current
+  // reads as opaque, so we don't need (and can't satisfy) a manual deps
+  // array here. Manual useCallback with `[actions]` couldn't be preserved
+  // by Compiler because the body reads refs not in the deps.
+  const handleTargetModeChange = (mode: TargetModeType) => {
+    const sk = slotKeyRef.current;
+    const gid = currentGroupIdRef.current;
+    const pos = currentPositionRef.current;
+    if (!sk || !gid || pos === null) return;
+    setTargetModes((prev) => ({ ...prev, [sk]: mode }));
+    // Broadcast to Blitz so it can preemptively switch panel
+    const chatId = effectiveActiveChatRef.current?.id;
+    const target: TargetMode = mode === "terminal" || !chatId
+      ? { mode: "terminal" }
+      : { mode: "chat", chat_id: chatId };
+    actions.setTarget(gid, pos, target);
+  };
 
-  const handleSelectChat = useCallback(
-    (chat: ChatRef) => {
-      const sk = slotKeyRef.current;
-      const gid = currentGroupIdRef.current;
-      const pos = currentPositionRef.current;
-      if (!sk || !gid || pos === null) return;
-      setSelectedChats((prev) => ({ ...prev, [sk]: chat.id }));
-      // Broadcast to Blitz
-      actions.setTarget(gid, pos, { mode: "chat", chat_id: chat.id });
-    },
-    [actions],
-  );
+  const handleSelectChat = (chat: ChatRef) => {
+    const sk = slotKeyRef.current;
+    const gid = currentGroupIdRef.current;
+    const pos = currentPositionRef.current;
+    if (!sk || !gid || pos === null) return;
+    setSelectedChats((prev) => ({ ...prev, [sk]: chat.id }));
+    // Broadcast to Blitz
+    actions.setTarget(gid, pos, { mode: "chat", chat_id: chat.id });
+  };
 
   // ── Callbacks ─────────────────────────────────────────────────────────────
 
-  const handleTap = useCallback(
-    (position: number) => {
-      if (state.currentGroupId) {
-        // Build target from the TARGET slot's state (not current slot)
-        const tapSlotKey = `${state.currentGroupId}:${position}`;
-        const mode = targetModes[tapSlotKey] ?? "chat";
-        const chatId = selectedChats[tapSlotKey];
-        let target: TargetMode | undefined;
-        if (mode === "terminal") {
-          target = { mode: "terminal" };
-        } else if (chatId) {
-          target = { mode: "chat", chat_id: chatId };
-        }
-        // If no target (first visit, no selection yet), server will use its fallback
-        actions.selectTask(state.currentGroupId, position, target);
+  const handleTap = (position: number) => {
+    if (state.currentGroupId) {
+      // Build target from the TARGET slot's state (not current slot)
+      const tapSlotKey = `${state.currentGroupId}:${position}`;
+      const mode = targetModes[tapSlotKey] ?? "chat";
+      const chatId = selectedChats[tapSlotKey];
+      let target: TargetMode | undefined;
+      if (mode === "terminal") {
+        target = { mode: "terminal" };
+      } else if (chatId) {
+        target = { mode: "chat", chat_id: chatId };
       }
-    },
-    [state.currentGroupId, actions, targetModes, selectedChats],
-  );
+      // If no target (first visit, no selection yet), server will use its fallback
+      actions.selectTask(state.currentGroupId, position, target);
+    }
+  };
 
-  const handleHoldStart = useCallback(
-    (position: number) => {
-      // Cancel any in-progress recording before starting a new one
-      if (recorder.status === "recording") {
-        recorder.cancel();
-      }
-      // Increment generation to cancel any stale hold-end processing
-      holdGenerationRef.current++;
-      // Block if transcription is still in progress
-      if (isProcessingRef.current) return;
+  const handleHoldStart = (position: number) => {
+    // Cancel any in-progress recording before starting a new one
+    if (recorder.status === "recording") {
+      recorder.cancel();
+    }
+    // Increment generation to cancel any stale hold-end processing
+    holdGenerationRef.current += 1;
+    // Block if transcription is still in progress
+    if (isProcessingRef.current) return;
 
-      if (state.currentGroupId) {
-        // Build target from the HOLD slot's state (not current slot)
-        const holdSlotKey = `${state.currentGroupId}:${position}`;
-        const mode = targetModes[holdSlotKey] ?? "chat";
-        const holdChatId = selectedChats[holdSlotKey];
-        let target: TargetMode | undefined;
-        if (mode === "terminal") {
-          target = { mode: "terminal" };
-        } else if (holdChatId) {
-          target = { mode: "chat", chat_id: holdChatId };
-        }
-        actions.selectTask(state.currentGroupId, position, target);
+    if (state.currentGroupId) {
+      // Build target from the HOLD slot's state (not current slot)
+      const holdSlotKey = `${state.currentGroupId}:${position}`;
+      const mode = targetModes[holdSlotKey] ?? "chat";
+      const holdChatId = selectedChats[holdSlotKey];
+      let target: TargetMode | undefined;
+      if (mode === "terminal") {
+        target = { mode: "terminal" };
+      } else if (holdChatId) {
+        target = { mode: "chat", chat_id: holdChatId };
       }
-      recordingGroupRef.current = state.currentGroupId;
-      recordingPositionRef.current = position;
-      recordingStartRef.current = Date.now();
-      setRecordingPosition(position);
-      // Track the start promise so holdEnd can wait for it
-      startPromiseRef.current = recorder.start();
-    },
-    [state.currentGroupId, actions, recorder, targetModes, selectedChats],
-  );
+      actions.selectTask(state.currentGroupId, position, target);
+    }
+    recordingGroupRef.current = state.currentGroupId;
+    recordingPositionRef.current = position;
+    recordingStartRef.current = Date.now();
+    setRecordingPosition(position);
+    // Track the start promise so holdEnd can wait for it
+    startPromiseRef.current = recorder.start();
+  };
 
   // Shared blob processing: transcribe → send or show for edit
-  const processBlob = useCallback(async (blob: Blob) => {
+  const processBlob = async (blob: Blob) => {
     const groupId = recordingGroupRef.current;
     const pos = recordingPositionRef.current;
     if (!groupId || pos === null) {
@@ -258,113 +265,115 @@ export function RadioPage() {
     }
 
     setIsTranscribing(true);
+    // Resolve the slot's project id outside try — optional chaining inside
+    // a try block bails the whole function out of React Compiler.
+    const currentGroup = groupsRef.current.find((g) => g.id === groupId);
+    const slot = currentGroup?.slots.find((s) => s.position === pos);
+    const projectId = slot?.project_id;
+    let result: Awaited<ReturnType<typeof transcribeAudio>> | null = null;
+    let succeeded = false;
     try {
-      const currentGroup = groupsRef.current.find((g) => g.id === groupId);
-      const slot = currentGroup?.slots.find((s) => s.position === pos);
-      const result = await transcribeAudio(blob, slot?.project_id);
-      const text = (result.final || result.revised || result.raw || "").trim();
-
-      if (!text) {
-        // Empty transcription — skip silently
-        setPendingPrompt(null);
-        return;
-      }
-
-      const target = buildTargetRef.current();
-
-      if (!connectedRef.current) {
-        setTranscriptText(text);
-        setPendingPrompt({ groupId, position: pos, target });
-      } else if (autoSendRef.current) {
-        actions.sendPrompt(groupId, pos, text, target);
-        setTranscriptText(null);
-        setPendingPrompt(null);
-      } else {
-        setTranscriptText(text);
-        setPendingPrompt({ groupId, position: pos, target });
-      }
+      result = await transcribeAudio(blob, projectId);
+      succeeded = true;
     } catch (err) {
       console.error("[Radio] Transcription failed:", err);
       setPendingPrompt(null);
-    } finally {
+    }
+    if (!succeeded || result === null) {
       setIsTranscribing(false);
       isProcessingRef.current = false;
+      return;
     }
-  }, [actions]);
-  processBlobRef.current = processBlob;
+    const text = (result.final || result.revised || result.raw || "").trim();
+    if (!text) {
+      // Empty transcription — skip silently
+      setPendingPrompt(null);
+      setIsTranscribing(false);
+      isProcessingRef.current = false;
+      return;
+    }
+    const target = buildTargetRef.current();
+    if (!connectedRef.current) {
+      setTranscriptText(text);
+      setPendingPrompt({ groupId, position: pos, target });
+    } else if (autoSendRef.current) {
+      actions.sendPrompt(groupId, pos, text, target);
+      setTranscriptText(null);
+      setPendingPrompt(null);
+    } else {
+      setTranscriptText(text);
+      setPendingPrompt({ groupId, position: pos, target });
+    }
+    setIsTranscribing(false);
+    isProcessingRef.current = false;
+  };
+  useEffect(() => {
+    processBlobRef.current = processBlob;
+  });
 
-  const handleHoldEnd = useCallback(
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    (_position: number) => {
-      const preciseElapsed = (Date.now() - recordingStartRef.current) / 1000;
-      setRecordingPosition(null);
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const handleHoldEnd = (_position: number) => {
+    const preciseElapsed = (Date.now() - recordingStartRef.current) / 1000;
+    setRecordingPosition(null);
 
-      // Skip if recording is shorter than configured min duration
-      if (preciseElapsed < audioMinDurationRef.current) {
-        recorder.cancel();
+    // Skip if recording is shorter than configured min duration
+    if (preciseElapsed < audioMinDurationRef.current) {
+      recorder.cancel();
+      isProcessingRef.current = false;
+      return;
+    }
+
+    const gen = holdGenerationRef.current;
+
+    const doStop = async () => {
+      if (startPromiseRef.current) {
+        await startPromiseRef.current;
+        startPromiseRef.current = null;
+      }
+      return recorder.stop();
+    };
+
+    isProcessingRef.current = true;
+    doStop().then(async (blob) => {
+      if (gen !== holdGenerationRef.current) {
         isProcessingRef.current = false;
         return;
       }
-
-      const gen = holdGenerationRef.current;
-
-      const doStop = async () => {
-        if (startPromiseRef.current) {
-          await startPromiseRef.current;
-          startPromiseRef.current = null;
-        }
-        return recorder.stop();
-      };
-
-      isProcessingRef.current = true;
-      doStop().then(async (blob) => {
-        if (gen !== holdGenerationRef.current) {
-          isProcessingRef.current = false;
-          return;
-        }
-        if (!blob) {
-          isProcessingRef.current = false;
-          return;
-        }
-        setIsTranscribing(true);
-        processBlob(blob);
-      });
-    },
-    [recorder, processBlob],
-  );
-
-  const handleCancel = useCallback(
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    (_position: number) => {
-      setRecordingPosition(null);
-      holdGenerationRef.current++;
-      startPromiseRef.current = null;
-      recorder.cancel();
-      isProcessingRef.current = false;
-    },
-    [recorder],
-  );
-
-  const handleManualSend = useCallback(
-    (text: string) => {
-      if (pendingPrompt) {
-        actions.sendPrompt(
-          pendingPrompt.groupId,
-          pendingPrompt.position,
-          text,
-          pendingPrompt.target,
-        );
+      if (!blob) {
+        isProcessingRef.current = false;
+        return;
       }
-      setTranscriptText(null);
-      setPendingPrompt(null);
-    },
-    [pendingPrompt, actions],
-  );
+      setIsTranscribing(true);
+      processBlob(blob);
+    });
+  };
 
-  const handleClearTranscript = useCallback(() => {
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const handleCancel = (_position: number) => {
+    setRecordingPosition(null);
+    holdGenerationRef.current += 1;
+    startPromiseRef.current = null;
+    recorder.cancel();
+    isProcessingRef.current = false;
+  };
+
+  const handleManualSend = (text: string) => {
+    if (pendingPrompt) {
+      actions.sendPrompt(
+        pendingPrompt.groupId,
+        pendingPrompt.position,
+        text,
+        pendingPrompt.target,
+      );
+    }
     setTranscriptText(null);
     setPendingPrompt(null);
-  }, []);
+  };
+
+  const handleClearTranscript = () => {
+    setTranscriptText(null);
+    setPendingPrompt(null);
+  };
 
   // ── Volume key support (works on physical keyboards / tablets, not iOS Safari) ──
 

@@ -75,6 +75,11 @@ const INSTRUCTION_TEMPLATES = [
   },
 ];
 
+function errorMessage(err: unknown, fallback: string): string {
+  if (err instanceof Error) return err.message;
+  return fallback;
+}
+
 function dropContainsDirectory(dataTransfer: DataTransfer): boolean {
   for (const item of Array.from(dataTransfer.items || [])) {
     const entry = (item as DataTransferItem & {
@@ -177,28 +182,35 @@ export function ResourcePage() {
     if (!projectId) return;
     setIsLoadingFiles(true);
     setFileError(null);
+    const pathArg = currentPath || undefined;
+    let caught: unknown = null;
     try {
-      const data = await listResources(projectId, currentPath || undefined);
+      const data = await listResources(projectId, pathArg);
       setFiles(data.files);
     } catch (err) {
-      setFileError(err instanceof Error ? err.message : "Failed to load");
-    } finally {
-      setIsLoadingFiles(false);
+      caught = err;
     }
+    if (caught !== null) {
+      setFileError(errorMessage(caught, "Failed to load"));
+    }
+    setIsLoadingFiles(false);
   }, [projectId, currentPath]);
 
   const loadWorkdirs = useCallback(async () => {
     if (!projectId) return;
     setIsLoadingWorkdirs(true);
     setWorkdirError(null);
+    let caught: unknown = null;
     try {
       const data = await listResourceWorkdirs(projectId);
       setWorkdirs(data.entries);
     } catch (err) {
-      setWorkdirError(err instanceof Error ? err.message : "Failed to load");
-    } finally {
-      setIsLoadingWorkdirs(false);
+      caught = err;
     }
+    if (caught !== null) {
+      setWorkdirError(errorMessage(caught, "Failed to load"));
+    }
+    setIsLoadingWorkdirs(false);
   }, [projectId]);
 
   const loadInstructions = useCallback(async () => {
@@ -212,9 +224,8 @@ export function ResourcePage() {
       console.error('Failed to load instructions:', err);
       setInstructions("");
       setSavedInstructions("");
-    } finally {
-      setIsLoadingInstructions(false);
     }
+    setIsLoadingInstructions(false);
   }, [projectId]);
 
   const loadMemory = useCallback(async () => {
@@ -228,9 +239,8 @@ export function ResourcePage() {
       console.error('Failed to load memory:', err);
       setMemory("");
       setSavedMemory("");
-    } finally {
-      setIsLoadingMemory(false);
     }
+    setIsLoadingMemory(false);
   }, [projectId]);
 
   const handleSaveMemory = useCallback(async () => {
@@ -244,13 +254,18 @@ export function ResourcePage() {
       setIsEditingMemory(false);
     } catch {
       setMemorySaveMessage("Failed to save");
-    } finally {
-      setIsSavingMemory(false);
     }
+    setIsSavingMemory(false);
   }, [projectId, memory]);
 
-  useEffect(() => { loadFiles(); }, [loadFiles]);
-  useEffect(() => { loadWorkdirs(); loadInstructions(); loadMemory(); }, [loadWorkdirs, loadInstructions, loadMemory]);
+  useEffect(() => { void Promise.resolve().then(loadFiles); }, [loadFiles]);
+  useEffect(() => {
+    void Promise.resolve().then(() => {
+      void loadWorkdirs();
+      void loadInstructions();
+      void loadMemory();
+    });
+  }, [loadWorkdirs, loadInstructions, loadMemory]);
 
   // Auto-dismiss save messages with proper cleanup
   useEffect(() => {
@@ -279,28 +294,35 @@ export function ResourcePage() {
     if (!projectId || fileList.length === 0) return;
     setIsUploading(true);
     setFileError(null);
+    const pathArg = currentPath || undefined;
+    let caught: unknown = null;
     try {
-      await uploadResource(projectId, Array.from(fileList), currentPath || undefined);
+      await uploadResource(projectId, Array.from(fileList), pathArg);
       await loadFiles();
     } catch (err) {
-      setFileError(err instanceof Error ? err.message : "Upload failed");
-    } finally {
-      setIsUploading(false);
+      caught = err;
     }
+    if (caught !== null) {
+      setFileError(errorMessage(caught, "Upload failed"));
+    }
+    setIsUploading(false);
   }, [projectId, currentPath, loadFiles]);
 
   const handleCreateFolder = useCallback(async () => {
     if (!projectId || !newFolderName.trim()) return;
+    const trimmedName = newFolderName.trim();
+    const folderPath = currentPath ? `${currentPath}/${trimmedName}` : trimmedName;
+    let caught: unknown = null;
     try {
-      const folderPath = currentPath
-        ? `${currentPath}/${newFolderName.trim()}`
-        : newFolderName.trim();
       await createResourceFolder(projectId, folderPath);
       setNewFolderName("");
       setIsCreatingFolder(false);
       await loadFiles();
     } catch (err) {
-      setFileError(err instanceof Error ? err.message : "Failed to create folder");
+      caught = err;
+    }
+    if (caught !== null) {
+      setFileError(errorMessage(caught, "Failed to create folder"));
     }
   }, [projectId, currentPath, newFolderName, loadFiles]);
 
@@ -314,34 +336,46 @@ export function ResourcePage() {
     isMoveInProgressRef.current = true;
     const filename = fromPath.split("/").pop()!;
     const toPath = toFolderPath ? `${toFolderPath}/${filename}` : filename;
+    const renameTo = options?.renameTo;
+    const newName = renameTo ?? filename;
+    let err: unknown = null;
     try {
       await moveResource(projectId, fromPath, toPath, options);
       await loadFiles();
-    } catch (err) {
-      const apiErr = err as { status?: number };
-      if (apiErr.status === 409) {
-        // Fetch destination folder contents to know which names are taken
-        const existingNames = cachedExistingNames ?? await (async () => {
-          try {
-            const data = await listResources(projectId, toFolderPath || undefined);
-            return new Set(data.files.map(f => f.name));
-          } catch {
-            return new Set<string>();
-          }
-        })();
-        setMoveConflict({
-          fromPath,
-          toFolderPath,
-          newName: options?.renameTo ?? filename,
-          existingNames,
-        });
-        isMoveInProgressRef.current = false;
-        return;
-      }
-      setFileError(err instanceof Error ? err.message : "Failed to move");
-    } finally {
-      isMoveInProgressRef.current = false;
+    } catch (e) {
+      err = e;
     }
+    if (!err) {
+      isMoveInProgressRef.current = false;
+      return;
+    }
+    const apiErr = err as { status?: number };
+    if (apiErr.status === 409) {
+      // Fetch destination folder contents to know which names are taken
+      let existingNames: Set<string>;
+      if (cachedExistingNames) {
+        existingNames = cachedExistingNames;
+      } else {
+        const folderArg = toFolderPath || undefined;
+        let data: Awaited<ReturnType<typeof listResources>> | null = null;
+        try {
+          data = await listResources(projectId, folderArg);
+        } catch {
+          data = null;
+        }
+        existingNames = data ? new Set(data.files.map(f => f.name)) : new Set<string>();
+      }
+      setMoveConflict({
+        fromPath,
+        toFolderPath,
+        newName,
+        existingNames,
+      });
+      isMoveInProgressRef.current = false;
+      return;
+    }
+    setFileError(err instanceof Error ? err.message : "Failed to move");
+    isMoveInProgressRef.current = false;
   }, [projectId, loadFiles]);
 
   const handleRenameFile = useCallback(async (oldPath: string, newName: string) => {
@@ -350,12 +384,16 @@ export function ResourcePage() {
     parts[parts.length - 1] = newName.trim();
     const newPath = parts.join("/");
     if (newPath === oldPath) { setRenamingPath(null); return; }
+    let caught: unknown = null;
     try {
       await moveResource(projectId, oldPath, newPath);
       setRenamingPath(null);
       await loadFiles();
     } catch (err) {
-      setFileError(err instanceof Error ? err.message : "Failed to rename");
+      caught = err;
+    }
+    if (caught !== null) {
+      setFileError(errorMessage(caught, "Failed to rename"));
     }
   }, [projectId, loadFiles]);
 
@@ -363,60 +401,79 @@ export function ResourcePage() {
     if (!projectId) return;
     setIsAddingWorkdir(true);
     setWorkdirError(null);
+    let caught: unknown = null;
     try {
       const data = await apiClient.get<{ path: string | null }>("/api/v1/browse-folder");
-      if (!data.path) return;
-      await addResourceWorkdir(projectId, data.path);
-      await loadWorkdirs();
+      if (data.path) {
+        await addResourceWorkdir(projectId, data.path);
+        await loadWorkdirs();
+      }
     } catch (err) {
-      setWorkdirError(err instanceof Error ? err.message : "Failed to add folder");
-    } finally {
-      setIsAddingWorkdir(false);
+      caught = err;
     }
+    if (caught !== null) {
+      setWorkdirError(errorMessage(caught, "Failed to add folder"));
+    }
+    setIsAddingWorkdir(false);
   }, [projectId, loadWorkdirs]);
 
   const handleDeleteWorkdir = useCallback(async (entry: WorkDirectoryEntry) => {
     if (!projectId) return;
+    let caught: unknown = null;
     try {
       await deleteResourceWorkdir(projectId, entry.name);
       await loadWorkdirs();
     } catch (err) {
-      setWorkdirError(err instanceof Error ? err.message : "Failed to remove folder");
+      caught = err;
+    }
+    if (caught !== null) {
+      setWorkdirError(errorMessage(caught, "Failed to remove folder"));
     }
   }, [projectId, loadWorkdirs]);
 
   const handleOpenWorkdir = useCallback(async (entry: WorkDirectoryEntry) => {
     if (!projectId) return;
+    let caught: unknown = null;
     try {
       await openResourceWorkdir(projectId, entry.name);
     } catch (err) {
-      setWorkdirError(err instanceof Error ? err.message : "Failed to open folder");
+      caught = err;
+    }
+    if (caught !== null) {
+      setWorkdirError(errorMessage(caught, "Failed to open folder"));
     }
   }, [projectId]);
 
   const handleDelete = useCallback(async (file: ResourceFile) => {
     if (!projectId) return;
+    let caught: unknown = null;
     try {
       await deleteResource(projectId, file.path);
       await loadFiles();
     } catch (err) {
-      setFileError(err instanceof Error ? err.message : "Failed to delete");
+      caught = err;
+    }
+    if (caught !== null) {
+      setFileError(errorMessage(caught, "Failed to delete"));
     }
   }, [projectId, loadFiles]);
 
   const handleSaveInstructions = useCallback(async () => {
     if (!projectId) return;
     setIsSaving(true);
+    let caught: unknown = null;
     try {
       await updateInstructions(projectId, instructions);
       setSavedInstructions(instructions);
       setSaveMessage("Saved");
       setIsEditingInstructions(false);
     } catch (err) {
-      setSaveMessage(err instanceof Error ? err.message : "Failed to save");
-    } finally {
-      setIsSaving(false);
+      caught = err;
     }
+    if (caught !== null) {
+      setSaveMessage(errorMessage(caught, "Failed to save"));
+    }
+    setIsSaving(false);
   }, [projectId, instructions]);
 
   useEffect(() => {
@@ -467,9 +524,8 @@ export function ResourcePage() {
       setPreviewFile({ file, content });
     } catch {
       setPreviewFile({ file, content: "(Failed to load preview)" });
-    } finally {
-      setPreviewLoading(false);
     }
+    setPreviewLoading(false);
   };
 
   const handleDownload = (file: ResourceFile) => {
@@ -479,35 +535,47 @@ export function ResourcePage() {
 
   const handleOpenLink = useCallback(async (file: ResourceFile) => {
     if (!projectId) return;
+    let raw: string | null = null;
+    let caught: unknown = null;
     try {
-      const raw = await previewResource(projectId, file.path);
-      const parsed = parseLinkFile(raw);
-      if (!parsed) {
-        setFileError("Malformed link file");
-        return;
-      }
-      openExternalUrl(parsed.url);
+      raw = await previewResource(projectId, file.path);
     } catch (err) {
-      setFileError(err instanceof Error ? err.message : "Failed to open link");
+      caught = err;
     }
+    if (caught !== null) {
+      setFileError(errorMessage(caught, "Failed to open link"));
+      return;
+    }
+    const parsed = raw !== null ? parseLinkFile(raw) : null;
+    if (!parsed) {
+      setFileError("Malformed link file");
+      return;
+    }
+    openExternalUrl(parsed.url);
   }, [projectId]);
 
   const handleEditLink = useCallback(async (file: ResourceFile) => {
     if (!projectId) return;
+    let raw: string | null = null;
+    let caught: unknown = null;
     try {
-      const raw = await previewResource(projectId, file.path);
-      const parsed = parseLinkFile(raw);
-      if (!parsed) {
-        setFileError("Malformed link file");
-        return;
-      }
-      setEditLink({
-        file,
-        initial: { name: parsed.name, url: parsed.url, description: parsed.description },
-      });
+      raw = await previewResource(projectId, file.path);
     } catch (err) {
-      setFileError(err instanceof Error ? err.message : "Failed to load link");
+      caught = err;
     }
+    if (caught !== null) {
+      setFileError(errorMessage(caught, "Failed to load link"));
+      return;
+    }
+    const parsed = raw !== null ? parseLinkFile(raw) : null;
+    if (!parsed) {
+      setFileError("Malformed link file");
+      return;
+    }
+    setEditLink({
+      file,
+      initial: { name: parsed.name, url: parsed.url, description: parsed.description },
+    });
   }, [projectId]);
 
   const navigateTo = (path: string) => {

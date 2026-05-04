@@ -277,7 +277,7 @@ function TreeNode({
     if (!selectedFile || !selectedFile.startsWith(node.path + '/')) return;
     if (autoExpandedForRef.current === selectedFile) return;
     autoExpandedForRef.current = selectedFile;
-    setExpanded(true); // eslint-disable-line react-hooks/set-state-in-effect
+    setExpanded(true);
     // In lazy-load mode, also trigger dir load so children become available.
     if (onExpandDir) onExpandDir(node.path).catch(console.error);
   }, [selectedFile]); // eslint-disable-line react-hooks/exhaustive-deps

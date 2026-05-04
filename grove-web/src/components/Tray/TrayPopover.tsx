@@ -138,22 +138,31 @@ export function TrayPopover() {
   useEffect(() => {
     let cancelled = false;
     const reload = async () => {
+      let res: Response;
       try {
-        const res = await fetch("/api/v1/config");
-        if (!res.ok) {
-          console.error("[TrayPopover] Failed to fetch config:", res.status);
-          return;
-        }
-        const cfg = await res.json();
-        if (cancelled || !cfg.notifications) return;
-        setShow({
-          permission: !!cfg.notifications.tray_show_permission,
-          running: !!cfg.notifications.tray_show_running,
-          done: !!cfg.notifications.tray_show_done,
-        });
+        res = await fetch("/api/v1/config");
       } catch {
         /* noop */
+        return;
       }
+      if (!res.ok) {
+        console.error("[TrayPopover] Failed to fetch config:", res.status);
+        return;
+      }
+      let cfg: { notifications?: { tray_show_permission?: unknown; tray_show_running?: unknown; tray_show_done?: unknown } };
+      try {
+        cfg = await res.json();
+      } catch {
+        return;
+      }
+      if (cancelled) return;
+      const notif = cfg.notifications;
+      if (!notif) return;
+      setShow({
+        permission: !!notif.tray_show_permission,
+        running: !!notif.tray_show_running,
+        done: !!notif.tray_show_done,
+      });
     };
     reload();
     const onFocus = () => reload();

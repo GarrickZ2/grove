@@ -169,14 +169,17 @@ export function BranchDrawer({
     }
   }, [isOpen, projectId]);
 
-  // Reset remote state when drawer closes
-  useEffect(() => {
+  // Reset remote state when drawer closes (derived state pattern: track
+  // previous prop value, reset during render rather than in an effect).
+  const [prevIsOpen, setPrevIsOpen] = useState(isOpen);
+  if (prevIsOpen !== isOpen) {
+    setPrevIsOpen(isOpen);
     if (!isOpen) {
       setLoadedRemotes(new Set());
       setLoadedRemoteBranches({});
       setLoadingRemote(null);
     }
-  }, [isOpen]);
+  }
 
   // Load branches from a specific remote
   const loadRemoteBranches = async (remote: string) => {
@@ -226,9 +229,8 @@ export function BranchDrawer({
       });
     } catch (err) {
       console.error(`Failed to load branches from ${remote}:`, err);
-    } finally {
-      setLoadingRemote(null);
     }
+    setLoadingRemote(null);
   };
 
   const localBranches = branches.filter(b => b.isLocal);

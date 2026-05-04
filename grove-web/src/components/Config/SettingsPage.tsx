@@ -256,7 +256,6 @@ export function SettingsPage({ config }: SettingsPageProps) {
   const [isRecordingWindowShortcut, setIsRecordingWindowShortcut] = useState(false);
 
   const lastTerminalMuxRef = useRef<string>("tmux");
-  const defaultAppliedRef = useRef(false);
 
   // Layout state
   const [selectedLayout, setSelectedLayout] = useState(config.layout.default);
@@ -310,98 +309,117 @@ export function SettingsPage({ config }: SettingsPageProps) {
     setTimeout(() => setCopiedField(null), 2000);
   };
 
+  // Helper: apply config to all state — defined first so loadConfig can list it
+  // as a dependency. Kept outside try/catch so optional chaining and ternaries
+  // don't bail out the React Compiler.
+  const applyLoadedConfig = useCallback((cfg: Awaited<ReturnType<typeof getConfig>>) => {
+    const agentCmd = cfg.layout.agent_command || config.agent.command;
+    setAgentCommand(agentCmd);
+    setIdeCommand(cfg.web.ide || "");
+    setTerminalCommand(cfg.web.terminal || "");
+    setSelectedLayout(cfg.layout.default);
+
+    const mux = cfg.terminal_multiplexer || "tmux";
+    setTerminalMultiplexer(mux);
+    lastTerminalMuxRef.current = mux;
+    setWebTerminalMode(cfg.web.terminal_mode || "multiplexer");
+    setWorkspaceLayout(cfg.web.workspace_layout || "ide");
+    setShowHideWindowShortcut(cfg.web.show_hide_window_shortcut || "");
+
+    // Load theme - sync with context
+    // API stores theme id (e.g., "dark", "tokyo-night")
+    if (cfg.theme.name && cfg.theme.name.toLowerCase() !== "auto") {
+      // Try to match by id (lowercase, with dash)
+      const themeId = cfg.theme.name.toLowerCase().replace(/\s+/g, "-");
+      setTheme(themeId);
+    }
+
+    // Load custom layouts
+    if (cfg.layout.custom_layouts) {
+      let parsed: unknown = null;
+      let parseFailed = false;
+      try {
+        parsed = JSON.parse(cfg.layout.custom_layouts);
+      } catch {
+        parseFailed = true;
+      }
+      if (parseFailed) {
+        console.error("Failed to parse custom layouts");
+      } else if (Array.isArray(parsed) && parsed.length > 0) {
+        // Check if it's an array (Web format) vs object (TUI format)
+        const layouts = parsed as CustomLayoutConfig[];
+        setCustomLayouts(layouts);
+        setCustomLayoutsLoaded(true); // Mark as loaded from Web format
+        // Use saved selected_custom_id or fallback to first layout
+        const savedId = cfg.layout.selected_custom_id;
+        if (savedId && layouts.some(l => l.id === savedId)) {
+          setSelectedCustomLayoutId(savedId);
+        } else {
+          setSelectedCustomLayoutId(layouts[0].id);
+        }
+      }
+      // If it's TUI format (object), keep the default customLayouts
+      // customLayoutsLoaded stays false, so we won't overwrite TUI data
+    } else {
+      // No existing custom layouts, mark as loaded so we can save new ones
+      setCustomLayoutsLoaded(true);
+    }
+
+    // Load AutoLink config
+    setAutoLinkPatterns(cfg.auto_link.patterns);
+
+    // Load ACP config
+    const acp = cfg.acp;
+    if (acp?.agent_command) {
+      setAcpAgent(acp.agent_command);
+    }
+    if (acp?.custom_agents) {
+      setCustomAgents(acp.custom_agents);
+    }
+    const renderWindowLimit = acp?.render_window_limit ?? 0;
+    const renderWindowTrigger = acp?.render_window_trigger ?? 1500;
+    setChatRenderWindowLimit(renderWindowLimit);
+    setChatRenderWindowTrigger(renderWindowTrigger);
+    setChatRenderWindowLimitDraft(String(renderWindowLimit));
+    setChatRenderWindowTriggerDraft(String(renderWindowTrigger));
+
+    if (cfg.hooks) {
+      setHooksResponseSoundEnabled(cfg.hooks.response_sound_enabled);
+      setHooksResponseSound(cfg.hooks.response_sound || "Glass");
+      setHooksPermissionSoundEnabled(cfg.hooks.permission_sound_enabled);
+      setHooksPermissionSound(cfg.hooks.permission_sound || "Purr");
+    }
+
+    if (cfg.notifications) {
+      setTrayEnabled(cfg.notifications.tray_enabled);
+      setTrayShowPermission(cfg.notifications.tray_show_permission);
+      setTrayShowDone(cfg.notifications.tray_show_done);
+      setTrayShowRunning(cfg.notifications.tray_show_running);
+      setSystemNotifEnabled(cfg.notifications.notification_enabled);
+      setSystemNotifShowPermission(cfg.notifications.notification_show_permission);
+      setSystemNotifShowDone(cfg.notifications.notification_show_done);
+      setSystemNotifShowRunning(cfg.notifications.notification_show_running);
+    }
+
+    setIsLoaded(true);
+  }, [config.agent.command, setTheme]);
+
   // Load config from API
   const loadConfig = useCallback(async () => {
+    let cfg: Awaited<ReturnType<typeof getConfig>> | null = null;
     try {
-      const cfg = await getConfig();
-      setAgentCommand(cfg.layout.agent_command || config.agent.command);
-      setIdeCommand(cfg.web.ide || "");
-      setTerminalCommand(cfg.web.terminal || "");
-      setSelectedLayout(cfg.layout.default);
-
-      setTerminalMultiplexer(cfg.terminal_multiplexer || "tmux");
-      lastTerminalMuxRef.current = cfg.terminal_multiplexer || "tmux";
-      setWebTerminalMode(cfg.web.terminal_mode || "multiplexer");
-      setWorkspaceLayout(cfg.web.workspace_layout || "ide");
-      setShowHideWindowShortcut(cfg.web.show_hide_window_shortcut || "");
-
-      // Load theme - sync with context
-      // API stores theme id (e.g., "dark", "tokyo-night")
-      if (cfg.theme.name && cfg.theme.name.toLowerCase() !== "auto") {
-        // Try to match by id (lowercase, with dash)
-        const themeId = cfg.theme.name.toLowerCase().replace(/\s+/g, "-");
-        setTheme(themeId);
-      }
-
-      // Load custom layouts
-      if (cfg.layout.custom_layouts) {
-        try {
-          const parsed = JSON.parse(cfg.layout.custom_layouts);
-          // Check if it's an array (Web format) vs object (TUI format)
-          if (Array.isArray(parsed) && parsed.length > 0) {
-            const layouts = parsed as CustomLayoutConfig[];
-            setCustomLayouts(layouts);
-            setCustomLayoutsLoaded(true); // Mark as loaded from Web format
-            // Use saved selected_custom_id or fallback to first layout
-            const savedId = cfg.layout.selected_custom_id;
-            if (savedId && layouts.some(l => l.id === savedId)) {
-              setSelectedCustomLayoutId(savedId);
-            } else {
-              setSelectedCustomLayoutId(layouts[0].id);
-            }
-          }
-          // If it's TUI format (object), keep the default customLayouts
-          // customLayoutsLoaded stays false, so we won't overwrite TUI data
-        } catch {
-          console.error("Failed to parse custom layouts");
-        }
-      } else {
-        // No existing custom layouts, mark as loaded so we can save new ones
-        setCustomLayoutsLoaded(true);
-      }
-
-      // Load AutoLink config
-      setAutoLinkPatterns(cfg.auto_link.patterns);
-
-      // Load ACP config
-      if (cfg.acp?.agent_command) {
-        setAcpAgent(cfg.acp.agent_command);
-      }
-      if (cfg.acp?.custom_agents) {
-        setCustomAgents(cfg.acp.custom_agents);
-      }
-      const renderWindowLimit = cfg.acp?.render_window_limit ?? 0;
-      const renderWindowTrigger = cfg.acp?.render_window_trigger ?? 1500;
-      setChatRenderWindowLimit(renderWindowLimit);
-      setChatRenderWindowTrigger(renderWindowTrigger);
-      setChatRenderWindowLimitDraft(String(renderWindowLimit));
-      setChatRenderWindowTriggerDraft(String(renderWindowTrigger));
-
-      if (cfg.hooks) {
-        setHooksResponseSoundEnabled(cfg.hooks.response_sound_enabled);
-        setHooksResponseSound(cfg.hooks.response_sound || "Glass");
-        setHooksPermissionSoundEnabled(cfg.hooks.permission_sound_enabled);
-        setHooksPermissionSound(cfg.hooks.permission_sound || "Purr");
-      }
-
-      if (cfg.notifications) {
-        setTrayEnabled(cfg.notifications.tray_enabled);
-        setTrayShowPermission(cfg.notifications.tray_show_permission);
-        setTrayShowDone(cfg.notifications.tray_show_done);
-        setTrayShowRunning(cfg.notifications.tray_show_running);
-        setSystemNotifEnabled(cfg.notifications.notification_enabled);
-        setSystemNotifShowPermission(cfg.notifications.notification_show_permission);
-        setSystemNotifShowDone(cfg.notifications.notification_show_done);
-        setSystemNotifShowRunning(cfg.notifications.notification_show_running);
-      }
-
-      setIsLoaded(true);
+      cfg = await getConfig();
     } catch {
+      cfg = null;
+    }
+    if (!cfg) {
       // API not available, use props config
       console.warn("Config API not available, using local config");
       setIsLoaded(true);
+      return;
     }
-  }, [config.agent.command, setTheme]);
+    applyLoadedConfig(cfg);
+  }, [applyLoadedConfig]);
 
   // Check dependencies via API
   const checkDependencies = useCallback(async () => {
@@ -422,20 +440,14 @@ export function SettingsPage({ config }: SettingsPageProps) {
       return newStates;
     });
 
+    let response: Awaited<ReturnType<typeof checkAllDependencies>> | null = null;
+    let failed = false;
     try {
-      const response = await checkAllDependencies();
-      const newStates: Record<string, DependencyState> = {};
-
-      for (const dep of response.dependencies) {
-        newStates[dep.name] = {
-          status: dep.installed ? "installed" : "not_installed",
-          version: dep.version || undefined,
-          installCommand: dep.install_command,
-        };
-      }
-
-      setDepStates(newStates);
+      response = await checkAllDependencies();
     } catch {
+      failed = true;
+    }
+    if (failed || !response) {
       // API not available, show error state
       setDepStates((prev) => {
         const newStates: Record<string, DependencyState> = {};
@@ -444,9 +456,20 @@ export function SettingsPage({ config }: SettingsPageProps) {
         }
         return newStates;
       });
-    } finally {
-      setIsChecking(false);
+    } else {
+      const newStates: Record<string, DependencyState> = {};
+      for (const dep of response.dependencies) {
+        const status: "installed" | "not_installed" = dep.installed ? "installed" : "not_installed";
+        const version = dep.version ? dep.version : undefined;
+        newStates[dep.name] = {
+          status,
+          version,
+          installCommand: dep.install_command,
+        };
+      }
+      setDepStates(newStates);
     }
+    setIsChecking(false);
   }, []);
 
   // Check agent command availability
@@ -481,9 +504,8 @@ export function SettingsPage({ config }: SettingsPageProps) {
             available: true,
           })),
       );
-    } finally {
-      setBaseAgentsLoading(false);
     }
+    setBaseAgentsLoading(false);
   }, []);
 
   // Save config to API (called automatically)
@@ -491,55 +513,67 @@ export function SettingsPage({ config }: SettingsPageProps) {
   const saveConfig = useCallback(async () => {
     if (!isLoaded) return; // Don't save during initial load
 
+    const layoutAgentCommand = agentCommand ? agentCommand : undefined;
+    const layoutExtras = customLayoutsLoaded
+      ? {
+          custom_layouts: JSON.stringify(customLayouts),
+          selected_custom_id: selectedCustomLayoutId ? selectedCustomLayoutId : undefined,
+        }
+      : {};
+    const webIde = ideCommand ? ideCommand : undefined;
+    const webTerminal = terminalCommand ? terminalCommand : undefined;
+    const acpAgentCommand = acpAgent ? acpAgent : undefined;
+    let renderWindowTrigger: number;
+    if (chatRenderWindowLimit > 0) {
+      renderWindowTrigger = Math.max(chatRenderWindowTrigger, chatRenderWindowLimit + 1);
+    } else if (chatRenderWindowTrigger) {
+      renderWindowTrigger = chatRenderWindowTrigger;
+    } else {
+      renderWindowTrigger = 1500;
+    }
+    const patch = {
+      layout: {
+        default: selectedLayout,
+        // 仅当 Terminal 启用时保存 agent_command
+        agent_command: layoutAgentCommand,
+        // Only save custom layouts if they were loaded/created in Web format
+        // This prevents overwriting TUI's custom layout format
+        ...layoutExtras,
+      },
+      web: {
+        ide: webIde,
+        terminal: webTerminal,
+        terminal_mode: webTerminalMode,
+        workspace_layout: workspaceLayout,
+        show_hide_window_shortcut: showHideWindowShortcut,
+      },
+      terminal_multiplexer: terminalMultiplexer,
+      acp: {
+        agent_command: acpAgentCommand,
+        render_window_limit: chatRenderWindowLimit,
+        render_window_trigger: renderWindowTrigger,
+      },
+      auto_link: {
+        patterns: autoLinkPatterns,
+      },
+      hooks: {
+        response_sound_enabled: hooksResponseSoundEnabled,
+        response_sound: hooksResponseSound,
+        permission_sound_enabled: hooksPermissionSoundEnabled,
+        permission_sound: hooksPermissionSound,
+      },
+      notifications: {
+        tray_enabled: trayEnabled,
+        tray_show_permission: trayShowPermission,
+        tray_show_done: trayShowDone,
+        tray_show_running: trayShowRunning,
+        notification_enabled: systemNotifEnabled,
+        notification_show_permission: systemNotifShowPermission,
+        notification_show_done: systemNotifShowDone,
+        notification_show_running: systemNotifShowRunning,
+      },
+    };
     try {
-      const patch = {
-        layout: {
-          default: selectedLayout,
-          // 仅当 Terminal 启用时保存 agent_command
-          agent_command: agentCommand || undefined,
-          // Only save custom layouts if they were loaded/created in Web format
-          // This prevents overwriting TUI's custom layout format
-          ...(customLayoutsLoaded ? {
-            custom_layouts: JSON.stringify(customLayouts),
-            selected_custom_id: selectedCustomLayoutId || undefined,
-          } : {}),
-        },
-        web: {
-          ide: ideCommand || undefined,
-          terminal: terminalCommand || undefined,
-          terminal_mode: webTerminalMode,
-          workspace_layout: workspaceLayout,
-          show_hide_window_shortcut: showHideWindowShortcut,
-        },
-        terminal_multiplexer: terminalMultiplexer,
-        acp: {
-          agent_command: acpAgent || undefined,
-          render_window_limit: chatRenderWindowLimit,
-          render_window_trigger:
-            chatRenderWindowLimit > 0
-              ? Math.max(chatRenderWindowTrigger, chatRenderWindowLimit + 1)
-              : chatRenderWindowTrigger || 1500,
-        },
-        auto_link: {
-          patterns: autoLinkPatterns,
-        },
-        hooks: {
-          response_sound_enabled: hooksResponseSoundEnabled,
-          response_sound: hooksResponseSound,
-          permission_sound_enabled: hooksPermissionSoundEnabled,
-          permission_sound: hooksPermissionSound,
-        },
-        notifications: {
-          tray_enabled: trayEnabled,
-          tray_show_permission: trayShowPermission,
-          tray_show_done: trayShowDone,
-          tray_show_running: trayShowRunning,
-          notification_enabled: systemNotifEnabled,
-          notification_show_permission: systemNotifShowPermission,
-          notification_show_done: systemNotifShowDone,
-          notification_show_running: systemNotifShowRunning,
-        },
-      };
       await patchConfig(patch);
       // Refresh the global config cache so other pages see the changes immediately
       await refreshGlobalConfig();
@@ -601,9 +635,8 @@ export function SettingsPage({ config }: SettingsPageProps) {
       setServerPlatform(platform);
     } catch {
       console.error("Failed to load applications");
-    } finally {
-      setIsLoadingApps(false);
     }
+    setIsLoadingApps(false);
   }, []);
 
   const loadCustomAgentPersonas = useCallback(async () => {
@@ -615,19 +648,22 @@ export function SettingsPage({ config }: SettingsPageProps) {
       setCustomAgentPersonas(list);
     } catch (err) {
       console.error("Failed to load custom agents:", err);
-    } finally {
-      setCustomAgentPersonasLoading(false);
     }
+    setCustomAgentPersonasLoading(false);
   }, []);
 
   // Initial load
   useEffect(() => {
-    loadConfig();
-    checkDependencies();
-    loadApplications();
-    checkAgentCommands();
-    loadBaseAgents();
-    loadCustomAgentPersonas();
+    void (async () => {
+      await Promise.all([
+        loadConfig(),
+        checkDependencies(),
+        loadApplications(),
+        checkAgentCommands(),
+        loadBaseAgents(),
+        loadCustomAgentPersonas(),
+      ]);
+    })();
   }, [loadConfig, checkDependencies, loadApplications, checkAgentCommands, loadBaseAgents, loadCustomAgentPersonas]);
 
   // Terminal availability
@@ -641,25 +677,40 @@ export function SettingsPage({ config }: SettingsPageProps) {
   // Auto-correct on first load:
   // 1. If multiplexer mode but no multiplexer installed → fallback to direct
   // 2. If selected multiplexer not installed but other is → switch
-  useEffect(() => {
-    if (defaultAppliedRef.current || !isLoaded || isChecking) return;
-    if (Object.keys(depStates).length === 0) return;
-    defaultAppliedRef.current = true;
-
+  //
+  // Uses the documented "Adjusting state on prop change" pattern (gated on a
+  // one-shot state flag) so the corrective setState runs during render rather
+  // than inside an effect.
+  // https://react.dev/reference/react/useState#storing-information-from-previous-renders
+  const [defaultsApplied, setDefaultsApplied] = useState(false);
+  if (
+    !defaultsApplied &&
+    isLoaded &&
+    !isChecking &&
+    Object.keys(depStates).length > 0
+  ) {
+    setDefaultsApplied(true);
     if (webTerminalMode === "multiplexer" && !hasMultiplexer) {
       // No multiplexer available → fallback to direct
       setWebTerminalMode("direct");
     } else if (webTerminalMode === "multiplexer") {
-      // Auto-correct multiplexer selection
+      // Auto-correct multiplexer selection (the ref mirror is kept in sync
+      // by the effect below that watches `terminalMultiplexer`).
       if (terminalMultiplexer === "tmux" && !tmuxInstalled && zellijInstalled) {
         setTerminalMultiplexer("zellij");
-        lastTerminalMuxRef.current = "zellij";
       } else if (terminalMultiplexer === "zellij" && !zellijInstalled && tmuxInstalled) {
         setTerminalMultiplexer("tmux");
-        lastTerminalMuxRef.current = "tmux";
       }
     }
-  }, [isLoaded, isChecking, depStates, webTerminalMode, hasMultiplexer, terminalMultiplexer, tmuxInstalled, zellijInstalled]);
+  }
+  // Keep `lastTerminalMuxRef` in sync with the latest selected multiplexer.
+  // Writing the ref in an effect avoids the react-hooks/refs render-time
+  // mutation flag while still letting the explicit ref-setters elsewhere
+  // (e.g. on user-driven dropdown change) take precedence within a single
+  // render — the effect just confirms the post-render value.
+  useEffect(() => {
+    lastTerminalMuxRef.current = terminalMultiplexer || "tmux";
+  }, [terminalMultiplexer]);
 
   // Filter and mark agent options based on mode + command availability
   const hasAvailability = Object.keys(commandAvailability).length > 0;
@@ -718,23 +769,32 @@ export function SettingsPage({ config }: SettingsPageProps) {
     if (!isLoaded) return;
     const hasTerminalAvailability = Object.keys(commandAvailability).length > 0;
 
-    // Terminal Agent
+    // Compute corrections synchronously, but apply them after a microtask so
+    // the setStates aren't synchronous within the effect body.
+    let nextAgentCommand: string | undefined;
     if (hasTerminalAvailability && agentCommand) {
       const currentAgent = agentOptions.find(a => a.id === agentCommand);
       const cmd = currentAgent?.terminalCheck;
       if (cmd && commandAvailability[cmd] === false) {
         const firstAvailable = terminalAgentOptions.find(a => !a.disabled);
-        setAgentCommand(firstAvailable?.id ?? "");
+        nextAgentCommand = firstAvailable?.id ?? "";
       }
     }
 
-    // Chat Agent availability is backend-derived from /agents/base.
+    let nextAcpAgent: string | undefined;
     if (baseAgents.length > 0 && acpAgent) {
       const currentBaseAgent = baseAgentStatusById.get(acpAgent);
       if (currentBaseAgent && !currentBaseAgent.available) {
         const firstAvailable = chatAgentOptions.find(a => !a.disabled);
-        setAcpAgent(firstAvailable?.value ?? "");
+        nextAcpAgent = firstAvailable?.value ?? "";
       }
+    }
+
+    if (nextAgentCommand !== undefined || nextAcpAgent !== undefined) {
+      void Promise.resolve().then(() => {
+        if (nextAgentCommand !== undefined) setAgentCommand(nextAgentCommand);
+        if (nextAcpAgent !== undefined) setAcpAgent(nextAcpAgent);
+      });
     }
   }, [isLoaded, commandAvailability, agentCommand, acpAgent, terminalAgentOptions, chatAgentOptions, baseAgentStatusById, baseAgents.length]);
 

@@ -47,6 +47,10 @@ const RECONNECT_BASE_DELAY = 2000;
 const RECONNECT_MAX_DELAY = 30000;
 
 export function useWalkieTalkie(): [WalkieTalkieState, WalkieTalkieActions] {
+  "use no memo";
+  // Uses dynamic `import()` for the WebSocket library — Compiler 1.0 can't
+  // lower that, so opt the hook out.
+
   const [connected, setConnected] = useState(false);
   const [groups, setGroups] = useState<GroupSnapshot[]>([]);
   const [currentGroupId, setCurrentGroupId] = useState<string | null>(null);
@@ -140,6 +144,10 @@ export function useWalkieTalkie(): [WalkieTalkieState, WalkieTalkieActions] {
 
   // ── WebSocket lifecycle ──────────────────────────────────────────────────
 
+  // Self-reference ref so reconnect timer can call the latest `connect`
+  // without `connect` capturing itself (which would be a use-before-declare).
+  const connectRef = useRef<() => void>(() => {});
+
   const connect = useCallback(async () => {
     const protocol =
       window.location.protocol === "https:" ? "wss:" : "ws:";
@@ -200,7 +208,7 @@ export function useWalkieTalkie(): [WalkieTalkieState, WalkieTalkieActions] {
         reconnectAttemptsRef.current++;
         reconnectTimerRef.current = setTimeout(() => {
           reconnectTimerRef.current = null;
-          connect();
+          connectRef.current();
         }, delay);
       }
     };
@@ -209,6 +217,10 @@ export function useWalkieTalkie(): [WalkieTalkieState, WalkieTalkieActions] {
       // onclose will fire after onerror, triggering reconnect
     };
   }, [handleMessage]);
+
+  useEffect(() => {
+    connectRef.current = connect;
+  });
 
   useEffect(() => {
     intentionalCloseRef.current = false;

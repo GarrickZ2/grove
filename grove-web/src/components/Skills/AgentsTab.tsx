@@ -26,9 +26,8 @@ export function AgentsTab({ agents, onRefresh }: AgentsTabProps) {
       await onRefresh();
     } catch (err) {
       console.error("Toggle failed:", err);
-    } finally {
-      setTogglingId(null);
     }
+    setTogglingId(null);
   };
 
   const handleDelete = async (agentId: string) => {

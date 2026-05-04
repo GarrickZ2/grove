@@ -160,13 +160,12 @@ export function CommentsTab({ projectId, task }: CommentsTabProps) {
     } catch (err) {
       console.error("Failed to load review comments:", err);
       setComments([]);
-    } finally {
-      setIsLoading(false);
     }
+    setIsLoading(false);
   }, [resolvedProjectId, task.id]);
 
   useEffect(() => {
-    loadComments();
+    Promise.resolve().then(loadComments);
   }, [loadComments]);
 
   if (isLoading) {

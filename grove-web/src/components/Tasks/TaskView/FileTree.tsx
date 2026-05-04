@@ -149,6 +149,7 @@ function FileTreeItem({
       if (expandError) return;
       if (!expanded && onExpandDir && !loadedRef.current) {
         setLoading(true);
+        let failed = false;
         try {
           const entries = await onExpandDir(node.path);
           loadedRef.current = true;
@@ -173,10 +174,10 @@ function FileTreeItem({
           const msg = err instanceof Error ? err.message : String(err);
           const isForbidden = msg.includes('403') || msg.toLowerCase().includes('forbidden');
           setExpandError(isForbidden ? 'Symlink folders cannot be expanded' : 'Failed to load folder');
-          return;
-        } finally {
-          setLoading(false);
+          failed = true;
         }
+        setLoading(false);
+        if (failed) return;
       }
       setExpanded((prev) => !prev);
     } else {

@@ -24,6 +24,10 @@ interface Props {
 }
 
 export function SketchPage({ projectId, taskId, isChatBusy, lastChatIdleAt }: Props) {
+  "use no memo";
+  // Uses dynamic `import()` for the Excalidraw scene module — Compiler 1.0
+  // can't lower it. Studio is not on the hot interaction path.
+
   const {
     sketches,
     loading: listLoading,
@@ -75,24 +79,29 @@ export function SketchPage({ projectId, taskId, isChatBusy, lastChatIdleAt }: Pr
   // selection to `null` and then immediately back to `sketches[0]` during the
   // transient window after a WS `index_changed` when `useSketchList` is
   // between invalidation and refetch (empty array briefly observed).
-  useEffect(() => {
-    if (sketches.length === 0) return;
-    if (!activeId) {
-      // Prefer the last-active sketch remembered from a prior visit; fall
-      // back to the first sketch when no memory exists or the remembered
-      // sketch has been deleted.
-      const remembered = readLastActiveTab("sketch", projectId, taskId);
-      const restoredId =
-        remembered && sketches.some((s) => s.id === remembered)
-          ? remembered
-          : sketches[0].id;
-      setActiveId(restoredId);
-    } else if (!sketches.some((s) => s.id === activeId)) {
-      const fallbackId = sketches[0].id;
-      setActiveId(fallbackId);
-      writeLastActiveTab("sketch", projectId, taskId, fallbackId);
+  //
+  // Implemented as a "derive from props during render" pattern (compare prev
+  // sketches/activeId, setState when stale) rather than useEffect to satisfy
+  // react-hooks/set-state-in-effect. Same observable behavior.
+  const [prevSelSig, setPrevSelSig] = useState<string>("");
+  const selSig = `${sketches.length}|${activeId ?? ""}|${sketches.map((s) => s.id).join(",")}`;
+  if (selSig !== prevSelSig) {
+    setPrevSelSig(selSig);
+    if (sketches.length > 0) {
+      if (!activeId) {
+        const remembered = readLastActiveTab("sketch", projectId, taskId);
+        const restoredId =
+          remembered && sketches.some((s) => s.id === remembered)
+            ? remembered
+            : sketches[0].id;
+        setActiveId(restoredId);
+      } else if (!sketches.some((s) => s.id === activeId)) {
+        const fallbackId = sketches[0].id;
+        setActiveId(fallbackId);
+        writeLastActiveTab("sketch", projectId, taskId, fallbackId);
+      }
     }
-  }, [sketches, activeId, projectId, taskId]);
+  }
 
   // Keep the shared SketchChip name cache in sync with the live sketch index
   // so newly created / renamed / deleted sketches surface correctly in chat

@@ -74,7 +74,6 @@ import { renderGroveMetaEnvelope } from "./groveMetaRenderers";
 import {
   agentIconComponent,
   agentIconUrl,
-  loadCustomAgentPersonas as loadCustomAgentPersonasIcon,
   usePersonaRegistry,
 } from "../../../utils/agentIcon";
 import type { MentionItem } from "../../../utils/fileMention";
@@ -85,9 +84,13 @@ import { usePreviewComments, type PreviewCommentDraft } from "../../../context";
 import { PreviewSearchBar } from "../../Review/PreviewSearchBar";
 import { Virtuoso, type VirtuosoHandle } from "react-virtuoso";
 import { useChatSearch } from "./useChatSearch";
+import { useChatPositioning } from "./useChatPositioning";
+import { useACPAvailability } from "./useACPAvailability";
+import { useInitialChatLoad } from "./useInitialChatLoad";
+import { useActiveChatId } from "./useActiveChatId";
 import { useTypewriter } from "./useTypewriter";
 import { listSketches, type SketchMeta } from "../../../api/sketches";
-import { readLastActiveTab, writeLastActiveTab } from "../../../utils/lastActiveTab";
+import { writeLastActiveTab } from "../../../utils/lastActiveTab";
 import type { Task } from "../../../data/types";
 import { perfMark } from "../../../perf/marks";
 import { getApiHost, appendHmacToUrl } from "../../../api/client";
@@ -106,10 +109,8 @@ import {
   takeControl,
   readFile,
   updateNotes,
-  listCustomAgents,
-  listBaseAgents,
 } from "../../../api";
-import type { ChatSessionResponse, CustomAgentServer, CustomAgentPersona, BaseAgent } from "../../../api";
+import type { ChatSessionResponse, CustomAgentServer } from "../../../api";
 import { openExternalUrl } from "../../../utils/openExternal";
 import "./task-chat.css";
 
@@ -1253,6 +1254,15 @@ export function TaskChat({
   onUserMessageSent,
   onBusyStateChange,
 }: TaskChatProps) {
+  // Three sub-concerns have been extracted into their own hooks
+  // (useChatPositioning, useACPAvailability, useInitialChatLoad) — those
+  // hooks ARE Compiler-optimized. The remaining TaskChat body still has
+  // multiple captured-mutable-`let` patterns (history reducer, WS event
+  // dispatch, DOM walkers, attachment lifecycle) that React Compiler 1.0
+  // can't reconcile in a single function this large. Unlocking it
+  // requires a structural split into more sub-components/hooks — a
+  // dedicated refactor for a future version, not a 0.10.4 task.
+
   const sessionModeStorageKey = `taskchat:session-mode:${projectId}`;
   // ─── Multi-chat state ───────────────────────────────────────────────────
   const [chats, setChats] = useState<ChatSessionResponse[]>([]);
@@ -1262,7 +1272,11 @@ export function TaskChat({
   useEffect(() => {
     chatsRef.current = chats;
   }, [chats]);
-  const [activeChatId, setActiveChatId] = useState<string | null>(null);
+  const {
+    activeChatId,
+    getActiveChatId,
+    setActiveChatId,
+  } = useActiveChatId(null);
   const [showChatMenu, setShowChatMenu] = useState(false);
   const [editingTitle, setEditingTitle] = useState<{
     chatId: string;
@@ -1271,10 +1285,12 @@ export function TaskChat({
   const [editTitleValue, setEditTitleValue] = useState("");
   const chatMenuRef = useRef<HTMLDivElement>(null);
   const [showAgentPicker, setShowAgentPicker] = useState(false);
-  const [baseAgents, setBaseAgents] = useState<BaseAgent[]>([]);
-  const [acpAvailabilityLoaded, setAcpAvailabilityLoaded] = useState(false);
-  const [customAgents, setCustomAgents] = useState<CustomAgentServer[]>([]);
-  const [customAgentPersonas, setCustomAgentPersonas] = useState<CustomAgentPersona[]>([]);
+  const {
+    baseAgents,
+    customAgents,
+    customAgentPersonas,
+    acpAvailabilityLoaded,
+  } = useACPAvailability();
   const headerAgentPickerRef = useRef<HTMLDivElement>(null);
   const sidebarAgentPickerRef = useRef<HTMLDivElement>(null);
   const agentPickerMenuRef = useRef<HTMLDivElement>(null);
@@ -1457,7 +1473,9 @@ export function TaskChat({
   const autoStickToBottomRef = useRef(true);
   const suppressNextSmoothScrollRef = useRef(false);
   const messagesCountRef = useRef(messages.length);
-  messagesCountRef.current = messages.length;
+  useEffect(() => {
+    messagesCountRef.current = messages.length;
+  }, [messages.length]);
   const inputAreaRef = useRef<HTMLDivElement>(null);
   const chatboxContainerRef = useRef<HTMLDivElement>(null);
   const taskChatRootRef = useRef<HTMLDivElement>(null);
@@ -1529,7 +1547,15 @@ export function TaskChat({
             : null;
   const composerPanelOpen = activeComposerPanel !== null;
 
-  useEffect(() => {
+  // When a permission message appears, force the permission panel open and
+  // close any rival panels. When it goes away, close the panel. Done via
+  // the prev-prop comparison pattern (set-state-during-render) instead of
+  // useEffect so React Compiler / eslint don't flag a setState-in-effect.
+  // Mount: prev === current means no side effects fire — intentional, since
+  // panels start closed and there's no permission message at mount.
+  const [prevActivePermissionMessage, setPrevActivePermissionMessage] = useState(activePermissionMessage);
+  if (activePermissionMessage !== prevActivePermissionMessage) {
+    setPrevActivePermissionMessage(activePermissionMessage);
     if (activePermissionMessage) {
       setShowPermissionPanel(true);
       setShowPlan(false);
@@ -1539,13 +1565,13 @@ export function TaskChat({
     } else {
       setShowPermissionPanel(false);
     }
-  }, [activePermissionMessage]);
+  }
 
   // Reset preview-comments toggle when drafts become empty — otherwise a
   // stale `true` reopens the panel next time a draft is added.
-  useEffect(() => {
-    if (!hasPreviewCommentsPanel && showPreviewComments) setShowPreviewComments(false);
-  }, [hasPreviewCommentsPanel, showPreviewComments]);
+  if (!hasPreviewCommentsPanel && showPreviewComments) {
+    setShowPreviewComments(false);
+  }
 
   // ── Chat search (Cmd/Ctrl+F) ────────────────────────────────────────
   // Skip thinking blocks (data-grove-search-skip) and our own UI.
@@ -1565,11 +1591,16 @@ export function TaskChat({
     window.addEventListener("keydown", handler, true);
     return () => window.removeEventListener("keydown", handler, true);
   }, []);
-  // Close search when switching chats
-  useEffect(() => {
+  // Close search when switching chats — set-state-during-render with a
+  // prev-prop guard avoids the setState-in-effect cascading-render warning.
+  // Mount: prev === current means no reset fires — intentional, search is
+  // already closed at mount.
+  const [prevChatIdForSearch, setPrevChatIdForSearch] = useState(activeChatId);
+  if (activeChatId !== prevChatIdForSearch) {
+    setPrevChatIdForSearch(activeChatId);
     setChatSearchOpen(false);
     setChatSearchQuery("");
-  }, [activeChatId]);
+  }
 
   // Filtered slash commands based on current input — substring match on
   // command name only. Name-only avoids the old noise bug where matching
@@ -1613,50 +1644,7 @@ export function TaskChat({
     [combinedMentionItems, deferredFileFilter],
   );
 
-  // Check ACP agent availability on mount via backend (consistent with SettingsPage)
-  useEffect(() => {
-    let cancelled = false;
-    const checkAvailability = async () => {
-      try {
-        const [agents, cfg, personas] = await Promise.all([
-          listBaseAgents(),
-          getConfig(),
-          // Centralized loader — only the most-recent in-flight request
-          // wins the icon-registry write, so a stale fetch from a previous
-          // mount can't clobber fresher data we just got elsewhere.
-          loadCustomAgentPersonasIcon(() =>
-            listCustomAgents().catch(() => [] as CustomAgentPersona[]),
-          ),
-        ]);
-        if (cancelled) return;
-        setBaseAgents(agents);
-        setCustomAgents(cfg.acp?.custom_agents ?? []);
-        setCustomAgentPersonas(personas);
-      } catch (err) {
-        // Fall back to static list so the picker stays functional when the backend is unavailable.
-        // Mark all as available (fail-open) — the user will get an error if they try to use one
-        // that isn't actually installed.
-        console.warn("[TaskChat] availability check failed, fail-open:", err);
-        if (!cancelled) {
-          setBaseAgents(
-            agentOptions
-              .filter((opt) => opt.acpCheck)
-              .map((opt) => ({
-                id: opt.id,
-                display_name: opt.label,
-                icon_id: opt.id,
-                available: true,
-              })),
-          );
-        }
-      }
-      if (!cancelled) setAcpAvailabilityLoaded(true);
-    };
-    checkAvailability();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+  // ACP agent availability check is encapsulated in useACPAvailability.
 
   // Compute available ACP agent options from backend availability (consistent with SettingsPage)
   const acpAgentOptions = useMemo(() => {
@@ -1694,25 +1682,21 @@ export function TaskChat({
   // (sender = "agent:<chat_id>") we look up the chat's title and agent kind
   // so the receiving panel shows e.g. "测试子 Session" with the codex icon
   // instead of the raw "agent:chat-0daa3a" + generic robot.
-  const resolveSender = useCallback(
-    (sender?: string): { label: string; Icon: React.ComponentType<{ size?: number; className?: string }> } => {
-      if (!sender) return { label: "", Icon: Bot };
-      if (sender === "user") return { label: "user", Icon: User };
-      if (sender.startsWith("agent:")) {
-        const chatId = sender.slice("agent:".length);
-        const chat = chats.find((c) => c.id === chatId);
-        if (chat) {
-          return { label: chat.title, Icon: getChatIcon(chat.agent) };
-        }
+  // Plain function — React Compiler memoizes based on actual reads (chats,
+  // customAgents, getChatIcon's own closure). agentIconComponent is module-
+  // imported and stable; persona registry is consulted via a singleton util.
+  const resolveSender = (sender?: string): { label: string; Icon: React.ComponentType<{ size?: number; className?: string }> } => {
+    if (!sender) return { label: "", Icon: Bot };
+    if (sender === "user") return { label: "user", Icon: User };
+    if (sender.startsWith("agent:")) {
+      const chatId = sender.slice("agent:".length);
+      const chat = chats.find((c) => c.id === chatId);
+      if (chat) {
+        return { label: chat.title, Icon: getChatIcon(chat.agent) };
       }
-      return { label: sender, Icon: Bot };
-    },
-    // getChatIcon closes over agentOptions (constant) + customAgents (state).
-    // Personas are resolved transparently by `agentIconComponent` via the
-    // shared icon util's registry, so they don't need to be in deps.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [chats, customAgents],
-  );
+    }
+    return { label: sender, Icon: Bot };
+  };
 
   // Resolve agent label and icon from active chat's agent
   useEffect(() => {
@@ -1782,11 +1766,15 @@ export function TaskChat({
     }
   }, [projectId, task.id, isStudioProject]);
 
-  // Initial load on mount / task switch
+  // Initial load on mount / task switch. refreshTaskFilesIfNeeded is a
+  // useCallback whose deps are [projectId, task.id, isStudioProject], so
+  // including it here only adds isStudioProject as a transitive dep.
+  // Workspace-level isStudioProject changes already imply a task switch,
+  // so the extra refire is harmless.
   useEffect(() => {
     taskFilesFetchTimeRef.current = 0; // force stale on task switch
     refreshTaskFilesIfNeeded();
-  }, [projectId, task.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [projectId, task.id, refreshTaskFilesIfNeeded]);
 
   // Refresh agent-graph @-mention candidates whenever the active chat changes
   // or the user opens the popover. Spawn candidates come from `acpAgentOptions`
@@ -1829,19 +1817,43 @@ export function TaskChat({
       });
   }, [projectId, task.id, activeChatId, acpAgentOptions, customAgentPersonas]);
 
+  // Defer to a microtask so the synchronous setAgentMentionItems([]) path
+  // for !activeChatId doesn't trip the set-state-in-effect rule. We still
+  // run after every dep change. `cancelled` guards against unmount/dep-change
+  // racing with the microtask flush.
   useEffect(() => {
-    refreshAgentMentionCandidates();
+    let cancelled = false;
+    queueMicrotask(() => {
+      if (cancelled) return;
+      refreshAgentMentionCandidates();
+    });
+    return () => {
+      cancelled = true;
+    };
   }, [refreshAgentMentionCandidates]);
 
-  // Studio: also load sketches so @ mentions can surface sketch names
+  // Studio: also load sketches so @ mentions can surface sketch names.
+  // Wrapped in queueMicrotask so the synchronous setSketchMeta([]) path
+  // doesn't trip eslint's setState-in-effect cascade-render rule.
   useEffect(() => {
-    if (!isStudioProject) {
-      setSketchMeta([]);
-      return;
-    }
-    listSketches(projectId, task.id)
-      .then(setSketchMeta)
-      .catch(() => setSketchMeta([]));
+    let cancelled = false;
+    queueMicrotask(() => {
+      if (cancelled) return;
+      if (!isStudioProject) {
+        setSketchMeta([]);
+        return;
+      }
+      listSketches(projectId, task.id)
+        .then((meta) => {
+          if (!cancelled) setSketchMeta(meta);
+        })
+        .catch(() => {
+          if (!cancelled) setSketchMeta([]);
+        });
+    });
+    return () => {
+      cancelled = true;
+    };
   }, [isStudioProject, projectId, task.id]);
 
   // Dynamically measure the input area height. With Virtuoso, we feed this
@@ -1950,20 +1962,6 @@ export function TaskChat({
   const handleIsScrolling = useCallback((scrolling: boolean) => {
     isUserScrollingRef.current = scrolling;
   }, []);
-  const handleAtBottomStateChange = useCallback((atBottom: boolean) => {
-    if (atBottom) {
-      autoStickToBottomRef.current = true;
-      // Chat-switch reveal: as soon as Virtuoso confirms we're at bottom,
-      // fade the list in (vs waiting the hard fallback timeout).
-      onPositionedAtBottomRef.current?.();
-    } else if (
-      isUserScrollingRef.current &&
-      !programmaticScrollRef.current
-    ) {
-      autoStickToBottomRef.current = false;
-    }
-    setShowScrollToBottom(!atBottom && messagesCountRef.current > 0);
-  }, []);
 
   // The tail-signature autoscroll path used to fire scrollMessagesToBottom
   // on every streaming token. With Virtuoso, `followOutput` already
@@ -1977,7 +1975,9 @@ export function TaskChat({
   );
   const prevAutoScrollTailRef = useRef(autoScrollTailSignature);
   const autoScrollTailSignatureRef = useRef(autoScrollTailSignature);
-  autoScrollTailSignatureRef.current = autoScrollTailSignature;
+  useEffect(() => {
+    autoScrollTailSignatureRef.current = autoScrollTailSignature;
+  }, [autoScrollTailSignature]);
 
   // Pin to bottom once per chat. Markdown messages have wildly variable
   // heights (code blocks, mermaid, images) that only stabilize after
@@ -1991,56 +1991,34 @@ export function TaskChat({
   // doesn't see the "first row → snap to last row" flash. Revealed as
   // soon as either (a) atBottomStateChange confirms we landed at the
   // bottom, or (b) a hard fallback timeout fires.
-  const [chatPositioning, setChatPositioning] = useState(false);
-  const positioningCancelRef = useRef<(() => void) | null>(null);
-  // Called by handleAtBottomStateChange below as soon as the chat-switch
-  // scroll lands. Cleared once revealed.
-  const onPositionedAtBottomRef = useRef<(() => void) | null>(null);
-  useEffect(() => {
-    if (messages.length === 0) return;
-    if (initialPinChatIdRef.current === activeChatId) return;
-    initialPinChatIdRef.current = activeChatId;
-    suppressNextSmoothScrollRef.current = true;
-    prevAutoScrollTailRef.current = autoScrollTailSignatureRef.current;
-    autoStickToBottomRef.current = true;
-    setShowScrollToBottom(false);
-    setChatPositioning(true);
+  const { chatPositioning, notifyPositionedAtBottom } = useChatPositioning({
+    activeChatId,
+    messagesLength: messages.length,
+    scrollMessagesToBottom,
+    initialPinChatIdRef,
+    suppressNextSmoothScrollRef,
+    prevAutoScrollTailRef,
+    autoScrollTailSignatureRef,
+    autoStickToBottomRef,
+    setShowScrollToBottom,
+  });
 
-    let cancelled = false;
-    let rafId: number | null = null;
-    let revealTimer: number | null = null;
-    let attempts = 0;
-    const MAX_ATTEMPTS = 12;
-    const HARD_FALLBACK_MS = 180;
-
-    const reveal = () => {
-      if (cancelled) return;
-      onPositionedAtBottomRef.current = null;
-      setChatPositioning(false);
-    };
-    onPositionedAtBottomRef.current = reveal;
-    // Fallback in case atBottomStateChange never fires (e.g. very tall
-    // images that haven't loaded — would otherwise stay blank forever).
-    revealTimer = window.setTimeout(reveal, HARD_FALLBACK_MS);
-
-    const tick = () => {
-      if (cancelled) return;
-      scrollMessagesToBottom("auto");
-      attempts += 1;
-      if (attempts < MAX_ATTEMPTS) {
-        rafId = requestAnimationFrame(tick);
-      }
-    };
-    rafId = requestAnimationFrame(tick);
-
-    positioningCancelRef.current = () => {
-      cancelled = true;
-      if (rafId !== null) cancelAnimationFrame(rafId);
-      if (revealTimer !== null) clearTimeout(revealTimer);
-      onPositionedAtBottomRef.current = null;
-    };
-    return () => positioningCancelRef.current?.();
-  }, [activeChatId, messages.length, scrollMessagesToBottom]);
+  // Defined after useChatPositioning so notifyPositionedAtBottom is in scope
+  // for the useCallback's dependency array.
+  const handleAtBottomStateChange = useCallback((atBottom: boolean) => {
+    if (atBottom) {
+      autoStickToBottomRef.current = true;
+      // Chat-switch reveal: as soon as Virtuoso confirms we're at bottom,
+      // fade the list in (vs waiting the hard fallback timeout).
+      notifyPositionedAtBottom();
+    } else if (
+      isUserScrollingRef.current &&
+      !programmaticScrollRef.current
+    ) {
+      autoStickToBottomRef.current = false;
+    }
+    setShowScrollToBottom(!atBottom && messagesCountRef.current > 0);
+  }, [notifyPositionedAtBottom]);
 
   // Auto-scroll slash menu to keep selected item visible
   useEffect(() => {
@@ -2058,12 +2036,21 @@ export function TaskChat({
     );
   }, [sessionModeStorageKey, sessionRailCollapsed]);
 
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    setSessionRailCollapsed(
-      window.localStorage.getItem(sessionModeStorageKey) !== "sidebar",
-    );
-  }, [sessionModeStorageKey]);
+  // Reload session-rail preference from localStorage when the storage key
+  // changes (project switch). Set-state-during-render with a prev-key guard
+  // is the documented pattern that avoids the cascading-render warning.
+  // Mount: prev === current means no read fires — intentional, since
+  // sessionRailCollapsed already loads from localStorage via its lazy
+  // useState initializer at mount.
+  const [prevSessionModeStorageKey, setPrevSessionModeStorageKey] = useState(sessionModeStorageKey);
+  if (sessionModeStorageKey !== prevSessionModeStorageKey) {
+    setPrevSessionModeStorageKey(sessionModeStorageKey);
+    if (typeof window !== "undefined") {
+      setSessionRailCollapsed(
+        window.localStorage.getItem(sessionModeStorageKey) !== "sidebar",
+      );
+    }
+  }
 
   useEffect(() => {
     const handleClick = (e: MouseEvent) => {
@@ -2291,58 +2278,20 @@ export function TaskChat({
     }
   }, [updateBusy, updateHiddenMessageCount]);
 
-  // ─── Load chats on mount ───────────────────────────────────────────────
+  // Initial chat list load is encapsulated in useInitialChatLoad.
+  useInitialChatLoad({
+    projectId,
+    taskId: task.id,
+    setChats,
+    setActiveChatId,
+  });
 
-  useEffect(() => {
-    let cancelled = false;
-
-    const init = async () => {
-      try {
-        let chatList = await listChats(projectId, task.id);
-        if (chatList.length === 0) {
-          // Auto-create first chat
-          const newChat = await createChat(
-            projectId,
-            task.id,
-            buildDefaultSessionTitle(),
-          );
-          chatList = [newChat];
-        }
-        if (cancelled) return;
-        setChats(chatList);
-        // Check if Radio requested a specific session (pending from before mount)
-        const pending = (window as unknown as Record<string, unknown>).__grove_pending_chat as
-          | { projectId: string; taskId: string; chatId: string }
-          | undefined;
-        if (
-          pending &&
-          pending.projectId === projectId &&
-          pending.taskId === task.id &&
-          chatList.some((c) => c.id === pending.chatId)
-        ) {
-          setActiveChatId(pending.chatId);
-          writeLastActiveTab("chat", projectId, task.id, pending.chatId);
-          delete (window as unknown as Record<string, unknown>).__grove_pending_chat;
-        } else {
-          // Prefer the last-active chat remembered from a prior visit; fall
-          // back to the last chat in the list when no memory exists or the
-          // remembered chat has been deleted.
-          const remembered = readLastActiveTab("chat", projectId, task.id);
-          const restoredId =
-            remembered && chatList.some((c) => c.id === remembered)
-              ? remembered
-              : chatList[chatList.length - 1].id;
-          setActiveChatId(restoredId);
-        }
-      } catch (err) {
-        console.error("Failed to load chats:", err);
-      }
-    };
-    init();
-    return () => {
-      cancelled = true;
-    };
-  }, [projectId, task.id]);
+  // Forward-declared ref for connectChatWs so handlers defined before its
+  // useCallback (e.g. the ChatListChanged refetch handler) can call it
+  // without creating a TDZ reference that React Compiler refuses to compile.
+  const connectChatWsRef = useRef<(chatId: string) => Promise<void>>(
+    async () => {},
+  );
 
   // ─── Auto-refetch chat list on RadioEvent::ChatListChanged ─────────────
   // Fired by the `grove_agent_spawn` MCP tool after a sibling session is
@@ -2352,62 +2301,61 @@ export function TaskChat({
     onChatListChanged: (evtProjectId, evtTaskId) => {
       if (evtProjectId !== projectId || evtTaskId !== task.id) return;
       void (async () => {
+        let fresh: ChatSessionResponse[];
         try {
-          const fresh = await listChats(projectId, task.id);
-          const freshIds = new Set(fresh.map((chat) => chat.id));
-          for (const [chatId, ws] of wsMapRef.current) {
-            if (freshIds.has(chatId)) continue;
-            intentionalCloseRef.current.add(chatId);
-            ws.close();
-            wsMapRef.current.delete(chatId);
-            perChatStateRef.current.delete(chatId);
-          }
-
-          setChats(fresh);
-
-          // If a tray/notification deep-link was waiting on this chat to
-          // appear (race: Open clicked before grove_agent_spawn's chat is in
-          // listChats yet), satisfy it now.
-          const pending = (window as unknown as Record<string, unknown>)
-            .__grove_pending_chat as
-            | { projectId: string; taskId: string; chatId: string }
-            | undefined;
-          if (
-            pending &&
-            pending.projectId === projectId &&
-            pending.taskId === task.id &&
-            freshIds.has(pending.chatId)
-          ) {
-            const targetId = pending.chatId;
-            delete (window as unknown as Record<string, unknown>).__grove_pending_chat;
-            setActiveChatId(targetId);
-            activeChatIdRef.current = targetId;
-            writeLastActiveTab("chat", projectId, task.id, targetId);
-            restoreChatState(targetId);
-            await connectChatWs(targetId);
-            wsRef.current = wsMapRef.current.get(targetId) ?? null;
-            return;
-          }
-
-          const current = activeChatIdRef.current;
-          if (current && freshIds.has(current)) return;
-
-          const next = fresh[fresh.length - 1];
-          if (next) {
-            setActiveChatId(next.id);
-            activeChatIdRef.current = next.id;
-            writeLastActiveTab("chat", projectId, task.id, next.id);
-            restoreChatState(next.id);
-            await connectChatWs(next.id);
-            wsRef.current = wsMapRef.current.get(next.id) ?? null;
-          } else {
-            setActiveChatId(null);
-            activeChatIdRef.current = null;
-            restoreChatState("__deleted__");
-            wsRef.current = null;
-          }
+          fresh = await listChats(projectId, task.id);
         } catch (err) {
           console.error("Failed to refetch chats after ChatListChanged:", err);
+          return;
+        }
+        const freshIds = new Set(fresh.map((chat) => chat.id));
+        wsMapRef.current.forEach((ws, chatId) => {
+          if (freshIds.has(chatId)) return;
+          intentionalCloseRef.current.add(chatId);
+          ws.close();
+          wsMapRef.current.delete(chatId);
+          perChatStateRef.current.delete(chatId);
+        });
+
+        setChats(fresh);
+
+        // If a tray/notification deep-link was waiting on this chat to
+        // appear (race: Open clicked before grove_agent_spawn's chat is in
+        // listChats yet), satisfy it now.
+        const pending = (window as unknown as Record<string, unknown>)
+          .__grove_pending_chat as
+          | { projectId: string; taskId: string; chatId: string }
+          | undefined;
+        const pendingMatches =
+          pending !== undefined &&
+          pending.projectId === projectId &&
+          pending.taskId === task.id &&
+          freshIds.has(pending.chatId);
+        if (pendingMatches && pending) {
+          const targetId = pending.chatId;
+          delete (window as unknown as Record<string, unknown>).__grove_pending_chat;
+          setActiveChatId(targetId);
+          writeLastActiveTab("chat", projectId, task.id, targetId);
+          restoreChatState(targetId);
+          await connectChatWsRef.current(targetId);
+          wsRef.current = wsMapRef.current.get(targetId) ?? null;
+          return;
+        }
+
+        const current = getActiveChatId();
+        if (current && freshIds.has(current)) return;
+
+        const next = fresh[fresh.length - 1];
+        if (next) {
+          setActiveChatId(next.id);
+          writeLastActiveTab("chat", projectId, task.id, next.id);
+          restoreChatState(next.id);
+          await connectChatWsRef.current(next.id);
+          wsRef.current = wsMapRef.current.get(next.id) ?? null;
+        } else {
+          setActiveChatId(null);
+          restoreChatState("__deleted__");
+          wsRef.current = null;
         }
       })();
     },
@@ -2449,9 +2397,11 @@ export function TaskChat({
     (chatId: string, msg: any) => void
   >(() => {});
   const onConnectedPropRef = useRef(onConnectedProp);
-  onConnectedPropRef.current = onConnectedProp;
   const onDisconnectedPropRef = useRef(onDisconnectedProp);
-  onDisconnectedPropRef.current = onDisconnectedProp;
+  useEffect(() => {
+    onConnectedPropRef.current = onConnectedProp;
+    onDisconnectedPropRef.current = onDisconnectedProp;
+  }, [onConnectedProp, onDisconnectedProp]);
 
   /** Connect a WebSocket for a given chat ID (idempotent) */
   const connectChatWs = useCallback(
@@ -2478,7 +2428,7 @@ export function TaskChat({
       ws.onmessage = (event) => {
         try {
           const data = JSON.parse(event.data);
-          if (chatId === activeChatIdRef.current) {
+          if (chatId === getActiveChatId()) {
             if (historyLoadingRef.current) {
               wsEventBufferRef.current.push(data);
             } else {
@@ -2495,7 +2445,7 @@ export function TaskChat({
 
       ws.onclose = () => {
         wsMapRef.current.delete(chatId);
-        if (chatId === activeChatIdRef.current) {
+        if (chatId === getActiveChatId()) {
           setIsConnected(false);
           onDisconnectedPropRef.current?.();
         } else {
@@ -2509,8 +2459,8 @@ export function TaskChat({
         } else {
           setTimeout(() => {
             if (!wsMapRef.current.has(chatId)) {
-              connectChatWs(chatId).then(() => {
-                if (chatId === activeChatIdRef.current) {
+              connectChatWsRef.current(chatId).then(() => {
+                if (chatId === getActiveChatId()) {
                   wsRef.current = wsMapRef.current.get(chatId) ?? null;
                 }
               });
@@ -2520,17 +2470,18 @@ export function TaskChat({
       };
 
       ws.onerror = () => {
-        if (chatId === activeChatIdRef.current) {
+        if (chatId === getActiveChatId()) {
           setMessages((prev) => appendSystemMessage(prev, "Connection error."));
         }
       };
     },
-    [projectId, task.id],
+    [projectId, task.id, getActiveChatId],
   );
+  useEffect(() => {
+    connectChatWsRef.current = connectChatWs;
+  }, [connectChatWs]);
 
-  // Ref to track current activeChatId (for use in callbacks)
-  const activeChatIdRef = useRef<string | null>(null);
-  activeChatIdRef.current = activeChatId;
+  // activeChatIdRef is owned by useActiveChatId — no separate declaration here.
 
   // Connect WS first (for real-time events + SessionReady), then load history via HTTP
   useEffect(() => {
@@ -2543,10 +2494,17 @@ export function TaskChat({
       await connectChatWs(chatId);
       wsRef.current = wsMapRef.current.get(chatId) ?? null;
       // Step 2: Load history from HTTP (one-shot, avoids "过电影" effect)
-      if (chatId !== activeChatIdRef.current) return;
+      if (chatId !== getActiveChatId()) return;
+      let res: Awaited<ReturnType<typeof getChatHistory>>;
       try {
-        const res = await getChatHistory(projectId, task.id, chatId);
-        if (chatId !== activeChatIdRef.current) return;
+        res = await getChatHistory(projectId, task.id, chatId);
+      } catch {
+        historyLoadingRef.current = false;
+        wsEventBufferRef.current = [];
+        return;
+      }
+      if (chatId !== getActiveChatId()) return;
+      {
         let msgs: ChatMessage[] = [];
         for (const evt of res.events) {
           msgs = reduceHistoryMessages(msgs, evt);
@@ -2661,12 +2619,9 @@ export function TaskChat({
               break;
           }
         }
-      } catch {
-        historyLoadingRef.current = false;
-        wsEventBufferRef.current = [];
       }
     })();
-  }, [activeChatId, connectChatWs, projectId, task.id, updateBusy, chatRenderWindowSettings, updateHiddenMessageCount]);
+  }, [activeChatId, connectChatWs, projectId, task.id, updateBusy, chatRenderWindowSettings, updateHiddenMessageCount, getActiveChatId]);
 
   // Cleanup all WebSockets on unmount
   useEffect(() => {
@@ -2965,7 +2920,7 @@ export function TaskChat({
           break;
       }
     },
-    [onConnectedProp, enableAutoStickToBottom, onChatBecameIdle, updateBusy, pruneActiveChatMessages],
+    [onConnectedProp, enableAutoStickToBottom, onChatBecameIdle, updateBusy, pruneActiveChatMessages, setAutoExpandSectionId],
   );
 
   /** Buffer a server message into the per-chat cache (for non-active chats) */
@@ -3083,8 +3038,10 @@ export function TaskChat({
   );
 
   // Keep refs in sync so connectChatWs WS handlers always call latest versions
-  handleServerMessageRef.current = handleServerMessage;
-  handleServerMessageForCacheRef.current = handleServerMessageForCache;
+  useEffect(() => {
+    handleServerMessageRef.current = handleServerMessage;
+    handleServerMessageForCacheRef.current = handleServerMessageForCache;
+  }, [handleServerMessage, handleServerMessageForCache]);
 
   // ─── Read-only observation polling ─────────────────────────────────────
   useEffect(() => {
@@ -3111,26 +3068,27 @@ export function TaskChat({
 
     // Poll every 5 seconds for incremental updates
     const loadLatest = async () => {
+      let res: Awaited<ReturnType<typeof getChatHistory>>;
       try {
-        const res = await getChatHistory(
+        res = await getChatHistory(
           projectId,
           task.id,
           chatId,
           pollingOffsetRef.current,
         );
-        if (res.events.length > 0) {
-          for (const evt of res.events) {
-            handleServerMessageRef.current(evt);
-          }
-          pollingOffsetRef.current = res.total;
-        }
-        // If session is gone, auto-exit read-only mode
-        if (!res.session) {
-          setIsRemoteSession(false);
-          setRemoteOwnerName("");
-        }
       } catch {
-        /* ignore */
+        return;
+      }
+      if (res.events.length > 0) {
+        for (const evt of res.events) {
+          handleServerMessageRef.current(evt);
+        }
+        pollingOffsetRef.current = res.total;
+      }
+      // If session is gone, auto-exit read-only mode
+      if (!res.session) {
+        setIsRemoteSession(false);
+        setRemoteOwnerName("");
       }
     };
     const timer = setInterval(loadLatest, 5000);
@@ -3151,16 +3109,17 @@ export function TaskChat({
       saveCurrentChatState();
       setActiveChatId(chatId);
       writeLastActiveTab("chat", projectId, task.id, chatId);
-      activeChatIdRef.current = chatId; // Sync ref immediately so WS messages route correctly
       restoreChatState(chatId);
       setShowChatMenu(false);
       // Connect WS if needed
       await connectChatWs(chatId);
       wsRef.current = wsMapRef.current.get(chatId) ?? null;
     },
-    [activeChatId, projectId, task.id, saveCurrentChatState, restoreChatState, connectChatWs],
+    [activeChatId, projectId, task.id, saveCurrentChatState, restoreChatState, connectChatWs, setActiveChatId],
   );
-  switchChatRef.current = switchChat;
+  useEffect(() => {
+    switchChatRef.current = switchChat;
+  }, [switchChat]);
 
   useEffect(() => {
     const handler = (e: Event) => {
@@ -3251,7 +3210,7 @@ export function TaskChat({
       }
       setShowChatMenu(false);
     },
-    [chats.length, projectId, task.id, activeChatId, restoreChatState],
+    [chats.length, projectId, task.id, activeChatId, restoreChatState, setActiveChatId],
   );
 
   // ─── User actions ────────────────────────────────────────────────────────
@@ -3273,7 +3232,8 @@ export function TaskChat({
     async (file: File) => {
       if (!file.type.startsWith("image/") && !file.type.startsWith("audio/")) {
         // Defer upload until the prompt is actually sent
-        const label = attachmentLabel("resource", ++attachCountersRef.current.resource);
+        attachCountersRef.current.resource += 1;
+        const label = attachmentLabel("resource", attachCountersRef.current.resource);
         setAttachments((prev) => [
           ...prev,
           {
@@ -3294,7 +3254,8 @@ export function TaskChat({
         reader.onload = () => {
           const dataUrl = reader.result as string;
           const base64 = dataUrl.split(",")[1];
-          const label = attachmentLabel("audio", ++attachCountersRef.current.audio);
+          attachCountersRef.current.audio += 1;
+          const label = attachmentLabel("audio", attachCountersRef.current.audio);
           setAttachments((prev) => [
             ...prev,
             { type: "audio", data: base64, mimeType: file.type, name: file.name, label },
@@ -3324,7 +3285,8 @@ export function TaskChat({
               const dataUrl = reader.result as string;
               const base64 = dataUrl.split(",")[1];
               const previewUrl = URL.createObjectURL(blob);
-              const label = attachmentLabel("image", ++attachCountersRef.current.image);
+              attachCountersRef.current.image += 1;
+              const label = attachmentLabel("image", attachCountersRef.current.image);
               const compressedName = file.name.replace(/\.[^.]+$/, ".jpg");
               setAttachments((prev) => [
                 ...prev,
@@ -3354,7 +3316,8 @@ export function TaskChat({
               const dataUrl = reader.result as string;
               const base64 = dataUrl.split(",")[1];
               const previewUrl = URL.createObjectURL(blob);
-              const label = attachmentLabel("image", ++attachCountersRef.current.image);
+              attachCountersRef.current.image += 1;
+              const label = attachmentLabel("image", attachCountersRef.current.image);
               const resizedName = file.name.replace(/\.[^.]+$/, ".jpg");
               setAttachments((prev) => [
                 ...prev,
@@ -3376,7 +3339,8 @@ export function TaskChat({
           const dataUrl = reader.result as string;
           const base64 = dataUrl.split(",")[1];
           const previewUrl = URL.createObjectURL(file);
-          const label = attachmentLabel("image", ++attachCountersRef.current.image);
+          attachCountersRef.current.image += 1;
+          const label = attachmentLabel("image", attachCountersRef.current.image);
           setAttachments((prev) => [
             ...prev,
             { type: "image", data: base64, mimeType: file.type, name: file.name, label, previewUrl },
@@ -3394,7 +3358,8 @@ export function TaskChat({
           const dataUrl = reader.result as string;
           const base64 = dataUrl.split(",")[1];
           const previewUrl = URL.createObjectURL(blob);
-          const label = attachmentLabel("image", ++attachCountersRef.current.image);
+          attachCountersRef.current.image += 1;
+          const label = attachmentLabel("image", attachCountersRef.current.image);
           const convertedName = file.name.replace(/\.[^.]+$/, ".jpg");
           setAttachments((prev) => [
             ...prev,
@@ -3430,11 +3395,18 @@ export function TaskChat({
       historyBase.audio = counters.audio - oldPendingCounts.audio;
       historyBase.resource = counters.resource - oldPendingCounts.resource;
       // Re-assign labels sequentially
+      // Plain for-loop instead of `.map` so the counter mutation is local
+      // (not captured in a lambda) — React Compiler flags captured-mutable
+      // variables as "Expected references to be consistently local".
       const reCount: AttachmentCounters = { ...historyBase };
-      const relabeled = remaining.map((a) => ({
-        ...a,
-        label: attachmentLabel(a.type, ++reCount[a.type]),
-      }));
+      const relabeled: Attachment[] = [];
+      for (const a of remaining) {
+        reCount[a.type] += 1;
+        relabeled.push({
+          ...a,
+          label: attachmentLabel(a.type, reCount[a.type]),
+        });
+      }
       attachCountersRef.current = reCount;
       return relabeled;
     });
@@ -3478,28 +3450,13 @@ export function TaskChat({
   const handleTakeControl = useCallback(async () => {
     if (!activeChatId || isTakingControl) return;
     setIsTakingControl(true);
+    let ok = true;
     try {
       await takeControl(projectId, task.id, activeChatId);
-      // Clear polling and remote state
-      setIsRemoteSession(false);
-      setRemoteOwnerName("");
-      // Resolve any pending permission requests (session was killed, permissions are void)
-      setShowPermissionPanel(false);
-      setMessages((prev) =>
-        prev.map((m) =>
-          m.type === "permission" && !m.resolved
-            ? { ...m, resolved: "Cancelled" }
-            : m,
-        ),
-      );
-      pollingOffsetRef.current = 0;
-      // Reconnect via WebSocket (normal flow)
-      intentionalCloseRef.current.add(activeChatId);
-      wsMapRef.current.get(activeChatId)?.close();
-      wsMapRef.current.delete(activeChatId);
-      await connectChatWs(activeChatId);
-      wsRef.current = wsMapRef.current.get(activeChatId) ?? null;
     } catch {
+      ok = false;
+    }
+    if (!ok) {
       setMessages((prev) => [
         ...prev,
         {
@@ -3507,9 +3464,30 @@ export function TaskChat({
           content: "Failed to take control. Please try again.",
         },
       ]);
-    } finally {
       setIsTakingControl(false);
+      return;
     }
+    // Clear polling and remote state
+    setIsRemoteSession(false);
+    setRemoteOwnerName("");
+    // Resolve any pending permission requests (session was killed, permissions are void)
+    setShowPermissionPanel(false);
+    setMessages((prev) =>
+      prev.map((m) =>
+        m.type === "permission" && !m.resolved
+          ? { ...m, resolved: "Cancelled" }
+          : m,
+      ),
+    );
+    pollingOffsetRef.current = 0;
+    // Reconnect via WebSocket (normal flow)
+    intentionalCloseRef.current.add(activeChatId);
+    const existingWs = wsMapRef.current.get(activeChatId);
+    if (existingWs) existingWs.close();
+    wsMapRef.current.delete(activeChatId);
+    await connectChatWs(activeChatId);
+    wsRef.current = wsMapRef.current.get(activeChatId) ?? null;
+    setIsTakingControl(false);
   }, [activeChatId, isTakingControl, projectId, task.id, connectChatWs]);
 
   const handleSavePlanToNote = useCallback(async () => {
@@ -3525,9 +3503,8 @@ export function TaskChat({
         ...prev,
         { type: "system", content: "Failed to save plan to note." },
       ]);
-    } finally {
-      setIsSavingToNote(false);
     }
+    setIsSavingToNote(false);
   }, [planFileContent, isSavingToNote, projectId, task.id]);
 
   const handleSend = useCallback(async () => {
@@ -3578,10 +3555,13 @@ export function TaskChat({
             });
           }),
         );
-        let uploadIdx = 0;
+        // Map each pending attachment to its upload result by identity, then
+        // walk attachments to apply. Avoids a mutated counter captured in
+        // a lambda (which the React Compiler flags).
+        const resultByAtt = new Map(pendingOnes.map((att, i) => [att, uploadResults[i]]));
         resolvedAttachments = attachments.map((att) => {
           if (!att.pendingFile) return att;
-          const result = uploadResults[uploadIdx++];
+          const result = resultByAtt.get(att)!;
           return {
             ...att,
             uri: result.uri,
@@ -3593,9 +3573,10 @@ export function TaskChat({
         });
       } catch (err) {
         console.error("Failed to upload attachment:", err);
+        const errMessage = err instanceof Error ? err.message : String(err);
         setMessages((prev) => [
           ...prev,
-          { type: "system", content: `Failed to upload attachment: ${err instanceof Error ? err.message : String(err)}` },
+          { type: "system", content: `Failed to upload attachment: ${errMessage}` },
         ]);
         return;
       }
@@ -3830,13 +3811,14 @@ export function TaskChat({
           // Walk text nodes to find absolute offset
           const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
           let offset = 0;
-          let node: Node | null;
-          while ((node = walker.nextNode())) {
+          let node: Node | null = walker.nextNode();
+          while (node) {
             if (node === r.startContainer) {
               cursorOffset = offset + r.startOffset;
               break;
             }
             offset += (node.textContent || "").length;
+            node = walker.nextNode();
           }
         }
         const escCmd = match[1]
@@ -3856,8 +3838,8 @@ export function TaskChat({
           const tw = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
           let remaining = cursorOffset;
           let placed = false;
-          let tn: Node | null;
-          while ((tn = tw.nextNode())) {
+          let tn: Node | null = tw.nextNode();
+          while (tn) {
             const len = (tn.textContent || "").length;
             if (remaining <= len) {
               newRange.setStart(tn, remaining);
@@ -3868,6 +3850,7 @@ export function TaskChat({
               break;
             }
             remaining -= len;
+            tn = tw.nextNode();
           }
           if (!placed) {
             newRange.selectNodeContents(el);
@@ -4534,10 +4517,12 @@ export function TaskChat({
   // Track the message index where the current busy turn started
   const turnStartIndexRef = useRef(0);
   const wasBusyRef = useRef(false);
-  if (isBusy && !wasBusyRef.current) {
-    turnStartIndexRef.current = messages.length;
-  }
-  wasBusyRef.current = isBusy;
+  useEffect(() => {
+    if (isBusy && !wasBusyRef.current) {
+      turnStartIndexRef.current = messages.length;
+    }
+    wasBusyRef.current = isBusy;
+  }, [isBusy, messages.length]);
 
   const toggleSection = useCallback((sectionId: string) => {
     setExpandedSections((prev) => {

@@ -31,7 +31,6 @@ export function useTypewriter(
     const prev = targetRef.current;
     targetRef.current = target;
     if (target.length > 0 && !target.startsWith(prev.slice(0, Math.min(prev.length, target.length)))) {
-      /* eslint-disable-next-line react-hooks/set-state-in-effect */
       setRevealed(0);
     }
   }, [target]);

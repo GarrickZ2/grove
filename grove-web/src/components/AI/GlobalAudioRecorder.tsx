@@ -108,7 +108,9 @@ export function GlobalAudioRecorder({ projectId }: GlobalAudioRecorderProps) {
   });
 
   const recorderRef = useRef(recorder);
-  recorderRef.current = recorder;
+  useEffect(() => {
+    recorderRef.current = recorder;
+  });
 
   // Load audio settings (on mount, projectId change, or after settings saved)
   const fetchSettings = useCallback(() => {
@@ -170,39 +172,49 @@ export function GlobalAudioRecorder({ projectId }: GlobalAudioRecorderProps) {
 
     setErrorMessage(null);
     setTranscribing(true);
+    const projectArg = projectId ?? undefined;
+    let result: Awaited<ReturnType<typeof transcribeAudio>> | null = null;
+    let transcribeErr: unknown = null;
     try {
-      const result = await transcribeAudio(blob, projectId ?? undefined, controller.signal);
-      if (controller.signal.aborted) return;
-
-      const text = result.final;
-
-      // 1. Copy to clipboard as fallback
-      try { await navigator.clipboard.writeText(text); } catch { /* ignore */ }
-
-      // 2. Insert into previously active element
-      const el = activeElementRef.current;
-      if (el && (el instanceof HTMLTextAreaElement || el instanceof HTMLInputElement)) {
-        insertTextIntoInput(el, text);
-      } else if (el && (el as HTMLElement).isContentEditable) {
-        insertTextIntoContentEditable(el as HTMLElement, text);
-      }
+      result = await transcribeAudio(blob, projectArg, controller.signal);
     } catch (err) {
+      transcribeErr = err;
+    }
+    if (transcribeErr !== null) {
       if (!controller.signal.aborted) {
         // Surface as much detail as the backend gave us. Generic
         // "Transcription failed" hides whether the cause was a missing
         // provider config (400), upstream API outage (502), oversized
         // payload (413), or anything else — and that distinction is
         // exactly what the user needs to fix their setup.
-        const msg = formatTranscribeError(err);
-        console.error("[audio] transcribe failed:", err);
+        const msg = formatTranscribeError(transcribeErr);
+        console.error("[audio] transcribe failed:", transcribeErr);
         setErrorMessage(msg);
       }
-    } finally {
       // Clear transcribing even on abort so the indicator can transition
       // out of "processing" — otherwise a cancel would leave the spinner
       // stuck and block the next recording's status calculation.
       setTranscribing(false);
+      return;
     }
+    if (controller.signal.aborted || !result) {
+      setTranscribing(false);
+      return;
+    }
+
+    const text = result.final;
+
+    // 1. Copy to clipboard as fallback
+    try { await navigator.clipboard.writeText(text); } catch { /* ignore */ }
+
+    // 2. Insert into previously active element
+    const el = activeElementRef.current;
+    if (el && (el instanceof HTMLTextAreaElement || el instanceof HTMLInputElement)) {
+      insertTextIntoInput(el, text);
+    } else if (el && (el as HTMLElement).isContentEditable) {
+      insertTextIntoContentEditable(el as HTMLElement, text);
+    }
+    setTranscribing(false);
   }, [projectId]);
 
   // Toggle mode: stop and process

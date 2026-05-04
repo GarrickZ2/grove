@@ -224,23 +224,29 @@ export function useTaskOperations(
   const handleCommitSubmit = useCallback(
     async (message: string) => {
       if (!projectId || !selectedTask) return;
+      setIsCommitting(true);
+      setCommitError(null);
+      let result: Awaited<ReturnType<typeof apiCommitTask>> | null = null;
+      let err: unknown = null;
       try {
-        setIsCommitting(true);
-        setCommitError(null);
-        const result = await apiCommitTask(projectId, selectedTask.id, message);
+        result = await apiCommitTask(projectId, selectedTask.id, message);
+      } catch (e) {
+        err = e;
+      }
+      if (err) {
+        console.error("Failed to commit:", err);
+        setCommitError("Failed to commit changes");
+      } else if (result) {
         if (result.success) {
           onShowMessage("Changes committed successfully");
           setShowCommitDialog(false);
           await onRefresh();
         } else {
-          setCommitError(result.message || "Commit failed");
+          const msg = result.message || "Commit failed";
+          setCommitError(msg);
         }
-      } catch (err) {
-        console.error("Failed to commit:", err);
-        setCommitError("Failed to commit changes");
-      } finally {
-        setIsCommitting(false);
       }
+      setIsCommitting(false);
     },
     [projectId, selectedTask, onRefresh, onShowMessage]
   );
@@ -254,75 +260,101 @@ export function useTaskOperations(
   const handleMerge = useCallback(async () => {
     if (!projectId || !selectedTask || isMerging) return;
 
+    let commitsRes: Awaited<ReturnType<typeof apiGetCommits>> | null = null;
+    let commitsErr: unknown = null;
     try {
-      // Get commit count (TUI: open_merge_dialog)
-      const commitsRes = await apiGetCommits(projectId, selectedTask.id);
-      const commitCount = commitsRes.total;
-
-      if (commitCount <= 1) {
-        // Only 1 commit, merge directly with merge-commit method (TUI logic)
-        setIsMerging(true);
-        const result = await apiMergeTask(projectId, selectedTask.id, "merge-commit");
-        setIsMerging(false);
-
-        if (result.success) {
-          onShowMessage(result.warning
-            ? `${result.message} ⚠️ ${result.warning}`
-            : (result.message || "Merged successfully"));
-          await onRefresh();
-          // Trigger post-merge archive
-          onTaskMerged?.(selectedTask.id, selectedTask.name);
-        } else {
-          const dirty = parseDirtyBranchError(result.message || "", "Merge", selectedTask.branch);
-          if (dirty) {
-            setDirtyBranchError(dirty);
-          } else {
-            onShowMessage(result.message || "Merge failed");
-          }
-        }
-      } else {
-        // Multiple commits, show dialog to choose method
-        setMergeError(null);
-        setShowMergeDialog(true);
-      }
+      commitsRes = await apiGetCommits(projectId, selectedTask.id);
     } catch (err) {
-      console.error("Failed to get commits:", err);
-      // Fallback: show merge dialog
+      commitsErr = err;
+    }
+
+    if (commitsErr || !commitsRes) {
+      console.error("Failed to get commits:", commitsErr);
       setMergeError(null);
       setShowMergeDialog(true);
+      return;
+    }
+
+    const commitCount = commitsRes.total;
+    if (commitCount > 1) {
+      // Multiple commits, show dialog to choose method
+      setMergeError(null);
+      setShowMergeDialog(true);
+      return;
+    }
+
+    // Only 1 commit, merge directly with merge-commit method (TUI logic)
+    setIsMerging(true);
+    let result: Awaited<ReturnType<typeof apiMergeTask>> | null = null;
+    let mergeErr: unknown = null;
+    try {
+      result = await apiMergeTask(projectId, selectedTask.id, "merge-commit");
+    } catch (err) {
+      mergeErr = err;
+    }
+    setIsMerging(false);
+
+    if (mergeErr || !result) {
+      console.error("Failed to get commits:", mergeErr);
+      setMergeError(null);
+      setShowMergeDialog(true);
+      return;
+    }
+
+    if (result.success) {
+      const baseMsg = result.message || "Merged successfully";
+      const finalMsg = result.warning ? `${result.message} ⚠️ ${result.warning}` : baseMsg;
+      onShowMessage(finalMsg);
+      await onRefresh();
+      // Trigger post-merge archive
+      onTaskMerged?.(selectedTask.id, selectedTask.name);
+    } else {
+      const errMsg = result.message || "";
+      const dirty = parseDirtyBranchError(errMsg, "Merge", selectedTask.branch);
+      if (dirty) {
+        setDirtyBranchError(dirty);
+      } else {
+        onShowMessage(errMsg || "Merge failed");
+      }
     }
   }, [projectId, selectedTask, isMerging, onRefresh, onShowMessage, onTaskMerged]);
 
   const handleMergeSubmit = useCallback(
     async (method: "squash" | "merge-commit") => {
       if (!projectId || !selectedTask || isMerging) return;
+      setIsMerging(true);
+      setMergeError(null);
+      let result: Awaited<ReturnType<typeof apiMergeTask>> | null = null;
+      let err: unknown = null;
       try {
-        setIsMerging(true);
-        setMergeError(null);
-        const result = await apiMergeTask(projectId, selectedTask.id, method);
+        result = await apiMergeTask(projectId, selectedTask.id, method);
+      } catch (e) {
+        err = e;
+      }
+      if (err) {
+        console.error("Failed to merge:", err);
+        setMergeError("Failed to merge task");
+      } else if (result) {
         if (result.success) {
-          onShowMessage(result.warning
-            ? `${result.message} ⚠️ ${result.warning}`
-            : (result.message || "Merged successfully"));
+          const baseMsg = result.message || "Merged successfully";
+          const finalMsg = result.warning ? `${result.message} ⚠️ ${result.warning}` : baseMsg;
+          onShowMessage(finalMsg);
           setShowMergeDialog(false);
           await onRefresh();
           // Trigger post-merge archive
           onTaskMerged?.(selectedTask.id, selectedTask.name);
         } else {
-          const dirty = parseDirtyBranchError(result.message || "", "Merge", selectedTask.branch);
+          const errMsg = result.message || "";
+          const dirty = parseDirtyBranchError(errMsg, "Merge", selectedTask.branch);
           if (dirty) {
             setShowMergeDialog(false);
             setDirtyBranchError(dirty);
           } else {
-            setMergeError(result.message || "Merge failed");
+            setMergeError(errMsg || "Merge failed");
           }
         }
-      } catch (err) {
-        console.error("Failed to merge:", err);
-        setMergeError("Failed to merge task");
-      } finally {
-        setIsMerging(false);
       }
+      setIsMerging(false);
     },
     [projectId, selectedTask, isMerging, onRefresh, onShowMessage, onTaskMerged]
   );
@@ -335,51 +367,61 @@ export function useTaskOperations(
   // --- Archive handlers ---
   const handleArchive = useCallback(async () => {
     if (!projectId || !selectedTask) return;
+    let err: unknown = null;
     try {
       await apiArchiveTask(projectId, selectedTask.id);
       await onRefresh();
-      onTaskArchived?.();
-    } catch (err) {
-      if (!setPendingArchiveConfirm) {
-        console.error("Failed to archive task:", err);
-        onShowMessage("Failed to archive task");
-        return;
-      }
+    } catch (e) {
+      err = e;
+    }
+    if (!err) {
+      if (onTaskArchived) onTaskArchived();
+      return;
+    }
+    if (!setPendingArchiveConfirm) {
+      console.error("Failed to archive task:", err);
+      onShowMessage("Failed to archive task");
+      return;
+    }
 
-      const needsConfirm = handleArchiveError(
-        err,
-        projectId,
-        selectedTask.id,
-        selectedTask.name,
-        "normal",
-        buildArchiveConfirmMessage,
-        setPendingArchiveConfirm,
-        onShowMessage
-      );
+    const needsConfirm = handleArchiveError(
+      err,
+      projectId,
+      selectedTask.id,
+      selectedTask.name,
+      "normal",
+      buildArchiveConfirmMessage,
+      setPendingArchiveConfirm,
+      onShowMessage
+    );
 
-      if (!needsConfirm) {
-        console.error("Failed to archive task:", err);
-      }
+    if (!needsConfirm) {
+      console.error("Failed to archive task:", err);
     }
   }, [projectId, selectedTask, onRefresh, onTaskArchived, setPendingArchiveConfirm, onShowMessage]);
 
   const handleArchiveConfirm = useCallback(
     async (pendingConfirm: PendingArchiveConfirm | null) => {
       if (!pendingConfirm || !setPendingArchiveConfirm) return;
+      let err: unknown = null;
       try {
         await apiArchiveTask(pendingConfirm.projectId, pendingConfirm.taskId, {
           force: true,
         });
         await onRefresh();
+      } catch (e) {
+        err = e;
+      }
+      if (err) {
+        const apiErr = err as ApiError;
+        console.error("Failed to archive task:", err);
+        const msg = apiErr?.message || "Failed to archive task";
+        onShowMessage(msg);
+      } else {
         onShowMessage("Task archived");
         onTaskArchived?.();
-      } catch (err) {
-        const e = err as ApiError;
-        console.error("Failed to archive task:", err);
-        onShowMessage(e?.message || "Failed to archive task");
-      } finally {
-        setPendingArchiveConfirm(null);
       }
+      setPendingArchiveConfirm(null);
     },
     [onRefresh, onShowMessage, onTaskArchived, setPendingArchiveConfirm]
   );
@@ -396,26 +438,32 @@ export function useTaskOperations(
   // --- Sync handler ---
   const handleSync = useCallback(async () => {
     if (!projectId || !selectedTask || isSyncing) return;
+    setIsSyncing(true);
+    let result: Awaited<ReturnType<typeof apiSyncTask>> | null = null;
+    let err: unknown = null;
     try {
-      setIsSyncing(true);
-      const result = await apiSyncTask(projectId, selectedTask.id);
+      result = await apiSyncTask(projectId, selectedTask.id);
+    } catch (e) {
+      err = e;
+    }
+    if (err) {
+      console.error("Failed to sync:", err);
+      onShowMessage("Failed to sync task");
+    } else if (result) {
+      const msg = result.message || "";
       if (result.success) {
-        onShowMessage(result.message || "Synced successfully");
+        onShowMessage(msg || "Synced successfully");
         await onRefresh();
       } else {
-        const dirty = parseDirtyBranchError(result.message || "", "Sync", selectedTask.branch);
+        const dirty = parseDirtyBranchError(msg, "Sync", selectedTask.branch);
         if (dirty) {
           setDirtyBranchError(dirty);
         } else {
-          onShowMessage(result.message || "Sync failed");
+          onShowMessage(msg || "Sync failed");
         }
       }
-    } catch (err) {
-      console.error("Failed to sync:", err);
-      onShowMessage("Failed to sync task");
-    } finally {
-      setIsSyncing(false);
     }
+    setIsSyncing(false);
   }, [projectId, selectedTask, isSyncing, onRefresh, onShowMessage]);
 
   // --- Rebase handlers ---
@@ -435,26 +483,35 @@ export function useTaskOperations(
   const handleRebaseSubmit = useCallback(
     async (newTarget: string) => {
       if (!projectId || !selectedTask || isRebasing) return;
+      setIsRebasing(true);
+      let result: Awaited<ReturnType<typeof apiRebaseToTask>> | null = null;
+      let err: unknown = null;
       try {
-        setIsRebasing(true);
-        const result = await apiRebaseToTask(projectId, selectedTask.id, newTarget);
+        result = await apiRebaseToTask(projectId, selectedTask.id, newTarget);
+      } catch (e) {
+        err = e;
+      }
+      if (err) {
+        console.error("Failed to rebase:", err);
+        let errorMessage: string;
+        if (err instanceof Error) {
+          errorMessage = err.message;
+        } else {
+          const fallback = (err as { message?: string })?.message;
+          errorMessage = fallback || "Failed to change target branch";
+        }
+        onShowMessage(errorMessage);
+      } else if (result) {
+        const msg = result.message || "";
         if (result.success) {
-          onShowMessage(result.message || "Target branch changed");
+          onShowMessage(msg || "Target branch changed");
           setShowRebaseDialog(false);
           await onRefresh();
         } else {
-          onShowMessage(result.message || "Failed to change target branch");
+          onShowMessage(msg || "Failed to change target branch");
         }
-      } catch (err) {
-        console.error("Failed to rebase:", err);
-        const errorMessage =
-          err instanceof Error
-            ? err.message
-            : (err as { message?: string })?.message || "Failed to change target branch";
-        onShowMessage(errorMessage);
-      } finally {
-        setIsRebasing(false);
       }
+      setIsRebasing(false);
     },
     [projectId, selectedTask, isRebasing, onRefresh, onShowMessage]
   );
@@ -470,26 +527,35 @@ export function useTaskOperations(
 
   const handleResetConfirm = useCallback(async () => {
     if (!projectId || !selectedTask || isResetting) return;
+    setIsResetting(true);
+    let result: Awaited<ReturnType<typeof apiResetTask>> | null = null;
+    let err: unknown = null;
     try {
-      setIsResetting(true);
-      const result = await apiResetTask(projectId, selectedTask.id);
+      result = await apiResetTask(projectId, selectedTask.id);
+    } catch (e) {
+      err = e;
+    }
+    if (err) {
+      console.error("Failed to reset task:", err);
+      let errorMessage: string;
+      if (err instanceof Error) {
+        errorMessage = err.message;
+      } else {
+        const fallback = (err as { message?: string })?.message;
+        errorMessage = fallback || "Failed to reset task";
+      }
+      onShowMessage(errorMessage);
+    } else if (result) {
+      const msg = result.message || "";
       if (result.success) {
-        onShowMessage(result.message || "Task reset successfully");
+        onShowMessage(msg || "Task reset successfully");
         await onRefresh();
       } else {
-        onShowMessage(result.message || "Reset failed");
+        onShowMessage(msg || "Reset failed");
       }
-    } catch (err) {
-      console.error("Failed to reset task:", err);
-      const errorMessage =
-        err instanceof Error
-          ? err.message
-          : (err as { message?: string })?.message || "Failed to reset task";
-      onShowMessage(errorMessage);
-    } finally {
-      setIsResetting(false);
-      setShowResetConfirm(false);
     }
+    setIsResetting(false);
+    setShowResetConfirm(false);
   }, [projectId, selectedTask, isResetting, onRefresh, onShowMessage]);
 
   const handleResetCancel = useCallback(() => {
@@ -503,19 +569,23 @@ export function useTaskOperations(
 
   const handleCleanConfirm = useCallback(async () => {
     if (!projectId || !selectedTask || isDeleting) return;
+    setIsDeleting(true);
+    let err: unknown = null;
     try {
-      setIsDeleting(true);
       await apiDeleteTask(projectId, selectedTask.id);
       await onRefresh();
-      onShowMessage("Task deleted successfully");
-      onTaskArchived?.();
-    } catch (err) {
+    } catch (e) {
+      err = e;
+    }
+    if (err) {
       console.error("Failed to delete task:", err);
       onShowMessage("Failed to delete task");
-    } finally {
-      setIsDeleting(false);
-      setShowCleanConfirm(false);
+    } else {
+      onShowMessage("Task deleted successfully");
+      if (onTaskArchived) onTaskArchived();
     }
+    setIsDeleting(false);
+    setShowCleanConfirm(false);
   }, [projectId, selectedTask, isDeleting, onRefresh, onShowMessage, onTaskArchived]);
 
   const handleCleanCancel = useCallback(() => {

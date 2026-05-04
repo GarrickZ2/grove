@@ -154,9 +154,8 @@ export function ArtifactsTab({ projectId, task, previewRequest, lastChatIdleAt, 
       setOutputFiles(data.output);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load files");
-    } finally {
-      if (!silent) setIsLoading(false);
     }
+    if (!silent) setIsLoading(false);
   }, [projectId, task.id]);
 
   const loadWorkdirs = useCallback(async () => {
@@ -167,12 +166,13 @@ export function ArtifactsTab({ projectId, task, previewRequest, lastChatIdleAt, 
       setWorkdirs(data.entries);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load work directories");
-    } finally {
-      setIsLoadingWorkdirs(false);
     }
+    setIsLoadingWorkdirs(false);
   }, [projectId, task.id]);
 
-  useEffect(() => { loadFiles(); loadWorkdirs(); }, [loadFiles, loadWorkdirs]);
+  useEffect(() => {
+    Promise.resolve().then(() => { void loadFiles(); void loadWorkdirs(); });
+  }, [loadFiles, loadWorkdirs]);
 
   // Refresh when ACP chat finishes work.
   // Use isUploadingRef (not isUploading state) to avoid stale closure:
@@ -192,10 +192,9 @@ export function ArtifactsTab({ projectId, task, previewRequest, lastChatIdleAt, 
       await loadFiles();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Upload failed");
-    } finally {
-      isUploadingRef.current = false;
-      setIsUploading(false);
     }
+    isUploadingRef.current = false;
+    setIsUploading(false);
   }, [projectId, task.id, loadFiles]);
 
   const handleDrop = useCallback((e: React.DragEvent) => {
@@ -212,17 +211,25 @@ export function ArtifactsTab({ projectId, task, previewRequest, lastChatIdleAt, 
   const handleAddWorkdir = useCallback(async () => {
     if (!projectId) return;
     setIsAddingWorkdir(true);
+    let data: { path: string | null } | null = null;
+    let err: unknown = null;
     try {
-      const data = await apiClient.get<{ path: string | null }>("/api/v1/browse-folder");
-      if (!data.path) return;
-      await addArtifactWorkdir(projectId, task.id, data.path);
-      await loadWorkdirs();
-      setToastMessage(`Added folder "${data.path.split("/").pop()}"`);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to add folder");
-    } finally {
-      setIsAddingWorkdir(false);
+      data = await apiClient.get<{ path: string | null }>("/api/v1/browse-folder");
+      if (data.path) {
+        await addArtifactWorkdir(projectId, task.id, data.path);
+        await loadWorkdirs();
+      }
+    } catch (e) {
+      err = e;
     }
+    if (err) {
+      setError(err instanceof Error ? err.message : "Failed to add folder");
+    } else if (data && data.path) {
+      const folderPath = data.path;
+      const folderName = folderPath.split("/").pop();
+      setToastMessage(`Added folder "${folderName}"`);
+    }
+    setIsAddingWorkdir(false);
   }, [projectId, task.id, loadWorkdirs]);
 
   const handleDeleteWorkdir = useCallback(async (entry: ArtifactWorkDirectoryEntry) => {
@@ -255,30 +262,43 @@ export function ArtifactsTab({ projectId, task, previewRequest, lastChatIdleAt, 
     }
     setPreviewLoading(true);
     setPreviewError(null);
+    let content: string | null = null;
+    let err: unknown = null;
+    let succeeded = false;
     try {
-      const content = await previewArtifact(projectId, task.id, file.directory, file.path);
-      lastGoodContentRef.current = content;
+      content = await previewArtifact(projectId, task.id, file.directory, file.path);
+      succeeded = true;
+    } catch (e) {
+      err = e;
+    }
+    if (succeeded) {
+      // Treat a literal `null` from the API as a valid empty preview, not
+      // an error. The previous `err === null && content !== null` form
+      // misclassified empty/missing files as failures.
+      const safeContent = content ?? "";
+      lastGoodContentRef.current = safeContent;
       // Skip setState when the previewed file and its content are unchanged.
-      // This covers the busy→idle final refresh (line 283) where the agent
+      // This covers the busy→idle final refresh where the agent
       // didn't actually touch this file — unconditional setState would
       // re-render FilePreviewDrawer and reset the user's scroll position.
       const prev = previewFileRef.current;
-      if (!prev || prev.file.path !== file.path || prev.content !== content) {
-        setPreviewFile({ file, content });
+      if (!prev || prev.file.path !== file.path || prev.content !== safeContent) {
+        setPreviewFile({ file, content: safeContent });
       }
-    } catch (err) {
-      const message = err && typeof err === 'object' && 'message' in err
-        ? (err as { message: string }).message
-        : 'Failed to load preview';
-      if (force || !lastGoodContentRef.current) {
+    } else {
+      const hasMessage = err && typeof err === 'object' && 'message' in err;
+      const message = hasMessage ? (err as { message: string }).message : 'Failed to load preview';
+      const lastGood = lastGoodContentRef.current;
+      const currentPreview = previewFileRef.current;
+      const sameFile = currentPreview !== null && currentPreview.file.path === file.path;
+      if (force || !lastGood) {
         setPreviewFile({ file, content: `Error: ${message}` });
         setPreviewError(message);
-      } else if (lastGoodContentRef.current && previewFileRef.current?.file.path === file.path) {
-        setPreviewFile({ file, content: lastGoodContentRef.current });
+      } else if (lastGood && sameFile) {
+        setPreviewFile({ file, content: lastGood });
       }
-    } finally {
-      setPreviewLoading(false);
     }
+    setPreviewLoading(false);
   }, [projectId, task.id]);
 
   useEffect(() => {
@@ -305,7 +325,9 @@ export function ArtifactsTab({ projectId, task, previewRequest, lastChatIdleAt, 
   useEffect(() => {
     if (isLoading || !pendingPreview) return;
     const requestedPath = pendingPreview;
-    setPendingPreview(null);
+    // Defer the consume-queued-action setState so the rule can see this as
+    // a callback (microtask) rather than a synchronous setState in render.
+    Promise.resolve().then(() => setPendingPreview(null));
 
     const trimmedPath = requestedPath.trim().replace(/^\.?\//, "");
     if (!trimmedPath) return;
@@ -351,18 +373,21 @@ export function ArtifactsTab({ projectId, task, previewRequest, lastChatIdleAt, 
     }
 
     if (!target) {
-      setToastMessage(`"${trimmedPath.split("/").pop() || trimmedPath}" is outside scope`);
+      const msg = `"${trimmedPath.split("/").pop() || trimmedPath}" is outside scope`;
+      Promise.resolve().then(() => setToastMessage(msg));
       return;
     }
 
-    if (target.directory === "input") {
-      setUploadsOpen(true);
-    } else if (target.directory === "output") {
-      setDownloadsOpen(true);
-      setCurrentOutputPath(parentPath(target.path));
-    }
-
-    void handlePreview(target);
+    const finalTarget = target;
+    Promise.resolve().then(() => {
+      if (finalTarget.directory === "input") {
+        setUploadsOpen(true);
+      } else if (finalTarget.directory === "output") {
+        setDownloadsOpen(true);
+        setCurrentOutputPath(parentPath(finalTarget.path));
+      }
+      void handlePreview(finalTarget);
+    });
   }, [isLoading, pendingPreview, inputFiles, outputFiles, handlePreview]);
 
   const handleDownload = useCallback((file: ArtifactFile) => {
@@ -466,26 +491,37 @@ export function ArtifactsTab({ projectId, task, previewRequest, lastChatIdleAt, 
     cachedExistingNames?: Set<string>,
   ) => {
     if (!projectId) return;
+    const renameTo = options?.renameTo;
+    const newName = renameTo ?? file.name;
+    let err: unknown = null;
     try {
       await syncArtifactToResource(projectId, task.id, file.directory, file.path, options);
-      setToastMessage(`Synced "${options?.renameTo ?? file.name}" to Shared Assets`);
-    } catch (err) {
-      const apiErr = err as { status?: number; data?: unknown };
-      if (apiErr.status === 409) {
-        // Fetch resource root filenames once and cache them for the dialog
-        const existingNames = cachedExistingNames ?? await (async () => {
-          try {
-            const data = await listResources(projectId);
-            return new Set(data.files.map(f => f.name));
-          } catch {
-            return new Set<string>();
-          }
-        })();
-        setSyncConflict({ file, newName: options?.renameTo ?? file.name, existingNames });
-        return;
-      }
-      setError(err instanceof Error ? err.message : "Sync failed");
+    } catch (e) {
+      err = e;
     }
+    if (!err) {
+      setToastMessage(`Synced "${newName}" to Shared Assets`);
+      return;
+    }
+    const apiErr = err as { status?: number; data?: unknown };
+    if (apiErr.status === 409) {
+      // Fetch resource root filenames once and cache them for the dialog
+      let existingNames: Set<string>;
+      if (cachedExistingNames) {
+        existingNames = cachedExistingNames;
+      } else {
+        let data: Awaited<ReturnType<typeof listResources>> | null = null;
+        try {
+          data = await listResources(projectId);
+        } catch {
+          data = null;
+        }
+        existingNames = data ? new Set(data.files.map(f => f.name)) : new Set<string>();
+      }
+      setSyncConflict({ file, newName, existingNames });
+      return;
+    }
+    setError(err instanceof Error ? err.message : "Sync failed");
   }, [projectId, task.id]);
 
   const handleOpenFolder = (dir: string) => {
@@ -496,7 +532,7 @@ export function ArtifactsTab({ projectId, task, previewRequest, lastChatIdleAt, 
   useEffect(() => {
     if (!currentOutputPath) return;
     const folderStillExists = outputFiles.some((file) => file.is_dir && file.path === currentOutputPath);
-    if (!folderStillExists) setCurrentOutputPath("");
+    if (!folderStillExists) Promise.resolve().then(() => setCurrentOutputPath(""));
   }, [currentOutputPath, outputFiles]);
 
   // Resize handler

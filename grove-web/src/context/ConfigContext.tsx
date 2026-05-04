@@ -20,29 +20,33 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
 
   const loadConfig = async () => {
     setLoading(true);
+    let cfg: Config | null = null;
     try {
-      const cfg = await getConfig();
+      cfg = await getConfig();
       setConfig(cfg);
-      return cfg;
     } catch (error) {
       console.error('Failed to load config:', error);
-      return null;
-    } finally {
-      setLoading(false);
+      cfg = null;
     }
+    setLoading(false);
+    return cfg;
   };
 
   const checkAvailability = useCallback(async (cfg: Config | null) => {
+    let envResult: Awaited<ReturnType<typeof checkAllDependencies>> | null = null;
     try {
-      const envResult = await checkAllDependencies();
-      // Terminal: direct mode always available, or tmux/zellij installed
-      const isDirectMode = cfg?.web?.terminal_mode === 'direct';
-      const tmux = envResult.dependencies.find(d => d.name === 'tmux')?.installed ?? false;
-      const zellij = envResult.dependencies.find(d => d.name === 'zellij')?.installed ?? false;
-      setTerminalAvailable(isDirectMode || tmux || zellij);
+      envResult = await checkAllDependencies();
     } catch {
       // On error, keep defaults
     }
+    if (!envResult) return;
+    // Terminal: direct mode always available, or tmux/zellij installed
+    const isDirectMode = cfg?.web?.terminal_mode === 'direct';
+    const tmuxDep = envResult.dependencies.find(d => d.name === 'tmux');
+    const zellijDep = envResult.dependencies.find(d => d.name === 'zellij');
+    const tmux = tmuxDep?.installed ?? false;
+    const zellij = zellijDep?.installed ?? false;
+    setTerminalAvailable(isDirectMode || tmux || zellij);
   }, []);
 
   const updateAvailability = useCallback((terminal: boolean) => {
@@ -60,7 +64,10 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
   }, [checkAvailability]);
 
   useEffect(() => {
-    loadConfig().then(cfg => checkAvailability(cfg));
+    void (async () => {
+      const cfg = await loadConfig();
+      await checkAvailability(cfg);
+    })();
   }, [checkAvailability]);
 
   return (

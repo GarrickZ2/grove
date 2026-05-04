@@ -1,7 +1,7 @@
 import { useState, useRef, useCallback, useEffect, forwardRef, useImperativeHandle } from 'react';
 import { createPortal } from 'react-dom';
 import { Layout, Model, TabNode, Actions, DockLocation, TabSetNode, BorderNode, Node as FlexNode } from 'flexlayout-react';
-import type { IJsonModel, ITabRenderValues, ITabSetRenderValues, IJsonRowNode, IJsonTabSetNode, IJsonTabNode } from 'flexlayout-react';
+import type { IJsonModel, ITabRenderValues, ITabSetRenderValues } from 'flexlayout-react';
 import {
   Terminal, MessageSquare, Code, FileCode, BarChart3, GitBranch, FileText,
   MessageCircle, X, XCircle, Trash2,
@@ -24,6 +24,20 @@ import { SketchPage } from '../../Studio/SketchPage';
 import { OPEN_SKETCH_EVENT, type OpenSketchDetail } from '../../ui/sketchChipCache';
 import { ContextMenu, type ContextMenuItem } from '../../ui/ContextMenu';
 import { useConfig, useProject } from '../../../context';
+
+// Strip transient `maximized` flag from any tabset node (recursive). Defined
+// at module scope so it can be reused from both the lazy initializer and the
+// model-change handler without sharing closure state.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function stripMaximizedNodes(node: any): void {
+  if (!node) return;
+  if (node.type === 'tabset' && node.maximized) {
+    delete node.maximized;
+  }
+  if (node.children) {
+    node.children.forEach(stripMaximizedNodes);
+  }
+}
 
 // --- TabBar Dropdown Menu ---
 interface DropdownItem {
@@ -212,19 +226,53 @@ export const FlexLayoutContainer = forwardRef<
   const { selectedProject } = useProject();
   const isStudio = selectedProject?.projectType === 'studio';
 
-  // Panel instance counters
-  const instanceCounters = useRef<Record<PanelType, number>>({
-    terminal: 0,
-    chat: 0,
-    review: 0,
-    editor: 0,
-    graph: 0,
-    stats: 0,
-    git: 0,
-    notes: 0,
-    comments: 0,
-    artifacts: 0,
-    sketch: 0,
+  const layoutStorageKey = `grove-flexlayout-${projectId}-${task.id}`;
+
+  // Compute the initial layout once. Doing this in a lazy useState
+  // initializer means we never read or write a ref during render (which
+  // the React Compiler disallows).
+  const [initialLayoutJson] = useState<IJsonModel>(() => {
+    const loadSaved = (): IJsonModel | null => {
+      let raw: string | null = null;
+      try {
+        raw = localStorage.getItem(layoutStorageKey);
+      } catch (error) {
+        console.error('Failed to read saved layout:', error);
+        return null;
+      }
+      if (!raw) return null;
+      let json: IJsonModel;
+      try {
+        json = JSON.parse(raw) as IJsonModel;
+      } catch (error) {
+        console.error('Failed to parse saved layout:', error);
+        return null;
+      }
+      stripMaximizedNodes(json.layout);
+      return json;
+    };
+    const defaultLayout: IJsonModel = {
+      global: {
+        tabEnableClose: true,
+        tabEnableRename: false,
+        tabSetEnableDeleteWhenEmpty: true,
+        tabSetEnableDrop: true,
+        tabSetEnableDrag: true,
+        tabSetEnableDivide: true,
+        tabSetEnableMaximize: false,
+        splitterSize: 4,
+      },
+      borders: [],
+      layout: {
+        type: 'row',
+        weight: 100,
+        children: [],
+      },
+    };
+    if (initialLayout) return initialLayout;
+    const fromSaved = loadSaved();
+    if (fromSaved) return fromSaved;
+    return defaultLayout;
   });
 
   // Get panel label
@@ -245,26 +293,6 @@ export const FlexLayoutContainer = forwardRef<
     return labels[type];
   }, []);
 
-  // Create default layout — empty, user chooses what to open
-  const createDefaultLayout = (): IJsonModel => ({
-    global: {
-      tabEnableClose: true,
-      tabEnableRename: false,
-      tabSetEnableDeleteWhenEmpty: true,
-      tabSetEnableDrop: true,
-      tabSetEnableDrag: true,
-      tabSetEnableDivide: true,
-      tabSetEnableMaximize: false,
-      splitterSize: 4,
-    },
-    borders: [],
-    layout: {
-      type: 'row',
-      weight: 100,
-      children: [],
-    },
-  });
-
   // Create tab node
   const createTabNode = useCallback((type: PanelType, instanceNumber: number) => {
     const id = `${type}-${instanceNumber}`;
@@ -280,57 +308,8 @@ export const FlexLayoutContainer = forwardRef<
     };
   }, [getPanelLabel]);
 
-  const layoutStorageKey = `grove-flexlayout-${projectId}-${task.id}`;
-  // Load saved layout from localStorage
-  const loadSavedLayout = (): IJsonModel | null => {
-    try {
-      const saved = localStorage.getItem(layoutStorageKey);
-      if (saved) {
-        const json = JSON.parse(saved) as IJsonModel;
-        // Strip any persisted maximized state (transient, not saved).
-        // Must recurse into nested rows/tabsets for split layouts.
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const stripMaximized = (node: any) => {
-          if (node?.type === 'tabset' && node.maximized) {
-            delete node.maximized;
-          }
-          if (node?.children) {
-            node.children.forEach(stripMaximized);
-          }
-        };
-        stripMaximized(json.layout);
-        // Restore instance counters from saved layout
-        type JsonNode = (IJsonRowNode | IJsonTabSetNode | IJsonTabNode) & { children?: JsonNode[] };
-        const restoreCounters = (node: JsonNode) => {
-          if (node.type === 'tab' && node.id) {
-            const match = node.id.match(/^(\w+)-(\d+)$/);
-            if (match) {
-              const panelType = match[1] as PanelType;
-              const num = parseInt(match[2], 10);
-              if (instanceCounters.current[panelType] < num) {
-                instanceCounters.current[panelType] = num;
-              }
-            }
-          }
-          if (node.children) {
-            node.children.forEach(restoreCounters);
-          }
-        };
-        restoreCounters(json.layout);
-        return json;
-      }
-    } catch (error) {
-      console.error('Failed to load saved layout:', error);
-    }
-    return null;
-  };
-
-  // Initialize model
-  // eslint-disable-next-line react-hooks/refs -- reading ref in lazy initializer is safe (runs once on mount)
-  const [model] = useState<Model>(() => {
-    const layoutJson = initialLayout || loadSavedLayout() || createDefaultLayout();
-    return Model.fromJson(layoutJson);
-  });
+  // Initialize model from the layout chosen above (initialLayout / saved / default).
+  const [model] = useState<Model>(() => Model.fromJson(initialLayoutJson));
 
   // Tab rename state
   const [editingTabId, setEditingTabId] = useState<string | null>(null);
@@ -942,28 +921,27 @@ export const FlexLayoutContainer = forwardRef<
   // Track empty state
   const [isEmpty, setIsEmpty] = useState(() => getAllTabs().length === 0);
 
-  // Handle model change (for persistence)
+  // Handle model change (for persistence). Strip maximized state from all
+  // tabsets before saving — maximized is transient UI state managed by
+  // fullscreenPanelId, not persisted. Optional-chain expressions are kept
+  // outside the try block to satisfy React Compiler's value-blocks rule.
   const handleModelChange = useCallback((m: Model) => {
+    const json = m.toJson();
+    stripMaximizedNodes(json.layout);
+    let serialized: string | null = null;
     try {
-      const json = m.toJson();
-      // Strip maximized state from all tabsets before saving — maximized is a
-      // transient UI state managed by fullscreenPanelId, not persisted.
-      // Must recurse into nested rows/tabsets for split layouts.
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const stripMaximized = (node: any) => {
-        if (node?.type === 'tabset' && node.maximized) {
-          delete node.maximized;
-        }
-        if (node?.children) {
-          node.children.forEach(stripMaximized);
-        }
-      };
-      stripMaximized(json.layout);
-      localStorage.setItem(layoutStorageKey, JSON.stringify(json));
-      onLayoutChange?.(json);
+      serialized = JSON.stringify(json);
     } catch (error) {
-      console.error('Failed to save layout:', error);
+      console.error('Failed to serialize layout:', error);
     }
+    if (serialized !== null) {
+      try {
+        localStorage.setItem(layoutStorageKey, serialized);
+      } catch (error) {
+        console.error('Failed to save layout:', error);
+      }
+    }
+    if (onLayoutChange) onLayoutChange(json);
     setIsEmpty(getAllTabs().length === 0);
   }, [layoutStorageKey, onLayoutChange, getAllTabs]);
 

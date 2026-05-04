@@ -88,17 +88,21 @@ export function UpdateBanner({ onClose }: UpdateBannerProps) {
       setDownloadProgress({ stage: "downloading", downloaded: 0, total: 0, version: null, error: null });
 
       pollIntervalRef.current = setInterval(async () => {
+        let progress: AppUpdateProgress;
         try {
-          const progress = await getAppUpdateProgress();
-          setDownloadProgress(progress);
-          if (progress.stage === "ready" || progress.stage === "error") {
-            stopPolling();
-            if (progress.stage === "ready") {
-              setShowRestartDialog(true);
-            }
-          }
+          progress = await getAppUpdateProgress();
         } catch {
           // ignore transient errors
+          return;
+        }
+        setDownloadProgress(progress);
+        const isReady = progress.stage === "ready";
+        const isError = progress.stage === "error";
+        if (isReady || isError) {
+          stopPolling();
+          if (isReady) {
+            setShowRestartDialog(true);
+          }
         }
       }, 500);
     } catch (err) {

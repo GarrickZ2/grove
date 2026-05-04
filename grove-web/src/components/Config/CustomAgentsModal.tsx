@@ -118,7 +118,9 @@ export function CustomAgentsModal({
   // Refs for keyboard handler so it always calls the latest closures without
   // re-adding the document listener on every render.
   const onCloseRef = useRef(onClose);
-  onCloseRef.current = onClose;
+  useEffect(() => {
+    onCloseRef.current = onClose;
+  });
   const cancelEditRef = useRef<() => void>(() => {});
   const saveEditRef = useRef<() => Promise<void>>(async () => {});
 
@@ -151,16 +153,21 @@ export function CustomAgentsModal({
   }, [isOpen, editingId, form, confirmDeleteId]);
 
   // Sync from props on open. Drafts are dropped on close.
-  useEffect(() => {
-    if (isOpen) {
-      setList(agents);
-      setSelectedId(agents[0]?.id ?? null);
-      setEditingId(null);
-      setForm(null);
-      setConfirmDeleteId(null);
-      setError(null);
-    }
-  }, [isOpen, agents]);
+  // Uses the documented "Adjusting state on prop change" pattern with a stored
+  // marker so the reset doesn't run inside an effect.
+  // https://react.dev/reference/react/useState#storing-information-from-previous-renders
+  const [openedFor, setOpenedFor] = useState<{ isOpen: boolean; agents: typeof agents } | null>(null);
+  if (isOpen && (openedFor?.isOpen !== isOpen || openedFor?.agents !== agents)) {
+    setOpenedFor({ isOpen, agents });
+    setList(agents);
+    setSelectedId(agents[0]?.id ?? null);
+    setEditingId(null);
+    setForm(null);
+    setConfirmDeleteId(null);
+    setError(null);
+  } else if (!isOpen && openedFor?.isOpen) {
+    setOpenedFor({ isOpen, agents });
+  }
 
   // When external agents change (e.g. after a successful create), keep list in sync but preserve drafts.
   const agentsRef = useRef(agents);
@@ -219,21 +226,27 @@ export function CustomAgentsModal({
    *  replaced. On fetch failure we surface a quiet inline warning rather
    *  than silently letting stale local state diverge from the server. */
   const reconcileFromServer = async (selectAfter?: string | null) => {
+    let fresh: CustomAgentPersona[] | null = null;
     try {
-      const fresh = await loadCustomAgentPersonasIcon(() => listCustomAgents());
-      const drafts = list.filter((p) => isDraft(p.id));
-      const next: (CustomAgentPersona | DraftAgent)[] = [...fresh, ...drafts];
-      setList(next);
-      onChanged(fresh);
-      if (selectAfter !== undefined) {
-        setSelectedId(selectAfter);
-      } else if (selectedId && !next.some((p) => p.id === selectedId)) {
-        setSelectedId(next[0]?.id ?? null);
-      }
+      fresh = await loadCustomAgentPersonasIcon(() => listCustomAgents());
     } catch {
+      fresh = null;
+    }
+    if (!fresh) {
       setError(
         "Couldn't refresh from server — your view may be out of date until you reopen this dialog.",
       );
+      return;
+    }
+    const drafts = list.filter((p) => isDraft(p.id));
+    const next: (CustomAgentPersona | DraftAgent)[] = [...fresh, ...drafts];
+    setList(next);
+    onChanged(fresh);
+    if (selectAfter !== undefined) {
+      setSelectedId(selectAfter);
+    } else if (selectedId && !next.some((p) => p.id === selectedId)) {
+      const firstId = next[0]?.id ?? null;
+      setSelectedId(firstId);
     }
   };
 
@@ -289,47 +302,69 @@ export function CustomAgentsModal({
     }
     setBusy(true);
     setError(null);
+    const trimmedName = form.name.trim();
+    const trimmedModel = form.model.trim();
+    const trimmedMode = form.mode.trim();
+    const trimmedEffort = form.effort.trim();
+    const trimmedDuty = form.duty.trim();
+    const modelVal = trimmedModel ? trimmedModel : null;
+    const modeVal = trimmedMode ? trimmedMode : null;
+    const effortVal = trimmedEffort ? trimmedEffort : null;
+    const dutyVal = trimmedDuty ? trimmedDuty : null;
+    const draftFlag = isDraft(editingId);
+    let created: CustomAgentPersona | null = null;
+    let updated: CustomAgentPersona | null = null;
+    let saveErr: unknown = null;
     try {
-      if (isDraft(editingId)) {
+      if (draftFlag) {
         const input: CustomAgentInput = {
-          name: form.name.trim(),
+          name: trimmedName,
           base_agent: form.base_agent,
-          model: form.model.trim() || null,
-          mode: form.mode.trim() || null,
-          effort: form.effort.trim() || null,
-          duty: form.duty.trim() || null,
+          model: modelVal,
+          mode: modeVal,
+          effort: effortVal,
+          duty: dutyVal,
           system_prompt: form.system_prompt,
         };
-        const created = await createCustomAgent(input);
-        const next = list.map((p) => (p.id === editingId ? created : p));
-        replaceList(next, { skipOnChanged: true });
-        setSelectedId(created.id);
-        await reconcileFromServer(created.id);
+        created = await createCustomAgent(input);
       } else {
         const patch: CustomAgentPatch = {
-          name: form.name.trim(),
+          name: trimmedName,
           base_agent: form.base_agent,
-          model: form.model.trim() || null,
-          mode: form.mode.trim() || null,
-          effort: form.effort.trim() || null,
-          duty: form.duty.trim() || null,
+          model: modelVal,
+          mode: modeVal,
+          effort: effortVal,
+          duty: dutyVal,
           system_prompt: form.system_prompt,
         };
-        const updated = await updateCustomAgent(editingId, patch);
-        const next = list.map((p) => (p.id === editingId ? updated : p));
-        replaceList(next, { skipOnChanged: true });
-        await reconcileFromServer(updated.id);
+        updated = await updateCustomAgent(editingId, patch);
       }
-      setEditingId(null);
-      setForm(null);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Save failed");
-    } finally {
-      setBusy(false);
+      saveErr = e;
     }
+    if (saveErr !== null) {
+      setError(saveErr instanceof Error ? saveErr.message : "Save failed");
+      setBusy(false);
+      return;
+    }
+    if (draftFlag && created) {
+      const next = list.map((p) => (p.id === editingId ? created! : p));
+      replaceList(next, { skipOnChanged: true });
+      setSelectedId(created.id);
+      await reconcileFromServer(created.id);
+    } else if (!draftFlag && updated) {
+      const next = list.map((p) => (p.id === editingId ? updated! : p));
+      replaceList(next, { skipOnChanged: true });
+      await reconcileFromServer(updated.id);
+    }
+    setEditingId(null);
+    setForm(null);
+    setBusy(false);
   };
-  cancelEditRef.current = cancelEdit;
-  saveEditRef.current = saveEdit;
+  useEffect(() => {
+    cancelEditRef.current = cancelEdit;
+    saveEditRef.current = saveEdit;
+  });
 
   // Inline delete --------------------------------------------------------
 
@@ -349,22 +384,29 @@ export function CustomAgentsModal({
       setConfirmDeleteId(null);
       return;
     }
+    let delErr: unknown = null;
     try {
       await deleteCustomAgent(id);
-      const next = list.filter((p) => p.id !== id);
-      replaceList(next, { skipOnChanged: true });
-      const fallbackId = next[0]?.id ?? null;
-      if (selectedId === id) setSelectedId(fallbackId);
-      if (editingId === id) {
-        setEditingId(null);
-        setForm(null);
-      }
-      await reconcileFromServer(selectedId === id ? fallbackId : selectedId);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Delete failed");
-    } finally {
-      setConfirmDeleteId(null);
+      delErr = e;
     }
+    if (delErr !== null) {
+      setError(delErr instanceof Error ? delErr.message : "Delete failed");
+      setConfirmDeleteId(null);
+      return;
+    }
+    const next = list.filter((p) => p.id !== id);
+    replaceList(next, { skipOnChanged: true });
+    const firstNext = next[0];
+    const fallbackId = firstNext ? firstNext.id : null;
+    if (selectedId === id) setSelectedId(fallbackId);
+    if (editingId === id) {
+      setEditingId(null);
+      setForm(null);
+    }
+    const targetSelect = selectedId === id ? fallbackId : selectedId;
+    await reconcileFromServer(targetSelect);
+    setConfirmDeleteId(null);
   };
 
   // Row click ------------------------------------------------------------

@@ -30,9 +30,8 @@ export function SourcesTab({ sources, onRefresh }: SourcesTabProps) {
       await onRefresh();
     } catch (err) {
       console.error("Sync failed:", err);
-    } finally {
-      setSyncingName(null);
     }
+    setSyncingName(null);
   };
 
   const handleDelete = async () => {
@@ -45,9 +44,8 @@ export function SourcesTab({ sources, onRefresh }: SourcesTabProps) {
       await onRefresh();
     } catch (err) {
       console.error("Delete failed:", err);
-    } finally {
-      setDeletingName(null);
     }
+    setDeletingName(null);
   };
 
   const handleCheckUpdates = async () => {
@@ -57,9 +55,8 @@ export function SourcesTab({ sources, onRefresh }: SourcesTabProps) {
       await onRefresh();
     } catch (err) {
       console.error("Check updates failed:", err);
-    } finally {
-      setIsChecking(false);
     }
+    setIsChecking(false);
   };
 
   const handleSyncAll = async () => {
@@ -69,9 +66,8 @@ export function SourcesTab({ sources, onRefresh }: SourcesTabProps) {
       await onRefresh();
     } catch (err) {
       console.error("Sync all failed:", err);
-    } finally {
-      setSyncingAll(false);
     }
+    setSyncingAll(false);
   };
 
   const handleAdded = async () => {
@@ -80,9 +76,18 @@ export function SourcesTab({ sources, onRefresh }: SourcesTabProps) {
     await onRefresh();
   };
 
+  // Tick `now` once per minute so relative-time labels stay roughly fresh
+  // without requiring a parent re-render. `Date.now()` is impure, so we
+  // pull it from state instead of calling it during render.
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const t = window.setInterval(() => setNow(Date.now()), 60000);
+    return () => window.clearInterval(t);
+  }, []);
+
   const formatRelativeTime = (iso: string | null) => {
     if (!iso) return "Never";
-    const diff = Date.now() - new Date(iso).getTime();
+    const diff = now - new Date(iso).getTime();
     const mins = Math.floor(diff / 60000);
     if (mins < 1) return "Just now";
     if (mins < 60) return `${mins}m ago`;

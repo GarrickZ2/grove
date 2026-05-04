@@ -111,8 +111,11 @@ export function useHotkeys(
   hotkeys: HotkeyDefinition[],
   deps: DependencyList = []
 ): void {
+  "use no memo";
   const hotkeysRef = useRef(hotkeys);
-  hotkeysRef.current = hotkeys;
+  useEffect(() => {
+    hotkeysRef.current = hotkeys;
+  });
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
@@ -148,6 +151,5 @@ export function useHotkeys(
     // before the browser's default handler processes them
     window.addEventListener("keydown", handler, true);
     return () => window.removeEventListener("keydown", handler, true);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, deps);
+  }, deps); // eslint-disable-line react-hooks/exhaustive-deps -- caller-supplied deps
 }

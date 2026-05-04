@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { Edit3, X } from "lucide-react";
 import { Button, Input } from "../ui";
 import { DialogShell } from "../ui/DialogShell";
@@ -16,11 +16,14 @@ export function RenameBranchDialog({
   onClose,
   onRename,
 }: RenameBranchDialogProps) {
+  // Derive: when branchName prop changes, reset newName. Uses the
+  // "store previous value" pattern instead of a useEffect+setState.
   const [newName, setNewName] = useState(branchName);
-
-  useEffect(() => {
+  const [prevBranchName, setPrevBranchName] = useState(branchName);
+  if (branchName !== prevBranchName) {
+    setPrevBranchName(branchName);
     setNewName(branchName);
-  }, [branchName]);
+  }
 
   const handleRename = () => {
     if (newName.trim() && newName !== branchName) {

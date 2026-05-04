@@ -146,12 +146,8 @@ export function useChatSearch<T>(opts: {
 
   const clearHighlights = useCallback(() => {
     if (!supportsHighlight) return;
-    try {
-      CSS.highlights.delete(HL_ALL);
-      CSS.highlights.delete(HL_CUR);
-    } catch {
-      /* noop */
-    }
+    try { CSS.highlights.delete(HL_ALL); } catch { /* noop */ }
+    try { CSS.highlights.delete(HL_CUR); } catch { /* noop */ }
   }, [supportsHighlight]);
 
   // When the user navigates to a different match, ask Virtuoso to bring
@@ -227,19 +223,22 @@ export function useChatSearch<T>(opts: {
         let i = 0;
         while ((i = lower.indexOf(q, i)) !== -1) {
           const r = document.createRange();
+          let ok = true;
           try {
             r.setStart(tn, i);
             r.setEnd(tn, i + qLen);
+          } catch {
+            ok = false;
+          }
+          if (ok) {
             allRanges.push(r);
-            if (
-              target &&
+            const isTarget =
+              target !== undefined &&
               itemIdx === target.itemIndex &&
-              intra === target.intra
-            ) {
+              intra === target.intra;
+            if (isTarget) {
               currentRange = r;
             }
-          } catch {
-            /* noop */
           }
           intra += 1;
           i += qLen;
@@ -247,25 +246,21 @@ export function useChatSearch<T>(opts: {
       }
     });
 
-    try {
-      const all = new Highlight();
-      for (const r of allRanges) all.add(r);
-      CSS.highlights.set(HL_ALL, all);
-      if (currentRange) {
-        const cr: Range = currentRange;
-        const h = new Highlight();
-        h.add(cr);
-        CSS.highlights.set(HL_CUR, h);
-        // Use "auto" so this scroll doesn't fight Virtuoso's own
-        // (instant) scrollToIndex above. With both instant the user sees
-        // a single jump rather than a two-stage animation.
-        cr.startContainer.parentElement?.scrollIntoView({
-          block: "center",
-          behavior: "auto",
-        });
-      }
-    } catch {
-      /* noop */
+    const all = new Highlight();
+    for (const r of allRanges) all.add(r);
+    try { CSS.highlights.set(HL_ALL, all); } catch { /* noop */ }
+    if (currentRange) {
+      const cr: Range = currentRange;
+      const h = new Highlight();
+      h.add(cr);
+      try { CSS.highlights.set(HL_CUR, h); } catch { /* noop */ }
+      // Use "auto" so this scroll doesn't fight Virtuoso's own
+      // (instant) scrollToIndex above. With both instant the user sees
+      // a single jump rather than a two-stage animation.
+      cr.startContainer.parentElement?.scrollIntoView({
+        block: "center",
+        behavior: "auto",
+      });
     }
   }, [
     matches,

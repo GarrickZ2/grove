@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { X, Plus, Pencil, Trash2, Globe, Terminal, Server } from "lucide-react";
@@ -55,24 +55,36 @@ export function CustomAgentModal({
   const [idDraft, setIdDraft] = useState<string>("");
   const { isMobile } = useIsMobile();
 
-  useEffect(() => {
-    if (isOpen) {
-      setLocal(agents);
-      setSelectedId(agents[0]?.id ?? null);
-    }
-  }, [isOpen, agents]);
+  // Reset local state when the modal opens (or `agents` prop changes while open).
+  // Uses the documented "Adjusting state on prop change" pattern to avoid
+  // setState inside an effect.
+  // https://react.dev/reference/react/useState#storing-information-from-previous-renders
+  const [openedFor, setOpenedFor] = useState<{ isOpen: boolean; agents: typeof agents } | null>(null);
+  if (isOpen && (openedFor === null || openedFor.isOpen !== isOpen || openedFor.agents !== agents)) {
+    setOpenedFor({ isOpen, agents });
+    setLocal(agents);
+    setSelectedId(agents[0]?.id ?? null);
+  } else if (!isOpen && openedFor !== null && openedFor.isOpen) {
+    setOpenedFor({ isOpen, agents });
+  }
 
   const current = local.find((a) => a.id === selectedId) ?? local[0] ?? null;
 
-  // Sync args draft when selection changes
-  useEffect(() => {
-    setArgsDraft(current?.args?.join(" ") ?? "");
-  }, [current?.id, current?.args]);
-
-  // Reset id draft when selected agent changes (or its committed id mutates).
-  useEffect(() => {
-    setIdDraft(current?.id ?? "");
-  }, [current?.id]);
+  // Sync args + id drafts when the selected agent (or its committed
+  // id/args) changes. Uses the same prop-change-style pattern keyed on the
+  // observed agent id + args reference so it doesn't run inside an effect.
+  const [syncedAgent, setSyncedAgent] = useState<{ id: string | undefined; args: string[] | undefined } | null>(null);
+  const currentId = current ? current.id : undefined;
+  const currentArgs = current ? current.args : undefined;
+  if (
+    syncedAgent === null ||
+    syncedAgent.id !== currentId ||
+    syncedAgent.args !== currentArgs
+  ) {
+    setSyncedAgent({ id: currentId, args: currentArgs });
+    setArgsDraft(currentArgs ? currentArgs.join(" ") : "");
+    setIdDraft(currentId ?? "");
+  }
 
   /** Is `idDraft` a duplicate against another agent? Drives the inline error. */
   const idDraftCollides =
@@ -140,27 +152,36 @@ export function CustomAgentModal({
 
   // Keyboard a11y — Esc unwinds in layers (inline rename → close).
   // Cmd/Ctrl+Enter triggers Save (blocked when ID draft is in collision).
+  // We bind once on open and read the latest handlers via refs to avoid
+  // re-binding on every keystroke (and to keep the React Compiler happy
+  // about the deps array).
+  const handleSaveRef = useRef(handleSave);
+  const onCloseRef = useRef(onClose);
+  const editingNameIdRef = useRef(editingNameId);
+  useEffect(() => {
+    handleSaveRef.current = handleSave;
+    onCloseRef.current = onClose;
+    editingNameIdRef.current = editingNameId;
+  });
   useEffect(() => {
     if (!isOpen) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
-        if (editingNameId) {
+        if (editingNameIdRef.current) {
           e.preventDefault();
           setEditingNameId(null);
           return;
         }
         e.preventDefault();
-        onClose();
+        onCloseRef.current();
       } else if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
         e.preventDefault();
-        handleSave();
+        handleSaveRef.current();
       }
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
-    // handleSave closes over `local` / id draft — re-bind on changes.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isOpen, local, editingNameId, idDraft, idDraftCollides]);
+  }, [isOpen]);
 
   if (!isOpen) return null;
 

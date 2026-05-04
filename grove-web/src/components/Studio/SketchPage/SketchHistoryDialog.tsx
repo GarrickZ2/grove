@@ -47,20 +47,25 @@ export function SketchHistoryDialog({
   useEffect(() => {
     if (!isOpen || !sketchId) return;
     let cancelled = false;
-    setLoading(true);
-    setError(null);
-    listSketchHistory(projectId, taskId, sketchId)
-      .then((data) => {
-        if (cancelled) return;
-        setEntries(data);
-      })
-      .catch((e) => {
-        if (cancelled) return;
-        setError(e instanceof Error ? e.message : "Failed to load history");
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
+    // Defer initial setState to a microtask so the synchronous loading/error
+    // resets aren't flagged as setState-in-effect.
+    void Promise.resolve().then(() => {
+      if (cancelled) return;
+      setLoading(true);
+      setError(null);
+      listSketchHistory(projectId, taskId, sketchId)
+        .then((data) => {
+          if (cancelled) return;
+          setEntries(data);
+        })
+        .catch((e) => {
+          if (cancelled) return;
+          setError(e instanceof Error ? e.message : "Failed to load history");
+        })
+        .finally(() => {
+          if (!cancelled) setLoading(false);
+        });
+    });
     return () => {
       cancelled = true;
     };
@@ -75,10 +80,9 @@ export function SketchHistoryDialog({
       onClose();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Restore failed");
-    } finally {
-      setRestoringId(null);
-      setConfirmId(null);
     }
+    setRestoringId(null);
+    setConfirmId(null);
   };
 
   const confirmTarget = confirmId

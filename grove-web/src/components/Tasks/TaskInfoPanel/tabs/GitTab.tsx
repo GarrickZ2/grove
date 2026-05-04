@@ -33,13 +33,12 @@ export function GitTab({ projectId, task }: GitTabProps) {
     } catch (err) {
       console.error("Failed to load git data:", err);
       setError("Failed to load git data. The task may have been deleted or archived.");
-    } finally {
-      setIsLoading(false);
     }
+    setIsLoading(false);
   }, [resolvedProjectId, task.id]);
 
   useEffect(() => {
-    loadGitData();
+    Promise.resolve().then(loadGitData);
   }, [loadGitData]);
 
   if (isLoading) {

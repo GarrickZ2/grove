@@ -21,7 +21,12 @@ export function AddAgentDialog({ isOpen, editingAgent, onClose, onSaved }: AddAg
 
   const isEditing = editingAgent !== null;
 
-  useEffect(() => {
+  // Sync form fields to (editingAgent, isOpen) using the "previous prop"
+  // pattern: detect changes during render and reset state synchronously
+  // without spawning extra render passes from a setState-in-effect.
+  const [prevSync, setPrevSync] = useState<{ agent: AgentDef | null; open: boolean }>({ agent: editingAgent, open: isOpen });
+  if (prevSync.agent !== editingAgent || prevSync.open !== isOpen) {
+    setPrevSync({ agent: editingAgent, open: isOpen });
     if (editingAgent) {
       setDisplayName(editingAgent.display_name);
       setGlobalDir(editingAgent.global_skills_dir);
@@ -32,7 +37,7 @@ export function AddAgentDialog({ isOpen, editingAgent, onClose, onSaved }: AddAg
       setProjectDir("");
     }
     setError(null);
-  }, [editingAgent, isOpen]);
+  }
 
   useEffect(() => {
     if (!isOpen) return;
@@ -43,14 +48,21 @@ export function AddAgentDialog({ isOpen, editingAgent, onClose, onSaved }: AddAg
     return () => window.removeEventListener("keydown", handler);
   }, [isOpen, onClose]);
 
-  // Auto-generate directory paths from name
-  useEffect(() => {
-    if (!isEditing && displayName && !globalDir && !projectDir) {
-      const slug = displayName.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-');
-      setGlobalDir(`~/.${slug}/skills`);
-      setProjectDir(`.${slug}/skills`);
+  // Auto-generate directory paths from name when the user first types into
+  // the (still empty) name field. Wired into onChange instead of useEffect to
+  // satisfy react-hooks/set-state-in-effect — same observable behavior:
+  // populates the dirs only when both are empty (i.e. user hasn't typed
+  // anything custom there yet) and we aren't editing an existing agent.
+  const handleDisplayNameChange = (value: string) => {
+    setDisplayName(value);
+    if (!isEditing && value && !globalDir && !projectDir) {
+      const slug = value.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-');
+      if (slug) {
+        setGlobalDir(`~/.${slug}/skills`);
+        setProjectDir(`.${slug}/skills`);
+      }
     }
-  }, [displayName, isEditing, globalDir, projectDir]);
+  };
 
   const handleSubmit = async () => {
     if (!displayName.trim()) { setError("Name is required"); return; }
@@ -73,9 +85,8 @@ export function AddAgentDialog({ isOpen, editingAgent, onClose, onSaved }: AddAg
       onSaved();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to save agent");
-    } finally {
-      setIsSaving(false);
     }
+    setIsSaving(false);
   };
 
   return (
@@ -104,7 +115,7 @@ export function AddAgentDialog({ isOpen, editingAgent, onClose, onSaved }: AddAg
                   <input
                     type="text"
                     value={displayName}
-                    onChange={(e) => setDisplayName(e.target.value)}
+                    onChange={(e) => handleDisplayNameChange(e.target.value)}
                     placeholder="e.g., My Agent"
                     className="w-full px-3 py-2 text-sm bg-[var(--color-bg)] border border-[var(--color-border)] rounded-lg text-[var(--color-text)] placeholder:text-[var(--color-text-muted)]/50 focus:outline-none focus:ring-1 focus:ring-[var(--color-highlight)]"
                   />

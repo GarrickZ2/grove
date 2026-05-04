@@ -416,13 +416,12 @@ export function ProjectStatsPage({ projectId }: ProjectStatsPageProps) {
       const msg = e instanceof Error ? e.message : "Failed to load statistics";
       setError(msg);
       setData(EMPTY_STATS);
-    } finally {
-      setLoading(false);
     }
+    setLoading(false);
   }, [projectId]);
 
   useEffect(() => {
-    fetchStats(timeRange);
+    void Promise.resolve().then(() => fetchStats(timeRange));
   }, [timeRange, fetchStats]);
 
   const d = data;

@@ -5,6 +5,28 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.4] - 2026-05-04
+
+### Added
+
+- **In-app performance monitor** — Dev-only perf panel (gated behind `perf-monitor` Cargo feature + Vite `perf` mode, tree-shaken from prod) with timeline / memory / renders / network / backend tabs. Backend exposes `/api/v1/perf/*` endpoints (sysinfo, per-route latency histogram, per-trace span tree); production builds omit the dep, routes, and middleware entirely.
+- **React Compiler enabled** — `babel-plugin-react-compiler@1.0.0` wired into the Vite pipeline, applying automatic component- and variable-level memoization across the entire web tree. ~97% of source files are auto-memoized; the remaining ~3% (root `App`, `XTerminal`, and dynamic-import sites in Studio / walkie-talkie / hotkeys) carry an explicit `"use no memo"` directive. Set `REACT_COMPILER_LOG=1` during `vite build` to inspect per-file compile decisions.
+
+### Improved
+
+- **React-19 hooks compliance sweep across 50+ files** — adopted React 19 / React Compiler safety patterns end-to-end: prop-change reset state via stored markers, `ResizeObserver` driving container size state, ref writes deferred to `useEffect`, derived state replacing `setState`-in-effect anti-patterns. Eliminated 124 hook-rule violations introduced by `eslint-plugin-react-hooks@7.1.1` and 95 `try/finally` Compiler bailouts plus 30+ `Support value blocks within try/catch` bailouts.
+- **TaskGraph + TaskChat decomposition** — extracted `GraphContextToolbar` (~620 LOC, 9 sub-components) and shared graph types out of the 2900-line `TaskGraph.tsx`, and pulled four focused hooks (`useACPAvailability`, `useActiveChatId`, `useChatPositioning`, `useInitialChatLoad`) out of `TaskChat.tsx` so their internal `let`-and-cleanup patterns can be Compiler-optimized independently.
+- **TaskChat virtualization** — ~7000 LOC chat view now virtualized via `react-virtuoso`, eliminating jank on long conversations.
+- **Backend hot-path fork+exec elimination** — replaced shell-out git calls with `gix`, swapped plist parsing to a native crate, and parallelized eligible passes with `rayon`.
+- **xterm WebGL renderer** — terminal panel now uses `@xterm/addon-webgl` for smoother scrolling and lower CPU on busy output.
+- **Event timeline diagnostics** — perf monitor's event timeline reworked to actually highlight pathological spans instead of drowning them in noise.
+
+### Fixed
+
+- **Code review findings + GUI mic, notification deep-links, IDE resize** — addressed review feedback covering the GUI microphone permission flow, notification deep-link routing, and IDE panel resize edge cases.
+- **z.ai 5-hour token quota window** — quota matcher now keys on duration instead of fragile label regex, so the 5-hour window is detected correctly.
+- **Lightbox panning + fullscreen window toggle** — restored panning behavior and fixed the fullscreen toggle interaction.
+
 ## [0.10.3] - 2026-04-30
 
 ### Added

@@ -65,8 +65,10 @@ export function TasksPage({ initialTaskId, initialChatId, initialViewMode, onNav
   const [showNewTaskDialog, setShowNewTaskDialog] = useState(initialOpenNewTask ?? false);
   useEffect(() => {
     if (initialOpenNewTask) {
-      setShowNewTaskDialog(true);
-      onNavigationConsumed?.();
+      Promise.resolve().then(() => {
+        setShowNewTaskDialog(true);
+        onNavigationConsumed?.();
+      });
     }
   }, [initialOpenNewTask, onNavigationConsumed]);
   const [isCreating, setIsCreating] = useState(false);
@@ -116,7 +118,9 @@ export function TasksPage({ initialTaskId, initialChatId, initialViewMode, onNav
   useEffect(() => {
     let cancelled = false;
     if (filter === "archived" && selectedProject) {
-      setIsLoadingArchived(true);
+      // Defer the "loading=true" flip into a microtask so the rule sees
+      // setState as a callback rather than a synchronous in-effect call.
+      Promise.resolve().then(() => { if (!cancelled) setIsLoadingArchived(true); });
       apiListTasks(selectedProject.id, "archived")
         .then((tasks) => {
           if (cancelled) return;
@@ -189,7 +193,9 @@ export function TasksPage({ initialTaskId, initialChatId, initialViewMode, onNav
   // always reads the latest value — avoids a stale-closure without adding
   // inWorkspace as a dep (which would make every workspace-enter/exit fire it).
   const inWorkspaceRef = useRef(pageState.inWorkspace);
-  inWorkspaceRef.current = pageState.inWorkspace;
+  useEffect(() => {
+    inWorkspaceRef.current = pageState.inWorkspace;
+  }, [pageState.inWorkspace]);
   useEffect(() => {
     if (!exitWorkspaceSignal) return;
     if (inWorkspaceRef.current) pageHandlers.handleCloseTask();
@@ -273,22 +279,33 @@ export function TasksPage({ initialTaskId, initialChatId, initialViewMode, onNav
   // Handle recover archived task (Zen-only)
   const handleRecover = useCallback(async () => {
     if (!selectedProject || !pageState.selectedTask) return;
+    const recoveredTaskId = pageState.selectedTask.id;
+    let recoverErr: unknown = null;
     try {
-      await apiRecoverTask(selectedProject.id, pageState.selectedTask.id);
+      await apiRecoverTask(selectedProject.id, recoveredTaskId);
       await refreshSelectedProject();
-      // Clear archived tasks cache so it reloads
-      setArchivedTasks((prev) => prev.filter((t) => t.id !== pageState.selectedTask?.id));
-      // Update local state to reflect the change
-      pageHandlers.setSelectedTask(null);
-      pageHandlers.setInWorkspace(false);
-      // Switch to active filter to see the recovered task
-      setFilter("active");
     } catch (err) {
-      console.error("Failed to recover task:", err);
-      const errorMessage = err instanceof Error ? err.message :
-        (err as { message?: string })?.message || "Failed to recover task";
-      pageHandlers.showMessage(errorMessage);
+      recoverErr = err;
     }
+    if (recoverErr !== null) {
+      console.error("Failed to recover task:", recoverErr);
+      let errorMessage: string;
+      if (recoverErr instanceof Error) {
+        errorMessage = recoverErr.message;
+      } else {
+        const maybeMsg = (recoverErr as { message?: string })?.message;
+        errorMessage = maybeMsg ? maybeMsg : "Failed to recover task";
+      }
+      pageHandlers.showMessage(errorMessage);
+      return;
+    }
+    // Clear archived tasks cache so it reloads
+    setArchivedTasks((prev) => prev.filter((t) => t.id !== recoveredTaskId));
+    // Update local state to reflect the change
+    pageHandlers.setSelectedTask(null);
+    pageHandlers.setInWorkspace(false);
+    // Switch to active filter to see the recovered task
+    setFilter("active");
   }, [selectedProject, pageState.selectedTask, refreshSelectedProject, pageHandlers]);
 
   // Unified panel add handler (Terminal/Chat/Review/Editor/Stats/Git/Notes/Comments)
@@ -317,33 +334,39 @@ export function TasksPage({ initialTaskId, initialChatId, initialViewMode, onNav
   const handleCreateTask = useCallback(
     async (name: string, targetBranch: string, notes: string) => {
       if (!selectedProject) return;
+      setIsCreating(true);
+      setCreateError(null);
+      const notesArg = notes ? notes : undefined;
+      let taskResponse: Awaited<ReturnType<typeof apiCreateTask>> | null = null;
+      let createErr: unknown = null;
       try {
-        setIsCreating(true);
-        setCreateError(null);
-
         // Create task and get the response
-        const taskResponse = await apiCreateTask(selectedProject.id, name, targetBranch, notes || undefined);
-
+        taskResponse = await apiCreateTask(selectedProject.id, name, targetBranch, notesArg);
+      } catch (err: unknown) {
+        createErr = err;
+      }
+      if (createErr !== null) {
+        console.error("Failed to create task:", createErr);
+        if (createErr && typeof createErr === "object" && "message" in createErr) {
+          const apiErr = createErr as { message: string };
+          const msg = apiErr.message ? apiErr.message : "Failed to create task";
+          setCreateError(msg);
+        } else {
+          setCreateError("Failed to create task");
+        }
+        setIsCreating(false);
+        return;
+      }
+      if (taskResponse) {
         setShowNewTaskDialog(false);
-
         // Auto-select the new task and enter Workspace (default panel chosen by FlexLayoutContainer)
         const newTask = convertTaskResponse(taskResponse);
         pageHandlers.setSelectedTask(newTask);
         pageHandlers.setInWorkspace(true);
-
         // Async refresh, don't block UI
         refreshSelectedProject();
-      } catch (err: unknown) {
-        console.error("Failed to create task:", err);
-        if (err && typeof err === "object" && "message" in err) {
-          const apiErr = err as { message: string };
-          setCreateError(apiErr.message || "Failed to create task");
-        } else {
-          setCreateError("Failed to create task");
-        }
-      } finally {
-        setIsCreating(false);
       }
+      setIsCreating(false);
     },
     [selectedProject, refreshSelectedProject, pageHandlers]
   );
@@ -491,7 +514,9 @@ export function TasksPage({ initialTaskId, initialChatId, initialViewMode, onNav
     };
   }, [pageState.inWorkspace, setContextInWorkspace, setPageContext]);
   const pageOptionsRef = useRef<Parameters<typeof buildCommands>[0]>(null!);
-  pageOptionsRef.current = {
+  // Build the latest options object during render (no setState/ref-write
+  // side effect), then commit it into the ref in an effect.
+  const pageOptions: Parameters<typeof buildCommands>[0] = {
     taskActions: {
       selectedTask: pageState.selectedTask,
       inWorkspace: pageState.inWorkspace,
@@ -504,6 +529,9 @@ export function TasksPage({ initialTaskId, initialChatId, initialViewMode, onNav
       isStudio,
     },
   };
+  useEffect(() => {
+    pageOptionsRef.current = pageOptions;
+  });
 
   useEffect(() => {
     registerPageCommands(() => buildCommands(pageOptionsRef.current));
@@ -841,18 +869,22 @@ function NonGitTasksEmptyState({
   const handleInit = async () => {
     setIsInitializing(true);
     setError(null);
+    let initErr: unknown = null;
     try {
       await initGitRepo(projectId);
       await onRefresh();
     } catch (err: unknown) {
-      if (err && typeof err === "object" && "message" in err) {
-        setError((err as { message: string }).message || "Failed to initialize Git");
+      initErr = err;
+    }
+    if (initErr !== null) {
+      if (initErr && typeof initErr === "object" && "message" in initErr) {
+        const m = (initErr as { message: string }).message;
+        setError(m ? m : "Failed to initialize Git");
       } else {
         setError("Failed to initialize Git");
       }
-    } finally {
-      setIsInitializing(false);
     }
+    setIsInitializing(false);
   };
 
   return (

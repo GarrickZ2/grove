@@ -49,6 +49,10 @@ export function useSketchThumbnail({
   scene,
   excalidrawApi,
 }: Params): void {
+  "use no memo";
+  // Uses dynamic `import()` for the Excalidraw export-to-svg module —
+  // Compiler 1.0 can't lower it.
+
   const timerRef = useRef<number | null>(null);
   // Track the last scene fingerprint we actually uploaded for. Every sketch
   // load / WS update / poll flips `scene` identity even when the bytes match

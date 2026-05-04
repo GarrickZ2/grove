@@ -7,6 +7,16 @@ interface UseDomSearchResult {
   prev: () => void;
 }
 
+function trySetRange(r: Range, node: Text, start: number, end: number): boolean {
+  try {
+    r.setStart(node, start);
+    r.setEnd(node, end);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 const SEARCH_HIGHLIGHT = "grove-search";
 const SEARCH_HIGHLIGHT_CURRENT = "grove-search-current";
 const MARK_ATTR = "data-grove-search-mark";
@@ -45,10 +55,8 @@ export function useDomSearch(
 
   const clearHighlights = useCallback(() => {
     if (supportsHighlight) {
-      try {
-        CSS.highlights.delete(SEARCH_HIGHLIGHT);
-        CSS.highlights.delete(SEARCH_HIGHLIGHT_CURRENT);
-      } catch { /* noop */ }
+      try { CSS.highlights.delete(SEARCH_HIGHLIGHT); } catch { /* noop */ }
+      try { CSS.highlights.delete(SEARCH_HIGHLIGHT_CURRENT); } catch { /* noop */ }
     }
     if (marksRef.current.length) {
       for (const m of marksRef.current) {
@@ -113,25 +121,20 @@ export function useDomSearch(
         let i = 0;
         while ((i = lower.indexOf(lowerQuery, i)) !== -1) {
           const r = document.createRange();
-          try {
-            r.setStart(tn, i);
-            r.setEnd(tn, i + queryLen);
-            ranges.push(r);
-          } catch { /* noop */ }
+          const ok = trySetRange(r, tn, i, i + queryLen);
+          if (ok) ranges.push(r);
           i += queryLen;
         }
       }
       rangesRef.current = ranges;
       commitState(ranges.length, 0);
       if (ranges.length) {
-        try {
-          const hlAll = new Highlight();
-          for (const r of ranges) hlAll.add(r);
-          CSS.highlights.set(SEARCH_HIGHLIGHT, hlAll);
-          const hlCur = new Highlight();
-          hlCur.add(ranges[0]);
-          CSS.highlights.set(SEARCH_HIGHLIGHT_CURRENT, hlCur);
-        } catch { /* noop */ }
+        const hlAll = new Highlight();
+        for (const r of ranges) hlAll.add(r);
+        const hlCur = new Highlight();
+        hlCur.add(ranges[0]);
+        try { CSS.highlights.set(SEARCH_HIGHLIGHT, hlAll); } catch { /* noop */ }
+        try { CSS.highlights.set(SEARCH_HIGHLIGHT_CURRENT, hlCur); } catch { /* noop */ }
       }
     } else {
       // Phase 2b: <mark> injection fallback
@@ -184,11 +187,9 @@ export function useDomSearch(
     if (supportsHighlight) {
       const range = rangesRef.current[idx];
       if (!range) return;
-      try {
-        const h = new Highlight();
-        h.add(range);
-        CSS.highlights.set(SEARCH_HIGHLIGHT_CURRENT, h);
-      } catch { /* noop */ }
+      const h = new Highlight();
+      h.add(range);
+      try { CSS.highlights.set(SEARCH_HIGHLIGHT_CURRENT, h); } catch { /* noop */ }
       // Scroll the start container into view
       const target = range.startContainer.parentElement;
       target?.scrollIntoView({ block: "center", behavior: "smooth" });

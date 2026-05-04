@@ -50,7 +50,10 @@ export function useTaskGroups(): UseTaskGroupsResult {
   const [groups, setGroups] = useState<TaskGroup[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const groupsRef = useRef(groups);
-  groupsRef.current = groups;
+  // Sync ref to latest groups in an effect (refs cannot be mutated during render).
+  useEffect(() => {
+    groupsRef.current = groups;
+  }, [groups]);
 
   const refresh = useCallback(async () => {
     try {
@@ -58,13 +61,12 @@ export function useTaskGroups(): UseTaskGroupsResult {
       setGroups(sortGroups(fetched));
     } catch (err) {
       console.error("[TaskGroups] refresh failed:", err);
-    } finally {
-      setIsLoading(false);
     }
+    setIsLoading(false);
   }, []);
 
   useEffect(() => {
-    refresh();
+    Promise.resolve().then(refresh);
   }, [refresh]);
 
   const handleCreateGroup = useCallback(
@@ -200,8 +202,9 @@ export function useTaskGroups(): UseTaskGroupsResult {
       const existingPositions = targetGroup
         ? targetGroup.slots.map((s) => s.position)
         : [];
-      let nextPos = 1;
-      while (existingPositions.includes(nextPos)) nextPos++;
+      let candidatePos = 1;
+      while (existingPositions.includes(candidatePos)) candidatePos += 1;
+      const nextPos = candidatePos;
 
       const movedSlot: TaskSlot = { ...slot, position: nextPos };
 

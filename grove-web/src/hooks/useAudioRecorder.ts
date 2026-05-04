@@ -105,10 +105,26 @@ export function useAudioRecorder(options: AudioRecorderOptions = {}): AudioRecor
     stoppedRef.current = false;
     stopResolveRef.current = null;
 
+    let stream: MediaStream;
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      streamRef.current = stream;
+      stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    } catch (err) {
+      cleanup();
+      const msg = err instanceof Error ? err.message : "Microphone access denied";
+      setError(msg);
+      setStatus("error");
+      return;
+    }
+    streamRef.current = stream;
 
+    // Wrap the rest of the setup in one try/catch so a failure in
+    // createMediaStreamSource / analyser config / new MediaRecorder /
+    // recorder.start doesn't leak the stream + audioCtx (and silently
+    // skip setStatus("error")). Whole pipeline lives or dies together.
+    let recorder: MediaRecorder;
+    const supportsOpus = MediaRecorder.isTypeSupported("audio/webm;codecs=opus");
+    const mimeType = supportsOpus ? "audio/webm;codecs=opus" : "audio/webm";
+    try {
       const audioCtx = new AudioContext();
       audioCtxRef.current = audioCtx;
       const source = audioCtx.createMediaStreamSource(stream);
@@ -117,73 +133,79 @@ export function useAudioRecorder(options: AudioRecorderOptions = {}): AudioRecor
       analyser.smoothingTimeConstant = 0.7;
       source.connect(analyser);
       analyserRef.current = analyser;
+      recorder = new MediaRecorder(stream, { mimeType });
+    } catch (err) {
+      cleanup();
+      const msg = err instanceof Error ? err.message : "Audio setup failed";
+      setError(msg);
+      setStatus("error");
+      return;
+    }
+    mediaRecorderRef.current = recorder;
+    chunksRef.current = [];
 
-      const mimeType = MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
-        ? "audio/webm;codecs=opus"
-        : "audio/webm";
-      const recorder = new MediaRecorder(stream, { mimeType });
-      mediaRecorderRef.current = recorder;
-      chunksRef.current = [];
+    recorder.ondataavailable = (e) => {
+      if (e.data.size > 0) chunksRef.current.push(e.data);
+    };
 
-      recorder.ondataavailable = (e) => {
-        if (e.data.size > 0) chunksRef.current.push(e.data);
-      };
+    // Unified onstop — handles both manual stop() and auto-stop
+    recorder.onstop = () => {
+      if (stoppedRef.current) return; // guard against double-fire
+      stoppedRef.current = true;
 
-      // Unified onstop — handles both manual stop() and auto-stop
-      recorder.onstop = () => {
-        if (stoppedRef.current) return; // guard against double-fire
-        stoppedRef.current = true;
+      if (rafRef.current) cancelAnimationFrame(rafRef.current);
+      if (timerRef.current) clearInterval(timerRef.current);
+      setFrequencyData(null);
 
-        if (rafRef.current) cancelAnimationFrame(rafRef.current);
-        if (timerRef.current) clearInterval(timerRef.current);
-        setFrequencyData(null);
-
-        if (cancelledRef.current) {
-          cleanupMedia();
-          setStatus("idle");
-          setElapsed(0);
-          stopResolveRef.current?.(null);
-          stopResolveRef.current = null;
-          return;
-        }
-
-        const blob = new Blob(chunksRef.current, { type: mimeType });
+      if (cancelledRef.current) {
         cleanupMedia();
         setStatus("idle");
         setElapsed(0);
+        stopResolveRef.current?.(null);
+        stopResolveRef.current = null;
+        return;
+      }
 
-        if (stopResolveRef.current) {
-          // Manual stop() — resolve the promise
-          stopResolveRef.current(blob);
-          stopResolveRef.current = null;
-        } else {
-          // Auto-stop (max duration) — fire callback
-          onMaxReachedRef.current?.(blob);
-        }
-      };
-
-      recorder.start(250);
-      startTimeRef.current = Date.now();
+      const blob = new Blob(chunksRef.current, { type: mimeType });
+      cleanupMedia();
+      setStatus("idle");
       setElapsed(0);
-      setStatus("recording");
 
-      timerRef.current = setInterval(() => {
-        const secs = Math.floor((Date.now() - startTimeRef.current) / 1000);
-        setElapsed(secs);
-        if (secs >= maxDuration) {
-          if (mediaRecorderRef.current?.state === "recording") {
-            mediaRecorderRef.current.stop();
-          }
-        }
-      }, 200);
+      if (stopResolveRef.current) {
+        // Manual stop() — resolve the promise
+        stopResolveRef.current(blob);
+        stopResolveRef.current = null;
+      } else {
+        // Auto-stop (max duration) — fire callback
+        onMaxReachedRef.current?.(blob);
+      }
+    };
 
-      startFrequencyUpdates();
+    try {
+      recorder.start(250);
     } catch (err) {
       cleanup();
-      const msg = err instanceof Error ? err.message : "Microphone access denied";
+      const msg = err instanceof Error ? err.message : "Recorder failed to start";
       setError(msg);
       setStatus("error");
+      return;
     }
+    startTimeRef.current = Date.now();
+    setElapsed(0);
+    setStatus("recording");
+
+    timerRef.current = setInterval(() => {
+      const secs = Math.floor((Date.now() - startTimeRef.current) / 1000);
+      setElapsed(secs);
+      if (secs >= maxDuration) {
+        const rec = mediaRecorderRef.current;
+        if (rec && rec.state === "recording") {
+          rec.stop();
+        }
+      }
+    }, 200);
+
+    startFrequencyUpdates();
   }, [maxDuration, cleanup, cleanupMedia, startFrequencyUpdates]);
 
   const stop = useCallback(async (): Promise<Blob | null> => {

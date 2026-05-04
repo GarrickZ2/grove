@@ -21,15 +21,27 @@ export function NotesTab({ projectId, task }: NotesTabProps) {
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const resolvedProjectIdRef = useRef(resolvedProjectId);
-  resolvedProjectIdRef.current = resolvedProjectId;
 
   // Refs for auto-save on navigate away
   const isEditingRef = useRef(isEditing);
-  isEditingRef.current = isEditing;
   const contentRef = useRef(content);
-  contentRef.current = content;
   const originalContentRef = useRef(originalContent);
-  originalContentRef.current = originalContent;
+
+  // Sync refs in effects (cannot mutate refs during render). The ref consumers
+  // are unmount cleanup + async event handlers, both of which run after the
+  // commit/effect phase, so the one-tick delay is safe.
+  useEffect(() => {
+    resolvedProjectIdRef.current = resolvedProjectId;
+  }, [resolvedProjectId]);
+  useEffect(() => {
+    isEditingRef.current = isEditing;
+  }, [isEditing]);
+  useEffect(() => {
+    contentRef.current = content;
+  }, [content]);
+  useEffect(() => {
+    originalContentRef.current = originalContent;
+  }, [originalContent]);
 
   // @ mention state
   const [taskFiles, setTaskFiles] = useState<string[]>([]);
@@ -117,9 +129,8 @@ export function NotesTab({ projectId, task }: NotesTabProps) {
     } catch (err) {
       console.error("Failed to save notes:", err);
       setError("Failed to save notes");
-    } finally {
-      setIsSaving(false);
     }
+    setIsSaving(false);
   };
 
   const handleCancel = () => {

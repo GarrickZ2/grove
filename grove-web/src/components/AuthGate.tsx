@@ -114,9 +114,8 @@ export function AuthGate({ children }: AuthGateProps) {
       } catch {
         clearSecretKey();
         setError("Connection failed");
-      } finally {
-        setVerifying(false);
       }
+      setVerifying(false);
     },
     [skInput, verifySk]
   );

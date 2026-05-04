@@ -53,8 +53,9 @@ const POLL_INTERVAL_MS = 2000;
  * carries transient per-user cursor/zoom state that changes constantly. */
 function sceneFingerprint(scene: unknown): string {
   const elements = (scene as { elements?: unknown } | null)?.elements;
+  const value = elements ?? null;
   try {
-    return JSON.stringify(elements ?? null);
+    return JSON.stringify(value);
   } catch {
     return "";
   }
@@ -373,13 +374,15 @@ export function useSketchSync(
     void (async () => {
       await flushPendingSave();
       if (cancelled) return;
+      let s: unknown;
       try {
-        const s = await getSketchScene(projectId, taskId, capturedSketchId);
-        if (cancelled || sketchIdRef.current !== capturedSketchId) return;
-        applyScene(s, true);
+        s = await getSketchScene(projectId, taskId, capturedSketchId);
       } catch {
         // ignore
+        return;
       }
+      if (cancelled || sketchIdRef.current !== capturedSketchId) return;
+      applyScene(s, true);
     })();
     return () => {
       cancelled = true;
@@ -444,13 +447,15 @@ export function useSketchSync(
     // identical to what's locally cached (user may want to force-reset the
     // canvas, or we want to clear a stale-looking state).
     lastFingerprintRef.current = "";
+    let fresh: unknown;
     try {
-      const fresh = await getSketchScene(projectId, taskId, sketchId);
-      if (sketchIdRef.current !== sketchId) return;
-      applyScene(fresh, true);
+      fresh = await getSketchScene(projectId, taskId, sketchId);
     } catch (e) {
       console.error("sketch refresh failed", e);
+      return;
     }
+    if (sketchIdRef.current !== sketchId) return;
+    applyScene(fresh, true);
   }, [projectId, taskId, sketchId, applyScene]);
 
   return { scene, loading, onLocalChange, remoteTick, refresh, wsConnected };

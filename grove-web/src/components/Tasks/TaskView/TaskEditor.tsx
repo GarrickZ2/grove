@@ -117,10 +117,13 @@ export function TaskEditor({ projectId, taskId, onClose, fullscreen = false, onT
   const [confirmDialogOpen, setConfirmDialogOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
 
-  // Hide file tree by default on mobile
-  useEffect(() => {
+  // Hide file tree by default on mobile. Tracked-prev pattern so the reset
+  // happens during render — avoids a setState-in-effect cascade.
+  const [prevIsMobile, setPrevIsMobile] = useState(isMobile);
+  if (prevIsMobile !== isMobile) {
+    setPrevIsMobile(isMobile);
     if (isMobile) setFileTreeVisible(false);
-  }, [isMobile]);
+  }
 
   // Load file list on mount
   useEffect(() => {
@@ -149,9 +152,8 @@ export function TaskEditor({ projectId, taskId, onClose, fullscreen = false, onT
         (err as { message?: string })?.message || 'Failed to load file';
       setError(msg);
       setFileContent('');
-    } finally {
-      setLoading(false);
     }
+    setLoading(false);
   }, [projectId, taskId, selectedFile, isMobile]);
 
   // Handle editor content change
@@ -175,9 +177,8 @@ export function TaskEditor({ projectId, taskId, onClose, fullscreen = false, onT
       const msg = err instanceof Error ? err.message :
         (err as { message?: string })?.message || 'Failed to save file';
       setError(msg);
-    } finally {
-      setSaving(false);
     }
+    setSaving(false);
   }, [projectId, taskId, selectedFile, saving, refreshing]);
 
   // Keyboard shortcut: Cmd/Ctrl+S to save
@@ -222,9 +223,8 @@ export function TaskEditor({ projectId, taskId, onClose, fullscreen = false, onT
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       setError(msg);
-    } finally {
-      setRefreshing(false);
     }
+    setRefreshing(false);
   }, [projectId, taskId, selectedFile]);
 
   const handleExpandDir = useCallback(async (dirPath: string): Promise<DirEntry[]> => {
@@ -273,9 +273,8 @@ export function TaskEditor({ projectId, taskId, onClose, fullscreen = false, onT
       const msg = err instanceof Error ? err.message : String(err);
       setError(msg);
       setFileContent('');
-    } finally {
-      setLoading(false);
     }
+    setLoading(false);
   }, [projectId, taskId, reloadFiles]);
 
   // Create directory submit handler
@@ -319,9 +318,8 @@ export function TaskEditor({ projectId, taskId, onClose, fullscreen = false, onT
       }
     } catch (err) {
       console.error('Failed to create path:', err);
-    } finally {
-      setCreatingPath(null);
     }
+    setCreatingPath(null);
   }, [creatingPath, handleCreateFile, handleCreateDirectory]);
 
   // Cancel inline path creation
@@ -345,10 +343,9 @@ export function TaskEditor({ projectId, taskId, onClose, fullscreen = false, onT
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       setError(msg);
-    } finally {
-      setDeleteTarget(null);
-      setConfirmDialogOpen(false);
     }
+    setDeleteTarget(null);
+    setConfirmDialogOpen(false);
   }, [deleteTarget, projectId, taskId, reloadFiles, selectedFile]);
 
   // Breadcrumb from file path

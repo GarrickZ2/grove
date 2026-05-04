@@ -45,13 +45,19 @@ export function AudioPanel({
   const [draftMaxDuration, setDraftMaxDuration] = useState(String(settings.maxDuration));
   const promptEditorRef = useRef<HTMLTextAreaElement>(null);
 
-  useEffect(() => {
+  // Re-sync local edit drafts whenever the upstream `settings` prop changes
+  // (e.g. saved by another panel). Uses the documented "Adjusting state on
+  // prop change" pattern instead of an effect.
+  // https://react.dev/reference/react/useState#storing-information-from-previous-renders
+  const [lastSyncedSettings, setLastSyncedSettings] = useState(settings);
+  if (lastSyncedSettings !== settings) {
+    setLastSyncedSettings(settings);
     setAudio(settings);
     setDraftPromptGlobal(settings.revisePromptGlobal);
     setDraftPromptProject(settings.revisePromptProject);
     setDraftMinDuration(String(settings.minDuration));
     setDraftMaxDuration(String(settings.maxDuration));
-  }, [settings]);
+  }
 
   const onSettingsSavedRef = useRef(onSettingsSaved);
   useEffect(() => { onSettingsSavedRef.current = onSettingsSaved; }, [onSettingsSaved]);
@@ -174,12 +180,10 @@ export function AudioPanel({
     if (vocabularyTab === "replacement") {
       if (!draftReplacementFrom.trim() || !draftReplacementTo.trim()) return;
       const nextRule = { from: draftReplacementFrom.trim(), to: draftReplacementTo.trim() };
+      const replKey = vocabularyScope === "global" ? "replacementsGlobal" : "replacementsProject";
       patchAudioState((prev) => ({
         ...prev,
-        [vocabularyScope === "global" ? "replacementsGlobal" : "replacementsProject"]: [
-          nextRule,
-          ...(vocabularyScope === "global" ? prev.replacementsGlobal : prev.replacementsProject),
-        ],
+        [replKey]: [nextRule, ...prev[replKey]],
       }));
       setDraftReplacementFrom("");
       setDraftReplacementTo("");

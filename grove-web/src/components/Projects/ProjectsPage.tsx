@@ -33,10 +33,18 @@ export function ProjectsPage({ onNavigate, initialTab }: ProjectsPageProps) {
     refreshProjects();
   }, [refreshProjects]);
 
-  useEffect(() => {
-    if (!selectedProject || initialTab !== undefined) return;
-    setActiveTab(selectedProject.projectType === "studio" ? "studio" : "coding");
-  }, [selectedProject, initialTab]);
+  // Sync activeTab to selectedProject.projectType. Use a "previous selected
+  // project" tracker computed during render instead of useEffect to satisfy
+  // react-hooks/set-state-in-effect. When `initialTab` is provided the parent
+  // is driving the tab, so the auto-sync stays disabled.
+  const [prevSelectedId, setPrevSelectedId] = useState(selectedProject?.id ?? null);
+  const currentSelectedId = selectedProject?.id ?? null;
+  if (currentSelectedId !== prevSelectedId) {
+    setPrevSelectedId(currentSelectedId);
+    if (selectedProject && initialTab === undefined) {
+      setActiveTab(selectedProject.projectType === "studio" ? "studio" : "coding");
+    }
+  }
   const [showAddDialog, setShowAddDialog] = useState(false);
   const [projectToDelete, setProjectToDelete] = useState<Project | null>(null);
   const [isAdding, setIsAdding] = useState(false);
@@ -65,9 +73,8 @@ export function ProjectsPage({ onNavigate, initialTab }: ProjectsPageProps) {
       } else {
         setError("Failed to add project");
       }
-    } finally {
-      setIsAdding(false);
     }
+    setIsAdding(false);
   };
 
   const handleCreateNewProject = async (parentDir: string, name: string, initGit: boolean, projectType?: string) => {
@@ -84,9 +91,8 @@ export function ProjectsPage({ onNavigate, initialTab }: ProjectsPageProps) {
       } else {
         setError("Failed to create project");
       }
-    } finally {
-      setIsAdding(false);
     }
+    setIsAdding(false);
   };
 
   const handleDeleteProject = async () => {
@@ -99,9 +105,8 @@ export function ProjectsPage({ onNavigate, initialTab }: ProjectsPageProps) {
       } catch (err) {
         console.error("Failed to delete project:", err);
         setError("Failed to delete project");
-      } finally {
-        setIsDeleting(false);
       }
+      setIsDeleting(false);
     }
   };
 

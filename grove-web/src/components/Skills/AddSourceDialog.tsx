@@ -32,7 +32,11 @@ export function AddSourceDialog({ isOpen, editingSource, onClose, onSaved }: Add
 
   const isEditing = editingSource !== null;
 
-  useEffect(() => {
+  // Sync form fields to (editingSource, isOpen) without setState-in-effect:
+  // detect prop changes during render and reset state synchronously.
+  const [prevSync, setPrevSync] = useState<{ source: SkillSource | null; open: boolean }>({ source: editingSource, open: isOpen });
+  if (prevSync.source !== editingSource || prevSync.open !== isOpen) {
+    setPrevSync({ source: editingSource, open: isOpen });
     if (editingSource) {
       setName(editingSource.name);
       setSourceType(editingSource.source_type);
@@ -47,19 +51,23 @@ export function AddSourceDialog({ isOpen, editingSource, onClose, onSaved }: Add
       setIsNameAutoFilled(false);
     }
     setError(null);
-  }, [editingSource, isOpen]);
+  }
 
-  // Auto-fill name from URL when name is empty or was auto-filled
-  useEffect(() => {
+  // Auto-fill name from URL when name is empty or was auto-filled. Moved
+  // from useEffect into the URL onChange handler to avoid setState-in-effect
+  // — observable behavior is unchanged: extract & set only when not editing
+  // and the name is either empty or was auto-filled previously.
+  const handleUrlChange = (value: string) => {
+    setUrl(value);
     if (isEditing) return;
-    if (!url.trim()) return;
+    if (!value.trim()) return;
     if (name && !isNameAutoFilled) return;
-    const extracted = extractNameFromUrl(url);
+    const extracted = extractNameFromUrl(value);
     if (extracted) {
       setName(extracted);
       setIsNameAutoFilled(true);
     }
-  }, [url, isEditing, isNameAutoFilled, name]);
+  };
 
   useEffect(() => {
     if (!isOpen) return;
@@ -72,20 +80,27 @@ export function AddSourceDialog({ isOpen, editingSource, onClose, onSaved }: Add
 
   const handleBrowse = async () => {
     setIsBrowsing(true);
+    let response: Response | null = null;
     try {
-      const response = await fetch("/api/v1/browse-folder");
-      if (response.ok) {
-        const data = await response.json();
-        if (data.path) {
-          // Remove trailing slash
-          setUrl(data.path.replace(/\/+$/, ""));
-        }
-      }
+      response = await fetch("/api/v1/browse-folder");
     } catch {
-      // User cancelled or command failed — ignore
-    } finally {
-      setIsBrowsing(false);
+      response = null;
     }
+    let data: { path?: unknown } | null = null;
+    if (response && response.ok) {
+      try {
+        data = await response.json();
+      } catch {
+        data = null;
+      }
+    }
+    const rawPath = data?.path;
+    const path: string | null = typeof rawPath === "string" ? rawPath : null;
+    if (path) {
+      // Remove trailing slash
+      handleUrlChange(path.replace(/\/+$/, ""));
+    }
+    setIsBrowsing(false);
   };
 
   const handleSubmit = async () => {
@@ -94,24 +109,29 @@ export function AddSourceDialog({ isOpen, editingSource, onClose, onSaved }: Add
 
     setIsSaving(true);
     setError(null);
+    const trimmedSubpath = subpath.trim();
+    const req = {
+      name: name.trim(),
+      source_type: sourceType,
+      url: url.trim(),
+      subpath: trimmedSubpath ? trimmedSubpath : undefined,
+    };
+    let saveErr: unknown = null;
     try {
-      const req = {
-        name: name.trim(),
-        source_type: sourceType,
-        url: url.trim(),
-        subpath: subpath.trim() || undefined,
-      };
       if (isEditing) {
         await updateSource(editingSource!.name, req);
       } else {
         await addSource(req);
       }
-      onSaved();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to save source");
-    } finally {
-      setIsSaving(false);
+      saveErr = err;
     }
+    if (saveErr !== null) {
+      setError(saveErr instanceof Error ? saveErr.message : "Failed to save source");
+    } else {
+      onSaved();
+    }
+    setIsSaving(false);
   };
 
   return (
@@ -187,7 +207,7 @@ export function AddSourceDialog({ isOpen, editingSource, onClose, onSaved }: Add
                     <input
                       type="text"
                       value={url}
-                      onChange={(e) => setUrl(e.target.value)}
+                      onChange={(e) => handleUrlChange(e.target.value)}
                       placeholder={
                         sourceType === "git"
                           ? "https://github.com/org/skills-repo.git"

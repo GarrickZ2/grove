@@ -40,6 +40,11 @@ export type TasksMode = "zen" | "blitz";
 // Main sidebar nav items for Cmd+1-6 and Option+Cmd+Up/Down cycling.
 // "settings" and "projects" are excluded as they are utility pages, not part of the main nav cycle.
 function AppContent() {
+  "use no memo";
+  // AppContent uses two dynamic `import()` calls for code-splitting heavy
+  // panels. React Compiler 1.0 can't lower dynamic imports, so we opt
+  // this root component out. Affected children are still memoized normally.
+
   const [activeItem, setActiveItem] = useState("dashboard");
   const [tasksMode, setTasksMode] = useState<TasksMode>("zen");
   const [tasksExitSignal, setTasksExitSignal] = useState(0);
@@ -266,9 +271,8 @@ function AppContent() {
       setShowAddProject(false);
     } catch (err) {
       setAddProjectError(err instanceof Error ? err.message : "Failed to add project");
-    } finally {
-      setIsAddingProject(false);
     }
+    setIsAddingProject(false);
   };
 
   const handleCreateNewProject = async (parentDir: string, name: string, initGit: boolean, projectType?: string) => {
@@ -285,9 +289,8 @@ function AppContent() {
       } else {
         setAddProjectError("Failed to create project");
       }
-    } finally {
-      setIsAddingProject(false);
     }
+    setIsAddingProject(false);
   };
 
   // Check if we should show welcome page
@@ -309,13 +312,21 @@ function AppContent() {
     setActiveItem("projects");
   };
 
-  // Auto-navigate to dashboard when a project is auto-selected via currentProjectId
-  useEffect(() => {
-    if (currentProjectId && selectedProject && !hasExitedWelcome) {
-      setHasExitedWelcome(true);
-      setActiveItem("dashboard");
-    }
-  }, [currentProjectId, selectedProject, hasExitedWelcome]);
+  // Auto-navigate to dashboard when a project is auto-selected via currentProjectId.
+  // Uses the documented "Adjusting state on prop change" pattern (compare to a
+  // memoised marker stored in state) so we don't setState inside an effect.
+  // https://react.dev/reference/react/useState#storing-information-from-previous-renders
+  const [autoNavigatedFor, setAutoNavigatedFor] = useState<string | null>(null);
+  if (
+    currentProjectId &&
+    selectedProject &&
+    !hasExitedWelcome &&
+    autoNavigatedFor !== currentProjectId
+  ) {
+    setAutoNavigatedFor(currentProjectId);
+    setHasExitedWelcome(true);
+    setActiveItem("dashboard");
+  }
 
   // Tray popover navigation. Rust emits `tray:navigate` with a route and
   // optional project/task/chat ids. Listener is registered ONCE; refs
@@ -471,7 +482,7 @@ function AppContent() {
 
   // Register global command builder — uses refs internally, no re-renders
   const globalOptionsRef = useRef<UseCommandsOptions>(null!);
-  globalOptionsRef.current = {
+  const nextGlobalOptions: UseCommandsOptions = {
     navigation: {
       onNavigate: setActiveItem,
       activeItem,
@@ -501,6 +512,13 @@ function AppContent() {
       onOpenTerminal: handleOpenTerminal,
     } : undefined,
   };
+
+  // Sync the latest options into the ref after render so the registered
+  // command builder always sees fresh values. Effect-only ref write avoids
+  // mutating refs during render.
+  useEffect(() => {
+    globalOptionsRef.current = nextGlobalOptions;
+  });
 
   useEffect(() => {
     registerGlobalCommands(() => buildCommands(globalOptionsRef.current));

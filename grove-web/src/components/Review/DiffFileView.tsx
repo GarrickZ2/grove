@@ -446,7 +446,15 @@ export function DiffFileView({
     else dom.prev();
   };
 
-  useEffect(() => { if (isIframePreview) setIframeCurrent(0); }, [searchQuery, isIframePreview]);
+  // Reset iframe match cursor whenever the search query changes. Using the
+  // "store previous value" idiom (https://react.dev/reference/react/useState
+  // #storing-information-from-previous-renders) keeps the reset out of an
+  // effect, avoiding a cascading render.
+  const [prevSearchQueryForReset, setPrevSearchQueryForReset] = useState(searchQuery);
+  if (isIframePreview && searchQuery !== prevSearchQueryForReset) {
+    setPrevSearchQueryForReset(searchQuery);
+    setIframeCurrent(0);
+  }
 
   useEffect(() => {
     if (!isIframePreview || !searchOpen) return;
@@ -479,6 +487,9 @@ export function DiffFileView({
     return () => window.removeEventListener('message', handler);
   }, [isIframePreview, previewCommentId]);
 
+  // Effect updates the external iframe (legitimate "sync to external
+  // system"). The state reset (setIframeTotal(0)) is handled below via the
+  // store-previous-value idiom so it doesn't cascade-render from the effect.
   useEffect(() => {
     if (!searchOpen && isIframePreview) {
       const iframe = previewDrawerRef.current?.querySelector<HTMLIFrameElement>('iframe');
@@ -486,9 +497,15 @@ export function DiffFileView({
         { type: 'grove-preview-search:clear', previewId: previewCommentId },
         '*',
       );
-      setIframeTotal(0);
     }
   }, [searchOpen, isIframePreview, previewCommentId]);
+  const [prevSearchOpenForTotal, setPrevSearchOpenForTotal] = useState(searchOpen);
+  if (prevSearchOpenForTotal !== searchOpen) {
+    setPrevSearchOpenForTotal(searchOpen);
+    if (!searchOpen && isIframePreview) {
+      setIframeTotal(0);
+    }
+  }
 
   // Cmd/Ctrl+F when focus is inside preview drawer
   useEffect(() => {
@@ -508,27 +525,38 @@ export function DiffFileView({
     return () => window.removeEventListener('keydown', handler, true);
   }, [isPreviewOpen]);
 
-  // Close search when drawer closes or file changes
-  useEffect(() => {
+  // Close search when drawer closes or file changes. Using the
+  // store-previous-value idiom so the reset doesn't fire from inside an
+  // effect (which would cascade-render).
+  const [prevIsPreviewOpenForSearch, setPrevIsPreviewOpenForSearch] = useState(isPreviewOpen);
+  if (prevIsPreviewOpenForSearch !== isPreviewOpen) {
+    setPrevIsPreviewOpenForSearch(isPreviewOpen);
     if (!isPreviewOpen) {
       setSearchOpen(false);
       setSearchQuery('');
     }
-  }, [isPreviewOpen]);
-  useEffect(() => {
+  }
+  const [prevFilePathForSearch, setPrevFilePathForSearch] = useState(file.new_path);
+  if (prevFilePathForSearch !== file.new_path) {
+    setPrevFilePathForSearch(file.new_path);
     setSearchOpen(false);
     setSearchQuery('');
-  }, [file.new_path]);
+  }
   const draggingRef = useRef(false);
   const bodyRef = useRef<HTMLDivElement>(null);
 
-  // Sync expanded state with defaultExpanded prop
-  useEffect(() => {
+  // Sync expanded state with defaultExpanded prop using the
+  // store-previous-value idiom — keeps the reset out of an effect.
+  const [prevDefaultExpanded, setPrevDefaultExpanded] = useState(defaultExpanded);
+  if (prevDefaultExpanded !== defaultExpanded) {
+    setPrevDefaultExpanded(defaultExpanded);
     setDrawerExpanded(defaultExpanded);
-  }, [defaultExpanded]);
+  }
 
-  // Reset drawer state when preview closes
-  useEffect(() => {
+  // Reset drawer state when preview closes — same idiom as above.
+  const [prevIsPreviewOpenForDrawer, setPrevIsPreviewOpenForDrawer] = useState(isPreviewOpen);
+  if (prevIsPreviewOpenForDrawer !== isPreviewOpen) {
+    setPrevIsPreviewOpenForDrawer(isPreviewOpen);
     if (!isPreviewOpen) {
       setDrawerExpanded(false);
       setDrawerWidthFraction(null);
@@ -536,7 +564,7 @@ export function DiffFileView({
       setPendingPreviewLocator(null);
       setEditingPreviewDraftId(null);
     }
-  }, [isPreviewOpen]);
+  }
 
   // Stash drafts in a ref so the message listener doesn't re-attach every
   // time drafts change anywhere in the app.
@@ -868,7 +896,8 @@ export function DiffFileView({
       if (!curKind || curLines.length === 0) return;
       const content = curLines.join('\n');
       if (content.trim()) {
-        segments.push({ type: 'markdown', id: `seg-${segId++}`, kind: curKind, content });
+        segments.push({ type: 'markdown', id: `seg-${segId}`, kind: curKind, content });
+        segId += 1;
       }
       curKind = null;
       curLines = [];
@@ -876,7 +905,8 @@ export function DiffFileView({
 
     const flushCode = () => {
       if (codeLines.length === 0) return;
-      segments.push({ type: 'code', id: `seg-${segId++}`, language: codeFenceLang, lines: [...codeLines] });
+      segments.push({ type: 'code', id: `seg-${segId}`, language: codeFenceLang, lines: [...codeLines] });
+      segId += 1;
       codeLines = [];
       codeFenceLang = '';
     };
@@ -994,28 +1024,37 @@ export function DiffFileView({
     onExpandAll: handleExpandAll,
   };
 
-  // Auto-expand gap when scrolling to a line in collapsed area, then scroll & highlight
+  // Auto-expand the gap containing scrollToLine. The state mutation
+  // (setExpansions) is done via the store-previous-value idiom — at most
+  // once per scrollToLine identity change, during render — so it doesn't
+  // cascade-render from inside an effect. ensureFileLines() (which reads a
+  // ref) is deferred to the effect below.
+  const [prevScrollToLineForExpand, setPrevScrollToLineForExpand] = useState(scrollToLine);
+  if (prevScrollToLineForExpand !== scrollToLine) {
+    setPrevScrollToLineForExpand(scrollToLine);
+    if (scrollToLine && isActive) {
+      const gap = gaps.find(g => scrollToLine.line >= g.startLine && scrollToLine.line <= g.endLine);
+      if (gap) {
+        const expansion = expansions.get(gap.gapIndex);
+        if (!expansion || !expansion.full) {
+          setExpansions((prev) => {
+            const next = new Map(prev);
+            next.set(gap.gapIndex, { fromTop: 0, fromBottom: 0, full: true });
+            return next;
+          });
+        }
+      }
+    }
+  }
+
+  // Scroll & highlight after the expanded rows render. Pure DOM side effect
+  // — no setState here. Also kicks off ensureFileLines() if the gap needs it
+  // (the actual expansion state was set in the prev-value block above).
   useEffect(() => {
     if (!scrollToLine || !isActive) return;
     const targetLine = scrollToLine.line;
-
-    // Find gap containing this line
     const gap = gaps.find(g => targetLine >= g.startLine && targetLine <= g.endLine);
-    if (gap) {
-      // Check if gap is not fully expanded
-      const expansion = expansions.get(gap.gapIndex);
-      if (!expansion || !expansion.full) {
-        // Expand the gap fully
-        ensureFileLines();
-        setExpansions((prev) => {
-          const next = new Map(prev);
-          next.set(gap.gapIndex, { fromTop: 0, fromBottom: 0, full: true });
-          return next;
-        });
-      }
-    }
-
-    // Scroll to the target line and highlight it after DOM updates
+    if (gap) ensureFileLines();
     requestAnimationFrame(() => {
       setTimeout(() => {
         if (!ref.current) return;
@@ -1028,7 +1067,7 @@ export function DiffFileView({
         }
       }, 100);
     });
-  }, [scrollToLine, gaps, expansions, isActive, ensureFileLines]);
+  }, [scrollToLine, isActive, gaps, ensureFileLines]);
 
   const handleCopyPath = () => {
     navigator.clipboard.writeText(file.new_path);

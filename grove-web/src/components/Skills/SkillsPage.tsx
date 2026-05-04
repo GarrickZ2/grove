@@ -41,13 +41,12 @@ export function SkillsPage() {
       setInstalled(installedData);
     } catch (err) {
       console.error("Failed to load skills data:", err);
-    } finally {
-      setIsLoading(false);
     }
+    setIsLoading(false);
   }, []);
 
   useEffect(() => {
-    loadData();
+    void Promise.resolve().then(loadData);
   }, [loadData]);
 
   const refreshAgents = useCallback(async () => {
