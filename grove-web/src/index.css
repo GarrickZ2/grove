@@ -135,6 +135,16 @@ body {
   }
 }
 
+/* Tray running card: indeterminate progress strip */
+@keyframes trayRunPulse {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(400%);
+  }
+}
+
 /* Aurora background animation for Blitz mode */
 @keyframes aurora {
   0%, 100% {

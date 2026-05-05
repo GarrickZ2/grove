@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { getDiffStats, getSingleFileDiff, createInlineComment, createFileComment, createProjectComment, deleteComment as apiDeleteComment, replyReviewComment as apiReplyComment, updateCommentStatus as apiUpdateCommentStatus, getFileContent, editComment as apiEditComment, editReply as apiEditReply, deleteReply as apiDeleteReply, bulkDeleteComments as apiBulkDeleteComments } from '../../api/review';
 import type { DiffFile, DiffStatsResult } from '../../api/review';
-import { getReviewComments, getCommits, getTaskFiles, getTaskDirEntries } from '../../api/tasks';
+import { getReviewComments, getCommits, getTaskFiles, getTaskDirEntries, listTasks } from '../../api/tasks';
 import type { ReviewCommentEntry, ReviewCommentsResponse, DirEntry } from '../../api/tasks';
 import { buildMentionItems } from '../../utils/fileMention';
 
@@ -59,6 +59,29 @@ import { getPreviewRenderer } from './previewRenderers';
 export function DiffReviewPage({ projectId, taskId, embedded, navigateToFile, isGitRepo }: DiffReviewPageProps) {
   const { isMobile } = useIsMobile();
   const [diffData, setDiffData] = useState<DiffStatsResult | null>(null);
+  const [taskPath, setTaskPath] = useState<string | null>(null);
+  useEffect(() => {
+    const ac = new AbortController();
+    const lookup = async () => {
+      for (const filter of ['active', 'archived'] as const) {
+        if (ac.signal.aborted) return;
+        try {
+          const tasks = await listTasks(projectId, filter, ac.signal);
+          if (ac.signal.aborted) return;
+          const match = tasks.find((t) => t.id === taskId);
+          if (match) {
+            setTaskPath(match.path);
+            return;
+          }
+        } catch {
+          // Aborted requests, transient network errors — both fine to swallow.
+          // "Copy Full Path" briefly unavailable; next render will retry.
+        }
+      }
+    };
+    void lookup();
+    return () => ac.abort();
+  }, [projectId, taskId]);
   const [allFiles, setAllFiles] = useState<string[]>([]); // All git-tracked files for File Mode
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
   const selectedFileRef = useRef<string | null>(selectedFile);
@@ -499,11 +522,14 @@ export function DiffReviewPage({ projectId, taskId, embedded, navigateToFile, is
     }
   }, [projectId, taskId]);
 
-  // Trigger diff load whenever the active file changes in CHANGES mode
+  // Trigger diff load whenever the active file changes in CHANGES mode.
   // Uses activeFilePath (derived) so the first file's diff loads even when selectedFile is null.
+  // Note: loadFileDiff dedupes via fileDiffCacheRef + loadingDiffsRef, so it is safe to fire
+  // even while a pending navigation is being resolved — without this, when the resolved
+  // navigation target equals the fallback activeFilePath, neither this effect (deps unchanged)
+  // nor the navigation effect (which doesn't load) ever triggers the fetch.
   useEffect(() => {
     if (!activeFilePath || viewMode !== 'diff') return;
-    if (pendingNavRef.current) return; // navigation effect will handle selection/load
     loadFileDiff(activeFilePath, currentDiffRefs.fromRef, currentDiffRefs.toRef);
   }, [activeFilePath, viewMode, currentDiffRefs.fromRef, currentDiffRefs.toRef, loadFileDiff]);
 
@@ -1639,6 +1665,7 @@ export function DiffReviewPage({ projectId, taskId, embedded, navigateToFile, is
               viewMode={viewMode}
               onExpandDir={viewMode === 'full' && focusMode ? handleExpandDir : undefined}
               onLoadFileDiff={viewMode === 'full' && focusMode ? loadFileDiff : undefined}
+              taskPath={taskPath}
             />
 
             {/* Diff content */}

@@ -13,11 +13,17 @@
  *   permission_required → status="permission" (inherit Running's timer)
  *   idle                → status="done"      (FREEZE duration_ms)
  *   disconnected        → drop entry
+ *
+ * Layout: three sections with fixed-shape rows per type so an item never
+ * grows to push others out of view.
+ *   NEEDS YOU (permission) — large card, inline action buttons
+ *   RUNNING                — medium card, single-line prompt, pulse strip
+ *   RECENT (done)          — single-line rows, sticky collapsible header
  */
 
 import { useEffect, useMemo, useState } from "react";
 import { motion, LayoutGroup, AnimatePresence } from "framer-motion";
-import { Settings, ExternalLink } from "lucide-react";
+import { Settings, ExternalLink, ChevronDown, X, Zap } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import { useRadioEvents } from "../../hooks/useRadioEvents";
 import { agentOptions } from "../../data/agents";
@@ -43,20 +49,12 @@ interface ChatItem {
   chat_title: string | null;
   agent: string | null;
   status: ChatStatusKind;
-  /** When this chat last entered Running. RESET on every busy=true.
-   *  Permission inherits this (no reset). Done freezes against this. */
   running_started_at: number | null;
-  /** When this chat last transitioned to its current state (for the
-   *  card's right-side absolute timestamp). */
   entered_state_at: number;
-  /** Frozen duration in ms — only set when status==="done". */
   done_duration_ms: number | null;
-  /** Permission details — only set when status==="permission". */
   pending_options: PermissionOption[] | null;
   pending_description: string | null;
-  /** User prompt for the current/most-recent turn (Running display). */
   prompt: string | null;
-  /** Final assistant message for the just-completed turn (Done display). */
   message: string | null;
 }
 
@@ -71,7 +69,7 @@ function formatDuration(ms: number): string {
   const r = s % 60;
   if (m < 60) return `${m}m ${String(r).padStart(2, "0")}s`;
   const h = Math.floor(m / 60);
-  return `${h}h ${m % 60}m ${String(r).padStart(2, "0")}s`;
+  return `${h}h ${m % 60}m`;
 }
 
 function resolveAgent(agent: string | null) {
@@ -79,9 +77,6 @@ function resolveAgent(agent: string | null) {
   const lower = agent.toLowerCase();
   return (
     agentOptions.find((a) => {
-      // Lowercase both sides — the catalog currently uses lowercase IDs
-      // but a future entry like "ClaudeCode" shouldn't silently break the
-      // tray's icon resolution.
       const id = a.id.toLowerCase();
       const value = a.value.toLowerCase();
       const tc = a.terminalCheck?.toLowerCase();
@@ -89,6 +84,25 @@ function resolveAgent(agent: string | null) {
       return id === lower || value === lower || tc === lower || ac === lower;
     }) ?? null
   );
+}
+
+/** Clean, predictable label per ACP `kind`. ACP `name` fields are often
+ *  function-call dumps (e.g. `Always Allow all mcp__grove__grove_reply_review`)
+ *  which look terrible as button labels. Falls back to `name` for unknown
+ *  kinds. */
+function labelFor(opt: PermissionOption): string {
+  switch (opt.kind) {
+    case "allow_once":
+      return "Allow";
+    case "allow_always":
+      return "Always allow";
+    case "reject_once":
+      return "Reject";
+    case "reject_always":
+      return "Always reject";
+    default:
+      return opt.name.replace(/\s+/g, " ").trim();
+  }
 }
 
 function orderOptions(opts: PermissionOption[]): PermissionOption[] {
@@ -100,6 +114,30 @@ function orderOptions(opts: PermissionOption[]): PermissionOption[] {
     return 4;
   };
   return [...opts].sort((a, b) => rank(a.kind) - rank(b.kind));
+}
+
+/** Build the provenance line shown under the title.
+ *  - When the task name equals the project name (the project's own
+ *    "local task"), `project · project` is just visual noise — replace
+ *    the duplicate with the literal label "Work".
+ *  - When a chat_title exists and differs from the task name, include
+ *    the task as middle context; otherwise just project.
+ */
+function provenanceOf(item: ChatItem): string {
+  const isLocal = item.task_name === item.project_name;
+  const taskLabel = isLocal ? "Work" : item.task_name;
+  if (item.chat_title && item.chat_title !== item.task_name) {
+    return `${item.project_name} · ${taskLabel}`;
+  }
+  return isLocal ? `${item.project_name} · Work` : item.project_name;
+}
+
+/** Truncate a single-line preview hard so it never wraps mid-card. */
+function oneLine(s: string | null, max = 120): string | null {
+  if (!s) return null;
+  const flat = s.replace(/\s+/g, " ").trim();
+  if (flat.length <= max) return flat;
+  return flat.slice(0, max - 1) + "…";
 }
 
 interface TrayShowConfig {
@@ -116,11 +154,8 @@ export function TrayPopover() {
   const [chats, setChats] = useState<Map<string, ChatItem>>(() => new Map());
   const [now, setNow] = useState(() => Date.now());
   const [show, setShow] = useState<TrayShowConfig>(DEFAULT_SHOW);
+  const [recentOpen, setRecentOpen] = useState(false);
 
-  // Live ticker — only ticks while there's actually a Running or Permission
-  // chat (their elapsed time is live). When the popover only contains Done
-  // rows (frozen durations) the interval would re-render the whole list every
-  // second for nothing.
   const hasLiveCard = useMemo(
     () =>
       Array.from(chats.values()).some(
@@ -134,7 +169,6 @@ export function TrayPopover() {
     return () => window.clearInterval(id);
   }, [hasLiveCard]);
 
-  // Read tray show toggles from main config.
   useEffect(() => {
     let cancelled = false;
     const reload = async () => {
@@ -142,7 +176,6 @@ export function TrayPopover() {
       try {
         res = await fetch("/api/v1/config");
       } catch {
-        /* noop */
         return;
       }
       if (!res.ok) {
@@ -178,8 +211,6 @@ export function TrayPopover() {
     };
   }, []);
 
-  // Subscribe to chat_status events on the existing radio WS. State
-  // machine described at the top of the file.
   useRadioEvents({
     onChatStatus: (
       projectId,
@@ -201,7 +232,6 @@ export function TrayPopover() {
 
         switch (status) {
           case "busy": {
-            // RESET running_started_at on every transition into Running.
             next.set(chatId, {
               chat_id: chatId,
               project_id: projectId,
@@ -222,11 +252,6 @@ export function TrayPopover() {
             break;
           }
           case "permission_required": {
-            // Inherit running_started_at from the in-flight Running /
-            // Permission turn so the timer doesn't reset mid-turn. If the
-            // prior state was Done (a stale completion from an earlier
-            // turn), OR there's no prior state at all, this is a fresh
-            // turn — start the timer from `ts`, not from hours ago.
             const isFreshTurn = !existing || existing.status === "done";
             next.set(chatId, {
               chat_id: chatId,
@@ -250,8 +275,6 @@ export function TrayPopover() {
             break;
           }
           case "idle": {
-            // Promote to Done only if we observed prior work — prevents
-            // an early "idle" right after connect from creating noise.
             if (
               existing &&
               (existing.status === "running" || existing.status === "permission")
@@ -266,8 +289,6 @@ export function TrayPopover() {
                 pending_description: null,
                 message: payload?.message ?? null,
               });
-              // Cap Done rows at 50 (FIFO by entered_state_at) so long
-              // sessions don't grow the Map indefinitely.
               const doneEntries = Array.from(next.entries()).filter(
                 ([, v]) => v.status === "done",
               );
@@ -317,16 +338,27 @@ export function TrayPopover() {
   const showPerms = show.permission;
   const showRunning = show.running;
   const showDone = show.done;
-  // totalRunning always reflects actual agent state regardless of show/hide filters
-  const totalRunning = Array.from(chats.values()).filter((c) => c.status === "running").length;
+  const totalRunning = showRunning
+    ? Array.from(chats.values()).filter((c) => c.status === "running").length
+    : 0;
   const totalPending = showPerms ? permList.length : 0;
-  const totalAll = totalRunning + totalPending + (showDone ? doneList.length : 0);
+  const totalDone = showDone ? doneList.length : 0;
+  const totalAll = totalRunning + totalPending + totalDone;
 
   const dismiss = (chatId: string) =>
     setChats((prev) => {
       if (!prev.has(chatId)) return prev;
       const next = new Map(prev);
       next.delete(chatId);
+      return next;
+    });
+
+  const clearDone = () =>
+    setChats((prev) => {
+      const next = new Map(prev);
+      for (const [k, v] of prev) {
+        if (v.status === "done") next.delete(k);
+      }
       return next;
     });
 
@@ -372,13 +404,23 @@ export function TrayPopover() {
         <div className="flex-1 leading-tight">
           <div className="text-[13px] font-semibold">Grove</div>
           <div className="font-mono text-[11px] text-[var(--color-text-muted)]">
-            <b className="font-medium text-[var(--color-highlight)]">{totalRunning}</b> running
             {totalPending > 0 ? (
               <>
-                {" · "}
-                <span className="text-[var(--color-warning)]">{totalPending} pending</span>
+                <span className="text-[var(--color-warning)] font-medium">
+                  {totalPending} needs you
+                </span>
+                {totalRunning > 0 ? (
+                  <>
+                    {" · "}
+                    <span className="text-[var(--color-highlight)]">{totalRunning} running</span>
+                  </>
+                ) : null}
               </>
-            ) : null}
+            ) : totalRunning > 0 ? (
+              <span className="text-[var(--color-highlight)]">{totalRunning} running</span>
+            ) : (
+              <span>idle</span>
+            )}
           </div>
         </div>
         <button
@@ -397,44 +439,111 @@ export function TrayPopover() {
         </button>
       </header>
 
-      {/* Stream */}
+      {/* Stream — single vertical scroll, no horizontal, no nested scrolls.
+          Each section is its own translucent panel with a chip header,
+          inspired by the glass mockup but theme-friendly (works under any
+          of Grove's 8 themes via color-mix on the existing tokens). */}
       <LayoutGroup>
-        <div className="flex-1 overflow-y-auto px-2 py-2">
+        <div className="flex flex-1 flex-col gap-2 overflow-y-auto overflow-x-hidden p-2">
           {totalAll === 0 ? (
             <EmptyState />
           ) : (
             <>
-              {showPerms &&
-                permList.map((c) => (
-                  <ChatRow
-                    key={c.chat_id}
-                    item={c}
-                    now={now}
-                    onResolve={(opt) => handleResolve(c, opt)}
-                    onOpen={() => handleOpenTask(c)}
-                    onDismiss={() => dismiss(c.chat_id)}
+              {showPerms && permList.length > 0 ? (
+                <Panel tone="warning">
+                  <ChipHeader
+                    tone="warning"
+                    icon={<Zap size={11} />}
+                    label="Needs you"
+                    count={permList.length}
                   />
-                ))}
-              {showRunning &&
-                runList.map((c) => (
-                  <ChatRow
-                    key={c.chat_id}
-                    item={c}
-                    now={now}
-                    onOpen={() => handleOpenTask(c)}
-                    onDismiss={() => dismiss(c.chat_id)}
+                  <div className="flex flex-col">
+                    {permList.map((c) => (
+                      <PermissionCard
+                        key={c.chat_id}
+                        item={c}
+                        now={now}
+                        onResolve={(opt) => handleResolve(c, opt)}
+                        onOpen={() => handleOpenTask(c)}
+                      />
+                    ))}
+                  </div>
+                </Panel>
+              ) : null}
+
+              {showRunning && runList.length > 0 ? (
+                <Panel tone="highlight">
+                  <ChipHeader
+                    tone="highlight"
+                    pulseDot
+                    label="Running"
+                    count={runList.length}
                   />
-                ))}
-              {showDone &&
-                doneList.map((c) => (
-                  <ChatRow
-                    key={c.chat_id}
-                    item={c}
-                    now={now}
-                    onOpen={() => handleOpenTask(c)}
-                    onDismiss={() => dismiss(c.chat_id)}
-                  />
-                ))}
+                  <div className="flex flex-col">
+                    {runList.map((c) => (
+                      <RunningCard
+                        key={c.chat_id}
+                        item={c}
+                        now={now}
+                        onOpen={() => handleOpenTask(c)}
+                      />
+                    ))}
+                  </div>
+                </Panel>
+              ) : null}
+
+              {showDone && doneList.length > 0 ? (
+                <Panel tone="muted">
+                  <button
+                    onClick={() => setRecentOpen((v) => !v)}
+                    className="flex w-full items-center gap-1.5 px-2 pt-2 pb-1.5 text-left"
+                  >
+                    <ChevronDown
+                      size={11}
+                      className="text-[var(--color-text-muted)] transition-transform"
+                      style={{ transform: recentOpen ? "rotate(0deg)" : "rotate(-90deg)" }}
+                    />
+                    <ChipBadge tone="muted">
+                      Done · {doneList.length}
+                    </ChipBadge>
+                    <span className="flex-1" />
+                    {recentOpen ? (
+                      <span
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          clearDone();
+                        }}
+                        className="text-[10px] font-medium uppercase tracking-[0.6px] text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
+                      >
+                        Clear all
+                      </span>
+                    ) : null}
+                  </button>
+                  <AnimatePresence initial={false}>
+                    {recentOpen ? (
+                      <motion.div
+                        key="recent-body"
+                        initial={{ opacity: 0, height: 0 }}
+                        animate={{ opacity: 1, height: "auto" }}
+                        exit={{ opacity: 0, height: 0 }}
+                        transition={{ duration: 0.18, ease: [0.4, 0, 0.2, 1] }}
+                        className="overflow-hidden"
+                      >
+                        <div className="flex flex-col">
+                          {doneList.map((c) => (
+                            <DoneRow
+                              key={c.chat_id}
+                              item={c}
+                              onOpen={() => handleOpenTask(c)}
+                              onDismiss={() => dismiss(c.chat_id)}
+                            />
+                          ))}
+                        </div>
+                      </motion.div>
+                    ) : null}
+                  </AnimatePresence>
+                </Panel>
+              ) : null}
             </>
           )}
         </div>
@@ -443,223 +552,376 @@ export function TrayPopover() {
   );
 }
 
-// ─── ChatRow ─────────────────────────────────────────────────────────────────
+// ─── Panel + chip header (glass-feel section container) ───────────────────
+
+type Tone = "warning" | "highlight" | "muted";
+
+const TONE_VAR: Record<Tone, string> = {
+  warning: "var(--color-warning)",
+  highlight: "var(--color-highlight)",
+  muted: "var(--color-text-muted)",
+};
+
+function Panel({ tone, children }: { tone: Tone; children: React.ReactNode }) {
+  // Translucent panel: sits on the popover's bg-secondary base. Subtle
+  // tone-tinted hairline border + soft inner background gives the
+  // "glass card" silhouette without depending on backdrop-filter (which
+  // doesn't show through Tauri's default opaque window).
+  const accent = TONE_VAR[tone];
+  return (
+    <div
+      className="overflow-hidden border"
+      style={{
+        background: `color-mix(in srgb, ${accent} 4%, var(--color-bg-tertiary))`,
+        borderColor: `color-mix(in srgb, ${accent} 22%, var(--color-border))`,
+        borderRadius: 8,
+      }}
+    >
+      {children}
+    </div>
+  );
+}
+
+function ChipBadge({
+  tone,
+  children,
+}: {
+  tone: Tone;
+  children: React.ReactNode;
+}) {
+  const accent = TONE_VAR[tone];
+  return (
+    <span
+      className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-[0.7px]"
+      style={{
+        color: accent,
+        background: `color-mix(in srgb, ${accent} 12%, transparent)`,
+        border: `1px solid color-mix(in srgb, ${accent} 28%, transparent)`,
+      }}
+    >
+      {children}
+    </span>
+  );
+}
+
+interface ChipHeaderProps {
+  tone: Tone;
+  label: string;
+  count: number;
+  icon?: React.ReactNode;
+  pulseDot?: boolean;
+}
+
+function ChipHeader({ tone, label, count, icon, pulseDot }: ChipHeaderProps) {
+  const accent = TONE_VAR[tone];
+  return (
+    <div className="px-2 pt-2 pb-1.5">
+      <ChipBadge tone={tone}>
+        {icon ? (
+          icon
+        ) : pulseDot ? (
+          <span
+            className="h-[6px] w-[6px] animate-pulse"
+            style={{
+              background: accent,
+              borderRadius: 999,
+              boxShadow: `0 0 6px color-mix(in srgb, ${accent} 60%, transparent)`,
+            }}
+          />
+        ) : null}
+        <span>
+          {label} · {count}
+        </span>
+      </ChipBadge>
+    </div>
+  );
+}
+
+// ─── Agent badge ───────────────────────────────────────────────────────────
+
+function AgentBadge({
+  agent,
+  tone,
+  size = 22,
+}: {
+  agent: string | null;
+  tone: "warning" | "highlight" | "muted";
+  size?: number;
+}) {
+  const meta = resolveAgent(agent);
+  const Icon = meta?.icon ?? null;
+  const bg =
+    tone === "warning"
+      ? "color-mix(in srgb, var(--color-warning) 16%, transparent)"
+      : tone === "highlight"
+        ? "color-mix(in srgb, var(--color-highlight) 16%, transparent)"
+        : "color-mix(in srgb, var(--color-text) 7%, transparent)";
+  return (
+    <span
+      className="flex shrink-0 items-center justify-center"
+      style={{ width: size, height: size, background: bg, borderRadius: 4 }}
+    >
+      {Icon ? (
+        <Icon size={Math.round(size * 0.62)} />
+      ) : (
+        <span className="text-[10px] text-[var(--color-text-muted)]">
+          {(agent || "?")[0].toUpperCase()}
+        </span>
+      )}
+    </span>
+  );
+}
+
+// ─── Permission card (NEEDS YOU) ───────────────────────────────────────────
 
 const CARD_MORPH = { type: "spring" as const, stiffness: 380, damping: 32 };
 
-interface RowProps {
+function PermissionCard({
+  item,
+  now,
+  onResolve,
+  onOpen,
+}: {
   item: ChatItem;
   now: number;
-  onResolve?: (opt: PermissionOption) => void;
+  onResolve: (opt: PermissionOption) => void;
   onOpen: () => void;
-  onDismiss: () => void;
-}
-
-function ChatRow({ item, now, onResolve, onOpen, onDismiss }: RowProps) {
-  const isPerm = item.status === "permission";
-  const isRunning = item.status === "running";
-
-  // Click anywhere on the row toggles expand. Permission, Running, Done
-  // all share the same UX — click to see details/actions.
-  const [expanded, setExpanded] = useState(false);
-
-  const accent = isPerm
-    ? "var(--color-warning)"
-    : isRunning
-      ? "var(--color-highlight)"
-      : "var(--color-text-muted)";
-  const dotPulse = isPerm || isRunning;
-
-  // Duration semantics:
-  //   Running     → live tick from running_started_at (RESET on each busy)
-  //   Permission  → live tick from running_started_at (INHERITED, no reset)
-  //   Done        → FROZEN done_duration_ms, never updates
-  const durationText =
-    item.status === "done"
-      ? item.done_duration_ms != null
-        ? formatDuration(item.done_duration_ms)
-        : null
-      : item.running_started_at != null
-        ? formatDuration(now - item.running_started_at)
-        : null;
-
+}) {
   const title = item.chat_title || item.task_name;
-  const preview = isPerm
-    ? item.pending_description
-    : isRunning
-      ? item.prompt
-      : item.message;
-
-  const agentMeta = resolveAgent(item.agent ?? null);
-  const AgentIcon = agentMeta?.icon ?? null;
+  const provenance = provenanceOf(item);
+  const elapsed =
+    item.running_started_at != null ? formatDuration(now - item.running_started_at) : null;
+  const desc = oneLine(item.pending_description, 140);
+  const opts = item.pending_options ? orderOptions(item.pending_options) : [];
+  const primary = opts[0];
+  const secondary = opts.slice(1);
 
   return (
     <motion.div
       layout
       transition={CARD_MORPH}
-      className="group relative mx-1 px-2.5 py-2 cursor-pointer transition-colors hover:bg-[color-mix(in_srgb,var(--color-text)_4%,transparent)]"
-      onClick={() => setExpanded((v) => !v)}
+      onClick={onOpen}
+      role="button"
+      tabIndex={0}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          onOpen();
+        }
+      }}
+      className="cursor-pointer overflow-hidden border-t border-[color-mix(in_srgb,var(--color-warning)_18%,transparent)] px-3 py-2 first:border-t-0 hover:bg-[color-mix(in_srgb,var(--color-warning)_6%,transparent)]"
     >
-      {/* Row 1: agent · title · status text + time */}
+      {/* Row 1: agent · title · elapsed */}
       <div className="flex items-center gap-2.5">
-        <span
-          className="relative flex h-[20px] w-[20px] shrink-0 items-center justify-center"
-          style={{
-            background: isRunning
-              ? "color-mix(in srgb, var(--color-highlight) 14%, transparent)"
-              : isPerm
-                ? "color-mix(in srgb, var(--color-warning) 14%, transparent)"
-                : "color-mix(in srgb, var(--color-text) 6%, transparent)",
-          }}
-        >
-          {AgentIcon ? (
-            <AgentIcon size={13} />
-          ) : (
-            <span className="text-[10px] text-[var(--color-text-muted)]">
-              {(item.agent || "?")[0].toUpperCase()}
-            </span>
-          )}
-          {isRunning ? (
-            <span className="pointer-events-none absolute inset-0 animate-[trayPulseRing_1.6s_ease-in-out_infinite]" />
-          ) : null}
-        </span>
-        <span
-          className="flex-1 overflow-hidden text-ellipsis whitespace-nowrap text-[13px] font-semibold text-[var(--color-text)]"
-          title={`${item.project_name} / ${item.task_name}${item.chat_title ? ` · ${item.chat_title}` : ""}`}
-        >
-          {title}
-        </span>
-        {/* Explicit status text — color is hard to read on its own. */}
-        <span
-          className={`shrink-0 inline-flex items-center gap-1 text-[10px] font-bold uppercase tracking-[0.8px] ${dotPulse ? "" : ""}`}
-          style={{ color: accent }}
-        >
-          <span
-            className={`h-[6px] w-[6px] ${dotPulse ? "animate-pulse" : ""}`}
-            style={{
-              background: accent,
-              borderRadius: 999,
-              boxShadow: dotPulse
-                ? `0 0 6px color-mix(in srgb, ${accent} 60%, transparent)`
-                : undefined,
-            }}
-          />
-          {isPerm ? "Permission" : isRunning ? "Running" : "Done"}
-        </span>
-        {durationText ? (
-          <span className="shrink-0 font-mono text-[10.5px] text-[var(--color-text-muted)]">
-            {durationText}
-          </span>
-        ) : null}
-      </div>
-
-      {/* Row 2: provenance + preview (one-line, always visible) */}
-      <div className="mt-0.5 ml-[30px] flex items-center gap-1.5 text-[11.5px] text-[var(--color-text-muted)]">
-        {item.chat_title && item.task_name !== item.chat_title ? (
-          <span className="shrink-0 text-[10.5px] opacity-70">
-            {item.project_name} / {item.task_name}
-          </span>
-        ) : (
-          <span className="shrink-0 text-[10.5px] opacity-70">{item.project_name}</span>
-        )}
-        {preview && !expanded ? (
-          <>
-            <span className="opacity-40">·</span>
-            <span
-              className="overflow-hidden text-ellipsis whitespace-nowrap"
-              style={isPerm ? { color: "var(--color-warning)" } : undefined}
-            >
-              {preview}
-            </span>
-          </>
-        ) : null}
-      </div>
-
-      {/* Expanded body: full preview + actions */}
-      <AnimatePresence initial={false}>
-        {expanded ? (
-          <motion.div
-            key="body"
-            initial={{ opacity: 0, height: 0 }}
-            animate={{ opacity: 1, height: "auto" }}
-            exit={{ opacity: 0, height: 0 }}
-            transition={{ duration: 0.18, ease: [0.4, 0, 0.2, 1] }}
-            className="overflow-hidden"
+        <AgentBadge agent={item.agent} tone="warning" />
+        <div className="min-w-0 flex-1">
+          <div
+            className="overflow-hidden text-ellipsis whitespace-nowrap text-[13px] font-semibold"
+            title={title}
           >
-            <div className="mt-2 ml-[30px]">
-              {preview ? (
-                <div
-                  className={`text-[12px] leading-snug whitespace-pre-wrap max-h-[160px] overflow-y-auto ${isPerm ? "text-[var(--color-text)]" : "text-[color-mix(in_srgb,var(--color-text)_88%,transparent)]"}`}
-                >
-                  {preview}
-                </div>
-              ) : null}
-              {isPerm && item.pending_options ? (
-                <div className="mt-2 flex flex-col gap-1">
-                  {orderOptions(item.pending_options).map((opt, idx) => {
-                    const isAllow = opt.kind.startsWith("allow");
-                    const isPrimary = idx === 0 && isAllow;
-                    return (
-                      <button
-                        key={opt.option_id}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          onResolve?.(opt);
-                        }}
-                        className={
-                          isPrimary
-                            ? "px-3 py-1 text-[11.5px] font-medium bg-[var(--color-highlight)] text-white hover:opacity-90 transition-all text-left"
-                            : isAllow
-                              ? "px-3 py-1 text-[11.5px] text-left text-[var(--color-text)] hover:bg-[var(--color-bg-tertiary)] transition-colors"
-                              : "px-3 py-1 text-[11.5px] text-left text-[var(--color-text-muted)] hover:text-[var(--color-error)] hover:bg-[color-mix(in_srgb,var(--color-error)_10%,transparent)] transition-colors"
-                        }
-                      >
-                        {opt.name}
-                      </button>
-                    );
-                  })}
-                  <div className="flex justify-end mt-1">
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        onOpen();
-                      }}
-                      className="inline-flex items-center gap-1 px-3 py-1 text-[11px] font-medium text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-bg-tertiary)] transition-colors"
-                    >
-                      Open <ExternalLink size={11} className="opacity-80" />
-                    </button>
-                  </div>
-                </div>
-              ) : (
-                <div className="mt-2 flex justify-end gap-1.5">
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onDismiss();
-                    }}
-                    className="px-2.5 py-1 text-[11px] text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-bg-tertiary)] transition-colors"
-                  >
-                    Dismiss
-                  </button>
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onOpen();
-                    }}
-                    className="inline-flex items-center gap-1 px-3 py-1 text-[11px] font-medium bg-[var(--color-highlight)] text-white hover:opacity-90 transition-all"
-                  >
-                    Open <ExternalLink size={11} className="opacity-80" />
-                  </button>
-                </div>
-              )}
-            </div>
-          </motion.div>
+            {title}
+          </div>
+          <div
+            className="overflow-hidden text-ellipsis whitespace-nowrap font-mono text-[10.5px] text-[var(--color-text-muted)]"
+            title={provenance}
+          >
+            {provenance}
+          </div>
+        </div>
+        {elapsed ? (
+          <span className="shrink-0 font-mono text-[10.5px] text-[var(--color-text-muted)]">
+            {elapsed}
+          </span>
         ) : null}
-      </AnimatePresence>
+      </div>
 
+      {/* Row 2: single-line description */}
+      {desc ? (
+        <div
+          className="mt-1.5 overflow-hidden text-ellipsis whitespace-nowrap text-[12px] text-[var(--color-text)]"
+          title={item.pending_description ?? undefined}
+        >
+          {desc}
+        </div>
+      ) : null}
+
+      {/* Row 3: action buttons — adaptive layout.
+          Primary always own row (CTA gets full width). Secondaries use
+          flex-wrap with `flex: 1 1 110px` + max-w-full so:
+            • short labels pack horizontally (2-3 per row)
+            • long labels (e.g. "Always Allow Read(/very/long/path)")
+              naturally fill the row alone and ellipsise.
+          No horizontal scroll, no fixed-count cap, no nested scroll. */}
+      {opts.length > 0 ? (
+        <div className="mt-2 flex flex-col gap-1">
+          {primary ? (
+            <button
+              onClick={(e) => { e.stopPropagation(); onResolve(primary); }}
+              title={primary.name}
+              className="h-7 w-full px-3 text-[11.5px] font-medium bg-[var(--color-highlight)] text-white hover:opacity-90 transition-opacity"
+            >
+              {labelFor(primary)}
+            </button>
+          ) : null}
+          {secondary.length > 0 ? (
+            <div className="flex flex-wrap gap-1">
+              {secondary.map((opt) => {
+                const isAllow = opt.kind.startsWith("allow");
+                return (
+                  <button
+                    key={opt.option_id}
+                    onClick={(e) => { e.stopPropagation(); onResolve(opt); }}
+                    title={opt.name}
+                    className={
+                      "h-7 min-w-0 max-w-full overflow-hidden text-ellipsis whitespace-nowrap px-3 text-[11.5px] border text-center transition-colors " +
+                      (isAllow
+                        ? "text-[var(--color-text)] border-[var(--color-border)] hover:bg-[var(--color-bg-tertiary)]"
+                        : "text-[var(--color-error)] border-[color-mix(in_srgb,var(--color-error)_35%,transparent)] hover:bg-[color-mix(in_srgb,var(--color-error)_10%,transparent)]")
+                    }
+                    style={{ flex: "1 1 110px" }}
+                  >
+                    {labelFor(opt)}
+                  </button>
+                );
+              })}
+            </div>
+          ) : null}
+        </div>
+      ) : (
+        <div className="mt-2 flex justify-end">
+          <button
+            onClick={(e) => { e.stopPropagation(); onOpen(); }}
+            className="inline-flex items-center gap-1 px-3 py-1.5 text-[11px] font-medium text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-bg-tertiary)] transition-colors"
+          >
+            Open <ExternalLink size={11} />
+          </button>
+        </div>
+      )}
     </motion.div>
   );
 }
+
+// ─── Running card ──────────────────────────────────────────────────────────
+
+function RunningCard({
+  item,
+  now,
+  onOpen,
+}: {
+  item: ChatItem;
+  now: number;
+  onOpen: () => void;
+}) {
+  const title = item.chat_title || item.task_name;
+  const provenance = provenanceOf(item);
+  const elapsed =
+    item.running_started_at != null ? formatDuration(now - item.running_started_at) : null;
+  const prompt = oneLine(item.prompt, 140);
+
+  return (
+    <motion.div
+      layout
+      transition={CARD_MORPH}
+      onClick={onOpen}
+      className="group relative cursor-pointer overflow-hidden px-2.5 py-2 transition-colors hover:bg-[color-mix(in_srgb,var(--color-text)_4%,transparent)]"
+    >
+      <div className="flex items-center gap-2.5">
+        <AgentBadge agent={item.agent} tone="highlight" />
+        <div className="min-w-0 flex-1">
+          <div
+            className="overflow-hidden text-ellipsis whitespace-nowrap text-[13px] font-semibold"
+            title={title}
+          >
+            {title}
+          </div>
+          <div className="flex items-center gap-1.5 font-mono text-[10.5px] text-[var(--color-text-muted)]">
+            <span
+              className="overflow-hidden text-ellipsis whitespace-nowrap"
+              title={provenance}
+            >
+              {provenance}
+            </span>
+          </div>
+        </div>
+        {elapsed ? (
+          <span className="shrink-0 font-mono text-[10.5px] text-[var(--color-highlight)]">
+            {elapsed}
+          </span>
+        ) : null}
+      </div>
+      {prompt ? (
+        <div
+          className="mt-1 ml-[32px] overflow-hidden text-ellipsis whitespace-nowrap text-[11.5px] text-[var(--color-text-muted)]"
+          title={item.prompt ?? undefined}
+        >
+          {prompt}
+        </div>
+      ) : null}
+      {/* Pulse strip — indicates "still working" without false ETA */}
+      <div className="mt-1.5 h-[2px] w-full overflow-hidden bg-[color-mix(in_srgb,var(--color-highlight)_15%,transparent)]">
+        <div className="h-full w-1/3 animate-[trayRunPulse_1.6s_ease-in-out_infinite] bg-[var(--color-highlight)]" />
+      </div>
+    </motion.div>
+  );
+}
+
+// ─── Done row (RECENT) ─────────────────────────────────────────────────────
+
+function DoneRow({
+  item,
+  onOpen,
+  onDismiss,
+}: {
+  item: ChatItem;
+  onOpen: () => void;
+  onDismiss: () => void;
+}) {
+  const title = item.chat_title || item.task_name;
+  const provenance = provenanceOf(item);
+  const dur = item.done_duration_ms != null ? formatDuration(item.done_duration_ms) : null;
+
+  return (
+    <motion.div
+      layout
+      transition={CARD_MORPH}
+      onClick={onOpen}
+      className="group relative flex h-[40px] cursor-pointer items-center gap-2.5 px-3 transition-colors hover:bg-[color-mix(in_srgb,var(--color-text)_4%,transparent)]"
+    >
+      <AgentBadge agent={item.agent} tone="muted" size={18} />
+      <div className="min-w-0 flex-1">
+        <div
+          className="overflow-hidden text-ellipsis whitespace-nowrap text-[12.5px] text-[var(--color-text)]"
+          title={title}
+        >
+          {title}
+        </div>
+        <div
+          className="overflow-hidden text-ellipsis whitespace-nowrap font-mono text-[10px] text-[var(--color-text-muted)]"
+          title={provenance}
+        >
+          {provenance}
+        </div>
+      </div>
+      {dur ? (
+        <span className="shrink-0 font-mono text-[10.5px] text-[var(--color-text-muted)] group-hover:hidden">
+          {dur}
+        </span>
+      ) : null}
+      <button
+        onClick={(e) => {
+          e.stopPropagation();
+          onDismiss();
+        }}
+        className="hidden h-5 w-5 shrink-0 items-center justify-center text-[var(--color-text-muted)] hover:bg-[var(--color-bg-tertiary)] hover:text-[var(--color-text)] group-hover:flex"
+        title="Dismiss"
+      >
+        <X size={12} />
+      </button>
+    </motion.div>
+  );
+}
+
+// ─── Empty ────────────────────────────────────────────────────────────────
 
 function EmptyState() {
   return (

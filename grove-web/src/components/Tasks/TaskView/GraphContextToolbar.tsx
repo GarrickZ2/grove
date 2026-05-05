@@ -155,15 +155,9 @@ export function GraphContextToolbar(props: ToolbarProps) {
   // Cancellation when the selection moves elsewhere is handled upstream by
   // the click handler that changed the selection.
   const activeKey = mode?.kind ?? (node ? "node" : edge ? "edge" : "empty");
-  // Hide the bottom-right zoom widget whenever the centered toolbar is
-  // displaying a wide form (spawn/edit/edit-edge are 420px wide). The
-  // two would otherwise overlap on anything smaller than a wide
-  // monitor. Pinch / scroll / keyboard zoom still work without the
-  // buttons.
-  const hideZoomWidget =
-    mode?.kind === "spawn" ||
-    mode?.kind === "edit" ||
-    mode?.kind === "edit-edge";
+  // Zoom widget lives at top-right (see below) so it never competes with the
+  // centered context toolbar for horizontal space in narrow split-pane
+  // containers; therefore no mode-driven hide logic is needed anymore.
 
   return (
     <>
@@ -432,14 +426,13 @@ export function GraphContextToolbar(props: ToolbarProps) {
 
       {/* Zoom widget: zoom out, current level (display-only label), zoom in,
        *  divider, "Reset" text button. The label is intentionally not a
-       *  button — users were misreading it as an editable percentage. */}
+       *  button — users were misreading it as an editable percentage.
+       *  Anchored top-right so it never collides with the centered
+       *  context toolbar at the bottom in narrow split-pane containers. */}
       <motion.div
         layout
         transition={MODE_TRANSITION}
-        // Hidden whenever the centered toolbar is showing a wide form
-        // (spawn/edit/edit-edge), since they would otherwise overlap.
-        // Pinch / scroll / keyboard zoom still work without the buttons.
-        className={`absolute bottom-5 right-5 z-40 ${hideZoomWidget ? "hidden" : "flex"} items-center gap-0.5 px-1.5 py-1.5 ${FLOAT_PILL}`}
+        className={`absolute top-5 right-5 z-40 flex items-center gap-0.5 px-1.5 py-1.5 ${FLOAT_PILL}`}
         key={`zoom-${activeKey}`}
       >
         <button

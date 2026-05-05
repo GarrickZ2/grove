@@ -71,7 +71,7 @@ const AGENT_TABLE: AgentRow[] = [
     label: "Claude Code",
     staticFile: "claude-color.svg",
     Component: Claude.Color,
-    aliases: ["claude-code", "claude-color"],
+    aliases: ["claude-code", "claude-color", "claude code"],
   },
   {
     key: "codex",
@@ -99,7 +99,7 @@ const AGENT_TABLE: AgentRow[] = [
     label: "GitHub Copilot",
     staticFile: "githubcopilot.svg",
     Component: Copilot.Color,
-    aliases: ["gh-copilot", "githubcopilot"],
+    aliases: ["gh-copilot", "githubcopilot", "github copilot"],
   },
   {
     key: "hermes",
@@ -224,30 +224,21 @@ export function setCustomAgentPersonas(
 // persona in Settings, navigates to Tasks, TaskChat's mount fetch resolves
 // from a stale cache and clobbers the new entry).
 //
-// `loadCustomAgentPersonas` now owns the single source of truth: it
-// dedupes concurrent callers via `inflight`, and only the resolution of
-// the LATEST fetch ever writes into the registry. Pages call this on
-// mount + after mutations; refresh races collapse onto one promise.
-let inflightLoad: Promise<unknown> | null = null;
+// `loadCustomAgentPersonas` enforces latest-wins via `lastLoadSeq`: every
+// caller still fires its own fetch, but only the most recent one writes
+// into the registry. Stale resolutions return their data to the caller but
+// don't clobber the shared state.
 let lastLoadSeq = 0;
 
 export async function loadCustomAgentPersonas<
   T extends { id: string; name: string; base_agent: string },
 >(fetcher: () => Promise<T[]>): Promise<T[]> {
   const seq = ++lastLoadSeq;
-  const promise = fetcher();
-  inflightLoad = promise;
-  try {
-    const list = await promise;
-    // Only the most-recent caller's result wins the write — older
-    // resolutions are discarded so they can't clobber fresher data.
-    if (seq === lastLoadSeq) {
-      setCustomAgentPersonas(list);
-    }
-    return list;
-  } finally {
-    if (inflightLoad === promise) inflightLoad = null;
+  const list = await fetcher();
+  if (seq === lastLoadSeq) {
+    setCustomAgentPersonas(list);
   }
+  return list;
 }
 
 export function subscribePersonaRegistry(listener: () => void): () => void {

@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { X, CheckCircle, RotateCcw, Reply, Send, Trash2, Pencil } from 'lucide-react';
 import type { ReviewCommentEntry } from '../../api/tasks';
 import { AgentAvatar } from './AgentAvatar';
+import { formatAgentDisplay } from './agentDisplay';
 import { MarkdownRenderer, FileMentionDropdown } from '../ui';
 import { useFileMention } from '../../hooks';
 import type { MentionItem } from '../../utils/fileMention';
@@ -201,10 +202,11 @@ export function CommentDetailModal({
           }}
         >
           <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-            <AgentAvatar name={comment.author} size={24} />
+            <AgentAvatar agent={comment.agent} size={24} />
             <div>
               <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--color-text)', display: 'flex', alignItems: 'center', gap: 8 }}>
-                {comment.author}
+                {formatAgentDisplay(comment.agent, comment.role)}
+                {comment.model && <span style={{ fontSize: 11, fontFamily: 'monospace', opacity: 0.5 }}>{comment.model}</span>}
                 <span style={{ fontSize: 11, fontWeight: 500, color: 'var(--color-text-muted)' }}>#{comment.id}</span>
                 <span style={{ fontSize: 11, fontWeight: 400, color: 'var(--color-text-muted)' }}>{formatTime(comment.timestamp)}</span>
               </div>
@@ -339,9 +341,9 @@ export function CommentDetailModal({
                   }}
                 >
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
-                    <AgentAvatar name={reply.author} size={18} />
+                    <AgentAvatar agent={reply.agent} size={18} />
                     <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--color-text)' }}>
-                      {reply.author}
+                      {formatAgentDisplay(reply.agent, reply.role)}
                     </span>
                     <span style={{ fontSize: 11, color: 'var(--color-text-muted)' }}>{formatTime(reply.timestamp)}</span>
                     <span style={{ flex: 1 }} />

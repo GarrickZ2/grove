@@ -3,6 +3,7 @@ import { X, Send, MessageSquare, Trash2, Reply, CheckCircle, RotateCcw, Minus, P
 import type { ReviewCommentEntry } from '../../api/tasks';
 import type { CommentAnchor } from './DiffReviewPage';
 import { AgentAvatar } from './AgentAvatar';
+import { formatAgentDisplay } from './agentDisplay';
 import { MarkdownRenderer, FileMentionDropdown } from '../ui';
 import { useFileMention } from '../../hooks';
 import type { MentionItem } from '../../utils/fileMention';
@@ -95,8 +96,9 @@ export function CommentCard({ comment, onDelete, onReply, onResolve, onReopen, o
     <div className="diff-comment-card">
       {/* Header: avatar + author + time + line range + status badge + actions */}
       <div className="diff-comment-header">
-        <AgentAvatar name={comment.author || '?'} size={24} className="diff-comment-avatar" />
-        <span className="diff-comment-author">{comment.author}</span>
+        <AgentAvatar agent={comment.agent || '?'} size={24} className="diff-comment-avatar" />
+        <span className="diff-comment-author">{formatAgentDisplay(comment.agent, comment.role)}</span>
+        {comment.model && <span className="diff-comment-model" style={{ fontSize: 10, opacity: 0.5, fontFamily: 'monospace' }}>{comment.model}</span>}
         <span className="diff-comment-id">#{comment.id}</span>
         <span className="diff-comment-time">{formatTime(comment.timestamp)}</span>
         {lineRange && (
@@ -242,8 +244,8 @@ export function CommentCard({ comment, onDelete, onReply, onResolve, onReopen, o
           {comment.replies.map((reply) => (
             <div key={reply.id} className="diff-comment-reply">
               <div className="diff-comment-header">
-                <AgentAvatar name={reply.author} size={18} className="diff-comment-avatar small" />
-                <span className="diff-comment-author" style={{ fontSize: 11 }}>{reply.author}</span>
+                <AgentAvatar agent={reply.agent} size={18} className="diff-comment-avatar small" />
+                <span className="diff-comment-author" style={{ fontSize: 11 }}>{formatAgentDisplay(reply.agent, reply.role)}</span>
                 <span className="diff-comment-time">{formatTime(reply.timestamp)}</span>
                 <span className="diff-comment-actions">
                   {onReply && (

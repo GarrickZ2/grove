@@ -103,12 +103,10 @@ pub enum Commands {
         #[arg(long)]
         public: bool,
     },
-    /// Migrate storage to the latest format
+    /// Migrate storage to the latest format. Same flow that runs at startup —
+    /// safe to invoke manually if a previous run was interrupted.
     Migrate {
-        /// Show what would be done without making changes
-        #[arg(long)]
-        dry_run: bool,
-        /// Remove legacy files that have been migrated to SQLite
+        /// Remove legacy files that have already been migrated to SQLite.
         #[arg(long)]
         prune: bool,
     },

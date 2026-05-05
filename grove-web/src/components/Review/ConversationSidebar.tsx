@@ -2,6 +2,7 @@ import { useState, useMemo, useRef, useEffect, useCallback } from 'react';
 import { MessageSquare, CheckCircle, RotateCcw, Reply, Send, FileCode, ChevronDown, ChevronRight, Trash2, Maximize2 } from 'lucide-react';
 import type { ReviewCommentEntry } from '../../api/tasks';
 import { AgentAvatar } from './AgentAvatar';
+import { formatAgentDisplay } from './agentDisplay';
 import { CommentDetailModal } from './CommentDetailModal';
 import { useFileMention } from '../../hooks';
 import { FileMentionDropdown } from '../ui';
@@ -59,11 +60,14 @@ export function ConversationSidebar({
   const resolvedCount = comments.filter((c) => c.status === 'resolved').length;
   const outdatedCount = comments.filter((c) => c.status === 'outdated').length;
 
-  // Author counts
-  const authorCounts = useMemo(() => {
+  // Agent counts. Key by the RAW agent value (including '' for missing), so a
+  // legitimate agent literally named "Unknown" stays in its own bucket and the
+  // bulk-delete filter can be sent through to the backend untranslated.
+  // Display label converts '' → 'Unknown' at render time.
+  const agentCounts = useMemo(() => {
     const map = new Map<string, number>();
     for (const c of comments) {
-      map.set(c.author, (map.get(c.author) || 0) + 1);
+      map.set(c.agent, (map.get(c.agent) || 0) + 1);
     }
     return map;
   }, [comments]);
@@ -158,7 +162,7 @@ export function ConversationSidebar({
                 openCount={openCount}
                 resolvedCount={resolvedCount}
                 outdatedCount={outdatedCount}
-                authorCounts={authorCounts}
+                agentCounts={agentCounts}
                 onClose={() => setCleanupOpen(false)}
                 onBulkDelete={onBulkDelete}
               />
@@ -455,8 +459,9 @@ function ConversationItem({
   return (
     <div className="conv-item" onClick={onClick}>
       <div className="conv-item-header">
-        <AgentAvatar name={comment.author} size={18} className="conv-item-avatar" />
-        <span className="conv-item-author">{comment.author}</span>
+        <AgentAvatar agent={comment.agent} size={18} className="conv-item-avatar" />
+        <span className="conv-item-author">{formatAgentDisplay(comment.agent, comment.role)}</span>
+        {comment.model && <span className="conv-item-meta" style={{ fontSize: 10, opacity: 0.5 }}>{comment.model}</span>}
         <span className="conv-item-meta" style={{ opacity: 0.6 }}>#{comment.id}</span>
         {locationLabel && <span className="conv-item-meta">{locationLabel}</span>}
         <span
@@ -488,8 +493,8 @@ function ConversationItem({
 
             return (
               <div key={reply.id} className="conv-item-reply">
-                <AgentAvatar name={reply.author} size={14} />
-                <span className="conv-item-reply-author">{reply.author}</span>
+                <AgentAvatar agent={reply.agent} size={14} />
+                <span className="conv-item-reply-author">{formatAgentDisplay(reply.agent, reply.role)}</span>
                 <span className="conv-item-reply-text">{truncatedReply}</span>
               </div>
             );
@@ -613,7 +618,7 @@ function CleanupPanel({
   openCount,
   resolvedCount,
   outdatedCount,
-  authorCounts,
+  agentCounts,
   onClose,
   onBulkDelete,
 }: {
@@ -621,7 +626,7 @@ function CleanupPanel({
   openCount: number;
   resolvedCount: number;
   outdatedCount: number;
-  authorCounts: Map<string, number>;
+  agentCounts: Map<string, number>;
   onClose: () => void;
   onBulkDelete: (statuses?: string[], authors?: string[]) => void;
 }) {
@@ -675,8 +680,8 @@ function CleanupPanel({
     if (noStatuses && noAuthors) return comments.length;
     return comments.filter((c) => {
       const statusMatch = noStatuses || checkedStatuses.has(c.status);
-      const authorMatch = noAuthors || checkedAuthors.has(c.author);
-      return statusMatch && authorMatch;
+      const agentMatch = noAuthors || checkedAuthors.has(c.agent);
+      return statusMatch && agentMatch;
     }).length;
   }, [comments, checkedStatuses, checkedAuthors]);
 
@@ -688,6 +693,8 @@ function CleanupPanel({
       return;
     }
     const statuses = checkedStatuses.size > 0 ? Array.from(checkedStatuses) : undefined;
+    // checkedAuthors stores raw agent column values (including '' for the
+    // unknown bucket); pass straight through.
     const authors = checkedAuthors.size > 0 ? Array.from(checkedAuthors) : undefined;
     onBulkDelete(statuses, authors);
     onClose();
@@ -699,7 +706,7 @@ function CleanupPanel({
     { key: 'open', label: 'Open', count: openCount },
   ].filter((s) => s.count > 0);
 
-  const authorItems = Array.from(authorCounts.entries())
+  const agentItems = Array.from(agentCounts.entries())
     .sort((a, b) => b[1] - a[1])
     .map(([name, count]) => ({ name, count }));
 
@@ -724,19 +731,19 @@ function CleanupPanel({
         </>
       )}
 
-      {authorItems.length > 0 && (
+      {agentItems.length > 0 && (
         <>
           <div className="conv-cleanup-section-title" style={statusItems.length > 0 ? { borderTop: '1px solid var(--color-border)', paddingTop: 8, marginTop: 4 } : undefined}>
-            AUTHOR
+            AGENT
           </div>
-          {authorItems.map((a) => (
-            <label key={a.name} className="conv-cleanup-checkbox-item">
+          {agentItems.map((a) => (
+            <label key={a.name || '__unknown__'} className="conv-cleanup-checkbox-item">
               <input
                 type="checkbox"
                 checked={checkedAuthors.has(a.name)}
                 onChange={() => toggleAuthor(a.name)}
               />
-              <span>{a.name}</span>
+              <span>{a.name || 'Unknown'}</span>
               <span className="conv-cleanup-count">{a.count}</span>
             </label>
           ))}

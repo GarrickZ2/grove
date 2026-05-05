@@ -44,6 +44,7 @@ pub struct NotificationsConfigDto {
     pub notification_show_permission: bool,
     pub notification_show_done: bool,
     pub notification_show_running: bool,
+    pub menubar_shortcut: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -163,6 +164,7 @@ impl From<&Config> for ConfigResponse {
                 notification_show_permission: config.notifications.notification_show_permission,
                 notification_show_done: config.notifications.notification_show_done,
                 notification_show_running: config.notifications.notification_show_running,
+                menubar_shortcut: config.notifications.menubar_shortcut.clone(),
             },
             terminal_multiplexer: config.terminal_multiplexer.to_string(),
             platform: current_platform(),
@@ -194,6 +196,8 @@ pub struct NotificationsConfigPatch {
     pub notification_show_permission: Option<bool>,
     pub notification_show_done: Option<bool>,
     pub notification_show_running: Option<bool>,
+    /// `Some("")` clears the shortcut, `Some("Cmd+Shift+M")` sets it.
+    pub menubar_shortcut: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -394,6 +398,14 @@ pub async fn patch_config(
         }
         if let Some(v) = n.notification_show_running {
             config.notifications.notification_show_running = v;
+        }
+        if let Some(shortcut) = n.menubar_shortcut {
+            let shortcut = shortcut.trim().to_string();
+            config.notifications.menubar_shortcut = if shortcut.is_empty() {
+                None
+            } else {
+                Some(shortcut)
+            };
         }
     }
 

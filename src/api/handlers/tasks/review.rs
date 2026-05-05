@@ -51,7 +51,9 @@ pub async fn get_review_comments(
                 .map(|r| ReviewCommentReplyEntry {
                     id: r.id,
                     content: r.content,
-                    author: r.author,
+                    agent: r.agent,
+                    model: r.model,
+                    role: r.role,
                     timestamp: r.timestamp,
                 })
                 .collect();
@@ -68,7 +70,9 @@ pub async fn get_review_comments(
                 start_line: c.start_line,
                 end_line: c.end_line,
                 content: c.content,
-                author: c.author,
+                agent: c.agent,
+                model: c.model,
+                role: c.role,
                 timestamp: c.timestamp,
                 status,
                 replies,
@@ -98,9 +102,18 @@ pub async fn reply_review_comment(
         .as_deref()
         .or(default_name.as_deref())
         .unwrap_or("You");
+    let (agent, role) = comments::parse_author_to_agent_role(author);
 
-    comments::reply_comment(&project_key, &task_id, req.comment_id, &req.message, author)
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    comments::reply_comment(
+        &project_key,
+        &task_id,
+        req.comment_id,
+        &req.message,
+        &agent,
+        "",
+        &role,
+    )
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     get_review_comments(Path((id, task_id))).await
 }
@@ -143,6 +156,7 @@ pub async fn create_review_comment(
         .as_deref()
         .or(default_name.as_deref())
         .unwrap_or("You");
+    let (agent, role) = comments::parse_author_to_agent_role(author);
 
     match comment_type {
         comments::CommentType::Inline => {
@@ -176,7 +190,9 @@ pub async fn create_review_comment(
                 Some(start_line),
                 Some(end_line),
                 &req.content,
-                author,
+                &agent,
+                "",
+                &role,
                 anchor_text,
             )
             .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
@@ -193,7 +209,9 @@ pub async fn create_review_comment(
                 None,
                 None,
                 &req.content,
-                author,
+                &agent,
+                "",
+                &role,
                 None,
             )
             .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
@@ -208,7 +226,9 @@ pub async fn create_review_comment(
                 None,
                 None,
                 &req.content,
-                author,
+                &agent,
+                "",
+                &role,
                 None,
             )
             .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;

@@ -62,3 +62,78 @@
     display: none;
   }
 }
+
+/* ============================================================================
+   Drop overlay — shown when dragging a Review file path over the chatbox
+   ============================================================================ */
+
+.chatbox-drop-active {
+  /* Subtle ring on the bubble itself for peripheral feedback */
+  box-shadow:
+    0 22px 60px rgba(0, 0, 0, 0.18),
+    0 0 0 1px color-mix(in srgb, var(--color-highlight) 55%, transparent),
+    0 0 0 6px color-mix(in srgb, var(--color-highlight) 14%, transparent);
+}
+
+.chatbox-drop-overlay {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 6px;
+  background: color-mix(in srgb, var(--color-highlight) 8%, transparent);
+  backdrop-filter: blur(2px);
+  animation: chatbox-drop-fade-in 120ms ease-out;
+}
+
+.chatbox-drop-overlay::before {
+  /* Animated dashed ring inset slightly so it sits cleanly inside the bubble */
+  content: "";
+  position: absolute;
+  inset: 4px;
+  border-radius: calc(var(--chatbox-bubble-radius, 30px) - 4px);
+  border: 1.5px dashed color-mix(in srgb, var(--color-highlight) 75%, transparent);
+  animation: chatbox-drop-dash 700ms linear infinite;
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--color-highlight) 6%, transparent),
+    color-mix(in srgb, var(--color-highlight) 2%, transparent) 60%,
+    transparent
+  );
+}
+
+.chatbox-drop-overlay-inner {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--color-bg) 92%, transparent);
+  color: var(--color-highlight);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  box-shadow:
+    0 8px 24px rgba(0, 0, 0, 0.18),
+    0 0 0 1px color-mix(in srgb, var(--color-highlight) 35%, transparent);
+  animation: chatbox-drop-pop 180ms cubic-bezier(0.2, 0.9, 0.3, 1.2);
+}
+
+@keyframes chatbox-drop-fade-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+@keyframes chatbox-drop-pop {
+  0%   { transform: translateY(4px) scale(0.96); opacity: 0; }
+  100% { transform: translateY(0)   scale(1);    opacity: 1; }
+}
+
+@keyframes chatbox-drop-dash {
+  to { background-position: 24px 0; }
+}

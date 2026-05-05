@@ -274,6 +274,8 @@ export function SettingsPage({ config }: SettingsPageProps) {
   const [trayShowPermission, setTrayShowPermission] = useState(true);
   const [trayShowDone, setTrayShowDone] = useState(true);
   const [trayShowRunning, setTrayShowRunning] = useState(true);
+  const [menubarShortcut, setMenubarShortcut] = useState("");
+  const [isRecordingMenubarShortcut, setIsRecordingMenubarShortcut] = useState(false);
   const [systemNotifEnabled, setSystemNotifEnabled] = useState(false);
   const [systemNotifShowPermission, setSystemNotifShowPermission] = useState(true);
   const [systemNotifShowDone, setSystemNotifShowDone] = useState(true);
@@ -395,6 +397,7 @@ export function SettingsPage({ config }: SettingsPageProps) {
       setTrayShowPermission(cfg.notifications.tray_show_permission);
       setTrayShowDone(cfg.notifications.tray_show_done);
       setTrayShowRunning(cfg.notifications.tray_show_running);
+      setMenubarShortcut(cfg.notifications.menubar_shortcut || "");
       setSystemNotifEnabled(cfg.notifications.notification_enabled);
       setSystemNotifShowPermission(cfg.notifications.notification_show_permission);
       setSystemNotifShowDone(cfg.notifications.notification_show_done);
@@ -571,6 +574,7 @@ export function SettingsPage({ config }: SettingsPageProps) {
         notification_show_permission: systemNotifShowPermission,
         notification_show_done: systemNotifShowDone,
         notification_show_running: systemNotifShowRunning,
+        menubar_shortcut: menubarShortcut,
       },
     };
     try {
@@ -580,7 +584,7 @@ export function SettingsPage({ config }: SettingsPageProps) {
     } catch {
       console.error("Failed to save config");
     }
-  }, [isLoaded, selectedLayout, agentCommand, acpAgent, chatRenderWindowLimit, chatRenderWindowTrigger, customLayouts, selectedCustomLayoutId, customLayoutsLoaded, ideCommand, terminalCommand, terminalMultiplexer, webTerminalMode, workspaceLayout, showHideWindowShortcut, autoLinkPatterns, hooksResponseSoundEnabled, hooksResponseSound, hooksPermissionSoundEnabled, hooksPermissionSound, trayEnabled, trayShowPermission, trayShowDone, trayShowRunning, systemNotifEnabled, systemNotifShowPermission, systemNotifShowDone, systemNotifShowRunning, refreshGlobalConfig]);
+  }, [isLoaded, selectedLayout, agentCommand, acpAgent, chatRenderWindowLimit, chatRenderWindowTrigger, customLayouts, selectedCustomLayoutId, customLayoutsLoaded, ideCommand, terminalCommand, terminalMultiplexer, webTerminalMode, workspaceLayout, showHideWindowShortcut, autoLinkPatterns, hooksResponseSoundEnabled, hooksResponseSound, hooksPermissionSoundEnabled, hooksPermissionSound, trayEnabled, trayShowPermission, trayShowDone, trayShowRunning, menubarShortcut, systemNotifEnabled, systemNotifShowPermission, systemNotifShowDone, systemNotifShowRunning, refreshGlobalConfig]);
 
   // Handle theme change with immediate save
   const handleThemeChange = useCallback((newThemeId: string) => {
@@ -602,7 +606,7 @@ export function SettingsPage({ config }: SettingsPageProps) {
     }, 500); // 500ms debounce
 
     return () => clearTimeout(timer);
-  }, [selectedLayout, agentCommand, acpAgent, chatRenderWindowLimit, chatRenderWindowTrigger, customLayouts, selectedCustomLayoutId, customLayoutsLoaded, ideCommand, terminalCommand, terminalMultiplexer, webTerminalMode, workspaceLayout, showHideWindowShortcut, autoLinkPatterns, hooksResponseSoundEnabled, hooksResponseSound, hooksPermissionSoundEnabled, hooksPermissionSound, trayEnabled, trayShowPermission, trayShowDone, trayShowRunning, systemNotifEnabled, systemNotifShowPermission, systemNotifShowDone, systemNotifShowRunning, isLoaded, saveConfig]);
+  }, [selectedLayout, agentCommand, acpAgent, chatRenderWindowLimit, chatRenderWindowTrigger, customLayouts, selectedCustomLayoutId, customLayoutsLoaded, ideCommand, terminalCommand, terminalMultiplexer, webTerminalMode, workspaceLayout, showHideWindowShortcut, autoLinkPatterns, hooksResponseSoundEnabled, hooksResponseSound, hooksPermissionSoundEnabled, hooksPermissionSound, trayEnabled, trayShowPermission, trayShowDone, trayShowRunning, menubarShortcut, systemNotifEnabled, systemNotifShowPermission, systemNotifShowDone, systemNotifShowRunning, isLoaded, saveConfig]);
 
   useEffect(() => {
     if (!isRecordingWindowShortcut) return;
@@ -625,6 +629,28 @@ export function SettingsPage({ config }: SettingsPageProps) {
     window.addEventListener("keydown", handleKeyDown, true);
     return () => window.removeEventListener("keydown", handleKeyDown, true);
   }, [isRecordingWindowShortcut]);
+
+  useEffect(() => {
+    if (!isRecordingMenubarShortcut) return;
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      event.preventDefault();
+      event.stopPropagation();
+
+      if (event.key === "Escape") {
+        setIsRecordingMenubarShortcut(false);
+        return;
+      }
+
+      const shortcut = formatShortcut(event);
+      if (!shortcut) return;
+      setMenubarShortcut(shortcut);
+      setIsRecordingMenubarShortcut(false);
+    };
+
+    window.addEventListener("keydown", handleKeyDown, true);
+    return () => window.removeEventListener("keydown", handleKeyDown, true);
+  }, [isRecordingMenubarShortcut]);
 
   // Load applications list
   const loadApplications = useCallback(async () => {
@@ -882,6 +908,65 @@ env_vars = [
     __TAURI__?: unknown;
     __TAURI_INTERNALS__?: unknown;
   }).__TAURI__ || (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__);
+  const menubarShortcutConflict =
+    !!menubarShortcut && menubarShortcut === showHideWindowShortcut;
+  const menubarShortcutControl = isTauriGui ? (
+    <div>
+      <div className="flex items-center gap-2 mb-3 select-none">
+        <Keyboard className="w-4 h-4 text-[var(--color-warning)]" />
+        <span className="text-sm font-medium text-[var(--color-text)]">
+          Show or Hide Menu bar
+        </span>
+      </div>
+      <div className="flex items-center gap-2">
+        <div
+          className={`flex h-10 min-w-0 flex-1 items-center rounded-lg border bg-[var(--color-bg-secondary)] px-3 text-sm text-[var(--color-text)] ${
+            menubarShortcutConflict
+              ? "border-[var(--color-error)]/60"
+              : "border-[var(--color-border)]"
+          }`}
+        >
+          {isRecordingMenubarShortcut ? (
+            <span className="text-[var(--color-warning)]">Press shortcut...</span>
+          ) : menubarShortcut ? (
+            menubarShortcut
+          ) : (
+            <span className="text-[var(--color-text-muted)]">Not set</span>
+          )}
+        </div>
+        {menubarShortcut && (
+          <button
+            type="button"
+            onClick={() => {
+              setMenubarShortcut("");
+              setIsRecordingMenubarShortcut(false);
+            }}
+            className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-secondary)] text-[var(--color-text-muted)] transition-colors hover:border-[var(--color-error)]/60 hover:text-[var(--color-error)]"
+            title="Clear shortcut"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        )}
+        <button
+          type="button"
+          onClick={() => setIsRecordingMenubarShortcut((value) => !value)}
+          className={`inline-flex h-10 shrink-0 items-center justify-center rounded-lg border px-3 text-xs font-medium transition-colors ${
+            isRecordingMenubarShortcut
+              ? "border-[var(--color-warning)] bg-[var(--color-warning)]/10 text-[var(--color-warning)]"
+              : "border-[var(--color-border)] bg-[var(--color-bg-secondary)] text-[var(--color-text)] hover:border-[var(--color-warning)]/50"
+          }`}
+        >
+          {isRecordingMenubarShortcut ? "Cancel" : "Record"}
+        </button>
+      </div>
+      {menubarShortcutConflict ? (
+        <div className="mt-2 text-[11px] text-[var(--color-error)]">
+          This shortcut is already bound to the main window. Pick a different
+          combination — the menubar binding will not register until you do.
+        </div>
+      ) : null}
+    </div>
+  ) : null;
   const windowShortcutControl = isTauriGui ? (
     <div>
       <div className="flex items-center gap-2 mb-3 select-none">
@@ -1880,9 +1965,9 @@ env_vars = [
               </AnimatePresence>
             </div>
 
-            {/* Menubar Tray */}
+            {/* Menu bar */}
             <NotifChannel
-              title="Menubar Tray"
+              title="Menu bar"
               subtitle="Persistent popover anchored to the menubar icon"
               enabled={trayEnabled}
               onEnabledChange={setTrayEnabled}
@@ -1892,6 +1977,7 @@ env_vars = [
               onShowDoneChange={setTrayShowDone}
               showRunning={trayShowRunning}
               onShowRunningChange={setTrayShowRunning}
+              extraControl={menubarShortcutControl}
               note="Disabling the tray takes effect on next Grove launch."
             />
           </div>
@@ -2040,6 +2126,9 @@ interface NotifChannelProps {
   showRunning?: boolean;
   onShowRunningChange?: (v: boolean) => void;
   note?: string;
+  /** Optional slot rendered inside the expanded body, below the toggles
+   *  (e.g. a shortcut recorder for the menubar channel). */
+  extraControl?: React.ReactNode;
 }
 
 function NotifChannel({
@@ -2054,6 +2143,7 @@ function NotifChannel({
   showRunning,
   onShowRunningChange,
   note,
+  extraControl,
 }: NotifChannelProps) {
   return (
     <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)] p-4">
@@ -2098,6 +2188,11 @@ function NotifChannel({
                 />
               )}
             </div>
+            {extraControl ? (
+              <div className="mt-3 border-t border-[color-mix(in_srgb,var(--color-border)_60%,transparent)] pt-3">
+                {extraControl}
+              </div>
+            ) : null}
             {note ? (
               <div className="mt-3 text-[11px] italic text-[var(--color-text-muted)]">{note}</div>
             ) : null}

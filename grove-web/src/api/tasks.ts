@@ -93,7 +93,9 @@ export interface CommitsResponse {
 export interface CommentReply {
   id: number;
   content: string;
-  author: string;
+  agent: string;
+  model: string;
+  role: string;
   timestamp: string;
 }
 
@@ -107,7 +109,9 @@ export interface ReviewCommentEntry {
   start_line?: number; // optional (None for file/project-level)
   end_line?: number; // optional (None for file/project-level)
   content: string;
-  author: string;
+  agent: string;
+  model: string;
+  role: string;
   timestamp: string;
   status: string; // "open" | "resolved" | "outdated"
   replies: CommentReply[];
@@ -151,10 +155,12 @@ export interface TaskStatsResponse {
  */
 export async function listTasks(
   projectId: string,
-  filter: TaskFilter = 'active'
+  filter: TaskFilter = 'active',
+  signal?: AbortSignal,
 ): Promise<TaskResponse[]> {
   const response = await apiClient.get<TaskListResponse>(
-    `/api/v1/projects/${projectId}/tasks?filter=${filter}`
+    `/api/v1/projects/${projectId}/tasks?filter=${filter}`,
+    signal,
   );
   return response.tasks;
 }

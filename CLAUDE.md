@@ -110,13 +110,16 @@ Production releases ship with `gui` only. `perf-monitor` is dev-only.
 ```
 ~/.grove/
 ├── config.toml                    # Theme + global settings
+├── grove.db                       # SQLite — projects, tasks, review comments,
+│                                  #   agent graph, custom agents, etc.
 └── projects/<path-hash>/
-    ├── project.toml               # Project metadata
-    ├── tasks.toml                 # Active tasks
-    ├── archived.toml              # Archived tasks
-    ├── ai/<task-id>/{summary.md, todo.json}
-    └── notes/<task-id>.md
+    └── notes/<task-id>.md         # Markdown notes (still on disk)
 ```
+
+Older layouts (per-task `ai/<task-id>/`, `review/<task-id>.json`,
+`tasks/<id>/review.json`, `project.toml`, `tasks.toml`, `archived.toml`) are
+all migrated into SQLite by the v1.x → v2.3 migration chain. `grove migrate
+--prune` removes the leftover files.
 
 ## Web Frontend
 

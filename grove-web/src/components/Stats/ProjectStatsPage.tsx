@@ -311,7 +311,7 @@ function AgentCard({ stat, rank, delay = 0 }: AgentCardProps) {
       <div className="flex items-center justify-between mb-3">
         <div className="flex items-center gap-2.5">
           <div className="w-8 h-8 rounded-lg overflow-hidden flex items-center justify-center bg-[var(--color-bg-tertiary)]">
-            <AgentAvatar name={stat.agent} size={28} />
+            <AgentAvatar agent={stat.agent} size={28} />
           </div>
           <div>
             <div className="text-sm font-semibold text-[var(--color-text)]">{stat.displayName}</div>

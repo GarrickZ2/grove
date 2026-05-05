@@ -204,7 +204,9 @@ pub struct CommitsResponse {
 pub struct ReviewCommentReplyEntry {
     pub id: u32,
     pub content: String,
-    pub author: String,
+    pub agent: String,
+    pub model: String,
+    pub role: String,
     pub timestamp: String,
 }
 
@@ -213,7 +215,7 @@ pub struct ReviewCommentReplyEntry {
 pub struct ReviewCommentEntry {
     pub id: u32,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub comment_type: Option<String>, // "inline" | "file" | "project" (defaults to "inline")
+    pub comment_type: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub file_path: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -223,9 +225,11 @@ pub struct ReviewCommentEntry {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub end_line: Option<u32>,
     pub content: String,
-    pub author: String,
+    pub agent: String,
+    pub model: String,
+    pub role: String,
     pub timestamp: String,
-    pub status: String, // "open" | "resolved" | "outdated"
+    pub status: String,
     pub replies: Vec<ReviewCommentReplyEntry>,
 }
 

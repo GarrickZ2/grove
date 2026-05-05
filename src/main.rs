@@ -80,7 +80,7 @@ fn ensure_storage_version() {
             .join("agents.toml")
             .exists();
 
-    // Chain migrations: None/1.0 → 1.1 → 2.0 → 2.1 → 2.2
+    // Chain migrations: None/1.0 → 1.1 → 2.0 → 2.1 → 2.2 → 2.3
     match version {
         Some("1.0") | None => {
             if has_legacy_files {
@@ -109,7 +109,10 @@ fn ensure_storage_version() {
         }
         Some("2.1") => {
             // v2.1 → v2.2: Agent Graph schema + chats.toml migration
-            // Schema is handled by CREATE TABLE IF NOT EXISTS in connection().
+            let _ = storage::database::connection();
+        }
+        Some("2.2") => {
+            // v2.2 → v2.3: Review comments JSON → SQLite
             let _ = storage::database::connection();
         }
         Some(v) => {
@@ -119,6 +122,12 @@ fn ensure_storage_version() {
             );
             std::process::exit(1);
         }
+    }
+
+    // v2.3: Review comments JSON → SQLite. Idempotent (INSERT OR IGNORE) — run for any
+    // pre-2.3 user so that those upgrading from 1.0/1.1/2.0/2.1 don't skip it.
+    if version != Some(CURRENT_STORAGE_VERSION) {
+        storage::database::migrate_review_to_sqlite();
     }
 
     // Update version
@@ -371,11 +380,18 @@ fn main() -> io::Result<()> {
                     local.run_until(cli::acp::execute(agent, cwd)).await;
                 });
         }
-        Commands::Migrate { dry_run, prune } => {
+        Commands::Migrate { prune } => {
             if prune {
                 storage::database::prune_legacy_files();
             } else {
-                cli::migrate::execute(dry_run);
+                // Run the exact same migration chain as startup. The legacy
+                // v1.0 → v1.1 file rearranger (`cli::migrate::execute`) is one
+                // step inside that chain, but it's no longer the whole story —
+                // SQLite-era migrations (v1.1 → v2.0, v2.2 → v2.3, …) only run
+                // through `ensure_storage_version`, so calling that function
+                // directly is the only way to keep manual `grove migrate` and
+                // automatic startup migration in sync.
+                ensure_storage_version();
             }
         }
         Commands::Register { path } => {

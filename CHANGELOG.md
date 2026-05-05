@@ -26,6 +26,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Code review findings + GUI mic, notification deep-links, IDE resize** — addressed review feedback covering the GUI microphone permission flow, notification deep-link routing, and IDE panel resize edge cases.
 - **z.ai 5-hour token quota window** — quota matcher now keys on duration instead of fragile label regex, so the 5-hour window is detected correctly.
 - **Lightbox panning + fullscreen window toggle** — restored panning behavior and fixed the fullscreen toggle interaction.
+- **Review-comment migration: orphaned data on non-2.2 upgrade paths** — `migrate_review_to_sqlite` now runs for any pre-2.3 user (was previously gated on `version == "2.2"`, silently skipping users coming from 1.0/1.1/2.0/2.1). Source `review.json` files are renamed to `.json.migrated` after import, and rename failures are logged instead of swallowed.
+- **`gix_log_target_to_head` correctness on long-lived branches** — bidirectional BFS now correctly excludes the merge-base and its ancestors from the HEAD-only walk. Earlier, mb was discovered but never inserted into the exclusion set, so commits at the merge boundary leaked into `target..HEAD`. Walk also short-circuits once it crosses below mb's commit-time, bounding work on huge histories.
+- **Bulk delete couldn't target unattributed comments** — `ConversationSidebar` was filtering on the display label `"Unknown"` while comments were stored with `agent=""`. Agent buckets now key on the raw column value (with `""` rendered as "Unknown" only for display) and the backend matches both bare-agent and legacy `"agent (role)"` display strings via a `CASE WHEN role=''` clause, so comments with empty role still match.
+- **Agent display string `" (Reviewer)"`** — `formatAgentDisplay` returned a leading-space parenthesis-only string when `agent=""` and `role` was set; now falls back to `"Unknown (Reviewer)"`.
+- **`normalize_agent_name` over-matched** — substring match misclassified e.g. `"openai-proxy"` as Codex; switched to token-based matching (split on whitespace / `-` / `_` / `.`) and dropped the `openai` → Codex alias entirely.
+- **Typewriter 1-frame garbled flash on stream resets** — when target text was replaced (not extended), `useTypewriter` previously rendered `newTarget.slice(0, oldRevealed)` for one frame before the reset effect fired. Reset is now detected during render so the slice already reflects the new target.
+- **TrayPopover stale-running header** — `totalRunning` now respects the `show.running` toggle, so disabling the section actually clears the header count and lets the empty-state placeholder render.
+- **TaskGraph zoom widget overlap in narrow split-panes** — moved from bottom-right to top-right so it never competes with the centered context toolbar for horizontal space.
+
+### Improved
+
+- **`grove migrate` CLI shares startup migration code** — the manual subcommand now calls the same `ensure_storage_version()` chain that runs at boot (was a stale v1.0 → v1.1-only file rearranger that wrote `tasks/<id>/review.json` files the v2.3 reader doesn't pick up). `--dry-run` flag dropped — it only ever applied to the legacy step. `--prune` extended for v2.3 leftovers (per-task `review.json[.migrated]`, the older `review/` directory, and pre-2.0 `ai/<task>/` per-task review folders).
+- **Review-comment SQL hardening** — `bulk_delete_comments` no longer pushes parameter values twice (the second batch was dead code); `add_comment` defaults `end_line` to `start_line` for inline comments when callers omit it.
+- **AbortController for `DiffReviewPage` task-path lookup** — rapid prop changes now actually cancel the in-flight `listTasks` requests instead of just gating their `setState`.
 
 ## [0.10.3] - 2026-04-30
 

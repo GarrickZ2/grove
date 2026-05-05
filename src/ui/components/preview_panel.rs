@@ -558,7 +558,13 @@ pub fn render_diff_tab(
         // Author line
         lines.push(Line::from(vec![
             Span::styled(" │ ", Style::default().fg(colors.border)),
-            Span::styled(format!("{}: ", comment.author), author_style),
+            Span::styled(
+                format!(
+                    "{}: ",
+                    crate::storage::comments::build_author(&comment.agent, &comment.role)
+                ),
+                author_style,
+            ),
         ]));
 
         // Content lines with manual wrapping
@@ -591,7 +597,11 @@ pub fn render_diff_tab(
                 let reply_style = Style::default().fg(colors.status_merged);
 
                 // First line: connector + author
-                let first_prefix = format!(" {}─ {}: ", connector, reply.author);
+                let first_prefix = format!(
+                    " {}─ {}: ",
+                    connector,
+                    crate::storage::comments::build_author(&reply.agent, &reply.role)
+                );
                 let cont_prefix = format!(" {}  ", continuation);
                 let reply_content_width = wrap_width.saturating_sub(cont_prefix.len());
 

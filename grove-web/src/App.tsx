@@ -186,6 +186,70 @@ function AppContent() {
     };
   }, [globalConfig?.web?.show_hide_window_shortcut]);
 
+  // Menubar popover global shortcut — parallel to the main window one.
+  // Conflict guard: if the same combo is bound to the main window we
+  // skip registration (Tauri's global-shortcut plugin would error
+  // anyway; this just keeps the log noise actionable).
+  useEffect(() => {
+    const isTauri = !!((window as Window & {
+      __TAURI__?: unknown;
+      __TAURI_INTERNALS__?: unknown;
+    }).__TAURI__ || (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__);
+    const shortcut = globalConfig?.notifications?.menubar_shortcut || "";
+    const mainShortcut = globalConfig?.web?.show_hide_window_shortcut || "";
+    if (!isTauri || !shortcut) return;
+    if (shortcut === mainShortcut) {
+      console.warn(
+        "[shortcut] menubar_shortcut conflicts with show_hide_window_shortcut — skipping registration",
+      );
+      return;
+    }
+
+    const tauriShortcut = shortcut
+      .split("+")
+      .map((part) => part === "Cmd" ? "CommandOrControl" : part === "Ctrl" ? "Control" : part)
+      .join("+");
+    let registered = false;
+    let disposed = false;
+    const unregisterShortcut = () => {
+      import("@tauri-apps/plugin-global-shortcut")
+        .then(({ unregister }) => unregister(tauriShortcut))
+        .catch((err) => console.error("Failed to unregister menubar shortcut:", err));
+    };
+
+    import("@tauri-apps/plugin-global-shortcut")
+      .then(({ register }) => {
+        if (disposed) return false;
+        return register(tauriShortcut, (event) => {
+          if (event.state === "Pressed") {
+            invoke("toggle_tray_popover_visibility").catch((err) => {
+              console.error("Failed to toggle Grove menubar:", err);
+            });
+          }
+        }).then(() => true);
+      })
+      .then((didRegister) => {
+        if (!didRegister) return;
+        if (disposed) {
+          unregisterShortcut();
+          return;
+        }
+        registered = true;
+      })
+      .catch((err) => {
+        if (!disposed) console.error("Failed to register menubar shortcut:", err);
+      });
+
+    return () => {
+      disposed = true;
+      if (!registered) return;
+      unregisterShortcut();
+    };
+  }, [
+    globalConfig?.notifications?.menubar_shortcut,
+    globalConfig?.web?.show_hide_window_shortcut,
+  ]);
+
   const handleSwitchToZen = useCallback(() => {
     setTasksMode("zen");
     refreshProjects();

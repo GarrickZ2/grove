@@ -68,6 +68,8 @@ export interface NotificationsConfig {
   notification_show_permission: boolean;
   notification_show_done: boolean;
   notification_show_running: boolean;
+  /** Global shortcut to show / hide the menubar popover. Empty = disabled. */
+  menubar_shortcut?: string | null;
 }
 
 export interface Config {

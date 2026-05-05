@@ -6,6 +6,7 @@ import type { Task } from "../../../../data/types";
 import { useProject } from "../../../../context/ProjectContext";
 import { getReviewComments, type ReviewCommentEntry } from "../../../../api";
 import { AgentAvatar } from "../../../Review/AgentAvatar";
+import { formatAgentDisplay } from "../../../Review/agentDisplay";
 
 type ReviewStatus = "open" | "resolved" | "outdated";
 
@@ -109,8 +110,8 @@ function ReviewCommentCard({ comment }: { comment: ReviewCommentEntry }) {
       {/* Main comment */}
       <div className="p-3">
         <div className="flex items-center gap-2 mb-1.5">
-          <AgentAvatar name={comment.author} size={18} />
-          <span className="text-xs font-medium text-[var(--color-text)]">{comment.author}</span>
+          <AgentAvatar agent={comment.agent} size={18} />
+          <span className="text-xs font-medium text-[var(--color-text)]">{formatAgentDisplay(comment.agent, comment.role)}</span>
           <span className="text-xs text-[var(--color-text-muted)]">{formatTimestamp(comment.timestamp)}</span>
         </div>
         <div className="text-sm text-[var(--color-text)] pl-[26px] markdown-content">
@@ -121,8 +122,8 @@ function ReviewCommentCard({ comment }: { comment: ReviewCommentEntry }) {
         {comment.replies.length > 0 && comment.replies.map((reply) => (
           <div key={reply.id} className="mt-2.5 pt-2.5 border-t border-[var(--color-border)] pl-[26px]">
             <div className="flex items-center gap-2 mb-1">
-              <AgentAvatar name={reply.author} size={16} />
-              <span className="text-xs font-medium text-[var(--color-text)]">{reply.author}</span>
+              <AgentAvatar agent={reply.agent} size={16} />
+              <span className="text-xs font-medium text-[var(--color-text)]">{formatAgentDisplay(reply.agent, reply.role)}</span>
               <span className="text-xs text-[var(--color-text-muted)]">{formatTimestamp(reply.timestamp)}</span>
             </div>
             <div className="text-sm text-[var(--color-text-muted)] pl-[24px] markdown-content">

@@ -1,20 +1,15 @@
-use std::path::PathBuf;
-
 use serde::{Deserialize, Serialize};
 
-use super::ensure_task_data_dir;
+use super::database;
 use crate::error::Result;
 
 /// Comment 类型
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum CommentType {
-    /// Inline code comment (legacy default)
     #[default]
     Inline,
-    /// File-level comment (on entire file)
     File,
-    /// Project-level comment (not tied to any file)
     Project,
 }
 
@@ -22,16 +17,73 @@ pub enum CommentType {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum CommentStatus {
-    /// 未处理
     #[default]
     Open,
-    /// AI 回复并标记已解决
     Resolved,
-    /// AI 回复但标记未解决（需要讨论/拒绝）
-    ///
-    /// 向后兼容旧 JSON 中的 "not_resolved"
     #[serde(alias = "not_resolved")]
     Outdated,
+}
+
+// ============================================================================
+// Enum ↔ string helpers
+// ============================================================================
+
+fn comment_type_to_str(ct: CommentType) -> &'static str {
+    match ct {
+        CommentType::Inline => "inline",
+        CommentType::File => "file",
+        CommentType::Project => "project",
+    }
+}
+
+fn comment_type_from_str(s: &str) -> CommentType {
+    match s {
+        "file" => CommentType::File,
+        "project" => CommentType::Project,
+        _ => CommentType::Inline,
+    }
+}
+
+fn status_to_str(s: CommentStatus) -> &'static str {
+    match s {
+        CommentStatus::Open => "open",
+        CommentStatus::Resolved => "resolved",
+        CommentStatus::Outdated => "outdated",
+    }
+}
+
+fn status_from_str(s: &str) -> CommentStatus {
+    match s {
+        "resolved" => CommentStatus::Resolved,
+        "outdated" => CommentStatus::Outdated,
+        _ => CommentStatus::Open,
+    }
+}
+
+/// Parse old `author` string (e.g. "Claude Code (Reviewer)") into (agent, role).
+pub fn parse_author_to_agent_role(author: &str) -> (String, String) {
+    if let Some(open) = author.rfind('(') {
+        if let Some(close) = author.rfind(')') {
+            if close > open {
+                let agent = author[..open].trim();
+                let role = author[open + 1..close].trim();
+                return (agent.to_string(), role.to_string());
+            }
+        }
+    }
+    (author.to_string(), String::new())
+}
+
+/// Build display "author" string from agent + role.
+/// ─ kept public for MCP response types and frontend migration helpers.
+pub fn build_author(agent: &str, role: &str) -> String {
+    if agent.is_empty() {
+        return "Unknown".to_string();
+    }
+    if role.is_empty() {
+        return agent.to_string();
+    }
+    format!("{} ({})", agent, role)
 }
 
 /// Comment 回复
@@ -39,132 +91,94 @@ pub enum CommentStatus {
 pub struct CommentReply {
     pub id: u32,
     pub content: String,
-    #[serde(default = "default_author")]
-    pub author: String,
+    #[serde(default)]
+    pub agent: String,
+    #[serde(default)]
+    pub model: String,
+    #[serde(default)]
+    pub role: String,
     #[serde(default = "default_timestamp")]
     pub timestamp: String,
 }
 
-fn default_author() -> String {
-    "Unknown".to_string()
+/// 单条 Review Comment
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Comment {
+    pub id: u32,
+
+    #[serde(default)]
+    pub comment_type: CommentType,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub file_path: Option<String>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub side: Option<String>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub start_line: Option<u32>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub end_line: Option<u32>,
+
+    pub content: String,
+
+    #[serde(default)]
+    pub agent: String,
+
+    #[serde(default)]
+    pub model: String,
+
+    #[serde(default)]
+    pub role: String,
+
+    #[serde(default = "default_timestamp")]
+    pub timestamp: String,
+
+    #[serde(default)]
+    pub status: CommentStatus,
+
+    #[serde(default)]
+    pub replies: Vec<CommentReply>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub anchor_text: Option<String>,
 }
 
 fn default_timestamp() -> String {
     chrono::Utc::now().to_rfc3339()
 }
 
-/// 单条 Review Comment
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Comment {
-    /// 唯一序号
-    pub id: u32,
-
-    /// Comment 类型 (inline, file, or project level)
-    #[serde(default)]
-    pub comment_type: CommentType,
-
-    /// 文件路径 (required for inline/file, None for project)
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub file_path: Option<String>,
-
-    /// 变更侧: "ADD" | "DELETE" (required for inline, None for file/project)
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub side: Option<String>,
-
-    /// 起始行 (required for inline, None for file/project)
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub start_line: Option<u32>,
-
-    /// 结束行 (required for inline, None for file/project)
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub end_line: Option<u32>,
-
-    /// Comment 内容
-    pub content: String,
-
-    /// 作者
-    #[serde(default = "default_author")]
-    pub author: String,
-
-    /// 时间戳
-    #[serde(default = "default_timestamp")]
-    pub timestamp: String,
-
-    /// 状态
-    #[serde(default)]
-    pub status: CommentStatus,
-
-    /// 回复列表
-    #[serde(default)]
-    pub replies: Vec<CommentReply>,
-
-    /// 创建 comment 时锚定行的代码快照，用于自动 outdated 检测 (only for inline comments)
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub anchor_text: Option<String>,
-}
-
 impl Comment {
-    /// 创建 inline comment
     #[allow(clippy::too_many_arguments)]
-    pub fn new_inline(
+    fn build(
         id: u32,
-        file_path: String,
-        side: String,
-        start_line: u32,
-        end_line: u32,
+        comment_type: CommentType,
+        file_path: Option<String>,
+        side: Option<String>,
+        start_line: Option<u32>,
+        end_line: Option<u32>,
         content: String,
-        author: String,
+        agent: String,
+        model: String,
+        role: String,
         anchor_text: Option<String>,
     ) -> Self {
         Comment {
             id,
-            comment_type: CommentType::Inline,
-            file_path: Some(file_path),
-            side: Some(side),
-            start_line: Some(start_line),
-            end_line: Some(end_line),
+            comment_type,
+            file_path,
+            side,
+            start_line,
+            end_line,
             content,
-            author,
+            agent,
+            model,
+            role,
             timestamp: chrono::Utc::now().to_rfc3339(),
             status: CommentStatus::Open,
             replies: Vec::new(),
             anchor_text,
-        }
-    }
-
-    /// 创建 file-level comment
-    pub fn new_file(id: u32, file_path: String, content: String, author: String) -> Self {
-        Comment {
-            id,
-            comment_type: CommentType::File,
-            file_path: Some(file_path),
-            side: None,
-            start_line: None,
-            end_line: None,
-            content,
-            author,
-            timestamp: chrono::Utc::now().to_rfc3339(),
-            status: CommentStatus::Open,
-            replies: Vec::new(),
-            anchor_text: None,
-        }
-    }
-
-    /// 创建 project-level comment
-    pub fn new_project(id: u32, content: String, author: String) -> Self {
-        Comment {
-            id,
-            comment_type: CommentType::Project,
-            file_path: None,
-            side: None,
-            start_line: None,
-            end_line: None,
-            content,
-            author,
-            timestamp: chrono::Utc::now().to_rfc3339(),
-            status: CommentStatus::Open,
-            replies: Vec::new(),
-            anchor_text: None,
         }
     }
 
@@ -195,27 +209,18 @@ impl Comment {
                     ));
                 }
             }
-            CommentType::Project => {
-                // No required fields
-            }
+            CommentType::Project => {}
         }
         Ok(())
     }
 }
 
 /// 解析 location 字符串
-///
-/// 支持格式:
-/// - "src/main.rs:42" → ("src/main.rs", (42, 42))
-/// - "src/main.rs:L42" → ("src/main.rs", (42, 42))
-/// - "src/app.rs:100-105" → ("src/app.rs", (100, 105))
-/// - "src/app.rs:L100-L105" → ("src/app.rs", (100, 105))
 pub fn parse_location(loc: &str) -> (String, (u32, u32)) {
     if let Some(colon_pos) = loc.rfind(':') {
         let file = loc[..colon_pos].to_string();
         let line_part = &loc[colon_pos + 1..];
 
-        // 去掉可能的 'L' 前缀
         let line_part = line_part.trim_start_matches('L');
 
         if let Some(dash_pos) = line_part.find('-') {
@@ -229,7 +234,6 @@ pub fn parse_location(loc: &str) -> (String, (u32, u32)) {
             (file, (line, line))
         }
     } else {
-        // 没有冒号，整个字符串作为文件名
         (loc.to_string(), (1, 1))
     }
 }
@@ -246,7 +250,6 @@ impl CommentsData {
         self.comments.is_empty()
     }
 
-    /// 统计各状态的数量: (open, resolved, outdated)
     pub fn count_by_status(&self) -> (usize, usize, usize) {
         let mut open = 0;
         let mut resolved = 0;
@@ -263,42 +266,9 @@ impl CommentsData {
 }
 
 // ============================================================================
-// Path helpers
-// ============================================================================
-
-/// review.json 路径: tasks/<task-id>/review.json
-fn review_path(project: &str, task_id: &str) -> Result<PathBuf> {
-    Ok(ensure_task_data_dir(project, task_id)?.join("review.json"))
-}
-
-// ============================================================================
-// JSON persistence
-// ============================================================================
-
-/// 从 review.json 加载 CommentsData
-fn load_comments_json(project: &str, task_id: &str) -> Result<Option<CommentsData>> {
-    let path = review_path(project, task_id)?;
-    if path.exists() {
-        let content = std::fs::read_to_string(&path)?;
-        let data: CommentsData = serde_json::from_str(&content)?;
-        return Ok(Some(data));
-    }
-    Ok(None)
-}
-
-/// 保存到 review.json
-fn save_comments_json(project: &str, task_id: &str, data: &CommentsData) -> Result<()> {
-    let path = review_path(project, task_id)?;
-    let content = serde_json::to_string_pretty(data)?;
-    std::fs::write(&path, content)?;
-    Ok(())
-}
-
-// ============================================================================
 // Anchor / Outdated detection
 // ============================================================================
 
-/// 从文本内容中提取 [start_line..=end_line] 行（1-based），用换行符连接
 pub fn extract_lines(content: &str, start_line: u32, end_line: u32) -> Option<String> {
     let lines: Vec<&str> = content.lines().collect();
     let start = start_line.saturating_sub(1) as usize;
@@ -310,10 +280,6 @@ pub fn extract_lines(content: &str, start_line: u32, end_line: u32) -> Option<St
     Some(lines[start..end].join("\n"))
 }
 
-/// 在文件内容中搜索 anchor_text（按行滑动窗口匹配）
-///
-/// `hint_line` 是评论的原始行号（1-based），用于在多个匹配中选择最近的。
-/// 返回找到的起始行号（1-based），未找到返回 None。
 pub fn find_anchor(content: &str, anchor: &str, hint_line: Option<u32>) -> Option<u32> {
     let file_lines: Vec<&str> = content.lines().collect();
     let anchor_lines: Vec<&str> = anchor.lines().collect();
@@ -321,7 +287,6 @@ pub fn find_anchor(content: &str, anchor: &str, hint_line: Option<u32>) -> Optio
         return None;
     }
 
-    // Collect all matching positions
     let mut matches: Vec<u32> = Vec::new();
     'outer: for i in 0..=file_lines.len().saturating_sub(anchor_lines.len()) {
         for (j, anchor_line) in anchor_lines.iter().enumerate() {
@@ -329,14 +294,13 @@ pub fn find_anchor(content: &str, anchor: &str, hint_line: Option<u32>) -> Optio
                 continue 'outer;
             }
         }
-        matches.push((i + 1) as u32); // 1-based
+        matches.push((i + 1) as u32);
     }
 
     if matches.is_empty() {
         return None;
     }
 
-    // Pick the match closest to hint_line (or first match if no hint)
     match hint_line {
         Some(hint) => matches
             .into_iter()
@@ -345,10 +309,6 @@ pub fn find_anchor(content: &str, anchor: &str, hint_line: Option<u32>) -> Optio
     }
 }
 
-/// 动态检测 outdated 并修正行号漂移（仅修改内存中的数据）
-///
-/// `read_fn(file_path, side)` 返回指定文件在对应 side 上的完整内容。
-/// 返回 true 表示有 comment 的行号被修正（调用方可选择持久化）。
 pub fn apply_outdated_detection<F>(data: &mut CommentsData, read_fn: F) -> bool
 where
     F: Fn(&str, &str) -> Option<String>,
@@ -356,7 +316,6 @@ where
     let mut line_changed = false;
 
     for comment in &mut data.comments {
-        // 仅对 Inline 类型的 Open 且有 anchor_text 的 comment 做检测
         if comment.comment_type != CommentType::Inline || comment.status != CommentStatus::Open {
             continue;
         }
@@ -377,14 +336,12 @@ where
         let content = read_fn(file_path, side);
         match content {
             None => {
-                // 文件不存在 → outdated
                 comment.status = CommentStatus::Outdated;
             }
             Some(file_content) => {
                 let file_line_count = file_content.lines().count().max(1) as u32;
 
                 if let Some(new_start) = find_anchor(&file_content, &anchor, comment.start_line) {
-                    // 找到 → 更新行号（如有位移）
                     if let (Some(start), Some(end)) = (comment.start_line, comment.end_line) {
                         let span = end.saturating_sub(start);
                         if start != new_start {
@@ -394,8 +351,6 @@ where
                         }
                     }
                 } else {
-                    // 没找到 → outdated，但保留行号信息
-                    // 如果行号超过文件长度，调整到最后一行
                     comment.status = CommentStatus::Outdated;
                     if let (Some(start), Some(end)) = (comment.start_line, comment.end_line) {
                         if end > file_line_count {
@@ -413,9 +368,34 @@ where
     line_changed
 }
 
-/// 保存 comments（公开版本，供外部调用）
-pub fn save_comments(project: &str, task_id: &str, data: &CommentsData) -> Result<()> {
-    save_comments_json(project, task_id, data)
+// ============================================================================
+// SQLite persistence helpers
+// ============================================================================
+
+fn load_replies_for_comment(
+    conn: &rusqlite::Connection,
+    project_key: &str,
+    task_id: &str,
+    comment_id: u32,
+) -> Result<Vec<CommentReply>> {
+    let mut stmt = conn.prepare(
+        "SELECT id, content, agent, model_name, role, timestamp
+         FROM review_replies
+         WHERE project_key = ?1 AND task_id = ?2 AND comment_id = ?3
+         ORDER BY id",
+    )?;
+    let rows = stmt.query_map(rusqlite::params![project_key, task_id, comment_id], |row| {
+        Ok(CommentReply {
+            id: row.get(0)?,
+            content: row.get(1)?,
+            agent: row.get::<_, String>(2).unwrap_or_default(),
+            model: row.get::<_, String>(3).unwrap_or_default(),
+            role: row.get::<_, String>(4).unwrap_or_default(),
+            timestamp: row.get(5)?,
+        })
+    })?;
+
+    Ok(rows.filter_map(|r| r.ok()).collect())
 }
 
 // ============================================================================
@@ -424,10 +404,90 @@ pub fn save_comments(project: &str, task_id: &str, data: &CommentsData) -> Resul
 
 /// 读取 Review Comments
 pub fn load_comments(project: &str, task_id: &str) -> Result<CommentsData> {
-    if let Some(data) = load_comments_json(project, task_id)? {
-        return Ok(data);
+    let conn = database::connection();
+
+    let mut stmt = conn.prepare(
+        "SELECT id, comment_type, file_path, side, start_line, end_line,
+                content, agent, model_name, role, timestamp, status, anchor_text
+         FROM review_comments
+         WHERE project_key = ?1 AND task_id = ?2
+         ORDER BY id",
+    )?;
+
+    let rows = stmt.query_map(rusqlite::params![project, task_id], |row| {
+        let id: u32 = row.get(0)?;
+        let comment_type_str: String = row.get(1)?;
+        let file_path: Option<String> = row.get(2)?;
+        let side: Option<String> = row.get(3)?;
+        let start_line: Option<u32> = row.get(4)?;
+        let end_line: Option<u32> = row.get(5)?;
+        let content: String = row.get(6)?;
+        let agent: String = row.get::<_, String>(7).unwrap_or_default();
+        let model: String = row.get::<_, String>(8).unwrap_or_default();
+        let role: String = row.get::<_, String>(9).unwrap_or_default();
+        let timestamp: String = row.get(10)?;
+        let status_str: String = row.get(11)?;
+        let anchor_text: Option<String> = row.get(12)?;
+        Ok((
+            id,
+            comment_type_str,
+            file_path,
+            side,
+            start_line,
+            end_line,
+            content,
+            agent,
+            model,
+            role,
+            timestamp,
+            status_str,
+            anchor_text,
+        ))
+    })?;
+
+    let mut comments = Vec::new();
+    for row in rows {
+        let (
+            id,
+            comment_type_str,
+            file_path,
+            side,
+            start_line,
+            end_line,
+            content,
+            agent,
+            model,
+            role,
+            timestamp,
+            status_str,
+            anchor_text,
+        ) = row?;
+
+        let comment_type = comment_type_from_str(&comment_type_str);
+        let status = status_from_str(&status_str);
+        let replies = load_replies_for_comment(&conn, project, task_id, id)?;
+
+        let comment = Comment {
+            id,
+            comment_type,
+            file_path,
+            side,
+            start_line,
+            end_line,
+            content,
+            agent,
+            model,
+            role,
+            timestamp,
+            status,
+            replies,
+            anchor_text,
+        };
+        comment.validate()?;
+        comments.push(comment);
     }
-    Ok(CommentsData::default())
+
+    Ok(CommentsData { comments })
 }
 
 /// 回复 Comment（仅追加回复，不改变 status）
@@ -436,24 +496,42 @@ pub fn reply_comment(
     task_id: &str,
     comment_id: u32,
     message: &str,
-    author: &str,
+    agent: &str,
+    model: &str,
+    role: &str,
 ) -> Result<bool> {
-    let mut data = load_comments(project, task_id)?;
-    if let Some(comment) = data.comments.iter_mut().find(|c| c.id == comment_id) {
-        if !message.is_empty() {
-            let reply_id = comment.replies.iter().map(|r| r.id).max().unwrap_or(0) + 1;
-            comment.replies.push(CommentReply {
-                id: reply_id,
-                content: message.to_string(),
-                author: author.to_string(),
-                timestamp: chrono::Utc::now().to_rfc3339(),
-            });
-        }
-        save_comments_json(project, task_id, &data)?;
-        Ok(true)
-    } else {
-        Ok(false)
+    let conn = database::connection();
+
+    let exists: bool = conn
+        .query_row(
+            "SELECT COUNT(*) > 0 FROM review_comments WHERE project_key = ?1 AND task_id = ?2 AND id = ?3",
+            rusqlite::params![project, task_id, comment_id],
+            |row| row.get(0),
+        )
+        .unwrap_or(false);
+
+    if !exists {
+        return Ok(false);
     }
+
+    if !message.is_empty() {
+        let next_id: u32 = conn
+            .query_row(
+                "SELECT COALESCE(MAX(id), 0) + 1 FROM review_replies WHERE project_key = ?1 AND task_id = ?2 AND comment_id = ?3",
+                rusqlite::params![project, task_id, comment_id],
+                |row| row.get(0),
+            )
+            .unwrap_or(1);
+
+        let now = chrono::Utc::now().to_rfc3339();
+        conn.execute(
+            "INSERT INTO review_replies (id, comment_id, project_key, task_id, content, agent, model_name, role, timestamp)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+            rusqlite::params![next_id, comment_id, project, task_id, message, agent, model, role, now],
+        )?;
+    }
+
+    Ok(true)
 }
 
 /// 更新 Comment 状态（不添加回复）
@@ -463,14 +541,13 @@ pub fn update_comment_status(
     comment_id: u32,
     status: CommentStatus,
 ) -> Result<bool> {
-    let mut data = load_comments(project, task_id)?;
-    if let Some(comment) = data.comments.iter_mut().find(|c| c.id == comment_id) {
-        comment.status = status;
-        save_comments_json(project, task_id, &data)?;
-        Ok(true)
-    } else {
-        Ok(false)
-    }
+    let conn = database::connection();
+    let status_str = status_to_str(status);
+    let updated = conn.execute(
+        "UPDATE review_comments SET status = ?1 WHERE project_key = ?2 AND task_id = ?3 AND id = ?4",
+        rusqlite::params![status_str, project, task_id, comment_id],
+    )?;
+    Ok(updated > 0)
 }
 
 /// 添加新 Comment
@@ -484,97 +561,150 @@ pub fn add_comment(
     start_line: Option<u32>,
     end_line: Option<u32>,
     content: &str,
-    author: &str,
+    agent: &str,
+    model: &str,
+    role: &str,
     anchor_text: Option<String>,
 ) -> Result<Comment> {
-    let mut data = load_comments(project, task_id)?;
+    let conn = database::connection();
 
-    let new_id = data.comments.iter().map(|c| c.id).max().unwrap_or(0) + 1;
+    let new_id: u32 = conn
+        .query_row(
+            "SELECT COALESCE(MAX(id), 0) + 1 FROM review_comments WHERE project_key = ?1 AND task_id = ?2",
+            rusqlite::params![project, task_id],
+            |row| row.get(0),
+        )
+        .unwrap_or(1);
 
-    let comment = match comment_type {
-        CommentType::Inline => Comment::new_inline(
-            new_id,
-            file_path.ok_or_else(|| {
-                crate::error::GroveError::Storage(
-                    "file_path required for inline comment".to_string(),
-                )
-            })?,
-            side.ok_or_else(|| {
-                crate::error::GroveError::Storage("side required for inline comment".to_string())
-            })?,
-            start_line.ok_or_else(|| {
-                crate::error::GroveError::Storage(
-                    "start_line required for inline comment".to_string(),
-                )
-            })?,
-            end_line.unwrap_or_else(|| start_line.unwrap()),
-            content.to_string(),
-            author.to_string(),
-            anchor_text,
-        ),
-        CommentType::File => Comment::new_file(
-            new_id,
-            file_path.ok_or_else(|| {
-                crate::error::GroveError::Storage("file_path required for file comment".to_string())
-            })?,
-            content.to_string(),
-            author.to_string(),
-        ),
-        CommentType::Project => {
-            Comment::new_project(new_id, content.to_string(), author.to_string())
-        }
+    // Inline comments require a non-null end_line; default to start_line when caller omits it.
+    let end_line = match comment_type {
+        CommentType::Inline => end_line.or(start_line),
+        _ => end_line,
     };
 
+    let comment = Comment::build(
+        new_id,
+        comment_type,
+        file_path,
+        side,
+        start_line,
+        end_line,
+        content.to_string(),
+        agent.to_string(),
+        model.to_string(),
+        role.to_string(),
+        anchor_text,
+    );
     comment.validate()?;
 
-    data.comments.push(comment.clone());
-    save_comments_json(project, task_id, &data)?;
+    let comment_type_str = comment_type_to_str(comment_type);
+    let status_str = status_to_str(CommentStatus::Open);
+
+    conn.execute(
+        "INSERT INTO review_comments (id, project_key, task_id, comment_type, file_path, side, start_line, end_line, content, agent, model_name, role, timestamp, status, anchor_text)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
+        rusqlite::params![
+            comment.id,
+            project,
+            task_id,
+            comment_type_str,
+            comment.file_path,
+            comment.side,
+            comment.start_line,
+            comment.end_line,
+            comment.content,
+            comment.agent,
+            comment.model,
+            comment.role,
+            comment.timestamp,
+            status_str,
+            comment.anchor_text,
+        ],
+    )?;
 
     Ok(comment)
 }
 
-/// 批量删除 Comments（按 status 和 author 组合过滤）
-/// - statuses 之间 OR，authors 之间 OR，两者之间 AND
-/// - 都为空 = 删除全部
+/// 保存 comments（供 outdated detection 后持久化行号和状态变更）
+pub fn save_comments(project: &str, task_id: &str, data: &CommentsData) -> Result<()> {
+    let conn = database::connection();
+    for comment in &data.comments {
+        conn.execute(
+            "UPDATE review_comments SET status = ?1, start_line = ?2, end_line = ?3 WHERE project_key = ?4 AND task_id = ?5 AND id = ?6",
+            rusqlite::params![
+                status_to_str(comment.status),
+                comment.start_line,
+                comment.end_line,
+                project,
+                task_id,
+                comment.id,
+            ],
+        )?;
+    }
+    Ok(())
+}
+
+/// 批量删除 Comments（按 status 和 agent 过滤）
 pub fn bulk_delete_comments(
     project: &str,
     task_id: &str,
     statuses: &[CommentStatus],
     authors: &[String],
 ) -> Result<usize> {
-    let mut data = load_comments(project, task_id)?;
-    let len_before = data.comments.len();
+    let conn = database::connection();
 
-    if statuses.is_empty() && authors.is_empty() {
-        data.comments.clear();
-    } else {
-        data.comments.retain(|c| {
-            let status_match = statuses.is_empty() || statuses.contains(&c.status);
-            let author_match = authors.is_empty() || authors.iter().any(|a| a == &c.author);
-            // retain = NOT matched (we delete matched ones)
-            !(status_match && author_match)
-        });
+    let mut conditions = vec!["project_key = ?1".to_string(), "task_id = ?2".to_string()];
+    let mut param_values: Vec<Box<dyn rusqlite::types::ToSql>> =
+        vec![Box::new(project.to_string()), Box::new(task_id.to_string())];
+
+    if !statuses.is_empty() {
+        let placeholders: Vec<String> = statuses
+            .iter()
+            .enumerate()
+            .map(|(i, _)| format!("?{}", param_values.len() + 1 + i))
+            .collect();
+        conditions.push(format!("status IN ({})", placeholders.join(", ")));
+        for s in statuses {
+            param_values.push(Box::new(status_to_str(*s).to_string()));
+        }
     }
 
-    let deleted = len_before - data.comments.len();
-    if deleted > 0 {
-        save_comments_json(project, task_id, &data)?;
+    if !authors.is_empty() {
+        let placeholders: Vec<String> = authors
+            .iter()
+            .enumerate()
+            .map(|(i, _)| format!("?{}", param_values.len() + 1 + i))
+            .collect();
+        // Match either the bare agent column or the legacy display string
+        // "agent (role)". When role is empty, the legacy form falls back to
+        // bare agent (without trailing " ()") so the first clause still
+        // catches it.
+        conditions.push(format!(
+            "(agent IN ({0}) OR (CASE WHEN role = '' THEN agent ELSE agent || ' (' || role || ')' END) IN ({0}))",
+            placeholders.join(", ")
+        ));
+        for a in authors {
+            param_values.push(Box::new(a.clone()));
+        }
     }
+
+    let where_clause = conditions.join(" AND ");
+    let sql = format!("DELETE FROM review_comments WHERE {}", where_clause);
+
+    let params: Vec<&dyn rusqlite::types::ToSql> =
+        param_values.iter().map(|p| p.as_ref()).collect();
+    let deleted = conn.execute(&sql, rusqlite::params_from_iter(params))?;
     Ok(deleted)
 }
 
 /// 删除 Comment
 pub fn delete_comment(project: &str, task_id: &str, comment_id: u32) -> Result<bool> {
-    let mut data = load_comments(project, task_id)?;
-    let len_before = data.comments.len();
-    data.comments.retain(|c| c.id != comment_id);
-
-    if data.comments.len() < len_before {
-        save_comments_json(project, task_id, &data)?;
-        Ok(true)
-    } else {
-        Ok(false)
-    }
+    let conn = database::connection();
+    let deleted = conn.execute(
+        "DELETE FROM review_comments WHERE project_key = ?1 AND task_id = ?2 AND id = ?3",
+        rusqlite::params![project, task_id, comment_id],
+    )?;
+    Ok(deleted > 0)
 }
 
 /// 编辑 Comment 内容
@@ -584,14 +714,12 @@ pub fn edit_comment(
     comment_id: u32,
     new_content: &str,
 ) -> Result<bool> {
-    let mut data = load_comments(project, task_id)?;
-    if let Some(comment) = data.comments.iter_mut().find(|c| c.id == comment_id) {
-        comment.content = new_content.to_string();
-        save_comments_json(project, task_id, &data)?;
-        Ok(true)
-    } else {
-        Ok(false)
-    }
+    let conn = database::connection();
+    let updated = conn.execute(
+        "UPDATE review_comments SET content = ?1 WHERE project_key = ?2 AND task_id = ?3 AND id = ?4",
+        rusqlite::params![new_content, project, task_id, comment_id],
+    )?;
+    Ok(updated > 0)
 }
 
 /// 编辑 Reply 内容
@@ -602,29 +730,22 @@ pub fn edit_reply(
     reply_id: u32,
     new_content: &str,
 ) -> Result<bool> {
-    let mut data = load_comments(project, task_id)?;
-    if let Some(comment) = data.comments.iter_mut().find(|c| c.id == comment_id) {
-        if let Some(reply) = comment.replies.iter_mut().find(|r| r.id == reply_id) {
-            reply.content = new_content.to_string();
-            save_comments_json(project, task_id, &data)?;
-            return Ok(true);
-        }
-    }
-    Ok(false)
+    let conn = database::connection();
+    let updated = conn.execute(
+        "UPDATE review_replies SET content = ?1 WHERE project_key = ?2 AND task_id = ?3 AND comment_id = ?4 AND id = ?5",
+        rusqlite::params![new_content, project, task_id, comment_id, reply_id],
+    )?;
+    Ok(updated > 0)
 }
 
 /// 删除 Reply
 pub fn delete_reply(project: &str, task_id: &str, comment_id: u32, reply_id: u32) -> Result<bool> {
-    let mut data = load_comments(project, task_id)?;
-    if let Some(comment) = data.comments.iter_mut().find(|c| c.id == comment_id) {
-        let len_before = comment.replies.len();
-        comment.replies.retain(|r| r.id != reply_id);
-        if comment.replies.len() < len_before {
-            save_comments_json(project, task_id, &data)?;
-            return Ok(true);
-        }
-    }
-    Ok(false)
+    let conn = database::connection();
+    let deleted = conn.execute(
+        "DELETE FROM review_replies WHERE project_key = ?1 AND task_id = ?2 AND comment_id = ?3 AND id = ?4",
+        rusqlite::params![project, task_id, comment_id, reply_id],
+    )?;
+    Ok(deleted > 0)
 }
 
 #[cfg(test)]
@@ -655,7 +776,6 @@ mod tests {
     #[test]
     fn test_extract_lines_clamp_end() {
         let content = "a\nb\nc";
-        // end_line=10 should be clamped to 3
         assert_eq!(extract_lines(content, 2, 10), Some("b\nc".to_string()));
     }
 
@@ -693,22 +813,59 @@ mod tests {
     }
 
     #[test]
-    fn test_apply_outdated_detection_marks_outdated() {
+    fn test_parse_author_to_agent_role() {
+        assert_eq!(
+            parse_author_to_agent_role("Claude Code (Reviewer)"),
+            ("Claude Code".to_string(), "Reviewer".to_string())
+        );
+        assert_eq!(
+            parse_author_to_agent_role("Claude Code"),
+            ("Claude Code".to_string(), String::new())
+        );
+        assert_eq!(
+            parse_author_to_agent_role("You"),
+            ("You".to_string(), String::new())
+        );
+        assert_eq!(
+            parse_author_to_agent_role("Codex (Implementer)"),
+            ("Codex".to_string(), "Implementer".to_string())
+        );
+    }
+
+    #[test]
+    fn test_build_author() {
+        assert_eq!(
+            build_author("Claude Code", "Reviewer"),
+            "Claude Code (Reviewer)"
+        );
+        assert_eq!(build_author("Claude Code", ""), "Claude Code");
+        assert_eq!(build_author("You", ""), "You");
+        assert_eq!(build_author("", ""), "Unknown");
+    }
+
+    fn test_comment() -> Comment {
+        Comment {
+            id: 1,
+            comment_type: CommentType::Inline,
+            file_path: Some("src/main.rs".to_string()),
+            side: Some("ADD".to_string()),
+            start_line: Some(5),
+            end_line: Some(5),
+            content: "fix this".to_string(),
+            agent: "You".to_string(),
+            model: String::new(),
+            role: String::new(),
+            timestamp: "2025-01-01".to_string(),
+            status: CommentStatus::Open,
+            replies: Vec::new(),
+            anchor_text: Some("original_code".to_string()),
+        }
+    }
+
+    #[test]
+    fn test_outdated_detection_marks_outdated() {
         let mut data = CommentsData {
-            comments: vec![Comment {
-                id: 1,
-                comment_type: CommentType::Inline,
-                file_path: Some("src/main.rs".to_string()),
-                side: Some("ADD".to_string()),
-                start_line: Some(5),
-                end_line: Some(5),
-                content: "fix this".to_string(),
-                author: "You".to_string(),
-                timestamp: "2025-01-01".to_string(),
-                status: CommentStatus::Open,
-                replies: Vec::new(),
-                anchor_text: Some("original_code".to_string()),
-            }],
+            comments: vec![test_comment()],
         };
 
         apply_outdated_detection(&mut data, |_, _| {
@@ -719,22 +876,13 @@ mod tests {
     }
 
     #[test]
-    fn test_apply_outdated_detection_updates_line() {
+    fn test_outdated_detection_updates_line() {
+        let mut comment = test_comment();
+        comment.anchor_text = Some("bbb\nccc".to_string());
+        comment.start_line = Some(2);
+        comment.end_line = Some(3);
         let mut data = CommentsData {
-            comments: vec![Comment {
-                id: 1,
-                comment_type: CommentType::Inline,
-                file_path: Some("src/main.rs".to_string()),
-                side: Some("ADD".to_string()),
-                start_line: Some(2),
-                end_line: Some(3),
-                content: "fix this".to_string(),
-                author: "You".to_string(),
-                timestamp: "2025-01-01".to_string(),
-                status: CommentStatus::Open,
-                replies: Vec::new(),
-                anchor_text: Some("bbb\nccc".to_string()),
-            }],
+            comments: vec![comment],
         };
 
         let changed = apply_outdated_detection(&mut data, |_, _| {
@@ -748,22 +896,11 @@ mod tests {
     }
 
     #[test]
-    fn test_apply_outdated_detection_skips_resolved() {
+    fn test_outdated_detection_skips_resolved() {
+        let mut comment = test_comment();
+        comment.status = CommentStatus::Resolved;
         let mut data = CommentsData {
-            comments: vec![Comment {
-                id: 1,
-                comment_type: CommentType::Inline,
-                file_path: Some("src/main.rs".to_string()),
-                side: Some("ADD".to_string()),
-                start_line: Some(1),
-                end_line: Some(1),
-                content: "fix this".to_string(),
-                author: "You".to_string(),
-                timestamp: "2025-01-01".to_string(),
-                status: CommentStatus::Resolved,
-                replies: Vec::new(),
-                anchor_text: Some("old_code".to_string()),
-            }],
+            comments: vec![comment],
         };
 
         apply_outdated_detection(&mut data, |_, _| Some("different_code".to_string()));
@@ -772,22 +909,11 @@ mod tests {
     }
 
     #[test]
-    fn test_apply_outdated_detection_no_anchor() {
+    fn test_outdated_detection_no_anchor() {
+        let mut comment = test_comment();
+        comment.anchor_text = None;
         let mut data = CommentsData {
-            comments: vec![Comment {
-                id: 1,
-                comment_type: CommentType::Inline,
-                file_path: Some("src/main.rs".to_string()),
-                side: Some("ADD".to_string()),
-                start_line: Some(1),
-                end_line: Some(1),
-                content: "fix this".to_string(),
-                author: "You".to_string(),
-                timestamp: "2025-01-01".to_string(),
-                status: CommentStatus::Open,
-                replies: Vec::new(),
-                anchor_text: None,
-            }],
+            comments: vec![comment],
         };
 
         apply_outdated_detection(&mut data, |_, _| Some("whatever".to_string()));
@@ -796,22 +922,12 @@ mod tests {
     }
 
     #[test]
-    fn test_apply_outdated_detection_file_missing() {
+    fn test_outdated_detection_file_missing() {
+        let mut comment = test_comment();
+        comment.file_path = Some("deleted.rs".to_string());
+        comment.anchor_text = Some("some_code".to_string());
         let mut data = CommentsData {
-            comments: vec![Comment {
-                id: 1,
-                comment_type: CommentType::Inline,
-                file_path: Some("deleted.rs".to_string()),
-                side: Some("ADD".to_string()),
-                start_line: Some(1),
-                end_line: Some(1),
-                content: "fix this".to_string(),
-                author: "You".to_string(),
-                timestamp: "2025-01-01".to_string(),
-                status: CommentStatus::Open,
-                replies: Vec::new(),
-                anchor_text: Some("some_code".to_string()),
-            }],
+            comments: vec![comment],
         };
 
         apply_outdated_detection(&mut data, |_, _| None);

@@ -158,6 +158,16 @@ pub fn tray_take_pending_navigate() -> Option<NavigatePayload> {
     })
 }
 
+/// Toggle the menubar popover via global shortcut. No anchor — the
+/// existing `compute_popover_position` fallback puts it at the primary
+/// monitor's menubar area, which matches users' mental model of where
+/// the popover lives.
+#[tauri::command]
+pub fn toggle_tray_popover_visibility(app: AppHandle) -> Result<(), String> {
+    toggle_popover(&app, None);
+    Ok(())
+}
+
 fn surface_main(app: &AppHandle) {
     if let Some(popover) = app.get_webview_window(POPOVER_LABEL) {
         let _ = popover.hide();

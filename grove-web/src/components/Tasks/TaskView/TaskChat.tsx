@@ -4086,9 +4086,71 @@ export function TaskChat({
     [promptCaps.image, promptCaps.audio, addFileAsAttachment],
   );
 
+  /**
+   * Insert a file chip at a screen point (used for drag-and-drop from
+   * the Review sidebar). Falls back to appending at the editor end if
+   * the point isn't inside the editable region.
+   */
+  const insertFileChipAtPoint = useCallback(
+    (filePath: string, clientX: number, clientY: number) => {
+      const el = editableRef.current;
+      if (!el) return;
+      const chip = createFileChip(filePath, false);
+
+      // Resolve a Range at the drop point. caretRangeFromPoint is WebKit/Blink;
+      // caretPositionFromPoint is the standard. Try both.
+      type CaretPositionLike = { offsetNode: Node; offset: number };
+      const docWithCaret = document as Document & {
+        caretRangeFromPoint?: (x: number, y: number) => Range | null;
+        caretPositionFromPoint?: (x: number, y: number) => CaretPositionLike | null;
+      };
+      let range: Range | null = null;
+      if (typeof docWithCaret.caretRangeFromPoint === 'function') {
+        range = docWithCaret.caretRangeFromPoint(clientX, clientY);
+      } else if (typeof docWithCaret.caretPositionFromPoint === 'function') {
+        const pos = docWithCaret.caretPositionFromPoint(clientX, clientY);
+        if (pos) {
+          range = document.createRange();
+          range.setStart(pos.offsetNode, pos.offset);
+          range.collapse(true);
+        }
+      }
+
+      // If the resolved range is outside the editable, append to its end.
+      const inEditor = range && el.contains(range.startContainer);
+      if (!inEditor) {
+        range = document.createRange();
+        range.selectNodeContents(el);
+        range.collapse(false);
+      }
+
+      el.focus();
+      range!.insertNode(chip);
+
+      // Place caret after the chip with a trailing space for ergonomics.
+      const space = document.createTextNode(' ');
+      chip.parentNode?.insertBefore(space, chip.nextSibling);
+      const newRange = document.createRange();
+      newRange.setStartAfter(space);
+      newRange.collapse(true);
+      const sel = window.getSelection();
+      sel?.removeAllRanges();
+      sel?.addRange(newRange);
+
+      checkContent();
+    },
+    [checkContent],
+  );
+
   /** Drag & drop handlers */
   const handleDragOver = useCallback((e: React.DragEvent) => {
     e.preventDefault();
+    // If the drag carries a grove file path, advertise copy semantics so
+    // the cursor reflects "drop = insert".
+    const types = e.dataTransfer.types;
+    if (types && Array.from(types).includes('application/x-grove-file-path')) {
+      e.dataTransfer.dropEffect = 'copy';
+    }
     setIsDragging(true);
   }, []);
 
@@ -4102,6 +4164,14 @@ export function TaskChat({
     (e: React.DragEvent) => {
       e.preventDefault();
       setIsDragging(false);
+
+      // Path drag from Review sidebar — insert a file chip at the drop point.
+      const grovePath = e.dataTransfer.getData('application/x-grove-file-path');
+      if (grovePath) {
+        insertFileChipAtPoint(grovePath, e.clientX, e.clientY);
+        return;
+      }
+
       const files = Array.from(e.dataTransfer.files);
       files.forEach((file) => {
         if (file.type.startsWith("image/") && promptCaps.image)
@@ -4111,7 +4181,7 @@ export function TaskChat({
         else void addFileAsAttachment(file);
       });
     },
-    [promptCaps.image, promptCaps.audio, addFileAsAttachment],
+    [promptCaps.image, promptCaps.audio, addFileAsAttachment, insertFileChipAtPoint],
   );
 
   // Re-check hasContent when attachments change
@@ -4580,9 +4650,6 @@ export function TaskChat({
       initial={{ opacity: 0, y: -10 }}
       animate={{ opacity: 1, y: 0 }}
       className={`flex-1 flex flex-col overflow-hidden relative outline-none ${fullscreen ? "" : "rounded-lg border border-[var(--color-border)]"}`}
-      onDragOver={handleDragOver}
-      onDragLeave={handleDragLeave}
-      onDrop={handleDrop}
       onPointerDown={(e) => {
         // Anchor keyboard focus to the chat panel on any click, so that
         // global Cmd/Ctrl+F handlers (which gate on activeElement) recognize
@@ -4598,14 +4665,6 @@ export function TaskChat({
         }
       }}
     >
-      {/* Full-window drag overlay */}
-      {isDragging && (
-        <div className="absolute inset-0 bg-[color-mix(in_srgb,var(--color-highlight)_8%,transparent)] border-2 border-dashed border-[var(--color-highlight)] rounded-lg flex items-center justify-center z-50 pointer-events-none">
-          <span className="text-[var(--color-highlight)] font-medium text-sm">
-            Drop files here
-          </span>
-        </div>
-      )}
       {chatSearchOpen && (
         <PreviewSearchBar
           query={chatSearchQuery}
@@ -5396,9 +5455,21 @@ export function TaskChat({
                     : isTerminalMode
                       ? "focus-within:border-[var(--color-warning)] border-[color-mix(in_srgb,var(--color-border)_62%,transparent)]"
                       : "focus-within:border-[color-mix(in_srgb,var(--color-highlight)_82%,white_8%)] border-[color-mix(in_srgb,var(--color-border)_62%,transparent)]"
-                } select-none`}
+                } ${isDragging ? "chatbox-drop-active" : ""} select-none`}
                 style={{ transform: "translateY(-6px)" }}
+                onDragOver={handleDragOver}
+                onDragLeave={handleDragLeave}
+                onDrop={handleDrop}
               >
+                {/* Localized drop overlay — only fires inside the composer */}
+                {isDragging && (
+                  <div className="chatbox-drop-overlay" aria-hidden>
+                    <div className="chatbox-drop-overlay-inner">
+                      <Paperclip className="w-4 h-4" />
+                      <span>Drop to mention this file</span>
+                    </div>
+                  </div>
+                )}
                 <div className="mb-2 flex items-center justify-between gap-2 pr-10 select-none">
                   <div className="flex min-w-0 items-center gap-2 select-none">
                     <div className="inline-flex items-center gap-1.5 rounded-full bg-[var(--color-bg)] px-2.5 py-1 text-[11px] text-[var(--color-text)] min-w-0 max-w-full">

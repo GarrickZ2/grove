@@ -925,7 +925,9 @@ pub struct CompleteTaskResult {
 struct ReviewReplyEntry {
     reply_id: u32,
     content: String,
-    author: String,
+    agent: String,
+    model: String,
+    role: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -943,7 +945,9 @@ struct ReviewCommentEntry {
     #[serde(skip_serializing_if = "Option::is_none")]
     end_line: Option<u32>,
     content: String,
-    author: String,
+    agent: String,
+    model: String,
+    role: String,
     replies: Vec<ReviewReplyEntry>,
 }
 
@@ -987,6 +991,90 @@ struct ReplyResultEntry {
 #[derive(Debug, Serialize)]
 struct ReplyReviewResult {
     replies: Vec<ReplyResultEntry>,
+}
+
+// ============================================================================
+// Session identity resolution (ACP auto-detection)
+// ============================================================================
+
+/// Normalize raw agent name from session.json to a display-friendly name.
+/// Matches on whitespace/hyphen/underscore-separated tokens so e.g. "openai-proxy"
+/// won't be mis-tagged as "Codex" via a naive substring match.
+fn normalize_agent_name(raw: &str) -> String {
+    let lower = raw.to_lowercase();
+    let has_token = |needle: &str| {
+        lower
+            .split(|c: char| c.is_whitespace() || c == '-' || c == '_' || c == '.')
+            .any(|tok| tok == needle)
+    };
+    if has_token("claude") {
+        return "Claude Code".to_string();
+    }
+    if has_token("codex") {
+        return "Codex".to_string();
+    }
+    if has_token("gemini") {
+        return "Gemini".to_string();
+    }
+    if has_token("copilot") {
+        return "GitHub Copilot".to_string();
+    }
+    if has_token("cursor") {
+        return "Cursor".to_string();
+    }
+    if has_token("qwen") {
+        return "Qwen".to_string();
+    }
+    if has_token("kimi") {
+        return "Kimi".to_string();
+    }
+    if has_token("junie") {
+        return "Junie".to_string();
+    }
+    if has_token("trae") {
+        return "Trae".to_string();
+    }
+    if has_token("opencode") {
+        return "OpenCode".to_string();
+    }
+    // Unknown agent — return as-is
+    raw.to_string()
+}
+
+/// Tries to resolve agent identity from session.json (ACP mode).
+/// Falls back to params if env vars are missing or session.json not found.
+/// Returns (agent, model, role).
+fn resolve_agent_identity(
+    params_agent: Option<&str>,
+    params_role: Option<&str>,
+) -> (String, String, String) {
+    // Try ACP session auto-detection via env vars + session.json
+    let project_key = env::var("GROVE_PROJECT_KEY").ok();
+    let task_id = env::var("GROVE_TASK_ID").ok();
+    let chat_id = env::var("GROVE_CHAT_ID").ok();
+
+    if let (Some(pk), Some(tid), Some(cid)) = (project_key, task_id, chat_id) {
+        if let Some(meta) = crate::acp::read_session_metadata(&pk, &tid, &cid) {
+            let agent = normalize_agent_name(&meta.agent_name);
+            let model = meta
+                .current_model_id
+                .and_then(|id| {
+                    meta.available_models
+                        .iter()
+                        .find(|(m_id, _)| m_id == &id)
+                        .map(|(_, name)| name.clone())
+                })
+                .unwrap_or_default();
+            let role = params_role.unwrap_or("").to_string();
+            return (agent, model, role);
+        }
+    }
+
+    // Fallback: use params or defaults
+    let agent = params_agent.unwrap_or("Claude Code").to_string();
+    let model = String::new();
+    let role = params_role.unwrap_or("").to_string();
+    (agent, model, role)
 }
 
 // ============================================================================
@@ -1416,14 +1504,18 @@ impl GroveMcpServer {
                             start_line: c.start_line,
                             end_line: c.end_line,
                             content: c.content.clone(),
-                            author: c.author.clone(),
+                            agent: c.agent.clone(),
+                            model: c.model.clone(),
+                            role: c.role.clone(),
                             replies: c
                                 .replies
                                 .iter()
                                 .map(|r| ReviewReplyEntry {
                                     reply_id: r.id,
                                     content: r.content.clone(),
-                                    author: r.author.clone(),
+                                    agent: r.agent.clone(),
+                                    model: r.model.clone(),
+                                    role: r.role.clone(),
                                 })
                                 .collect(),
                         })
@@ -1463,13 +1555,9 @@ impl GroveMcpServer {
             ));
         }
 
-        // Build author string: "agent_name (role)"
-        let author = match (&params.0.agent_name, &params.0.role) {
-            (Some(name), Some(role)) => format!("{} ({})", name, role),
-            (Some(name), None) => name.clone(),
-            (None, Some(role)) => format!("Claude Code ({})", role),
-            (None, None) => "Claude Code".to_string(),
-        };
+        // Resolve agent/model/role (ACP auto-detect or params fallback)
+        let (agent, model, role) =
+            resolve_agent_identity(params.0.agent_name.as_deref(), params.0.role.as_deref());
 
         let mut reply_results: Vec<ReplyResultEntry> = Vec::new();
 
@@ -1479,7 +1567,9 @@ impl GroveMcpServer {
                 &task_id,
                 reply.comment_id,
                 &reply.message,
-                &author,
+                &agent,
+                &model,
+                &role,
             ) {
                 Ok(true) => {
                     // Handle resolve if requested
@@ -1488,7 +1578,7 @@ impl GroveMcpServer {
                         match comments::load_comments(&project_key, &task_id) {
                             Ok(data) => {
                                 match data.comments.iter().find(|c| c.id == reply.comment_id) {
-                                    Some(comment) if comment.author == author => {
+                                    Some(comment) if comment.agent == agent && comment.role == role => {
                                         match comments::update_comment_status(
                                             &project_key,
                                             &task_id,
@@ -1503,7 +1593,7 @@ impl GroveMcpServer {
                                     Some(comment) => {
                                         (Some(false), Some(format!(
                                             "permission denied: only the creator ({}) can resolve this comment",
-                                            comment.author
+                                            comments::build_author(&comment.agent, &comment.role)
                                         )))
                                     }
                                     None => (Some(false), Some("comment not found during resolve".to_string())),
@@ -1576,13 +1666,9 @@ impl GroveMcpServer {
         validate_task_exists(&project_key, &task_id)?;
         let worktree = env::var("GROVE_WORKTREE").unwrap_or_default();
 
-        // Build author string: "agent_name (role)"
-        let author = match (&params.0.agent_name, &params.0.role) {
-            (Some(name), Some(role)) => format!("{} ({})", name, role),
-            (Some(name), None) => name.clone(),
-            (None, Some(role)) => format!("Claude Code ({})", role),
-            (None, None) => "Claude Code".to_string(),
-        };
+        // Resolve agent/model/role (ACP auto-detect or params fallback)
+        let (agent, model, role) =
+            resolve_agent_identity(params.0.agent_name.as_deref(), params.0.role.as_deref());
 
         let mut created = Vec::new();
         let mut errors = Vec::new();
@@ -1621,7 +1707,9 @@ impl GroveMcpServer {
                                 Some(start),
                                 Some(end),
                                 &item.content,
-                                &author,
+                                &agent,
+                                &model,
+                                &role,
                                 anchor,
                             )
                             .map_err(|e| e.to_string())
@@ -1640,7 +1728,9 @@ impl GroveMcpServer {
                         None,
                         None,
                         &item.content,
-                        &author,
+                        &agent,
+                        &model,
+                        &role,
                         None,
                     )
                     .map_err(|e| e.to_string()),
@@ -1655,7 +1745,9 @@ impl GroveMcpServer {
                     None,
                     None,
                     &item.content,
-                    &author,
+                    &agent,
+                    &model,
+                    &role,
                     None,
                 )
                 .map_err(|e| e.to_string()),

@@ -218,7 +218,7 @@ class ApiClient {
     this.baseUrl = baseUrl;
   }
 
-  async get<T>(path: string): Promise<T> {
+  async get<T>(path: string, signal?: AbortSignal): Promise<T> {
     const response = await fetch(`${this.baseUrl}${path}`, {
       method: 'GET',
       headers: await getSignedHeaders('GET', path),
@@ -226,6 +226,7 @@ class ApiClient {
       // other tabs, background sync). We always want the freshest response;
       // never let the browser serve a stale cached copy.
       cache: 'no-store',
+      signal,
     });
 
     if (!response.ok) {

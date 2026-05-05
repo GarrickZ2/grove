@@ -308,6 +308,11 @@ pub struct NotificationsConfig {
     /// they fire continuously and would be too noisy.
     #[serde(default)]
     pub notification_show_running: bool,
+
+    /// Global shortcut to show / hide the menubar tray popover.
+    /// Stored in display form (e.g. "Cmd+Shift+M"); empty/None disables.
+    #[serde(default)]
+    pub menubar_shortcut: Option<String>,
 }
 
 impl Default for NotificationsConfig {
@@ -321,6 +326,7 @@ impl Default for NotificationsConfig {
             notification_show_permission: true,
             notification_show_done: true,
             notification_show_running: false,
+            menubar_shortcut: None,
         }
     }
 }

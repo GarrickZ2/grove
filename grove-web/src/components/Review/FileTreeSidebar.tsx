@@ -1,7 +1,8 @@
 import { useState, useRef, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import type { DiffFile } from '../../api/review';
 import type { DirEntry } from '../../api/tasks';
-import { FolderOpen, Folder, Search, MessageSquare, FilePlus, FolderPlus } from 'lucide-react';
+import { FolderOpen, Folder, Search, MessageSquare, FilePlus, FolderPlus, Copy, FileText } from 'lucide-react';
 import { VSCodeIcon } from '../ui';
 
 interface FileCommentCount {
@@ -22,6 +23,8 @@ interface FileTreeSidebarProps {
   viewMode?: 'diff' | 'full';
   onExpandDir?: (dirPath: string) => Promise<DirEntry[]>;
   onLoadFileDiff?: (filePath: string, fromRef?: string, toRef?: string) => Promise<void>;
+  /** Absolute worktree path — used to compute "Copy Full Path" */
+  taskPath?: string | null;
 }
 
 interface DirNode {
@@ -53,6 +56,7 @@ export function FileTreeSidebar({
   viewMode = 'diff',
   onExpandDir,
   onLoadFileDiff,
+  taskPath,
 }: FileTreeSidebarProps) {
   // Context menu state
   const [contextMenu, setContextMenu] = useState<{
@@ -83,9 +87,6 @@ export function FileTreeSidebar({
   };
 
   const handleContextMenu = (e: React.MouseEvent, path: string, isDirectory: boolean) => {
-    // Only show context menu in All Files Mode
-    if (viewMode !== 'full') return;
-
     e.preventDefault();
     e.stopPropagation();
     setContextMenu({
@@ -94,6 +95,30 @@ export function FileTreeSidebar({
       targetPath: path,
       isDirectory,
     });
+  };
+
+  const copyToClipboard = async (text: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch (err) {
+      console.error('Copy failed:', err);
+    }
+  };
+
+  const handleCopyRelativePath = () => {
+    if (!contextMenu) return;
+    void copyToClipboard(contextMenu.targetPath);
+    setContextMenu(null);
+  };
+
+  const handleCopyFullPath = () => {
+    if (!contextMenu) return;
+    const rel = contextMenu.targetPath;
+    const full = taskPath
+      ? `${taskPath.replace(/\/$/, '')}/${rel}`
+      : rel;
+    void copyToClipboard(full);
+    setContextMenu(null);
   };
 
   const handleCreateVirtual = (type: 'file' | 'directory') => {
@@ -169,23 +194,42 @@ export function FileTreeSidebar({
         ))}
       </div>
 
-      {/* Context Menu */}
-      {contextMenu && (
-        <div
-          className="file-tree-context-menu"
-          style={{
-            position: 'fixed',
-            left: contextMenu.x,
-            top: contextMenu.y,
-            zIndex: 9999,
-          }}
-          onClick={(e) => e.stopPropagation()}
-        >
-          <button onClick={() => handleCreateVirtual('file')}>
-            <FilePlus style={{ width: 14, height: 14 }} />
-            Create Virtual File
-          </button>
-        </div>
+      {/* Context Menu (portaled to body to escape transformed ancestors) */}
+      {contextMenu && createPortal(
+        <>
+          <div
+            className="file-tree-context-menu-backdrop"
+            onClick={handleCloseContextMenu}
+            onContextMenu={(e) => { e.preventDefault(); handleCloseContextMenu(); }}
+          />
+          <div
+            className="file-tree-context-menu"
+            style={{
+              left: contextMenu.x,
+              top: contextMenu.y,
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <button onClick={handleCopyRelativePath}>
+              <Copy style={{ width: 14, height: 14 }} />
+              Copy Relative Path
+            </button>
+            <button onClick={handleCopyFullPath} disabled={!taskPath}>
+              <FileText style={{ width: 14, height: 14 }} />
+              Copy Full Path
+            </button>
+            {viewMode === 'full' && onCreateVirtualPath && (
+              <>
+                <div className="file-tree-context-menu-separator" />
+                <button onClick={() => handleCreateVirtual('file')}>
+                  <FilePlus style={{ width: 14, height: 14 }} />
+                  Create Virtual File
+                </button>
+              </>
+            )}
+          </div>
+        </>,
+        document.body,
       )}
     </div>
   );
@@ -371,6 +415,12 @@ function TreeNode({
       onClick={() => onSelectFile(file.new_path)}
       onContextMenu={(e) => onContextMenu?.(e, file.new_path, false)}
       title={file.is_virtual ? 'Planned file (not yet created)' : undefined}
+      draggable
+      onDragStart={(e) => {
+        e.dataTransfer.effectAllowed = 'copy';
+        e.dataTransfer.setData('application/x-grove-file-path', file.new_path);
+        e.dataTransfer.setData('text/plain', file.new_path);
+      }}
     >
       {viewMode === 'full' ? (
         <VSCodeIcon filename={node.name} size={14} />

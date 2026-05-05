@@ -92,7 +92,9 @@ impl LegacyComment {
                 self.replies.push(CommentReply {
                     id: 1,
                     content: reply_text,
-                    author: "AI".to_string(),
+                    agent: "AI".to_string(),
+                    model: String::new(),
+                    role: String::new(),
                     timestamp: default_timestamp(),
                 });
             }
@@ -103,6 +105,8 @@ impl LegacyComment {
             self.end_line = Some(start);
         }
 
+        let (agent, role) = crate::storage::comments::parse_author_to_agent_role(&self.author);
+
         crate::storage::comments::Comment {
             id: self.id,
             comment_type: self.comment_type,
@@ -111,7 +115,9 @@ impl LegacyComment {
             start_line: self.start_line,
             end_line: self.end_line,
             content: self.content,
-            author: self.author,
+            agent,
+            model: String::new(),
+            role,
             timestamp: self.timestamp,
             status: self.status,
             replies: self.replies,
@@ -158,7 +164,9 @@ fn parse_diff_comments(content: &str) -> Vec<crate::storage::comments::Comment> 
                 start_line: Some(start_line),
                 end_line: Some(end_line),
                 content: body,
-                author: default_author(),
+                agent: String::new(),
+                model: String::new(),
+                role: String::new(),
                 timestamp: default_timestamp(),
                 status: CommentStatus::Open,
                 replies: Vec::new(),
@@ -577,7 +585,9 @@ fn load_legacy_ai_comments(ai_task_dir: &Path) -> Vec<crate::storage::comments::
                     comment.replies.push(CommentReply {
                         id: 1,
                         content: reply_data.reply.clone(),
-                        author: "AI".to_string(),
+                        agent: "AI".to_string(),
+                        model: String::new(),
+                        role: String::new(),
                         timestamp: default_timestamp(),
                     });
                 }

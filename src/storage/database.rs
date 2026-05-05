@@ -13,7 +13,7 @@ use std::sync::Mutex;
 use super::grove_dir;
 use crate::error::Result;
 
-pub const CURRENT_STORAGE_VERSION: &str = "2.2";
+pub const CURRENT_STORAGE_VERSION: &str = "2.3";
 
 /// Database state: caches connection + its path so we can detect HOME changes.
 struct DbState {
@@ -313,6 +313,44 @@ pub(crate) fn create_schema(conn: &Connection) -> Result<()> {
             created_at    TEXT NOT NULL,
             updated_at    TEXT NOT NULL
         );
+
+        -- Review Comments
+        CREATE TABLE IF NOT EXISTS review_comments (
+            id           INTEGER NOT NULL,
+            project_key  TEXT NOT NULL,
+            task_id      TEXT NOT NULL,
+            comment_type TEXT NOT NULL DEFAULT 'inline',
+            file_path    TEXT,
+            side         TEXT,
+            start_line   INTEGER,
+            end_line     INTEGER,
+            content      TEXT NOT NULL,
+            agent        TEXT NOT NULL DEFAULT '',
+            model_name   TEXT NOT NULL DEFAULT '',
+            role         TEXT NOT NULL DEFAULT '',
+            timestamp    TEXT NOT NULL,
+            status       TEXT NOT NULL DEFAULT 'open',
+            anchor_text  TEXT,
+            PRIMARY KEY (project_key, task_id, id)
+        );
+
+        CREATE TABLE IF NOT EXISTS review_replies (
+            id          INTEGER NOT NULL,
+            comment_id  INTEGER NOT NULL,
+            project_key TEXT NOT NULL,
+            task_id     TEXT NOT NULL,
+            content     TEXT NOT NULL,
+            agent       TEXT NOT NULL DEFAULT '',
+            model_name  TEXT NOT NULL DEFAULT '',
+            role        TEXT NOT NULL DEFAULT '',
+            timestamp   TEXT NOT NULL,
+            PRIMARY KEY (project_key, task_id, comment_id, id),
+            FOREIGN KEY (project_key, task_id, comment_id)
+                REFERENCES review_comments(project_key, task_id, id) ON DELETE CASCADE
+        );
+
+        CREATE INDEX IF NOT EXISTS ix_review_comments_status
+            ON review_comments(project_key, task_id, status);
     ",
     )?;
 
@@ -783,6 +821,181 @@ fn default_true_for_migration() -> bool {
     true
 }
 
+/// Migrate review comments from per-task `review.json` files to SQLite (v2.2 → v2.3).
+pub fn migrate_review_to_sqlite() {
+    let projects_dir = grove_dir().join("projects");
+    if !projects_dir.exists() {
+        return;
+    }
+    let entries = match std::fs::read_dir(&projects_dir) {
+        Ok(e) => e,
+        Err(_) => return,
+    };
+
+    for entry in entries.flatten() {
+        let project_dir = entry.path();
+        if !project_dir.is_dir() {
+            continue;
+        }
+        let project_key = entry.file_name().to_string_lossy().to_string();
+        let tasks_dir = project_dir.join("tasks");
+        if !tasks_dir.exists() {
+            continue;
+        }
+        let task_entries = match std::fs::read_dir(&tasks_dir) {
+            Ok(e) => e,
+            Err(_) => continue,
+        };
+
+        for task_entry in task_entries.flatten() {
+            let task_dir = task_entry.path();
+            if !task_dir.is_dir() {
+                continue;
+            }
+            let review_path = task_dir.join("review.json");
+            if !review_path.exists() {
+                continue;
+            }
+            let task_id = task_entry.file_name().to_string_lossy().to_string();
+
+            let content = match std::fs::read_to_string(&review_path) {
+                Ok(c) => c,
+                Err(_) => continue,
+            };
+
+            let raw: serde_json::Value = match serde_json::from_str(&content) {
+                Ok(v) => v,
+                Err(_) => continue,
+            };
+
+            let comments_array = raw.get("comments").and_then(|c| c.as_array());
+            let comments_array = match comments_array {
+                Some(a) => a,
+                None => continue,
+            };
+
+            let conn = connection();
+
+            for comment_val in comments_array {
+                let id = comment_val.get("id").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+                let author = comment_val
+                    .get("author")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                let (agent, role) = super::comments::parse_author_to_agent_role(author);
+                let comment_type_str = comment_val
+                    .get("comment_type")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("inline");
+                let status_str = comment_val
+                    .get("status")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("open");
+
+                let file_path = comment_val.get("file_path").and_then(|v| v.as_str());
+                let side = comment_val.get("side").and_then(|v| v.as_str());
+                let start_line = comment_val
+                    .get("start_line")
+                    .and_then(|v| v.as_u64())
+                    .map(|v| v as u32);
+                let end_line = comment_val
+                    .get("end_line")
+                    .and_then(|v| v.as_u64())
+                    .map(|v| v as u32);
+                let content = comment_val
+                    .get("content")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                let timestamp = comment_val
+                    .get("timestamp")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                let anchor_text = comment_val.get("anchor_text").and_then(|v| v.as_str());
+
+                let result = conn.execute(
+                    "INSERT OR IGNORE INTO review_comments
+                     (id, project_key, task_id, comment_type, file_path, side, start_line, end_line, content, agent, model_name, role, timestamp, status, anchor_text)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
+                    params![
+                        id,
+                        project_key,
+                        task_id,
+                        comment_type_str,
+                        file_path,
+                        side,
+                        start_line,
+                        end_line,
+                        content,
+                        agent,
+                        "",
+                        role,
+                        timestamp,
+                        status_str,
+                        anchor_text,
+                    ],
+                );
+
+                if result.is_ok() {
+                    // Iterate replies from raw JSON
+                    if let Some(replies_arr) = comment_val.get("replies").and_then(|r| r.as_array())
+                    {
+                        for reply_val in replies_arr {
+                            let reply_id =
+                                reply_val.get("id").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+                            let reply_author = reply_val
+                                .get("author")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("");
+                            let (r_agent, r_role) =
+                                super::comments::parse_author_to_agent_role(reply_author);
+                            let reply_content = reply_val
+                                .get("content")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("");
+                            let reply_timestamp = reply_val
+                                .get("timestamp")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("");
+                            let _ = conn.execute(
+                                "INSERT OR IGNORE INTO review_replies
+                                 (id, comment_id, project_key, task_id, content, agent, model_name, role, timestamp)
+                                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                                params![
+                                    reply_id,
+                                    id,
+                                    project_key,
+                                    task_id,
+                                    reply_content,
+                                    r_agent,
+                                    "",
+                                    r_role,
+                                    reply_timestamp,
+                                ],
+                            );
+                        }
+                    }
+                }
+            }
+
+            // Rename the source file so a future re-run of this migration won't
+            // re-import stale data and shadow newer SQLite-era comments. INSERT OR
+            // IGNORE already protects against duplicate ids, but a rename makes the
+            // one-shot intent explicit. Log on failure (read-only fs / permission)
+            // so the operator can clean it up — silent failure was hiding real
+            // breakage.
+            let target = review_path.with_extension("json.migrated");
+            if let Err(e) = std::fs::rename(&review_path, &target) {
+                eprintln!(
+                    "  [migrate] failed to rename {} → {}: {}",
+                    review_path.display(),
+                    target.display(),
+                    e
+                );
+            }
+        }
+    }
+}
+
 // ============================================================================
 // Prune legacy files (grove migrate --prune)
 // ============================================================================
@@ -838,10 +1051,13 @@ pub fn prune_legacy_files() {
         }
     }
 
-    // projects/*/project.toml, projects/*/ai/audio.json
+    // projects/*/{project.toml, ai/audio.json, review/, ai/<task>/, tasks/<task>/review.json[.migrated]}
     let projects_dir = grove.join("projects");
     if projects_dir.exists() {
         let mut project_removed = 0u32;
+        let mut review_files_removed = 0u32;
+        let mut review_dirs_removed = 0u32;
+        let mut ai_task_dirs_removed = 0u32;
         if let Ok(entries) = std::fs::read_dir(&projects_dir) {
             for entry in entries.flatten() {
                 let dir = entry.path();
@@ -858,6 +1074,50 @@ pub fn prune_legacy_files() {
                     std::fs::remove_file(&audio_path).ok();
                     project_removed += 1;
                 }
+
+                // v2.3: per-task review.json (and rename trail) — comments now
+                // live in SQLite, the on-disk copies are dust.
+                let tasks_dir = dir.join("tasks");
+                if tasks_dir.exists() {
+                    if let Ok(task_entries) = std::fs::read_dir(&tasks_dir) {
+                        for task_entry in task_entries.flatten() {
+                            let task_dir = task_entry.path();
+                            if !task_dir.is_dir() {
+                                continue;
+                            }
+                            for name in &["review.json", "review.json.migrated"] {
+                                let p = task_dir.join(name);
+                                if p.exists() {
+                                    std::fs::remove_file(&p).ok();
+                                    review_files_removed += 1;
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Older formats: standalone review/<task>.json directory and the
+                // pre-2.0 ai/<task>/ per-task review folders. Both fully
+                // superseded by SQLite as of v2.3.
+                let legacy_review_dir = dir.join("review");
+                if legacy_review_dir.exists() {
+                    std::fs::remove_dir_all(&legacy_review_dir).ok();
+                    review_dirs_removed += 1;
+                }
+                let ai_dir = dir.join("ai");
+                if ai_dir.exists() {
+                    if let Ok(ai_entries) = std::fs::read_dir(&ai_dir) {
+                        for ai_entry in ai_entries.flatten() {
+                            let p = ai_entry.path();
+                            // Skip files (e.g. audio.json above); only legacy
+                            // per-task subdirs.
+                            if p.is_dir() {
+                                std::fs::remove_dir_all(&p).ok();
+                                ai_task_dirs_removed += 1;
+                            }
+                        }
+                    }
+                }
             }
         }
         if project_removed > 0 {
@@ -866,6 +1126,27 @@ pub fn prune_legacy_files() {
                 project_removed
             );
             removed += project_removed;
+        }
+        if review_files_removed > 0 {
+            eprintln!(
+                "  removed {} per-task review.json files (now in SQLite)",
+                review_files_removed
+            );
+            removed += review_files_removed;
+        }
+        if review_dirs_removed > 0 {
+            eprintln!(
+                "  removed {} legacy review/ directories",
+                review_dirs_removed
+            );
+            removed += review_dirs_removed;
+        }
+        if ai_task_dirs_removed > 0 {
+            eprintln!(
+                "  removed {} legacy ai/<task>/ directories",
+                ai_task_dirs_removed
+            );
+            removed += ai_task_dirs_removed;
         }
     }
 

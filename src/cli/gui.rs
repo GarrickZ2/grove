@@ -436,6 +436,7 @@ pub async fn execute(port: u16) {
             crate::tray::tray_open_settings,
             crate::tray::tray_open_task,
             crate::tray::tray_take_pending_navigate,
+            crate::tray::toggle_tray_popover_visibility,
         ])
         .setup(move |app| {
             // Create a window pointing to our HTTP server

@@ -287,7 +287,7 @@ fn aggregate_tasks(
         // ── Comment flow ──────────────────────────────────────────────────
         let comments_data = load_comments(project_key, &task.id).unwrap_or_default();
         for comment in &comments_data.comments {
-            let ai = is_ai_author(&comment.author);
+            let ai = is_ai_author(&comment.agent);
             if ai {
                 cf_agent_total += 1;
             } else {
@@ -311,7 +311,7 @@ fn aggregate_tasks(
                         let ai_reply_count = comment
                             .replies
                             .iter()
-                            .filter(|r| is_ai_author(&r.author))
+                            .filter(|r| is_ai_author(&r.agent))
                             .count() as u32;
                         cf_ai_reply_rounds += ai_reply_count;
                         cf_resolved_human_count += 1;
@@ -402,10 +402,10 @@ fn aggregate_tasks(
 
         // ── Agent review comments（同样用 canonical key 聚合）────────────────
         for comment in &comments_data.comments {
-            if !is_ai_author(&comment.author) {
+            if !is_ai_author(&comment.agent) {
                 continue;
             }
-            let key = canonical_agent(&comment.author);
+            let key = canonical_agent(&comment.agent);
             let entry = agent_stats.entry(key).or_default();
             entry.review_comments += 1;
             if matches!(comment.status, CommentStatus::Resolved) {

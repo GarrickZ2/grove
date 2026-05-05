@@ -2285,14 +2285,25 @@ td.diff-code.diff-line-highlighted::before {
    File Tree Context Menu & Virtual Path Creation
    ============================================================================ */
 
-/* Context menu */
+/* Context menu — portaled to body so position: fixed isn't trapped by transformed ancestors */
+.file-tree-context-menu-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 9998;
+  background: transparent;
+}
+
 .file-tree-context-menu {
+  position: fixed;
+  z-index: 9999;
   background: var(--color-bg);
   border: 1px solid var(--color-border);
   border-radius: 6px;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18), 0 2px 6px rgba(0, 0, 0, 0.08);
   padding: 4px;
-  min-width: 200px;
+  min-width: 180px;
+  font-size: 12px;
+  user-select: none;
 }
 
 .file-tree-context-menu button {
@@ -2300,19 +2311,32 @@ td.diff-code.diff-line-highlighted::before {
   align-items: center;
   gap: 8px;
   width: 100%;
-  padding: 8px 12px;
+  padding: 6px 10px;
   background: none;
   border: none;
   border-radius: 4px;
   color: var(--color-text);
-  font-size: 13px;
+  font-size: 12px;
+  line-height: 1.4;
   cursor: pointer;
   text-align: left;
-  transition: background 0.15s;
+  transition: background 0.1s;
 }
 
-.file-tree-context-menu button:hover {
+.file-tree-context-menu button:hover:not(:disabled) {
   background: var(--color-bg-tertiary);
+}
+
+.file-tree-context-menu button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.file-tree-context-menu-separator {
+  height: 1px;
+  background: var(--color-border);
+  margin: 4px 2px;
+  opacity: 0.6;
 }
 
 /* Inline virtual path input in file tree */

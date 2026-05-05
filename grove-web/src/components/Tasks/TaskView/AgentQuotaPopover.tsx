@@ -273,6 +273,8 @@ export function AgentQuotaPopover({
                   maxHeight: rect.maxHeight,
                   overflowY: "auto",
                   zIndex: 120,
+                  borderRadius: 20,
+                  boxShadow: "0 22px 60px rgba(0,0,0,0.18)",
                 }}
                 onMouseEnter={handlePopoverEnter}
                 onMouseLeave={handlePopoverLeave}
@@ -310,7 +312,6 @@ function PopoverCard({
           "color-mix(in srgb, var(--color-bg-secondary) 78%, transparent)",
         borderColor:
           "color-mix(in srgb, var(--color-border) 62%, transparent)",
-        boxShadow: "0 22px 60px rgba(0,0,0,0.18)",
       }}
     >
       {/* Header: Plan */}
