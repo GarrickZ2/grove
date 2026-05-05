@@ -528,8 +528,11 @@ export function DiffReviewPage({ projectId, taskId, embedded, navigateToFile, is
   // even while a pending navigation is being resolved — without this, when the resolved
   // navigation target equals the fallback activeFilePath, neither this effect (deps unchanged)
   // nor the navigation effect (which doesn't load) ever triggers the fetch.
+  // loadFileDiff sets fetch state internally; this is a legitimate fetch-on-prop-change
+  // sync, not the cascading-render pattern the rule targets.
   useEffect(() => {
     if (!activeFilePath || viewMode !== 'diff') return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     loadFileDiff(activeFilePath, currentDiffRefs.fromRef, currentDiffRefs.toRef);
   }, [activeFilePath, viewMode, currentDiffRefs.fromRef, currentDiffRefs.toRef, loadFileDiff]);
 
