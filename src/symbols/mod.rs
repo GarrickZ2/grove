@@ -1,28 +1,34 @@
-// Items below are wired up by storage / API / frontend in follow-up
-// commits. Until then, allow unused-* without cluttering each item.
-#![allow(dead_code)]
-
 //! Symbol indexer for cmd+click navigation in the Editor.
 //!
-//! This module is the data-extraction half of the feature — given source
-//! bytes for a supported file, it produces `Vec<SymbolDef>`. Storage,
-//! lifecycle hooks, and the HTTP API live in sibling modules added in
-//! later commits.
+//! Pipeline:
+//! 1. `extractor::extract` — given source bytes for a supported file,
+//!    return a flat `Vec<SymbolDef>` via tree-sitter.
+//! 2. `store::SymbolStore` — per-project SQLite cache + in-memory hot
+//!    layer at `~/.grove/projects/<hash>/index.db`.
+//! 3. `indexer` — orchestrates lazy first-build and incremental updates
+//!    driven by `FileWatcher` subscriptions. Public entry points are
+//!    `ensure_built`, `lookup`, `search`, `trigger_reindex`.
 //!
-//! Currently supports Go only. Other languages plug in by registering a
-//! new `tree-sitter-<lang>` grammar plus a tags query under
-//! `queries/<lang>.scm`.
+//! Currently supports Go only. Other languages plug in by adding a
+//! `tree-sitter-<lang>` dep, a `queries/<lang>.scm`, and registering
+//! the language in `types::Language`.
 
 mod extractor;
 mod indexer;
 mod store;
 mod types;
 
-#[allow(unused_imports)]
-pub use extractor::extract;
-#[allow(unused_imports)]
 pub use indexer::{ensure_built, lookup, search, trigger_reindex};
+pub use types::{SymbolDef, SymbolKind};
+
+// Lower-level pieces are kept available behind the module wall but not
+// re-exported; outside callers should go through the indexer.
+#[cfg(test)]
 #[allow(unused_imports)]
-pub use store::SymbolStore;
+pub(crate) use extractor::extract;
+#[cfg(test)]
 #[allow(unused_imports)]
-pub use types::{Language, SymbolDef, SymbolKind};
+pub(crate) use store::SymbolStore;
+#[cfg(test)]
+#[allow(unused_imports)]
+pub(crate) use types::Language;

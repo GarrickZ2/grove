@@ -114,7 +114,9 @@ impl SymbolStore {
         Ok(())
     }
 
-    /// Drop all symbols for `task_id` (e.g. task archived).
+    /// Drop all symbols for `task_id` (e.g. task archived). Wired to a
+    /// future archive-task hook; not yet on a hot path.
+    #[allow(dead_code)]
     pub fn delete_task(&mut self, task_id: &str) -> Result<()> {
         self.db
             .execute("DELETE FROM symbols WHERE task_id = ?1", params![task_id])?;

@@ -255,6 +255,18 @@ pub fn create_api_router() -> Router {
             post(handlers::tasks::activate_task),
         )
         .route(
+            "/projects/{id}/tasks/{taskId}/symbols/lookup",
+            get(handlers::symbols::lookup_symbol),
+        )
+        .route(
+            "/projects/{id}/tasks/{taskId}/symbols/search",
+            get(handlers::symbols::search_symbols),
+        )
+        .route(
+            "/projects/{id}/tasks/{taskId}/symbols/reindex",
+            post(handlers::symbols::reindex_symbols),
+        )
+        .route(
             "/projects/{id}/tasks/{taskId}/archive",
             post(handlers::tasks::archive_task),
         )

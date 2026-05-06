@@ -20,6 +20,7 @@ pub mod skills;
 pub mod statistics;
 pub mod stats;
 pub mod studio_common;
+pub mod symbols;
 pub mod taskgroups;
 pub mod tasks;
 pub mod terminal;
