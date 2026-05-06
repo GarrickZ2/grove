@@ -35,6 +35,9 @@ export {
   listTasks,
   createTask,
   activateTask,
+  lookupSymbol,
+  searchSymbols,
+  reindexSymbols,
   archiveTask,
   recoverTask,
   deleteTask,
@@ -88,6 +91,7 @@ export {
 } from './tasks';
 export type {
   TaskResponse,
+  SymbolCandidate,
   DiffResponse,
   CommitsResponse,
   ReviewCommentEntry,

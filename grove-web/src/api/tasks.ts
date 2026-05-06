@@ -208,6 +208,73 @@ export async function activateTask(projectId: string, taskId: string): Promise<v
   );
 }
 
+// ============================================================================
+// Symbol indexing (cmd+click navigation)
+// ============================================================================
+
+export interface SymbolCandidate {
+  name: string;
+  kind: string;
+  file_path: string;
+  /** 0-indexed line where the identifier begins. */
+  line: number;
+  /** 0-indexed column where the identifier begins. */
+  col: number;
+  /** 0-indexed line where the surrounding declaration ends. */
+  end_line: number;
+  container?: string;
+  language: string;
+}
+
+interface SymbolLookupResponse {
+  candidates: SymbolCandidate[];
+}
+
+/**
+ * Resolve a clicked identifier to its definition(s). Backend ranks
+ * same-file matches first, then by line distance to the click.
+ */
+export async function lookupSymbol(
+  projectId: string,
+  taskId: string,
+  name: string,
+  fromFile?: string,
+  fromLine?: number,
+): Promise<SymbolCandidate[]> {
+  const params = new URLSearchParams({ name });
+  if (fromFile) params.set('from_file', fromFile);
+  if (fromLine !== undefined) params.set('from_line', String(fromLine));
+  const res = await apiClient.get<SymbolLookupResponse>(
+    `/api/v1/projects/${projectId}/tasks/${taskId}/symbols/lookup?${params}`,
+  );
+  return res.candidates;
+}
+
+/**
+ * Prefix search across symbols. Backs the future ⌘K palette.
+ */
+export async function searchSymbols(
+  projectId: string,
+  taskId: string,
+  query: string,
+  limit = 50,
+): Promise<SymbolCandidate[]> {
+  const params = new URLSearchParams({ q: query, limit: String(limit) });
+  const res = await apiClient.get<SymbolLookupResponse>(
+    `/api/v1/projects/${projectId}/tasks/${taskId}/symbols/search?${params}`,
+  );
+  return res.candidates;
+}
+
+/**
+ * Force a fresh full reindex. Idempotent on success.
+ */
+export async function reindexSymbols(projectId: string, taskId: string): Promise<void> {
+  await apiClient.post<undefined, void>(
+    `/api/v1/projects/${projectId}/tasks/${taskId}/symbols/reindex`,
+  );
+}
+
 /**
  * Recover an archived task
  */

@@ -12,6 +12,7 @@ import {
   createFile,
   createDirectory,
   deleteFileOrDir,
+  lookupSymbol,
 } from "../../../api";
 import type { DirEntry } from "../../../api";
 import { FileContextMenu, type ContextMenuPosition, type ContextMenuTarget } from "./FileContextMenu";
@@ -105,6 +106,14 @@ export function TaskEditor({ projectId, taskId, onClose, fullscreen = false, onT
   const [error, setError] = useState<string | null>(null);
   const editorContentRef = useRef<string>('');
 
+  // Symbol jump (cmd+click navigation): keep a handle to the Monaco
+  // editor, plus a pending-target slot so a cross-file jump can finish
+  // positioning after the new file's content loads.
+  // monaco-editor's IStandaloneCodeEditor type is heavy; loosely typed.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const editorRef = useRef<any>(null);
+  const pendingJumpRef = useRef<{ file: string; line: number; col: number } | null>(null);
+
   // Context menu state
   const [contextMenuOpen, setContextMenuOpen] = useState(false);
   const [contextMenuPosition, setContextMenuPosition] = useState<ContextMenuPosition>({ x: 0, y: 0 });
@@ -155,6 +164,79 @@ export function TaskEditor({ projectId, taskId, onClose, fullscreen = false, onT
     }
     setLoading(false);
   }, [projectId, taskId, selectedFile, isMobile]);
+
+  // After cross-file jumps, position the cursor once the new file's
+  // content has rendered into Monaco. We watch fileContent (not just
+  // selectedFile) so the move waits until lines actually exist.
+  useEffect(() => {
+    const target = pendingJumpRef.current;
+    const editor = editorRef.current;
+    if (!target || !editor || target.file !== selectedFile) return;
+    if (!fileContent) return;
+
+    pendingJumpRef.current = null;
+    // Backend uses 0-indexed line/col; Monaco wants 1-indexed.
+    const line = target.line + 1;
+    const column = target.col + 1;
+    editor.revealLineInCenter(line);
+    editor.setPosition({ lineNumber: line, column });
+    editor.focus();
+  }, [selectedFile, fileContent]);
+
+  const jumpToCandidate = useCallback(
+    async (candidate: { file_path: string; line: number; col: number }) => {
+      const editor = editorRef.current;
+      if (candidate.file_path === selectedFile && editor) {
+        const line = candidate.line + 1;
+        editor.revealLineInCenter(line);
+        editor.setPosition({ lineNumber: line, column: candidate.col + 1 });
+        editor.focus();
+        return;
+      }
+      // Cross-file: queue the cursor move and trigger the file load.
+      pendingJumpRef.current = {
+        file: candidate.file_path,
+        line: candidate.line,
+        col: candidate.col,
+      };
+      await handleSelectFile(candidate.file_path);
+    },
+    [selectedFile, handleSelectFile],
+  );
+
+  const handleSymbolJump = useCallback(
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    async (event: any) => {
+      const editor = editorRef.current;
+      if (!editor) return;
+      const browserEvent = event?.event?.browserEvent as MouseEvent | undefined;
+      if (!browserEvent || (!browserEvent.metaKey && !browserEvent.ctrlKey)) return;
+      const position = event?.target?.position;
+      if (!position) return;
+      const model = editor.getModel?.();
+      if (!model) return;
+      const word = model.getWordAtPosition?.(position);
+      if (!word?.word) return;
+
+      // selectedFile is the "from" file; line is 1-indexed in Monaco.
+      try {
+        const candidates = await lookupSymbol(
+          projectId,
+          taskId,
+          word.word,
+          selectedFile ?? undefined,
+          position.lineNumber - 1,
+        );
+        if (candidates.length === 0) return;
+        // Backend ranks; first candidate is the best guess. Multi-result
+        // peek widget is a follow-up.
+        await jumpToCandidate(candidates[0]);
+      } catch {
+        // Fail silently — symbol indexing is best-effort UX.
+      }
+    },
+    [projectId, taskId, selectedFile, jumpToCandidate],
+  );
 
   // Handle editor content change
   const handleEditorChange = useCallback((value: string | undefined) => {
@@ -513,6 +595,10 @@ export function TaskEditor({ projectId, taskId, onClose, fullscreen = false, onT
               language={getLanguage(selectedFile)}
               value={fileContent}
               onChange={handleEditorChange}
+              onMount={(editor) => {
+                editorRef.current = editor;
+                editor.onMouseDown(handleSymbolJump);
+              }}
               theme="vs-dark"
               options={{
                 minimap: { enabled: false },
