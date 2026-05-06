@@ -1,6 +1,11 @@
 //! Global state management for the Web API server.
 //!
-//! Manages FileWatchers for all live tasks (tasks with active tmux sessions).
+//! Lazy file watching: a `FileWatcher` is created on demand for a project
+//! the first time one of its tasks is activated by the frontend (via the
+//! `POST /tasks/{id}/activate` endpoint, hit when the user enters a task
+//! workspace page). Server startup itself does not scan projects/tasks;
+//! pre-ACP probing via `session_exists` missed all ACP-only tasks and
+//! wasted work on stale tmux sessions.
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -8,74 +13,16 @@ use std::sync::RwLock;
 
 use once_cell::sync::Lazy;
 
-use crate::session;
-use crate::storage::{tasks, workspace};
 use crate::watcher::FileWatcher;
 
-/// Global state: one FileWatcher per project
+/// Global state: one FileWatcher per project, populated lazily.
 pub static FILE_WATCHERS: Lazy<RwLock<HashMap<String, FileWatcher>>> =
     Lazy::new(|| RwLock::new(HashMap::new()));
 
-/// Initialize FileWatchers for all live tasks.
-///
-/// This function scans all registered projects and their tasks,
-/// checking for active tmux sessions. For each live task, it starts
-/// file watching on the worktree directory.
-///
-/// Called at web server startup.
+/// Server-startup hook. Currently a no-op kept as a lifecycle placeholder so
+/// `gui.rs` and `mod.rs` can still call it symmetrically with shutdown.
 pub fn init_file_watchers() {
-    let projects = match workspace::load_projects() {
-        Ok(p) => p,
-        Err(e) => {
-            eprintln!("Failed to load projects for file watching: {}", e);
-            return;
-        }
-    };
-
-    let mut watchers = match FILE_WATCHERS.write() {
-        Ok(w) => w,
-        Err(_) => return,
-    };
-
-    for project in projects {
-        let project_key = workspace::project_hash(&project.path);
-
-        // Load all active tasks for this project
-        let project_tasks = match tasks::load_tasks(&project_key) {
-            Ok(t) => t,
-            Err(_) => continue,
-        };
-
-        // Check which tasks have active sessions
-        let mut has_live_tasks = false;
-        let mut watcher = FileWatcher::new(&project_key);
-
-        for task in &project_tasks {
-            let task_mux = session::resolve_session_type(&task.multiplexer);
-            let sname = session::resolve_session_name(&task.session_name, &project_key, &task.id);
-            if session::session_exists(&task_mux, &sname) {
-                // This task is live - start watching its worktree
-                if !has_live_tasks {
-                    watcher.start();
-                    has_live_tasks = true;
-                }
-                watcher.watch(&task.id, Path::new(&task.worktree_path));
-            }
-        }
-
-        // Only add watcher if there are live tasks
-        if has_live_tasks {
-            watchers.insert(project_key, watcher);
-        }
-    }
-
-    let count: usize = watchers.values().count();
-    if count > 0 {
-        eprintln!(
-            "FileWatcher: monitoring {} project(s) with live tasks",
-            count
-        );
-    }
+    Lazy::force(&FILE_WATCHERS);
 }
 
 /// Shutdown all FileWatchers and flush pending events to disk.
@@ -90,17 +37,16 @@ pub fn shutdown_file_watchers() {
     eprintln!("FileWatcher: all watchers shut down");
 }
 
-/// Register file watching for a task.
+/// Ensure file watching is active for the given task. Idempotent: repeated
+/// calls for the same task are cheap (the inner watcher dedups by task id).
 ///
-/// Called when a new tmux session is created for a task.
-/// If the project doesn't have a watcher yet, one is created.
-pub fn watch_task(project_key: &str, task_id: &str, worktree_path: &str) {
+/// Called when the frontend enters a task workspace page (via /activate),
+/// and also defensively when a terminal session is opened.
+pub fn ensure_task_active(project_key: &str, task_id: &str, worktree_path: &str) {
     if let Ok(mut watchers) = FILE_WATCHERS.write() {
         if let Some(watcher) = watchers.get_mut(project_key) {
-            // Project already has a watcher, just add this task
             watcher.watch(task_id, Path::new(worktree_path));
         } else {
-            // Project doesn't have a watcher yet, create one
             let mut watcher = FileWatcher::new(project_key);
             watcher.start();
             watcher.watch(task_id, Path::new(worktree_path));

@@ -74,7 +74,7 @@ pub async fn task_terminal_handler(
 
     if web_terminal_mode == "direct" {
         // Direct mode: spawn a plain shell in the task's worktree (no multiplexer)
-        state::watch_task(&project_key, &task.id, &task.worktree_path);
+        state::ensure_task_active(&project_key, &task.id, &task.worktree_path);
 
         Ok(ws.on_upgrade(move |socket| handle_shell_terminal(socket, working_dir, cols, rows)))
     } else {
@@ -82,7 +82,7 @@ pub async fn task_terminal_handler(
         let session_info = create_task_session(&project_key, &task, &project.path)
             .map_err(|e| TaskTerminalError::Internal(format!("Session error: {}", e)))?;
 
-        state::watch_task(&project_key, &task.id, &task.worktree_path);
+        state::ensure_task_active(&project_key, &task.id, &task.worktree_path);
 
         Ok(ws.on_upgrade(move |socket| {
             handle_mux_terminal(

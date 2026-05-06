@@ -198,6 +198,17 @@ export async function archiveTask(
 }
 
 /**
+ * Activate a task workspace. Fire-and-forget signal that the user has
+ * entered this task's page; backend uses it to attach the file watcher
+ * lazily. Idempotent.
+ */
+export async function activateTask(projectId: string, taskId: string): Promise<void> {
+  await apiClient.post<undefined, void>(
+    `/api/v1/projects/${projectId}/tasks/${taskId}/activate`
+  );
+}
+
+/**
  * Recover an archived task
  */
 export async function recoverTask(projectId: string, taskId: string): Promise<TaskResponse> {

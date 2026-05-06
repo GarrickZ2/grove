@@ -569,20 +569,18 @@ pub async fn execute(port: u16) {
         #[cfg(target_os = "macos")]
         {
             match event {
+                // macOS: red traffic light hides instead of quits, so
+                // re-clicking the Dock icon brings the window back.
+                // Skip tray-popover here — the cross-platform handler
+                // above already took care of it.
                 tauri::RunEvent::WindowEvent {
                     label,
                     event: tauri::WindowEvent::CloseRequested { api, .. },
                     ..
-                } => {
-                    // macOS: red traffic light hides instead of quits, so
-                    // re-clicking the Dock icon brings the window back.
-                    // Skip tray-popover here — the cross-platform handler
-                    // above already took care of it.
-                    if label != "tray-popover" {
-                        if let Some(window) = app_handle.get_webview_window(&label) {
-                            api.prevent_close();
-                            let _ = window.hide();
-                        }
+                } if label != "tray-popover" => {
+                    if let Some(window) = app_handle.get_webview_window(&label) {
+                        api.prevent_close();
+                        let _ = window.hide();
                     }
                 }
                 tauri::RunEvent::Reopen {

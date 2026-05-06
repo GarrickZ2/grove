@@ -20,6 +20,7 @@ import { AUX_PANEL_TYPES, INFO_PANEL_TYPES } from "../IDELayout";
 import type { Task } from "../../../data/types";
 import type { PanelType } from "../PanelSystem/types";
 import { sendInputToTerminal, pasteToTerminal } from "../TaskDetail/terminalCache";
+import { activateTask } from "../../../api";
 import { useConfig } from "../../../context";
 import { useHotkeys } from "../../../hooks";
 
@@ -190,6 +191,12 @@ export const TaskView = forwardRef<TaskViewHandle, TaskViewProps>((props, ref) =
       else ref?.ensurePanel(type);
     }
   }, [layoutMode]);
+
+  // Notify backend the user has entered this task workspace so the file
+  // watcher attaches lazily. Fire-and-forget; idempotent on the backend.
+  useEffect(() => {
+    void activateTask(projectId, task.id).catch(() => {});
+  }, [projectId, task.id]);
 
   const handleAddPanel = useCallback((type: PanelType) => routePanelCommand(type, "add"), [routePanelCommand]);
   const handleEnsurePanel = useCallback((type: PanelType) => routePanelCommand(type, "ensure"), [routePanelCommand]);

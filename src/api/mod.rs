@@ -251,6 +251,10 @@ pub fn create_api_router() -> Router {
             delete(handlers::tasks::delete_task),
         )
         .route(
+            "/projects/{id}/tasks/{taskId}/activate",
+            post(handlers::tasks::activate_task),
+        )
+        .route(
             "/projects/{id}/tasks/{taskId}/archive",
             post(handlers::tasks::archive_task),
         )
