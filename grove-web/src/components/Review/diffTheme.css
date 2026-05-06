@@ -341,6 +341,14 @@
   color: var(--color-highlight);
 }
 
+/* TOC outline button: TocPanel itself is `hidden md:flex`, so hide the
+   toggle below the same breakpoint to avoid a no-op click. */
+@media (max-width: 767px) {
+  .diff-file-preview-btn-md-only {
+    display: none;
+  }
+}
+
 .diff-file-path {
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   font-size: 12px;

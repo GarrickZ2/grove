@@ -130,6 +130,11 @@ interface IDELayoutInternalState {
   isChatBusy: boolean;
   terminalTabs: TerminalTab[];
   terminalActiveId: string;
+  // Keep-alive: panel types the user has opened at least once. Once a type
+  // is in this list it stays mounted (hidden via display:none) so re-opening
+  // is instant and doesn't re-fetch data.
+  visitedAux: AuxPanelType[];
+  visitedInfo: InfoTabType[];
 }
 
 function Toolbar({
@@ -297,6 +302,8 @@ export const IDELayoutContainer = forwardRef<IDELayoutHandle, IDELayoutContainer
         isChatBusy: false,
         terminalTabs,
         terminalActiveId,
+        visitedAux: persisted.auxType ? [persisted.auxType] : [],
+        visitedInfo: persisted.infoType ? [persisted.infoType] : [],
       };
     });
     const [auxWidth, setAuxWidth] = useState(() => readStoredWidth(520, persisted.auxWidth));
@@ -317,9 +324,32 @@ export const IDELayoutContainer = forwardRef<IDELayoutHandle, IDELayoutContainer
       stateRef.current = state;
     }, [state]);
 
+    // Wrap setState so every state transition tags the active panel as
+    // "visited" — once visited a panel stays mounted (display:none when
+    // hidden) so re-opening is instant and doesn't refetch data.
+    const setStateTagged = useCallback(
+      (updater: (prev: IDELayoutInternalState) => IDELayoutInternalState) => {
+        setState((prev) => {
+          const next = updater(prev);
+          let visitedAux = next.visitedAux;
+          let visitedInfo = next.visitedInfo;
+          if (next.auxVisible && next.auxType && !visitedAux.includes(next.auxType)) {
+            visitedAux = [...visitedAux, next.auxType];
+          }
+          if (next.infoVisible && next.infoType && !visitedInfo.includes(next.infoType)) {
+            visitedInfo = [...visitedInfo, next.infoType];
+          }
+          return visitedAux === next.visitedAux && visitedInfo === next.visitedInfo
+            ? next
+            : { ...next, visitedAux, visitedInfo };
+        });
+      },
+      [],
+    );
+
     const update = useCallback(
       (partial: Partial<IDELayoutInternalState>) => {
-        setState((prev) => {
+        setStateTagged((prev) => {
           const next = { ...prev, ...partial };
           if (!next.auxVisible && !next.infoVisible && !next.chatVisible) {
             next.chatVisible = true;
@@ -327,7 +357,7 @@ export const IDELayoutContainer = forwardRef<IDELayoutHandle, IDELayoutContainer
           return next;
         });
       },
-      [],
+      [setStateTagged],
     );
 
     const handleNavigateToFile = useCallback(
@@ -340,12 +370,12 @@ export const IDELayoutContainer = forwardRef<IDELayoutHandle, IDELayoutContainer
           update({ fileNavRequest: { file: filePath, line, mode, seq } });
         }
         if (isStudio) {
-          setState((prev) => ({ ...prev, auxType: "artifacts", auxVisible: true }));
+          setStateTagged((prev) => ({ ...prev, auxType: "artifacts", auxVisible: true }));
         } else {
-          setState((prev) => ({ ...prev, auxType: "review", auxVisible: true }));
+          setStateTagged((prev) => ({ ...prev, auxType: "review", auxVisible: true }));
         }
       },
-      [isStudio, update],
+      [isStudio, update, setStateTagged],
     );
 
     const handleChatBecameIdle = useCallback(() => {
@@ -361,14 +391,14 @@ export const IDELayoutContainer = forwardRef<IDELayoutHandle, IDELayoutContainer
         const detail = (e as CustomEvent<OpenSketchDetail>).detail;
         if (!detail) return;
         if (detail.projectId !== projectId || detail.taskId !== task.id) return;
-        setState((prev) => {
+        setStateTagged((prev) => {
           if (prev.auxVisible && prev.auxType === "sketch") return prev;
           return { ...prev, auxType: "sketch", auxVisible: true };
         });
       };
       window.addEventListener(OPEN_SKETCH_EVENT, handler);
       return () => window.removeEventListener(OPEN_SKETCH_EVENT, handler);
-    }, [isStudio, projectId, task.id]);
+    }, [isStudio, projectId, task.id, setStateTagged]);
 
     useEffect(() => {
       const handler = (e: Event) => {
@@ -468,7 +498,7 @@ export const IDELayoutContainer = forwardRef<IDELayoutHandle, IDELayoutContainer
       ref,
       () => ({
         focusPanel: (type: AuxPanelType) => {
-          setState((prev) => {
+          setStateTagged((prev) => {
             if (prev.auxType === type && prev.auxVisible) return prev;
             return { ...prev, auxType: type, auxVisible: true };
           });
@@ -478,14 +508,14 @@ export const IDELayoutContainer = forwardRef<IDELayoutHandle, IDELayoutContainer
           // show`). Pressing the same shortcut twice closes the panel the
           // user just opened, which is what shortcut hotkeys are expected to
           // do in every IDE.
-          setState((prev) =>
+          setStateTagged((prev) =>
             prev.auxVisible && prev.auxType === type
               ? { ...prev, auxVisible: false }
               : { ...prev, auxType: type, auxVisible: true },
           );
         },
         focusInfoPanel: (type: InfoTabType) => {
-          setState((prev) =>
+          setStateTagged((prev) =>
             prev.infoVisible && prev.infoType === type
               ? { ...prev, infoVisible: false }
               : { ...prev, infoType: type, infoVisible: true },
@@ -495,7 +525,7 @@ export const IDELayoutContainer = forwardRef<IDELayoutHandle, IDELayoutContainer
           // Same toggle rule for Chat: pressing `i` again hides it unless
           // that would leave the workbench with no visible surface (no aux,
           // no info), in which case we force it to stay visible.
-          setState((prev) => {
+          setStateTagged((prev) => {
             if (!prev.chatVisible) return { ...prev, chatVisible: true };
             const hasOtherSurface =
               (prev.auxVisible && !!prev.auxType) || (prev.infoVisible && !!prev.infoType);
@@ -518,7 +548,7 @@ export const IDELayoutContainer = forwardRef<IDELayoutHandle, IDELayoutContainer
             (type !== "terminal" || terminalAvailable)
           );
           if (auxTypes.length === 0) return false;
-          setState((prev) => {
+          setStateTagged((prev) => {
             if (!prev.auxVisible || !prev.auxType) {
               const idx = delta > 0 ? 0 : auxTypes.length - 1;
               return { ...prev, auxType: auxTypes[idx], auxVisible: true };
@@ -538,7 +568,7 @@ export const IDELayoutContainer = forwardRef<IDELayoutHandle, IDELayoutContainer
           // auto-created empty tab instead of spawning a second one.
           if (!terminalWasOpen && current.terminalTabs.length > 0) {
             const reusedId = current.terminalTabs[0].id;
-            setState((prev) => ({
+            setStateTagged((prev) => ({
               ...prev,
               auxType: "terminal",
               auxVisible: true,
@@ -550,7 +580,7 @@ export const IDELayoutContainer = forwardRef<IDELayoutHandle, IDELayoutContainer
           // Terminal is already open — spawn a new tab so we don't clobber
           // whatever the user has running.
           const newId = `term-run-${Date.now()}-${Math.floor(Math.random() * 10000)}`;
-          setState((prev) => ({
+          setStateTagged((prev) => ({
             ...prev,
             terminalTabs: [...prev.terminalTabs, { id: newId, label: `Terminal (${prev.terminalTabs.length + 1})` }],
             terminalActiveId: newId,
@@ -560,7 +590,7 @@ export const IDELayoutContainer = forwardRef<IDELayoutHandle, IDELayoutContainer
           return newId;
         },
         closeActiveTab: () => {
-          setState((prev) => {
+          setStateTagged((prev) => {
             // Prefer closing the side that was most recently focused. Fall
             // back to whichever side is visible if the recorded side isn't.
             const preferAux =
@@ -578,14 +608,14 @@ export const IDELayoutContainer = forwardRef<IDELayoutHandle, IDELayoutContainer
           });
         },
       }),
-      [isStudio, terminalAvailable],
+      [isStudio, terminalAvailable, setStateTagged],
     );
 
-    const renderAuxPanel = () => {
-      if (!state.auxVisible || !state.auxType) return null;
-
-      // Terminal gets its own multi-tab panel
-      if (state.auxType === "terminal" && terminalAvailable) {
+    // Render content for a single aux panel type. Caller wraps this in a
+    // pane div whose display toggles between "flex" (active) and "none"
+    // (hidden but mounted, so state survives a close/reopen cycle).
+    const renderAuxContent = (type: AuxPanelType) => {
+      if (type === "terminal" && terminalAvailable) {
         return (
           <MultiTabTerminalPanel
             projectId={projectId}
@@ -598,8 +628,7 @@ export const IDELayoutContainer = forwardRef<IDELayoutHandle, IDELayoutContainer
           />
         );
       }
-
-      const config = AUX_PANEL_CONFIG[state.auxType];
+      const config = AUX_PANEL_CONFIG[type];
       return (
         <PanelSlot
           title={config.label}
@@ -607,22 +636,22 @@ export const IDELayoutContainer = forwardRef<IDELayoutHandle, IDELayoutContainer
           side="left"
           onClose={() => update({ auxVisible: false })}
         >
-          {state.auxType === "editor" && (
+          {type === "editor" && (
             <TaskEditor projectId={projectId} taskId={task.id} hideHeader fullscreen onClose={() => update({ auxVisible: false })} />
           )}
-          {state.auxType === "graph" && (
+          {type === "graph" && (
             <TaskGraph projectId={projectId} taskId={task.id} />
           )}
-          {state.auxType === "review" && !isStudio && (
+          {type === "review" && !isStudio && (
             <TaskCodeReview
               projectId={projectId} taskId={task.id} navigateToFile={state.fileNavRequest}
               hideHeader fullscreen isGitRepo={isGitRepo} onClose={() => update({ auxVisible: false })}
             />
           )}
-          {state.auxType === "artifacts" && isStudio && (
+          {type === "artifacts" && isStudio && (
             <ArtifactsTab projectId={projectId} task={task} previewRequest={state.artifactPreviewRequest} lastChatIdleAt={state.lastChatIdleAt} isChatBusy={state.isChatBusy} />
           )}
-          {state.auxType === "sketch" && isStudio && (
+          {type === "sketch" && isStudio && (
             <SketchPage
               projectId={projectId}
               taskId={task.id}
@@ -648,9 +677,8 @@ export const IDELayoutContainer = forwardRef<IDELayoutHandle, IDELayoutContainer
       );
     };
 
-    const renderInfoPanel = () => {
-      if (!state.infoVisible || !state.infoType) return null;
-      const config = INFO_PANEL_CONFIG[state.infoType];
+    const renderInfoContent = (type: InfoTabType) => {
+      const config = INFO_PANEL_CONFIG[type];
       return (
         <PanelSlot
           title={config.label}
@@ -659,10 +687,10 @@ export const IDELayoutContainer = forwardRef<IDELayoutHandle, IDELayoutContainer
           onClose={() => update({ infoVisible: false })}
         >
           <div className="ide-info-content">
-            {state.infoType === "stats" && <StatsTab projectId={projectId} task={task} />}
-            {state.infoType === "git" && !isStudio && <GitTab projectId={projectId} task={task} />}
-            {state.infoType === "notes" && <NotesTab projectId={projectId} task={task} />}
-            {state.infoType === "comments" && !isStudio && <CommentsTab projectId={projectId} task={task} />}
+            {type === "stats" && <StatsTab projectId={projectId} task={task} />}
+            {type === "git" && !isStudio && <GitTab projectId={projectId} task={task} />}
+            {type === "notes" && <NotesTab projectId={projectId} task={task} />}
+            {type === "comments" && !isStudio && <CommentsTab projectId={projectId} task={task} />}
           </div>
         </PanelSlot>
       );
@@ -720,33 +748,58 @@ export const IDELayoutContainer = forwardRef<IDELayoutHandle, IDELayoutContainer
             gridTemplateColumns: gridColumns,
           } as React.CSSProperties}
         >
-          {showAux && (
+          {state.visitedAux.length > 0 && (
             <div
-              style={{ display: "contents" }}
+              className="ide-aux-host"
+              style={{ display: showAux ? "flex" : "none" }}
               onFocusCapture={() => { lastFocusedSideRef.current = "aux"; }}
               onMouseDownCapture={() => { lastFocusedSideRef.current = "aux"; }}
             >
-              {renderAuxPanel()}
+              {state.visitedAux.map((type) => {
+                const isActive = state.auxType === type;
+                return (
+                  <div
+                    key={type}
+                    className="ide-aux-pane"
+                    style={{ display: isActive ? "flex" : "none" }}
+                  >
+                    {renderAuxContent(type)}
+                  </div>
+                );
+              })}
             </div>
           )}
           {showAux && (showChat || showInfo) && (
             <div className="ide-resizer ide-resizer--aux" onPointerDown={(event) => startResize("aux", event)} />
           )}
-          {showChat && (
-            <div className="ide-chat-surface">
-              {renderChat()}
-            </div>
-          )}
+          <div
+            className="ide-chat-surface"
+            style={{ display: showChat ? "block" : "none" }}
+          >
+            {renderChat()}
+          </div>
           {showChat && showInfo && (
             <div className="ide-resizer ide-resizer--info" onPointerDown={(event) => startResize("info", event)} />
           )}
-          {showInfo && (
+          {state.visitedInfo.length > 0 && (
             <div
-              style={{ display: "contents" }}
+              className="ide-info-host"
+              style={{ display: showInfo ? "flex" : "none" }}
               onFocusCapture={() => { lastFocusedSideRef.current = "info"; }}
               onMouseDownCapture={() => { lastFocusedSideRef.current = "info"; }}
             >
-              {renderInfoPanel()}
+              {state.visitedInfo.map((type) => {
+                const isActive = state.infoType === type;
+                return (
+                  <div
+                    key={type}
+                    className="ide-info-pane"
+                    style={{ display: isActive ? "flex" : "none" }}
+                  >
+                    {renderInfoContent(type)}
+                  </div>
+                );
+              })}
             </div>
           )}
         </div>

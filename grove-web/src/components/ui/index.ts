@@ -8,6 +8,8 @@ export { AppPicker, ideAppOptions, terminalAppOptions } from "./AppPicker";
 export { AgentPicker, AgentPickerMenuItems, agentOptions } from "./AgentPicker";
 export { CustomAgentModal } from "./CustomAgentModal";
 export { MarkdownRenderer } from "./MarkdownRenderer";
+export { TocPanel, type TocEntry } from "./MarkdownToc";
+export { extractToc } from "./extractToc";
 export { SketchChip } from "./SketchChip";
 export { OPEN_SKETCH_EVENT, invalidateSketchNameCache, setSketchNames } from "./sketchChipCache";
 export type { OpenSketchDetail } from "./sketchChipCache";

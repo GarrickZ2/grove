@@ -4,12 +4,14 @@ import { getFileContent } from '../../api/review';
 import type { ReviewCommentEntry } from '../../api/tasks';
 import type { CommentAnchor } from './DiffReviewPage';
 import { CommentCard, CommentForm, ReplyForm } from './InlineComment';
-import { ChevronRight, ChevronDown, ChevronUp, Copy, Check, MessageSquare, MessageSquarePlus, ChevronsUpDown, Eye, Maximize2, Minimize2, Trash2, X } from 'lucide-react';
+import { ChevronRight, ChevronDown, ChevronUp, Copy, Check, List, MessageSquare, MessageSquarePlus, ChevronsUpDown, Eye, Maximize2, Minimize2, Trash2, X } from 'lucide-react';
 import { detectLanguage, highlightLines } from './syntaxHighlight';
 import { GutterAvatar } from './AgentAvatar';
 import { useFileMention } from '../../hooks';
 import { FileMentionDropdown } from '../ui';
 import { MarkdownRenderer, MermaidBlock } from '../ui/MarkdownRenderer';
+import { TocPanel } from '../ui/MarkdownToc';
+import { extractToc } from '../ui/extractToc';
 import { ImagePreview, type PreviewRenderer, type PreviewCommentMarker } from './previewRenderers';
 import { PreviewCommentHost } from './PreviewCommentHost';
 import { PreviewSearchBar } from './PreviewSearchBar';
@@ -445,6 +447,14 @@ export function DiffFileView({
     if (isIframePreview) setIframeCurrent((c) => (iframeTotal === 0 ? 0 : (c - 1 + iframeTotal) % iframeTotal));
     else dom.prev();
   };
+
+  // TOC state
+  const isMarkdownPreview = previewRenderer?.id === 'markdown';
+  const tocEntries = useMemo(() => {
+    if (!isMarkdownPreview || !fullFileContent) return [];
+    return extractToc(fullFileContent);
+  }, [isMarkdownPreview, fullFileContent]);
+  const [showToc, setShowToc] = useState(false);
 
   // Reset iframe match cursor whenever the search query changes. Using the
   // "store previous value" idiom (https://react.dev/reference/react/useState
@@ -1390,6 +1400,15 @@ export function DiffFileView({
                 <div className="preview-drawer-header">
                   <Eye style={{ width: 14, height: 14, opacity: 0.6 }} />
                   <span style={{ flex: 1, fontWeight: 600 }}>Preview</span>
+                  {isMarkdownPreview && tocEntries.length > 1 && (
+                    <button
+                      className={`diff-file-preview-btn diff-file-preview-btn-md-only${showToc ? ' active' : ''}`}
+                      onClick={() => setShowToc((v) => !v)}
+                      title={showToc ? 'Hide outline' : 'Show outline'}
+                    >
+                      <List style={{ width: 13, height: 13 }} />
+                    </button>
+                  )}
                   {previewRenderer && previewRenderer.supportsComments !== false && projectId && taskId && (
                     <button
                       className={`diff-file-preview-btn${previewCommentMode ? ' active' : ''}`}
@@ -1418,11 +1437,13 @@ export function DiffFileView({
                     <X style={{ width: 14, height: 14 }} />
                   </button>
                 </div>
+                <div style={{ display: 'flex', flex: 1, minHeight: 0, minWidth: 0 }}>
                 <div
                   ref={searchRootRef}
                   className="preview-drawer-content"
                   style={{
                     position: 'relative',
+                    minWidth: 0,
                     // When there's no real content to show, don't let the content area flex-stretch
                     // to fill the full viewport height — cap it so the drawer stays compact.
                     ...(isPreviewOpen && fullFileContent == null && file.hunks.length === 0
@@ -1522,6 +1543,17 @@ export function DiffFileView({
                       <div className="preview-loading">No previewable changes</div>
                     )
                   )}
+                </div>
+                {showToc && tocEntries.length > 1 && (
+                  <TocPanel
+                    entries={tocEntries}
+                    scrollRoot={searchRootRef}
+                    onEntryClick={(id) => {
+                      const el = searchRootRef.current?.querySelector(`[id="${CSS.escape(id)}"]`);
+                      if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                    }}
+                  />
+                )}
                 </div>
               </div>
             )}

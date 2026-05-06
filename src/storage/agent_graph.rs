@@ -510,6 +510,27 @@ pub fn cascade_delete_for_task(conn: &Connection, project: &str, task_id: &str) 
 /// L3 安全性：load_tasks 出 IO 错误时跳过该 task（保留 sessions），不再因
 /// 短暂权限错误而误删 — 通过 result.is_ok() 区分 "无 task" vs "读不到"。
 pub fn gc_orphans(conn: &Connection) -> Result<GcStats> {
+    // Sanity check: if `tasks` is empty but `session` isn't, the source of
+    // truth hasn't loaded yet (failed migration, schema drift). Refuse to
+    // run — better to leave orphans than to nuke real chat metadata because
+    // tasks happens to be transiently empty. The pre-v2.4 TOML implementation
+    // had the equivalent protection via IO-error fallthrough; the v2.4
+    // SELECT EXISTS rewrite lost it because an empty SQL table doesn't error.
+    let task_count: i64 = conn
+        .query_row("SELECT COUNT(*) FROM tasks", [], |r| r.get(0))
+        .unwrap_or(0);
+    let session_count: i64 = conn
+        .query_row("SELECT COUNT(*) FROM session", [], |r| r.get(0))
+        .unwrap_or(0);
+    if task_count == 0 && session_count > 0 {
+        eprintln!(
+            "[gc_orphans] refusing to run: tasks table is empty but {} session row(s) exist; \
+             likely a missed/incomplete migration",
+            session_count
+        );
+        return Ok(GcStats::default());
+    }
+
     let session_keys: Vec<(String, String)> = {
         let mut stmt = conn.prepare("SELECT DISTINCT project, task_id FROM session")?;
         let rows = stmt.query_map([], |row| {

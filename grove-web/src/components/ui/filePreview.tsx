@@ -2,12 +2,14 @@
 import { useState, useEffect, useId, useMemo, useRef } from "react";
 import { createPortal } from "react-dom";
 import { motion } from "framer-motion";
-import { Code, Download, Expand, Eye, Loader2, Maximize2, MessageSquarePlus, Minimize2, RefreshCw, Shrink, Trash2, X } from "lucide-react";
+import { Code, Download, Expand, Eye, List, Loader2, Maximize2, MessageSquarePlus, Minimize2, RefreshCw, Shrink, Trash2, X } from "lucide-react";
 import { getPreviewRenderer, type PreviewCommentMarker } from "../Review/previewRenderers";
 import { highlightCode, detectLanguage } from "../Review/syntaxHighlight";
 import { PreviewSearchBar } from "../Review/PreviewSearchBar";
 import { useDomSearch } from "../Review/useDomSearch";
 import { ImageLightbox } from "./ImageLightbox";
+import { TocPanel } from "./MarkdownToc";
+import { extractToc } from "./extractToc";
 import type { PreviewCommentLocator, PreviewCommentDraft } from "../../context";
 
 
@@ -142,6 +144,10 @@ export function FilePreviewDrawer({
   const [pendingLocator, setPendingLocator] = useState<PreviewCommentLocator | null>(null);
   const [commentText, setCommentText] = useState("");
   const [editingDraftId, setEditingDraftId] = useState<string | null>(null);
+
+  const isMarkdown = fileName.endsWith(".md") || fileName.endsWith(".markdown");
+  const tocEntries = useMemo(() => isMarkdown ? extractToc(content) : [], [isMarkdown, content]);
+  const [showToc, setShowToc] = useState(false);
 
   // ── Search ─────────────────────────────────────────────────────────────
   const drawerRef = useRef<HTMLDivElement>(null);
@@ -426,6 +432,21 @@ export function FilePreviewDrawer({
             )}
           </div>
           <div className="flex items-center gap-1 shrink-0">
+            {isMarkdown && tocEntries.length > 1 && (
+              <button
+                onClick={() => setShowToc(v => !v)}
+                className="hidden md:inline-flex p-1.5 rounded-md transition-colors"
+                title={showToc ? "Hide outline" : "Show outline"}
+                style={{
+                  color: showToc ? "var(--color-highlight)" : "var(--color-text-muted)",
+                  background: showToc ? "color-mix(in srgb, var(--color-highlight) 12%, transparent)" : "transparent",
+                }}
+                onMouseEnter={(e) => { e.currentTarget.style.background = showToc ? "color-mix(in srgb, var(--color-highlight) 20%, transparent)" : "var(--color-bg-tertiary)"; }}
+                onMouseLeave={(e) => { e.currentTarget.style.background = showToc ? "color-mix(in srgb, var(--color-highlight) 12%, transparent)" : "transparent"; }}
+              >
+                <List className="w-4 h-4" />
+              </button>
+            )}
             {canToggleSource && (
               <button
                 onClick={() => setShowSource(s => !s)}
@@ -519,7 +540,8 @@ export function FilePreviewDrawer({
             )}
           </div>
         )}
-        <div ref={searchRootRef} className="flex-1 overflow-auto relative">
+        <div className="flex-1 flex min-h-0 relative">
+          <div ref={searchRootRef} className="flex-1 overflow-auto relative min-w-0">
           {searchOpen && (
             <PreviewSearchBar
               query={searchQuery}
@@ -569,6 +591,17 @@ export function FilePreviewDrawer({
               </pre>
             );
           })()}
+          </div>
+          {showToc && tocEntries.length > 1 && (
+            <TocPanel
+              entries={tocEntries}
+              scrollRoot={searchRootRef}
+              onEntryClick={(id) => {
+                const el = searchRootRef.current?.querySelector(`[id="${CSS.escape(id)}"]`);
+                if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
+              }}
+            />
+          )}
         </div>
       </motion.div>
       {pendingLocator && (

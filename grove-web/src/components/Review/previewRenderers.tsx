@@ -75,7 +75,7 @@ const markdownRenderer: PreviewRenderer = {
   match: (path) => /\.(md|markdown)$/i.test(path),
   contentType: 'text',
   renderFull: ({ content, onImageClick, onSvgClick, previewComment }) => withCommentHost(
-    <MarkdownRenderer content={content} onImageClick={onImageClick} onMermaidClick={onSvgClick} onD2Click={onSvgClick} />,
+    <MarkdownRenderer content={content} onImageClick={onImageClick} onMermaidClick={onSvgClick} onD2Click={onSvgClick} enableHeadingIds />,
     previewComment,
   ),
   supportsDiffSegments: true,

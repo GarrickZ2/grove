@@ -879,17 +879,16 @@ fn default_true_for_migration() -> bool {
 }
 
 /// Migrate tasks from per-project tasks.toml + archived.toml to SQLite (v2.3 → v2.4).
+///
+/// Caller (`ensure_storage_version`) gates this on the storage version bump,
+/// so it runs at most once per upgrade. Idempotency comes from per-row
+/// `INSERT OR IGNORE` against the (project, id) primary key — we deliberately
+/// do **not** stack a global "tasks table non-empty → bail" guard on top.
+/// That guard was the original v2.4 design; it false-positived on contaminated
+/// dev DBs (leftover `cargo test` rows) and let the version flip to 2.4
+/// without real data, after which `gc_orphans` saw an "empty" tasks table and
+/// wiped all chat sessions. Trust the row-level idempotency only.
 pub fn migrate_tasks_toml_to_sqlite() {
-    let already: bool = {
-        let conn = connection();
-        conn.query_row("SELECT COUNT(*) FROM tasks", [], |r| r.get::<_, i64>(0))
-            .unwrap_or(0)
-            > 0
-    };
-    if already {
-        return;
-    }
-
     let projects_dir = grove_dir().join("projects");
     if !projects_dir.exists() {
         return;

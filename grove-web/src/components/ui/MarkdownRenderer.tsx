@@ -8,6 +8,7 @@ import mermaid from "mermaid";
 import { VSCodeIcon } from "./VSCodeIcon";
 import { SketchChip } from "./SketchChip";
 import { highlightLines, normalizeLanguage } from "../Review/syntaxHighlight";
+import { createSlugger } from "./headingSlug";
 import { useTheme } from "../../context/ThemeContext";
 
 /** Languages whose code blocks may be executed in the terminal. */
@@ -619,6 +620,11 @@ interface MarkdownRendererProps {
    * sketch chip scoped to this Studio task. Chip labels resolve uuid → name
    * from this task's sketch index; unknown uuids render as a disabled chip. */
   sketchContext?: { projectId: string; taskId: string };
+  /** Emit GitHub-style auto-generated `id` attributes on headings. Off by
+   * default: chat / notes / agent replies share one DOM, and stable global
+   * heading ids would collide across messages. Opt in only on surfaces that
+   * own their preview pane (file preview drawer, code review preview). */
+  enableHeadingIds?: boolean;
 }
 
 /** Extract filename from a full file path */
@@ -703,30 +709,45 @@ function parseFileHref(href: string): { filePath: string; line?: number } | null
   };
 }
 
-export const MarkdownRenderer = memo(function MarkdownRenderer({ content, onFileClick, resolveImageUrl, onMermaidClick, onImageClick, onD2Click, enableRunCommand, sketchContext }: MarkdownRendererProps) {
+export const MarkdownRenderer = memo(function MarkdownRenderer({ content, onFileClick, resolveImageUrl, onMermaidClick, onImageClick, onD2Click, enableRunCommand, sketchContext, enableHeadingIds }: MarkdownRendererProps) {
   const processedContent = useMemo(() => {
     let out = preprocessInlineCodeUrls(content);
     if (sketchContext) out = preprocessSketchUrls(out);
     return out;
   }, [content, sketchContext]);
-  const components = useMemo((): Components => ({
-        h1: ({ children }) => (
-          <h1 className="text-lg font-bold text-[var(--color-text)] mt-4 mb-2 first:mt-0">{children}</h1>
+  // Slugger must reset every render: react-markdown calls heading components
+  // in document order, so a per-render slugger sees each heading once and
+  // produces GitHub-style `-1`, `-2` suffixes for repeats. We hold it in a
+  // ref so the memoized `components` closure can read fresh state without
+  // invalidating the memo. Mutating a ref during render is normally a smell;
+  // here it's a documented "render cache reset" pattern.
+  const sluggerRef = useRef<(text: string) => string>(createSlugger());
+  // eslint-disable-next-line react-hooks/refs
+  sluggerRef.current = createSlugger();
+  const components = useMemo((): Components => {
+    const slug = (children: React.ReactNode, fallback: string | undefined) => {
+      if (fallback) return fallback;
+      if (!enableHeadingIds) return undefined;
+      return sluggerRef.current(extractText(children));
+    };
+    return ({
+        h1: ({ children, ...props }) => (
+          <h1 id={slug(children, props.id)} className="text-lg font-bold text-[var(--color-text)] mt-4 mb-2 first:mt-0 scroll-mt-4">{children}</h1>
         ),
-        h2: ({ children }) => (
-          <h2 className="text-base font-semibold text-[var(--color-text)] mt-3 mb-2">{children}</h2>
+        h2: ({ children, ...props }) => (
+          <h2 id={slug(children, props.id)} className="text-base font-semibold text-[var(--color-text)] mt-3 mb-2 scroll-mt-4">{children}</h2>
         ),
-        h3: ({ children }) => (
-          <h3 className="text-sm font-semibold text-[var(--color-text)] mt-3 mb-1">{children}</h3>
+        h3: ({ children, ...props }) => (
+          <h3 id={slug(children, props.id)} className="text-sm font-semibold text-[var(--color-text)] mt-3 mb-1 scroll-mt-4">{children}</h3>
         ),
-        h4: ({ children }) => (
-          <h4 className="text-sm font-medium text-[var(--color-text)] mt-2 mb-1">{children}</h4>
+        h4: ({ children, ...props }) => (
+          <h4 id={slug(children, props.id)} className="text-sm font-medium text-[var(--color-text)] mt-2 mb-1 scroll-mt-4">{children}</h4>
         ),
-        h5: ({ children }) => (
-          <h5 className="text-xs font-semibold text-[var(--color-text)] mt-2 mb-1">{children}</h5>
+        h5: ({ children, ...props }) => (
+          <h5 id={slug(children, props.id)} className="text-xs font-semibold text-[var(--color-text)] mt-2 mb-1 scroll-mt-4">{children}</h5>
         ),
-        h6: ({ children }) => (
-          <h6 className="text-xs font-medium text-[var(--color-text-muted)] mt-2 mb-1">{children}</h6>
+        h6: ({ children, ...props }) => (
+          <h6 id={slug(children, props.id)} className="text-xs font-medium text-[var(--color-text-muted)] mt-2 mb-1 scroll-mt-4">{children}</h6>
         ),
         p: ({ children }) => (
           <p className="text-sm text-[var(--color-text)] mb-2 last:mb-0 [li>&]:mb-0 break-words">{children}</p>
@@ -904,22 +925,13 @@ export const MarkdownRenderer = memo(function MarkdownRenderer({ content, onFile
           }
           return <input {...props} />;
         },
-  }), [onFileClick, resolveImageUrl, onMermaidClick, onImageClick, onD2Click, enableRunCommand, sketchContext]);
+    });
+  }, [onFileClick, resolveImageUrl, onMermaidClick, onImageClick, onD2Click, enableRunCommand, sketchContext, enableHeadingIds]);
 
   return (
     <ReactMarkdown
       remarkPlugins={[remarkGfm]}
       components={components}
-      // react-markdown's default url transform strips non-safe schemes like
-      // `sketch:` to an empty href, which would hide sketch chips behind a
-      // dead link. Pass sketch:// through untouched; everything else keeps
-      // the default sanitization (js/vbscript/file blocked, etc.).
-      // Pass through schemes the default transform would otherwise strip:
-      //   sketch://      — chip rendering depends on this surviving
-      //   data:image/    — inline base64 images embedded by agents
-      //   file://, /abs  — local-path images go through resolveImageUrl in
-      //                    the img component; defaultUrlTransform doesn't
-      //                    affect bare paths anyway, only `file:` URIs.
       urlTransform={(url) => {
         if (url.startsWith("sketch://")) return url;
         if (/^data:image\//i.test(url)) return url;
