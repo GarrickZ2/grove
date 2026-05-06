@@ -14,9 +14,12 @@
 //! `queries/<lang>.scm`.
 
 mod extractor;
+mod store;
 mod types;
 
 #[allow(unused_imports)]
 pub use extractor::extract;
+#[allow(unused_imports)]
+pub use store::SymbolStore;
 #[allow(unused_imports)]
 pub use types::{Language, SymbolDef, SymbolKind};
