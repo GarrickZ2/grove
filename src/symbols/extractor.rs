@@ -172,6 +172,20 @@ mod tests {
     }
 
     #[test]
+    fn extracts_interface_methods() {
+        let src = r#"
+            package foo
+            type Greeter interface {
+                Hello(name string) string
+                Goodbye() error
+            }
+        "#;
+        let got = names(src);
+        assert!(got.iter().any(|(n, k, _)| n == "Hello" && *k == SymbolKind::Method));
+        assert!(got.iter().any(|(n, k, _)| n == "Goodbye" && *k == SymbolKind::Method));
+    }
+
+    #[test]
     fn extracts_struct_fields() {
         let src = r#"
             package foo

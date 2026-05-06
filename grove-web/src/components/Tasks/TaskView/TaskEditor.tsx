@@ -13,6 +13,7 @@ import {
   createDirectory,
   deleteFileOrDir,
   lookupSymbol,
+  listTasks,
 } from "../../../api";
 import type { DirEntry } from "../../../api";
 import { FileContextMenu, type ContextMenuPosition, type ContextMenuTarget } from "./FileContextMenu";
@@ -80,23 +81,20 @@ function getLanguage(filePath: string): string {
 }
 
 /**
- * Wire up cmd/ctrl + click navigation through Monaco's standard
- * DefinitionProvider. Returns nothing — side effects only.
+ * Wire up symbol navigation on a Monaco editor instance.
  *
- * - The DefinitionProvider is invoked by Monaco on ⌘+hover (which paints
- *   the blue underline) and on ⌘+click (which navigates). We hand back
- *   Monaco Locations whose URI scheme is `grove-file:` and let Monaco
- *   call our overridden `openCodeEditor` for navigation. Same-file jumps
- *   still go through openCodeEditor in this app — there are no other
- *   open Monaco models for the URI scheme to match against.
+ *  - Hold ⌘ (or Ctrl on non-mac) and move the mouse → the word under
+ *    the cursor gets a blue underline. This is purely visual: no API
+ *    call, no symbol-defined check. The underline is a hint that the
+ *    token is clickable.
+ *  - Click while still holding ⌘ → fires `lookupSymbol`; if the backend
+ *    returns at least one candidate, jump to the top one (same-file
+ *    reveal or cross-file load via handleSelectFile).
  *
- * - openCodeEditor is the Monaco standalone hook documented in
- *   https://github.com/microsoft/monaco-editor/issues/2000 — overriding
- *   _codeEditorService is the supported way to handle "go to file" when
- *   target file isn't already open in another editor.
+ * The two events are deliberately decoupled — "is this clickable" and
+ * "where does it go" are independent concerns.
  */
-// monaco-editor's surface is loosely typed across versions; we touch
-// internal services so any-type pragmas are unavoidable.
+// monaco-editor's surface is loosely typed across versions.
 /* eslint-disable @typescript-eslint/no-explicit-any */
 function wireSymbolNavigation(
   editor: any,
@@ -107,27 +105,82 @@ function wireSymbolNavigation(
   pendingJumpRef: React.MutableRefObject<{ file: string; line: number; col: number } | null>,
   handleSelectFileRef: React.MutableRefObject<(path: string) => Promise<void>>,
 ) {
-  // Register the provider once per editor mount. Languages we have
-  // tree-sitter grammars for must be listed here; others see no underline
-  // and ⌘+click does nothing (correct fallback).
+  let underlineDecorations: string[] = [];
+
+  const clearUnderline = () => {
+    if (underlineDecorations.length === 0) return;
+    underlineDecorations = editor.deltaDecorations(underlineDecorations, []);
+  };
+
+  const setUnderlineAt = (lineNumber: number, startCol: number, endCol: number) => {
+    underlineDecorations = editor.deltaDecorations(underlineDecorations, [
+      {
+        range: new monaco.Range(lineNumber, startCol, lineNumber, endCol),
+        options: { inlineClassName: 'grove-symbol-link' },
+      },
+    ]);
+  };
+
+  // Hover with ⌘ held → paint underline on the word under the cursor.
+  // No API call. Pure visual hint that "this token is clickable."
+  editor.onMouseMove((e: any) => {
+    const browserEvent = e?.event?.browserEvent as MouseEvent | undefined;
+    const cmd = browserEvent?.metaKey || browserEvent?.ctrlKey;
+    if (!cmd) {
+      clearUnderline();
+      return;
+    }
+    const position = e?.target?.position;
+    if (!position) {
+      clearUnderline();
+      return;
+    }
+    const model = editor.getModel?.();
+    if (!model) return;
+    const word = model.getWordAtPosition?.(position);
+    if (!word) {
+      clearUnderline();
+      return;
+    }
+    setUnderlineAt(position.lineNumber, word.startColumn, word.endColumn);
+  });
+
+  editor.onMouseLeave(clearUnderline);
+
+  // Releasing ⌘/Ctrl while staying in the editor — clear the underline
+  // immediately rather than waiting for the next mouse move.
+  editor.onKeyUp((e: any) => {
+    const ev = e?.browserEvent as KeyboardEvent | undefined;
+    if (!ev) return;
+    if (!ev.metaKey && !ev.ctrlKey) {
+      clearUnderline();
+    }
+  });
+
+  // ⌘+click → Monaco's standard "Go to Definition" flow.
+  //
+  //   - 1 candidate  → Monaco navigates directly.
+  //   - >1 candidates → Monaco opens its built-in peek widget; user
+  //                     picks one with arrow keys + Enter.
+  //
+  // We hand back Locations whose URI is `grove-file:///<rel-path>`
+  // (synthetic — never matches the editor's in-memory model URI), so
+  // every navigation routes through our `openCodeEditor` override
+  // below, where we either reveal-in-place or load a different file.
   for (const lang of ['go']) {
     monaco.languages.registerDefinitionProvider(lang, {
       provideDefinition: async (model: any, position: any) => {
         const word = model.getWordAtPosition?.(position);
         if (!word?.word) return null;
-        const fromFile = selectedFileRef.current ?? undefined;
         try {
           const candidates = await lookupSymbol(
             projectId,
             taskId,
             word.word,
-            fromFile,
+            selectedFileRef.current ?? undefined,
             position.lineNumber - 1,
           );
           if (candidates.length === 0) return null;
-          // Encode the worktree-relative path into a custom URI so our
-          // openCodeEditor override can decode it back. URIs in Monaco
-          // need a scheme; "grove-file" is unique to us.
           return candidates.map((c) => ({
             uri: monaco.Uri.parse(`grove-file:///${encodeURI(c.file_path)}`),
             range: new monaco.Range(
@@ -144,37 +197,35 @@ function wireSymbolNavigation(
     });
   }
 
-  // Override openCodeEditor so cross-file jumps load the target file
-  // through our existing handleSelectFile flow. Same-file jumps also
-  // pass through here (the URI never matches the inline model's URI).
+  // Override openCodeEditor so navigation to a `grove-file:` URI loads
+  // the target file through our existing handleSelectFile flow. This
+  // is the standard Monaco-standalone hook for "go to file" when the
+  // target isn't already open in another editor.
   const editorService = (editor as any)._codeEditorService;
-  if (!editorService || (editorService as any)._groveSymbolHooked) return;
-  const openBase = editorService.openCodeEditor.bind(editorService);
-  (editorService as any)._groveSymbolHooked = true;
-  editorService.openCodeEditor = async (input: any, source: any) => {
-    const result = await openBase(input, source);
-    if (result !== null) return result;
-
-    const uri = input?.resource;
-    if (!uri || uri.scheme !== 'grove-file') return null;
-    const filePath = decodeURI((uri.path as string).replace(/^\//, ''));
-    const sel = input?.options?.selection;
-    if (!sel) return null;
-
-    const targetLine = (sel.startLineNumber as number) - 1;
-    const targetCol = (sel.startColumn as number) - 1;
-
-    if (filePath === selectedFileRef.current) {
-      editor.revealLineInCenter(targetLine + 1);
-      editor.setPosition({ lineNumber: targetLine + 1, column: targetCol + 1 });
-      editor.focus();
+  if (editorService && !(editorService as any)._groveSymbolHooked) {
+    const openBase = editorService.openCodeEditor.bind(editorService);
+    (editorService as any)._groveSymbolHooked = true;
+    editorService.openCodeEditor = async (input: any, source: any) => {
+      const result = await openBase(input, source);
+      if (result !== null) return result;
+      const uri = input?.resource;
+      if (!uri || uri.scheme !== 'grove-file') return null;
+      const filePath = decodeURI((uri.path as string).replace(/^\//, ''));
+      const sel = input?.options?.selection;
+      if (!sel) return null;
+      const targetLine = (sel.startLineNumber as number) - 1;
+      const targetCol = (sel.startColumn as number) - 1;
+      if (filePath === selectedFileRef.current) {
+        editor.revealLineInCenter(targetLine + 1);
+        editor.setPosition({ lineNumber: targetLine + 1, column: targetCol + 1 });
+        editor.focus();
+        return source;
+      }
+      pendingJumpRef.current = { file: filePath, line: targetLine, col: targetCol };
+      await handleSelectFileRef.current(filePath);
       return source;
-    }
-
-    pendingJumpRef.current = { file: filePath, line: targetLine, col: targetCol };
-    await handleSelectFileRef.current(filePath);
-    return source;
-  };
+    };
+  }
 }
 /* eslint-enable @typescript-eslint/no-explicit-any */
 
@@ -226,6 +277,31 @@ export function TaskEditor({ projectId, taskId, onClose, fullscreen = false, onT
   const [contextMenuOpen, setContextMenuOpen] = useState(false);
   const [contextMenuPosition, setContextMenuPosition] = useState<ContextMenuPosition>({ x: 0, y: 0 });
   const [contextMenuTarget, setContextMenuTarget] = useState<ContextMenuTarget | null>(null);
+
+  // Task path (for "Copy Full Path")
+  const [taskPath, setTaskPath] = useState<string | null>(null);
+
+  useEffect(() => {
+    const ac = new AbortController();
+    const lookup = async () => {
+      for (const filter of ['active', 'archived'] as const) {
+        if (ac.signal.aborted) return;
+        try {
+          const tasks = await listTasks(projectId, filter, ac.signal);
+          if (ac.signal.aborted) return;
+          const match = tasks.find((t) => t.id === taskId);
+          if (match) {
+            setTaskPath(match.path);
+            return;
+          }
+        } catch {
+          // Aborted requests, transient network errors — both fine to swallow.
+        }
+      }
+    };
+    lookup();
+    return () => ac.abort();
+  }, [projectId, taskId]);
 
   // Inline creation state
   const [creatingPath, setCreatingPath] = useState<{ type: 'file' | 'directory'; parentPath: string; depth: number } | null>(null);
@@ -387,12 +463,20 @@ export function TaskEditor({ projectId, taskId, onClose, fullscreen = false, onT
     setConfirmDialogOpen(true);
   }, []);
 
-  // Copy path handler
-  const handleCopyPath = useCallback((path: string) => {
+  // Copy path handlers
+  const handleCopyRelativePath = useCallback((path: string) => {
     navigator.clipboard.writeText(path).catch((err) => {
-      console.error('Failed to copy path:', err);
+      console.error('Failed to copy relative path:', err);
     });
   }, []);
+
+  const handleCopyFullPath = useCallback((path: string) => {
+    if (!taskPath) return;
+    const full = `${taskPath.replace(/\/$/, '')}/${path}`;
+    navigator.clipboard.writeText(full).catch((err) => {
+      console.error('Failed to copy full path:', err);
+    });
+  }, [taskPath]);
 
   // Create file submit handler
   const handleCreateFile = useCallback(async (path: string) => {
@@ -695,11 +779,13 @@ export function TaskEditor({ projectId, taskId, onClose, fullscreen = false, onT
         isOpen={contextMenuOpen}
         position={contextMenuPosition}
         target={contextMenuTarget}
+        taskPath={taskPath}
         onClose={() => setContextMenuOpen(false)}
         onNewFile={handleNewFile}
         onNewDirectory={handleNewDirectory}
         onDelete={handleDelete}
-        onCopyPath={handleCopyPath}
+        onCopyRelativePath={handleCopyRelativePath}
+        onCopyFullPath={handleCopyFullPath}
       />
 
       {/* Confirm Dialog for deletion */}

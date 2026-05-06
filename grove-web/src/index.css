@@ -430,3 +430,13 @@ mark[data-grove-search-mark][data-grove-search-mark-current="true"] {
   background-color: color-mix(in srgb, var(--color-warning) 90%, transparent);
   color: #1a1a1a;
 }
+
+/* Symbol-jump hint: ⌘+hover paints this on the word under the cursor.
+   Styled like an <a> tag — link blue + underline — to signal "this is
+   clickable". The click handler is what actually queries the index. */
+.grove-symbol-link {
+  color: var(--color-info);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}

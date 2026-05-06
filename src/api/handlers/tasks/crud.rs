@@ -120,36 +120,33 @@ pub async fn get_task(
 /// POST /api/v1/projects/{id}/tasks/{taskId}/activate
 ///
 /// Marks a task workspace as actively viewed. Triggered by the frontend
-/// when the user enters the task page so the file watcher attaches lazily
-/// (instead of eagerly at server startup). Idempotent.
+/// when the user enters the task page so the file watcher attaches
+/// lazily. Idempotent.
 ///
-/// Skipped for archived tasks (their worktree may not exist on disk) and
-/// the LOCAL_TASK_ID pseudo-task.
+/// Studio projects are skipped — their tasks live under
+/// `~/.grove/studios/...` and aren't part of the symbol-indexing scope.
+/// Coding projects index every active task, **including** the
+/// LOCAL_TASK_ID pseudo-task whose worktree is the project root.
 pub async fn activate_task(
     Path((id, task_id)): Path<(String, String)>,
 ) -> Result<StatusCode, StatusCode> {
     let (project, project_key) = common::find_project_by_id(&id)?;
 
-    if task_id == crate::storage::tasks::LOCAL_TASK_ID {
+    if project.project_type == workspace::ProjectType::Studio {
         return Ok(StatusCode::NO_CONTENT);
     }
 
-    let is_studio = project.project_type == workspace::ProjectType::Studio;
     let project_path = project.path.clone();
-    let pk = project_key.clone();
     let tid = task_id.clone();
 
     let worktree_path: Option<String> = tokio::task::spawn_blocking(move || {
-        if is_studio {
-            // Studio tasks: only active (non-archived)
-            tasks::get_task(&pk, &tid)
-                .ok()
-                .flatten()
-                .map(|t| t.worktree_path)
+        if tid == crate::storage::tasks::LOCAL_TASK_ID {
+            // Local task: worktree IS the project root.
+            loader::load_local_task(&project_path).map(|wt| wt.path.clone())
         } else {
-            // Coding tasks: only active worktrees, skip archived
-            let active = loader::load_worktrees(&project_path);
-            active
+            // Worktree-backed task; archived tasks have no on-disk worktree
+            // and are filtered by load_worktrees.
+            loader::load_worktrees(&project_path)
                 .iter()
                 .find(|wt| wt.id == tid)
                 .map(|wt| wt.path.clone())

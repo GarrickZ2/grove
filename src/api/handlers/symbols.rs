@@ -135,30 +135,27 @@ fn kind_str(k: SymbolKind) -> &'static str {
     k.as_str()
 }
 
-/// Resolve `(project_id, task_id)` to `(project_key, worktree_path)` if
-/// the task is active (not archived) and the path exists. Returns
-/// `None` for archived tasks, missing paths, or the LOCAL_TASK_ID
-/// pseudo-task.
+/// Resolve `(project_id, task_id)` to `(project_key, worktree_path)`.
+///
+/// Returns `None` for Studio projects (out of scope for symbol
+/// indexing), archived tasks, and missing on-disk paths. Coding
+/// projects resolve every active task, including LOCAL_TASK_ID whose
+/// worktree is the project root.
 async fn resolve_active_worktree(
     id: &str,
     task_id: &str,
 ) -> Result<Option<(String, String)>, StatusCode> {
-    if task_id == tasks::LOCAL_TASK_ID {
+    let (project, project_key) = common::find_project_by_id(id)?;
+    if project.project_type == workspace::ProjectType::Studio {
         return Ok(None);
     }
 
-    let (project, project_key) = common::find_project_by_id(id)?;
-    let is_studio = project.project_type == workspace::ProjectType::Studio;
     let project_path = project.path.clone();
-    let pk_for_blocking = project_key.clone();
     let tid = task_id.to_string();
 
     let path: Option<String> = tokio::task::spawn_blocking(move || {
-        if is_studio {
-            tasks::get_task(&pk_for_blocking, &tid)
-                .ok()
-                .flatten()
-                .map(|t| t.worktree_path)
+        if tid == tasks::LOCAL_TASK_ID {
+            loader::load_local_task(&project_path).map(|wt| wt.path.clone())
         } else {
             loader::load_worktrees(&project_path)
                 .iter()
