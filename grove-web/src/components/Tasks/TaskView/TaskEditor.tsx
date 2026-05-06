@@ -79,6 +79,105 @@ function getLanguage(filePath: string): string {
   return map[ext] || 'plaintext';
 }
 
+/**
+ * Wire up cmd/ctrl + click navigation through Monaco's standard
+ * DefinitionProvider. Returns nothing — side effects only.
+ *
+ * - The DefinitionProvider is invoked by Monaco on ⌘+hover (which paints
+ *   the blue underline) and on ⌘+click (which navigates). We hand back
+ *   Monaco Locations whose URI scheme is `grove-file:` and let Monaco
+ *   call our overridden `openCodeEditor` for navigation. Same-file jumps
+ *   still go through openCodeEditor in this app — there are no other
+ *   open Monaco models for the URI scheme to match against.
+ *
+ * - openCodeEditor is the Monaco standalone hook documented in
+ *   https://github.com/microsoft/monaco-editor/issues/2000 — overriding
+ *   _codeEditorService is the supported way to handle "go to file" when
+ *   target file isn't already open in another editor.
+ */
+// monaco-editor's surface is loosely typed across versions; we touch
+// internal services so any-type pragmas are unavoidable.
+/* eslint-disable @typescript-eslint/no-explicit-any */
+function wireSymbolNavigation(
+  editor: any,
+  monaco: any,
+  projectId: string,
+  taskId: string,
+  selectedFileRef: React.MutableRefObject<string | null>,
+  pendingJumpRef: React.MutableRefObject<{ file: string; line: number; col: number } | null>,
+  handleSelectFileRef: React.MutableRefObject<(path: string) => Promise<void>>,
+) {
+  // Register the provider once per editor mount. Languages we have
+  // tree-sitter grammars for must be listed here; others see no underline
+  // and ⌘+click does nothing (correct fallback).
+  for (const lang of ['go']) {
+    monaco.languages.registerDefinitionProvider(lang, {
+      provideDefinition: async (model: any, position: any) => {
+        const word = model.getWordAtPosition?.(position);
+        if (!word?.word) return null;
+        const fromFile = selectedFileRef.current ?? undefined;
+        try {
+          const candidates = await lookupSymbol(
+            projectId,
+            taskId,
+            word.word,
+            fromFile,
+            position.lineNumber - 1,
+          );
+          if (candidates.length === 0) return null;
+          // Encode the worktree-relative path into a custom URI so our
+          // openCodeEditor override can decode it back. URIs in Monaco
+          // need a scheme; "grove-file" is unique to us.
+          return candidates.map((c) => ({
+            uri: monaco.Uri.parse(`grove-file:///${encodeURI(c.file_path)}`),
+            range: new monaco.Range(
+              c.line + 1,
+              c.col + 1,
+              c.line + 1,
+              c.col + 1 + c.name.length,
+            ),
+          }));
+        } catch {
+          return null;
+        }
+      },
+    });
+  }
+
+  // Override openCodeEditor so cross-file jumps load the target file
+  // through our existing handleSelectFile flow. Same-file jumps also
+  // pass through here (the URI never matches the inline model's URI).
+  const editorService = (editor as any)._codeEditorService;
+  if (!editorService || (editorService as any)._groveSymbolHooked) return;
+  const openBase = editorService.openCodeEditor.bind(editorService);
+  (editorService as any)._groveSymbolHooked = true;
+  editorService.openCodeEditor = async (input: any, source: any) => {
+    const result = await openBase(input, source);
+    if (result !== null) return result;
+
+    const uri = input?.resource;
+    if (!uri || uri.scheme !== 'grove-file') return null;
+    const filePath = decodeURI((uri.path as string).replace(/^\//, ''));
+    const sel = input?.options?.selection;
+    if (!sel) return null;
+
+    const targetLine = (sel.startLineNumber as number) - 1;
+    const targetCol = (sel.startColumn as number) - 1;
+
+    if (filePath === selectedFileRef.current) {
+      editor.revealLineInCenter(targetLine + 1);
+      editor.setPosition({ lineNumber: targetLine + 1, column: targetCol + 1 });
+      editor.focus();
+      return source;
+    }
+
+    pendingJumpRef.current = { file: filePath, line: targetLine, col: targetCol };
+    await handleSelectFileRef.current(filePath);
+    return source;
+  };
+}
+/* eslint-enable @typescript-eslint/no-explicit-any */
+
 /** Map a flat DirEntry list to FileTreeNode[] for the file tree */
 function dirEntriesToNodes(entries: { path: string; is_dir: boolean }[]): FileTreeNode[] {
   return entries
@@ -106,13 +205,22 @@ export function TaskEditor({ projectId, taskId, onClose, fullscreen = false, onT
   const [error, setError] = useState<string | null>(null);
   const editorContentRef = useRef<string>('');
 
-  // Symbol jump (cmd+click navigation): keep a handle to the Monaco
-  // editor, plus a pending-target slot so a cross-file jump can finish
-  // positioning after the new file's content loads.
+  // Symbol jump (cmd+click navigation):
+  //  - editorRef:     handle to the Monaco editor instance
+  //  - selectedFileRef: latest selectedFile for closure capture inside the
+  //    DefinitionProvider (which is registered once on mount and otherwise
+  //    can't see the React state)
+  //  - pendingJumpRef: target line/col to apply after a cross-file load
+  //    finishes (the new file's content loads asynchronously)
   // monaco-editor's IStandaloneCodeEditor type is heavy; loosely typed.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const editorRef = useRef<any>(null);
+  const selectedFileRef = useRef<string | null>(null);
   const pendingJumpRef = useRef<{ file: string; line: number; col: number } | null>(null);
+
+  useEffect(() => {
+    selectedFileRef.current = selectedFile;
+  }, [selectedFile]);
 
   // Context menu state
   const [contextMenuOpen, setContextMenuOpen] = useState(false);
@@ -183,60 +291,13 @@ export function TaskEditor({ projectId, taskId, onClose, fullscreen = false, onT
     editor.focus();
   }, [selectedFile, fileContent]);
 
-  const jumpToCandidate = useCallback(
-    async (candidate: { file_path: string; line: number; col: number }) => {
-      const editor = editorRef.current;
-      if (candidate.file_path === selectedFile && editor) {
-        const line = candidate.line + 1;
-        editor.revealLineInCenter(line);
-        editor.setPosition({ lineNumber: line, column: candidate.col + 1 });
-        editor.focus();
-        return;
-      }
-      // Cross-file: queue the cursor move and trigger the file load.
-      pendingJumpRef.current = {
-        file: candidate.file_path,
-        line: candidate.line,
-        col: candidate.col,
-      };
-      await handleSelectFile(candidate.file_path);
-    },
-    [selectedFile, handleSelectFile],
-  );
-
-  const handleSymbolJump = useCallback(
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    async (event: any) => {
-      const editor = editorRef.current;
-      if (!editor) return;
-      const browserEvent = event?.event?.browserEvent as MouseEvent | undefined;
-      if (!browserEvent || (!browserEvent.metaKey && !browserEvent.ctrlKey)) return;
-      const position = event?.target?.position;
-      if (!position) return;
-      const model = editor.getModel?.();
-      if (!model) return;
-      const word = model.getWordAtPosition?.(position);
-      if (!word?.word) return;
-
-      // selectedFile is the "from" file; line is 1-indexed in Monaco.
-      try {
-        const candidates = await lookupSymbol(
-          projectId,
-          taskId,
-          word.word,
-          selectedFile ?? undefined,
-          position.lineNumber - 1,
-        );
-        if (candidates.length === 0) return;
-        // Backend ranks; first candidate is the best guess. Multi-result
-        // peek widget is a follow-up.
-        await jumpToCandidate(candidates[0]);
-      } catch {
-        // Fail silently — symbol indexing is best-effort UX.
-      }
-    },
-    [projectId, taskId, selectedFile, jumpToCandidate],
-  );
+  // handleSelectFile is closed over by the DefinitionProvider registered
+  // on Monaco mount. The provider is registered once but needs to see
+  // the latest handleSelectFile, so we mirror it through a ref.
+  const handleSelectFileRef = useRef(handleSelectFile);
+  useEffect(() => {
+    handleSelectFileRef.current = handleSelectFile;
+  }, [handleSelectFile]);
 
   // Handle editor content change
   const handleEditorChange = useCallback((value: string | undefined) => {
@@ -595,9 +656,17 @@ export function TaskEditor({ projectId, taskId, onClose, fullscreen = false, onT
               language={getLanguage(selectedFile)}
               value={fileContent}
               onChange={handleEditorChange}
-              onMount={(editor) => {
+              onMount={(editor, monaco) => {
                 editorRef.current = editor;
-                editor.onMouseDown(handleSymbolJump);
+                wireSymbolNavigation(
+                  editor,
+                  monaco,
+                  projectId,
+                  taskId,
+                  selectedFileRef,
+                  pendingJumpRef,
+                  handleSelectFileRef,
+                );
               }}
               theme="vs-dark"
               options={{
