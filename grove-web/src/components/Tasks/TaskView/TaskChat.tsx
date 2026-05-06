@@ -869,6 +869,7 @@ function createAgentMentionChip(item: MentionItem): HTMLSpanElement {
   if (item.duty != null) chip.dataset.duty = item.duty;
   if (item.agentName) chip.dataset.agentName = item.agentName;
   if (item.displayName) chip.dataset.displayName = item.displayName;
+  if (item.historyPath) chip.dataset.historyPath = item.historyPath;
 
   // Neutral surface — readable in any theme. Type is conveyed by the brand
   // icon + the optional ↩ glyph for reply, not by tinted color.
@@ -884,18 +885,24 @@ function createAgentMentionChip(item: MentionItem): HTMLSpanElement {
   if (item.kind === "agent_reply" && item.msgId) {
     chip.title = `Reply to ${item.displayName ?? ""} (msg ${item.msgId})`;
   }
+  if (item.kind === "chat_history" && item.historyPath) {
+    chip.title = `Share history of "${item.displayName ?? ""}" — ${item.historyPath}`;
+  }
 
   // Layout: <verb> <agent_icon> <name>
-  //   - mention_spawn  → "Spawn  <icon> <agent>"
-  //   - mention_send   → "Send To <icon> <session>"
-  //   - mention_reply  → "Reply To <icon> <session>"
+  //   - mention_spawn        → "Spawn  <icon> <agent>"
+  //   - mention_send         → "Send To <icon> <session>"
+  //   - mention_reply        → "Reply To <icon> <session>"
+  //   - mention_chat_history → "Share History <icon> <chat>"
   const name = item.displayName ?? item.agentName ?? "";
   const action =
     item.kind === "agent_spawn"
       ? "Spawn"
       : item.kind === "agent_send"
         ? "Send To"
-        : "Reply To";
+        : item.kind === "chat_history"
+          ? "Share History"
+          : "Reply To";
   const verb = document.createElement("span");
   verb.textContent = action;
   verb.style.cssText = "opacity:0.7;font-weight:500;";
@@ -967,6 +974,19 @@ function expandAgentMentionChip(node: HTMLElement): string {
       "mention_reply",
       data,
       `@[session id=${id}, name=${name}, pending_msg=${msg} · use grove_agent_reply(msg_id="${msg}") to respond]`,
+    );
+  }
+  if (kind === "chat_history") {
+    const cid = node.dataset.sessionId ?? "";
+    const name = node.dataset.displayName ?? "";
+    const file = node.dataset.historyPath ?? "";
+    const agent = node.dataset.agentName ?? "";
+    const data: Record<string, unknown> = { chat_id: cid, name, file };
+    if (agent) data.agent = agent;
+    return buildGroveMetaTag(
+      "mention_chat_history",
+      data,
+      `@[chat_history name="${name}" file="${file}" · this is another chat's history.jsonl in the same task; read the file to see the conversation]`,
     );
   }
   return "";
@@ -1794,6 +1814,17 @@ export function TaskChat({
       base_agent: p.base_agent,
       duty: p.duty,
     }));
+    // Sibling chats in the same task (excluding the active one) — feed
+    // `Read History` mentions so the AI can inspect another chat's
+    // history.jsonl by absolute path.
+    const siblingChats = chats
+      .filter((c) => c.id !== activeChatId)
+      .map((c) => ({
+        chat_id: c.id,
+        name: c.title,
+        agent: c.agent,
+        history_path: c.history_path,
+      }));
     getMentionCandidates(projectId, task.id, activeChatId)
       .then((resp) => {
         setAgentMentionItems(
@@ -1802,6 +1833,7 @@ export function TaskChat({
             spawnPersonas,
             outgoing: resp.outgoing,
             pending_replies: resp.pending_replies,
+            siblingChats,
           }),
         );
       })
@@ -1812,10 +1844,11 @@ export function TaskChat({
             spawnPersonas,
             outgoing: [],
             pending_replies: [],
+            siblingChats,
           }),
         );
       });
-  }, [projectId, task.id, activeChatId, acpAgentOptions, customAgentPersonas]);
+  }, [projectId, task.id, activeChatId, acpAgentOptions, customAgentPersonas, chats]);
 
   // Defer to a microtask so the synchronous setAgentMentionItems([]) path
   // for !activeChatId doesn't trip the set-state-in-effect rule. We still

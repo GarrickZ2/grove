@@ -5,7 +5,12 @@
  * with three agent-graph kinds (spawn / send / reply) inside the same `@`
  * popover so the user picks one entry-point per `@`.
  */
-export type MentionKind = "file" | "agent_spawn" | "agent_send" | "agent_reply";
+export type MentionKind =
+  | "file"
+  | "agent_spawn"
+  | "agent_send"
+  | "agent_reply"
+  | "chat_history";
 
 export interface MentionItem {
   path: string;
@@ -35,6 +40,8 @@ export interface MentionItem {
   agentName?: string;
   /** Agent-graph: agent icon id when known (kind: agent_spawn). */
   agentIconId?: string;
+  /** Chat-history: absolute path to that chat's history.jsonl (kind: chat_history). */
+  historyPath?: string;
 }
 
 export interface FilteredMentionItem extends MentionItem {
@@ -143,6 +150,15 @@ export function buildAgentMentionItems(input: {
     msg_id: string;
     body_preview: string;
   }[];
+  /** Sibling chats in the same task (current chat already excluded by caller).
+   *  Surfaced as `Read History` mentions — the AI receives the absolute
+   *  history.jsonl path and inspects it with its own Read tool. */
+  siblingChats?: {
+    chat_id: string;
+    name: string;
+    agent: string;
+    history_path: string;
+  }[];
 }): MentionItem[] {
   const items: MentionItem[] = [];
 
@@ -170,6 +186,19 @@ export function buildAgentMentionItems(input: {
       sessionId: o.session_id,
       duty: o.duty,
       agentName: o.agent,
+    });
+  }
+
+  for (const c of input.siblingChats ?? []) {
+    items.push({
+      kind: "chat_history",
+      path: `@history-${c.chat_id}`, // synthetic key for de-dup
+      isDir: false,
+      displayName: c.name,
+      category: "Share history",
+      sessionId: c.chat_id,
+      agentName: c.agent,
+      historyPath: c.history_path,
     });
   }
 

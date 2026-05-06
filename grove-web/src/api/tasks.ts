@@ -379,6 +379,8 @@ export interface ChatSessionResponse {
   title: string;
   agent: string;
   created_at: string;
+  /** Absolute path to this chat's history.jsonl on disk. */
+  history_path: string;
 }
 
 interface ChatListResponse {

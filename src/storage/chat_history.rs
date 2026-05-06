@@ -54,7 +54,7 @@ fn needs_truncation(update: &AcpUpdate) -> bool {
 }
 
 /// 获取 history.jsonl 路径
-fn history_file_path(project: &str, task_id: &str, chat_id: &str) -> PathBuf {
+pub fn history_file_path(project: &str, task_id: &str, chat_id: &str) -> PathBuf {
     super::grove_dir()
         .join("projects")
         .join(project)

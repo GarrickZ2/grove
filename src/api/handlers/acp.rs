@@ -780,6 +780,10 @@ pub struct ChatSessionResponse {
     pub title: String,
     pub agent: String,
     pub created_at: String,
+    /// Absolute path to this chat's history.jsonl on disk. Surfaced so the
+    /// `Read History` @-mention can hand the path to the AI; the AI uses its
+    /// own Read tool to inspect the file.
+    pub history_path: String,
 }
 
 #[derive(Serialize)]
@@ -798,13 +802,24 @@ pub struct UpdateChatRequest {
     pub title: String,
 }
 
-impl From<&tasks::ChatSession> for ChatSessionResponse {
-    fn from(chat: &tasks::ChatSession) -> Self {
+impl ChatSessionResponse {
+    fn build(project_key: &str, task_id: &str, chat: &tasks::ChatSession) -> Self {
+        let abs = crate::storage::chat_history::history_file_path(project_key, task_id, &chat.id);
+        // Render as `~/...` when under HOME so the absolute username never
+        // leaks through the API. AI agents resolve `~` themselves.
+        let history_path = match dirs::home_dir() {
+            Some(home) => match abs.strip_prefix(&home) {
+                Ok(rel) => format!("~/{}", rel.display()),
+                Err(_) => abs.to_string_lossy().into_owned(),
+            },
+            None => abs.to_string_lossy().into_owned(),
+        };
         Self {
             id: chat.id.clone(),
             title: chat.title.clone(),
             agent: chat.agent.clone(),
             created_at: chat.created_at.to_rfc3339(),
+            history_path,
         }
     }
 }
@@ -859,7 +874,10 @@ pub async fn list_chats(
         .map_err(|e| AcpError::Internal(e.to_string()))?;
 
     Ok(Json(ChatListResponse {
-        chats: chats.iter().map(ChatSessionResponse::from).collect(),
+        chats: chats
+            .iter()
+            .map(|c| ChatSessionResponse::build(&project_key, &task_id, c))
+            .collect(),
     }))
 }
 
@@ -903,7 +921,11 @@ pub async fn create_chat(
         },
     );
 
-    Ok(Json(ChatSessionResponse::from(&chat)))
+    Ok(Json(ChatSessionResponse::build(
+        &project_key,
+        &task_id,
+        &chat,
+    )))
 }
 
 /// Update a chat's title
@@ -929,7 +951,11 @@ pub async fn update_chat(
         },
     );
 
-    Ok(Json(ChatSessionResponse::from(&chat)))
+    Ok(Json(ChatSessionResponse::build(
+        &project_key,
+        &task_id,
+        &chat,
+    )))
 }
 
 /// Delete a chat (and kill its ACP session if running)
