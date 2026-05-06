@@ -8,7 +8,7 @@ pub mod perf_middleware;
 #[cfg(feature = "perf-monitor")]
 pub mod perf_tracing;
 pub mod radio_server;
-mod state;
+pub mod state;
 pub mod tls;
 
 pub use state::{init_file_watchers, shutdown_file_watchers};
