@@ -120,6 +120,7 @@ fn parse_kind(s: &str) -> Option<SymbolKind> {
         "type" => Some(SymbolKind::Type),
         "const" => Some(SymbolKind::Const),
         "var" => Some(SymbolKind::Var),
+        "field" => Some(SymbolKind::Field),
         _ => None,
     }
 }
@@ -168,6 +169,27 @@ mod tests {
         let got = names(src);
         assert!(got.contains(&("Config".into(), SymbolKind::Struct, None)));
         assert!(got.contains(&("Handler".into(), SymbolKind::Interface, None)));
+    }
+
+    #[test]
+    fn extracts_struct_fields() {
+        let src = r#"
+            package foo
+            type Item struct {
+                Id      int64
+                Title   string
+                Content string
+            }
+            type Server struct {
+                addr string
+                Logger
+            }
+        "#;
+        let got = names(src);
+        assert!(got.contains(&("Id".into(), SymbolKind::Field, None)));
+        assert!(got.contains(&("Title".into(), SymbolKind::Field, None)));
+        assert!(got.contains(&("Content".into(), SymbolKind::Field, None)));
+        assert!(got.contains(&("addr".into(), SymbolKind::Field, None)));
     }
 
     #[test]

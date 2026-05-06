@@ -47,3 +47,9 @@
 (var_declaration
   (var_spec
     name: (identifier) @name.var)) @def.var
+
+; Struct fields:  type Foo struct { Bar int }
+; Captures both regular fields and embedded types (where the field name
+; equals the type name).
+(field_declaration
+  name: (field_identifier) @name.field) @def.field

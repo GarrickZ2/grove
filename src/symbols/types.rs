@@ -39,6 +39,8 @@ pub enum SymbolKind {
     Type,
     Const,
     Var,
+    /// Struct field — captured so cmd+click on `obj.Field` resolves.
+    Field,
 }
 
 impl SymbolKind {
@@ -51,6 +53,7 @@ impl SymbolKind {
             SymbolKind::Type => "type",
             SymbolKind::Const => "const",
             SymbolKind::Var => "var",
+            SymbolKind::Field => "field",
         }
     }
 }

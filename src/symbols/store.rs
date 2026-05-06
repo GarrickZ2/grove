@@ -329,6 +329,7 @@ fn parse_kind(s: &str) -> Option<SymbolKind> {
         "type" => Some(SymbolKind::Type),
         "const" => Some(SymbolKind::Const),
         "var" => Some(SymbolKind::Var),
+        "field" => Some(SymbolKind::Field),
         _ => None,
     }
 }
