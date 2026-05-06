@@ -622,7 +622,7 @@ export function DiffFileView({
     for (const d of previewCommentDrafts) {
       if (d.projectId !== projectId || d.taskId !== taskId || d.filePath !== path) continue;
       n++;
-      entries.push({ id: d.id, label: String(n), selector: d.locator.selector, xpath: d.locator.xpath });
+      entries.push({ id: d.id, label: String(n), selector: d.locator.selector, xpath: d.locator.xpath, extraBlocks: d.locator.extraBlocks });
     }
     return JSON.stringify(entries);
   }, [previewCommentDrafts, projectId, taskId, file.new_path]);
@@ -1599,7 +1599,7 @@ export function DiffFileView({
                 {pendingPreviewLocator.selector || pendingPreviewLocator.tagName}
               </div>
               {pendingPreviewLocator.text && (
-                <div style={{ marginTop: 8, padding: '6px 10px', border: '1px solid var(--color-border)', borderRadius: 6, background: 'var(--color-bg-secondary)', color: 'var(--color-text-muted)', fontSize: 11, lineHeight: 1.4, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
+                <div style={{ marginTop: 8, padding: '6px 10px', border: '1px solid var(--color-border)', borderRadius: 6, background: 'var(--color-bg-secondary)', color: 'var(--color-text-muted)', fontSize: 11, lineHeight: 1.4, maxHeight: 160, overflowY: 'auto', whiteSpace: 'pre-wrap' }}>
                   {pendingPreviewLocator.text}
                 </div>
               )}

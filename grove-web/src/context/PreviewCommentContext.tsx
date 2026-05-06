@@ -36,6 +36,7 @@ export interface PreviewCommentLocator {
   html?: string;
   role?: string;
   rect?: { x: number; y: number; width: number; height: number };
+  extraBlocks?: Array<{ selector: string; xpath: string }>;
 }
 
 export interface PreviewCommentDraft {

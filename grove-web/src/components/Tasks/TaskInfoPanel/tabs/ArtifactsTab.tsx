@@ -429,6 +429,7 @@ export function ArtifactsTab({ projectId, task, previewRequest, lastChatIdleAt, 
       label: String(idx + 1),
       selector: d.locator.selector,
       xpath: d.locator.xpath,
+      extraBlocks: d.locator.extraBlocks,
     })),
     [currentFilePreviewDrafts],
   );

@@ -634,7 +634,7 @@ export function FilePreviewDrawer({
                 {pendingLocator.selector || pendingLocator.tagName}
               </div>
               {pendingLocator.text && (
-                <div className="mt-2 rounded-md border border-[var(--color-border)] bg-[var(--color-bg-secondary)] px-2.5 py-1.5 text-[11px] leading-snug text-[var(--color-text-muted)] line-clamp-2">
+                <div className="mt-2 max-h-40 overflow-y-auto whitespace-pre-wrap rounded-md border border-[var(--color-border)] bg-[var(--color-bg-secondary)] px-2.5 py-1.5 text-[11px] leading-snug text-[var(--color-text-muted)]">
                   {pendingLocator.text}
                 </div>
               )}
