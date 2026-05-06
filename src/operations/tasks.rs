@@ -455,7 +455,14 @@ pub fn archive_task(
         crate::zellij::layout::remove_session_layout(&session_name);
     }
 
-    // 9. Return archived task
+    // 9. Drop the symbol cache. The worktree is gone (step 3); cached
+    //    symbols reference paths that no longer exist on disk and would
+    //    only consume space. If the user later recovers, /lookup's
+    //    lazy ensure_built path rebuilds the index from the recreated
+    //    worktree — recover doesn't need any explicit reindex hook.
+    crate::symbols::on_task_deleted(project_key, task_id);
+
+    // 10. Return archived task
     tasks::get_archived_task(project_key, task_id)?
         .ok_or_else(|| GroveError::not_found("Archived task not found"))
 }

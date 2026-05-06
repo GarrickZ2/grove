@@ -120,9 +120,11 @@ pub fn trigger_reindex(project_hash: &str, task_id: &str) {
     reg.builds.remove(&key);
 }
 
-/// Clean up cached symbols for a task that's being deleted. Called
-/// alongside grove's existing `storage::delete_task_data` cleanup so
-/// the SQLite cache file doesn't accumulate stale rows over time.
+/// Clean up cached symbols for a task that's being deleted *or
+/// archived*. The worktree is gone in both cases (archive removes it
+/// too), so cached rows can never be queried meaningfully again — and
+/// if the user later recovers an archived task, the lazy ensure_built
+/// path rebuilds from the recreated worktree.
 ///
 /// Best-effort: errors are swallowed (cache cleanup must not block
 /// task deletion). No-op if no on-disk index.db exists yet.
