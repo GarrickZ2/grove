@@ -18,7 +18,7 @@ mod indexer;
 mod store;
 mod types;
 
-pub use indexer::{ensure_built, lookup, search, trigger_reindex};
+pub use indexer::{ensure_built, lookup, on_task_deleted, search, trigger_reindex};
 pub use types::{SymbolDef, SymbolKind};
 
 // Lower-level pieces are kept available behind the module wall but not

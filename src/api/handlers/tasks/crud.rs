@@ -545,6 +545,7 @@ pub async fn delete_task(
         let _ = tasks::remove_archived_task(&project_key, &task_id);
         hooks::remove_task_hook(&project_key, &task_id);
         let _ = storage::delete_task_data(&project_key, &task_id);
+        crate::symbols::on_task_deleted(&project_key, &task_id);
 
         if crate::storage::taskgroups::remove_task_from_all_groups(&project_key, &task_id) {
             use crate::api::handlers::walkie_talkie::{broadcast_radio_event, RadioEvent};
@@ -569,6 +570,7 @@ pub async fn delete_task(
 
     hooks::remove_task_hook(&project_key, &task_id);
     let _ = storage::delete_task_data(&project_key, &task_id);
+    crate::symbols::on_task_deleted(&project_key, &task_id);
 
     if crate::storage::taskgroups::remove_task_from_all_groups(&project_key, &task_id) {
         use crate::api::handlers::walkie_talkie::{broadcast_radio_event, RadioEvent};

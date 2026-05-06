@@ -1904,8 +1904,9 @@ impl App {
         hooks::remove_task_hook(&self.project.project_key, task_id);
         self.remove_notification(task_id);
 
-        // 6.5 清理关联数据 (notes, review comments, activity)
+        // 6.5 清理关联数据 (notes, review comments, activity, symbol cache)
         let _ = storage::delete_task_data(&self.project.project_key, task_id);
+        crate::symbols::on_task_deleted(&self.project.project_key, task_id);
 
         // 7. 刷新数据
         self.project.refresh();

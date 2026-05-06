@@ -120,6 +120,40 @@ pub fn trigger_reindex(project_hash: &str, task_id: &str) {
     reg.builds.remove(&key);
 }
 
+/// Clean up cached symbols for a task that's being deleted. Called
+/// alongside grove's existing `storage::delete_task_data` cleanup so
+/// the SQLite cache file doesn't accumulate stale rows over time.
+///
+/// Best-effort: errors are swallowed (cache cleanup must not block
+/// task deletion). No-op if no on-disk index.db exists yet.
+pub fn on_task_deleted(project_hash: &str, task_id: &str) {
+    // 1. Drop in-process build state so a same-id task created later
+    //    re-builds from scratch instead of seeing the stale "done" flag.
+    {
+        let mut reg = REGISTRY.write().expect("symbols registry poisoned");
+        reg.builds
+            .remove(&(project_hash.to_string(), task_id.to_string()));
+    }
+
+    // 2. If the project's index.db doesn't exist on disk yet (no task
+    //    in this project has been indexed), there's nothing to clean.
+    //    Avoid creating an empty file just to delete from it.
+    let db_path = crate::storage::grove_dir()
+        .join("projects")
+        .join(project_hash)
+        .join("index.db");
+    if !db_path.exists() {
+        return;
+    }
+
+    // 3. Open (or reuse) the store and drop this task's rows.
+    if let Ok(store) = ensure_store(project_hash) {
+        if let Ok(mut s) = store.lock() {
+            let _ = s.delete_task(task_id);
+        }
+    }
+}
+
 /// Exact-name lookup. Does not trigger a build — callers should
 /// `ensure_built(...)` first.
 pub fn lookup(project_hash: &str, task_id: &str, name: &str) -> Result<Vec<SymbolDef>> {
@@ -296,6 +330,7 @@ fn file_mtime_unix(path: &Path) -> Option<i64> {
 mod tests {
     use super::*;
     use crate::storage::set_grove_dir_override;
+    use crate::symbols::types::SymbolKind;
 
     fn write(p: &Path, s: &str) {
         std::fs::write(p, s).unwrap();
@@ -357,5 +392,97 @@ mod tests {
         let hits = lookup("proj-1", "task-1", "Indexed").unwrap();
         assert_eq!(hits.len(), 1, "expected to index Indexed in a.go");
         assert!(lookup("proj-1", "task-1", "NotTracked").unwrap().is_empty());
+    }
+
+    #[test]
+    fn on_task_deleted_drops_rows_and_build_state() {
+        let root = std::env::temp_dir().join("grove-symidx-cleanup");
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+
+        let grove_home = root.join("grove-home");
+        std::fs::create_dir_all(&grove_home).unwrap();
+        set_grove_dir_override(Some(grove_home));
+
+        // Seed two tasks under the same project so we can verify
+        // cleanup is task-scoped.
+        let store = ensure_store("proj-x").unwrap();
+        {
+            let mut s = store.lock().unwrap();
+            s.replace_file(
+                "task-keep",
+                "k.go",
+                1,
+                vec![SymbolDef {
+                    name: "Keep".into(),
+                    kind: SymbolKind::Function,
+                    file_path: "k.go".into(),
+                    line: 0,
+                    col: 0,
+                    end_line: 1,
+                    container: None,
+                    language: Language::Go,
+                }],
+            )
+            .unwrap();
+            s.replace_file(
+                "task-drop",
+                "d.go",
+                1,
+                vec![SymbolDef {
+                    name: "Drop".into(),
+                    kind: SymbolKind::Function,
+                    file_path: "d.go".into(),
+                    line: 0,
+                    col: 0,
+                    end_line: 1,
+                    container: None,
+                    language: Language::Go,
+                }],
+            )
+            .unwrap();
+        }
+
+        // Pretend task-drop went through ensure_built so it has a
+        // BuildState entry; on_task_deleted must clear it too.
+        {
+            let mut reg = REGISTRY.write().unwrap();
+            reg.builds
+                .insert(("proj-x".into(), "task-drop".into()), BuildState::new());
+        }
+
+        on_task_deleted("proj-x", "task-drop");
+
+        assert!(
+            lookup("proj-x", "task-drop", "Drop").unwrap().is_empty(),
+            "task-drop's rows should be gone"
+        );
+        assert_eq!(
+            lookup("proj-x", "task-keep", "Keep").unwrap().len(),
+            1,
+            "sibling task's rows must be untouched"
+        );
+        assert!(
+            REGISTRY
+                .read()
+                .unwrap()
+                .builds
+                .get(&("proj-x".to_string(), "task-drop".to_string()))
+                .is_none(),
+            "build state for deleted task should be cleared"
+        );
+    }
+
+    #[test]
+    fn on_task_deleted_no_op_when_db_missing() {
+        let root = std::env::temp_dir().join("grove-symidx-cleanup-empty");
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        set_grove_dir_override(Some(root.clone()));
+
+        // No prior indexing for this project — no index.db on disk.
+        on_task_deleted("proj-empty", "task-x");
+        // Mustn't have created the file as a side effect.
+        assert!(!root.join("projects/proj-empty/index.db").exists());
     }
 }

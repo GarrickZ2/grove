@@ -931,8 +931,9 @@ pub fn reset_task(
         let _ = git::delete_branch(repo_path, &task.branch);
     }
 
-    // 5. Clear all task-related data
+    // 5. Clear all task-related data (incl. symbol-index cache)
     let _ = storage::delete_task_data(project_key, task_id);
+    crate::symbols::on_task_deleted(project_key, task_id);
 
     // 6. Recreate branch and worktree from target
     let worktree_path = std::path::Path::new(&task.worktree_path);
