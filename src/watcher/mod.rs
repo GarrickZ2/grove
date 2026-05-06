@@ -142,6 +142,11 @@ impl TaskEditHistory {
     }
 }
 
+/// Per-task event subscriber. Called from the watcher thread for every
+/// debounced edit event matching the registered `task_id`. Implementors
+/// must be lightweight — heavy work should be moved off-thread.
+pub type SubscriberFn = dyn Fn(&EditEvent) + Send + Sync + 'static;
+
 /// Manages file watching for multiple tasks
 pub struct FileWatcher {
     /// Sender to control the watcher thread
@@ -150,6 +155,10 @@ pub struct FileWatcher {
     histories: Arc<RwLock<HashMap<String, TaskEditHistory>>>,
     /// Pending events to flush
     pending_events: Arc<RwLock<HashMap<String, Vec<EditEvent>>>>,
+    /// Per-task callbacks invoked from the watcher thread for each
+    /// debounced edit event. Used by the symbol indexer to keep its
+    /// in-memory index in sync with disk; other consumers can plug in.
+    subscribers: Arc<RwLock<HashMap<String, Vec<Arc<SubscriberFn>>>>>,
     /// Project key for storage
     project_key: String,
 }
@@ -173,7 +182,32 @@ impl FileWatcher {
             control_tx: None,
             histories: Arc::new(RwLock::new(HashMap::new())),
             pending_events: Arc::new(RwLock::new(HashMap::new())),
+            subscribers: Arc::new(RwLock::new(HashMap::new())),
             project_key: project_key.to_string(),
+        }
+    }
+
+    /// Register a callback for `task_id`. Multiple callbacks per task
+    /// are supported; they fire in registration order. Idempotent in
+    /// the sense that repeated registrations stack — call `unsubscribe`
+    /// to clear.
+    #[allow(dead_code)]
+    pub fn subscribe<F>(&self, task_id: impl Into<String>, callback: F)
+    where
+        F: Fn(&EditEvent) + Send + Sync + 'static,
+    {
+        if let Ok(mut subs) = self.subscribers.write() {
+            subs.entry(task_id.into())
+                .or_default()
+                .push(Arc::new(callback));
+        }
+    }
+
+    /// Drop all callbacks for `task_id`. No-op if none were registered.
+    #[allow(dead_code)]
+    pub fn unsubscribe(&self, task_id: &str) {
+        if let Ok(mut subs) = self.subscribers.write() {
+            subs.remove(task_id);
         }
     }
 
@@ -182,11 +216,18 @@ impl FileWatcher {
         let (control_tx, control_rx) = channel();
         let histories = Arc::clone(&self.histories);
         let pending_events = Arc::clone(&self.pending_events);
+        let subscribers = Arc::clone(&self.subscribers);
         let project_key = self.project_key.clone();
 
         thread::spawn(move || {
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                run_watcher_thread(control_rx, histories, pending_events, project_key);
+                run_watcher_thread(
+                    control_rx,
+                    histories,
+                    pending_events,
+                    subscribers,
+                    project_key,
+                );
             }));
             if let Err(e) = result {
                 let msg = if let Some(s) = e.downcast_ref::<&str>() {
@@ -308,6 +349,7 @@ fn run_watcher_thread(
     control_rx: Receiver<WatcherCommand>,
     histories: Arc<RwLock<HashMap<String, TaskEditHistory>>>,
     pending_events: Arc<RwLock<HashMap<String, Vec<EditEvent>>>>,
+    subscribers: Arc<RwLock<HashMap<String, Vec<Arc<SubscriberFn>>>>>,
     project_key: String,
 ) {
     let (event_tx, event_rx) = channel();
@@ -358,6 +400,12 @@ fn run_watcher_thread(
                         let _ = watcher.unwatch(&path);
                         path_to_task.remove(&path);
                         git_tracked_cache.remove(&path);
+                    }
+                    // Also drop any subscriber callbacks for this task so
+                    // they release their captured Arcs and don't fire on
+                    // a residual late event.
+                    if let Ok(mut subs) = subscribers.write() {
+                        subs.remove(&task_id);
                     }
                 }
                 WatcherCommand::Shutdown => {
@@ -457,6 +505,28 @@ fn run_watcher_thread(
                         .entry(task_id.clone())
                         .or_insert_with(TaskEditHistory::new);
                     history.add_event(event.clone());
+                }
+            }
+
+            // Dispatch to per-task subscribers. We snapshot the
+            // callbacks per task under a short read lock, then call
+            // them outside the lock so a slow callback can't stall
+            // event processing for unrelated tasks.
+            let snapshots: HashMap<String, Vec<Arc<SubscriberFn>>> = match subscribers.read() {
+                Ok(subs) => batch
+                    .iter()
+                    .map(|(tid, _)| tid.clone())
+                    .collect::<HashSet<_>>()
+                    .into_iter()
+                    .filter_map(|tid| subs.get(&tid).map(|v| (tid, v.clone())))
+                    .collect(),
+                Err(_) => HashMap::new(),
+            };
+            for (task_id, event) in &batch {
+                if let Some(callbacks) = snapshots.get(task_id) {
+                    for cb in callbacks {
+                        cb(event);
+                    }
                 }
             }
 
