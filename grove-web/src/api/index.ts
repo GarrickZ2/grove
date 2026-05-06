@@ -36,7 +36,6 @@ export {
   createTask,
   activateTask,
   lookupSymbol,
-  searchSymbols,
   reindexSymbols,
   archiveTask,
   recoverTask,

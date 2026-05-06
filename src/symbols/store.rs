@@ -213,26 +213,6 @@ impl SymbolStore {
         Ok(out)
     }
 
-    /// Prefix search across symbol names, capped at `limit`.
-    pub fn search(&mut self, task_id: &str, prefix: &str, limit: usize) -> Result<Vec<SymbolDef>> {
-        self.ensure_loaded(task_id)?;
-        let Some(cache) = self.cache.get(task_id) else {
-            return Ok(Vec::new());
-        };
-        let mut out = Vec::new();
-        for syms in cache.by_file.values() {
-            for s in syms {
-                if s.name.starts_with(prefix) {
-                    out.push(s.clone());
-                    if out.len() >= limit {
-                        return Ok(out);
-                    }
-                }
-            }
-        }
-        Ok(out)
-    }
-
     /// Map of `file_path -> file_mtime` previously stored. Used by the
     /// indexer to decide which files are stale and need re-parsing.
     pub fn file_mtimes(&self, task_id: &str) -> Result<HashMap<String, i64>> {
@@ -433,26 +413,6 @@ mod tests {
         s.delete_task("task-A").unwrap();
         assert!(s.lookup("task-A", "Same").unwrap().is_empty());
         assert_eq!(s.lookup("task-B", "Same").unwrap().len(), 1);
-    }
-
-    #[test]
-    fn search_prefix_with_limit() {
-        let mut s = fresh_store("search_prefix");
-        s.replace_file(
-            "t",
-            "x.go",
-            1,
-            vec![
-                sym("ParseA", "x.go", SymbolKind::Function),
-                sym("ParseB", "x.go", SymbolKind::Function),
-                sym("ParseC", "x.go", SymbolKind::Function),
-                sym("Other", "x.go", SymbolKind::Function),
-            ],
-        )
-        .unwrap();
-        let res = s.search("t", "Parse", 2).unwrap();
-        assert_eq!(res.len(), 2);
-        assert!(res.iter().all(|s| s.name.starts_with("Parse")));
     }
 
     #[test]

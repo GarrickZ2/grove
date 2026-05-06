@@ -158,21 +158,6 @@ pub fn lookup(project_hash: &str, task_id: &str, name: &str) -> Result<Vec<Symbo
     store.lookup(task_id, name)
 }
 
-/// Prefix-match search, capped at `limit`.
-pub fn search(
-    project_hash: &str,
-    task_id: &str,
-    prefix: &str,
-    limit: usize,
-) -> Result<Vec<SymbolDef>> {
-    let store = match get_store(project_hash) {
-        Some(s) => s,
-        None => return Ok(Vec::new()),
-    };
-    let mut store = store.lock().expect("symbol store mutex poisoned");
-    store.search(task_id, prefix, limit)
-}
-
 // ============================================================================
 // Slot / scheduler internals
 // ============================================================================

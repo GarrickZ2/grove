@@ -251,22 +251,6 @@ export async function lookupSymbol(
 }
 
 /**
- * Prefix search across symbols. Backs the future ⌘K palette.
- */
-export async function searchSymbols(
-  projectId: string,
-  taskId: string,
-  query: string,
-  limit = 50,
-): Promise<SymbolCandidate[]> {
-  const params = new URLSearchParams({ q: query, limit: String(limit) });
-  const res = await apiClient.get<SymbolLookupResponse>(
-    `/api/v1/projects/${projectId}/tasks/${taskId}/symbols/search?${params}`,
-  );
-  return res.candidates;
-}
-
-/**
  * Force a fresh full reindex. Idempotent on success.
  */
 export async function reindexSymbols(projectId: string, taskId: string): Promise<void> {

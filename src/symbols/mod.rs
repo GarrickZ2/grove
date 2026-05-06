@@ -5,9 +5,9 @@
 //!    return a flat `Vec<SymbolDef>` via tree-sitter.
 //! 2. `store::SymbolStore` — per-project SQLite cache + in-memory hot
 //!    layer at `~/.grove/projects/<hash>/index.db`.
-//! 3. `indexer` — orchestrates lazy first-build and incremental updates
+//! 3. `indexer` — orchestrates first-build and incremental updates
 //!    driven by `FileWatcher` subscriptions. Public entry points are
-//!    `ensure_built`, `lookup`, `search`, `trigger_reindex`.
+//!    `on_watch_started`, `lookup`, `trigger_reindex`, `on_task_deleted`.
 //!
 //! Currently supports Go only. Other languages plug in by adding a
 //! `tree-sitter-<lang>` dep, a `queries/<lang>.scm`, and registering
@@ -18,7 +18,7 @@ mod indexer;
 mod store;
 mod types;
 
-pub use indexer::{lookup, on_task_deleted, on_watch_started, search, trigger_reindex};
+pub use indexer::{lookup, on_task_deleted, on_watch_started, trigger_reindex};
 pub use types::{SymbolDef, SymbolKind};
 
 // Lower-level pieces are kept available behind the module wall but not

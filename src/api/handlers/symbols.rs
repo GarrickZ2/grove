@@ -53,12 +53,6 @@ pub struct LookupParams {
     pub from_line: Option<u32>,
 }
 
-#[derive(Debug, Deserialize)]
-pub struct SearchParams {
-    pub q: String,
-    #[serde(default)]
-    pub limit: Option<usize>,
-}
 
 // ============================================================================
 // Handlers
@@ -78,21 +72,6 @@ pub async fn lookup_symbol(
     let mut hits = symbols::lookup(&project_key, &task_id, &params.name)
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     rank_candidates(&mut hits, params.from_file.as_deref(), params.from_line);
-
-    Ok(Json(LookupResponse {
-        candidates: hits.into_iter().map(into_candidate).collect(),
-    }))
-}
-
-/// GET /api/v1/projects/{id}/tasks/{taskId}/symbols/search?q=...&limit=...
-pub async fn search_symbols(
-    Path((id, task_id)): Path<(String, String)>,
-    Query(params): Query<SearchParams>,
-) -> Result<Json<LookupResponse>, StatusCode> {
-    let (_, project_key) = common::find_project_by_id(&id)?;
-    let limit = params.limit.unwrap_or(50).min(500);
-    let hits = symbols::search(&project_key, &task_id, &params.q, limit)
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     Ok(Json(LookupResponse {
         candidates: hits.into_iter().map(into_candidate).collect(),

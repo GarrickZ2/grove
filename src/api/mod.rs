@@ -259,10 +259,6 @@ pub fn create_api_router() -> Router {
             get(handlers::symbols::lookup_symbol),
         )
         .route(
-            "/projects/{id}/tasks/{taskId}/symbols/search",
-            get(handlers::symbols::search_symbols),
-        )
-        .route(
             "/projects/{id}/tasks/{taskId}/symbols/reindex",
             post(handlers::symbols::reindex_symbols),
         )
