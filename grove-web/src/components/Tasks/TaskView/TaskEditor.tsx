@@ -167,63 +167,97 @@ function wireSymbolNavigation(
   // (synthetic — never matches the editor's in-memory model URI), so
   // every navigation routes through our `openCodeEditor` override
   // below, where we either reveal-in-place or load a different file.
+  // For each candidate file we need a Monaco model behind its
+  // `grove-file:` URI — otherwise the peek widget's left-side preview
+  // is blank, since Monaco can't fetch text for a URI scheme it
+  // doesn't know. We lazily createModel on demand and de-dupe so the
+  // same file isn't fetched twice.
+  const ensureModelFor = async (filePath: string) => {
+    const uri = monaco.Uri.parse(`grove-file:///${encodeURI(filePath)}`);
+    if (monaco.editor.getModel(uri)) return uri;
+    try {
+      const res = await getFileContent(projectId, taskId, filePath);
+      // The model may have been created concurrently while we were
+      // fetching; double-check before creating to avoid the duplicate
+      // URI error.
+      if (!monaco.editor.getModel(uri)) {
+        monaco.editor.createModel(res.content, getLanguage(filePath), uri);
+      }
+    } catch {
+      // Without content the peek preview will still be blank for this
+      // entry, but the click-to-navigate path still works.
+    }
+    return uri;
+  };
+
   for (const lang of ['go']) {
     monaco.languages.registerDefinitionProvider(lang, {
       provideDefinition: async (model: any, position: any) => {
         const word = model.getWordAtPosition?.(position);
         if (!word?.word) return null;
+        let candidates;
         try {
-          const candidates = await lookupSymbol(
+          candidates = await lookupSymbol(
             projectId,
             taskId,
             word.word,
             selectedFileRef.current ?? undefined,
             position.lineNumber - 1,
           );
-          if (candidates.length === 0) return null;
-          return candidates.map((c) => ({
-            uri: monaco.Uri.parse(`grove-file:///${encodeURI(c.file_path)}`),
-            range: new monaco.Range(
-              c.line + 1,
-              c.col + 1,
-              c.line + 1,
-              c.col + 1 + c.name.length,
-            ),
-          }));
         } catch {
           return null;
         }
+        if (candidates.length === 0) return null;
+
+        // Pre-fetch content for each unique candidate file so the peek
+        // widget can render previews. Fire in parallel.
+        const uniqueFiles = Array.from(new Set(candidates.map((c) => c.file_path)));
+        await Promise.all(uniqueFiles.map(ensureModelFor));
+
+        return candidates.map((c) => ({
+          uri: monaco.Uri.parse(`grove-file:///${encodeURI(c.file_path)}`),
+          range: new monaco.Range(
+            c.line + 1,
+            c.col + 1,
+            c.line + 1,
+            c.col + 1 + c.name.length,
+          ),
+        }));
       },
     });
   }
 
-  // Override openCodeEditor so navigation to a `grove-file:` URI loads
-  // the target file through our existing handleSelectFile flow. This
-  // is the standard Monaco-standalone hook for "go to file" when the
-  // target isn't already open in another editor.
+  // Override openCodeEditor: for our synthetic `grove-file:` URIs we
+  // always go through React's handleSelectFile so component state
+  // (selectedFile, fileContent, modified, etc.) stays consistent with
+  // what's actually rendered. Without this short-circuit Monaco would
+  // happily call setModel() on the editor itself — visually correct,
+  // but React state is stale and the next render clobbers it.
+  //
+  // Other URI schemes (e.g. Monaco's built-in `inmemory://`) keep the
+  // default behaviour via openBase.
   const editorService = (editor as any)._codeEditorService;
   if (editorService && !(editorService as any)._groveSymbolHooked) {
     const openBase = editorService.openCodeEditor.bind(editorService);
     (editorService as any)._groveSymbolHooked = true;
     editorService.openCodeEditor = async (input: any, source: any) => {
-      const result = await openBase(input, source);
-      if (result !== null) return result;
       const uri = input?.resource;
-      if (!uri || uri.scheme !== 'grove-file') return null;
-      const filePath = decodeURI((uri.path as string).replace(/^\//, ''));
-      const sel = input?.options?.selection;
-      if (!sel) return null;
-      const targetLine = (sel.startLineNumber as number) - 1;
-      const targetCol = (sel.startColumn as number) - 1;
-      if (filePath === selectedFileRef.current) {
-        editor.revealLineInCenter(targetLine + 1);
-        editor.setPosition({ lineNumber: targetLine + 1, column: targetCol + 1 });
-        editor.focus();
+      if (uri && uri.scheme === 'grove-file') {
+        const filePath = decodeURI((uri.path as string).replace(/^\//, ''));
+        const sel = input?.options?.selection;
+        const targetLine = sel ? (sel.startLineNumber as number) - 1 : 0;
+        const targetCol = sel ? (sel.startColumn as number) - 1 : 0;
+        if (filePath === selectedFileRef.current) {
+          editor.revealLineInCenter(targetLine + 1);
+          editor.setPosition({ lineNumber: targetLine + 1, column: targetCol + 1 });
+          editor.focus();
+        } else {
+          pendingJumpRef.current = { file: filePath, line: targetLine, col: targetCol };
+          await handleSelectFileRef.current(filePath);
+        }
         return source;
       }
-      pendingJumpRef.current = { file: filePath, line: targetLine, col: targetCol };
-      await handleSelectFileRef.current(filePath);
-      return source;
+      return await openBase(input, source);
     };
   }
 }
