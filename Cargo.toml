@@ -65,6 +65,11 @@ walkdir = "2"
 rayon = "1.10"
 encoding_rs = "0.8.35"
 
+# Symbol indexing (cmd+click navigation). Tree-sitter grammar bundled
+# statically; only Go is wired up for now.
+tree-sitter = "0.25"
+tree-sitter-go = "0.25"
+
 # MCP Server
 # transport-streamable-http-server is used by the Agent Graph in-process MCP listener
 # (src/api/handlers/agent_graph_mcp.rs). The stdio `grove mcp` uses transport-io.

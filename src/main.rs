@@ -26,6 +26,7 @@ mod operations;
 mod session;
 mod stats;
 mod storage;
+mod symbols;
 #[cfg(not(windows))]
 mod theme;
 mod tmux;
