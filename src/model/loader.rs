@@ -3,7 +3,7 @@
 //! 设计:
 //! - `load_worktrees` 只返回真正的 worktree 任务(不含 Local Task)
 //! - `load_local_task` 返回单独的 Local Task
-//! - 两者都会确保 Local Task 在 `tasks.toml` 中被创建/同步(给 notes/chats/sessions
+//! - 两者都会确保 Local Task 在 SQLite 中被创建/同步(给 notes/chats/sessions
 //!   的存储层使用),但对外的数据契约里 Local Task 和 worktree 任务是隔离的
 
 use std::path::Path;
@@ -15,7 +15,7 @@ use crate::storage::workspace::{self, project_hash};
 
 use super::{FileChanges, Worktree, WorktreeStatus};
 
-/// 确保 Local Task 记录在 tasks.toml 中存在并与项目状态同步
+/// 确保 Local Task 记录在 SQLite 中存在并与项目状态同步
 ///
 /// 返回 `(active_tasks, project_key)`。`active_tasks` 包含已同步 Local Task
 /// 的完整任务列表(供后续拆分使用)。
@@ -85,7 +85,11 @@ fn ensure_local_task_synced(project_path: &str) -> (Vec<Task>, String) {
             needs_save = true;
         }
         if needs_save {
-            let _ = tasks::save_tasks(&project_key, &active_tasks);
+            // Local task already exists in this branch — must UPDATE, not
+            // INSERT. Old TOML code path was a save-whole-table overwrite;
+            // a naive `add_task` collides on the (project, id) primary key
+            // and silently fails, leaving stale branch/target/worktree_path.
+            let _ = tasks::update_local_task(&project_key, local_task);
         }
     } else {
         let local_task = tasks::create_local_task(

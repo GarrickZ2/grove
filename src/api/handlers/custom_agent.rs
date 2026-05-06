@@ -332,6 +332,15 @@ mod tests {
         let _lock = acquire_lock().await;
         let _dir = sandbox_grove_dir();
 
+        // Switching to "codex" requires the codex binary to be installed
+        // (resolve_agent → command_exists("codex")). Skip on machines
+        // without it instead of failing — the assertion under test is the
+        // 200 path, not the per-binary install state.
+        if crate::acp::resolve_agent("codex").is_none() {
+            eprintln!("skipping: codex binary not installed in this environment");
+            return;
+        }
+
         let persona = create_persona("p3", "claude");
         let patch = custom_agent::CustomAgentPatch {
             base_agent: Some("codex".to_string()),

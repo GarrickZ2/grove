@@ -31,6 +31,7 @@ pub(crate) fn worktree_to_response(wt: &model::Worktree) -> TaskResponse {
         additions: 0,
         deletions: 0,
         files_changed: 0,
+        initial_commit: None,
         commits: Vec::new(),
         created_at: wt.created_at.to_rfc3339(),
         updated_at: wt.updated_at.to_rfc3339(),

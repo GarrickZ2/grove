@@ -80,7 +80,7 @@ fn ensure_storage_version() {
             .join("agents.toml")
             .exists();
 
-    // Chain migrations: None/1.0 → 1.1 → 2.0 → 2.1 → 2.2 → 2.3
+    // Chain migrations: None/1.0 → 1.1 → 2.0 → 2.1 → 2.2 → 2.3 → 2.4
     match version {
         Some("1.0") | None => {
             if has_legacy_files {
@@ -115,6 +115,10 @@ fn ensure_storage_version() {
             // v2.2 → v2.3: Review comments JSON → SQLite
             let _ = storage::database::connection();
         }
+        Some("2.3") => {
+            // v2.3 → v2.4: Tasks TOML → SQLite
+            let _ = storage::database::connection();
+        }
         Some(v) => {
             eprintln!(
                 "Unknown storage version: {}. Expected {}.",
@@ -128,6 +132,11 @@ fn ensure_storage_version() {
     // pre-2.3 user so that those upgrading from 1.0/1.1/2.0/2.1 don't skip it.
     if version != Some(CURRENT_STORAGE_VERSION) {
         storage::database::migrate_review_to_sqlite();
+    }
+
+    // v2.4: Tasks TOML → SQLite. Idempotent (INSERT OR IGNORE, gated by row count).
+    if version != Some(CURRENT_STORAGE_VERSION) {
+        storage::database::migrate_tasks_toml_to_sqlite();
     }
 
     // Update version

@@ -202,6 +202,7 @@ mod tests {
             session_name: String::new(),
             created_by: "test".to_string(),
             archived_at: None,
+            initial_commit: None,
             code_additions: 0,
             code_deletions: 0,
             files_changed: 0,

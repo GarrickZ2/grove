@@ -521,24 +521,13 @@ pub fn gc_orphans(conn: &Connection) -> Result<GcStats> {
     let tx = conn.unchecked_transaction()?;
     let mut sessions_deleted = 0;
     for (project, task_id) in session_keys {
-        let active = crate::storage::tasks::load_tasks(&project);
-        let archived = crate::storage::tasks::load_archived_tasks(&project);
-        // 区分 "读不到" 与 "明确不存在"：任一 IO 错误都跳过 GC，
-        // 避免短暂权限错 / 文件被锁导致误删该 project 全部 sessions。
-        if active.is_err() || archived.is_err() {
-            eprintln!("[gc_orphans] skip project={} (toml read failed)", project);
-            continue;
-        }
-        let exists = active
-            .as_ref()
-            .ok()
-            .map(|v| v.iter().any(|t| t.id == task_id))
-            .unwrap_or(false)
-            || archived
-                .as_ref()
-                .ok()
-                .map(|v| v.iter().any(|t| t.id == task_id))
-                .unwrap_or(false);
+        let exists: bool = tx
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM tasks WHERE project = ?1 AND id = ?2)",
+                rusqlite::params![project, task_id],
+                |row| row.get(0),
+            )
+            .unwrap_or(false);
         if !exists {
             sessions_deleted += tx.execute(
                 "DELETE FROM session WHERE project = ?1 AND task_id = ?2",

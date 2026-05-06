@@ -4,7 +4,6 @@ use chrono::{DateTime, Utc};
 use rusqlite::{params, OptionalExtension};
 use serde::{Deserialize, Serialize};
 
-use super::ensure_project_dir;
 use crate::error::{GroveError, Result};
 
 /// Local Task 的固定 ID
@@ -40,43 +39,33 @@ pub enum TaskStatus {
 /// 任务数据
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Task {
-    /// 任务 ID (slug 形式，如 "oauth-login")
     pub id: String,
-    /// 任务名称 (用户输入，如 "Add OAuth login")
     pub name: String,
-    /// 分支名 (如 "feature/oauth-login")
     pub branch: String,
-    /// 目标分支 (如 "main")
     pub target: String,
-    /// Worktree 路径
     pub worktree_path: String,
-    /// 创建时间
+    pub initial_commit: Option<String>,
     pub created_at: DateTime<Utc>,
-    /// 更新时间
     #[serde(default = "default_updated_at")]
     pub updated_at: DateTime<Utc>,
-    /// 任务状态
     pub status: TaskStatus,
-    /// 创建时使用的 multiplexer ("tmux" / "zellij")
     #[serde(default = "default_multiplexer")]
     pub multiplexer: String,
-    /// 持久化的 session name（Zellij 有 40 字符限制）
     #[serde(default)]
     pub session_name: String,
-    /// 创建来源: "agent" (MCP 创建) | "user" (TUI/Web 创建) | "" (旧数据)
     #[serde(default)]
     pub created_by: String,
-    /// Archive 时间（用于确定归属到哪一天）
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub archived_at: Option<DateTime<Utc>>,
-    /// Archive 前快照的 git diff 统计（worktree 删除后无法重新计算）
+    /// Snapshot of git diff stats taken at archive time. Worktree is gone after
+    /// archival, so live recomputation is impossible — these are the only
+    /// numbers stats can show for archived tasks. 0 for active tasks.
     #[serde(default)]
     pub code_additions: u32,
     #[serde(default)]
     pub code_deletions: u32,
     #[serde(default)]
     pub files_changed: u32,
-    /// 是否为 Local Task（指向主仓库，非 worktree）
     #[serde(default)]
     pub is_local: bool,
 }
@@ -89,200 +78,289 @@ fn default_updated_at() -> DateTime<Utc> {
     Utc::now()
 }
 
-/// 任务列表容器 (用于 TOML 序列化)
-#[derive(Debug, Default, Serialize, Deserialize)]
-struct TasksFile {
-    #[serde(default)]
-    tasks: Vec<Task>,
+fn parse_dt(s: &str) -> DateTime<Utc> {
+    DateTime::parse_from_rfc3339(s)
+        .map(|dt| dt.with_timezone(&Utc))
+        .unwrap_or_else(|_| Utc::now())
 }
 
-/// 获取 tasks.toml 文件路径
-fn tasks_file_path(project: &str) -> Result<PathBuf> {
-    let dir = ensure_project_dir(project)?;
-    Ok(dir.join("tasks.toml"))
+fn row_to_task(row: &rusqlite::Row<'_>) -> rusqlite::Result<Task> {
+    let created_at: String = row.get(7)?;
+    let updated_at: String = row.get(8)?;
+    let status: String = row.get(9)?;
+    let archived_at: Option<String> = row.get(13)?;
+    let initial_commit: Option<String> = row.get(6)?;
+    let is_local: i64 = row.get(14)?;
+    let code_additions: i64 = row.get(15)?;
+    let code_deletions: i64 = row.get(16)?;
+    let files_changed: i64 = row.get(17)?;
+
+    Ok(Task {
+        id: row.get(1)?,
+        name: row.get(2)?,
+        branch: row.get(3)?,
+        target: row.get(4)?,
+        worktree_path: row.get(5)?,
+        initial_commit,
+        created_at: parse_dt(&created_at),
+        updated_at: parse_dt(&updated_at),
+        status: match status.as_str() {
+            "archived" => TaskStatus::Archived,
+            _ => TaskStatus::Active,
+        },
+        multiplexer: row.get(10)?,
+        session_name: row.get(11)?,
+        created_by: row.get(12)?,
+        archived_at: archived_at.map(|s| parse_dt(&s)),
+        is_local: is_local != 0,
+        code_additions: code_additions as u32,
+        code_deletions: code_deletions as u32,
+        files_changed: files_changed as u32,
+    })
 }
 
-/// 任务类型 (活跃 / 归档)
-enum TasksKind {
-    Active,
-    Archived,
-}
+const TASK_COLUMNS: &str = "project, id, name, branch, target, worktree_path, initial_commit, created_at, updated_at, status, multiplexer, session_name, created_by, archived_at, is_local, code_additions, code_deletions, files_changed";
 
-/// 通用加载任务函数
-fn load_tasks_generic(project: &str, kind: TasksKind) -> Result<Vec<Task>> {
-    let path = match kind {
-        TasksKind::Active => tasks_file_path(project)?,
-        TasksKind::Archived => archived_file_path(project)?,
-    };
-
-    if !path.exists() {
-        return Ok(Vec::new());
-    }
-
-    let tasks_file: TasksFile = super::load_toml(&path)?;
-    Ok(tasks_file.tasks)
-}
-
-/// 通用保存任务函数
-fn save_tasks_generic(project: &str, tasks: &[Task], kind: TasksKind) -> Result<()> {
-    let path = match kind {
-        TasksKind::Active => tasks_file_path(project)?,
-        TasksKind::Archived => archived_file_path(project)?,
-    };
-
-    let tasks_file = TasksFile {
-        tasks: tasks.to_vec(),
-    };
-
-    super::save_toml(&path, &tasks_file)
-}
-
-/// 加载任务列表
+/// 加载活跃任务列表
 pub fn load_tasks(project: &str) -> Result<Vec<Task>> {
-    load_tasks_generic(project, TasksKind::Active)
-}
-
-/// 保存任务列表
-pub fn save_tasks(project: &str, tasks: &[Task]) -> Result<()> {
-    save_tasks_generic(project, tasks, TasksKind::Active)
-}
-
-/// 添加单个任务
-pub fn add_task(project: &str, task: Task) -> Result<()> {
-    let mut tasks = load_tasks(project)?;
-    tasks.push(task);
-    save_tasks(project, &tasks)
-}
-
-// ========== Archived Tasks (分离存储) ==========
-
-/// 获取 archived.toml 文件路径
-fn archived_file_path(project: &str) -> Result<PathBuf> {
-    let dir = ensure_project_dir(project)?;
-    Ok(dir.join("archived.toml"))
+    let conn = crate::storage::database::connection();
+    let mut stmt = conn.prepare(&format!(
+        "SELECT {} FROM tasks WHERE project = ?1 AND status = 'active' ORDER BY updated_at DESC",
+        TASK_COLUMNS
+    ))?;
+    let tasks = stmt
+        .query_map(params![project], row_to_task)?
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+    Ok(tasks)
 }
 
 /// 加载归档任务列表
 pub fn load_archived_tasks(project: &str) -> Result<Vec<Task>> {
-    load_tasks_generic(project, TasksKind::Archived)
+    let conn = crate::storage::database::connection();
+    let mut stmt = conn.prepare(&format!(
+        "SELECT {} FROM tasks WHERE project = ?1 AND status = 'archived' ORDER BY updated_at DESC",
+        TASK_COLUMNS
+    ))?;
+    let tasks = stmt
+        .query_map(params![project], row_to_task)?
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+    Ok(tasks)
 }
 
-/// 保存归档任务列表
-pub fn save_archived_tasks(project: &str, tasks: &[Task]) -> Result<()> {
-    save_tasks_generic(project, tasks, TasksKind::Archived)
+/// 添加单个任务
+pub fn add_task(project: &str, task: Task) -> Result<()> {
+    let conn = crate::storage::database::connection();
+    conn.execute(
+        &format!("INSERT INTO tasks ({}) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18)", TASK_COLUMNS),
+        params![
+            project,
+            task.id,
+            task.name,
+            task.branch,
+            task.target,
+            task.worktree_path,
+            task.initial_commit,
+            task.created_at.to_rfc3339(),
+            task.updated_at.to_rfc3339(),
+            match task.status { TaskStatus::Active => "active", TaskStatus::Archived => "archived" },
+            task.multiplexer,
+            task.session_name,
+            task.created_by,
+            task.archived_at.map(|t| t.to_rfc3339()),
+            task.is_local as i64,
+            task.code_additions as i64,
+            task.code_deletions as i64,
+            task.files_changed as i64,
+        ],
+    )?;
+    Ok(())
 }
 
-/// 归档任务 (tasks.toml → archived.toml)
+/// Update mutable Local Task metadata (name, branch, target, worktree_path).
+/// Used by `loader.rs::ensure_local_task_synced` when the project's branch /
+/// path drifts. Plain UPDATE — INSERT would collide on the (project, id)
+/// primary key and be silently swallowed by callers that ignore the error.
+pub fn update_local_task(project: &str, task: &Task) -> Result<()> {
+    let conn = crate::storage::database::connection();
+    conn.execute(
+        "UPDATE tasks SET name = ?1, branch = ?2, target = ?3, worktree_path = ?4, updated_at = ?5
+         WHERE project = ?6 AND id = ?7",
+        params![
+            task.name,
+            task.branch,
+            task.target,
+            task.worktree_path,
+            Utc::now().to_rfc3339(),
+            project,
+            task.id,
+        ],
+    )?;
+    Ok(())
+}
+
+/// Snapshot git diff stats onto an archived task. Worktree no longer exists
+/// after archival, so this is the only chance to record per-task line counts
+/// for stats. Restored after the v2.4 migration accidentally dropped it.
+pub fn update_archived_task_code_stats(
+    project: &str,
+    task_id: &str,
+    additions: u32,
+    deletions: u32,
+    files_changed: u32,
+) -> Result<()> {
+    let conn = crate::storage::database::connection();
+    conn.execute(
+        "UPDATE tasks SET code_additions = ?1, code_deletions = ?2, files_changed = ?3
+         WHERE project = ?4 AND id = ?5 AND status = 'archived'",
+        params![
+            additions as i64,
+            deletions as i64,
+            files_changed as i64,
+            project,
+            task_id,
+        ],
+    )?;
+    Ok(())
+}
+
+/// 归档任务
 pub fn archive_task(project: &str, task_id: &str) -> Result<Option<Task>> {
-    let mut tasks = load_tasks(project)?;
-    let mut archived = load_archived_tasks(project)?;
-
-    // 找到并移除任务
-    if let Some(pos) = tasks.iter().position(|t| t.id == task_id) {
-        let mut task = tasks.remove(pos);
-        task.status = TaskStatus::Archived;
-        let now = Utc::now();
-        task.updated_at = now;
-        task.archived_at = Some(now);
-        archived.push(task.clone());
-
-        save_tasks(project, &tasks)?;
-        save_archived_tasks(project, &archived)?;
-
-        Ok(Some(task))
-    } else {
-        Ok(None)
+    let task = get_task(project, task_id)?;
+    if task.is_none() {
+        return Ok(None);
     }
+    let now = Utc::now().to_rfc3339();
+    {
+        let conn = crate::storage::database::connection();
+        conn.execute(
+            "UPDATE tasks SET status = 'archived', updated_at = ?1, archived_at = ?1 WHERE project = ?2 AND id = ?3 AND status = 'active'",
+            params![now, project, task_id],
+        )?;
+    }
+    // `conn` released; `get_task_any` re-acquires the global mutex.
+    // std::sync::Mutex is not reentrant — without the scope above,
+    // the inner call would deadlock against our own outer guard.
+    get_task_any(project, task_id)
 }
 
-/// 恢复任务 (archived.toml → tasks.toml)
+/// 恢复任务
 pub fn recover_task(project: &str, task_id: &str) -> Result<()> {
-    let mut tasks = load_tasks(project)?;
-    let mut archived = load_archived_tasks(project)?;
-
-    // 找到并移除归档任务
-    if let Some(pos) = archived.iter().position(|t| t.id == task_id) {
-        let mut task = archived.remove(pos);
-        task.status = TaskStatus::Active;
-        task.updated_at = Utc::now();
-        tasks.push(task);
-
-        save_tasks(project, &tasks)?;
-        save_archived_tasks(project, &archived)?;
-    }
-
+    let now = Utc::now().to_rfc3339();
+    let conn = crate::storage::database::connection();
+    conn.execute(
+        "UPDATE tasks SET status = 'active', updated_at = ?1, archived_at = NULL WHERE project = ?2 AND id = ?3 AND status = 'archived'",
+        params![now, project, task_id],
+    )?;
     Ok(())
 }
 
 /// 删除活跃任务
 pub fn remove_task(project: &str, task_id: &str) -> Result<()> {
-    let mut tasks = load_tasks(project)?;
-    tasks.retain(|t| t.id != task_id);
-    save_tasks(project, &tasks)?;
-
     let conn = crate::storage::database::connection();
     let tx = conn.unchecked_transaction()?;
     crate::storage::agent_graph::cascade_delete_for_task(&tx, project, task_id)?;
+    tx.execute(
+        "DELETE FROM tasks WHERE project = ?1 AND id = ?2",
+        params![project, task_id],
+    )?;
     tx.commit()?;
-
-    Ok(())
-}
-
-/// 更新归档任务的代码统计快照
-pub fn update_archived_task_code_stats(
-    project: &str,
-    task_id: &str,
-    code_additions: u32,
-    code_deletions: u32,
-    files_changed: u32,
-) -> Result<()> {
-    let mut archived = load_archived_tasks(project)?;
-    if let Some(task) = archived.iter_mut().find(|t| t.id == task_id) {
-        task.code_additions = code_additions;
-        task.code_deletions = code_deletions;
-        task.files_changed = files_changed;
-        save_archived_tasks(project, &archived)?;
-    }
     Ok(())
 }
 
 /// 删除归档任务
 pub fn remove_archived_task(project: &str, task_id: &str) -> Result<()> {
-    let mut archived = load_archived_tasks(project)?;
-    archived.retain(|t| t.id != task_id);
-    save_archived_tasks(project, &archived)?;
-
     let conn = crate::storage::database::connection();
     let tx = conn.unchecked_transaction()?;
     crate::storage::agent_graph::cascade_delete_for_task(&tx, project, task_id)?;
+    tx.execute(
+        "DELETE FROM tasks WHERE project = ?1 AND id = ?2 AND status = 'archived'",
+        params![project, task_id],
+    )?;
     tx.commit()?;
-
     Ok(())
 }
 
 /// 更新任务的 target branch
 pub fn update_task_target(project: &str, task_id: &str, new_target: &str) -> Result<()> {
-    let mut tasks = load_tasks(project)?;
-
-    if let Some(task) = tasks.iter_mut().find(|t| t.id == task_id) {
-        task.target = new_target.to_string();
-        task.updated_at = Utc::now();
-        save_tasks(project, &tasks)?;
-    }
-
+    let conn = crate::storage::database::connection();
+    conn.execute(
+        "UPDATE tasks SET target = ?1, updated_at = ?2 WHERE project = ?3 AND id = ?4",
+        params![new_target, Utc::now().to_rfc3339(), project, task_id],
+    )?;
     Ok(())
 }
 
 /// 更新 task 的 updated_at 时间戳
 pub fn touch_task(project: &str, task_id: &str) -> Result<()> {
-    let mut tasks = load_tasks(project)?;
-
-    if let Some(task) = tasks.iter_mut().find(|t| t.id == task_id) {
-        task.updated_at = Utc::now();
-        save_tasks(project, &tasks)?;
-    }
-
+    let conn = crate::storage::database::connection();
+    conn.execute(
+        "UPDATE tasks SET updated_at = ?1 WHERE project = ?2 AND id = ?3",
+        params![Utc::now().to_rfc3339(), project, task_id],
+    )?;
     Ok(())
+}
+
+/// 更新 task 的 multiplexer 和 session_name
+pub fn persist_task_session(
+    project: &str,
+    task_id: &str,
+    multiplexer: &str,
+    session_name: &str,
+) -> Result<()> {
+    let conn = crate::storage::database::connection();
+    conn.execute(
+        "UPDATE tasks SET multiplexer = ?1, session_name = ?2, updated_at = ?3 WHERE project = ?4 AND id = ?5",
+        params![multiplexer, session_name, Utc::now().to_rfc3339(), project, task_id],
+    )?;
+    Ok(())
+}
+
+/// 根据 task_id 获取活跃任务
+pub fn get_task(project: &str, task_id: &str) -> Result<Option<Task>> {
+    let conn = crate::storage::database::connection();
+    let task = conn
+        .query_row(
+            &format!(
+                "SELECT {} FROM tasks WHERE project = ?1 AND id = ?2 AND status = 'active'",
+                TASK_COLUMNS
+            ),
+            params![project, task_id],
+            row_to_task,
+        )
+        .optional()?;
+    Ok(task)
+}
+
+/// 根据 task_id 获取归档任务
+pub fn get_archived_task(project: &str, task_id: &str) -> Result<Option<Task>> {
+    let conn = crate::storage::database::connection();
+    let task = conn
+        .query_row(
+            &format!(
+                "SELECT {} FROM tasks WHERE project = ?1 AND id = ?2 AND status = 'archived'",
+                TASK_COLUMNS
+            ),
+            params![project, task_id],
+            row_to_task,
+        )
+        .optional()?;
+    Ok(task)
+}
+
+/// 根据 task_id 获取任务（不限状态）
+fn get_task_any(project: &str, task_id: &str) -> Result<Option<Task>> {
+    let conn = crate::storage::database::connection();
+    let task = conn
+        .query_row(
+            &format!(
+                "SELECT {} FROM tasks WHERE project = ?1 AND id = ?2",
+                TASK_COLUMNS
+            ),
+            params![project, task_id],
+            row_to_task,
+        )
+        .optional()?;
+    Ok(task)
 }
 
 /// 创建 Local Task（指向主仓库的特殊任务，name 使用项目名称）
@@ -299,6 +377,7 @@ pub fn create_local_task(
         branch: current_branch.to_string(),
         target: default_branch.to_string(),
         worktree_path: repo_path.to_string(),
+        initial_commit: None,
         created_at: now,
         updated_at: now,
         status: TaskStatus::Active,
@@ -574,18 +653,6 @@ pub fn find_chat_session(chat_id: &str) -> Result<Option<(String, String, ChatSe
         )
         .optional()?;
     Ok(row)
-}
-
-/// 根据 task_id 获取任务（从 tasks.toml）
-pub fn get_task(project: &str, task_id: &str) -> Result<Option<Task>> {
-    let tasks = load_tasks(project)?;
-    Ok(tasks.into_iter().find(|t| t.id == task_id))
-}
-
-/// 根据 task_id 获取归档任务
-pub fn get_archived_task(project: &str, task_id: &str) -> Result<Option<Task>> {
-    let archived = load_archived_tasks(project)?;
-    Ok(archived.into_iter().find(|t| t.id == task_id))
 }
 
 /// 生成 slug (用于任务 ID 和目录名)

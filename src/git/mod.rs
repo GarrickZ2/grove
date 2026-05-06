@@ -717,6 +717,10 @@ pub fn get_head_short(repo_path: &str) -> Result<String> {
     git_cmd(repo_path, &["rev-parse", "--short", "HEAD"]).map(|s| s.trim().to_string())
 }
 
+pub fn get_head_commit(repo_path: &str) -> Result<String> {
+    git_cmd(repo_path, &["rev-parse", "HEAD"]).map(|s| s.trim().to_string())
+}
+
 /// 通用 merge 命令执行函数 (带 merge 错误格式化)
 fn git_merge_cmd(repo_path: &str, args: &[&str]) -> Result<()> {
     let output = Command::new("git")

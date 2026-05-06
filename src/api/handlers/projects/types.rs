@@ -39,6 +39,7 @@ pub struct TaskResponse {
     pub additions: u32,
     pub deletions: u32,
     pub files_changed: u32,
+    pub initial_commit: Option<String>,
     pub commits: Vec<CommitResponse>,
     pub created_at: String,
     pub updated_at: String,

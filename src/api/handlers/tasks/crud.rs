@@ -189,6 +189,7 @@ pub async fn create_task(
         additions: 0,
         deletions: 0,
         files_changed: 0,
+        initial_commit: None,
         commits: Vec::new(),
         created_at: result.task.created_at.to_rfc3339(),
         updated_at: result.task.updated_at.to_rfc3339(),

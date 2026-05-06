@@ -31,6 +31,7 @@ pub fn storage_task_to_response(task: &tasks::Task) -> TaskResponse {
         additions: task.code_additions,
         deletions: task.code_deletions,
         files_changed: task.files_changed,
+        initial_commit: task.initial_commit.clone(),
         commits: Vec::new(),
         created_at: task.created_at.to_rfc3339(),
         updated_at: task.updated_at.to_rfc3339(),
@@ -424,6 +425,7 @@ pub async fn add_project(
         additions: 0,
         deletions: 0,
         files_changed: 0,
+        initial_commit: None,
         commits: Vec::new(),
         created_at: wt.created_at.to_rfc3339(),
         updated_at: wt.updated_at.to_rfc3339(),
@@ -432,6 +434,7 @@ pub async fn add_project(
         created_by: wt.created_by,
         is_local: true,
     });
+
     let _ = crate::storage::taskgroups::ensure_system_groups();
     use crate::api::handlers::walkie_talkie::{broadcast_radio_event, RadioEvent};
     broadcast_radio_event(RadioEvent::GroupChanged);
@@ -522,6 +525,7 @@ pub async fn create_new_project(
             additions: 0,
             deletions: 0,
             files_changed: 0,
+            initial_commit: None,
             commits: Vec::new(),
             created_at: wt.created_at.to_rfc3339(),
             updated_at: wt.updated_at.to_rfc3339(),

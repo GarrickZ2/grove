@@ -40,13 +40,6 @@ pub fn grove_dir() -> PathBuf {
         .join(".grove")
 }
 
-/// 确保项目配置目录存在: ~/.grove/projects/{project}/
-pub fn ensure_project_dir(project: &str) -> Result<PathBuf> {
-    let path = grove_dir().join("projects").join(project);
-    std::fs::create_dir_all(&path)?;
-    Ok(path)
-}
-
 /// 确保 worktree 目录存在: ~/.grove/worktrees/{project}/
 pub fn ensure_worktree_dir(project: &str) -> Result<PathBuf> {
     let path = grove_dir().join("worktrees").join(project);

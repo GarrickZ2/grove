@@ -161,14 +161,7 @@ fn persist_task_session(
         SessionType::Zellij => "zellij",
         SessionType::Acp => "acp",
     };
-    if let Ok(mut all_tasks) = tasks::load_tasks(project_key) {
-        if let Some(t) = all_tasks.iter_mut().find(|t| t.id == task_id) {
-            t.multiplexer = mux_str.to_string();
-            t.session_name = session_name.to_string();
-            t.updated_at = chrono::Utc::now();
-            let _ = tasks::save_tasks(project_key, &all_tasks);
-        }
-    }
+    let _ = tasks::persist_task_session(project_key, task_id, mux_str, session_name);
 }
 
 /// Merge method selection
@@ -412,23 +405,22 @@ pub fn archive_task(
     // 1. Get task info (before archival)
     let task_info = tasks::get_task(project_key, task_id)?;
 
-    // 2. Snapshot git diff stats before removing worktree
-    let (code_additions, code_deletions, files_changed) = if let Some(task) = &task_info {
-        if std::path::Path::new(&task.worktree_path).exists() {
+    // 2. Snapshot git diff stats before removing the worktree. After archival
+    //    the worktree is gone and stats can no longer recompute live numbers,
+    //    so this snapshot is the only thing the per-day stats page can show
+    //    for archived tasks.
+    let (code_additions, code_deletions, files_changed) = match &task_info {
+        Some(task) if std::path::Path::new(&task.worktree_path).exists() => {
             match git::diff_stat(&task.worktree_path, &task.target) {
-                Ok(entries) => {
-                    let additions: u32 = entries.iter().map(|e| e.additions).sum();
-                    let deletions: u32 = entries.iter().map(|e| e.deletions).sum();
-                    let files = entries.len() as u32;
-                    (additions, deletions, files)
-                }
+                Ok(entries) => (
+                    entries.iter().map(|e| e.additions).sum(),
+                    entries.iter().map(|e| e.deletions).sum(),
+                    entries.len() as u32,
+                ),
                 Err(_) => (0, 0, 0),
             }
-        } else {
-            (0, 0, 0)
         }
-    } else {
-        (0, 0, 0)
+        _ => (0, 0, 0),
     };
 
     // 3. Remove worktree
@@ -438,10 +430,10 @@ pub fn archive_task(
         }
     }
 
-    // 4. Move to archived.toml (sets archived_at timestamp)
+    // 4. Move to archived status
     tasks::archive_task(project_key, task_id)?;
 
-    // 5. Update code stats on the archived task
+    // 5. Persist the diff snapshot onto the now-archived row.
     tasks::update_archived_task_code_stats(
         project_key,
         task_id,
@@ -752,7 +744,14 @@ fn create_task_inner(
         (worktree_path.to_string_lossy().to_string(), branch)
     };
 
-    // 6. Create task record (shared for both types)
+    // 6. Record initial commit (for repo tasks, HEAD of the new worktree)
+    let initial_commit = if !is_studio {
+        git::get_head_commit(&task_path_str).ok()
+    } else {
+        None
+    };
+
+    // 7. Create task record (shared for both types)
     let now = chrono::Utc::now();
     let session_name = session::session_name(project_key, &slug);
     let task = tasks::Task {
@@ -761,6 +760,7 @@ fn create_task_inner(
         branch,
         target: target_branch,
         worktree_path: task_path_str.clone(),
+        initial_commit,
         created_at: now,
         updated_at: now,
         status: tasks::TaskStatus::Active,

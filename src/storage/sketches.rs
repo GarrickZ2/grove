@@ -841,7 +841,7 @@ pub fn apply_draw(
 mod tests {
     use super::*;
     use crate::storage::grove_dir;
-    use crate::storage::tasks::{save_tasks, Task, TaskStatus};
+    use crate::storage::tasks::{Task, TaskStatus};
     use chrono::Utc;
     use uuid::Uuid;
 
@@ -876,12 +876,13 @@ mod tests {
                 session_name: String::new(),
                 created_by: "user".to_string(),
                 archived_at: None,
+                initial_commit: None,
                 code_additions: 0,
                 code_deletions: 0,
                 files_changed: 0,
                 is_local: false,
             };
-            save_tasks(&project, &[task]).unwrap();
+            crate::storage::tasks::add_task(&project, task).unwrap();
             Self {
                 _lock: lock,
                 project,

@@ -257,12 +257,13 @@ fn aggregate_tasks(
     for task in tasks {
         // ── Code stats ────────────────────────────────────────────────────
         if task.code_additions > 0 || task.code_deletions > 0 || task.files_changed > 0 {
-            // Archived task with snapshot
+            // Archived task with snapshot — worktree is gone, use the
+            // numbers we recorded at archive time.
             code_additions += task.code_additions;
             code_deletions += task.code_deletions;
             total_files_changed += task.files_changed;
         } else if std::path::Path::new(&task.worktree_path).exists() {
-            // Active task (or archived without snapshot): compute live
+            // Active task (or archived without snapshot): compute live.
             if let Ok(entries) = git::diff_stat(&task.worktree_path, &task.target) {
                 code_additions += entries.iter().map(|e| e.additions).sum::<u32>();
                 code_deletions += entries.iter().map(|e| e.deletions).sum::<u32>();

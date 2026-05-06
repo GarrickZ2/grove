@@ -13,7 +13,7 @@ use std::sync::Mutex;
 use super::grove_dir;
 use crate::error::Result;
 
-pub const CURRENT_STORAGE_VERSION: &str = "2.3";
+pub const CURRENT_STORAGE_VERSION: &str = "2.4";
 
 /// Database state: caches connection + its path so we can detect HOME changes.
 struct DbState {
@@ -111,6 +111,30 @@ pub(crate) fn create_schema(conn: &Connection) -> Result<()> {
             is_git_repo  INTEGER NOT NULL DEFAULT 1,
             added_at     TEXT NOT NULL,
             project_type TEXT NOT NULL DEFAULT 'repo'
+        );
+
+        -- Tasks (active + archived, unified)
+        CREATE TABLE IF NOT EXISTS tasks (
+            project        TEXT    NOT NULL,
+            id             TEXT    NOT NULL,
+            name           TEXT    NOT NULL,
+            branch         TEXT    NOT NULL,
+            target         TEXT    NOT NULL,
+            worktree_path  TEXT    NOT NULL,
+            initial_commit TEXT,
+            created_at     TEXT    NOT NULL,
+            updated_at     TEXT    NOT NULL,
+            status         TEXT    NOT NULL DEFAULT 'active',
+            multiplexer    TEXT    NOT NULL DEFAULT 'tmux',
+            session_name   TEXT    NOT NULL DEFAULT '',
+            created_by     TEXT    NOT NULL DEFAULT '',
+            archived_at    TEXT,
+            is_local       INTEGER NOT NULL DEFAULT 0,
+            -- diff snapshot taken at archive time; 0 for active tasks
+            code_additions INTEGER NOT NULL DEFAULT 0,
+            code_deletions INTEGER NOT NULL DEFAULT 0,
+            files_changed  INTEGER NOT NULL DEFAULT 0,
+            PRIMARY KEY (project, id)
         );
 
         -- Task Groups
@@ -467,7 +491,40 @@ pub(crate) fn create_schema(conn: &Connection) -> Result<()> {
         )?;
     }
 
+    // Add code-stat columns onto already-migrated v2.4 task tables (the v2.4
+    // migration shipped without them). Idempotent — second call sees the
+    // column already there and no-ops via the duplicate-column check below.
+    add_column_if_missing(
+        conn,
+        "tasks",
+        "code_additions",
+        "INTEGER NOT NULL DEFAULT 0",
+    )?;
+    add_column_if_missing(
+        conn,
+        "tasks",
+        "code_deletions",
+        "INTEGER NOT NULL DEFAULT 0",
+    )?;
+    add_column_if_missing(conn, "tasks", "files_changed", "INTEGER NOT NULL DEFAULT 0")?;
+
     Ok(())
+}
+
+/// `ALTER TABLE ... ADD COLUMN` swallowing the "duplicate column name" error
+/// SQLite returns when the column already exists. Lets us evolve a previously
+/// installed schema without managing a per-column migration version.
+fn add_column_if_missing(conn: &Connection, table: &str, column: &str, decl: &str) -> Result<()> {
+    let sql = format!("ALTER TABLE {} ADD COLUMN {} {}", table, column, decl);
+    match conn.execute(&sql, []) {
+        Ok(_) => Ok(()),
+        Err(rusqlite::Error::SqliteFailure(_, Some(msg)))
+            if msg.to_lowercase().contains("duplicate column") =>
+        {
+            Ok(())
+        }
+        Err(e) => Err(e.into()),
+    }
 }
 
 // ============================================================================
@@ -821,6 +878,177 @@ fn default_true_for_migration() -> bool {
     true
 }
 
+/// Migrate tasks from per-project tasks.toml + archived.toml to SQLite (v2.3 → v2.4).
+pub fn migrate_tasks_toml_to_sqlite() {
+    let already: bool = {
+        let conn = connection();
+        conn.query_row("SELECT COUNT(*) FROM tasks", [], |r| r.get::<_, i64>(0))
+            .unwrap_or(0)
+            > 0
+    };
+    if already {
+        return;
+    }
+
+    let projects_dir = grove_dir().join("projects");
+    if !projects_dir.exists() {
+        return;
+    }
+    let entries = match std::fs::read_dir(&projects_dir) {
+        Ok(e) => e,
+        Err(_) => return,
+    };
+
+    let mut total_migrated: u32 = 0;
+
+    for entry in entries.flatten() {
+        let dir = entry.path();
+        if !dir.is_dir() {
+            continue;
+        }
+        let project_key = entry.file_name().to_string_lossy().to_string();
+
+        for (filename, status_str) in &[("tasks.toml", "active"), ("archived.toml", "archived")] {
+            let toml_path = dir.join(filename);
+            if !toml_path.exists() {
+                continue;
+            }
+            let content = match std::fs::read_to_string(&toml_path) {
+                Ok(c) => c,
+                Err(e) => {
+                    eprintln!(
+                        "  [migrate] tasks.toml read failed for {}/{}: {}",
+                        project_key, filename, e
+                    );
+                    continue;
+                }
+            };
+            let data: toml::Value = match toml::from_str(&content) {
+                Ok(d) => d,
+                Err(e) => {
+                    eprintln!(
+                        "  [migrate] tasks.toml parse failed for {}/{}: {}",
+                        project_key, filename, e
+                    );
+                    continue;
+                }
+            };
+            let tasks = match data.get("tasks").and_then(|t| t.as_array()) {
+                Some(a) => a,
+                None => continue,
+            };
+
+            let conn = connection();
+            let tx = match conn.unchecked_transaction() {
+                Ok(tx) => tx,
+                Err(_) => continue,
+            };
+
+            for task in tasks {
+                let id = match task.get("id").and_then(|v| v.as_str()) {
+                    Some(s) => s,
+                    None => continue,
+                };
+                let name = task.get("name").and_then(|v| v.as_str()).unwrap_or("");
+                let branch = task.get("branch").and_then(|v| v.as_str()).unwrap_or("");
+                let target = task.get("target").and_then(|v| v.as_str()).unwrap_or("");
+                let worktree_path = task
+                    .get("worktree_path")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                let created_at = task
+                    .get("created_at")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                let updated_at = task
+                    .get("updated_at")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or(created_at);
+                let multiplexer = task
+                    .get("multiplexer")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("tmux");
+                let session_name = task
+                    .get("session_name")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                let created_by = task
+                    .get("created_by")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                let archived_at = task.get("archived_at").and_then(|v| v.as_str());
+                let is_local = task
+                    .get("is_local")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+                // Carry the archive-time diff snapshot across the migration.
+                // Without these fields archived rows show 0/0/0 in the stats
+                // page even when the old tasks.toml had real numbers.
+                let code_additions = task
+                    .get("code_additions")
+                    .and_then(|v| v.as_integer())
+                    .unwrap_or(0)
+                    .max(0);
+                let code_deletions = task
+                    .get("code_deletions")
+                    .and_then(|v| v.as_integer())
+                    .unwrap_or(0)
+                    .max(0);
+                let files_changed = task
+                    .get("files_changed")
+                    .and_then(|v| v.as_integer())
+                    .unwrap_or(0)
+                    .max(0);
+
+                if let Err(e) = tx.execute(
+                    "INSERT OR IGNORE INTO tasks (project, id, name, branch, target, worktree_path, initial_commit, created_at, updated_at, status, multiplexer, session_name, created_by, archived_at, is_local, code_additions, code_deletions, files_changed)
+                     VALUES (?1,?2,?3,?4,?5,?6,NULL,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17)",
+                    params![
+                        project_key,
+                        id,
+                        name,
+                        branch,
+                        target,
+                        worktree_path,
+                        created_at,
+                        updated_at,
+                        status_str,
+                        multiplexer,
+                        session_name,
+                        created_by,
+                        archived_at,
+                        is_local as i64,
+                        code_additions,
+                        code_deletions,
+                        files_changed,
+                    ],
+                ) {
+                    eprintln!(
+                        "  [migrate] tasks.toml insert failed for {}/{}: {}",
+                        project_key, id, e
+                    );
+                }
+            }
+
+            if let Err(e) = tx.commit() {
+                eprintln!(
+                    "  [migrate] tasks.toml commit failed for {}/{}: {}",
+                    project_key, filename, e
+                );
+            } else {
+                total_migrated += tasks.len() as u32;
+            }
+        }
+    }
+
+    if total_migrated > 0 {
+        eprintln!(
+            "  [migrate] tasks.toml/archived.toml → SQLite done ({} tasks)",
+            total_migrated
+        );
+    }
+}
+
 /// Migrate review comments from per-task `review.json` files to SQLite (v2.2 → v2.3).
 pub fn migrate_review_to_sqlite() {
     let projects_dir = grove_dir().join("projects");
@@ -1051,7 +1279,7 @@ pub fn prune_legacy_files() {
         }
     }
 
-    // projects/*/{project.toml, ai/audio.json, review/, ai/<task>/, tasks/<task>/review.json[.migrated]}
+    // projects/*/{project.toml, ai/audio.json, review/, ai/<task>/, tasks/<task>/review.json[.migrated], tasks.toml, archived.toml}
     let projects_dir = grove.join("projects");
     if projects_dir.exists() {
         let mut project_removed = 0u32;
@@ -1069,6 +1297,16 @@ pub fn prune_legacy_files() {
                     std::fs::remove_file(&toml_path).ok();
                     project_removed += 1;
                 }
+
+                // v2.4: tasks.toml + archived.toml → SQLite
+                for name in &["tasks.toml", "archived.toml"] {
+                    let p = dir.join(name);
+                    if p.exists() {
+                        std::fs::remove_file(&p).ok();
+                        project_removed += 1;
+                    }
+                }
+
                 let audio_path = dir.join("ai").join("audio.json");
                 if audio_path.exists() {
                     std::fs::remove_file(&audio_path).ok();
