@@ -63,6 +63,13 @@ impl SymbolStore {
 
     /// Replace all symbols for `(task_id, file_path)`. Atomic in SQLite
     /// (single transaction) and propagated to the in-memory cache.
+    ///
+    /// Mtime-gated: if the store already has a row for this file with a
+    /// **strictly greater** `file_mtime`, the call is a no-op. This
+    /// closes the race where the on_watch_started full scan (which can
+    /// read a file's bytes seconds before reaching the write step) would
+    /// otherwise clobber a fresher update from a concurrent on_file_event
+    /// on the same file. Equal mtime is allowed to overwrite (idempotent).
     pub fn replace_file(
         &mut self,
         task_id: &str,
@@ -70,6 +77,23 @@ impl SymbolStore {
         file_mtime: i64,
         symbols: Vec<SymbolDef>,
     ) -> Result<()> {
+        // Cheap pre-check: under the outer Mutex<SymbolStore>, no other
+        // writer is running, so this read is consistent with the SQL we
+        // execute below.
+        let stored: Option<i64> = self
+            .db
+            .query_row(
+                "SELECT MAX(file_mtime) FROM symbols WHERE task_id = ?1 AND file_path = ?2",
+                params![task_id, file_path],
+                |r| r.get(0),
+            )
+            .ok();
+        if let Some(stored) = stored {
+            if stored > file_mtime {
+                return Ok(());
+            }
+        }
+
         let tx = self.db.transaction()?;
         tx.execute(
             "DELETE FROM symbols WHERE task_id = ?1 AND file_path = ?2",
@@ -103,6 +127,11 @@ impl SymbolStore {
     }
 
     /// Drop a single file's symbols (e.g. file deleted on disk).
+    /// Currently unused — file deletion is handled implicitly: the next
+    /// debounced reindex re-scans `git ls-files` and the file's rows
+    /// stay in the table only until then. Kept here as part of the
+    /// store's vocabulary in case a future feature needs targeted drops.
+    #[allow(dead_code)]
     pub fn delete_file(&mut self, task_id: &str, file_path: &str) -> Result<()> {
         self.db.execute(
             "DELETE FROM symbols WHERE task_id = ?1 AND file_path = ?2",

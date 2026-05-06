@@ -42,6 +42,10 @@ pub fn shutdown_file_watchers() {
 ///
 /// Called when the frontend enters a task workspace page (via /activate),
 /// and also defensively when a terminal session is opened.
+///
+/// Also kicks the symbol indexer's once-gated initial build for this
+/// task — the indexer subscribes to watcher events for incremental
+/// updates, so build and watch share a single trigger point.
 pub fn ensure_task_active(project_key: &str, task_id: &str, worktree_path: &str) {
     if let Ok(mut watchers) = FILE_WATCHERS.write() {
         if let Some(watcher) = watchers.get_mut(project_key) {
@@ -53,4 +57,6 @@ pub fn ensure_task_active(project_key: &str, task_id: &str, worktree_path: &str)
             watchers.insert(project_key.to_string(), watcher);
         }
     }
+
+    crate::symbols::on_watch_started(project_key, task_id, Path::new(worktree_path));
 }

@@ -65,23 +65,18 @@ pub struct SearchParams {
 // ============================================================================
 
 /// GET /api/v1/projects/{id}/tasks/{taskId}/symbols/lookup?name=...&from_file=...&from_line=...
+///
+/// Pure read. Does not block on the build pipeline — if the index
+/// hasn't finished building yet, returns whatever rows are persisted
+/// so far (possibly empty). Caller retries.
 pub async fn lookup_symbol(
     Path((id, task_id)): Path<(String, String)>,
     Query(params): Query<LookupParams>,
 ) -> Result<Json<LookupResponse>, StatusCode> {
-    let Some((project_key, worktree)) = resolve_active_worktree(&id, &task_id).await? else {
-        return Ok(Json(LookupResponse { candidates: vec![] }));
-    };
-
-    if let Err(e) =
-        symbols::ensure_built(&project_key, &task_id, std::path::Path::new(&worktree)).await
-    {
-        eprintln!("[symbols] ensure_built failed: {}", e);
-    }
+    let (_, project_key) = common::find_project_by_id(&id)?;
 
     let mut hits = symbols::lookup(&project_key, &task_id, &params.name)
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-
     rank_candidates(&mut hits, params.from_file.as_deref(), params.from_line);
 
     Ok(Json(LookupResponse {
@@ -94,16 +89,7 @@ pub async fn search_symbols(
     Path((id, task_id)): Path<(String, String)>,
     Query(params): Query<SearchParams>,
 ) -> Result<Json<LookupResponse>, StatusCode> {
-    let Some((project_key, worktree)) = resolve_active_worktree(&id, &task_id).await? else {
-        return Ok(Json(LookupResponse { candidates: vec![] }));
-    };
-
-    if let Err(e) =
-        symbols::ensure_built(&project_key, &task_id, std::path::Path::new(&worktree)).await
-    {
-        eprintln!("[symbols] ensure_built failed: {}", e);
-    }
-
+    let (_, project_key) = common::find_project_by_id(&id)?;
     let limit = params.limit.unwrap_or(50).min(500);
     let hits = symbols::search(&project_key, &task_id, &params.q, limit)
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
@@ -114,20 +100,17 @@ pub async fn search_symbols(
 }
 
 /// POST /api/v1/projects/{id}/tasks/{taskId}/symbols/reindex
+///
+/// Force a from-scratch rebuild. Drops cached rows so the build can't
+/// mtime-skip them, then queues a debounced reindex. Returns
+/// immediately — the build runs in the background.
 pub async fn reindex_symbols(
     Path((id, task_id)): Path<(String, String)>,
 ) -> Result<StatusCode, StatusCode> {
     let Some((project_key, worktree)) = resolve_active_worktree(&id, &task_id).await? else {
         return Ok(StatusCode::NO_CONTENT);
     };
-
-    symbols::trigger_reindex(&project_key, &task_id);
-    if let Err(e) =
-        symbols::ensure_built(&project_key, &task_id, std::path::Path::new(&worktree)).await
-    {
-        eprintln!("[symbols] reindex failed: {}", e);
-        return Err(StatusCode::INTERNAL_SERVER_ERROR);
-    }
+    symbols::trigger_reindex(&project_key, &task_id, std::path::Path::new(&worktree));
     Ok(StatusCode::NO_CONTENT)
 }
 

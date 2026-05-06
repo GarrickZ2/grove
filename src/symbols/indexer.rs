@@ -1,24 +1,38 @@
-//! Symbol index orchestration: lazy build on first access, incremental
-//! updates driven by `FileWatcher`, and a small global registry shared
-//! by the HTTP API and the watcher subscription callbacks.
+//! Symbol index orchestration.
 //!
-//! Lifecycle:
-//! - First `ensure_built(project_hash, task_id, worktree)` triggers a
-//!   full scan of the worktree (`git ls-files` ∩ supported extensions),
-//!   parses each file via tree-sitter, and persists symbols via
-//!   `SymbolStore`. Subsequent calls for the same task short-circuit.
-//! - After a successful build the indexer subscribes to the project's
-//!   `FileWatcher` for that task; debounced edit events fire a single-
-//!   file re-parse and replace the file's rows.
-//! - Concurrent first-access requests coalesce via a per-task
-//!   `BuildState` (atomic `done` flag + `tokio::sync::Notify`).
+//! Per-task coalescing scheduler:
+//!
+//! ```text
+//!   on_watch_started(task) ┐
+//!   watcher event (task)   ├─→ request_reindex(task)
+//!                          │     (sets next_due = now + DEBOUNCE)
+//!                          │
+//!                          ▼
+//!                ┌────────────────────────┐
+//!                │ worker_loop (per task) │
+//!                │                        │
+//!                │  loop:                 │
+//!                │    if next_due is None │ ──→ exit
+//!                │    if next_due > now   │ ──→ sleep, re-check
+//!                │    else                │ ──→ run_build, re-check
+//!                └────────────────────────┘
+//! ```
+//!
+//! - One worker thread per task at a time. Multiple concurrent triggers
+//!   don't spawn multiple workers — they just push `next_due` forward.
+//! - Debounce: rapid edits (AI tools modifying many files in quick
+//!   succession) coalesce into a single reindex once the storm dies down.
+//! - During a running build, new triggers reset `next_due`. When the
+//!   build finishes, the worker sees `next_due` set and debounces again
+//!   before the next run.
+//! - `lookup` is a pure SQL read; it never blocks on the build.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use once_cell::sync::Lazy;
 
@@ -31,115 +45,92 @@ use super::types::{Language, SymbolDef};
 /// (project_hash, task_id)
 type TaskKey = (String, String);
 
-struct BuildState {
-    done: AtomicBool,
-    notify: tokio::sync::Notify,
+/// Quiet-period before a coalesced reindex actually runs.
+const REINDEX_DEBOUNCE: Duration = Duration::from_millis(1500);
+
+struct BuildSlot {
+    /// True while a worker thread is alive for this task.
+    scheduled: AtomicBool,
+    /// True after the watcher subscription has been registered for this
+    /// task — prevents duplicate callbacks if /activate fires repeatedly.
+    subscribed: AtomicBool,
+    /// Earliest instant the worker should start the next build. Each
+    /// `request_reindex` sets this to `now + DEBOUNCE`. None ⇒ no pending
+    /// work; the worker treats that as "exit".
+    next_due: Mutex<Option<Instant>>,
 }
 
-impl BuildState {
+impl BuildSlot {
     fn new() -> Arc<Self> {
         Arc::new(Self {
-            done: AtomicBool::new(false),
-            notify: tokio::sync::Notify::new(),
+            scheduled: AtomicBool::new(false),
+            subscribed: AtomicBool::new(false),
+            next_due: Mutex::new(None),
         })
     }
 }
 
-/// Process-wide registry. Accessed by the HTTP API for lookup/search and
-/// by the watcher subscription callback for incremental updates.
 struct Registry {
     /// One SymbolStore per project. The Mutex serializes writers; reads
     /// also go through it because rusqlite::Connection is not Sync.
     stores: HashMap<String, Arc<Mutex<SymbolStore>>>,
-    /// Per-task build state (single-flight gate).
-    builds: HashMap<TaskKey, Arc<BuildState>>,
+    /// Per-task coalescing scheduler state.
+    slots: HashMap<TaskKey, Arc<BuildSlot>>,
 }
 
 static REGISTRY: Lazy<RwLock<Registry>> = Lazy::new(|| {
     RwLock::new(Registry {
         stores: HashMap::new(),
-        builds: HashMap::new(),
+        slots: HashMap::new(),
     })
 });
 
-/// Maximum time a `/lookup` is willing to wait for an in-flight initial
-/// build. After timeout the lookup returns whatever's already persisted
-/// (typically empty for the very first request) — the user retries.
-const ENSURE_BUILT_TIMEOUT: Duration = Duration::from_secs(2);
+// ============================================================================
+// Public API
+// ============================================================================
 
-/// Public entry point. Idempotent: returns immediately if the task's
-/// index has already been built for this process. Otherwise blocks the
-/// caller (up to ENSURE_BUILT_TIMEOUT) on the in-flight build.
-pub async fn ensure_built(project_hash: &str, task_id: &str, worktree: &Path) -> Result<()> {
-    let key: TaskKey = (project_hash.to_string(), task_id.to_string());
+/// Triggered when the FileWatcher starts watching a task. Subscribes
+/// the indexer to watcher events (idempotent) and queues a debounced
+/// reindex.
+pub fn on_watch_started(project_hash: &str, task_id: &str, worktree: &Path) {
+    let slot = get_or_create_slot((project_hash.to_string(), task_id.to_string()));
 
-    // Fast path + single-flight admission, all under one write lock.
-    let state = {
-        let mut reg = REGISTRY.write().expect("symbols registry poisoned");
-        match reg.builds.get(&key) {
-            Some(s) if s.done.load(Ordering::Acquire) => return Ok(()),
-            Some(s) => s.clone(),
-            None => {
-                let s = BuildState::new();
-                reg.builds.insert(key.clone(), s.clone());
+    // Subscribe to watcher events exactly once per task. Each event then
+    // funnels back here as `request_reindex`, which the slot debounces.
+    if !slot.subscribed.swap(true, Ordering::AcqRel) {
+        register_watcher_subscription(project_hash, task_id, worktree);
+    }
 
-                let project_hash = project_hash.to_string();
-                let task_id = task_id.to_string();
-                let worktree = worktree.to_path_buf();
-                let state = s.clone();
-                // The build itself is CPU-bound (tree-sitter parsing) +
-                // blocking I/O (SQLite), so push it off the async runtime.
-                tokio::task::spawn_blocking(move || {
-                    if let Err(e) = run_build(&project_hash, &task_id, &worktree) {
-                        eprintln!(
-                            "[symbols] build failed for ({}, {}): {}",
-                            project_hash, task_id, e
-                        );
-                    }
-                    // Successful or not, mark done so retries don't
-                    // pile up. A subsequent /reindex resets explicitly.
-                    state.done.store(true, Ordering::Release);
-                    state.notify.notify_waiters();
-                });
-                s
-            }
-        }
-    };
-
-    // Wait briefly for the in-flight build. Timeouts are non-fatal —
-    // the lookup proceeds with whatever's persisted.
-    let _ = tokio::time::timeout(ENSURE_BUILT_TIMEOUT, state.notify.notified()).await;
-    Ok(())
+    request_reindex_with(&slot, project_hash, task_id, worktree);
 }
 
-/// Force a fresh full rebuild for a task. Drops any prior build state
-/// so the next `ensure_built` will re-run from scratch.
-pub fn trigger_reindex(project_hash: &str, task_id: &str) {
-    let key: TaskKey = (project_hash.to_string(), task_id.to_string());
-    let mut reg = REGISTRY.write().expect("symbols registry poisoned");
-    reg.builds.remove(&key);
+/// Force a fresh from-scratch reindex. Wipes the cached rows for this
+/// task (so the build can't mtime-skip them) and queues a build.
+pub fn trigger_reindex(project_hash: &str, task_id: &str, worktree: &Path) {
+    if let Ok(store) = ensure_store(project_hash) {
+        if let Ok(mut s) = store.lock() {
+            let _ = s.delete_task(task_id);
+        }
+    }
+    let slot = get_or_create_slot((project_hash.to_string(), task_id.to_string()));
+    request_reindex_with(&slot, project_hash, task_id, worktree);
 }
 
 /// Clean up cached symbols for a task that's being deleted *or
 /// archived*. The worktree is gone in both cases (archive removes it
 /// too), so cached rows can never be queried meaningfully again — and
-/// if the user later recovers an archived task, the lazy ensure_built
-/// path rebuilds from the recreated worktree.
+/// if the user later recovers an archived task, the next /activate
+/// fires `on_watch_started` again and rebuilds.
 ///
-/// Best-effort: errors are swallowed (cache cleanup must not block
-/// task deletion). No-op if no on-disk index.db exists yet.
+/// Best-effort: errors are swallowed. No-op if no on-disk index.db
+/// exists yet.
 pub fn on_task_deleted(project_hash: &str, task_id: &str) {
-    // 1. Drop in-process build state so a same-id task created later
-    //    re-builds from scratch instead of seeing the stale "done" flag.
     {
         let mut reg = REGISTRY.write().expect("symbols registry poisoned");
-        reg.builds
+        reg.slots
             .remove(&(project_hash.to_string(), task_id.to_string()));
     }
 
-    // 2. If the project's index.db doesn't exist on disk yet (no task
-    //    in this project has been indexed), there's nothing to clean.
-    //    Avoid creating an empty file just to delete from it.
     let db_path = crate::storage::grove_dir()
         .join("projects")
         .join(project_hash)
@@ -148,7 +139,6 @@ pub fn on_task_deleted(project_hash: &str, task_id: &str) {
         return;
     }
 
-    // 3. Open (or reuse) the store and drop this task's rows.
     if let Ok(store) = ensure_store(project_hash) {
         if let Ok(mut s) = store.lock() {
             let _ = s.delete_task(task_id);
@@ -156,8 +146,9 @@ pub fn on_task_deleted(project_hash: &str, task_id: &str) {
     }
 }
 
-/// Exact-name lookup. Does not trigger a build — callers should
-/// `ensure_built(...)` first.
+/// Exact-name lookup. Pure read; never blocks on the build pipeline.
+/// If the build hasn't run yet, returns whatever rows are persisted
+/// (possibly empty); the caller retries.
 pub fn lookup(project_hash: &str, task_id: &str, name: &str) -> Result<Vec<SymbolDef>> {
     let store = match get_store(project_hash) {
         Some(s) => s,
@@ -182,7 +173,88 @@ pub fn search(
     store.search(task_id, prefix, limit)
 }
 
-// --- internals ---------------------------------------------------------
+// ============================================================================
+// Slot / scheduler internals
+// ============================================================================
+
+fn get_or_create_slot(key: TaskKey) -> Arc<BuildSlot> {
+    let mut reg = REGISTRY.write().expect("symbols registry poisoned");
+    reg.slots.entry(key).or_insert_with(BuildSlot::new).clone()
+}
+
+fn request_reindex_with(slot: &Arc<BuildSlot>, project_hash: &str, task_id: &str, worktree: &Path) {
+    {
+        let mut due = slot.next_due.lock().expect("slot.next_due poisoned");
+        *due = Some(Instant::now() + REINDEX_DEBOUNCE);
+    }
+
+    // If we are the first caller to flip `scheduled` from false to true,
+    // we own the worker thread for this round. Subsequent callers hit
+    // the existing worker via `next_due`.
+    if !slot.scheduled.swap(true, Ordering::AcqRel) {
+        let slot = Arc::clone(slot);
+        let project_hash = project_hash.to_string();
+        let task_id = task_id.to_string();
+        let worktree = worktree.to_path_buf();
+        std::thread::spawn(move || worker_loop(slot, project_hash, task_id, worktree));
+    }
+}
+
+fn request_reindex_external(project_hash: &str, task_id: &str, worktree: &Path) {
+    let slot = get_or_create_slot((project_hash.to_string(), task_id.to_string()));
+    request_reindex_with(&slot, project_hash, task_id, worktree);
+}
+
+enum Action {
+    Sleep(Duration),
+    Build,
+}
+
+fn worker_loop(slot: Arc<BuildSlot>, project_hash: String, task_id: String, worktree: PathBuf) {
+    loop {
+        let action = {
+            let mut due = slot.next_due.lock().expect("slot.next_due poisoned");
+            match *due {
+                None => {
+                    // No pending work. Mark unscheduled and exit. Holding
+                    // the lock across `scheduled.store(false)` closes the
+                    // race with concurrent `request_reindex`: a caller
+                    // that flips scheduled→true after our store sees it
+                    // false and spawns a fresh worker.
+                    slot.scheduled.store(false, Ordering::Release);
+                    return;
+                }
+                Some(t) => {
+                    let now = Instant::now();
+                    if t <= now {
+                        // Take the deadline before building so events
+                        // arriving during the build start a fresh
+                        // debounce window rather than racing with us.
+                        *due = None;
+                        Action::Build
+                    } else {
+                        Action::Sleep(t - now)
+                    }
+                }
+            }
+        };
+        match action {
+            Action::Sleep(d) => std::thread::sleep(d),
+            Action::Build => {
+                if let Err(e) = run_build(&project_hash, &task_id, &worktree) {
+                    eprintln!(
+                        "[symbols] build failed for ({}, {}): {}",
+                        project_hash, task_id, e
+                    );
+                }
+            }
+        }
+    }
+}
+
+// ============================================================================
+// Build pipeline
+// ============================================================================
 
 fn get_store(project_hash: &str) -> Option<Arc<Mutex<SymbolStore>>> {
     let reg = REGISTRY.read().ok()?;
@@ -203,10 +275,13 @@ fn ensure_store(project_hash: &str) -> Result<Arc<Mutex<SymbolStore>>> {
         .clone())
 }
 
-/// Full build for one task. Walks the worktree's git-tracked files,
-/// parses supported languages, and writes results to the store. Files
-/// whose mtime hasn't changed since the last persisted scan are
-/// skipped — this keeps cold starts fast across grove restarts.
+/// Walks the worktree's git-tracked files, parses supported languages,
+/// and writes results to the store. mtime-skips files unchanged since
+/// the last persisted scan.
+///
+/// `SymbolStore::replace_file` is mtime-gated, so concurrent watcher
+/// events that happen to also update a file we're processing here can't
+/// be clobbered by a stale write from this build.
 fn run_build(project_hash: &str, task_id: &str, worktree: &Path) -> Result<()> {
     let store = ensure_store(project_hash)?;
 
@@ -220,7 +295,7 @@ fn run_build(project_hash: &str, task_id: &str, worktree: &Path) -> Result<()> {
         let abs = worktree.join(&rel_path);
         let mtime = match file_mtime_unix(&abs) {
             Some(m) => m,
-            None => continue, // file vanished between ls-files and stat
+            None => continue,
         };
 
         let rel_str = rel_path.to_string_lossy().replace('\\', "/");
@@ -238,11 +313,6 @@ fn run_build(project_hash: &str, task_id: &str, worktree: &Path) -> Result<()> {
         let _ = store.replace_file(task_id, &rel_str, mtime, symbols);
     }
 
-    // Wire up incremental updates. If the watcher hasn't been started
-    // for this project yet (frontend hasn't hit /activate), skip — a
-    // later activation/build cycle will pick it up.
-    register_watcher_subscription(project_hash, task_id, worktree);
-
     Ok(())
 }
 
@@ -258,45 +328,14 @@ fn register_watcher_subscription(project_hash: &str, task_id: &str, worktree: &P
     let project_hash = project_hash.to_string();
     let task_id_owned = task_id.to_string();
     let worktree = worktree.to_path_buf();
-    watcher.subscribe(task_id, move |event| {
-        handle_file_event(&project_hash, &task_id_owned, &worktree, &event.file);
+    watcher.subscribe(task_id, move |_event| {
+        // All edits feed into the same coalescing slot — the worker
+        // debounces them so an AI burst that touches 50 files results
+        // in one reindex, not 50.
+        request_reindex_external(&project_hash, &task_id_owned, &worktree);
     });
 }
 
-fn handle_file_event(project_hash: &str, task_id: &str, worktree: &Path, rel_file: &Path) {
-    let Some(ext) = rel_file.extension().and_then(|s| s.to_str()) else {
-        return;
-    };
-    let Some(language) = Language::from_extension(ext) else {
-        return; // unsupported extension; nothing to update
-    };
-
-    let abs = worktree.join(rel_file);
-    let rel_str = rel_file.to_string_lossy().replace('\\', "/");
-
-    let store = match ensure_store(project_hash) {
-        Ok(s) => s,
-        Err(_) => return,
-    };
-
-    if !abs.exists() {
-        // File deleted: drop its rows.
-        let mut store = store.lock().expect("symbol store mutex poisoned");
-        let _ = store.delete_file(task_id, &rel_str);
-        return;
-    }
-
-    let bytes = match std::fs::read(&abs) {
-        Ok(b) => b,
-        Err(_) => return,
-    };
-    let mtime = file_mtime_unix(&abs).unwrap_or(0);
-    let symbols = extractor::extract(language, &rel_str, &bytes);
-    let mut store = store.lock().expect("symbol store mutex poisoned");
-    let _ = store.replace_file(task_id, &rel_str, mtime, symbols);
-}
-
-/// `git ls-files` output filtered to extensions we have grammars for.
 fn git_tracked_supported_files(worktree: &Path) -> Vec<(PathBuf, Language)> {
     let output = match Command::new("git")
         .args(["ls-files"])
@@ -372,12 +411,7 @@ mod tests {
             &worktree.join("vendor/v.go"),
             "package v\nfunc NotTracked() {}\n",
         );
-        // Write .gitignore so vendor isn't committed (simulating a real
-        // worktree where vendor is checked-in or not). Keep it simple:
-        // commit only a.go and readme.md.
         init_repo(&worktree);
-        // Reset and re-add only the files we want tracked, since init
-        // above added everything. Simpler: commit removes vendor.
         Command::new("git")
             .args(["rm", "-rq", "vendor"])
             .current_dir(&worktree)
@@ -397,17 +431,47 @@ mod tests {
     }
 
     #[test]
-    fn on_task_deleted_drops_rows_and_build_state() {
+    fn slot_coalesces_rapid_requests() {
+        let root = std::env::temp_dir().join("grove-symidx-coalesce");
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        set_grove_dir_override(Some(root.join("grove-home")));
+
+        let worktree = root.join("wt");
+        std::fs::create_dir_all(&worktree).unwrap();
+        write(&worktree.join("a.go"), "package x\nfunc One() {}\n");
+        init_repo(&worktree);
+
+        let slot = get_or_create_slot(("p-coalesce".into(), "t".into()));
+
+        // Fire 50 requests in rapid succession. Only one worker thread
+        // should be spawned; only one build should run after debounce.
+        for _ in 0..50 {
+            request_reindex_with(&slot, "p-coalesce", "t", &worktree);
+        }
+
+        // scheduled should be true exactly once across all calls.
+        assert!(slot.scheduled.load(Ordering::Acquire));
+
+        // Wait for the worker to finish. With DEBOUNCE=1500ms and a
+        // tiny project, one build cycle should complete well within 5s.
+        std::thread::sleep(Duration::from_millis(2500));
+
+        // After build done and no further requests, scheduled goes false.
+        assert!(!slot.scheduled.load(Ordering::Acquire));
+
+        // The build should have happened — `One` is in the index.
+        let hits = lookup("p-coalesce", "t", "One").unwrap();
+        assert_eq!(hits.len(), 1);
+    }
+
+    #[test]
+    fn on_task_deleted_drops_rows_and_slot() {
         let root = std::env::temp_dir().join("grove-symidx-cleanup");
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(&root).unwrap();
+        set_grove_dir_override(Some(root.join("grove-home")));
 
-        let grove_home = root.join("grove-home");
-        std::fs::create_dir_all(&grove_home).unwrap();
-        set_grove_dir_override(Some(grove_home));
-
-        // Seed two tasks under the same project so we can verify
-        // cleanup is task-scoped.
         let store = ensure_store("proj-x").unwrap();
         {
             let mut s = store.lock().unwrap();
@@ -444,35 +508,18 @@ mod tests {
             )
             .unwrap();
         }
-
-        // Pretend task-drop went through ensure_built so it has a
-        // BuildState entry; on_task_deleted must clear it too.
-        {
-            let mut reg = REGISTRY.write().unwrap();
-            reg.builds
-                .insert(("proj-x".into(), "task-drop".into()), BuildState::new());
-        }
+        // Pretend a slot existed.
+        get_or_create_slot(("proj-x".into(), "task-drop".into()));
 
         on_task_deleted("proj-x", "task-drop");
 
-        assert!(
-            lookup("proj-x", "task-drop", "Drop").unwrap().is_empty(),
-            "task-drop's rows should be gone"
-        );
-        assert_eq!(
-            lookup("proj-x", "task-keep", "Keep").unwrap().len(),
-            1,
-            "sibling task's rows must be untouched"
-        );
-        assert!(
-            REGISTRY
-                .read()
-                .unwrap()
-                .builds
-                .get(&("proj-x".to_string(), "task-drop".to_string()))
-                .is_none(),
-            "build state for deleted task should be cleared"
-        );
+        assert!(lookup("proj-x", "task-drop", "Drop").unwrap().is_empty());
+        assert_eq!(lookup("proj-x", "task-keep", "Keep").unwrap().len(), 1);
+        assert!(!REGISTRY
+            .read()
+            .unwrap()
+            .slots
+            .contains_key(&("proj-x".to_string(), "task-drop".to_string())));
     }
 
     #[test]
@@ -482,9 +529,7 @@ mod tests {
         std::fs::create_dir_all(&root).unwrap();
         set_grove_dir_override(Some(root.clone()));
 
-        // No prior indexing for this project — no index.db on disk.
         on_task_deleted("proj-empty", "task-x");
-        // Mustn't have created the file as a side effect.
         assert!(!root.join("projects/proj-empty/index.db").exists());
     }
 }
