@@ -437,6 +437,8 @@ pub async fn execute(port: u16) {
             crate::tray::tray_open_task,
             crate::tray::tray_take_pending_navigate,
             crate::tray::toggle_tray_popover_visibility,
+            crate::tray::tray_set_pinned,
+            crate::tray::tray_is_pinned,
         ])
         .setup(move |app| {
             // Create a window pointing to our HTTP server
@@ -542,7 +544,7 @@ pub async fn execute(port: u16) {
             ..
         } = &event
         {
-            if label == "tray-popover" {
+            if label == "tray-popover" && !crate::tray::is_popover_pinned() {
                 if let Some(win) = app_handle.get_webview_window("tray-popover") {
                     let _ = win.hide();
                 }

@@ -6,6 +6,7 @@
 //! "Open" actions just bring the main Grove window to the foreground —
 //! no deep-linking, no cross-window navigation events.
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 
 use serde::{Deserialize, Serialize};
@@ -13,7 +14,7 @@ use tauri::{
     image::Image,
     menu::{Menu, MenuEvent, MenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
-    AppHandle, Emitter, Manager, WebviewUrl, WebviewWindowBuilder,
+    AppHandle, Emitter, LogicalSize, Manager, WebviewUrl, WebviewWindowBuilder,
 };
 
 /// Wire schema for `tray:navigate` events and the pending-navigate stash.
@@ -61,6 +62,19 @@ const TRAY_ICON_BYTES: &[u8] = include_bytes!("../../src-tauri/icons/32x32.png")
 const POPOVER_LABEL: &str = "tray-popover";
 const POPOVER_WIDTH: f64 = 400.0;
 const POPOVER_HEIGHT: f64 = 580.0;
+const POPOVER_MIN_WIDTH: f64 = 320.0;
+const POPOVER_MIN_HEIGHT: f64 = 400.0;
+const POPOVER_MAX_WIDTH: f64 = 560.0;
+const POPOVER_MAX_HEIGHT: f64 = 900.0;
+
+/// Whether the tray popover is currently pinned as an always-on-top widget.
+/// Not persisted across launches — every Grove start defaults to unpinned so
+/// the user doesn't end up with a surprise floating window after reboot.
+static POPOVER_PINNED: AtomicBool = AtomicBool::new(false);
+
+pub fn is_popover_pinned() -> bool {
+    POPOVER_PINNED.load(Ordering::Relaxed)
+}
 
 // ─── Tauri commands ─────────────────────────────────────────────────────────
 
@@ -158,6 +172,85 @@ pub fn tray_take_pending_navigate() -> Option<NavigatePayload> {
     })
 }
 
+/// Pin (or unpin) the tray popover as an always-on-top widget.
+///
+/// Pinned: stays on top across other apps, becomes resizable within
+/// [320×400, 560×900], joins all Spaces (but **not** fullscreen apps —
+/// `fullScreenAuxiliary` is intentionally omitted).
+///
+/// Unpinned: drop always-on-top, restore fixed default size, hide the
+/// window so the gesture mirrors "click pin to dismiss".
+#[tauri::command]
+pub fn tray_set_pinned(app: AppHandle, pinned: bool) -> Result<(), String> {
+    let win = app
+        .get_webview_window(POPOVER_LABEL)
+        .ok_or_else(|| "popover window not available".to_string())?;
+    POPOVER_PINNED.store(pinned, Ordering::Relaxed);
+
+    if pinned {
+        let _ = win.set_always_on_top(true);
+        let _ = win.set_resizable(true);
+        let _ = win.set_min_size(Some(LogicalSize::new(
+            POPOVER_MIN_WIDTH,
+            POPOVER_MIN_HEIGHT,
+        )));
+        let _ = win.set_max_size(Some(LogicalSize::new(
+            POPOVER_MAX_WIDTH,
+            POPOVER_MAX_HEIGHT,
+        )));
+        #[cfg(target_os = "macos")]
+        apply_macos_pinned_behavior(&win, true);
+    } else {
+        #[cfg(target_os = "macos")]
+        apply_macos_pinned_behavior(&win, false);
+        let _ = win.set_always_on_top(false);
+        let _ = win.set_min_size(None::<LogicalSize<f64>>);
+        let _ = win.set_max_size(None::<LogicalSize<f64>>);
+        let _ = win.set_size(LogicalSize::new(POPOVER_WIDTH, POPOVER_HEIGHT));
+        let _ = win.set_resizable(false);
+        let _ = win.hide();
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub fn tray_is_pinned() -> bool {
+    is_popover_pinned()
+}
+
+/// macOS: toggle NSWindow.collectionBehavior so a pinned popover follows
+/// the user across regular Spaces but stays out of fullscreen-app Spaces
+/// (we deliberately do **not** set `fullScreenAuxiliary`).
+#[cfg(target_os = "macos")]
+fn apply_macos_pinned_behavior(win: &tauri::WebviewWindow, pinned: bool) {
+    use objc2::msg_send;
+    use objc2::runtime::AnyObject;
+
+    // NSWindowCollectionBehavior bits:
+    //   Default                 = 0
+    //   CanJoinAllSpaces        = 1 << 0
+    //   Stationary              = 1 << 4
+    const NS_DEFAULT: usize = 0;
+    const NS_CAN_JOIN_ALL_SPACES: usize = 1 << 0;
+    const NS_STATIONARY: usize = 1 << 4;
+
+    let Ok(ns_window_ptr) = win.ns_window() else {
+        return;
+    };
+    if ns_window_ptr.is_null() {
+        return;
+    }
+    let ns_window = ns_window_ptr as *mut AnyObject;
+    let behavior: usize = if pinned {
+        NS_CAN_JOIN_ALL_SPACES | NS_STATIONARY
+    } else {
+        NS_DEFAULT
+    };
+    unsafe {
+        let _: () = msg_send![ns_window, setCollectionBehavior: behavior];
+    }
+}
+
 /// Toggle the menubar popover via global shortcut. No anchor — the
 /// existing `compute_popover_position` fallback puts it at the primary
 /// monitor's menubar area, which matches users' mental model of where
@@ -169,8 +262,10 @@ pub fn toggle_tray_popover_visibility(app: AppHandle) -> Result<(), String> {
 }
 
 fn surface_main(app: &AppHandle) {
-    if let Some(popover) = app.get_webview_window(POPOVER_LABEL) {
-        let _ = popover.hide();
+    if !is_popover_pinned() {
+        if let Some(popover) = app.get_webview_window(POPOVER_LABEL) {
+            let _ = popover.hide();
+        }
     }
     if let Some(win) = app.get_webview_window("main") {
         let _ = win.unminimize();
@@ -237,8 +332,12 @@ fn show_popover_at(app: &AppHandle, anchor: Option<(f64, f64)>) {
     let Some(win) = app.get_webview_window(POPOVER_LABEL) else {
         return;
     };
-    if let Some((x, y)) = compute_popover_position(app, anchor) {
-        let _ = win.set_position(tauri::PhysicalPosition::new(x, y));
+    // Pinned widget keeps wherever the user dragged it — only reposition
+    // for the transient popover case.
+    if !is_popover_pinned() {
+        if let Some((x, y)) = compute_popover_position(app, anchor) {
+            let _ = win.set_position(tauri::PhysicalPosition::new(x, y));
+        }
     }
     let _ = win.show();
     let _ = win.set_focus();
@@ -246,6 +345,13 @@ fn show_popover_at(app: &AppHandle, anchor: Option<(f64, f64)>) {
 
 fn toggle_popover(app: &AppHandle, anchor: Option<(f64, f64)>) {
     if let Some(win) = app.get_webview_window(POPOVER_LABEL) {
+        // Pinned widget is already on screen — tray icon click just refocuses
+        // it instead of toggling. Hiding a pinned widget by accident would
+        // be a UX trap (user has to find the pin button to bring it back).
+        if is_popover_pinned() {
+            let _ = win.set_focus();
+            return;
+        }
         if win.is_visible().unwrap_or(false) {
             let _ = win.hide();
         } else {

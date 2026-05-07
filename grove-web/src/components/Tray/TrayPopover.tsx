@@ -23,8 +23,9 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { motion, LayoutGroup, AnimatePresence } from "framer-motion";
-import { Settings, ExternalLink, ChevronDown, X, Zap } from "lucide-react";
+import { Settings, ExternalLink, ChevronDown, X, Zap, Pin, PinOff, GripVertical } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useRadioEvents } from "../../hooks/useRadioEvents";
 import { agentOptions } from "../../data/agents";
 import type { RadioEvent } from "../../api/walkieTalkie";
@@ -154,7 +155,7 @@ export function TrayPopover() {
   const [chats, setChats] = useState<Map<string, ChatItem>>(() => new Map());
   const [now, setNow] = useState(() => Date.now());
   const [show, setShow] = useState<TrayShowConfig>(DEFAULT_SHOW);
-  const [recentOpen, setRecentOpen] = useState(false);
+  const [recentOpen, setRecentOpen] = useState(true);
 
   const hasLiveCard = useMemo(
     () =>
@@ -378,6 +379,49 @@ export function TrayPopover() {
   const handleOpenMain = () => {
     invoke("tray_open_main").catch((e) => console.error("[tray] open_main failed", e));
   };
+  const [pinned, setPinned] = useState(false);
+  useEffect(() => {
+    // Pin state isn't persisted across launches, but the popover webview
+    // can outlive a single show/hide cycle — so we still ask the backend
+    // for the current state on mount in case React re-mounts mid-session.
+    invoke<boolean>("tray_is_pinned")
+      .then((v) => setPinned(!!v))
+      .catch(() => {});
+  }, []);
+  const handleTogglePin = () => {
+    const next = !pinned;
+    setPinned(next);
+    invoke("tray_set_pinned", { pinned: next }).catch((e) => {
+      console.error("[tray] set_pinned failed", e);
+      setPinned(!next);
+    });
+  };
+  // Imperative drag — `data-tauri-drag-region` doesn't fire reliably in this
+  // webview, so we explicitly start a window drag on mousedown when pinned.
+  // Buttons inside the header stop propagation via their own onClick, so the
+  // drag handler only triggers on the empty / handle areas.
+  const handleHeaderMouseDown = (e: React.MouseEvent<HTMLElement>) => {
+    if (!pinned) return;
+    if (e.button !== 0) return;
+    const target = e.target as HTMLElement;
+    if (target.closest("button, a, input")) return;
+    e.preventDefault();
+    getCurrentWindow()
+      .startDragging()
+      .catch((err) => console.error("[tray] startDragging failed", err));
+  };
+  // Bottom-right resize grip — `decorations(false)` strips the system edge
+  // handles, so we synthesize a corner grip and call into Tauri's
+  // startResizeDragging("South-East") on mousedown.
+  const handleResizeMouseDown = (e: React.MouseEvent<HTMLElement>) => {
+    if (!pinned) return;
+    if (e.button !== 0) return;
+    e.preventDefault();
+    e.stopPropagation();
+    getCurrentWindow()
+      .startResizeDragging("SouthEast")
+      .catch((err) => console.error("[tray] startResizeDragging failed", err));
+  };
   const handleOpenSettings = () => {
     invoke("tray_open_settings").catch((e) =>
       console.error("[tray] open_settings failed", e),
@@ -392,16 +436,34 @@ export function TrayPopover() {
   };
 
   return (
-    <div className="flex h-screen flex-col overflow-hidden bg-[var(--color-bg-secondary)] text-[var(--color-text)] border border-[color-mix(in_srgb,var(--color-border)_70%,transparent)]">
-      {/* Header */}
-      <header className="flex items-center gap-3 border-b border-[color-mix(in_srgb,var(--color-border)_35%,transparent)] px-4 pt-3.5 pb-3">
+    <div
+      className={`relative flex h-screen flex-col overflow-hidden bg-[var(--color-bg-secondary)] text-[var(--color-text)] border ${pinned ? "border-[var(--color-highlight)]" : "border-[color-mix(in_srgb,var(--color-border)_70%,transparent)]"}`}
+    >
+      {/* Header — when pinned, the title strip becomes the drag handle so
+          the user can move the floating widget around the screen. */}
+      <header
+        className={`flex items-center gap-3 border-b border-[color-mix(in_srgb,var(--color-border)_35%,transparent)] px-4 pt-3.5 pb-3 ${pinned ? "cursor-grab active:cursor-grabbing select-none" : ""}`}
+        onMouseDown={handleHeaderMouseDown}
+        data-tauri-drag-region={pinned ? "" : undefined}
+      >
+        {pinned ? (
+          <GripVertical
+            size={14}
+            className="-ml-1 shrink-0 text-[var(--color-text-muted)]"
+            aria-label="Drag handle"
+          />
+        ) : null}
         <img
           src="/favicon.svg"
           alt="Grove"
           className="h-[20px] w-[20px] shrink-0"
           draggable={false}
+          data-tauri-drag-region={pinned ? "" : undefined}
         />
-        <div className="flex-1 leading-tight">
+        <div
+          className="flex-1 leading-tight"
+          data-tauri-drag-region={pinned ? "" : undefined}
+        >
           <div className="text-[13px] font-semibold">Grove</div>
           <div className="font-mono text-[11px] text-[var(--color-text-muted)]">
             {totalPending > 0 ? (
@@ -423,6 +485,13 @@ export function TrayPopover() {
             )}
           </div>
         </div>
+        <button
+          onClick={handleTogglePin}
+          className={`flex h-7 w-7 items-center justify-center transition-colors hover:bg-[var(--color-bg-tertiary)] ${pinned ? "text-[var(--color-highlight)]" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}
+          title={pinned ? "Unpin widget" : "Pin as widget (always on top)"}
+        >
+          {pinned ? <PinOff size={14} /> : <Pin size={14} />}
+        </button>
         <button
           onClick={handleOpenMain}
           className="flex h-7 w-7 items-center justify-center text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-bg-tertiary)] hover:text-[var(--color-text)]"
@@ -548,6 +617,18 @@ export function TrayPopover() {
           )}
         </div>
       </LayoutGroup>
+      {pinned ? (
+        <div
+          onMouseDown={handleResizeMouseDown}
+          title="Drag to resize"
+          aria-label="Resize widget"
+          className="absolute bottom-0 right-0 h-4 w-4 cursor-nwse-resize"
+          style={{
+            backgroundImage:
+              "linear-gradient(135deg, transparent 0 55%, var(--color-text-muted) 55% 62%, transparent 62% 75%, var(--color-text-muted) 75% 82%, transparent 82%)",
+          }}
+        />
+      ) : null}
     </div>
   );
 }
