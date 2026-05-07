@@ -210,6 +210,7 @@ export function SettingsPage({ config }: SettingsPageProps) {
     autolink: false,
     layout: false,
     hooks: false,
+    indexing: false,
     mcp: false,
   });
 
