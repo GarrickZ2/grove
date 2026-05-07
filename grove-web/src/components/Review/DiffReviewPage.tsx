@@ -214,6 +214,9 @@ export function DiffReviewPage({ projectId, taskId, embedded, navigateToFile, is
     // Store the pending navigation target; reset expansion tracker for the new target
     expandedForNavRef.current.clear();
     pendingNavRef.current = { file: navigateToFile.file, line: navigateToFile.line };
+    // Mode switch is staged here because navigateToFile is an external prop
+    // bumped via seq; we have no event handler to respond to.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setViewMode(navigateToFile.mode ?? 'full');
   }, [navigateToFile]);
 
@@ -402,6 +405,9 @@ export function DiffReviewPage({ projectId, taskId, embedded, navigateToFile, is
       expandedForNavRef.current.clear();
       pendingNavRef.current = null;
       const resolvedPath = match.new_path;
+      // Resolves a pending external nav once the lazy-loaded file appears in
+      // displayFiles — this is the only place the resolution can be observed.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setSelectedFile(resolvedPath);
       // currentFileIndex is derived from activeFilePath — auto-updates
       // Uncollapse it if collapsed
@@ -667,6 +673,9 @@ export function DiffReviewPage({ projectId, taskId, embedded, navigateToFile, is
     if (!modeSwitchReadyRef.current) return;
 
     const gen = ++fetchGenRef.current;
+    // Reset focus list + show loading spinner before async fetch dispatches below.
+    // Driven by viewMode/focusMode/projectId change — no equivalent event hook.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setFocusFiles([]);
     setLoading(true);
     // Reset scroll position so the new mode starts at the top

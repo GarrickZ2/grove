@@ -179,6 +179,9 @@ export function ArtifactsTab({ projectId, task, previewRequest, lastChatIdleAt, 
   // the ref always reflects the current upload state when this effect fires.
   useEffect(() => {
     if (lastChatIdleAt === undefined) return;
+    // loadFiles is async and any setState inside happens after `await`, so the
+    // setState is not synchronous within this effect body.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     if (!isUploadingRef.current) void loadFiles({ silent: true });
   }, [lastChatIdleAt, loadFiles]);
 
@@ -319,6 +322,9 @@ export function ArtifactsTab({ projectId, task, previewRequest, lastChatIdleAt, 
   useEffect(() => {
     if (!previewRequest || previewRequest.seq === lastPreviewSeqRef.current) return;
     lastPreviewSeqRef.current = previewRequest.seq;
+    // previewRequest is a seq-bumped external prop; we have no event handler
+    // to consume it, so the queued path is staged here for the next effect to drain.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setPendingPreview(previewRequest.file);
   }, [previewRequest]);
 

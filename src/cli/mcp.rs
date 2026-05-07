@@ -3661,9 +3661,9 @@ mod tests {
                 name: "Dashboard UI".to_string(),
             });
 
-            // No filter → both tasks
+            // No filter → both created tasks plus the auto-created Local task
             let all = list_tasks_json(&project_id, None);
-            assert_eq!(all["tasks"].as_array().unwrap().len(), 2);
+            assert_eq!(all["tasks"].as_array().unwrap().len(), 3);
 
             // Filter "dashboard" → only dashboard task
             let filtered = list_tasks_json(&project_id, Some("dashboard"));

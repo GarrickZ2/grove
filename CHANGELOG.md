@@ -5,6 +5,32 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.5] - 2026-05-07
+
+### Added
+
+- **Symbol indexing for Go (tree-sitter)** — Per-project `SymbolStore` backed by SQLite + in-memory cache, populated by a tree-sitter-go grammar that extracts top-level decls and struct fields. Index builds lazily on first access and stays current via watcher-driven incremental updates with a coalescing scheduler and mtime-gated writes. Exposed over HTTP (`lookup` / `reindex`) and wired into Monaco for cmd+click jump-to-definition, cmd+hover underline (via `DefinitionProvider`), peek preview, double-click navigation, and a multi-candidate picker when a name resolves to several symbols.
+- **Symbol Indexing settings panel** — New "Code Repo Indexing" section in Settings: master toggle + per-language enable list, with VSCode-style language icons on the chips and a portal'd language picker. `openSections` init updated so the section actually expands.
+- **`@ Share History` chat mention** — In a chat, `@` another chat to share its `history.jsonl` as context. Mention dropdown and `@file` chips now render VSCode file icons instead of generic glyphs.
+- **Project rename via inline edit on ProjectCard** — Click to rename projects directly from the card without opening settings.
+- **Drag-select preview comments** — Drag across multiple preview blocks to attach one comment to the whole range.
+- **Markdown TOC + IDE keep-alive panes** — TOC for markdown previews; IDE panes survive layout changes without losing terminal/process state.
+- **Per-task watcher event subscription API** — Lets clients subscribe to filesystem events scoped to a single task; tasks now activate explicitly via `/activate` instead of implicitly on first read.
+
+### Improved
+
+- **Local Task created at project registration** — Previously lazy-on-read, which left projects in an inconsistent state until first open. Now created up front so downstream code can rely on it existing.
+- **Tasks migrated to SQLite (storage v2.3 → v2.4)** — Moves task records out of TOML into `grove.db` alongside the rest of v2.3's migrated data. Migration is guarded with the same safety checks used for the review/notes migrations.
+- **Mobile web UI usability** — Layout, hit targets, and overflow handling reworked so the web IDE is actually usable on a phone (not just on tablets).
+- **Misc UI polish + small backend fixes** — assorted rough edges across the web frontend and Rust handlers.
+
+### Fixed
+
+- **Symbols index hardening per code review** — coding-task scope honored, comprehensive Go query (no missed decls), multi-candidate UI surfaces ambiguity instead of silently picking one, peek preview shows real file content, double-click navigation routes correctly, unused `/search` endpoint removed.
+- **Symbol cache lifecycle** — cached rows are dropped when a task is deleted *or* archived (previously archive leaked stale rows).
+- **Settings outside-click missed portal'd picker** — outside-click handler now sees clicks landing on portal'd picker DOM; section also renamed to "Code Repo Indexing" for clarity.
+- **Review hardening sweep** — fixes across symbols indexing, storage migrations, chat draft persistence, and UI per review feedback.
+
 ## [0.10.4] - 2026-05-04
 
 ### Added

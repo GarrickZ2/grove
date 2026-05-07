@@ -53,6 +53,9 @@ export function useChatPositioning({
     prevAutoScrollTailRef.current = autoScrollTailSignatureRef.current ?? "";
     autoStickToBottomRef.current = true;
     setShowScrollToBottom(false);
+    // Begin the position-pin orchestration (RAF/timer-driven below); the flag
+    // is read by the chat scroller to suppress its own auto-scroll while we pin.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setChatPositioning(true);
 
     let cancelled = false;

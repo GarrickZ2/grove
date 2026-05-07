@@ -20,7 +20,6 @@ export default defineConfig(({ mode }) => ({
                     const fnLine = event.fnLoc?.start?.line
                     const loc = event.detail?.loc
                     const errLine = typeof loc === 'object' && loc?.start?.line
-                    // eslint-disable-next-line no-console
                     console.warn('[react-compiler]', event.kind, filename, `fn:${fnLine ?? '?'}${errLine ? ` err:${errLine}` : ''}`, event.detail?.reason ?? '', event.detail?.description ?? '')
                   }
                 },

@@ -1,9 +1,3 @@
-// d3-force drives an SVG layout that legitimately reads refs during render
-// (pan state, container bounds, drag/edge bubble overlays) and uses
-// hand-tuned useCallback dep arrays the React Compiler can't preserve.
-// Re-introducing these as compiler-friendly patterns is a separate refactor.
-/* eslint-disable react-hooks/refs, react-hooks/preserve-manual-memoization */
-
 import {
   useCallback,
   useEffect,

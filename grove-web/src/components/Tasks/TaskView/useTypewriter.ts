@@ -33,6 +33,10 @@ export function useTypewriter(
       target.length > 0 &&
       !target.startsWith(prev.slice(0, Math.min(prev.length, target.length)))
     ) {
+      // Reset reveal counter on stream replacement (not extension). This is the
+      // documented "Adjusting state when a prop changes" pattern, expressed here
+      // as an effect because we also need to update targetRef in the same step.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setRevealed(0);
     }
   }, [target]);

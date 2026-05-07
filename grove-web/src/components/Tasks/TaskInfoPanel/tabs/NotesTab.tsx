@@ -64,6 +64,9 @@ export function NotesTab({ projectId, task }: NotesTabProps) {
     if (!pid) return;
 
     let cancelled = false;
+    // Initial loading state before async getNotes fetch below; driven by
+    // task.id change with no equivalent event hook upstream.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setIsLoading(true);
     setError(null);
     setIsEditing(false);
