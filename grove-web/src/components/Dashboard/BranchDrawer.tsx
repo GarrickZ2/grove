@@ -264,7 +264,6 @@ export function BranchDrawer({
     // Expand all first-level folders (only if not already in the set).
     // Effect-driven because expansion depends on async-loaded `localBranches`;
     // the `hasAutoExpandedRef` guard runs this exactly once per drawer-open.
-    // eslint-disable-next-line react-hooks/set-state-in-effect
     setExpandedFolders((prev) => {
       const next = new Set(prev);
       firstLevelFolders.forEach(folder => next.add(folder));

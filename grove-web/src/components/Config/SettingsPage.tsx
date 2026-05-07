@@ -308,9 +308,6 @@ export function SettingsPage({ config }: SettingsPageProps) {
     if (rect) setIndexingPickerPos({ top: rect.bottom + 4, left: rect.left });
   }, []);
 
-  /* eslint-disable react-hooks/set-state-in-effect -- legitimate
-     "open the picker" lifecycle: position is computed on mount and the
-     mousedown handler is a user-action callback, not a render cascade. */
   useEffect(() => {
     if (!indexingLangPickerOpen) return;
     updateIndexingPickerPos();
@@ -326,7 +323,6 @@ export function SettingsPage({ config }: SettingsPageProps) {
     document.addEventListener("mousedown", onDocClick);
     return () => document.removeEventListener("mousedown", onDocClick);
   }, [indexingLangPickerOpen, updateIndexingPickerPos]);
-  /* eslint-enable react-hooks/set-state-in-effect */
 
   const toggleSection = (id: string) => {
     setOpenSections((prev) => {

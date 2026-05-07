@@ -7,7 +7,7 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "build:perf": "tsc -b && vite build --mode perf",
-    "lint": "eslint .",
+    "lint": "eslint src/ --max-warnings 0",
     "preview": "vite preview"
   },
   "dependencies": {

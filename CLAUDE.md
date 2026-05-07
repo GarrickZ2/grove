@@ -126,8 +126,8 @@ all migrated into SQLite by the v1.x → v2.3 migration chain. `grove migrate
 ### Build
 
 ```
-cd grove-web && npm run build       # → grove-web/dist (clean prod, no perf code)
-cd grove-web && npm run build:perf  # → grove-web/dist (with perf monitor)
+cd grove-web && pnpm run build       # → grove-web/dist (clean prod, no perf code)
+cd grove-web && pnpm run build:perf  # → grove-web/dist (with perf monitor)
 ```
 
 The Rust binary embeds `grove-web/dist`. In **debug builds** (`cargo run`) the embed reads from disk on each request — rebuilding the web frontend takes effect without re-compiling Rust. In **release builds** the dist is baked into the binary.
@@ -157,7 +157,7 @@ Grove ships an in-house perf monitor that's **only included in dev/perf builds**
 
 | Layer | Mechanism | When active |
 |---|---|---|
-| Frontend | Vite mode `perf` (`if (import.meta.env.MODE === "perf")`) | `npm run build:perf` only — vite tree-shakes the entire `src/perf/` tree from `npm run build` output |
+| Frontend | Vite mode `perf` (`if (import.meta.env.MODE === "perf")`) | `pnpm run build:perf` only — vite tree-shakes the entire `src/perf/` tree from `pnpm run build` output |
 | Backend | Cargo feature `perf-monitor` (`#[cfg(feature = "perf-monitor")]`) | `cargo build --features perf-monitor` only — release binaries omit the dep, routes, and middleware |
 
 ### How to use
@@ -243,7 +243,7 @@ After any code change, end your response with explicit build status:
 
 ```
 ## Build Status
-- ✅/⚠️ npm run build (or build:perf): ...
+- ✅/⚠️ pnpm run build (or build:perf): ...
 - ✅/⚠️ Rust backend: needs/doesn't need rebuild
 ```
 
@@ -260,7 +260,7 @@ The pre-commit hook (`.githooks/pre-commit`) runs:
 1. `cargo fmt --all -- --check`
 2. `cargo clippy -- -D warnings`
 3. `cargo test`
-4. `npx eslint src/ --max-warnings 0` (in `grove-web/`)
+4. `pnpm eslint src/ --max-warnings 0` (in `grove-web/`)
 5. Version bump check (Cargo.toml differs from `master`, except on `master` itself)
 
 Activate it once per clone:

@@ -30,19 +30,19 @@ tui: ## Run TUI (no GUI / no web build)
 
 .PHONY: web
 web: ## Build web frontend (production, no perf monitor)
-	cd $(WEB_DIR) && npm run build
+	cd $(WEB_DIR) && pnpm run build
 
 .PHONY: web-perf
 web-perf: ## Build web frontend with perf monitor wired in
-	cd $(WEB_DIR) && npm run build:perf
+	cd $(WEB_DIR) && pnpm run build:perf
 
 .PHONY: web-dev
 web-dev: ## Start vite dev server (proxy /api to localhost:3001)
-	cd $(WEB_DIR) && npm run dev
+	cd $(WEB_DIR) && pnpm run dev
 
 .PHONY: web-lint
-web-lint: ## Run eslint on grove-web (zero warnings allowed)
-	cd $(WEB_DIR) && npx eslint . --max-warnings 0
+web-lint: ## Run eslint on grove-web — mirrors .github/workflows/ci.yml eslint job
+	cd $(WEB_DIR) && pnpm eslint src/ --max-warnings 0
 
 # ─── Rust ───────────────────────────────────────────────────────────────
 

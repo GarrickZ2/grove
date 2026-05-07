@@ -21,7 +21,7 @@ echo "   ✔ tests passed"
 # 4. ESLint check (grove-web)
 if [ -d "grove-web" ]; then
     echo ">> eslint (grove-web)"
-    (cd grove-web && npx eslint src/ --max-warnings 0)
+    (cd grove-web && pnpm eslint src/ --max-warnings 0)
     echo "   ✔ eslint passed"
 fi
 

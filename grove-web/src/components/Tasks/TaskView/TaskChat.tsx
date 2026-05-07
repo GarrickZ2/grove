@@ -4377,7 +4377,6 @@ export function TaskChat({
   useEffect(() => {
     // checkContent reads contentEditable DOM and may setState; this is the
     // only place attachment-driven recomputation is observable.
-    // eslint-disable-next-line react-hooks/set-state-in-effect
     checkContent();
   }, [attachments.length, checkContent]);
 

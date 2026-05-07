@@ -115,7 +115,6 @@ export function useAgentQuota(
     initialFetchStartedRef.current = true;
     // fetchData awaits a microtask before any setState (see implementation),
     // so the setState here is not synchronous within the effect body.
-    // eslint-disable-next-line react-hooks/set-state-in-effect
     void fetchData(agentId, false, effectiveModel);
     return () => {
       requestIdRef.current += 1;
@@ -133,7 +132,6 @@ export function useAgentQuota(
     if (wasBusy && !busy) {
       // fetchData awaits a microtask before any setState; the busy→idle edge
       // is observed in an effect because there's no synchronous "turn ended" event.
-      // eslint-disable-next-line react-hooks/set-state-in-effect
       void fetchData(agentId, false, effectiveModel);
     }
   }, [busy, agentId, effectiveModel, fetchData]);

@@ -324,7 +324,6 @@ function TreeNode({
     // Auto-expand when an ancestor of `selectedFile`. The ref guard above
     // ensures we don't re-expand after user collapses, so this is a one-shot
     // sync from external prop change.
-    // eslint-disable-next-line react-hooks/set-state-in-effect
     setExpanded(true);
     // In lazy-load mode, also trigger dir load so children become available.
     if (onExpandDir) onExpandDir(node.path).catch(console.error);

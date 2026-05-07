@@ -336,7 +336,6 @@ export function FileMentionDropdown({
     if (!visible || !anchorRef) return;
     // updatePosition reads anchor DOM rect and setPortalStyle; we must compute
     // it here because the listener-driven updates only fire on scroll/resize.
-    // eslint-disable-next-line react-hooks/set-state-in-effect
     updatePosition();
     window.addEventListener("scroll", updatePosition, true);
     window.addEventListener("resize", updatePosition);
