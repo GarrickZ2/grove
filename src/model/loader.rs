@@ -3,8 +3,10 @@
 //! 设计:
 //! - `load_worktrees` 只返回真正的 worktree 任务(不含 Local Task)
 //! - `load_local_task` 返回单独的 Local Task
-//! - 两者都会确保 Local Task 在 SQLite 中被创建/同步(给 notes/chats/sessions
-//!   的存储层使用),但对外的数据契约里 Local Task 和 worktree 任务是隔离的
+//! - Local Task 在项目注册时创建(`workspace::add_project_with_type` 等),
+//!   这里的 `ensure_local_task_synced` 只做同步(branch/target/path/name drift)
+//!
+//! 两者都会读取 Local Task,但对外的数据契约里 Local Task 和 worktree 任务是隔离的
 
 use std::path::Path;
 
@@ -15,14 +17,16 @@ use crate::storage::workspace::{self, project_hash};
 
 use super::{FileChanges, Worktree, WorktreeStatus};
 
-/// 确保 Local Task 记录在 SQLite 中存在并与项目状态同步
+/// 确保 Local Task 记录与项目状态同步
 ///
-/// 返回 `(active_tasks, project_key)`。`active_tasks` 包含已同步 Local Task
-/// 的完整任务列表(供后续拆分使用)。
+/// 只同步已有 Local Task 的字段(branch/target/path/name)。
+/// Local Task 的创建在项目注册时完成(`workspace::add_project_with_type` 等),
+/// 此函数不再负责创建。
+///
+/// 返回 `(active_tasks, project_key)`。
 fn ensure_local_task_synced(project_path: &str) -> (Vec<Task>, String) {
     let project_key = project_hash(project_path);
 
-    // 加载 tasks.toml (活跃任务)
     let mut active_tasks = match tasks::load_tasks(&project_key) {
         Ok(t) => t,
         Err(e) => {
@@ -34,7 +38,7 @@ fn ensure_local_task_synced(project_path: &str) -> (Vec<Task>, String) {
         }
     };
 
-    // Studio 项目没有主仓库,不应该创建 Local Task。
+    // Studio 项目没有 Local Task
     let project_meta = workspace::load_project_by_hash(&project_key).ok().flatten();
     let is_studio = matches!(
         project_meta.as_ref().map(|p| &p.project_type),
@@ -44,29 +48,27 @@ fn ensure_local_task_synced(project_path: &str) -> (Vec<Task>, String) {
         return (active_tasks, project_key);
     }
 
-    // 非 git 项目无分支概念,传空串
-    let is_git = git::is_git_repo(project_path);
-    let (current_branch, default_branch) = if is_git {
-        let cur = git::current_branch(project_path).unwrap_or_else(|_| "main".to_string());
-        let def = git::default_branch(project_path);
-        (cur, def)
-    } else {
-        (String::new(), String::new())
-    };
-
-    // 项目名(用作 Local Task 的显示名)
-    let project_name = project_meta
-        .as_ref()
-        .map(|p| p.name.clone())
-        .unwrap_or_else(|| {
-            Path::new(project_path)
-                .file_name()
-                .and_then(|n| n.to_str())
-                .unwrap_or("Local")
-                .to_string()
-        });
-
+    // 同步已有 Local Task 的字段 drift
     if let Some(local_task) = active_tasks.iter_mut().find(|t| t.id == LOCAL_TASK_ID) {
+        let is_git = git::is_git_repo(project_path);
+        let (current_branch, default_branch) = if is_git {
+            let cur = git::current_branch(project_path).unwrap_or_else(|_| "main".to_string());
+            let def = git::default_branch(project_path);
+            (cur, def)
+        } else {
+            (String::new(), String::new())
+        };
+        let project_name = project_meta
+            .as_ref()
+            .map(|p| p.name.clone())
+            .unwrap_or_else(|| {
+                Path::new(project_path)
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("Local")
+                    .to_string()
+            });
+
         let mut needs_save = false;
         if local_task.branch != current_branch {
             local_task.branch = current_branch.clone();
@@ -85,21 +87,7 @@ fn ensure_local_task_synced(project_path: &str) -> (Vec<Task>, String) {
             needs_save = true;
         }
         if needs_save {
-            // Local task already exists in this branch — must UPDATE, not
-            // INSERT. Old TOML code path was a save-whole-table overwrite;
-            // a naive `add_task` collides on the (project, id) primary key
-            // and silently fails, leaving stale branch/target/worktree_path.
             let _ = tasks::update_local_task(&project_key, local_task);
-        }
-    } else {
-        let local_task = tasks::create_local_task(
-            project_path,
-            &current_branch,
-            &default_branch,
-            &project_name,
-        );
-        if tasks::add_task(&project_key, local_task.clone()).is_ok() {
-            active_tasks.push(local_task);
         }
     }
 
@@ -108,8 +96,8 @@ fn ensure_local_task_synced(project_path: &str) -> (Vec<Task>, String) {
 
 /// 从 Task 元数据加载活跃 worktree 列表(**不含** Local Task)
 ///
-/// Local Task 仍然会在 tasks.toml 中被创建/同步(供存储层的 notes/chats 等复用),
-/// 但不会出现在返回的列表中。需要 Local Task 请使用 [`load_local_task`]。
+/// Local Task 在项目注册时创建,此处只做 branch/target drift 同步。
+/// Local Task 不会出现在返回的列表中。需要 Local Task 请使用 [`load_local_task`]。
 pub fn load_worktrees(project_path: &str) -> Vec<Worktree> {
     let (active_tasks, project_key) = ensure_local_task_synced(project_path);
 
@@ -137,7 +125,7 @@ pub fn load_worktrees(project_path: &str) -> Vec<Worktree> {
 
 /// 加载项目的 Local Task(每个项目有且只有一个)
 ///
-/// 返回 `None` 仅在 Local Task 创建失败这种极端情况(例如 tasks.toml 损坏)。
+/// Local Task 在项目注册时创建。返回 `None` 表示该项目尚未注册或为 Studio 项目。
 pub fn load_local_task(project_path: &str) -> Option<Worktree> {
     let (active_tasks, project_key) = ensure_local_task_synced(project_path);
     let local_task = active_tasks.iter().find(|t| t.is_local)?;

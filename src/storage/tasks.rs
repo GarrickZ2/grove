@@ -363,8 +363,7 @@ fn get_task_any(project: &str, task_id: &str) -> Result<Option<Task>> {
     Ok(task)
 }
 
-/// 创建 Local Task（指向主仓库的特殊任务，name 使用项目名称）
-pub fn create_local_task(
+fn build_local_task(
     repo_path: &str,
     current_branch: &str,
     default_branch: &str,
@@ -390,6 +389,44 @@ pub fn create_local_task(
         files_changed: 0,
         is_local: true,
     }
+}
+
+/// Ensure the Local Task for a project exists in the database.
+///
+/// Called at project registration time (`add_project`, `create_new_project`,
+/// `auto_register_cwd_if_git_repo`). If the Local Task already exists, this
+/// is a no-op — the sync-on-read path in `loader::ensure_local_task_synced`
+/// handles keeping branch/target/path/name up to date.
+pub fn ensure_local_task(
+    project_key: &str,
+    project_path: &str,
+    project_name: &str,
+) -> Result<()> {
+    let conn = crate::storage::database::connection();
+    let exists: bool = conn
+        .query_row(
+            "SELECT 1 FROM tasks WHERE project = ?1 AND id = ?2 LIMIT 1",
+            params![project_key, LOCAL_TASK_ID],
+            |_| Ok(true),
+        )
+        .unwrap_or(false);
+
+    if exists {
+        return Ok(());
+    }
+    drop(conn);
+
+    let is_git = crate::git::is_git_repo(project_path);
+    let (current_branch, default_branch) = if is_git {
+        let cur = crate::git::current_branch(project_path).unwrap_or_else(|_| "main".to_string());
+        let def = crate::git::default_branch(project_path);
+        (cur, def)
+    } else {
+        (String::new(), String::new())
+    };
+
+    let task = build_local_task(project_path, &current_branch, &default_branch, project_name);
+    add_task(project_key, task)
 }
 
 /// 生成全局唯一 chat/session ID ("chat-<uuid>")
