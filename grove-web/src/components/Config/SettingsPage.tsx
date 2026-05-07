@@ -16,7 +16,6 @@ import {
   Palette,
   Settings,
   Code,
-  FileCode,
   Wrench,
   Link,
   Plus,
@@ -26,7 +25,7 @@ import {
   Server,
   UserCog,
 } from "lucide-react";
-import { Button, Combobox, AppPicker, AgentPicker, agentOptions, ideAppOptions, terminalAppOptions, CustomAgentModal } from "../ui";
+import { Button, Combobox, AppPicker, AgentPicker, agentOptions, ideAppOptions, terminalAppOptions, CustomAgentModal, VSCodeIcon } from "../ui";
 import type { ComboboxOption } from "../ui";
 import { useTheme, themes, useConfig } from "../../context";
 import {
@@ -2070,11 +2069,10 @@ env_vars = [
                         key={l.id}
                         className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs bg-[var(--color-info)]/10 text-[var(--color-info)] border border-[var(--color-info)]/30"
                       >
-                        {/* Generic language icon — we don't ship per-language
-                            file-type icons in the bundle, so this is a
-                            placeholder that signals "this chip is a code
-                            language" without claiming any specific brand. */}
-                        <FileCode className="w-3 h-3" />
+                        {/* Real per-language icon from vscode-icons (same set
+                            the file tree uses). Synthesize `index.<ext>` so
+                            getIconForFile resolves to the language icon. */}
+                        <VSCodeIcon filename={`index.${l.extensions[0] ?? l.id}`} size={14} />
                         {l.display_name}
                         <button
                           onClick={() =>
@@ -2134,7 +2132,7 @@ env_vars = [
                             }}
                             className="w-full flex items-center gap-2 text-left px-2 py-1.5 rounded text-xs text-[var(--color-text)] hover:bg-[var(--color-bg-tertiary)]"
                           >
-                            <FileCode className="w-3 h-3" />
+                            <VSCodeIcon filename={`index.${l.extensions[0] ?? l.id}`} size={14} />
                             {l.display_name}
                           </button>
                         ))}
