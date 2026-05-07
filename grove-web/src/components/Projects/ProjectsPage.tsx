@@ -17,7 +17,7 @@ interface ProjectsPageProps {
 }
 
 export function ProjectsPage({ onNavigate, initialTab }: ProjectsPageProps) {
-  const { projects, selectedProject, selectProject, addProject, createNewProject, deleteProject, refreshProjects } = useProject();
+  const { projects, selectedProject, selectProject, addProject, createNewProject, deleteProject, renameProject, refreshProjects } = useProject();
   const { isMobile } = useIsMobile();
   const codingProjects = useMemo(() => filterProjectsByType(projects, "coding"), [projects]);
   const studioProjects = useMemo(() => filterProjectsByType(projects, "studio"), [projects]);
@@ -119,6 +119,10 @@ export function ProjectsPage({ onNavigate, initialTab }: ProjectsPageProps) {
     onNavigate?.("dashboard");
   };
 
+  const handleRenameProject = async (project: Project, newName: string) => {
+    await renameProject(project.id, newName);
+  };
+
   const renderProjectGrid = (items: Project[], sectionKey: string, includeAddCard = false) => (
     <div className={`grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 ${isMobile ? "gap-2" : "gap-4"}`}>
       {items.map((project, index) => (
@@ -134,6 +138,7 @@ export function ProjectsPage({ onNavigate, initialTab }: ProjectsPageProps) {
             onSelect={() => handleSelectProject(project)}
             onDoubleClick={() => handleDoubleClick(project)}
             onDelete={() => setProjectToDelete(project)}
+            onRename={(newName) => handleRenameProject(project, newName)}
             compact={isMobile}
           />
         </motion.div>

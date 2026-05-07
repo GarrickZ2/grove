@@ -7,6 +7,7 @@ import {
   addProject as apiAddProject,
   createNewProject as apiCreateNewProject,
   deleteProject as apiDeleteProject,
+  renameProject as apiRenameProject,
   type ProjectListItem,
   type ProjectResponse,
   type TaskResponse,
@@ -21,6 +22,7 @@ interface ProjectContextType {
   addProject: (path: string, name?: string) => Promise<Project>;
   createNewProject: (parentDir: string, name: string, initGit: boolean, projectType?: string) => Promise<Project>;
   deleteProject: (id: string) => Promise<void>;
+  renameProject: (id: string, name: string) => Promise<void>;
   refreshProjects: () => Promise<void>;
   refreshSelectedProject: () => Promise<void>;
   /**
@@ -251,7 +253,6 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
   const applySelectedProject = useCallback(
     (response: ProjectResponse) => {
       setSelectedProject(convertProject(response));
-      // Refresh list in background so task counts / is_git_repo flags stay in sync
       void loadProjects();
     },
     [loadProjects],
@@ -269,6 +270,18 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
     }
   }, [selectedProject, loadProjectDetails, loadProjects]);
 
+  const renameProject = useCallback(
+    async (id: string, name: string): Promise<void> => {
+      await apiRenameProject(id, name);
+      if (selectedProject?.id === id) {
+        await refreshSelectedProject();
+      } else {
+        await loadProjects();
+      }
+    },
+    [selectedProject, refreshSelectedProject, loadProjects]
+  );
+
   return (
     <ProjectContext.Provider
       value={{
@@ -280,6 +293,7 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
         createNewProject,
         applySelectedProject,
         deleteProject,
+        renameProject,
         refreshProjects,
         refreshSelectedProject,
         isLoading,

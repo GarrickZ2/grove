@@ -164,6 +164,7 @@ pub fn create_api_router() -> Router {
             post(handlers::projects::create_new_project),
         )
         .route("/projects/{id}", get(handlers::projects::get_project))
+        .route("/projects/{id}", patch(handlers::projects::rename_project))
         .route("/projects/{id}", delete(handlers::projects::delete_project))
         .route("/projects/{id}/stats", get(handlers::projects::get_stats))
         // Studio Resource API

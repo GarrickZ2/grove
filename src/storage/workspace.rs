@@ -239,6 +239,11 @@ pub fn add_project_with_type(name: &str, path: &str, project_type: ProjectType) 
         "INSERT INTO projects (hash, name, path, is_git_repo, added_at, project_type) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
         rusqlite::params![&hash, name, &resolved_path, is_git, &now, project_type.as_str()],
     )?;
+    drop(conn);
+
+    if project_type == ProjectType::Repo {
+        let _ = crate::storage::tasks::ensure_local_task(&hash, &resolved_path, name);
+    }
 
     Ok(())
 }
@@ -276,6 +281,9 @@ pub fn upsert_project(name: &str, path: &str) -> Result<()> {
             "INSERT INTO projects (hash, name, path, is_git_repo, added_at, project_type) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
             rusqlite::params![&hash, name, &resolved_path, is_git, &now, ProjectType::Repo.as_str()],
         )?;
+        drop(conn);
+        let _ = crate::storage::tasks::ensure_local_task(&hash, &resolved_path, name);
+        return Ok(());
     }
 
     Ok(())
@@ -434,6 +442,18 @@ pub fn create_studio_project(name: &str) -> Result<String> {
 pub fn studio_project_dir(project_path: &str) -> std::path::PathBuf {
     let hash = project_hash(project_path);
     grove_dir().join("studios").join(hash)
+}
+
+pub fn rename_project(hash: &str, new_name: &str) -> Result<()> {
+    let conn = crate::storage::database::connection();
+    let changes = conn.execute(
+        "UPDATE projects SET name = ?1 WHERE hash = ?2",
+        rusqlite::params![new_name, hash],
+    )?;
+    if changes == 0 {
+        return Err(crate::error::GroveError::storage("Project not found"));
+    }
+    Ok(())
 }
 
 /// 设置项目的 is_git_repo 标志

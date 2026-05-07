@@ -76,6 +76,12 @@ pub struct ProjectResponse {
     pub project_type: String,
 }
 
+/// Rename project request
+#[derive(Debug, Deserialize)]
+pub struct RenameProjectRequest {
+    pub name: String,
+}
+
 /// Add project request
 #[derive(Debug, Deserialize)]
 pub struct AddProjectRequest {

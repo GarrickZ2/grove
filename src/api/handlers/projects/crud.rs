@@ -414,8 +414,7 @@ pub async fn add_project(
         String::new()
     };
 
-    // Local Task 是 Coding Project 的核心组成部分,注册时立刻落盘并补齐 _local slot,
-    // 否则 Blitz 视图要等到第一次创建普通 Task 后才能看到这个项目。
+    // Local Task 已在 add_project_with_type 中创建,此处读取以填充响应。
     let local_task = loader::load_local_task(&resolved_path).map(|wt| TaskResponse {
         id: wt.id,
         name: wt.task_name,
@@ -554,6 +553,44 @@ pub async fn create_new_project(
 }
 
 /// DELETE /api/v1/projects/{id}
+pub async fn rename_project(
+    Path(id): Path<String>,
+    Json(req): Json<RenameProjectRequest>,
+) -> Result<Json<ProjectResponse>, (StatusCode, Json<ApiError>)> {
+    let trimmed = req.name.trim().to_string();
+    if trimmed.is_empty() {
+        return Err(ApiError::bad_request("Project name cannot be empty".to_string()));
+    }
+
+    let (project, _) = common::find_project_by_id(&id).map_err(|s| {
+        (
+            s,
+            Json(ApiError {
+                error: "Project not found".to_string(),
+            }),
+        )
+    })?;
+
+    let hash = workspace::project_hash(&project.path);
+    workspace::rename_project(&hash, &trimmed).map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ApiError {
+                error: e.to_string(),
+            }),
+        )
+    })?;
+
+    get_project(Path(id)).await.map_err(|s| {
+        (
+            s,
+            Json(ApiError {
+                error: "Failed to load updated project".to_string(),
+            }),
+        )
+    })
+}
+
 pub async fn delete_project(Path(id): Path<String>) -> Result<StatusCode, StatusCode> {
     let (project, _) = common::find_project_by_id(&id)?;
 

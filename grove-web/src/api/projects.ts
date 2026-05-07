@@ -130,6 +130,10 @@ export async function deleteProject(id: string): Promise<void> {
   return apiClient.delete(`/api/v1/projects/${id}`);
 }
 
+export async function renameProject(id: string, name: string): Promise<ProjectResponse> {
+  return apiClient.patch<{ name: string }, ProjectResponse>(`/api/v1/projects/${id}`, { name });
+}
+
 /**
  * Get project statistics
  */
