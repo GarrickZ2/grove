@@ -5168,7 +5168,7 @@ export function TaskChat({
           />
 
           {/* Input */}
-          <div ref={inputAreaRef} className="pointer-events-none absolute inset-x-0 bottom-0 z-10 px-3 pb-4 pt-2">
+          <div ref={inputAreaRef} className="pointer-events-none absolute inset-x-0 z-10 px-3 pb-4 pt-2" style={{ bottom: "var(--grove-kb-inset, 0px)" }}>
             <div className="pointer-events-none absolute inset-x-0 bottom-0 h-24 bg-[linear-gradient(to_top,color-mix(in_srgb,var(--color-bg)_96%,transparent),transparent)]" />
             <div className="chatbox-cq-root pointer-events-auto relative mx-auto w-full max-w-[920px]">
               {isRemoteSession && (

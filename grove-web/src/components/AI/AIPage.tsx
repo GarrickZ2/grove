@@ -115,16 +115,16 @@ export function AIPage() {
       : "Transcribe Only";
 
   return (
-    <div className="flex h-full flex-col">
-      <div className="mb-5 rounded-3xl border border-[var(--color-border)] bg-[linear-gradient(135deg,color-mix(in_srgb,var(--color-highlight)_8%,transparent),transparent_48%,color-mix(in_srgb,var(--color-accent)_10%,transparent))] p-6">
+    <div className="flex min-h-full lg:h-full flex-col">
+      <div className="mb-4 sm:mb-5 rounded-2xl sm:rounded-3xl border border-[var(--color-border)] bg-[linear-gradient(135deg,color-mix(in_srgb,var(--color-highlight)_8%,transparent),transparent_48%,color-mix(in_srgb,var(--color-accent)_10%,transparent))] p-4 sm:p-6">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
           <div className="max-w-2xl">
             <div className="inline-flex items-center gap-2 rounded-full border border-[var(--color-border)] bg-[var(--color-bg)]/70 px-3 py-1 text-xs font-semibold uppercase tracking-[0.18em] text-[var(--color-text-muted)]">
               <Sparkles className="h-3.5 w-3.5 text-[var(--color-highlight)]" />
               AI Control Plane
             </div>
-            <h1 className="mt-4 text-3xl font-semibold tracking-tight text-[var(--color-text)]">AI Settings</h1>
-            <p className="mt-3 max-w-xl text-sm leading-6 text-[var(--color-text-muted)]">
+            <h1 className="mt-3 sm:mt-4 text-2xl sm:text-3xl font-semibold tracking-tight text-[var(--color-text)]">AI Settings</h1>
+            <p className="mt-2 sm:mt-3 max-w-xl text-sm leading-6 text-[var(--color-text-muted)]">
               A dedicated space for Grove-native AI features. Providers stay global, while Audio settings can carry project-aware behavior without leaking provider credentials into every feature.
             </p>
           </div>
@@ -144,7 +144,7 @@ export function AIPage() {
         </div>
       </div>
 
-      <div className="flex items-center gap-1 border-b border-[var(--color-border)] pb-4">
+      <div className="flex items-center gap-1 border-b border-[var(--color-border)] pb-3 sm:pb-4 overflow-x-auto">
         {tabs.map((tab) => {
           const Icon = tab.icon;
           const isActive = activeTab === tab.id;
@@ -172,7 +172,7 @@ export function AIPage() {
         })}
       </div>
 
-      <div className="flex-1 overflow-y-auto pt-5">
+      <div className="lg:flex-1 lg:overflow-y-auto pt-5">
         {loading ? (
           <div className="flex items-center justify-center py-12 text-sm text-[var(--color-text-muted)]">
             Loading AI settings...

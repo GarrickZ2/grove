@@ -38,6 +38,7 @@ import {
 import { SketchPage } from "../../Studio/SketchPage";
 import { OPEN_SKETCH_EVENT, type OpenSketchDetail } from "../../ui/sketchChipCache";
 import { useConfig, useProject } from "../../../context";
+import { useIsMobile } from "../../../hooks";
 
 const AUX_PANEL_CONFIG: Record<AuxPanelType, { label: string; icon: typeof Terminal }> = {
   terminal: { label: "Terminal", icon: Terminal },
@@ -142,6 +143,7 @@ function Toolbar({
   update,
   isStudio,
   terminalAvailable,
+  isMobile,
   leading,
   trailing,
 }: {
@@ -149,6 +151,7 @@ function Toolbar({
   update: (partial: Partial<IDELayoutInternalState>) => void;
   isStudio: boolean;
   terminalAvailable: boolean;
+  isMobile: boolean;
   leading?: React.ReactNode;
   trailing?: React.ReactNode;
 }) {
@@ -171,11 +174,15 @@ function Toolbar({
       {leading && <div className="ide-toolbar__leading">{leading}</div>}
 
       <button
-        onClick={() =>
-          update({ chatVisible: state.chatVisible ? !hasOpenPanel : true })
-        }
-        disabled={state.chatVisible && !hasOpenPanel}
-        className={`ide-toolbar__btn ide-toolbar__btn--chat ${state.chatVisible ? "ide-toolbar__btn--active" : ""}`}
+        onClick={() => {
+          if (isMobile) {
+            update({ chatVisible: true, auxVisible: false, infoVisible: false });
+          } else {
+            update({ chatVisible: state.chatVisible ? !hasOpenPanel : true });
+          }
+        }}
+        disabled={!isMobile && state.chatVisible && !hasOpenPanel}
+        className={`ide-toolbar__btn ide-toolbar__btn--chat ${state.chatVisible && !state.auxVisible && !state.infoVisible ? "ide-toolbar__btn--active" : (state.chatVisible && !isMobile ? "ide-toolbar__btn--active" : "")}`}
         title={hasOpenPanel ? "Toggle Chat" : "Chat stays visible until another panel is open"}
       >
         <MessageSquare size={13} />
@@ -189,11 +196,18 @@ function Toolbar({
           return (
             <button
               key={type}
-              onClick={() =>
-                isActive
-                  ? update({ auxVisible: false })
-                  : update({ auxType: type, auxVisible: true })
-              }
+              onClick={() => {
+                if (isMobile) {
+                  if (isActive) {
+                    update({ auxVisible: false, chatVisible: true });
+                  } else {
+                    update({ auxType: type, auxVisible: true, chatVisible: false, infoVisible: false });
+                  }
+                } else {
+                  if (isActive) update({ auxVisible: false });
+                  else update({ auxType: type, auxVisible: true });
+                }
+              }}
               className={`ide-toolbar__btn ${isActive ? "ide-toolbar__btn--active" : ""}`}
               title={`${label} (${shortcut})`}
             >
@@ -212,11 +226,18 @@ function Toolbar({
           return (
             <button
               key={type}
-              onClick={() =>
-                isActive
-                  ? update({ infoVisible: false })
-                  : update({ infoType: type, infoVisible: true })
-              }
+              onClick={() => {
+                if (isMobile) {
+                  if (isActive) {
+                    update({ infoVisible: false, chatVisible: true });
+                  } else {
+                    update({ infoType: type, infoVisible: true, chatVisible: false, auxVisible: false });
+                  }
+                } else {
+                  if (isActive) update({ infoVisible: false });
+                  else update({ infoType: type, infoVisible: true });
+                }
+              }}
               className={`ide-toolbar__btn ${isActive ? "ide-toolbar__btn--active" : ""}`}
               title={`${label} (${shortcut})`}
             >
@@ -273,6 +294,7 @@ export const IDELayoutContainer = forwardRef<IDELayoutHandle, IDELayoutContainer
   function IDELayoutContainer({ task, projectId, toolbarLeading, toolbarTrailing }, ref) {
     const { selectedProject } = useProject();
     const { terminalAvailable } = useConfig();
+    const { isMobile } = useIsMobile();
     const isStudio = selectedProject?.projectType === "studio";
     const isGitRepo = selectedProject?.isGitRepo;
 
@@ -731,6 +753,7 @@ export const IDELayoutContainer = forwardRef<IDELayoutHandle, IDELayoutContainer
         update={update}
         isStudio={isStudio}
         terminalAvailable={terminalAvailable}
+        isMobile={isMobile}
         leading={toolbarLeading}
         trailing={toolbarTrailing}
       />

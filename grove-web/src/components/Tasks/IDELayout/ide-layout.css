@@ -515,6 +515,34 @@
   }
 }
 
+/* ── Mobile: single visible pane (toolbar acts as pane switcher) ────────── */
+@media (max-width: 768px) {
+  .ide-workbench {
+    padding: 4px;
+  }
+
+  .ide-layout {
+    /* Override JS-set inline grid-template-columns to a single full-width col
+       and a single full-height row, then stack all panes in the same cell so
+       the visible one (others are display:none) fills the whole grid. */
+    grid-template-columns: minmax(0, 1fr) !important;
+    grid-template-rows: minmax(0, 1fr) !important;
+  }
+
+  .ide-aux-host,
+  .ide-info-host,
+  .ide-chat-surface {
+    grid-column: 1;
+    grid-row: 1;
+    min-width: 0;
+    min-height: 0;
+  }
+
+  .ide-resizer {
+    display: none;
+  }
+}
+
 @media (max-width: 1280px) {
   .ide-toolbar__group .ide-toolbar__btn span {
     display: none;

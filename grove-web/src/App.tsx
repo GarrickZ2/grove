@@ -5,6 +5,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { Sidebar } from "./components/Layout/Sidebar";
 import { MobileHeader } from "./components/Layout/MobileHeader";
 import { MobileDrawer } from "./components/Layout/MobileDrawer";
+import { NotificationPopover } from "./components/Layout/NotificationPopover";
 import { SettingsPage } from "./components/Config";
 import { DashboardPage } from "./components/Dashboard";
 import { BlitzPage } from "./components/Blitz";
@@ -74,6 +75,7 @@ function AppContent() {
   const [isAddingProject, setIsAddingProject] = useState(false);
   const [addProjectError, setAddProjectError] = useState<string | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [mobileNotifOpen, setMobileNotifOpen] = useState(false);
   const [showHelp, setShowHelp] = useState(false);
   const { isMobile } = useIsMobile();
   const {
@@ -134,6 +136,27 @@ function AppContent() {
     const open = () => setShowHelp(true);
     window.addEventListener("grove:open-help", open);
     return () => window.removeEventListener("grove:open-help", open);
+  }, []);
+
+  // Mobile virtual-keyboard tracker: exposes the keyboard height as a global
+  // CSS variable (--grove-kb-inset). Bottom-anchored UI uses
+  // `bottom: var(--grove-kb-inset, 0)` to lift above the keyboard on iOS.
+  useEffect(() => {
+    if (typeof window === "undefined" || !window.visualViewport) return;
+    const vv = window.visualViewport;
+    const root = document.documentElement;
+    const onResize = () => {
+      const offset = window.innerHeight - vv.height - vv.offsetTop;
+      root.style.setProperty("--grove-kb-inset", `${offset > 50 ? offset : 0}px`);
+    };
+    vv.addEventListener("resize", onResize);
+    vv.addEventListener("scroll", onResize);
+    onResize();
+    return () => {
+      vv.removeEventListener("resize", onResize);
+      vv.removeEventListener("scroll", onResize);
+      root.style.removeProperty("--grove-kb-inset");
+    };
   }, []);
 
   useEffect(() => {
@@ -676,14 +699,16 @@ function AppContent() {
   // Mobile layout
   if (isMobile) {
     return (
-      <div className="flex flex-col h-screen bg-[var(--color-bg)] overflow-hidden">
+      <div className="flex flex-col h-[100dvh] bg-[var(--color-bg)] overflow-hidden">
         <UpdateBanner />
         <MobileHeader
           onMenuOpen={() => setDrawerOpen(true)}
-          onNotificationOpen={() => {
-            setDrawerOpen(true);
-            // Notification will be accessible from drawer sidebar
-          }}
+          onNotificationOpen={() => setMobileNotifOpen(true)}
+        />
+        <NotificationPopover
+          isOpen={mobileNotifOpen}
+          onClose={() => setMobileNotifOpen(false)}
+          onNavigate={handleNavigate}
         />
         <MobileDrawer isOpen={drawerOpen} onClose={() => setDrawerOpen(false)}>
           <Sidebar
@@ -693,7 +718,7 @@ function AppContent() {
           />
         </MobileDrawer>
 
-        <main className={`relative flex-1 ${isFullWidthPage && !isDashboardPage ? "overflow-hidden" : "overflow-y-auto"}`}>
+        <main className={`relative flex-1 ${(activeItem === "tasks" && tasksMode !== "blitz") || activeItem === "work" ? "overflow-hidden" : "overflow-y-auto"}`}>
           {/* TasksPage always mounted on mobile too */}
           <div
             className="h-full p-3"
@@ -709,7 +734,7 @@ function AppContent() {
               exitWorkspaceSignal={tasksExitSignal}
             />
           </div>
-          <div className={isFullWidthPage ? "h-full p-3" : "max-w-5xl mx-auto p-3"}
+          <div className={activeItem === "work" ? "h-full p-3" : isFullWidthPage ? "min-h-full p-3" : "max-w-5xl mx-auto p-3"}
                style={{ display: activeItem === "tasks" && tasksMode !== "blitz" ? "none" : undefined }}>
             <AnimatePresence mode="wait">
               {tasksMode === "blitz" ? (
@@ -726,7 +751,7 @@ function AppContent() {
               ) : (
                 <motion.div
                   key="zen-content"
-                  className="w-full h-full"
+                  className={activeItem === "work" ? "w-full h-full" : "w-full min-h-full"}
                   initial={{ opacity: 0 }}
                   animate={{ opacity: 1 }}
                   exit={{ opacity: 0 }}

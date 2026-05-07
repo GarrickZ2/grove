@@ -1,5 +1,27 @@
+import { useEffect, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useIsMobile } from "../../hooks";
+
+/** Track the visualViewport so a dialog can be positioned exactly inside it
+ *  (above any virtual keyboard, below the iOS top bar, etc). Returns the
+ *  fixed-position rectangle the visualViewport currently occupies in layout
+ *  viewport coordinates. */
+function useVisualViewportRect(enabled: boolean) {
+  const [rect, setRect] = useState<{ top: number; height: number } | null>(null);
+  useEffect(() => {
+    if (!enabled || typeof window === "undefined" || !window.visualViewport) return;
+    const vv = window.visualViewport;
+    const update = () => setRect({ top: vv.offsetTop, height: vv.height });
+    vv.addEventListener("resize", update);
+    vv.addEventListener("scroll", update);
+    update();
+    return () => {
+      vv.removeEventListener("resize", update);
+      vv.removeEventListener("scroll", update);
+    };
+  }, [enabled]);
+  return rect;
+}
 
 interface DialogShellProps {
   isOpen: boolean;
@@ -28,6 +50,11 @@ export function DialogShell({
   zIndex = 50,
 }: DialogShellProps) {
   const { isMobile } = useIsMobile();
+  const vvRect = useVisualViewportRect(isMobile && isOpen);
+
+  // No body-level scroll lock — that breaks touch-scroll inside the dialog
+  // on iOS Safari. The dialog itself uses `overscroll-contain` to keep its
+  // scroll from chaining to the page behind.
 
   return (
     <AnimatePresence>
@@ -51,23 +78,35 @@ export function DialogShell({
 
           {/* Dialog */}
           {isMobile ? (
-            /* Mobile: Bottom Sheet */
-            <motion.div
-              initial={{ y: "100%" }}
-              animate={{ y: 0 }}
-              exit={{ y: "100%" }}
-              transition={{ type: "spring", damping: 30, stiffness: 300 }}
-              className="fixed inset-x-0 bottom-0 w-full max-h-[85vh] overflow-y-auto"
-              style={{ zIndex }}
+            /* Mobile: viewport-aligned wrapper that pins the bottom-sheet to
+               the bottom of the visualViewport (i.e. just above any virtual
+               keyboard). The wrapper itself is pointer-events:none so the
+               backdrop receives clicks outside the sheet. */
+            <div
+              className="fixed inset-x-0 flex flex-col justify-end pointer-events-none"
+              style={{
+                zIndex,
+                top: vvRect?.top ?? 0,
+                height: vvRect ? `${vvRect.height}px` : "100%",
+              }}
             >
-              <div className="bg-[var(--color-bg-secondary)] border-t border-[var(--color-border)] rounded-t-2xl shadow-xl overflow-hidden">
-                {/* Drag indicator */}
-                <div className="flex justify-center pt-3 pb-1">
-                  <div className="w-10 h-1 rounded-full bg-[var(--color-border)]" />
+              <motion.div
+                initial={{ y: "100%" }}
+                animate={{ y: 0 }}
+                exit={{ y: "100%" }}
+                transition={{ type: "spring", damping: 30, stiffness: 300 }}
+                className="pointer-events-auto w-full max-h-full overflow-y-auto overscroll-contain"
+                style={{ WebkitOverflowScrolling: "touch" }}
+              >
+                <div className="bg-[var(--color-bg-secondary)] border-t border-[var(--color-border)] rounded-t-2xl shadow-xl overflow-hidden">
+                  {/* Drag indicator */}
+                  <div className="flex justify-center pt-3 pb-1">
+                    <div className="w-10 h-1 rounded-full bg-[var(--color-border)]" />
+                  </div>
+                  {children}
                 </div>
-                {children}
-              </div>
-            </motion.div>
+              </motion.div>
+            </div>
           ) : (
             /* Desktop: Centered modal */
             <motion.div

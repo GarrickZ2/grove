@@ -591,7 +591,7 @@ export function DashboardPage({ onNavigate }: DashboardPageProps) {
       initial={{ opacity: 0, y: 12 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.25 }}
-      className="h-full flex flex-col gap-5 select-none"
+      className="min-h-full lg:h-full flex flex-col gap-4 sm:gap-5 select-none"
     >
       {/* Toast */}
       <AnimatePresence>
@@ -608,14 +608,14 @@ export function DashboardPage({ onNavigate }: DashboardPageProps) {
       </AnimatePresence>
 
       {/* ── Two-column layout ── */}
-      <div className={`flex-1 min-h-0 grid grid-cols-1 gap-5 items-stretch ${isGitRepo ? "lg:grid-cols-[minmax(0,1fr)_minmax(260px,340px)]" : ""}`}>
+      <div className={`lg:flex-1 lg:min-h-0 grid grid-cols-1 gap-4 sm:gap-5 items-stretch ${isGitRepo ? "lg:grid-cols-[minmax(0,1fr)_minmax(260px,340px)]" : ""}`}>
 
         {/* ── Left column ── */}
-        <div className="flex flex-col gap-5 min-h-0">
+        <div className="flex flex-col gap-4 sm:gap-5 lg:min-h-0">
 
           {/* Hero */}
           <section
-            className="flex items-center gap-4 rounded-2xl border border-[var(--color-border)] px-5 py-4"
+            className="flex flex-wrap items-center gap-3 sm:gap-4 rounded-2xl border border-[var(--color-border)] px-4 py-3 sm:px-5 sm:py-4"
             style={{
               background: `linear-gradient(135deg, color-mix(in srgb, ${projectColor.fg} 8%, var(--color-bg-secondary)), var(--color-bg-secondary) 48%, color-mix(in srgb, var(--color-accent) 10%, var(--color-bg-secondary)))`,
             }}
@@ -661,7 +661,7 @@ export function DashboardPage({ onNavigate }: DashboardPageProps) {
               </div>
             </div>
             {!isStudio && (
-              <div className="flex items-center gap-2 shrink-0">
+              <div className="flex items-center gap-2 shrink-0 w-full sm:w-auto justify-end flex-wrap">
                 {serverPlatform === "macos" && (
                   <>
                     <HeroButton icon={Code2} label="Open IDE" onClick={handleOpenIDE} />
@@ -741,7 +741,7 @@ export function DashboardPage({ onNavigate }: DashboardPageProps) {
           )}
 
           {/* Pulse */}
-          <section className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)] p-5 shrink-0">
+          <section className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)] p-4 sm:p-5 shrink-0">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
                 {trendPct >= 0 ? (
@@ -785,7 +785,7 @@ export function DashboardPage({ onNavigate }: DashboardPageProps) {
             {!isStudio && (
               <button
                 onClick={() => onNavigate("work")}
-                className="flex items-center gap-3 rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)] px-5 py-4 text-left transition-colors hover:border-[var(--color-highlight)] group"
+                className="flex items-center gap-3 rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)] px-4 py-3 sm:px-5 sm:py-4 text-left transition-colors hover:border-[var(--color-highlight)] group"
               >
                 <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[color-mix(in_srgb,var(--color-accent)_12%,transparent)]">
                   <Laptop className="h-5 w-5 text-[var(--color-accent)]" />
@@ -806,7 +806,7 @@ export function DashboardPage({ onNavigate }: DashboardPageProps) {
             {(isGitRepo || isStudio) && (
               <button
                 onClick={() => onNavigate("tasks", { openNewTask: true })}
-                className="flex items-center gap-3 rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)] px-5 py-4 text-left transition-colors hover:border-[var(--color-highlight)] group"
+                className="flex items-center gap-3 rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)] px-4 py-3 sm:px-5 sm:py-4 text-left transition-colors hover:border-[var(--color-highlight)] group"
               >
                 <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[color-mix(in_srgb,var(--color-info)_12%,transparent)]">
                   <Plus className="h-5 w-5 text-[var(--color-info)]" />
@@ -824,7 +824,7 @@ export function DashboardPage({ onNavigate }: DashboardPageProps) {
             {isStudio && (
               <button
                 onClick={() => onNavigate("resource")}
-                className="flex items-center gap-3 rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)] px-5 py-4 text-left transition-colors hover:border-[var(--color-highlight)] group"
+                className="flex items-center gap-3 rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)] px-4 py-3 sm:px-5 sm:py-4 text-left transition-colors hover:border-[var(--color-highlight)] group"
               >
                 <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[color-mix(in_srgb,var(--color-accent)_12%,transparent)]">
                   <FolderOpen className="h-5 w-5 text-[var(--color-accent)]" />
@@ -841,21 +841,21 @@ export function DashboardPage({ onNavigate }: DashboardPageProps) {
           </div>
 
           {/* Sessions list — flex-1 fills remaining space */}
-          <section className="flex-1 min-h-[120px] rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)] overflow-hidden flex flex-col">
-            <div className="flex items-center justify-between px-5 py-3 border-b border-[var(--color-border)] shrink-0">
+          <section className="lg:flex-1 min-h-[120px] rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)] overflow-hidden flex flex-col">
+            <div className="flex items-center justify-between px-4 sm:px-5 py-3 border-b border-[var(--color-border)] shrink-0">
               <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[var(--color-text-muted)]">
                 Active Sessions
               </div>
               <span className="text-xs text-[var(--color-text-muted)]">{worktreeTasks.length} task{worktreeTasks.length !== 1 ? "s" : ""}</span>
             </div>
-            <div className="flex-1 overflow-y-auto [scrollbar-width:none] hover:[scrollbar-width:thin] [&::-webkit-scrollbar]:w-0 hover:[&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-[var(--color-border)]">
+            <div className="lg:flex-1 lg:overflow-y-auto [scrollbar-width:none] hover:[scrollbar-width:thin] [&::-webkit-scrollbar]:w-0 hover:[&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-[var(--color-border)]">
               {worktreeTasks.length > 0 ? (
                 <div className="divide-y divide-[var(--color-border)]">
                   {worktreeTasks.map(task => (
                     <button
                       key={task.id}
                       onClick={() => onNavigate("tasks", { taskId: task.id })}
-                      className="flex items-center gap-3 w-full px-5 py-3 text-left hover:bg-[var(--color-bg-tertiary)] transition-colors"
+                      className="flex items-center gap-3 w-full px-4 sm:px-5 py-3 text-left hover:bg-[var(--color-bg-tertiary)] transition-colors"
                     >
                       <GitBranch className="h-3.5 w-3.5 shrink-0 text-[var(--color-info)]" />
                       <div className="flex-1 min-w-0">
@@ -879,7 +879,7 @@ export function DashboardPage({ onNavigate }: DashboardPageProps) {
 
         {/* ── Right column (git-only) ── */}
         {isGitRepo && (
-        <aside className="flex flex-col gap-4 min-h-0">
+        <aside className="flex flex-col gap-4 lg:min-h-0">
 
           {/* Repo Control */}
           <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)] p-4">
@@ -963,11 +963,11 @@ export function DashboardPage({ onNavigate }: DashboardPageProps) {
           </div>
 
           {/* Recent Commits — flex-1 fills remaining space */}
-          <div className="flex-1 min-h-0 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)] p-4 flex flex-col">
+          <div className="lg:flex-1 lg:min-h-0 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)] p-4 flex flex-col">
             <div className="text-xs font-medium uppercase tracking-widest text-[var(--color-text-muted)] shrink-0">
               Recent Commits
             </div>
-            <div className="mt-3 flex-1 overflow-y-auto [scrollbar-width:none] hover:[scrollbar-width:thin] [&::-webkit-scrollbar]:w-0 hover:[&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-[var(--color-border)] divide-y divide-[var(--color-border)]">
+            <div className="mt-3 lg:flex-1 lg:overflow-y-auto [scrollbar-width:none] hover:[scrollbar-width:thin] [&::-webkit-scrollbar]:w-0 hover:[&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-[var(--color-border)] divide-y divide-[var(--color-border)]">
               {repoCommits.length > 0 ? repoCommits.slice(0, 10).map(commit => (
                 <div key={commit.hash} className="flex items-start gap-3 py-2.5 first:pt-0 last:pb-0">
                   <code className="shrink-0 font-mono text-xs text-[var(--color-highlight)]">
@@ -1056,7 +1056,7 @@ function HeroButton({ icon: Icon, label, onClick, disabled = false, title }: {
           : "hover:border-[var(--color-highlight)] hover:bg-[var(--color-bg)]"
       }`}
     >
-      <Icon className="h-4 w-4" /> {label}
+      <Icon className="h-4 w-4" /> <span className="hidden sm:inline">{label}</span>
     </button>
   );
 }
