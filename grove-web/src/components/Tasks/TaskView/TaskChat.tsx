@@ -51,6 +51,7 @@ import {
   Search,
   User,
 } from "lucide-react";
+import { getIconForFile, getIconForFolder } from "vscode-icons-js";
 import {
   Button,
   ImageLightbox,
@@ -830,61 +831,39 @@ function createFileChip(
   if (displayLabel) chip.dataset.label = displayLabel;
   if (category) chip.dataset.category = category;
   chip.title = filePath;
+  // Pill-style chip: neutral background + highlight text, matching the
+  // FileChip used in MarkdownRenderer for visual consistency.
   chip.style.cssText =
-    "display:inline-flex;align-items:center;gap:4px;padding:1px 6px;border-radius:4px;" +
-    "background:color-mix(in srgb,var(--color-warning) 15%,transparent);" +
-    "border:1px solid color-mix(in srgb,var(--color-warning) 30%,transparent);" +
-    "font-size:12px;font-weight:500;color:var(--color-warning);" +
+    "display:inline-flex;align-items:center;gap:4px;padding:1px 8px;border-radius:9999px;" +
+    "background:color-mix(in srgb,var(--color-bg-secondary) 80%,var(--color-bg));" +
+    "border:1px solid color-mix(in srgb,var(--color-border) 65%,transparent);" +
+    "font-size:12px;font-weight:500;color:var(--color-highlight);" +
     "margin:0 2px;user-select:none;vertical-align:baseline;line-height:1.5;";
 
   const isLink = filePath.toLowerCase().endsWith(".link.json");
-  // Icon (Link / Folder / File)
-  const icon = document.createElementNS("http://www.w3.org/2000/svg", "svg");
-  icon.setAttribute("width", "12");
-  icon.setAttribute("height", "12");
-  icon.setAttribute("viewBox", "0 0 24 24");
-  icon.setAttribute("fill", "none");
-  icon.setAttribute("stroke", "currentColor");
-  icon.setAttribute("stroke-width", "2");
-  icon.setAttribute("stroke-linecap", "round");
-  icon.setAttribute("stroke-linejoin", "round");
-  icon.style.cssText = "flex-shrink:0;";
+  const baseName = filePath.split("/").filter(Boolean).pop() || "";
+
+  // VSCode file icon via CDN
+  const ICON_CDN_BASE =
+    "https://cdn.jsdelivr.net/gh/vscode-icons/vscode-icons@master/icons";
+  let iconName: string;
   if (isLink) {
-    // Lucide Link icon (two connected chain segments)
-    const p1 = document.createElementNS("http://www.w3.org/2000/svg", "path");
-    p1.setAttribute(
-      "d",
-      "M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71",
-    );
-    const p2 = document.createElementNS("http://www.w3.org/2000/svg", "path");
-    p2.setAttribute(
-      "d",
-      "M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71",
-    );
-    icon.appendChild(p1);
-    icon.appendChild(p2);
+    iconName = "file_type_json.svg";
   } else if (isDir) {
-    const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
-    path.setAttribute(
-      "d",
-      "M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z",
-    );
-    icon.appendChild(path);
+    iconName = getIconForFolder(baseName) || "default_folder.svg";
   } else {
-    const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
-    path.setAttribute(
-      "d",
-      "M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z",
-    );
-    const poly = document.createElementNS(
-      "http://www.w3.org/2000/svg",
-      "polyline",
-    );
-    poly.setAttribute("points", "14 2 14 8 20 8");
-    icon.appendChild(path);
-    icon.appendChild(poly);
+    iconName = getIconForFile(baseName) || "default_file.svg";
   }
-  chip.appendChild(icon);
+  const iconUrl = `${ICON_CDN_BASE}/${iconName}`;
+
+  const img = document.createElement("img");
+  img.src = iconUrl;
+  img.alt = "";
+  img.width = 13;
+  img.height = 13;
+  img.style.cssText =
+    "display:inline-block;vertical-align:middle;flex-shrink:0;";
+  chip.appendChild(img);
 
   const label = document.createElement("span");
   if (displayLabel) {
@@ -898,7 +877,7 @@ function createFileChip(
   closeBtn.dataset.chipClose = "true";
   closeBtn.textContent = "\u00d7";
   closeBtn.style.cssText =
-    "margin-left:2px;cursor:pointer;opacity:0.6;font-size:13px;line-height:1;";
+    "margin-left:2px;cursor:pointer;opacity:0.6;font-size:13px;line-height:1;color:var(--color-highlight);";
   chip.appendChild(closeBtn);
 
   return chip;

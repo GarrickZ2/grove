@@ -18,6 +18,7 @@ import {
 } from "lucide-react";
 import type { FilteredMentionItem, MentionItem } from "../../utils/fileMention";
 import { agentIconComponent } from "../../utils/agentIcon";
+import { VSCodeIcon } from "./VSCodeIcon";
 
 /**
  * Pick an icon for a mention item. Category-intrinsic concepts (Instruction,
@@ -222,12 +223,18 @@ const MentionRow = memo(function MentionRow({
           : "hover:bg-[var(--color-bg-secondary)]"
       }`}
     >
-      {createElement(iconFor(item), {
-        className:
-          item.kind && item.kind !== "file"
-            ? "w-3.5 h-3.5 shrink-0"
-            : "w-3.5 h-3.5 text-[var(--color-warning)] shrink-0",
-      })}
+      {item.kind && item.kind !== "file" ? (
+        createElement(iconFor(item), {
+          className: "w-3.5 h-3.5 shrink-0",
+        })
+      ) : (
+        <VSCodeIcon
+          filename={item.path.split("/").pop() || item.path}
+          isFolder={item.isDir}
+          size={14}
+          className="shrink-0"
+        />
+      )}
       {item.category && (
         <span className="shrink-0 rounded-sm border border-[var(--color-border)] bg-[var(--color-bg-secondary)] px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-[var(--color-text-muted)]">
           {item.category}
