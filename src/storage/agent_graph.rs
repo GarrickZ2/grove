@@ -474,6 +474,17 @@ pub fn awaiting_reply_for(conn: &Connection, session_id: &str) -> Result<Vec<Age
 }
 
 /// 删除 session 时的级联清理：删除该 session 涉及的所有 edge / pending_message。
+///
+/// 这两张表都已经在 schema 上声明了 `from_session/to_session ON DELETE
+/// CASCADE`,所以当调用方 `DELETE FROM session ...` 时 FK 会自动连带删除。
+/// 本函数仍然显式删一遍,原因是:
+/// 1. 把"删 session 时连带删 graph"这个意图集中到一个入口,新增 graph
+///    相关表(没有 FK 也没改 schema)时,这里要补一行,易于发现遗漏。
+/// 2. 调用方先调本函数再 DELETE FROM session 时,本函数的 DELETE 是空动
+///    作,代价仅是两次 SQL 解析;不影响正确性。
+///
+/// 调用方必须在 transaction 内调用(本函数不自管 BEGIN/COMMIT),否则
+/// 第二条 DELETE 失败时第一条已经落盘,留下不一致状态。
 pub fn cascade_delete_for_session(conn: &Connection, session_id: &str) -> Result<()> {
     conn.execute(
         "DELETE FROM agent_edge WHERE from_session = ?1 OR to_session = ?1",

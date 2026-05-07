@@ -39,8 +39,54 @@
     name: (type_identifier) @name.interface
     type: (interface_type))) @def.interface
 
+; Type aliases / non-struct-non-interface named types. Listed explicitly
+; per supported `type:` form so we don't duplicate-emit struct/interface
+; definitions (which are already captured by the patterns above).
+; tree-sitter doesn't have a "not equal to" predicate for child node
+; types, hence the verbose enumeration.
 (type_declaration
   (type_spec
+    name: (type_identifier) @name.type
+    type: (type_identifier))) @def.type
+(type_declaration
+  (type_spec
+    name: (type_identifier) @name.type
+    type: (qualified_type))) @def.type
+(type_declaration
+  (type_spec
+    name: (type_identifier) @name.type
+    type: (pointer_type))) @def.type
+(type_declaration
+  (type_spec
+    name: (type_identifier) @name.type
+    type: (function_type))) @def.type
+(type_declaration
+  (type_spec
+    name: (type_identifier) @name.type
+    type: (map_type))) @def.type
+(type_declaration
+  (type_spec
+    name: (type_identifier) @name.type
+    type: (channel_type))) @def.type
+(type_declaration
+  (type_spec
+    name: (type_identifier) @name.type
+    type: (slice_type))) @def.type
+(type_declaration
+  (type_spec
+    name: (type_identifier) @name.type
+    type: (array_type))) @def.type
+(type_declaration
+  (type_spec
+    name: (type_identifier) @name.type
+    type: (generic_type))) @def.type
+(type_declaration
+  (type_spec
+    name: (type_identifier) @name.type
+    type: (parenthesized_type))) @def.type
+; `type T = U` (Go 1.9+ type alias)
+(type_declaration
+  (type_alias
     name: (type_identifier) @name.type)) @def.type
 
 ; Constants and package-level variables
@@ -53,12 +99,22 @@
     name: (identifier) @name.var)) @def.var
 
 ; Struct fields (regular + embedded types where field name == type name)
-(field_declaration
-  name: (field_identifier) @name.field) @def.field
+; Capture the enclosing struct's type name so cmd+click can disambiguate
+; same-named fields across different structs in the multi-candidate UI.
+(type_declaration
+  (type_spec
+    name: (type_identifier) @container.field
+    type: (struct_type
+            (field_declaration_list
+              (field_declaration
+                name: (field_identifier) @name.field) @def.field))))
 
 ; Interface method elements:  type Foo interface { Bar() int }
-; The method belongs to the interface, but tree-sitter doesn't expose a
-; tidy `container` link for these without a wider pattern; leaving
-; container empty is consistent with how upstream tags.scm treats them.
-(method_elem
-  name: (field_identifier) @name.method) @def.method
+; Capture the enclosing interface's type name so cmd+click on a method
+; from `iface.Method()` can rank candidates by interface name.
+(type_declaration
+  (type_spec
+    name: (type_identifier) @container.method
+    type: (interface_type
+            (method_elem
+              name: (field_identifier) @name.method) @def.method)))

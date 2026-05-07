@@ -35,13 +35,16 @@ textarea,
 }
 
 /* Prevent iOS Safari from auto-zooming when focusing an input/textarea
-   with font-size < 16px. Apply only on mobile viewports so desktop
-   typography stays unchanged. */
+   with font-size < 16px. `max(16px, 1em)` lets larger inputs keep their
+   intentional size without squashing them down to 16px, while still
+   meeting the iOS auto-zoom threshold for everything ≤ 16px. Inputs
+   that genuinely need to stay smaller can opt out with `.compact` —
+   visual layout there is the author's problem. */
 @media (max-width: 768px) {
-  input:not([type="checkbox"]):not([type="radio"]):not([type="range"]),
-  textarea,
-  select {
-    font-size: 16px !important;
+  input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not(.compact),
+  textarea:not(.compact),
+  select:not(.compact) {
+    font-size: max(16px, 1em);
   }
 }
 

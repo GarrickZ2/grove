@@ -173,6 +173,16 @@ function Toolbar({
     <div className="ide-toolbar">
       {leading && <div className="ide-toolbar__leading">{leading}</div>}
 
+      {(() => {
+        // On mobile, chat / aux / info are mutually exclusive (they all
+        // collapse onto the same grid cell). The button shows active
+        // only when chat is the panel actually being rendered. On
+        // desktop the panels can coexist, so chat is "active" any time
+        // it's visible.
+        const chatActive = isMobile
+          ? state.chatVisible && !state.auxVisible && !state.infoVisible
+          : state.chatVisible;
+        return (
       <button
         onClick={() => {
           if (isMobile) {
@@ -182,12 +192,14 @@ function Toolbar({
           }
         }}
         disabled={!isMobile && state.chatVisible && !hasOpenPanel}
-        className={`ide-toolbar__btn ide-toolbar__btn--chat ${state.chatVisible && !state.auxVisible && !state.infoVisible ? "ide-toolbar__btn--active" : (state.chatVisible && !isMobile ? "ide-toolbar__btn--active" : "")}`}
+        className={`ide-toolbar__btn ide-toolbar__btn--chat ${chatActive ? "ide-toolbar__btn--active" : ""}`}
         title={hasOpenPanel ? "Toggle Chat" : "Chat stays visible until another panel is open"}
       >
         <MessageSquare size={13} />
         <span>Chat</span>
       </button>
+        );
+      })()}
       <div className="ide-toolbar__separator" />
 
       <div className="ide-toolbar__group">

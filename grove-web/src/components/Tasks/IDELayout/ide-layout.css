@@ -529,6 +529,11 @@
     grid-template-rows: minmax(0, 1fr) !important;
   }
 
+  /* All three pane hosts collapse onto the same grid cell on mobile.
+     The host JSX (IDELayoutContainer.tsx) sets `display:none` on
+     hidden hosts via inline style, so only one ever paints — without
+     that inline style we'd get visible stacking. Keep the two paths
+     in sync if either is touched. */
   .ide-aux-host,
   .ide-info-host,
   .ide-chat-surface {

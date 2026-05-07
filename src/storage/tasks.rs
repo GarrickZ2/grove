@@ -422,7 +422,28 @@ pub fn ensure_local_task(project_key: &str, project_path: &str, project_name: &s
     };
 
     let task = build_local_task(project_path, &current_branch, &default_branch, project_name);
-    add_task(project_key, task)
+    // Race-tolerant: between the existence check above and add_task,
+    // another thread (loader backfill / parallel registration) could
+    // have inserted the row. Treat the unique-violation as success
+    // — the post-condition ("a Local Task row exists") is satisfied.
+    match add_task(project_key, task) {
+        Ok(()) => Ok(()),
+        Err(e) => {
+            let conn = crate::storage::database::connection();
+            let exists_now: bool = conn
+                .query_row(
+                    "SELECT 1 FROM tasks WHERE project = ?1 AND id = ?2 LIMIT 1",
+                    params![project_key, LOCAL_TASK_ID],
+                    |_| Ok(true),
+                )
+                .unwrap_or(false);
+            if exists_now {
+                Ok(())
+            } else {
+                Err(e)
+            }
+        }
+    }
 }
 
 /// 生成全局唯一 chat/session ID ("chat-<uuid>")

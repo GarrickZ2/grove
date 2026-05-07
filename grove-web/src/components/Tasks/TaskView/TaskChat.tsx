@@ -119,6 +119,12 @@ import "./task-chat.css";
 
 const CHAT_DRAFT_PREFIX = "grove:chat-draft:";
 const CHAT_DRAFT_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
+// Hard cap on persisted draft size. localStorage is shared across the
+// whole origin (~5–10 MB depending on browser); a runaway draft full of
+// pasted screenshots could exhaust quota and silently break the next
+// save. 256 KB easily fits multi-page text + several @file chips.
+const CHAT_DRAFT_MAX_BYTES = 256 * 1024;
+let chatDraftGcDone = false;
 
 function chatDraftKey(chatId: string): string {
   return `${CHAT_DRAFT_PREFIX}${chatId}`;
@@ -129,6 +135,12 @@ function saveChatDraft(chatId: string, html: string): void {
   try {
     if (!html) {
       window.localStorage.removeItem(chatDraftKey(chatId));
+      return;
+    }
+    // Skip persistence for oversized drafts rather than silently
+    // truncating — a partial HTML snapshot would corrupt the inline
+    // chip markup and confuse the editor on next load.
+    if (html.length > CHAT_DRAFT_MAX_BYTES) {
       return;
     }
     window.localStorage.setItem(
@@ -161,6 +173,45 @@ function clearChatDraft(chatId: string): void {
   if (!chatId) return;
   try {
     window.localStorage.removeItem(chatDraftKey(chatId));
+  } catch {
+    // ignore
+  }
+}
+
+/**
+ * Sweep stale draft entries on first invocation per page load. Drafts
+ * for deleted chats accumulate forever otherwise (TTL is only checked
+ * on `loadChatDraft`, which never runs for chats that no longer exist
+ * in the UI). Idempotent and best-effort — quota errors swallowed.
+ */
+function gcChatDraftsOnce(): void {
+  if (chatDraftGcDone) return;
+  chatDraftGcDone = true;
+  try {
+    const now = Date.now();
+    const stale: string[] = [];
+    for (let i = 0; i < window.localStorage.length; i++) {
+      const key = window.localStorage.key(i);
+      if (!key || !key.startsWith(CHAT_DRAFT_PREFIX)) continue;
+      const raw = window.localStorage.getItem(key);
+      if (!raw) continue;
+      try {
+        const parsed = JSON.parse(raw);
+        if (
+          !parsed ||
+          typeof parsed.updatedAt !== "number" ||
+          now - parsed.updatedAt > CHAT_DRAFT_MAX_AGE_MS
+        ) {
+          stale.push(key);
+        }
+      } catch {
+        // Unparsable entry — drop it.
+        stale.push(key);
+      }
+    }
+    for (const key of stale) {
+      window.localStorage.removeItem(key);
+    }
   } catch {
     // ignore
   }
@@ -863,6 +914,11 @@ function createFileChip(
   img.height = 13;
   img.style.cssText =
     "display:inline-block;vertical-align:middle;flex-shrink:0;";
+  // Hide the broken-image glyph if the CDN is blocked / offline.
+  // The chip's text label is still meaningful without the icon.
+  img.onerror = () => {
+    img.style.display = "none";
+  };
   chip.appendChild(img);
 
   const label = document.createElement("span");
@@ -1366,6 +1422,10 @@ export function TaskChat({
   const connectingRef = useRef<Set<string>>(new Set());
   // Debounce timer for auto-saving composer draft to localStorage
   const draftSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Wall-clock anchor for the max-debounce: the first keystroke since
+  // the last successful save. We force a flush 5s after this anchor so
+  // a fast-typing user can never leave the page without ANY save.
+  const draftLastFlushRef = useRef<number>(0);
 
   // ─── Active chat's live state ─────────────────────────────────────────
   const [isConnected, setIsConnected] = useState(false);
@@ -2332,7 +2392,11 @@ export function TaskChat({
     // Restore the unsent composer draft for this chat. innerHTML round-trip
     // preserves slash/file chips because click handlers are delegated on the
     // editable container, not attached to individual chip DOM nodes.
-    const draftHtml = cached?.draftHtml || loadChatDraft(chatId);
+    // If the chat is in the in-memory cache, use the cached draft even
+    // when it's the empty string (the user intentionally cleared it on
+    // a tab switch). Falling through to localStorage in that case would
+    // resurrect an older saved draft.
+    const draftHtml = cached ? cached.draftHtml : loadChatDraft(chatId);
     const el = editableRef.current;
     if (el) {
       el.innerHTML = draftHtml;
@@ -2700,15 +2764,32 @@ export function TaskChat({
     };
   }, []);
 
-  // Save composer draft to localStorage on page unload / navigation
+  // Save composer draft to localStorage on page unload / navigation /
+  // tab hide. `beforeunload` is unreliable on mobile and on fast tab
+  // close — `visibilitychange` (state="hidden") fires consistently
+  // across all browsers and is the recommended hook for "user is
+  // leaving" persistence work.
   useEffect(() => {
-    const handler = () => {
+    const flush = () => {
       const chatId = getActiveChatId();
       if (chatId) saveChatDraft(chatId, editableRef.current?.innerHTML ?? "");
     };
-    window.addEventListener("beforeunload", handler);
-    return () => window.removeEventListener("beforeunload", handler);
+    const visHandler = () => {
+      if (document.visibilityState === "hidden") flush();
+    };
+    window.addEventListener("beforeunload", flush);
+    document.addEventListener("visibilitychange", visHandler);
+    return () => {
+      window.removeEventListener("beforeunload", flush);
+      document.removeEventListener("visibilitychange", visHandler);
+    };
   }, [getActiveChatId]);
+
+  // GC stale chat drafts from prior sessions on first mount of any
+  // TaskChat. Idempotent across mounts thanks to a module-level guard.
+  useEffect(() => {
+    gcChatDraftsOnce();
+  }, []);
 
   // Save draft on unmount and clear the debounce timer
   useEffect(() => {
@@ -3878,11 +3959,24 @@ export function TaskChat({
 
   /** Detect /slash or @file at cursor position in contentEditable */
   const handleInput = useCallback(() => {
-    if (draftSaveTimerRef.current) clearTimeout(draftSaveTimerRef.current);
-    draftSaveTimerRef.current = setTimeout(() => {
+    // Trailing 500ms debounce: usual case where the user pauses typing
+    // and we save once they're idle. Plus a 5s max-debounce anchored
+    // on the first keystroke after the last save — without it, a user
+    // typing continuously for minutes would never persist a draft, and
+    // a tab close mid-burst (especially on mobile, where beforeunload
+    // is unreliable) would lose everything.
+    const flush = () => {
+      draftLastFlushRef.current = Date.now();
       const chatId = getActiveChatId();
       if (chatId) saveChatDraft(chatId, editableRef.current?.innerHTML ?? "");
-    }, 500);
+    };
+    if (draftSaveTimerRef.current) clearTimeout(draftSaveTimerRef.current);
+    if (draftLastFlushRef.current === 0) {
+      draftLastFlushRef.current = Date.now();
+    }
+    const sinceLast = Date.now() - draftLastFlushRef.current;
+    const delay = sinceLast >= 5000 ? 0 : Math.min(500, 5000 - sinceLast);
+    draftSaveTimerRef.current = setTimeout(flush, delay);
     // Detect "!" typed into empty input → enter shell mode and clear the "!"
     const el = editableRef.current;
     if (el && !isTerminalMode && !isBusy && el.textContent === "!") {

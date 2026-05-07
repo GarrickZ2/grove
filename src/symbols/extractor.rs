@@ -4,7 +4,7 @@
 //! supported language, lazily initialized on first use.
 
 use once_cell::sync::Lazy;
-use std::sync::Mutex;
+use std::cell::RefCell;
 
 use tree_sitter::{Parser, Query, QueryCursor, StreamingIterator};
 
@@ -12,23 +12,26 @@ use super::types::{Language, SymbolDef, SymbolKind};
 
 const GO_QUERY_SRC: &str = include_str!("queries/go.scm");
 
-/// Pre-compiled query for the Go grammar.
+/// Pre-compiled query for the Go grammar. `Query` is `Sync`, so a single
+/// global instance is fine.
 static GO_QUERY: Lazy<Query> = Lazy::new(|| {
     Query::new(&tree_sitter_go::LANGUAGE.into(), GO_QUERY_SRC)
         .expect("invalid Go tags query (queries/go.scm)")
 });
 
-/// Thread-local-ish parser pool. Tree-sitter parsers are not thread-safe,
-/// but they are cheap to create and cheaper to reuse. Keep one parser per
-/// language behind a Mutex; symbol indexing is rarely contended (one
-/// rayon thread parses a file at a time per language).
-static GO_PARSER: Lazy<Mutex<Parser>> = Lazy::new(|| {
-    let mut parser = Parser::new();
-    parser
-        .set_language(&tree_sitter_go::LANGUAGE.into())
-        .expect("failed to load tree-sitter-go grammar");
-    Mutex::new(parser)
-});
+thread_local! {
+    /// Tree-sitter `Parser` is not `Sync`; a global `Mutex<Parser>` would
+    /// serialize extraction across worker threads. Per-thread parsers
+    /// let multiple project workers parse in parallel; cost is one
+    /// parser per thread (~few KB) and one tree-sitter language attach.
+    static GO_PARSER: RefCell<Parser> = RefCell::new({
+        let mut parser = Parser::new();
+        parser
+            .set_language(&tree_sitter_go::LANGUAGE.into())
+            .expect("failed to load tree-sitter-go grammar");
+        parser
+    });
+}
 
 /// Extract all symbol definitions from `source` for the given language.
 ///
@@ -37,22 +40,25 @@ static GO_PARSER: Lazy<Mutex<Parser>> = Lazy::new(|| {
 /// worktree root, forward slashes).
 pub fn extract(language: Language, file_path: &str, source: &[u8]) -> Vec<SymbolDef> {
     match language {
-        Language::Go => extract_with(&GO_PARSER, &GO_QUERY, language, file_path, source),
+        Language::Go => GO_PARSER.with(|cell| {
+            extract_with(
+                &mut cell.borrow_mut(),
+                &GO_QUERY,
+                language,
+                file_path,
+                source,
+            )
+        }),
     }
 }
 
 fn extract_with(
-    parser: &Mutex<Parser>,
+    parser: &mut Parser,
     query: &Query,
     language: Language,
     file_path: &str,
     source: &[u8],
 ) -> Vec<SymbolDef> {
-    let mut parser = match parser.lock() {
-        Ok(p) => p,
-        Err(p) => p.into_inner(), // Recover from a poisoned parser; the
-                                  // previous panic was on a different file.
-    };
     let Some(tree) = parser.parse(source, None) else {
         return Vec::new();
     };
@@ -84,7 +90,7 @@ fn extract_with(
                     let pos = node.start_position();
                     name_node = Some((kind, text, pos.row as u32, pos.column as u32));
                 }
-            } else if cname == "container.method" {
+            } else if cname.starts_with("container.") {
                 if let Ok(t) = node.utf8_text(source) {
                     container = Some(t.to_string());
                 }
@@ -204,10 +210,70 @@ mod tests {
             }
         "#;
         let got = names(src);
-        assert!(got.contains(&("Id".into(), SymbolKind::Field, None)));
-        assert!(got.contains(&("Title".into(), SymbolKind::Field, None)));
-        assert!(got.contains(&("Content".into(), SymbolKind::Field, None)));
-        assert!(got.contains(&("addr".into(), SymbolKind::Field, None)));
+        assert!(got.contains(&("Id".into(), SymbolKind::Field, Some("Item".into()))));
+        assert!(got.contains(&("Title".into(), SymbolKind::Field, Some("Item".into()))));
+        assert!(got.contains(&("Content".into(), SymbolKind::Field, Some("Item".into()))));
+        assert!(got.contains(&("addr".into(), SymbolKind::Field, Some("Server".into()))));
+    }
+
+    #[test]
+    fn extracts_struct_fields_with_tags() {
+        let src = "package foo\n\
+                   type Tagged struct {\n    Foo string `json:\"foo\"`\n    Bar int `json:\"bar,omitempty\"`\n}\n";
+        let got = names(src);
+        assert!(got.contains(&("Foo".into(), SymbolKind::Field, Some("Tagged".into()))));
+        assert!(got.contains(&("Bar".into(), SymbolKind::Field, Some("Tagged".into()))));
+    }
+
+    #[test]
+    fn extracts_interface_methods_with_container() {
+        let src = r#"
+            package foo
+            type Greeter interface {
+                Hello(name string) string
+            }
+        "#;
+        let got = names(src);
+        assert!(got.iter().any(|(n, k, c)| {
+            n == "Hello" && *k == SymbolKind::Method && c.as_deref() == Some("Greeter")
+        }));
+    }
+
+    #[test]
+    fn type_aliases_do_not_duplicate_struct_or_interface() {
+        // R1 regression guard: catch-all @def.type used to also fire on
+        // struct/interface specs, producing two candidates per name.
+        let src = r#"
+            package foo
+            type S struct{}
+            type I interface{ Do() }
+            type Alias = int
+            type Named func(int) string
+            type ParenT (int)
+        "#;
+        let got = names(src);
+        let s: Vec<_> = got.iter().filter(|(n, _, _)| n == "S").collect();
+        assert_eq!(s.len(), 1, "S should only emit one symbol, got {:?}", s);
+        assert_eq!(s[0].1, SymbolKind::Struct);
+        let i: Vec<_> = got.iter().filter(|(n, _, _)| n == "I").collect();
+        assert_eq!(i.len(), 1, "I should only emit one symbol, got {:?}", i);
+        assert_eq!(i[0].1, SymbolKind::Interface);
+        assert!(got
+            .iter()
+            .any(|(n, k, _)| n == "Alias" && *k == SymbolKind::Type));
+        assert!(got
+            .iter()
+            .any(|(n, k, _)| n == "Named" && *k == SymbolKind::Type));
+        // R3-H1 (round 3 finding): parenthesized_type was missed by the
+        // explicit list and silently dropped.
+        assert!(
+            got.iter()
+                .any(|(n, k, _)| n == "ParenT" && *k == SymbolKind::Type),
+            "ParenT (parenthesized_type) should be captured, got {:?}",
+            got.iter()
+                .filter(|(n, _, _)| n == "ParenT")
+                .collect::<Vec<_>>()
+        );
     }
 
     #[test]

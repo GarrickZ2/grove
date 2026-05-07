@@ -32,6 +32,15 @@ pub fn migrate_chats_toml_to_sqlite(conn: &Connection) -> Result<()> {
         }
     };
 
+    // Distinguish two failure classes:
+    //   - Structural (parse error, malformed TOML): the file will never
+    //     succeed without manual intervention. Rename to `.broken` so
+    //     it's preserved for forensics but no longer triggers retry,
+    //     and treat the migration as "done as far as we can".
+    //   - Transient (IO error: permission denied, lock held, etc.):
+    //     leave the file alone and don't `mark_done`, so the next
+    //     launch retries.
+    let mut had_transient_failure = false;
     for project in projects.flatten() {
         let project_dir = project.path();
         if !project_dir.is_dir() {
@@ -58,15 +67,69 @@ pub fn migrate_chats_toml_to_sqlite(conn: &Connection) -> Result<()> {
                     "  [migrate] chats.toml → session: {}/{} ({} chats)",
                     project_id, task_id, count
                 ),
-                Err(e) => eprintln!(
-                    "[warning] chats.toml migration failed for {}/{}: {}",
-                    project_id, task_id, e
-                ),
+                Err(crate::error::GroveError::TomlParse(e)) => {
+                    // Pick a non-clobbering target: if `chats.toml.broken`
+                    // already exists from a previous launch, suffix with
+                    // a timestamp instead of overwriting it. Preserves
+                    // history for forensics.
+                    let primary = chats_path.with_extension("toml.broken");
+                    let target = if primary.exists() {
+                        chats_path.with_extension(format!(
+                            "toml.broken.{}",
+                            Utc::now().format("%Y%m%d%H%M%S")
+                        ))
+                    } else {
+                        primary
+                    };
+                    let renamed = std::fs::rename(&chats_path, &target).is_ok();
+                    eprintln!(
+                        "[warning] chats.toml migration: structural error for {}/{}: {}{}",
+                        project_id,
+                        task_id,
+                        e,
+                        if renamed {
+                            format!("; renamed to {}", target.display())
+                        } else {
+                            "; rename failed (file kept in place)".to_string()
+                        }
+                    );
+                    // Structural failure does NOT block mark_done — the
+                    // file is unreachable forever, retrying won't help.
+                }
+                Err(crate::error::GroveError::Io(io_err))
+                    if io_err.kind() == std::io::ErrorKind::NotFound =>
+                {
+                    // TOCTOU: chats_path.exists() said yes, but the file
+                    // was removed before load. Treat as "nothing to
+                    // migrate here" rather than a transient failure
+                    // that would retry forever.
+                    eprintln!(
+                        "[info] chats.toml migration: {}/{} disappeared between scan and read; skipping",
+                        project_id, task_id
+                    );
+                }
+                Err(e) => {
+                    had_transient_failure = true;
+                    eprintln!(
+                        "[warning] chats.toml migration failed for {}/{}: {} (will retry next launch)",
+                        project_id, task_id, e
+                    );
+                }
             }
         }
     }
 
-    mark_done(conn)?;
+    // mark_done blocks the migration from re-running. We only block
+    // re-run if no transient failure occurred — structural failures
+    // are handled in-band by the rename above.
+    if !had_transient_failure {
+        mark_done(conn)?;
+    } else {
+        eprintln!(
+            "[warning] chats.toml migration left unfinished due to transient errors; \
+             will retry on next launch"
+        );
+    }
     Ok(())
 }
 
@@ -246,7 +309,7 @@ mod tests {
     }
 
     #[test]
-    fn migration_remaps_duplicate_legacy_chat_ids_across_tasks() {
+    fn migration_drops_duplicate_legacy_chat_ids_across_tasks() {
         with_temp_home(|home| {
             for task_id in ["task-1", "task-2"] {
                 let chats_dir = home

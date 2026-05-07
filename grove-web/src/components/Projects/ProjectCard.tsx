@@ -35,7 +35,16 @@ function ProjectCardInner({ project, isSelected, onSelect, onDoubleClick, onDele
   const [isEditing, setIsEditing] = useState(false);
   const [editName, setEditName] = useState(project.name);
   const [isRenaming, setIsRenaming] = useState(false);
+  const [renameError, setRenameError] = useState<string | null>(null);
+  // Set when the user clicks the Trash button while editing — prevents
+  // the input's onBlur from accidentally committing a rename when the
+  // user's actual intent was to delete the project.
+  const skipBlurSubmitRef = useRef(false);
   const inputRef = useRef<HTMLInputElement>(null);
+
+  // Caps & validation. Mirrors what the backend would accept; rejecting
+  // here gives the user immediate feedback instead of an opaque 500.
+  const MAX_NAME_LEN = 128;
 
   useEffect(() => {
     if (isEditing && inputRef.current) {
@@ -47,29 +56,66 @@ function ProjectCardInner({ project, isSelected, onSelect, onDoubleClick, onDele
   const startEditing = (e: React.MouseEvent) => {
     e.stopPropagation();
     setEditName(project.name);
+    setRenameError(null);
     setIsEditing(true);
   };
 
   const cancelEditing = () => {
     setIsEditing(false);
     setEditName(project.name);
+    setRenameError(null);
+  };
+
+  const validateName = (name: string): string | null => {
+    if (!name) return "Name cannot be empty.";
+    if (name.length > MAX_NAME_LEN) return `Name must be ${MAX_NAME_LEN} characters or fewer.`;
+    // Reject path separators, NUL, and control chars — anything that
+    // would confuse downstream filesystem / display code.
+    // eslint-disable-next-line no-control-regex
+    if (/[\x00-\x1f\x7f/\\]/.test(name)) {
+      return "Name cannot contain slashes or control characters.";
+    }
+    return null;
   };
 
   const submitRename = async () => {
+    if (isRenaming) return;
     const trimmed = editName.trim();
     if (!trimmed || trimmed === project.name) {
       cancelEditing();
       return;
     }
+    const validationError = validateName(trimmed);
+    if (validationError) {
+      setRenameError(validationError);
+      return;
+    }
     setIsRenaming(true);
+    setRenameError(null);
     try {
       await onRename(trimmed);
       setIsEditing(false);
-    } catch {
-      setEditName(project.name);
+    } catch (err) {
+      // Surface the error inline instead of silently reverting; the
+      // user just lost their edit otherwise.
+      const msg =
+        err instanceof Error
+          ? err.message
+          : (typeof err === "string" ? err : "Rename failed.");
+      setRenameError(msg);
+      // Keep the edited name visible so the user can adjust.
     } finally {
       setIsRenaming(false);
     }
+  };
+
+  const handleBlur = () => {
+    if (skipBlurSubmitRef.current) {
+      skipBlurSubmitRef.current = false;
+      cancelEditing();
+      return;
+    }
+    submitRename();
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -113,22 +159,34 @@ function ProjectCardInner({ project, isSelected, onSelect, onDoubleClick, onDele
         </div>
         <div className="flex-1 min-w-0">
           {isEditing ? (
-            <input
-              ref={inputRef}
-              type="text"
-              value={editName}
-              onChange={(e) => setEditName(e.target.value)}
-              onBlur={submitRename}
-              onKeyDown={handleKeyDown}
-              disabled={isRenaming}
-              onClick={(e) => e.stopPropagation()}
-              className={`
-                text-sm font-semibold w-full bg-transparent
-                border-b border-[var(--color-highlight)] outline-none
-                text-[var(--color-text)]
-                ${isRenaming ? "opacity-50" : ""}
-              `}
-            />
+            <>
+              <input
+                ref={inputRef}
+                type="text"
+                value={editName}
+                maxLength={MAX_NAME_LEN}
+                onChange={(e) => {
+                  setEditName(e.target.value);
+                  if (renameError) setRenameError(null);
+                }}
+                onBlur={handleBlur}
+                onKeyDown={handleKeyDown}
+                disabled={isRenaming}
+                onClick={(e) => e.stopPropagation()}
+                className={`
+                  text-sm font-semibold w-full bg-transparent
+                  border-b outline-none
+                  text-[var(--color-text)]
+                  ${renameError ? "border-[var(--color-error)]" : "border-[var(--color-highlight)]"}
+                  ${isRenaming ? "opacity-50" : ""}
+                `}
+              />
+              {renameError && (
+                <p className="text-[10px] text-[var(--color-error)] mt-0.5 truncate" title={renameError}>
+                  {renameError}
+                </p>
+              )}
+            </>
           ) : (
             <h3 className="text-sm font-semibold text-[var(--color-text)] truncate">
               {project.name}
@@ -189,6 +247,29 @@ function ProjectCardInner({ project, isSelected, onSelect, onDoubleClick, onDele
           <Pencil className="w-3.5 h-3.5" />
         </button>
         <button
+          onPointerDown={() => {
+            // Mark before the input loses focus so handleBlur skips
+            // the submit. Without this, clicking Trash mid-edit would
+            // silently rename the project to whatever was typed.
+            // pointerdown covers mouse, touch, and stylus uniformly
+            // and fires before the input's blur in all those input
+            // modes (mousedown alone misses some touch sequences).
+            if (isEditing) skipBlurSubmitRef.current = true;
+          }}
+          onPointerUp={() => {
+            // Reset asynchronously so a still-pending blur (which
+            // hasn't run yet) sees the flag, but a later legitimate
+            // blur (after the user dragged off this button without
+            // clicking — no blur fires now, but eventually focus
+            // moves elsewhere) doesn't inherit a stale `true`.
+            // rAF gives blur one tick to run if it's coming.
+            requestAnimationFrame(() => {
+              skipBlurSubmitRef.current = false;
+            });
+          }}
+          onPointerCancel={() => {
+            skipBlurSubmitRef.current = false;
+          }}
           onClick={(e) => {
             e.stopPropagation();
             onDelete();

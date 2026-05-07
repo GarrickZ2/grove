@@ -200,6 +200,11 @@ pub fn auto_register_cwd_if_git_repo() {
 
     // "already registered" 当成成功 —— 我们只需要保证仓库在 DB 里。
     let _ = add_project(&name, &git_root);
+    // 不论 add_project 走哪条分支(成功 / 已存在),都补一次 Local Task。
+    // 这覆盖老项目升级到 "Local Task at registration" 重构后缺一行的情况;
+    // ensure_local_task 自身幂等,已存在就 no-op。
+    let hash = project_hash(&git_root);
+    let _ = crate::storage::tasks::ensure_local_task(&hash, &git_root, &name);
 }
 
 /// 添加指定类型的项目
@@ -281,11 +286,15 @@ pub fn upsert_project(name: &str, path: &str) -> Result<()> {
             "INSERT INTO projects (hash, name, path, is_git_repo, added_at, project_type) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
             rusqlite::params![&hash, name, &resolved_path, is_git, &now, ProjectType::Repo.as_str()],
         )?;
-        drop(conn);
-        let _ = crate::storage::tasks::ensure_local_task(&hash, &resolved_path, name);
-        return Ok(());
     }
-
+    drop(conn);
+    // Both branches must call ensure_local_task — the existing-project
+    // branch used to skip it on the assumption that a project row
+    // implies a Local Task row, but that's not invariant: legacy DBs
+    // pre-dating the eager-creation refactor could have a project row
+    // without a Local Task. ensure_local_task is idempotent (checks
+    // existence first), so the cost on the common path is one SELECT.
+    let _ = crate::storage::tasks::ensure_local_task(&hash, &resolved_path, name);
     Ok(())
 }
 
@@ -349,6 +358,18 @@ pub fn remove_project(path: &str) -> Result<()> {
                 )?;
             }
         }
+
+        // 删 tasks + session 等项目作用域行 —— 这些表没有 FK 到 projects,
+        // 不显式删会留下孤儿。session 上有 FK ON DELETE CASCADE,所以
+        // 删它会顺带带走 agent_edge / agent_pending_message。
+        tx.execute(
+            "DELETE FROM session WHERE project = ?1",
+            rusqlite::params![&hash],
+        )?;
+        tx.execute(
+            "DELETE FROM tasks WHERE project = ?1",
+            rusqlite::params![&hash],
+        )?;
 
         tx.execute(
             "DELETE FROM projects WHERE hash = ?1",

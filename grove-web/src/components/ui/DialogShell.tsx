@@ -52,9 +52,34 @@ export function DialogShell({
   const { isMobile } = useIsMobile();
   const vvRect = useVisualViewportRect(isMobile && isOpen);
 
-  // No body-level scroll lock — that breaks touch-scroll inside the dialog
-  // on iOS Safari. The dialog itself uses `overscroll-contain` to keep its
-  // scroll from chaining to the page behind.
+  // iOS-safe body scroll lock for mobile dialogs. The naive
+  // `overflow:hidden` on body breaks touch-scroll inside the dialog on
+  // iOS Safari, so we instead pin the document with `position:fixed`
+  // and a negative top offset matching the current scroll. On unmount
+  // we restore both. Desktop dialogs don't need this — the page can
+  // scroll behind a centered modal without ill effect.
+  useEffect(() => {
+    if (!isOpen || !isMobile) return;
+    const scrollY = window.scrollY;
+    const body = document.body;
+    const prev = {
+      position: body.style.position,
+      top: body.style.top,
+      width: body.style.width,
+      overflowY: body.style.overflowY,
+    };
+    body.style.position = "fixed";
+    body.style.top = `-${scrollY}px`;
+    body.style.width = "100%";
+    body.style.overflowY = "scroll"; // preserve scrollbar gutter
+    return () => {
+      body.style.position = prev.position;
+      body.style.top = prev.top;
+      body.style.width = prev.width;
+      body.style.overflowY = prev.overflowY;
+      window.scrollTo(0, scrollY);
+    };
+  }, [isOpen, isMobile]);
 
   return (
     <AnimatePresence>

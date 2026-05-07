@@ -19,15 +19,17 @@ use super::{FileChanges, Worktree, WorktreeStatus};
 
 /// 确保 Local Task 记录与项目状态同步
 ///
-/// 只同步已有 Local Task 的字段(branch/target/path/name)。
-/// Local Task 的创建在项目注册时完成(`workspace::add_project_with_type` 等),
-/// 此函数不再负责创建。
+/// - 缺失补建:如果项目是非 Studio 且数据库里没有 Local Task 行,
+///   就地补建一条(`ensure_local_task` 是幂等的)。这覆盖了从老版本
+///   升级 / `auto_register_cwd_if_git_repo` 在 already-registered 路径
+///   吃掉错误的 backfill 缺口 — 不会等到下一次 re-register。
+/// - 字段同步:已有 Local Task 的 branch/target/path/name drift 同步。
 ///
 /// 返回 `(active_tasks, project_key)`。
 fn ensure_local_task_synced(project_path: &str) -> (Vec<Task>, String) {
     let project_key = project_hash(project_path);
 
-    let mut active_tasks = match tasks::load_tasks(&project_key) {
+    let load = || match tasks::load_tasks(&project_key) {
         Ok(t) => t,
         Err(e) => {
             eprintln!(
@@ -38,6 +40,8 @@ fn ensure_local_task_synced(project_path: &str) -> (Vec<Task>, String) {
         }
     };
 
+    let mut active_tasks = load();
+
     // Studio 项目没有 Local Task
     let project_meta = workspace::load_project_by_hash(&project_key).ok().flatten();
     let is_studio = matches!(
@@ -46,6 +50,28 @@ fn ensure_local_task_synced(project_path: &str) -> (Vec<Task>, String) {
     );
     if is_studio {
         return (active_tasks, project_key);
+    }
+
+    // Backfill: 老项目升级后可能没有 Local Task 行
+    if !active_tasks.iter().any(|t| t.id == LOCAL_TASK_ID) {
+        let project_name = project_meta
+            .as_ref()
+            .map(|p| p.name.clone())
+            .unwrap_or_else(|| {
+                Path::new(project_path)
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("Local")
+                    .to_string()
+            });
+        if let Err(e) = tasks::ensure_local_task(&project_key, project_path, &project_name) {
+            eprintln!(
+                "Warning: failed to backfill Local Task for {}: {}",
+                project_key, e
+            );
+        } else {
+            active_tasks = load();
+        }
     }
 
     // 同步已有 Local Task 的字段 drift

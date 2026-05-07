@@ -273,6 +273,10 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
   const renameProject = useCallback(
     async (id: string, name: string): Promise<void> => {
       await apiRenameProject(id, name);
+      // Always refresh the project list so the cards show the new
+      // name. If the renamed project is the currently selected one,
+      // also refresh its detail view (refreshSelectedProject loads
+      // both list + selected in parallel, so don't double-load it).
       if (selectedProject?.id === id) {
         await refreshSelectedProject();
       } else {

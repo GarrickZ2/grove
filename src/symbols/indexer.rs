@@ -48,12 +48,46 @@ type TaskKey = (String, String);
 /// Quiet-period before a coalesced reindex actually runs.
 const REINDEX_DEBOUNCE: Duration = Duration::from_millis(1500);
 
+/// How long the cached `indexing.enabled` toggle is considered fresh.
+/// The watcher hot path (`request_reindex_external`) consults the
+/// toggle on every event; without caching we'd re-parse the on-disk
+/// TOML dozens of times per second under an AI burst.
+const TOGGLE_CACHE_TTL: Duration = Duration::from_secs(2);
+
+/// Cached `indexing.enabled` snapshot for the watcher hot path.
+/// `None` means "not yet sampled". Refreshed lazily.
+static INDEXING_ENABLED_CACHE: Lazy<Mutex<Option<(bool, Instant)>>> =
+    Lazy::new(|| Mutex::new(None));
+
+/// Read `IndexingConfig.enabled`, caching the result for
+/// `TOGGLE_CACHE_TTL`. The toggle is rarely changed (settings UI), so
+/// a 2s staleness window is invisible to users while saving the watcher
+/// from per-event TOML parsing.
+fn indexing_enabled_cached() -> bool {
+    let mut cache = INDEXING_ENABLED_CACHE
+        .lock()
+        .expect("indexing toggle cache poisoned");
+    let now = Instant::now();
+    if let Some((value, taken_at)) = *cache {
+        if now.duration_since(taken_at) < TOGGLE_CACHE_TTL {
+            return value;
+        }
+    }
+    let fresh = crate::storage::config::load_config().indexing.enabled;
+    *cache = Some((fresh, now));
+    fresh
+}
+
 struct BuildSlot {
     /// True while a worker thread is alive for this task.
     scheduled: AtomicBool,
     /// True after the watcher subscription has been registered for this
     /// task — prevents duplicate callbacks if /activate fires repeatedly.
     subscribed: AtomicBool,
+    /// Set when the task is deleted/archived. The worker checks this in
+    /// its per-file loop and bails so we don't reinsert rows the
+    /// post-delete `delete_task` already cleared.
+    cancelled: AtomicBool,
     /// Earliest instant the worker should start the next build. Each
     /// `request_reindex` sets this to `now + DEBOUNCE`. None ⇒ no pending
     /// work; the worker treats that as "exit".
@@ -65,6 +99,7 @@ impl BuildSlot {
         Arc::new(Self {
             scheduled: AtomicBool::new(false),
             subscribed: AtomicBool::new(false),
+            cancelled: AtomicBool::new(false),
             next_due: Mutex::new(None),
         })
     }
@@ -99,7 +134,7 @@ static REGISTRY: Lazy<RwLock<Registry>> = Lazy::new(|| {
 /// toggled off) keep ticking until grove restarts — matches the
 /// "config takes effect on next activation" semantics.
 pub fn on_watch_started(project_hash: &str, task_id: &str, worktree: &Path) {
-    if !crate::storage::config::load_config().indexing.enabled {
+    if !indexing_enabled_cached() {
         return;
     }
 
@@ -116,7 +151,14 @@ pub fn on_watch_started(project_hash: &str, task_id: &str, worktree: &Path) {
 
 /// Force a fresh from-scratch reindex. Wipes the cached rows for this
 /// task (so the build can't mtime-skip them) and queues a build.
+///
+/// Honors `IndexingConfig.enabled`: if the master toggle is off, this is
+/// a no-op (we don't even purge — leaving rows alone matches the
+/// "indexing disabled" intent).
 pub fn trigger_reindex(project_hash: &str, task_id: &str, worktree: &Path) {
+    if !indexing_enabled_cached() {
+        return;
+    }
     if let Ok(store) = ensure_store(project_hash) {
         if let Ok(mut s) = store.lock() {
             let _ = s.delete_task(task_id);
@@ -135,10 +177,25 @@ pub fn trigger_reindex(project_hash: &str, task_id: &str, worktree: &Path) {
 /// Best-effort: errors are swallowed. No-op if no on-disk index.db
 /// exists yet.
 pub fn on_task_deleted(project_hash: &str, task_id: &str) {
-    {
+    // Drop the watcher subscription + watch path so late events for this
+    // task don't resurrect the slot via `request_reindex_external`.
+    if let Ok(watchers) = crate::api::state::FILE_WATCHERS.read() {
+        if let Some(watcher) = watchers.get(project_hash) {
+            watcher.unsubscribe(task_id);
+            watcher.unwatch(task_id);
+        }
+    }
+
+    let removed_slot = {
         let mut reg = REGISTRY.write().expect("symbols registry poisoned");
         reg.slots
-            .remove(&(project_hash.to_string(), task_id.to_string()));
+            .remove(&(project_hash.to_string(), task_id.to_string()))
+    };
+    // Tell any in-flight worker holding its own Arc<BuildSlot> to bail
+    // out of its per-file loop so it can't re-insert rows we're about to
+    // delete.
+    if let Some(slot) = removed_slot {
+        slot.cancelled.store(true, Ordering::Release);
     }
 
     let db_path = crate::storage::grove_dir()
@@ -196,6 +253,14 @@ fn request_reindex_with(slot: &Arc<BuildSlot>, project_hash: &str, task_id: &str
 }
 
 fn request_reindex_external(project_hash: &str, task_id: &str, worktree: &Path) {
+    // Watcher-driven reindex must also honor the master toggle — without
+    // this, a long-lived subscription registered before the user toggled
+    // off would keep producing builds. Watcher events fire per-file
+    // edit (dozens per second under an AI burst), so use the cached
+    // toggle to avoid re-parsing config.toml each time.
+    if !indexing_enabled_cached() {
+        return;
+    }
     let slot = get_or_create_slot((project_hash.to_string(), task_id.to_string()));
     request_reindex_with(&slot, project_hash, task_id, worktree);
 }
@@ -207,6 +272,10 @@ enum Action {
 
 fn worker_loop(slot: Arc<BuildSlot>, project_hash: String, task_id: String, worktree: PathBuf) {
     loop {
+        if slot.cancelled.load(Ordering::Acquire) {
+            slot.scheduled.store(false, Ordering::Release);
+            return;
+        }
         let action = {
             let mut due = slot.next_due.lock().expect("slot.next_due poisoned");
             match *due {
@@ -236,7 +305,7 @@ fn worker_loop(slot: Arc<BuildSlot>, project_hash: String, task_id: String, work
         match action {
             Action::Sleep(d) => std::thread::sleep(d),
             Action::Build => {
-                if let Err(e) = run_build(&project_hash, &task_id, &worktree) {
+                if let Err(e) = run_build(&slot, &project_hash, &task_id, &worktree) {
                     eprintln!(
                         "[symbols] build failed for ({}, {}): {}",
                         project_hash, task_id, e
@@ -277,7 +346,7 @@ fn ensure_store(project_hash: &str) -> Result<Arc<Mutex<SymbolStore>>> {
 /// `SymbolStore::replace_file` is mtime-gated, so concurrent watcher
 /// events that happen to also update a file we're processing here can't
 /// be clobbered by a stale write from this build.
-fn run_build(project_hash: &str, task_id: &str, worktree: &Path) -> Result<()> {
+fn run_build(slot: &BuildSlot, project_hash: &str, task_id: &str, worktree: &Path) -> Result<()> {
     let store = ensure_store(project_hash)?;
 
     let cached_mtimes = {
@@ -287,6 +356,12 @@ fn run_build(project_hash: &str, task_id: &str, worktree: &Path) -> Result<()> {
 
     let candidates = git_tracked_supported_files(worktree);
     for (rel_path, language) in candidates {
+        // Bail mid-build if the task was deleted/archived; otherwise we'd
+        // re-insert rows that `on_task_deleted` is about to (or just did)
+        // wipe out.
+        if slot.cancelled.load(Ordering::Acquire) {
+            return Ok(());
+        }
         let abs = worktree.join(&rel_path);
         let mtime = match file_mtime_unix(&abs) {
             Some(m) => m,
@@ -305,6 +380,18 @@ fn run_build(project_hash: &str, task_id: &str, worktree: &Path) -> Result<()> {
         let symbols = extractor::extract(language, &rel_str, &bytes);
 
         let mut store = store.lock().expect("symbol store mutex poisoned");
+        // Re-check cancellation under the store lock. Without this, the
+        // sequence (worker passes outer cancelled check at top of loop
+        // → does file IO + extract outside any lock → on_task_deleted
+        // sets cancelled + takes lock + delete_task + releases →
+        // worker takes lock here and replace_file resurrects rows) is
+        // a live race. Pairing the cancel-set with the lock acquisition
+        // closes it: any worker that observes cancelled=false here
+        // necessarily acquired the lock before on_task_deleted's
+        // delete_task ran (or before cancelled was set at all).
+        if slot.cancelled.load(Ordering::Acquire) {
+            return Ok(());
+        }
         let _ = store.replace_file(task_id, &rel_str, mtime, symbols);
     }
 
@@ -429,7 +516,8 @@ mod tests {
             .output()
             .unwrap();
 
-        run_build("proj-1", "task-1", &worktree).unwrap();
+        let slot = BuildSlot::new();
+        run_build(&slot, "proj-1", "task-1", &worktree).unwrap();
 
         let hits = lookup("proj-1", "task-1", "Indexed").unwrap();
         assert_eq!(hits.len(), 1, "expected to index Indexed in a.go");

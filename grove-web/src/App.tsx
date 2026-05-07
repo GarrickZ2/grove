@@ -141,20 +141,30 @@ function AppContent() {
   // Mobile virtual-keyboard tracker: exposes the keyboard height as a global
   // CSS variable (--grove-kb-inset). Bottom-anchored UI uses
   // `bottom: var(--grove-kb-inset, 0)` to lift above the keyboard on iOS.
+  //
+  // window.resize fires when the layout viewport changes — orientation
+  // flip, iPad split-view resize, breakpoint crossing. On Android Chrome
+  // (and older iOS) it ALSO fires when the keyboard opens, in undefined
+  // order relative to vv.resize. Recompute from `vv` directly on every
+  // event rather than blanking the var; this keeps the inset correct
+  // when the keyboard is genuinely up at resize time, while still
+  // letting orientation changes update the value.
   useEffect(() => {
     if (typeof window === "undefined" || !window.visualViewport) return;
     const vv = window.visualViewport;
     const root = document.documentElement;
-    const onResize = () => {
+    const recompute = () => {
       const offset = window.innerHeight - vv.height - vv.offsetTop;
       root.style.setProperty("--grove-kb-inset", `${offset > 50 ? offset : 0}px`);
     };
-    vv.addEventListener("resize", onResize);
-    vv.addEventListener("scroll", onResize);
-    onResize();
+    vv.addEventListener("resize", recompute);
+    vv.addEventListener("scroll", recompute);
+    window.addEventListener("resize", recompute);
+    recompute();
     return () => {
-      vv.removeEventListener("resize", onResize);
-      vv.removeEventListener("scroll", onResize);
+      vv.removeEventListener("resize", recompute);
+      vv.removeEventListener("scroll", recompute);
+      window.removeEventListener("resize", recompute);
       root.style.removeProperty("--grove-kb-inset");
     };
   }, []);

@@ -137,6 +137,14 @@ pub(crate) fn create_schema(conn: &Connection) -> Result<()> {
             PRIMARY KEY (project, id)
         );
 
+        -- Hot path: load_tasks() / load_archived_tasks() filter by
+        -- (project, status) and ORDER BY updated_at DESC. The PK alone
+        -- covers the project predicate but still scans archived rows
+        -- inside one project; this index makes the status filter O(1)
+        -- and the sort no-op.
+        CREATE INDEX IF NOT EXISTS ix_tasks_project_status
+            ON tasks (project, status, updated_at DESC);
+
         -- Task Groups
         CREATE TABLE IF NOT EXISTS task_groups (
             id         TEXT PRIMARY KEY,
@@ -1389,8 +1397,17 @@ pub fn prune_legacy_files() {
 
     if removed > 0 {
         eprintln!("Pruned {} legacy files.", removed);
+        eprintln!(
+            "Note: per-task chats.toml is preserved as a recovery backup \
+             after the v2.4 chat migration; remove manually if no longer \
+             needed."
+        );
     } else {
         eprintln!("No legacy files to prune.");
+        eprintln!(
+            "(Note: per-task chats.toml is preserved by design as a recovery \
+             backup; it is not pruned automatically.)"
+        );
     }
 }
 

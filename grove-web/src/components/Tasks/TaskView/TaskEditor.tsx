@@ -14,6 +14,7 @@ import {
   deleteFileOrDir,
   lookupSymbol,
   listTasks,
+  getConfig,
 } from "../../../api";
 import type { DirEntry } from "../../../api";
 import { FileContextMenu, type ContextMenuPosition, type ContextMenuTarget } from "./FileContextMenu";
@@ -93,18 +94,222 @@ function getLanguage(filePath: string): string {
  *
  * The two events are deliberately decoupled — "is this clickable" and
  * "where does it go" are independent concerns.
+ *
+ * Multi-editor correctness: the DefinitionProvider and `openCodeEditor`
+ * override are registered exactly once per process, against a global
+ * `editorRegistry`. Each TaskEditor instance registers its
+ * (projectId, taskId, refs) on mount under a unique session id, and
+ * unregisters on unmount. The synthetic `grove-file://` URIs we hand to
+ * Monaco's peek widget include the session id so cross-file jumps and
+ * peek previews route back to the originating editor instance —
+ * different TaskEditors with the same relative file path don't collide.
  */
 // monaco-editor's surface is loosely typed across versions.
 /* eslint-disable @typescript-eslint/no-explicit-any */
-function wireSymbolNavigation(
-  editor: any,
-  monaco: any,
-  projectId: string,
-  taskId: string,
-  selectedFileRef: React.MutableRefObject<string | null>,
-  pendingJumpRef: React.MutableRefObject<{ file: string; line: number; col: number } | null>,
-  handleSelectFileRef: React.MutableRefObject<(path: string) => Promise<void>>,
-) {
+type EditorEntry = {
+  projectId: string;
+  taskId: string;
+  monaco: any;
+  // Latest selectedFile, captured by ref so the global provider sees
+  // current React state without re-registering.
+  selectedFileRef: React.MutableRefObject<string | null>;
+  pendingJumpRef: React.MutableRefObject<{ file: string; line: number; col: number } | null>;
+  handleSelectFileRef: React.MutableRefObject<(path: string) => Promise<void>>;
+  // Live editor handle, used by the openCodeEditor override to reveal
+  // / focus when the jump target is the same file.
+  editor: any;
+};
+
+const editorRegistry = new Map<string, EditorEntry>();
+const registeredProviderLangs = new Set<string>();
+let editorServiceHooked = false;
+
+function isGroveFileScheme(scheme: string | undefined): scheme is 'grove-file' {
+  return scheme === 'grove-file';
+}
+
+/** Synthetic URI: grove-file://<sessionId>/<rel-path>.
+ *
+ *  Use `monaco.Uri.from({ scheme, authority, path })` rather than
+ *  `Uri.parse` over a percent-encoded string. The `from` constructor
+ *  takes the path as a raw value and stores it verbatim; reading
+ *  `uri.path` later returns the same raw string. If we instead handed
+ *  Monaco a percent-encoded path string via `Uri.parse`, Monaco
+ *  decodes it once on its own — round-tripping through us would then
+ *  need exactly one more decode, which is fragile (`encodeURIComponent`
+ *  / `decodeURIComponent` are not strictly inverse for already-encoded
+ *  inputs like a real file named `100%20.txt`).
+ */
+function buildGroveUri(monaco: any, sessionId: string, filePath: string): any {
+  // Path must start with `/` per the URI grammar Monaco expects.
+  return monaco.Uri.from({
+    scheme: 'grove-file',
+    authority: sessionId,
+    path: `/${filePath}`,
+  });
+}
+
+function parseGroveUri(uri: any): { sessionId: string; filePath: string } | null {
+  if (!uri || !isGroveFileScheme(uri.scheme)) return null;
+  const sessionId = (uri.authority as string) || '';
+  // `uri.path` returns the raw path we stored via `Uri.from`. No
+  // additional decoding is needed — and applying decodeURIComponent
+  // here would corrupt file names containing literal `%XX` sequences
+  // (e.g. `100%20.txt` would become `100 .txt`).
+  const filePath = (uri.path as string).replace(/^\//, '');
+  if (!sessionId) return null;
+  return { sessionId, filePath };
+}
+
+async function ensureGlobalEditorServiceHook(editor: any) {
+  if (editorServiceHooked) return;
+  const editorService = (editor as any)._codeEditorService;
+  if (!editorService) {
+    // Monaco internals may shift across versions and not always expose
+    // `_codeEditorService` synchronously on first mount. Don't latch
+    // the global flag — leave it false so a later mount can retry.
+    return;
+  }
+  if ((editorService as any)._groveSymbolHooked) {
+    editorServiceHooked = true;
+    return;
+  }
+  const openBase = editorService.openCodeEditor.bind(editorService);
+  (editorService as any)._groveSymbolHooked = true;
+  editorServiceHooked = true;
+  editorService.openCodeEditor = async (input: any, source: any) => {
+    const parsed = parseGroveUri(input?.resource);
+    if (parsed) {
+      const entry = editorRegistry.get(parsed.sessionId);
+      if (entry) {
+        const sel = input?.options?.selection;
+        const targetLine = sel ? (sel.startLineNumber as number) - 1 : 0;
+        const targetCol = sel ? (sel.startColumn as number) - 1 : 0;
+        const target = entry.editor;
+        if (parsed.filePath === entry.selectedFileRef.current) {
+          target.revealLineInCenter(targetLine + 1);
+          target.setPosition({ lineNumber: targetLine + 1, column: targetCol + 1 });
+          target.focus();
+        } else {
+          entry.pendingJumpRef.current = { file: parsed.filePath, line: targetLine, col: targetCol };
+          await entry.handleSelectFileRef.current(parsed.filePath);
+        }
+        return source;
+      }
+    }
+    return await openBase(input, source);
+  };
+}
+
+/** Map a backend language id to Monaco's language id. */
+function monacoLangIdFor(langId: string): string {
+  switch (langId) {
+    case 'go':
+      return 'go';
+    default:
+      return langId;
+  }
+}
+
+async function ensureDefinitionProvidersRegistered(monaco: any) {
+  // Register one provider per backend-supported language, filtered by
+  // the user's deny-list. Idempotent at the language level so we don't
+  // stack providers if the editor mounts again.
+  //
+  // Known limitation: `registeredProviderLangs` is process-scoped and
+  // never trimmed. If the user later adds a language to
+  // `disabled_languages` via Settings, the already-registered provider
+  // keeps firing `lookupSymbol` for that language; the backend returns
+  // an empty result so the user sees no candidates, but the RPC is
+  // wasted. Acceptable today — the deny-list is rarely toggled at
+  // runtime — but worth revisiting if we ship more languages.
+  let langs: string[] = [];
+  try {
+    const cfg = await getConfig();
+    const disabled = new Set(cfg.indexing?.disabled_languages ?? []);
+    const supported = cfg.indexing?.supported_languages ?? [];
+    langs = supported
+      .map((l) => l.id)
+      .filter((id) => !disabled.has(id))
+      .map(monacoLangIdFor);
+  } catch {
+    // Config fetch failed (rare): fall back to the only language we
+    // ship a backend extractor for today.
+    langs = ['go'];
+  }
+
+  for (const lang of langs) {
+    if (registeredProviderLangs.has(lang)) continue;
+    registeredProviderLangs.add(lang);
+    monaco.languages.registerDefinitionProvider(lang, {
+      provideDefinition: async (model: any, position: any) => {
+        // Find the editor that owns this model, then look up its
+        // (projectId, taskId) in the registry. This dispatches
+        // correctly across multiple TaskEditor instances.
+        const editors = (monaco.editor.getEditors?.() as any[]) || [];
+        const owner = editors.find((e: any) => e.getModel?.() === model);
+        if (!owner) return null;
+        const sessionId = owner.getId?.() as string | undefined;
+        if (!sessionId) return null;
+        const entry = editorRegistry.get(sessionId);
+        if (!entry) return null;
+
+        const word = model.getWordAtPosition?.(position);
+        if (!word?.word) return null;
+        let candidates;
+        try {
+          candidates = await lookupSymbol(
+            entry.projectId,
+            entry.taskId,
+            word.word,
+            entry.selectedFileRef.current ?? undefined,
+            position.lineNumber - 1,
+          );
+        } catch {
+          return null;
+        }
+        if (candidates.length === 0) return null;
+
+        // Pre-fetch content for each unique candidate file so the peek
+        // widget can render previews. URIs are namespaced by sessionId
+        // so two TaskEditors for different tasks but same rel path
+        // don't share a (potentially mismatched) model.
+        const uniqueFiles = Array.from(new Set(candidates.map((c) => c.file_path)));
+        await Promise.all(
+          uniqueFiles.map(async (fp) => {
+            const uri = buildGroveUri(monaco, sessionId, fp);
+            if (monaco.editor.getModel(uri)) return;
+            try {
+              const res = await getFileContent(entry.projectId, entry.taskId, fp);
+              if (!monaco.editor.getModel(uri)) {
+                monaco.editor.createModel(res.content, getLanguage(fp), uri);
+              }
+            } catch {
+              // Peek preview falls back to blank; click-to-navigate
+              // still works.
+            }
+          }),
+        );
+
+        return candidates.map((c) => ({
+          uri: buildGroveUri(monaco, sessionId, c.file_path),
+          range: new monaco.Range(
+            c.line + 1,
+            c.col + 1,
+            c.line + 1,
+            c.col + 1 + c.name.length,
+          ),
+        }));
+      },
+    });
+  }
+}
+
+/**
+ * Attach mouse/keyboard hover-underline listeners to the editor.
+ * Returns disposables; caller must dispose on unmount.
+ */
+function attachUnderlineListeners(editor: any, monaco: any): { dispose: () => void }[] {
   let underlineDecorations: string[] = [];
 
   const clearUnderline = () => {
@@ -121,9 +326,7 @@ function wireSymbolNavigation(
     ]);
   };
 
-  // Hover with ⌘ held → paint underline on the word under the cursor.
-  // No API call. Pure visual hint that "this token is clickable."
-  editor.onMouseMove((e: any) => {
+  const d1 = editor.onMouseMove((e: any) => {
     const browserEvent = e?.event?.browserEvent as MouseEvent | undefined;
     const cmd = browserEvent?.metaKey || browserEvent?.ctrlKey;
     if (!cmd) {
@@ -145,11 +348,9 @@ function wireSymbolNavigation(
     setUnderlineAt(position.lineNumber, word.startColumn, word.endColumn);
   });
 
-  editor.onMouseLeave(clearUnderline);
+  const d2 = editor.onMouseLeave(clearUnderline);
 
-  // Releasing ⌘/Ctrl while staying in the editor — clear the underline
-  // immediately rather than waiting for the next mouse move.
-  editor.onKeyUp((e: any) => {
+  const d3 = editor.onKeyUp((e: any) => {
     const ev = e?.browserEvent as KeyboardEvent | undefined;
     if (!ev) return;
     if (!ev.metaKey && !ev.ctrlKey) {
@@ -157,109 +358,7 @@ function wireSymbolNavigation(
     }
   });
 
-  // ⌘+click → Monaco's standard "Go to Definition" flow.
-  //
-  //   - 1 candidate  → Monaco navigates directly.
-  //   - >1 candidates → Monaco opens its built-in peek widget; user
-  //                     picks one with arrow keys + Enter.
-  //
-  // We hand back Locations whose URI is `grove-file:///<rel-path>`
-  // (synthetic — never matches the editor's in-memory model URI), so
-  // every navigation routes through our `openCodeEditor` override
-  // below, where we either reveal-in-place or load a different file.
-  // For each candidate file we need a Monaco model behind its
-  // `grove-file:` URI — otherwise the peek widget's left-side preview
-  // is blank, since Monaco can't fetch text for a URI scheme it
-  // doesn't know. We lazily createModel on demand and de-dupe so the
-  // same file isn't fetched twice.
-  const ensureModelFor = async (filePath: string) => {
-    const uri = monaco.Uri.parse(`grove-file:///${encodeURI(filePath)}`);
-    if (monaco.editor.getModel(uri)) return uri;
-    try {
-      const res = await getFileContent(projectId, taskId, filePath);
-      // The model may have been created concurrently while we were
-      // fetching; double-check before creating to avoid the duplicate
-      // URI error.
-      if (!monaco.editor.getModel(uri)) {
-        monaco.editor.createModel(res.content, getLanguage(filePath), uri);
-      }
-    } catch {
-      // Without content the peek preview will still be blank for this
-      // entry, but the click-to-navigate path still works.
-    }
-    return uri;
-  };
-
-  for (const lang of ['go']) {
-    monaco.languages.registerDefinitionProvider(lang, {
-      provideDefinition: async (model: any, position: any) => {
-        const word = model.getWordAtPosition?.(position);
-        if (!word?.word) return null;
-        let candidates;
-        try {
-          candidates = await lookupSymbol(
-            projectId,
-            taskId,
-            word.word,
-            selectedFileRef.current ?? undefined,
-            position.lineNumber - 1,
-          );
-        } catch {
-          return null;
-        }
-        if (candidates.length === 0) return null;
-
-        // Pre-fetch content for each unique candidate file so the peek
-        // widget can render previews. Fire in parallel.
-        const uniqueFiles = Array.from(new Set(candidates.map((c) => c.file_path)));
-        await Promise.all(uniqueFiles.map(ensureModelFor));
-
-        return candidates.map((c) => ({
-          uri: monaco.Uri.parse(`grove-file:///${encodeURI(c.file_path)}`),
-          range: new monaco.Range(
-            c.line + 1,
-            c.col + 1,
-            c.line + 1,
-            c.col + 1 + c.name.length,
-          ),
-        }));
-      },
-    });
-  }
-
-  // Override openCodeEditor: for our synthetic `grove-file:` URIs we
-  // always go through React's handleSelectFile so component state
-  // (selectedFile, fileContent, modified, etc.) stays consistent with
-  // what's actually rendered. Without this short-circuit Monaco would
-  // happily call setModel() on the editor itself — visually correct,
-  // but React state is stale and the next render clobbers it.
-  //
-  // Other URI schemes (e.g. Monaco's built-in `inmemory://`) keep the
-  // default behaviour via openBase.
-  const editorService = (editor as any)._codeEditorService;
-  if (editorService && !(editorService as any)._groveSymbolHooked) {
-    const openBase = editorService.openCodeEditor.bind(editorService);
-    (editorService as any)._groveSymbolHooked = true;
-    editorService.openCodeEditor = async (input: any, source: any) => {
-      const uri = input?.resource;
-      if (uri && uri.scheme === 'grove-file') {
-        const filePath = decodeURI((uri.path as string).replace(/^\//, ''));
-        const sel = input?.options?.selection;
-        const targetLine = sel ? (sel.startLineNumber as number) - 1 : 0;
-        const targetCol = sel ? (sel.startColumn as number) - 1 : 0;
-        if (filePath === selectedFileRef.current) {
-          editor.revealLineInCenter(targetLine + 1);
-          editor.setPosition({ lineNumber: targetLine + 1, column: targetCol + 1 });
-          editor.focus();
-        } else {
-          pendingJumpRef.current = { file: filePath, line: targetLine, col: targetCol };
-          await handleSelectFileRef.current(filePath);
-        }
-        return source;
-      }
-      return await openBase(input, source);
-    };
-  }
+  return [d1, d2, d3];
 }
 /* eslint-enable @typescript-eslint/no-explicit-any */
 
@@ -776,15 +875,38 @@ export function TaskEditor({ projectId, taskId, onClose, fullscreen = false, onT
               onChange={handleEditorChange}
               onMount={(editor, monaco) => {
                 editorRef.current = editor;
-                wireSymbolNavigation(
-                  editor,
-                  monaco,
-                  projectId,
-                  taskId,
-                  selectedFileRef,
-                  pendingJumpRef,
-                  handleSelectFileRef,
-                );
+                const sessionId = editor.getId?.() as string | undefined;
+                if (sessionId) {
+                  editorRegistry.set(sessionId, {
+                    projectId,
+                    taskId,
+                    monaco,
+                    selectedFileRef,
+                    pendingJumpRef,
+                    handleSelectFileRef,
+                    editor,
+                  });
+                  // Drop the registry entry when Monaco disposes the
+                  // editor (panel close, tab switch, FlexLayout
+                  // re-mount). Without this, late provider lookups
+                  // would target a dead editor.
+                  editor.onDidDispose?.(() => {
+                    editorRegistry.delete(sessionId);
+                  });
+                }
+                const underlineDisposables = attachUnderlineListeners(editor, monaco);
+                editor.onDidDispose?.(() => {
+                  for (const d of underlineDisposables) {
+                    try {
+                      d.dispose();
+                    } catch {
+                      // Monaco disposes its own listeners on
+                      // editor.dispose; this is just defensive.
+                    }
+                  }
+                });
+                void ensureDefinitionProvidersRegistered(monaco);
+                void ensureGlobalEditorServiceHook(editor);
               }}
               theme="vs-dark"
               options={{

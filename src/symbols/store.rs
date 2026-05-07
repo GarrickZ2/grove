@@ -77,24 +77,32 @@ impl SymbolStore {
         file_mtime: i64,
         symbols: Vec<SymbolDef>,
     ) -> Result<()> {
-        // Cheap pre-check: under the outer Mutex<SymbolStore>, no other
-        // writer is running, so this read is consistent with the SQL we
-        // execute below.
-        let stored: Option<i64> = self
-            .db
-            .query_row(
-                "SELECT MAX(file_mtime) FROM symbols WHERE task_id = ?1 AND file_path = ?2",
-                params![task_id, file_path],
-                |r| r.get(0),
-            )
-            .ok();
+        let tx = self.db.transaction()?;
+        // Mtime gate: read inside the same transaction so no other writer
+        // (in this process or another grove instance attached to the same
+        // file) can sneak a fresher row in between the gate and our
+        // delete/insert.
+        //
+        // MAX over zero rows returns one row whose value is NULL — we
+        // map that to None via Option<i64>. Real SQL errors propagate
+        // up so the caller can log/abort, rather than being silently
+        // treated as "no row".
+        let stored: Option<i64> = match tx.query_row(
+            "SELECT MAX(file_mtime) FROM symbols WHERE task_id = ?1 AND file_path = ?2",
+            params![task_id, file_path],
+            |r| r.get::<_, Option<i64>>(0),
+        ) {
+            Ok(v) => v,
+            Err(rusqlite::Error::QueryReturnedNoRows) => None,
+            Err(e) => return Err(e.into()),
+        };
         if let Some(stored) = stored {
             if stored > file_mtime {
+                // Drop the empty txn; nothing to commit.
+                drop(tx);
                 return Ok(());
             }
         }
-
-        let tx = self.db.transaction()?;
         tx.execute(
             "DELETE FROM symbols WHERE task_id = ?1 AND file_path = ?2",
             params![task_id, file_path],
@@ -143,9 +151,8 @@ impl SymbolStore {
         Ok(())
     }
 
-    /// Drop all symbols for `task_id` (e.g. task archived). Wired to a
-    /// future archive-task hook; not yet on a hot path.
-    #[allow(dead_code)]
+    /// Drop all symbols for `task_id` (e.g. task archived/deleted).
+    /// Called by the indexer's `on_task_deleted` and `trigger_reindex`.
     pub fn delete_task(&mut self, task_id: &str) -> Result<()> {
         self.db
             .execute("DELETE FROM symbols WHERE task_id = ?1", params![task_id])?;
@@ -251,24 +258,54 @@ impl SymbolStore {
     }
 
     fn apply_schema(db: &mut Connection, path: &Path) -> Result<()> {
-        // Detect mismatched schema first; nuke-and-recreate the file.
-        // Fresh dbs have no `meta` table, so the SELECT fails and we
-        // proceed to create. Mismatch is treated the same as "unreadable".
-        let existing: Option<String> = db
+        // Detect a schema-version mismatch and nuke-and-recreate the
+        // file. Three cases trigger a rebuild:
+        //   (a) `meta` table doesn't exist (truly fresh / corrupt db),
+        //   (b) `meta` exists but has no schema_version row,
+        //   (c) schema_version row exists but doesn't match.
+        //
+        // Cases (a) and (b) both surface as a missing/empty SELECT,
+        // which we couldn't previously distinguish from "first-time
+        // create" — a half-initialized db (b) used to pass through and
+        // run `CREATE TABLE IF NOT EXISTS` against potentially stale
+        // columns. We now check the `meta` table existence separately
+        // so a half-initialized file goes through the same rebuild
+        // path as a version mismatch.
+        let meta_exists: bool = db
             .query_row(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='meta'",
+                [],
+                |_| Ok(true),
+            )
+            .unwrap_or(false);
+        let existing: Option<String> = if meta_exists {
+            db.query_row(
                 "SELECT value FROM meta WHERE key = 'schema_version'",
                 [],
                 |r| r.get(0),
             )
-            .ok();
-        if let Some(v) = existing {
-            if v == SCHEMA_VERSION {
-                return Ok(());
-            }
-            // Version mismatch: drop the file and reopen. Treat this as
-            // cache invalidation, not an error path users care about.
+            .ok()
+        } else {
+            None
+        };
+
+        let needs_rebuild = match (meta_exists, existing.as_deref()) {
+            (false, _) => false, // truly empty; fall through to CREATE
+            (true, Some(v)) if v == SCHEMA_VERSION => return Ok(()),
+            // half-init or version drift: rebuild
+            (true, _) => true,
+        };
+
+        if needs_rebuild {
+            // Drop the file and reopen. Treat this as cache
+            // invalidation, not an error path users care about. Also
+            // remove WAL/SHM sidecars so the rebuild starts clean —
+            // SQLite tolerates orphans but they confuse debuggers
+            // attached to the new file.
             drop(std::mem::replace(db, Connection::open_in_memory()?));
             std::fs::remove_file(path)?;
+            let _ = std::fs::remove_file(path.with_extension("db-wal"));
+            let _ = std::fs::remove_file(path.with_extension("db-shm"));
             *db = Self::connect(path)?;
         }
 

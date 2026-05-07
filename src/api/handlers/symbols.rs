@@ -159,6 +159,10 @@ async fn resolve_active_worktree(
 ///   1. Same file as the click site, closest line first.
 ///   2. Other files, sorted by file path for stability.
 ///
+/// `from_line` is only used inside the same-file group; if the client
+/// sends `from_line` without `from_file` it is silently ignored
+/// (cross-file proximity has no meaning).
+///
 /// Language-family ranking will become relevant when we add a second
 /// grammar; for now there's only Go.
 fn rank_candidates(hits: &mut [SymbolDef], from_file: Option<&str>, from_line: Option<u32>) {
