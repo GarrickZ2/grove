@@ -397,11 +397,7 @@ fn build_local_task(
 /// `auto_register_cwd_if_git_repo`). If the Local Task already exists, this
 /// is a no-op — the sync-on-read path in `loader::ensure_local_task_synced`
 /// handles keeping branch/target/path/name up to date.
-pub fn ensure_local_task(
-    project_key: &str,
-    project_path: &str,
-    project_name: &str,
-) -> Result<()> {
+pub fn ensure_local_task(project_key: &str, project_path: &str, project_name: &str) -> Result<()> {
     let conn = crate::storage::database::connection();
     let exists: bool = conn
         .query_row(

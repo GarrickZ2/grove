@@ -181,8 +181,12 @@ mod tests {
             }
         "#;
         let got = names(src);
-        assert!(got.iter().any(|(n, k, _)| n == "Hello" && *k == SymbolKind::Method));
-        assert!(got.iter().any(|(n, k, _)| n == "Goodbye" && *k == SymbolKind::Method));
+        assert!(got
+            .iter()
+            .any(|(n, k, _)| n == "Hello" && *k == SymbolKind::Method));
+        assert!(got
+            .iter()
+            .any(|(n, k, _)| n == "Goodbye" && *k == SymbolKind::Method));
     }
 
     #[test]

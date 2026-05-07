@@ -559,7 +559,9 @@ pub async fn rename_project(
 ) -> Result<Json<ProjectResponse>, (StatusCode, Json<ApiError>)> {
     let trimmed = req.name.trim().to_string();
     if trimmed.is_empty() {
-        return Err(ApiError::bad_request("Project name cannot be empty".to_string()));
+        return Err(ApiError::bad_request(
+            "Project name cannot be empty".to_string(),
+        ));
     }
 
     let (project, _) = common::find_project_by_id(&id).map_err(|s| {

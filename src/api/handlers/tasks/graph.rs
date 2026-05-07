@@ -494,16 +494,10 @@ fn build_mention_candidates(
     let pending = graph_db::pending_replies_for(&conn, chat_id).ok()?;
     drop(conn);
 
-    // Outgoing candidates = every other session in the same task (whether or
-    // not an edge exists). The user's mental model is "any chat in the task
-    // is mentionable"; the spec §6 send template instructs the AI to use
-    // grove_agent_send, which will surface no_edge if missing — that's a
-    // dispatch-time concern, not a discovery-time one. Edge-backed sessions
-    // are listed first so they sort above the rest.
-    let edge_ids: std::collections::HashSet<String> = outgoing_edges
-        .iter()
-        .map(|c| c.to_session_id.clone())
-        .collect();
+    // Outgoing candidates = only sessions reachable via an existing edge.
+    // Unrelated same-task sessions are excluded because grove_agent_send
+    // will reject them with no_edge at dispatch time, making the mention
+    // misleading.
 
     let agents = skills::get_all_agents()
         .into_iter()
@@ -521,13 +515,7 @@ fn build_mention_candidates(
         .map(|c| (c.id.clone(), (c.title.clone(), c.agent.clone())))
         .collect();
 
-    // Edge-backed first (in their existing edge order), then the remaining
-    // same-task sessions (excluding caller and pending-reply senders, since
-    // those already appear under their own group).
-    let pending_ids: std::collections::HashSet<String> =
-        pending.iter().map(|p| p.from_session.clone()).collect();
-
-    let mut outgoing: Vec<MentionOutgoing> = outgoing_edges
+    let outgoing: Vec<MentionOutgoing> = outgoing_edges
         .into_iter()
         .map(|c| {
             let agent = chat_meta
@@ -542,18 +530,6 @@ fn build_mention_candidates(
             }
         })
         .collect();
-
-    for chat in &chats {
-        if chat.id == chat_id || edge_ids.contains(&chat.id) || pending_ids.contains(&chat.id) {
-            continue;
-        }
-        outgoing.push(MentionOutgoing {
-            session_id: chat.id.clone(),
-            name: chat.title.clone(),
-            agent: chat.agent.clone(),
-            duty: chat.duty.clone(),
-        });
-    }
 
     let make_excerpt = crate::agent_graph::pending_body_excerpt;
     let pending_replies = pending
@@ -933,10 +909,10 @@ mod tests {
     }
 
     #[test]
-    fn mention_candidates_includes_edgeless_same_task_sessions() {
+    fn mention_candidates_excludes_edgeless_same_task_sessions() {
         with_temp_home(|project_id, task_id| {
             // caller + two siblings, no edges anywhere — siblings should
-            // still surface so the user can @-mention by name.
+            // NOT surface because there is no edge to support a send.
             for (id, name, agent) in [
                 ("caller", "Caller", "claude"),
                 ("sib-1", "Sibling One", "codex"),
@@ -958,25 +934,21 @@ mod tests {
             }
 
             let resp = build_mention_candidates(project_id, task_id, "caller").unwrap();
-            // Caller excluded; both siblings present with their agent kind.
-            let names: std::collections::HashSet<_> =
-                resp.outgoing.iter().map(|o| o.name.clone()).collect();
-            assert_eq!(names.len(), 2);
-            assert!(names.contains("Sibling One"));
-            assert!(names.contains("Sibling Two"));
-            let by_name: std::collections::HashMap<_, _> = resp
-                .outgoing
-                .iter()
-                .map(|o| (o.name.clone(), o.agent.clone()))
-                .collect();
-            assert_eq!(
-                by_name.get("Sibling One").map(String::as_str),
-                Some("codex")
+            assert!(
+                resp.outgoing.is_empty(),
+                "edgeless siblings should not appear in outgoing"
             );
-            assert_eq!(
-                by_name.get("Sibling Two").map(String::as_str),
-                Some("gemini")
-            );
+
+            // Now add an edge caller → sib-1; only sib-1 should appear.
+            let conn = connection();
+            graph_db::add_edge(&conn, project_id, task_id, "caller", "sib-1", None).unwrap();
+            drop(conn);
+
+            let resp = build_mention_candidates(project_id, task_id, "caller").unwrap();
+            assert_eq!(resp.outgoing.len(), 1);
+            assert_eq!(resp.outgoing[0].session_id, "sib-1");
+            assert_eq!(resp.outgoing[0].name, "Sibling One");
+            assert_eq!(resp.outgoing[0].agent, "codex");
         });
     }
 

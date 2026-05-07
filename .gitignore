@@ -4,6 +4,12 @@ Cargo.lock  # Uncomment if this is a library project
 **/*.rs.bk
 *.pdb
 
+# Tauri build artifacts — gen/schemas/*.json is regenerated on every
+# `cargo build --features gui` / `cargo tauri build`, so tracking it
+# just produces noisy diffs. CI rebuilds from source, doesn't read the
+# committed copy.
+gen/schemas/
+
 # IDE
 .idea/
 .vscode/

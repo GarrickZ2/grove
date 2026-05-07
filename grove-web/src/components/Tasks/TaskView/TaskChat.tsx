@@ -114,6 +114,57 @@ import type { ChatSessionResponse, CustomAgentServer } from "../../../api";
 import { openExternalUrl } from "../../../utils/openExternal";
 import "./task-chat.css";
 
+// ─── Chat draft persistence (localStorage) ────────────────────────────────
+
+const CHAT_DRAFT_PREFIX = "grove:chat-draft:";
+const CHAT_DRAFT_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
+
+function chatDraftKey(chatId: string): string {
+  return `${CHAT_DRAFT_PREFIX}${chatId}`;
+}
+
+function saveChatDraft(chatId: string, html: string): void {
+  if (!chatId) return;
+  try {
+    if (!html) {
+      window.localStorage.removeItem(chatDraftKey(chatId));
+      return;
+    }
+    window.localStorage.setItem(
+      chatDraftKey(chatId),
+      JSON.stringify({ html, updatedAt: Date.now() }),
+    );
+  } catch {
+    // quota/denied — silently skip
+  }
+}
+
+function loadChatDraft(chatId: string): string {
+  if (!chatId) return "";
+  try {
+    const raw = window.localStorage.getItem(chatDraftKey(chatId));
+    if (!raw) return "";
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed.html !== "string") return "";
+    if (Date.now() - parsed.updatedAt > CHAT_DRAFT_MAX_AGE_MS) {
+      window.localStorage.removeItem(chatDraftKey(chatId));
+      return "";
+    }
+    return parsed.html;
+  } catch {
+    return "";
+  }
+}
+
+function clearChatDraft(chatId: string): void {
+  if (!chatId) return;
+  try {
+    window.localStorage.removeItem(chatDraftKey(chatId));
+  } catch {
+    // ignore
+  }
+}
+
 // ─── Types ───────────────────────────────────────────────────────────────────
 
 interface TaskChatProps {
@@ -1334,6 +1385,8 @@ export function TaskChat({
   const intentionalCloseRef = useRef<Set<string>>(new Set());
   // Track in-flight connection attempts to prevent async TOCTOU race
   const connectingRef = useRef<Set<string>>(new Set());
+  // Debounce timer for auto-saving composer draft to localStorage
+  const draftSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // ─── Active chat's live state ─────────────────────────────────────────
   const [isConnected, setIsConnected] = useState(false);
@@ -2209,6 +2262,7 @@ export function TaskChat({
       remoteOwnerName,
       draftHtml: editableRef.current?.innerHTML ?? "",
     });
+    saveChatDraft(activeChatId, editableRef.current?.innerHTML ?? "");
   }, [
     activeChatId,
     messages,
@@ -2299,7 +2353,7 @@ export function TaskChat({
     // Restore the unsent composer draft for this chat. innerHTML round-trip
     // preserves slash/file chips because click handlers are delegated on the
     // editable container, not attached to individual chip DOM nodes.
-    const draftHtml = cached?.draftHtml ?? "";
+    const draftHtml = cached?.draftHtml || loadChatDraft(chatId);
     const el = editableRef.current;
     if (el) {
       el.innerHTML = draftHtml;
@@ -2666,6 +2720,26 @@ export function TaskChat({
       wsMap.clear();
     };
   }, []);
+
+  // Save composer draft to localStorage on page unload / navigation
+  useEffect(() => {
+    const handler = () => {
+      const chatId = getActiveChatId();
+      if (chatId) saveChatDraft(chatId, editableRef.current?.innerHTML ?? "");
+    };
+    window.addEventListener("beforeunload", handler);
+    return () => window.removeEventListener("beforeunload", handler);
+  }, [getActiveChatId]);
+
+  // Save draft on unmount and clear the debounce timer
+  useEffect(() => {
+    const editableEl = editableRef.current;
+    return () => {
+      if (draftSaveTimerRef.current) clearTimeout(draftSaveTimerRef.current);
+      const chatId = getActiveChatId();
+      if (chatId) saveChatDraft(chatId, editableEl?.innerHTML ?? "");
+    };
+  }, [getActiveChatId]);
 
   // ─── WebSocket message handler ───────────────────────────────────────────
 
@@ -3562,6 +3636,7 @@ export function TaskChat({
         JSON.stringify({ type: "terminal_execute", command: prompt }),
       );
       el.innerHTML = "";
+      clearChatDraft(activeChatId);
       setHasContent(false);
       setAttachments([]);
       setIsTerminalMode(false);
@@ -3645,6 +3720,7 @@ export function TaskChat({
         }),
       );
       el.innerHTML = "";
+      clearChatDraft(activeChatId);
       setHasContent(false);
       setAttachments((prev) => {
         prev.forEach((att) => { if (att.previewUrl) URL.revokeObjectURL(att.previewUrl); });
@@ -3669,6 +3745,7 @@ export function TaskChat({
         }),
       );
       el.innerHTML = "";
+      clearChatDraft(activeChatId);
       setHasContent(false);
       setAttachments((prev) => {
         prev.forEach((att) => { if (att.previewUrl) URL.revokeObjectURL(att.previewUrl); });
@@ -3822,6 +3899,11 @@ export function TaskChat({
 
   /** Detect /slash or @file at cursor position in contentEditable */
   const handleInput = useCallback(() => {
+    if (draftSaveTimerRef.current) clearTimeout(draftSaveTimerRef.current);
+    draftSaveTimerRef.current = setTimeout(() => {
+      const chatId = getActiveChatId();
+      if (chatId) saveChatDraft(chatId, editableRef.current?.innerHTML ?? "");
+    }, 500);
     // Detect "!" typed into empty input → enter shell mode and clear the "!"
     const el = editableRef.current;
     if (el && !isTerminalMode && !isBusy && el.textContent === "!") {
@@ -3951,6 +4033,7 @@ export function TaskChat({
     agentMentionItems.length,
     refreshTaskFilesIfNeeded,
     refreshAgentMentionCandidates,
+    getActiveChatId,
   ]);
 
   /** Insert a command chip at the current cursor position, replacing the /partial text */
