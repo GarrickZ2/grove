@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState } from "react";
-import { motion, AnimatePresence } from "framer-motion";
+import { useEffect, useRef, useState, useLayoutEffect, useMemo } from "react";
+import { createPortal } from "react-dom";
 import { FileText, FolderPlus, Trash2, Copy } from "lucide-react";
 
 export interface ContextMenuPosition {
@@ -16,48 +16,38 @@ interface FileContextMenuProps {
   isOpen: boolean;
   position: ContextMenuPosition;
   target: ContextMenuTarget | null;
+  taskPath?: string | null;
   onClose: () => void;
   onNewFile: (parentPath?: string) => void;
   onNewDirectory: (parentPath?: string) => void;
   onDelete: (path: string) => void;
-  onCopyPath: (path: string) => void;
+  onCopyRelativePath: (path: string) => void;
+  onCopyFullPath: (path: string) => void;
 }
 
 export function FileContextMenu({
   isOpen,
   position,
   target,
+  taskPath,
   onClose,
   onNewFile,
   onNewDirectory,
   onDelete,
-  onCopyPath,
+  onCopyRelativePath,
+  onCopyFullPath,
 }: FileContextMenuProps) {
   const menuRef = useRef<HTMLDivElement>(null);
-  const [adjustedPosition, setAdjustedPosition] = useState(position);
+  const [dimensions, setDimensions] = useState({ width: 0, height: 0 });
 
-  // Adjust position to prevent overflow
-  useEffect(() => {
+  // Measure menu size for overflow adjustment
+  useLayoutEffect(() => {
     if (!isOpen || !menuRef.current) return;
-
-    const menu = menuRef.current;
-    const rect = menu.getBoundingClientRect();
-    const newPos = { ...position };
-
-    // Adjust horizontal position
-    if (position.x + rect.width > window.innerWidth) {
-      newPos.x = Math.max(10, window.innerWidth - rect.width - 10);
-    }
-
-    // Adjust vertical position
-    if (position.y + rect.height > window.innerHeight) {
-      newPos.y = Math.max(10, window.innerHeight - rect.height - 10);
-    }
-
-    setAdjustedPosition(newPos);
+    const rect = menuRef.current.getBoundingClientRect();
+    setDimensions({ width: rect.width, height: rect.height });
   }, [isOpen, position]);
 
-  // Close menu on escape or click outside
+  // Close menu on escape or click outside (backdrop handles click outside)
   useEffect(() => {
     if (!isOpen) return;
 
@@ -67,20 +57,22 @@ export function FileContextMenu({
       }
     };
 
-    const handleClickOutside = (e: MouseEvent) => {
-      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
-        onClose();
-      }
-    };
-
     document.addEventListener("keydown", handleEscape);
-    document.addEventListener("mousedown", handleClickOutside);
-
     return () => {
       document.removeEventListener("keydown", handleEscape);
-      document.removeEventListener("mousedown", handleClickOutside);
     };
   }, [isOpen, onClose]);
+
+  const adjustedPosition = useMemo(() => {
+    const pos = { ...position };
+    if (dimensions.width > 0 && position.x + dimensions.width > window.innerWidth) {
+      pos.x = Math.max(10, window.innerWidth - dimensions.width - 10);
+    }
+    if (dimensions.height > 0 && position.y + dimensions.height > window.innerHeight) {
+      pos.y = Math.max(10, window.innerHeight - dimensions.height - 10);
+    }
+    return pos;
+  }, [position, dimensions]);
 
   const handleAction = (action: () => void) => {
     action();
@@ -93,66 +85,83 @@ export function FileContextMenu({
   // Get parent directory path for "New File" / "New Folder" actions
   const parentPath = isDirectory ? targetPath : targetPath.split("/").slice(0, -1).join("/");
 
-  return (
-    <AnimatePresence>
-      {isOpen && target && (
-        <motion.div
-          ref={menuRef}
-          initial={{ opacity: 0, scale: 0.95 }}
-          animate={{ opacity: 1, scale: 1 }}
-          exit={{ opacity: 0, scale: 0.95 }}
-          transition={{ duration: 0.15 }}
-          className="fixed z-[100] min-w-[200px] bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-lg shadow-xl overflow-hidden"
-          style={{
-            left: `${adjustedPosition.x}px`,
-            top: `${adjustedPosition.y}px`,
-          }}
-        >
-          <div className="py-1">
-            {/* New File */}
-            <button
-              onClick={() => handleAction(() => onNewFile(isDirectory ? targetPath : parentPath))}
-              className="w-full flex items-center gap-3 px-4 py-2 hover:bg-[var(--color-bg-tertiary)] text-left transition-colors"
-            >
-              <FileText className="w-4 h-4 text-[var(--color-text-muted)]" />
-              <span className="text-sm text-[var(--color-text)]">New File</span>
-            </button>
+  if (!isOpen || !target) return null;
 
-            {/* New Folder */}
-            <button
-              onClick={() => handleAction(() => onNewDirectory(isDirectory ? targetPath : parentPath))}
-              className="w-full flex items-center gap-3 px-4 py-2 hover:bg-[var(--color-bg-tertiary)] text-left transition-colors"
-            >
-              <FolderPlus className="w-4 h-4 text-[var(--color-text-muted)]" />
-              <span className="text-sm text-[var(--color-text)]">New Folder</span>
-            </button>
+  return createPortal(
+    <>
+      {/* Backdrop — portaled to body so position: fixed isn't trapped by transformed ancestors */}
+      <div
+        className="fixed inset-0 z-[9998]"
+        onClick={onClose}
+        onContextMenu={(e) => {
+          e.preventDefault();
+          onClose();
+        }}
+      />
+      <div
+        ref={menuRef}
+        className="fixed z-[9999] min-w-[200px] bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-lg shadow-xl overflow-hidden"
+        style={{
+          left: `${adjustedPosition.x}px`,
+          top: `${adjustedPosition.y}px`,
+        }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="py-1">
+          {/* New File */}
+          <button
+            onClick={() => handleAction(() => onNewFile(isDirectory ? targetPath : parentPath))}
+            className="w-full flex items-center gap-3 px-4 py-2 hover:bg-[var(--color-bg-tertiary)] text-left transition-colors"
+          >
+            <FileText className="w-4 h-4 text-[var(--color-text-muted)]" />
+            <span className="text-sm text-[var(--color-text)]">New File</span>
+          </button>
 
-            {/* Divider */}
-            <div className="my-1 h-px bg-[var(--color-border)]" />
+          {/* New Folder */}
+          <button
+            onClick={() => handleAction(() => onNewDirectory(isDirectory ? targetPath : parentPath))}
+            className="w-full flex items-center gap-3 px-4 py-2 hover:bg-[var(--color-bg-tertiary)] text-left transition-colors"
+          >
+            <FolderPlus className="w-4 h-4 text-[var(--color-text-muted)]" />
+            <span className="text-sm text-[var(--color-text)]">New Folder</span>
+          </button>
 
-            {/* Copy Path */}
-            <button
-              onClick={() => handleAction(() => onCopyPath(targetPath))}
-              className="w-full flex items-center gap-3 px-4 py-2 hover:bg-[var(--color-bg-tertiary)] text-left transition-colors"
-            >
-              <Copy className="w-4 h-4 text-[var(--color-text-muted)]" />
-              <span className="text-sm text-[var(--color-text)]">Copy Path</span>
-            </button>
+          {/* Divider */}
+          <div className="my-1 h-px bg-[var(--color-border)]" />
 
-            {/* Divider */}
-            <div className="my-1 h-px bg-[var(--color-border)]" />
+          {/* Copy Relative Path */}
+          <button
+            onClick={() => handleAction(() => onCopyRelativePath(targetPath))}
+            className="w-full flex items-center gap-3 px-4 py-2 hover:bg-[var(--color-bg-tertiary)] text-left transition-colors"
+          >
+            <Copy className="w-4 h-4 text-[var(--color-text-muted)]" />
+            <span className="text-sm text-[var(--color-text)]">Copy Relative Path</span>
+          </button>
 
-            {/* Delete */}
-            <button
-              onClick={() => handleAction(() => onDelete(targetPath))}
-              className="w-full flex items-center gap-3 px-4 py-2 hover:bg-[var(--color-error)]/10 text-left transition-colors"
-            >
-              <Trash2 className="w-4 h-4 text-[var(--color-error)]" />
-              <span className="text-sm text-[var(--color-error)]">Delete</span>
-            </button>
-          </div>
-        </motion.div>
-      )}
-    </AnimatePresence>
+          {/* Copy Full Path */}
+          <button
+            onClick={() => handleAction(() => onCopyFullPath(targetPath))}
+            disabled={!taskPath}
+            className="w-full flex items-center gap-3 px-4 py-2 hover:bg-[var(--color-bg-tertiary)] text-left transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            <FileText className="w-4 h-4 text-[var(--color-text-muted)]" />
+            <span className="text-sm text-[var(--color-text)]">Copy Full Path</span>
+          </button>
+
+          {/* Divider */}
+          <div className="my-1 h-px bg-[var(--color-border)]" />
+
+          {/* Delete */}
+          <button
+            onClick={() => handleAction(() => onDelete(targetPath))}
+            className="w-full flex items-center gap-3 px-4 py-2 hover:bg-[var(--color-error)]/10 text-left transition-colors"
+          >
+            <Trash2 className="w-4 h-4 text-[var(--color-error)]" />
+            <span className="text-sm text-[var(--color-error)]">Delete</span>
+          </button>
+        </div>
+      </div>
+    </>,
+    document.body
   );
 }

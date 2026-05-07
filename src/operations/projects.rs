@@ -7,6 +7,7 @@ use std::path::Path;
 use std::process::Command;
 
 use crate::error::{GroveError, Result};
+use crate::git;
 use crate::storage::workspace;
 
 /// Ensure the given directory is a Git repository with at least one commit.
@@ -46,14 +47,19 @@ pub fn init_git_repo(project_path: &str) -> Result<()> {
 
     // 3. No commits yet → create an empty initial commit so HEAD is valid.
     if !head_check.status.success() {
+        let user_name = git::git_user_name(project_path).unwrap_or_else(|| "Grove".to_string());
+        let user_email =
+            git::git_user_email(project_path).unwrap_or_else(|| "grove@local".to_string());
+        let name_arg = format!("user.name={}", user_name);
+        let email_arg = format!("user.email={}", user_email);
         let out = Command::new("git")
             .args([
                 "-C",
                 project_path,
                 "-c",
-                "user.name=Grove",
+                &name_arg,
                 "-c",
-                "user.email=grove@local",
+                &email_arg,
                 "commit",
                 "--allow-empty",
                 "-m",

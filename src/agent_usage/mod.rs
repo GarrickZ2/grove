@@ -386,6 +386,9 @@ fn classify_error(agent: &str, message: &str) -> UsageError {
     {
         return UsageError::Upstream(format!("{} quota upstream request failed", agent));
     }
+    if msg.contains("does not map to a known upstream") {
+        return UsageError::UnsupportedAgent;
+    }
 
     UsageError::Internal(format!("{} quota fetch failed", agent))
 }

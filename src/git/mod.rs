@@ -87,6 +87,13 @@ pub fn git_user_name(path: &str) -> Option<String> {
         .filter(|s| !s.is_empty())
 }
 
+/// Get `git config user.email` from the given repo path.
+pub fn git_user_email(path: &str) -> Option<String> {
+    git_cmd(path, &["config", "user.email"])
+        .ok()
+        .filter(|s| !s.is_empty())
+}
+
 // ============================================================================
 // Git 公开 API
 // ============================================================================

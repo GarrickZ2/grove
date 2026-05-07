@@ -44,9 +44,12 @@ import dart from 'highlight.js/lib/languages/dart';
 import elixir from 'highlight.js/lib/languages/elixir';
 import haskell from 'highlight.js/lib/languages/haskell';
 import protobuf from 'highlight.js/lib/languages/protobuf';
+import thrift from 'highlight.js/lib/languages/thrift';
 import graphql from 'highlight.js/lib/languages/graphql';
 import diff from 'highlight.js/lib/languages/diff';
 import nginx from 'highlight.js/lib/languages/nginx';
+import vim from 'highlight.js/lib/languages/vim';
+import powershell from 'highlight.js/lib/languages/powershell';
 
 hljs.registerLanguage('javascript', javascript);
 hljs.registerLanguage('typescript', typescript);
@@ -82,9 +85,12 @@ hljs.registerLanguage('dart', dart);
 hljs.registerLanguage('elixir', elixir);
 hljs.registerLanguage('haskell', haskell);
 hljs.registerLanguage('protobuf', protobuf);
+hljs.registerLanguage('thrift', thrift);
 hljs.registerLanguage('graphql', graphql);
 hljs.registerLanguage('diff', diff);
 hljs.registerLanguage('nginx', nginx);
+hljs.registerLanguage('vim', vim);
+hljs.registerLanguage('powershell', powershell);
 
 // Aliases
 hljs.registerLanguage('jsx', javascript);
@@ -101,6 +107,8 @@ hljs.registerLanguage('htm', xml);
 hljs.registerLanguage('html', xml);
 hljs.registerLanguage('svelte', xml);
 hljs.registerLanguage('vue', xml);
+hljs.registerLanguage('ps', powershell);
+hljs.registerLanguage('ps1', powershell);
 
 /** Map file extension → hljs language name */
 const EXT_MAP: Record<string, string> = {
@@ -123,6 +131,9 @@ const EXT_MAP: Record<string, string> = {
   ex: 'elixir', exs: 'elixir', hs: 'haskell',
   // Shell
   sh: 'bash', bash: 'bash', zsh: 'bash', fish: 'bash',
+  ps1: 'powershell', ps: 'powershell', psm1: 'powershell', psd1: 'powershell',
+  // Vim
+  vim: 'vim',
   // Data / Config
   json: 'json', yaml: 'yaml', yml: 'yaml', toml: 'toml',
   ini: 'toml', cfg: 'toml',
@@ -133,6 +144,7 @@ const EXT_MAP: Record<string, string> = {
   // Query / Schema
   sql: 'sql', graphql: 'graphql', gql: 'graphql',
   proto: 'protobuf',
+  thrift: 'thrift',
   // Build / Infra
   dockerfile: 'dockerfile', makefile: 'makefile',
   mk: 'makefile', cmake: 'makefile',
@@ -151,6 +163,7 @@ export function detectLanguage(filePath: string): string | undefined {
   if (fileName === 'makefile' || fileName === 'gnumakefile') return 'makefile';
   if (fileName === 'cmakelists.txt') return 'makefile';
   if (fileName === '.bashrc' || fileName === '.zshrc' || fileName === '.profile') return 'bash';
+  if (fileName === '.vimrc' || fileName === '.gvimrc' || fileName === '.nvimrc' || fileName === '.exrc') return 'vim';
   if (fileName === 'nginx.conf') return 'nginx';
 
   // Extension lookup

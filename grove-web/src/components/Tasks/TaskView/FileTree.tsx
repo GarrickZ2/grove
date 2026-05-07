@@ -207,6 +207,13 @@ function FileTreeItem({
           ${isSelected ? "bg-[var(--color-highlight)]/15 text-[var(--color-highlight)]" : "text-[var(--color-text-muted)]"}
         `}
         style={{ paddingLeft: `${depth * 16 + 8}px` }}
+        draggable={!node.isDir}
+        onDragStart={(e) => {
+          if (node.isDir) return;
+          e.dataTransfer.effectAllowed = 'copy';
+          e.dataTransfer.setData('application/x-grove-file-path', node.path);
+          e.dataTransfer.setData('text/plain', node.path);
+        }}
       >
         {node.isDir ? (
           <span className="w-4 h-4 flex items-center justify-center flex-shrink-0">
