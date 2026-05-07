@@ -297,6 +297,7 @@ export function SettingsPage({ config }: SettingsPageProps) {
   >([]);
   const [indexingLangPickerOpen, setIndexingLangPickerOpen] = useState(false);
   const indexingAddBtnRef = useRef<HTMLButtonElement>(null);
+  const indexingPickerRef = useRef<HTMLDivElement>(null);
   const [indexingPickerPos, setIndexingPickerPos] = useState<{ top: number; left: number } | null>(null);
 
   // Anchor the language picker to the trigger button. Wrapped in
@@ -314,7 +315,12 @@ export function SettingsPage({ config }: SettingsPageProps) {
     if (!indexingLangPickerOpen) return;
     updateIndexingPickerPos();
     const onDocClick = (e: MouseEvent) => {
-      if (indexingAddBtnRef.current?.contains(e.target as Node)) return;
+      const target = e.target as Node;
+      // Exclude both the trigger and the portal'd picker — clicking on
+      // a picker option must NOT close before its onClick has a chance
+      // to run (mousedown fires first, would unmount the option).
+      if (indexingAddBtnRef.current?.contains(target)) return;
+      if (indexingPickerRef.current?.contains(target)) return;
       setIndexingLangPickerOpen(false);
     };
     document.addEventListener("mousedown", onDocClick);
@@ -2028,10 +2034,10 @@ env_vars = [
           </div>
         </Section>
 
-        {/* Symbol Indexing Section */}
+        {/* Code Repo Indexing Section */}
         <Section
           id="indexing"
-          title="Symbol Indexing"
+          title="Code Repo Indexing"
           description="Index source code so cmd+click navigates to definitions"
           icon={Code}
           iconColor="var(--color-info)"
@@ -2111,6 +2117,7 @@ env_vars = [
                 {indexingLangPickerOpen && indexingPickerPos &&
                   createPortal(
                     <div
+                      ref={indexingPickerRef}
                       style={{
                         position: "fixed",
                         top: indexingPickerPos.top,
