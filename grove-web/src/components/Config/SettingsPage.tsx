@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from "react";
+import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Terminal,
@@ -15,6 +16,7 @@ import {
   Palette,
   Settings,
   Code,
+  FileCode,
   Wrench,
   Link,
   Plus,
@@ -295,6 +297,31 @@ export function SettingsPage({ config }: SettingsPageProps) {
     { id: string; display_name: string; extensions: string[] }[]
   >([]);
   const [indexingLangPickerOpen, setIndexingLangPickerOpen] = useState(false);
+  const indexingAddBtnRef = useRef<HTMLButtonElement>(null);
+  const [indexingPickerPos, setIndexingPickerPos] = useState<{ top: number; left: number } | null>(null);
+
+  // Anchor the language picker to the trigger button. Wrapped in
+  // useCallback so the effect can call it without doing setState
+  // directly in its body (matches the Combobox pattern in src/ui).
+  const updateIndexingPickerPos = useCallback(() => {
+    const rect = indexingAddBtnRef.current?.getBoundingClientRect();
+    if (rect) setIndexingPickerPos({ top: rect.bottom + 4, left: rect.left });
+  }, []);
+
+  /* eslint-disable react-hooks/set-state-in-effect -- legitimate
+     "open the picker" lifecycle: position is computed on mount and the
+     mousedown handler is a user-action callback, not a render cascade. */
+  useEffect(() => {
+    if (!indexingLangPickerOpen) return;
+    updateIndexingPickerPos();
+    const onDocClick = (e: MouseEvent) => {
+      if (indexingAddBtnRef.current?.contains(e.target as Node)) return;
+      setIndexingLangPickerOpen(false);
+    };
+    document.addEventListener("mousedown", onDocClick);
+    return () => document.removeEventListener("mousedown", onDocClick);
+  }, [indexingLangPickerOpen, updateIndexingPickerPos]);
+  /* eslint-enable react-hooks/set-state-in-effect */
 
   const toggleSection = (id: string) => {
     setOpenSections((prev) => {
@@ -2043,6 +2070,11 @@ env_vars = [
                         key={l.id}
                         className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs bg-[var(--color-info)]/10 text-[var(--color-info)] border border-[var(--color-info)]/30"
                       >
+                        {/* Generic language icon — we don't ship per-language
+                            file-type icons in the bundle, so this is a
+                            placeholder that signals "this chip is a code
+                            language" without claiming any specific brand. */}
+                        <FileCode className="w-3 h-3" />
                         {l.display_name}
                         <button
                           onClick={() =>
@@ -2059,35 +2091,14 @@ env_vars = [
                     ))}
 
                   {indexingSupportedLangs.some((l) => indexingDisabledLangs.includes(l.id)) && (
-                    <div className="relative">
-                      <button
-                        onClick={() => setIndexingLangPickerOpen((v) => !v)}
-                        className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs border border-dashed border-[var(--color-border)] text-[var(--color-text-muted)] hover:bg-[var(--color-bg-tertiary)]"
-                      >
-                        <Plus className="w-3 h-3" />
-                        Add language
-                      </button>
-                      {indexingLangPickerOpen && (
-                        <div className="absolute z-10 mt-1 min-w-[160px] rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] shadow-lg p-1">
-                          {indexingSupportedLangs
-                            .filter((l) => indexingDisabledLangs.includes(l.id))
-                            .map((l) => (
-                              <button
-                                key={l.id}
-                                onClick={() => {
-                                  setIndexingDisabledLangs((prev) =>
-                                    prev.filter((x) => x !== l.id),
-                                  );
-                                  setIndexingLangPickerOpen(false);
-                                }}
-                                className="w-full text-left px-2 py-1.5 rounded text-xs text-[var(--color-text)] hover:bg-[var(--color-bg-tertiary)]"
-                              >
-                                {l.display_name}
-                              </button>
-                            ))}
-                        </div>
-                      )}
-                    </div>
+                    <button
+                      ref={indexingAddBtnRef}
+                      onClick={() => setIndexingLangPickerOpen((v) => !v)}
+                      className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs border border-dashed border-[var(--color-border)] text-[var(--color-text-muted)] hover:bg-[var(--color-bg-tertiary)]"
+                    >
+                      <Plus className="w-3 h-3" />
+                      Add language
+                    </button>
                   )}
 
                   {indexingSupportedLangs.length === 0 && (
@@ -2096,6 +2107,40 @@ env_vars = [
                     </span>
                   )}
                 </div>
+
+                {/* Picker portaled to body so the Section's overflow-hidden
+                    doesn't clip the dropdown when there's a section below. */}
+                {indexingLangPickerOpen && indexingPickerPos &&
+                  createPortal(
+                    <div
+                      style={{
+                        position: "fixed",
+                        top: indexingPickerPos.top,
+                        left: indexingPickerPos.left,
+                        zIndex: 9999,
+                      }}
+                      className="min-w-[160px] rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] shadow-lg p-1"
+                    >
+                      {indexingSupportedLangs
+                        .filter((l) => indexingDisabledLangs.includes(l.id))
+                        .map((l) => (
+                          <button
+                            key={l.id}
+                            onClick={() => {
+                              setIndexingDisabledLangs((prev) =>
+                                prev.filter((x) => x !== l.id),
+                              );
+                              setIndexingLangPickerOpen(false);
+                            }}
+                            className="w-full flex items-center gap-2 text-left px-2 py-1.5 rounded text-xs text-[var(--color-text)] hover:bg-[var(--color-bg-tertiary)]"
+                          >
+                            <FileCode className="w-3 h-3" />
+                            {l.display_name}
+                          </button>
+                        ))}
+                    </div>,
+                    document.body,
+                  )}
               </div>
             )}
           </div>
