@@ -92,7 +92,17 @@ static REGISTRY: Lazy<RwLock<Registry>> = Lazy::new(|| {
 /// Triggered when the FileWatcher starts watching a task. Subscribes
 /// the indexer to watcher events (idempotent) and queues a debounced
 /// reindex.
+///
+/// Honors `IndexingConfig.enabled`: when the master toggle is off,
+/// no subscription is registered and no build is queued for this
+/// activation. Already-subscribed tasks (registered before the user
+/// toggled off) keep ticking until grove restarts — matches the
+/// "config takes effect on next activation" semantics.
 pub fn on_watch_started(project_hash: &str, task_id: &str, worktree: &Path) {
+    if !crate::storage::config::load_config().indexing.enabled {
+        return;
+    }
+
     let slot = get_or_create_slot((project_hash.to_string(), task_id.to_string()));
 
     // Subscribe to watcher events exactly once per task. Each event then
@@ -330,6 +340,14 @@ fn git_tracked_supported_files(worktree: &Path) -> Vec<(PathBuf, Language)> {
         Ok(o) if o.status.success() => o.stdout,
         _ => return Vec::new(),
     };
+    // Snapshot the deny-list once per build. Reading config per-file
+    // would be wasteful and lets the user's toggle take effect at the
+    // start of each scheduled build, which is what we want.
+    let disabled: std::collections::HashSet<String> = crate::storage::config::load_config()
+        .indexing
+        .disabled_languages
+        .into_iter()
+        .collect();
     let stdout = String::from_utf8_lossy(&output);
     stdout
         .lines()
@@ -337,6 +355,9 @@ fn git_tracked_supported_files(worktree: &Path) -> Vec<(PathBuf, Language)> {
             let path = PathBuf::from(crate::git::git_unquote(line.trim()));
             let ext = path.extension().and_then(|s| s.to_str())?;
             let lang = Language::from_extension(ext)?;
+            if disabled.contains(lang.as_str()) {
+                return None;
+            }
             Some((path, lang))
         })
         .collect()

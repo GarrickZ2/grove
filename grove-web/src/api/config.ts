@@ -57,6 +57,21 @@ export interface HooksConfig {
   permission_sound: string;
 }
 
+export interface SupportedLanguage {
+  id: string;
+  display_name: string;
+  extensions: string[];
+}
+
+export interface IndexingConfig {
+  /** Master toggle for symbol indexing (cmd+click navigation). */
+  enabled: boolean;
+  /** Language IDs the user has opted out of (deny-list). */
+  disabled_languages: string[];
+  /** Read-only: full list of languages the running grove binary supports. */
+  supported_languages: SupportedLanguage[];
+}
+
 export interface NotificationsConfig {
   /** Whether the menubar tray icon is enabled at all. */
   tray_enabled: boolean;
@@ -81,7 +96,13 @@ export interface Config {
   acp: AcpConfig;
   hooks: HooksConfig;
   notifications: NotificationsConfig;
+  indexing: IndexingConfig;
   platform: string; // "macos" | "windows" | "linux"
+}
+
+interface IndexingConfigPatch {
+  enabled?: boolean;
+  disabled_languages?: string[];
 }
 
 interface ConfigPatch {
@@ -93,6 +114,7 @@ interface ConfigPatch {
   acp?: Partial<AcpConfig>;
   hooks?: Partial<HooksConfig>;
   notifications?: Partial<NotificationsConfig>;
+  indexing?: IndexingConfigPatch;
 }
 
 // Application info for picker

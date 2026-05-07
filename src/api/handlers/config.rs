@@ -26,12 +26,30 @@ pub struct ConfigResponse {
     pub acp: AcpConfigDto,
     pub hooks: HooksConfigDto,
     pub notifications: NotificationsConfigDto,
+    pub indexing: IndexingConfigDto,
     /// Terminal 模式使用的复用器 ("tmux" | "zellij")
     pub terminal_multiplexer: String,
     /// Server platform identifier ("macos" | "windows" | "linux"). Lets the
     /// frontend gate platform-specific UI (IDE picker, Terminal picker)
     /// without doing a separate `listApplications` round-trip.
     pub platform: &'static str,
+}
+
+#[derive(Debug, Serialize)]
+pub struct IndexingConfigDto {
+    pub enabled: bool,
+    pub disabled_languages: Vec<String>,
+    /// Read-only list of languages the build understands. Patch ignores
+    /// this field — adding/removing comes from the grove binary's
+    /// compiled-in `Language` enum.
+    pub supported_languages: Vec<SupportedLanguageDto>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct SupportedLanguageDto {
+    pub id: String,
+    pub display_name: &'static str,
+    pub extensions: Vec<&'static str>,
 }
 
 #[derive(Debug, Serialize)]
@@ -166,6 +184,18 @@ impl From<&Config> for ConfigResponse {
                 notification_show_running: config.notifications.notification_show_running,
                 menubar_shortcut: config.notifications.menubar_shortcut.clone(),
             },
+            indexing: IndexingConfigDto {
+                enabled: config.indexing.enabled,
+                disabled_languages: config.indexing.disabled_languages.clone(),
+                supported_languages: crate::symbols::Language::all()
+                    .iter()
+                    .map(|l| SupportedLanguageDto {
+                        id: l.as_str().to_string(),
+                        display_name: l.display_name(),
+                        extensions: l.extensions().to_vec(),
+                    })
+                    .collect(),
+            },
             terminal_multiplexer: config.terminal_multiplexer.to_string(),
             platform: current_platform(),
         }
@@ -182,8 +212,16 @@ pub struct ConfigPatchRequest {
     pub acp: Option<AcpConfigPatch>,
     pub hooks: Option<HooksConfigPatch>,
     pub notifications: Option<NotificationsConfigPatch>,
+    pub indexing: Option<IndexingConfigPatch>,
     /// Terminal 模式使用的复用器 ("tmux" | "zellij")
     pub terminal_multiplexer: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct IndexingConfigPatch {
+    pub enabled: Option<bool>,
+    /// Replaces the deny-list wholesale when present.
+    pub disabled_languages: Option<Vec<String>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -406,6 +444,25 @@ pub async fn patch_config(
             } else {
                 Some(shortcut)
             };
+        }
+    }
+
+    // Apply indexing patch
+    if let Some(i) = patch.indexing {
+        if let Some(v) = i.enabled {
+            config.indexing.enabled = v;
+        }
+        if let Some(langs) = i.disabled_languages {
+            // Drop unknown languages so the deny-list doesn't accumulate
+            // typos or stale entries from older clients.
+            let known: std::collections::HashSet<&'static str> = crate::symbols::Language::all()
+                .iter()
+                .map(|l| l.as_str())
+                .collect();
+            config.indexing.disabled_languages = langs
+                .into_iter()
+                .filter(|l| known.contains(l.as_str()))
+                .collect();
         }
     }
 

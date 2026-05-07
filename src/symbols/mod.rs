@@ -19,7 +19,7 @@ mod store;
 mod types;
 
 pub use indexer::{lookup, on_task_deleted, on_watch_started, trigger_reindex};
-pub use types::{SymbolDef, SymbolKind};
+pub use types::{Language, SymbolDef, SymbolKind};
 
 // Lower-level pieces are kept available behind the module wall but not
 // re-exported; outside callers should go through the indexer.
@@ -29,6 +29,3 @@ pub(crate) use extractor::extract;
 #[cfg(test)]
 #[allow(unused_imports)]
 pub(crate) use store::SymbolStore;
-#[cfg(test)]
-#[allow(unused_imports)]
-pub(crate) use types::Language;

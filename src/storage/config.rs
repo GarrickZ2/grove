@@ -253,6 +253,8 @@ pub struct Config {
     pub hooks: HooksConfig,
     #[serde(default)]
     pub notifications: NotificationsConfig,
+    #[serde(default)]
+    pub indexing: IndexingConfig,
 
     /// Storage layout version (None = legacy, "1.0" = task-centric layout)
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -335,6 +337,34 @@ impl Default for NotificationsConfig {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct McpConfig {
     // 预留字段，目前仅用于显示配置说明
+}
+
+/// Symbol-indexing config (cmd+click navigation).
+///
+/// `disabled_languages` is a deny-list (rather than the symmetric
+/// "enabled list") so newly added languages opt-in by default — when a
+/// future grove release ships, say, a TS grammar, existing users get
+/// it without re-touching their config.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct IndexingConfig {
+    /// Master toggle. When false, `on_watch_started` no-ops and no
+    /// build is triggered for newly activated tasks.
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+
+    /// Language IDs (matching `Language::as_str()`) the user has opted
+    /// out of. Files with these languages are skipped during build.
+    #[serde(default)]
+    pub disabled_languages: Vec<String>,
+}
+
+impl Default for IndexingConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            disabled_languages: Vec::new(),
+        }
+    }
 }
 
 /// Web 专用配置（TUI 会忽略未知字段）

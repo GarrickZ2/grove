@@ -287,6 +287,14 @@ export function SettingsPage({ config }: SettingsPageProps) {
   // AutoLink state
   const [autoLinkPatterns, setAutoLinkPatterns] = useState<string[]>([]);
 
+  // Symbol indexing state (cmd+click navigation)
+  const [indexingEnabled, setIndexingEnabled] = useState(true);
+  const [indexingDisabledLangs, setIndexingDisabledLangs] = useState<string[]>([]);
+  const [indexingSupportedLangs, setIndexingSupportedLangs] = useState<
+    { id: string; display_name: string; extensions: string[] }[]
+  >([]);
+  const [indexingLangPickerOpen, setIndexingLangPickerOpen] = useState(false);
+
   const toggleSection = (id: string) => {
     setOpenSections((prev) => {
       const isCurrentlyOpen = prev[id];
@@ -402,6 +410,12 @@ export function SettingsPage({ config }: SettingsPageProps) {
       setSystemNotifShowPermission(cfg.notifications.notification_show_permission);
       setSystemNotifShowDone(cfg.notifications.notification_show_done);
       setSystemNotifShowRunning(cfg.notifications.notification_show_running);
+    }
+
+    if (cfg.indexing) {
+      setIndexingEnabled(cfg.indexing.enabled);
+      setIndexingDisabledLangs(cfg.indexing.disabled_languages ?? []);
+      setIndexingSupportedLangs(cfg.indexing.supported_languages ?? []);
     }
 
     setIsLoaded(true);
@@ -576,6 +590,10 @@ export function SettingsPage({ config }: SettingsPageProps) {
         notification_show_running: systemNotifShowRunning,
         menubar_shortcut: menubarShortcut,
       },
+      indexing: {
+        enabled: indexingEnabled,
+        disabled_languages: indexingDisabledLangs,
+      },
     };
     try {
       await patchConfig(patch);
@@ -584,7 +602,7 @@ export function SettingsPage({ config }: SettingsPageProps) {
     } catch {
       console.error("Failed to save config");
     }
-  }, [isLoaded, selectedLayout, agentCommand, acpAgent, chatRenderWindowLimit, chatRenderWindowTrigger, customLayouts, selectedCustomLayoutId, customLayoutsLoaded, ideCommand, terminalCommand, terminalMultiplexer, webTerminalMode, workspaceLayout, showHideWindowShortcut, autoLinkPatterns, hooksResponseSoundEnabled, hooksResponseSound, hooksPermissionSoundEnabled, hooksPermissionSound, trayEnabled, trayShowPermission, trayShowDone, trayShowRunning, menubarShortcut, systemNotifEnabled, systemNotifShowPermission, systemNotifShowDone, systemNotifShowRunning, refreshGlobalConfig]);
+  }, [isLoaded, selectedLayout, agentCommand, acpAgent, chatRenderWindowLimit, chatRenderWindowTrigger, customLayouts, selectedCustomLayoutId, customLayoutsLoaded, ideCommand, terminalCommand, terminalMultiplexer, webTerminalMode, workspaceLayout, showHideWindowShortcut, autoLinkPatterns, hooksResponseSoundEnabled, hooksResponseSound, hooksPermissionSoundEnabled, hooksPermissionSound, trayEnabled, trayShowPermission, trayShowDone, trayShowRunning, menubarShortcut, systemNotifEnabled, systemNotifShowPermission, systemNotifShowDone, systemNotifShowRunning, indexingEnabled, indexingDisabledLangs, refreshGlobalConfig]);
 
   // Handle theme change with immediate save
   const handleThemeChange = useCallback((newThemeId: string) => {
@@ -606,7 +624,7 @@ export function SettingsPage({ config }: SettingsPageProps) {
     }, 500); // 500ms debounce
 
     return () => clearTimeout(timer);
-  }, [selectedLayout, agentCommand, acpAgent, chatRenderWindowLimit, chatRenderWindowTrigger, customLayouts, selectedCustomLayoutId, customLayoutsLoaded, ideCommand, terminalCommand, terminalMultiplexer, webTerminalMode, workspaceLayout, showHideWindowShortcut, autoLinkPatterns, hooksResponseSoundEnabled, hooksResponseSound, hooksPermissionSoundEnabled, hooksPermissionSound, trayEnabled, trayShowPermission, trayShowDone, trayShowRunning, menubarShortcut, systemNotifEnabled, systemNotifShowPermission, systemNotifShowDone, systemNotifShowRunning, isLoaded, saveConfig]);
+  }, [selectedLayout, agentCommand, acpAgent, chatRenderWindowLimit, chatRenderWindowTrigger, customLayouts, selectedCustomLayoutId, customLayoutsLoaded, ideCommand, terminalCommand, terminalMultiplexer, webTerminalMode, workspaceLayout, showHideWindowShortcut, autoLinkPatterns, hooksResponseSoundEnabled, hooksResponseSound, hooksPermissionSoundEnabled, hooksPermissionSound, trayEnabled, trayShowPermission, trayShowDone, trayShowRunning, menubarShortcut, systemNotifEnabled, systemNotifShowPermission, systemNotifShowDone, systemNotifShowRunning, indexingEnabled, indexingDisabledLangs, isLoaded, saveConfig]);
 
   useEffect(() => {
     if (!isRecordingWindowShortcut) return;
@@ -1980,6 +1998,105 @@ env_vars = [
               extraControl={menubarShortcutControl}
               note="Disabling the tray takes effect on next Grove launch."
             />
+          </div>
+        </Section>
+
+        {/* Symbol Indexing Section */}
+        <Section
+          id="indexing"
+          title="Symbol Indexing"
+          description="Index source code so cmd+click navigates to definitions"
+          icon={Code}
+          iconColor="var(--color-info)"
+          isOpen={openSections.indexing ?? false}
+          onToggle={() => toggleSection("indexing")}
+        >
+          <div className="space-y-4">
+            <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)] p-4">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <div className="text-sm font-semibold text-[var(--color-text)]">Enable indexing</div>
+                  <div className="text-xs text-[var(--color-text-muted)] mt-0.5">
+                    When off, cmd+click and the underline hint do nothing for newly opened tasks.
+                    Already-running tasks keep their index until grove restarts.
+                  </div>
+                </div>
+                <ToggleSwitch checked={indexingEnabled} onChange={setIndexingEnabled} />
+              </div>
+            </div>
+
+            {indexingEnabled && (
+              <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)] p-4">
+                <div className="text-sm font-semibold text-[var(--color-text)] mb-1">Languages</div>
+                <div className="text-xs text-[var(--color-text-muted)] mb-3">
+                  Files with these languages are indexed during build. Removing a chip stops new
+                  scans from picking it up; existing rows in the cache are kept until the next
+                  manual reindex.
+                </div>
+
+                <div className="flex items-center gap-2 flex-wrap">
+                  {indexingSupportedLangs
+                    .filter((l) => !indexingDisabledLangs.includes(l.id))
+                    .map((l) => (
+                      <span
+                        key={l.id}
+                        className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs bg-[var(--color-info)]/10 text-[var(--color-info)] border border-[var(--color-info)]/30"
+                      >
+                        {l.display_name}
+                        <button
+                          onClick={() =>
+                            setIndexingDisabledLangs((prev) =>
+                              prev.includes(l.id) ? prev : [...prev, l.id],
+                            )
+                          }
+                          className="hover:bg-[var(--color-info)]/20 rounded-full w-4 h-4 flex items-center justify-center"
+                          title={`Remove ${l.display_name}`}
+                        >
+                          <X className="w-3 h-3" />
+                        </button>
+                      </span>
+                    ))}
+
+                  {indexingSupportedLangs.some((l) => indexingDisabledLangs.includes(l.id)) && (
+                    <div className="relative">
+                      <button
+                        onClick={() => setIndexingLangPickerOpen((v) => !v)}
+                        className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs border border-dashed border-[var(--color-border)] text-[var(--color-text-muted)] hover:bg-[var(--color-bg-tertiary)]"
+                      >
+                        <Plus className="w-3 h-3" />
+                        Add language
+                      </button>
+                      {indexingLangPickerOpen && (
+                        <div className="absolute z-10 mt-1 min-w-[160px] rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] shadow-lg p-1">
+                          {indexingSupportedLangs
+                            .filter((l) => indexingDisabledLangs.includes(l.id))
+                            .map((l) => (
+                              <button
+                                key={l.id}
+                                onClick={() => {
+                                  setIndexingDisabledLangs((prev) =>
+                                    prev.filter((x) => x !== l.id),
+                                  );
+                                  setIndexingLangPickerOpen(false);
+                                }}
+                                className="w-full text-left px-2 py-1.5 rounded text-xs text-[var(--color-text)] hover:bg-[var(--color-bg-tertiary)]"
+                              >
+                                {l.display_name}
+                              </button>
+                            ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {indexingSupportedLangs.length === 0 && (
+                    <span className="text-xs text-[var(--color-text-muted)]">
+                      No supported languages reported by the server.
+                    </span>
+                  )}
+                </div>
+              </div>
+            )}
           </div>
         </Section>
 

@@ -78,4 +78,24 @@ impl Language {
             Language::Go => "go",
         }
     }
+
+    /// Human-friendly label used in Settings UI.
+    pub fn display_name(self) -> &'static str {
+        match self {
+            Language::Go => "Go",
+        }
+    }
+
+    /// File extensions (without leading dot) this language claims.
+    pub fn extensions(self) -> &'static [&'static str] {
+        match self {
+            Language::Go => &["go"],
+        }
+    }
+
+    /// All supported languages, in deterministic order. Used by the
+    /// config response to surface the full list to the frontend.
+    pub fn all() -> &'static [Language] {
+        &[Language::Go]
+    }
 }
