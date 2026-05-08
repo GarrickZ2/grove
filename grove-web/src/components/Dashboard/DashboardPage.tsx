@@ -502,9 +502,14 @@ export function DashboardPage({ onNavigate }: DashboardPageProps) {
   const { color: projectColor, Icon: ProjectIcon } = getProjectStyle(selectedProject.id, theme.accentPalette);
   const hasLocalChanges = currentStatus.staged + currentStatus.unstaged + currentStatus.untracked > 0;
 
+  // Backend buckets `chat_token_usage.end_ts` by UTC date (sqlite
+  // strftime('%Y-%m-%d', end_ts, 'unixepoch') runs in UTC). To align the
+  // weekday labels with the data they represent, weekday is also derived
+  // from UTC. Otherwise users east of UTC see "today's" turns under
+  // yesterday's column for the late-night part of the day.
   const dayLabels = (() => {
     const days = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-    const today = new Date().getDay();
+    const today = new Date().getUTCDay();
     const labels: string[] = [];
     for (let i = 6; i >= 0; i--) {
       labels.push(days[(today - i + 7) % 7]);
@@ -518,15 +523,17 @@ export function DashboardPage({ onNavigate }: DashboardPageProps) {
   // so we walk dates explicitly and zero-fill missing days.
   const weeklyTokenSeries = (() => {
     const series = tokenStats?.current.timeseries ?? [];
+    // Anchor "today" at UTC midnight so each iterated key matches the
+    // backend's UTC-bucketed `bucket_start` values exactly.
     const today = new Date();
-    today.setHours(0, 0, 0, 0);
+    today.setUTCHours(0, 0, 0, 0);
     const out: {
       total: number;
       segments: { agent: string; tokens: number }[];
     }[] = [];
     for (let i = 6; i >= 0; i--) {
       const day = new Date(today);
-      day.setDate(today.getDate() - i);
+      day.setUTCDate(today.getUTCDate() - i);
       const key = day.toISOString().slice(0, 10);
       const match = series.find((b) => {
         const bk = new Date(b.bucket_start * 1000).toISOString().slice(0, 10);

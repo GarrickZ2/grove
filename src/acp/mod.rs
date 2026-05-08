@@ -2777,15 +2777,19 @@ impl AcpSessionHandle {
                     write_session_metadata(&self.project_key, &self.task_id, chat_id, &meta);
                 }
                 AcpUpdate::UsageUpdate { used, size, cost } => {
-                    if let Some(mut meta) =
-                        read_session_metadata(&self.project_key, &self.task_id, chat_id)
-                    {
-                        meta.current_usage = Some(UsageSnapshot {
-                            used: *used,
-                            size: *size,
-                            cost: cost.clone(),
-                        });
-                        write_session_metadata(&self.project_key, &self.task_id, chat_id, &meta);
+                    // Update only the in-memory snapshot — disk persistence
+                    // is deferred to turn Complete to avoid a write storm
+                    // when an agent emits many usage updates per turn.
+                    // session.json is read on attach/restore from another
+                    // process, which only matters across turns; within a
+                    // turn the live process serves the snapshot from memory.
+                    let snapshot = UsageSnapshot {
+                        used: *used,
+                        size: *size,
+                        cost: cost.clone(),
+                    };
+                    if let Ok(mut guard) = self.current_usage.lock() {
+                        *guard = Some(snapshot);
                     }
                 }
                 _ => {}
@@ -2965,6 +2969,30 @@ impl AcpSessionHandle {
                         *slot = None;
                     }
                 }
+            }
+
+            // Flush latest in-memory usage snapshot to session.json. We
+            // batch on Complete instead of writing on every UsageUpdate
+            // notification so a turn that emits many incremental updates
+            // produces exactly one session.json write.
+            if let Some(ref chat_id) = self.chat_id {
+                let snapshot = self.current_usage.lock().ok().and_then(|g| g.clone());
+                if let Some(snapshot) = snapshot {
+                    if let Some(mut meta) =
+                        read_session_metadata(&self.project_key, &self.task_id, chat_id)
+                    {
+                        meta.current_usage = Some(snapshot);
+                        write_session_metadata(&self.project_key, &self.task_id, chat_id, &meta);
+                    }
+                }
+            }
+        }
+
+        // SessionEnded clears the cached plan so a chat that disconnects
+        // mid-todo doesn't carry partial progress into its next session.
+        if matches!(&update, AcpUpdate::SessionEnded) {
+            if let Ok(mut slot) = self.last_plan.lock() {
+                *slot = None;
             }
         }
 

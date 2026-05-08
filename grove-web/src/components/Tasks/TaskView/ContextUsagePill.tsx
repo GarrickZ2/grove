@@ -12,6 +12,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { Brain } from "lucide-react";
 
 import { contextHealthColor } from "./quotaColors";
+import { formatTokens } from "../../Stats/formatters";
 
 export interface ContextUsageData {
   used: number;
@@ -38,12 +39,6 @@ interface Rect {
   placement: "top" | "bottom";
 }
 
-function formatTokens(n: number): string {
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(2)}M`;
-  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`;
-  return `${n}`;
-}
-
 function formatCost(amount: number, currency: string): string {
   const sym = currency === "USD" ? "$" : "";
   const suf = currency === "USD" ? "" : ` ${currency}`;
@@ -65,6 +60,8 @@ export function ContextUsagePill({ usage, anchorRef }: ContextUsagePillProps) {
       : 0;
   const color = contextHealthColor(percent);
 
+  // Hooks must run unconditionally — call them all before the size==0 early
+  // return below.
   const [open, setOpen] = useState(false);
   const [rect, setRect] = useState<Rect | null>(null);
   const popoverRef = useRef<HTMLDivElement | null>(null);
@@ -204,6 +201,10 @@ export function ContextUsagePill({ usage, anchorRef }: ContextUsagePillProps) {
         window.clearTimeout(hideTimerRef.current);
     };
   }, []);
+
+  // No context size yet (no usage_update received) — render nothing rather
+  // than a meaningless 0% pill.
+  if (usage.size === 0) return null;
 
   return (
     <span

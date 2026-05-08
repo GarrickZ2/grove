@@ -663,7 +663,10 @@ mod tests {
             AcpUpdate::MessageChunk {
                 text: "World".into(),
             },
-            AcpUpdate::Complete { usage: None, start_ts: None, end_ts: None,
+            AcpUpdate::Complete {
+                usage: None,
+                start_ts: None,
+                end_ts: None,
                 stop_reason: "end".into(),
             },
         ];
@@ -684,7 +687,10 @@ mod tests {
             AcpUpdate::ThoughtChunk {
                 text: "deep".into(),
             },
-            AcpUpdate::Complete { usage: None, start_ts: None, end_ts: None,
+            AcpUpdate::Complete {
+                usage: None,
+                start_ts: None,
+                end_ts: None,
                 stop_reason: "end".into(),
             },
         ];
@@ -717,7 +723,10 @@ mod tests {
                 content: Some("file content".into()),
                 locations: vec![("foo.rs".into(), Some(1))],
             },
-            AcpUpdate::Complete { usage: None, start_ts: None, end_ts: None,
+            AcpUpdate::Complete {
+                usage: None,
+                start_ts: None,
+                end_ts: None,
                 stop_reason: "end".into(),
             },
         ];
@@ -766,7 +775,10 @@ mod tests {
                 locations: vec![],
             },
             AcpUpdate::MessageChunk { text: "m3".into() },
-            AcpUpdate::Complete { usage: None, start_ts: None, end_ts: None,
+            AcpUpdate::Complete {
+                usage: None,
+                start_ts: None,
+                end_ts: None,
                 stop_reason: "end".into(),
             },
         ];
@@ -797,7 +809,10 @@ mod tests {
                 terminal: false,
             },
             AcpUpdate::MessageChunk { text: "hi".into() },
-            AcpUpdate::Complete { usage: None, start_ts: None, end_ts: None,
+            AcpUpdate::Complete {
+                usage: None,
+                start_ts: None,
+                end_ts: None,
                 stop_reason: "end".into(),
             },
         ];
@@ -834,7 +849,10 @@ mod tests {
                 content: Some("hi".into()),
                 locations: vec![],
             },
-            AcpUpdate::Complete { usage: None, start_ts: None, end_ts: None,
+            AcpUpdate::Complete {
+                usage: None,
+                start_ts: None,
+                end_ts: None,
                 stop_reason: "end".into(),
             },
         ];
@@ -875,7 +893,10 @@ mod tests {
                 content: Some("payload-A".into()),
                 locations: vec![],
             },
-            AcpUpdate::Complete { usage: None, start_ts: None, end_ts: None,
+            AcpUpdate::Complete {
+                usage: None,
+                start_ts: None,
+                end_ts: None,
                 stop_reason: "end".into(),
             },
         ];
@@ -924,7 +945,10 @@ mod tests {
                 content: Some("line1\nline2\nline3".into()),
                 locations: vec![],
             },
-            AcpUpdate::Complete { usage: None, start_ts: None, end_ts: None,
+            AcpUpdate::Complete {
+                usage: None,
+                start_ts: None,
+                end_ts: None,
                 stop_reason: "end".into(),
             },
         ];
@@ -1028,7 +1052,10 @@ mod tests {
                 content: None,
                 locations: vec![("b.rs".into(), Some(2)), ("c.rs".into(), None)],
             },
-            AcpUpdate::Complete { usage: None, start_ts: None, end_ts: None,
+            AcpUpdate::Complete {
+                usage: None,
+                start_ts: None,
+                end_ts: None,
                 stop_reason: "end".into(),
             },
         ];

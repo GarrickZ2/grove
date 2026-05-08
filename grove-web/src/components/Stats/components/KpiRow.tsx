@@ -49,9 +49,9 @@ export function KpiRow({
       />
       <KpiCard
         icon={<Clock className="w-3.5 h-3.5" />}
-        label="Agent Compute"
+        label="Total Turn Duration"
         value={formatDuration(current?.agent_compute_secs ?? 0)}
-        sub="cumulative end−start"
+        sub="sum of end−start (overlapping turns counted twice)"
         delta={computeDelta(
           current?.agent_compute_secs,
           previous?.agent_compute_secs,

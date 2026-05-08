@@ -1,3 +1,5 @@
+import { formatTokens, formatDuration } from "../../Stats/formatters";
+
 interface TurnUsageMetaProps {
   inputTokens: number;
   outputTokens: number;
@@ -5,19 +7,6 @@ interface TurnUsageMetaProps {
   /** Wall-clock seconds when the turn started (send_request) and ended. */
   startTs?: number;
   endTs?: number;
-}
-
-function formatTokens(n: number): string {
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(2)}M`;
-  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`;
-  return `${n}`;
-}
-
-function formatDuration(seconds: number): string {
-  if (seconds < 60) return `${seconds.toFixed(1)}s`;
-  const m = Math.floor(seconds / 60);
-  const s = Math.round(seconds - m * 60);
-  return s > 0 ? `${m}m${s}s` : `${m}m`;
 }
 
 /**
@@ -51,7 +40,7 @@ export function TurnUsageMeta({
           cache {formatTokens(cachedReadTokens)}
         </span>
       )}
-      {duration != null && <span>· {formatDuration(duration)}</span>}
+      {duration != null && <span>· {formatDuration(duration, true)}</span>}
     </div>
   );
 }

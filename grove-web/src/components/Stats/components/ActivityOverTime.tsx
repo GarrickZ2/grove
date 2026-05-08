@@ -15,9 +15,9 @@
  * handles. Hover tooltip surfaces the bucket's segment breakdown.
  */
 
-import { useMemo, useState } from "react";
+import { useLayoutEffect, useMemo, useRef, useState } from "react";
 
-import type { TimeseriesBucket } from "../../../api/statistics";
+import type { Bucket, TimeseriesBucket } from "../../../api/statistics";
 import { agentColor } from "../agentColors";
 import { formatTokens, formatNumber } from "../formatters";
 import { TOKEN_TYPE_COLORS } from "./KpiRow";
@@ -74,7 +74,12 @@ function bucketTotal(b: TimeseriesBucket, m: Metric): number {
   }
 }
 
-export function ActivityOverTime({ buckets }: { buckets: TimeseriesBucket[] }) {
+interface ActivityOverTimeProps {
+  buckets: TimeseriesBucket[];
+  bucket?: Bucket;
+}
+
+export function ActivityOverTime({ buckets, bucket }: ActivityOverTimeProps) {
   const [metric, setMetric] = useState<Metric>("total");
 
   // Stable agent ordering used both for stacking order and the legend in
@@ -138,7 +143,7 @@ export function ActivityOverTime({ buckets }: { buckets: TimeseriesBucket[] }) {
       {buckets.length === 0 ? (
         <Empty />
       ) : (
-        <Chart stacks={stacks} metric={metric} />
+        <Chart stacks={stacks} metric={metric} bucket={bucket} />
       )}
     </div>
   );
@@ -200,7 +205,15 @@ function Empty() {
 
 const PADDING = { top: 8, right: 12, bottom: 22, left: 40 };
 
-function Chart({ stacks, metric }: { stacks: Stack[]; metric: Metric }) {
+function Chart({
+  stacks,
+  metric,
+  bucket,
+}: {
+  stacks: Stack[];
+  metric: Metric;
+  bucket?: Bucket;
+}) {
   const [hoverIdx, setHoverIdx] = useState<number | null>(null);
 
   const computed = useMemo(() => {
@@ -315,7 +328,7 @@ function Chart({ stacks, metric }: { stacks: Stack[]; metric: Metric }) {
               textAnchor="middle"
               fill="var(--color-text-muted)"
             >
-              {formatBucketLabel(computed[i].ts)}
+              {formatBucketLabel(computed[i].ts, false, bucket)}
             </text>
           ))}
 
@@ -366,6 +379,7 @@ function Chart({ stacks, metric }: { stacks: Stack[]; metric: Metric }) {
           stack={computed[hoverIdx]}
           metric={metric}
           xPct={(hoverIdx / Math.max(computed.length - 1, 1)) * 100}
+          bucket={bucket}
         />
       )}
     </div>
@@ -376,21 +390,32 @@ function Tooltip({
   stack,
   metric,
   xPct,
+  bucket,
 }: {
   stack: { ts: number; total: number; layers: Segment[] };
   metric: Metric;
   xPct: number;
+  bucket?: Bucket;
 }) {
   const fmt = metric === "turns" ? formatNumber : formatTokens;
-  const left = `clamp(8px, calc(${xPct}% + 4px), calc(100% - 180px))`;
+  // Measure the rendered tooltip width on first paint so the right-edge
+  // clamp uses the actual size instead of a hardcoded 180px guess (which
+  // broke whenever locale formatting or bucket label pushed it wider).
+  const ref = useRef<HTMLDivElement>(null);
+  const [width, setWidth] = useState(180);
+  useLayoutEffect(() => {
+    if (ref.current) setWidth(ref.current.offsetWidth);
+  }, [stack, metric]);
+  const left = `clamp(8px, calc(${xPct}% + 4px), calc(100% - ${width + 8}px))`;
   const unit = metric === "turns" ? "turns" : "tokens";
   return (
     <div
+      ref={ref}
       className="absolute top-2 pointer-events-none rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-2.5 py-1.5 text-[10px] shadow-lg"
       style={{ left, minWidth: 160 }}
     >
       <div className="text-[var(--color-text-muted)] mb-1">
-        {formatBucketLabel(stack.ts, true)}
+        {formatBucketLabel(stack.ts, true, bucket)}
       </div>
       <div className="text-[var(--color-text)] font-semibold mb-1 tabular-nums">
         {fmt(stack.total)} {unit}
@@ -424,15 +449,31 @@ function makeTicks(max: number, count: number): number[] {
   return ticks;
 }
 
-function formatBucketLabel(ts: number, full = false): string {
+function formatBucketLabel(ts: number, full = false, bucket?: Bucket): string {
   const d = new Date(ts * 1000);
+  // Match label granularity to bucket size — showing "Mar 5, 14:30" for a
+  // monthly bucket implies precision the data doesn't have.
+  if (bucket === "monthly") {
+    return d.toLocaleDateString(undefined, { year: "numeric", month: "short" });
+  }
+  if (bucket === "weekly") {
+    return full
+      ? `Week of ${d.toLocaleDateString(undefined, { month: "short", day: "numeric" })}`
+      : d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  }
   if (full) {
-    return d.toLocaleString(undefined, {
+    const opts: Intl.DateTimeFormatOptions = {
       month: "short",
       day: "numeric",
-      hour: "numeric",
-      minute: "2-digit",
-    });
+    };
+    if (bucket === "hourly" || bucket == null) {
+      opts.hour = "numeric";
+      opts.minute = "2-digit";
+    }
+    return d.toLocaleString(undefined, opts);
+  }
+  if (bucket === "hourly") {
+    return d.toLocaleTimeString(undefined, { hour: "numeric" });
   }
   return d.toLocaleDateString(undefined, { month: "numeric", day: "numeric" });
 }

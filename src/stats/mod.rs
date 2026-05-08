@@ -214,12 +214,26 @@ fn kpi_only(scope: &Scope, from_ts: i64, to_ts: i64) -> KpiData {
         );
         if let Some(p) = project_param(scope) {
             conn.query_row(&sql, params![from_ts, to_ts, p], |r| {
-                Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?))
+                Ok((
+                    r.get(0)?,
+                    r.get(1)?,
+                    r.get(2)?,
+                    r.get(3)?,
+                    r.get(4)?,
+                    r.get(5)?,
+                ))
             })
             .unwrap_or((0, 0, 0, 0, 0, 0))
         } else {
             conn.query_row(&sql, params![from_ts, to_ts], |r| {
-                Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?))
+                Ok((
+                    r.get(0)?,
+                    r.get(1)?,
+                    r.get(2)?,
+                    r.get(3)?,
+                    r.get(4)?,
+                    r.get(5)?,
+                ))
             })
             .unwrap_or((0, 0, 0, 0, 0, 0))
         }
@@ -273,10 +287,33 @@ fn query_durations(scope: &Scope, from_ts: i64, to_ts: i64) -> Vec<i64> {
             Err(_) => return out,
         }
     };
+    let mut had_negative = false;
     for v in collected {
+        if v < 0 {
+            had_negative = true;
+        }
         out.push(v.max(0));
     }
+    if had_negative {
+        // Negative durations indicate `end_ts < start_ts`, almost always a
+        // wall-clock NTP correction during a turn. Flooring to 0 is the
+        // pragmatic fix; logging once per query lets us notice if it gets
+        // common enough to warrant storing the duration directly.
+        log_negative_duration_once();
+    }
     out
+}
+
+fn log_negative_duration_once() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    static LOGGED: AtomicBool = AtomicBool::new(false);
+    if LOGGED.swap(true, Ordering::Relaxed) {
+        return;
+    }
+    eprintln!(
+        "[stats] chat_token_usage contains rows with end_ts < start_ts; \
+         clamping to 0 (likely clock skew / NTP correction)"
+    );
 }
 
 fn percentile_50(values: &[i64]) -> f64 {
@@ -361,8 +398,8 @@ fn map_timeseries_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<TimeseriesBucke
 }
 
 fn bucket_key(ts: i64, bucket: Bucket) -> String {
-    let dt = chrono::DateTime::<chrono::Utc>::from_timestamp(ts, 0)
-        .unwrap_or_else(chrono::Utc::now);
+    let dt =
+        chrono::DateTime::<chrono::Utc>::from_timestamp(ts, 0).unwrap_or_else(chrono::Utc::now);
     match bucket {
         Bucket::Hourly => dt.format("%Y-%m-%d %H").to_string(),
         Bucket::Daily => dt.format("%Y-%m-%d").to_string(),
@@ -449,14 +486,22 @@ fn query_agent_share(scope: &Scope, from_ts: i64, to_ts: i64) -> Vec<AgentShareI
     };
     let collected: Vec<(String, i64, i64)> = if let Some(p) = project_param(scope) {
         match stmt.query_map(params![from_ts, to_ts, p], |r| {
-            Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?, r.get::<_, i64>(2)?))
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, i64>(1)?,
+                r.get::<_, i64>(2)?,
+            ))
         }) {
             Ok(it) => it.flatten().collect(),
             Err(_) => return Vec::new(),
         }
     } else {
         match stmt.query_map(params![from_ts, to_ts], |r| {
-            Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?, r.get::<_, i64>(2)?))
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, i64>(1)?,
+                r.get::<_, i64>(2)?,
+            ))
         }) {
             Ok(it) => it.flatten().collect(),
             Err(_) => return Vec::new(),
@@ -650,8 +695,7 @@ fn query_top_tasks(project_key: &str, from_ts: i64, to_ts: i64) -> Vec<TopItem> 
                 .get(&task_id)
                 .cloned()
                 .unwrap_or_else(|| task_id.chars().take(8).collect());
-            let agent_split =
-                query_agent_split_for_task(project_key, &task_id, from_ts, to_ts);
+            let agent_split = query_agent_split_for_task(project_key, &task_id, from_ts, to_ts);
             TopItem {
                 id: task_id,
                 name,

@@ -217,7 +217,10 @@ export function ProjectStatsPage({ projectId }: ProjectStatsPageProps) {
 
           <div className="flex-1 grid grid-cols-12 grid-rows-2 gap-3 min-h-0">
             <div className="col-span-8 row-span-1 min-h-0">
-              <ActivityOverTime buckets={data?.current.timeseries ?? []} />
+              <ActivityOverTime
+                buckets={data?.current.timeseries ?? []}
+                bucket={bucket}
+              />
             </div>
             <div className="col-span-4 row-span-1 min-h-0">
               <AgentShare items={data?.current.agent_share ?? []} />

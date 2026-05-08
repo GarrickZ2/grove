@@ -76,8 +76,8 @@ export function getPreviewType(fileName: string): "image" | "text" | null {
 }
 
 /** Use this in Resource/Artifacts contexts where plain text files should also be previewable. */
-export function canPreviewFile(_fileName: string): boolean {
-  return true;
+export function canPreviewFile(fileName: string): boolean {
+  return fileName.length > 0;
 }
 
 interface FilePreviewDrawerProps {

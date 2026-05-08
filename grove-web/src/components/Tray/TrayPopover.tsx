@@ -763,7 +763,7 @@ function AgentBadge({
         <Icon size={Math.round(size * 0.62)} />
       ) : (
         <span className="text-[10px] text-[var(--color-text-muted)]">
-          {(agent || "?")[0].toUpperCase()}
+          {(Array.from(agent || "?")[0] ?? "?").toUpperCase()}
         </span>
       )}
     </span>

@@ -49,15 +49,22 @@ export function useDebugIds(): DebugIdsState {
 
 /**
  * Report a single id from the surface that owns it. Clears on unmount or
- * when value becomes null. No-op outside perf builds — the effect runs but
- * the store stays empty since nothing reads it.
+ * when value becomes null. Compiled out by Vite tree-shaking in non-perf
+ * builds via the module-level `IS_PERF` constant.
  */
+const IS_PERF = import.meta.env.MODE === "perf";
+
 export function useReportDebugId(level: DebugIdLevel, value: string | null) {
-  useEffect(() => {
-    if (import.meta.env.MODE !== "perf") return;
-    setDebugId(level, value);
-    return () => {
-      setDebugId(level, null);
-    };
-  }, [level, value]);
+  // Effect is registered conditionally so prod builds don't pay the
+  // per-render diff cost. Hook order is stable per call site since the
+  // `IS_PERF` constant is fixed at build time.
+  if (IS_PERF) {
+    // eslint-disable-next-line react-hooks/rules-of-hooks
+    useEffect(() => {
+      setDebugId(level, value);
+      return () => {
+        setDebugId(level, null);
+      };
+    }, [level, value]);
+  }
 }
