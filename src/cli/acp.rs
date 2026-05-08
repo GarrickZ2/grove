@@ -169,7 +169,8 @@ pub async fn execute(agent: String, cwd: String) {
                     | AcpUpdate::TerminalExecute { .. }
                     | AcpUpdate::TerminalChunk { .. }
                     | AcpUpdate::TerminalComplete { .. }
-                    | AcpUpdate::ConnectPhase { .. },
+                    | AcpUpdate::ConnectPhase { .. }
+                    | AcpUpdate::UsageUpdate { .. },
                 ) => continue,
                 Ok(AcpUpdate::SessionEnded) => {
                     eprintln!("Session ended.");

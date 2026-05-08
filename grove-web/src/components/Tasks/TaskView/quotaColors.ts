@@ -1,3 +1,10 @@
+import {
+  BatteryFull,
+  BatteryLow,
+  BatteryMedium,
+  BatteryWarning,
+} from "lucide-react";
+import type { ComponentType } from "react";
 import type { AgentUsage } from "../../../api/agentUsage";
 
 /**
@@ -28,4 +35,30 @@ export function quotaBadgePercent(usage: AgentUsage): number {
     (window) => window.total_window_seconds === FIVE_HOUR_SECONDS,
   );
   return preferred?.percentage_remaining ?? usage.percentage_remaining;
+}
+
+/**
+ * Health-based color for context window *used* percentage.
+ *
+ *   0-50  %  →  success  (plenty of room)
+ *   50-70 %  →  warning  (filling up)
+ *   ≥ 70 %  →  error    (consider compact / new chat)
+ */
+export function contextHealthColor(percentUsed: number): string {
+  if (percentUsed >= 70) return "var(--color-error)";
+  if (percentUsed >= 50) return "var(--color-warning)";
+  return "var(--color-success)";
+}
+
+type IconComponent = ComponentType<{ size?: number; className?: string }>;
+
+/**
+ * Pick a Battery lucide icon based on quota *remaining* percentage.
+ * Mirrors device battery semantics — full → warning as the bar drains.
+ */
+export function quotaBatteryIcon(percentRemaining: number): IconComponent {
+  if (percentRemaining < 20) return BatteryWarning;
+  if (percentRemaining < 50) return BatteryLow;
+  if (percentRemaining < 80) return BatteryMedium;
+  return BatteryFull;
 }

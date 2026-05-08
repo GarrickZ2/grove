@@ -98,7 +98,12 @@ import { useReportDebugId } from "../../../perf/debugIdsStore";
 import { getApiHost, appendHmacToUrl } from "../../../api/client";
 import { useAgentQuota, useRadioEvents } from "../../../hooks";
 import { AgentQuotaPopover } from "./AgentQuotaPopover";
-import { quotaBadgePercent, quotaHealthColor } from "./quotaColors";
+import { ContextUsagePill } from "./ContextUsagePill";
+import {
+  quotaBadgePercent,
+  quotaBatteryIcon,
+  quotaHealthColor,
+} from "./quotaColors";
 import {
   getConfig,
   listChats,
@@ -355,6 +360,12 @@ interface PerChatState {
    * preserves text plus any slash/file chips. Restored on chat switch so a
    * half-typed message isn't lost when the user peeks at another chat. */
   draftHtml: string;
+  /** Latest ACP usage_update for this chat (null when agent never reported). */
+  contextUsage: {
+    used: number;
+    size: number;
+    cost: { amount: number; currency: string } | null;
+  } | null;
 }
 
 function defaultPerChatState(): PerChatState {
@@ -381,6 +392,7 @@ function defaultPerChatState(): PerChatState {
     planFilePath: "",
     planFileContent: "",
     draftHtml: "",
+    contextUsage: null,
   };
 }
 
@@ -898,13 +910,17 @@ function createFileChip(
   // VSCode file icon via CDN
   const ICON_CDN_BASE =
     "https://cdn.jsdelivr.net/gh/vscode-icons/vscode-icons@master/icons";
+  const EXTENSION_OVERRIDE: Record<string, string> = {
+    ".graphql": "file_type_graphql.svg",
+  };
   let iconName: string;
   if (isLink) {
     iconName = "file_type_json.svg";
   } else if (isDir) {
     iconName = getIconForFolder(baseName) || "default_folder.svg";
   } else {
-    iconName = getIconForFile(baseName) || "default_file.svg";
+    const ext = baseName.includes(".") ? "." + baseName.split(".").pop()!.toLowerCase() : "";
+    iconName = (ext in EXTENSION_OVERRIDE) ? EXTENSION_OVERRIDE[ext] : (getIconForFile(baseName) || "default_file.svg");
   }
   const iconUrl = `${ICON_CDN_BASE}/${iconName}`;
 
@@ -1468,6 +1484,14 @@ export function TaskChat({
   const [showPermMenu, setShowPermMenu] = useState(false);
   const [planEntries, setPlanEntries] = useState<PlanEntry[]>([]);
   const [showPlan, setShowPlan] = useState(false);
+  // Latest ACP `usage_update` for the current chat. `null` until the agent
+  // pushes one (or attach hydrates from session.json). Drives the context-
+  // window pill — when null, the pill is hidden.
+  const [contextUsage, setContextUsage] = useState<{
+    used: number;
+    size: number;
+    cost: { amount: number; currency: string } | null;
+  } | null>(null);
   const [lightboxUrl, setLightboxUrl] = useState<string | null>(null);
   const [lightboxSvg, setLightboxSvg] = useState<string | null>(null);
   const [planFilePath, setPlanFilePath] = useState("");
@@ -2302,6 +2326,7 @@ export function TaskChat({
       isRemoteSession,
       remoteOwnerName,
       draftHtml: editableRef.current?.innerHTML ?? "",
+      contextUsage,
     });
     saveChatDraft(activeChatId, editableRef.current?.innerHTML ?? "");
   }, [
@@ -2326,6 +2351,7 @@ export function TaskChat({
     planFileContent,
     isRemoteSession,
     remoteOwnerName,
+    contextUsage,
   ]);
 
   /** Restore chat state from cache */
@@ -2354,6 +2380,7 @@ export function TaskChat({
       setShowPlanFile(!!cached.planFileContent);
       setIsRemoteSession(cached.isRemoteSession);
       setRemoteOwnerName(cached.remoteOwnerName);
+      setContextUsage(cached.contextUsage);
     } else {
       setMessages([]);
       updateHiddenMessageCount(0);
@@ -2366,6 +2393,7 @@ export function TaskChat({
       setThoughtLevel("");
       setThoughtLevelConfigId("");
       setPlanEntries([]);
+      setContextUsage(null);
       setSlashCommands([]);
       setIsConnected(false);
       setConnectPhase(null);
@@ -2735,6 +2763,18 @@ export function TaskChat({
             case "available_commands":
               setSlashCommands(evt.commands ?? []);
               break;
+            case "usage_update":
+              setContextUsage({
+                used: Number(evt.used) || 0,
+                size: Number(evt.size) || 0,
+                cost: evt.cost
+                  ? {
+                      amount: Number(evt.cost.amount) || 0,
+                      currency: String(evt.cost.currency ?? ""),
+                    }
+                  : null,
+              });
+              break;
             case "session_ended":
               setIsConnected(false);
               setConnectPhase(null);
@@ -3052,6 +3092,20 @@ export function TaskChat({
         case "available_commands":
           setSlashCommands(msg.commands ?? []);
           break;
+        case "usage_update":
+          // ACP `unstable_session_usage` — context window pill data.
+          // Agent decides cadence (typically once per turn). No debouncing.
+          setContextUsage({
+            used: Number(msg.used) || 0,
+            size: Number(msg.size) || 0,
+            cost: msg.cost
+              ? {
+                  amount: Number(msg.cost.amount) || 0,
+                  currency: String(msg.cost.currency ?? ""),
+                }
+              : null,
+          });
+          break;
         case "queue_update":
           // Server sends QueuedMessage[]; extract text for display
           setPendingMessages(
@@ -3146,6 +3200,18 @@ export function TaskChat({
           );
           state.thoughtLevel = msg.current ?? "";
           state.thoughtLevelConfigId = msg.config_id ?? "";
+          break;
+        case "usage_update":
+          state.contextUsage = {
+            used: Number(msg.used) || 0,
+            size: Number(msg.size) || 0,
+            cost: msg.cost
+              ? {
+                  amount: Number(msg.cost.amount) || 0,
+                  currency: String(msg.cost.currency ?? ""),
+                }
+              : null,
+          };
           break;
         case "message_chunk":
         case "tool_call":
@@ -5697,7 +5763,7 @@ export function TaskChat({
                             title={`${Math.round(
                               quotaBadgePercentRemaining ?? 0,
                             )}% remaining${agentQuota.outdated ? " — outdated" : ""} — click to refresh`}
-                            className="shrink-0 rounded-full border px-1.5 text-[10px] font-semibold leading-[16px] transition-opacity hover:opacity-80 disabled:opacity-50"
+                            className="inline-flex shrink-0 items-center gap-1 rounded-full border px-1.5 text-[10px] font-semibold leading-[16px] transition-opacity hover:opacity-80 disabled:opacity-50"
                             style={{
                               color: quotaHealthColor(quotaBadgePercentRemaining ?? 0),
                               // Subtle health-tinted pill so the status is
@@ -5711,9 +5777,21 @@ export function TaskChat({
                               )} 40%, transparent)`,
                             }}
                           >
+                            {(() => {
+                              const Icon = quotaBatteryIcon(
+                                quotaBadgePercentRemaining ?? 0,
+                              );
+                              return <Icon size={10} />;
+                            })()}
                             {Math.round(quotaBadgePercentRemaining ?? 0)}%
                           </button>
                         </AgentQuotaPopover>
+                      )}
+                      {contextUsage && (
+                        <ContextUsagePill
+                          usage={contextUsage}
+                          anchorRef={chatboxContainerRef}
+                        />
                       )}
                     </div>
                     {isTerminalMode && (

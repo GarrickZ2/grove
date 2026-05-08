@@ -200,6 +200,13 @@ enum ServerMessage {
     ConnectPhase {
         phase: String,
     },
+    /// Context window usage update — see `AcpUpdate::UsageUpdate`.
+    UsageUpdate {
+        used: u64,
+        size: u64,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        cost: Option<crate::acp::UsageCost>,
+    },
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -408,6 +415,9 @@ impl From<AcpUpdate> for ServerMessage {
                 ServerMessage::TerminalComplete { exit_code }
             }
             AcpUpdate::ConnectPhase { phase } => ServerMessage::ConnectPhase { phase },
+            AcpUpdate::UsageUpdate { used, size, cost } => {
+                ServerMessage::UsageUpdate { used, size, cost }
+            }
         }
     }
 }
@@ -551,17 +561,40 @@ async fn handle_acp_ws(socket: WebSocket, session_key: String, config: AcpStartC
         if let Ok(json) = serde_json::to_string(&meta_msg) {
             let _ = ws_sender.send(Message::Text(json.into())).await;
         }
-        if let Some(meta) = meta.filter(|meta| !meta.available_commands.is_empty()) {
+        if let Some(meta) = meta
+            .as_ref()
+            .filter(|meta| !meta.available_commands.is_empty())
+        {
             let msg = ServerMessage::AvailableCommands {
                 commands: meta
                     .available_commands
-                    .into_iter()
+                    .iter()
+                    .cloned()
                     .map(|c| CommandMsg {
                         name: c.name,
                         description: c.description,
                         input_hint: c.input_hint,
                     })
                     .collect(),
+            };
+            if let Ok(json) = serde_json::to_string(&msg) {
+                let _ = ws_sender.send(Message::Text(json.into())).await;
+            }
+        }
+        // Restore the persisted context-window snapshot. Hydrate the in-memory
+        // mutex on cold reattach (process restart) so subsequent reads stay
+        // consistent, and push a UsageUpdate to this WS so the pill renders
+        // immediately without waiting for the next agent push.
+        if let Some(snapshot) = meta.as_ref().and_then(|m| m.current_usage.clone()) {
+            if let Ok(mut guard) = handle.current_usage.lock() {
+                if guard.is_none() {
+                    *guard = Some(snapshot.clone());
+                }
+            }
+            let msg = ServerMessage::UsageUpdate {
+                used: snapshot.used,
+                size: snapshot.size,
+                cost: snapshot.cost,
             };
             if let Ok(json) = serde_json::to_string(&msg) {
                 let _ = ws_sender.send(Message::Text(json.into())).await;

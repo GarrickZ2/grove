@@ -66,6 +66,10 @@ pub struct AcpSessionHandle {
     current_mode_id: Mutex<Option<String>>,
     /// 当前 agent model id（用于 QueuedConfig 快照）
     current_model_id: Mutex<Option<String>>,
+    /// 最近一次 ACP `usage_update` 推送的 context window 快照。同步落盘到
+    /// `session.json`,attach 时也通过 status 接口下发,前端据此渲染 context pill。
+    /// `None` 表示该 chat 还没收到过 usage_update（pill 隐藏）。
+    pub current_usage: Mutex<Option<UsageSnapshot>>,
     /// 当前 thought-level value id（用于 QueuedConfig 快照）
     current_thought_level_id: Mutex<Option<String>>,
     /// Config option id for thought-level（agent 自定义，用于 SetThoughtLevel 命令）
@@ -236,6 +240,35 @@ pub enum AcpUpdate {
     /// done — TaskChat clears the override and falls back to its normal
     /// connecting/connected text driven by `connecting`/`SessionReady`).
     ConnectPhase { phase: String },
+    /// Context window usage update (ACP `unstable_session_usage`).
+    /// Agent reports current `used / size` tokens for the session, optionally
+    /// with cumulative cost. Pushed every time the agent recomputes — frontend
+    /// renders a context-window pill, no debouncing.
+    UsageUpdate {
+        used: u64,
+        size: u64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        cost: Option<UsageCost>,
+    },
+}
+
+/// Cumulative session cost (from ACP `usage_update.cost`). Optional —
+/// only some agents (e.g. opencode) report it.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq)]
+pub struct UsageCost {
+    pub amount: f64,
+    pub currency: String,
+}
+
+/// Latest context-window usage snapshot for a chat. Persisted into
+/// `session.json` so reopening Grove restores the pill without waiting for
+/// the next agent push.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq)]
+pub struct UsageSnapshot {
+    pub used: u64,
+    pub size: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cost: Option<UsageCost>,
 }
 
 /// 权限选项数据（从 ACP PermissionOption 提取，用于 WebSocket 传输）
@@ -367,6 +400,11 @@ pub struct SessionMetadata {
     pub prompt_capabilities: PromptCapabilitiesData,
     #[serde(default)]
     pub available_commands: Vec<CommandInfo>,
+    /// Latest context-window usage snapshot (ACP `unstable_session_usage`).
+    /// Set on every `usage_update` notification; restored from disk on reopen.
+    /// `None` when the agent has not reported usage yet — UI hides the pill.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub current_usage: Option<UsageSnapshot>,
 }
 
 /// Unix socket 命令（JSONL，每连接一条）
@@ -1069,6 +1107,25 @@ async fn handle_session_notification(
                 config_id,
             });
         }
+        acp::SessionUpdate::UsageUpdate(u) => {
+            let cost = u.cost.as_ref().map(|c| UsageCost {
+                amount: c.amount,
+                currency: c.currency.clone(),
+            });
+            let snapshot = UsageSnapshot {
+                used: u.used,
+                size: u.size,
+                cost: cost.clone(),
+            };
+            if let Ok(mut guard) = state.handle.current_usage.lock() {
+                *guard = Some(snapshot);
+            }
+            state.handle.emit(AcpUpdate::UsageUpdate {
+                used: u.used,
+                size: u.size,
+                cost,
+            });
+        }
         _ => {}
     }
     Ok(())
@@ -1389,6 +1446,7 @@ pub async fn get_or_start_session(
                     queue_paused: std::sync::atomic::AtomicBool::new(false),
                     current_mode_id: Mutex::new(None),
                     current_model_id: Mutex::new(None),
+                    current_usage: Mutex::new(None),
                     current_thought_level_id: Mutex::new(None),
                     thought_level_config_id: Mutex::new(None),
                     working_dir: config.working_dir.to_string_lossy().to_string(),
@@ -2586,6 +2644,11 @@ impl AcpSessionHandle {
                     ..
                 } => {
                     let existing = read_session_metadata(&self.project_key, &self.task_id, chat_id);
+                    let preserved_commands = existing
+                        .as_ref()
+                        .map(|m| m.available_commands.clone())
+                        .unwrap_or_default();
+                    let preserved_usage = existing.as_ref().and_then(|m| m.current_usage.clone());
                     write_session_metadata(
                         &self.project_key,
                         &self.task_id,
@@ -2602,9 +2665,8 @@ impl AcpSessionHandle {
                             current_thought_level_id: current_thought_level_id.clone(),
                             thought_level_config_id: thought_level_config_id.clone(),
                             prompt_capabilities: prompt_capabilities.clone(),
-                            available_commands: existing
-                                .map(|meta| meta.available_commands)
-                                .unwrap_or_default(),
+                            available_commands: preserved_commands,
+                            current_usage: preserved_usage,
                         },
                     );
                 }
@@ -2645,9 +2707,22 @@ impl AcpSessionHandle {
                             thought_level_config_id: None,
                             prompt_capabilities: PromptCapabilitiesData::default(),
                             available_commands: Vec::new(),
+                            current_usage: None,
                         });
                     meta.available_commands = commands.clone();
                     write_session_metadata(&self.project_key, &self.task_id, chat_id, &meta);
+                }
+                AcpUpdate::UsageUpdate { used, size, cost } => {
+                    if let Some(mut meta) =
+                        read_session_metadata(&self.project_key, &self.task_id, chat_id)
+                    {
+                        meta.current_usage = Some(UsageSnapshot {
+                            used: *used,
+                            size: *size,
+                            cost: cost.clone(),
+                        });
+                        write_session_metadata(&self.project_key, &self.task_id, chat_id, &meta);
+                    }
                 }
                 _ => {}
             }
@@ -3217,6 +3292,7 @@ pub fn new_handle_for_test(
         queue_paused: std::sync::atomic::AtomicBool::new(false),
         current_mode_id: Mutex::new(None),
         current_model_id: Mutex::new(None),
+        current_usage: Mutex::new(None),
         current_thought_level_id: Mutex::new(None),
         thought_level_config_id: Mutex::new(None),
         working_dir: "/tmp".to_string(),
@@ -4414,6 +4490,7 @@ mod tests {
             thought_level_config_id: None,
             prompt_capabilities: PromptCapabilitiesData::default(),
             available_commands: vec![],
+            current_usage: None,
         };
 
         let json = serde_json::to_string_pretty(&meta).expect("serialize");
