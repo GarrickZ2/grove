@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.6] - 2026-05-08
+
+### Added
+
+- **Token-centric Statistics + Dashboard** — Stats reworked around tokens (not just messages): per-token-type breakdown across Statistics panels with agent-tinted bars, Dashboard rebuilt around the same model. Material file icons throughout.
+- **Preview any text file as syntax-highlighted source** — Artifact preview falls back to a Monaco-rendered source view for arbitrary text files instead of "no preview available".
+- **Per-turn ACP token usage** — Each ACP turn records its token consumption and surfaces it as message metadata; per-chat context window usage shown as a pill in the chat header.
+- **ACP debug log dump + perf id pill + tray plan progress** — One-click ACP session log dump for bug reports, perf trace ID pill in the perf panel, and live plan-step progress in the tray popover.
+- **Tray popover pinnable as widget** — Pin the tray popover into a free-floating widget with drag and resize handles.
+
+### Improved
+
+- **Review-driven cleanups across stats, ACP, tray, perf** — assorted polish from internal review across the new stats path, ACP integration, tray widget, and perf monitor.
+- **Local lint matches GitHub Actions** — `make lint` / pre-commit now run `pnpm eslint src/ --max-warnings 0`, the same command CI uses, instead of `npx eslint .` against a different plugin tree.
+
+### Fixed
+
+- **Agent-usage endpoint returns 204 for unsupported agents** — previously returned 404, which clients couldn't distinguish from a real missing-resource error.
+
 ## [0.10.5] - 2026-05-07
 
 ### Added
