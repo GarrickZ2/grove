@@ -1,7 +1,8 @@
 /* eslint-disable react-refresh/only-export-components */
-import { useEffect, useRef, type ReactNode } from 'react';
+import { useEffect, useRef, useMemo, type ReactNode } from 'react';
 import { MarkdownRenderer, MermaidBlock, D2Block } from '../ui/MarkdownRenderer';
 import { PreviewCommentHost } from './PreviewCommentHost';
+import { highlightCode as highlightLocal, detectLanguage as detectLanguageLocal } from './syntaxHighlight';
 import type { DiffFile } from '../../api/review';
 
 function withCommentHost(
@@ -26,6 +27,7 @@ export interface PreviewCommentMarker {
 
 export interface RenderFullProps {
   content: string;
+  fileName?: string;
   onImageClick?: (url: string) => void;
   onSvgClick?: (svg: string) => void;
   previewComment?: {
@@ -553,8 +555,73 @@ const jsxRenderer: PreviewRenderer = {
 };
 
 // ============================================================================
-// Registry
+// Source Code Renderer (fallback — any text file, line-level comments)
 // ============================================================================
+
+function splitHighlightedLines(html: string): string[] {
+  const lines: string[] = [];
+  let currentLine = '';
+  const openTags: string[] = [];
+  let i = 0;
+  while (i < html.length) {
+    if (html[i] === '\n') {
+      for (let t = openTags.length - 1; t >= 0; t--) currentLine += '</span>';
+      lines.push(currentLine);
+      currentLine = openTags.join('');
+      i++;
+    } else if (html[i] === '<') {
+      const tagEnd = html.indexOf('>', i);
+      if (tagEnd === -1) { currentLine += html.slice(i); break; }
+      const tag = html.slice(i, tagEnd + 1);
+      if (tag.startsWith('</')) { openTags.pop(); currentLine += tag; }
+      else if (tag.endsWith('/>')) { currentLine += tag; }
+      else { openTags.push(tag); currentLine += tag; }
+      i = tagEnd + 1;
+    } else {
+      currentLine += html[i];
+      i++;
+    }
+  }
+  if (currentLine || lines.length > 0) lines.push(currentLine);
+  return lines;
+}
+
+function escapeHtml(s: string): string {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+function SourceCodePreview({ content, previewComment, fileName }: RenderFullProps) {
+  const lang = fileName ? detectLanguageLocal(fileName) : undefined;
+  const lines = useMemo(() => {
+    const rawLines = content.split('\n');
+    if (!lang) return rawLines.map(escapeHtml);
+    try {
+      const code = rawLines.join('\n');
+      const highlighted = highlightLocal(code, lang);
+      const split = splitHighlightedLines(highlighted);
+      if (split.length === rawLines.length) return split;
+      return rawLines.map(escapeHtml);
+    } catch {
+      return rawLines.map(escapeHtml);
+    }
+  }, [content, lang]);
+
+  const node = (
+    <pre className="markdown-code-block text-xs font-mono leading-6 overflow-x-auto" style={{ color: "var(--color-text)", margin: 0 }}>
+      <code>
+        {lines.map((lineHtml, i) => (
+          <div key={i} className="source-line" style={{ minHeight: '1.5rem', paddingRight: '1rem' }}>
+            <span
+              dangerouslySetInnerHTML={{ __html: lineHtml || '&nbsp;' }}
+            />
+          </div>
+        ))}
+      </code>
+    </pre>
+  );
+
+  return withCommentHost(node, previewComment);
+}
 
 const d2Renderer: PreviewRenderer = {
   id: 'd2',
@@ -568,6 +635,15 @@ const d2Renderer: PreviewRenderer = {
   supportsDiffSegments: false,
 };
 
+const sourceCodeRenderer: PreviewRenderer = {
+  id: 'source',
+  label: 'Preview source code',
+  match: () => true,
+  contentType: 'text',
+  renderFull: (props) => <SourceCodePreview {...props} />,
+  supportsDiffSegments: false,
+};
+
 const renderers: PreviewRenderer[] = [
   jsxRenderer,
   htmlRenderer,
@@ -578,6 +654,7 @@ const renderers: PreviewRenderer[] = [
   imageRenderer,
   csvRenderer,
   pdfRenderer,
+  sourceCodeRenderer,
 ];
 
 /**

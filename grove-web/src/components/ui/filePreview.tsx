@@ -75,22 +75,9 @@ export function getPreviewType(fileName: string): "image" | "text" | null {
   return renderer.contentType === 'url' ? "image" : "text";
 }
 
-const TEXT_EXTENSIONS = new Set([
-  "txt", "log", "env",
-  "json", "jsonl", "ndjson", "yaml", "yml", "toml", "ini", "xml", "csv", "tsv",
-  "html", "htm", "css", "scss", "less",
-  "js", "jsx", "ts", "tsx", "mjs", "cjs",
-  "sh", "bash", "zsh", "fish",
-  "py", "rb", "php", "lua", "r",
-  "rs", "go", "java", "kt", "swift", "cs", "cpp", "c", "h", "hpp",
-  "sql",
-]);
-
 /** Use this in Resource/Artifacts contexts where plain text files should also be previewable. */
-export function canPreviewFile(fileName: string): boolean {
-  if (getPreviewRenderer(fileName)) return true;
-  const ext = fileName.split(".").pop()?.toLowerCase() ?? "";
-  return TEXT_EXTENSIONS.has(ext);
+export function canPreviewFile(_fileName: string): boolean {
+  return true;
 }
 
 interface FilePreviewDrawerProps {
@@ -573,6 +560,7 @@ export function FilePreviewDrawer({
             <div className={renderer.id === 'image' || renderer.id === 'jsx' || renderer.id === 'html' ? 'h-full' : 'p-5'}>
               {renderer.renderFull({
                 content,
+                fileName,
                 onImageClick: setLightboxUrl,
                 onSvgClick: setLightboxSvg,
                 previewComment: commentable ? { enabled: commentMode && !pendingLocator, previewId, markers: stableMarkers } : undefined,

@@ -31,7 +31,7 @@ import {
 } from "../../../ui";
 import { openExternalUrl } from "../../../../utils/openExternal";
 import { usePreviewComments, type PreviewCommentLocator } from "../../../../context";
-import type { PreviewCommentMarker } from "../../../Review/previewRenderers";
+import { getPreviewRenderer, type PreviewCommentMarker } from "../../../Review/previewRenderers";
 
 interface ArtifactsTabProps {
   projectId?: string;
@@ -288,6 +288,15 @@ export function ArtifactsTab({ projectId, task, previewRequest, lastChatIdleAt, 
         setPreviewFile({ file, content: safeContent });
       }
     } else {
+      const renderer = getPreviewRenderer(file.name);
+      if (renderer && renderer.id === 'source') {
+        downloadViaIframe(
+          artifactDownloadUrl(projectId, task.id, file.directory, file.path),
+          file.name,
+        );
+        setPreviewLoading(false);
+        return;
+      }
       const hasMessage = err && typeof err === 'object' && 'message' in err;
       const message = hasMessage ? (err as { message: string }).message : 'Failed to load preview';
       const lastGood = lastGoodContentRef.current;
