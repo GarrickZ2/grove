@@ -12,12 +12,13 @@
 use axum::{
     extract::{Path, Query},
     http::StatusCode,
+    response::IntoResponse,
     Json,
 };
 use serde::Deserialize;
 use serde::Serialize;
 
-use crate::agent_usage::{self, AgentUsage, UsageError};
+use crate::agent_usage::{self, UsageError};
 
 #[derive(Debug, Deserialize)]
 pub struct UsageQuery {
@@ -34,7 +35,7 @@ pub struct UsageErrorResponse {
 
 fn into_http_error(err: UsageError) -> (StatusCode, Json<UsageErrorResponse>) {
     let status = match err {
-        UsageError::UnsupportedAgent => StatusCode::NOT_FOUND,
+        UsageError::UnsupportedAgent => StatusCode::NO_CONTENT,
         UsageError::Unauthorized(_) => StatusCode::UNAUTHORIZED,
         UsageError::Forbidden(_) => StatusCode::FORBIDDEN,
         UsageError::RateLimited(_) => StatusCode::TOO_MANY_REQUESTS,
@@ -52,9 +53,10 @@ fn into_http_error(err: UsageError) -> (StatusCode, Json<UsageErrorResponse>) {
 pub async fn get_agent_usage(
     Path(agent): Path<String>,
     Query(query): Query<UsageQuery>,
-) -> Result<Json<AgentUsage>, (StatusCode, Json<UsageErrorResponse>)> {
-    agent_usage::fetch_usage(&agent, query.model.as_deref(), query.force)
-        .await
-        .map(Json)
-        .map_err(into_http_error)
+) -> impl IntoResponse {
+    match agent_usage::fetch_usage(&agent, query.model.as_deref(), query.force).await {
+        Ok(usage) => Json(usage).into_response(),
+        Err(UsageError::UnsupportedAgent) => StatusCode::NO_CONTENT.into_response(),
+        Err(err) => into_http_error(err).into_response(),
+    }
 }
