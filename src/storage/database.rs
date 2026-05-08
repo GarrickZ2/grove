@@ -383,6 +383,30 @@ pub(crate) fn create_schema(conn: &Connection) -> Result<()> {
 
         CREATE INDEX IF NOT EXISTS ix_review_comments_status
             ON review_comments(project_key, task_id, status);
+
+        -- Per-turn token usage (Layer A). One row per agent prompt response;
+        -- written from acp::handle_session_notification when Complete is emitted.
+        -- Per-turn delta values (not session totals) — confirmed empirically.
+        CREATE TABLE IF NOT EXISTS chat_token_usage (
+            id                 INTEGER PRIMARY KEY,
+            project_key        TEXT    NOT NULL,
+            task_id            TEXT    NOT NULL,
+            chat_id            TEXT    NOT NULL,
+            agent              TEXT    NOT NULL,
+            model              TEXT,
+            input_tokens       INTEGER NOT NULL,
+            cached_read_tokens INTEGER,
+            output_tokens      INTEGER NOT NULL,
+            total_tokens       INTEGER NOT NULL,
+            start_ts           INTEGER NOT NULL,
+            end_ts             INTEGER NOT NULL
+        );
+
+        -- Stats hot path: GROUP BY date(end_ts, 'unixepoch') WHERE project_key = ?
+        CREATE INDEX IF NOT EXISTS ix_chat_token_usage_proj_end
+            ON chat_token_usage(project_key, end_ts);
+        CREATE INDEX IF NOT EXISTS ix_chat_token_usage_end
+            ON chat_token_usage(end_ts);
     ",
     )?;
 

@@ -134,6 +134,12 @@ enum ServerMessage {
     },
     Complete {
         stop_reason: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        usage: Option<crate::acp::TurnUsage>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        start_ts: Option<i64>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        end_ts: Option<i64>,
     },
     Busy {
         value: bool,
@@ -357,7 +363,17 @@ impl From<AcpUpdate> for ServerMessage {
             AcpUpdate::PermissionResponse { id, option_id } => {
                 ServerMessage::PermissionResponse { id, option_id }
             }
-            AcpUpdate::Complete { stop_reason } => ServerMessage::Complete { stop_reason },
+            AcpUpdate::Complete {
+                stop_reason,
+                usage,
+                start_ts,
+                end_ts,
+            } => ServerMessage::Complete {
+                stop_reason,
+                usage,
+                start_ts,
+                end_ts,
+            },
             AcpUpdate::Busy { value } => ServerMessage::Busy { value },
             AcpUpdate::Error { message } => ServerMessage::Error { message },
             AcpUpdate::UserMessage {

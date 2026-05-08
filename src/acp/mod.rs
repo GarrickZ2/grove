@@ -180,8 +180,19 @@ pub enum AcpUpdate {
         id: String,
         option_id: String,
     },
-    /// 本轮处理结束
-    Complete { stop_reason: String },
+    /// 本轮处理结束。`stop_reason` / `usage` 来自 ACP `PromptResponse`;
+    /// `start_ts` / `end_ts`(Unix 秒)是 grove 在 send_request 前后自测的
+    /// wall-clock,用于本轮 duration 显示与 token 用量统计入库。
+    /// 三个字段都可空,老 history.jsonl 没有这些字段反序列化兜底为 None。
+    Complete {
+        stop_reason: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        usage: Option<TurnUsage>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        start_ts: Option<i64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        end_ts: Option<i64>,
+    },
     /// Agent busy 状态变化
     Busy { value: bool },
     /// 错误
@@ -258,6 +269,19 @@ pub enum AcpUpdate {
 pub struct UsageCost {
     pub amount: f64,
     pub currency: String,
+}
+
+/// Per-turn token accounting (from ACP `PromptResponse.usage`). Persisted
+/// alongside `Complete` events in chat history so the UI can render a
+/// per-message meta row, and inserted into `chat_token_usage` for stats.
+/// Per ACP, fields are *this turn's* delta — not session totals.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+pub struct TurnUsage {
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+    pub total_tokens: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cached_read_tokens: Option<u64>,
 }
 
 /// Latest context-window usage snapshot for a chat. Persisted into
@@ -2266,6 +2290,12 @@ async fn drive_session(
                     content_blocks.push(to_acp_content_block(block));
                 }
 
+                // Grove-instrumented turn timer. `start_ts` 记录 send_request 这一刻的
+                // wall clock,用来算 duration 和写入 chat_token_usage.start_ts。
+                // 选取 send_request 而非用户点 send 的时刻,是为了排除 prompt 队列
+                // 等待时间,只反映 agent 真正"思考"了多久。
+                let turn_start_ts = chrono::Utc::now().timestamp();
+
                 // 用 SentRequest::block_task() 得到可被 select 的 future
                 let prompt_fut = conn
                     .send_request(acp::PromptRequest::new(
@@ -2367,8 +2397,42 @@ async fn drive_session(
                                 AcpNotificationEvent::TurnComplete,
                             );
                             handle.emit(AcpUpdate::Busy { value: false });
+                            let turn_end_ts = chrono::Utc::now().timestamp();
+                            let turn_usage = resp.usage.as_ref().map(|u| TurnUsage {
+                                input_tokens: u.input_tokens,
+                                output_tokens: u.output_tokens,
+                                total_tokens: u.total_tokens,
+                                cached_read_tokens: u.cached_read_tokens,
+                            });
+                            // Layer A: persist per-turn usage to SQLite for stats.
+                            // Best-effort — a write error here must not fail the turn.
+                            if let (Some(usage), Some(chat_id)) =
+                                (&turn_usage, config.chat_id.as_deref())
+                            {
+                                let model_owned =
+                                    handle.current_model_id.lock().ok().and_then(|g| g.clone());
+                                let rec = crate::storage::token_usage::TokenUsageRecord {
+                                    project_key: &config.project_key,
+                                    task_id: &config.task_id,
+                                    chat_id,
+                                    agent: &config.agent_name,
+                                    model: model_owned.as_deref(),
+                                    input_tokens: usage.input_tokens,
+                                    cached_read_tokens: usage.cached_read_tokens,
+                                    output_tokens: usage.output_tokens,
+                                    total_tokens: usage.total_tokens,
+                                    start_ts: turn_start_ts,
+                                    end_ts: turn_end_ts,
+                                };
+                                if let Err(e) = crate::storage::token_usage::insert(&rec) {
+                                    eprintln!("[token_usage] insert failed: {}", e);
+                                }
+                            }
                             handle.emit(AcpUpdate::Complete {
                                 stop_reason: format!("{:?}", resp.stop_reason),
+                                usage: turn_usage,
+                                start_ts: Some(turn_start_ts),
+                                end_ts: Some(turn_end_ts),
                             });
                         } else {
                             handle.emit(AcpUpdate::Busy { value: false });

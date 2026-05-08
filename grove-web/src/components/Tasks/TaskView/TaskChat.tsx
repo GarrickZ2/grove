@@ -99,6 +99,7 @@ import { getApiHost, appendHmacToUrl } from "../../../api/client";
 import { useAgentQuota, useRadioEvents } from "../../../hooks";
 import { AgentQuotaPopover } from "./AgentQuotaPopover";
 import { ContextUsagePill } from "./ContextUsagePill";
+import { TurnUsageMeta } from "./TurnUsageMeta";
 import {
   quotaBadgePercent,
   quotaBatteryIcon,
@@ -288,6 +289,13 @@ interface Attachment {
   pendingFile?: File;
 }
 
+interface TurnUsageData {
+  inputTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+  cachedReadTokens?: number;
+}
+
 type ChatMessage =
   | {
       type: "user";
@@ -296,7 +304,20 @@ type ChatMessage =
       attachments?: Attachment[];
       terminal?: boolean;
     }
-  | { type: "assistant"; content: string; complete: boolean }
+  | {
+      type: "assistant";
+      content: string;
+      complete: boolean;
+      /** Per-turn token accounting from the agent's PromptResponse, attached
+       * by the `complete` reducer to the most recent assistant message in
+       * the turn. Absent on streaming messages and on agents that don't
+       * report usage. */
+      usage?: TurnUsageData;
+      /** Wall-clock seconds when grove dispatched the prompt RPC. */
+      startTs?: number;
+      /** Wall-clock seconds when the prompt response arrived. */
+      endTs?: number;
+    }
   | { type: "thinking"; content: string; collapsed: boolean; complete: boolean }
   | ToolMessage
   | { type: "system"; content: string }
@@ -1265,8 +1286,24 @@ function reduceHistoryMessages(
       );
     case "complete": {
       const completed = completeThinking(messages);
+      const usage: TurnUsageData | undefined = msg.usage
+        ? {
+            inputTokens: Number(msg.usage.input_tokens) || 0,
+            outputTokens: Number(msg.usage.output_tokens) || 0,
+            totalTokens: Number(msg.usage.total_tokens) || 0,
+            cachedReadTokens:
+              msg.usage.cached_read_tokens != null
+                ? Number(msg.usage.cached_read_tokens)
+                : undefined,
+          }
+        : undefined;
+      const startTs =
+        typeof msg.start_ts === "number" ? msg.start_ts : undefined;
+      const endTs = typeof msg.end_ts === "number" ? msg.end_ts : undefined;
       return completed.map((m) =>
-        m.type === "assistant" && !m.complete ? { ...m, complete: true } : m,
+        m.type === "assistant" && !m.complete
+          ? { ...m, complete: true, usage, startTs, endTs }
+          : m,
       );
     }
     case "user_message":
@@ -6659,6 +6696,15 @@ const MessageItem = memo(function MessageItem({
             />
             {!message.complete && isBusy && (
               <span className="inline-block w-1.5 h-4 ml-0.5 bg-[var(--color-text-muted)] animate-pulse rounded-sm" />
+            )}
+            {message.complete && message.usage && (
+              <TurnUsageMeta
+                inputTokens={message.usage.inputTokens}
+                outputTokens={message.usage.outputTokens}
+                cachedReadTokens={message.usage.cachedReadTokens}
+                startTs={message.startTs}
+                endTs={message.endTs}
+              />
             )}
           </div>
         </div>

@@ -13,6 +13,7 @@ pub mod sketches;
 pub mod skills;
 pub mod taskgroups;
 pub mod tasks;
+pub mod token_usage;
 pub mod workspace;
 
 use std::cell::RefCell;

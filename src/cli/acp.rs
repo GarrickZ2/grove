@@ -147,7 +147,7 @@ pub async fn execute(agent: String, cwd: String) {
                 Ok(AcpUpdate::PermissionRequest { description, .. }) => {
                     eprintln!("\x1b[33m[Permission] {} (auto-allowed)\x1b[0m", description);
                 }
-                Ok(AcpUpdate::Complete { stop_reason: _ }) => {
+                Ok(AcpUpdate::Complete { .. }) => {
                     println!(); // 换行
                     break;
                 }
