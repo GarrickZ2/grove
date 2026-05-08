@@ -1,12 +1,12 @@
 /**
  * Models breakdown list — one row per (model, agent) pair, sorted by tokens.
- * Each row has a horizontal bar where total tokens fills the bar in the
- * agent's color, with the cached-read portion overlaid in a muted shade so
- * users can eyeball cache efficiency at a glance.
+ * Each row's bar is a 3-segment stack (input / cached / output) using three
+ * shades of the agent's brand color. Width of the whole bar encodes the
+ * row's share of the heaviest model's total.
  */
 
 import type { ModelItem } from "../../../api/statistics";
-import { agentColor } from "../agentColors";
+import { agentShades } from "../agentColors";
 import { formatTokens } from "../formatters";
 
 export function ModelsList({ items }: { items: ModelItem[] }) {
@@ -19,7 +19,7 @@ export function ModelsList({ items }: { items: ModelItem[] }) {
           Models
         </h2>
         <span className="text-[10px] text-[var(--color-text-muted)]">
-          tokens · cached overlay
+          input · cached · output
         </span>
       </div>
       {items.length === 0 ? (
@@ -39,10 +39,13 @@ export function ModelsList({ items }: { items: ModelItem[] }) {
 
 function Row({ item, max }: { item: ModelItem; max: number }) {
   const widthPct = (item.tokens / max) * 100;
-  const cachedPct =
-    item.tokens > 0 ? (item.cached_tokens / item.tokens) * widthPct : 0;
-  const color = agentColor(item.agent);
+  const total = item.tokens || 1;
+  const ipct = (item.input_tokens / total) * 100;
+  const cpct = (item.cached_tokens / total) * 100;
+  const opct = (item.output_tokens / total) * 100;
+  const shades = agentShades(item.agent);
   const modelLabel = item.model || "(unknown)";
+
   return (
     <div className="text-[11px]">
       <div className="flex items-center justify-between gap-2 mb-1">
@@ -54,7 +57,12 @@ function Row({ item, max }: { item: ModelItem; max: number }) {
             · {item.agent}
           </span>
         </span>
-        <span className="text-[var(--color-text-muted)] tabular-nums shrink-0">
+        <span
+          className="text-[var(--color-text-muted)] tabular-nums shrink-0"
+          title={`${formatTokens(item.input_tokens)} input · ${formatTokens(
+            item.cached_tokens,
+          )} cached · ${formatTokens(item.output_tokens)} output`}
+        >
           {formatTokens(item.tokens)} · {item.turns} turns
         </span>
       </div>
@@ -65,22 +73,16 @@ function Row({ item, max }: { item: ModelItem; max: number }) {
         aria-valuemin={0}
         aria-valuemax={100}
       >
+        {/* Outer width = row's share of max; the three inner segments split
+            that width by input / cached / output proportions of this row. */}
         <div
-          className="absolute left-0 top-0 h-full rounded-sm"
-          style={{ width: `${widthPct}%`, backgroundColor: color }}
-        />
-        {cachedPct > 0 && (
-          <div
-            className="absolute left-0 top-0 h-full rounded-sm"
-            style={{
-              width: `${cachedPct}%`,
-              backgroundColor: `color-mix(in srgb, ${color} 55%, white 0%)`,
-              mixBlendMode: "multiply",
-              opacity: 0.55,
-            }}
-            title={`${formatTokens(item.cached_tokens)} cached`}
-          />
-        )}
+          className="absolute left-0 top-0 h-full flex"
+          style={{ width: `${widthPct}%` }}
+        >
+          <div style={{ width: `${ipct}%`, backgroundColor: shades.input }} />
+          <div style={{ width: `${cpct}%`, backgroundColor: shades.cached }} />
+          <div style={{ width: `${opct}%`, backgroundColor: shades.output }} />
+        </div>
       </div>
     </div>
   );

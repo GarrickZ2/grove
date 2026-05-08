@@ -83,7 +83,9 @@ pub struct ModelItem {
     pub model: String,
     pub agent: String,
     pub tokens: u64,
+    pub input_tokens: u64,
     pub cached_tokens: u64,
+    pub output_tokens: u64,
     pub turns: u64,
 }
 
@@ -95,6 +97,9 @@ pub struct TopItem {
     pub name: String,
     pub turns: u64,
     pub tokens: u64,
+    pub input_tokens: u64,
+    pub cached_tokens: u64,
+    pub output_tokens: u64,
     pub agent_split: Vec<AgentBucket>,
 }
 
@@ -482,7 +487,9 @@ fn query_models(scope: &Scope, from_ts: i64, to_ts: i64) -> Vec<ModelItem> {
             COALESCE(model, '') AS m,
             agent,
             COALESCE(SUM(total_tokens), 0),
+            COALESCE(SUM(input_tokens), 0),
             COALESCE(SUM(cached_read_tokens), 0),
+            COALESCE(SUM(output_tokens), 0),
             COUNT(*)
          FROM chat_token_usage
          WHERE end_ts BETWEEN ?1 AND ?2 AND {}
@@ -513,8 +520,10 @@ fn map_model_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<ModelItem> {
         model: r.get(0)?,
         agent: r.get(1)?,
         tokens: r.get::<_, i64>(2)? as u64,
-        cached_tokens: r.get::<_, i64>(3)? as u64,
-        turns: r.get::<_, i64>(4)? as u64,
+        input_tokens: r.get::<_, i64>(3)? as u64,
+        cached_tokens: r.get::<_, i64>(4)? as u64,
+        output_tokens: r.get::<_, i64>(5)? as u64,
+        turns: r.get::<_, i64>(6)? as u64,
     })
 }
 
@@ -533,9 +542,13 @@ fn query_top_projects(from_ts: i64, to_ts: i64) -> Vec<TopItem> {
     // Mutex; nesting calls (e.g. `workspace::load_projects()` while still
     // holding `conn`) deadlocks the entire API since every other handler
     // queues behind the same mutex.
-    let raw: Vec<(String, i64, i64)> = {
+    let raw: Vec<(String, i64, i64, i64, i64, i64)> = {
         let conn = database::connection();
-        let sql = "SELECT project_key, COUNT(*), COALESCE(SUM(total_tokens), 0)
+        let sql = "SELECT project_key, COUNT(*),
+                          COALESCE(SUM(total_tokens), 0),
+                          COALESCE(SUM(input_tokens), 0),
+                          COALESCE(SUM(cached_read_tokens), 0),
+                          COALESCE(SUM(output_tokens), 0)
                    FROM chat_token_usage
                    WHERE end_ts BETWEEN ?1 AND ?2
                    GROUP BY project_key
@@ -546,7 +559,14 @@ fn query_top_projects(from_ts: i64, to_ts: i64) -> Vec<TopItem> {
             Err(_) => return Vec::new(),
         };
         let rows = stmt.query_map(params![from_ts, to_ts], |r| {
-            Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?, r.get::<_, i64>(2)?))
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, i64>(1)?,
+                r.get::<_, i64>(2)?,
+                r.get::<_, i64>(3)?,
+                r.get::<_, i64>(4)?,
+                r.get::<_, i64>(5)?,
+            ))
         });
         match rows {
             Ok(it) => it.flatten().collect(),
@@ -565,7 +585,7 @@ fn query_top_projects(from_ts: i64, to_ts: i64) -> Vec<TopItem> {
             .collect();
 
     raw.into_iter()
-        .map(|(key, turns, tokens)| {
+        .map(|(key, turns, tokens, input, cached, output)| {
             let name = project_names
                 .get(&key)
                 .cloned()
@@ -576,6 +596,9 @@ fn query_top_projects(from_ts: i64, to_ts: i64) -> Vec<TopItem> {
                 name,
                 turns: turns as u64,
                 tokens: tokens as u64,
+                input_tokens: input as u64,
+                cached_tokens: cached as u64,
+                output_tokens: output as u64,
                 agent_split,
             }
         })
@@ -585,9 +608,13 @@ fn query_top_projects(from_ts: i64, to_ts: i64) -> Vec<TopItem> {
 fn query_top_tasks(project_key: &str, from_ts: i64, to_ts: i64) -> Vec<TopItem> {
     // Drop the DB guard before calling load_tasks — see `query_top_projects`
     // for the deadlock rationale.
-    let raw: Vec<(String, i64, i64)> = {
+    let raw: Vec<(String, i64, i64, i64, i64, i64)> = {
         let conn = database::connection();
-        let sql = "SELECT task_id, COUNT(*), COALESCE(SUM(total_tokens), 0)
+        let sql = "SELECT task_id, COUNT(*),
+                          COALESCE(SUM(total_tokens), 0),
+                          COALESCE(SUM(input_tokens), 0),
+                          COALESCE(SUM(cached_read_tokens), 0),
+                          COALESCE(SUM(output_tokens), 0)
                    FROM chat_token_usage
                    WHERE end_ts BETWEEN ?1 AND ?2 AND project_key = ?3
                    GROUP BY task_id
@@ -598,7 +625,14 @@ fn query_top_tasks(project_key: &str, from_ts: i64, to_ts: i64) -> Vec<TopItem> 
             Err(_) => return Vec::new(),
         };
         let rows = stmt.query_map(params![from_ts, to_ts, project_key], |r| {
-            Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?, r.get::<_, i64>(2)?))
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, i64>(1)?,
+                r.get::<_, i64>(2)?,
+                r.get::<_, i64>(3)?,
+                r.get::<_, i64>(4)?,
+                r.get::<_, i64>(5)?,
+            ))
         });
         match rows {
             Ok(it) => it.flatten().collect(),
@@ -611,7 +645,7 @@ fn query_top_tasks(project_key: &str, from_ts: i64, to_ts: i64) -> Vec<TopItem> 
         tasks.into_iter().map(|t| (t.id.clone(), t.name)).collect();
 
     raw.into_iter()
-        .map(|(task_id, turns, tokens)| {
+        .map(|(task_id, turns, tokens, input, cached, output)| {
             let name = task_names
                 .get(&task_id)
                 .cloned()
@@ -623,6 +657,9 @@ fn query_top_tasks(project_key: &str, from_ts: i64, to_ts: i64) -> Vec<TopItem> 
                 name,
                 turns: turns as u64,
                 tokens: tokens as u64,
+                input_tokens: input as u64,
+                cached_tokens: cached as u64,
+                output_tokens: output as u64,
                 agent_split,
             }
         })

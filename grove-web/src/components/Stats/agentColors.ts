@@ -63,3 +63,26 @@ export function agentColor(key: string): string {
   if (hit) return hit;
   return FALLBACK_PALETTE[hashIndex(canonical, FALLBACK_PALETTE.length)];
 }
+
+/**
+ * Three shades of an agent's brand color, used for token-type breakdown
+ * bars (input / cached / output). The brightest shade goes to `output`
+ * because that's the actual generated work; cached is the lightest since
+ * cached reads are visually de-emphasized (they're cheap by design).
+ *
+ * Implemented via `color-mix` so the shades inherit the agent hue
+ * regardless of theme — adjusting alpha against the panel background
+ * gives consistent legibility on light and dark surfaces.
+ */
+export function agentShades(key: string): {
+  input: string;
+  cached: string;
+  output: string;
+} {
+  const base = agentColor(key);
+  return {
+    output: base,
+    input: `color-mix(in srgb, ${base} 65%, transparent)`,
+    cached: `color-mix(in srgb, ${base} 30%, transparent)`,
+  };
+}

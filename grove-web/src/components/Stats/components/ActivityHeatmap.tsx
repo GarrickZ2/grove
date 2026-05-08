@@ -19,7 +19,6 @@ export function ActivityHeatmap({
   cells: HeatmapCell[];
   rangeId: string;
 }) {
-  const max = Math.max(...cells.map((c) => c.turns), 1);
   const peak = cells.reduce<HeatmapCell | null>((best, c) => {
     if (!best || c.turns > best.turns) return c;
     return best;
@@ -48,11 +47,11 @@ export function ActivityHeatmap({
         </span>
         <span className="ml-auto inline-flex items-center gap-1 text-[10px] text-[var(--color-text-muted)]">
           <span>less</span>
-          <Swatch v={0} max={1} />
-          <Swatch v={0.25} max={1} />
-          <Swatch v={0.5} max={1} />
-          <Swatch v={0.75} max={1} />
-          <Swatch v={1} max={1} />
+          <Swatch level={0} />
+          <Swatch level={1} />
+          <Swatch level={2} />
+          <Swatch level={3} />
+          <Swatch level={4} />
           <span>more</span>
         </span>
       </div>
@@ -64,9 +63,9 @@ export function ActivityHeatmap({
       ) : (
         <div className="flex-1 flex flex-col min-h-0 justify-between">
           {collapseToHourStrip ? (
-            <HourStrip cellMap={cellMap} max={max} />
+            <HourStrip cellMap={cellMap} />
           ) : (
-            <WeekGrid cellMap={cellMap} max={max} />
+            <WeekGrid cellMap={cellMap} />
           )}
           {peak && (
             <div className="mt-2 text-[10px] text-[var(--color-text-muted)] tabular-nums">
@@ -81,19 +80,13 @@ export function ActivityHeatmap({
   );
 }
 
-function WeekGrid({
-  cellMap,
-  max,
-}: {
-  cellMap: Map<string, number>;
-  max: number;
-}) {
+function WeekGrid({ cellMap }: { cellMap: Map<string, number> }) {
   return (
-    <div className="flex flex-col gap-[3px] min-h-0">
-      {/* Rows: weekday */}
+    <div className="flex flex-col flex-1 gap-[3px] min-h-0">
+      {/* Rows: weekday — each row stretches to fill available card height. */}
       {WEEKDAYS.map((wd, dayIdx) => (
-        <div key={wd} className="flex items-center gap-2">
-          <span className="w-7 text-[10px] text-[var(--color-text-muted)] tabular-nums">
+        <div key={wd} className="flex flex-1 items-stretch gap-2 min-h-0">
+          <span className="w-7 self-center text-[10px] text-[var(--color-text-muted)] tabular-nums">
             {wd}
           </span>
           <div className="flex-1 grid grid-cols-[repeat(24,minmax(0,1fr))] gap-[2px]">
@@ -103,7 +96,6 @@ function WeekGrid({
                 <Cell
                   key={hr}
                   v={v}
-                  max={max}
                   title={`${wd} ${String(hr).padStart(2, "0")}:00 — ${v} turns`}
                 />
               );
@@ -111,8 +103,8 @@ function WeekGrid({
           </div>
         </div>
       ))}
-      {/* Hour ticks under the grid */}
-      <div className="flex items-center gap-2 mt-1">
+      {/* Hour ticks under the grid — natural height. */}
+      <div className="flex items-center gap-2 mt-1 shrink-0">
         <span className="w-7" />
         <div className="flex-1 grid grid-cols-[repeat(24,minmax(0,1fr))] text-[9px] text-[var(--color-text-muted)] tabular-nums">
           {[0, 4, 8, 12, 16, 20].map((h) => (
@@ -130,24 +122,16 @@ function WeekGrid({
   );
 }
 
-function HourStrip({
-  cellMap,
-  max,
-}: {
-  cellMap: Map<string, number>;
-  max: number;
-}) {
+function HourStrip({ cellMap }: { cellMap: Map<string, number> }) {
   return (
-    <div className="grid grid-cols-[repeat(24,minmax(0,1fr))] gap-[2px]">
+    <div className="flex-1 grid grid-cols-[repeat(24,minmax(0,1fr))] gap-[2px] min-h-0">
       {Array.from({ length: 24 }, (_, hr) => {
         const v = cellMap.get(String(hr)) ?? 0;
         return (
           <Cell
             key={hr}
             v={v}
-            max={max}
             title={`${String(hr).padStart(2, "0")}:00 — ${v} turns`}
-            tall
           />
         );
       })}
@@ -155,48 +139,52 @@ function HourStrip({
   );
 }
 
-function Cell({
-  v,
-  max,
-  title,
-  tall,
-}: {
-  v: number;
-  max: number;
-  title: string;
-  tall?: boolean;
-}) {
-  const intensity = max > 0 ? v / max : 0;
+/**
+ * Absolute intensity scale. Tuned for grove's actual usage where a busy
+ * hour sees 10-30 turns; relative-max scaling made 4 turns look like
+ * peak activity which over-promised in light usage.
+ *
+ *   0     → empty (no activity)
+ *   1-4   → faint
+ *   5-14  → light
+ *   15-29 → medium
+ *   ≥30   → heavy
+ */
+function intensityLevel(v: number): 0 | 1 | 2 | 3 | 4 {
+  if (v <= 0) return 0;
+  if (v < 5) return 1;
+  if (v < 15) return 2;
+  if (v < 30) return 3;
+  return 4;
+}
+
+const LEVEL_OPACITY = ["0", "22", "45", "70", "100"]; // pct
+
+function Cell({ v, title }: { v: number; title: string }) {
+  const lvl = intensityLevel(v);
   return (
     <div
       title={title}
-      className={`rounded-sm ${tall ? "h-8" : "aspect-square"}`}
+      className="rounded-sm w-full h-full min-h-[8px]"
       style={{
         backgroundColor:
-          intensity === 0
+          lvl === 0
             ? "var(--color-bg-tertiary)"
-            : `color-mix(in srgb, var(--color-highlight) ${Math.max(
-                12,
-                Math.round(intensity * 100),
-              )}%, transparent)`,
+            : `color-mix(in srgb, var(--color-highlight) ${LEVEL_OPACITY[lvl]}%, transparent)`,
       }}
     />
   );
 }
 
-function Swatch({ v, max }: { v: number; max: number }) {
-  const intensity = max > 0 ? v / max : 0;
+function Swatch({ level }: { level: 0 | 1 | 2 | 3 | 4 }) {
   return (
     <span
       className="inline-block w-2.5 h-2.5 rounded-sm"
       style={{
         backgroundColor:
-          intensity === 0
+          level === 0
             ? "var(--color-bg-tertiary)"
-            : `color-mix(in srgb, var(--color-highlight) ${Math.max(
-                12,
-                Math.round(intensity * 100),
-              )}%, transparent)`,
+            : `color-mix(in srgb, var(--color-highlight) ${LEVEL_OPACITY[level]}%, transparent)`,
       }}
     />
   );

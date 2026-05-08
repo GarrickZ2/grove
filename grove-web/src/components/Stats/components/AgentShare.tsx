@@ -1,15 +1,18 @@
 /**
- * Donut chart of "agent share by prompt turns" + a list of bars on the right.
- * Donut center shows total turns; segments are sized by turns (not tokens)
- * because turns is the right denominator for "who picked the work".
+ * Donut chart of "agent share by tokens" + a bar list on the right.
+ *
+ * Token-weighted (not turn-weighted) because turns are message-count noise:
+ * "hi" and "rebuild the build pipeline" both count as 1 turn but represent
+ * vastly different agent workloads. Tokens are the closest proxy we have to
+ * real work done.
  */
 
 import type { AgentShareItem } from "../../../api/statistics";
 import { agentColor } from "../agentColors";
-import { formatNumber } from "../formatters";
+import { formatTokens } from "../formatters";
 
 export function AgentShare({ items }: { items: AgentShareItem[] }) {
-  const total = items.reduce((sum, i) => sum + i.turns, 0);
+  const total = items.reduce((sum, i) => sum + i.tokens, 0);
 
   return (
     <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)] p-4 h-full flex flex-col min-h-0">
@@ -18,7 +21,7 @@ export function AgentShare({ items }: { items: AgentShareItem[] }) {
           Agent share
         </h2>
         <span className="text-[10px] text-[var(--color-text-muted)]">
-          by prompt turns
+          by tokens
         </span>
       </div>
       {total === 0 ? (
@@ -51,7 +54,7 @@ function Donut({
   const c = 2 * Math.PI * r;
   const slices = items.map((item) => ({
     ...item,
-    slice: (item.turns / total) * c,
+    slice: (item.tokens / total) * c,
   }));
   const offsets: number[] = [];
   slices.reduce((acc, s, i) => {
@@ -86,10 +89,10 @@ function Donut({
       </svg>
       <div className="absolute inset-0 flex flex-col items-center justify-center select-none">
         <div className="text-2xl font-bold text-[var(--color-text)] tabular-nums leading-none">
-          {formatNumber(total)}
+          {formatTokens(total)}
         </div>
         <div className="text-[9px] uppercase tracking-[0.08em] text-[var(--color-text-muted)] mt-1">
-          turns
+          tokens
         </div>
       </div>
     </div>
@@ -106,7 +109,7 @@ function BarList({
   return (
     <div className="space-y-2 overflow-y-auto pr-1 min-h-0">
       {items.slice(0, 8).map((it) => {
-        const pct = total > 0 ? (it.turns / total) * 100 : 0;
+        const pct = total > 0 ? (it.tokens / total) * 100 : 0;
         return (
           <div key={it.agent} className="text-[11px]">
             <div className="flex items-center justify-between gap-2 mb-0.5">
@@ -123,7 +126,7 @@ function BarList({
                 </span>
               </span>
               <span className="text-[var(--color-text-muted)] tabular-nums shrink-0">
-                {it.turns} · {pct.toFixed(0)}%
+                {formatTokens(it.tokens)} · {pct.toFixed(0)}%
               </span>
             </div>
             <div

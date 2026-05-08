@@ -1,11 +1,13 @@
 /**
- * Top entities — projects in Global scope, tasks in Project scope. Numbered
- * 1..N with a tiny per-agent bar that lets the user spot which agent did
- * the work without scanning a separate breakdown.
+ * Top entities — projects in Global scope, tasks in Project scope.
+ * Each row shows a 3-segment input / cached / output bar in three shades
+ * of the row's *dominant agent* color (whichever agent contributed the
+ * most tokens in this entity). Falls back to a neutral palette when no
+ * agent_split is available.
  */
 
 import type { TopItem } from "../../../api/statistics";
-import { agentColor } from "../agentColors";
+import { agentShades } from "../agentColors";
 import { formatTokens, formatNumber } from "../formatters";
 
 export function TopList({
@@ -24,7 +26,7 @@ export function TopList({
           {title}
         </h2>
         <span className="text-[10px] text-[var(--color-text-muted)]">
-          by tokens
+          input · cached · output
         </span>
       </div>
       {items.length === 0 ? (
@@ -43,7 +45,28 @@ export function TopList({
 }
 
 function Row({ item, rank }: { item: TopItem; rank: number }) {
-  const totalTurns = item.agent_split.reduce((s, a) => s + a.turns, 0);
+  // Use the dominant agent (highest tokens in agent_split) to color the
+  // 3-shade bar. Each task usually has a primary driving agent; mixing
+  // multiple agents' palettes inside one bar would be illegible.
+  const dominant = item.agent_split.reduce<{
+    agent: string;
+    tokens: number;
+  } | null>(
+    (best, a) => (!best || a.tokens > best.tokens ? a : best),
+    null,
+  );
+  const shades = dominant
+    ? agentShades(dominant.agent)
+    : {
+        input: "var(--color-text-muted)",
+        cached: "color-mix(in srgb, var(--color-text-muted) 30%, transparent)",
+        output: "var(--color-highlight)",
+      };
+
+  const total = item.tokens || 1;
+  const ipct = (item.input_tokens / total) * 100;
+  const cpct = (item.cached_tokens / total) * 100;
+  const opct = (item.output_tokens / total) * 100;
 
   return (
     <li className="flex items-start gap-2">
@@ -55,24 +78,19 @@ function Row({ item, rank }: { item: TopItem; rank: number }) {
           <span className="text-[12px] font-medium text-[var(--color-text)] truncate">
             {item.name}
           </span>
-          <span className="text-[10px] text-[var(--color-text-muted)] tabular-nums shrink-0 tabular-nums">
+          <span
+            className="text-[10px] text-[var(--color-text-muted)] tabular-nums shrink-0"
+            title={`${formatTokens(item.input_tokens)} input · ${formatTokens(
+              item.cached_tokens,
+            )} cached · ${formatTokens(item.output_tokens)} output`}
+          >
             {formatTokens(item.tokens)} · {formatNumber(item.turns)}
           </span>
         </div>
         <div className="flex h-1 rounded-sm overflow-hidden bg-[var(--color-bg-tertiary)]">
-          {item.agent_split.map((a) => {
-            const pct = totalTurns > 0 ? (a.turns / totalTurns) * 100 : 0;
-            return (
-              <div
-                key={a.agent}
-                style={{
-                  width: `${pct}%`,
-                  backgroundColor: agentColor(a.agent),
-                }}
-                title={`${a.agent}: ${a.turns} turns`}
-              />
-            );
-          })}
+          <div style={{ width: `${ipct}%`, backgroundColor: shades.input }} />
+          <div style={{ width: `${cpct}%`, backgroundColor: shades.cached }} />
+          <div style={{ width: `${opct}%`, backgroundColor: shades.output }} />
         </div>
       </div>
     </li>

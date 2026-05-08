@@ -42,7 +42,9 @@ export interface ModelItem {
   model: string;
   agent: string;
   tokens: number;
+  input_tokens: number;
   cached_tokens: number;
+  output_tokens: number;
   turns: number;
 }
 
@@ -51,6 +53,9 @@ export interface TopItem {
   name: string;
   turns: number;
   tokens: number;
+  input_tokens: number;
+  cached_tokens: number;
+  output_tokens: number;
   agent_split: AgentBucket[];
 }
 

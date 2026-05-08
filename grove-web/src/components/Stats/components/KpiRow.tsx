@@ -44,14 +44,8 @@ export function KpiRow({
         icon={<InfinityIcon className="w-3.5 h-3.5" />}
         label="Tokens"
         value={formatTokens(current?.tokens_total ?? 0)}
-        sub={
-          current
-            ? `${formatTokens(current.tokens_in)} in · ${formatTokens(
-                current.tokens_out,
-              )} out · ${formatTokens(current.tokens_cached)} cached`
-            : undefined
-        }
         delta={computeDelta(current?.tokens_total, previous?.tokens_total)}
+        extra={current ? <TokenSplitBar kpi={current} /> : undefined}
       />
       <KpiCard
         icon={<Clock className="w-3.5 h-3.5" />}
@@ -96,12 +90,14 @@ function KpiCard({
   value,
   sub,
   delta,
+  extra,
 }: {
   icon: React.ReactNode;
   label: string;
   value: string;
   sub?: string;
   delta: { pct: number | null; direction: 1 | -1 | 0 };
+  extra?: React.ReactNode;
 }) {
   return (
     <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)] p-3 flex flex-col gap-1.5">
@@ -115,6 +111,43 @@ function KpiCard({
         {value}
       </div>
       <DeltaLine delta={delta} sub={sub} />
+      {extra}
+    </div>
+  );
+}
+
+// Token type palette — used by both the KPI bar and ActivityOverTime stacks.
+// Colors are theme-aware by leaning on grove's existing semantic tokens
+// where possible, and fall back to fixed hex when the semantic palette
+// doesn't have an obvious slot.
+export const TOKEN_TYPE_COLORS = {
+  input: "var(--color-info, #3b82f6)", // bluish — fresh input
+  cached: "var(--color-text-muted)", // muted — replayed from cache, cheap
+  output: "var(--color-highlight)", // accent — actual generated work
+} as const;
+
+function TokenSplitBar({ kpi }: { kpi: KpiData }) {
+  const total = kpi.tokens_in + kpi.tokens_cached + kpi.tokens_out;
+  if (total === 0) return null;
+  const ipct = (kpi.tokens_in / total) * 100;
+  const cpct = (kpi.tokens_cached / total) * 100;
+  const opct = (kpi.tokens_out / total) * 100;
+  return (
+    <div
+      className="flex h-1.5 w-full rounded-sm overflow-hidden"
+      title={`${formatTokens(kpi.tokens_in)} in · ${formatTokens(
+        kpi.tokens_cached,
+      )} cached · ${formatTokens(kpi.tokens_out)} out`}
+    >
+      <div
+        style={{ width: `${ipct}%`, backgroundColor: TOKEN_TYPE_COLORS.input }}
+      />
+      <div
+        style={{ width: `${cpct}%`, backgroundColor: TOKEN_TYPE_COLORS.cached }}
+      />
+      <div
+        style={{ width: `${opct}%`, backgroundColor: TOKEN_TYPE_COLORS.output }}
+      />
     </div>
   );
 }

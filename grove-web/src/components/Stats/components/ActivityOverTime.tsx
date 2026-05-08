@@ -1,9 +1,18 @@
 /**
- * Stacked area chart — tokens or turns over time, split per agent.
+ * Stacked area / bar chart — single metric over time, stacked by agent
+ * when the data permits.
+ *
+ * Metric selector:
+ *   turns  – per-agent turns (stacked)
+ *   total  – per-agent tokens summed (stacked)
+ *   input  – bucket-level input tokens (single area; backend does not split
+ *            input/cached/output per agent today)
+ *   cached – bucket-level cached_read tokens
+ *   output – bucket-level output tokens
  *
  * Hand-rolled SVG (no chart library) keeps the dependency surface small;
  * stat panels render a few hundred buckets max, well under what plain SVG
- * handles. Hover tooltip surfaces the bucket's per-agent breakdown.
+ * handles. Hover tooltip surfaces the bucket's segment breakdown.
  */
 
 import { useMemo, useState } from "react";
@@ -11,19 +20,71 @@ import { useMemo, useState } from "react";
 import type { TimeseriesBucket } from "../../../api/statistics";
 import { agentColor } from "../agentColors";
 import { formatTokens, formatNumber } from "../formatters";
+import { TOKEN_TYPE_COLORS } from "./KpiRow";
 
-type Metric = "tokens" | "turns";
+type Metric = "turns" | "total" | "input" | "cached" | "output";
+
+const METRICS: { id: Metric; label: string }[] = [
+  { id: "turns", label: "Turns" },
+  { id: "total", label: "Total" },
+  { id: "input", label: "Input" },
+  { id: "cached", label: "Cached" },
+  { id: "output", label: "Output" },
+];
+
+interface Segment {
+  /** Display label for legend / tooltip. */
+  label: string;
+  /** Numeric value (token count or turn count). */
+  value: number;
+  /** SVG fill color. */
+  color: string;
+}
+
+interface Stack {
+  ts: number;
+  segs: Segment[];
+}
+
+/** Whether a metric stacks per agent (true) or renders as a single layer. */
+function isAgentStacked(m: Metric): boolean {
+  return m === "turns" || m === "total";
+}
+
+/** Color used when a metric is rendered as a single layer (input/cached/output). */
+function singleColor(m: Metric): string {
+  if (m === "input") return TOKEN_TYPE_COLORS.input;
+  if (m === "cached") return TOKEN_TYPE_COLORS.cached;
+  if (m === "output") return TOKEN_TYPE_COLORS.output;
+  return "var(--color-highlight)";
+}
+
+function bucketTotal(b: TimeseriesBucket, m: Metric): number {
+  switch (m) {
+    case "turns":
+      return b.turns;
+    case "total":
+      return b.tokens_in + b.tokens_cached + b.tokens_out;
+    case "input":
+      return b.tokens_in;
+    case "cached":
+      return b.tokens_cached;
+    case "output":
+      return b.tokens_out;
+  }
+}
 
 export function ActivityOverTime({ buckets }: { buckets: TimeseriesBucket[] }) {
-  const [metric, setMetric] = useState<Metric>("tokens");
+  const [metric, setMetric] = useState<Metric>("total");
 
-  // Build a stable agent ordering by total contribution (largest first) so
-  // colors and stacking order don't flicker between renders.
+  // Stable agent ordering used both for stacking order and the legend in
+  // agent-stacked modes. Sort by total contribution descending so the
+  // heaviest agent sits at the bottom of the stack.
   const agentOrder = useMemo(() => {
     const totals = new Map<string, number>();
     for (const b of buckets) {
       for (const a of b.per_agent) {
-        const v = metric === "tokens" ? a.tokens : a.turns;
+        const v = metric === "turns" ? a.turns : a.tokens;
         totals.set(a.agent, (totals.get(a.agent) ?? 0) + v);
       }
     }
@@ -32,44 +93,75 @@ export function ActivityOverTime({ buckets }: { buckets: TimeseriesBucket[] }) {
       .map(([k]) => k);
   }, [buckets, metric]);
 
+  const stacks: Stack[] = useMemo(() => {
+    if (isAgentStacked(metric)) {
+      return buckets.map((b) => {
+        const map = new Map(b.per_agent.map((a) => [a.agent, a]));
+        return {
+          ts: b.bucket_start,
+          segs: agentOrder.map((agent) => ({
+            label: agent,
+            value:
+              metric === "turns"
+                ? (map.get(agent)?.turns ?? 0)
+                : (map.get(agent)?.tokens ?? 0),
+            color: agentColor(agent),
+          })),
+        };
+      });
+    }
+    // Single-layer mode: input / cached / output don't have per-agent
+    // detail in the timeseries today, so we render the bucket total in
+    // the metric's brand color.
+    const color = singleColor(metric);
+    return buckets.map((b) => ({
+      ts: b.bucket_start,
+      segs: [{ label: metric, value: bucketTotal(b, metric), color }],
+    }));
+  }, [buckets, metric, agentOrder]);
+
+  const legend: { label: string; color: string }[] = isAgentStacked(metric)
+    ? agentOrder.map((a) => ({ label: a, color: agentColor(a) }))
+    : [{ label: metric, color: singleColor(metric) }];
+
   return (
     <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)] p-4 h-full flex flex-col min-h-0">
-      <div className="flex items-center justify-between mb-3 shrink-0">
-        <div className="flex items-baseline gap-3">
-          <h2 className="text-sm font-semibold text-[var(--color-text)]">
+      <div className="flex items-center justify-between mb-3 shrink-0 gap-3">
+        <div className="flex items-baseline gap-3 min-w-0">
+          <h2 className="text-sm font-semibold text-[var(--color-text)] shrink-0">
             Activity over time
           </h2>
-          <Legend agents={agentOrder} />
+          <Legend items={legend} />
         </div>
-        <MetricToggle value={metric} onChange={setMetric} />
+        <MetricSelector value={metric} onChange={setMetric} />
       </div>
       {buckets.length === 0 ? (
         <Empty />
       ) : (
-        <Chart buckets={buckets} agentOrder={agentOrder} metric={metric} />
+        <Chart stacks={stacks} metric={metric} />
       )}
     </div>
   );
 }
 
-function Legend({ agents }: { agents: string[] }) {
-  if (agents.length === 0) return null;
+function Legend({ items }: { items: { label: string; color: string }[] }) {
+  if (items.length === 0) return null;
   return (
-    <div className="flex items-center gap-3 text-[10px] text-[var(--color-text-muted)]">
-      {agents.slice(0, 6).map((a) => (
-        <span key={a} className="inline-flex items-center gap-1">
+    <div className="flex items-center gap-3 text-[10px] text-[var(--color-text-muted)] truncate">
+      {items.slice(0, 6).map((it) => (
+        <span key={it.label} className="inline-flex items-center gap-1">
           <span
             className="inline-block w-2 h-2 rounded-sm"
-            style={{ backgroundColor: agentColor(a) }}
+            style={{ backgroundColor: it.color }}
           />
-          {a}
+          {it.label}
         </span>
       ))}
     </div>
   );
 }
 
-function MetricToggle({
+function MetricSelector({
   value,
   onChange,
 }: {
@@ -77,19 +169,19 @@ function MetricToggle({
   onChange: (m: Metric) => void;
 }) {
   return (
-    <div className="inline-flex rounded-md border border-[var(--color-border)] bg-[var(--color-bg-tertiary)] p-0.5">
-      {(["tokens", "turns"] as Metric[]).map((m) => (
+    <div className="inline-flex rounded-md border border-[var(--color-border)] bg-[var(--color-bg-tertiary)] p-0.5 shrink-0">
+      {METRICS.map((m) => (
         <button
-          key={m}
+          key={m.id}
           type="button"
-          onClick={() => onChange(m)}
+          onClick={() => onChange(m.id)}
           className={`px-2 py-0.5 rounded text-[10px] font-medium ${
-            value === m
+            value === m.id
               ? "bg-[var(--color-bg)] text-[var(--color-text)]"
               : "text-[var(--color-text-muted)]"
           }`}
         >
-          {m}
+          {m.label}
         </button>
       ))}
     </div>
@@ -108,71 +200,77 @@ function Empty() {
 
 const PADDING = { top: 8, right: 12, bottom: 22, left: 40 };
 
-function Chart({
-  buckets,
-  agentOrder,
-  metric,
-}: {
-  buckets: TimeseriesBucket[];
-  agentOrder: string[];
-  metric: Metric;
-}) {
+function Chart({ stacks, metric }: { stacks: Stack[]; metric: Metric }) {
   const [hoverIdx, setHoverIdx] = useState<number | null>(null);
 
-  // Compute per-bucket stacked values per agent (in agentOrder).
-  const stacks = useMemo(() => {
-    return buckets.map((b) => {
-      const map = new Map(b.per_agent.map((a) => [a.agent, a]));
+  const computed = useMemo(() => {
+    return stacks.map((s) => {
       let cum = 0;
-      const segs = agentOrder.map((agent) => {
-        const item = map.get(agent);
-        const v = item ? (metric === "tokens" ? item.tokens : item.turns) : 0;
-        const seg = { agent, base: cum, value: v };
-        cum += v;
-        return seg;
+      const layers = s.segs.map((seg) => {
+        const layer = { ...seg, base: cum };
+        cum += seg.value;
+        return layer;
       });
-      return { ts: b.bucket_start, total: cum, segs };
+      return { ts: s.ts, total: cum, layers };
     });
-  }, [buckets, agentOrder, metric]);
+  }, [stacks]);
 
-  const yMax = Math.max(...stacks.map((s) => s.total), 1);
+  const yMax = Math.max(...computed.map((s) => s.total), 1);
 
-  // Render-time dimensions are CSS-driven; SVG uses 0..1 viewBox normalized
-  // by hard pixel constants. We use a viewBox of 1000x300 and let CSS scale
-  // it to the parent. y axis uses 4 ticks.
   const W = 1000;
   const H = 280;
   const innerW = W - PADDING.left - PADDING.right;
   const innerH = H - PADDING.top - PADDING.bottom;
 
-  // x positions: distribute buckets across innerW; if only 1 bucket, center it.
   const xAt = (i: number) =>
     PADDING.left +
-    (stacks.length === 1
+    (computed.length === 1
       ? innerW / 2
-      : (i / (stacks.length - 1)) * innerW);
+      : (i / (computed.length - 1)) * innerW);
   const yAt = (v: number) => PADDING.top + innerH - (v / yMax) * innerH;
 
-  // Build polygons per agent layer (top edge + bottom edge reversed).
-  const layers = agentOrder.map((agent, layerIdx) => {
+  const isSingle = computed.length === 1;
+  const barWidth = innerW / 8;
+  const layerCount = computed[0]?.layers.length ?? 0;
+
+  const shapes = Array.from({ length: layerCount }, (_, layerIdx) => {
+    const layerLabel = computed[0].layers[layerIdx].label;
+    const layerColor = computed[0].layers[layerIdx].color;
+    if (isSingle) {
+      const seg = computed[0].layers[layerIdx];
+      const cx = xAt(0);
+      const x = cx - barWidth / 2;
+      const y1 = yAt(seg.base + seg.value);
+      const y0 = yAt(seg.base);
+      return {
+        label: layerLabel,
+        color: layerColor,
+        kind: "rect" as const,
+        x,
+        y: y1,
+        w: barWidth,
+        h: Math.max(0, y0 - y1),
+      };
+    }
     const top: string[] = [];
     const bot: string[] = [];
-    stacks.forEach((s, i) => {
-      const seg = s.segs[layerIdx];
+    computed.forEach((s, i) => {
+      const seg = s.layers[layerIdx];
       const x = xAt(i);
-      const y0 = yAt(seg.base);
-      const y1 = yAt(seg.base + seg.value);
-      top.push(`${x},${y1}`);
-      bot.push(`${x},${y0}`);
+      top.push(`${x},${yAt(seg.base + seg.value)}`);
+      bot.push(`${x},${yAt(seg.base)}`);
     });
     bot.reverse();
     return {
-      agent,
+      label: layerLabel,
+      color: layerColor,
+      kind: "path" as const,
       d: `M ${top.join(" L ")} L ${bot.join(" L ")} Z`,
     };
   });
 
   const yTicks = makeTicks(yMax, 4);
+  const valueFmt = metric === "turns" ? formatNumber : formatTokens;
 
   return (
     <div className="flex-1 min-h-0 relative">
@@ -182,7 +280,6 @@ function Chart({
         className="w-full h-full"
         onMouseLeave={() => setHoverIdx(null)}
       >
-        {/* Y grid + labels */}
         {yTicks.map((t, i) => (
           <g key={i}>
             <line
@@ -202,14 +299,13 @@ function Chart({
               fill="var(--color-text-muted)"
               className="tabular-nums"
             >
-              {metric === "tokens" ? formatTokens(t) : formatNumber(t)}
+              {valueFmt(t)}
             </text>
           </g>
         ))}
 
-        {/* X labels: first, middle, last */}
-        {[0, Math.floor(stacks.length / 2), stacks.length - 1]
-          .filter((i, idx, arr) => stacks[i] && arr.indexOf(i) === idx)
+        {[0, Math.floor(computed.length / 2), computed.length - 1]
+          .filter((i, idx, arr) => computed[i] && arr.indexOf(i) === idx)
           .map((i) => (
             <text
               key={i}
@@ -219,18 +315,27 @@ function Chart({
               textAnchor="middle"
               fill="var(--color-text-muted)"
             >
-              {formatBucketLabel(stacks[i].ts)}
+              {formatBucketLabel(computed[i].ts)}
             </text>
           ))}
 
-        {/* Stacked layers */}
-        {layers.map((l) => (
-          <path key={l.agent} d={l.d} fill={agentColor(l.agent)} />
-        ))}
+        {shapes.map((sh) =>
+          sh.kind === "rect" ? (
+            <rect
+              key={sh.label}
+              x={sh.x}
+              y={sh.y}
+              width={sh.w}
+              height={sh.h}
+              fill={sh.color}
+            />
+          ) : (
+            <path key={sh.label} d={sh.d} fill={sh.color} />
+          ),
+        )}
 
-        {/* Hover hit-targets — invisible vertical bands over each bucket */}
-        {stacks.map((_s, i) => {
-          const bandW = innerW / Math.max(stacks.length, 1);
+        {computed.map((_, i) => {
+          const bandW = innerW / Math.max(computed.length, 1);
           return (
             <rect
               key={i}
@@ -244,8 +349,7 @@ function Chart({
           );
         })}
 
-        {/* Hover line */}
-        {hoverIdx != null && stacks[hoverIdx] && (
+        {hoverIdx != null && computed[hoverIdx] && (
           <line
             x1={xAt(hoverIdx)}
             x2={xAt(hoverIdx)}
@@ -257,11 +361,11 @@ function Chart({
         )}
       </svg>
 
-      {hoverIdx != null && stacks[hoverIdx] && (
+      {hoverIdx != null && computed[hoverIdx] && (
         <Tooltip
-          stack={stacks[hoverIdx]}
+          stack={computed[hoverIdx]}
           metric={metric}
-          xPct={(hoverIdx / Math.max(stacks.length - 1, 1)) * 100}
+          xPct={(hoverIdx / Math.max(computed.length - 1, 1)) * 100}
         />
       )}
     </div>
@@ -273,13 +377,13 @@ function Tooltip({
   metric,
   xPct,
 }: {
-  stack: { ts: number; total: number; segs: { agent: string; value: number }[] };
+  stack: { ts: number; total: number; layers: Segment[] };
   metric: Metric;
   xPct: number;
 }) {
-  const fmt = metric === "tokens" ? formatTokens : formatNumber;
-  // Anchor tooltip near hovered bar; clamp into the panel.
+  const fmt = metric === "turns" ? formatNumber : formatTokens;
   const left = `clamp(8px, calc(${xPct}% + 4px), calc(100% - 180px))`;
+  const unit = metric === "turns" ? "turns" : "tokens";
   return (
     <div
       className="absolute top-2 pointer-events-none rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-2.5 py-1.5 text-[10px] shadow-lg"
@@ -289,21 +393,21 @@ function Tooltip({
         {formatBucketLabel(stack.ts, true)}
       </div>
       <div className="text-[var(--color-text)] font-semibold mb-1 tabular-nums">
-        {fmt(stack.total)} {metric}
+        {fmt(stack.total)} {unit}
       </div>
-      {stack.segs
+      {stack.layers
         .filter((s) => s.value > 0)
         .map((s) => (
           <div
-            key={s.agent}
+            key={s.label}
             className="flex items-center justify-between gap-3 tabular-nums"
           >
             <span className="inline-flex items-center gap-1 text-[var(--color-text-muted)]">
               <span
                 className="inline-block w-2 h-2 rounded-sm"
-                style={{ backgroundColor: agentColor(s.agent) }}
+                style={{ backgroundColor: s.color }}
               />
-              {s.agent}
+              {s.label}
             </span>
             <span className="text-[var(--color-text)]">{fmt(s.value)}</span>
           </div>
