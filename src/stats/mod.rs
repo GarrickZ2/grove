@@ -1,646 +1,722 @@
-//! Statistics aggregation module
+//! Statistics aggregation over `chat_token_usage`.
 //!
-//! `aggregate_range(project_key, from, to)` 直接在日期区间维度聚合，
-//! 包含所有"在该区间内活跃过"的任务（active 或生命周期与区间有交叉的 archived）。
+//! All metrics derive from a single table — per-turn token + duration rows.
+//! Two scopes:
+//!   * Global: across all projects
+//!   * Project: a single project
 //!
-//! ## 任务纳入规则
-//!
-//! 一个任务被纳入统计，当且仅当：
-//! - `created_at.date() <= to`（任务在区间结束前已存在）
-//! - `archived_at.date() >= from` 或 `status == Active`（任务在区间开始后还活着）
-//!
-//! ## tasks_completed
-//!
-//! 只统计 archived_at ∈ [from, to] 的任务，表示"本周期内完成了多少任务"。
+//! Each request returns the current period plus a "previous" period of equal
+//! length (used by the frontend to render Δ deltas on KPIs).
 
-use std::collections::{HashMap, HashSet};
+use rusqlite::params;
+use serde::Serialize;
 
-use chrono::NaiveDate;
-use serde::{Deserialize, Serialize};
+use crate::storage::database;
 
-use crate::acp::AcpUpdate;
-use crate::git;
-use crate::storage::chat_history;
-use crate::storage::comments::{load_comments, CommentStatus};
-use crate::storage::notes;
-use crate::storage::tasks::{load_archived_tasks, load_chat_sessions, load_tasks, Task};
-use crate::watcher;
+// ── Public response type ────────────────────────────────────────────────
 
-// ============================================================================
-// Response DTOs (API layer)
-// ============================================================================
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct BriefDataPoint {
-    pub brief_length: u32,
-    /// 实际干预次数 = user_messages - active_chat_count（每个 session 的首条消息是任务派发，不算干预）
-    pub interventions: u32,
-    /// 所有 chat session 的 substantive user messages 总数（>= 5 chars）
-    pub user_messages: u32,
-    /// AI 执行的 tool calls 总数（工作量指标）
-    pub tool_calls: u32,
-    /// AI 生成 Plan 的次数（结构化思考指标）
-    pub plan_updates: u32,
+#[derive(Debug, Serialize, Default, Clone)]
+pub struct StatisticsResponse {
+    pub current: PeriodData,
+    pub previous: PreviousPeriodData,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
-pub struct HotFile {
-    pub path: String,
-    pub task_count: u32,
+#[derive(Debug, Serialize, Default, Clone)]
+pub struct PeriodData {
+    pub kpi: KpiData,
+    pub timeseries: Vec<TimeseriesBucket>,
+    pub agent_share: Vec<AgentShareItem>,
+    pub models: Vec<ModelItem>,
+    pub top: Vec<TopItem>,
+    pub heatmap: Vec<HeatmapCell>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
-pub struct CommentFlow {
-    pub total: u32,
-    /// 人开的 comment 数
-    pub human_total: u32,
-    /// AI 开的 comment 数（review suggestion 采用率）
-    pub agent_total: u32,
-
-    // ── 人开的 comment 结果 ───────────────────────────────────────────────
-    pub human_resolved: u32,
-    pub human_open: u32,
-    pub human_outdated: u32,
-
-    // ── AI 开的 comment 结果 ──────────────────────────────────────────────
-    pub agent_resolved: u32,
-    pub agent_open: u32,
-    pub agent_outdated: u32,
-
-    /// 已解决的人的 comment 中，AI 平均回复几轮（effort 指标）
-    pub avg_ai_rounds_on_human_comments: f64,
+/// Previous-period only carries KPI for delta computation; the frontend
+/// doesn't render charts for it.
+#[derive(Debug, Serialize, Default, Clone)]
+pub struct PreviousPeriodData {
+    pub kpi: KpiData,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
-pub struct AgentStat {
+#[derive(Debug, Serialize, Default, Clone)]
+pub struct KpiData {
+    pub turns: u64,
+    pub tokens_total: u64,
+    pub tokens_in: u64,
+    pub tokens_out: u64,
+    pub tokens_cached: u64,
+    /// Sum of (end_ts - start_ts) across all turns, in seconds.
+    pub agent_compute_secs: u64,
+    pub avg_tokens_per_turn: u64,
+    pub avg_duration_secs: f64,
+    pub p50_duration_secs: f64,
+}
+
+#[derive(Debug, Serialize, Clone)]
+pub struct TimeseriesBucket {
+    /// Bucket start, Unix seconds.
+    pub bucket_start: i64,
+    pub turns: u64,
+    pub tokens_in: u64,
+    pub tokens_cached: u64,
+    pub tokens_out: u64,
+    pub per_agent: Vec<AgentBucket>,
+}
+
+#[derive(Debug, Serialize, Clone)]
+pub struct AgentBucket {
     pub agent: String,
-    pub display_name: String,
-    /// 参与的 task 数
-    pub chat_tasks: u32,
-    /// 总 tool calls（工作量）
-    pub chat_total_tool_calls: u32,
-    /// 平均每个 task 的 tool calls
-    pub chat_avg_tool_calls_per_task: f64,
-    /// AI 开的 review comment 数（建议数量）
-    pub review_comments: u32,
-    /// AI review 有效率（已解决 / 总数）
-    pub review_hit_rate: f64,
-    pub contribution_score: f64,
+    pub tokens: u64,
+    pub turns: u64,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
-pub struct ProjectStatisticsResponse {
-    pub time_saved_hours: f64,
-    pub parallel_multiplier: f64,
-    pub peak_concurrency: u32,
-    pub total_active_minutes: u64,
-    pub tasks_completed: u32,
-    pub tasks_created: u32,
-    pub tasks_in_progress: u32,
-    pub agent_autonomy_rate: f64,
-    pub code_additions: u32,
-    pub code_deletions: u32,
-    pub avg_files_per_task: f64,
-    pub total_files_changed: u32,
-    pub avg_brief_length: u32,
-    pub avg_interventions_per_task: f64,
-    /// 仅含 user_messages > 0 的任务（排除废弃任务）
-    pub brief_insight_data: Vec<BriefDataPoint>,
-    /// 所有任务的 tool calls 总数
-    pub total_tool_calls: u64,
-    /// 平均每个活跃任务的 tool calls（仅 user_messages > 0 的任务）
-    pub avg_tool_calls_per_task: f64,
-    /// 平均每个活跃任务的 plan 更新次数（仅 user_messages > 0 的任务）
-    pub avg_plan_updates_per_task: f64,
-    pub hot_files: Vec<HotFile>,
-    pub comment_flow: CommentFlow,
-    pub agent_leaderboard: Vec<AgentStat>,
+#[derive(Debug, Serialize, Clone)]
+pub struct AgentShareItem {
+    pub agent: String,
+    pub turns: u64,
+    pub tokens: u64,
+    pub percent: f64,
 }
 
-// ============================================================================
-// AI agent detection
-// ============================================================================
-
-const AI_AGENTS: &[&str] = &["claude", "codex", "gemini", "gpt", "copilot", "o1", "o3"];
-
-fn is_ai_author(author: &str) -> bool {
-    let lower = author.to_lowercase();
-    AI_AGENTS.iter().any(|a| lower.contains(a))
+#[derive(Debug, Serialize, Clone)]
+pub struct ModelItem {
+    pub model: String,
+    pub agent: String,
+    pub tokens: u64,
+    pub cached_tokens: u64,
+    pub turns: u64,
 }
 
-// ============================================================================
-// Main entry: aggregate across a date range
-// ============================================================================
+/// Top entity in the period — projects (Global scope) or tasks (Project scope).
+/// `id` is project_key or task_id; `name` is human label.
+#[derive(Debug, Serialize, Clone)]
+pub struct TopItem {
+    pub id: String,
+    pub name: String,
+    pub turns: u64,
+    pub tokens: u64,
+    pub agent_split: Vec<AgentBucket>,
+}
 
-/// 聚合日期区间 [from, to] 内的统计数据
-pub fn aggregate_range(
-    project_key: &str,
-    from: NaiveDate,
-    to: NaiveDate,
-) -> ProjectStatisticsResponse {
-    // 加载所有任务（active + archived）
-    let active_tasks = load_tasks(project_key).unwrap_or_default();
-    let archived_tasks = load_archived_tasks(project_key).unwrap_or_default();
+#[derive(Debug, Serialize, Clone)]
+pub struct HeatmapCell {
+    pub weekday: u8, // 0=Sun..6=Sat
+    pub hour: u8,    // 0..23
+    pub turns: u64,
+}
 
-    // 筛选：生命周期与 [from, to] 有交叉的任务
-    // active:   created_at.date() <= to（在区间结束前已存在）
-    // archived: created_at.date() <= to AND archived_at.date() >= from
-    let relevant_tasks: Vec<&Task> = active_tasks
-        .iter()
-        .filter(|t| t.created_at.date_naive() <= to)
-        .chain(archived_tasks.iter().filter(|t| {
-            let archived_date = t.archived_at.unwrap_or(t.updated_at).date_naive();
-            t.created_at.date_naive() <= to && archived_date >= from
-        }))
-        .collect();
+// ── Bucket granularity ──────────────────────────────────────────────────
 
-    // tasks_completed：仅统计 archived_at ∈ [from, to] 的任务
-    let tasks_completed = archived_tasks
-        .iter()
-        .filter(|t| {
-            let d = t.archived_at.unwrap_or(t.updated_at).date_naive();
-            d >= from && d <= to
-        })
-        .count() as u32;
+#[derive(Debug, Clone, Copy)]
+pub enum Bucket {
+    Hourly,
+    Daily,
+    Weekly,
+    Monthly,
+}
 
-    // tasks_created：本周期内创建的任务（active + archived，created_at ∈ [from, to]）
-    let tasks_created = active_tasks
-        .iter()
-        .filter(|t| {
-            let d = t.created_at.date_naive();
-            d >= from && d <= to
-        })
-        .count() as u32
-        + archived_tasks
-            .iter()
-            .filter(|t| {
-                let d = t.created_at.date_naive();
-                d >= from && d <= to
+impl Bucket {
+    pub fn parse(s: &str) -> Self {
+        match s.to_lowercase().as_str() {
+            "hourly" | "hour" => Bucket::Hourly,
+            "weekly" | "week" => Bucket::Weekly,
+            "monthly" | "month" => Bucket::Monthly,
+            _ => Bucket::Daily,
+        }
+    }
+
+    /// SQLite strftime format that floors a timestamp into a bucket key.
+    fn strftime_key(self) -> &'static str {
+        match self {
+            Bucket::Hourly => "%Y-%m-%d %H",
+            Bucket::Daily => "%Y-%m-%d",
+            Bucket::Weekly => "%Y-%W",
+            Bucket::Monthly => "%Y-%m",
+        }
+    }
+}
+
+// ── Query scope ─────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone)]
+pub enum Scope {
+    /// Aggregate across every project.
+    Global,
+    /// Restrict to one project_key.
+    Project(String),
+}
+
+// ── Public entry point ──────────────────────────────────────────────────
+
+pub fn aggregate(scope: &Scope, from_ts: i64, to_ts: i64, bucket: Bucket) -> StatisticsResponse {
+    let span = (to_ts - from_ts).max(1);
+    let prev_to = from_ts - 1;
+    let prev_from = prev_to - span;
+
+    let current = build_period(scope, from_ts, to_ts, bucket);
+    let previous = PreviousPeriodData {
+        kpi: kpi_only(scope, prev_from, prev_to),
+    };
+    StatisticsResponse { current, previous }
+}
+
+fn build_period(scope: &Scope, from_ts: i64, to_ts: i64, bucket: Bucket) -> PeriodData {
+    PeriodData {
+        kpi: kpi_only(scope, from_ts, to_ts),
+        timeseries: query_timeseries(scope, from_ts, to_ts, bucket),
+        agent_share: query_agent_share(scope, from_ts, to_ts),
+        models: query_models(scope, from_ts, to_ts),
+        top: query_top(scope, from_ts, to_ts),
+        heatmap: query_heatmap(scope, from_ts, to_ts),
+    }
+}
+
+// ── Helpers: WHERE clause and binding ───────────────────────────────────
+
+fn scope_clause(scope: &Scope) -> &'static str {
+    match scope {
+        Scope::Global => "1=1",
+        Scope::Project(_) => "project_key = ?3",
+    }
+}
+
+fn project_param(scope: &Scope) -> Option<&str> {
+    match scope {
+        Scope::Global => None,
+        Scope::Project(k) => Some(k.as_str()),
+    }
+}
+
+// ── KPI ─────────────────────────────────────────────────────────────────
+
+fn kpi_only(scope: &Scope, from_ts: i64, to_ts: i64) -> KpiData {
+    // Sum query in its own scope so the DB guard is dropped before
+    // `query_durations` re-acquires it. Holding two nested guards on the
+    // same process-wide Mutex deadlocks every other API request.
+    let where_scope = scope_clause(scope);
+    let row: (i64, i64, i64, i64, i64, i64) = {
+        let conn = database::connection();
+        let sql = format!(
+            "SELECT
+                COUNT(*),
+                COALESCE(SUM(input_tokens), 0),
+                COALESCE(SUM(output_tokens), 0),
+                COALESCE(SUM(cached_read_tokens), 0),
+                COALESCE(SUM(total_tokens), 0),
+                COALESCE(SUM(end_ts - start_ts), 0)
+             FROM chat_token_usage
+             WHERE end_ts BETWEEN ?1 AND ?2 AND {where_scope}",
+        );
+        if let Some(p) = project_param(scope) {
+            conn.query_row(&sql, params![from_ts, to_ts, p], |r| {
+                Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?))
             })
-            .count() as u32;
-
-    let agent_created = active_tasks
-        .iter()
-        .filter(|t| {
-            let d = t.created_at.date_naive();
-            d >= from && d <= to && t.created_by == "agent"
-        })
-        .count() as u32
-        + archived_tasks
-            .iter()
-            .filter(|t| {
-                let d = t.created_at.date_naive();
-                d >= from && d <= to && t.created_by == "agent"
+            .unwrap_or((0, 0, 0, 0, 0, 0))
+        } else {
+            conn.query_row(&sql, params![from_ts, to_ts], |r| {
+                Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?))
             })
-            .count() as u32;
+            .unwrap_or((0, 0, 0, 0, 0, 0))
+        }
+    };
 
-    let tasks_in_progress = active_tasks
-        .iter()
-        .filter(|t| t.created_at.date_naive() <= to)
-        .count() as u32;
+    let (turns, tin, tout, tcached, ttotal, tcompute) = row;
+    let turns = turns as u64;
 
-    // 聚合所有相关任务的详细数据
-    aggregate_tasks(
-        project_key,
-        &relevant_tasks,
-        tasks_completed,
-        tasks_created,
-        tasks_in_progress,
-        agent_created,
-    )
+    // Pull all turn durations to compute p50 in memory (small N — single user).
+    let durations = query_durations(scope, from_ts, to_ts);
+    let p50 = percentile_50(&durations);
+    let avg_dur = if !durations.is_empty() {
+        durations.iter().sum::<i64>() as f64 / durations.len() as f64
+    } else {
+        0.0
+    };
+
+    KpiData {
+        turns,
+        tokens_total: ttotal as u64,
+        tokens_in: tin as u64,
+        tokens_out: tout as u64,
+        tokens_cached: tcached as u64,
+        agent_compute_secs: tcompute as u64,
+        avg_tokens_per_turn: (ttotal as u64).checked_div(turns).unwrap_or(0),
+        avg_duration_secs: avg_dur,
+        p50_duration_secs: p50,
+    }
 }
 
-// ============================================================================
-// Per-task aggregation
-// ============================================================================
-
-#[derive(Default)]
-struct RawAgentStat {
-    chat_tasks: u32,
-    total_tool_calls: u32,
-    review_comments: u32,
-    resolved_count: u32,
+fn query_durations(scope: &Scope, from_ts: i64, to_ts: i64) -> Vec<i64> {
+    let conn = database::connection();
+    let sql = format!(
+        "SELECT (end_ts - start_ts) FROM chat_token_usage
+         WHERE end_ts BETWEEN ?1 AND ?2 AND {}",
+        scope_clause(scope),
+    );
+    let mut out = Vec::new();
+    let mut stmt = match conn.prepare(&sql) {
+        Ok(s) => s,
+        Err(_) => return out,
+    };
+    let collected: Vec<i64> = if let Some(p) = project_param(scope) {
+        match stmt.query_map(params![from_ts, to_ts, p], |r| r.get::<_, i64>(0)) {
+            Ok(it) => it.flatten().collect(),
+            Err(_) => return out,
+        }
+    } else {
+        match stmt.query_map(params![from_ts, to_ts], |r| r.get::<_, i64>(0)) {
+            Ok(it) => it.flatten().collect(),
+            Err(_) => return out,
+        }
+    };
+    for v in collected {
+        out.push(v.max(0));
+    }
+    out
 }
 
-fn aggregate_tasks(
-    project_key: &str,
-    tasks: &[&Task],
-    tasks_completed: u32,
-    tasks_created: u32,
-    tasks_in_progress: u32,
-    agent_created: u32,
-) -> ProjectStatisticsResponse {
-    let mut code_additions: u32 = 0;
-    let mut code_deletions: u32 = 0;
-    let mut total_files_changed: u32 = 0;
-    let mut all_brief_data: Vec<BriefDataPoint> = Vec::new();
-    let mut hot_files_map: HashMap<String, HashSet<String>> = HashMap::new();
-
-    // Comment flow accumulators
-    let mut cf_human_total: u32 = 0;
-    let mut cf_agent_total: u32 = 0;
-    let mut cf_human_resolved: u32 = 0;
-    let mut cf_human_open: u32 = 0;
-    let mut cf_human_outdated: u32 = 0;
-    let mut cf_agent_resolved: u32 = 0;
-    let mut cf_agent_open: u32 = 0;
-    let mut cf_agent_outdated: u32 = 0;
-    // AI effort on human comments
-    let mut cf_ai_reply_rounds: u32 = 0;
-    let mut cf_resolved_human_count: u32 = 0;
-
-    let mut agent_stats: HashMap<String, RawAgentStat> = HashMap::new();
-
-    // 每个 task 的活跃分钟集合（用于并发计算）
-    let mut intervals: Vec<std::collections::HashSet<i64>> = Vec::new();
-
-    for task in tasks {
-        // ── Code stats ────────────────────────────────────────────────────
-        if task.code_additions > 0 || task.code_deletions > 0 || task.files_changed > 0 {
-            // Archived task with snapshot — worktree is gone, use the
-            // numbers we recorded at archive time.
-            code_additions += task.code_additions;
-            code_deletions += task.code_deletions;
-            total_files_changed += task.files_changed;
-        } else if std::path::Path::new(&task.worktree_path).exists() {
-            // Active task (or archived without snapshot): compute live.
-            if let Ok(entries) = git::diff_stat(&task.worktree_path, &task.target) {
-                code_additions += entries.iter().map(|e| e.additions).sum::<u32>();
-                code_deletions += entries.iter().map(|e| e.deletions).sum::<u32>();
-                total_files_changed += entries.len() as u32;
-            }
-        }
-
-        // ── Brief data (notes char count) ────────────────────────────────
-        let notes_content = notes::load_notes(project_key, &task.id).unwrap_or_default();
-        let brief_length = notes_content.chars().count() as u32;
-
-        // ── Hot files ─────────────────────────────────────────────────────
-        let edits = watcher::load_edit_history(project_key, &task.id).unwrap_or_default();
-        for event in &edits {
-            let path = event.file.to_string_lossy().to_string();
-            hot_files_map
-                .entry(path)
-                .or_default()
-                .insert(task.id.clone());
-        }
-
-        // ── Comment flow ──────────────────────────────────────────────────
-        let comments_data = load_comments(project_key, &task.id).unwrap_or_default();
-        for comment in &comments_data.comments {
-            let ai = is_ai_author(&comment.agent);
-            if ai {
-                cf_agent_total += 1;
-            } else {
-                cf_human_total += 1;
-            }
-
-            match comment.status {
-                CommentStatus::Open => {
-                    if ai {
-                        cf_agent_open += 1;
-                    } else {
-                        cf_human_open += 1;
-                    }
-                }
-                CommentStatus::Resolved => {
-                    if ai {
-                        cf_agent_resolved += 1;
-                    } else {
-                        cf_human_resolved += 1;
-                        // 统计 AI 为解决这条人的 comment 花了几轮回复
-                        let ai_reply_count = comment
-                            .replies
-                            .iter()
-                            .filter(|r| is_ai_author(&r.agent))
-                            .count() as u32;
-                        cf_ai_reply_rounds += ai_reply_count;
-                        cf_resolved_human_count += 1;
-                    }
-                }
-                CommentStatus::Outdated => {
-                    if ai {
-                        cf_agent_outdated += 1;
-                    } else {
-                        cf_human_outdated += 1;
-                    }
-                }
-            }
-        }
-
-        // ── Chat sessions + history（单次遍历，跳过空 chat）──────────────────
-        // 空 chat = history.jsonl 中没有任何事件，不计入 session 数和 agent stats。
-        // user_messages = 长度 >= 5 Unicode 字符的 UserMessage（中英文通用）
-        // interventions = user_messages - active_chat_count
-        //   （每个 session 的首条消息是任务派发，不算干预；后续消息才算）
-        // 0 user_messages 的任务视为废弃任务，不纳入 brief_insight_data。
-        let chats = load_chat_sessions(project_key, &task.id).unwrap_or_default();
-        let mut user_message_count: u32 = 0;
-        let mut active_chat_count: u32 = 0;
-        let mut task_tool_calls: u32 = 0;
-        let mut task_plan_updates: u32 = 0;
-        let mut task_active_minutes: std::collections::HashSet<i64> =
-            std::collections::HashSet::new();
-
-        for event in &edits {
-            task_active_minutes.insert(event.timestamp.timestamp() / 60);
-        }
-
-        for chat in &chats {
-            let key = chat.agent.to_lowercase();
-            let has_key = !key.is_empty();
-            let mut chat_had_events = false;
-
-            // 使用 canonical key 聚合同类 agent（如 "claude code (planner)" → "claude"）
-            let canonical_key = canonical_agent(&key);
-
-            for event in chat_history::load_history(project_key, &task.id, &chat.id) {
-                if !chat_had_events {
-                    chat_had_events = true;
-                    active_chat_count += 1;
-                    if has_key {
-                        agent_stats
-                            .entry(canonical_key.clone())
-                            .or_default()
-                            .chat_tasks += 1;
-                    }
-                }
-                match &event {
-                    AcpUpdate::UserMessage { text, .. } if text.trim().chars().count() >= 5 => {
-                        user_message_count += 1;
-                    }
-                    AcpUpdate::ToolCall { timestamp, .. } => {
-                        task_tool_calls += 1;
-                        if has_key {
-                            agent_stats
-                                .entry(canonical_key.clone())
-                                .or_default()
-                                .total_tool_calls += 1;
-                        }
-                        if let Some(ts) = timestamp {
-                            task_active_minutes.insert(ts.timestamp() / 60);
-                        }
-                    }
-                    AcpUpdate::PlanUpdate { .. } => {
-                        task_plan_updates += 1;
-                    }
-                    _ => {}
-                }
-            }
-        }
-
-        // 0 user_messages = 废弃任务，不纳入 brief_insight_data
-        if user_message_count > 0 {
-            let interventions = user_message_count.saturating_sub(active_chat_count);
-            all_brief_data.push(BriefDataPoint {
-                brief_length,
-                interventions,
-                user_messages: user_message_count,
-                tool_calls: task_tool_calls,
-                plan_updates: task_plan_updates,
-            });
-        }
-
-        // ── Agent review comments（同样用 canonical key 聚合）────────────────
-        for comment in &comments_data.comments {
-            if !is_ai_author(&comment.agent) {
-                continue;
-            }
-            let key = canonical_agent(&comment.agent);
-            let entry = agent_stats.entry(key).or_default();
-            entry.review_comments += 1;
-            if matches!(comment.status, CommentStatus::Resolved) {
-                entry.resolved_count += 1;
-            }
-        }
-
-        intervals.push(task_active_minutes);
+fn percentile_50(values: &[i64]) -> f64 {
+    if values.is_empty() {
+        return 0.0;
     }
-
-    // ── Derived metrics ────────────────────────────────────────────────────
-    let total_tasks = tasks.len() as u32;
-    // 活跃任务数（user_messages > 0，排除废弃任务）
-    let n_active = all_brief_data.len() as f64;
-
-    let agent_autonomy_rate = if tasks_created > 0 {
-        agent_created as f64 / tasks_created as f64
+    let mut sorted: Vec<i64> = values.to_vec();
+    sorted.sort_unstable();
+    let mid = sorted.len() / 2;
+    if sorted.len() % 2 == 1 {
+        sorted[mid] as f64
     } else {
-        0.0
+        (sorted[mid - 1] + sorted[mid]) as f64 / 2.0
+    }
+}
+
+// ── Timeseries ──────────────────────────────────────────────────────────
+
+fn query_timeseries(
+    scope: &Scope,
+    from_ts: i64,
+    to_ts: i64,
+    bucket: Bucket,
+) -> Vec<TimeseriesBucket> {
+    // Outer query in its own scope — drop the DB guard before recursing
+    // into `query_timeseries_per_agent` which re-acquires the same Mutex.
+    let mut out: Vec<TimeseriesBucket> = {
+        let conn = database::connection();
+        let fmt = bucket.strftime_key();
+        let sql = format!(
+            "SELECT
+                strftime('{fmt}', end_ts, 'unixepoch') AS bk,
+                MIN(end_ts),
+                COUNT(*),
+                COALESCE(SUM(input_tokens), 0),
+                COALESCE(SUM(cached_read_tokens), 0),
+                COALESCE(SUM(output_tokens), 0)
+             FROM chat_token_usage
+             WHERE end_ts BETWEEN ?1 AND ?2 AND {where_scope}
+             GROUP BY bk
+             ORDER BY bk ASC",
+            where_scope = scope_clause(scope),
+        );
+        let mut stmt = match conn.prepare(&sql) {
+            Ok(s) => s,
+            Err(_) => return Vec::new(),
+        };
+        if let Some(p) = project_param(scope) {
+            match stmt.query_map(params![from_ts, to_ts, p], map_timeseries_row) {
+                Ok(it) => it.flatten().collect(),
+                Err(_) => return Vec::new(),
+            }
+        } else {
+            match stmt.query_map(params![from_ts, to_ts], map_timeseries_row) {
+                Ok(it) => it.flatten().collect(),
+                Err(_) => return Vec::new(),
+            }
+        }
     };
 
-    let avg_files_per_task = if total_tasks > 0 {
-        (total_files_changed as f64 / total_tasks as f64 * 10.0).round() / 10.0
-    } else {
-        0.0
-    };
-
-    let avg_brief_length = if all_brief_data.is_empty() {
-        0
-    } else {
-        (all_brief_data
-            .iter()
-            .map(|d| d.brief_length as u64)
-            .sum::<u64>()
-            / all_brief_data.len() as u64) as u32
-    };
-
-    let avg_interventions = if n_active > 0.0 {
-        all_brief_data
-            .iter()
-            .map(|d| d.interventions as f64)
-            .sum::<f64>()
-            / n_active
-    } else {
-        0.0
-    };
-
-    // tool calls & plan updates（仅活跃任务）
-    let total_tool_calls: u64 = all_brief_data.iter().map(|d| d.tool_calls as u64).sum();
-    let avg_tool_calls_per_task = if n_active > 0.0 {
-        total_tool_calls as f64 / n_active
-    } else {
-        0.0
-    };
-    let avg_plan_updates_per_task = if n_active > 0.0 {
-        all_brief_data
-            .iter()
-            .map(|d| d.plan_updates as f64)
-            .sum::<f64>()
-            / n_active
-    } else {
-        0.0
-    };
-
-    // ── 并发统计（基于实际 activity 分钟）────────────────────────────────────
-    // minute_count[m] = 该分钟有多少个 task 同时活跃
-    let mut minute_count: HashMap<i64, u32> = HashMap::new();
-    let mut total_active_minutes: u64 = 0;
-
-    for task_minutes in &intervals {
-        total_active_minutes += task_minutes.len() as u64;
-        for &m in task_minutes {
-            *minute_count.entry(m).or_insert(0) += 1;
+    // Per-agent split inside each bucket: one extra query rather than a complex
+    // CTE — total round-trips stay small (≤ a few hundred buckets).
+    let agent_buckets = query_timeseries_per_agent(scope, from_ts, to_ts, bucket);
+    for b in &mut out {
+        let key = bucket_key(b.bucket_start, bucket);
+        if let Some(list) = agent_buckets.get(&key) {
+            b.per_agent = list.clone();
         }
     }
+    out
+}
 
-    let mut time_saved_minutes: u64 = 0;
-    let mut peak_concurrency: u32 = 0;
+fn map_timeseries_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<TimeseriesBucket> {
+    Ok(TimeseriesBucket {
+        bucket_start: r.get(1)?,
+        turns: r.get::<_, i64>(2)? as u64,
+        tokens_in: r.get::<_, i64>(3)? as u64,
+        tokens_cached: r.get::<_, i64>(4)? as u64,
+        tokens_out: r.get::<_, i64>(5)? as u64,
+        per_agent: Vec::new(),
+    })
+}
 
-    for &count in minute_count.values() {
-        if count > peak_concurrency {
-            peak_concurrency = count;
-        }
-        if count >= 2 {
-            time_saved_minutes += (count - 1) as u64;
-        }
+fn bucket_key(ts: i64, bucket: Bucket) -> String {
+    let dt = chrono::DateTime::<chrono::Utc>::from_timestamp(ts, 0)
+        .unwrap_or_else(chrono::Utc::now);
+    match bucket {
+        Bucket::Hourly => dt.format("%Y-%m-%d %H").to_string(),
+        Bucket::Daily => dt.format("%Y-%m-%d").to_string(),
+        Bucket::Weekly => dt.format("%Y-%W").to_string(),
+        Bucket::Monthly => dt.format("%Y-%m").to_string(),
     }
+}
 
-    let parallel_multiplier = if total_active_minutes > time_saved_minutes
-        && total_active_minutes > 0
-    {
-        (total_active_minutes as f64 / (total_active_minutes - time_saved_minutes) as f64).max(1.0)
-    } else {
-        1.0
+fn query_timeseries_per_agent(
+    scope: &Scope,
+    from_ts: i64,
+    to_ts: i64,
+    bucket: Bucket,
+) -> std::collections::HashMap<String, Vec<AgentBucket>> {
+    let conn = database::connection();
+    let fmt = bucket.strftime_key();
+    let sql = format!(
+        "SELECT
+            strftime('{fmt}', end_ts, 'unixepoch') AS bk,
+            agent,
+            COUNT(*),
+            COALESCE(SUM(total_tokens), 0)
+         FROM chat_token_usage
+         WHERE end_ts BETWEEN ?1 AND ?2 AND {where_scope}
+         GROUP BY bk, agent",
+        where_scope = scope_clause(scope),
+    );
+    let mut out: std::collections::HashMap<String, Vec<AgentBucket>> =
+        std::collections::HashMap::new();
+    let mut stmt = match conn.prepare(&sql) {
+        Ok(s) => s,
+        Err(_) => return out,
     };
-
-    let time_saved_hours = if parallel_multiplier >= 1.005 {
-        time_saved_minutes as f64 / 60.0
+    let collected: Vec<(String, String, i64, i64)> = if let Some(p) = project_param(scope) {
+        match stmt.query_map(params![from_ts, to_ts, p], |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, i64>(2)?,
+                r.get::<_, i64>(3)?,
+            ))
+        }) {
+            Ok(it) => it.flatten().collect(),
+            Err(_) => return out,
+        }
     } else {
-        0.0
+        match stmt.query_map(params![from_ts, to_ts], |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, i64>(2)?,
+                r.get::<_, i64>(3)?,
+            ))
+        }) {
+            Ok(it) => it.flatten().collect(),
+            Err(_) => return out,
+        }
     };
+    for (key, agent, turns, tokens) in collected {
+        out.entry(key).or_default().push(AgentBucket {
+            agent,
+            tokens: tokens as u64,
+            turns: turns as u64,
+        });
+    }
+    out
+}
 
-    // ── Hot files (top 6) ──────────────────────────────────────────────────
-    let mut hot_files: Vec<HotFile> = hot_files_map
+// ── Agent share ─────────────────────────────────────────────────────────
+
+fn query_agent_share(scope: &Scope, from_ts: i64, to_ts: i64) -> Vec<AgentShareItem> {
+    let conn = database::connection();
+    let sql = format!(
+        "SELECT agent, COUNT(*), COALESCE(SUM(total_tokens), 0)
+         FROM chat_token_usage
+         WHERE end_ts BETWEEN ?1 AND ?2 AND {}
+         GROUP BY agent
+         ORDER BY 2 DESC",
+        scope_clause(scope),
+    );
+    let mut stmt = match conn.prepare(&sql) {
+        Ok(s) => s,
+        Err(_) => return Vec::new(),
+    };
+    let collected: Vec<(String, i64, i64)> = if let Some(p) = project_param(scope) {
+        match stmt.query_map(params![from_ts, to_ts, p], |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?, r.get::<_, i64>(2)?))
+        }) {
+            Ok(it) => it.flatten().collect(),
+            Err(_) => return Vec::new(),
+        }
+    } else {
+        match stmt.query_map(params![from_ts, to_ts], |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?, r.get::<_, i64>(2)?))
+        }) {
+            Ok(it) => it.flatten().collect(),
+            Err(_) => return Vec::new(),
+        }
+    };
+    let total_turns: i64 = collected.iter().map(|x| x.1).sum();
+    collected
         .into_iter()
-        .map(|(path, set)| HotFile {
-            path,
-            task_count: set.len() as u32,
-        })
-        .collect();
-    hot_files.sort_by_key(|b| std::cmp::Reverse(b.task_count));
-    hot_files.truncate(6);
-
-    // ── Agent leaderboard ──────────────────────────────────────────────────
-    let mut leaderboard: Vec<AgentStat> = agent_stats
-        .into_iter()
-        .map(|(agent, raw)| {
-            let avg_tool_calls_per_task = if raw.chat_tasks > 0 {
-                raw.total_tool_calls as f64 / raw.chat_tasks as f64
-            } else {
-                0.0
-            };
-            let hit_rate = if raw.review_comments > 0 {
-                raw.resolved_count as f64 / raw.review_comments as f64
-            } else {
-                0.0
-            };
-
-            let mut s = AgentStat {
-                display_name: display_name(&agent),
-                agent,
-                chat_tasks: raw.chat_tasks,
-                chat_total_tool_calls: raw.total_tool_calls,
-                chat_avg_tool_calls_per_task: (avg_tool_calls_per_task * 10.0).round() / 10.0,
-                review_comments: raw.review_comments,
-                review_hit_rate: (hit_rate * 1000.0).round() / 1000.0,
-                contribution_score: 0.0,
-            };
-            s.contribution_score = compute_contribution_score(&s);
-            s
-        })
-        .collect();
-    leaderboard.sort_by(|a, b| {
-        b.contribution_score
-            .partial_cmp(&a.contribution_score)
-            .unwrap_or(std::cmp::Ordering::Equal)
-    });
-
-    ProjectStatisticsResponse {
-        time_saved_hours: (time_saved_hours * 100.0).round() / 100.0,
-        parallel_multiplier: (parallel_multiplier * 100.0).round() / 100.0,
-        peak_concurrency,
-        total_active_minutes,
-        tasks_completed,
-        tasks_created,
-        tasks_in_progress,
-        agent_autonomy_rate: (agent_autonomy_rate * 1000.0).round() / 1000.0,
-        code_additions,
-        code_deletions,
-        avg_files_per_task,
-        total_files_changed,
-        avg_brief_length,
-        avg_interventions_per_task: (avg_interventions * 10.0).round() / 10.0,
-        brief_insight_data: all_brief_data,
-        total_tool_calls,
-        avg_tool_calls_per_task: (avg_tool_calls_per_task * 10.0).round() / 10.0,
-        avg_plan_updates_per_task: (avg_plan_updates_per_task * 10.0).round() / 10.0,
-        hot_files,
-        comment_flow: CommentFlow {
-            total: cf_human_total + cf_agent_total,
-            human_total: cf_human_total,
-            agent_total: cf_agent_total,
-            human_resolved: cf_human_resolved,
-            human_open: cf_human_open,
-            human_outdated: cf_human_outdated,
-            agent_resolved: cf_agent_resolved,
-            agent_open: cf_agent_open,
-            agent_outdated: cf_agent_outdated,
-            avg_ai_rounds_on_human_comments: if cf_resolved_human_count > 0 {
-                (cf_ai_reply_rounds as f64 / cf_resolved_human_count as f64 * 10.0).round() / 10.0
+        .map(|(agent, turns, tokens)| AgentShareItem {
+            agent,
+            turns: turns as u64,
+            tokens: tokens as u64,
+            percent: if total_turns > 0 {
+                (turns as f64 / total_turns as f64) * 100.0
             } else {
                 0.0
             },
-        },
-        agent_leaderboard: leaderboard,
-    }
+        })
+        .collect()
 }
 
-// ============================================================================
-// Helpers
-// ============================================================================
+// ── Models ──────────────────────────────────────────────────────────────
 
-/// 将 agent 名字归一化到已知的 AI agent 基础名。
-/// "Claude code (planner)" / "claude code (reviewer)" → "claude"
-/// 未识别的保留原始小写名。
-fn canonical_agent(name: &str) -> String {
-    let lower = name.to_lowercase();
-    for &known in AI_AGENTS {
-        if lower.contains(known) {
-            return known.to_string();
-        }
-    }
-    lower.trim().to_string()
-}
-
-fn display_name(agent: &str) -> String {
-    match agent {
-        "claude" => "Claude Code".to_string(),
-        "codex" => "Codex".to_string(),
-        "gemini" => "Gemini".to_string(),
-        "gpt" => "GPT".to_string(),
-        "copilot" => "GitHub Copilot".to_string(),
-        "o1" => "o1".to_string(),
-        "o3" => "o3".to_string(),
-        other => {
-            let mut s = other.to_string();
-            if let Some(first) = s.get_mut(0..1) {
-                first.make_ascii_uppercase();
-            }
-            s
-        }
-    }
-}
-
-fn compute_contribution_score(a: &AgentStat) -> f64 {
-    // 工作量：tool calls（最重要）
-    let tool_score = (a.chat_total_tool_calls as f64 / 10.0).min(100.0);
-    // 参与任务数
-    let task_score = (a.chat_tasks as f64 * 5.0).min(100.0);
-    // Review 质量：有建议且有效率高
-    let review_score = if a.review_comments > 0 {
-        a.review_hit_rate * 100.0
-    } else {
-        0.0
+fn query_models(scope: &Scope, from_ts: i64, to_ts: i64) -> Vec<ModelItem> {
+    let conn = database::connection();
+    let sql = format!(
+        "SELECT
+            COALESCE(model, '') AS m,
+            agent,
+            COALESCE(SUM(total_tokens), 0),
+            COALESCE(SUM(cached_read_tokens), 0),
+            COUNT(*)
+         FROM chat_token_usage
+         WHERE end_ts BETWEEN ?1 AND ?2 AND {}
+         GROUP BY m, agent
+         ORDER BY 3 DESC
+         LIMIT 50",
+        scope_clause(scope),
+    );
+    let mut stmt = match conn.prepare(&sql) {
+        Ok(s) => s,
+        Err(_) => return Vec::new(),
     };
-    (tool_score * 0.5 + task_score * 0.3 + review_score * 0.2).min(100.0)
+    if let Some(p) = project_param(scope) {
+        match stmt.query_map(params![from_ts, to_ts, p], map_model_row) {
+            Ok(it) => it.flatten().collect(),
+            Err(_) => Vec::new(),
+        }
+    } else {
+        match stmt.query_map(params![from_ts, to_ts], map_model_row) {
+            Ok(it) => it.flatten().collect(),
+            Err(_) => Vec::new(),
+        }
+    }
+}
+
+fn map_model_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<ModelItem> {
+    Ok(ModelItem {
+        model: r.get(0)?,
+        agent: r.get(1)?,
+        tokens: r.get::<_, i64>(2)? as u64,
+        cached_tokens: r.get::<_, i64>(3)? as u64,
+        turns: r.get::<_, i64>(4)? as u64,
+    })
+}
+
+// ── Top projects / tasks ────────────────────────────────────────────────
+
+fn query_top(scope: &Scope, from_ts: i64, to_ts: i64) -> Vec<TopItem> {
+    match scope {
+        Scope::Global => query_top_projects(from_ts, to_ts),
+        Scope::Project(key) => query_top_tasks(key, from_ts, to_ts),
+    }
+}
+
+fn query_top_projects(from_ts: i64, to_ts: i64) -> Vec<TopItem> {
+    // Acquire the DB guard inside a tight block and drop it before any
+    // call that also needs the connection. The DB guard wraps a process-wide
+    // Mutex; nesting calls (e.g. `workspace::load_projects()` while still
+    // holding `conn`) deadlocks the entire API since every other handler
+    // queues behind the same mutex.
+    let raw: Vec<(String, i64, i64)> = {
+        let conn = database::connection();
+        let sql = "SELECT project_key, COUNT(*), COALESCE(SUM(total_tokens), 0)
+                   FROM chat_token_usage
+                   WHERE end_ts BETWEEN ?1 AND ?2
+                   GROUP BY project_key
+                   ORDER BY 3 DESC
+                   LIMIT 10";
+        let mut stmt = match conn.prepare(sql) {
+            Ok(s) => s,
+            Err(_) => return Vec::new(),
+        };
+        let rows = stmt.query_map(params![from_ts, to_ts], |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?, r.get::<_, i64>(2)?))
+        });
+        match rows {
+            Ok(it) => it.flatten().collect(),
+            Err(_) => return Vec::new(),
+        }
+    };
+
+    let project_names: std::collections::HashMap<String, String> =
+        crate::storage::workspace::load_projects()
+            .unwrap_or_default()
+            .into_iter()
+            .map(|p| {
+                let key = crate::storage::workspace::project_hash(&p.path);
+                (key, p.name)
+            })
+            .collect();
+
+    raw.into_iter()
+        .map(|(key, turns, tokens)| {
+            let name = project_names
+                .get(&key)
+                .cloned()
+                .unwrap_or_else(|| key.chars().take(8).collect());
+            let agent_split = query_agent_split_for_project(&key, from_ts, to_ts);
+            TopItem {
+                id: key,
+                name,
+                turns: turns as u64,
+                tokens: tokens as u64,
+                agent_split,
+            }
+        })
+        .collect()
+}
+
+fn query_top_tasks(project_key: &str, from_ts: i64, to_ts: i64) -> Vec<TopItem> {
+    // Drop the DB guard before calling load_tasks — see `query_top_projects`
+    // for the deadlock rationale.
+    let raw: Vec<(String, i64, i64)> = {
+        let conn = database::connection();
+        let sql = "SELECT task_id, COUNT(*), COALESCE(SUM(total_tokens), 0)
+                   FROM chat_token_usage
+                   WHERE end_ts BETWEEN ?1 AND ?2 AND project_key = ?3
+                   GROUP BY task_id
+                   ORDER BY 3 DESC
+                   LIMIT 10";
+        let mut stmt = match conn.prepare(sql) {
+            Ok(s) => s,
+            Err(_) => return Vec::new(),
+        };
+        let rows = stmt.query_map(params![from_ts, to_ts, project_key], |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?, r.get::<_, i64>(2)?))
+        });
+        match rows {
+            Ok(it) => it.flatten().collect(),
+            Err(_) => return Vec::new(),
+        }
+    };
+
+    let tasks = crate::storage::tasks::load_tasks(project_key).unwrap_or_default();
+    let task_names: std::collections::HashMap<String, String> =
+        tasks.into_iter().map(|t| (t.id.clone(), t.name)).collect();
+
+    raw.into_iter()
+        .map(|(task_id, turns, tokens)| {
+            let name = task_names
+                .get(&task_id)
+                .cloned()
+                .unwrap_or_else(|| task_id.chars().take(8).collect());
+            let agent_split =
+                query_agent_split_for_task(project_key, &task_id, from_ts, to_ts);
+            TopItem {
+                id: task_id,
+                name,
+                turns: turns as u64,
+                tokens: tokens as u64,
+                agent_split,
+            }
+        })
+        .collect()
+}
+
+fn query_agent_split_for_project(key: &str, from_ts: i64, to_ts: i64) -> Vec<AgentBucket> {
+    let conn = database::connection();
+    let sql = "SELECT agent, COUNT(*), COALESCE(SUM(total_tokens), 0)
+               FROM chat_token_usage
+               WHERE end_ts BETWEEN ?1 AND ?2 AND project_key = ?3
+               GROUP BY agent
+               ORDER BY 3 DESC";
+    let mut stmt = match conn.prepare(sql) {
+        Ok(s) => s,
+        Err(_) => return Vec::new(),
+    };
+    let rows = stmt.query_map(params![from_ts, to_ts, key], |r| {
+        Ok(AgentBucket {
+            agent: r.get(0)?,
+            turns: r.get::<_, i64>(1)? as u64,
+            tokens: r.get::<_, i64>(2)? as u64,
+        })
+    });
+    match rows {
+        Ok(it) => it.flatten().collect(),
+        Err(_) => Vec::new(),
+    }
+}
+
+fn query_agent_split_for_task(
+    project_key: &str,
+    task_id: &str,
+    from_ts: i64,
+    to_ts: i64,
+) -> Vec<AgentBucket> {
+    let conn = database::connection();
+    let sql = "SELECT agent, COUNT(*), COALESCE(SUM(total_tokens), 0)
+               FROM chat_token_usage
+               WHERE end_ts BETWEEN ?1 AND ?2 AND project_key = ?3 AND task_id = ?4
+               GROUP BY agent
+               ORDER BY 3 DESC";
+    let mut stmt = match conn.prepare(sql) {
+        Ok(s) => s,
+        Err(_) => return Vec::new(),
+    };
+    let rows = stmt.query_map(params![from_ts, to_ts, project_key, task_id], |r| {
+        Ok(AgentBucket {
+            agent: r.get(0)?,
+            turns: r.get::<_, i64>(1)? as u64,
+            tokens: r.get::<_, i64>(2)? as u64,
+        })
+    });
+    match rows {
+        Ok(it) => it.flatten().collect(),
+        Err(_) => Vec::new(),
+    }
+}
+
+// ── Heatmap ─────────────────────────────────────────────────────────────
+
+fn query_heatmap(scope: &Scope, from_ts: i64, to_ts: i64) -> Vec<HeatmapCell> {
+    let conn = database::connection();
+    let sql = format!(
+        "SELECT
+            CAST(strftime('%w', end_ts, 'unixepoch') AS INTEGER) AS wd,
+            CAST(strftime('%H', end_ts, 'unixepoch') AS INTEGER) AS hr,
+            COUNT(*)
+         FROM chat_token_usage
+         WHERE end_ts BETWEEN ?1 AND ?2 AND {}
+         GROUP BY wd, hr",
+        scope_clause(scope),
+    );
+    let mut stmt = match conn.prepare(&sql) {
+        Ok(s) => s,
+        Err(_) => return Vec::new(),
+    };
+    if let Some(p) = project_param(scope) {
+        match stmt.query_map(params![from_ts, to_ts, p], map_heatmap_row) {
+            Ok(it) => it.flatten().collect(),
+            Err(_) => Vec::new(),
+        }
+    } else {
+        match stmt.query_map(params![from_ts, to_ts], map_heatmap_row) {
+            Ok(it) => it.flatten().collect(),
+            Err(_) => Vec::new(),
+        }
+    }
+}
+
+fn map_heatmap_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<HeatmapCell> {
+    Ok(HeatmapCell {
+        weekday: r.get::<_, i64>(0)? as u8,
+        hour: r.get::<_, i64>(1)? as u8,
+        turns: r.get::<_, i64>(2)? as u64,
+    })
 }

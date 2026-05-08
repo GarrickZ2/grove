@@ -1,59 +1,69 @@
-//! Project-level statistics API handler
-//!
-//! GET /api/v1/projects/{id}/statistics?from=YYYY-MM-DD&to=YYYY-MM-DD
+//! Statistics API handlers — Global + Project scope, backed by
+//! `chat_token_usage`. See `crate::stats` for aggregation logic.
 
 use axum::{
     extract::{Path, Query},
     http::StatusCode,
     Json,
 };
-use chrono::{Duration, NaiveDate, Utc};
+use chrono::{Duration, Utc};
 use serde::Deserialize;
 
-use crate::stats;
-use crate::stats::ProjectStatisticsResponse;
+use crate::stats::{self, Bucket, Scope, StatisticsResponse};
 use crate::storage::workspace;
 
-/// Query parameters for statistics endpoint
+/// Query parameters for both endpoints.
+///
+/// `from`/`to` are Unix seconds (inclusive). `bucket` is one of
+/// `hourly|daily|weekly|monthly` (defaults to `daily`). All optional —
+/// missing values fall back to "last 7 days, daily".
 #[derive(Debug, Deserialize)]
 pub struct StatisticsQuery {
-    /// Start date (inclusive), "YYYY-MM-DD". Defaults to 30 days ago.
-    pub from: Option<String>,
-    /// End date (inclusive), "YYYY-MM-DD". Defaults to today.
-    pub to: Option<String>,
+    pub from: Option<i64>,
+    pub to: Option<i64>,
+    pub bucket: Option<String>,
 }
 
-/// GET /api/v1/projects/{id}/statistics
+fn resolve_range(query: &StatisticsQuery) -> (i64, i64, Bucket) {
+    let now = Utc::now().timestamp();
+    let to = query.to.unwrap_or(now);
+    let from = query
+        .from
+        .unwrap_or_else(|| to - Duration::days(7).num_seconds());
+    let from = from.min(to);
+    let bucket = query
+        .bucket
+        .as_deref()
+        .map(Bucket::parse)
+        .unwrap_or(Bucket::Daily);
+    (from, to, bucket)
+}
+
+/// GET /api/v1/statistics/global
+pub async fn get_global_statistics(
+    Query(query): Query<StatisticsQuery>,
+) -> Json<StatisticsResponse> {
+    let (from, to, bucket) = resolve_range(&query);
+    Json(stats::aggregate(&Scope::Global, from, to, bucket))
+}
+
+/// GET /api/v1/statistics/project/{id}
 pub async fn get_project_statistics(
     Path(id): Path<String>,
     Query(query): Query<StatisticsQuery>,
-) -> Result<Json<ProjectStatisticsResponse>, StatusCode> {
-    // Resolve project
+) -> Result<Json<StatisticsResponse>, StatusCode> {
     let projects = workspace::load_projects().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     let project = projects
         .into_iter()
         .find(|p| workspace::project_hash(&p.path) == id)
         .ok_or(StatusCode::NOT_FOUND)?;
-
     let project_key = workspace::project_hash(&project.path);
 
-    let today = Utc::now().date_naive();
-
-    let to = match &query.to {
-        Some(s) => NaiveDate::parse_from_str(s, "%Y-%m-%d").unwrap_or(today),
-        None => today,
-    };
-
-    let from = match &query.from {
-        Some(s) => NaiveDate::parse_from_str(s, "%Y-%m-%d").unwrap_or(to - Duration::days(30)),
-        None => to - Duration::days(30),
-    };
-
-    // Clamp to [from, today]
-    let to = to.min(today);
-    let from = from.min(to);
-
-    let response = stats::aggregate_range(&project_key, from, to);
-
-    Ok(Json(response))
+    let (from, to, bucket) = resolve_range(&query);
+    Ok(Json(stats::aggregate(
+        &Scope::Project(project_key),
+        from,
+        to,
+        bucket,
+    )))
 }

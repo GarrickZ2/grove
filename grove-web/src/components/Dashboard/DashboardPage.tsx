@@ -34,7 +34,6 @@ import {
   createBranch,
   deleteBranch,
   renameBranch,
-  getProjectStats,
   openIDE,
   openTerminal,
   archiveTask,
@@ -47,8 +46,13 @@ import {
   type RepoStatusResponse,
   type BranchDetailInfo,
   type RepoCommitEntry,
-  type ProjectStatsResponse,
 } from "../../api";
+import {
+  getProjectStatistics,
+  type StatisticsResponse,
+} from "../../api/statistics";
+import { agentColor } from "../Stats/agentColors";
+import { formatTokens, computeDelta } from "../Stats/formatters";
 import type { Branch, Commit, RepoStatus, Task } from "../../data/types";
 import { getProjectStyle } from "../../utils/projectStyle";
 import { shortenPath } from "../../utils/path";
@@ -117,8 +121,10 @@ export function DashboardPage({ onNavigate }: DashboardPageProps) {
   const [repoStatus, setRepoStatus] = useState<RepoStatus | null>(null);
   const [branches, setBranches] = useState<Branch[]>([]);
   const [repoCommits, setRepoCommits] = useState<Commit[]>([]);
-  const [weeklyCommitCount, setWeeklyCommitCount] = useState(0);
-  const [projectStats, setProjectStats] = useState<ProjectStatsResponse | null>(null);
+  // Token-centric stats for the Pulse + Activity sections — fetched from the
+  // new /statistics/project endpoint (last 7 days, daily bucket). Independent
+  // of git status, so non-git projects still get token charts.
+  const [tokenStats, setTokenStats] = useState<StatisticsResponse | null>(null);
   const [isBranchesLoading, setIsBranchesLoading] = useState(true);
   const [isOperating, setIsOperating] = useState(false);
   const [operationMessage, setOperationMessage] = useState<string | null>(null);
@@ -170,24 +176,33 @@ export function DashboardPage({ onNavigate }: DashboardPageProps) {
   const loadCommits = useCallback(async () => {
     if (!selectedProject) return;
     try {
-      const [commitsRes, weeklyRes] = await Promise.all([
-        getGitCommits(selectedProject.id),
-        getGitCommits(selectedProject.id, { since: "1 week ago", limit: 100 }),
-      ]);
+      const commitsRes = await getGitCommits(selectedProject.id);
       setRepoCommits(commitsRes.commits.map(convertCommit));
-      setWeeklyCommitCount(weeklyRes.commits.length);
     } catch (err) {
       console.error("Failed to load commits:", err);
     }
   }, [selectedProject]);
 
-  const loadStats = useCallback(async () => {
-    if (!selectedProject) return;
+  // Pulse + Activity feed off the new statistics endpoint (last 7 days,
+  // daily bucket). Runs independent of git data — even non-git projects
+  // can have token activity worth showing.
+  const loadTokenStats = useCallback(async () => {
+    if (!selectedProject) {
+      setTokenStats(null);
+      return;
+    }
     try {
-      const statsRes = await getProjectStats(selectedProject.id);
-      setProjectStats(statsRes);
+      const now = Math.floor(Date.now() / 1000);
+      const from = now - 7 * 24 * 3600;
+      const res = await getProjectStatistics(selectedProject.id, {
+        from,
+        to: now,
+        bucket: "daily",
+      });
+      setTokenStats(res);
     } catch (err) {
-      console.error("Failed to load stats:", err);
+      console.error("Failed to load token stats:", err);
+      setTokenStats(null);
     }
   }, [selectedProject]);
 
@@ -197,13 +212,19 @@ export function DashboardPage({ onNavigate }: DashboardPageProps) {
       setRepoStatus(null);
       setBranches([]);
       setRepoCommits([]);
-      setWeeklyCommitCount(0);
-      setProjectStats(null);
       setIsBranchesLoading(false);
       return;
     }
-    await Promise.all([loadGitStatus(), loadBranches(), loadCommits(), loadStats()]);
-  }, [selectedProject, loadGitStatus, loadBranches, loadCommits, loadStats]);
+    await Promise.all([loadGitStatus(), loadBranches(), loadCommits()]);
+  }, [selectedProject, loadGitStatus, loadBranches, loadCommits]);
+
+  // Token stats run independently of git, so non-git projects still get the
+  // Pulse + Activity charts when they've had agent activity. Fetch is an
+  // external system call; the loading-state setState inside is intentional.
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    void loadTokenStats();
+  }, [loadTokenStats]);
 
   useEffect(() => {
     Promise.resolve().then(loadGitData);
@@ -480,22 +501,6 @@ export function DashboardPage({ onNavigate }: DashboardPageProps) {
   const currentStatus = repoStatus || defaultRepoStatus;
   const { color: projectColor, Icon: ProjectIcon } = getProjectStyle(selectedProject.id, theme.accentPalette);
   const hasLocalChanges = currentStatus.staged + currentStatus.unstaged + currentStatus.untracked > 0;
-  const weeklyData = projectStats?.weekly_activity?.length
-    ? [...projectStats.weekly_activity].reverse()
-    : [];
-  const weeklyPeak = Math.max(...weeklyData, 1); // sentinel 1 for chart divisor
-  const weeklyMaxValue = weeklyData.length > 0 ? Math.max(...weeklyData) : 0; // actual max for Pulse
-  const weeklyPeakIdx = weeklyMaxValue > 0 ? weeklyData.indexOf(weeklyMaxValue) : -1;
-  const weeklyTotal = (projectStats?.weekly_activity || []).reduce((sum, count) => sum + count, 0);
-
-  // Pulse: compare daily average of first half vs second half for trend
-  const firstHalfDays = weeklyData.slice(0, 3);
-  const secondHalfDays = weeklyData.slice(3);
-  const avgFirst = firstHalfDays.length > 0 ? firstHalfDays.reduce((s, v) => s + v, 0) / firstHalfDays.length : 0;
-  const avgSecond = secondHalfDays.length > 0 ? secondHalfDays.reduce((s, v) => s + v, 0) / secondHalfDays.length : 0;
-  const trendPct = avgFirst > 0
-    ? Math.round(((avgSecond - avgFirst) / avgFirst) * 100)
-    : avgSecond > 0 ? 100 : 0;
 
   const dayLabels = (() => {
     const days = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -505,6 +510,66 @@ export function DashboardPage({ onNavigate }: DashboardPageProps) {
       labels.push(days[(today - i + 7) % 7]);
     }
     return labels;
+  })();
+
+  // ── Token-centric derived data for Pulse + Activity ──
+  // Build a 7-element series indexed oldest→newest, matching dayLabels.
+  // Backend returns ascending buckets but may skip days with zero activity,
+  // so we walk dates explicitly and zero-fill missing days.
+  const weeklyTokenSeries = (() => {
+    const series = tokenStats?.current.timeseries ?? [];
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const out: {
+      total: number;
+      segments: { agent: string; tokens: number }[];
+    }[] = [];
+    for (let i = 6; i >= 0; i--) {
+      const day = new Date(today);
+      day.setDate(today.getDate() - i);
+      const key = day.toISOString().slice(0, 10);
+      const match = series.find((b) => {
+        const bk = new Date(b.bucket_start * 1000).toISOString().slice(0, 10);
+        return bk === key;
+      });
+      const segments = match?.per_agent ?? [];
+      out.push({
+        total: segments.reduce((s, a) => s + a.tokens, 0),
+        segments,
+      });
+    }
+    return out;
+  })();
+  const weeklyTokenTotal = weeklyTokenSeries.reduce((s, d) => s + d.total, 0);
+  const weeklyTokenPeak = Math.max(...weeklyTokenSeries.map((d) => d.total), 1);
+  const weeklyTokenMaxValue = Math.max(
+    ...weeklyTokenSeries.map((d) => d.total),
+    0,
+  );
+  const weeklyTokenPeakIdx =
+    weeklyTokenMaxValue > 0
+      ? weeklyTokenSeries.findIndex((d) => d.total === weeklyTokenMaxValue)
+      : -1;
+  const tokenTrend = computeDelta(
+    tokenStats?.current.kpi.tokens_total,
+    tokenStats?.previous.kpi.tokens_total,
+  );
+  const topAgent = (() => {
+    const totals = new Map<string, number>();
+    for (const d of weeklyTokenSeries) {
+      for (const s of d.segments) {
+        totals.set(s.agent, (totals.get(s.agent) ?? 0) + s.tokens);
+      }
+    }
+    let bestName = "";
+    let bestVal = 0;
+    for (const [a, n] of totals) {
+      if (n > bestVal) {
+        bestName = a;
+        bestVal = n;
+      }
+    }
+    return bestName;
   })();
 
   // Guidance tips
@@ -740,11 +805,14 @@ export function DashboardPage({ onNavigate }: DashboardPageProps) {
             </section>
           )}
 
-          {/* Pulse */}
+          {/* Pulse — token-centric snapshot for the past 7 days. Numbers
+              come from /statistics/project (the same endpoint the
+              Statistics page uses) so totals always reconcile with the
+              "View Statistics" deep link. */}
           <section className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)] p-4 sm:p-5 shrink-0">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
-                {trendPct >= 0 ? (
+                {tokenTrend.direction >= 0 ? (
                   <TrendingUp className="h-4 w-4 text-[var(--color-success)]" />
                 ) : (
                   <TrendingDown className="h-4 w-4 text-[var(--color-warning)]" />
@@ -760,23 +828,49 @@ export function DashboardPage({ onNavigate }: DashboardPageProps) {
                 View Statistics
               </button>
             </div>
-            <div className="mt-3 flex items-baseline gap-2">
-              <span className="text-2xl font-semibold text-[var(--color-text)]">
-                {weeklyTotal.toLocaleString()}
+            <div className="mt-3 flex items-baseline gap-2 flex-wrap">
+              <span className="text-2xl font-semibold text-[var(--color-text)] tabular-nums">
+                {formatTokens(weeklyTokenTotal)}
               </span>
-              <span className="text-sm text-[var(--color-text-muted)]">actions this week</span>
-              {trendPct !== 0 && (
-                <span className={`text-sm font-medium ${trendPct > 0 ? "text-[var(--color-success)]" : "text-[var(--color-warning)]"}`}>
-                  {trendPct > 0 ? "+" : ""}{trendPct}%
+              <span className="text-sm text-[var(--color-text-muted)]">
+                tokens this week
+              </span>
+              {tokenTrend.pct != null && tokenTrend.pct !== 0 && (
+                <span
+                  className={`text-sm font-medium tabular-nums ${
+                    tokenTrend.direction > 0
+                      ? "text-[var(--color-success)]"
+                      : "text-[var(--color-warning)]"
+                  }`}
+                >
+                  {tokenTrend.pct === Infinity
+                    ? "new"
+                    : `${tokenTrend.pct > 0 ? "+" : ""}${Math.round(tokenTrend.pct)}%`}
                 </span>
               )}
             </div>
-            <div className={`mt-4 grid gap-4 ${isStudio ? "grid-cols-2" : "grid-cols-3"}`}>
-              {!isStudio && (
-                <PulseStat label="Commits" value={weeklyCommitCount} subtext="this week" />
-              )}
-              <PulseStat label="Avg / day" value={weeklyData.length > 0 ? Math.round(weeklyTotal / 7) : 0} subtext="actions" />
-              <PulseStat label="Peak day" value={weeklyPeakIdx >= 0 ? dayLabels[weeklyPeakIdx] : "—"} subtext={weeklyMaxValue > 0 ? `${weeklyMaxValue} actions` : "no activity"} />
+            <div className="mt-4 grid grid-cols-3 gap-4">
+              <PulseStat
+                label="Avg / day"
+                value={formatTokens(Math.round(weeklyTokenTotal / 7))}
+                subtext="tokens"
+              />
+              <PulseStat
+                label="Peak day"
+                value={
+                  weeklyTokenPeakIdx >= 0 ? dayLabels[weeklyTokenPeakIdx] : "—"
+                }
+                subtext={
+                  weeklyTokenMaxValue > 0
+                    ? `${formatTokens(weeklyTokenMaxValue)} tokens`
+                    : "no activity"
+                }
+              />
+              <PulseStat
+                label="Top agent"
+                value={topAgent || "—"}
+                subtext={topAgent ? "by tokens" : "no activity"}
+              />
             </div>
           </section>
 
@@ -925,35 +1019,63 @@ export function DashboardPage({ onNavigate }: DashboardPageProps) {
             </div>
           </div>
 
-          {/* Activity */}
+          {/* Activity — daily token bars stacked by agent. Same data
+              source as Pulse; bar height encodes total tokens, color
+              segments encode per-agent contribution. Empty days render
+              as a thin baseline so the row stays visually balanced. */}
           <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)] p-4">
             <div className="flex items-center justify-between">
               <div>
                 <div className="text-xs font-medium uppercase tracking-widest text-[var(--color-text-muted)]">
                   Activity
                 </div>
-                <div className="mt-0.5 text-lg font-semibold text-[var(--color-text)]">
-                  {weeklyTotal.toLocaleString()} actions
+                <div className="mt-0.5 text-lg font-semibold text-[var(--color-text)] tabular-nums">
+                  {formatTokens(weeklyTokenTotal)} tokens
                 </div>
               </div>
-              <span className="text-xs text-[var(--color-text-muted)]">7 days</span>
+              <span className="text-xs text-[var(--color-text-muted)]">
+                7 days
+              </span>
             </div>
             <div className="mt-4 grid h-28 grid-cols-7 items-end gap-2">
-              {weeklyData.length > 0 ? (
-                weeklyData.map((value, index) => (
-                  <div key={`${index}-${value}`} className="flex h-full flex-col justify-end items-center gap-1.5">
+              {weeklyTokenSeries.some((d) => d.total > 0) ? (
+                weeklyTokenSeries.map((day, index) => {
+                  const heightPct =
+                    day.total > 0 ? (day.total / weeklyTokenPeak) * 100 : 0;
+                  return (
                     <div
-                      className="w-full rounded-t-md bg-[var(--color-success)]"
-                      style={{
-                        height: `${(value / weeklyPeak) * 100}%`,
-                        opacity: 0.6 + (value / weeklyPeak) * 0.4,
-                      }}
-                    />
-                    <span className="text-[10px] text-[var(--color-text-muted)]">
-                      {dayLabels[index]}
-                    </span>
-                  </div>
-                ))
+                      key={index}
+                      className="flex h-full flex-col justify-end items-center gap-1.5"
+                      title={
+                        day.total > 0
+                          ? `${dayLabels[index]} · ${formatTokens(day.total)} tokens`
+                          : `${dayLabels[index]} · no activity`
+                      }
+                    >
+                      <div
+                        className="w-full rounded-t-md overflow-hidden flex flex-col-reverse"
+                        style={{ height: `${heightPct}%` }}
+                      >
+                        {day.segments.map((seg) => {
+                          const segPct =
+                            day.total > 0 ? (seg.tokens / day.total) * 100 : 0;
+                          return (
+                            <div
+                              key={seg.agent}
+                              style={{
+                                height: `${segPct}%`,
+                                backgroundColor: agentColor(seg.agent),
+                              }}
+                            />
+                          );
+                        })}
+                      </div>
+                      <span className="text-[10px] text-[var(--color-text-muted)]">
+                        {dayLabels[index]}
+                      </span>
+                    </div>
+                  );
+                })
               ) : (
                 <div className="col-span-7 flex items-center justify-center rounded-lg border border-dashed border-[var(--color-border)] text-sm text-[var(--color-text-muted)]">
                   No data

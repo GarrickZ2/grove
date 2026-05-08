@@ -39,7 +39,7 @@ const ALL_NAV_ITEMS: Record<string, NavItem> = {
   resource: { id: "resource", label: "Studio", icon: Layers },
   skills: { id: "skills", label: "Skills", icon: Blocks },
   ai: { id: "ai", label: "AI", icon: Sparkles },
-  statistics: { id: "statistics", label: "Statistics", icon: BarChart2, beta: true },
+  statistics: { id: "statistics", label: "Statistics", icon: BarChart2 },
 };
 
 function resolveNavItems(isStudio: boolean): NavItem[] {

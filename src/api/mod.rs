@@ -218,7 +218,11 @@ pub fn create_api_router() -> Router {
             get(handlers::projects::get_memory).put(handlers::projects::update_memory),
         )
         .route(
-            "/projects/{id}/statistics",
+            "/statistics/global",
+            get(handlers::statistics::get_global_statistics),
+        )
+        .route(
+            "/statistics/project/{id}",
             get(handlers::statistics::get_project_statistics),
         )
         .route(

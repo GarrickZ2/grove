@@ -686,7 +686,8 @@ function AppContent() {
     activeItem === "work" ||
     activeItem === "skills" ||
     activeItem === "ai" ||
-    activeItem === "resource";
+    activeItem === "resource" ||
+    activeItem === "statistics";
 
   const sidebarProps = {
     activeItem,

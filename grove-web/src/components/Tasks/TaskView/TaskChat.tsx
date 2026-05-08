@@ -51,7 +51,7 @@ import {
   Search,
   User,
 } from "lucide-react";
-import { getIconForFile, getIconForFolder } from "vscode-icons-js";
+import { iconUrlForFile } from "../../ui/iconUrl";
 import {
   Button,
   ImageLightbox,
@@ -928,22 +928,12 @@ function createFileChip(
   const isLink = filePath.toLowerCase().endsWith(".link.json");
   const baseName = filePath.split("/").filter(Boolean).pop() || "";
 
-  // VSCode file icon via CDN
-  const ICON_CDN_BASE =
-    "https://cdn.jsdelivr.net/gh/vscode-icons/vscode-icons@master/icons";
-  const EXTENSION_OVERRIDE: Record<string, string> = {
-    ".graphql": "file_type_graphql.svg",
-  };
-  let iconName: string;
-  if (isLink) {
-    iconName = "file_type_json.svg";
-  } else if (isDir) {
-    iconName = getIconForFolder(baseName) || "default_folder.svg";
-  } else {
-    const ext = baseName.includes(".") ? "." + baseName.split(".").pop()!.toLowerCase() : "";
-    iconName = (ext in EXTENSION_OVERRIDE) ? EXTENSION_OVERRIDE[ext] : (getIconForFile(baseName) || "default_file.svg");
-  }
-  const iconUrl = `${ICON_CDN_BASE}/${iconName}`;
+  // Material file icon via shared resolver (same matcher as <VSCodeIcon>).
+  // `.link.json` is grove's worktree-link sentinel; render it as a plain JSON
+  // so the chip reads as "linked file" rather than the generic JSON-anything.
+  const iconUrl = isLink
+    ? iconUrlForFile("link.json")
+    : iconUrlForFile(baseName, { isFolder: isDir });
 
   const img = document.createElement("img");
   img.src = iconUrl;

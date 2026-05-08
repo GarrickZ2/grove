@@ -39,7 +39,7 @@ export function TurnUsageMeta({
       : null;
 
   return (
-    <div className="mt-1 flex items-center justify-end gap-3 text-[10px] text-[var(--color-text-muted)] tabular-nums select-none">
+    <div className="mt-1 flex items-center justify-start gap-3 text-[10px] text-[var(--color-text-muted)] tabular-nums select-none">
       <span title={`Input ${inputTokens.toLocaleString()} tokens`}>
         ↑ {formatTokens(inputTokens)}
       </span>

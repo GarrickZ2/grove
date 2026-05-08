@@ -1,92 +1,111 @@
-// Statistics API client
+// Statistics API client — backed by chat_token_usage.
 
-import { apiClient } from './client';
+import { apiClient } from "./client";
 
-// ============================================================================
-// Types
-// ============================================================================
+// ── Types ───────────────────────────────────────────────────────────────
 
-export interface BriefDataPoint {
-  brief_length: number;
-  interventions: number;
-  user_messages: number;
-  tool_calls: number;
-  plan_updates: number;
+export interface KpiData {
+  turns: number;
+  tokens_total: number;
+  tokens_in: number;
+  tokens_out: number;
+  tokens_cached: number;
+  agent_compute_secs: number;
+  avg_tokens_per_turn: number;
+  avg_duration_secs: number;
+  p50_duration_secs: number;
 }
 
-export interface HotFile {
-  path: string;
-  task_count: number;
-}
-
-export interface CommentFlowResponse {
-  total: number;
-  human_total: number;
-  agent_total: number;
-  human_resolved: number;
-  human_open: number;
-  human_outdated: number;
-  agent_resolved: number;
-  agent_open: number;
-  agent_outdated: number;
-  avg_ai_rounds_on_human_comments: number;
-}
-
-export interface AgentStatResponse {
+export interface AgentBucket {
   agent: string;
-  display_name: string;
-  chat_tasks: number;
-  chat_total_tool_calls: number;
-  chat_avg_tool_calls_per_task: number;
-  review_comments: number;
-  review_hit_rate: number;
-  contribution_score: number;
+  tokens: number;
+  turns: number;
 }
 
-export interface ProjectStatisticsResponse {
-  time_saved_hours: number;
-  parallel_multiplier: number;
-  peak_concurrency: number;
-  total_active_minutes: number;
-  tasks_completed: number;
-  tasks_created: number;
-  tasks_in_progress: number;
-  agent_autonomy_rate: number;
-  code_additions: number;
-  code_deletions: number;
-  avg_files_per_task: number;
-  total_files_changed: number;
-  avg_brief_length: number;
-  avg_interventions_per_task: number;
-  brief_insight_data: BriefDataPoint[];
-  total_tool_calls: number;
-  avg_tool_calls_per_task: number;
-  avg_plan_updates_per_task: number;
-  hot_files: HotFile[];
-  comment_flow: CommentFlowResponse;
-  agent_leaderboard: AgentStatResponse[];
+export interface TimeseriesBucket {
+  bucket_start: number; // unix seconds
+  turns: number;
+  tokens_in: number;
+  tokens_cached: number;
+  tokens_out: number;
+  per_agent: AgentBucket[];
 }
 
-// ============================================================================
-// API functions
-// ============================================================================
+export interface AgentShareItem {
+  agent: string;
+  turns: number;
+  tokens: number;
+  percent: number;
+}
 
-/**
- * Fetch project statistics for the given date range.
- * @param projectId - Project ID (hash)
- * @param from - Start date "YYYY-MM-DD" (inclusive), defaults to 30 days ago
- * @param to   - End date "YYYY-MM-DD" (inclusive), defaults to today
- */
-export async function getProjectStatistics(
-  projectId: string,
-  from?: string,
-  to?: string,
-): Promise<ProjectStatisticsResponse> {
+export interface ModelItem {
+  model: string;
+  agent: string;
+  tokens: number;
+  cached_tokens: number;
+  turns: number;
+}
+
+export interface TopItem {
+  id: string;
+  name: string;
+  turns: number;
+  tokens: number;
+  agent_split: AgentBucket[];
+}
+
+export interface HeatmapCell {
+  weekday: number; // 0=Sun..6=Sat
+  hour: number; // 0..23
+  turns: number;
+}
+
+export interface PeriodData {
+  kpi: KpiData;
+  timeseries: TimeseriesBucket[];
+  agent_share: AgentShareItem[];
+  models: ModelItem[];
+  top: TopItem[];
+  heatmap: HeatmapCell[];
+}
+
+export interface StatisticsResponse {
+  current: PeriodData;
+  previous: { kpi: KpiData };
+}
+
+export type Bucket = "hourly" | "daily" | "weekly" | "monthly";
+
+// ── Fetchers ────────────────────────────────────────────────────────────
+
+interface QueryArgs {
+  from?: number;
+  to?: number;
+  bucket?: Bucket;
+}
+
+function buildQuery(args: QueryArgs): string {
   const params = new URLSearchParams();
-  if (from) params.set('from', from);
-  if (to) params.set('to', to);
-  const query = params.toString() ? `?${params.toString()}` : '';
-  return apiClient.get<ProjectStatisticsResponse>(
-    `/api/v1/projects/${projectId}/statistics${query}`,
+  if (args.from != null) params.set("from", String(args.from));
+  if (args.to != null) params.set("to", String(args.to));
+  if (args.bucket) params.set("bucket", args.bucket);
+  const s = params.toString();
+  return s ? `?${s}` : "";
+}
+
+export function getGlobalStatistics(
+  args: QueryArgs = {},
+): Promise<StatisticsResponse> {
+  return apiClient.get<StatisticsResponse>(
+    `/api/v1/statistics/global${buildQuery(args)}`,
+  );
+}
+
+export function getProjectStatistics(
+  projectId: string,
+  args: QueryArgs = {},
+): Promise<StatisticsResponse> {
+  return apiClient.get<StatisticsResponse>(
+    `/api/v1/statistics/project/${projectId}${buildQuery(args)}`,
   );
 }
