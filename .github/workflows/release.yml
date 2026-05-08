@@ -57,7 +57,7 @@ jobs:
       - name: Build Frontend
         run: |
           cd grove-web
-          pnpm install --no-frozen-lockfile
+          pnpm install --frozen-lockfile
           pnpm run build
       - name: Upload frontend dist
         uses: actions/upload-artifact@v4
@@ -86,6 +86,7 @@ jobs:
         with:
           key: macos-arm-gui
           add-job-id-key: false
+          save-if: false
       - name: Build (with GUI support)
         run: cargo build --release --target aarch64-apple-darwin --features gui
       - name: Package
@@ -119,6 +120,7 @@ jobs:
         with:
           key: macos-intel-gui
           add-job-id-key: false
+          save-if: false
       - name: Build (with GUI support)
         run: cargo build --release --target x86_64-apple-darwin --features gui
       - name: Package
@@ -152,6 +154,7 @@ jobs:
         with:
           key: linux-x64-musl
           add-job-id-key: false
+          save-if: false
       - name: Install musl tools
         run: sudo apt-get update && sudo apt-get install -y musl-tools
       - name: Build
@@ -186,6 +189,7 @@ jobs:
           key: linux-arm-cross
           cache-all-crates: true
           add-job-id-key: false
+          save-if: false
       - name: Install cross
         run: cargo install cross --git https://github.com/cross-rs/cross
       - name: Build
@@ -219,8 +223,9 @@ jobs:
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2
         with:
-          key: release-linux-x64-gnu-gui
+          key: ci-linux-x64-gnu-gui
           add-job-id-key: false
+          save-if: false
       - name: Install Linux GUI dependencies
         run: |
           sudo apt-get update
@@ -266,8 +271,9 @@ jobs:
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2
         with:
-          key: release-windows-x64-gui
+          key: ci-windows-x64-gui
           add-job-id-key: false
+          save-if: false
       - name: Build (with GUI support)
         run: cargo build --release --target x86_64-pc-windows-msvc --features gui
       - name: Package
@@ -304,6 +310,7 @@ jobs:
           key: macos-dmg-universal
           cache-all-crates: true
           add-job-id-key: false
+          save-if: false
       - name: Cache Tauri CLI binary
         uses: actions/cache@v4
         id: cache-tauri
