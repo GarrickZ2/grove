@@ -94,6 +94,7 @@ import { listSketches, type SketchMeta } from "../../../api/sketches";
 import { writeLastActiveTab } from "../../../utils/lastActiveTab";
 import type { Task } from "../../../data/types";
 import { perfMark } from "../../../perf/marks";
+import { useReportDebugId } from "../../../perf/debugIdsStore";
 import { getApiHost, appendHmacToUrl } from "../../../api/client";
 import { useAgentQuota, useRadioEvents } from "../../../hooks";
 import { AgentQuotaPopover } from "./AgentQuotaPopover";
@@ -1383,6 +1384,7 @@ export function TaskChat({
     getActiveChatId,
     setActiveChatId,
   } = useActiveChatId(null);
+  useReportDebugId("chatId", activeChatId);
   const [showChatMenu, setShowChatMenu] = useState(false);
   const [editingTitle, setEditingTitle] = useState<{
     chatId: string;

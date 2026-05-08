@@ -1,6 +1,7 @@
 import { Fragment, useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { perfRecorder } from "./recorder";
 import type { PerfEvent, PerfEventKind, PerfSnapshot } from "./types";
+import { useDebugIds, type DebugIdLevel } from "./debugIdsStore";
 
 type Tab = "timeline" | "memory" | "renders" | "network" | "backend";
 
@@ -147,6 +148,8 @@ export function PerfPanel() {
     return (last.usedJSHeapSize / 1024 / 1024).toFixed(0);
   })();
 
+  const debugIds = useDebugIds();
+
   return (
     <>
       <button
@@ -182,6 +185,9 @@ export function PerfPanel() {
         <span>{snapshot.fps}fps</span>
         {heapMb !== null && <span>{heapMb}MB</span>}
         <span>{snapshot.events.length}ev</span>
+        <DebugIdSegment level="projectId" value={debugIds.projectId} />
+        <DebugIdSegment level="taskId" value={debugIds.taskId} />
+        <DebugIdSegment level="chatId" value={debugIds.chatId} />
       </button>
 
       {open && (
@@ -1089,6 +1095,60 @@ function NetworkTab({ snapshot }: { snapshot: PerfSnapshot }) {
         )}
       </tbody>
     </table>
+  );
+}
+
+/**
+ * Inline pill segment for one of the three debug ids. Hidden when value is
+ * null (progressive disclosure: project view shows only proj, task view adds
+ * task, chat focus adds chat). Click stops propagation so it doesn't toggle
+ * the panel; copies the full id to clipboard. The visible text is a short
+ * preview (first 6 chars + last 4) so the pill stays compact.
+ */
+function DebugIdSegment({
+  level,
+  value,
+}: {
+  level: DebugIdLevel;
+  value: string | null;
+}) {
+  const [copied, setCopied] = useState(false);
+  if (!value) return null;
+  const label =
+    level === "projectId" ? "proj" : level === "taskId" ? "task" : "chat";
+  const preview =
+    value.length > 14 ? `${value.slice(0, 6)}…${value.slice(-4)}` : value;
+  return (
+    <span
+      role="button"
+      tabIndex={0}
+      onClick={(e) => {
+        e.stopPropagation();
+        void navigator.clipboard.writeText(value).then(() => {
+          setCopied(true);
+          window.setTimeout(() => setCopied(false), 900);
+        });
+      }}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.stopPropagation();
+        }
+      }}
+      title={`${label}: ${value} (click to copy)`}
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 3,
+        paddingLeft: 6,
+        marginLeft: 2,
+        borderLeft: "1px solid rgba(255,255,255,0.2)",
+        color: "rgba(255,255,255,0.85)",
+      }}
+    >
+      <span style={{ opacity: 0.55 }}>{label}</span>
+      <span>{preview}</span>
+      {copied && <span style={{ color: "#4ade80" }}>✓</span>}
+    </span>
   );
 }
 

@@ -57,6 +57,8 @@ interface ChatItem {
   pending_description: string | null;
   prompt: string | null;
   message: string | null;
+  todo_completed: number | null;
+  todo_total: number | null;
 }
 
 type ChatStatusEvent = Extract<RadioEvent, { type: "chat_status" }>;
@@ -233,6 +235,10 @@ export function TrayPopover() {
 
         switch (status) {
           case "busy": {
+            // Backend re-emits chat_status on plan_update with status="busy",
+            // so repeat busy events arrive mid-turn. Preserve running_started_at
+            // for those repeats — only reset on a genuinely new turn.
+            const isFreshTurn = !existing || existing.status === "done";
             next.set(chatId, {
               chat_id: chatId,
               project_id: projectId,
@@ -242,13 +248,18 @@ export function TrayPopover() {
               chat_title,
               agent,
               status: "running",
-              running_started_at: ts,
-              entered_state_at: ts,
+              running_started_at: isFreshTurn
+                ? ts
+                : (existing.running_started_at ?? ts),
+              entered_state_at: isFreshTurn ? ts : existing.entered_state_at,
               done_duration_ms: null,
               pending_options: null,
               pending_description: null,
               prompt: payload?.prompt ?? existing?.prompt ?? null,
               message: null,
+              todo_completed:
+                payload?.todo_completed ?? existing?.todo_completed ?? null,
+              todo_total: payload?.todo_total ?? existing?.todo_total ?? null,
             });
             break;
           }
@@ -272,6 +283,9 @@ export function TrayPopover() {
               pending_description: payload?.permission?.description ?? null,
               prompt: isFreshTurn ? null : existing.prompt,
               message: null,
+              todo_completed:
+                payload?.todo_completed ?? existing?.todo_completed ?? null,
+              todo_total: payload?.todo_total ?? existing?.todo_total ?? null,
             });
             break;
           }
@@ -289,6 +303,9 @@ export function TrayPopover() {
                 pending_options: null,
                 pending_description: null,
                 message: payload?.message ?? null,
+                todo_completed:
+                  payload?.todo_completed ?? existing.todo_completed,
+                todo_total: payload?.todo_total ?? existing.todo_total,
               });
               const doneEntries = Array.from(next.entries()).filter(
                 ([, v]) => v.status === "done",
@@ -938,10 +955,48 @@ function RunningCard({
           {prompt}
         </div>
       ) : null}
-      {/* Pulse strip — indicates "still working" without false ETA */}
-      <div className="mt-1.5 h-[2px] w-full overflow-hidden bg-[color-mix(in_srgb,var(--color-highlight)_15%,transparent)]">
-        <div className="h-full w-1/3 animate-[trayRunPulse_1.6s_ease-in-out_infinite] bg-[var(--color-highlight)]" />
-      </div>
+      {/* Progress strip — real plan progress when the agent emits a TodoWrite
+          plan; otherwise fall back to the pulse strip ("still working" without
+          a false ETA). */}
+      {item.todo_total != null && item.todo_total > 0 ? (
+        (() => {
+          const pct = Math.min(
+            100,
+            Math.round(((item.todo_completed ?? 0) / item.todo_total) * 100),
+          );
+          return (
+            <div
+              className="mt-1.5 flex items-center gap-2"
+              title={`Todo ${item.todo_completed ?? 0}/${item.todo_total}`}
+            >
+              <div className="relative h-[2px] flex-1 overflow-hidden bg-[color-mix(in_srgb,var(--color-highlight)_15%,transparent)]">
+                {/* Filled segment — solid, left-aligned. */}
+                <div
+                  className="absolute left-0 top-0 h-full bg-[var(--color-highlight)] transition-[width] duration-300"
+                  style={{ width: `${pct}%` }}
+                />
+                {/* Pulse on the remaining section so the user can tell the
+                    agent is still working between todo completions. */}
+                {pct < 100 ? (
+                  <div
+                    className="absolute top-0 h-full overflow-hidden"
+                    style={{ left: `${pct}%`, right: 0 }}
+                  >
+                    <div className="h-full w-1/3 animate-[trayRunPulse_1.6s_ease-in-out_infinite] bg-[var(--color-highlight)]" />
+                  </div>
+                ) : null}
+              </div>
+              <span className="shrink-0 font-mono text-[10px] text-[var(--color-text-muted)]">
+                {item.todo_completed ?? 0}/{item.todo_total}
+              </span>
+            </div>
+          );
+        })()
+      ) : (
+        <div className="mt-1.5 h-[2px] w-full overflow-hidden bg-[color-mix(in_srgb,var(--color-highlight)_15%,transparent)]">
+          <div className="h-full w-1/3 animate-[trayRunPulse_1.6s_ease-in-out_infinite] bg-[var(--color-highlight)]" />
+        </div>
+      )}
     </motion.div>
   );
 }

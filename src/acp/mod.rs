@@ -83,6 +83,12 @@ pub struct AcpSessionHandle {
     /// when the chat transitions to `busy` so passive listeners (menubar tray)
     /// can show what the agent is currently working on.
     last_user_prompt: Mutex<Option<String>>,
+    /// Latest TodoWrite-style plan progress for this chat: `(completed, total)`.
+    /// Updated whenever an `AcpUpdate::PlanUpdate` flows through `emit()`.
+    /// Surfaced on `RadioEvent::ChatStatus.todo_completed` / `todo_total` so
+    /// the menubar tray can render a real progress bar instead of the
+    /// generic pulse strip. None for chats whose agent never emits a plan.
+    last_plan: Mutex<Option<(u32, u32)>>,
 }
 
 /// 发送给 ACP 后台任务的命令
@@ -1390,6 +1396,7 @@ pub async fn get_or_start_session(
                     is_busy: std::sync::atomic::AtomicBool::new(false),
                     last_assistant_text: Mutex::new(String::new()),
         last_user_prompt: Mutex::new(None),
+        last_plan: Mutex::new(None),
                 });
 
                 // 注册到全局表
@@ -1435,6 +1442,8 @@ pub async fn get_or_start_session(
                                     agent: None,
                                     prompt: None,
                                     message: None,
+                                    todo_completed: None,
+                                    todo_total: None,
                                 });
                                 cleanup_socket_files(&self.project_key, &self.task_id, cid);
                             }
@@ -1469,6 +1478,8 @@ pub async fn get_or_start_session(
                             agent: None,
                             prompt: None,
                             message: None,
+                            todo_completed: None,
+                            todo_total: None,
                         });
                     }
                 }
@@ -1520,6 +1531,8 @@ pub async fn get_or_start_session(
                         agent: None,
                         prompt: None,
                         message: None,
+                        todo_completed: None,
+                        todo_total: None,
                     });
                     cleanup_socket_files(&session_project_key, &session_task_id, cid);
                 }
@@ -1582,8 +1595,8 @@ async fn run_acp_session(
     // 根据 agent_type 分支获取 reader/writer（使用 trait object 统一类型）
     let child: Option<tokio::process::Child>;
     // 0.11 ByteStreams 要求 Send + 'static;grove 的子进程 pipe 和 DuplexStream 都满足。
-    let writer: Box<dyn futures::AsyncWrite + Send + Unpin>;
-    let reader: Box<dyn futures::AsyncRead + Send + Unpin>;
+    let mut writer: Box<dyn futures::AsyncWrite + Send + Unpin>;
+    let mut reader: Box<dyn futures::AsyncRead + Send + Unpin>;
 
     if config.agent_type == "remote" {
         // Remote: WebSocket 连接（通过 duplex 管道桥接为 AsyncRead/AsyncWrite）
@@ -1685,6 +1698,38 @@ async fn run_acp_session(
         writer = Box::new(proc.stdin.take().unwrap().compat_write());
         reader = Box::new(proc.stdout.take().unwrap().compat());
         child = Some(proc);
+    }
+
+    // ACP_DEBUG=1（仅 dev build）：把 stdio 上的所有 NDJSON 流量 tee 到
+    // 每个 chat 的 agent.log（与 stderr 合用同一文件），方向用 `>>`(出) /
+    // `<<`(入) 标记。release 永远不开。
+    if acp_debug_enabled() {
+        let log_path = agent_log_path(
+            &config.project_key,
+            &config.task_id,
+            config.chat_id.as_deref(),
+        );
+        if let Some(file) = open_acp_log(&log_path) {
+            if let Ok(mut f) = file.lock() {
+                use std::io::Write;
+                let _ = writeln!(
+                    f,
+                    "[{}] -- ACP session start agent={} task={} chat={:?}",
+                    chrono::Utc::now().to_rfc3339(),
+                    config.agent_name,
+                    config.task_id,
+                    config.chat_id,
+                );
+            }
+            writer = Box::new(LoggingAsyncWrite {
+                inner: writer,
+                tap: AcpLogTap::new(Arc::clone(&file), ">>"),
+            });
+            reader = Box::new(LoggingAsyncRead {
+                inner: reader,
+                tap: AcpLogTap::new(file, "<<"),
+            });
+        }
     }
 
     let adapter = adapter::resolve_adapter(&config.agent_name, &config.agent_command);
@@ -2507,6 +2552,8 @@ impl AcpSessionHandle {
                 agent: None,
                 prompt: None,
                 message: None,
+                todo_completed: self.last_plan.lock().ok().and_then(|p| p.map(|(c, _)| c)),
+                todo_total: self.last_plan.lock().ok().and_then(|p| p.map(|(_, t)| t)),
             });
         }
         true
@@ -2675,6 +2722,19 @@ impl AcpSessionHandle {
                         }),
                     ),
                     AcpUpdate::SessionEnded => (Some("disconnected"), None),
+                    // Plan progress changed — re-emit the chat's current
+                    // status so the cached (todo_completed, todo_total) added
+                    // below reaches passive listeners (menubar tray) without
+                    // waiting for the next busy/idle transition.
+                    AcpUpdate::PlanUpdate { entries } => {
+                        let total = entries.len() as u32;
+                        let completed =
+                            entries.iter().filter(|e| e.status == "completed").count() as u32;
+                        if let Ok(mut slot) = self.last_plan.lock() {
+                            *slot = Some((completed, total));
+                        }
+                        (Some(self.derive_node_status()), None)
+                    }
                     _ => (None, None),
                 };
             if let Some(status) = next_status {
@@ -2728,6 +2788,13 @@ impl AcpSessionHandle {
                 } else {
                     None
                 };
+                let (todo_completed, todo_total) = self
+                    .last_plan
+                    .lock()
+                    .ok()
+                    .and_then(|p| *p)
+                    .map(|(c, t)| (Some(c), Some(t)))
+                    .unwrap_or((None, None));
                 broadcast_radio_event(RadioEvent::ChatStatus {
                     project_id: self.project_key.clone(),
                     task_id: self.task_id.clone(),
@@ -2740,12 +2807,27 @@ impl AcpSessionHandle {
                     agent,
                     prompt,
                     message,
+                    todo_completed,
+                    todo_total,
                 });
             }
         }
 
         // Turn 结束时 compact 磁盘历史
         let should_compact = matches!(&update, AcpUpdate::Complete { .. });
+
+        // Turn 结束时,如果 plan 已经 100% 完成,清掉缓存。
+        // 否则下一轮 agent 不再发 TodoWrite,tray 会一直停在 9/9。
+        // 部分完成(例如 5/7 中途停)保留,partial 进度本身是有价值信号。
+        if should_compact {
+            if let Ok(mut slot) = self.last_plan.lock() {
+                if let Some((completed, total)) = *slot {
+                    if total > 0 && completed >= total {
+                        *slot = None;
+                    }
+                }
+            }
+        }
 
         // broadcast
         let _ = self.update_tx.send(update);
@@ -3142,6 +3224,7 @@ pub fn new_handle_for_test(
         is_busy: std::sync::atomic::AtomicBool::new(false),
         last_assistant_text: Mutex::new(String::new()),
         last_user_prompt: Mutex::new(None),
+        last_plan: Mutex::new(None),
     });
 
     if let Ok(mut sessions) = ACP_SESSIONS.write() {
@@ -4097,6 +4180,125 @@ fn agent_log_path(project: &str, task_id: &str, chat_id: Option<&str>) -> PathBu
     match chat_id {
         Some(cid) => base.join("chats").join(cid).join("agent.log"),
         None => base.join("agent.log"),
+    }
+}
+
+/// Gating check: dev-only feature, and only when the env opt-in is set.
+/// `cfg!(debug_assertions)` is true for `cargo run` / `cargo build` and false
+/// for `--release`, so production binaries never honor `ACP_DEBUG`.
+fn acp_debug_enabled() -> bool {
+    cfg!(debug_assertions) && std::env::var("ACP_DEBUG").as_deref() == Ok("1")
+}
+
+fn open_acp_log(path: &std::path::Path) -> Option<Arc<Mutex<std::fs::File>>> {
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+        .ok()
+        .map(|f| Arc::new(Mutex::new(f)))
+}
+
+/// Buffers bytes flowing in one direction and flushes per newline-terminated
+/// JSON-RPC frame. ACP transport is NDJSON over stdio, so `\n` cleanly
+/// delimits message boundaries.
+struct AcpLogTap {
+    file: Arc<Mutex<std::fs::File>>,
+    direction: &'static str,
+    buf: Vec<u8>,
+}
+
+impl AcpLogTap {
+    fn new(file: Arc<Mutex<std::fs::File>>, direction: &'static str) -> Self {
+        Self {
+            file,
+            direction,
+            buf: Vec::new(),
+        }
+    }
+
+    fn record(&mut self, bytes: &[u8]) {
+        if bytes.is_empty() {
+            return;
+        }
+        self.buf.extend_from_slice(bytes);
+        while let Some(pos) = self.buf.iter().position(|&b| b == b'\n') {
+            let line: Vec<u8> = self.buf.drain(..=pos).collect();
+            let mut end = line.len() - 1;
+            if end > 0 && line[end - 1] == b'\r' {
+                end -= 1;
+            }
+            let payload = String::from_utf8_lossy(&line[..end]);
+            let ts = chrono::Utc::now().to_rfc3339();
+            if let Ok(mut f) = self.file.lock() {
+                use std::io::Write;
+                let _ = writeln!(f, "[{}] {} {}", ts, self.direction, payload);
+                let _ = f.flush();
+            }
+        }
+    }
+}
+
+struct LoggingAsyncWrite {
+    inner: Box<dyn futures::AsyncWrite + Send + Unpin>,
+    tap: AcpLogTap,
+}
+
+impl futures::AsyncWrite for LoggingAsyncWrite {
+    fn poll_write(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &[u8],
+    ) -> std::task::Poll<std::io::Result<usize>> {
+        let this = std::pin::Pin::into_inner(self);
+        match std::pin::Pin::new(&mut *this.inner).poll_write(cx, buf) {
+            std::task::Poll::Ready(Ok(n)) => {
+                this.tap.record(&buf[..n]);
+                std::task::Poll::Ready(Ok(n))
+            }
+            other => other,
+        }
+    }
+
+    fn poll_flush(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        let this = std::pin::Pin::into_inner(self);
+        std::pin::Pin::new(&mut *this.inner).poll_flush(cx)
+    }
+
+    fn poll_close(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        let this = std::pin::Pin::into_inner(self);
+        std::pin::Pin::new(&mut *this.inner).poll_close(cx)
+    }
+}
+
+struct LoggingAsyncRead {
+    inner: Box<dyn futures::AsyncRead + Send + Unpin>,
+    tap: AcpLogTap,
+}
+
+impl futures::AsyncRead for LoggingAsyncRead {
+    fn poll_read(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &mut [u8],
+    ) -> std::task::Poll<std::io::Result<usize>> {
+        let this = std::pin::Pin::into_inner(self);
+        match std::pin::Pin::new(&mut *this.inner).poll_read(cx, buf) {
+            std::task::Poll::Ready(Ok(n)) => {
+                this.tap.record(&buf[..n]);
+                std::task::Poll::Ready(Ok(n))
+            }
+            other => other,
+        }
     }
 }
 

@@ -9,6 +9,7 @@ import { TaskOperationDialogs } from "./TaskOperationDialogs";
 import { Button } from "../ui";
 import { ContextMenu } from "../ui/ContextMenu";
 import { useProject, useCommandPalette } from "../../context";
+import { useReportDebugId } from "../../perf/debugIdsStore";
 import {
   useIsMobile,
   useHotkeys,
@@ -84,6 +85,7 @@ export function TasksPage({ initialTaskId, initialChatId, initialViewMode, onNav
 
   // Page state hook
   const [pageState, pageHandlers] = useTaskPageState();
+  useReportDebugId("taskId", pageState.selectedTask?.id ?? null);
 
   // Post-merge archive hook
   const [postMergeState, postMergeHandlers] = usePostMergeArchive({

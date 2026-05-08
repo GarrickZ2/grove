@@ -172,6 +172,8 @@ pub async fn user_spawn_node(
         agent: None,
         prompt: None,
         message: None,
+        todo_completed: None,
+        todo_total: None,
     });
 
     // 8. Fire-and-forget ACP spawn. The session's lifecycle (connecting →
@@ -202,6 +204,8 @@ pub async fn user_spawn_node(
                 agent: None,
                 prompt: None,
                 message: None,
+                todo_completed: None,
+                todo_total: None,
             });
         };
 

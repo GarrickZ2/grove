@@ -134,6 +134,15 @@ pub enum RadioEvent {
         /// to "idle" after a busy phase.
         #[serde(skip_serializing_if = "Option::is_none")]
         message: Option<String>,
+        /// TodoWrite-style plan progress: number of `completed` entries.
+        /// `None` for chats whose agent has never emitted a plan; pairs with
+        /// `todo_total`. Surfaced so the menubar tray can render a real
+        /// progress bar instead of the generic pulse strip.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        todo_completed: Option<u32>,
+        /// Total entries in the latest plan. See `todo_completed`.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        todo_total: Option<u32>,
     },
     /// A pending agent-to-agent message ticket was inserted or deleted. Carries
     /// enough metadata for the graph view to update its in-memory pending map
@@ -291,6 +300,10 @@ enum ServerMessage {
         prompt: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
         message: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        todo_completed: Option<u32>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        todo_total: Option<u32>,
     },
     /// Mirror of `RadioEvent::PendingChanged`.
     PendingChanged {
@@ -482,7 +495,7 @@ pub async fn handle_walkie_talkie_ws_inner(socket: WebSocket) {
                             message,
                         });
                     }
-                    Ok(RadioEvent::ChatStatus { project_id, task_id, chat_id, status, permission, project_name, task_name, chat_title, agent, prompt, message }) => {
+                    Ok(RadioEvent::ChatStatus { project_id, task_id, chat_id, status, permission, project_name, task_name, chat_title, agent, prompt, message, todo_completed, todo_total }) => {
                         // Per-chat granularity — never dedup. Pure state push.
                         let _ = msg_tx.send(ServerMessage::ChatStatus {
                             project_id,
@@ -496,6 +509,8 @@ pub async fn handle_walkie_talkie_ws_inner(socket: WebSocket) {
                             agent,
                             prompt,
                             message,
+                            todo_completed,
+                            todo_total,
                         });
                     }
                     Ok(RadioEvent::PendingChanged {

@@ -60,6 +60,11 @@ export type RadioEvent =
       prompt?: string;
       /** Final assistant message — populated when status==="idle" after busy. */
       message?: string;
+      /** TodoWrite-style plan progress — number of `completed` entries.
+       *  Pairs with `todo_total`. Absent for chats whose agent never emits a plan. */
+      todo_completed?: number;
+      /** Total entries in the latest plan. See `todo_completed`. */
+      todo_total?: number;
     }
   | {
       type: "pending_changed";

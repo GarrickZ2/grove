@@ -26,6 +26,7 @@ import { CommandPalette } from "./components/ui/CommandPalette";
 import { ProjectCommandPalette } from "./components/ui/ProjectCommandPalette";
 import { TaskCommandPalette } from "./components/ui/TaskCommandPalette";
 import { ThemeProvider, ProjectProvider, TerminalThemeProvider, NotificationProvider, ConfigProvider, CommandPaletteProvider, PreviewCommentProvider, useProject, useCommandPalette, useTheme, useConfig } from "./context";
+import { useReportDebugId } from "./perf/debugIdsStore";
 import { AuthGate } from "./components/AuthGate";
 import { OptionalPerfProfiler } from "./perf/profilerShim";
 import type { Task } from "./data/types";
@@ -70,6 +71,7 @@ function AppContent() {
   const [hasExitedWelcome, setHasExitedWelcome] = useState(false);
   const [navigationData, setNavigationData] = useState<Record<string, unknown> | null>(null);
   const { selectedProject, currentProjectId, isLoading, selectProject, projects, addProject, createNewProject, refreshProjects, refreshSelectedProject } = useProject();
+  useReportDebugId("projectId", selectedProject?.id ?? null);
   const [showAddProject, setShowAddProject] = useState(false);
   const [addProjectInitialMode, setAddProjectInitialMode] = useState<"coding" | "studio">("coding");
   const [isAddingProject, setIsAddingProject] = useState(false);

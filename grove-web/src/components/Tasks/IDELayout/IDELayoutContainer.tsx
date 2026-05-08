@@ -349,7 +349,6 @@ export const IDELayoutContainer = forwardRef<IDELayoutHandle, IDELayoutContainer
     const [infoWidth, setInfoWidth] = useState(() => readStoredWidth(340, persisted.infoWidth));
     const [auxWasResized, setAuxWasResized] = useState(false);
     const [infoWasResized, setInfoWasResized] = useState(false);
-    const [shellWidth, setShellWidth] = useState(0);
     const navSeqRef = useRef(0);
     const shellRef = useRef<HTMLDivElement>(null);
     // Tracks which side panel was most recently focused so Cmd+W /
@@ -463,8 +462,17 @@ export const IDELayoutContainer = forwardRef<IDELayoutHandle, IDELayoutContainer
     const startResize = useCallback((side: "aux" | "info", event: React.PointerEvent<HTMLDivElement>) => {
       event.preventDefault();
       const startX = event.clientX;
-      const shellWidth = shellRef.current?.getBoundingClientRect().width ?? window.innerWidth;
-      const maxSideWidth = Math.max(320, Math.floor(shellWidth * 0.62));
+      const sw = shellRef.current?.getBoundingClientRect().width ?? window.innerWidth;
+      const s = stateRef.current;
+      const otherSide = side === "aux" ? "info" : "aux";
+      const otherVisible = otherSide === "info"
+        ? Boolean(s.infoVisible && s.infoType)
+        : Boolean(s.auxVisible && s.auxType);
+      const otherFloor = otherSide === "info" ? INFO_COL_FLOOR : AUX_COL_FLOOR;
+      const maxSide = otherVisible
+        ? sw - CHAT_COL_MIN - RESIZER_PX * 2 - otherFloor
+        : sw - CHAT_COL_MIN - RESIZER_PX;
+      const maxSideWidth = Math.max(side === "aux" ? AUX_COL_FLOOR : INFO_COL_FLOOR, Math.floor(maxSide));
 
       // Use the actually-rendered panel width as the baseline. When the layout
       // is using the default fr-ratio (auxWasResized/infoWasResized = false),
@@ -533,17 +541,6 @@ export const IDELayoutContainer = forwardRef<IDELayoutHandle, IDELayoutContainer
       state.terminalTabs, state.terminalActiveId,
       auxWidth, infoWidth,
     ]);
-
-    useEffect(() => {
-      const el = shellRef.current;
-      if (!el) return;
-      const ro = new ResizeObserver((entries) => {
-        const e = entries[0];
-        if (e) setShellWidth(e.contentRect.width);
-      });
-      ro.observe(el);
-      return () => ro.disconnect();
-    }, []);
 
     useImperativeHandle(
       ref,
@@ -755,38 +752,21 @@ export const IDELayoutContainer = forwardRef<IDELayoutHandle, IDELayoutContainer
     const useDefaultAuxPairRatio = isAuxChatPair && !auxWasResized;
     const useDefaultInfoPairRatio = isChatInfoPair && !infoWasResized;
 
-    let effectiveAux = auxWidth;
-    let effectiveInfo = infoWidth;
-    if (shellWidth > 0 && showChat) {
-      const resizerCount = (showAux ? 1 : 0) + (showInfo ? 1 : 0);
-      const available = shellWidth - CHAT_COL_MIN - resizerCount * RESIZER_PX;
-      if (showAux && showInfo) {
-        const totalDesired = auxWidth + infoWidth;
-        if (totalDesired > available && available > AUX_COL_FLOOR + INFO_COL_FLOOR) {
-          const scale = available / totalDesired;
-          effectiveAux = Math.max(AUX_COL_FLOOR, Math.round(auxWidth * scale));
-          effectiveInfo = Math.max(INFO_COL_FLOOR, Math.round(infoWidth * scale));
-          if (effectiveAux + effectiveInfo > available) {
-            const excess = effectiveAux + effectiveInfo - available;
-            const auxRoom = effectiveAux - AUX_COL_FLOOR;
-            const infoRoom = effectiveInfo - INFO_COL_FLOOR;
-            if (auxRoom + infoRoom > 0) {
-              effectiveAux -= Math.round(excess * auxRoom / (auxRoom + infoRoom));
-              effectiveInfo = available - effectiveAux;
-            }
-          }
-        }
-      } else if (showAux) {
-        effectiveAux = Math.min(auxWidth, Math.max(AUX_COL_FLOOR, available));
-      } else if (showInfo) {
-        effectiveInfo = Math.min(infoWidth, Math.max(INFO_COL_FLOOR, available));
-      }
-    }
+    const auxMaxCSS = (() => {
+      if (useDefaultAuxPairRatio || !showChat) return `${auxWidth}px`;
+      const reserved = CHAT_COL_MIN + RESIZER_PX + (showInfo ? RESIZER_PX + INFO_COL_FLOOR : 0);
+      return `min(${auxWidth}px, calc(100% - ${reserved}px))`;
+    })();
+    const infoMaxCSS = (() => {
+      if (useDefaultInfoPairRatio || !showChat) return `${infoWidth}px`;
+      const reserved = CHAT_COL_MIN + RESIZER_PX + (showAux ? RESIZER_PX + AUX_COL_FLOOR : 0);
+      return `min(${infoWidth}px, calc(100% - ${reserved}px))`;
+    })();
 
     const auxColumn = useDefaultAuxPairRatio
       ? "minmax(360px, 7fr)"
       : showChat
-        ? `minmax(${AUX_COL_FLOOR}px, var(--ide-aux-width))`
+        ? `minmax(${AUX_COL_FLOOR}px, ${auxMaxCSS})`
         : "minmax(360px, 1fr)";
     const chatColumn = useDefaultAuxPairRatio
       ? `minmax(${CHAT_COL_MIN}px, 3fr)`
@@ -796,7 +776,7 @@ export const IDELayoutContainer = forwardRef<IDELayoutHandle, IDELayoutContainer
     const infoColumn = useDefaultInfoPairRatio
       ? "minmax(320px, 4fr)"
       : showChat
-        ? `minmax(${INFO_COL_FLOOR}px, var(--ide-info-width))`
+        ? `minmax(${INFO_COL_FLOOR}px, ${infoMaxCSS})`
         : "minmax(360px, 1fr)";
     const gridColumns = [
       showAux ? auxColumn : null,
@@ -824,8 +804,6 @@ export const IDELayoutContainer = forwardRef<IDELayoutHandle, IDELayoutContainer
           ref={shellRef}
           className="ide-layout"
           style={{
-            "--ide-aux-width": `${effectiveAux}px`,
-            "--ide-info-width": `${effectiveInfo}px`,
             gridTemplateColumns: gridColumns,
           } as React.CSSProperties}
         >
