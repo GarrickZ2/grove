@@ -197,14 +197,25 @@ export const MermaidBlock = memo(function MermaidBlock({ code, onPreviewClick }:
       let cancelled = false;
       const id = `mermaid-${uniqueId.replace(/:/g, "")}`;
       mermaid.initialize(getMermaidConfig());
+      // Pre-validate: mermaid.render leaks a `#d{id}` temp container in document.body
+      // on parse failure. parse({ suppressErrors: true }) lets us bail before render
+      // ever touches the DOM — important during streaming when intermediate code
+      // states are syntactically invalid.
       mermaid
-        .render(id, code)
-        .then(({ svg: rendered }) => {
-          if (!cancelled) {
-            mermaidSvgCache.set(cacheKey, rendered);
-            setSvg(rendered);
-            setError(null);
+        .parse(code, { suppressErrors: true })
+        .then((ok) => {
+          if (cancelled) return;
+          if (ok === false) {
+            setError("Syntax error in text");
+            return;
           }
+          return mermaid.render(id, code).then(({ svg: rendered }) => {
+            if (!cancelled) {
+              mermaidSvgCache.set(cacheKey, rendered);
+              setSvg(rendered);
+              setError(null);
+            }
+          });
         })
         .catch((err) => {
           if (!cancelled) setError(err instanceof Error ? err.message : String(err));
@@ -759,7 +770,7 @@ export const MarkdownRenderer = memo(function MarkdownRenderer({ content, onFile
           <ol className="list-decimal list-inside text-sm text-[var(--color-text)] mb-2 ml-2 space-y-0.5">{children}</ol>
         ),
         li: ({ children }) => (
-          <li className="text-sm text-[var(--color-text)]">{children}</li>
+          <li className="text-sm text-[var(--color-text)] break-words">{children}</li>
         ),
         a: ({ href, children }) => {
           // sketch:// chip — render first so bare sketch URLs never fall
