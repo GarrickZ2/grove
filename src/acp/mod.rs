@@ -93,7 +93,29 @@ pub struct AcpSessionHandle {
     /// the menubar tray can render a real progress bar instead of the
     /// generic pulse strip. None for chats whose agent never emits a plan.
     last_plan: Mutex<Option<(u32, u32)>>,
+    /// agent 在 initialize 响应里声明的登录方法。空 = 未声明 / 不需要。
+    /// 收到 `AuthRequired (-32000)` 时,client 用这里的第一个 id 走 `authenticate`。
+    pub auth_methods: Mutex<Vec<AuthMethodInfo>>,
+    /// 因 `AuthRequired` 错误暂存待重试的 prompt(text, attachments, sender, terminal)。
+    /// authenticate 成功后 outer command loop 会把它再丢回 cmd_tx。
+    pending_auth_retry: Mutex<Option<PendingPromptRetry>>,
+    /// session/new 阶段被 -32000 卡住后,记录当前 banner 状态(methods + agent_name)。
+    /// 用途:WS 重连时,如果还没登录成功,跳过假的 SessionReady,改发 AuthRequired
+    /// 让前端继续显示 banner;避免"刷新后看起来连上了但消息发不出去"。
+    /// 进入 retry 时设置,authenticate 成功 → SessionReady 真正发出后清除。
+    pub pending_auth: Mutex<Option<PendingAuthState>>,
 }
+
+/// `pending_auth` 内容:重发 AuthRequired 所需的全部字段
+#[derive(Debug, Clone)]
+pub struct PendingAuthState {
+    pub methods: Vec<AuthMethodInfo>,
+    pub agent_name: Option<String>,
+}
+
+/// 暂存待重发的 prompt 元组(`AuthRequired` 重试用)。
+/// 顺序与 `AcpCommand::Prompt` 字段对齐:text, attachments, sender, terminal。
+type PendingPromptRetry = (String, Vec<ContentBlockData>, Option<String>, bool);
 
 /// 发送给 ACP 后台任务的命令
 enum AcpCommand {
@@ -117,6 +139,11 @@ enum AcpCommand {
     SetThoughtLevel {
         config_id: String,
         value_id: String,
+    },
+    /// 用户点击登录后触发。method_id 来自 initialize 响应 auth_methods[i].id,
+    /// 由前端从 `AuthRequired` update 中拿到再原样回传。
+    Authenticate {
+        method_id: String,
     },
 }
 
@@ -197,6 +224,18 @@ pub enum AcpUpdate {
     Busy { value: bool },
     /// 错误
     Error { message: String },
+    /// agent 通过 -32000 AuthRequired 通知 client 需要登录。`methods` 来自
+    /// initialize 响应里的 auth_methods 全集 — 前端把每个渲染成一个按钮,
+    /// 用户点哪个就用哪种登录。空数组表示 agent 没声明任何登录方法,UI 提示
+    /// 用户去终端用 agent 自己的 CLI 登录。
+    AuthRequired {
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        methods: Vec<AuthMethodInfo>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        agent_name: Option<String>,
+    },
+    /// authenticate 调用成功。发出后 grove 会自动把暂存的原 prompt 重新入队。
+    AuthSucceeded,
     /// 用户消息（load_session 回放时由 agent 发送）
     UserMessage {
         text: String,
@@ -316,6 +355,17 @@ pub struct CommandInfo {
     pub name: String,
     pub description: String,
     pub input_hint: Option<String>,
+}
+
+/// 从 ACP InitializeResponse.auth_methods 提取的登录方法描述。
+/// 仅捕获 `AuthMethod::Agent` 变体的字段(`unstable_auth_methods` 未开启时
+/// EnvVar / Terminal 变体在反序列化阶段会被 `VecSkipError` 自动跳过)。
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct AuthMethodInfo {
+    pub id: String,
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
 }
 
 /// Agent 的 Prompt 能力声明（从 ACP InitializeResponse 提取）
@@ -1479,6 +1529,9 @@ pub async fn get_or_start_session(
                     last_assistant_text: Mutex::new(String::new()),
         last_user_prompt: Mutex::new(None),
         last_plan: Mutex::new(None),
+                    auth_methods: Mutex::new(Vec::new()),
+                    pending_auth_retry: Mutex::new(None),
+                    pending_auth: Mutex::new(None),
                 });
 
                 // 注册到全局表
@@ -2042,6 +2095,24 @@ async fn drive_session(
         .block_task()
         .await?;
 
+    // 缓存 agent 声明的登录方法 — 后续收到 -32000 AuthRequired 时取第一个走
+    // authenticate。`unstable_auth_methods` feature 未启用,所以这里只会拿到
+    // `AuthMethod::Agent` 变体(EnvVar / Terminal 在反序列化阶段已被过滤)。
+    {
+        let methods: Vec<AuthMethodInfo> = init_resp
+            .auth_methods
+            .iter()
+            .map(|m| AuthMethodInfo {
+                id: m.id().to_string(),
+                name: m.name().to_string(),
+                description: m.description().map(|s| s.to_string()),
+            })
+            .collect();
+        if let Ok(mut slot) = handle.auth_methods.lock() {
+            *slot = methods;
+        }
+    }
+
     let agent_name = init_resp
         .agent_info
         .as_ref()
@@ -2095,12 +2166,137 @@ async fn drive_session(
             }
             let mcp_servers =
                 build_mcp_servers(&config.env_vars, agent_graph_token).map_err(to_acp_err)?;
-            let resp = conn
-                .send_request(
-                    acp::NewSessionRequest::new(&config.working_dir).mcp_servers(mcp_servers),
-                )
-                .block_task()
-                .await?;
+            // 重试循环:session/new 在用户没登录时(claude-code-acp / codex 都
+            // 这样)会直接抛 -32000 AuthRequired。捕获后 emit AuthRequired banner,
+            // 等用户在 chat 里点 Login → 收到 Authenticate cmd → 调 authenticate →
+            // 成功后回到 loop 顶端再试一次 session/new。这一段没有进 cmd 主循环,
+            // 用户此时不可能发 prompt,所以 cmd_rx 里只会出现 Authenticate / Kill。
+            let resp = loop {
+                match conn
+                    .send_request(
+                        acp::NewSessionRequest::new(&config.working_dir)
+                            .mcp_servers(mcp_servers.clone()),
+                    )
+                    .block_task()
+                    .await
+                {
+                    Ok(r) => break r,
+                    Err(e) if i32::from(e.code) == -32000 => {
+                        let methods = handle
+                            .auth_methods
+                            .lock()
+                            .map(|m| m.clone())
+                            .unwrap_or_default();
+                        // 记录到 handle:WS 重连时据此判断"还在等登录",
+                        // 跳过假 SessionReady 改发 AuthRequired,避免刷新后
+                        // 体验上"似乎可以发消息"的死路。
+                        if let Ok(mut slot) = handle.pending_auth.lock() {
+                            *slot = Some(PendingAuthState {
+                                methods: methods.clone(),
+                                agent_name: Some(agent_name.clone()),
+                            });
+                        }
+                        handle.emit(AcpUpdate::AuthRequired {
+                            methods,
+                            agent_name: Some(agent_name.clone()),
+                        });
+
+                        // 等用户点登录;非 Authenticate / Kill 一律忽略。
+                        // 关键:in-flight authenticate 期间继续 select cmd_rx,
+                        // 新 Authenticate 抢占旧的(drop future = 放弃旧响应)。
+                        // 否则用户选了 A 没完成浏览器 OAuth → 刷新页面 → 点 B
+                        // 会被排队在 cmd_rx 永不处理,死锁。
+                        let mut authed = false;
+                        let mut next_method_id: Option<String> = None;
+                        'outer: while !authed {
+                            let method_id = if let Some(m) = next_method_id.take() {
+                                m
+                            } else {
+                                loop {
+                                    match cmd_rx.recv().await {
+                                        None => {
+                                            if let Ok(mut slot) =
+                                                handle.pending_auth.lock()
+                                            {
+                                                *slot = None;
+                                            }
+                                            return Err(acp::Error::internal_error());
+                                        }
+                                        Some(AcpCommand::Authenticate { method_id }) => {
+                                            break method_id;
+                                        }
+                                        Some(AcpCommand::Kill) => {
+                                            if let Ok(mut slot) =
+                                                handle.pending_auth.lock()
+                                            {
+                                                *slot = None;
+                                            }
+                                            return Err(acp::Error::internal_error());
+                                        }
+                                        _ => {}
+                                    }
+                                }
+                            };
+
+                            let auth_fut = conn
+                                .send_request(acp::AuthenticateRequest::new(
+                                    acp::AuthMethodId::new(method_id),
+                                ))
+                                .block_task();
+                            tokio::pin!(auth_fut);
+                            loop {
+                                tokio::select! {
+                                    res = &mut auth_fut => {
+                                        match res {
+                                            Ok(_) => {
+                                                handle.emit(AcpUpdate::AuthSucceeded);
+                                                authed = true;
+                                            }
+                                            Err(auth_err) => {
+                                                handle.emit(AcpUpdate::Error {
+                                                    message: format!(
+                                                        "Authentication failed: {}",
+                                                        auth_err
+                                                    ),
+                                                });
+                                                // 留在 outer,等下一次点击
+                                            }
+                                        }
+                                        continue 'outer;
+                                    }
+                                    cmd = cmd_rx.recv() => match cmd {
+                                        None => {
+                                            if let Ok(mut slot) = handle.pending_auth.lock() {
+                                                *slot = None;
+                                            }
+                                            return Err(acp::Error::internal_error());
+                                        }
+                                        Some(AcpCommand::Authenticate { method_id: new_id }) => {
+                                            // 抢占:用户在等待中又点了一次(可能是
+                                            // 同一个 method,也可能是另一个)。drop
+                                            // 旧 future,outer 用新 method_id 重跑。
+                                            next_method_id = Some(new_id);
+                                            continue 'outer;
+                                        }
+                                        Some(AcpCommand::Kill) => {
+                                            if let Ok(mut slot) = handle.pending_auth.lock() {
+                                                *slot = None;
+                                            }
+                                            return Err(acp::Error::internal_error());
+                                        }
+                                        _ => {}
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    Err(e) => return Err(e),
+                }
+            };
+            // session/new 成功 → 清掉 pending_auth,后续 SessionReady 走正常路径
+            if let Ok(mut slot) = handle.pending_auth.lock() {
+                *slot = None;
+            }
             let sid = resp.session_id.to_string();
             persist_session_id(&sid);
             (available_modes, current_mode_id) = extract_modes(&resp.modes);
@@ -2244,7 +2440,7 @@ async fn drive_session(
 
     handle.emit(AcpUpdate::SessionReady {
         session_id,
-        agent_name,
+        agent_name: agent_name.clone(),
         agent_version,
         available_modes,
         current_mode_id,
@@ -2265,6 +2461,10 @@ async fn drive_session(
                 sender,
                 terminal,
             } => {
+                // 提前快照,便于 -32000 AuthRequired 时把这条 prompt 暂存起来
+                // 等 authenticate 成功后自动重试。sender/attachments 后续会被
+                // 移动进 emit / content_blocks,所以必须 clone。
+                let retry_snapshot = (text.clone(), attachments.clone(), sender.clone(), terminal);
                 handle.emit(AcpUpdate::UserMessage {
                     text: text.clone(),
                     attachments: attachments.clone(),
@@ -2365,6 +2565,11 @@ async fn drive_session(
                                     got_kill = true;
                                     break Err(acp::Error::internal_error());
                                 }
+                                AcpCommand::Authenticate { .. } => {
+                                    // 我们的流程里 Authenticate 只会在 prompt errored
+                                    // 之后由用户点登录触发,此时 prompt_fut 不可能
+                                    // 在飞 — 但 channel 是共享的,容错性 drop 掉。
+                                }
                             }
                         }
                     }
@@ -2441,9 +2646,37 @@ async fn drive_session(
                     Err(e) => {
                         handle.emit(AcpUpdate::Busy { value: false });
                         if next_prompt.is_none() {
-                            handle.emit(AcpUpdate::Error {
-                                message: format!("Prompt error: {}", e),
-                            });
+                            // -32000 AuthRequired:转登录流程,不当一般错误报。
+                            // 用 i32 比较避免依赖具体 ErrorCode 路径(0.11 之后
+                            // 已 stable,但 Other(_) 兜底变体的存在意味着直接
+                            // match Pattern 不一定 exhaustive)。
+                            if i32::from(e.code) == -32000 {
+                                let methods = handle
+                                    .auth_methods
+                                    .lock()
+                                    .map(|m| m.clone())
+                                    .unwrap_or_default();
+                                if let Ok(mut slot) = handle.pending_auth_retry.lock() {
+                                    *slot = Some(retry_snapshot.clone());
+                                }
+                                // 同时落到 pending_auth,让刷新后 WS 重连能重发
+                                // banner(activeAuthMessage 派生自当下 messages,
+                                // history 里没存 auth_required,光靠回放拿不到)。
+                                if let Ok(mut slot) = handle.pending_auth.lock() {
+                                    *slot = Some(PendingAuthState {
+                                        methods: methods.clone(),
+                                        agent_name: Some(agent_name.clone()),
+                                    });
+                                }
+                                handle.emit(AcpUpdate::AuthRequired {
+                                    methods,
+                                    agent_name: Some(agent_name.clone()),
+                                });
+                            } else {
+                                handle.emit(AcpUpdate::Error {
+                                    message: format!("Prompt error: {}", e),
+                                });
+                            }
                         }
                     }
                 }
@@ -2520,6 +2753,85 @@ async fn drive_session(
                     .await;
                 if resp.is_ok() {
                     emit_thought_level_sync(&handle, &config_id, &value_id);
+                }
+            }
+            AcpCommand::Authenticate { method_id } => {
+                // Long-blocking 请求:agent 典型实现是开浏览器等 OAuth,期间不响应。
+                // 用 select 抢占:in-flight 期间继续 poll cmd_rx,新 Authenticate
+                // 进来 → drop 旧 future、用新 method_id 重跑;否则用户选了 A 没完成
+                // → 刷新 → 点 B 会被排队永不处理。同 session/new 阶段的写法对齐。
+                let mut current_method_id = method_id;
+                'auth_loop: loop {
+                    let auth_fut = conn
+                        .send_request(acp::AuthenticateRequest::new(acp::AuthMethodId::new(
+                            current_method_id,
+                        )))
+                        .block_task();
+                    tokio::pin!(auth_fut);
+                    loop {
+                        tokio::select! {
+                            res = &mut auth_fut => {
+                                match res {
+                                    Ok(_) => {
+                                        // 登录成功:清 pending_auth,转发 AuthSucceeded,
+                                        // 重发暂存的失败 prompt 让用户感觉无缝接上。
+                                        if let Ok(mut slot) = handle.pending_auth.lock() {
+                                            *slot = None;
+                                        }
+                                        handle.emit(AcpUpdate::AuthSucceeded);
+                                        let pending = handle
+                                            .pending_auth_retry
+                                            .lock()
+                                            .ok()
+                                            .and_then(|mut s| s.take());
+                                        if let Some((text, attachments, sender, terminal)) =
+                                            pending
+                                        {
+                                            let _ = handle.cmd_tx.try_send(
+                                                AcpCommand::Prompt {
+                                                    text,
+                                                    attachments,
+                                                    sender,
+                                                    terminal,
+                                                },
+                                            );
+                                        }
+                                    }
+                                    Err(e) => {
+                                        // 登录失败 — 清暂存 prompt,告诉用户;banner
+                                        // 仍在,用户可换一种再点。pending_auth 不清,
+                                        // 刷新仍能看到 banner。
+                                        if let Ok(mut slot) =
+                                            handle.pending_auth_retry.lock()
+                                        {
+                                            *slot = None;
+                                        }
+                                        handle.emit(AcpUpdate::Error {
+                                            message: format!(
+                                                "Authentication failed: {}",
+                                                e
+                                            ),
+                                        });
+                                    }
+                                }
+                                break 'auth_loop;
+                            }
+                            cmd = cmd_rx.recv() => match cmd {
+                                None => break 'auth_loop,
+                                Some(AcpCommand::Authenticate { method_id: new_id }) => {
+                                    current_method_id = new_id;
+                                    continue 'auth_loop;
+                                }
+                                Some(AcpCommand::Kill) => {
+                                    if let Ok(mut slot) = handle.pending_auth.lock() {
+                                        *slot = None;
+                                    }
+                                    return Ok(());
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
                 }
             }
             AcpCommand::Kill => {
@@ -3069,6 +3381,15 @@ impl AcpSessionHandle {
             .map_err(|_| crate::error::GroveError::Session("ACP session closed".to_string()))
     }
 
+    /// 触发 ACP `authenticate(method_id)`。method_id 由前端从 `AuthRequired`
+    /// update 拿到再原样回传 — grove 不替换、不验证。
+    pub async fn authenticate(&self, method_id: String) -> crate::error::Result<()> {
+        self.cmd_tx
+            .send(AcpCommand::Authenticate { method_id })
+            .await
+            .map_err(|_| crate::error::GroveError::Session("ACP session closed".to_string()))
+    }
+
     /// 取消当前处理
     pub async fn cancel(&self) -> crate::error::Result<()> {
         self.cmd_tx
@@ -3393,6 +3714,9 @@ pub fn new_handle_for_test(
         last_assistant_text: Mutex::new(String::new()),
         last_user_prompt: Mutex::new(None),
         last_plan: Mutex::new(None),
+        auth_methods: Mutex::new(Vec::new()),
+        pending_auth_retry: Mutex::new(None),
+        pending_auth: Mutex::new(None),
     });
 
     if let Ok(mut sessions) = ACP_SESSIONS.write() {

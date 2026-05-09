@@ -155,6 +155,18 @@ pub async fn execute(agent: String, cwd: String) {
                     eprintln!("\x1b[31mError: {}\x1b[0m", message);
                     break;
                 }
+                Ok(AcpUpdate::AuthRequired { methods, .. }) => {
+                    let hint = methods
+                        .first()
+                        .map(|m| m.name.as_str())
+                        .unwrap_or("<no method advertised>");
+                    eprintln!(
+                        "\x1b[33m[Auth required: {}] please run `grove web` or this agent's CLI login\x1b[0m",
+                        hint
+                    );
+                    break;
+                }
+                Ok(AcpUpdate::AuthSucceeded) => continue,
                 Ok(
                     AcpUpdate::Busy { .. }
                     | AcpUpdate::UserMessage { .. }

@@ -82,6 +82,11 @@ enum ClientMessage {
     },
     /// Kill a running user terminal command
     TerminalKill,
+    /// 用户在 AuthRequired 横幅上点击登录按钮。method_id 来自前端从
+    /// `auth_required` server message 拿到的同名字段,原样回传。
+    Authenticate {
+        method_id: String,
+    },
 }
 
 /// Server-to-client messages (serialized AcpUpdate)
@@ -213,6 +218,27 @@ enum ServerMessage {
         #[serde(skip_serializing_if = "Option::is_none")]
         cost: Option<crate::acp::UsageCost>,
     },
+    /// agent 通过 -32000 报需登录。`methods` 是 agent 在 initialize 时声明的
+    /// 全部登录方法 — 前端为每个渲染一个按钮,用户点哪个就用哪个 method_id
+    /// 走 ClientMessage::Authenticate 回传。空数组表示 agent 没声明任何方法,
+    /// UI 显示提示让用户在终端里用 agent 自己的 CLI 登录。
+    AuthRequired {
+        #[serde(skip_serializing_if = "Vec::is_empty")]
+        methods: Vec<AuthMethodMsg>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        agent_name: Option<String>,
+    },
+    /// authenticate 调用成功。前端把 banner 状态切到"登录成功,正在重试...",
+    /// 后续会自动收到原 prompt 的 UserMessage / Busy 流。
+    AuthSucceeded,
+}
+
+#[derive(Debug, Serialize, Clone)]
+struct AuthMethodMsg {
+    id: String,
+    name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    description: Option<String>,
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -434,6 +460,21 @@ impl From<AcpUpdate> for ServerMessage {
             AcpUpdate::UsageUpdate { used, size, cost } => {
                 ServerMessage::UsageUpdate { used, size, cost }
             }
+            AcpUpdate::AuthRequired {
+                methods,
+                agent_name,
+            } => ServerMessage::AuthRequired {
+                methods: methods
+                    .into_iter()
+                    .map(|m| AuthMethodMsg {
+                        id: m.id,
+                        name: m.name,
+                        description: m.description,
+                    })
+                    .collect(),
+                agent_name,
+            },
+            AcpUpdate::AuthSucceeded => ServerMessage::AuthSucceeded,
         }
     }
 }
@@ -520,6 +561,31 @@ async fn handle_acp_ws(socket: WebSocket, session_key: String, config: AcpStartC
     // For existing sessions, construct SessionReady from metadata so frontend can interact.
     // History is already loaded via HTTP.
     if is_existing {
+        // Reconnect 时 agent 还卡在 -32000 等登录:跳过假 SessionReady,
+        // 改发 AuthRequired 让前端继续显示 banner。否则前端误以为已 Connected,
+        // 用户发的 prompt 会落进 inner auth-wait loop 被静默丢弃。
+        let pending_auth_snapshot = handle.pending_auth.lock().ok().and_then(|s| s.clone());
+        let auth_pending = pending_auth_snapshot.is_some();
+        if let Some(pending) = pending_auth_snapshot {
+            let msg = ServerMessage::AuthRequired {
+                methods: pending
+                    .methods
+                    .into_iter()
+                    .map(|m| AuthMethodMsg {
+                        id: m.id,
+                        name: m.name,
+                        description: m.description,
+                    })
+                    .collect(),
+                agent_name: pending.agent_name,
+            };
+            if let Ok(json) = serde_json::to_string(&msg) {
+                let _ = ws_sender.send(Message::Text(json.into())).await;
+            }
+            // 保留 ws_sender / receiver 走主消息循环,不 return — 用户点登录的
+            // ClientMessage::Authenticate 仍要进 cmd 通道。session/new 还没成功,
+            // 后续 SessionReady / AvailableCommands 拉取也跳过。
+        }
         let meta = (|| {
             let (persist_proj, persist_tsk, persist_cid) = handle.persist_info();
             let cid = persist_cid?;
@@ -574,8 +640,10 @@ async fn handle_acp_ws(socket: WebSocket, session_key: String, config: AcpStartC
                     prompt_capabilities: PromptCapabilitiesData::default(),
                 }
             });
-        if let Ok(json) = serde_json::to_string(&meta_msg) {
-            let _ = ws_sender.send(Message::Text(json.into())).await;
+        if !auth_pending {
+            if let Ok(json) = serde_json::to_string(&meta_msg) {
+                let _ = ws_sender.send(Message::Text(json.into())).await;
+            }
         }
         if let Some(meta) = meta
             .as_ref()
@@ -780,6 +848,13 @@ async fn handle_acp_ws(socket: WebSocket, session_key: String, config: AcpStartC
                             }
                             ClientMessage::TerminalKill => {
                                 handle_for_input.kill_terminal();
+                            }
+                            ClientMessage::Authenticate { method_id } => {
+                                if let Err(e) = handle_for_input.authenticate(method_id).await {
+                                    handle_for_input.emit(AcpUpdate::Error {
+                                        message: format!("Authenticate dispatch failed: {}", e),
+                                    });
+                                }
                             }
                         }
                     }

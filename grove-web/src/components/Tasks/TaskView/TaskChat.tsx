@@ -322,7 +322,19 @@ type ChatMessage =
   | ToolMessage
   | { type: "system"; content: string }
   | PermissionMessage
-  | { type: "terminal_output"; chunks: string[]; exitCode?: number | null };
+  | { type: "terminal_output"; chunks: string[]; exitCode?: number | null }
+  | {
+      // ACP -32000 AuthRequired banner. methods 来自 initialize 时 agent 声明
+      // 的 auth_methods 全集 — 每一个渲染成一个登录按钮,用户点哪个就用哪种。
+      // 空数组 = agent 没声明任何方法,显示手动登录提示。
+      type: "auth_required";
+      methods: { id: string; name: string; description?: string }[];
+      agentName: string | null;
+      status: "idle" | "in_progress" | "succeeded" | "failed";
+      // 用户点击的按钮 id;in_progress / succeeded 时用来高亮和显示文案。
+      activeMethodId?: string;
+      errorMessage?: string;
+    };
 
 type ServerEvent = {
   type: string;
@@ -456,6 +468,10 @@ function buildRenderItems(messages: ChatMessage[]): RenderItem[] {
   messages.forEach((msg, i) => {
     if (msg.type === "tool") {
       toolBuf.push({ message: msg, index: i });
+    } else if (msg.type === "auth_required") {
+      // 不进消息流 — 由 composer panel 统一渲染(同 PermissionRequest)。
+      // 留在 messages 数组里只为方便用 useMemo 派生 activeAuthMessage。
+      flush();
     } else {
       flush();
       items.push({ kind: "single", message: msg, index: i });
@@ -482,6 +498,14 @@ function extractRenderItemText(item: RenderItem): string {
         return m.description;
       case "terminal_output":
         return m.chunks.join("");
+      case "auth_required":
+        return [
+          m.agentName ?? "",
+          ...m.methods.map((x) => x.name),
+          "auth required",
+        ]
+          .filter(Boolean)
+          .join("\n");
     }
   } else {
     return item.tools
@@ -509,6 +533,8 @@ function getAutoScrollTailSignature(messages: ChatMessage[]): string {
           return `terminal_output:${message.exitCode ?? ""}:${message.chunks.length}:${message.chunks.reduce((s, c) => s + c.length, 0)}`;
         case "user":
           return `user:${message.content.length}:${message.attachments?.length ?? 0}:${message.terminal ? 1 : 0}`;
+        case "auth_required":
+          return `auth_required:${message.status}:${message.activeMethodId ?? ""}:${message.methods.length}`;
       }
     })
     .join("|");
@@ -1525,6 +1551,7 @@ export function TaskChat({
   const [planFileContent, setPlanFileContent] = useState("");
   const [showPlanFile, setShowPlanFile] = useState(false);
   const [showPermissionPanel, setShowPermissionPanel] = useState(false);
+  const [showAuthPanel, setShowAuthPanel] = useState(false);
   const [slashCommands, setSlashCommands] = useState<SlashCommand[]>([]);
   const [showSlashMenu, setShowSlashMenu] = useState(false);
   const [slashFilter, setSlashFilter] = useState("");
@@ -1693,23 +1720,47 @@ export function TaskChat({
         ) ?? null,
     [messages],
   );
+  /** 最近一条仍在生效的 auth_required(succeeded 视为已结束,自动让位)。
+   *  composer panel 据此渲染登录卡片,与 PermissionRequest 共用同一套 panel
+   *  机制 — 优先级最高,因为没登录前其它操作都不能进行。 */
+  type AuthRequiredMsg = Extract<ChatMessage, { type: "auth_required" }>;
+  const activeAuthMessage = useMemo(
+    () =>
+      [...messages]
+        .reverse()
+        .find(
+          (m): m is AuthRequiredMsg =>
+            m.type === "auth_required" && m.status !== "succeeded",
+        ) ?? null,
+    [messages],
+  );
+  /** auth 消息所在的索引(handleAuthLogin 需要根据它定位状态切换)。 */
+  const activeAuthMessageIndex = useMemo(() => {
+    if (!activeAuthMessage) return -1;
+    for (let i = messages.length - 1; i >= 0; i--) {
+      if (messages[i] === activeAuthMessage) return i;
+    }
+    return -1;
+  }, [activeAuthMessage, messages]);
   const taskPreviewCommentDrafts = useMemo(
     () => previewCommentDrafts.filter((draft) => draft.projectId === projectId && draft.taskId === task.id),
     [previewCommentDrafts, projectId, task.id],
   );
   const hasPreviewCommentsPanel = taskPreviewCommentDrafts.length > 0;
   const activeComposerPanel =
-    showPermissionPanel && activePermissionMessage
-      ? "permission"
-      : showPlan && hasTodoPanel
-        ? "todo"
-        : showPlanFile && hasPlanPanel
-        ? "plan"
-        : showPendingQueue && hasPendingPanel
-          ? "pending"
-          : showPreviewComments && hasPreviewCommentsPanel
-            ? "previewComments"
-            : null;
+    showAuthPanel && activeAuthMessage
+      ? "auth"
+      : showPermissionPanel && activePermissionMessage
+        ? "permission"
+        : showPlan && hasTodoPanel
+          ? "todo"
+          : showPlanFile && hasPlanPanel
+            ? "plan"
+            : showPendingQueue && hasPendingPanel
+              ? "pending"
+              : showPreviewComments && hasPreviewCommentsPanel
+                ? "previewComments"
+                : null;
   const composerPanelOpen = activeComposerPanel !== null;
 
   // When a permission message appears, force the permission panel open and
@@ -1729,6 +1780,23 @@ export function TaskChat({
       setShowPreviewComments(false);
     } else {
       setShowPermissionPanel(false);
+    }
+  }
+
+  // 同样的 prev-prop 模式:auth 卡片出现 → 强制打开 auth 面板并压住其它面板;
+  // auth_succeeded 后 activeAuthMessage 变 null → 自动关闭。auth 优先级最高。
+  const [prevActiveAuthMessage, setPrevActiveAuthMessage] = useState(activeAuthMessage);
+  if (activeAuthMessage !== prevActiveAuthMessage) {
+    setPrevActiveAuthMessage(activeAuthMessage);
+    if (activeAuthMessage) {
+      setShowAuthPanel(true);
+      setShowPermissionPanel(false);
+      setShowPlan(false);
+      setShowPlanFile(false);
+      setShowPendingQueue(false);
+      setShowPreviewComments(false);
+    } else {
+      setShowAuthPanel(false);
     }
   }
 
@@ -3064,6 +3132,38 @@ export function TaskChat({
           enableAutoStickToBottom("smooth");
           break;
         }
+        case "auth_required": {
+          // 推一条 banner 消息:对每个 auth method 渲染一个登录按钮,
+          // 点击后发 authenticate(method_id),后端会自动重试暂存的 prompt
+          // (见 acp::run_acp_session 的 Authenticate 分支)。
+          const methods: { id: string; name: string; description?: string }[] =
+            Array.isArray(msg.methods) ? msg.methods : [];
+          setMessages((prev) => [
+            ...prev,
+            {
+              type: "auth_required",
+              methods,
+              agentName: msg.agent_name ?? null,
+              status: "idle",
+            },
+          ]);
+          updateBusy(false);
+          onChatBecameIdle?.();
+          break;
+        }
+        case "auth_succeeded": {
+          setMessages((prev) =>
+            prev.map((m, i) =>
+              i === prev.length - 1 ||
+              (m.type === "auth_required" && m.status === "in_progress")
+                ? m.type === "auth_required"
+                  ? { ...m, status: "succeeded" }
+                  : m
+                : m,
+            ),
+          );
+          break;
+        }
         case "mode_changed":
           setPermissionLevel(msg.mode_id);
           break;
@@ -4047,6 +4147,26 @@ export function TaskChat({
           id: requestId,
           option_id: optionId,
         }),
+      );
+    },
+    [],
+  );
+
+  /** AuthRequired banner login click. 乐观把对应消息切到 in_progress,
+   *  authenticate 由后端处理:成功 → AuthSucceeded(切 succeeded)+ 重发原 prompt;
+   *  失败 → Error 通过 system 消息呈现并把 banner 切回 idle 让用户重试。 */
+  const handleAuthLogin = useCallback(
+    (index: number, methodId: string) => {
+      if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
+      setMessages((prev) =>
+        prev.map((m, i) =>
+          i === index && m.type === "auth_required"
+            ? { ...m, status: "in_progress", activeMethodId: methodId }
+            : m,
+        ),
+      );
+      wsRef.current.send(
+        JSON.stringify({ type: "authenticate", method_id: methodId }),
       );
     },
     [],
@@ -5608,6 +5728,15 @@ export function TaskChat({
                         </div>
                       )}
 
+                      {activeComposerPanel === "auth" && activeAuthMessage && (
+                        <AuthRequiredPanel
+                          message={activeAuthMessage}
+                          index={activeAuthMessageIndex}
+                          agentLabel={agentLabel}
+                          onAuthLogin={handleAuthLogin}
+                        />
+                      )}
+
                       {activeComposerPanel === "permission" &&
                         activePermissionMessage && (
                           <div className="space-y-3">
@@ -6544,7 +6673,7 @@ const MessageItem = memo(function MessageItem({
         const args = parts ? parts[2] : "";
         return (
           <div className="flex justify-end">
-            <div className="max-w-[85%]">
+            <div className="max-w-[85%] min-w-0">
               <div className="rounded-xl px-3.5 py-2 bg-[var(--color-bg-tertiary)] border border-[color-mix(in_srgb,var(--color-border)_72%,transparent)] shadow-[0_10px_30px_rgba(0,0,0,0.08)]">
                 <code className="text-[13px] font-mono whitespace-pre-wrap">
                   <span className="text-[var(--color-text-muted)] select-none">
@@ -6562,7 +6691,7 @@ const MessageItem = memo(function MessageItem({
       }
       return (
         <div className="flex justify-end">
-          <div className="max-w-[80%]">
+          <div className="max-w-[80%] min-w-0">
             {message.sender && (() => {
               const resolved = resolveSender?.(message.sender) ?? {
                 label: message.sender,
@@ -6673,7 +6802,7 @@ const MessageItem = memo(function MessageItem({
       if (!shown.trim()) return null;
       return (
         <div className="flex justify-start">
-          <div className="max-w-[82%] text-sm text-[var(--color-text)]">
+          <div className="max-w-[82%] min-w-0 text-sm text-[var(--color-text)]">
             <MarkdownRenderer
               content={shown}
               onFileClick={onFileClick}
@@ -6744,6 +6873,9 @@ const MessageItem = memo(function MessageItem({
         </div>
       );
     }
+    case "auth_required":
+      // buildRenderItems 已过滤,不会走到这里。万一漏过返回 null 而非占位。
+      return null;
     case "terminal_output": {
       const hasExited = message.exitCode !== undefined;
       const isError = hasExited && message.exitCode !== 0;
@@ -6790,6 +6922,103 @@ const MessageItem = memo(function MessageItem({
 });
 
 /** Permission request card with action buttons */
+/** AuthRequired panel — 渲染在 composerPanel 区域(对齐 PermissionRequest)。
+ * 暗色 tertiary 背景、warning 左强调条、标题 + 描述 + ghost 风格选项按钮。
+ * in_progress / succeeded 期间整组按钮 disable;每个 method 单独一行,
+ * 含可选 description 二行注释。 */
+function AuthRequiredPanel({
+  message,
+  index,
+  agentLabel,
+  onAuthLogin,
+}: {
+  message: Extract<ChatMessage, { type: "auth_required" }>;
+  index: number;
+  agentLabel?: string;
+  onAuthLogin?: (index: number, methodId: string) => void;
+}) {
+  const agentDisplay = message.agentName || agentLabel || "Agent";
+  const hasMethods = message.methods.length > 0;
+  const activeMethod = message.activeMethodId
+    ? message.methods.find((m) => m.id === message.activeMethodId)
+    : undefined;
+  let title: string;
+  let description: string;
+  if (message.status === "succeeded") {
+    title = "Login successful";
+    description = "Retrying your request...";
+  } else if (message.status === "in_progress") {
+    title = "Authenticating";
+    description = activeMethod
+      ? `Complete the ${activeMethod.name} flow in the browser. The session will resume automatically once finished.`
+      : "Waiting for the agent to confirm authentication...";
+  } else if (message.status === "failed") {
+    title = "Login failed";
+    description =
+      message.errorMessage ?? "Please choose an option below to try again.";
+  } else if (!hasMethods) {
+    title = "Authentication required";
+    description = `${agentDisplay} did not advertise any login method. Run the agent's CLI login in a terminal, then send your message again.`;
+  } else {
+    title = "Authentication required";
+    description = `${agentDisplay} needs you to sign in before continuing. Pick a login method below.`;
+  }
+  const buttonsDisabled =
+    message.status === "in_progress" || message.status === "succeeded";
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-start gap-2">
+        <AlertTriangle className="h-4 w-4 shrink-0 text-[var(--color-warning)] mt-0.5" />
+        <div className="min-w-0 flex-1">
+          <div className="text-sm font-medium text-[var(--color-text)]">
+            {title}
+          </div>
+          <p className="mt-0.5 text-xs text-[var(--color-text-muted)] break-words leading-relaxed">
+            {description}
+          </p>
+        </div>
+      </div>
+      {hasMethods && (
+        <div className="space-y-2">
+          {message.methods.map((method) => {
+            const isActive = method.id === message.activeMethodId;
+            const showSpinner = isActive && message.status === "in_progress";
+            const showCheck = isActive && message.status === "succeeded";
+            return (
+              <button
+                key={method.id}
+                type="button"
+                disabled={buttonsDisabled}
+                onClick={() => onAuthLogin?.(index, method.id)}
+                className="flex w-full items-center justify-between rounded-xl border border-[color-mix(in_srgb,var(--color-warning)_18%,transparent)] bg-[color-mix(in_srgb,var(--color-warning)_7%,transparent)] px-3 py-2.5 text-left transition-colors hover:bg-[color-mix(in_srgb,var(--color-warning)_12%,transparent)] disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-[color-mix(in_srgb,var(--color-warning)_7%,transparent)]"
+              >
+                <span className="flex-1 min-w-0 pr-2">
+                  <span className="block text-sm font-medium text-[var(--color-text)]">
+                    {method.name}
+                  </span>
+                  {method.description && (
+                    <span className="mt-0.5 block text-[11px] text-[var(--color-text-muted)] leading-snug">
+                      {method.description}
+                    </span>
+                  )}
+                </span>
+                {showCheck ? (
+                  <ShieldCheck className="h-4 w-4 shrink-0 text-[var(--color-success)]" />
+                ) : showSpinner ? (
+                  <Loader2 className="h-4 w-4 shrink-0 animate-spin text-[var(--color-warning)]" />
+                ) : (
+                  <ChevronRight className="h-4 w-4 shrink-0 text-[var(--color-warning)]" />
+                )}
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function PermissionCard({
   message,
   onRespond,
