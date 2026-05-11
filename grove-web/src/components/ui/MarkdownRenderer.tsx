@@ -196,7 +196,20 @@ export const MermaidBlock = memo(function MermaidBlock({ code, onPreviewClick }:
     const timer = window.setTimeout(() => {
       let cancelled = false;
       const id = `mermaid-${uniqueId.replace(/:/g, "")}`;
-      mermaid.initialize(getMermaidConfig());
+      // 即使前置 parse + .catch 兜底,异常路径下 mermaid 仍可能在 document.body
+      // 留下 `#d{id}` 或 `#${id}` 临时节点。每次 effect 跑前先扫一遍清掉,
+      // 避免长会话下泄漏堆积。
+      const cleanupStrayNodes = () => {
+        document.getElementById(id)?.remove();
+        document.getElementById(`d${id}`)?.remove();
+      };
+      cleanupStrayNodes();
+      try {
+        mermaid.initialize(getMermaidConfig());
+      } catch (err) {
+        setError(err instanceof Error ? err.message : String(err));
+        return () => { cancelled = true; };
+      }
       // Pre-validate: mermaid.render leaks a `#d{id}` temp container in document.body
       // on parse failure. parse({ suppressErrors: true }) lets us bail before render
       // ever touches the DOM — important during streaming when intermediate code
@@ -219,8 +232,12 @@ export const MermaidBlock = memo(function MermaidBlock({ code, onPreviewClick }:
         })
         .catch((err) => {
           if (!cancelled) setError(err instanceof Error ? err.message : String(err));
-        });
-      return () => { cancelled = true; };
+        })
+        .finally(cleanupStrayNodes);
+      return () => {
+        cancelled = true;
+        cleanupStrayNodes();
+      };
     }, 300);
 
     return () => window.clearTimeout(timer);
