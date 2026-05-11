@@ -16,6 +16,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      - name: Restore Rust cache (read-only)
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: ci-linux-x64-gnu-gui
+          add-job-id-key: false
+          save-if: false
       - uses: pnpm/action-setup@v4
         with:
           version: 9
@@ -49,6 +55,12 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
+      - name: Restore Rust cache (read-only)
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: ci-linux-x64-gnu-gui
+          add-job-id-key: false
+          save-if: false
       - uses: pnpm/action-setup@v4
         with:
           version: 9
