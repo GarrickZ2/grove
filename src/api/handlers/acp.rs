@@ -108,6 +108,8 @@ enum ServerMessage {
         #[serde(skip_serializing_if = "Option::is_none")]
         thought_level_config_id: Option<String>,
         prompt_capabilities: PromptCapabilitiesData,
+        /// agent 是否声明了 `session.fork` 能力 — 前端据此显示 Fork 按钮
+        fork_capable: bool,
     },
     MessageChunk {
         text: String,
@@ -319,6 +321,7 @@ impl From<AcpUpdate> for ServerMessage {
                 current_thought_level_id,
                 thought_level_config_id,
                 prompt_capabilities,
+                fork_capable,
             } => ServerMessage::SessionReady {
                 session_id,
                 agent_name,
@@ -340,6 +343,7 @@ impl From<AcpUpdate> for ServerMessage {
                 current_thought_level_id,
                 thought_level_config_id,
                 prompt_capabilities,
+                fork_capable,
             },
             AcpUpdate::MessageChunk { text } => ServerMessage::MessageChunk { text },
             AcpUpdate::ThoughtChunk { text } => ServerMessage::ThoughtChunk { text },
@@ -620,6 +624,9 @@ async fn handle_acp_ws(socket: WebSocket, session_key: String, config: AcpStartC
                     current_thought_level_id: meta.current_thought_level_id,
                     thought_level_config_id: meta.thought_level_config_id,
                     prompt_capabilities: meta.prompt_capabilities,
+                    fork_capable: handle
+                        .fork_capable
+                        .load(std::sync::atomic::Ordering::Relaxed),
                 }
             })
             .unwrap_or_else(|| {
@@ -638,6 +645,9 @@ async fn handle_acp_ws(socket: WebSocket, session_key: String, config: AcpStartC
                     current_thought_level_id: None,
                     thought_level_config_id: None,
                     prompt_capabilities: PromptCapabilitiesData::default(),
+                    fork_capable: handle
+                        .fork_capable
+                        .load(std::sync::atomic::Ordering::Relaxed),
                 }
             });
         if !auth_pending {
@@ -1117,6 +1127,108 @@ pub async fn delete_chat(
     );
 
     Ok(StatusCode::NO_CONTENT)
+}
+
+/// Fork a chat: 调用 ACP `session/fork` 让 agent 派生新会话,然后在 grove 侧
+/// 创建一个新的 chat 行(同 task,标题加 " (Fork)"),复制 history.jsonl,
+/// 写入 fork 出来的 acp_session_id。新 chat 不立即 spawn 进程 — 用户首次打开
+/// 时走标准 reconnect 路径(fresh agent + load_session(forked_id)),与现有
+/// resume 机制完全一致。
+///
+/// 前置条件:被 fork 的 chat 当前必须有 in-memory ACP handle 在跑(必要条件,
+/// session/fork 是个 RPC,得有人能发);并且 agent 在 init 阶段声明了 fork
+/// capability(`fork_capable=true`),否则 RPC 会被 agent 拒。
+pub async fn fork_chat(
+    Path((project_id, task_id, chat_id)): Path<(String, String, String)>,
+) -> Result<Json<ChatSessionResponse>, AcpError> {
+    let (project_key, _, _) = resolve_project_key(&project_id)?;
+    let _ = tasks::get_task(&project_key, &task_id)
+        .map_err(|e| AcpError::Internal(e.to_string()))?
+        .ok_or(AcpError::NotFound("Task not found".to_string()))?;
+
+    // 拿源 chat 元数据(用于继承 agent / title / duty)
+    let src_chat = tasks::get_chat_session(&project_key, &task_id, &chat_id)
+        .map_err(|e| AcpError::Internal(e.to_string()))?
+        .ok_or(AcpError::NotFound("Source chat not found".to_string()))?;
+
+    // 找到正在跑的 ACP handle — 没跑就没法 fork
+    let session_key = format!("{}:{}:{}", project_key, task_id, chat_id);
+    let handle = acp::get_session_handle(&session_key)
+        .ok_or(AcpError::NotFound("ACP session not running".to_string()))?;
+
+    if !handle
+        .fork_capable
+        .load(std::sync::atomic::Ordering::Relaxed)
+    {
+        return Err(AcpError::Internal(
+            "Agent does not support session/fork".to_string(),
+        ));
+    }
+
+    let cwd = std::path::PathBuf::from(&handle.working_dir);
+    let new_acp_session_id = handle
+        .fork_session(cwd)
+        .await
+        .map_err(|e| AcpError::Internal(e.to_string()))?;
+
+    // 创建新 chat 行
+    let now = chrono::Utc::now();
+    let new_chat = tasks::ChatSession {
+        id: tasks::generate_chat_id(),
+        title: format!("{} (Fork)", src_chat.title),
+        agent: src_chat.agent.clone(),
+        acp_session_id: Some(new_acp_session_id),
+        created_at: now,
+        duty: src_chat.duty.clone(),
+    };
+    tasks::add_chat_session(&project_key, &task_id, new_chat.clone())
+        .map_err(|e| AcpError::Internal(e.to_string()))?;
+
+    // 复制 history.jsonl(失败不致命 — 新 chat 从空历史起步,
+    // 用户首次打开仍能通过 load_session 让 agent 端回放)
+    if let Err(e) =
+        crate::storage::chat_history::copy_history(&project_key, &task_id, &chat_id, &new_chat.id)
+    {
+        eprintln!("[fork_chat] copy_history failed (non-fatal): {}", e);
+    }
+
+    // 同步 copy session.json:usage / mode / model / available_commands 等元数据
+    // 让新 chat 首次打开时 ContextUsagePill / mode-picker 直接展示父 chat 的快照,
+    // 而不是 fallback 到全空。`pid` 字段清零 — 新 chat 还没 spawn 进程,父进程的
+    // pid 不该被任何 owner 检查认成"已上线"。新 agent SessionReady 时会用真 pid
+    // 覆盖整个文件。
+    if let Some(mut meta) =
+        acp::read_session_metadata(&project_key, &task_id, &chat_id)
+    {
+        meta.pid = 0;
+        let dst = acp::session_json_path(&project_key, &task_id, &new_chat.id);
+        if let Some(parent) = dst.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        match serde_json::to_string_pretty(&meta) {
+            Ok(json) => {
+                if let Err(e) = std::fs::write(&dst, json) {
+                    eprintln!("[fork_chat] write session.json failed (non-fatal): {}", e);
+                }
+            }
+            Err(e) => {
+                eprintln!("[fork_chat] serialize session.json failed (non-fatal): {}", e);
+            }
+        }
+    }
+
+    crate::api::handlers::walkie_talkie::broadcast_radio_event(
+        crate::api::handlers::walkie_talkie::RadioEvent::ChatListChanged {
+            project_id: project_id.clone(),
+            task_id: task_id.clone(),
+        },
+    );
+
+    Ok(Json(ChatSessionResponse::build(
+        &project_key,
+        &task_id,
+        &new_chat,
+    )))
 }
 
 /// Store a non-image/audio chat attachment on disk and return an ACP resource_link payload.

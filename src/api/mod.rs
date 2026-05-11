@@ -156,6 +156,11 @@ pub fn create_api_router() -> Router {
             "/projects/{id}/tasks/{taskId}/chats/{chatId}/take-control",
             post(handlers::acp::take_control),
         )
+        // Fork chat (ACP session/fork)
+        .route(
+            "/projects/{id}/tasks/{taskId}/chats/{chatId}/fork",
+            post(handlers::acp::fork_chat),
+        )
         // Projects API
         .route("/projects", get(handlers::projects::list_projects))
         .route("/projects", post(handlers::projects::add_project))

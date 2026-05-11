@@ -707,6 +707,20 @@ export async function remindGraphEdge(
 }
 
 /**
+ * Fork a chat: 调用后端 ACP `session/fork` 派生新会话,返回新 chat 行
+ */
+export async function forkChat(
+  projectId: string,
+  taskId: string,
+  chatId: string
+): Promise<ChatSessionResponse> {
+  return apiClient.post<Record<string, never>, ChatSessionResponse>(
+    `/api/v1/projects/${projectId}/tasks/${taskId}/chats/${chatId}/fork`,
+    {}
+  );
+}
+
+/**
  * Delete a chat
  */
 export async function deleteChat(
@@ -841,6 +855,11 @@ interface SessionMetadata {
   pid: number;
   agent_name: string;
   agent_version: string;
+  current_usage?: {
+    used: number;
+    size: number;
+    cost?: { amount: number; currency: string } | null;
+  } | null;
 }
 
 interface ChatHistoryResponse {

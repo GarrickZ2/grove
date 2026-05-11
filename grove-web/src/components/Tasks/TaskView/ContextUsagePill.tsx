@@ -9,7 +9,7 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "framer-motion";
-import { Brain } from "lucide-react";
+import { Brain, Zap } from "lucide-react";
 
 import { contextHealthColor } from "./quotaColors";
 import { formatTokens } from "../../Stats/formatters";
@@ -24,7 +24,14 @@ interface ContextUsagePillProps {
   usage: ContextUsageData;
   /** Element used to anchor the popover — same pattern as AgentQuotaPopover. */
   anchorRef: RefObject<HTMLElement | null>;
+  /** Agent advertises a `compact` slash command. Required to show the button. */
+  hasCompactCommand?: boolean;
+  /** Click handler — triggers `/compact` on the active chat. */
+  onCompact?: () => void;
 }
+
+/** Show the inline Compact button only once context pressure crosses this. */
+const COMPACT_BUTTON_THRESHOLD = 60;
 
 const POPOVER_GAP = 8;
 const MIN_WIDTH = 240;
@@ -53,7 +60,12 @@ function formatCost(amount: number, currency: string): string {
  * opens a popover with absolute used/size token counts and (when reported)
  * cumulative session cost.
  */
-export function ContextUsagePill({ usage, anchorRef }: ContextUsagePillProps) {
+export function ContextUsagePill({
+  usage,
+  anchorRef,
+  hasCompactCommand = false,
+  onCompact,
+}: ContextUsagePillProps) {
   const percent =
     usage.size > 0
       ? Math.max(0, Math.min(100, Math.round((usage.used / usage.size) * 100)))
@@ -65,6 +77,7 @@ export function ContextUsagePill({ usage, anchorRef }: ContextUsagePillProps) {
   const [open, setOpen] = useState(false);
   const [rect, setRect] = useState<Rect | null>(null);
   const popoverRef = useRef<HTMLDivElement | null>(null);
+  const triggerRef = useRef<HTMLButtonElement | null>(null);
   const triggerHoveredRef = useRef(false);
   const popoverHoveredRef = useRef(false);
   const focusedRef = useRef(false);
@@ -72,12 +85,17 @@ export function ContextUsagePill({ usage, anchorRef }: ContextUsagePillProps) {
   const popoverId = useId();
 
   const recomputePosition = useCallback(() => {
+    const trigger = triggerRef.current;
     const anchor = anchorRef.current;
-    if (!anchor) return;
-    const r = anchor.getBoundingClientRect();
+    if (!trigger) return;
+    // Use the trigger pill for vertical placement so the popover hugs the
+    // pill, but borrow the chatbox container width as a sizing hint when
+    // available — keeps the card readable without stretching across the page.
+    const r = trigger.getBoundingClientRect();
+    const widthHint = anchor?.getBoundingClientRect().width ?? r.width;
     const viewportW = window.innerWidth;
     const available = Math.max(0, viewportW - VIEWPORT_PADDING * 2);
-    const desiredWidth = Math.max(MIN_WIDTH, Math.min(MAX_WIDTH, r.width));
+    const desiredWidth = Math.max(MIN_WIDTH, Math.min(MAX_WIDTH, widthHint));
     const width = Math.min(desiredWidth, available);
 
     const viewportH = window.innerHeight;
@@ -216,6 +234,7 @@ export function ContextUsagePill({ usage, anchorRef }: ContextUsagePillProps) {
       aria-describedby={open ? popoverId : undefined}
     >
       <button
+        ref={triggerRef}
         type="button"
         aria-label={`Context window: ${percent}% used (${formatTokens(
           usage.used,
@@ -267,6 +286,12 @@ export function ContextUsagePill({ usage, anchorRef }: ContextUsagePillProps) {
                   usage={usage}
                   percent={percent}
                   color={color}
+                  showCompact={
+                    hasCompactCommand &&
+                    !!onCompact &&
+                    percent >= COMPACT_BUTTON_THRESHOLD
+                  }
+                  onCompact={onCompact}
                 />
               </motion.div>
             )}
@@ -281,10 +306,14 @@ function ContextUsageCard({
   usage,
   percent,
   color,
+  showCompact,
+  onCompact,
 }: {
   usage: ContextUsageData;
   percent: number;
   color: string;
+  showCompact: boolean;
+  onCompact?: () => void;
 }) {
   return (
     <div
@@ -347,6 +376,24 @@ function ContextUsageCard({
           </div>
         )}
       </div>
+
+      {showCompact && onCompact && (
+        <button
+          type="button"
+          onClick={onCompact}
+          aria-label="Compact context window — sends /compact"
+          title="Sends /compact to the agent"
+          className="mt-3 flex w-full items-center justify-center gap-1.5 rounded-full border px-2 py-1.5 text-[11px] font-semibold transition-opacity hover:opacity-80"
+          style={{
+            color,
+            backgroundColor: `color-mix(in srgb, ${color} 12%, transparent)`,
+            borderColor: `color-mix(in srgb, ${color} 40%, transparent)`,
+          }}
+        >
+          <Zap size={12} />
+          Compact context
+        </button>
+      )}
     </div>
   );
 }

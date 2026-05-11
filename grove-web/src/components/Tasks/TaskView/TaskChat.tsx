@@ -32,6 +32,7 @@ import {
   Plus,
   ListPlus,
   Trash2,
+  GitFork,
   Pencil,
   Square,
   Paperclip,
@@ -111,6 +112,7 @@ import {
   createChat,
   updateChatTitle,
   deleteChat,
+  forkChat,
   uploadChatAttachment,
   getTaskFiles,
   getChatHistory,
@@ -385,6 +387,9 @@ interface PerChatState {
   agentLabel: string;
   agentIcon: React.ComponentType<{ size?: number; className?: string }> | null;
   promptCaps: PromptCaps;
+  /** Agent 是否声明 ACP `session/fork` 能力(`unstable_session_fork`)。
+   * true → 在 chat 菜单的当前 chat 行显示 Fork 按钮。 */
+  forkCapable: boolean;
   planFilePath: string;
   planFileContent: string;
   isRemoteSession: boolean;
@@ -422,6 +427,7 @@ function defaultPerChatState(): PerChatState {
     isRemoteSession: false,
     remoteOwnerName: "",
     promptCaps: { image: false, audio: false, embeddedContext: false },
+    forkCapable: false,
     planFilePath: "",
     planFileContent: "",
     draftHtml: "",
@@ -1650,6 +1656,7 @@ export function TaskChat({
     audio: false,
     embeddedContext: false,
   });
+  const [forkCapable, setForkCapable] = useState(false);
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const attachCountersRef = useRef<AttachmentCounters>({ image: 0, audio: 0, resource: 0 });
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -2416,6 +2423,7 @@ export function TaskChat({
       agentLabel,
       agentIcon: AgentIcon,
       promptCaps,
+      forkCapable,
       planFilePath,
       planFileContent,
       isRemoteSession,
@@ -2442,6 +2450,7 @@ export function TaskChat({
     agentLabel,
     AgentIcon,
     promptCaps,
+    forkCapable,
     planFilePath,
     planFileContent,
     isRemoteSession,
@@ -2469,6 +2478,10 @@ export function TaskChat({
       setAgentLabel(cached.agentLabel);
       if (cached.agentIcon) setAgentIcon(() => cached.agentIcon);
       setPromptCaps(cached.promptCaps);
+      // 不从 cache 恢复 forkCapable:cache 是 chat 切换前的快照,可能 stale
+      // (agent 升级 / 能力被关掉)。等 SessionReady / snapshot 到达由 live
+      // 信号刷新;在那之前先按"未知 → 隐藏"处理,避免误显示按钮。
+      setForkCapable(false);
       setPlanFilePath(cached.planFilePath);
       setPlanFileContent(cached.planFileContent);
       planFilePathRef.current = cached.planFilePath;
@@ -2495,6 +2508,7 @@ export function TaskChat({
       setConnectPhaseStartedAt(null);
       setIsTerminalMode(false);
       setPromptCaps({ image: false, audio: false, embeddedContext: false });
+      setForkCapable(false);
       setPlanFilePath("");
       setPlanFileContent("");
       planFilePathRef.current = "";
@@ -2831,6 +2845,7 @@ export function TaskChat({
                     evt.prompt_capabilities.embedded_context ?? false,
                 });
               }
+              setForkCapable(!!evt.fork_capable);
               break;
             case "thought_levels_update":
               setThoughtLevelOptions(
@@ -2884,6 +2899,26 @@ export function TaskChat({
                 setConnectPhaseStartedAt(null);
               }
               break;
+          }
+        }
+        // Hydrate context window from session.json snapshot when no live
+        // usage_update was buffered. Covers chat-switch back to a chat whose
+        // WS is already in wsMapRef — backend only auto-pushes UsageUpdate on
+        // first attach, so without this the pill stays stale/blank.
+        const hadUsageEvent = buffered.some((e) => e.type === "usage_update");
+        if (!hadUsageEvent) {
+          const snap = res.session?.current_usage;
+          if (snap) {
+            setContextUsage({
+              used: Number(snap.used) || 0,
+              size: Number(snap.size) || 0,
+              cost: snap.cost
+                ? {
+                    amount: Number(snap.cost.amount) || 0,
+                    currency: String(snap.cost.currency ?? ""),
+                  }
+                : null,
+            });
           }
         }
       }
@@ -3000,6 +3035,7 @@ export function TaskChat({
                 msg.prompt_capabilities.embedded_context ?? false,
             });
           }
+          setForkCapable(!!msg.fork_capable);
           break;
         case "message_chunk":
           // Auto-close the current tool section (one-time)
@@ -3152,13 +3188,14 @@ export function TaskChat({
           break;
         }
         case "auth_succeeded": {
+          // 把所有 idle / in_progress 的 auth_required 都标 succeeded。
+          // 之前的 `i === prev.length-1` 兜底在尾部不是 auth 时静默漏掉,
+          // 导致登录已成功但 banner 仍以 idle 残留。
           setMessages((prev) =>
-            prev.map((m, i) =>
-              i === prev.length - 1 ||
-              (m.type === "auth_required" && m.status === "in_progress")
-                ? m.type === "auth_required"
-                  ? { ...m, status: "succeeded" }
-                  : m
+            prev.map((m) =>
+              m.type === "auth_required" &&
+              (m.status === "idle" || m.status === "in_progress")
+                ? { ...m, status: "succeeded" }
                 : m,
             ),
           );
@@ -3317,6 +3354,7 @@ export function TaskChat({
                 msg.prompt_capabilities.embedded_context ?? false,
             };
           }
+          state.forkCapable = !!msg.fork_capable;
           break;
         case "thought_levels_update":
           state.thoughtLevelOptions = (msg.available ?? []).map(
@@ -3573,6 +3611,34 @@ export function TaskChat({
       setShowChatMenu(false);
     },
     [chats.length, projectId, task.id, activeChatId, restoreChatState, setActiveChatId],
+  );
+
+  // ─── Chat fork ─────────────────────────────────────────────────────────
+
+  /** 调用 ACP `session/fork` 派生新 chat:成功后切到新 chat,新 chat 会通过
+   * 标准 reconnect 路径 + load_session(forked_id) 把对话上下文复活。 */
+  const handleForkChat = useCallback(
+    async (chatId: string) => {
+      try {
+        const created = await forkChat(projectId, task.id, chatId);
+        setChats((prev) => [...prev, created]);
+        setActiveChatId(created.id);
+        writeLastActiveTab("chat", projectId, task.id, created.id);
+        restoreChatState(created.id);
+      } catch (err) {
+        // Fork 通常因 source agent 进程已退出 / agent busy / agent 拒绝
+        // 而失败。把错误以 system 消息推到当前 chat 让用户能看到 — 之前
+        // 只 console.error,UI 上完全无反馈。
+        const message = err instanceof Error ? err.message : String(err);
+        console.error("Failed to fork chat:", err);
+        setMessages((prev) => [
+          ...prev,
+          { type: "system", content: `Fork failed: ${message}` },
+        ]);
+      }
+      setShowChatMenu(false);
+    },
+    [projectId, task.id, restoreChatState, setActiveChatId],
   );
 
   // ─── User actions ────────────────────────────────────────────────────────
@@ -4054,6 +4120,42 @@ export function TaskChat({
     onUserMessageSent,
     updateBusy,
   ]);
+
+  const handleCompact = useCallback(() => {
+    if (
+      !activeChatId ||
+      !wsRef.current ||
+      wsRef.current.readyState !== WebSocket.OPEN ||
+      isTerminalMode
+    ) {
+      return;
+    }
+    enableAutoStickToBottom("auto");
+    wsRef.current.send(
+      JSON.stringify({
+        type: isBusy ? "queue_message" : "prompt",
+        text: "/compact",
+        attachments: [],
+      }),
+    );
+    setShowSlashMenu(false);
+    setShowFileMenu(false);
+    setShowPendingQueue(isBusy);
+    if (!isBusy) updateBusy(true);
+    onUserMessageSent?.();
+  }, [
+    activeChatId,
+    enableAutoStickToBottom,
+    isBusy,
+    isTerminalMode,
+    onUserMessageSent,
+    updateBusy,
+  ]);
+
+  const hasCompactCommand = useMemo(
+    () => slashCommands.some((c) => c.name === "compact"),
+    [slashCommands],
+  );
 
   /** Cancel current agent work — server auto-sends next queued message after Complete */
   const handleSendNow = useCallback(() => {
@@ -5202,8 +5304,30 @@ export function TaskChat({
                   title="New Session"
                 >
                   <Plus className="w-3.5 h-3.5" />
+                  <span>New</span>
                 </button>
               </div>
+              {/* Fork 只在 source agent live 且当前空闲、不在登录中时允许。
+                  disabled 而不是隐藏:让用户知道按钮存在,只是当下不能用。 */}
+              {forkCapable && activeChat && (
+                <button
+                  onClick={() => handleForkChat(activeChat.id)}
+                  disabled={!isConnected || isBusy || !!activeAuthMessage}
+                  className="flex shrink-0 items-center gap-1 rounded px-1.5 py-0.5 text-xs text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-bg-tertiary)] hover:text-[var(--color-highlight)] disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-[var(--color-text-muted)]"
+                  title={
+                    !isConnected
+                      ? "Fork unavailable: source session not connected"
+                      : isBusy
+                        ? "Fork unavailable while agent is responding"
+                        : activeAuthMessage
+                          ? "Fork unavailable: finish login first"
+                          : "Fork Session — derive a new session from the current chat, copy the conversation history"
+                  }
+                >
+                  <GitFork className="w-3.5 h-3.5" />
+                  <span>Fork</span>
+                </button>
+              )}
             </div>
 
             <div className="flex shrink-0 items-center gap-1.5 select-none">
@@ -5317,17 +5441,38 @@ export function TaskChat({
 
             <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-none p-1.5">
               <div className="space-y-1">
-                <div className="relative" ref={sidebarAgentPickerRef}>
-                  <button
-                    onClick={(e) => toggleAgentPicker(e.currentTarget)}
-                    className="flex w-full items-center gap-2 rounded-md border border-dashed border-[color-mix(in_srgb,var(--color-highlight)_34%,transparent)] bg-transparent px-1.5 py-1 text-[12px] text-[var(--color-highlight)] transition-colors hover:bg-[color-mix(in_srgb,var(--color-bg-secondary)_72%,transparent)]"
-                    title="New Session"
-                  >
-                    <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-sm border border-dashed border-[color-mix(in_srgb,var(--color-highlight)_34%,transparent)] text-[var(--color-highlight)]">
-                      <Plus className="h-3 w-3" />
-                    </div>
-                    <span className="font-medium">New Session</span>
-                  </button>
+                <div className="flex items-stretch gap-1">
+                  <div className="relative flex-1" ref={sidebarAgentPickerRef}>
+                    <button
+                      onClick={(e) => toggleAgentPicker(e.currentTarget)}
+                      className="flex w-full items-center gap-2 rounded-md border border-dashed border-[color-mix(in_srgb,var(--color-highlight)_34%,transparent)] bg-transparent px-1.5 py-1 text-[12px] text-[var(--color-highlight)] transition-colors hover:bg-[color-mix(in_srgb,var(--color-bg-secondary)_72%,transparent)]"
+                      title="New Session"
+                    >
+                      <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-sm border border-dashed border-[color-mix(in_srgb,var(--color-highlight)_34%,transparent)] text-[var(--color-highlight)]">
+                        <Plus className="h-3 w-3" />
+                      </div>
+                      <span className="font-medium">New Session</span>
+                    </button>
+                  </div>
+                  {forkCapable && activeChat && (
+                    <button
+                      onClick={() => handleForkChat(activeChat.id)}
+                      disabled={!isConnected || isBusy || !!activeAuthMessage}
+                      className="flex shrink-0 items-center gap-1.5 rounded-md border border-dashed border-[color-mix(in_srgb,var(--color-border)_72%,transparent)] bg-transparent px-2 text-[12px] text-[var(--color-text-muted)] transition-colors hover:border-[color-mix(in_srgb,var(--color-highlight)_34%,transparent)] hover:text-[var(--color-highlight)] disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:border-[color-mix(in_srgb,var(--color-border)_72%,transparent)] disabled:hover:text-[var(--color-text-muted)]"
+                      title={
+                        !isConnected
+                          ? "Fork unavailable: source session not connected"
+                          : isBusy
+                            ? "Fork unavailable while agent is responding"
+                            : activeAuthMessage
+                              ? "Fork unavailable: finish login first"
+                              : "Fork Session — derive a new session from the current chat, copy the conversation history"
+                      }
+                    >
+                      <GitFork className="h-3 w-3" />
+                      <span>Fork</span>
+                    </button>
+                  )}
                 </div>
                 {orderedChats.map((chat) => {
                   const ChatIcon = getChatIcon(chat.agent);
@@ -5947,6 +6092,8 @@ export function TaskChat({
                         <ContextUsagePill
                           usage={contextUsage}
                           anchorRef={chatboxContainerRef}
+                          hasCompactCommand={hasCompactCommand}
+                          onCompact={handleCompact}
                         />
                       )}
                     </div>

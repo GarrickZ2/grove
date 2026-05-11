@@ -99,6 +99,9 @@ pub struct AcpSessionHandle {
     /// 因 `AuthRequired` 错误暂存待重试的 prompt(text, attachments, sender, terminal)。
     /// authenticate 成功后 outer command loop 会把它再丢回 cmd_tx。
     pending_auth_retry: Mutex<Option<PendingPromptRetry>>,
+    /// agent 是否在 initialize 响应里声明了 `session.fork` 能力
+    /// (`unstable_session_fork`)。前端据此显示/隐藏 Fork 按钮。
+    pub fork_capable: std::sync::atomic::AtomicBool,
     /// session/new 阶段被 -32000 卡住后,记录当前 banner 状态(methods + agent_name)。
     /// 用途:WS 重连时,如果还没登录成功,跳过假的 SessionReady,改发 AuthRequired
     /// 让前端继续显示 banner;避免"刷新后看起来连上了但消息发不出去"。
@@ -145,6 +148,12 @@ enum AcpCommand {
     Authenticate {
         method_id: String,
     },
+    /// 调用 ACP `session/fork`(`unstable_session_fork`),要求 agent 基于当前
+    /// session 派生一个新的会话副本。reply 回传 fork 后的 acp session_id。
+    ForkSession {
+        cwd: PathBuf,
+        reply: tokio::sync::oneshot::Sender<std::result::Result<String, String>>,
+    },
 }
 
 /// 从 agent 接收的流式更新
@@ -172,6 +181,10 @@ pub enum AcpUpdate {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         thought_level_config_id: Option<String>,
         prompt_capabilities: PromptCapabilitiesData,
+        /// agent 在 initialize 响应里是否声明了 `session.fork` capability
+        /// (`unstable_session_fork`)。老 history.jsonl 没这个字段时反序列化为 false。
+        #[serde(default)]
+        fork_capable: bool,
     },
     /// Agent 消息文本片段
     MessageChunk { text: String },
@@ -1532,6 +1545,7 @@ pub async fn get_or_start_session(
                     auth_methods: Mutex::new(Vec::new()),
                     pending_auth_retry: Mutex::new(None),
                     pending_auth: Mutex::new(None),
+                    fork_capable: std::sync::atomic::AtomicBool::new(false),
                 });
 
                 // 注册到全局表
@@ -2128,6 +2142,20 @@ async fn drive_session(
     let is_trae = config.agent_command.contains("trae");
     let supports_load = init_resp.agent_capabilities.load_session || is_trae;
 
+    // Fork 能力(`unstable_session_fork`):agent 在 capabilities 里声明 fork=Some(_)
+    // 表示支持 `session/fork`。同时 grove 的 fork 实现依赖 load_session — 派生
+    // 出的新 chat 用户首次打开时走的是 fresh process + load_session(forked_id),
+    // 没有 load_session 就复活不了。两者必须同时具备,Fork 按钮才显示。
+    let fork_capable = init_resp
+        .agent_capabilities
+        .session_capabilities
+        .fork
+        .is_some()
+        && supports_load;
+    handle
+        .fork_capable
+        .store(fork_capable, std::sync::atomic::Ordering::Relaxed);
+
     // 查找保存的 session_id(从 chat session 读取)
     let saved_id = config.chat_id.as_ref().and_then(|cid| {
         crate::storage::tasks::get_chat_session(&config.project_key, &config.task_id, cid)
@@ -2156,13 +2184,18 @@ async fn drive_session(
     let thought_level_config_id;
 
     macro_rules! create_new_session {
-        () => {{
-            if let Some(ref cid) = config.chat_id {
-                crate::storage::chat_history::clear_history(
-                    &config.project_key,
-                    &config.task_id,
-                    cid,
-                );
+        ($preserve_history:expr) => {{
+            // 仅在"明确从零起步"时才清 history.jsonl。Resume / Fork 场景下
+            // load_session 失败 fall-through 到 fresh session 时,磁盘上的
+            // 历史是用户的对话记录,agent 忘了不代表用户也得忘 — 保留。
+            if !$preserve_history {
+                if let Some(ref cid) = config.chat_id {
+                    crate::storage::chat_history::clear_history(
+                        &config.project_key,
+                        &config.task_id,
+                        cid,
+                    );
+                }
             }
             let mcp_servers =
                 build_mcp_servers(&config.env_vars, agent_graph_token).map_err(to_acp_err)?;
@@ -2408,10 +2441,21 @@ async fn drive_session(
                 ) = extract_thought_level(resp.config_options.as_deref().unwrap_or(&[]));
                 saved_id
             }
-            Err(_) => create_new_session!(),
+            Err(load_err) => {
+                // Agent 不认识 saved_id(典型场景:fork 出来的 chat 首次打开
+                // 但 agent 进程已重启;或 session 过期)。告诉用户,然后起一个
+                // 全新 session — 但保留磁盘 history,用户仍能看到之前的对话。
+                handle.emit(AcpUpdate::Error {
+                    message: format!(
+                        "Resume session failed; starting fresh agent context. Prior history preserved on disk. ({})",
+                        load_err
+                    ),
+                });
+                create_new_session!(true)
+            }
         }
     } else {
-        create_new_session!()
+        create_new_session!(false)
     };
 
     let session_id_arc = acp::SessionId::new(&*session_id);
@@ -2450,6 +2494,7 @@ async fn drive_session(
         current_thought_level_id,
         thought_level_config_id,
         prompt_capabilities,
+        fork_capable,
     });
 
     // 处理命令循环
@@ -2570,6 +2615,14 @@ async fn drive_session(
                                     // 之后由用户点登录触发,此时 prompt_fut 不可能
                                     // 在飞 — 但 channel 是共享的,容错性 drop 掉。
                                 }
+                                AcpCommand::ForkSession { reply, .. } => {
+                                    // Agent busy 期间 fork 风险较大(spec 未规定 agent
+                                    // 必须支持 in-flight fork);拒绝并让前端把按钮 disable
+                                    // 直到 turn 结束。reply 是 oneshot,drop 不丢。
+                                    let _ = reply.send(Err(
+                                        "Cannot fork while agent is busy".to_string(),
+                                    ));
+                                }
                             }
                         }
                     }
@@ -2585,6 +2638,16 @@ async fn drive_session(
 
                 match result {
                     Ok(resp) => {
+                        // Prompt 成功 = agent 当前认账户已登录,任何 stale 的
+                        // pending_auth(用户在 grove 外部完成登录后回来)清掉,
+                        // 否则 WS 重连仍会重发假 banner。pending_auth_retry 同理 —
+                        // 已经成功过了不再需要回放。
+                        if let Ok(mut slot) = handle.pending_auth.lock() {
+                            *slot = None;
+                        }
+                        if let Ok(mut slot) = handle.pending_auth_retry.lock() {
+                            *slot = None;
+                        }
                         if next_prompt.is_none() {
                             let summary = handle
                                 .last_assistant_text
@@ -2798,14 +2861,10 @@ async fn drive_session(
                                         }
                                     }
                                     Err(e) => {
-                                        // 登录失败 — 清暂存 prompt,告诉用户;banner
-                                        // 仍在,用户可换一种再点。pending_auth 不清,
-                                        // 刷新仍能看到 banner。
-                                        if let Ok(mut slot) =
-                                            handle.pending_auth_retry.lock()
-                                        {
-                                            *slot = None;
-                                        }
+                                        // 登录失败 — 告诉用户,banner 仍在,可换一种
+                                        // 方法再点。pending_auth_retry 保留:用户二次
+                                        // 成功时仍要重发原 prompt。pending_auth 也不清,
+                                        // 刷新页面仍能看到 banner。
                                         handle.emit(AcpUpdate::Error {
                                             message: format!(
                                                 "Authentication failed: {}",
@@ -2833,6 +2892,20 @@ async fn drive_session(
                         }
                     }
                 }
+            }
+            AcpCommand::ForkSession { cwd, reply } => {
+                // Agent 必须声明 fork capability;否则 send_request 会被 agent
+                // 直接拒绝。这里不再二次校验,直接发出 — 失败会通过 reply 透传
+                // 给上层(API handler 把错误传回前端)。
+                let res = conn
+                    .send_request(acp::ForkSessionRequest::new(session_id_arc.clone(), cwd))
+                    .block_task()
+                    .await;
+                let outcome = match res {
+                    Ok(resp) => Ok(resp.session_id.to_string()),
+                    Err(e) => Err(format!("session/fork failed: {}", e)),
+                };
+                let _ = reply.send(outcome);
             }
             AcpCommand::Kill => {
                 break;
@@ -3404,6 +3477,27 @@ impl AcpSessionHandle {
         Ok(())
     }
 
+    /// 通过 ACP `session/fork` 派生新会话(`unstable_session_fork`)。
+    /// 成功返回 fork 后的 acp session_id;调用方据此创建新 chat 行,
+    /// 用户首次打开新 chat 时走 `load_session(new_id)` 复活。
+    pub async fn fork_session(&self, cwd: PathBuf) -> crate::error::Result<String> {
+        let (reply_tx, reply_rx) = tokio::sync::oneshot::channel();
+        self.cmd_tx
+            .send(AcpCommand::ForkSession {
+                cwd,
+                reply: reply_tx,
+            })
+            .await
+            .map_err(|_| crate::error::GroveError::Session("ACP session closed".to_string()))?;
+        match reply_rx.await {
+            Ok(Ok(sid)) => Ok(sid),
+            Ok(Err(msg)) => Err(crate::error::GroveError::Session(msg)),
+            Err(_) => Err(crate::error::GroveError::Session(
+                "Fork request was dropped by ACP loop".to_string(),
+            )),
+        }
+    }
+
     /// 订阅更新流
     pub fn subscribe(&self) -> broadcast::Receiver<AcpUpdate> {
         self.update_tx.subscribe()
@@ -3717,6 +3811,7 @@ pub fn new_handle_for_test(
         auth_methods: Mutex::new(Vec::new()),
         pending_auth_retry: Mutex::new(None),
         pending_auth: Mutex::new(None),
+        fork_capable: std::sync::atomic::AtomicBool::new(false),
     });
 
     if let Ok(mut sessions) = ACP_SESSIONS.write() {

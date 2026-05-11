@@ -71,6 +71,7 @@ export {
   remindGraphEdge,
   getMentionCandidates,
   deleteChat,
+  forkChat,
   uploadChatAttachment,
   getChatHistory,
   takeControl,

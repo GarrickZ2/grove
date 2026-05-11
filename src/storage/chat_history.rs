@@ -284,6 +284,27 @@ pub fn unresolved_permission_ids(history: &[AcpUpdate]) -> Vec<String> {
     unresolved
 }
 
+/// 把一个 chat 的 history.jsonl 完整复制到另一个 chat 目录（fork 场景）。
+/// 源不存在时静默成功 — 老 chat 还没产生过持久化事件即可 fork,新 chat
+/// 直接以空 history 起步。
+pub fn copy_history(
+    project: &str,
+    task_id: &str,
+    src_chat_id: &str,
+    dst_chat_id: &str,
+) -> std::io::Result<()> {
+    let src = history_file_path(project, task_id, src_chat_id);
+    if !src.exists() {
+        return Ok(());
+    }
+    let dst = history_file_path(project, task_id, dst_chat_id);
+    if let Some(parent) = dst.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    fs::copy(&src, &dst)?;
+    Ok(())
+}
+
 /// 清空 chat 历史文件（新 session 时调用）
 pub fn clear_history(project: &str, task_id: &str, chat_id: &str) {
     let path = history_file_path(project, task_id, chat_id);
