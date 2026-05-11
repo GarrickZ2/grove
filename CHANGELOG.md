@@ -5,6 +5,28 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.7] - 2026-05-11
+
+### Added
+
+- **Add Project from Git** — New "From Git" tab in the Add Project dialog clones a remote repo into `~/.grove/cloned/<name>` via `POST /api/v1/projects/clone`. Async clone with 5-minute timeout, `GIT_TERMINAL_PROMPT=0`, and cleanup on failure.
+- **ACP session fork** — When the agent advertises `unstable_session_fork` + `load_session`, a Fork button on the chat header and sidebar branches the live session into a new chat with copied history and usage parity. Buttons gate on `isConnected && !isBusy && !activeAuthMessage` with descriptive disabled titles.
+- **In-chatbox ACP login panel** — ACP `-32000 AuthRequired` from `session/new` or `session/prompt` surfaces the agent's advertised auth methods as a sticky panel above the composer; click → authenticate → retry. WS reconnect mid-login re-emits AuthRequired instead of faking SessionReady.
+- **Mobile localhost mode + custom passkey** — `grove mobile --private` binds to 127.0.0.1; `--passkey <key>` lets users supply their own HMAC key (≥16 chars, mixed letters+digits). Auto-generated keys print a banner pointing to `--passkey` for stability.
+
+### Improved
+
+- **API surface hardened against cross-origin abuse** — New CSRF middleware (Sec-Fetch-Site / Origin / Referer) wraps the entire `/api/v1` surface so random tabs can't reach the unauthenticated localhost API while `grove web` runs.
+- **Git clone option-injection defenses** — Reject clone URLs starting with `-` and pass `--` end-of-options to `git clone`, closing the `--upload-pack=…` RCE class. Repo-name validation rejects `.`, `..`, slashes, NUL, and control chars; inferred-name heuristic rejects URLs without a repo path.
+- **ACP auth-flow correctness** — `load_session` failure now emits an Error and preserves history instead of silently wiping the transcript on fresh-process fork open. Successful prompt clears stale `pending_auth` / `pending_auth_retry`; authenticate failure preserves the retry snapshot; `auth_succeeded` reducer matches all idle/in-progress auth rows instead of a fragile last-index fallback.
+- **Release CI cache aligned with `ci.yml`** — Unified cache keys (`release-*` → `ci-*`) so release jobs fall back to master scope; `save-if: false` on tag-scoped rust-cache steps stops burning the 10GB quota writing dead-on-arrival caches; release frontend install switched to `--frozen-lockfile` to match `ci.yml`.
+
+### Fixed
+
+- **Mermaid container leak during streaming** — `mermaid.render` left `#d{id}` temp containers in `document.body` when input failed to parse (constant during streaming). Pre-validate with `mermaid.parse({ suppressErrors: true })` and only call render after it returns truthy. Wrap `mermaid.initialize` in try/catch (it can throw on bad theme config) and sweep `#${id}` / `#d${id}` on init, in `.finally`, and on effect cleanup.
+- **Long list items overflow** — Add `break-words` to `<li>` so long URLs / paths in lists stop overflowing the container.
+- **`AddProjectDialog` form leak** — Reset all fields on reopen (previously leaked `gitUrl` / `gitName`); disable the close button while a clone/create is in flight.
+
 ## [0.10.6] - 2026-05-08
 
 ### Added
