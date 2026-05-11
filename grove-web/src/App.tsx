@@ -21,6 +21,7 @@ import { HelpOverlay } from "./components/Tasks/HelpOverlay";
 import { SkillsPage } from "./components/Skills";
 import { AIPage, GlobalAudioRecorder } from "./components/AI";
 import { ProjectStatsPage } from "./components/Stats/ProjectStatsPage";
+import { BoardsPage } from "./components/Boards";
 import { UpdateBanner } from "./components/ui/UpdateBanner";
 import { CommandPalette } from "./components/ui/CommandPalette";
 import { ProjectCommandPalette } from "./components/ui/ProjectCommandPalette";
@@ -677,6 +678,8 @@ function AppContent() {
         return <SkillsPage />;
       case "ai":
         return <AIPage />;
+      case "boards":
+        return <BoardsPage />;
       case "statistics":
         return <ProjectStatsPage projectId={selectedProject?.id} />;
       case "settings":
@@ -705,7 +708,8 @@ function AppContent() {
     activeItem === "skills" ||
     activeItem === "ai" ||
     activeItem === "resource" ||
-    activeItem === "statistics";
+    activeItem === "statistics" ||
+    activeItem === "boards";
 
   const sidebarProps = {
     activeItem,

@@ -1,0 +1,1 @@
+export { BoardsPage } from "./BoardsPage";
