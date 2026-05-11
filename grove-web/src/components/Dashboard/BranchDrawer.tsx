@@ -1242,7 +1242,11 @@ function RemoteBranchItem({
             >
               <button
                 onClick={() => {
-                  onCheckout(branch);
+                  // Strip "<remote>/" prefix so `git checkout <name>` DWIMs
+                  // a local tracking branch instead of detaching HEAD.
+                  const slash = branch.name.indexOf("/");
+                  const localName = slash >= 0 ? branch.name.slice(slash + 1) : branch.name;
+                  onCheckout({ ...branch, name: localName });
                   onClose();
                 }}
                 className="w-full flex items-center gap-2 px-3 py-2 text-sm text-white bg-[var(--color-highlight)] hover:opacity-90 rounded-lg transition-colors"

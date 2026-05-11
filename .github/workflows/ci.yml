@@ -12,14 +12,16 @@ env:
 jobs:
   check:
     name: Check
-    runs-on: ubuntu-latest
+    runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
       - name: Restore Rust cache (read-only)
         uses: Swatinem/rust-cache@v2
         with:
-          key: ci-linux-x64-gnu-gui
+          key: macos-arm-gui
           add-job-id-key: false
           save-if: false
       - uses: pnpm/action-setup@v4
@@ -35,7 +37,7 @@ jobs:
           pnpm install --frozen-lockfile
           pnpm run build
         working-directory: grove-web
-      - run: cargo check
+      - run: cargo check --release --target aarch64-apple-darwin --features gui
 
   fmt:
     name: Format
@@ -49,16 +51,17 @@ jobs:
 
   clippy:
     name: Clippy
-    runs-on: ubuntu-latest
+    runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
+          targets: aarch64-apple-darwin
       - name: Restore Rust cache (read-only)
         uses: Swatinem/rust-cache@v2
         with:
-          key: ci-linux-x64-gnu-gui
+          key: macos-arm-gui
           add-job-id-key: false
           save-if: false
       - uses: pnpm/action-setup@v4
@@ -74,7 +77,7 @@ jobs:
           pnpm install --frozen-lockfile
           pnpm run build
         working-directory: grove-web
-      - run: cargo clippy -- -D warnings
+      - run: cargo clippy --release --target aarch64-apple-darwin --features gui -- -D warnings
 
   eslint:
     name: ESLint
