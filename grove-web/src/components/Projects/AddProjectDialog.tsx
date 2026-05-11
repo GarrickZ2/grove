@@ -1,18 +1,20 @@
 import { useState, useRef, useEffect } from "react";
 import { motion } from "framer-motion";
-import { X, Plus, FolderOpen, GitBranch, Sparkles, Code2 } from "lucide-react";
+import { X, Plus, FolderOpen, GitBranch, Sparkles, Code2, Globe } from "lucide-react";
 import { Button } from "../ui";
 import { DialogShell } from "../ui/DialogShell";
 import { useIsMobile } from "../../hooks";
+import { apiClient } from "../../api/client";
 
 type ProjectMode = "coding" | "studio";
-type CodingTab = "existing" | "new";
+type CodingTab = "existing" | "new" | "git";
 
 interface AddProjectDialogProps {
   isOpen: boolean;
   onClose: () => void;
   onAdd: (path: string, name?: string) => void | Promise<void>;
   onCreateNew: (parentDir: string, name: string, initGit: boolean, projectType?: string) => void | Promise<void>;
+  onClone: (url: string, name?: string) => void | Promise<void>;
   isLoading?: boolean;
   externalError?: string | null;
   initialMode?: ProjectMode;
@@ -23,6 +25,7 @@ export function AddProjectDialog({
   onClose,
   onAdd,
   onCreateNew,
+  onClone,
   isLoading,
   externalError,
   initialMode = "coding",
@@ -30,8 +33,11 @@ export function AddProjectDialog({
   const [mode, setMode] = useState<ProjectMode>(initialMode);
   const [codingTab, setCodingTab] = useState<CodingTab>("existing");
 
-  // Existing-tab state
+  // Existing-tab state. `existingNameTouched` flips to true once the user
+  // edits the name field; until then, we keep auto-syncing it from the path.
   const [path, setPath] = useState("");
+  const [existingName, setExistingName] = useState("");
+  const [existingNameTouched, setExistingNameTouched] = useState(false);
 
   // New-tab state
   const [parentDir, setParentDir] = useState("");
@@ -40,6 +46,11 @@ export function AddProjectDialog({
 
   // Studio-tab state
   const [studioName, setStudioName] = useState("");
+
+  // Git clone tab state. Same touched-pattern as existing tab.
+  const [gitUrl, setGitUrl] = useState("");
+  const [gitName, setGitName] = useState("");
+  const [gitNameTouched, setGitNameTouched] = useState(false);
 
   const [error, setError] = useState("");
   const { isMobile } = useIsMobile();
@@ -51,6 +62,16 @@ export function AddProjectDialog({
     if (isOpen && !prevIsOpenRef.current) {
       setMode(initialMode);
       setCodingTab("existing");
+      setPath("");
+      setExistingName("");
+      setExistingNameTouched(false);
+      setParentDir("");
+      setName("");
+      setInitGit(true);
+      setStudioName("");
+      setGitUrl("");
+      setGitName("");
+      setGitNameTouched(false);
       setError("");
     }
     prevIsOpenRef.current = isOpen;
@@ -68,10 +89,15 @@ export function AddProjectDialog({
     setMode(initialMode);
     setCodingTab("existing");
     setPath("");
+    setExistingName("");
+    setExistingNameTouched(false);
     setParentDir("");
     setName("");
     setInitGit(true);
     setStudioName("");
+    setGitUrl("");
+    setGitName("");
+    setGitNameTouched(false);
     setError("");
     onClose();
   };
@@ -85,15 +111,32 @@ export function AddProjectDialog({
   }, [initialMode, isOpen]);
   /* eslint-enable react-hooks/set-state-in-effect */
 
+  // Auto-derive a project name from a filesystem path (last segment).
+  const deriveNameFromPath = (p: string): string => {
+    const trimmed = p.trim().replace(/\/+$/, "");
+    if (!trimmed) return "";
+    const parts = trimmed.split("/");
+    return parts[parts.length - 1] ?? "";
+  };
+
+  // Auto-derive a project name from a git URL — mirrors backend infer_repo_name.
+  const deriveNameFromGitUrl = (u: string): string => {
+    const trimmed = u.trim().replace(/\/+$/, "");
+    if (!trimmed) return "";
+    const last = trimmed.split(/[/:]/).pop() ?? trimmed;
+    return last.replace(/\.git$/, "");
+  };
+
+  const displayedExistingName = existingNameTouched ? existingName : deriveNameFromPath(path);
+  const displayedGitName = gitNameTouched ? gitName : deriveNameFromGitUrl(gitUrl);
+
+  // Use apiClient (not raw fetch) so HMAC headers are attached in mobile mode.
   const handleBrowseExisting = async () => {
     try {
-      const response = await fetch("/api/v1/browse-folder");
-      if (response.ok) {
-        const data = await response.json();
-        if (data.path) {
-          setPath(data.path);
-          setError("");
-        }
+      const data = await apiClient.get<{ path: string | null }>("/api/v1/browse-folder");
+      if (data.path) {
+        setPath(data.path);
+        setError("");
       }
     } catch (err) {
       console.error("Failed to browse folder:", err);
@@ -103,13 +146,10 @@ export function AddProjectDialog({
 
   const handleBrowseParent = async () => {
     try {
-      const response = await fetch("/api/v1/browse-folder");
-      if (response.ok) {
-        const data = await response.json();
-        if (data.path) {
-          setParentDir(data.path);
-          setError("");
-        }
+      const data = await apiClient.get<{ path: string | null }>("/api/v1/browse-folder");
+      if (data.path) {
+        setParentDir(data.path);
+        setError("");
       }
     } catch (err) {
       console.error("Failed to browse folder:", err);
@@ -127,7 +167,8 @@ export function AddProjectDialog({
       return;
     }
     setError("");
-    await onAdd(path.trim());
+    const finalName = displayedExistingName.trim();
+    await onAdd(path.trim(), finalName || undefined);
   };
 
   const trimmedParent = parentDir.trim().replace(/\/+$/, "");
@@ -165,15 +206,32 @@ export function AddProjectDialog({
     await onCreateNew("", trimmed, false, "studio");
   };
 
+  const handleSubmitGit = async () => {
+    if (!gitUrl.trim()) {
+      setError("Git URL is required");
+      return;
+    }
+    setError("");
+    const finalName = displayedGitName.trim();
+    await onClone(gitUrl.trim(), finalName || undefined);
+  };
+
   const handleSubmit = () => {
     if (mode === "studio") return handleSubmitStudio();
     if (codingTab === "existing") return handleSubmitExisting();
+    if (codingTab === "git") return handleSubmitGit();
     return handleSubmitNew();
   };
 
   const submitLabel = () => {
-    if (isLoading) return mode === "studio" ? "Creating..." : codingTab === "existing" ? "Adding..." : "Creating...";
+    if (isLoading) {
+      if (mode === "studio") return "Creating...";
+      if (codingTab === "git") return "Cloning...";
+      if (codingTab === "existing") return "Adding...";
+      return "Creating...";
+    }
     if (mode === "studio") return "Create Studio";
+    if (codingTab === "git") return "Clone Project";
     if (codingTab === "existing") return "Add Project";
     return "Create Project";
   };
@@ -196,7 +254,8 @@ export function AddProjectDialog({
           <h2 className="text-lg font-semibold text-[var(--color-text)]">New Project</h2>
           <button
             onClick={resetAndClose}
-            className="p-1.5 rounded-lg hover:bg-[var(--color-bg-tertiary)] text-[var(--color-text-muted)] transition-colors"
+            disabled={isLoading}
+            className="p-1.5 rounded-lg hover:bg-[var(--color-bg-tertiary)] text-[var(--color-text-muted)] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           >
             <X className="w-5 h-5" />
           </button>
@@ -273,10 +332,65 @@ export function AddProjectDialog({
                 onClick={() => { setCodingTab("new"); setError(""); }}
                 label="Create New"
               />
+              <TabButton
+                active={codingTab === "git"}
+                onClick={() => { setCodingTab("git"); setError(""); }}
+                label="From Git"
+              />
             </div>
 
             <div className="px-5 py-4 space-y-4">
-              {codingTab === "existing" ? (
+              {codingTab === "git" ? (
+                <>
+                  <div>
+                    <label className="block text-sm font-medium text-[var(--color-text-muted)] mb-2">
+                      Git URL
+                    </label>
+                    <input
+                      type="text"
+                      value={gitUrl}
+                      onChange={(e) => { setGitUrl(e.target.value); setError(""); }}
+                      placeholder="https://github.com/user/repo.git"
+                      className={`w-full px-3 py-2 bg-[var(--color-bg)] border rounded-lg
+                        text-sm text-[var(--color-text)] placeholder:text-[var(--color-text-muted)]
+                        focus:outline-none focus:ring-1 transition-all duration-200
+                        ${error
+                          ? "border-[var(--color-error)] focus:border-[var(--color-error)] focus:ring-[var(--color-error)]"
+                          : "border-[var(--color-border)] focus:border-[var(--color-highlight)] focus:ring-[var(--color-highlight)]"
+                        }`}
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-[var(--color-text-muted)] mb-2">
+                      Project Name
+                    </label>
+                    <input
+                      type="text"
+                      value={displayedGitName}
+                      onChange={(e) => {
+                        setGitName(e.target.value);
+                        setGitNameTouched(true);
+                        setError("");
+                      }}
+                      placeholder="Auto-derived from URL"
+                      className="w-full px-3 py-2 bg-[var(--color-bg)] border border-[var(--color-border)] rounded-lg
+                        text-sm text-[var(--color-text)] placeholder:text-[var(--color-text-muted)]
+                        focus:outline-none focus:border-[var(--color-highlight)] focus:ring-1 focus:ring-[var(--color-highlight)]
+                        transition-all duration-200"
+                    />
+                  </div>
+                  <div className="flex items-start gap-3 p-3 rounded-lg bg-[var(--color-bg)] border border-[var(--color-border)]">
+                    <Globe className="w-4 h-4 text-[var(--color-highlight)] mt-0.5 flex-shrink-0" />
+                    <p className="text-xs text-[var(--color-text-muted)] leading-relaxed">
+                      Clones into <code className="text-[var(--color-text)]">~/.grove/cloned/</code> and registers
+                      it as a Grove project. HTTPS works with public repos; SSH URLs
+                      require an active <code className="text-[var(--color-text)]">ssh-agent</code> with the
+                      key loaded (interactive prompts are disabled and will fail fast).
+                      Times out after 5 minutes.
+                    </p>
+                  </div>
+                </>
+              ) : codingTab === "existing" ? (
                 <>
                   <div>
                     <label className="block text-sm font-medium text-[var(--color-text-muted)] mb-2">
@@ -303,6 +417,25 @@ export function AddProjectDialog({
                         </Button>
                       )}
                     </div>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-[var(--color-text-muted)] mb-2">
+                      Project Name
+                    </label>
+                    <input
+                      type="text"
+                      value={displayedExistingName}
+                      onChange={(e) => {
+                        setExistingName(e.target.value);
+                        setExistingNameTouched(true);
+                        setError("");
+                      }}
+                      placeholder="Auto-derived from path"
+                      className="w-full px-3 py-2 bg-[var(--color-bg)] border border-[var(--color-border)] rounded-lg
+                        text-sm text-[var(--color-text)] placeholder:text-[var(--color-text-muted)]
+                        focus:outline-none focus:border-[var(--color-highlight)] focus:ring-1 focus:ring-[var(--color-highlight)]
+                        transition-all duration-200"
+                    />
                   </div>
                   <div className="p-3 rounded-lg bg-[var(--color-bg)] border border-[var(--color-border)]">
                     <p className="text-xs text-[var(--color-text-muted)]">

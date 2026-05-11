@@ -224,6 +224,12 @@ Terminal · Chat · Review · Editor · Stats · Git · Notes · Comments · Art
 - `--cert` / `--key` — user-provided CA-signed certificate
 - `--host <ip>` — bind to a specific interface
 - `--public` — bind to 0.0.0.0 (all interfaces)
+- `--private` — bind to 127.0.0.1 only; no LAN exposure (conflicts with `--host` / `--public`)
+
+### 8.2.1 Secret key
+- Interactive prompt (ssh-keygen style): empty input → auto-generate (32-byte CSPRNG → 64-char hex); non-empty → validated user passkey (≥8 chars, mixed letters+digits)
+- Hidden input via `rpassword`; never appears as a process argv, so it stays out of `~/.zsh_history` / `~/.bash_history`
+- Either way, the resulting key is embedded in the QR code URL as `#sk=<key>`
 
 ### 8.3 Onboarding
 - QR code printed in terminal with embedded secret

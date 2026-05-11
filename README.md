@@ -10,13 +10,42 @@
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20%7C%20Windows-lightgrey.svg)]()
 
-![Grove](docs/images/graph.png)
+![Grove Agent Graph](docs/images/graph.png)
 
 Grove is a workspace for you and your AI development team. Write a spec, send a sketch, hold a button and talk — every major coding agent runs in parallel, every change goes through review, every merge is a decision someone made. From your terminal, your browser, your desktop, or your phone.
 
 > Grove treats **Studio** — the space where designers, PMs, and brand folks shape the product alongside AI — as a first-class surface. Code review is rigorous. But the product isn't just "a review tool that also has chat."
 >
 > And with **Agent Graph**, your AI team is a typed DAG, not a single chat. A planner spawns a coder. The coder spawns a reviewer. Every cross-agent message is structured, logged, and scoped per task.
+
+---
+
+## Quick Start
+
+```bash
+# macOS
+brew tap GarrickZ2/grove && brew install grove
+
+# Other platforms — see Install section below
+```
+
+Pick your surface and run it once inside any directory:
+
+```bash
+grove web  # Browser IDE at http://localhost:3001
+grove gui  # Native desktop window
+grove tui  # Keyboard-first terminal UI
+```
+
+After that, `grove` alone resumes whichever mode you last used.
+
+The thing most people miss: every task gets its own Git worktree and tmux session. Not a branch — a full isolated directory. Ten agents can work on ten tasks at the same time and they will never touch the same file. This is the only architecture that makes parallel agents actually safe.
+
+Write a spec in Task Notes. Agents read it through the MCP server before touching code. Pick an agent — Claude Code, Codex, Gemini, Copilot, and nine others are built in. Watch them work in Blitz view: every active task across every registered repo, live, in one place.
+
+When they're done, review the diff. Comment on any line. Select a batch of unresolved comments and let the AI fixer address them all at once — you approve the diff, not each comment. Then: commit → rebase → merge → archive. One action.
+
+Most tools stop there. Grove also tracks tool calls per task, review AI adoption rate, spec length vs. how many times you had to intervene, and an agent leaderboard. Enough signal to figure out what's actually working.
 
 ---
 
@@ -86,55 +115,87 @@ grove tui      # Keyboard-first terminal UI
 
 ## What Grove gives you
 
-### 🌿 Every agent, in parallel
+### 🌿 Ten agents. One workspace. Zero collisions.
 
-Grove speaks ACP — ten agents built in, three more (Hermes, Kiro, OpenClaw) with first-class icons ready for custom configs. Each task runs in its own Git worktree with its own session, so ten agents can work at once without collision.
+![Parallel agents](docs/images/blitz.png)
 
-**Built-in:** Claude Code · Codex · Gemini CLI · GitHub Copilot · Cursor Agent · Junie · Trae CLI · Kimi · Qwen · OpenCode
-**Ready for ACP:** Hermes · Kiro · OpenClaw
-**Bring your own:** any binary that speaks ACP over stdio, or any HTTP endpoint.
+The standard approach to running multiple agents is chaos: shared working tree, competing writes, one agent undoing what another just built. Grove solves this at the architecture level. Every task is a dedicated Git worktree on its own branch with its own tmux session — physical isolation, not just logical. Ten agents work on ten tasks simultaneously and will never touch the same file.
 
-### 🧠 Agent Graph — agents that talk to each other
+**Built-in:** Claude Code · Codex · Gemini CLI · GitHub Copilot · Cursor Agent · Junie · Trae CLI · Kimi · Qwen · OpenCode · Hermes · Kiro · OpenClaw
 
-A planner spawns a coder. The coder spawns a reviewer. The reviewer replies. Grove makes that workflow a first-class object: a typed **DAG of agents**, exchanging structured messages, scoped per task. No bash glue, no string-concat orchestration, no leaky cross-task context.
+Plug in any binary that speaks ACP over stdio, or any HTTP endpoint — one entry in `config.toml`.
 
-- **Visual DAG editor** — drag to connect, edit duties, send messages from a hover card
-- **6 MCP tools** — `grove_agent_spawn` · `_send` · `_reply` · `_contacts` · `_capability` · `_get_spawn_candidates` — every agent in the graph can use them
-- **Custom Agents (personas)** — base agent + your model / mode / effort / system prompt; reusable across tasks
-- **Single-in-flight per edge**, cycle detection, per-task isolation enforced at the DB layer
-- **`<grove-meta>` envelopes** — every cross-agent prompt is a structured payload, not glued strings
+**Blitz view** shows every active task across every registered repo in one real-time feed. You see all ten agents working at once without switching windows.
 
-### 🎨 Studio — for everyone on the team
+![Custom agent](docs/images/custom-agent.png)
 
-Studio is the room inside Grove where non-coders join the AI workflow. Upload shared assets (hard-linked across worktrees), edit Project Memory and Workspace Instructions without touching the CLI, draw on a real Excalidraw canvas agents can read, and watch artifacts (D2 diagrams, Mermaid, images, code, HTML) render inline as the agents produce them.
+---
 
-![Studio sketch](docs/images/studio-sketch.png)
+### 🧠 Agent Graph — structured orchestration, not bash glue
 
-### 🚢 Every merge, a decision
+![Agent Graph](docs/images/agent-graph.png)
 
-Review isn't just a diff. It's a threaded, resolvable, AI-assisted workspace. Comment on any line, discuss, let the AI fixer resolve your comments in a batch, and ship in one step — commit → rebase → merge → archive, with cross-branch safety and squash-merge detection built in.
+A planner agent spawns a coder with a scoped spec. The coder spawns a reviewer with only the relevant diff. The reviewer's reply routes back through a typed message queue, not a string passed through `$PROMPT`. Grove enforces this at the DB layer: one message in-flight per edge, cycle detection at spawn time, every message a `<grove-meta>` envelope with sender, intent, and task scope.
+
+Six MCP tools make the whole graph programmable from inside any agent: `grove_agent_spawn` · `grove_agent_send` · `grove_agent_reply` · `grove_agent_contacts` · `grove_agent_capability` · `grove_get_spawn_candidates`. A Claude Code orchestrator can create tasks, fill worktrees, and archive branches without a human in the loop.
+
+**Custom Agents (personas):** name a base model + system prompt + effort level. Reuse the same "adversarial reviewer" persona across every task that needs one.
+
+---
+
+### 🎨 Studio — no terminal, no git, still shipping
+
+![Studio](docs/images/studio-sketch.png)
+
+Studio exists because the people who most need to shape the product are the ones most locked out of AI workflows. Grove doesn't ask designers, PMs, or brand teams to learn git. It gives them a room.
+
+Upload shared assets once — Grove hard-links them into every task's worktree so agents always have the latest without duplication or manual sync. Draw on a real Excalidraw canvas per task; agents read and write sketches via `grove_sketch_read` / `grove_sketch_draw`, turning a rough UI layout into a buildable spec. Edit Project Memory and Workspace Instructions from a UI — no markdown file to find, no CLI to open. Every agent reads them on every task, automatically.
+
+D2 diagrams, Mermaid charts, and HTML previews render live inside the panel as agents produce them.
+
+![Shared memory](docs/images/shared-memory.png)
+
+---
+
+### 🚢 Review that earns the merge
 
 ![Code review](docs/images/code-review.png)
 
+Line-level comment threads. `@`-file mentions with autocomplete. Filter by status and author so your notes don't get lost in the agent's self-review. Select any batch of unresolved comments and run the AI batch fixer — it addresses all of them at once and produces a single diff. You approve the diff. Not each comment.
+
+One action to ship: commit, rebase onto target, merge, archive. Squash-merge detection is automatic. Cross-branch safety is built in.
+
+---
+
 ### 🌐 Anywhere — TUI · Web · GUI · Mobile · Voice
 
-One binary, four surfaces:
-- **Web IDE** — the main event. FlexLayout with 10 panel types, IDE Layout mode, Studio, ⌘K command palette.
-- **Desktop (Tauri)** — the same IDE in a native window. macOS DMG; Linux / Windows via feature flag.
-- **Mobile** — LAN access with HMAC request signing, QR-code onboarding, optional TLS.
-- **TUI** — the original keyboard-first surface. Still here, still fast.
+Same workspace, five surfaces.
 
-Plus **Radio** — a walkie-talkie for your phone. Hold to speak; the transcript lands in the right chat or terminal in real time.
+**TUI** — the original. `j`/`k` to navigate tasks, full review workflow, no mouse required.
 
-### 🧩 Skills, MCP, your own
+![TUI](docs/images/grove-tui.png)
 
-Install a skill once, every installed agent gets smarter. Expose Grove via `grove mcp` so an orchestrator agent can manage your tasks. Plug in any custom agent with a launch command or URL. Notification hooks on every platform.
+**Web IDE** — the main event: FlexLayout with 10 panel types, IDE Layout mode with Monaco and a file tree, ⌘K command palette. The **desktop** (Tauri) wraps the same Web IDE in a native window.
+
+`grove mobile` prints a QR code in the terminal. Scan from your phone — every subsequent request is automatically HMAC-SHA256 signed, the secret embedded in the QR. The key never crosses the wire unprotected. Optional TLS, custom bind address, or `--private` for localhost-only.
+
+![Mobile QR](docs/images/radio-connect-qr.png)
+
+**Radio:** hold a button on your phone, talk, release. The transcript goes to the right Chat or Terminal — nine configurable slots, each pointed at a different task. You're directing your AI team from your pocket.
+
+![Radio](docs/images/radio-mobile.jpg)
+
+---
+
+### 📊 Measure what shipped
+
+![Statistics](docs/images/statistics.png)
+
+Most tools stop at merge. Grove tracks tool calls per task, spec length vs. intervention count, review AI adoption rate and hit rate, average fix cycles per comment, and an agent leaderboard. Enough signal to understand what's actually working — and what's costing you the most intervention.
 
 ---
 
 ## Who Grove is for
-
-Grove serves three kinds of people on the same project:
 
 - **Power developers** — Web IDE with FlexLayout, Blitz across projects, 10 agents in parallel, Agent Graph to orchestrate them; TUI when you want it.
 - **Visual thinkers** — IDE Layout, Sketch canvases agents can read, click-through reviews, inline D2 / Mermaid.

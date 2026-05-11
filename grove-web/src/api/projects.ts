@@ -123,6 +123,21 @@ export async function createNewProject(
   });
 }
 
+interface CloneProjectRequest {
+  url: string;
+  name?: string;
+}
+
+/**
+ * Clone a remote git repository into ~/.grove/cloned/<name>/ and register it.
+ */
+export async function cloneProject(url: string, name?: string): Promise<ProjectResponse> {
+  return apiClient.post<CloneProjectRequest, ProjectResponse>('/api/v1/projects/clone', {
+    url,
+    name,
+  });
+}
+
 /**
  * Delete a project
  */

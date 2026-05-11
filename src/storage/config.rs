@@ -193,6 +193,8 @@ pub enum LastLaunch {
         host: Option<String>,
         #[serde(default)]
         public: bool,
+        #[serde(default)]
+        private: bool,
     },
     Gui {
         #[serde(default = "default_gui_port")]

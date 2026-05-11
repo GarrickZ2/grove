@@ -6,6 +6,7 @@ import {
   getProject,
   addProject as apiAddProject,
   createNewProject as apiCreateNewProject,
+  cloneProject as apiCloneProject,
   deleteProject as apiDeleteProject,
   renameProject as apiRenameProject,
   type ProjectListItem,
@@ -21,6 +22,7 @@ interface ProjectContextType {
   selectProject: (project: Project | null) => void;
   addProject: (path: string, name?: string) => Promise<Project>;
   createNewProject: (parentDir: string, name: string, initGit: boolean, projectType?: string) => Promise<Project>;
+  cloneProject: (url: string, name?: string) => Promise<Project>;
   deleteProject: (id: string) => Promise<void>;
   renameProject: (id: string, name: string) => Promise<void>;
   refreshProjects: () => Promise<void>;
@@ -231,6 +233,16 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
     [loadProjects]
   );
 
+  const cloneProject = useCallback(
+    async (url: string, name?: string): Promise<Project> => {
+      const response = await apiCloneProject(url, name);
+      const newProject = convertProject(response);
+      await loadProjects();
+      return newProject;
+    },
+    [loadProjects]
+  );
+
   const deleteProject = useCallback(
     async (id: string): Promise<void> => {
       await apiDeleteProject(id);
@@ -295,6 +307,7 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
         selectProject,
         addProject,
         createNewProject,
+        cloneProject,
         applySelectedProject,
         deleteProject,
         renameProject,

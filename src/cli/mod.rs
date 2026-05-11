@@ -97,11 +97,14 @@ pub enum Commands {
         #[arg(long, requires = "cert")]
         key: Option<String>,
         /// Bind to a specific host address (default: auto-detected LAN IP)
-        #[arg(long)]
+        #[arg(long, conflicts_with_all = ["private", "public"])]
         host: Option<String>,
         /// Bind to 0.0.0.0 (all interfaces)
-        #[arg(long)]
+        #[arg(long, conflicts_with_all = ["private", "host"])]
         public: bool,
+        /// Bind to localhost only (127.0.0.1); disables LAN access
+        #[arg(long, conflicts_with_all = ["host", "public"])]
+        private: bool,
     },
     /// Migrate storage to the latest format. Same flow that runs at startup —
     /// safe to invoke manually if a previous run was interrupted.
@@ -140,6 +143,7 @@ impl Commands {
                 key,
                 host,
                 public,
+                private,
             } => Some(LastLaunch::Mobile {
                 port: *port,
                 no_open: *no_open,
@@ -148,6 +152,7 @@ impl Commands {
                 key: key.clone(),
                 host: host.clone(),
                 public: *public,
+                private: *private,
             }),
             Commands::Gui { port } => Some(LastLaunch::Gui { port: *port }),
             _ => None,
@@ -173,6 +178,7 @@ impl LastLaunch {
                 key,
                 host,
                 public,
+                private,
             } => Commands::Mobile {
                 port: *port,
                 no_open: *no_open,
@@ -181,6 +187,7 @@ impl LastLaunch {
                 key: key.clone(),
                 host: host.clone(),
                 public: *public,
+                private: *private,
             },
             LastLaunch::Gui { port } => Commands::Gui { port: *port },
         }

@@ -29,6 +29,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useRadioEvents } from "../../hooks/useRadioEvents";
 import { agentOptions } from "../../data/agents";
 import type { RadioEvent } from "../../api/walkieTalkie";
+import { apiClient } from "../../api/client";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -175,20 +176,12 @@ export function TrayPopover() {
   useEffect(() => {
     let cancelled = false;
     const reload = async () => {
-      let res: Response;
-      try {
-        res = await fetch("/api/v1/config");
-      } catch {
-        return;
-      }
-      if (!res.ok) {
-        console.error("[TrayPopover] Failed to fetch config:", res.status);
-        return;
-      }
+      // apiClient signs requests with HMAC in mobile mode; raw fetch would 401.
       let cfg: { notifications?: { tray_show_permission?: unknown; tray_show_running?: unknown; tray_show_done?: unknown } };
       try {
-        cfg = await res.json();
-      } catch {
+        cfg = await apiClient.get("/api/v1/config");
+      } catch (e) {
+        console.error("[TrayPopover] Failed to fetch config:", e);
         return;
       }
       if (cancelled) return;

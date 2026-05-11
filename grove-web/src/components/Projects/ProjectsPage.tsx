@@ -17,7 +17,7 @@ interface ProjectsPageProps {
 }
 
 export function ProjectsPage({ onNavigate, initialTab }: ProjectsPageProps) {
-  const { projects, selectedProject, selectProject, addProject, createNewProject, deleteProject, renameProject, refreshProjects } = useProject();
+  const { projects, selectedProject, selectProject, addProject, createNewProject, cloneProject, deleteProject, renameProject, refreshProjects } = useProject();
   const { isMobile } = useIsMobile();
   const codingProjects = useMemo(() => filterProjectsByType(projects, "coding"), [projects]);
   const studioProjects = useMemo(() => filterProjectsByType(projects, "studio"), [projects]);
@@ -72,6 +72,24 @@ export function ProjectsPage({ onNavigate, initialTab }: ProjectsPageProps) {
         setError(apiErr.message || "Failed to add project");
       } else {
         setError("Failed to add project");
+      }
+    }
+    setIsAdding(false);
+  };
+
+  const handleCloneProject = async (url: string, name?: string) => {
+    try {
+      setIsAdding(true);
+      setError(null);
+      const project = await cloneProject(url, name);
+      selectProject(project);
+      setShowAddDialog(false);
+    } catch (err: unknown) {
+      console.error("Failed to clone project:", err);
+      if (err && typeof err === "object" && "message" in err) {
+        setError((err as { message: string }).message || "Failed to clone project");
+      } else {
+        setError("Failed to clone project");
       }
     }
     setIsAdding(false);
@@ -257,6 +275,7 @@ export function ProjectsPage({ onNavigate, initialTab }: ProjectsPageProps) {
         }}
         onAdd={handleAddProject}
         onCreateNew={handleCreateNewProject}
+        onClone={handleCloneProject}
         isLoading={isAdding}
         externalError={error}
         initialMode={addDialogMode}

@@ -3,6 +3,7 @@ import { X, GitBranch, FolderOpen } from "lucide-react";
 import { Button } from "../ui";
 import { DialogShell } from "../ui/DialogShell";
 import { useIsMobile } from "../../hooks";
+import { apiClient } from "../../api/client";
 import { addSource, updateSource } from "../../api";
 import type { SkillSource } from "../../api";
 
@@ -80,25 +81,14 @@ export function AddSourceDialog({ isOpen, editingSource, onClose, onSaved }: Add
 
   const handleBrowse = async () => {
     setIsBrowsing(true);
-    let response: Response | null = null;
     try {
-      response = await fetch("/api/v1/browse-folder");
-    } catch {
-      response = null;
-    }
-    let data: { path?: unknown } | null = null;
-    if (response && response.ok) {
-      try {
-        data = await response.json();
-      } catch {
-        data = null;
+      // apiClient signs requests with HMAC in mobile mode; raw fetch would 401.
+      const data = await apiClient.get<{ path: string | null }>("/api/v1/browse-folder");
+      if (data.path) {
+        handleUrlChange(data.path.replace(/\/+$/, ""));
       }
-    }
-    const rawPath = data?.path;
-    const path: string | null = typeof rawPath === "string" ? rawPath : null;
-    if (path) {
-      // Remove trailing slash
-      handleUrlChange(path.replace(/\/+$/, ""));
+    } catch {
+      // ignore — picker dismissed or unavailable
     }
     setIsBrowsing(false);
   };

@@ -222,7 +222,7 @@ Reset the histogram before measuring an isolated operation; otherwise the cold-s
 - `grove tui` — Keyboard-first terminal UI
 - `grove web` — Browser IDE on `http://localhost:3001`
 - `grove gui` — Native desktop window (requires `--features gui` build)
-- `grove mobile` — LAN access for phone / tablet (HMAC-signed requests)
+- `grove mobile` — LAN access for phone / tablet (HMAC-signed requests); `--private` for localhost-only, `--passkey <key>` for custom secret
 - `grove mcp` — MCP server (stdio) for orchestrator agents
 - `grove acp` — Headless ACP bridge
 - `grove hooks <level>` — Send notification (`notice` / `warn` / `critical`)

@@ -70,7 +70,7 @@ function AppContent() {
   const effectiveSidebarCollapsed = sidebarCollapsed || viewportTooNarrowForSidebar;
   const [hasExitedWelcome, setHasExitedWelcome] = useState(false);
   const [navigationData, setNavigationData] = useState<Record<string, unknown> | null>(null);
-  const { selectedProject, currentProjectId, isLoading, selectProject, projects, addProject, createNewProject, refreshProjects, refreshSelectedProject } = useProject();
+  const { selectedProject, currentProjectId, isLoading, selectProject, projects, addProject, createNewProject, cloneProject, refreshProjects, refreshSelectedProject } = useProject();
   useReportDebugId("projectId", selectedProject?.id ?? null);
   const [showAddProject, setShowAddProject] = useState(false);
   const [addProjectInitialMode, setAddProjectInitialMode] = useState<"coding" | "studio">("coding");
@@ -370,6 +370,24 @@ function AppContent() {
       setShowAddProject(false);
     } catch (err) {
       setAddProjectError(err instanceof Error ? err.message : "Failed to add project");
+    }
+    setIsAddingProject(false);
+  };
+
+  const handleCloneProject = async (url: string, name?: string) => {
+    setIsAddingProject(true);
+    setAddProjectError(null);
+    try {
+      const project = await cloneProject(url, name);
+      selectProject(project);
+      navigateToProjectDashboard();
+      setShowAddProject(false);
+    } catch (err: unknown) {
+      if (err && typeof err === "object" && "message" in err) {
+        setAddProjectError((err as { message: string }).message || "Failed to clone project");
+      } else {
+        setAddProjectError("Failed to clone project");
+      }
     }
     setIsAddingProject(false);
   };
@@ -791,6 +809,7 @@ function AppContent() {
           }}
           onAdd={handleAddProject}
           onCreateNew={handleCreateNewProject}
+          onClone={handleCloneProject}
           isLoading={isAddingProject}
           externalError={addProjectError}
           initialMode={addProjectInitialMode}
@@ -878,6 +897,7 @@ function AppContent() {
         }}
         onAdd={handleAddProject}
         onCreateNew={handleCreateNewProject}
+        onClone={handleCloneProject}
         isLoading={isAddingProject}
         externalError={addProjectError}
         initialMode={addProjectInitialMode}

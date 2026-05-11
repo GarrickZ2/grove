@@ -145,3 +145,183 @@ pub fn create_new_project(parent_dir: &str, name: &str, init_git: bool) -> Resul
 
     Ok(resolved_path)
 }
+
+/// Infer a repo name from a git URL.
+///
+/// Examples:
+///   `https://github.com/user/repo.git` → `repo`
+///   `git@github.com:user/repo`         → `repo`
+fn infer_repo_name(url: &str) -> Result<String> {
+    let trimmed = url.trim().trim_end_matches('/');
+    let last = trimmed.rsplit(['/', ':']).next().unwrap_or(trimmed);
+    let name = last.trim_end_matches(".git");
+
+    // Heuristic: if the inferred name still looks like the URL host (contains
+    // a `.` and no other path segment was found), the URL is incomplete
+    // (e.g. `https://github.com/`). git would fail with a confusing error,
+    // so reject upfront with something readable.
+    if name.contains('.') && url.trim().contains("://") {
+        let after_scheme = url.trim().split_once("://").map(|(_, r)| r).unwrap_or("");
+        let host = after_scheme
+            .split(['/', '?', '#'])
+            .next()
+            .unwrap_or("")
+            .trim_end_matches('/');
+        if host.eq_ignore_ascii_case(name) {
+            return Err(crate::error::GroveError::storage(
+                "URL appears to be missing a repository path",
+            ));
+        }
+    }
+
+    validate_repo_name(name)?;
+    Ok(name.to_string())
+}
+
+/// Validate a directory name destined for `~/.grove/cloned/<name>`. Same rules
+/// for both auto-inferred names and user-supplied overrides — the destination
+/// must be a single path segment with no traversal or control characters.
+fn validate_repo_name(name: &str) -> Result<()> {
+    if name.is_empty() {
+        return Err(crate::error::GroveError::storage(
+            "Cannot infer repository name from URL",
+        ));
+    }
+    if name == "." || name == ".." || name.starts_with('.') {
+        return Err(crate::error::GroveError::storage(
+            "Invalid project name (no leading dots, '.' or '..')",
+        ));
+    }
+    if name.contains('/') || name.contains('\\') || name.contains('\0') {
+        return Err(crate::error::GroveError::storage(
+            "Invalid project name (no slashes or NUL bytes)",
+        ));
+    }
+    if name.chars().any(|c| c.is_control() || c == ' ') {
+        return Err(crate::error::GroveError::storage(
+            "Invalid project name (no whitespace or control characters)",
+        ));
+    }
+    Ok(())
+}
+
+/// Maximum wall-clock time allowed for a single `git clone` invocation.
+/// Hung clones (DNS, TLS handshake, paused server) get killed instead of
+/// blocking the API forever.
+const CLONE_TIMEOUT_SECS: u64 = 300;
+
+/// Clone a remote git repository into `~/.grove/cloned/<name>/` and register
+/// it with Grove.
+///
+/// - `url`  — any URL accepted by `git clone` (https, ssh, git://)
+/// - `name` — optional override for the local directory name; defaults to the
+///   repo name inferred from the URL
+///
+/// Returns the absolute path of the cloned directory.
+///
+/// Async because `git clone` shells out and can take minutes; using
+/// `tokio::process::Command` keeps the runtime worker free for other requests
+/// while the subprocess runs.
+pub async fn clone_project(url: &str, name: Option<&str>) -> Result<String> {
+    let url = url.trim();
+    if url.is_empty() {
+        return Err(crate::error::GroveError::storage("Git URL is required"));
+    }
+
+    // Reject URLs that would be parsed as `git` options (e.g.
+    // `--upload-pack=/tmp/evil.sh`). Combined with the `--` end-of-options
+    // marker below, this closes the historical `git clone` option-injection
+    // RCE class.
+    if url.starts_with('-') {
+        return Err(crate::error::GroveError::storage(
+            "Git URL cannot start with '-'",
+        ));
+    }
+
+    let inferred = infer_repo_name(url)?;
+    let repo_name = match name {
+        Some(n) if !n.trim().is_empty() => n.trim(),
+        _ => &inferred,
+    };
+
+    validate_repo_name(repo_name)?;
+
+    let cloned_root = crate::storage::grove_dir().join("cloned");
+    std::fs::create_dir_all(&cloned_root).map_err(|e| {
+        crate::error::GroveError::storage(format!("Failed to create cloned dir: {}", e))
+    })?;
+
+    let dest = cloned_root.join(repo_name);
+    if dest.exists() {
+        return Err(crate::error::GroveError::storage(format!(
+            "Destination already exists: {}",
+            dest.display()
+        )));
+    }
+
+    let dest_str = dest.to_string_lossy().to_string();
+
+    // `--` terminates option parsing so `url` and `dest_str` are always
+    // treated as positional args even if a future caller skips the
+    // `starts_with('-')` guard. `GIT_TERMINAL_PROMPT=0` makes auth failures
+    // exit fast instead of hanging on a blocking prompt that nobody can answer.
+    let mut cmd = tokio::process::Command::new("git");
+    cmd.args(["clone", "--", url, &dest_str])
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .kill_on_drop(true);
+
+    // Spawn manually instead of `.output()` so we can explicitly kill + wait
+    // on timeout. Without the explicit wait, `kill_on_drop` only sends SIGKILL
+    // — the OS may not have reaped the child by the time we try to delete the
+    // partial dest dir.
+    let child = cmd
+        .spawn()
+        .map_err(|e| crate::error::GroveError::git(format!("failed to spawn git clone: {}", e)))?;
+
+    let out = match tokio::time::timeout(
+        std::time::Duration::from_secs(CLONE_TIMEOUT_SECS),
+        child.wait_with_output(),
+    )
+    .await
+    {
+        Ok(res) => {
+            res.map_err(|e| crate::error::GroveError::git(format!("git clone wait failed: {}", e)))?
+        }
+        Err(_) => {
+            // `child` was moved into `wait_with_output`, so by the time we get
+            // here the future was dropped and `kill_on_drop` SIGKILL'd git.
+            // Give the OS a brief moment to reap, then clean up the partial
+            // clone tree. On Linux unlink works on open file handles anyway;
+            // this is mostly belt-and-braces for non-Linux targets.
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            let _ = std::fs::remove_dir_all(&dest);
+            return Err(crate::error::GroveError::git(format!(
+                "git clone timed out after {}s",
+                CLONE_TIMEOUT_SECS
+            )));
+        }
+    };
+
+    if !out.status.success() {
+        // Clean up partial clone on failure
+        let _ = std::fs::remove_dir_all(&dest);
+        return Err(crate::error::GroveError::git(format!(
+            "git clone failed: {}",
+            String::from_utf8_lossy(&out.stderr).trim()
+        )));
+    }
+
+    let resolved_path = dest
+        .canonicalize()
+        .map_err(|e| {
+            crate::error::GroveError::storage(format!("Failed to canonicalize path: {}", e))
+        })?
+        .to_string_lossy()
+        .to_string();
+
+    workspace::add_project(repo_name, &resolved_path)?;
+
+    Ok(resolved_path)
+}

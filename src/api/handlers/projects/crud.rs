@@ -355,6 +355,47 @@ pub async fn get_project(Path(id): Path<String>) -> Result<Json<ProjectResponse>
     }))
 }
 
+/// POST /api/v1/projects/clone
+pub async fn clone_project(
+    Json(req): Json<CloneProjectRequest>,
+) -> Result<Json<ProjectResponse>, (StatusCode, Json<ApiError>)> {
+    let name_ref = req.name.as_deref();
+    let resolved_path = crate::operations::projects::clone_project(&req.url, name_ref)
+        .await
+        .map_err(|e| {
+            let msg = e.to_string();
+            let status = if msg.contains("already exists") || msg.contains("already registered") {
+                StatusCode::CONFLICT
+            } else if msg.contains("is required")
+                || msg.contains("Invalid project name")
+                || msg.contains("Cannot infer")
+                || msg.contains("cannot start with")
+            {
+                StatusCode::BAD_REQUEST
+            } else {
+                StatusCode::INTERNAL_SERVER_ERROR
+            };
+            (status, Json(ApiError { error: msg }))
+        })?;
+
+    let _ = crate::storage::taskgroups::ensure_system_groups();
+    use crate::api::handlers::walkie_talkie::{broadcast_radio_event, RadioEvent};
+    broadcast_radio_event(RadioEvent::GroupChanged);
+
+    // Single source of truth: re-fetch via the same path GET /projects/{id}
+    // uses, so the response matches what the frontend would see on refresh
+    // (real branch, real local_task, real project name from DB).
+    let id = workspace::project_hash(&resolved_path);
+    get_project(Path(id)).await.map_err(|s| {
+        (
+            s,
+            Json(ApiError {
+                error: "Failed to load cloned project".to_string(),
+            }),
+        )
+    })
+}
+
 /// POST /api/v1/projects
 pub async fn add_project(
     Json(req): Json<AddProjectRequest>,

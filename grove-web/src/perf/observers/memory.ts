@@ -1,4 +1,5 @@
 import { perfRecorder } from "../recorder";
+import { apiClient } from "../../api/client";
 
 const SAMPLE_INTERVAL_MS = 5000;
 
@@ -44,13 +45,7 @@ export function installMemorySampler(): () => void {
     // Process RSS + CPU% (any platform, requires perf-monitor backend)
     if (!backendDisabled) {
       try {
-        const res = await fetch("/api/v1/perf/sysinfo");
-        if (res.status === 404) {
-          backendDisabled = true;
-          return;
-        }
-        if (!res.ok) return;
-        const data = (await res.json()) as SysinfoResponse;
+        const data = await apiClient.get<SysinfoResponse>("/api/v1/perf/sysinfo");
         // Reuse the memory ring with rss as totalJSHeapSize for chart
         // continuity, and stash CPU% on the same sample so the panel can
         // render both from a single time series.
@@ -67,8 +62,11 @@ export function installMemorySampler(): () => void {
           duration: data.cpu_percent,
           meta: { rss_bytes: data.rss_bytes, cpu_percent: data.cpu_percent, pid: data.pid },
         });
-      } catch {
-        // Network error: don't disable; transient blips are fine.
+      } catch (e) {
+        // 404 → endpoint not built (no perf-monitor feature); stop polling.
+        // Anything else → transient blip, leave backendDisabled alone.
+        const status = (e as { status?: number } | null)?.status;
+        if (status === 404) backendDisabled = true;
       }
     }
   };

@@ -104,8 +104,11 @@ pub async fn execute(port: u16, no_open: bool, dev: bool) {
 
 /// Resolve the bind host for `grove mobile`.
 ///
-/// Priority: `--host` > `--public` (0.0.0.0) > auto-detected LAN IP > fallback 0.0.0.0
-fn resolve_mobile_host(host: Option<String>, public: bool) -> String {
+/// Priority: `--private` (localhost) > `--host` > `--public` (0.0.0.0) > auto-detected LAN IP > fallback 0.0.0.0
+fn resolve_mobile_host(host: Option<String>, public: bool, private: bool) -> String {
+    if private {
+        return "127.0.0.1".to_string();
+    }
     if let Some(h) = host {
         return h;
     }
@@ -119,6 +122,37 @@ fn resolve_mobile_host(host: Option<String>, public: bool) -> String {
     })
 }
 
+/// Minimum acceptable length for a user-supplied passkey.
+///
+/// Threat model is *online* HMAC brute force from the LAN — attacker has to
+/// send a real signed request per guess (~1000 req/s ceiling), not offline
+/// hash cracking. 8 mixed alphanumeric chars (~218 trillion combos) is many
+/// millennia at that rate. Real risk is dictionary words, which length alone
+/// can't stop; the mixed letter+digit requirement filters out the worst.
+const MIN_PASSKEY_LEN: usize = 8;
+
+/// Validate a user-typed passkey from the interactive prompt. Auto-generated
+/// keys (32 random bytes hex) bypass this entirely.
+fn validate_passkey(pk: &str) -> Result<(), String> {
+    let trimmed = pk.trim();
+    if trimmed.is_empty() {
+        return Err("passkey cannot be empty".to_string());
+    }
+    if trimmed.len() < MIN_PASSKEY_LEN {
+        return Err(format!(
+            "passkey must be at least {} characters (got {})",
+            MIN_PASSKEY_LEN,
+            trimmed.len()
+        ));
+    }
+    let has_letter = trimmed.chars().any(|c| c.is_ascii_alphabetic());
+    let has_digit = trimmed.chars().any(|c| c.is_ascii_digit());
+    if !(has_letter && has_digit) {
+        return Err("passkey must contain both letters and digits".to_string());
+    }
+    Ok(())
+}
+
 /// TLS configuration for `start_server`.
 pub enum TlsMode {
     /// No TLS.
@@ -129,7 +163,51 @@ pub enum TlsMode {
     Custom { cert: String, key: String },
 }
 
+/// Read a passkey interactively, ssh-keygen style.
+///
+/// - TTY + empty input → auto-generate.
+/// - TTY + non-empty → validate and use.
+/// - No TTY (piped/CI) → auto-generate (we can't prompt).
+///
+/// Hidden input via `rpassword` keeps the value off the screen; the value
+/// never appears as a process argv either, so it stays out of `~/.zsh_history`.
+fn read_passkey_interactive(public_bind: bool) -> (String, bool) {
+    use std::io::IsTerminal;
+    if !std::io::stdin().is_terminal() {
+        return (auth::generate_secret_key(), true);
+    }
+
+    let prompt = "Enter passkey (empty to auto-generate): ";
+    let input = match rpassword::prompt_password(prompt) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("Failed to read passkey: {} — auto-generating.", e);
+            return (auth::generate_secret_key(), true);
+        }
+    };
+
+    let trimmed = input.trim();
+    if trimmed.is_empty() {
+        return (auth::generate_secret_key(), true);
+    }
+
+    if let Err(msg) = validate_passkey(trimmed) {
+        eprintln!("Error: {}", msg);
+        std::process::exit(2);
+    }
+
+    if public_bind {
+        eprintln!(
+            "Warning: a user-chosen passkey + --public exposes Grove to your full \
+             LAN. Only do this on a network you trust."
+        );
+    }
+
+    (trimmed.to_string(), false)
+}
+
 /// Execute the mobile-friendly web server (LAN-accessible with HMAC-SHA256 auth)
+#[allow(clippy::too_many_arguments)]
 pub async fn execute_mobile(
     port: u16,
     no_open: bool,
@@ -138,10 +216,11 @@ pub async fn execute_mobile(
     key: Option<String>,
     host: Option<String>,
     public: bool,
+    private: bool,
 ) {
-    let bind_host = resolve_mobile_host(host, public);
-    let sk = auth::generate_secret_key();
-    let auth = Arc::new(ServerAuth::hmac(sk));
+    let bind_host = resolve_mobile_host(host, public, private);
+    let (sk, key_is_generated) = read_passkey_interactive(bind_host == "0.0.0.0");
+    let auth = Arc::new(ServerAuth::hmac(sk, key_is_generated));
 
     // Determine TLS mode: --cert/--key implies --tls
     let tls_mode = match (cert, key) {

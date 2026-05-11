@@ -102,6 +102,14 @@ pub struct NewProjectRequest {
     pub project_type: Option<String>,
 }
 
+/// Clone remote git repository request
+#[derive(Debug, Deserialize)]
+pub struct CloneProjectRequest {
+    pub url: String,
+    /// Optional local directory name override (defaults to repo name from URL)
+    pub name: Option<String>,
+}
+
 /// Project stats response
 #[derive(Debug, Serialize)]
 pub struct ProjectStatsResponse {

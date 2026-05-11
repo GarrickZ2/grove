@@ -392,7 +392,10 @@ pub async fn execute(port: u16) {
         )
         .await
         {
-            Ok(port) => println!("[agent_graph_mcp] listener on http://127.0.0.1:{port}"),
+            Ok(_port) => {
+                // Silent on success; failures still print since they disable
+                // agent_graph tools downstream.
+            }
             Err(e) => eprintln!(
                 "[agent_graph_mcp] failed to bind listener: {} — agent_graph tools disabled",
                 e

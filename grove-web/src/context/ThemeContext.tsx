@@ -1,5 +1,6 @@
 import { createContext, useContext, useState, useEffect, useMemo } from "react";
 import type { ReactNode } from "react";
+import { apiClient } from "../api/client";
 
 // Theme definitions matching TUI themes
 interface ThemeColors {
@@ -317,27 +318,20 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
   // without needing their own broadcast subscription.
   useEffect(() => {
     const loadTheme = async () => {
-      let response: Response | null = null;
+      // apiClient signs requests with HMAC in mobile mode; raw fetch would 401.
+      let config: { theme?: { theme?: string } } | null = null;
       try {
-        response = await fetch("/api/v1/config");
+        config = await apiClient.get<{ theme?: { theme?: string } }>("/api/v1/config");
       } catch (error) {
         console.error("Failed to load theme from config:", error);
       }
-      if (response && response.ok) {
-        let config: { theme?: { theme?: string } } | null = null;
-        try {
-          config = await response.json();
-        } catch (error) {
-          console.error("Failed to parse theme config:", error);
-        }
-        const themeRaw = config?.theme?.theme;
-        if (themeRaw) {
-          const themeId = themeRaw.toLowerCase();
-          const found = themes.find((t) => t.id === themeId);
-          if (found) {
-            setSelectedThemeId(themeId);
-            return;
-          }
+      const themeRaw = config?.theme?.theme;
+      if (themeRaw) {
+        const themeId = themeRaw.toLowerCase();
+        const found = themes.find((t) => t.id === themeId);
+        if (found) {
+          setSelectedThemeId(themeId);
+          return;
         }
       }
 

@@ -28,7 +28,13 @@ fn edits_file_path(project_key: &str, task_id: &str) -> Result<PathBuf> {
     Ok(ensure_task_data_dir(project_key, task_id)?.join("activity.jsonl"))
 }
 
-/// Load all edit events for a task
+/// Load all edit events for a task.
+///
+/// Filters out historical noise (tmp files, OS cruft) on the way in so the
+/// UI gets a clean view even when the on-disk JSONL contains pre-filter
+/// entries from older Grove versions. The on-disk file is left untouched —
+/// if the filter logic ever changes, we don't want to have already discarded
+/// the raw events.
 pub fn load_edit_history(project_key: &str, task_id: &str) -> Result<Vec<EditEvent>> {
     let path = edits_file_path(project_key, task_id)?;
     if !path.exists() {
@@ -45,6 +51,9 @@ pub fn load_edit_history(project_key: &str, task_id: &str) -> Result<Vec<EditEve
             continue;
         }
         if let Ok(event) = serde_json::from_str::<EditEvent>(&line) {
+            if super::is_noise_file(&event.file) {
+                continue;
+            }
             events.push(event);
         }
     }

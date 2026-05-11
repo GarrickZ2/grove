@@ -28,6 +28,12 @@ export function AuthGate({ children }: AuthGateProps) {
     const proof = await computeHmac("grove-verify");
     if (!proof) return false;
     try {
+      // Intentional raw fetch: this endpoint is the pre-auth handshake and
+      // accepts an unsigned request body containing the HMAC proof. The
+      // global apiClient would attach signed headers, which the server's
+      // /auth/verify path is allowed to ignore but which require us to
+      // already know the SK is valid — chicken-and-egg.
+      // eslint-disable-next-line no-restricted-syntax
       const resp = await fetch("/api/v1/auth/verify", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -61,6 +67,9 @@ export function AuthGate({ children }: AuthGateProps) {
 
       // Step 2: Check if auth is required
       try {
+        // Intentional raw fetch: pre-auth probe to discover if the server
+        // requires HMAC signing at all. apiClient assumes a valid SK exists.
+        // eslint-disable-next-line no-restricted-syntax
         const resp = await fetch("/api/v1/auth/info");
         if (!resp.ok) {
           // If auth/info fails, assume no auth needed (backwards compat)
@@ -146,16 +155,22 @@ export function AuthGate({ children }: AuthGateProps) {
             <input
               type="password"
               value={skInput}
-              onChange={(e) => setSkInput(e.target.value)}
+              onChange={(e) => {
+                setSkInput(e.target.value);
+                if (error) setError(null);
+              }}
               placeholder="Secret key"
               autoFocus
-              className="w-full px-4 py-3 bg-[#1a1a1a] border border-[#333] rounded-lg text-white placeholder-[#666] focus:outline-none focus:border-[#3b82f6] focus:ring-1 focus:ring-[#3b82f6] font-mono text-sm"
+              className={`w-full px-4 py-3 bg-[#1a1a1a] border rounded-lg text-white placeholder-[#666] focus:outline-none focus:ring-1 font-mono text-sm transition-colors ${
+                error
+                  ? "border-red-500 focus:border-red-500 focus:ring-red-500"
+                  : "border-[#333] focus:border-[#3b82f6] focus:ring-[#3b82f6]"
+              }`}
             />
+            {error && (
+              <p className="mt-1.5 text-red-400 text-xs">{error}</p>
+            )}
           </div>
-
-          {error && (
-            <p className="text-red-400 text-sm text-center">{error}</p>
-          )}
 
           <button
             type="submit"

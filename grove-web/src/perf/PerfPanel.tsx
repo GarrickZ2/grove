@@ -2,6 +2,7 @@ import { Fragment, useEffect, useMemo, useState, useSyncExternalStore } from "re
 import { perfRecorder } from "./recorder";
 import type { PerfEvent, PerfEventKind, PerfSnapshot } from "./types";
 import { useDebugIds, type DebugIdLevel } from "./debugIdsStore";
+import { apiClient } from "../api/client";
 
 type Tab = "timeline" | "memory" | "renders" | "network" | "backend";
 
@@ -300,22 +301,22 @@ function BackendTab({ open }: { open: boolean }) {
     let cancelled = false;
     const load = async () => {
       try {
-        const res = await fetch("/api/v1/perf/handler-stats");
-        if (res.status === 404) {
-          if (!cancelled) {
-            setError("backend not built with --features perf-monitor");
-            setStats(null);
-          }
-          return;
-        }
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const data = (await res.json()) as { routes: BackendRouteStat[] };
+        const data = await apiClient.get<{ routes: BackendRouteStat[] }>(
+          "/api/v1/perf/handler-stats",
+        );
         if (!cancelled) {
           setStats(data.routes);
           setError(null);
         }
       } catch (e) {
-        if (!cancelled) setError(String(e));
+        if (cancelled) return;
+        const status = (e as { status?: number } | null)?.status;
+        if (status === 404) {
+          setError("backend not built with --features perf-monitor");
+          setStats(null);
+        } else {
+          setError(String(e));
+        }
       }
     };
     void load();
@@ -328,7 +329,7 @@ function BackendTab({ open }: { open: boolean }) {
 
   const reset = async () => {
     try {
-      await fetch("/api/v1/perf/handler-stats/reset", { method: "POST" });
+      await apiClient.post("/api/v1/perf/handler-stats/reset");
       setStats([]);
     } catch {
       // ignore
@@ -470,11 +471,9 @@ function TraceList({
     let cancelled = false;
     const load = async () => {
       try {
-        const res = await fetch(
+        const data = await apiClient.get<{ traces: TraceListEntry[] }>(
           `/api/v1/perf/traces?route=${encodeURIComponent(route)}`,
         );
-        if (!res.ok) return;
-        const data = (await res.json()) as { traces: TraceListEntry[] };
         if (!cancelled) setList(data.traces);
       } catch {
         // ignore
@@ -490,9 +489,7 @@ function TraceList({
 
   const openTrace = async (id: number) => {
     try {
-      const res = await fetch(`/api/v1/perf/traces/${id}`);
-      if (!res.ok) return;
-      const data = (await res.json()) as TraceRecord;
+      const data = await apiClient.get<TraceRecord>(`/api/v1/perf/traces/${id}`);
       onSelectTrace(data);
     } catch {
       // ignore

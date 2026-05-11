@@ -343,11 +343,13 @@ fn main() -> io::Result<()> {
             key,
             host,
             public,
+            private,
         } => {
             tokio::runtime::Runtime::new()
                 .expect("Failed to create tokio runtime")
                 .block_on(async {
-                    cli::web::execute_mobile(port, no_open, tls, cert, key, host, public).await;
+                    cli::web::execute_mobile(port, no_open, tls, cert, key, host, public, private)
+                        .await;
                 });
         }
         Commands::Diff { task_id, port } => {

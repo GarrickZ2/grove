@@ -28,6 +28,60 @@ const DEBOUNCE_SECS: i64 = 2;
 /// How often to refresh the git tracked files cache (in seconds)
 const GIT_CACHE_REFRESH_SECS: u64 = 60;
 
+/// Filter out filesystem noise that would otherwise pollute the edit history.
+///
+/// Two categories:
+/// - **OS/editor cruft**: `.DS_Store`, `Thumbs.db`, vim swap/backup files,
+///   emacs lockfiles. Never carry semantic meaning.
+/// - **Atomic-write temp files**: `<name>.tmp.<digits>` (Claude Code, Cursor,
+///   many others write here then rename to the target). The follow-up
+///   rename produces a separate event for the real file, so we don't lose
+///   the edit by skipping the tmp.
+///
+/// For git projects this filter is technically redundant with `git ls-files`
+/// (tmp files aren't tracked), but the ls-files cache refreshes only every
+/// 60s — newly created tmp files in the gap could slip through. For Studio
+/// projects (no git) this is the only line of defense.
+fn is_noise_file(path: &Path) -> bool {
+    let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+        return false;
+    };
+
+    // OS metadata files
+    if matches!(name, ".DS_Store" | "Thumbs.db" | "desktop.ini" | "4913") {
+        return true;
+    }
+
+    // Editor swap / backup / lockfiles
+    if name.starts_with(".#")
+        || name.ends_with('~')
+        || name.ends_with(".swp")
+        || name.ends_with(".swo")
+        || name.ends_with(".swn")
+        || name.ends_with(".bak")
+        || name.ends_with(".orig")
+    {
+        return true;
+    }
+
+    // `<name>.tmp.<digits-or-hex>` — atomic-write pattern from many AI tools
+    // and editors. Suffix must be non-empty and all hex/digit chars to avoid
+    // accidentally matching a real file like `report.tmp.draft`.
+    if let Some(tmp_idx) = name.rfind(".tmp.") {
+        let suffix = &name[tmp_idx + ".tmp.".len()..];
+        if !suffix.is_empty() && suffix.chars().all(|c| c.is_ascii_hexdigit()) {
+            return true;
+        }
+    }
+
+    // Bare `.tmp` suffix
+    if name.ends_with(".tmp") {
+        return true;
+    }
+
+    false
+}
+
 /// Get list of git-tracked files in a directory
 fn get_git_tracked_files(worktree_path: &Path) -> HashSet<PathBuf> {
     let output = Command::new("git")
@@ -470,6 +524,12 @@ fn run_watcher_thread(
                                     path.strip_prefix(watch_path).unwrap_or(&path).to_path_buf();
 
                                 if relative_path.as_os_str().is_empty() {
+                                    continue;
+                                }
+
+                                // Drop OS cruft and atomic-write tmp files
+                                // before any git/disk check.
+                                if is_noise_file(&relative_path) {
                                     continue;
                                 }
 

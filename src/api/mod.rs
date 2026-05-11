@@ -1,6 +1,7 @@
 //! Web API module for Grove
 
 pub mod auth;
+pub mod csrf;
 pub mod error;
 pub mod handlers;
 #[cfg(feature = "perf-monitor")]
@@ -168,6 +169,7 @@ pub fn create_api_router() -> Router {
             "/projects/new",
             post(handlers::projects::create_new_project),
         )
+        .route("/projects/clone", post(handlers::projects::clone_project))
         .route("/projects/{id}", get(handlers::projects::get_project))
         .route("/projects/{id}", patch(handlers::projects::rename_project))
         .route("/projects/{id}", delete(handlers::projects::delete_project))
@@ -707,15 +709,22 @@ pub fn create_router(static_dir: Option<PathBuf>, auth: Arc<ServerAuth>) -> Rout
         .route("/auth/verify", post(auth::auth_verify))
         .with_state(auth.clone());
 
-    // Protected API routes with auth middleware
+    // Protected API routes get the HMAC auth layer.
     let protected_api = api_router.layer(middleware::from_fn_with_state(
         auth.clone(),
         auth::auth_middleware,
     ));
 
-    let router = Router::new()
+    // CSRF guard wraps EVERYTHING under /api/v1 — including auth_router, so
+    // /auth/verify can't be probed cross-origin. Sec-Fetch-Site / Origin /
+    // Referer are checked for non-safe methods; safe methods (GET/HEAD/OPTIONS,
+    // including WebSocket upgrades and CORS preflight) pass through.
+    let api_v1 = Router::new()
         .nest("/api/v1", protected_api)
-        .nest("/api/v1", auth_router);
+        .nest("/api/v1", auth_router)
+        .layer(middleware::from_fn(csrf::csrf_middleware));
+
+    let router = api_v1;
 
     // Priority: external static_dir > embedded assets
     // Static files are NOT auth-protected (SPA needs to load to show login page)
@@ -908,8 +917,9 @@ pub async fn start_server(
     )
     .await
     {
-        Ok(port) => {
-            println!("[agent_graph_mcp] listener on http://127.0.0.1:{port}");
+        Ok(_port) => {
+            // Listener bound successfully; success is silent. Failures still
+            // print since they disable agent_graph tools downstream.
         }
         Err(e) => {
             eprintln!(
@@ -978,6 +988,11 @@ pub async fn start_server(
         println!("  Authentication: HMAC-SHA256");
         println!("  TLS: enabled ({})", tls_label);
         println!("  Secret Key: {}", sk);
+        if auth.key_is_generated {
+            println!(
+                "    (auto-generated; not persisted — type a passkey at the prompt for a stable key)"
+            );
+        }
         println!();
 
         let qr_url = format!("{}/#sk={}", base_url, sk);
@@ -1017,6 +1032,11 @@ pub async fn start_server(
         println!();
         println!("  Authentication: HMAC-SHA256");
         println!("  Secret Key: {}", sk);
+        if auth.key_is_generated {
+            println!(
+                "    (auto-generated; not persisted — type a passkey at the prompt for a stable key)"
+            );
+        }
         println!();
 
         // QR code with SK embedded in URL hash fragment

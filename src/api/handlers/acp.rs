@@ -1197,9 +1197,7 @@ pub async fn fork_chat(
     // 而不是 fallback 到全空。`pid` 字段清零 — 新 chat 还没 spawn 进程,父进程的
     // pid 不该被任何 owner 检查认成"已上线"。新 agent SessionReady 时会用真 pid
     // 覆盖整个文件。
-    if let Some(mut meta) =
-        acp::read_session_metadata(&project_key, &task_id, &chat_id)
-    {
+    if let Some(mut meta) = acp::read_session_metadata(&project_key, &task_id, &chat_id) {
         meta.pid = 0;
         let dst = acp::session_json_path(&project_key, &task_id, &new_chat.id);
         if let Some(parent) = dst.parent() {
@@ -1212,7 +1210,10 @@ pub async fn fork_chat(
                 }
             }
             Err(e) => {
-                eprintln!("[fork_chat] serialize session.json failed (non-fatal): {}", e);
+                eprintln!(
+                    "[fork_chat] serialize session.json failed (non-fatal): {}",
+                    e
+                );
             }
         }
     }
