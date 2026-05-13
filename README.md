@@ -97,8 +97,11 @@ Same workspace, five surfaces.
 - **Mobile** — `grove mobile` prints a QR. Scan from your phone; every request is HMAC-SHA256 signed with the secret embedded in the QR. Optional TLS, custom bind address, `--private` for localhost-only.
 - **Radio** — hold-to-talk from your phone. The transcript routes to a configured Chat or Terminal slot; nine slots, each bound to a different task.
 
-![Mobile QR pairing](docs/images/radio-connect-qr.png)
-![Radio walkie-talkie](docs/images/radio-mobile.jpg)
+<p align="center">
+  <img src="docs/images/radio-connect-qr.png" width="65%" alt="Scan from your phone to pair">
+  &nbsp;
+  <img src="docs/images/radio-mobile.jpg" width="22%" alt="Grove Radio on phone — hold to talk">
+</p>
 
 ---
 
