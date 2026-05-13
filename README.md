@@ -175,10 +175,10 @@ sudo apt install libwebkit2gtk-4.1-0 libgtk-3-0 libayatana-appindicator3-1 librs
 
 | | |
 |---|---|
-| **[Agents →](https://garrickz2.github.io/grove/agents.html)**<br>Every coding agent, in parallel. | **[Agent Graph →](https://garrickz2.github.io/grove/extend.html)**<br>Typed DAG, agent-to-agent messaging. |
-| **[Studio →](https://garrickz2.github.io/grove/studio.html)**<br>Sketch, memory, assets. | **[Workflow →](https://garrickz2.github.io/grove/workflow.html)**<br>Spec to ship. |
-| **[Anywhere →](https://garrickz2.github.io/grove/anywhere.html)**<br>TUI · Web · GUI · Mobile · Voice. | **[Statistics →](https://garrickz2.github.io/grove/workflow.html#stats)**<br>Token use, agent leaderboard. |
-| **[Capabilities →](docs/capabilities.md)**<br>Full feature reference. | **[Install →](docs/install.md)**<br>Detailed setup. |
+| 🌿 **[Agents →](https://garrickz2.github.io/grove/agents.html)**<br>Every coding agent, in parallel. | 🕸️ **[Agent Graph →](https://garrickz2.github.io/grove/extend.html)**<br>Typed DAG, agent-to-agent messaging. |
+| 🎨 **[Studio →](https://garrickz2.github.io/grove/studio.html)**<br>Sketch, memory, assets. | 🚢 **[Workflow →](https://garrickz2.github.io/grove/workflow.html)**<br>Spec to ship. |
+| 🌐 **[Anywhere →](https://garrickz2.github.io/grove/anywhere.html)**<br>TUI · Web · GUI · Mobile · Voice. | 📊 **[Statistics →](https://garrickz2.github.io/grove/workflow.html#stats)**<br>Token use, agent leaderboard. |
+| 📜 **[Capabilities →](docs/capabilities.md)**<br>Full feature reference. | 📦 **[Install →](docs/install.md)**<br>Detailed setup. |
 
 ---
 
