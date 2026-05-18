@@ -12,6 +12,7 @@ pub mod env;
 pub mod folder;
 pub mod git;
 pub mod hooks;
+pub mod libraries;
 #[cfg(feature = "perf-monitor")]
 pub mod perf;
 pub mod projects;

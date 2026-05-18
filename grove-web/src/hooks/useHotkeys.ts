@@ -73,13 +73,45 @@ function matchesHotkey(
 /**
  * Check if the current focus context should suppress hotkeys.
  */
+/** Keys the app owns when combined with Meta (Cmd). Only these get to bypass
+ *  the focus-based suppression below — everything else (Cmd+A, Cmd+C, Cmd+V,
+ *  Cmd+Z, …) must reach the focused input / xterm so native editing works.
+ *  Previously we passed *every* Meta combo through, which broke select-all
+ *  and clipboard ops inside Monaco / xterm / chat textareas.
+ *
+ *  Maintenance gotchas (read before adding a binding):
+ *  - Matching is on `e.key.toLowerCase()`, so add the LITERAL key as it
+ *    appears in `KeyboardEvent.key`. Cmd+Shift+P yields `key === "p"` on
+ *    macOS — `Shift` doesn't change the key here.
+ *  - Cmd+Alt combos shift `e.key` to the option-mapped character on
+ *    macOS (e.g. Cmd+Alt+/ → key="÷"). For those bindings prefer
+ *    matching on `e.code` upstream (see useHotkeys' own matcher) and
+ *    skip this list entirely.
+ *  - Punctuation like `/`, `,`, `.` is fine to add (key === literal char).
+ *  - Single letters: only add when the binding really is application-
+ *    global; otherwise leave it out so the native editing surface sees it. */
+const APP_OWNED_META_KEYS = new Set([
+  "k", "p", "o",
+  "1", "2", "3", "4", "5", "6", "7", "8", "9",
+]);
+
 function shouldSuppress(_e: KeyboardEvent): "all" | "alpha" | false {
+  // App-level Meta shortcuts (Cmd+K / Cmd+P / Cmd+O / Cmd+<digit>) should
+  // fire regardless of where focus lives — otherwise the palette feels
+  // broken in Tauri's WKWebView, where focus stays glued to the last-typed
+  // textarea (TaskChat / ACP chat / Monaco) and Cmd+K silently no-ops.
+  //
+  // Everything else under Meta (Cmd+A/C/V/Z/X/F/...) MUST transparently
+  // reach the focused element so native editing / clipboard / find work.
+  if (_e.metaKey) {
+    if (APP_OWNED_META_KEYS.has(_e.key.toLowerCase())) return false;
+    // Fall through to normal suppression rules below so the keystroke
+    // still reaches focused inputs without being preventDefault-ed.
+  }
+
   // 1. Terminal focused — suppress all
   const active = document.activeElement;
   if (active?.closest(".xterm")) {
-    // Preserve app-level Meta shortcuts (Cmd+K/Cmd+P/Cmd+O, etc.) while
-    // keeping terminal control keys available to the shell.
-    if (_e.metaKey) return false;
     return "all";
   }
 

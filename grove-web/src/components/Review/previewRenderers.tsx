@@ -35,6 +35,11 @@ export interface RenderFullProps {
     previewId: string;
     markers?: PreviewCommentMarker[];
   };
+  /** Scopes `sketch://<uuid>` references in markdown to a specific Studio
+   *  task. When provided, the markdown renderer swaps such references for an
+   *  inline image of the sketch's PNG render (lightbox on click; falls back
+   *  to plain text if the render is missing). */
+  sketchContext?: { projectId: string; taskId: string };
 }
 
 export interface PreviewRenderer {
@@ -77,8 +82,16 @@ const markdownRenderer: PreviewRenderer = {
   label: 'Preview markdown',
   match: (path) => /\.(md|markdown)$/i.test(path),
   contentType: 'text',
-  renderFull: ({ content, onImageClick, onSvgClick, previewComment }) => withCommentHost(
-    <MarkdownRenderer content={content} onImageClick={onImageClick} onMermaidClick={onSvgClick} onD2Click={onSvgClick} enableHeadingIds />,
+  renderFull: ({ content, onImageClick, onSvgClick, previewComment, sketchContext }) => withCommentHost(
+    <MarkdownRenderer
+      content={content}
+      onImageClick={onImageClick}
+      onMermaidClick={onSvgClick}
+      onD2Click={onSvgClick}
+      enableHeadingIds
+      sketchContext={sketchContext}
+      sketchRenderMode="image"
+    />,
     previewComment,
   ),
   supportsDiffSegments: true,

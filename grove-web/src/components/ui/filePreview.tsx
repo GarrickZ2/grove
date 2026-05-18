@@ -10,6 +10,12 @@ import { useDomSearch } from "../Review/useDomSearch";
 import { ImageLightbox } from "./ImageLightbox";
 import { TocPanel } from "./MarkdownToc";
 import { extractToc } from "./extractToc";
+import {
+  VirtualizedMarkdownRenderer,
+  type VirtualizedMarkdownHandle,
+  type VirtualizedMarkdownHeading,
+} from "./VirtualizedMarkdownRenderer";
+import { PreviewCommentHost } from "../Review/PreviewCommentHost";
 import type { PreviewCommentLocator, PreviewCommentDraft } from "../../context";
 
 
@@ -40,6 +46,37 @@ function fallbackDownloadViaAnchor(url: string, suggestedName?: string) {
   document.body.appendChild(a);
   a.click();
   setTimeout(() => a.remove(), 1000);
+}
+
+/**
+ * Save a blob to disk. In the Tauri desktop build, blob URLs aren't reachable
+ * from the main process (different origin/context), so we ship the bytes
+ * across the bridge into a native save dialog. In the browser/web build, fall
+ * back to the standard `<a download>` anchor pattern.
+ */
+export async function saveBlobAsFile(blob: Blob, suggestedName: string): Promise<void> {
+  const tauri = getTauriInternals();
+  if (tauri) {
+    const buf = await blob.arrayBuffer();
+    try {
+      await tauri.invoke("save_bytes_dialog", {
+        bytes: Array.from(new Uint8Array(buf)),
+        suggestedName,
+      });
+      return;
+    } catch (err) {
+      console.error("[saveBlobAsFile] Tauri save dialog failed:", err);
+      // fall through to anchor fallback below
+    }
+  }
+  const url = URL.createObjectURL(blob);
+  try {
+    fallbackDownloadViaAnchor(url, suggestedName);
+  } finally {
+    // Anchor click is sync; the browser has already snapshotted the URL by
+    // the time we revoke. Delay slightly anyway to be safe across webviews.
+    setTimeout(() => URL.revokeObjectURL(url), 2000);
+  }
 }
 
 export function downloadViaIframe(url: string, suggestedName?: string) {
@@ -95,6 +132,11 @@ interface FilePreviewDrawerProps {
   onStaleMarkersCleaned?: (count: number) => void;
   previewCommentMarkers?: PreviewCommentMarker[];
   previewCommentDrafts?: PreviewCommentDraft[];
+  /** When provided, markdown previews resolve `sketch://<uuid>` refs to the
+   *  scoped task's sketch render (image inline, lightbox on click). Omit on
+   *  surfaces that aren't task-scoped (e.g. project-level shared resources)
+   *  — those refs then stay as plain text. */
+  sketchContext?: { projectId: string; taskId: string };
 }
 
 export function FilePreviewDrawer({
@@ -112,6 +154,7 @@ export function FilePreviewDrawer({
   onStaleMarkersCleaned,
   previewCommentMarkers,
   previewCommentDrafts,
+  sketchContext,
 }: FilePreviewDrawerProps) {
   const renderer = getPreviewRenderer(fileName);
   const wide = renderer?.id === 'jsx' || renderer?.id === 'html';
@@ -133,31 +176,69 @@ export function FilePreviewDrawer({
   const [editingDraftId, setEditingDraftId] = useState<string | null>(null);
 
   const isMarkdown = fileName.endsWith(".md") || fileName.endsWith(".markdown");
-  const tocEntries = useMemo(() => isMarkdown ? extractToc(content) : [], [isMarkdown, content]);
+  // Threshold for switching to block-level virtualization: ~30k chars is
+  // roughly 700 lines of prose or 400 lines of code — past that, the
+  // synchronous react-markdown parse + DOM mount becomes the first-paint
+  // bottleneck, and Cmd+F over the full tree starts to lock the UI.
+  const isLargeMarkdown = isMarkdown && !showSource && content.length > 30000;
+  const tocEntries = useMemo(
+    // Skip the regex pass when virtualization is in charge — it builds its
+    // own heading list during mdast parsing.
+    () => (isMarkdown && !isLargeMarkdown ? extractToc(content) : []),
+    [isMarkdown, isLargeMarkdown, content],
+  );
+  const [virtHeadings, setVirtHeadings] = useState<VirtualizedMarkdownHeading[]>([]);
+  const effectiveTocEntries = isLargeMarkdown ? virtHeadings : tocEntries;
   const [showToc, setShowToc] = useState(false);
 
   // ── Search ─────────────────────────────────────────────────────────────
   const drawerRef = useRef<HTMLDivElement>(null);
   const searchRootRef = useRef<HTMLDivElement>(null);
+  const virtRef = useRef<VirtualizedMarkdownHandle>(null);
+  // Tracked as state (not a ref) so consumers like TocPanel re-render when
+  // Virtuoso's internal scroller mounts — a plain ref mutation would never
+  // trigger the effects that depend on the scroll element.
+  const [virtScroller, setVirtScroller] = useState<HTMLElement | null>(null);
+  // Stable RefObject wrapper around `virtScroller` for the TocPanel API,
+  // which expects `RefObject<HTMLElement | null>`. The object identity stays
+  // the same across renders; only its `.current` changes.
+  const virtScrollerRef = useRef<HTMLElement | null>(null);
+  useEffect(() => {
+    virtScrollerRef.current = virtScroller;
+  }, [virtScroller]);
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   // Iframe (HTML/JSX) renderers route search through the bridge; for those
   // we rely on bridge-reported counts instead of running TreeWalker locally.
   const isIframeRenderer = renderer?.id === "html" || renderer?.id === "jsx";
-  const searchEnabled = searchOpen && !isIframeRenderer;
+  // Three mutually-exclusive search backends. Virtualized markdown runs
+  // search over its pre-parsed plaintext index (DOM-free), iframe renderers
+  // forward via postMessage, and everything else uses the TreeWalker-based
+  // useDomSearch hook.
+  const searchEnabled = searchOpen && !isIframeRenderer && !isLargeMarkdown;
   const dom = useDomSearch(searchRootRef, searchEnabled ? searchQuery : "", searchEnabled);
   const [iframeTotal, setIframeTotal] = useState(0);
   const [iframeCurrent, setIframeCurrent] = useState(0);
-  const total = isIframeRenderer ? iframeTotal : dom.total;
-  const current = isIframeRenderer ? iframeCurrent : dom.current;
+  const [virtTotal, setVirtTotal] = useState(0);
+  const [virtCurrent, setVirtCurrent] = useState(0);
+  const total = isIframeRenderer ? iframeTotal : isLargeMarkdown ? virtTotal : dom.total;
+  const current = isIframeRenderer ? iframeCurrent : isLargeMarkdown ? virtCurrent : dom.current;
   const next = () => {
     if (isIframeRenderer) setIframeCurrent((c) => (iframeTotal === 0 ? 0 : (c + 1) % iframeTotal));
+    else if (isLargeMarkdown) virtRef.current?.searchNext();
     else dom.next();
   };
   const prev = () => {
     if (isIframeRenderer) setIframeCurrent((c) => (iframeTotal === 0 ? 0 : (c - 1 + iframeTotal) % iframeTotal));
+    else if (isLargeMarkdown) virtRef.current?.searchPrev();
     else dom.prev();
   };
+
+  // Drive the virtualized renderer's internal search query when in that mode.
+  useEffect(() => {
+    if (!isLargeMarkdown) return;
+    virtRef.current?.setSearchQuery(searchOpen ? searchQuery : "");
+  }, [searchQuery, searchOpen, isLargeMarkdown]);
 
   // Reset iframe match state when query changes
   useEffect(() => {
@@ -419,7 +500,7 @@ export function FilePreviewDrawer({
             )}
           </div>
           <div className="flex items-center gap-1 shrink-0">
-            {isMarkdown && tocEntries.length > 1 && (
+            {isMarkdown && effectiveTocEntries.length > 1 && (
               <button
                 onClick={() => setShowToc(v => !v)}
                 className="hidden md:inline-flex p-1.5 rounded-md transition-colors"
@@ -556,7 +637,34 @@ export function FilePreviewDrawer({
                 {content}
               </pre>
             );
-          })() : renderer ? (
+          })() : isLargeMarkdown ? (
+            <PreviewCommentHost
+              previewComment={
+                commentable
+                  ? { enabled: commentMode && !pendingLocator, previewId, markers: stableMarkers }
+                  : undefined
+              }
+            >
+              <VirtualizedMarkdownRenderer
+                ref={virtRef}
+                content={content}
+                onImageClick={setLightboxUrl}
+                onMermaidClick={setLightboxSvg}
+                onD2Click={setLightboxSvg}
+                sketchContext={sketchContext}
+                sketchRenderMode="image"
+                onHeadingsChange={setVirtHeadings}
+                onSearchStateChange={(t, c) => {
+                  setVirtTotal(t);
+                  setVirtCurrent(c);
+                }}
+                onScrollerRef={(el) => {
+                  setVirtScroller(el);
+                }}
+                style={{ height: "100%" }}
+              />
+            </PreviewCommentHost>
+          ) : renderer ? (
             <div className={renderer.id === 'image' || renderer.id === 'jsx' || renderer.id === 'html' ? 'h-full' : 'p-5'}>
               {renderer.renderFull({
                 content,
@@ -564,6 +672,7 @@ export function FilePreviewDrawer({
                 onImageClick: setLightboxUrl,
                 onSvgClick: setLightboxSvg,
                 previewComment: commentable ? { enabled: commentMode && !pendingLocator, previewId, markers: stableMarkers } : undefined,
+                sketchContext,
               })}
             </div>
           ) : (() => {
@@ -580,11 +689,22 @@ export function FilePreviewDrawer({
             );
           })()}
           </div>
-          {showToc && tocEntries.length > 1 && (
+          {showToc && effectiveTocEntries.length > 1 && (
             <TocPanel
-              entries={tocEntries}
-              scrollRoot={searchRootRef}
+              entries={effectiveTocEntries}
+              // In virtualized mode the scroll surface is Virtuoso's internal
+              // scroller, not the drawer body — TocPanel's active-heading
+              // tracking watches scroll on this element.
+              scrollRoot={
+                isLargeMarkdown
+                  ? (virtScrollerRef as React.RefObject<HTMLElement | null>)
+                  : searchRootRef
+              }
               onEntryClick={(id) => {
+                if (isLargeMarkdown) {
+                  virtRef.current?.scrollToHeadingId(id);
+                  return;
+                }
                 const el = searchRootRef.current?.querySelector(`[id="${CSS.escape(id)}"]`);
                 if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
               }}

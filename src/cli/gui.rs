@@ -215,6 +215,33 @@ async fn download_file_dialog(
     Ok(Some(path.display().to_string()))
 }
 
+/// Show a native "Save As" dialog and write the given bytes to the chosen
+/// path. Used for blob-backed downloads (e.g. Sketch PNG export) where the
+/// data lives in the webview and cannot be re-fetched by the main process.
+///
+/// Returns `Ok(Some(path))` on success, `Ok(None)` if the user cancelled.
+#[tauri::command]
+async fn save_bytes_dialog(
+    bytes: Vec<u8>,
+    suggested_name: String,
+) -> Result<Option<String>, String> {
+    let handle = rfd::AsyncFileDialog::new()
+        .set_file_name(&suggested_name)
+        .save_file()
+        .await;
+    let Some(file) = handle else {
+        return Ok(None);
+    };
+    let path = file.path().to_path_buf();
+    let path_for_blocking = path.clone();
+    tokio::task::spawn_blocking(move || -> Result<(), String> {
+        std::fs::write(&path_for_blocking, &bytes).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())??;
+    Ok(Some(path.display().to_string()))
+}
+
 /// Try to daemonize the GUI process so the terminal is released immediately.
 ///
 /// Returns `true` if the current process is the **parent** that spawned a
@@ -432,6 +459,7 @@ pub async fn execute(port: u16) {
         .invoke_handler(tauri::generate_handler![
             open_external_url,
             download_file_dialog,
+            save_bytes_dialog,
             toggle_devtools,
             toggle_main_window_visibility,
             crate::tray::tray_resolve_permission,
@@ -508,6 +536,49 @@ pub async fn execute(port: u16) {
                         set_key("mediaStreamEnabled");
                         set_key("peerConnectionEnabled");
                     });
+                });
+            }
+
+            // Native menu — survives frontend / React crashes when the
+            // in-page Cmd+Opt+I and Cmd+R bindings die with the JS runtime.
+            // Menu lives in the OS menubar (Tauri main process), so even a
+            // fully-frozen webview can be reloaded or have devtools opened.
+            {
+                use tauri::menu::{Menu, MenuItemBuilder, SubmenuBuilder};
+                let toggle_devtools_item =
+                    MenuItemBuilder::with_id("toggle_devtools", "Toggle DevTools")
+                        .accelerator("CmdOrCtrl+Alt+I")
+                        .build(app)?;
+                let reload_item = MenuItemBuilder::with_id("reload", "Reload")
+                    .accelerator("CmdOrCtrl+R")
+                    .build(app)?;
+                let view = SubmenuBuilder::new(app, "View")
+                    .item(&toggle_devtools_item)
+                    .item(&reload_item)
+                    .build()?;
+                // Default macOS menu (App / Edit / Window / Help) so Copy/Paste
+                // and Quit Grove keep working — then append our View submenu.
+                let menu = Menu::default(app.handle())?;
+                menu.append(&view)?;
+                app.set_menu(menu)?;
+                app.on_menu_event(move |app, event| {
+                    use tauri::Manager;
+                    let Some(window) = app.get_webview_window("main") else {
+                        return;
+                    };
+                    match event.id().as_ref() {
+                        "toggle_devtools" => {
+                            if window.is_devtools_open() {
+                                window.close_devtools();
+                            } else {
+                                window.open_devtools();
+                            }
+                        }
+                        "reload" => {
+                            let _ = window.eval("window.location.reload()");
+                        }
+                        _ => {}
+                    }
                 });
             }
 

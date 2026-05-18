@@ -420,11 +420,23 @@ fn json_success<T: serde::Serialize>(value: &T) -> Result<CallToolResult, McpErr
 /// spec §4 error code (`no_edge`, `duty_required`, …) and the human hint as
 /// part of normal tool output rather than a transport failure.
 fn tool_error(err: AgentGraphError) -> CallToolResult {
-    let body = serde_json::json!({
+    let mut body = serde_json::json!({
         "error": err.code(),
         "hint": err.hint(),
         "message": err.to_string(),
     });
+    // For InvalidConfig surface the structured allowed-list so the calling AI
+    // can pick a real value without parsing the human message.
+    if let AgentGraphError::InvalidConfig {
+        field,
+        value,
+        allowed,
+    } = &err
+    {
+        body["field"] = serde_json::json!(field);
+        body["value"] = serde_json::json!(value);
+        body["allowed"] = serde_json::json!(allowed);
+    }
     let text = serde_json::to_string_pretty(&body)
         .unwrap_or_else(|_| format!("{{\"error\":\"{}\"}}", err.code()));
     CallToolResult::error(vec![Content::text(text)])

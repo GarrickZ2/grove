@@ -756,29 +756,82 @@ async fn deliver_to_session(
     // message was NOT queued — the caller MUST treat that as a failure.
     let target_handle = ensure_target_handle(project_key, task_id, target_chat_id).await?;
 
-    // Apply config now that the session is guaranteed online (covers the offline case).
-    // We also build a QueuedConfig snapshot to re-apply if the message ends up queued.
-    let queued_config = if let Some(cfg) = &config {
+    // Validate the config against the target session's advertised available_*
+    // lists BEFORE applying anything. Without this check the AI could pass a
+    // wrong model id (e.g. mixing a Claude session with a GLM model id) and
+    // silently corrupt the session's model state — Grove would optimistically
+    // update its local `current_model_id` while the ACP agent rejects the
+    // SetSessionModel request, and every subsequent prompt would fail with
+    // `invalid_request` until the bad state is overwritten by chance.
+    //
+    // Hard-fail with the structured allowed list so the calling AI can self-
+    // correct on retry (see `tool_error` in agent_graph_mcp.rs).
+    let session_meta = if config.is_some() {
+        acp::read_session_metadata(project_key, task_id, target_chat_id)
+    } else {
+        None
+    };
+    // B1 fix: when session.json is missing (target session not yet spawned, or
+    // mid-spawn race), fall back to optimistic apply — don't reject the prompt
+    // with an empty `allowed` list. Once the session comes online, the cmd_loop
+    // will surface a real `set_*_rejected_by_agent` error if the value is bad.
+    if let (Some(cfg), Some(meta)) = (&config, session_meta.as_ref()) {
         if let Some(ref model) = cfg.model {
-            let _ = target_handle.set_model(model.clone()).await;
+            let allowed: Vec<String> = meta
+                .available_models
+                .iter()
+                .map(|(id, _)| id.clone())
+                .collect();
+            if !allowed.iter().any(|id| id == model) {
+                return Err(AgentGraphError::InvalidConfig {
+                    field: "model",
+                    value: model.clone(),
+                    allowed,
+                });
+            }
         }
         if let Some(ref mode) = cfg.mode {
-            let _ = target_handle.set_mode(mode.clone()).await;
+            let allowed: Vec<String> = meta
+                .available_modes
+                .iter()
+                .map(|(id, _)| id.clone())
+                .collect();
+            if !allowed.iter().any(|id| id == mode) {
+                return Err(AgentGraphError::InvalidConfig {
+                    field: "mode",
+                    value: mode.clone(),
+                    allowed,
+                });
+            }
         }
-        let thought_level_config_id =
-            acp::read_session_metadata(project_key, task_id, target_chat_id)
-                .and_then(|m| m.thought_level_config_id);
-        if let (Some(ref thought_level), Some(ref config_id)) =
-            (&cfg.thought_level, &thought_level_config_id)
-        {
-            let _ = target_handle
-                .set_thought_level(config_id.clone(), thought_level.clone())
-                .await;
-        } else if cfg.thought_level.is_some() && thought_level_config_id.is_none() {
+        if let Some(ref thought_level) = cfg.thought_level {
+            let allowed: Vec<String> = meta
+                .available_thought_levels
+                .iter()
+                .map(|(id, _)| id.clone())
+                .collect();
+            if !allowed.iter().any(|id| id == thought_level) {
+                return Err(AgentGraphError::InvalidConfig {
+                    field: "thought_level",
+                    value: thought_level.clone(),
+                    allowed,
+                });
+            }
+        }
+    }
+
+    // Build a QueuedConfig snapshot to bundle with the prompt. The ACP cmd_loop
+    // applies SetSessionMode/Model/ThoughtLevel requests before the prompt itself,
+    // so we no longer fire separate set_* calls here.
+    let queued_config = if let Some(cfg) = &config {
+        let thought_level_config_id = session_meta
+            .as_ref()
+            .and_then(|m| m.thought_level_config_id.clone());
+        if cfg.thought_level.is_some() && thought_level_config_id.is_none() {
             eprintln!(
                 "[ACP] deliver_to_session: thought_level requested but thought_level_config_id \
-                 not yet in session.json for chat {target_chat_id} — thought_level will also be \
-                 skipped at dequeue (config_id snapshot is None)"
+                 not yet in session.json for chat {target_chat_id} — thought_level will be \
+                 skipped at apply time (config_id snapshot is None)"
             );
         }
         Some(QueuedConfig {
@@ -816,19 +869,20 @@ async fn deliver_to_session(
         )
         .is_ok();
     if !claimed {
-        let messages = target_handle.queue_message(QueuedMessage {
-            text: injected,
-            attachments: Vec::new(),
-            sender: Some(sender),
-            config: queued_config,
-        });
+        let messages = target_handle.queue_message(QueuedMessage::new(
+            injected,
+            Vec::new(),
+            Some(sender),
+            false,
+            queued_config,
+        ));
         target_handle.emit(AcpUpdate::QueueUpdate { messages });
         return Ok(());
     }
 
     let send_res = tokio::time::timeout(
         Duration::from_secs(10),
-        target_handle.send_prompt(injected, Vec::new(), Some(sender), false),
+        target_handle.send_prompt(injected, Vec::new(), Some(sender), false, queued_config),
     )
     .await;
     match send_res {
@@ -884,7 +938,13 @@ pub async fn deliver_user_remind(
 
     let send_res = tokio::time::timeout(
         Duration::from_secs(10),
-        target_handle.send_prompt(injected, Vec::new(), Some("user:remind".to_string()), false),
+        target_handle.send_prompt(
+            injected,
+            Vec::new(),
+            Some("user:remind".to_string()),
+            false,
+            None,
+        ),
     )
     .await;
     match send_res {
@@ -1573,7 +1633,7 @@ mod tests {
         handle_b
             .is_busy
             .store(false, std::sync::atomic::Ordering::Relaxed);
-        handle_b.resume_queue();
+        assert!(handle_b.test_drain_one_queued());
 
         // Now we should see a UserMessage with sender preserved.
         let event = drain_until(&mut rx_b, |u| matches!(u, AcpUpdate::UserMessage { .. })).await;

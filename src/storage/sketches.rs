@@ -228,6 +228,27 @@ pub fn load_thumbnail_if_fresh(
     }
 }
 
+/// Load the thumbnail PNG along with its mtime, regardless of staleness vs
+/// the scene file. Used by the HTTP preview endpoint where showing a slightly
+/// stale render is preferable to showing nothing while the next debounced
+/// upload is in flight. Returns `None` when the thumb file is missing.
+pub fn load_thumbnail(
+    project: &str,
+    task_id: &str,
+    sketch_id: &str,
+) -> Result<Option<(Vec<u8>, std::time::SystemTime)>> {
+    validate_sketch_id(sketch_id)?;
+    let dir = sketches_dir(project, task_id)?;
+    let png_path = thumb_png_path_in(&dir, sketch_id);
+    if !png_path.exists() {
+        return Ok(None);
+    }
+    let mtime = std::fs::metadata(&png_path)
+        .and_then(|m| m.modified())
+        .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
+    Ok(Some((std::fs::read(&png_path)?, mtime)))
+}
+
 pub fn rename_sketch(project: &str, task_id: &str, sketch_id: &str, new_name: &str) -> Result<()> {
     validate_sketch_id(sketch_id)?;
     let mut index = load_index(project, task_id)?;
@@ -679,6 +700,21 @@ pub fn apply_draw(
             "cameraUpdate" => {
                 last_camera = Some(el.clone());
             }
+            "libraryItem" => {
+                let lib_id = el
+                    .get("id")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| {
+                        GroveError::storage(format!(
+                            "element at index {i} (type=\"libraryItem\") is missing the required `id` field"
+                        ))
+                    })?;
+                let x = el.get("x").and_then(|v| v.as_f64()).unwrap_or(0.0);
+                let y = el.get("y").and_then(|v| v.as_f64()).unwrap_or(0.0);
+                let expanded = crate::storage::libraries::expand(lib_id, x, y)
+                    .map_err(|e| GroveError::storage(format!("libraryItem at index {i}: {e}")))?;
+                new_elements.extend(expanded);
+            }
             "" => {
                 return Err(GroveError::storage(format!(
                     "element at index {i} is missing the required `type` field"
@@ -1054,6 +1090,52 @@ mod tests {
         let els2 = v2["elements"].as_array().unwrap();
         assert_eq!(els2.len(), 1);
         assert_eq!(els2[0]["id"], "b");
+    }
+
+    #[test]
+    fn apply_draw_expands_library_item_pseudo_element() {
+        let env = TestEnv::new();
+        let meta = create_sketch(&env.project, &env.task_id, "lib-test").unwrap();
+
+        // Seed the global library with one item. Note: TestEnv shares
+        // `grove_dir()` with the library file, so the lock held by TestEnv
+        // serialises this against other tests touching the same library.
+        crate::storage::libraries::upsert(vec![crate::storage::libraries::LibraryItem {
+            id: "lib-db".to_string(),
+            status: Some("published".to_string()),
+            elements: vec![serde_json::json!({
+                "type": "rectangle", "id": "C", "x": 0.0, "y": 0.0,
+                "width": 80.0, "height": 40.0,
+            })],
+            created: Some(0),
+            name: Some("database".to_string()),
+            extra: Default::default(),
+        }])
+        .unwrap();
+
+        let draw = vec![serde_json::json!({
+            "type": "libraryItem", "id": "lib-db", "x": 300.0, "y": 200.0,
+        })];
+        apply_draw(&env.project, &env.task_id, &meta.id, &draw).unwrap();
+
+        let scene = load_scene_value(&env.project, &env.task_id, &meta.id).unwrap();
+        let els = scene["elements"].as_array().unwrap();
+        assert_eq!(els.len(), 1);
+        assert_eq!(els[0]["type"], "rectangle");
+        assert_eq!(els[0]["x"].as_f64().unwrap(), 300.0);
+        assert_eq!(els[0]["y"].as_f64().unwrap(), 200.0);
+        // Element id must be rewritten so future instantiations don't collide.
+        assert_ne!(els[0]["id"].as_str().unwrap(), "C");
+
+        // Unknown library id → clear error.
+        let bad = vec![serde_json::json!({
+            "type": "libraryItem", "id": "does-not-exist", "x": 0.0, "y": 0.0,
+        })];
+        let err = apply_draw(&env.project, &env.task_id, &meta.id, &bad).unwrap_err();
+        assert!(err.to_string().contains("not found"));
+
+        // Clean up the global library file so concurrent tests aren't affected.
+        crate::storage::libraries::reset().unwrap();
     }
 
     #[test]

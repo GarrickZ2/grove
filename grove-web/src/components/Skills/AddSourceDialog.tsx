@@ -13,6 +13,72 @@ function extractNameFromUrl(url: string): string {
   return segments.length > 0 ? segments[segments.length - 1] : "";
 }
 
+// Smart-parse a user-pasted string into a canonical git URL (+ optional subpath).
+// Handles:
+//   - Standard https://github.com/<owner>/<repo>(.git)?
+//   - SSH git@github.com:<owner>/<repo>(.git)?
+//   - Bare shortcut <owner>/<repo>  →  https://github.com/<owner>/<repo>.git
+//   - GitHub tree/blob URLs        →  base repo URL + subpath
+//   - CLI-style "npx skills add <repo> [flags]" / "skills add <repo>"
+function parseGitInput(raw: string): { url: string; subpath?: string } {
+  let input = raw.trim();
+  if (!input) return { url: "" };
+  // Cap input length — the parsers below are cheap, but pathologically long
+  // strings are almost never a legitimate git URL and could exercise
+  // worst-case regex behaviour. Cheap to reject.
+  if (input.length > 2000) return { url: "" };
+
+  // Strip CLI command prefixes: "npx skills add X -y -g" → "X"
+  const cliMatch = input.match(/^(?:npx\s+)?skills\s+add\s+(.+)$/i);
+  if (cliMatch) {
+    const tokens = cliMatch[1].split(/\s+/).filter((t) => t && !t.startsWith("-"));
+    if (tokens.length > 0) input = tokens[0];
+  }
+
+  // Tree/blob URL on any host — split on the literal `/tree/` or `/blob/`
+  // (with optional GitLab `-/` prefix) instead of relying on a backtracking
+  // regex. The previous expression had lazy `.+?` followed by alternation,
+  // which can catastrophically backtrack on long inputs without a `/tree/`
+  // segment. The split approach is O(n) and immune.
+  //   GitHub / Gitea:        <base>/(tree|blob)/<branch>/<subpath>
+  //   GitLab (incl. nested): <base>/-/(tree|blob)/<branch>/<subpath>
+  if (/^https?:\/\//i.test(input)) {
+    const markerMatch = input.match(/\/(?:-\/)?(?:tree|blob)\//i);
+    if (markerMatch && markerMatch.index !== undefined && markerMatch.index > 0) {
+      const base = input.slice(0, markerMatch.index).replace(/\.git$/i, "");
+      const afterMarker = input.slice(markerMatch.index + markerMatch[0].length);
+      // Drop the branch (first segment) and any trailing slash.
+      const slashIdx = afterMarker.indexOf("/");
+      const rawSub = slashIdx >= 0 ? afterMarker.slice(slashIdx + 1) : "";
+      const subpath = rawSub.replace(/\/+$/, "");
+      return { url: `${base}.git`, subpath: subpath || undefined };
+    }
+  }
+
+  // Generic https repo URL (any host, ≥2 path segments) — normalize to .git suffix.
+  // Lazy `*?` on extra segments lets nested paths match while still allowing a
+  // trailing `.git` to be stripped.
+  const httpsMatch = input.match(
+    /^(https?:\/\/[^/]+\/[^/]+\/[^/]+(?:\/[^/]+)*?)(?:\.git)?\/?$/i,
+  );
+  if (httpsMatch) {
+    return { url: `${httpsMatch[1]}.git` };
+  }
+
+  // SSH form — leave as-is (already canonical)
+  if (/^git@[^:]+:[^/]+\/.+/.test(input)) {
+    return { url: input.endsWith(".git") ? input : `${input}.git` };
+  }
+
+  // Bare owner/repo shortcut
+  const shortMatch = input.match(/^([A-Za-z0-9][\w.-]*)\/([A-Za-z0-9][\w.-]*?)(?:\.git)?$/);
+  if (shortMatch) {
+    return { url: `https://github.com/${shortMatch[1]}/${shortMatch[2]}.git` };
+  }
+
+  return { url: input };
+}
+
 interface AddSourceDialogProps {
   isOpen: boolean;
   editingSource: SkillSource | null;
@@ -70,6 +136,28 @@ export function AddSourceDialog({ isOpen, editingSource, onClose, onSaved }: Add
     }
   };
 
+  // Normalize on blur (git mode only) so the canonical form lands in the
+  // field after the user finishes pasting/typing. Idempotent — safe to re-run.
+  const handleUrlBlur = () => {
+    if (sourceType !== "git") return;
+    if (isEditing) return;
+    if (!url.trim()) return;
+    const parsed = parseGitInput(url);
+    if (parsed.url && parsed.url !== url) {
+      setUrl(parsed.url);
+      if (!name || isNameAutoFilled) {
+        const extracted = extractNameFromUrl(parsed.url);
+        if (extracted) {
+          setName(extracted);
+          setIsNameAutoFilled(true);
+        }
+      }
+    }
+    if (parsed.subpath && !subpath.trim()) {
+      setSubpath(parsed.subpath);
+    }
+  };
+
   useEffect(() => {
     if (!isOpen) return;
     const handler = (e: KeyboardEvent) => {
@@ -99,12 +187,18 @@ export function AddSourceDialog({ isOpen, editingSource, onClose, onSaved }: Add
 
     setIsSaving(true);
     setError(null);
-    const trimmedSubpath = subpath.trim();
+    let finalUrl = url.trim();
+    let finalSubpath = subpath.trim();
+    if (sourceType === "git" && !isEditing) {
+      const parsed = parseGitInput(finalUrl);
+      if (parsed.url) finalUrl = parsed.url;
+      if (parsed.subpath && !finalSubpath) finalSubpath = parsed.subpath;
+    }
     const req = {
       name: name.trim(),
       source_type: sourceType,
-      url: url.trim(),
-      subpath: trimmedSubpath ? trimmedSubpath : undefined,
+      url: finalUrl,
+      subpath: finalSubpath ? finalSubpath : undefined,
     };
     let saveErr: unknown = null;
     try {
@@ -198,9 +292,10 @@ export function AddSourceDialog({ isOpen, editingSource, onClose, onSaved }: Add
                       type="text"
                       value={url}
                       onChange={(e) => handleUrlChange(e.target.value)}
+                      onBlur={handleUrlBlur}
                       placeholder={
                         sourceType === "git"
-                          ? "https://github.com/org/skills-repo.git"
+                          ? "URL · owner/repo · npx skills add ..."
                           : "/home/user/my-skills"
                       }
                       className="flex-1 px-3 py-2 text-sm font-mono bg-[var(--color-bg)] border border-[var(--color-border)] rounded-lg text-[var(--color-text)] placeholder:text-[var(--color-text-muted)]/50 focus:outline-none focus:ring-1 focus:ring-[var(--color-highlight)]"

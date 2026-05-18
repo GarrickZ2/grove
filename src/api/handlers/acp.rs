@@ -14,7 +14,8 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 use crate::acp::{
-    self, AcpStartConfig, AcpUpdate, ContentBlockData, PromptCapabilitiesData, QueuedMessage,
+    self, AcpStartConfig, AcpUpdate, ContentBlockData, PromptCapabilitiesData, QueuedConfig,
+    QueuedMessage,
 };
 use crate::storage::{chat_attachments, chat_history, config, tasks, workspace};
 
@@ -30,23 +31,15 @@ enum ClientMessage {
         sender: Option<String>,
         #[serde(default)]
         terminal: bool,
+        /// Per-prompt config bundle (model / mode / thought_level). Cmd loop applies
+        /// it BEFORE the prompt; replaces the old standalone SetMode/SetModel/
+        /// SetThoughtLevel client messages.
+        #[serde(default)]
+        config: Option<QueuedConfig>,
     },
     Cancel,
     /// Explicitly kill the ACP session
     Kill,
-    /// Switch agent mode dynamically
-    SetMode {
-        mode_id: String,
-    },
-    /// Switch agent model dynamically
-    SetModel {
-        model_id: String,
-    },
-    /// Change the thought-level / reasoning-effort selector
-    SetThoughtLevel {
-        config_id: String,
-        value_id: String,
-    },
     /// Respond to a permission request. `id` is the request id (ACP tool_call_id)
     /// so the server can verify the response targets the live pending tx and not
     /// a stale dialog the frontend was still rendering from history.
@@ -60,22 +53,29 @@ enum ClientMessage {
         text: String,
         #[serde(default)]
         attachments: Vec<ContentBlockData>,
+        /// Per-message config bundle captured at the moment the user clicked
+        /// queue. Front-end snapshots the dropdowns it currently shows so a
+        /// later model/mode switch during the busy turn doesn't retroactively
+        /// rewrite this queued message's settings. Old clients that don't
+        /// send the field fall back to a server-side snapshot of the agent's
+        /// current state (legacy behaviour).
+        #[serde(default)]
+        config: Option<QueuedConfig>,
     },
-    /// Remove a message from the pending queue by index
+    /// Remove a queued message by its stable id (assigned by the server when
+    /// the message was enqueued, surfaced in `QueueUpdate.messages[].id`).
+    /// 用 id 而非 index 是为了在编辑/删除请求往返期间,即使队首被 drain 也能
+    /// 精确定位用户原本想动的那条消息(找不到 → MessageGone 通知前端)。
     DequeueMessage {
-        index: usize,
+        id: String,
     },
-    /// Edit a queued message by index
+    /// Edit a queued message by id. Same id semantics as DequeueMessage.
     UpdateQueuedMessage {
-        index: usize,
+        id: String,
         text: String,
     },
     /// Clear all pending messages
     ClearQueue,
-    /// Pause queue auto-send (user is editing a queued message)
-    PauseQueue,
-    /// Resume queue auto-send (user finished editing)
-    ResumeQueue,
     /// Execute a terminal command directly (Shell mode, bypasses AI)
     TerminalExecute {
         command: String,
@@ -190,6 +190,12 @@ enum ServerMessage {
     },
     QueueUpdate {
         messages: Vec<QueuedMessage>,
+    },
+    /// 前端通过 id 请求 edit/delete pending 消息,但该 id 已不在队列(通常是
+    /// 网络往返期间被 drain 出去发给了 agent)。前端收到后应关闭编辑态并
+    /// 提示用户"消息已发送,无法编辑"。
+    QueueMessageGone {
+        id: String,
     },
     PlanFileUpdate {
         path: String,
@@ -451,6 +457,7 @@ impl From<AcpUpdate> for ServerMessage {
                     .collect(),
             },
             AcpUpdate::QueueUpdate { messages } => ServerMessage::QueueUpdate { messages },
+            AcpUpdate::QueueMessageGone { id } => ServerMessage::QueueMessageGone { id },
             AcpUpdate::PlanFileUpdate { path, content } => {
                 ServerMessage::PlanFileUpdate { path, content }
             }
@@ -765,116 +772,110 @@ async fn handle_acp_ws(socket: WebSocket, session_key: String, config: AcpStartC
     });
 
     // Task: Forward WebSocket messages to ACP
-    let ws_to_acp = tokio::spawn(async move {
-        while let Some(msg) = ws_receiver.next().await {
-            match msg {
-                Ok(Message::Text(text)) => {
-                    if let Ok(client_msg) = serde_json::from_str::<ClientMessage>(&text) {
-                        match client_msg {
-                            ClientMessage::Prompt {
-                                text,
-                                attachments,
-                                sender,
-                                terminal,
-                            } => {
-                                if let Err(e) = handle_for_input
-                                    .send_prompt(text, attachments, sender, terminal)
-                                    .await
-                                {
-                                    eprintln!("Failed to send prompt: {}", e);
-                                    break;
-                                }
-                            }
-                            ClientMessage::Cancel => {
-                                let _ = handle_for_input.cancel().await;
-                            }
-                            ClientMessage::Kill => {
-                                let _ = handle_for_input.kill().await;
-                                break;
-                            }
-                            ClientMessage::SetMode { mode_id } => {
-                                let _ = handle_for_input.set_mode(mode_id).await;
-                            }
-                            ClientMessage::SetModel { model_id } => {
-                                let _ = handle_for_input.set_model(model_id).await;
-                            }
-                            ClientMessage::SetThoughtLevel {
-                                config_id,
-                                value_id,
-                            } => {
-                                let _ = handle_for_input
-                                    .set_thought_level(config_id, value_id)
-                                    .await;
-                            }
-                            ClientMessage::PermissionResponse { id, option_id } => {
-                                // Reject responses targeting a stale dialog —
-                                // when the frontend rendered it from history but
-                                // the live pending has moved on or never matched.
-                                let live_id = handle_for_input.pending_permission_id();
-                                if !id.is_empty() && live_id.as_deref() != Some(id.as_str()) {
-                                    handle_for_input.emit(AcpUpdate::Error {
-                                        message: format!(
-                                            "Permission request {} is no longer pending",
-                                            id
-                                        ),
-                                    });
-                                } else if !handle_for_input.respond_permission(option_id) {
-                                    handle_for_input.emit(AcpUpdate::Error {
-                                        message: "No pending permission request".to_string(),
-                                    });
-                                }
-                            }
-                            ClientMessage::QueueMessage { text, attachments } => {
-                                // 快照当前 config，确保出队时使用正确的 model/mode/thought_level
-                                let config = Some(handle_for_input.snapshot_config());
-                                let messages = handle_for_input.queue_message(QueuedMessage {
+    let ws_to_acp =
+        tokio::spawn(async move {
+            while let Some(msg) = ws_receiver.next().await {
+                match msg {
+                    Ok(Message::Text(text)) => {
+                        if let Ok(client_msg) = serde_json::from_str::<ClientMessage>(&text) {
+                            match client_msg {
+                                ClientMessage::Prompt {
                                     text,
                                     attachments,
-                                    sender: None,
+                                    sender,
+                                    terminal,
                                     config,
-                                });
-                                handle_for_input.emit(AcpUpdate::QueueUpdate { messages });
-                            }
-                            ClientMessage::DequeueMessage { index } => {
-                                let messages = handle_for_input.dequeue_message(index);
-                                handle_for_input.emit(AcpUpdate::QueueUpdate { messages });
-                            }
-                            ClientMessage::UpdateQueuedMessage { index, text } => {
-                                let messages = handle_for_input.update_queued_message(index, text);
-                                handle_for_input.emit(AcpUpdate::QueueUpdate { messages });
-                            }
-                            ClientMessage::ClearQueue => {
-                                let messages = handle_for_input.clear_queue();
-                                handle_for_input.emit(AcpUpdate::QueueUpdate { messages });
-                            }
-                            ClientMessage::PauseQueue => {
-                                handle_for_input.pause_queue();
-                            }
-                            ClientMessage::ResumeQueue => {
-                                handle_for_input.resume_queue();
-                            }
-                            ClientMessage::TerminalExecute { command } => {
-                                handle_for_input.execute_terminal(command);
-                            }
-                            ClientMessage::TerminalKill => {
-                                handle_for_input.kill_terminal();
-                            }
-                            ClientMessage::Authenticate { method_id } => {
-                                if let Err(e) = handle_for_input.authenticate(method_id).await {
-                                    handle_for_input.emit(AcpUpdate::Error {
-                                        message: format!("Authenticate dispatch failed: {}", e),
-                                    });
+                                } => {
+                                    if let Err(e) = handle_for_input
+                                        .send_prompt(text, attachments, sender, terminal, config)
+                                        .await
+                                    {
+                                        eprintln!("Failed to send prompt: {}", e);
+                                        break;
+                                    }
+                                }
+                                ClientMessage::Cancel => {
+                                    let _ = handle_for_input.cancel().await;
+                                }
+                                ClientMessage::Kill => {
+                                    let _ = handle_for_input.kill().await;
+                                    break;
+                                }
+                                ClientMessage::PermissionResponse { id, option_id } => {
+                                    // Reject responses targeting a stale dialog —
+                                    // when the frontend rendered it from history but
+                                    // the live pending has moved on or never matched.
+                                    let live_id = handle_for_input.pending_permission_id();
+                                    if !id.is_empty() && live_id.as_deref() != Some(id.as_str()) {
+                                        handle_for_input.emit(AcpUpdate::Error {
+                                            message: format!(
+                                                "Permission request {} is no longer pending",
+                                                id
+                                            ),
+                                        });
+                                    } else if !handle_for_input.respond_permission(option_id) {
+                                        handle_for_input.emit(AcpUpdate::Error {
+                                            message: "No pending permission request".to_string(),
+                                        });
+                                    }
+                                }
+                                ClientMessage::QueueMessage {
+                                    text,
+                                    attachments,
+                                    config: msg_config,
+                                } => {
+                                    // 优先使用前端传入的 config（捕获用户点 queue 时
+                                    // 的下拉选项），未传则回退到 session 当前快照以
+                                    // 兼容旧客户端。
+                                    let config = msg_config
+                                        .or_else(|| Some(handle_for_input.snapshot_config()));
+                                    let messages = handle_for_input.queue_message(
+                                        QueuedMessage::new(text, attachments, None, false, config),
+                                    );
+                                    handle_for_input.emit(AcpUpdate::QueueUpdate { messages });
+                                }
+                                ClientMessage::DequeueMessage { id } => {
+                                    let (found, messages) =
+                                        handle_for_input.dequeue_message_by_id(&id);
+                                    handle_for_input.emit(AcpUpdate::QueueUpdate { messages });
+                                    if !found {
+                                        handle_for_input.emit(AcpUpdate::QueueMessageGone { id });
+                                    }
+                                }
+                                ClientMessage::UpdateQueuedMessage { id, text } => {
+                                    let (found, messages) =
+                                        handle_for_input.update_queued_message_by_id(&id, text);
+                                    handle_for_input.emit(AcpUpdate::QueueUpdate { messages });
+                                    if !found {
+                                        handle_for_input.emit(AcpUpdate::QueueMessageGone { id });
+                                    }
+                                }
+                                ClientMessage::ClearQueue => {
+                                    let messages = handle_for_input.clear_queue();
+                                    handle_for_input.emit(AcpUpdate::QueueUpdate { messages });
+                                }
+                                ClientMessage::TerminalExecute { command } => {
+                                    handle_for_input.execute_terminal(command);
+                                }
+                                ClientMessage::TerminalKill => {
+                                    handle_for_input.kill_terminal();
+                                }
+                                ClientMessage::Authenticate { method_id } => {
+                                    if let Err(e) = handle_for_input.authenticate(method_id).await {
+                                        handle_for_input.emit(AcpUpdate::Error {
+                                            message: format!("Authenticate dispatch failed: {}", e),
+                                        });
+                                    }
                                 }
                             }
                         }
                     }
+                    Ok(Message::Close(_)) => break,
+                    Err(_) => break,
+                    _ => {}
                 }
-                Ok(Message::Close(_)) => break,
-                Err(_) => break,
-                _ => {}
             }
-        }
-    });
+        });
 
     // Wait for either task to finish, detect panics
     tokio::select! {

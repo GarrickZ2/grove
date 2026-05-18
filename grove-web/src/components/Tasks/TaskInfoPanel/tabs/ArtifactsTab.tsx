@@ -649,6 +649,7 @@ export function ArtifactsTab({ projectId, task, previewRequest, lastChatIdleAt, 
             onStaleMarkersCleaned={handleStaleMarkersCleaned}
             previewCommentDrafts={currentFilePreviewDrafts}
             previewCommentMarkers={currentFilePreviewMarkers}
+            sketchContext={projectId ? { projectId, taskId: task.id } : undefined}
           />
         )}
       </AnimatePresence>

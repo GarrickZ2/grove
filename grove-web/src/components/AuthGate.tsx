@@ -47,10 +47,13 @@ export function AuthGate({ children }: AuthGateProps) {
 
   useEffect(() => {
     const init = async () => {
-      // Step 1: Try to extract SK, page intent, and radio token from URL hash fragment
+      // Step 1: Try to extract SK, page intent, and radio token from URL hash fragment.
+      // The `token=` key is generic and collides with other flows (e.g. Excalidraw's
+      // `#addLibrary=...&token=...` callback), so only treat it as a radio token when
+      // it appears alongside an `sk=` or `page=` (which are unique to the auth flow).
       const hashSk = extractSkFromUrl();
       const hashPage = extractPageFromUrl();
-      const hashToken = extractRadioTokenFromUrl();
+      const hashToken = (hashSk || hashPage) ? extractRadioTokenFromUrl() : null;
       if (hashSk) {
         setSecretKey(hashSk);
       }
@@ -60,9 +63,22 @@ export function AuthGate({ children }: AuthGateProps) {
       if (hashToken) {
         setRadioToken(hashToken);
       }
+      // Only strip the keys WE consumed from the hash. Wholesale clearing
+      // would eat unrelated params like `#addLibrary=...` that downstream
+      // hooks (useAddLibraryHashHandler) need to see.
       if (hashSk || hashPage || hashToken) {
-        // Clear hash from URL (keep path)
-        window.history.replaceState(null, "", window.location.pathname + window.location.search);
+        const params = new URLSearchParams(window.location.hash.slice(1));
+        if (hashSk) params.delete("sk");
+        if (hashPage) params.delete("page");
+        if (hashToken) params.delete("token");
+        const remaining = params.toString();
+        window.history.replaceState(
+          null,
+          "",
+          window.location.pathname +
+            window.location.search +
+            (remaining ? "#" + remaining : ""),
+        );
       }
 
       // Step 2: Check if auth is required

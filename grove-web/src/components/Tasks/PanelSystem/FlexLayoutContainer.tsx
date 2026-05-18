@@ -214,8 +214,10 @@ export interface FlexLayoutContainerHandle {
   selectTabByIndex: (index: number) => "handled" | "no_tabs" | "out_of_range";
   selectAdjacentTab: (delta: number) => boolean;
   closeActiveTab: () => void;
-  /** Navigate to a file (optionally at a line) in the Review panel */
-  navigateToFile: (filePath: string, line?: number, mode?: 'diff' | 'full') => void;
+  /** Navigate to a file (optionally at a line) in the Review panel.
+   *  Returns true if the file exists and the panel was staged; false if the
+   *  file is missing (caller decides how to surface the miss). */
+  navigateToFile: (filePath: string, line?: number, mode?: 'diff' | 'full') => Promise<boolean>;
 }
 
 export const FlexLayoutContainer = forwardRef<
@@ -494,7 +496,21 @@ export const FlexLayoutContainer = forwardRef<
   const handleChatBecameIdle = useCallback(() => setLastChatIdleAt(Date.now()), []);
   const handleBusyStateChange = useCallback((busy: boolean) => setIsChatBusy(busy), []);
 
-  const navigateToFile = useCallback((filePath: string, line?: number, mode: 'diff' | 'full' = 'full') => {
+  const navigateToFile = useCallback(async (filePath: string, line?: number, mode: 'diff' | 'full' = 'full'): Promise<boolean> => {
+    // Existence probe — the jump needs to know the file is real before
+    // opening the panel. HEAD reuses the existing /file/raw route so we
+    // don't add a new endpoint. 404 → caller renders a fallback.
+    try {
+      const probeUrl = `/api/v1/projects/${encodeURIComponent(projectId)}/tasks/${encodeURIComponent(task.id)}/file/raw?path=${encodeURIComponent(filePath)}`;
+      const resp = await fetch(probeUrl, { method: 'HEAD' });
+      // 4xx = file truly missing → bail. 5xx is server flake; be optimistic
+      // and let the panel render its own fallback rather than denying the
+      // user the chance to open it.
+      if (resp.status >= 400 && resp.status < 500) return false;
+    } catch {
+      // Network failure (offline, dev server restart) — don't punish the
+      // user; open the panel and let its content fetch fall back.
+    }
     const seq = ++navSeqRef.current;
     const allTabs = getAllTabs();
     if (isStudio) {
@@ -514,7 +530,8 @@ export const FlexLayoutContainer = forwardRef<
         addPanel('review');
       }
     }
-  }, [model, getAllTabs, addPanel, isStudio]);
+    return true;
+  }, [model, getAllTabs, addPanel, isStudio, projectId, task.id]);
 
   // Expose API via ref
   useImperativeHandle(ref, () => ({

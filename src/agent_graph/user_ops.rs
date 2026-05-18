@@ -297,12 +297,13 @@ pub async fn user_send_message(
         )
         .is_ok();
     if !claimed {
-        let messages = handle.queue_message(QueuedMessage {
-            text: text.to_string(),
-            attachments: Vec::new(),
-            sender: Some("user".to_string()),
-            config: Some(handle.snapshot_config()),
-        });
+        let messages = handle.queue_message(QueuedMessage::new(
+            text.to_string(),
+            Vec::new(),
+            Some("user".to_string()),
+            false,
+            Some(handle.snapshot_config()),
+        ));
         handle.emit(AcpUpdate::QueueUpdate { messages });
         return Ok(());
     }
@@ -314,6 +315,7 @@ pub async fn user_send_message(
             Vec::new(),
             Some("user".to_string()),
             false,
+            None,
         ),
     )
     .await;

@@ -34,6 +34,14 @@ pub enum AgentGraphError {
     CallerUnknown,
     /// 跨 task 通讯被拒
     SameTaskRequired,
+    /// `SendConfig` 里的 model / mode / thought_level 不在 target session 的 available_* 列表里。
+    /// `field` 是字段名（"model" / "mode" / "thought_level"），`value` 是 AI 传错的值，
+    /// `allowed` 是当前 target 真正能用的值列表 — 直接回传给 AI 让它知道下次该用哪个。
+    InvalidConfig {
+        field: &'static str,
+        value: String,
+        allowed: Vec<String>,
+    },
     /// 内部错误（DB / IO / 逻辑分支兜底）。message 给运维看。
     Internal(String),
 }
@@ -56,6 +64,7 @@ impl AgentGraphError {
             Self::NameTaken => "name_taken",
             Self::CallerUnknown => "caller_unknown",
             Self::SameTaskRequired => "same_task_required",
+            Self::InvalidConfig { .. } => "invalid_config",
             Self::Internal(_) => "internal_error",
         }
     }
@@ -77,6 +86,7 @@ impl AgentGraphError {
             Self::NameTaken => "another session in this task already uses that name",
             Self::CallerUnknown => "caller chat_id is not registered with Grove",
             Self::SameTaskRequired => "agent_graph is per-task; from and to must be in the same task",
+            Self::InvalidConfig { .. } => "config field value is not in target session's available list; call grove_agent_capability first to discover valid ids, then retry — see the `allowed` field in this response for valid ids",
             Self::Internal(_) => "internal error in Grove; check server logs",
         }
     }
@@ -86,6 +96,25 @@ impl fmt::Display for AgentGraphError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Internal(msg) => write!(f, "{}: {}", self.code(), msg),
+            Self::InvalidConfig {
+                field,
+                value,
+                allowed,
+            } => {
+                let list = if allowed.is_empty() {
+                    "<target session reports no values for this field>".to_string()
+                } else {
+                    allowed.join(", ")
+                };
+                write!(
+                    f,
+                    "{}: field `{}` value `{}` is not available for the target session. Allowed: [{}]",
+                    self.code(),
+                    field,
+                    value,
+                    list,
+                )
+            }
             _ => write!(f, "{}: {}", self.code(), self.hint()),
         }
     }

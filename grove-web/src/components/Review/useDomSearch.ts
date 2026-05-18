@@ -70,9 +70,19 @@ export function useDomSearch(
     rangesRef.current = [];
   }, [supportsHighlight]);
 
-  // Re-compute on query / enabled / root change
+  // Re-compute on query / enabled / root change.
+  //
+  // Two-stage pipeline for large documents (≥10k lines of markdown):
+  //   1. Debounce keystrokes — without this, every character retriggers a
+  //      full TreeWalker scan + thousands of Range constructions, freezing
+  //      the main thread between keys.
+  //   2. Chunk the per-text-node work across animation frames so a common
+  //      query like "the" (thousands of hits) doesn't block paint for the
+  //      whole search. Match count streams in; the user sees it climb.
   useEffect(() => {
     let cancelled = false;
+    let debounceHandle = 0;
+    let rafHandle = 0;
     const commitState = (nextTotal: number, nextCurrent: number) => {
       queueMicrotask(() => {
         if (cancelled) return;
@@ -89,93 +99,131 @@ export function useDomSearch(
       };
     }
 
-    const root = rootRef.current;
-    const lowerQuery = query.toLowerCase();
-    const queryLen = query.length;
+    // Number of text nodes processed per animation frame. ~400 keeps each
+    // frame under ~4ms on a 15k-line doc with frequent matches, leaving
+    // headroom for paint and input handling.
+    const CHUNK_SIZE = 400;
 
-    // Phase 1: collect text nodes (skip our UI subtrees)
-    const textNodes: Text[] = [];
-    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
-      acceptNode: (node) => {
-        const parent = node.parentElement;
-        if (!parent) return NodeFilter.FILTER_REJECT;
-        if (parent.closest("[data-grove-search-bar]")) return NodeFilter.FILTER_REJECT;
-        if (parent.closest("[data-grove-comment-overlay]")) return NodeFilter.FILTER_REJECT;
-        if (parent.closest("[data-grove-preview-comment-overlay]")) return NodeFilter.FILTER_REJECT;
-        if (parent.closest("[data-grove-search-skip]")) return NodeFilter.FILTER_REJECT;
-        const tag = parent.tagName?.toLowerCase();
-        if (tag === "script" || tag === "style" || tag === "noscript") return NodeFilter.FILTER_REJECT;
-        if (!node.textContent) return NodeFilter.FILTER_REJECT;
-        return NodeFilter.FILTER_ACCEPT;
-      },
-    });
-    let n: Node | null;
-    while ((n = walker.nextNode())) textNodes.push(n as Text);
+    debounceHandle = window.setTimeout(() => {
+      if (cancelled) return;
+      const root = rootRef.current;
+      if (!root) return;
+      const lowerQuery = query.toLowerCase();
+      const queryLen = query.length;
 
-    if (supportsHighlight) {
-      // Phase 2a: build Range list
-      const ranges: Range[] = [];
-      for (const tn of textNodes) {
-        const text = tn.textContent ?? "";
-        const lower = text.toLowerCase();
-        let i = 0;
-        while ((i = lower.indexOf(lowerQuery, i)) !== -1) {
-          const r = document.createRange();
-          const ok = trySetRange(r, tn, i, i + queryLen);
-          if (ok) ranges.push(r);
-          i += queryLen;
-        }
-      }
-      rangesRef.current = ranges;
-      commitState(ranges.length, 0);
-      if (ranges.length) {
+      // Phase 1: collect text nodes (skip our UI subtrees). One TreeWalker
+      // pass — fast even on huge DOMs since acceptNode is cheap.
+      const textNodes: Text[] = [];
+      const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+        acceptNode: (node) => {
+          const parent = node.parentElement;
+          if (!parent) return NodeFilter.FILTER_REJECT;
+          if (parent.closest("[data-grove-search-bar]")) return NodeFilter.FILTER_REJECT;
+          if (parent.closest("[data-grove-comment-overlay]")) return NodeFilter.FILTER_REJECT;
+          if (parent.closest("[data-grove-preview-comment-overlay]")) return NodeFilter.FILTER_REJECT;
+          if (parent.closest("[data-grove-search-skip]")) return NodeFilter.FILTER_REJECT;
+          const tag = parent.tagName?.toLowerCase();
+          if (tag === "script" || tag === "style" || tag === "noscript") return NodeFilter.FILTER_REJECT;
+          if (!node.textContent) return NodeFilter.FILTER_REJECT;
+          return NodeFilter.FILTER_ACCEPT;
+        },
+      });
+      let n: Node | null;
+      while ((n = walker.nextNode())) textNodes.push(n as Text);
+
+      if (supportsHighlight) {
+        // Register an empty Highlight up front; we add Ranges to it as
+        // chunks complete so partial results are visible before the full
+        // scan finishes.
+        const ranges: Range[] = [];
         const hlAll = new Highlight();
-        for (const r of ranges) hlAll.add(r);
-        const hlCur = new Highlight();
-        hlCur.add(ranges[0]);
         try { CSS.highlights.set(SEARCH_HIGHLIGHT, hlAll); } catch { /* noop */ }
-        try { CSS.highlights.set(SEARCH_HIGHLIGHT_CURRENT, hlCur); } catch { /* noop */ }
+        rangesRef.current = ranges;
+
+        let cursor = 0;
+        const processChunk = () => {
+          if (cancelled) return;
+          const end = Math.min(cursor + CHUNK_SIZE, textNodes.length);
+          for (; cursor < end; cursor++) {
+            const tn = textNodes[cursor];
+            const text = tn.textContent ?? "";
+            const lower = text.toLowerCase();
+            let i = 0;
+            while ((i = lower.indexOf(lowerQuery, i)) !== -1) {
+              const r = document.createRange();
+              if (trySetRange(r, tn, i, i + queryLen)) {
+                ranges.push(r);
+                hlAll.add(r);
+              }
+              i += queryLen;
+            }
+          }
+          commitState(ranges.length, 0);
+          if (cursor < textNodes.length) {
+            rafHandle = requestAnimationFrame(processChunk);
+          } else if (ranges.length) {
+            // First-match "current" highlight, painted once scanning is done
+            // so the smooth-scroll in the index effect lands on a stable
+            // target rather than chasing a moving total.
+            const hlCur = new Highlight();
+            hlCur.add(ranges[0]);
+            try { CSS.highlights.set(SEARCH_HIGHLIGHT_CURRENT, hlCur); } catch { /* noop */ }
+          }
+        };
+        rafHandle = requestAnimationFrame(processChunk);
+      } else {
+        // <mark> injection fallback for browsers without CSS Highlight API.
+        // Chunked the same way; splitText only mutates within one text node
+        // at a time, so the textNodes[] snapshot stays valid across frames.
+        const marks: HTMLElement[] = [];
+        marksRef.current = marks;
+        let cursor = 0;
+        const processChunk = () => {
+          if (cancelled) return;
+          const end = Math.min(cursor + CHUNK_SIZE, textNodes.length);
+          for (; cursor < end; cursor++) {
+            const tn = textNodes[cursor];
+            const text = tn.textContent ?? "";
+            const lower = text.toLowerCase();
+            const occurrences: number[] = [];
+            let i = 0;
+            while ((i = lower.indexOf(lowerQuery, i)) !== -1) {
+              occurrences.push(i);
+              i += queryLen;
+            }
+            if (!occurrences.length) continue;
+            const parent = tn.parentNode;
+            if (!parent) continue;
+            let split: Text = tn;
+            let consumed = 0;
+            for (const occ of occurrences) {
+              const localStart = occ - consumed;
+              const after = split.splitText(localStart);
+              const matched = after.splitText(queryLen);
+              const mark = document.createElement("mark");
+              mark.setAttribute(MARK_ATTR, "true");
+              mark.appendChild(after);
+              parent.insertBefore(mark, matched);
+              marks.push(mark);
+              split = matched;
+              consumed = occ + queryLen;
+            }
+          }
+          commitState(marks.length, 0);
+          if (cursor < textNodes.length) {
+            rafHandle = requestAnimationFrame(processChunk);
+          } else if (marks.length) {
+            marks[0].setAttribute(MARK_CURRENT_ATTR, "true");
+          }
+        };
+        rafHandle = requestAnimationFrame(processChunk);
       }
-    } else {
-      // Phase 2b: <mark> injection fallback
-      const marks: HTMLElement[] = [];
-      for (const tn of textNodes) {
-        const text = tn.textContent ?? "";
-        const lower = text.toLowerCase();
-        const occurrences: number[] = [];
-        let i = 0;
-        while ((i = lower.indexOf(lowerQuery, i)) !== -1) {
-          occurrences.push(i);
-          i += queryLen;
-        }
-        if (!occurrences.length) continue;
-        // Walk occurrences right-to-left so earlier indices stay valid as we split.
-        const parent = tn.parentNode;
-        if (!parent) continue;
-        let cursor = tn;
-        let consumed = 0;
-        for (const occ of occurrences) {
-          const localStart = occ - consumed;
-          const after = cursor.splitText(localStart);
-          const matched = after.splitText(queryLen);
-          const mark = document.createElement("mark");
-          mark.setAttribute(MARK_ATTR, "true");
-          mark.appendChild(after);
-          parent.insertBefore(mark, matched);
-          marks.push(mark);
-          cursor = matched;
-          consumed = occ + queryLen;
-        }
-      }
-      marksRef.current = marks;
-      commitState(marks.length, 0);
-      if (marks.length) {
-        marks[0].setAttribute(MARK_CURRENT_ATTR, "true");
-      }
-    }
+    }, 180);
 
     return () => {
       cancelled = true;
+      if (debounceHandle) window.clearTimeout(debounceHandle);
+      if (rafHandle) cancelAnimationFrame(rafHandle);
       clearHighlights();
     };
   }, [query, enabled, rootRef, supportsHighlight, clearHighlights]);

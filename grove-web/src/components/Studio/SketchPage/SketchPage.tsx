@@ -7,6 +7,7 @@ import { SketchCanvas } from "./SketchCanvas";
 import { SketchTabBar } from "./SketchTabBar";
 import { SketchHistoryDialog } from "./SketchHistoryDialog";
 import { OPEN_SKETCH_EVENT, type OpenSketchDetail, setSketchNames } from "../../ui/sketchChipCache";
+import { saveBlobAsFile } from "../../ui/filePreview";
 import { readLastActiveTab, writeLastActiveTab } from "../../../utils/lastActiveTab";
 
 interface Props {
@@ -160,12 +161,8 @@ export function SketchPage({ projectId, taskId, isChatBusy, lastChatIdleAt }: Pr
         files: apiRef.getFiles(),
         mimeType: "image/png",
       });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `${sketches.find((s) => s.id === activeId)?.name ?? "sketch"}.png`;
-      a.click();
-      URL.revokeObjectURL(url);
+      const name = `${sketches.find((s) => s.id === activeId)?.name ?? "sketch"}.png`;
+      await saveBlobAsFile(blob, name);
     } catch (e) {
       console.error("sketch export failed", e);
     }

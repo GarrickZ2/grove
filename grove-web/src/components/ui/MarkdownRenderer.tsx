@@ -7,6 +7,7 @@ import remarkGfm from "remark-gfm";
 import mermaid from "mermaid";
 import { VSCodeIcon } from "./VSCodeIcon";
 import { SketchChip } from "./SketchChip";
+import { sketchThumbnailUrl } from "../../api/sketches";
 import { highlightLines, normalizeLanguage } from "../Review/syntaxHighlight";
 import { createSlugger } from "./headingSlug";
 import { useTheme } from "../../context/ThemeContext";
@@ -219,8 +220,25 @@ export const MermaidBlock = memo(function MermaidBlock({ code, onPreviewClick }:
         .then((ok) => {
           if (cancelled) return;
           if (ok === false) {
-            setError("Syntax error in text");
-            return;
+            // parse passed but returned false — try render for a detailed
+            // error message. If render then throws, surface its message
+            // instead of a generic "Syntax error" so the user sees the
+            // actual mermaid complaint.
+            return mermaid.render(id, code).then(
+              () => {
+                if (!cancelled) setError("Syntax error in text");
+              },
+              (err: unknown) => {
+                if (cancelled) return;
+                const m =
+                  err instanceof Error
+                    ? err.message
+                    : typeof err === "string"
+                      ? err
+                      : null;
+                setError(m && m.length > 0 ? m : "Syntax error in text");
+              },
+            );
           }
           return mermaid.render(id, code).then(({ svg: rendered }) => {
             if (!cancelled) {
@@ -244,11 +262,23 @@ export const MermaidBlock = memo(function MermaidBlock({ code, onPreviewClick }:
   }, [cacheKey, code, uniqueId, theme.id, theme.colors.bg, theme.colors.bgSecondary, theme.colors.bgTertiary, theme.colors.border, theme.colors.text, theme.colors.textMuted, theme.colors.highlight]);
   /* eslint-enable react-hooks/set-state-in-effect */
 
+  if (error && showSource) {
+    return (
+      <div className="group relative rounded-lg border border-[var(--color-border)] bg-[color-mix(in_srgb,var(--color-bg-secondary)_72%,transparent)] my-2 overflow-hidden">
+        <SourceToggleButton active={showSource} onClick={() => setShowSource(false)} />
+        <pre className="p-3 text-xs font-mono whitespace-pre-wrap break-words leading-relaxed overflow-x-auto" style={{ color: "var(--color-text)" }}>{code}</pre>
+      </div>
+    );
+  }
+
   if (error) {
     return (
-      <pre className="rounded-lg bg-[var(--color-bg-tertiary)] border border-[var(--color-border)] p-3 my-2 whitespace-pre-wrap break-words text-xs font-mono text-[var(--color-danger)]">
-        Mermaid error: {error}
-      </pre>
+      <div className="group relative rounded-lg bg-[var(--color-bg-tertiary)] border border-[var(--color-border)] my-2 overflow-hidden">
+        <SourceToggleButton active={showSource} onClick={() => setShowSource(true)} />
+        <div className="p-3">
+          <div className="text-xs font-mono text-[var(--color-danger)] whitespace-pre-wrap break-words">{error}</div>
+        </div>
+      </div>
     );
   }
 
@@ -501,10 +531,52 @@ function CodeBlock({
 
   const normalizedLanguage = normalizeLanguage(language);
   const rawLines = useMemo(() => code.split("\n"), [code]);
-  const highlightedLines = useMemo(
-    () => highlightLines(rawLines, normalizedLanguage),
-    [rawLines, normalizedLanguage],
+  // Render raw text on first paint, then upgrade to highlighted HTML when the
+  // browser is idle. Large markdown docs with several big code blocks would
+  // otherwise block the first frame for hundreds of ms while highlight.js
+  // tokenizes everything synchronously.
+  const escapedLines = useMemo(
+    () => rawLines.map((l) => l.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")),
+    [rawLines],
   );
+  // Key the cached highlight to the inputs it was computed from. When the
+  // code or language changes, the stale highlight is discarded immediately
+  // (line count mismatch would otherwise misalign rows in the render loop)
+  // and we fall back to escaped raw text until the idle upgrade lands.
+  const [highlighted, setHighlighted] = useState<{ key: string; lines: string[] } | null>(null);
+  const highlightKey = `${normalizedLanguage ?? ""}\x00${code}`;
+  const highlightedLines = highlighted?.key === highlightKey ? highlighted.lines : escapedLines;
+  useEffect(() => {
+    let cancelled = false;
+    const run = () => {
+      if (cancelled) return;
+      const out = highlightLines(rawLines, normalizedLanguage);
+      if (!cancelled) setHighlighted({ key: highlightKey, lines: out });
+    };
+    type IdleWindow = Window & {
+      requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => number;
+      cancelIdleCallback?: (id: number) => void;
+    };
+    const w = window as IdleWindow;
+    if (typeof w.requestIdleCallback === "function") {
+      const handle = w.requestIdleCallback(run, { timeout: 200 });
+      return () => {
+        cancelled = true;
+        w.cancelIdleCallback?.(handle);
+      };
+    }
+    const handle = window.setTimeout(run, 0);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(handle);
+    };
+    // `highlightKey` is derived from `code` + `normalizedLanguage` and used
+    // inside the closure for cache-keying, but it MUST NOT appear in the
+    // deps array on its own — it's a string identity that changes with
+    // every keystroke during streaming and would re-fire the highlight
+    // effect more often than needed. Tracking the underlying inputs gives
+    // the same correctness with less churn.
+  }, [code, normalizedLanguage]); // eslint-disable-line react-hooks/exhaustive-deps -- highlightKey/rawLines are derived
 
   const isRunnable =
     !!enableRunCommand &&
@@ -548,6 +620,7 @@ function CodeBlock({
     >
       {/* Header bar — subtle gray tint (visible but not overpowering) */}
       <div
+        data-grove-search-skip="true"
         className="flex items-center justify-between gap-2 px-3 py-1.5 border-b"
         style={{
           borderColor: "color-mix(in srgb, var(--color-border) 80%, transparent)",
@@ -607,6 +680,7 @@ function CodeBlock({
               <div key={i} className="flex items-stretch">
                 {showLineNumbers && (
                   <span
+                    data-grove-search-skip="true"
                     className={`shrink-0 select-none pr-3 pl-4 text-right sticky left-0 ${edgePad}`}
                     style={{
                       color: "color-mix(in srgb, var(--color-text-muted) 60%, transparent)",
@@ -632,8 +706,11 @@ function CodeBlock({
 
 interface MarkdownRendererProps {
   content: string;
-  /** When provided, inline code matching file path patterns become clickable */
-  onFileClick?: (filePath: string, line?: number) => void;
+  /** When provided, inline code matching file path patterns become clickable.
+   *  Must return whether the navigation succeeded — `false` triggers the
+   *  FileChip to fall back to its original markdown rendering (raw <code>
+   *  or <a>) so the user can still see / copy the path. */
+  onFileClick?: (filePath: string, line?: number) => Promise<boolean>;
   /** When provided, relative image src values are resolved via this function */
   resolveImageUrl?: (src: string) => string;
   /** When provided, clicking a rendered mermaid diagram triggers this callback with the SVG */
@@ -648,6 +725,14 @@ interface MarkdownRendererProps {
    * sketch chip scoped to this Studio task. Chip labels resolve uuid → name
    * from this task's sketch index; unknown uuids render as a disabled chip. */
   sketchContext?: { projectId: string; taskId: string };
+  /** How `sketch://` links render when `sketchContext` is provided.
+   *  - `'chip'` (default): inline SketchChip pill (chat / agent reply UX).
+   *  - `'image'`: inline `<img>` of the sketch render; falls back to plain
+   *    text on 404 / unknown id / load error. Used by the file preview pane
+   *    where a visual is more useful than a label.
+   *  Click behavior in `'image'` mode reuses `onImageClick` (lightbox),
+   *  matching how authored images behave in the same surface. */
+  sketchRenderMode?: "chip" | "image";
   /** Emit GitHub-style auto-generated `id` attributes on headings. Off by
    * default: chat / notes / agent replies share one DOM, and stable global
    * heading ids would collide across messages. Opt in only on surfaces that
@@ -666,17 +751,48 @@ function FileChip({
   filePath,
   line,
   onClick,
+  fallback,
 }: {
   filePath: string;
   line?: number;
-  onClick: () => void;
+  onClick: () => Promise<boolean>;
+  /** Rendered in place of the chip when navigation reports the file is
+   *  missing — restores the original markdown element (raw <code> or <a>)
+   *  so the full path stays visible / selectable. */
+  fallback: React.ReactNode;
 }) {
+  // All hooks first — keep useState (and any future hooks) above the
+  // early-return so the hook order stays stable across the missing
+  // transition. React would otherwise throw "Rendered fewer hooks than
+  // expected" the moment we add a second hook here.
+  // Reset `missing` whenever the chip's target changes. Same FileChip
+  // instance can be reused for a different file as parent re-renders (e.g.
+  // streaming markdown re-emits the same DOM slot with new props); without
+  // this reset, a once-missing path stays collapsed even after the user
+  // retargets to a file that does exist. Uses the canonical React "reset
+  // state on prop change" pattern (https://react.dev/learn/you-might-not-need-an-effect#resetting-all-state-when-a-prop-changes)
+  // — derive in render via a tracker state, not a useEffect.
+  const [missing, setMissing] = useState(false);
+  const [trackedTarget, setTrackedTarget] = useState({ filePath, line });
+  let effectiveMissing = missing;
+  if (trackedTarget.filePath !== filePath || trackedTarget.line !== line) {
+    setTrackedTarget({ filePath, line });
+    setMissing(false);
+    effectiveMissing = false;
+  }
   const fileName = getFileName(filePath);
   const lineLabel = line ? `:${line}` : "";
+  const handleClick = async (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const ok = await onClick();
+    if (!ok) setMissing(true);
+  };
+  if (effectiveMissing) return <>{fallback}</>;
   return (
     <button
       type="button"
-      onClick={(e) => { e.preventDefault(); e.stopPropagation(); onClick(); }}
+      onClick={handleClick}
       className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium cursor-pointer
         bg-[color-mix(in_srgb,var(--color-bg-secondary)_80%,var(--color-bg))]
         text-[var(--color-highlight)]
@@ -689,6 +805,38 @@ function FileChip({
       <VSCodeIcon filename={fileName} size={13} />
       <span>{fileName}{lineLabel}</span>
     </button>
+  );
+}
+
+/** Render a sketch reference as an inline image of its current PNG render.
+ *  Falls back to plain text on any load failure (404 = thumb never uploaded,
+ *  unknown id, network). The fallback intentionally mirrors what the source
+ *  markdown would have shown if the autolink wrap hadn't run, so authors and
+ *  readers see the same string in both states. */
+function SketchImage({
+  projectId,
+  taskId,
+  sketchId,
+  fallbackText,
+  onImageClick,
+}: {
+  projectId: string;
+  taskId: string;
+  sketchId: string;
+  fallbackText: string;
+  onImageClick?: (url: string) => void;
+}) {
+  const [failed, setFailed] = useState(false);
+  if (failed) return <>{fallbackText}</>;
+  const url = sketchThumbnailUrl(projectId, taskId, sketchId);
+  return (
+    <img
+      src={url}
+      alt={fallbackText}
+      className={`max-w-full rounded-lg my-2 border border-[var(--color-border)]${onImageClick ? " cursor-pointer hover:opacity-80 transition-opacity" : ""}`}
+      onClick={onImageClick ? () => onImageClick(url) : undefined}
+      onError={() => setFailed(true)}
+    />
   );
 }
 
@@ -737,7 +885,7 @@ function parseFileHref(href: string): { filePath: string; line?: number } | null
   };
 }
 
-export const MarkdownRenderer = memo(function MarkdownRenderer({ content, onFileClick, resolveImageUrl, onMermaidClick, onImageClick, onD2Click, enableRunCommand, sketchContext, enableHeadingIds }: MarkdownRendererProps) {
+export const MarkdownRenderer = memo(function MarkdownRenderer({ content, onFileClick, resolveImageUrl, onMermaidClick, onImageClick, onD2Click, enableRunCommand, sketchContext, sketchRenderMode = "chip", enableHeadingIds }: MarkdownRendererProps) {
   const processedContent = useMemo(() => {
     let out = preprocessInlineCodeUrls(content);
     if (sketchContext) out = preprocessSketchUrls(out);
@@ -795,6 +943,17 @@ export const MarkdownRenderer = memo(function MarkdownRenderer({ content, onFile
           if (sketchContext && href && href.startsWith("sketch://")) {
             const id = href.slice("sketch://".length);
             if (SKETCH_ID_RE.test(id)) {
+              if (sketchRenderMode === "image") {
+                return (
+                  <SketchImage
+                    projectId={sketchContext.projectId}
+                    taskId={sketchContext.taskId}
+                    sketchId={id}
+                    fallbackText={extractText(children) || href}
+                    onImageClick={onImageClick}
+                  />
+                );
+              }
               return (
                 <SketchChip
                   projectId={sketchContext.projectId}
@@ -813,11 +972,22 @@ export const MarkdownRenderer = memo(function MarkdownRenderer({ content, onFile
               const text = extractText(children);
               const textMatch = text.match(FILE_PATH_RE);
               const finalLine = line ?? (textMatch?.[2] ? parseInt(textMatch[2], 10) : undefined);
+              const fallback = (
+                <a
+                  href={href}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-[var(--color-highlight)] hover:underline break-words"
+                >
+                  {children}
+                </a>
+              );
               return (
                 <FileChip
                   filePath={filePath}
                   line={finalLine}
                   onClick={() => onFileClick(filePath, finalLine)}
+                  fallback={fallback}
                 />
               );
             }
@@ -884,11 +1054,17 @@ export const MarkdownRenderer = memo(function MarkdownRenderer({ content, onFile
             if (match) {
               const filePath = match[1];
               const line = match[2] ? parseInt(match[2], 10) : undefined;
+              const fallback = (
+                <code className="px-1 py-0.5 rounded bg-[var(--color-bg-tertiary)] text-[var(--color-highlight)] text-xs font-mono break-all">
+                  {children}
+                </code>
+              );
               return (
                 <FileChip
                   filePath={filePath}
                   line={line}
                   onClick={() => onFileClick(filePath, line)}
+                  fallback={fallback}
                 />
               );
             }
@@ -954,7 +1130,7 @@ export const MarkdownRenderer = memo(function MarkdownRenderer({ content, onFile
           return <input {...props} />;
         },
     });
-  }, [onFileClick, resolveImageUrl, onMermaidClick, onImageClick, onD2Click, enableRunCommand, sketchContext, enableHeadingIds]);
+  }, [onFileClick, resolveImageUrl, onMermaidClick, onImageClick, onD2Click, enableRunCommand, sketchContext, sketchRenderMode, enableHeadingIds]);
 
   return (
     <ReactMarkdown

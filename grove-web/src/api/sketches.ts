@@ -158,6 +158,21 @@ export async function restoreSketchCheckpoint(
 }
 
 /**
+ * Build the URL for the sketch's PNG render. Returned synchronously so it can
+ * be dropped straight into an `<img src>` (HMAC for mobile is handled by the
+ * server's per-host policy, mirroring the existing `<img>` markdown path).
+ * The endpoint returns 404 when no thumbnail has been uploaded yet — callers
+ * should fall back to plain text on `onError`.
+ */
+export function sketchThumbnailUrl(
+  projectId: string,
+  taskId: string,
+  sketchId: string,
+): string {
+  return `/api/v1/projects/${projectId}/tasks/${taskId}/sketches/${sketchId}/thumbnail`;
+}
+
+/**
  * Build a WebSocket URL for the sketches live-update endpoint.
  * The caller is responsible for appending HMAC auth (see `appendHmacToUrl`).
  */

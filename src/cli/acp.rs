@@ -110,7 +110,7 @@ pub async fn execute(agent: String, cwd: String) {
 
         // 发送 prompt
         if let Err(e) = handle_for_input
-            .send_prompt(text, vec![], None, false)
+            .send_prompt(text, vec![], None, false, None)
             .await
         {
             eprintln!("Failed to send prompt: {}", e);
@@ -177,6 +177,7 @@ pub async fn execute(agent: String, cwd: String) {
                     | AcpUpdate::AvailableCommands { .. }
                     | AcpUpdate::PermissionResponse { .. }
                     | AcpUpdate::QueueUpdate { .. }
+                    | AcpUpdate::QueueMessageGone { .. }
                     | AcpUpdate::PlanFileUpdate { .. }
                     | AcpUpdate::TerminalExecute { .. }
                     | AcpUpdate::TerminalChunk { .. }

@@ -400,7 +400,21 @@ export const IDELayoutContainer = forwardRef<IDELayoutHandle, IDELayoutContainer
     );
 
     const handleNavigateToFile = useCallback(
-      (filePath: string, line?: number, mode?: "diff" | "full") => {
+      async (filePath: string, line?: number, mode?: "diff" | "full"): Promise<boolean> => {
+        // Probe existence via the existing /file/raw route (HEAD reuses the
+        // GET handler in axum). 404 → caller renders a markdown fallback
+        // and we never open the panel for a phantom path.
+        try {
+          const probeUrl = `/api/v1/projects/${encodeURIComponent(projectId)}/tasks/${encodeURIComponent(task.id)}/file/raw?path=${encodeURIComponent(filePath)}`;
+          const resp = await fetch(probeUrl, { method: 'HEAD' });
+          // 4xx = file truly missing → bail. 5xx is server flake; be
+          // optimistic and let the panel render its own fallback rather
+          // than denying the user the chance to open it.
+          if (resp.status >= 400 && resp.status < 500) return false;
+        } catch {
+          // Network failure (offline, dev server restart) — don't punish
+          // the user; open the panel and let its content fetch fall back.
+        }
         navSeqRef.current += 1;
         const seq = navSeqRef.current;
         if (isStudio) {
@@ -413,8 +427,9 @@ export const IDELayoutContainer = forwardRef<IDELayoutHandle, IDELayoutContainer
         } else {
           setStateTagged((prev) => ({ ...prev, auxType: "review", auxVisible: true }));
         }
+        return true;
       },
-      [isStudio, update, setStateTagged],
+      [isStudio, update, setStateTagged, projectId, task.id],
     );
 
     const handleChatBecameIdle = useCallback(() => {
@@ -715,6 +730,7 @@ export const IDELayoutContainer = forwardRef<IDELayoutHandle, IDELayoutContainer
       return (
         <OptionalPerfProfiler id="TaskChat">
           <TaskChat
+            key={`${projectId}:${task.id}`}
             projectId={projectId} task={task} fullscreen
             onNavigateToFile={handleNavigateToFile}
             onChatBecameIdle={handleChatBecameIdle}

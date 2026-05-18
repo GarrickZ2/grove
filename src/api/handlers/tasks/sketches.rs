@@ -3,7 +3,7 @@
 use axum::{
     body::Bytes,
     extract::Path,
-    http::StatusCode,
+    http::{header, HeaderMap, HeaderValue, StatusCode},
     response::{IntoResponse, Response},
     Json,
 };
@@ -305,4 +305,50 @@ pub async fn upload_sketch_thumbnail(
     }
     sketches::save_thumbnail(&project_key, &task_id, &sketch_id, &body).map_err(internal)?;
     Ok(StatusCode::NO_CONTENT)
+}
+
+/// Serve the sketch's PNG render. Returns 404 when no thumbnail has been
+/// generated yet (the canvas only uploads on edit, debounced 2s); callers
+/// (markdown preview) treat 404 as "fall back to plain text". Slightly stale
+/// thumbs are served as-is — visual preview tolerates the lag.
+pub async fn get_sketch_thumbnail(
+    Path((id, task_id, sketch_id)): Path<(String, String, String)>,
+    headers: HeaderMap,
+) -> Result<Response, StatusCode> {
+    let (_project, project_key) = find_project_by_id(&id)?;
+    let Some((bytes, mtime)) =
+        sketches::load_thumbnail(&project_key, &task_id, &sketch_id).map_err(internal)?
+    else {
+        return Err(StatusCode::NOT_FOUND);
+    };
+    // Weak ETag from sketch_id + mtime epoch + length so the browser can
+    // 304 between markdown re-renders. Including `sketch_id` prevents the
+    // (admittedly unlikely) ETag collision where two sketches happen to
+    // share both byte length and mtime second. We propagate mtime errors
+    // as 500 instead of silently falling back to UNIX_EPOCH — a clock
+    // reading "0" would make every render share an ETag.
+    let mtime_secs = mtime
+        .duration_since(std::time::SystemTime::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .map_err(internal)?;
+    let etag = format!("W/\"{}-{}-{}\"", sketch_id, mtime_secs, bytes.len());
+    if let Some(req_etag) = headers
+        .get(header::IF_NONE_MATCH)
+        .and_then(|v| v.to_str().ok())
+    {
+        if req_etag == etag {
+            return Ok(StatusCode::NOT_MODIFIED.into_response());
+        }
+    }
+    let mut resp = (StatusCode::OK, bytes).into_response();
+    let h = resp.headers_mut();
+    h.insert(header::CONTENT_TYPE, HeaderValue::from_static("image/png"));
+    if let Ok(v) = HeaderValue::from_str(&etag) {
+        h.insert(header::ETAG, v);
+    }
+    h.insert(
+        header::CACHE_CONTROL,
+        HeaderValue::from_static("private, max-age=0, must-revalidate"),
+    );
+    Ok(resp)
 }

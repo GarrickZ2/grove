@@ -939,7 +939,13 @@ async fn send_prompt_to_task(
     match acp::get_session_handle(&session_key) {
         Some(handle) => {
             match handle
-                .send_prompt(text.to_string(), vec![], Some("radio".to_string()), false)
+                .send_prompt(
+                    text.to_string(),
+                    vec![],
+                    Some("radio".to_string()),
+                    false,
+                    None,
+                )
                 .await
             {
                 Ok(_) => ServerMessage::PromptSent {

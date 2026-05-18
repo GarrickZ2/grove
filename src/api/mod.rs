@@ -88,7 +88,22 @@ pub fn create_api_router() -> Router {
         // Environment API
         .route("/env/check", get(handlers::env::check_all))
         .route("/env/check/{name}", get(handlers::env::check_one))
-        .route("/env/check-commands", post(handlers::env::check_commands));
+        .route("/env/check-commands", post(handlers::env::check_commands))
+        // Global Excalidraw library API (shared across all tasks/sketches).
+        // The editor sync path (SketchCanvas `onLibraryChange`) PUTs the
+        // full library every time, and a real user library can be many MB
+        // (e.g. Google icons alone is ~6MB), so we raise the body limit to
+        // 128MB instead of disabling it outright — auth-gated LAN exposure
+        // (`grove mobile`) makes "unbounded" PUTs an OOM vector. The
+        // `libraries::upsert` path enforces per-item, total-item, and
+        // total-byte caps as a second layer of defense.
+        .route(
+            "/library",
+            get(handlers::libraries::get_library)
+                .put(handlers::libraries::put_library)
+                .delete(handlers::libraries::delete_library)
+                .layer(DefaultBodyLimit::max(128 * 1024 * 1024)),
+        );
 
     // Process-level perf metrics (RSS + CPU%) and per-handler timing
     // stats for the perf-build frontend. Only registered when the
@@ -346,7 +361,8 @@ pub fn create_api_router() -> Router {
         .route(
             "/projects/{id}/tasks/{taskId}/sketches/{sketchId}/thumbnail",
             post(handlers::tasks::upload_sketch_thumbnail)
-                .layer(DefaultBodyLimit::max(4 * 1024 * 1024)),
+                .layer(DefaultBodyLimit::max(4 * 1024 * 1024))
+                .get(handlers::tasks::get_sketch_thumbnail),
         )
         .route(
             "/projects/{id}/tasks/{taskId}/sketches/{sketchId}/history",

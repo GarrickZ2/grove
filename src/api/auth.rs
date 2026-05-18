@@ -67,7 +67,10 @@ impl ServerAuth {
 
     /// Verify an HMAC-SHA256 signature.
     ///
-    /// The message is `"{timestamp}|{nonce}|{METHOD}|{path}"`.
+    /// The message is `"{timestamp}|{nonce}|{METHOD}|{canonical_path}"`, where
+    /// `canonical_path` is `path` plus a sorted, `&`-joined query string (see
+    /// [`canonical_path`]). Caller is responsible for canonicalizing before
+    /// passing the value in.
     pub fn verify_signature(
         &self,
         timestamp: &str,
@@ -142,6 +145,58 @@ fn query_param<'a>(query: &'a str, key: &str) -> Option<&'a str> {
     None
 }
 
+/// Build the canonical path-and-query used as the `path` segment of the HMAC
+/// message. Query parameters are sorted by `(key, value)` ascending and
+/// joined with `&`. `exclude_keys` are dropped (used to strip `ts/nonce/sig`
+/// when validating WebSocket upgrade requests that carry the signature in
+/// the query string itself). Returns just `path` when there is no remaining
+/// query.
+///
+/// IMPORTANT: this canonicalization is **byte-level**, not semantic-URL.
+/// We do not percent-decode keys or values, do not collapse `+` to space,
+/// do not normalize empty values, and do not unify multiple slashes. The
+/// client signing the request MUST emit the exact same bytes — produce its
+/// query by sorting `(key, value)` pairs ascending and joining with `&`,
+/// matching whatever percent-encoding the server will see in the URL.
+/// Mismatches at this layer produce `401 Invalid signature` even though
+/// the URLs are semantically equivalent.
+pub fn canonical_path(path: &str, query: Option<&str>, exclude_keys: &[&str]) -> String {
+    let q = match query {
+        Some(q) if !q.is_empty() => q,
+        _ => return path.to_string(),
+    };
+    let mut pairs: Vec<(&str, &str)> = Vec::new();
+    for part in q.split('&') {
+        if part.is_empty() {
+            continue;
+        }
+        let (k, v) = match part.split_once('=') {
+            Some((k, v)) => (k, v),
+            None => (part, ""),
+        };
+        if exclude_keys.contains(&k) {
+            continue;
+        }
+        pairs.push((k, v));
+    }
+    if pairs.is_empty() {
+        return path.to_string();
+    }
+    pairs.sort();
+    let mut out = String::with_capacity(path.len() + q.len() + 1);
+    out.push_str(path);
+    out.push('?');
+    for (i, (k, v)) in pairs.iter().enumerate() {
+        if i > 0 {
+            out.push('&');
+        }
+        out.push_str(k);
+        out.push('=');
+        out.push_str(v);
+    }
+    out
+}
+
 /// Axum middleware — checks HMAC signature (headers or query params).
 ///
 /// Uses `OriginalUri` so that the path seen here is the full request path
@@ -159,9 +214,11 @@ pub async fn auth_middleware(
 
     let method = request.method().as_str().to_uppercase();
     // Use the original (un-stripped) URI so the path matches what the client signed.
-    let path = original_uri.path().to_string();
+    let path = original_uri.path();
+    let query = original_uri.query();
 
-    // Try headers first
+    // Try headers first. Header-signed requests include the full query string
+    // in the canonical path (after sorting by key); no keys are excluded.
     let from_headers = (|| {
         let ts = request.headers().get("x-timestamp")?.to_str().ok()?;
         let nonce = request.headers().get("x-nonce")?.to_str().ok()?;
@@ -170,20 +227,24 @@ pub async fn auth_middleware(
     })();
 
     if let Some((ts, nonce, sig)) = from_headers {
-        if auth.verify_signature(&ts, &nonce, &method, &path, &sig) {
+        let canonical = canonical_path(path, query, &[]);
+        if auth.verify_signature(&ts, &nonce, &method, &canonical, &sig) {
             return next.run(request).await;
         }
         return (StatusCode::UNAUTHORIZED, "Invalid signature").into_response();
     }
 
-    // Fallback: query params (WebSocket upgrade)
-    if let Some(query) = original_uri.query() {
+    // Fallback: query params (WebSocket upgrade). The signature itself rides
+    // on the URL as `ts/nonce/sig`, so we strip those three keys before
+    // canonicalizing — otherwise the signature would have to sign itself.
+    if let Some(query) = query {
         if let (Some(ts), Some(nonce), Some(sig)) = (
             query_param(query, "ts"),
             query_param(query, "nonce"),
             query_param(query, "sig"),
         ) {
-            if auth.verify_signature(ts, nonce, &method, &path, sig) {
+            let canonical = canonical_path(path, Some(query), &["ts", "nonce", "sig"]);
+            if auth.verify_signature(ts, nonce, &method, &canonical, sig) {
                 return next.run(request).await;
             }
             return (StatusCode::UNAUTHORIZED, "Invalid signature").into_response();
@@ -219,6 +280,61 @@ pub struct VerifyRequest {
 #[derive(Serialize)]
 pub struct VerifyResponse {
     pub valid: bool,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::canonical_path;
+
+    #[test]
+    fn no_query() {
+        assert_eq!(canonical_path("/a/b", None, &[]), "/a/b");
+        assert_eq!(canonical_path("/a/b", Some(""), &[]), "/a/b");
+    }
+
+    #[test]
+    fn single_param() {
+        assert_eq!(
+            canonical_path("/api/v1/x", Some("offset=0"), &[]),
+            "/api/v1/x?offset=0"
+        );
+    }
+
+    #[test]
+    fn sorts_by_key() {
+        let a = canonical_path("/x", Some("b=2&a=1&c=3"), &[]);
+        let b = canonical_path("/x", Some("a=1&b=2&c=3"), &[]);
+        let c = canonical_path("/x", Some("c=3&a=1&b=2"), &[]);
+        assert_eq!(a, "/x?a=1&b=2&c=3");
+        assert_eq!(a, b);
+        assert_eq!(a, c);
+    }
+
+    #[test]
+    fn excludes_keys() {
+        let canonical = canonical_path(
+            "/ws",
+            Some("ts=1&offset=0&nonce=abc&sig=def"),
+            &["ts", "nonce", "sig"],
+        );
+        assert_eq!(canonical, "/ws?offset=0");
+    }
+
+    #[test]
+    fn exclude_all_leaves_path_only() {
+        let canonical = canonical_path(
+            "/ws",
+            Some("ts=1&nonce=abc&sig=def"),
+            &["ts", "nonce", "sig"],
+        );
+        assert_eq!(canonical, "/ws");
+    }
+
+    #[test]
+    fn value_without_equals() {
+        // `?flag` (no =) → key "flag", value ""
+        assert_eq!(canonical_path("/x", Some("flag"), &[]), "/x?flag=");
+    }
 }
 
 /// `POST /api/v1/auth/verify` — client sends `HMAC(SK, "grove-verify")` as proof.

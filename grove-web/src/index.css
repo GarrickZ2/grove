@@ -315,6 +315,16 @@ body.blitz-command-pressed .blitz-shortcut {
   opacity: 1 !important;
 }
 
+/* Skip layout/paint for code blocks outside the viewport.
+ * DOM nodes are preserved (per-line divs are needed for preview-comment
+ * anchoring), but the browser defers their rendering work until they
+ * scroll into view. `contain-intrinsic-size` reserves a placeholder
+ * height so the scrollbar doesn't jump as blocks materialize. */
+.markdown-code-block {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 600px;
+}
+
 .markdown-code-block .hljs-keyword,
 .markdown-code-block .hljs-selector-tag {
   color: #c678dd;

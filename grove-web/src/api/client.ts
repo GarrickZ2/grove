@@ -103,6 +103,39 @@ function generateNonce(): string {
     .join('');
 }
 
+/**
+ * Build the canonical path-and-query that goes into the HMAC message.
+ *
+ * Query parameters are sorted by `(key, value)` ascending and rejoined with
+ * `&`. `excludeKeys` are dropped — used by `appendHmacToUrl` to skip the
+ * signature parameters themselves (`ts/nonce/sig`) when re-signing a URL
+ * that may already carry them. Mirror of the Rust `canonical_path` helper
+ * in `src/api/auth.rs`; the two must stay in lockstep.
+ */
+export function canonicalPath(path: string, excludeKeys: string[] = []): string {
+  const qIdx = path.indexOf('?');
+  if (qIdx < 0) return path;
+  const pathname = path.substring(0, qIdx);
+  const query = path.substring(qIdx + 1);
+  if (!query) return pathname;
+  const pairs: [string, string][] = [];
+  for (const part of query.split('&')) {
+    if (!part) continue;
+    const eqIdx = part.indexOf('=');
+    const key = eqIdx < 0 ? part : part.substring(0, eqIdx);
+    const value = eqIdx < 0 ? '' : part.substring(eqIdx + 1);
+    if (excludeKeys.includes(key)) continue;
+    pairs.push([key, value]);
+  }
+  if (pairs.length === 0) return pathname;
+  pairs.sort((a, b) => {
+    if (a[0] !== b[0]) return a[0] < b[0] ? -1 : 1;
+    if (a[1] !== b[1]) return a[1] < b[1] ? -1 : 1;
+    return 0;
+  });
+  return `${pathname}?${pairs.map(([k, v]) => `${k}=${v}`).join('&')}`;
+}
+
 /** Sign a request and return {timestamp, nonce, signature}. */
 async function signRequest(
   method: string,
@@ -112,7 +145,8 @@ async function signRequest(
   if (!sk) return null;
   const timestamp = Math.floor(Date.now() / 1000).toString();
   const nonce = generateNonce();
-  const message = `${timestamp}|${nonce}|${method}|${path}`;
+  const canonical = canonicalPath(path);
+  const message = `${timestamp}|${nonce}|${method}|${canonical}`;
   const signature = await computeHmac(message);
   if (!signature) return null;
   return { timestamp, nonce, signature };
@@ -168,22 +202,31 @@ async function getAuthOnlyHeaders(
 
 /** Append HMAC signature as query params to a WebSocket URL (async). */
 export async function appendHmacToUrl(url: string): Promise<string> {
-  // Extract the pathname for signing
-  let pathname: string;
+  // Extract pathname + query for signing. The signature must cover existing
+  // query params (e.g. `?session_id=…`) so a MITM can't swap them.
+  let pathWithQuery: string;
   try {
     const parsed = new URL(url, window.location.origin);
-    pathname = parsed.pathname;
+    pathWithQuery = parsed.pathname + (parsed.search || '');
   } catch {
-    // Fallback: extract path from ws:// URL
-    const pathMatch = url.match(/wss?:\/\/[^/]+(\/[^?#]*)/);
-    pathname = pathMatch ? pathMatch[1] : '/';
+    const pathMatch = url.match(/wss?:\/\/[^/]+(\/[^#]*)/);
+    pathWithQuery = pathMatch ? pathMatch[1] : '/';
   }
 
-  const sig = await signRequest('GET', pathname);
-  if (!sig) return url;
+  // ts/nonce/sig are about to be appended; they must NOT contribute to the
+  // signature itself. Mirrors the server-side exclude list in auth.rs.
+  const canonical = canonicalPath(pathWithQuery, ['ts', 'nonce', 'sig']);
+
+  const sk = getSecretKey();
+  if (!sk) return url;
+  const timestamp = Math.floor(Date.now() / 1000).toString();
+  const nonce = generateNonce();
+  const message = `${timestamp}|${nonce}|GET|${canonical}`;
+  const signature = await computeHmac(message);
+  if (!signature) return url;
 
   const sep = url.includes('?') ? '&' : '?';
-  return `${url}${sep}ts=${sig.timestamp}&nonce=${sig.nonce}&sig=${sig.signature}`;
+  return `${url}${sep}ts=${timestamp}&nonce=${nonce}&sig=${signature}`;
 }
 
 // ─── Internal helpers ───────────────────────────────────────────────────────

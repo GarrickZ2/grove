@@ -62,9 +62,15 @@ pub struct AcpSessionHandle {
     pending_queue: Mutex<Vec<QueuedMessage>>,
     /// 队列暂停标志（用户正在编辑队列消息时暂停 auto-send）
     queue_paused: std::sync::atomic::AtomicBool,
-    /// 当前 agent mode id（用于 PlanFileUpdate 检测和 QueuedConfig 快照）
+    /// 当前 agent mode id（用于 PlanFileUpdate 检测和 QueuedConfig 快照）。
+    /// 语义：last "intent" — 即上一次成功通过 SetSessionMode 推给 agent 的值。
+    /// **不**保证 agent 真的拿这个 mode 处理了任何 prompt（partial apply 失败的
+    /// 路径：mode 成功 → model 失败 → prompt 整条跳过，但 current_mode_id 已更新）。
+    /// 用于 (a) 决定下次 prompt 是否需要重发 SetSessionMode（O(1) diff），
+    /// (b) 写入 token_usage 等统计的 best-effort 归属。
     current_mode_id: Mutex<Option<String>>,
-    /// 当前 agent model id（用于 QueuedConfig 快照）
+    /// 当前 agent model id — 同 `current_mode_id` 语义（last intent，不是
+    /// last-used-for-prompt）。token_usage 写盘读这个字段做 model 归属。
     current_model_id: Mutex<Option<String>>,
     /// 最近一次 ACP `usage_update` 推送的 context window 快照。同步落盘到
     /// `session.json`,attach 时也通过 status 接口下发,前端据此渲染 context pill。
@@ -72,7 +78,8 @@ pub struct AcpSessionHandle {
     pub current_usage: Mutex<Option<UsageSnapshot>>,
     /// 当前 thought-level value id（用于 QueuedConfig 快照）
     current_thought_level_id: Mutex<Option<String>>,
-    /// Config option id for thought-level（agent 自定义，用于 SetThoughtLevel 命令）
+    /// Config option id for thought-level（agent 自定义，例如 "effort_level"）。
+    /// 前端在下一条 `Prompt.config.thought_level_config_id` 里 echo 回来。
     thought_level_config_id: Mutex<Option<String>>,
     /// Task 工作目录（用于用户直接执行 terminal 命令）
     pub working_dir: String,
@@ -117,8 +124,14 @@ pub struct PendingAuthState {
 }
 
 /// 暂存待重发的 prompt 元组(`AuthRequired` 重试用)。
-/// 顺序与 `AcpCommand::Prompt` 字段对齐:text, attachments, sender, terminal。
-type PendingPromptRetry = (String, Vec<ContentBlockData>, Option<String>, bool);
+/// 顺序与 `AcpCommand::Prompt` 字段对齐:text, attachments, sender, terminal, config。
+type PendingPromptRetry = (
+    String,
+    Vec<ContentBlockData>,
+    Option<String>,
+    bool,
+    Option<QueuedConfig>,
+);
 
 /// 发送给 ACP 后台任务的命令
 enum AcpCommand {
@@ -127,22 +140,13 @@ enum AcpCommand {
         attachments: Vec<ContentBlockData>,
         sender: Option<String>,
         terminal: bool,
+        /// Per-prompt config snapshot. The cmd_loop applies this (SetSessionMode /
+        /// Model / ThoughtLevel ACP requests) BEFORE sending the prompt itself.
+        /// `None` means "use whatever the session currently has".
+        config: Option<QueuedConfig>,
     },
     Cancel,
     Kill,
-    SetMode {
-        mode_id: String,
-    },
-    SetModel {
-        model_id: String,
-    },
-    /// Change a thought-level / reasoning-effort selector (0.11 SessionConfigOption).
-    /// config_id identifies which option (agents choose their own id, e.g. "effort_level");
-    /// value_id is the chosen value's id.
-    SetThoughtLevel {
-        config_id: String,
-        value_id: String,
-    },
     /// 用户点击登录后触发。method_id 来自 initialize 响应 auth_methods[i].id,
     /// 由前端从 `AuthRequired` update 中拿到再原样回传。
     Authenticate {
@@ -177,7 +181,7 @@ pub enum AcpUpdate {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         current_thought_level_id: Option<String>,
         /// Config option id for the thought-level selector (agent-chosen, e.g. "effort_level").
-        /// Frontend must echo this back when calling SetThoughtLevel.
+        /// Frontend echoes this back inside the next `Prompt.config.thought_level_config_id`.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         thought_level_config_id: Option<String>,
         prompt_capabilities: PromptCapabilitiesData,
@@ -265,8 +269,8 @@ pub enum AcpUpdate {
     /// Model 变更通知（乐观更新，与 ModeChanged 对称）
     ModelChanged { model_id: String },
     /// Thought-level selector updated (push from agent via ConfigOptionUpdate,
-    /// or echo after a SetThoughtLevel roundtrip). Empty available vec means
-    /// the agent dropped the selector.
+    /// or echo after applying a Prompt's `config.thought_level`). Empty
+    /// available vec means the agent dropped the selector.
     ThoughtLevelsUpdate {
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         available: Vec<(String, String)>,
@@ -281,6 +285,11 @@ pub enum AcpUpdate {
     AvailableCommands { commands: Vec<CommandInfo> },
     /// 待执行消息队列更新
     QueueUpdate { messages: Vec<QueuedMessage> },
+    /// Notify the frontend that a queued message with the given id is no longer
+    /// in the pending queue (already drained / edited away / cleared). Used to
+    /// reconcile optimistic edit/delete UI when the client request races the
+    /// auto-drain.
+    QueueMessageGone { id: String },
     /// Plan file 路径更新（Write 工具在 plan mode 下写入 .md 文件时触发）
     PlanFileUpdate {
         path: String,
@@ -454,6 +463,11 @@ pub struct QueuedConfig {
 /// 队列中的待发送消息（支持附件）
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct QueuedMessage {
+    /// 入队时分配的稳定唯一标识。前端用它做 edit/delete 的目标定位 — 比 index 安全,
+    /// 因为 index 会随队首被 drain 而漂移。旧版本持久化数据没有此字段,反序列化时由
+    /// `default` 生成新 uuid。
+    #[serde(default = "default_queued_message_id")]
+    pub id: String,
     pub text: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub attachments: Vec<ContentBlockData>,
@@ -465,6 +479,38 @@ pub struct QueuedMessage {
     /// 出队时重新应用的 config 快照（model / mode / thought_level）。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub config: Option<QueuedConfig>,
+    /// `true` when the original Prompt was issued from Shell-mode (terminal
+    /// echo). Drained back into `AcpCommand::Prompt.terminal` so the
+    /// downstream `UserMessage` emission preserves the terminal flag. Default
+    /// `false` keeps backwards compatibility with persisted history that
+    /// pre-dates this field.
+    #[serde(default)]
+    pub terminal: bool,
+}
+
+fn default_queued_message_id() -> String {
+    uuid::Uuid::new_v4().to_string()
+}
+
+impl QueuedMessage {
+    /// Convenience constructor used by enqueue paths (api/agent_graph/cmd_loop).
+    /// 自动分配 uuid 作为 id;调用方拿到返回值后可读 `msg.id` 用于后续 dequeue/edit。
+    pub fn new(
+        text: String,
+        attachments: Vec<ContentBlockData>,
+        sender: Option<String>,
+        terminal: bool,
+        config: Option<QueuedConfig>,
+    ) -> Self {
+        Self {
+            id: default_queued_message_id(),
+            text,
+            attachments,
+            sender,
+            config,
+            terminal,
+        }
+    }
 }
 
 /// Session 元数据（写入 session.json，供其他进程发现）
@@ -494,7 +540,14 @@ pub struct SessionMetadata {
     pub current_usage: Option<UsageSnapshot>,
 }
 
-/// Unix socket 命令（JSONL，每连接一条）
+/// Unix socket 命令（JSONL，每连接一条）。
+///
+/// **不携带 terminal 字段**：cross-process 路径（MCP CLI、远端 ACP bridge）
+/// 不支持 Shell-mode prompt。本进程内 `AcpCommand::Prompt` 有 `terminal: bool`
+/// — 那是 WS 直连前端用的。Socket dispatch 在 `dispatch_socket_command` 里
+/// 一律以 `terminal=false` 转成 `AcpCommand::Prompt`。若未来要让远端调用方也能
+/// 发 Shell prompt，在这里加 `#[serde(default)] terminal: bool` 并把 dispatch
+/// 透传即可。
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(tag = "action", rename_all = "snake_case")]
 pub enum SocketCommand {
@@ -504,18 +557,11 @@ pub enum SocketCommand {
         attachments: Vec<ContentBlockData>,
         #[serde(default)]
         sender: Option<String>,
+        /// Per-prompt config bundle. Applied before the prompt is sent.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        config: Option<QueuedConfig>,
     },
     Cancel,
-    SetMode {
-        mode_id: String,
-    },
-    SetModel {
-        model_id: String,
-    },
-    SetThoughtLevel {
-        config_id: String,
-        value_id: String,
-    },
     RespondPermission {
         option_id: String,
     },
@@ -2505,11 +2551,132 @@ async fn drive_session(
                 attachments,
                 sender,
                 terminal,
+                config: prompt_config,
             } => {
                 // 提前快照,便于 -32000 AuthRequired 时把这条 prompt 暂存起来
                 // 等 authenticate 成功后自动重试。sender/attachments 后续会被
                 // 移动进 emit / content_blocks,所以必须 clone。
-                let retry_snapshot = (text.clone(), attachments.clone(), sender.clone(), terminal);
+                let retry_snapshot = (
+                    text.clone(),
+                    attachments.clone(),
+                    sender.clone(),
+                    terminal,
+                    prompt_config.clone(),
+                );
+
+                // ── Pre-prompt config application ───────────────────────────
+                // Apply mode/model/thought_level via ACP requests BEFORE emitting
+                // Busy=true / UserMessage. If any rejected by agent, surface
+                // Error and skip this prompt entirely (haven't emitted Busy yet
+                // so no need to flip it back). Replaces the old standalone
+                // SetMode/SetModel/SetThoughtLevel AcpCommand variants.
+                //
+                // Failure reporting: applies are sequential (mode → model →
+                // thought_level). When request N fails, requests 1..N-1 may
+                // have already taken effect on the agent. We don't roll back —
+                // ACP has no rollback semantics, and a "best-effort revert"
+                // could fail too. Instead the Error message enumerates what
+                // landed vs what didn't, so the user/AI can see the real
+                // session state and decide whether to retry, manually correct,
+                // or proceed.
+                if let Some(ref cfg) = prompt_config {
+                    let mut applied: Vec<String> = Vec::new();
+                    let mut failure: Option<(&'static str, String)> = None;
+
+                    if let Some(ref mode_id) = cfg.mode {
+                        let current = handle.current_mode_id.lock().unwrap().clone();
+                        if current.as_deref() != Some(mode_id.as_str()) {
+                            let resp = conn
+                                .send_request(acp::SetSessionModeRequest::new(
+                                    session_id_arc.clone(),
+                                    acp::SessionModeId::new(mode_id.clone()),
+                                ))
+                                .block_task()
+                                .await;
+                            match resp {
+                                Ok(_) => {
+                                    *handle.current_mode_id.lock().unwrap() = Some(mode_id.clone());
+                                    handle.emit(AcpUpdate::ModeChanged {
+                                        mode_id: mode_id.clone(),
+                                    });
+                                    applied.push(format!("mode={}", mode_id));
+                                }
+                                Err(e) => {
+                                    failure = Some(("mode", format!("{}: {}", mode_id, e)));
+                                }
+                            }
+                        }
+                    }
+                    if failure.is_none() {
+                        if let Some(ref model_id) = cfg.model {
+                            let current = handle.current_model_id.lock().unwrap().clone();
+                            if current.as_deref() != Some(model_id.as_str()) {
+                                let resp = conn
+                                    .send_request(acp::SetSessionModelRequest::new(
+                                        session_id_arc.clone(),
+                                        acp::ModelId::new(model_id.clone()),
+                                    ))
+                                    .block_task()
+                                    .await;
+                                match resp {
+                                    Ok(_) => {
+                                        *handle.current_model_id.lock().unwrap() =
+                                            Some(model_id.clone());
+                                        handle.emit(AcpUpdate::ModelChanged {
+                                            model_id: model_id.clone(),
+                                        });
+                                        applied.push(format!("model={}", model_id));
+                                    }
+                                    Err(e) => {
+                                        failure = Some(("model", format!("{}: {}", model_id, e)));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    if failure.is_none() {
+                        if let (Some(ref value_id), Some(ref config_id)) =
+                            (&cfg.thought_level, &cfg.thought_level_config_id)
+                        {
+                            let current = handle.current_thought_level_id.lock().unwrap().clone();
+                            if current.as_deref() != Some(value_id.as_str()) {
+                                let resp = conn
+                                    .send_request(acp::SetSessionConfigOptionRequest::new(
+                                        session_id_arc.clone(),
+                                        acp::SessionConfigId::new(config_id.clone()),
+                                        acp::SessionConfigValueId::new(value_id.clone()),
+                                    ))
+                                    .block_task()
+                                    .await;
+                                match resp {
+                                    Ok(_) => {
+                                        emit_thought_level_sync(&handle, config_id, value_id);
+                                        applied.push(format!("thought_level={}", value_id));
+                                    }
+                                    Err(e) => {
+                                        failure =
+                                            Some(("thought_level", format!("{}: {}", value_id, e)));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    if let Some((field, detail)) = failure {
+                        let applied_str = if applied.is_empty() {
+                            "none".to_string()
+                        } else {
+                            applied.join(", ")
+                        };
+                        handle.emit(AcpUpdate::Error {
+                            message: format!(
+                                "Prompt not sent — {} rejected by agent ({}). Already applied before failure: {}. Session state reflects the applied settings; retry after fixing the rejected value.",
+                                field, detail, applied_str
+                            ),
+                        });
+                        continue;
+                    }
+                }
+
                 handle.emit(AcpUpdate::UserMessage {
                     text: text.clone(),
                     attachments: attachments.clone(),
@@ -2550,63 +2717,52 @@ async fn drive_session(
                     .block_task();
                 tokio::pin!(prompt_fut);
 
-                let cancel_deadline: std::cell::Cell<Option<tokio::time::Instant>> =
-                    std::cell::Cell::new(None);
-                let mut next_prompt: Option<(String, Vec<ContentBlockData>, Option<String>, bool)> =
-                    None;
                 let mut got_kill = false;
 
+                // No client-side cancel timeout: agents can legitimately take
+                // arbitrarily long to acknowledge a cancel (long tool calls,
+                // network roundtrips, etc.). Any timer that force-breaks the
+                // inner loop drops `prompt_fut`'s oneshot Receiver — when the
+                // agent's late response finally arrives, the protocol layer
+                // logs "failed to send response, receiver dropped" and the
+                // ACP session enters a broken state. Trust the agent to
+                // resolve `prompt_fut` (success, error, or cancel-ack).
                 let result = loop {
-                    let deadline = cancel_deadline.get();
                     tokio::select! {
                         res = &mut prompt_fut => break res,
-                        _ = tokio::time::sleep_until(deadline.unwrap_or_else(|| tokio::time::Instant::now() + std::time::Duration::from_secs(86400))), if deadline.is_some() => {
-                            eprintln!("[ACP] Cancel timeout — agent unresponsive, forcing exit");
-                            break Err(acp::Error::internal_error());
-                        }
                         Some(inner_cmd) = cmd_rx.recv() => {
                             match inner_cmd {
                                 AcpCommand::Cancel => {
-                                    // 0.11: cancel 是 Notification,send_notification 是同步 API
+                                    // 0.11: cancel 是 Notification, send_notification 是同步 API.
+                                    // 多次 Cancel 都允许通过 (用户连点 Send Now / 多 WS 同时 cancel),
+                                    // agent 侧需要幂等处理多份 CancelNotification — 这是 ACP spec
+                                    // 的预期行为, 不在客户端去重。
                                     let _ = conn.send_notification(acp::CancelNotification::new(session_id_arc.clone()));
-                                    cancel_deadline.set(Some(tokio::time::Instant::now() + std::time::Duration::from_secs(10)));
                                 }
-                                AcpCommand::SetMode { mode_id } => {
-                                    *handle.current_mode_id.lock().unwrap() = Some(mode_id.clone());
-                                    handle.emit(AcpUpdate::ModeChanged { mode_id: mode_id.clone() });
-                                    let _ = conn.send_request(acp::SetSessionModeRequest::new(
-                                        session_id_arc.clone(),
-                                        acp::SessionModeId::new(mode_id),
-                                    )).block_task().await;
-                                }
-                                AcpCommand::SetModel { model_id } => {
-                                    *handle.current_model_id.lock().unwrap() = Some(model_id.clone());
-                                    handle.emit(AcpUpdate::ModelChanged { model_id: model_id.clone() });
-                                    let _ = conn.send_request(acp::SetSessionModelRequest::new(
-                                        session_id_arc.clone(),
-                                        acp::ModelId::new(model_id),
-                                    )).block_task().await;
-                                }
-                                AcpCommand::SetThoughtLevel { config_id, value_id } => {
-                                    let resp = conn.send_request(acp::SetSessionConfigOptionRequest::new(
-                                        session_id_arc.clone(),
-                                        acp::SessionConfigId::new(config_id.clone()),
-                                        acp::SessionConfigValueId::new(value_id.clone()),
-                                    )).block_task().await;
-                                    if resp.is_ok() {
-                                        // Optimistically mirror the selection so reconnects
-                                        // see it even if the agent doesn't auto-echo via
-                                        // session_update. The ThoughtLevelsUpdate handler
-                                        // elsewhere in this file persists this to disk.
-                                        emit_thought_level_sync(&handle, &config_id, &value_id);
-                                    }
-                                }
-                                AcpCommand::Prompt { text, attachments, sender, terminal } => {
-                                    let _ = conn.send_notification(acp::CancelNotification::new(session_id_arc.clone()));
-                                    cancel_deadline.set(Some(tokio::time::Instant::now() + std::time::Duration::from_secs(10)));
-                                    next_prompt = Some((text, attachments, sender, terminal));
+                                AcpCommand::Prompt { text, attachments, sender, terminal, config: prompt_config } => {
+                                    // B3 fix: in-flight Prompt no longer cancels the current
+                                    // turn and overwrites a single `next_prompt` slot — that
+                                    // dropped N-1 messages on rapid resends. Enqueue to
+                                    // pending_queue and let the end-of-turn drain process
+                                    // them in order. terminal flag is preserved so the
+                                    // drained Prompt still renders as a shell echo if the
+                                    // user originally sent it from Shell mode.
+                                    let qm = QueuedMessage::new(text, attachments, sender, terminal, prompt_config);
+                                    handle.pending_queue.lock().unwrap().push(qm);
+                                    handle.emit(AcpUpdate::QueueUpdate {
+                                        messages: handle.get_queue(),
+                                    });
                                 }
                                 AcpCommand::Kill => {
+                                    // Intentionally drops `prompt_fut`'s oneshot Receiver
+                                    // even though the Cancel arm above carefully avoids that
+                                    // pattern. The distinction: Cancel keeps the session
+                                    // alive (any late agent response still has somewhere to
+                                    // land), Kill tears the whole session down (cmd_loop
+                                    // exits, agent subprocess is killed downstream — no
+                                    // late response can arrive because the transport is
+                                    // gone). Library-level "receiver dropped" log here is
+                                    // harmless noise, not protocol corruption.
                                     got_kill = true;
                                     break Err(acp::Error::internal_error());
                                 }
@@ -2648,110 +2804,101 @@ async fn drive_session(
                         if let Ok(mut slot) = handle.pending_auth_retry.lock() {
                             *slot = None;
                         }
-                        if next_prompt.is_none() {
-                            let summary = handle
-                                .last_assistant_text
-                                .lock()
-                                .ok()
-                                .map(|buf| truncate_chars(&buf, 80))
-                                .filter(|s| !s.is_empty())
-                                .unwrap_or_else(|| "Agent finished responding".to_string());
-                            notify_acp_event(
-                                &config.project_key,
-                                &config.task_id,
-                                config.chat_id.as_deref(),
-                                "Task Complete",
-                                &summary,
-                                AcpNotificationEvent::TurnComplete,
-                            );
-                            handle.emit(AcpUpdate::Busy { value: false });
-                            let turn_end_ts = chrono::Utc::now().timestamp();
-                            let turn_usage = resp.usage.as_ref().map(|u| TurnUsage {
-                                input_tokens: u.input_tokens,
-                                output_tokens: u.output_tokens,
-                                total_tokens: u.total_tokens,
-                                cached_read_tokens: u.cached_read_tokens,
-                            });
-                            // Layer A: persist per-turn usage to SQLite for stats.
-                            // Best-effort — a write error here must not fail the turn.
-                            if let (Some(usage), Some(chat_id)) =
-                                (&turn_usage, config.chat_id.as_deref())
-                            {
-                                let model_owned =
-                                    handle.current_model_id.lock().ok().and_then(|g| g.clone());
-                                let rec = crate::storage::token_usage::TokenUsageRecord {
-                                    project_key: &config.project_key,
-                                    task_id: &config.task_id,
-                                    chat_id,
-                                    agent: &config.agent_name,
-                                    model: model_owned.as_deref(),
-                                    input_tokens: usage.input_tokens,
-                                    cached_read_tokens: usage.cached_read_tokens,
-                                    output_tokens: usage.output_tokens,
-                                    total_tokens: usage.total_tokens,
-                                    start_ts: turn_start_ts,
-                                    end_ts: turn_end_ts,
-                                };
-                                if let Err(e) = crate::storage::token_usage::insert(&rec) {
-                                    eprintln!("[token_usage] insert failed: {}", e);
-                                }
+                        // After protocol refactor: in-flight Prompt commands are
+                        // enqueued to pending_queue instead of cancelling/chaining,
+                        // so every turn is "final" at this point. The drain-loop
+                        // below picks up the next queued message if any.
+                        let summary = handle
+                            .last_assistant_text
+                            .lock()
+                            .ok()
+                            .map(|buf| truncate_chars(&buf, 80))
+                            .filter(|s| !s.is_empty())
+                            .unwrap_or_else(|| "Agent finished responding".to_string());
+                        notify_acp_event(
+                            &config.project_key,
+                            &config.task_id,
+                            config.chat_id.as_deref(),
+                            "Task Complete",
+                            &summary,
+                            AcpNotificationEvent::TurnComplete,
+                        );
+                        handle.emit(AcpUpdate::Busy { value: false });
+                        let turn_end_ts = chrono::Utc::now().timestamp();
+                        let turn_usage = resp.usage.as_ref().map(|u| TurnUsage {
+                            input_tokens: u.input_tokens,
+                            output_tokens: u.output_tokens,
+                            total_tokens: u.total_tokens,
+                            cached_read_tokens: u.cached_read_tokens,
+                        });
+                        // Layer A: persist per-turn usage to SQLite for stats.
+                        // Best-effort — a write error here must not fail the turn.
+                        if let (Some(usage), Some(chat_id)) =
+                            (&turn_usage, config.chat_id.as_deref())
+                        {
+                            let model_owned =
+                                handle.current_model_id.lock().ok().and_then(|g| g.clone());
+                            let rec = crate::storage::token_usage::TokenUsageRecord {
+                                project_key: &config.project_key,
+                                task_id: &config.task_id,
+                                chat_id,
+                                agent: &config.agent_name,
+                                model: model_owned.as_deref(),
+                                input_tokens: usage.input_tokens,
+                                cached_read_tokens: usage.cached_read_tokens,
+                                output_tokens: usage.output_tokens,
+                                total_tokens: usage.total_tokens,
+                                start_ts: turn_start_ts,
+                                end_ts: turn_end_ts,
+                            };
+                            if let Err(e) = crate::storage::token_usage::insert(&rec) {
+                                eprintln!("[token_usage] insert failed: {}", e);
                             }
-                            handle.emit(AcpUpdate::Complete {
-                                stop_reason: format!("{:?}", resp.stop_reason),
-                                usage: turn_usage,
-                                start_ts: Some(turn_start_ts),
-                                end_ts: Some(turn_end_ts),
-                            });
-                        } else {
-                            handle.emit(AcpUpdate::Busy { value: false });
                         }
+                        handle.emit(AcpUpdate::Complete {
+                            stop_reason: format!("{:?}", resp.stop_reason),
+                            usage: turn_usage,
+                            start_ts: Some(turn_start_ts),
+                            end_ts: Some(turn_end_ts),
+                        });
                     }
                     Err(e) => {
                         handle.emit(AcpUpdate::Busy { value: false });
-                        if next_prompt.is_none() {
-                            // -32000 AuthRequired:转登录流程,不当一般错误报。
-                            // 用 i32 比较避免依赖具体 ErrorCode 路径(0.11 之后
-                            // 已 stable,但 Other(_) 兜底变体的存在意味着直接
-                            // match Pattern 不一定 exhaustive)。
-                            if i32::from(e.code) == -32000 {
-                                let methods = handle
-                                    .auth_methods
-                                    .lock()
-                                    .map(|m| m.clone())
-                                    .unwrap_or_default();
-                                if let Ok(mut slot) = handle.pending_auth_retry.lock() {
-                                    *slot = Some(retry_snapshot.clone());
-                                }
-                                // 同时落到 pending_auth,让刷新后 WS 重连能重发
-                                // banner(activeAuthMessage 派生自当下 messages,
-                                // history 里没存 auth_required,光靠回放拿不到)。
-                                if let Ok(mut slot) = handle.pending_auth.lock() {
-                                    *slot = Some(PendingAuthState {
-                                        methods: methods.clone(),
-                                        agent_name: Some(agent_name.clone()),
-                                    });
-                                }
-                                handle.emit(AcpUpdate::AuthRequired {
-                                    methods,
+                        // -32000 AuthRequired:转登录流程,不当一般错误报。
+                        // 用 i32 比较避免依赖具体 ErrorCode 路径(0.11 之后
+                        // 已 stable,但 Other(_) 兜底变体的存在意味着直接
+                        // match Pattern 不一定 exhaustive)。
+                        if i32::from(e.code) == -32000 {
+                            let methods = handle
+                                .auth_methods
+                                .lock()
+                                .map(|m| m.clone())
+                                .unwrap_or_default();
+                            if let Ok(mut slot) = handle.pending_auth_retry.lock() {
+                                *slot = Some(retry_snapshot.clone());
+                            }
+                            // 同时落到 pending_auth,让刷新后 WS 重连能重发
+                            // banner(activeAuthMessage 派生自当下 messages,
+                            // history 里没存 auth_required,光靠回放拿不到)。
+                            if let Ok(mut slot) = handle.pending_auth.lock() {
+                                *slot = Some(PendingAuthState {
+                                    methods: methods.clone(),
                                     agent_name: Some(agent_name.clone()),
                                 });
-                            } else {
-                                handle.emit(AcpUpdate::Error {
-                                    message: format!("Prompt error: {}", e),
-                                });
                             }
+                            handle.emit(AcpUpdate::AuthRequired {
+                                methods,
+                                agent_name: Some(agent_name.clone()),
+                            });
+                        } else {
+                            handle.emit(AcpUpdate::Error {
+                                message: format!("Prompt error: {}", e),
+                            });
                         }
                     }
                 }
 
-                if let Some((text, attachments, sender, terminal)) = next_prompt {
-                    let _ = handle.cmd_tx.try_send(AcpCommand::Prompt {
-                        text,
-                        attachments,
-                        sender,
-                        terminal,
-                    });
-                } else if !handle
+                if !handle
                     .queue_paused
                     .load(std::sync::atomic::Ordering::Relaxed)
                 {
@@ -2761,8 +2908,9 @@ async fn drive_session(
                         let text = next_msg.text.clone();
                         let attachments = next_msg.attachments.clone();
                         let sender = next_msg.sender.clone();
+                        let terminal = next_msg.terminal;
                         let config = next_msg.config.clone();
-                        if handle.try_enqueue_prompt(text, attachments, sender, config) {
+                        if handle.try_enqueue_prompt(text, attachments, sender, terminal, config) {
                             handle.emit(AcpUpdate::QueueUpdate {
                                 messages: handle.get_queue(),
                             });
@@ -2775,48 +2923,6 @@ async fn drive_session(
             }
             AcpCommand::Cancel => {
                 // Agent 空闲时收到 Cancel,忽略
-            }
-            AcpCommand::SetMode { mode_id } => {
-                *handle.current_mode_id.lock().unwrap() = Some(mode_id.clone());
-                handle.emit(AcpUpdate::ModeChanged {
-                    mode_id: mode_id.clone(),
-                });
-                let _ = conn
-                    .send_request(acp::SetSessionModeRequest::new(
-                        session_id_arc.clone(),
-                        acp::SessionModeId::new(mode_id),
-                    ))
-                    .block_task()
-                    .await;
-            }
-            AcpCommand::SetModel { model_id } => {
-                *handle.current_model_id.lock().unwrap() = Some(model_id.clone());
-                handle.emit(AcpUpdate::ModelChanged {
-                    model_id: model_id.clone(),
-                });
-                let _ = conn
-                    .send_request(acp::SetSessionModelRequest::new(
-                        session_id_arc.clone(),
-                        acp::ModelId::new(model_id),
-                    ))
-                    .block_task()
-                    .await;
-            }
-            AcpCommand::SetThoughtLevel {
-                config_id,
-                value_id,
-            } => {
-                let resp = conn
-                    .send_request(acp::SetSessionConfigOptionRequest::new(
-                        session_id_arc.clone(),
-                        acp::SessionConfigId::new(config_id.clone()),
-                        acp::SessionConfigValueId::new(value_id.clone()),
-                    ))
-                    .block_task()
-                    .await;
-                if resp.is_ok() {
-                    emit_thought_level_sync(&handle, &config_id, &value_id);
-                }
             }
             AcpCommand::Authenticate { method_id } => {
                 // Long-blocking 请求:agent 典型实现是开浏览器等 OAuth,期间不响应。
@@ -2847,8 +2953,13 @@ async fn drive_session(
                                             .lock()
                                             .ok()
                                             .and_then(|mut s| s.take());
-                                        if let Some((text, attachments, sender, terminal)) =
-                                            pending
+                                        if let Some((
+                                            text,
+                                            attachments,
+                                            sender,
+                                            terminal,
+                                            config,
+                                        )) = pending
                                         {
                                             let _ = handle.cmd_tx.try_send(
                                                 AcpCommand::Prompt {
@@ -2856,6 +2967,7 @@ async fn drive_session(
                                                     attachments,
                                                     sender,
                                                     terminal,
+                                                    config,
                                                 },
                                             );
                                         }
@@ -3404,13 +3516,15 @@ impl AcpSessionHandle {
         )
     }
 
-    /// 发送用户提示
+    /// 发送用户提示。`config` 为 None 表示沿用 session 当前配置;Some 时 cmd_loop 会
+    /// 在发 prompt 前按需先发 SetSessionMode/Model/ThoughtLevel ACP 请求。
     pub async fn send_prompt(
         &self,
         text: String,
         attachments: Vec<ContentBlockData>,
         sender: Option<String>,
         terminal: bool,
+        config: Option<QueuedConfig>,
     ) -> crate::error::Result<()> {
         self.cmd_tx
             .send(AcpCommand::Prompt {
@@ -3418,37 +3532,7 @@ impl AcpSessionHandle {
                 attachments,
                 sender,
                 terminal,
-            })
-            .await
-            .map_err(|_| crate::error::GroveError::Session("ACP session closed".to_string()))
-    }
-
-    /// 切换 Mode
-    pub async fn set_mode(&self, mode_id: String) -> crate::error::Result<()> {
-        self.cmd_tx
-            .send(AcpCommand::SetMode { mode_id })
-            .await
-            .map_err(|_| crate::error::GroveError::Session("ACP session closed".to_string()))
-    }
-
-    /// 切换 Model
-    pub async fn set_model(&self, model_id: String) -> crate::error::Result<()> {
-        self.cmd_tx
-            .send(AcpCommand::SetModel { model_id })
-            .await
-            .map_err(|_| crate::error::GroveError::Session("ACP session closed".to_string()))
-    }
-
-    /// 切换 thought-level / reasoning-effort(0.11 通用 SessionConfigOption)
-    pub async fn set_thought_level(
-        &self,
-        config_id: String,
-        value_id: String,
-    ) -> crate::error::Result<()> {
-        self.cmd_tx
-            .send(AcpCommand::SetThoughtLevel {
-                config_id,
-                value_id,
+                config,
             })
             .await
             .map_err(|_| crate::error::GroveError::Session("ACP session closed".to_string()))
@@ -3530,6 +3614,34 @@ impl AcpSessionHandle {
         q.clone()
     }
 
+    /// 删除队列中指定 id 的消息。返回 `(found, snapshot)`:
+    /// - `found = false` 时调用方应回报"消息已被发送/已不在队列"以让前端关闭编辑态。
+    pub fn dequeue_message_by_id(&self, id: &str) -> (bool, Vec<QueuedMessage>) {
+        let mut q = self.pending_queue.lock().unwrap();
+        let before = q.len();
+        q.retain(|m| m.id != id);
+        let found = q.len() != before;
+        (found, q.clone())
+    }
+
+    /// 编辑队列中指定 id 的消息文本。返回 `(found, snapshot)`。
+    pub fn update_queued_message_by_id(
+        &self,
+        id: &str,
+        text: String,
+    ) -> (bool, Vec<QueuedMessage>) {
+        let mut q = self.pending_queue.lock().unwrap();
+        let mut found = false;
+        for m in q.iter_mut() {
+            if m.id == id {
+                m.text = text;
+                found = true;
+                break;
+            }
+        }
+        (found, q.clone())
+    }
+
     /// 清空待执行队列，返回空队列
     pub fn clear_queue(&self) -> Vec<QueuedMessage> {
         let mut q = self.pending_queue.lock().unwrap();
@@ -3552,65 +3664,44 @@ impl AcpSessionHandle {
         }
     }
 
-    /// 非阻塞发送 prompt 命令（队列 auto-send 使用）。
-    /// 如果 config 不为空，先依次发送 SetModel / SetMode / SetThoughtLevel，
-    /// 再发送 Prompt，确保配置在本轮生效。
-    /// 注意：config 命令和 Prompt 命令各自独立发送至无界有界 channel，无法原子提交。
-    /// 若某条 config 命令成功但后续命令失败（channel 已满），config 已生效但 Prompt
-    /// 未送达。调用方检查返回 false 时需将消息回插队首；config 的提前生效属于可接受的
-    /// 最终一致性，不会导致消息丢失。
+    /// 非阻塞发送 prompt 命令(队列 auto-send 使用)。
+    /// config 直接 bundle 在 Prompt 内,cmd_loop 在发 prompt 前按需先发
+    /// SetSessionMode/Model/ThoughtLevel ACP 请求。
     fn try_enqueue_prompt(
         &self,
         text: String,
         attachments: Vec<ContentBlockData>,
         sender: Option<String>,
+        terminal: bool,
         config: Option<QueuedConfig>,
     ) -> bool {
-        if let Some(cfg) = config {
-            if let Some(model) = cfg.model {
-                if self
-                    .cmd_tx
-                    .try_send(AcpCommand::SetModel { model_id: model })
-                    .is_err()
-                {
-                    return false;
-                }
-            }
-            if let Some(mode) = cfg.mode {
-                if self
-                    .cmd_tx
-                    .try_send(AcpCommand::SetMode { mode_id: mode })
-                    .is_err()
-                {
-                    return false;
-                }
-            }
-            if let (Some(config_id), Some(value_id)) =
-                (cfg.thought_level_config_id, cfg.thought_level)
-            {
-                if self
-                    .cmd_tx
-                    .try_send(AcpCommand::SetThoughtLevel {
-                        config_id,
-                        value_id,
-                    })
-                    .is_err()
-                {
-                    return false;
-                }
-            }
-        }
         self.cmd_tx
             .try_send(AcpCommand::Prompt {
                 text,
                 attachments,
                 sender,
-                terminal: false,
+                terminal,
+                config,
             })
             .is_ok()
     }
 
-    /// 返回当前 model id 快照（用于 QueuedConfig）
+    /// 返回当前 config 快照（用于 QueuedConfig）。
+    ///
+    /// **Tearing**: 这里串行 lock 四个独立 Mutex（model / mode / thought_level /
+    /// thought_level_config_id），不是一次原子读。如果在这四次 lock 之间外部刚好
+    /// 推进了某个字段（agent 主动 emit ConfigOptionUpdate、另一个 WS client 触发
+    /// 切换），快照可能"半新半旧"。
+    ///
+    /// 这是 benign 的：
+    /// (1) snapshot_config 只在"前端没传 config 的旧客户端 fallback"路径上调用
+    ///     （`ClientMessage::QueueMessage` 兼容老客户端），不在主流程；
+    /// (2) `current_*_id` 字段语义本身就是 "last intent"（见 struct 字段注释），
+    ///     不是 ground truth；下一次真正 send prompt 时 cmd_loop 会无条件 apply
+    ///     最终 config，任何撕裂都会被覆盖。
+    ///
+    /// 若哪天要求严格一致（多 mutator 同时跑），把四个字段合并到单一 Mutex 包裹
+    /// 的 struct 里即可。
     pub fn snapshot_config(&self) -> QueuedConfig {
         QueuedConfig {
             model: self.current_model_id.lock().unwrap().clone(),
@@ -3626,6 +3717,23 @@ impl AcpSessionHandle {
             .store(true, std::sync::atomic::Ordering::Relaxed);
     }
 
+    /// Test-only helper: drain one queued message into the cmd channel,
+    /// emulating what the prod cmd_loop does at end-of-turn.
+    #[cfg(test)]
+    pub fn test_drain_one_queued(&self) -> bool {
+        if let Some(next_msg) = self.pop_queue_front() {
+            self.try_enqueue_prompt(
+                next_msg.text,
+                next_msg.attachments,
+                next_msg.sender,
+                next_msg.terminal,
+                next_msg.config,
+            )
+        } else {
+            false
+        }
+    }
+
     /// 恢复队列 auto-send，如果队列非空则立即尝试发送第一条
     pub fn resume_queue(&self) {
         self.queue_paused
@@ -3637,8 +3745,9 @@ impl AcpSessionHandle {
             let text = next_msg.text.clone();
             let attachments = next_msg.attachments.clone();
             let sender = next_msg.sender.clone();
+            let terminal = next_msg.terminal;
             let config = next_msg.config.clone();
-            if self.try_enqueue_prompt(text, attachments, sender, config) {
+            if self.try_enqueue_prompt(text, attachments, sender, terminal, config) {
                 self.emit(AcpUpdate::QueueUpdate {
                     messages: self.get_queue(),
                 });
@@ -3827,6 +3936,7 @@ pub fn new_handle_for_test(
                     attachments,
                     sender,
                     terminal,
+                    config: _,
                 } => {
                     handle_for_loop.emit(AcpUpdate::UserMessage {
                         text,
@@ -4030,34 +4140,17 @@ async fn dispatch_socket_command(handle: &AcpSessionHandle, cmd: SocketCommand) 
             text,
             attachments,
             sender,
-        } => match handle.send_prompt(text, attachments, sender, false).await {
+            config,
+        } => match handle
+            .send_prompt(text, attachments, sender, false, config)
+            .await
+        {
             Ok(()) => SocketResponse::Ok,
             Err(e) => SocketResponse::Error {
                 message: e.to_string(),
             },
         },
         SocketCommand::Cancel => match handle.cancel().await {
-            Ok(()) => SocketResponse::Ok,
-            Err(e) => SocketResponse::Error {
-                message: e.to_string(),
-            },
-        },
-        SocketCommand::SetMode { mode_id } => match handle.set_mode(mode_id).await {
-            Ok(()) => SocketResponse::Ok,
-            Err(e) => SocketResponse::Error {
-                message: e.to_string(),
-            },
-        },
-        SocketCommand::SetModel { model_id } => match handle.set_model(model_id).await {
-            Ok(()) => SocketResponse::Ok,
-            Err(e) => SocketResponse::Error {
-                message: e.to_string(),
-            },
-        },
-        SocketCommand::SetThoughtLevel {
-            config_id,
-            value_id,
-        } => match handle.set_thought_level(config_id, value_id).await {
             Ok(()) => SocketResponse::Ok,
             Err(e) => SocketResponse::Error {
                 message: e.to_string(),
@@ -4929,14 +5022,20 @@ mod tests {
                 text: "hello".into(),
                 attachments: vec![],
                 sender: None,
+                config: None,
+            },
+            SocketCommand::Prompt {
+                text: "with config".into(),
+                attachments: vec![],
+                sender: None,
+                config: Some(QueuedConfig {
+                    model: Some("opus".into()),
+                    mode: Some("plan".into()),
+                    thought_level: None,
+                    thought_level_config_id: None,
+                }),
             },
             SocketCommand::Cancel,
-            SocketCommand::SetMode {
-                mode_id: "plan".into(),
-            },
-            SocketCommand::SetModel {
-                model_id: "opus".into(),
-            },
             SocketCommand::RespondPermission {
                 option_id: "allow_once".into(),
             },
@@ -4957,6 +5056,7 @@ mod tests {
             text: "do it".into(),
             attachments: vec![],
             sender: None,
+            config: None,
         };
         let json = serde_json::to_string(&cmd).unwrap();
         assert!(json.contains(r#""action":"prompt""#));

@@ -239,12 +239,14 @@ interface TaskChatProps {
   fullscreen?: boolean;
   onToggleFullscreen?: () => void;
   hideHeader?: boolean;
-  /** Navigate to a file (optionally at a line) in the Review panel */
+  /** Navigate to a file (optionally at a line) in the Review panel.
+   *  Returns whether the file was found and the panel staged — `false`
+   *  lets in-message FileChips fall back to plain markdown rendering. */
   onNavigateToFile?: (
     filePath: string,
     line?: number,
     mode?: "diff" | "full",
-  ) => void;
+  ) => Promise<boolean>;
   /** Called when chat transitions from busy to idle (work completed) */
   onChatBecameIdle?: () => void;
   /** Called when the user successfully sends a message */
@@ -404,6 +406,10 @@ interface PerChatState {
     size: number;
     cost: { amount: number; currency: string } | null;
   } | null;
+  /** Pending queue snapshot — kept in cache so chat-tab switches don't
+   * clear queued messages. WS server only re-sends QueueUpdate on reconnect,
+   * not on tab switch (the WS stays alive). */
+  pendingMessages: { id: string; text: string }[];
 }
 
 function defaultPerChatState(): PerChatState {
@@ -432,6 +438,7 @@ function defaultPerChatState(): PerChatState {
     planFileContent: "",
     draftHtml: "",
     contextUsage: null,
+    pendingMessages: [],
   };
 }
 
@@ -1180,10 +1187,18 @@ function reduceHistoryMessages(
 ): ChatMessage[] {
   switch (msg.type) {
     case "message_chunk": {
+      // OpenCode (and possibly others) emit trailing `session_update.AgentMessageChunk`
+      // events AFTER `PromptResponse` has already resolved — so the chunk arrives
+      // when the assistant bubble is already `complete=true`. Appending to whichever
+      // assistant is most recent (regardless of complete flag), as long as no
+      // user/tool boundary intervenes, merges that orphan tail back into the
+      // bubble it belongs to. Without this, the tail creates a new bubble that
+      // then incorrectly inherits the NEXT turn's usage from the complete-handler
+      // mapper (which targets all `!complete` assistants).
       const prev = completeThinking(messages);
       for (let i = prev.length - 1; i >= 0; i -= 1) {
         const m = prev[i];
-        if (m.type === "assistant" && !m.complete) {
+        if (m.type === "assistant") {
           const updated = [...prev];
           updated[i] = { ...m, content: m.content + msg.text };
           return updated;
@@ -1518,9 +1533,15 @@ export function TaskChat({
   const [hasContent, setHasContent] = useState(false);
   const [isBusy, setIsBusy] = useState(false);
   const busyRef = useRef(false);
+  // True from the moment the user clicks a cancel-emitting button (Send Now /
+  // Stop) until the server acks by transitioning busy → false. Prevents the
+  // "click 11 times spams 11 CancelNotifications" pattern that previously
+  // drove the agent's request channel into a broken state.
+  const [isCancelling, setIsCancelling] = useState(false);
   const updateBusy = useCallback((value: boolean) => {
     busyRef.current = value;
     setIsBusy(value);
+    if (!value) setIsCancelling(false);
     onBusyStateChange?.(value);
   }, [onBusyStateChange]);
   const terminalRunningRef = useRef(false);
@@ -1569,11 +1590,45 @@ export function TaskChat({
   // The sectionId of the currently auto-expanded tool section (null = none)
   // Set on tool_call, cleared on message_chunk or complete
   const [, setAutoExpandSectionId] = useState<string | null>(null);
-  const [pendingMessages, setPendingMessages] = useState<string[]>([]);
-  const [showPendingQueue, setShowPendingQueue] = useState(true);
-  const [editingPendingIdx, setEditingPendingIdx] = useState<number | null>(
-    null,
+  // pending 消息现在带 id(uuid,后端在入队时分配);所有 edit/delete 都用
+  // id 精准定位 — index 在网络往返期间可能因为队首被 drain 而漂移。
+  const [pendingMessages, setPendingMessages] = useState<
+    { id: string; text: string }[]
+  >([]);
+  // Stable React keys for pending messages that arrive without a server-side
+  // id. Pure derivation off `(index, text)` — no Math.random / crypto, no
+  // ref mutation during render — so React Compiler is happy. Two identical
+  // texts at different indices still get distinct keys, and identical
+  // (index, text) cells across queue_update echoes map to the same key so
+  // an in-progress <input> edit isn't torn down. When the backend supplies
+  // a real id we honour it directly.
+  const sawEmptyPendingIdRef = useRef(false);
+  const pendingMessageKeys = useMemo(
+    () =>
+      pendingMessages.map((msg, idx) =>
+        msg.id ? msg.id : `local-${idx}-${msg.text}`,
+      ),
+    [pendingMessages],
   );
+  useEffect(() => {
+    // One-shot warn when empty-id queue messages first appear — backend bug
+    // upstream; edits will fall back to position-keyed identity, which still
+    // preserves focus across queue_update echoes but loses identity across
+    // queue reorders.
+    if (pendingMessages.some((m) => !m.id) && !sawEmptyPendingIdRef.current) {
+      sawEmptyPendingIdRef.current = true;
+      console.warn(
+        "[TaskChat] queue messages arriving without ids — backend bug; edits will be position-keyed",
+      );
+    }
+  }, [pendingMessages]);
+  const [showPendingQueue, setShowPendingQueue] = useState(true);
+  const [editingPendingId, setEditingPendingId] = useState<string | null>(null);
+  // 给 websocket onmessage 这种长生命周期闭包用 — useState 值会过期,ref 不会
+  const editingPendingIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    editingPendingIdRef.current = editingPendingId;
+  }, [editingPendingId]);
   const [editingPendingValue, setEditingPendingValue] = useState("");
   // Subscribe to persona registry — re-renders this tree (and the picker /
   // chip / icon descendants that read `agentIconComponent` / `resolveAgentIcon`)
@@ -2430,6 +2485,7 @@ export function TaskChat({
       remoteOwnerName,
       draftHtml: editableRef.current?.innerHTML ?? "",
       contextUsage,
+      pendingMessages,
     });
     saveChatDraft(activeChatId, editableRef.current?.innerHTML ?? "");
   }, [
@@ -2456,6 +2512,7 @@ export function TaskChat({
     isRemoteSession,
     remoteOwnerName,
     contextUsage,
+    pendingMessages,
   ]);
 
   /** Restore chat state from cache */
@@ -2516,8 +2573,10 @@ export function TaskChat({
       setIsRemoteSession(false);
       setRemoteOwnerName("");
     }
-    // Reset pending messages — server will send queue_update on reconnect
-    setPendingMessages([]);
+    // 从缓存恢复 pending queue;tab 切换时 WS 不会断,server 也不会主动
+    // 重发 queue_update,只能靠本地缓存 — 若 cache miss(首次进入此 chat)
+    // 才置空,等首条 queue_update 灌入。
+    setPendingMessages(cached?.pendingMessages ?? []);
     // Clear attachments on chat switch (revoke blob URLs to avoid leaks)
     setAttachments((prev) => {
       prev.forEach((att) => { if (att.previewUrl) URL.revokeObjectURL(att.previewUrl); });
@@ -2868,7 +2927,14 @@ export function TaskChat({
               setPlanEntries(evt.entries || []);
               break;
             case "queue_update":
-              setPendingMessages(evt.messages || []);
+              setPendingMessages(
+                (evt.messages ?? []).map(
+                  (m: { id?: string; text: string } | string) =>
+                    typeof m === "string"
+                      ? { id: "", text: m }
+                      : { id: m.id ?? "", text: m.text },
+                ),
+              );
               break;
             case "available_commands":
               setSlashCommands(evt.commands ?? []);
@@ -3271,12 +3337,29 @@ export function TaskChat({
           });
           break;
         case "queue_update":
-          // Server sends QueuedMessage[]; extract text for display
+          // Server now always sends QueuedMessage[] with id+text.
           setPendingMessages(
-            (msg.messages ?? []).map((m: string | { text: string }) =>
-              typeof m === "string" ? m : m.text,
+            (msg.messages ?? []).map(
+              (m: { id?: string; text: string } | string) =>
+                typeof m === "string"
+                  ? { id: "", text: m }
+                  : { id: m.id ?? "", text: m.text },
             ),
           );
+          break;
+        case "queue_message_gone":
+          // 用户编辑/删除的消息已经在服务端被 drain 出去发给 agent 了。
+          // 关闭编辑态并提示。
+          if (editingPendingIdRef.current === msg.id) {
+            setEditingPendingId(null);
+            setEditingPendingValue("");
+            // Project does not currently expose a global toast/notification
+            // surface — log to console so the loss is at least visible in
+            // devtools. Promote to a real toast when the UI gains one.
+            console.warn(
+              "Your queued message was already sent to the agent before the edit landed.",
+            );
+          }
           break;
         case "remote_session":
           // Session is owned by another process — enter read-only observation mode
@@ -3402,7 +3485,19 @@ export function TaskChat({
           }
           break;
         case "queue_update":
-          // Server manages queue — ignored for non-active chat cache
+          // 即使该 chat 当前不是 active,也得把 queue 写进 cache,
+          // 否则用户切回来时只能看到空 queue(WS 不会主动再发一次)。
+          state.pendingMessages = (msg.messages ?? []).map(
+            (m: { id?: string; text: string } | string) =>
+              typeof m === "string"
+                ? { id: "", text: m }
+                : { id: m.id ?? "", text: m.text },
+          );
+          break;
+        case "queue_message_gone":
+          // 后台 chat 的编辑状态由前端 active 路径管理,这里只需让 cache
+          // 不要保留已发出的消息;cache 的 pendingMessages 会被下一条
+          // queue_update 自然覆盖,这里不用手动处理。
           break;
         case "busy":
           state.isBusy = msg.value;
@@ -3935,6 +4030,28 @@ export function TaskChat({
     setIsSavingToNote(false);
   }, [planFileContent, isSavingToNote, projectId, task.id]);
 
+  // Bundle current model/mode/thought_level into a `config` object for every
+  // prompt/queue_message send. The backend cmd_loop applies these as ACP
+  // SetSessionMode/Model/ThoughtLevel requests right before the prompt itself —
+  // so per-prompt config swaps land in the correct order even when the user
+  // toggles selectors between rapid sends. Replaces the old set_mode/set_model/
+  // set_thought_level standalone WS messages.
+  const buildPromptConfig = useCallback(() => {
+    const cfg: {
+      model?: string;
+      mode?: string;
+      thought_level?: string;
+      thought_level_config_id?: string;
+    } = {};
+    if (selectedModel) cfg.model = selectedModel;
+    if (permissionLevel) cfg.mode = permissionLevel;
+    if (thoughtLevel && thoughtLevelConfigId) {
+      cfg.thought_level = thoughtLevel;
+      cfg.thought_level_config_id = thoughtLevelConfigId;
+    }
+    return Object.keys(cfg).length === 0 ? undefined : cfg;
+  }, [selectedModel, permissionLevel, thoughtLevel, thoughtLevelConfigId]);
+
   const handleSend = useCallback(async () => {
     const el = editableRef.current;
     if (!el) return;
@@ -4038,6 +4155,11 @@ export function TaskChat({
           type: "queue_message",
           text,
           attachments: contentAttachments,
+          // FR2: queued messages must carry the same per-prompt config the
+          // user has selected (model / thinking / agent overrides). Without
+          // it the backend falls back to whatever snapshot was current when
+          // the agent was last spawned, silently dropping the user's choice.
+          config: buildPromptConfig(),
         }),
       );
       el.innerHTML = "";
@@ -4063,6 +4185,7 @@ export function TaskChat({
           type: "prompt",
           text,
           attachments: contentAttachments,
+          config: buildPromptConfig(),
         }),
       );
       el.innerHTML = "";
@@ -4076,11 +4199,13 @@ export function TaskChat({
       setShowFileMenu(false);
       setIsTerminalMode(false);
       setIsInputExpanded(false);
-      updateBusy(true);
+      // Part B: 不再乐观 updateBusy(true)。busy 状态由后端 "busy" / "user_message"
+      // 事件驱动 — 收到后才翻 true。乐观更新会和后端事件 race,产生短暂"可发送"
+      // 窗口让用户连点出 bug。延迟期间发送按钮短暂仍可点也行,backend 会自己处理。
       onUserMessageSent?.();
       el.focus();
     }
-  }, [isTerminalMode, isBusy, attachments, activeChatId, projectId, task.id, enableAutoStickToBottom, onUserMessageSent, updateBusy]);
+  }, [isTerminalMode, isBusy, attachments, activeChatId, projectId, task.id, enableAutoStickToBottom, onUserMessageSent, buildPromptConfig]);
 
   const sendPreviewComments = useCallback((comments: PreviewCommentDraft[]) => {
     if (
@@ -4100,6 +4225,10 @@ export function TaskChat({
         type: isBusy ? "queue_message" : "prompt",
         text,
         attachments: [],
+        // FR2: send config on both prompt and queue_message paths so the
+        // user's per-prompt overrides (model / thinking / agent) survive
+        // queueing instead of getting backfilled from a stale snapshot.
+        config: buildPromptConfig(),
       }),
     );
     clearPreviewCommentDrafts(comments.map((comment) => comment.id));
@@ -4109,16 +4238,16 @@ export function TaskChat({
     setShowPendingQueue(isBusy);
     setShowPlan(false);
     setShowPlanFile(false);
-    if (!isBusy) updateBusy(true);
+    // Part B: 删乐观 updateBusy — 等后端事件
     onUserMessageSent?.();
   }, [
     activeChatId,
+    buildPromptConfig,
     clearPreviewCommentDrafts,
     enableAutoStickToBottom,
     isBusy,
     isTerminalMode,
     onUserMessageSent,
-    updateBusy,
   ]);
 
   const handleCompact = useCallback(() => {
@@ -4136,20 +4265,22 @@ export function TaskChat({
         type: isBusy ? "queue_message" : "prompt",
         text: "/compact",
         attachments: [],
+        // FR2: queue path must carry config too (see prompt-send above).
+        config: buildPromptConfig(),
       }),
     );
     setShowSlashMenu(false);
     setShowFileMenu(false);
     setShowPendingQueue(isBusy);
-    if (!isBusy) updateBusy(true);
+    // Part B: 删乐观 updateBusy — 等后端事件
     onUserMessageSent?.();
   }, [
     activeChatId,
+    buildPromptConfig,
     enableAutoStickToBottom,
     isBusy,
     isTerminalMode,
     onUserMessageSent,
-    updateBusy,
   ]);
 
   const hasCompactCommand = useMemo(
@@ -4159,34 +4290,37 @@ export function TaskChat({
 
   /** Cancel current agent work — server auto-sends next queued message after Complete */
   const handleSendNow = useCallback(() => {
+    if (isCancelling) return;
     if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
+    setIsCancelling(true);
     wsRef.current.send(JSON.stringify({ type: "cancel" }));
-  }, []);
+  }, [isCancelling]);
 
   /** Stop agent or kill running terminal command */
   const handleStopAgent = useCallback(() => {
     if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
     if (terminalRunningRef.current) {
       wsRef.current.send(JSON.stringify({ type: "terminal_kill" }));
-    } else {
-      wsRef.current.send(JSON.stringify({ type: "cancel" }));
+      return;
     }
-  }, []);
+    if (isCancelling) return;
+    setIsCancelling(true);
+    wsRef.current.send(JSON.stringify({ type: "cancel" }));
+  }, [isCancelling]);
 
+  // 不再发 pause_queue:后端不暂停队列,而是在 save/delete 时按 id 定位 —
+  // 找不到(已被 drain 走)就回一个 queue_message_gone 让前端关编辑态。
   const handleEditPending = useCallback(
-    (i: number) => {
-      setEditingPendingIdx(i);
-      setEditingPendingValue(pendingMessages[i]);
-      if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-        wsRef.current.send(JSON.stringify({ type: "pause_queue" }));
-      }
+    (msg: { id: string; text: string }) => {
+      setEditingPendingId(msg.id);
+      setEditingPendingValue(msg.text);
     },
-    [pendingMessages],
+    [],
   );
 
   const handleSavePendingEdit = useCallback(() => {
     if (
-      editingPendingIdx === null ||
+      editingPendingId === null ||
       !wsRef.current ||
       wsRef.current.readyState !== WebSocket.OPEN
     )
@@ -4194,46 +4328,42 @@ export function TaskChat({
     const trimmed = editingPendingValue.trim();
     if (!trimmed) {
       wsRef.current.send(
-        JSON.stringify({ type: "dequeue_message", index: editingPendingIdx }),
+        JSON.stringify({ type: "dequeue_message", id: editingPendingId }),
       );
     } else {
       wsRef.current.send(
         JSON.stringify({
           type: "update_queued_message",
-          index: editingPendingIdx,
+          id: editingPendingId,
           text: trimmed,
         }),
       );
     }
-    setEditingPendingIdx(null);
+    setEditingPendingId(null);
     setEditingPendingValue("");
-    wsRef.current.send(JSON.stringify({ type: "resume_queue" }));
-  }, [editingPendingIdx, editingPendingValue]);
+  }, [editingPendingId, editingPendingValue]);
 
   const handleCancelPendingEdit = useCallback(() => {
-    setEditingPendingIdx(null);
+    setEditingPendingId(null);
     setEditingPendingValue("");
-    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-      wsRef.current.send(JSON.stringify({ type: "resume_queue" }));
-    }
   }, []);
 
   const handleDeletePending = useCallback(
-    (i: number) => {
+    (id: string) => {
       if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
-      wsRef.current.send(JSON.stringify({ type: "dequeue_message", index: i }));
-      if (editingPendingIdx === i) {
-        setEditingPendingIdx(null);
+      wsRef.current.send(JSON.stringify({ type: "dequeue_message", id }));
+      if (editingPendingId === id) {
+        setEditingPendingId(null);
         setEditingPendingValue("");
       }
     },
-    [editingPendingIdx],
+    [editingPendingId],
   );
 
   const handleClearPending = useCallback(() => {
     if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
     wsRef.current.send(JSON.stringify({ type: "clear_queue" }));
-    setEditingPendingIdx(null);
+    setEditingPendingId(null);
     setEditingPendingValue("");
   }, []);
 
@@ -4898,12 +5028,8 @@ export function TaskChat({
         );
         const nextIdx = (currentIdx + 1) % modeOptions.length;
         const next = modeOptions[nextIdx];
+        // Local-only: mode now travels with the next prompt's config bundle.
         setPermissionLevel(next.value);
-        if (wsRef.current?.readyState === WebSocket.OPEN) {
-          wsRef.current.send(
-            JSON.stringify({ type: "set_mode", mode_id: next.value }),
-          );
-        }
         return;
       }
       // Cmd+Option+Backspace → clear pending queue
@@ -5727,13 +5853,13 @@ export function TaskChat({
                         <div className="space-y-1">
                           {pendingMessages.map((msg, i) => (
                             <div
-                              key={i}
+                              key={pendingMessageKeys[i] ?? `idx-${i}`}
                               className="flex items-center gap-2 py-1 text-sm"
                             >
                               <span className="w-4 shrink-0 text-right text-xs text-[var(--color-text-muted)]">
                                 {i + 1}
                               </span>
-                              {editingPendingIdx === i ? (
+                              {editingPendingId === msg.id && msg.id !== "" ? (
                                 <input
                                   autoFocus
                                   value={editingPendingValue}
@@ -5759,28 +5885,33 @@ export function TaskChat({
                               ) : (
                                 <>
                                   <span className="flex-1 min-w-0 truncate text-[var(--color-text)]">
-                                    {msg}
+                                    {msg.text}
                                   </span>
                                   <div className="flex items-center gap-1 shrink-0">
                                     {i === 0 && (
                                       <button
                                         onClick={() => handleSendNow()}
-                                        className="flex items-center gap-1 rounded px-1.5 py-0.5 text-xs text-[var(--color-highlight)] transition-colors hover:bg-[var(--color-bg-tertiary)]"
-                                        title="Send Now"
+                                        disabled={isCancelling}
+                                        className="flex items-center gap-1 rounded px-1.5 py-0.5 text-xs text-[var(--color-highlight)] transition-colors hover:bg-[var(--color-bg-tertiary)] disabled:opacity-50 disabled:cursor-not-allowed"
+                                        title={isCancelling ? "Cancelling…" : "Send Now"}
                                       >
-                                        <Send className="h-3 w-3" />
+                                        {isCancelling ? (
+                                          <Loader2 className="h-3 w-3 animate-spin" />
+                                        ) : (
+                                          <Send className="h-3 w-3" />
+                                        )}
                                         <span>Now</span>
                                       </button>
                                     )}
                                     <button
-                                      onClick={() => handleEditPending(i)}
+                                      onClick={() => handleEditPending(msg)}
                                       className="rounded p-1 text-[var(--color-text-muted)] transition-colors hover:text-[var(--color-text)]"
                                       title="Edit"
                                     >
                                       <Pencil className="h-3 w-3" />
                                     </button>
                                     <button
-                                      onClick={() => handleDeletePending(i)}
+                                      onClick={() => handleDeletePending(msg.id)}
                                       className="rounded p-1 text-[var(--color-text-muted)] transition-colors hover:text-[var(--color-error)]"
                                       title="Delete"
                                     >
@@ -6398,16 +6529,9 @@ export function TaskChat({
                           setShowThoughtLevelMenu(false);
                         }}
                         onSelect={(v) => {
+                          // Local-only: model now travels with the next prompt's config bundle.
                           setSelectedModel(v);
                           setShowModelMenu(false);
-                          if (wsRef.current?.readyState === WebSocket.OPEN) {
-                            wsRef.current.send(
-                              JSON.stringify({
-                                type: "set_model",
-                                model_id: v,
-                              }),
-                            );
-                          }
                         }}
                       />
                     )}
@@ -6424,13 +6548,9 @@ export function TaskChat({
                           setShowThoughtLevelMenu(false);
                         }}
                         onSelect={(v) => {
+                          // Local-only: mode now travels with the next prompt's config bundle.
                           setPermissionLevel(v);
                           setShowPermMenu(false);
-                          if (wsRef.current?.readyState === WebSocket.OPEN) {
-                            wsRef.current.send(
-                              JSON.stringify({ type: "set_mode", mode_id: v }),
-                            );
-                          }
                         }}
                       />
                     )}
@@ -6447,17 +6567,9 @@ export function TaskChat({
                           setShowPermMenu(false);
                         }}
                         onSelect={(v) => {
+                          // Local-only: thought_level now travels with the next prompt's config bundle.
                           setThoughtLevel(v);
                           setShowThoughtLevelMenu(false);
-                          if (wsRef.current?.readyState === WebSocket.OPEN) {
-                            wsRef.current.send(
-                              JSON.stringify({
-                                type: "set_thought_level",
-                                config_id: thoughtLevelConfigId,
-                                value_id: v,
-                              }),
-                            );
-                          }
                         }}
                       />
                     )}
@@ -6467,8 +6579,9 @@ export function TaskChat({
                         size="sm"
                         className="h-9 w-9 !p-0 rounded-xl"
                         onClick={handleStopAgent}
+                        disabled={isCancelling}
                       >
-                        <Square className="w-3.5 h-3.5" />
+                        {isCancelling ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Square className="w-3.5 h-3.5" />}
                       </Button>
                     ) : !activePermissionMessage && !isBusy && hasContent ? (
                       <Button
@@ -6496,8 +6609,9 @@ export function TaskChat({
                           size="sm"
                           className="h-9 w-9 !p-0 rounded-xl"
                           onClick={handleSendNow}
+                          disabled={isCancelling}
                         >
-                          <Send className="w-3.5 h-3.5" />
+                          {isCancelling ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
                         </Button>
                       ) : (
                         <Button
@@ -6505,8 +6619,9 @@ export function TaskChat({
                           size="sm"
                           className="h-9 w-9 !p-0 rounded-xl"
                           onClick={handleStopAgent}
+                          disabled={isCancelling}
                         >
-                          <Square className="w-3.5 h-3.5" />
+                          {isCancelling ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Square className="w-3.5 h-3.5" />}
                         </Button>
                       )
                     ) : (
@@ -6773,7 +6888,7 @@ const MessageItem = memo(function MessageItem({
   isStudio: boolean;
   onToggleThinkingCollapse: (index: number) => void;
   onPermissionResponse?: (optionId: string, requestId: string) => void;
-  onFileClick?: (filePath: string, line?: number) => void;
+  onFileClick?: (filePath: string, line?: number) => Promise<boolean>;
   onImageClick?: (url: string) => void;
   onMermaidClick?: (svg: string) => void;
   onD2Click?: (svg: string) => void;
@@ -7726,7 +7841,7 @@ function summarizeToolSection(tools: ToolSectionItem[], sectionFinished: boolean
     return Array.from(merged.values());
   })();
 
-  const actionItems = foregroundActions.map((tool) => {
+  const buildChipItem = (tool: ToolSectionItem): ActionChipItem => {
     const kind = classifyActionKind(tool.message.title);
     const derived = extractActionChipLabel(tool.message, kind);
     return {
@@ -7738,7 +7853,15 @@ function summarizeToolSection(tools: ToolSectionItem[], sectionFinished: boolean
       locations: tool.message.locations ?? [],
       status: tool.message.status,
     };
-  });
+  };
+  const actionItems = foregroundActions.map(buildChipItem);
+  // Background tools without file locations (Bash, Grep with output_mode=content,
+  // MCP calls, ...) won't appear in the file-chip group above — surface them as
+  // action chips so the user can still see what was inspected and expand to read
+  // the output.
+  const inspectionActionItems = backgroundActions
+    .filter((t) => (t.message.locations?.length ?? 0) === 0)
+    .map(buildChipItem);
 
   const inspectionEntries = collectLocationChips(tools, isBackgroundAction);
   const inspectionFiles = inspectionEntries.filter(
@@ -7791,6 +7914,9 @@ function summarizeToolSection(tools: ToolSectionItem[], sectionFinished: boolean
     inspectionEntries,
     inspectionVisibleEntries: inspectionEntries.slice(0, 3),
     inspectionOverflow: Math.max(0, inspectionEntries.length - 3),
+    inspectionActionItems,
+    visibleInspectionItems: inspectionActionItems.slice(0, 4),
+    inspectionItemOverflow: Math.max(0, inspectionActionItems.length - 4),
     actionEntries,
     actionVisibleEntries: actionEntries.slice(0, 3),
     actionOverflow: Math.max(0, actionEntries.length - 3),
@@ -7842,7 +7968,7 @@ function ActionChip({
     filePath: string,
     line?: number,
     mode?: "diff" | "full",
-  ) => void;
+  ) => Promise<boolean>;
 }) {
   const hasContent = item.content.trim().length > 0;
   const hasLocation = item.locations.length > 0;
@@ -7879,7 +8005,11 @@ function ActionChip({
         isInteractive
           ? "cursor-pointer hover:brightness-110"
           : "cursor-default"
-      } ${getStatusChipClasses(item.status)}`}
+      } ${getStatusChipClasses(item.status)} ${
+        expanded
+          ? "ring-1 ring-[color-mix(in_srgb,var(--color-highlight)_55%,transparent)] bg-[color-mix(in_srgb,var(--color-highlight)_14%,var(--color-bg-secondary))] text-[var(--color-text)]"
+          : ""
+      }`}
     >
       {item.status === "running" ? (
         <Loader2 className="h-3 w-3 animate-spin text-[var(--color-highlight)] shrink-0" />
@@ -7914,7 +8044,7 @@ function ActionChipList({
     filePath: string,
     line?: number,
     mode?: "diff" | "full",
-  ) => void;
+  ) => Promise<boolean>;
 }) {
   const expandedItems = items.filter((it) => expandedKeys.has(it.key));
   return (
@@ -8007,7 +8137,7 @@ function ExpandableFileChipGroup({
     filePath: string,
     line?: number,
     mode?: "diff" | "full",
-  ) => void;
+  ) => Promise<boolean>;
   muted?: boolean;
 }) {
   const overflow = Math.max(0, allEntries.length - visibleEntries.length);
@@ -8086,18 +8216,23 @@ const ToolSectionView = memo(function ToolSectionView({
     filePath: string,
     line?: number,
     mode?: "diff" | "full",
-  ) => void;
+  ) => Promise<boolean>;
 }) {
   const sectionExpanded = forceExpanded || expanded;
   const summary = useMemo(() => summarizeToolSection(tools, sectionFinished), [tools, sectionFinished]);
   const [inspectionExpanded, setInspectionExpanded] = useState(false);
   const [actionExpanded, setActionExpanded] = useState(false);
   const [actionItemsExpanded, setActionItemsExpanded] = useState(false);
+  const [inspectionItemsExpanded, setInspectionItemsExpanded] = useState(false);
   const [expandedActionKeys, setExpandedActionKeys] = useState<Set<string>>(
     () => new Set(),
   );
+  const [expandedInspectionKeys, setExpandedInspectionKeys] = useState<
+    Set<string>
+  >(() => new Set());
   const hasDetails =
     summary.inspectionEntries.length > 0 ||
+    summary.inspectionActionItems.length > 0 ||
     summary.editItems.length > 0 ||
     summary.actionItems.length > 0 ||
     summary.actionEntries.length > 0;
@@ -8200,17 +8335,48 @@ const ToolSectionView = memo(function ToolSectionView({
             className="overflow-hidden"
           >
             <div className="mt-3 border-t border-[color-mix(in_srgb,var(--color-border)_62%,transparent)] pt-3 space-y-3">
-              {summary.inspectionEntries.length > 0 && (
-                <ExpandableFileChipGroup
-                  title="Inspection"
-                  summary={summary.inspectionSectionSummary}
-                  visibleEntries={summary.inspectionVisibleEntries}
-                  allEntries={summary.inspectionEntries}
-                  expanded={inspectionExpanded}
-                  onToggleExpanded={() => setInspectionExpanded((v) => !v)}
-                  onFileClick={onFileClick}
-                  muted
-                />
+              {(summary.inspectionEntries.length > 0 ||
+                summary.inspectionActionItems.length > 0) && (
+                <div className="space-y-2">
+                  {summary.inspectionEntries.length > 0 && (
+                    <ExpandableFileChipGroup
+                      title="Inspection"
+                      summary={summary.inspectionSectionSummary}
+                      visibleEntries={summary.inspectionVisibleEntries}
+                      allEntries={summary.inspectionEntries}
+                      expanded={inspectionExpanded}
+                      onToggleExpanded={() => setInspectionExpanded((v) => !v)}
+                      onFileClick={onFileClick}
+                      muted
+                    />
+                  )}
+                  {(summary.visibleInspectionItems.length > 0 ||
+                    summary.inspectionItemOverflow > 0) && (
+                    <ActionChipList
+                      items={
+                        inspectionItemsExpanded
+                          ? summary.inspectionActionItems
+                          : summary.visibleInspectionItems
+                      }
+                      overflowCount={
+                        inspectionItemsExpanded
+                          ? 0
+                          : summary.inspectionItemOverflow
+                      }
+                      onShowMore={() => setInspectionItemsExpanded(true)}
+                      expandedKeys={expandedInspectionKeys}
+                      onToggleExpand={(key) =>
+                        setExpandedInspectionKeys((prev) => {
+                          const next = new Set(prev);
+                          if (next.has(key)) next.delete(key);
+                          else next.add(key);
+                          return next;
+                        })
+                      }
+                      onFileClick={onFileClick}
+                    />
+                  )}
+                </div>
               )}
 
               {summary.editItems.length > 0 && (

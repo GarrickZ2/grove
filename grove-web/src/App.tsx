@@ -26,6 +26,7 @@ import { CommandPalette } from "./components/ui/CommandPalette";
 import { ProjectCommandPalette } from "./components/ui/ProjectCommandPalette";
 import { TaskCommandPalette } from "./components/ui/TaskCommandPalette";
 import { ThemeProvider, ProjectProvider, TerminalThemeProvider, NotificationProvider, ConfigProvider, CommandPaletteProvider, PreviewCommentProvider, useProject, useCommandPalette, useTheme, useConfig } from "./context";
+import { ConfirmDialog } from "./components/Dialogs";
 import { useReportDebugId } from "./perf/debugIdsStore";
 import { AuthGate } from "./components/AuthGate";
 import { OptionalPerfProfiler } from "./perf/profilerShim";
@@ -33,7 +34,7 @@ import type { Task } from "./data/types";
 import { mockConfig } from "./data/mockData";
 import { getConfig, patchConfig, checkCommands, openIDE, openTerminal } from "./api";
 import { agentOptions } from "./components/ui";
-import { useIsMobile, useHotkeys, buildCommands } from "./hooks";
+import { useIsMobile, useHotkeys, buildCommands, useAddLibraryHashHandler } from "./hooks";
 import type { UseCommandsOptions } from "./hooks/useCommands";
 import { REPO_NAV_IDS, STUDIO_NAV_IDS } from "./data/nav";
 
@@ -46,6 +47,13 @@ function AppContent() {
   // AppContent uses two dynamic `import()` calls for code-splitting heavy
   // panels. React Compiler 1.0 can't lower dynamic imports, so we opt
   // this root component out. Affected children are still memoized normally.
+
+  // Handle libraries.excalidraw.com "Add to Excalidraw" callback once at
+  // load: if the URL hash carries `addLibrary=`, fetch the library, ask the
+  // user to confirm via ConfirmDialog (rendered below), then install and
+  // broadcast to peer tabs. Runs on any landing page — the callback tab
+  // can't be guaranteed to land on a sketch view.
+  const addLibrary = useAddLibraryHashHandler();
 
   const [activeItem, setActiveItem] = useState("dashboard");
   const [tasksMode, setTasksMode] = useState<TasksMode>("zen");
@@ -81,7 +89,9 @@ function AppContent() {
   const [showHelp, setShowHelp] = useState(false);
   const { isMobile } = useIsMobile();
   const {
-    open: openCommandPalette, openProjectPalette, openTaskPalette,
+    isOpen: commandPaletteOpen,
+    open: openCommandPalette, close: closeCommandPalette,
+    openProjectPalette, openTaskPalette,
     closeProjectPalette, closeTaskPalette,
     projectPaletteOpen, taskPaletteOpen,
     registerGlobalCommands,
@@ -112,12 +122,31 @@ function AppContent() {
 
   const isZenMode = tasksMode === "zen";
 
+  // Track palette open flags via refs so the toggle hotkeys don't have to
+  // re-bind (and the whole useHotkeys listener tear down + re-install) on
+  // every open/close. Without this, every palette toggle remounted the
+  // global keydown listener, which intermittently dropped keystrokes that
+  // arrived during the swap window. All three palette flags get the same
+  // pattern so adding a fourth palette later doesn't reintroduce the bug.
+  const commandPaletteOpenRef = useRef(commandPaletteOpen);
+  const projectPaletteOpenRef = useRef(projectPaletteOpen);
+  const taskPaletteOpenRef = useRef(taskPaletteOpen);
+  useEffect(() => {
+    commandPaletteOpenRef.current = commandPaletteOpen;
+  }, [commandPaletteOpen]);
+  useEffect(() => {
+    projectPaletteOpenRef.current = projectPaletteOpen;
+  }, [projectPaletteOpen]);
+  useEffect(() => {
+    taskPaletteOpenRef.current = taskPaletteOpen;
+  }, [taskPaletteOpen]);
+
   // Cmd+K = command palette, Cmd+P = project palette, Cmd+T = task palette
   // Cmd+1-5 = tab switch (Zen mode only; Blitz uses Cmd+1-9 for task selection)
   useHotkeys([
-    { key: "Meta+k", handler: openCommandPalette },
-    { key: "Meta+p", handler: openProjectPalette },
-    { key: "Meta+o", handler: openTaskPalette },
+    { key: "Meta+k", handler: () => (commandPaletteOpenRef.current ? closeCommandPalette() : openCommandPalette()) },
+    { key: "Meta+p", handler: () => (projectPaletteOpenRef.current ? closeProjectPalette() : openProjectPalette()) },
+    { key: "Meta+o", handler: () => (taskPaletteOpenRef.current ? closeTaskPalette() : openTaskPalette()) },
     { key: "Meta+1", handler: () => setActiveNavItem(0), options: { enabled: isZenMode && !inWorkspace } },
     { key: "Meta+2", handler: () => setActiveNavItem(1), options: { enabled: isZenMode && !inWorkspace } },
     { key: "Meta+3", handler: () => setActiveNavItem(2), options: { enabled: isZenMode && !inWorkspace } },
@@ -130,7 +159,12 @@ function AppContent() {
     // Work, Dashboard, Skills, …) instead of only when TasksPage happens to
     // be the visible tab.
     { key: "?", handler: () => setShowHelp((v) => !v) },
-  ], [openCommandPalette, openProjectPalette, openTaskPalette, isZenMode, inWorkspace, navigateSidebar]);
+  ], [
+    openCommandPalette, closeCommandPalette,
+    openProjectPalette, closeProjectPalette,
+    openTaskPalette, closeTaskPalette,
+    isZenMode, inWorkspace, navigateSidebar,
+  ]);
 
   // Allow any page's "help" button (e.g. Blitz toolbar) to open the same
   // overlay by dispatching a custom event instead of duplicating state.
@@ -509,6 +543,23 @@ function AppContent() {
         });
       } else {
         setNavigationData(null);
+        // Work route bypasses TasksPage entirely, so the chat-switch handoff
+        // that TasksPage normally performs has to be planted here instead.
+        // Otherwise WorkPage's TaskChat mounts and useInitialChatLoad falls
+        // back to readLastActiveTab — i.e. tray click lands on whichever
+        // chat the user last opened, ignoring the tray's chat_id.
+        if (task_id && effectiveRoute === "work" && chat_id && project_id) {
+          (window as unknown as Record<string, unknown>).__grove_pending_chat = {
+            projectId: project_id,
+            taskId: task_id,
+            chatId: chat_id,
+          };
+          window.dispatchEvent(
+            new CustomEvent("grove:switch-chat", {
+              detail: { projectId: project_id, taskId: task_id, chatId: chat_id },
+            }),
+          );
+        }
       }
     };
 
@@ -727,6 +778,91 @@ function AppContent() {
     inWorkspace,
   };
 
+  // Add-library dialog — surfaces both the install confirmation and any
+  // download/parse/install error so the user always knows what happened.
+  // Rendered in both desktop and mobile branches via {addLibraryDialog}.
+  let addLibraryDialog: React.ReactNode = null;
+  if (addLibrary.state?.kind === "install") {
+    const s = addLibrary.state;
+    const unnamedCount = s.total - s.namedCount;
+    addLibraryDialog = (
+      <ConfirmDialog
+        isOpen
+        title="Add Excalidraw library"
+        variant="warning"
+        confirmLabel={`Install ${s.total} item${s.total === 1 ? "" : "s"}`}
+        cancelLabel="Cancel"
+        onConfirm={addLibrary.confirm}
+        onCancel={addLibrary.dismiss}
+        message={
+          <div className="space-y-2">
+            <p>
+              Install <strong>{s.total}</strong> item{s.total === 1 ? "" : "s"}{" "}
+              into your global Excalidraw library from:
+            </p>
+            <p className="font-mono text-xs break-all text-[var(--color-text)]/80">
+              {s.url}
+            </p>
+            <div className="text-xs space-y-1">
+              <div>
+                <span className="text-[var(--color-text-muted)]">
+                  With name (usable by AI):
+                </span>{" "}
+                <strong>{s.namedCount}</strong>
+              </div>
+              <div>
+                <span className="text-[var(--color-text-muted)]">
+                  Without name (canvas-only, AI cannot reference):
+                </span>{" "}
+                <strong
+                  className={unnamedCount > 0 ? "text-[var(--color-warning)]" : ""}
+                >
+                  {unnamedCount}
+                </strong>
+              </div>
+            </div>
+            <p className="text-xs text-[var(--color-text-muted)]">
+              Only accept libraries from sources you trust.
+            </p>
+          </div>
+        }
+      />
+    );
+  } else if (addLibrary.state?.kind === "error") {
+    const s = addLibrary.state;
+    addLibraryDialog = (
+      <ConfirmDialog
+        isOpen
+        title="Add Excalidraw library failed"
+        variant="danger"
+        confirmLabel={s.retryable ? "Reload to retry" : "OK"}
+        cancelLabel="Dismiss"
+        onConfirm={() => {
+          if (s.retryable) {
+            window.location.reload();
+          } else {
+            addLibrary.dismiss();
+          }
+        }}
+        onCancel={addLibrary.dismiss}
+        message={
+          <div className="space-y-2">
+            <p>{s.message}</p>
+            <p className="font-mono text-xs break-all text-[var(--color-text-muted)]">
+              {s.url}
+            </p>
+            {s.retryable && (
+              <p className="text-xs text-[var(--color-text-muted)]">
+                The pending install is parked for an hour — you can refresh
+                this page to retry without re-clicking the source link.
+              </p>
+            )}
+          </div>
+        }
+      />
+    );
+  }
+
   // Mobile layout
   if (isMobile) {
     return (
@@ -828,6 +964,7 @@ function AppContent() {
           onTaskSelect={handleTaskSelectFromPalette}
         />
         <GlobalAudioRecorder projectId={selectedProject?.id ?? null} />
+        {addLibraryDialog}
       </div>
     );
   }
@@ -917,6 +1054,7 @@ function AppContent() {
       />
       <GlobalAudioRecorder projectId={selectedProject?.id ?? null} />
       <HelpOverlay isOpen={showHelp} onClose={() => setShowHelp(false)} />
+      {addLibraryDialog}
     </div>
   );
 }

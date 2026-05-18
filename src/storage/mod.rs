@@ -6,6 +6,7 @@ pub mod comments;
 pub mod config;
 pub mod custom_agent;
 pub mod database;
+pub mod libraries;
 pub mod migrate_chats;
 pub mod notes;
 pub mod sketch_checkpoints;

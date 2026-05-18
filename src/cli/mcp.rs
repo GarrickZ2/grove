@@ -145,7 +145,7 @@ Checkpoints are retained for the most recent 50 draws per sketch (per-sketch LRU
 /// the excalidraw-mcp "cheat sheet" (MIT) with Grove-specific pseudo-elements.
 const SKETCH_READ_ME: &str = r##"# Grove Sketch — Excalidraw Element Format
 
-Thanks for calling `grove_sketch_read_me`! Do NOT call it again in this conversation — the content does not change. Use `grove_sketch_draw` to draw.
+Thanks for calling `grove_sketch_read_me`! Call this ONCE before your first `grove_sketch_draw`. The static portion (element format, palette, examples) does not change; the **Available library items** section at the bottom reflects the user's currently installed Excalidraw libraries at call time.
 
 ## How drawing works in Grove
 
@@ -168,6 +168,12 @@ Comma-separated. Also removes bound-text whose `containerId` matches. Place anyw
 **`cameraUpdate`** — viewport hint for the widget (not drawn):
 `{"type":"cameraUpdate","x":0,"y":0,"width":800,"height":600}`
 Use 4:3 sizes: 400x300, 600x450, 800x600, 1200x900, 1600x1200. Emit BEFORE the elements it frames.
+
+**`libraryItem`** — instantiate an icon from the user's installed Excalidraw library at a position. **Strongly prefer this over hand-drawn rectangles when an item with a matching semantic name exists** (e.g. for a database, use the library item named "database" instead of a labeled rectangle):
+`{"type":"libraryItem","id":"<library-item-id>","x":300,"y":200}`
+- `id` MUST be a `LibraryItem.id` from the **Available library items** section below. Do not invent ids.
+- `x,y` is the top-left where the item is placed; the original `width/height` of the item are used (see the listing below).
+- The server expands this into the item's underlying Excalidraw elements with fresh ids, offset by `(x, y)`. If the id isn't in the library, the call fails.
 
 ## Color Palette (use consistently)
 
@@ -1256,9 +1262,10 @@ impl GroveMcpServer {
         description = "Return the Grove sketch drawing reference: Excalidraw element format, color palette, Grove pseudo-elements (restoreCheckpoint / delete / cameraUpdate), camera sizing rules, and worked examples. Call this ONCE before your first `grove_sketch_draw` in a conversation. Do not call it repeatedly — the content does not change."
     )]
     async fn grove_sketch_read_me(&self) -> Result<CallToolResult, McpError> {
-        Ok(CallToolResult::success(vec![Content::text(
-            SKETCH_READ_ME.to_string(),
-        )]))
+        let mut body = String::with_capacity(SKETCH_READ_ME.len() + 512);
+        body.push_str(SKETCH_READ_ME);
+        body.push_str(&render_library_listing());
+        Ok(CallToolResult::success(vec![Content::text(body)]))
     }
 
     /// List Excalidraw sketches in the current Studio task.
@@ -2035,6 +2042,131 @@ fn error_json(error: &str, message: impl Into<String>) -> serde_json::Value {
     })
 }
 
+/// Render the "Available library items" section appended to
+/// `grove_sketch_read_me`. Text-only by design — AI references items by id,
+/// names provide semantic hints, no visual preview is given (matches the
+/// `.excalidrawlib` format which has no preview field).
+///
+/// Format per item: `- id=<uuid>  name="<name>"  size=<w>x<h>`. Width/height
+/// derive from the element bounding box so AI can plan layout. Items missing
+/// a `name` are still listed (caller decides whether to use them) but flagged
+/// as `<unnamed>`.
+fn render_library_listing() -> String {
+    let file = match crate::storage::libraries::load() {
+        Ok(f) => f,
+        Err(e) => {
+            return format!(
+                "\n\n## Available library items\n\n(library could not be loaded: {e}; treat as empty)\n"
+            );
+        }
+    };
+    if file.library_items.is_empty() {
+        return "\n\n## Available library items\n\nNone installed. Fall back to drawing labeled basic shapes.\n".to_string();
+    }
+    // Only items with a real name are exposed to the agent: an item without
+    // a name cannot be chosen by semantic intent, so listing "<unnamed>"
+    // entries would just be noise (and inviting blind id-picking would
+    // produce arbitrary visual output). Unnamed items still install fine
+    // for human use in the canvas; they're just invisible here.
+    let named: Vec<_> = file
+        .library_items
+        .iter()
+        .filter(|it| it.name.as_deref().is_some_and(|n| !n.trim().is_empty()))
+        .collect();
+    let unnamed_count = file.library_items.len() - named.len();
+    if named.is_empty() {
+        return format!(
+            "\n\n## Available library items\n\nNone of the {} installed item(s) have names, so none can be referenced by semantic intent. Fall back to drawing labeled basic shapes.\n",
+            file.library_items.len()
+        );
+    }
+    let mut out = String::from("\n\n## Available library items\n\nPrefer these over hand-drawn shapes when a name matches your semantic intent. Reference via `{\"type\":\"libraryItem\",\"id\":\"<id>\",\"x\":...,\"y\":...}`.\n\n");
+    for item in &named {
+        let (w, h) = library_item_bbox(item);
+        let raw = item.name.as_deref().unwrap_or("");
+        let name = sanitize_library_name(raw);
+        out.push_str(&format!(
+            "- id={}  name=\"{}\"  size={}x{}\n",
+            item.id,
+            name,
+            w.round() as i64,
+            h.round() as i64,
+        ));
+    }
+    if unnamed_count > 0 {
+        out.push_str(&format!(
+            "\n_({unnamed_count} additional item(s) are installed but unnamed and not listed here.)_\n"
+        ));
+    }
+    out
+}
+
+/// Defangs a library item `name` before it is concatenated into the agent
+/// prompt. Library items can be installed from arbitrary `.excalidrawlib`
+/// URLs via the `#addLibrary=` callback flow, so a hostile name could try
+/// prompt-injection (newlines that look like fresh instructions, very long
+/// runs that pad the context, control chars). Strip newlines/control bytes,
+/// escape embedded quotes, and cap length.
+fn sanitize_library_name(raw: &str) -> String {
+    // Cap is in BYTES (not codepoints), intentionally — its purpose is to
+    // bound prompt size, and prompt budgets are byte-denominated. We check
+    // BEFORE each push so the cap never overshoots: any character whose
+    // UTF-8 encoding (or escaped form, for `"`) would push us past
+    // `MAX_NAME_LEN` truncates here. Always produces valid UTF-8.
+    const MAX_NAME_LEN: usize = 500;
+    let mut out = String::with_capacity(raw.len().min(MAX_NAME_LEN));
+    for ch in raw.chars() {
+        let next_bytes = if ch == '"' {
+            2
+        } else if ch.is_control() {
+            1
+        } else {
+            ch.len_utf8()
+        };
+        if out.len() + next_bytes > MAX_NAME_LEN {
+            out.push('…');
+            break;
+        }
+        if ch == '"' {
+            out.push_str("\\\"");
+        } else if ch.is_control() {
+            out.push(' ');
+        } else {
+            out.push(ch);
+        }
+    }
+    out
+}
+
+/// Bounding box (w, h) over the item's elements, used both for the README
+/// listing and for client-side layout planning. Falls back to (0, 0) when the
+/// item has no positioned elements.
+fn library_item_bbox(item: &crate::storage::libraries::LibraryItem) -> (f64, f64) {
+    // Use the un-rotated AABB so this stays consistent with
+    // `libraries::expand`, which anchors at `bbox_min` of the raw element
+    // (x, y) without applying `angle`. Reporting a rotated AABB here while
+    // expanding from the un-rotated min was producing size/placement
+    // mismatches: the AI would reserve canvas space sized to the rotated
+    // bbox but the actual instantiation occupied the un-rotated extent.
+    let (mut min_x, mut min_y) = (f64::INFINITY, f64::INFINITY);
+    let (mut max_x, mut max_y) = (f64::NEG_INFINITY, f64::NEG_INFINITY);
+    for el in &item.elements {
+        let x = el.get("x").and_then(|v| v.as_f64()).unwrap_or(0.0);
+        let y = el.get("y").and_then(|v| v.as_f64()).unwrap_or(0.0);
+        let w = el.get("width").and_then(|v| v.as_f64()).unwrap_or(0.0);
+        let h = el.get("height").and_then(|v| v.as_f64()).unwrap_or(0.0);
+        min_x = min_x.min(x);
+        min_y = min_y.min(y);
+        max_x = max_x.max(x + w);
+        max_y = max_y.max(y + h);
+    }
+    if min_x.is_finite() && max_x > min_x {
+        (max_x - min_x, max_y - min_y)
+    } else {
+        (0.0, 0.0)
+    }
+}
+
 /// Build the text body for `grove_sketch_read` (summary + fresh checkpoint +
 /// optional full scene JSON) plus an optional PNG thumbnail. Also writes a fresh
 /// checkpoint so the caller receives an id they can use with `restoreCheckpoint`
@@ -2715,41 +2847,61 @@ async fn send_prompt_local(
         return ok_json(json!({ "action": "permission_responded" }));
     }
 
-    // Action: send prompt
+    // Action: send prompt — bundle any model/mode/thought_level into config so the
+    // cmd_loop applies them as ACP requests right before sending the prompt.
     let text = p.text.unwrap(); // safe: validated above
 
-    // Set mode if requested
-    if let Some(mode_id) = p.mode_id {
-        handle
-            .set_mode(mode_id)
-            .await
-            .map_err(|e| McpError::internal_error(format!("Failed to set mode: {e}"), None))?;
-    }
-
-    // Set model if requested
-    if let Some(model_id) = p.model_id {
-        handle
-            .set_model(model_id)
-            .await
-            .map_err(|e| McpError::internal_error(format!("Failed to set model: {e}"), None))?;
-    }
-
-    // Set thought level if both ids are provided
-    if let (Some(cfg_id), Some(val_id)) = (p.thought_level_config_id, p.thought_level_value_id) {
-        handle
-            .set_thought_level(cfg_id, val_id)
-            .await
-            .map_err(|e| {
-                McpError::internal_error(format!("Failed to set thought level: {e}"), None)
-            })?;
-    }
+    let config = build_queued_config(
+        p.model_id.clone(),
+        p.mode_id.clone(),
+        p.thought_level_config_id.clone(),
+        p.thought_level_value_id.clone(),
+    )?;
 
     handle
-        .send_prompt(text, vec![], p.sender, false)
+        .send_prompt(text, vec![], p.sender, false, config)
         .await
         .map_err(|e| McpError::internal_error(format!("Failed to send prompt: {e}"), None))?;
 
     ok_json(json!({ "action": "prompt_sent" }))
+}
+
+/// Assemble a `QueuedConfig` from the MCP params; returns None when no fields are set.
+/// Errors when only one half of the thought-level pair is provided — both
+/// `thought_level_value_id` and `thought_level_config_id` are required together,
+/// silently dropping the value (old behavior) hid bugs in caller scripts.
+fn build_queued_config(
+    model_id: Option<String>,
+    mode_id: Option<String>,
+    thought_level_config_id: Option<String>,
+    thought_level_value_id: Option<String>,
+) -> Result<Option<acp::QueuedConfig>, McpError> {
+    match (&thought_level_value_id, &thought_level_config_id) {
+        (Some(_), None) => {
+            return Err(McpError::invalid_params(
+                "thought_level_value_id requires thought_level_config_id (both must be \
+                 supplied together so the agent knows which config option the value targets)",
+                None,
+            ));
+        }
+        (None, Some(_)) => {
+            return Err(McpError::invalid_params(
+                "thought_level_config_id requires thought_level_value_id",
+                None,
+            ));
+        }
+        _ => {}
+    }
+    let any = model_id.is_some() || mode_id.is_some() || thought_level_value_id.is_some();
+    if !any {
+        return Ok(None);
+    }
+    Ok(Some(acp::QueuedConfig {
+        model: model_id,
+        mode: mode_id,
+        thought_level: thought_level_value_id,
+        thought_level_config_id,
+    }))
 }
 
 /// Send prompt via Unix socket to remote session owner
@@ -2763,63 +2915,17 @@ async fn send_prompt_remote(
         acp::SocketCommand::RespondPermission { option_id }
     } else {
         let text = p.text.unwrap(); // safe: validated above
-
-        // Set mode first if requested
-        if let Some(mode_id) = p.mode_id {
-            let mode_cmd = acp::SocketCommand::SetMode { mode_id };
-            let resp = acp::send_socket_command(sock_path, &mode_cmd)
-                .await
-                .map_err(|e| {
-                    McpError::internal_error(format!("Socket set_mode failed: {e}"), None)
-                })?;
-            if let acp::SocketResponse::Error { message } = resp {
-                return Err(McpError::internal_error(
-                    format!("Remote set_mode failed: {}", message),
-                    None,
-                ));
-            }
-        }
-
-        // Set model if requested
-        if let Some(model_id) = p.model_id {
-            let model_cmd = acp::SocketCommand::SetModel { model_id };
-            let resp = acp::send_socket_command(sock_path, &model_cmd)
-                .await
-                .map_err(|e| {
-                    McpError::internal_error(format!("Socket set_model failed: {e}"), None)
-                })?;
-            if let acp::SocketResponse::Error { message } = resp {
-                return Err(McpError::internal_error(
-                    format!("Remote set_model failed: {}", message),
-                    None,
-                ));
-            }
-        }
-
-        // Set thought level if both ids provided
-        if let (Some(cfg_id), Some(val_id)) = (p.thought_level_config_id, p.thought_level_value_id)
-        {
-            let tl_cmd = acp::SocketCommand::SetThoughtLevel {
-                config_id: cfg_id,
-                value_id: val_id,
-            };
-            let resp = acp::send_socket_command(sock_path, &tl_cmd)
-                .await
-                .map_err(|e| {
-                    McpError::internal_error(format!("Socket set_thought_level failed: {e}"), None)
-                })?;
-            if let acp::SocketResponse::Error { message } = resp {
-                return Err(McpError::internal_error(
-                    format!("Remote set_thought_level failed: {}", message),
-                    None,
-                ));
-            }
-        }
-
+        let config = build_queued_config(
+            p.model_id.clone(),
+            p.mode_id.clone(),
+            p.thought_level_config_id.clone(),
+            p.thought_level_value_id.clone(),
+        )?;
         acp::SocketCommand::Prompt {
             text,
             attachments: vec![],
             sender: p.sender,
+            config,
         }
     };
 

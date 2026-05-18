@@ -800,7 +800,7 @@ function PermissionCard({
           onOpen();
         }
       }}
-      className="cursor-pointer overflow-hidden border-t border-[color-mix(in_srgb,var(--color-warning)_18%,transparent)] px-3 py-2 first:border-t-0 hover:bg-[color-mix(in_srgb,var(--color-warning)_6%,transparent)]"
+      className="cursor-pointer border-t border-[color-mix(in_srgb,var(--color-warning)_18%,transparent)] px-3 py-2 first:border-t-0 hover:bg-[color-mix(in_srgb,var(--color-warning)_6%,transparent)]"
     >
       {/* Row 1: agent · title · elapsed */}
       <div className="flex items-center gap-2.5">
@@ -914,7 +914,7 @@ function RunningCard({
       layout
       transition={CARD_MORPH}
       onClick={onOpen}
-      className="group relative cursor-pointer overflow-hidden px-2.5 py-2 transition-colors hover:bg-[color-mix(in_srgb,var(--color-text)_4%,transparent)]"
+      className="group relative cursor-pointer px-2.5 py-2 transition-colors hover:bg-[color-mix(in_srgb,var(--color-text)_4%,transparent)]"
     >
       <div className="flex items-center gap-2.5">
         <AgentBadge agent={item.agent} tone="highlight" />
