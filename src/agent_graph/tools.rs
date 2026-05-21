@@ -574,6 +574,7 @@ pub async fn grove_agent_spawn(
         acp_session_id: None,
         created_at: now,
         duty: None, // duty 等 ACP ready 之后再设定，避免半成品记录被外界看到锁定的 duty
+        launch_mode: "acp".to_string(),
     };
     tasks::add_chat_session(&project_key, &task_id, new_chat.clone())
         .map_err(AgentGraphError::from)?;

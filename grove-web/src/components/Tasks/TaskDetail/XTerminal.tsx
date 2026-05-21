@@ -293,12 +293,10 @@ export function XTerminal({
     params.set("rows", rows.toString());
 
     let baseUrl: string;
-    let isTaskMode = false;
     if (wsUrl) {
       baseUrl = wsUrl;
     } else if (projectId && taskId) {
       baseUrl = `${protocol}//${host}/api/v1/projects/${projectId}/tasks/${taskId}/terminal`;
-      isTaskMode = true;
     } else {
       baseUrl = `${protocol}//${host}/api/v1/terminal`;
       if (cwd) params.set("cwd", cwd);
@@ -319,12 +317,6 @@ export function XTerminal({
       }
 
       ws.onopen = () => {
-        if (isTaskMode) {
-          terminal.writeln("\x1b[32mConnected to session\x1b[0m");
-        } else {
-          terminal.writeln("\x1b[32mConnected to terminal\x1b[0m");
-        }
-        terminal.writeln("");
         terminal.focus();
         onConnectedRef.current?.();
       };

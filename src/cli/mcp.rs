@@ -2701,6 +2701,7 @@ async fn start_chat_impl(p: StartChatParams) -> Result<CallToolResult, McpError>
         acp_session_id: None,
         created_at: now,
         duty: None,
+        launch_mode: "acp".to_string(),
     };
 
     tasks::add_chat_session(&project_key, &p.task_id, chat)

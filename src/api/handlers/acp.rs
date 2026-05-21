@@ -927,6 +927,9 @@ pub struct ChatSessionResponse {
     /// `Read History` @-mention can hand the path to the AI; the AI uses its
     /// own Read tool to inspect the file.
     pub history_path: String,
+    /// "acp" (default) or "terminal" — frontend routes WS / renders chat area
+    /// accordingly. Snapshotted at chat creation and immutable.
+    pub launch_mode: String,
 }
 
 #[derive(Serialize)]
@@ -963,6 +966,7 @@ impl ChatSessionResponse {
             agent: chat.agent.clone(),
             created_at: chat.created_at.to_rfc3339(),
             history_path,
+            launch_mode: chat.launch_mode.clone(),
         }
     }
 }
@@ -1038,8 +1042,23 @@ pub async fn create_chat(
     let agent = body.agent.unwrap_or_else(|| {
         cfg.acp
             .agent_command
+            .clone()
             .unwrap_or_else(|| "claude".to_string())
     });
+    // Snapshot launch_mode from the agent's installed_agents row at
+    // chat-creation time. Subsequent edits do not retroactively change
+    // existing chats — that contract is what makes ACP/terminal switching
+    // safe.
+    //
+    // Lookup is against the canonical id because the marketplace stores
+    // rows under canonical ids; `agent` here can still be a legacy id
+    // (claude) since the AgentPicker hasn't been migrated.
+    let canonical = crate::storage::agent_supplement::resolve_agent_id(&agent);
+    let launch_mode = crate::storage::installed_agents::get(canonical.as_ref())
+        .ok()
+        .flatten()
+        .map(|r| r.launch_mode)
+        .unwrap_or_else(|| "acp".to_string());
     let now = chrono::Utc::now();
     let title = body
         .title
@@ -1052,6 +1071,7 @@ pub async fn create_chat(
         acp_session_id: None,
         created_at: now,
         duty: None,
+        launch_mode,
     };
 
     tasks::add_chat_session(&project_key, &task_id, chat.clone())
@@ -1125,6 +1145,14 @@ pub async fn delete_chat(
         .join(&chat_id);
     let _ = std::fs::remove_dir_all(&chat_dir);
 
+    // Clean up the terminal-mode mcp-config tmp dir if present (only created
+    // for chats that were ever launched in terminal mode; ACP-only chats
+    // skip this directory entirely so the remove is a no-op).
+    let mcp_tmp = crate::storage::grove_dir()
+        .join("agents-tmp")
+        .join(&chat_id);
+    let _ = std::fs::remove_dir_all(&mcp_tmp);
+
     // Clean up socket file
     let _ = std::fs::remove_file(acp::sock_path(&project_key, &task_id, &chat_id));
 
@@ -1189,6 +1217,7 @@ pub async fn fork_chat(
         acp_session_id: Some(new_acp_session_id),
         created_at: now,
         duty: src_chat.duty.clone(),
+        launch_mode: src_chat.launch_mode.clone(),
     };
     tasks::add_chat_session(&project_key, &task_id, new_chat.clone())
         .map_err(|e| AcpError::Internal(e.to_string()))?;
@@ -1316,6 +1345,15 @@ pub async fn chat_ws_handler(
     let chat = tasks::get_chat_session(&project_key, &task_id, &chat_id)
         .map_err(|e| AcpError::Internal(e.to_string()))?
         .ok_or(AcpError::NotFound("Chat not found".to_string()))?;
+    eprintln!(
+        "[acp_ws] enter chat_id={} launch_mode={:?} acp_session_id={:?} agent={:?}",
+        chat_id, chat.launch_mode, chat.acp_session_id, chat.agent
+    );
+    if chat.launch_mode == "terminal" {
+        eprintln!(
+            "[acp_ws] !!! WARNING: terminal-mode chat connected to ACP WS — frontend bug, this chat should be using /agent-pty"
+        );
+    }
 
     // Resolve agent command from the chat's stored agent.
     //
@@ -1346,7 +1384,7 @@ pub async fn chat_ws_handler(
         effective_agent
     )))?;
 
-    let env_vars = build_grove_env(
+    let mut env_vars = build_grove_env(
         &project_key,
         &project_path,
         &project_name,
@@ -1356,10 +1394,35 @@ pub async fn chat_ws_handler(
     let working_dir = std::path::PathBuf::from(&task.worktree_path);
     let session_key = format!("{}:{}:{}", project_key, task_id, chat_id);
 
+    // Per-agent overrides from the marketplace settings sheet. Look up by
+    // canonical id so legacy chat.agent values (claude → claude-acp) hit
+    // the right row. `spawn_for` decides the actual command + args based
+    // on install_method (pins npx/uvx version, uses binary install_path,
+    // gracefully falls back when the row is External or the binary has
+    // been deleted off disk).
+    let canonical_id =
+        crate::storage::agent_supplement::resolve_agent_id(&effective_agent).into_owned();
+    let installed_record = crate::storage::installed_agents::get(&canonical_id)
+        .ok()
+        .flatten();
+    let supplement = crate::storage::agent_supplement::find_supplement(&canonical_id);
+    let (final_command, final_args) = if let Some(ref rec) = installed_record {
+        let (cmd, base_args) = crate::storage::installed_agents::spawn_for(rec, supplement)
+            .unwrap_or_else(|| (resolved.command.clone(), resolved.args.clone()));
+        let mut args = base_args;
+        args.extend(rec.args_override.iter().cloned());
+        for (k, v) in &rec.env_override {
+            env_vars.insert(k.clone(), v.clone());
+        }
+        (cmd, args)
+    } else {
+        (resolved.command, resolved.args)
+    };
+
     let config = AcpStartConfig {
-        agent_command: resolved.command,
+        agent_command: final_command,
         agent_name: resolved.agent_name,
-        agent_args: resolved.args,
+        agent_args: final_args,
         working_dir,
         env_vars,
         project_key,

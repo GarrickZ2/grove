@@ -625,6 +625,7 @@ mod tests {
                 acp_session_id: None,
                 created_at: chrono::Utc::now(),
                 duty: None,
+                launch_mode: "acp".to_string(),
             };
             add_chat_session(project_id, task_id, chat).unwrap();
 
@@ -649,6 +650,7 @@ mod tests {
                 acp_session_id: None,
                 created_at: chrono::Utc::now(),
                 duty: Some("review".to_string()),
+                launch_mode: "acp".to_string(),
             };
             let chat2 = ChatSession {
                 id: "chat-2".to_string(),
@@ -657,6 +659,7 @@ mod tests {
                 acp_session_id: None,
                 created_at: chrono::Utc::now(),
                 duty: None,
+                launch_mode: "acp".to_string(),
             };
             add_chat_session(project_id, task_id, chat1).unwrap();
             add_chat_session(project_id, task_id, chat2).unwrap();
@@ -723,6 +726,7 @@ mod tests {
                 acp_session_id: None,
                 created_at: chrono::Utc::now(),
                 duty: None,
+                launch_mode: "acp".to_string(),
             };
             let chat2 = ChatSession {
                 id: "chat-b".to_string(),
@@ -731,6 +735,7 @@ mod tests {
                 acp_session_id: None,
                 created_at: chrono::Utc::now(),
                 duty: None,
+                launch_mode: "acp".to_string(),
             };
             add_chat_session("proj-1", task_id, chat1).unwrap();
             add_chat_session("proj-1", task_id, chat2).unwrap();
@@ -754,6 +759,7 @@ mod tests {
                     acp_session_id: None,
                     created_at: chrono::Utc::now(),
                     duty: None,
+                    launch_mode: "acp".to_string(),
                 };
                 add_chat_session("proj-1", task_id, chat).unwrap();
             }
@@ -780,6 +786,7 @@ mod tests {
                 acp_session_id: None,
                 created_at: chrono::Utc::now(),
                 duty: None,
+                launch_mode: "acp".to_string(),
             };
             let chat2 = ChatSession {
                 id: "chat-y".to_string(),
@@ -788,6 +795,7 @@ mod tests {
                 acp_session_id: None,
                 created_at: chrono::Utc::now(),
                 duty: None,
+                launch_mode: "acp".to_string(),
             };
             add_chat_session("proj-1", task_id, chat1).unwrap();
             add_chat_session("proj-1", task_id, chat2).unwrap();
@@ -813,6 +821,7 @@ mod tests {
                 acp_session_id: None,
                 created_at: chrono::Utc::now(),
                 duty: None,
+                launch_mode: "acp".to_string(),
             };
             let chat2 = ChatSession {
                 id: "chat-d2".to_string(),
@@ -821,6 +830,7 @@ mod tests {
                 acp_session_id: None,
                 created_at: chrono::Utc::now(),
                 duty: None,
+                launch_mode: "acp".to_string(),
             };
             add_chat_session("proj-1", task_id, chat1).unwrap();
             add_chat_session("proj-1", task_id, chat2).unwrap();
@@ -844,6 +854,7 @@ mod tests {
                 acp_session_id: None,
                 created_at: chrono::Utc::now(),
                 duty: None,
+                launch_mode: "acp".to_string(),
             };
             let chat_b = ChatSession {
                 id: "chat-b".to_string(),
@@ -852,6 +863,7 @@ mod tests {
                 acp_session_id: None,
                 created_at: chrono::Utc::now(),
                 duty: Some("frontend tests".to_string()),
+                launch_mode: "acp".to_string(),
             };
             let chat_c = ChatSession {
                 id: "chat-c".to_string(),
@@ -860,6 +872,7 @@ mod tests {
                 acp_session_id: None,
                 created_at: chrono::Utc::now(),
                 duty: None,
+                launch_mode: "acp".to_string(),
             };
             add_chat_session(project_id, task_id, chat_a).unwrap();
             add_chat_session(project_id, task_id, chat_b).unwrap();
@@ -928,6 +941,7 @@ mod tests {
                         acp_session_id: None,
                         created_at: chrono::Utc::now(),
                         duty: None,
+                        launch_mode: "acp".to_string(),
                     },
                 )
                 .unwrap();
@@ -962,6 +976,7 @@ mod tests {
                 acp_session_id: None,
                 created_at: chrono::Utc::now(),
                 duty: None,
+                launch_mode: "acp".to_string(),
             };
             add_chat_session(project_id, task_id, chat).unwrap();
 
@@ -1005,6 +1020,7 @@ mod tests {
                 acp_session_id: None,
                 created_at: chrono::Utc::now(),
                 duty: None,
+                launch_mode: "acp".to_string(),
             };
             add_chat_session(project_id, "task-2", chat_in_other).unwrap();
 

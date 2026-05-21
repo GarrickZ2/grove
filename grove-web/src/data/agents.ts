@@ -20,7 +20,6 @@ import {
   OpenClaw,
   Hermes,
   Kiro,
-  Windsurf,
 } from "../components/ui/AgentIcons";
 
 export interface AgentOption {
@@ -38,10 +37,18 @@ export interface AgentOption {
   acpFallback?: string;
   /** npm package for npx fallback when acpCheck not on PATH */
   npxPackage?: string;
+  /**
+   * Launch modes this agent supports. Omitted = ACP only (the default; covers
+   * 13 of the 14 built-in agents). Set explicitly when an agent supports
+   * spawning under a raw PTY (no protocol). Currently only Claude Code offers
+   * `--session-id` / `--resume <uuid>` semantics needed for terminal-mode
+   * resume across Grove restarts.
+   */
+  supportedLaunchModes?: ("acp" | "terminal")[];
 }
 
 export const agentOptions: AgentOption[] = [
-  { id: "claude", label: "Claude Code", value: "claude", icon: Claude.Color, terminalCheck: "claude", acpCheck: "claude-agent-acp", acpFallback: "claude-code-acp", npxPackage: "@agentclientprotocol/claude-agent-acp" },
+  { id: "claude", label: "Claude Code", value: "claude", icon: Claude.Color, terminalCheck: "claude", acpCheck: "claude-agent-acp", acpFallback: "claude-code-acp", npxPackage: "@agentclientprotocol/claude-agent-acp", supportedLaunchModes: ["acp", "terminal"] },
   { id: "codex", label: "CodeX", value: "codex", icon: OpenAI, terminalCheck: "codex", acpCheck: "codex-acp", npxPackage: "@zed-industries/codex-acp" },
   { id: "cursor-agent", label: "Cursor", value: "cursor", icon: Cursor, terminalCheck: "cursor-agent", acpCheck: "cursor-agent" },
   { id: "gemini", label: "Gemini", value: "gemini", icon: Gemini.Color, terminalCheck: "gemini", acpCheck: "gemini" },
@@ -54,7 +61,6 @@ export const agentOptions: AgentOption[] = [
   { id: "opencode", label: "OpenCode", value: "opencode", icon: OpenCode, terminalCheck: "opencode", acpCheck: "opencode" },
   { id: "qwen", label: "Qwen", value: "qwen", icon: Qwen.Color, terminalCheck: "qwen", acpCheck: "qwen" },
   { id: "traecli", label: "Trae", value: "traecli", icon: Trae.Color, terminalCheck: "traecli", acpCheck: "traecli" },
-  { id: "windsurf", label: "Windsurf", value: "windsurf", icon: Windsurf, terminalCheck: "windsurf", acpCheck: "windsurf" },
 ];
 
 export function getAcpAvailabilityCommands(options: AgentOption[] = agentOptions): string[] {

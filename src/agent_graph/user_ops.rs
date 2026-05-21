@@ -68,6 +68,7 @@ pub async fn user_spawn_node(
         acp_session_id: None,
         created_at: Utc::now(),
         duty: None,
+        launch_mode: "acp".to_string(),
     };
     tasks::add_chat_session(project_key, task_id, new_chat)
         .map_err(|e| format!("add_session: {}", e))?;

@@ -443,6 +443,8 @@ export interface ChatSessionResponse {
   created_at: string;
   /** Absolute path to this chat's history.jsonl on disk. */
   history_path: string;
+  /** "acp" (default) or "terminal". Snapshotted at chat creation, immutable. */
+  launch_mode: string;
 }
 
 interface ChatListResponse {

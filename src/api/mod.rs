@@ -162,6 +162,30 @@ pub fn create_api_router() -> Router {
             "/projects/{id}/tasks/{taskId}/chats/{chatId}/ws",
             get(handlers::acp::chat_ws_handler),
         )
+        // Agent PTY WebSocket (terminal-mode chat: spawn agent CLI under PTY,
+        // no ACP). Frontend chooses this endpoint when chat.launch_mode == "terminal".
+        .route(
+            "/projects/{id}/tasks/{taskId}/chats/{chatId}/agent-pty",
+            get(handlers::agent_pty::agent_pty_handler),
+        )
+        // Agent marketplace — unified view of ACP registry + supplement + probe.
+        .route(
+            "/agents/marketplace",
+            get(handlers::marketplace::list_marketplace),
+        )
+        .route(
+            "/agents/marketplace/refresh",
+            post(handlers::marketplace::refresh_registry),
+        )
+        .route(
+            "/agents/marketplace/{id}/install",
+            post(handlers::marketplace::install_agent)
+                .delete(handlers::marketplace::uninstall_agent),
+        )
+        .route(
+            "/agents/marketplace/{id}",
+            patch(handlers::marketplace::patch_agent),
+        )
         // Chat History (read-only observation mode)
         .route(
             "/projects/{id}/tasks/{taskId}/chats/{chatId}/history",
@@ -923,6 +947,31 @@ pub async fn start_server(
     // Runs every server start because the user's environment can change between
     // sessions (e.g. they install a new CLI).
     crate::acp::init_agent_defaults();
+
+    // Recover any installed_agents row stuck in `installing` — happens when
+    // grove was killed mid-download. Marking them failed lets the user
+    // retry from Marketplace instead of staring at a perpetual spinner.
+    if let Err(e) = crate::storage::installed_agents::recover_orphaned_installing() {
+        eprintln!(
+            "[startup] failed to recover orphaned installing rows: {}",
+            e
+        );
+    }
+
+    // Long-running ACP registry refresher. First tick happens immediately
+    // so the cache gets populated on startup (Marketplace then opens fast
+    // with full data). Subsequent ticks run every hour and call
+    // refresh_if_stale, which respects the 24h freshness window — so we
+    // hit the CDN at most once per stale-window in steady state, but stay
+    // responsive when grove runs for days/weeks.
+    tokio::spawn(async {
+        let mut ticker = tokio::time::interval(std::time::Duration::from_secs(60 * 60));
+        ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        loop {
+            ticker.tick().await;
+            crate::storage::agent_registry::refresh_if_stale().await;
+        }
+    });
 
     // Start the in-process agent_graph MCP listener (loopback-only). Failure to
     // bind is non-fatal — the rest of the server still boots; ACP sessions will

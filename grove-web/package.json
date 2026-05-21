@@ -5,8 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc -b && vite build",
-    "build:perf": "tsc -b && vite build --mode perf",
+    "build": "tsc -b && NODE_OPTIONS=\"--no-deprecation\" vite build",
+    "build:perf": "tsc -b && NODE_OPTIONS=\"--no-deprecation\" vite build --mode perf",
     "lint": "eslint src/ --max-warnings 0",
     "preview": "vite preview"
   },

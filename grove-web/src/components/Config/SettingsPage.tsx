@@ -24,6 +24,8 @@ import {
   Bot,
   Server,
   UserCog,
+  Package,
+  ChevronRight,
 } from "lucide-react";
 import { Button, Combobox, AppPicker, AgentPicker, agentOptions, ideAppOptions, terminalAppOptions, CustomAgentModal, VSCodeIcon } from "../ui";
 import type { ComboboxOption } from "../ui";
@@ -44,6 +46,7 @@ import {
 } from "../../api";
 import { LayoutEditor, type CustomLayoutConfig, type PaneType, type LayoutNode, createDefaultLayout, countPanes } from "./LayoutEditor";
 import { CustomAgentsModal } from "./CustomAgentsModal";
+import { MarketplaceModal } from "./MarketplaceModal";
 import {
   setCustomAgentPersonas as setCustomAgentPersonasIconRegistry,
   loadCustomAgentPersonas as loadCustomAgentPersonasIcon,
@@ -237,6 +240,7 @@ export function SettingsPage({ config }: SettingsPageProps) {
   const [customAgents, setCustomAgents] = useState<CustomAgentServer[]>([]);
   const [showCustomAgentModal, setShowCustomAgentModal] = useState(false);
   const [showCustomAgentsModal, setShowCustomAgentsModal] = useState(false);
+  const [showMarketplaceModal, setShowMarketplaceModal] = useState(false);
   const [customAgentPersonas, setCustomAgentPersonas] = useState<CustomAgentPersona[]>([]);
   const [customAgentPersonasLoading, setCustomAgentPersonasLoading] = useState(false);
   const [baseAgents, setBaseAgents] = useState<BaseAgent[]>([]);
@@ -245,7 +249,6 @@ export function SettingsPage({ config }: SettingsPageProps) {
   const [chatRenderWindowTrigger, setChatRenderWindowTrigger] = useState(1500);
   const [chatRenderWindowLimitDraft, setChatRenderWindowLimitDraft] = useState("0");
   const [chatRenderWindowTriggerDraft, setChatRenderWindowTriggerDraft] = useState("1500");
-
   // Agent command availability: command name → exists on PATH
   const [commandAvailability, setCommandAvailability] = useState<Record<string, boolean>>({});
 
@@ -807,28 +810,29 @@ export function SettingsPage({ config }: SettingsPageProps) {
 
   // Chat Agent 选项：ACP base agent availability comes from backend.
   const chatAgentOptions = useMemo(() => {
-    return baseAgents.map((base) => {
-      const local = agentOptions.find((a) => a.value === base.id || a.id === base.id);
-      const option = local ?? {
-        id: base.id,
-        label: base.display_name,
-        value: base.id,
-      };
-      return base.available
-        ? { ...option, label: base.display_name, value: base.id }
-        : {
-            ...option,
-            label: base.display_name,
-            value: base.id,
-            disabled: true,
-            disabledReason: `${base.unavailable_reason ?? "not available"} — install to enable`,
-          };
-    });
+    // Only surface available agents — the Marketplace modal is the place to
+    // see/install everything else. Hiding unavailable ones from the picker
+    // gets rid of the long list of `<agent> not found — install to enable`
+    // rows that used to fill the dropdown and let users pick something
+    // grove couldn't actually launch.
+    return baseAgents
+      .filter((base) => base.available)
+      .map((base) => {
+        const local = agentOptions.find(
+          (a) => a.value === base.id || a.id === base.id,
+        );
+        const option = local ?? {
+          id: base.id,
+          label: base.display_name,
+          value: base.id,
+        };
+        return { ...option, label: base.display_name, value: base.id };
+      });
   }, [baseAgents]);
 
   // Feature availability (auto-derived from dependencies)
   const isTerminalAvailable = canUseTerminal;
-  const isChatAvailable = chatAgentOptions.some(a => !a.disabled) || customAgents.length > 0;
+  const isChatAvailable = chatAgentOptions.length > 0 || customAgents.length > 0;
 
   // Sync availability to ConfigContext for Task panel components
   useEffect(() => {
@@ -1106,53 +1110,35 @@ env_vars = [
               )}
             </div>
 
-            {/* Custom Agent entry buttons */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <motion.button
-                type="button"
-                whileHover={{ scale: 1.01 }}
-                whileTap={{ scale: 0.99 }}
+            {/* Hub entry list — full-width rows so an odd entry count never
+                leaves a lonely card stranded in a 2-column grid. Each row is
+                Settings-style: icon, label/subtitle, optional count chip,
+                right chevron. The legacy per-agent launch-mode toggle has
+                moved into the Marketplace modal's per-agent config sheet. */}
+            <div className="divide-y divide-[var(--color-border)] rounded-lg border border-[var(--color-border)] overflow-hidden">
+              <HubRow
+                icon={<Package className="w-4 h-4 text-[var(--color-highlight)]" />}
+                iconBg="var(--color-highlight)"
+                label="Agent Marketplace"
+                subtitle="Browse, install, and configure ACP agents"
+                onClick={() => setShowMarketplaceModal(true)}
+              />
+              <HubRow
+                icon={<UserCog className="w-4 h-4 text-[var(--color-highlight)]" />}
+                iconBg="var(--color-highlight)"
+                label="Custom Agents"
+                subtitle="Personas with preset model & system prompt"
+                count={customAgentPersonas.length}
                 onClick={() => setShowCustomAgentsModal(true)}
-                className="flex items-start gap-3 p-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-secondary)] hover:border-[var(--color-highlight)]/50 transition-colors text-left"
-              >
-                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-[var(--color-highlight)]/10">
-                  <UserCog className="w-4 h-4 text-[var(--color-highlight)]" />
-                </div>
-                <div className="min-w-0 flex-1">
-                  <div className="text-sm font-medium text-[var(--color-text)]">
-                    Custom Agents
-                    <span className="ml-2 text-[10px] text-[var(--color-text-muted)] font-normal">
-                      {customAgentPersonas.length > 0 ? `${customAgentPersonas.length} configured` : "None"}
-                    </span>
-                  </div>
-                  <div className="text-xs text-[var(--color-text-muted)] mt-0.5">
-                    Personas with preset model & system prompt
-                  </div>
-                </div>
-              </motion.button>
-
-              <motion.button
-                type="button"
-                whileHover={{ scale: 1.01 }}
-                whileTap={{ scale: 0.99 }}
+              />
+              <HubRow
+                icon={<Server className="w-4 h-4 text-[var(--color-info)]" />}
+                iconBg="var(--color-info)"
+                label="Custom Agent Servers"
+                subtitle="For private or self-hosted ACP deploys"
+                count={customAgents.length}
                 onClick={() => setShowCustomAgentModal(true)}
-                className="flex items-start gap-3 p-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-secondary)] hover:border-[var(--color-highlight)]/50 transition-colors text-left"
-              >
-                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-[var(--color-info)]/10">
-                  <Server className="w-4 h-4 text-[var(--color-info)]" />
-                </div>
-                <div className="min-w-0 flex-1">
-                  <div className="text-sm font-medium text-[var(--color-text)]">
-                    Custom Agent Servers
-                    <span className="ml-2 text-[10px] text-[var(--color-text-muted)] font-normal">
-                      {customAgents.length > 0 ? `${customAgents.length} configured` : "None"}
-                    </span>
-                  </div>
-                  <div className="text-xs text-[var(--color-text-muted)] mt-0.5">
-                    For private or self-hosted ACP deploys
-                  </div>
-                </div>
-              </motion.button>
+              />
             </div>
 
             {/* Chat render window */}
@@ -2272,11 +2258,56 @@ env_vars = [
           setCustomAgentPersonasIconRegistry(next);
         }}
       />
+
+      <MarketplaceModal
+        open={showMarketplaceModal}
+        onClose={() => setShowMarketplaceModal(false)}
+      />
     </motion.div>
   );
 }
 
 // ─── Notification channel sub-card ──────────────────────────────────────────
+
+// ─── Settings-style row used by Agent section hub ──────────────────────────
+
+interface HubRowProps {
+  icon: React.ReactNode;
+  iconBg: string; // CSS color string (e.g. var(--color-highlight))
+  label: string;
+  subtitle: string;
+  count?: number;
+  onClick: () => void;
+}
+
+function HubRow({ icon, iconBg, label, subtitle, count, onClick }: HubRowProps) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="group flex w-full items-center gap-3 bg-[var(--color-bg-secondary)] px-3.5 py-3 text-left transition-colors hover:bg-[var(--color-bg-tertiary)]"
+    >
+      <div
+        className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md"
+        style={{ backgroundColor: `color-mix(in srgb, ${iconBg} 10%, transparent)` }}
+      >
+        {icon}
+      </div>
+      <div className="min-w-0 flex-1">
+        <div className="flex items-center gap-2">
+          <span className="text-sm font-medium text-[var(--color-text)]">{label}</span>
+          {typeof count === "number" && (
+            <span className="rounded-full bg-[var(--color-bg)] px-2 py-0.5 text-[10px] text-[var(--color-text-muted)]">
+              {count > 0 ? count : "None"}
+            </span>
+          )}
+        </div>
+        <div className="mt-0.5 text-xs text-[var(--color-text-muted)]">{subtitle}</div>
+      </div>
+      <ChevronRight className="h-4 w-4 shrink-0 text-[var(--color-text-muted)] transition-transform group-hover:translate-x-0.5" />
+    </button>
+  );
+}
 
 interface NotifChannelProps {
   title: string;

@@ -2,6 +2,7 @@
 
 pub mod acp;
 pub mod agent_graph_mcp;
+pub mod agent_pty;
 pub mod agent_usage;
 pub mod agents;
 pub mod ai;
@@ -13,6 +14,7 @@ pub mod folder;
 pub mod git;
 pub mod hooks;
 pub mod libraries;
+pub mod marketplace;
 #[cfg(feature = "perf-monitor")]
 pub mod perf;
 pub mod projects;

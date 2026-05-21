@@ -163,7 +163,7 @@ fn pick_default_shell() -> (String, Vec<String>) {
 ///
 /// We set safe defaults only when the variable is absent, so users who do
 /// have a terminal-inherited env keep their own values.
-fn apply_terminal_env_defaults(cmd: &mut CommandBuilder) {
+pub(crate) fn apply_terminal_env_defaults(cmd: &mut CommandBuilder) {
     let defaults: &[(&str, &str)] = &[
         ("TERM", "xterm-256color"),
         ("LANG", "en_US.UTF-8"),
@@ -270,7 +270,12 @@ async fn handle_mux_terminal(socket: WebSocket, params: MuxTerminalParams) {
 }
 
 /// Common PTY terminal handler
-async fn handle_pty_terminal(socket: WebSocket, cmd: CommandBuilder, cols: u16, rows: u16) {
+pub(crate) async fn handle_pty_terminal(
+    socket: WebSocket,
+    cmd: CommandBuilder,
+    cols: u16,
+    rows: u16,
+) {
     // Create PTY in blocking context
     let pty_result = tokio::task::spawn_blocking(move || {
         let pty_system = native_pty_system();

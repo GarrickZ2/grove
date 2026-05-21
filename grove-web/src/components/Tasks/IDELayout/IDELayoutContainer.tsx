@@ -198,10 +198,10 @@ function Toolbar({
         }}
         disabled={!isMobile && state.chatVisible && !hasOpenPanel}
         className={`ide-toolbar__btn ide-toolbar__btn--chat ${chatActive ? "ide-toolbar__btn--active" : ""}`}
-        title={hasOpenPanel ? "Toggle Chat" : "Chat stays visible until another panel is open"}
+        title={hasOpenPanel ? "Toggle Agent" : "Agent stays visible until another panel is open"}
       >
         <MessageSquare size={13} />
-        <span>Chat</span>
+        <span>Agent</span>
       </button>
         );
       })()}

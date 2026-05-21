@@ -93,6 +93,8 @@ import { useActiveChatId } from "./useActiveChatId";
 import { useTypewriter } from "./useTypewriter";
 import { listSketches, type SketchMeta } from "../../../api/sketches";
 import { writeLastActiveTab } from "../../../utils/lastActiveTab";
+import { XTerminal } from "../TaskDetail/XTerminal";
+import { sendInputToTerminal } from "../TaskDetail/terminalCache";
 import type { Task } from "../../../data/types";
 import { perfMark } from "../../../perf/marks";
 import { useReportDebugId } from "../../../perf/debugIdsStore";
@@ -456,6 +458,21 @@ function fileToBase64(file: File): Promise<string> {
       reject(reader.error ?? new Error("Failed to read file"));
     reader.readAsDataURL(file);
   });
+}
+
+/** Convert a `file://` URI (returned by uploadChatAttachment) to an absolute
+ *  local path. Used by terminal launch mode to pipe attachment paths into
+ *  the agent's stdin as `@<path>` references. Returns null for non-file URIs. */
+function fileUrlToPath(uri: string | undefined): string | null {
+  if (!uri || !uri.startsWith("file://")) return null;
+  try {
+    let pathname = decodeURIComponent(new URL(uri).pathname);
+    // Windows: file:///C:/foo → pathname is `/C:/foo` → strip leading slash.
+    if (/^\/[a-zA-Z]:/.test(pathname)) pathname = pathname.slice(1);
+    return pathname;
+  } catch {
+    return null;
+  }
 }
 
 // ─── Render grouping types ───────────────────────────────────────────────────
@@ -1768,6 +1785,16 @@ export function TaskChat({
   const historyLoadingRef = useRef(false);
 
   const activeChat = chats.find((c) => c.id === activeChatId);
+  // Terminal-mode chat: agent CLI runs under a PTY (no ACP). Messages area
+  // becomes xterm.js; chatbox input writes to PTY stdin instead of session/prompt.
+  const isTerminalLaunchMode = activeChat?.launch_mode === "terminal";
+  const agentPtyWsUrl = useMemo(() => {
+    if (!isTerminalLaunchMode || !activeChatId) return null;
+    const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+    const url = `${protocol}//${window.location.host}/api/v1/projects/${projectId}/tasks/${task.id}/chats/${activeChatId}/agent-pty`;
+    console.log("[XTerminal/agent-pty] activeChat=", activeChatId, "launch_mode=", activeChat?.launch_mode, "url=", url);
+    return url;
+  }, [isTerminalLaunchMode, activeChatId, projectId, task.id, activeChat?.launch_mode]);
   // Quota for built-in AI coding agents (Claude Code / Codex / Gemini).
   // Unsupported agents return null, which hides the quota badge entirely.
   const {
@@ -1950,24 +1977,21 @@ export function TaskChat({
 
   // ACP agent availability check is encapsulated in useACPAvailability.
 
-  // Compute available ACP agent options from backend availability (consistent with SettingsPage)
+  // Compute available ACP agent options from backend availability. Hide
+  // unavailable agents entirely — they live in the Marketplace modal now.
+  // While availability is still loading, fall back to the static list so
+  // the chat-create flow isn't blank during the first fetch.
   const acpAgentOptions = useMemo(() => {
     if (!acpAvailabilityLoaded) {
       return agentOptions.filter((opt) => opt.acpCheck);
     }
-    return baseAgents.map((base) => {
-      const local = agentOptions.find((a) => a.value === base.id || a.id === base.id);
-      const option = local ?? { id: base.id, label: base.display_name, value: base.id };
-      return base.available
-        ? { ...option, label: base.display_name, value: base.id }
-        : {
-            ...option,
-            label: base.display_name,
-            value: base.id,
-            disabled: true,
-            disabledReason: `${base.unavailable_reason ?? "not available"} — install to enable`,
-          };
-    });
+    return baseAgents
+      .filter((base) => base.available)
+      .map((base) => {
+        const local = agentOptions.find((a) => a.value === base.id || a.id === base.id);
+        const option = local ?? { id: base.id, label: base.display_name, value: base.id };
+        return { ...option, label: base.display_name, value: base.id };
+      });
   }, [baseAgents, acpAvailabilityLoaded]);
 
   const getChatIcon = (agentId: string) => {
@@ -2745,6 +2769,28 @@ export function TaskChat({
     async (chatId: string) => {
       if (wsMapRef.current.has(chatId)) return; // Already connected
       if (connectingRef.current.has(chatId)) return; // Connection already in-flight
+      // Terminal-mode chats have no ACP WebSocket — they speak PTY only.
+      // Bailing here keeps wsRef.current null for those chats; handleSend
+      // already branches on isTerminalLaunchMode before touching wsRef.
+      const chat = chatsRef.current.find((c) => c.id === chatId);
+      console.log(
+        "[connectChatWs]",
+        chatId,
+        "chatsLoaded=", chatsRef.current.length,
+        "chatFound=", !!chat,
+        "launch_mode=", chat?.launch_mode,
+      );
+      if (!chat) {
+        // Chats list hasn't loaded yet — we'd be guessing whether this chat
+        // is ACP or terminal mode. Bail; caller retries after the chats
+        // fetch completes via the [activeChatId, chats] effect below.
+        connectingRef.current.delete(chatId);
+        return;
+      }
+      if (chat.launch_mode === "terminal") {
+        connectingRef.current.delete(chatId);
+        return;
+      }
       connectingRef.current.add(chatId);
 
       const host = getApiHost();
@@ -2998,7 +3044,11 @@ export function TaskChat({
         }
       }
     })();
-  }, [activeChatId, connectChatWs, projectId, task.id, updateBusy, chatRenderWindowSettings, updateHiddenMessageCount, getActiveChatId]);
+    // Note: activeChat?.launch_mode is in deps so that when chats finish
+    // loading after this effect's first run (when launch_mode was still
+    // undefined → connectChatWs bailed), the effect re-fires with the
+    // resolved mode and routes the chat correctly (ACP WS vs PTY-only).
+  }, [activeChatId, activeChat?.launch_mode, connectChatWs, projectId, task.id, updateBusy, chatRenderWindowSettings, updateHiddenMessageCount, getActiveChatId]);
 
   // Cleanup all WebSockets on unmount
   useEffect(() => {
@@ -4068,6 +4118,93 @@ export function TaskChat({
     // clearing the editable, the user's typed message is silently lost.
     if (!activeChatId) return;
     const prompt = getPromptFromEditable(el);
+
+    // Terminal launch mode: chatbox forwards the typed text + any attachment
+    // file paths to the agent's PTY stdin. Attachments (images, files) are
+    // uploaded to the chat's on-disk attachments dir first, then each one is
+    // injected as `@<absolute-path>` so claude reads them via its Read tool.
+    if (isTerminalLaunchMode) {
+      if ((!prompt && attachments.length === 0) || !agentPtyWsUrl) return;
+
+      // Upload anything that doesn't have a server URI yet. Image/audio
+      // attachments arrive as base64 in `att.data`; resource attachments
+      // arrive as a pending File ref and need to be base64-encoded first.
+      let resolved = attachments;
+      const needUpload = attachments.filter(
+        (a) => !a.uri && (a.data || a.pendingFile),
+      );
+      if (needUpload.length > 0) {
+        try {
+          const uploads = await Promise.all(
+            needUpload.map(async (att) => {
+              const data = att.pendingFile
+                ? await fileToBase64(att.pendingFile)
+                : att.data;
+              return uploadChatAttachment(projectId, task.id, activeChatId, {
+                name: att.pendingFile?.name ?? att.name,
+                mime_type: att.mimeType || undefined,
+                data,
+              });
+            }),
+          );
+          const map = new Map(needUpload.map((a, i) => [a, uploads[i]]));
+          resolved = attachments.map((a) => {
+            const r = map.get(a);
+            return r
+              ? {
+                  ...a,
+                  uri: r.uri,
+                  name: r.name,
+                  mimeType: r.mime_type ?? a.mimeType,
+                  size: r.size,
+                  pendingFile: undefined,
+                }
+              : a;
+          });
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          setMessages((prev) => [
+            ...prev,
+            { type: "system", content: `Failed to upload attachment: ${msg}` },
+          ]);
+          return;
+        }
+      }
+
+      const paths = resolved
+        .map((a) => a.uri)
+        .map((u) => fileUrlToPath(u))
+        .filter((p): p is string => !!p);
+      // Natural-language attachment hint instead of `@path` — claude's
+      // picker autocomplete for `@` doesn't fire inside bracketed paste,
+      // but it scans prompt text for paths and calls Read on its own.
+      const filesNote =
+        paths.length > 0 ? `Files attached: ${paths.join(", ")}\n\n` : "";
+      const finalPrompt = filesNote + (prompt || "");
+      if (!finalPrompt) return;
+
+      // Wrap in bracketed paste (\x1b[200~ ... \x1b[201~) so claude treats
+      // the body as one paste — any embedded newlines stay as newlines, and
+      // the trailing \r AFTER the paste-end marker is the one that submits.
+      // A bare \r without wrapping gets eaten as a newline once claude's
+      // own paste-detection kicks in on the burst of bytes.
+      const prefix = `url:${agentPtyWsUrl}`;
+      const wrapped = `\x1b[200~${finalPrompt}\x1b[201~\r`;
+      const ok = sendInputToTerminal(prefix, wrapped);
+      if (!ok) return; // PTY not connected yet — keep the draft, user retries
+      el.innerHTML = "";
+      clearChatDraft(activeChatId);
+      setHasContent(false);
+      setAttachments((prev) => {
+        prev.forEach((att) => {
+          if (att.previewUrl) URL.revokeObjectURL(att.previewUrl);
+        });
+        return [];
+      });
+      el.focus();
+      return;
+    }
+
     if (
       (!prompt && attachments.length === 0) ||
       !wsRef.current ||
@@ -4214,7 +4351,7 @@ export function TaskChat({
       onUserMessageSent?.();
       el.focus();
     }
-  }, [isTerminalMode, isBusy, attachments, activeChatId, projectId, task.id, enableAutoStickToBottom, onUserMessageSent, buildPromptConfig]);
+  }, [isTerminalMode, isBusy, attachments, activeChatId, projectId, task.id, enableAutoStickToBottom, onUserMessageSent, buildPromptConfig, isTerminalLaunchMode, agentPtyWsUrl]);
 
   const sendPreviewComments = useCallback((comments: PreviewCommentDraft[]) => {
     if (
@@ -5683,10 +5820,32 @@ export function TaskChat({
         </div>
 
         <div className="relative min-h-0 min-w-0 flex-1">
-          {/* Messages — virtualized via react-virtuoso so multi-thousand
+          {/* Terminal launch mode: agent CLI runs in xterm.js (PTY).
+              Chatbox input still writes lines to PTY stdin via handleSend. */}
+          {isTerminalLaunchMode && agentPtyWsUrl ? (
+            // Constrain xterm's height so the floating chatbox doesn't cover
+            // the agent's bottom prompt. inputAreaHeight is the live-measured
+            // chatbox height (ResizeObserver on inputAreaRef); +16 matches
+            // the Virtuoso Footer spacer used in ACP mode.
+            <div
+              className="absolute inset-x-0 top-0"
+              style={{ bottom: inputAreaHeight + 16 }}
+            >
+              <XTerminal
+                wsUrl={agentPtyWsUrl}
+                instanceId={`agent-pty:${activeChatId ?? ""}`}
+                // Drive the chat header's connection pill from the PTY WS
+                // status — there's no ACP WS in this mode so the original
+                // ACP-driven `isConnected` would be stuck on "Connecting…".
+                onConnected={() => setIsConnected(true)}
+                onDisconnected={() => setIsConnected(false)}
+              />
+            </div>
+          ) : (
+          /* Messages — virtualized via react-virtuoso so multi-thousand
               message conversations stay snappy. Virtuoso owns the scroll
               container; we hand it the renderItems array and let it
-              mount/unmount rows as the viewport moves. */}
+              mount/unmount rows as the viewport moves. */
           <Virtuoso
             // Force-remount per chat so each chat starts with a clean
             // scroll position (no carry-over from the previous chat).
@@ -5757,6 +5916,7 @@ export function TaskChat({
             itemsRendered={handleItemsRendered}
             components={virtuosoComponents}
           />
+          )}
 
           {/* Input */}
           <div ref={inputAreaRef} className="pointer-events-none absolute inset-x-0 z-10 px-3 pb-4 pt-2" style={{ bottom: "var(--grove-kb-inset, 0px)" }}>
@@ -6525,7 +6685,7 @@ export function TaskChat({
                     </span>
                   </div>
                   <div className="chatbox-footer-right flex items-center gap-2 shrink-0 select-none">
-                    {!composerNarrow && modelOptions.length > 0 && (
+                    {!isTerminalLaunchMode && !composerNarrow && modelOptions.length > 0 && (
                       <DropdownSelect
                         ref={modelMenuRef}
                         label="Model"
@@ -6544,7 +6704,7 @@ export function TaskChat({
                         }}
                       />
                     )}
-                    {!composerNarrow && modeOptions.length > 0 && (
+                    {!isTerminalLaunchMode && !composerNarrow && modeOptions.length > 0 && (
                       <DropdownSelect
                         ref={permMenuRef}
                         label="Mode"
@@ -6563,7 +6723,7 @@ export function TaskChat({
                         }}
                       />
                     )}
-                    {!composerHideThinking && thoughtLevelOptions.length > 0 && thoughtLevelConfigId && (
+                    {!isTerminalLaunchMode && !composerHideThinking && thoughtLevelOptions.length > 0 && thoughtLevelConfigId && (
                       <DropdownSelect
                         ref={thoughtLevelMenuRef}
                         label="Thinking"

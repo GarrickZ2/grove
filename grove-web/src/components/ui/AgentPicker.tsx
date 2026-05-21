@@ -5,6 +5,7 @@ import { ChevronDown, Check, Bot, Globe, Terminal, Settings } from "lucide-react
 import type { CustomAgentServer } from "../../api/config";
 import type { CustomAgentPersona } from "../../api";
 import { agentOptions, type AgentOption } from "../../data/agents";
+import { resolveAgentId } from "../../data/agentAliases";
 
 // Re-export so existing call sites importing from "./ui/AgentPicker" or
 // "../ui" keep working without churn. New consumers should import from
@@ -74,8 +75,20 @@ export function AgentPicker({
   const displayOptions = externalOptions ?? agentOptions;
   const [isOpen, setIsOpen] = useState(false);
 
-  // Check if current value matches any built-in option or custom agent
-  const selectedOption = displayOptions.find((opt) => opt.value === value);
+  // Check if current value matches any built-in option or custom agent.
+  // Match through the alias map: builtin agentOptions use legacy ids
+  // (`claude`), but registry-driven flows (Marketplace) may write canonical
+  // (`claude-acp`). Both must resolve to the same option so the picker
+  // shows the right selection regardless of which id form was stored.
+  const valueCanonical = value ? resolveAgentId(value) : value;
+  const selectedOption = displayOptions.find(
+    (opt) =>
+      opt.value === value ||
+      opt.id === value ||
+      (valueCanonical &&
+        (resolveAgentId(opt.value) === valueCanonical ||
+          resolveAgentId(opt.id) === valueCanonical)),
+  );
   const selectedCustomAgent = !selectedOption
     ? customAgents.find((a) => a.id === value)
     : null;

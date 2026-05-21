@@ -298,7 +298,8 @@ pub(crate) fn create_schema(conn: &Connection) -> Result<()> {
             agent          TEXT NOT NULL,
             acp_session_id TEXT,
             duty           TEXT,
-            created_at     TEXT NOT NULL
+            created_at     TEXT NOT NULL,
+            launch_mode    TEXT NOT NULL DEFAULT 'acp'
         );
         CREATE INDEX IF NOT EXISTS idx_session_task ON session(project, task_id);
 
@@ -344,6 +345,25 @@ pub(crate) fn create_schema(conn: &Connection) -> Result<()> {
             system_prompt TEXT NOT NULL DEFAULT '',
             created_at    TEXT NOT NULL,
             updated_at    TEXT NOT NULL
+        );
+
+        -- Marketplace-managed agent installs. Auto-detected (user has the CLI
+        -- on PATH already) is NOT tracked here — that comes from runtime probe.
+        -- `hidden` lets a user suppress an auto-detected agent from the picker
+        -- without grove ever touching their system install.
+        CREATE TABLE IF NOT EXISTS installed_agents (
+            id              TEXT PRIMARY KEY,
+            version         TEXT NOT NULL,
+            install_method  TEXT NOT NULL,         -- 'npx' | 'binary' | 'uvx'
+            install_path    TEXT,                  -- binary only (extracted dir)
+            status          TEXT NOT NULL DEFAULT 'installed',  -- installing | installed | failed
+            failure_reason  TEXT,
+            args_override   TEXT,                  -- JSON array of strings
+            env_override    TEXT,                  -- JSON map
+            launch_mode     TEXT NOT NULL DEFAULT 'acp',
+            hidden          INTEGER NOT NULL DEFAULT 0,
+            installed_at    TEXT NOT NULL,
+            updated_at      TEXT NOT NULL
         );
 
         -- Review Comments
@@ -539,6 +559,17 @@ pub(crate) fn create_schema(conn: &Connection) -> Result<()> {
         "INTEGER NOT NULL DEFAULT 0",
     )?;
     add_column_if_missing(conn, "tasks", "files_changed", "INTEGER NOT NULL DEFAULT 0")?;
+
+    // Chat session launch mode: "acp" (default, JSON-RPC over stdio) or
+    // "terminal" (spawn agent CLI under a PTY, no protocol). Old chats stay
+    // on ACP; the value is snapshotted at chat-create time and never changes
+    // for the life of that chat session.
+    add_column_if_missing(
+        conn,
+        "session",
+        "launch_mode",
+        "TEXT NOT NULL DEFAULT 'acp'",
+    )?;
 
     Ok(())
 }
