@@ -13,6 +13,7 @@ import type { IDisposable } from "@xterm/xterm";
 export interface CachedTerminal {
   terminal: Terminal;
   fitAddon: FitAddon;
+  searchAddon?: any;
   ws: WebSocket | null;
   container: HTMLDivElement;
   dataDisposable: IDisposable;
@@ -72,6 +73,13 @@ export function disposeTerminal(key: string): void {
   entry.dataDisposable.dispose();
   if (entry.ws && entry.ws.readyState <= WebSocket.OPEN) {
     entry.ws.close();
+  }
+  if (entry.searchAddon) {
+    try {
+      entry.searchAddon.dispose();
+    } catch (e) {
+      console.warn("Failed to dispose searchAddon:", e);
+    }
   }
   entry.terminal.dispose();
   entry.container.remove();

@@ -264,6 +264,30 @@ export function BlitzPage({ onSwitchToZen, onNavigate }: BlitzPageProps) {
     return filteredTasks.find((bt) => bt.task.id === selectedBlitzTask.task.id && bt.projectId === selectedBlitzTask.projectId) ?? null;
   }, [filteredTasks, selectedBlitzTask]);
 
+  // Sync selectedBlitzTask with latest data if any fields changed
+  useEffect(() => {
+    if (currentSelected && selectedBlitzTask) {
+      const taskA = currentSelected.task;
+      const taskB = selectedBlitzTask.task;
+      const isDifferent =
+        taskA.name !== taskB.name ||
+        taskA.branch !== taskB.branch ||
+        taskA.target !== taskB.target ||
+        taskA.status !== taskB.status ||
+        taskA.multiplexer !== taskB.multiplexer ||
+        taskA.createdBy !== taskB.createdBy ||
+        taskA.isLocal !== taskB.isLocal ||
+        taskA.createdAt.getTime() !== taskB.createdAt.getTime() ||
+        taskA.updatedAt.getTime() !== taskB.updatedAt.getTime() ||
+        currentSelected.projectName !== selectedBlitzTask.projectName ||
+        currentSelected.projectType !== selectedBlitzTask.projectType;
+
+      if (isDifferent) {
+        setSelectedBlitzTask(currentSelected);
+      }
+    }
+  }, [currentSelected, selectedBlitzTask]);
+
   // Derive studio status from current selection — kept in sync via React state
   const isStudioTask = currentSelected?.projectType === "studio";
 

@@ -1,12 +1,14 @@
-import { useEffect, useRef, useMemo } from "react";
+import { useEffect, useRef, useMemo, useState } from "react";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import { WebglAddon } from "@xterm/addon-webgl";
+import { SearchAddon } from "@xterm/addon-search";
 import "@xterm/xterm/css/xterm.css";
 import { useTerminalTheme } from "../../../context";
 import { appendHmacToUrl } from "../../../api/client";
 import { openExternalUrl } from "../../../utils/openExternal";
+import { PreviewSearchBar } from "../../Review/PreviewSearchBar";
 import {
   getCached,
   setCached,
@@ -51,6 +53,13 @@ export function XTerminal({
   const terminalRef = useRef<Terminal | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
+
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchTotal, setSearchTotal] = useState(0);
+  const [searchCurrent, setSearchCurrent] = useState(-1);
+  const searchAddonRef = useRef<SearchAddon | null>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
 
   // Store callbacks in refs to avoid re-render issues
   const onConnectedRef = useRef(onConnected);
@@ -136,6 +145,17 @@ export function XTerminal({
       fitAddonRef.current = cached.fitAddon;
       wsRef.current = cached.ws;
 
+      if (!cached.searchAddon) {
+        cached.searchAddon = new SearchAddon();
+        cached.terminal.loadAddon(cached.searchAddon);
+      }
+      searchAddonRef.current = cached.searchAddon;
+
+      const searchDisposable = cached.searchAddon.onDidChangeResults((event: any) => {
+        setSearchTotal(event.resultCount);
+        setSearchCurrent(event.resultIndex);
+      });
+
       // Re-bind data handler so it references the current component's wsRef
       cached.dataDisposable.dispose();
       cached.dataDisposable = cached.terminal.onData((data) => {
@@ -152,6 +172,24 @@ export function XTerminal({
 
       // Apply current theme
       cached.terminal.options.theme = terminalThemeRef.current.colors;
+
+      // Intercept key events for search and Escape bubbling
+      cached.terminal.attachCustomKeyEventHandler((e) => {
+        if (e.type === "keydown") {
+          const isMac = navigator.platform.toLowerCase().includes("mac");
+          const isModF = isMac ? (e.metaKey && e.key === "f") : (e.ctrlKey && e.key === "f");
+          if (isModF) {
+            e.preventDefault();
+            e.stopPropagation();
+            setSearchOpen(true);
+            return false;
+          }
+          if (e.key === "Escape") {
+            e.stopPropagation();
+          }
+        }
+        return true;
+      });
 
       // Fit & notify after layout
       requestAnimationFrame(() => {
@@ -186,12 +224,14 @@ export function XTerminal({
         cancelled = true;
         resizeObserver.disconnect();
         if (resizeTimer) clearTimeout(resizeTimer);
+        searchDisposable.dispose();
         if (currentCacheKey && getCached(currentCacheKey)) {
           detachTerminal(currentCacheKey);
         }
         terminalRef.current = null;
         fitAddonRef.current = null;
         wsRef.current = null;
+        searchAddonRef.current = null;
       };
     }
 
@@ -231,6 +271,16 @@ export function XTerminal({
     });
     terminal.loadAddon(webLinksAddon);
 
+    // Initialize SearchAddon for terminal
+    const searchAddon = new SearchAddon();
+    terminal.loadAddon(searchAddon);
+    searchAddonRef.current = searchAddon;
+
+    const searchDisposable = searchAddon.onDidChangeResults((event: any) => {
+      setSearchTotal(event.resultCount);
+      setSearchCurrent(event.resultIndex);
+    });
+
     terminal.open(container);
 
     // GPU-accelerated renderer. Big win for high-throughput output (build
@@ -250,10 +300,22 @@ export function XTerminal({
     terminalRef.current = terminal;
     fitAddon.fit();
 
-    // Prevent Escape from bubbling up and causing terminal to lose focus
+    // Intercept keyboard shortcuts like Ctrl+F or Cmd+F for search and Escape bubbling
     terminal.attachCustomKeyEventHandler((e) => {
-      if (e.type === "keydown" && e.key === "Escape") {
-        e.stopPropagation();
+      if (e.type === "keydown") {
+        const isMac = navigator.platform.toLowerCase().includes("mac");
+        const isModF = isMac ? (e.metaKey && e.key === "f") : (e.ctrlKey && e.key === "f");
+        
+        if (isModF) {
+          e.preventDefault();
+          e.stopPropagation();
+          setSearchOpen(true);
+          return false;
+        }
+        
+        if (e.key === "Escape") {
+          e.stopPropagation();
+        }
       }
       return true;
     });
@@ -270,6 +332,7 @@ export function XTerminal({
       setCached(currentCacheKey, {
         terminal,
         fitAddon,
+        searchAddon,
         ws: null,
         container,
         dataDisposable,
@@ -361,6 +424,7 @@ export function XTerminal({
       cancelled = true;
       resizeObserver.disconnect();
       if (resizeTimer) clearTimeout(resizeTimer);
+      searchDisposable.dispose();
 
       if (currentCacheKey && getCached(currentCacheKey)) {
         // Cache mode: detach but keep alive
@@ -374,6 +438,7 @@ export function XTerminal({
           wsRef.current.close();
           wsRef.current = null;
         }
+        searchAddon.dispose();
         terminal.dispose();
         container.remove();
       }
@@ -381,6 +446,7 @@ export function XTerminal({
       terminalRef.current = null;
       fitAddonRef.current = null;
       wsRef.current = null;
+      searchAddonRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- intentional: connectionKey + cacheKey gate the full reconnect; reading other props live via refs
   }, [connectionKey, cacheKey]);
@@ -392,9 +458,96 @@ export function XTerminal({
     }
   }, [terminalTheme]);
 
+  // Global keydown handler to open search
+  useEffect(() => {
+    const handleGlobalKeyDown = (e: KeyboardEvent) => {
+      const isMac = navigator.platform.toLowerCase().includes("mac");
+      const isModF = isMac ? (e.metaKey && e.key === "f") : (e.ctrlKey && e.key === "f");
+      if (isModF) {
+        if (panelRef.current?.contains(document.activeElement)) {
+          e.preventDefault();
+          e.stopPropagation();
+          setSearchOpen(true);
+        }
+      }
+    };
+    window.addEventListener("keydown", handleGlobalKeyDown, true);
+    return () => {
+      window.removeEventListener("keydown", handleGlobalKeyDown, true);
+    };
+  }, []);
+
+  // Handle active search updates
+  useEffect(() => {
+    const searchAddon = searchAddonRef.current;
+    if (!searchAddon) return;
+
+    if (!searchOpen || !searchQuery) {
+      setSearchTotal(0);
+      setSearchCurrent(-1);
+      searchAddon.clearDecorations();
+      return;
+    }
+
+    const searchOptions = {
+      decorations: {
+        matchBackground: "#e5c07b",
+        activeMatchBackground: "#528bff",
+        matchOverviewRuler: "#e5c07b",
+        activeMatchColorOverviewRuler: "#528bff",
+      },
+      incremental: true,
+    };
+
+    searchAddon.findNext(searchQuery, searchOptions);
+  }, [searchQuery, searchOpen]);
+
+  const handleSearchNext = () => {
+    const searchAddon = searchAddonRef.current;
+    if (!searchAddon || !searchQuery) return;
+    searchAddon.findNext(searchQuery, {
+      decorations: {
+        matchBackground: "#e5c07b",
+        activeMatchBackground: "#528bff",
+        matchOverviewRuler: "#e5c07b",
+        activeMatchColorOverviewRuler: "#528bff",
+      },
+    });
+  };
+
+  const handleSearchPrev = () => {
+    const searchAddon = searchAddonRef.current;
+    if (!searchAddon || !searchQuery) return;
+    searchAddon.findPrevious(searchQuery, {
+      decorations: {
+        matchBackground: "#e5c07b",
+        activeMatchBackground: "#528bff",
+        matchOverviewRuler: "#e5c07b",
+        activeMatchColorOverviewRuler: "#528bff",
+      },
+    });
+  };
+
+  const handleCloseSearch = () => {
+    setSearchOpen(false);
+    setSearchQuery("");
+    setSearchTotal(0);
+    setSearchCurrent(-1);
+
+    const searchAddon = searchAddonRef.current;
+    if (searchAddon) {
+      searchAddon.clearDecorations();
+    }
+
+    if (terminalRef.current) {
+      terminalRef.current.focus();
+    }
+  };
+
   return (
     <div
-      className="w-full h-full"
+      ref={panelRef}
+      className="w-full h-full relative"
       style={{
         backgroundColor: terminalTheme.colors.background,
         padding: "12px 14px",
@@ -406,6 +559,18 @@ export function XTerminal({
         data-hotkeys-terminal
         className="w-full h-full"
       />
+      {searchOpen && (
+        <PreviewSearchBar
+          query={searchQuery}
+          onQueryChange={setSearchQuery}
+          total={searchTotal}
+          current={searchCurrent}
+          onNext={handleSearchNext}
+          onPrev={handleSearchPrev}
+          onClose={handleCloseSearch}
+          className="absolute right-6 top-4 z-[60]"
+        />
+      )}
     </div>
   );
 }

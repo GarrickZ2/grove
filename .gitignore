@@ -18,8 +18,9 @@ gen/schemas/
 *~
 .DS_Store
 
-# Claude Code
+# Claude Code / Antigravity
 .claude/
+.antigravitycli/
 .superpowers/
 docs/superpowers/
 

@@ -134,13 +134,6 @@ pub async fn get_branches(
 
     let branches: Vec<BranchInfo> = branch_names
         .into_iter()
-        .filter(|name| {
-            if params.remote == "local" {
-                !grove_branches.contains(name)
-            } else {
-                true
-            }
-        })
         .map(|name| {
             let is_current = name == current;
             BranchInfo { name, is_current }

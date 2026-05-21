@@ -217,12 +217,28 @@ export function TasksPage({ initialTaskId, initialChatId, initialViewMode, onNav
 
   // Sync selectedTask with latest project data after refresh
   useEffect(() => {
-    if (!pageState.selectedTask || !selectedProject?.tasks) return;
-    const updated = selectedProject.tasks.find((t) => t.id === pageState.selectedTask!.id);
-    if (updated && updated.status !== pageState.selectedTask.status) {
-      pageHandlers.setSelectedTask(updated);
+    if (!pageState.selectedTask || !selectedProject) return;
+    const updated = selectedProject.localTask?.id === pageState.selectedTask.id
+      ? selectedProject.localTask
+      : (selectedProject.tasks || []).find((t) => t.id === pageState.selectedTask!.id);
+
+    if (updated) {
+      const isDifferent =
+        updated.name !== pageState.selectedTask.name ||
+        updated.branch !== pageState.selectedTask.branch ||
+        updated.target !== pageState.selectedTask.target ||
+        updated.status !== pageState.selectedTask.status ||
+        updated.multiplexer !== pageState.selectedTask.multiplexer ||
+        updated.createdBy !== pageState.selectedTask.createdBy ||
+        updated.isLocal !== pageState.selectedTask.isLocal ||
+        updated.createdAt.getTime() !== pageState.selectedTask.createdAt.getTime() ||
+        updated.updatedAt.getTime() !== pageState.selectedTask.updatedAt.getTime();
+
+      if (isDifferent) {
+        pageHandlers.setSelectedTask(updated);
+      }
     }
-  }, [selectedProject?.tasks, pageState.selectedTask, pageHandlers]);
+  }, [selectedProject, pageState.selectedTask, pageHandlers]);
 
   // Filter, deduplicate, and search tasks
   const filteredTasks = useMemo(() => {

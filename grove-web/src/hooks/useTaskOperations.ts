@@ -472,13 +472,18 @@ export function useTaskOperations(
     try {
       // Fetch available branches
       const branchesRes = await apiGetBranches(projectId);
-      setAvailableBranches(branchesRes.branches.map((b) => b.name));
+      const branches = branchesRes.branches.map((b) => b.name);
+      // Filter out the branch currently used by this task itself
+      const filtered = selectedTask
+        ? branches.filter((name) => name !== selectedTask.branch)
+        : branches;
+      setAvailableBranches(filtered);
       setShowRebaseDialog(true);
     } catch (err) {
       console.error("Failed to fetch branches:", err);
       onShowMessage("Failed to load branches");
     }
-  }, [projectId, onShowMessage]);
+  }, [projectId, selectedTask, onShowMessage]);
 
   const handleRebaseSubmit = useCallback(
     async (newTarget: string) => {
