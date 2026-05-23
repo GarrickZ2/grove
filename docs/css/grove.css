@@ -1080,8 +1080,10 @@ figcaption .cap-text {
 /* ── Motion ── */
 @media (prefers-reduced-motion: reduce) {
   * { animation: none !important; transition: none !important; }
+  [data-animate] { opacity: 1 !important; transform: none !important; }
 }
 
+/* Default (no JS / GSAP fallback) — CSS reveal */
 [data-animate] {
   opacity: 0;
   transform: translateY(12px);
@@ -1090,6 +1092,58 @@ figcaption .cap-text {
 [data-animate].in-view {
   opacity: 1;
   transform: translateY(0);
+}
+
+/* When GSAP takes over, kill the CSS hidden state — GSAP owns initial opacity. */
+html.gsap-ready [data-animate] {
+  opacity: 1;
+  transform: none;
+  transition: none;
+}
+
+/* Word splitter — used by hero / section h2 / manifesto reveal */
+.g-word {
+  display: inline-block;
+  overflow: hidden;
+  /* Reserve room for descenders (p/g/y) so overflow:hidden doesn't clip them.
+     The negative margin keeps line height unchanged. */
+  padding-bottom: 0.18em;
+  margin-bottom: -0.18em;
+  /* And a little headroom for ascenders in italic / soft-axis variants */
+  padding-top: 0.04em;
+  margin-top: -0.04em;
+}
+.g-word-inner {
+  display: inline-block;
+  will-change: transform;
+}
+
+/* Section label — when GSAP draws the line, hide the original border-top */
+.section-label.g-no-border {
+  border-top: 0;
+  position: relative;
+  padding-top: 22px;
+}
+.g-section-line {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background: var(--line-2);
+  display: block;
+}
+
+/* Hint the compositor on common motion targets */
+.hero-grid h1,
+.page-hero h1,
+.section-head h2,
+.manifesto h2,
+.btn-lg,
+.asset-shot > img,
+.asset-shot > video,
+.marquee-track {
+  will-change: transform;
 }
 
 /* ── Selection ── */
