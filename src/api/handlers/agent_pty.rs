@@ -52,12 +52,8 @@ pub async fn agent_pty_handler(
     Path((project_id, task_id, chat_id)): Path<(String, String, String)>,
     Query(query): Query<AgentPtyQuery>,
 ) -> Result<Response, AgentPtyError> {
-    let cols = query.cols.unwrap_or(80);
-    let rows = query.rows.unwrap_or(24);
-    eprintln!(
-        "[agent_pty] enter project_id={} task_id={} chat_id={}",
-        project_id, task_id, chat_id
-    );
+    let cols = query.cols.unwrap_or(80).clamp(20, 500);
+    let rows = query.rows.unwrap_or(24).clamp(5, 200);
 
     // Resolve project hash
     let projects = workspace::load_projects()
@@ -78,10 +74,6 @@ pub async fn agent_pty_handler(
     let chat = tasks::get_chat_session(&project_key, &task_id, &chat_id)
         .map_err(|e| AgentPtyError::Internal(format!("get_chat_session: {}", e)))?
         .ok_or_else(|| AgentPtyError::NotFound("Chat not found".to_string()))?;
-    eprintln!(
-        "[agent_pty] chat loaded launch_mode={:?} acp_session_id={:?} agent={:?}",
-        chat.launch_mode, chat.acp_session_id, chat.agent
-    );
 
     if chat.launch_mode != "terminal" {
         return Err(AgentPtyError::BadRequest(format!(
@@ -215,10 +207,6 @@ pub async fn agent_pty_handler(
     for (k, v) in &grove_env {
         cmd.env(k, v);
     }
-    eprintln!(
-        "[agent_pty] spawning claude is_resume={} uuid={} cwd={}",
-        is_resume, uuid, task.worktree_path
-    );
 
     Ok(ws.on_upgrade(move |socket: WebSocket| async move {
         // RAII guard: release the agent_graph MCP token when the PTY

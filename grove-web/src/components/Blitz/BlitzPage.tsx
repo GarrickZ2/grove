@@ -104,9 +104,27 @@ export function BlitzPage({ onSwitchToZen, onNavigate }: BlitzPageProps) {
   // Archive confirmation state (shared between hooks)
   const [pendingArchiveConfirm, setPendingArchiveConfirm] = useState<PendingArchiveConfirm | null>(null);
 
-  // Derived helpers (use effectiveSelectedBlitzTask once computed below; for hooks that don't depend on it, raw is fine)
-  const activeProjectId = selectedBlitzTask?.projectId ?? null;
-  const selectedTask = selectedBlitzTask?.task ?? null;
+  // `selectedBlitzTask` is a snapshot from the click moment; `blitzTasks`
+  // refreshes underneath us. `liveSelected` is the same task with its latest
+  // fields, used by hooks that need fresh data. Falls back to the snapshot
+  // whenever the lookup misses — mid-archive, mid-refresh, or after the task
+  // has been permanently removed. Callers that perform a hard removal are
+  // expected to clear `selectedBlitzTask` themselves (e.g. archive flow
+  // calls `setSelectedBlitzTask(null)`); without that, keyboard ops can
+  // still fire against the deleted task and get a 404 from the backend.
+  const liveSelected = useMemo(() => {
+    if (!selectedBlitzTask) return null;
+    return (
+      blitzTasks.find(
+        (bt) =>
+          bt.task.id === selectedBlitzTask.task.id &&
+          bt.projectId === selectedBlitzTask.projectId,
+      ) ?? selectedBlitzTask
+    );
+  }, [blitzTasks, selectedBlitzTask]);
+
+  const activeProjectId = liveSelected?.projectId ?? null;
+  const selectedTask = liveSelected?.task ?? null;
 
   // Page state hook
   const [pageState, pageHandlers] = useTaskPageState();
@@ -258,35 +276,13 @@ export function BlitzPage({ onSwitchToZen, onNavigate }: BlitzPageProps) {
       .filter((bt): bt is BlitzTask => bt !== undefined);
   }, [taskMap]);
 
-  // Keep selectedBlitzTask in sync with refreshed data
+  // Search-aware live row. Null while the selected task is filtered out of
+  // view by the search query — used for the highlighted-row check and the
+  // info/workspace panels, which should hide when the task isn't on screen.
   const currentSelected = useMemo(() => {
     if (!selectedBlitzTask) return null;
     return filteredTasks.find((bt) => bt.task.id === selectedBlitzTask.task.id && bt.projectId === selectedBlitzTask.projectId) ?? null;
   }, [filteredTasks, selectedBlitzTask]);
-
-  // Sync selectedBlitzTask with latest data if any fields changed
-  useEffect(() => {
-    if (currentSelected && selectedBlitzTask) {
-      const taskA = currentSelected.task;
-      const taskB = selectedBlitzTask.task;
-      const isDifferent =
-        taskA.name !== taskB.name ||
-        taskA.branch !== taskB.branch ||
-        taskA.target !== taskB.target ||
-        taskA.status !== taskB.status ||
-        taskA.multiplexer !== taskB.multiplexer ||
-        taskA.createdBy !== taskB.createdBy ||
-        taskA.isLocal !== taskB.isLocal ||
-        taskA.createdAt.getTime() !== taskB.createdAt.getTime() ||
-        taskA.updatedAt.getTime() !== taskB.updatedAt.getTime() ||
-        currentSelected.projectName !== selectedBlitzTask.projectName ||
-        currentSelected.projectType !== selectedBlitzTask.projectType;
-
-      if (isDifferent) {
-        setSelectedBlitzTask(currentSelected);
-      }
-    }
-  }, [currentSelected, selectedBlitzTask]);
 
   // Derive studio status from current selection — kept in sync via React state
   const isStudioTask = currentSelected?.projectType === "studio";

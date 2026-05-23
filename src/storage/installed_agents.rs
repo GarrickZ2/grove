@@ -305,22 +305,32 @@ pub fn spawn_for(
 /// rows as failed with a clear reason so the user sees them as Retry-able
 /// in Marketplace instead of a perpetual spinner. Called once on server
 /// start; safe to run on an empty table (no-op).
+///
+/// Only touches rows whose `updated_at` is older than `STALE_AFTER` — keeps
+/// the rare two-grove-instances case (e.g. `grove web` + `grove gui` on the
+/// same machine) from having the second instance's boot kill an install
+/// the first instance is still actively driving. Caveat: a single
+/// `download_and_extract` that exceeds `STALE_AFTER` (slow network, big
+/// archive) can still get clobbered — we don't heartbeat `updated_at`
+/// while the download is in flight. Acceptable today; revisit if any
+/// agent ships a multi-hundred-MB binary.
 pub fn recover_orphaned_installing() -> Result<()> {
+    const STALE_AFTER: chrono::Duration = chrono::Duration::minutes(5);
+
     let conn = crate::storage::database::connection();
-    let now = Utc::now().to_rfc3339();
+    let now = Utc::now();
+    let cutoff = (now - STALE_AFTER).to_rfc3339();
     conn.execute(
         "UPDATE installed_agents
          SET status = 'failed',
              failure_reason = 'install interrupted (grove exited before download finished); retry from Marketplace',
              updated_at = ?1
-         WHERE status = 'installing'",
-        params![now],
+         WHERE status = 'installing' AND updated_at < ?2",
+        params![now.to_rfc3339(), cutoff],
     )?;
     Ok(())
 }
 
-// Wired in P3 (binary install status transitions during download/extract).
-#[allow(dead_code)]
 pub fn set_status(id: &str, status: InstallStatus, failure_reason: Option<String>) -> Result<()> {
     let conn = crate::storage::database::connection();
     conn.execute(

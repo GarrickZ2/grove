@@ -8,12 +8,13 @@
  */
 import type { Terminal } from "@xterm/xterm";
 import type { FitAddon } from "@xterm/addon-fit";
+import type { SearchAddon } from "@xterm/addon-search";
 import type { IDisposable } from "@xterm/xterm";
 
 export interface CachedTerminal {
   terminal: Terminal;
   fitAddon: FitAddon;
-  searchAddon?: any;
+  searchAddon?: SearchAddon;
   ws: WebSocket | null;
   container: HTMLDivElement;
   dataDisposable: IDisposable;

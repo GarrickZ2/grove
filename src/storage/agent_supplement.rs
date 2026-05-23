@@ -240,7 +240,6 @@ pub const BUILTIN_SUPPLEMENTS: &[SupplementEntry] = &[
 ];
 
 /// Look up a supplement entry by canonical id or any legacy alias.
-#[allow(dead_code)] // wired in P2 (installed_agents lookup) and P5 (frontend resolve)
 pub fn find_supplement(id: &str) -> Option<&'static SupplementEntry> {
     BUILTIN_SUPPLEMENTS
         .iter()
@@ -249,7 +248,6 @@ pub fn find_supplement(id: &str) -> Option<&'static SupplementEntry> {
 
 /// Resolve any legacy or canonical id to the canonical id. Unknown ids pass
 /// through unchanged (covers post-supplement registry-only agents).
-#[allow(dead_code)] // wired in P2/P5
 pub fn resolve_agent_id(id: &str) -> Cow<'_, str> {
     if let Some(entry) = find_supplement(id) {
         Cow::Borrowed(entry.canonical_id)

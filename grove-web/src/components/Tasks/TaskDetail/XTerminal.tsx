@@ -1,4 +1,4 @@
-import { useEffect, useRef, useMemo, useState } from "react";
+import { useCallback, useEffect, useRef, useMemo, useState } from "react";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebLinksAddon } from "@xterm/addon-web-links";
@@ -151,7 +151,7 @@ export function XTerminal({
       }
       searchAddonRef.current = cached.searchAddon;
 
-      const searchDisposable = cached.searchAddon.onDidChangeResults((event: any) => {
+      const searchDisposable = cached.searchAddon.onDidChangeResults((event: { resultIndex: number; resultCount: number }) => {
         setSearchTotal(event.resultCount);
         setSearchCurrent(event.resultIndex);
       });
@@ -276,7 +276,7 @@ export function XTerminal({
     terminal.loadAddon(searchAddon);
     searchAddonRef.current = searchAddon;
 
-    const searchDisposable = searchAddon.onDidChangeResults((event: any) => {
+    const searchDisposable = searchAddon.onDidChangeResults((event: { resultIndex: number; resultCount: number }) => {
       setSearchTotal(event.resultCount);
       setSearchCurrent(event.resultIndex);
     });
@@ -477,19 +477,30 @@ export function XTerminal({
     };
   }, []);
 
-  // Handle active search updates
+  // Mirror an empty/closed search by zeroing the counters before the
+  // imperative effect runs — keeps setState out of the effect body. The
+  // effect itself only calls into the addon (clearDecorations / findNext).
+  const handleSearchQueryChange = useCallback((q: string) => {
+    setSearchQuery(q);
+    if (!q) {
+      setSearchTotal(0);
+      setSearchCurrent(-1);
+    }
+  }, []);
+
+  // Drive the SearchAddon to reflect query/open state. State synchronization
+  // is done at the input boundary (handleSearchQueryChange / handleCloseSearch),
+  // so this effect only issues imperative addon calls.
   useEffect(() => {
     const searchAddon = searchAddonRef.current;
     if (!searchAddon) return;
 
     if (!searchOpen || !searchQuery) {
-      setSearchTotal(0);
-      setSearchCurrent(-1);
       searchAddon.clearDecorations();
       return;
     }
 
-    const searchOptions = {
+    searchAddon.findNext(searchQuery, {
       decorations: {
         matchBackground: "#e5c07b",
         activeMatchBackground: "#528bff",
@@ -497,9 +508,7 @@ export function XTerminal({
         activeMatchColorOverviewRuler: "#528bff",
       },
       incremental: true,
-    };
-
-    searchAddon.findNext(searchQuery, searchOptions);
+    });
   }, [searchQuery, searchOpen]);
 
   const handleSearchNext = () => {
@@ -562,7 +571,7 @@ export function XTerminal({
       {searchOpen && (
         <PreviewSearchBar
           query={searchQuery}
-          onQueryChange={setSearchQuery}
+          onQueryChange={handleSearchQueryChange}
           total={searchTotal}
           current={searchCurrent}
           onNext={handleSearchNext}

@@ -227,7 +227,13 @@ fn extract_zip(bytes: &[u8], dest: &Path) -> Result<()> {
 
 /// Refuse zip-slip / path traversal: any extracted path must resolve to a
 /// descendant of `dest`. Returns the joined absolute path on success.
-fn sanitize_extract_path(dest: &Path, entry: &Path) -> Result<PathBuf> {
+///
+/// `pub` because `marketplace::install_binary` reuses it to validate the
+/// registry-provided `target.cmd` before storing it as `install_path` — a
+/// malicious registry could otherwise hand us a `cmd` with `..` segments
+/// that escape `~/.grove/agents/<id>/<ver>/` and have grove spawn an
+/// attacker-chosen system binary.
+pub fn sanitize_extract_path(dest: &Path, entry: &Path) -> Result<PathBuf> {
     let joined = dest.join(entry);
     // Normalize without touching the filesystem — we can't canonicalize
     // because the file doesn't exist yet.

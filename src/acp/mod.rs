@@ -2160,7 +2160,6 @@ async fn drive_session(
             || err_msg.contains("401 Invalid authentication")
     }
 
-
     // The agent_graph MCP token is generated and registered in `run_acp_session`
     // BEFORE the agent subprocess is spawned, so that the token is present in
     // the agent's environment (`GROVE_MCP_TOKEN`) — needed by `grove mcp-bridge`
@@ -2555,7 +2554,8 @@ async fn drive_session(
     *handle.thought_level_config_id.lock().unwrap() = thought_level_config_id.clone();
 
     if let Some(ref chat_id) = handle.chat_id {
-        if let Some(existing) = read_session_metadata(&handle.project_key, &handle.task_id, chat_id) {
+        if let Some(existing) = read_session_metadata(&handle.project_key, &handle.task_id, chat_id)
+        {
             if let Some(usage) = existing.current_usage {
                 *handle.current_usage.lock().unwrap() = Some(usage);
             }

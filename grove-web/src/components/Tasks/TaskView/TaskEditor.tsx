@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from "react";
-import Editor from "@monaco-editor/react";
+import Editor, { type Monaco } from "@monaco-editor/react";
 import { X, FileCode, Loader2, Save, Maximize2, Minimize2, PanelLeftOpen, PanelLeftClose, RefreshCw, AlertCircle } from "lucide-react";
 import { Button } from "../../ui";
 import { FileTree } from "./FileTree";
@@ -382,7 +382,7 @@ export function TaskEditor({ projectId, taskId, onClose, fullscreen = false, onT
   const { theme } = useTheme();
   const [fileNodes, setFileNodes] = useState<FileTreeNode[]>([]);
   const [treeKey, setTreeKey] = useState(0);
-  const [monacoInstance, setMonacoInstance] = useState<any>(null);
+  const [monacoInstance, setMonacoInstance] = useState<Monaco | null>(null);
 
   // Dynamically adapt Monaco Editor background and text colors to match active theme
   useEffect(() => {

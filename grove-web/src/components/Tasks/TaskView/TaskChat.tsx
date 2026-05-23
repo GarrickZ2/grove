@@ -1806,10 +1806,8 @@ export function TaskChat({
   const agentPtyWsUrl = useMemo(() => {
     if (!isTerminalLaunchMode || !activeChatId) return null;
     const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-    const url = `${protocol}//${window.location.host}/api/v1/projects/${projectId}/tasks/${task.id}/chats/${activeChatId}/agent-pty`;
-    console.log("[XTerminal/agent-pty] activeChat=", activeChatId, "launch_mode=", activeChat?.launch_mode, "url=", url);
-    return url;
-  }, [isTerminalLaunchMode, activeChatId, projectId, task.id, activeChat?.launch_mode]);
+    return `${protocol}//${window.location.host}/api/v1/projects/${projectId}/tasks/${task.id}/chats/${activeChatId}/agent-pty`;
+  }, [isTerminalLaunchMode, activeChatId, projectId, task.id]);
   // Quota for built-in AI coding agents (Claude Code / Codex / Gemini).
   // Unsupported agents return null, which hides the quota badge entirely.
   const {
@@ -2912,13 +2910,6 @@ export function TaskChat({
       // Bailing here keeps wsRef.current null for those chats; handleSend
       // already branches on isTerminalLaunchMode before touching wsRef.
       const chat = chatsRef.current.find((c) => c.id === chatId);
-      console.log(
-        "[connectChatWs]",
-        chatId,
-        "chatsLoaded=", chatsRef.current.length,
-        "chatFound=", !!chat,
-        "launch_mode=", chat?.launch_mode,
-      );
       if (!chat) {
         // Chats list hasn't loaded yet — we'd be guessing whether this chat
         // is ACP or terminal mode. Bail; caller retries after the chats

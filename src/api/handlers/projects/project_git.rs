@@ -6,7 +6,6 @@ use axum::{
     Json,
 };
 use chrono::Utc;
-use std::collections::HashSet;
 use std::process::Command;
 
 use crate::git;
@@ -93,21 +92,6 @@ pub async fn get_branches(
     let (project, _) = find_project_by_id(&id)?;
 
     let current = git::current_branch(&project.path).unwrap_or_else(|_| "unknown".to_string());
-
-    let project_key = workspace::project_hash(&project.path);
-    let mut grove_branches = HashSet::new();
-
-    if let Ok(active_tasks) = tasks::load_tasks(&project_key) {
-        for task in active_tasks {
-            grove_branches.insert(task.branch);
-        }
-    }
-
-    if let Ok(archived_tasks) = tasks::load_archived_tasks(&project_key) {
-        for task in archived_tasks {
-            grove_branches.insert(task.branch);
-        }
-    }
 
     let branch_names = if params.remote == "local" {
         git::list_branches(&project.path).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?

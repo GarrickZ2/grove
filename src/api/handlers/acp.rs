@@ -1345,15 +1345,6 @@ pub async fn chat_ws_handler(
     let chat = tasks::get_chat_session(&project_key, &task_id, &chat_id)
         .map_err(|e| AcpError::Internal(e.to_string()))?
         .ok_or(AcpError::NotFound("Chat not found".to_string()))?;
-    eprintln!(
-        "[acp_ws] enter chat_id={} launch_mode={:?} acp_session_id={:?} agent={:?}",
-        chat_id, chat.launch_mode, chat.acp_session_id, chat.agent
-    );
-    if chat.launch_mode == "terminal" {
-        eprintln!(
-            "[acp_ws] !!! WARNING: terminal-mode chat connected to ACP WS — frontend bug, this chat should be using /agent-pty"
-        );
-    }
 
     // Resolve agent command from the chat's stored agent.
     //

@@ -571,13 +571,37 @@ async fn install_binary(reg: &RegistryAgent) -> Result<Json<InstallResponse>, Ma
     match crate::storage::agent_install::download_and_extract(&reg.id, &reg.version, &target).await
     {
         Ok(install_path) => {
-            agent.status = InstallStatus::Installed;
             // Resolve the full binary path here so launchers don't need
             // to consult the registry at spawn time. `target.cmd` from the
             // registry is a relative path like `./amp-acp` — strip the
-            // leading "./" and join to the extracted dir.
+            // leading "./" and join to the extracted dir, then run it
+            // through the same containment check `extract_*` uses on
+            // archive entries so a malicious registry can't hand us a
+            // `cmd` with `..` segments that escape the install dir and
+            // get spawned as an attacker-chosen system binary later.
             let cmd_rel = target.cmd.trim_start_matches("./");
-            let bin_path = install_path.join(cmd_rel);
+            let bin_path = crate::storage::agent_install::sanitize_extract_path(
+                &install_path,
+                std::path::Path::new(cmd_rel),
+            )
+            .map_err(|e| {
+                // download_and_extract already wrote the archive tree to
+                // disk; if we reject the cmd path here, the row gets marked
+                // Failed but the extracted directory has no DB reference.
+                // Clean it up so we don't accumulate orphans across retries
+                // with different malicious registry payloads.
+                let _ = std::fs::remove_dir_all(&install_path);
+                let _ = installed_agents::set_status(
+                    &reg.id,
+                    InstallStatus::Failed,
+                    Some(format!("invalid cmd path: {}", e)),
+                );
+                MarketplaceError::BadRequest(format!(
+                    "registry entry rejected: cmd path escapes install dir ({:?})",
+                    target.cmd
+                ))
+            })?;
+            agent.status = InstallStatus::Installed;
             agent.install_path = Some(bin_path.to_string_lossy().into_owned());
             agent.updated_at = chrono::Utc::now();
             installed_agents::upsert(&agent).map_err(|e| {
@@ -686,20 +710,34 @@ pub async fn uninstall_agent(Path(id): Path<String>) -> Result<StatusCode, Marke
         )));
     };
 
-    // For binary installs, P3 will own filesystem cleanup. P2 npx has no
-    // on-disk artifact owned by grove, so DB delete is the whole uninstall.
-    if let Some(path) = &existing.install_path {
-        // Defensive: only delete inside ~/.grove/agents/. Never act on a
-        // user-supplied path even if the row somehow got one.
+    // Binary installs need on-disk cleanup. Other methods (npx/uvx/external)
+    // have no grove-owned artifact.
+    //
+    // We delete the install **root** computed from id+version, not the stored
+    // `install_path` (which is the binary file inside it — and the field
+    // could in principle be tampered with). Canonicalize both sides and
+    // require strict containment under `~/.grove/agents/` so even if a
+    // future code path lets the registry influence the path, we can't be
+    // tricked into recursing through a symlink or `..` segment into the
+    // user's home directory.
+    if existing.install_method == InstallMethod::Binary {
+        let install_root =
+            crate::storage::agent_install::install_dir(&existing.id, &existing.version);
         let agents_root = crate::storage::grove_dir().join("agents");
-        let p = std::path::Path::new(path);
-        if p.starts_with(&agents_root) && p.exists() {
-            let _ = std::fs::remove_dir_all(p);
-        } else {
-            eprintln!(
-                "[marketplace] refusing to remove install_path outside ~/.grove/agents/: {:?}",
-                path
-            );
+        if install_root.exists() {
+            match (install_root.canonicalize(), agents_root.canonicalize()) {
+                (Ok(install_canon), Ok(agents_canon))
+                    if install_canon.starts_with(&agents_canon) =>
+                {
+                    let _ = std::fs::remove_dir_all(&install_canon);
+                }
+                _ => {
+                    eprintln!(
+                        "[marketplace] refusing to remove install_root outside ~/.grove/agents/: {:?}",
+                        install_root
+                    );
+                }
+            }
         }
     }
 
@@ -731,6 +769,20 @@ pub async fn patch_agent(
                 "launch_mode must be 'acp' or 'terminal' (got {:?})",
                 m
             )));
+        }
+        // Reject modes the agent supplement doesn't claim to support — e.g.
+        // setting an ACP-only agent to `terminal` produces a chat that the
+        // PTY handler rejects at connect time. Catching it at the API
+        // boundary keeps the UI's "supported modes" hint authoritative.
+        // Agents without a supplement entry (registry-only) are accepted
+        // for both modes since we can't prove they don't support either.
+        if let Some(supp) = crate::storage::agent_supplement::find_supplement(&id) {
+            if !supp.supported_launch_modes.contains(&m) {
+                return Err(MarketplaceError::BadRequest(format!(
+                    "{} does not support launch_mode {:?} (supported: {:?})",
+                    id, m, supp.supported_launch_modes
+                )));
+            }
         }
     }
     // installed_agents is the single source of truth for per-agent prefs

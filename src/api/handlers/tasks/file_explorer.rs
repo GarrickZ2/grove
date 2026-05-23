@@ -901,4 +901,3 @@ pub async fn move_file(
         message: format!("Moved {} to {}", req.source, req.destination),
     }))
 }
-
