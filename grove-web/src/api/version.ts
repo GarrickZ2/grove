@@ -13,6 +13,7 @@ export interface UpdateCheckResponse {
   install_method: string;
   update_command: string;
   check_time: string | null;
+  can_auto_update: boolean;
 }
 
 export interface AppUpdateProgress {

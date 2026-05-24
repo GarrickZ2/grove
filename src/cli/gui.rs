@@ -9,6 +9,8 @@ use std::sync::Arc;
 
 const DAEMON_ENV: &str = "GROVE_GUI_DAEMON";
 
+pub static TAURI_APP: once_cell::sync::OnceCell<tauri::AppHandle> = once_cell::sync::OnceCell::new();
+
 /// Open an http(s) URL in the OS default browser.
 ///
 /// Tauri 2's `plugin:shell|open` requires a scope validator that is
@@ -459,6 +461,7 @@ pub async fn execute(port: u16) {
     let tauri_app = tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .invoke_handler(tauri::generate_handler![
             open_external_url,
             download_file_dialog,
@@ -475,6 +478,7 @@ pub async fn execute(port: u16) {
             crate::tray::tray_is_pinned,
         ])
         .setup(move |app| {
+            let _ = TAURI_APP.set(app.handle().clone());
             // Create a window pointing to our HTTP server
             let url = format!("http://localhost:{}", actual_port);
             let main_window = tauri::WebviewWindowBuilder::new(

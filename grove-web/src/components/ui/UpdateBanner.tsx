@@ -43,8 +43,8 @@ export function UpdateBanner({ onClose }: UpdateBannerProps) {
         if (info.has_update) {
           setIsVisible(true);
 
-          // Auto-dismiss after 10 seconds for CLI mode only
-          if (info.install_method !== "AppBundle") {
+          // Auto-dismiss after 10 seconds for non-updatable installations
+          if (!info.can_auto_update) {
             setTimeout(() => {
               setIsVisible(false);
               setIsDismissed(true);
@@ -129,7 +129,7 @@ export function UpdateBanner({ onClose }: UpdateBannerProps) {
     return null;
   }
 
-  const isAppBundle = updateInfo.install_method === "AppBundle";
+  const canAutoUpdate = updateInfo.can_auto_update;
   const isDownloading = downloadProgress?.stage === "downloading";
   const isReady = downloadProgress?.stage === "ready";
   const hasError = downloadProgress?.stage === "error";
@@ -185,8 +185,8 @@ export function UpdateBanner({ onClose }: UpdateBannerProps) {
 
           {/* Action Buttons */}
           <div className="flex items-center gap-1.5 flex-shrink-0">
-            {isAppBundle ? (
-              /* AppBundle: in-app update flow */
+            {canAutoUpdate ? (
+              /* In-app update flow */
               <>
                 {!isDownloading && !isReady && (
                   <button
@@ -222,7 +222,7 @@ export function UpdateBanner({ onClose }: UpdateBannerProps) {
                 )}
               </>
             ) : (
-              /* CLI mode: open release page + copy install command */
+              /* CLI manual mode: open release page + copy install command */
               <>
                 <button
                   onClick={handleViewRelease}

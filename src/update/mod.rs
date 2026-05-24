@@ -73,6 +73,27 @@ impl UpdateInfo {
     }
 }
 
+/// Check if the executable directory is writable by the current process
+pub fn is_executable_writable() -> bool {
+    let Ok(exe_path) = env::current_exe() else {
+        return false;
+    };
+    let Some(parent) = exe_path.parent() else {
+        return false;
+    };
+
+    // Try to create a temporary file in the executable's directory to verify write access.
+    // This is the most cross-platform, deterministic and reliable check.
+    let temp_file = parent.join(format!(".grove_write_test_{}", uuid::Uuid::new_v4()));
+    match std::fs::File::create(&temp_file) {
+        Ok(_) => {
+            let _ = std::fs::remove_file(temp_file);
+            true
+        }
+        Err(_) => false,
+    }
+}
+
 /// Detect how Grove was installed based on executable path
 pub fn detect_install_method() -> InstallMethod {
     let Ok(exe_path) = env::current_exe() else {
@@ -96,8 +117,12 @@ pub fn detect_install_method() -> InstallMethod {
         return InstallMethod::CargoInstall;
     }
 
-    // Check for install.sh default location (/usr/local/bin/)
-    if path_str.starts_with("/usr/local/bin/") {
+    // Check for install.sh/install.ps1 location (user-local or system-wide)
+    if path_str.starts_with("/usr/local/bin/")
+        || path_str.contains("/.local/bin/")
+        || path_str.contains("Programs/Grove")
+        || path_str.contains("Programs\\Grove")
+    {
         return InstallMethod::GitHubRelease;
     }
 

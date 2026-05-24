@@ -23,10 +23,19 @@ pub struct UpdateCheckResponse {
     pub update_command: String,
     /// When the check was performed (RFC 3339 format)
     pub check_time: Option<String>,
+    /// Whether this client can be automatically updated in-app
+    pub can_auto_update: bool,
 }
 
 impl From<InternalUpdateInfo> for UpdateCheckResponse {
     fn from(info: InternalUpdateInfo) -> Self {
+        use crate::update::InstallMethod;
+        let can_auto_update = match info.install_method {
+            InstallMethod::AppBundle => true,
+            InstallMethod::GitHubRelease => crate::update::is_executable_writable(),
+            _ => false,
+        };
+
         Self {
             current_version: info.current_version.clone(),
             latest_version: info.latest_version.clone(),
@@ -36,6 +45,7 @@ impl From<InternalUpdateInfo> for UpdateCheckResponse {
             check_time: info
                 .check_time
                 .map(|dt| dt.to_rfc3339_opts(chrono::SecondsFormat::Secs, true)),
+            can_auto_update,
         }
     }
 }
@@ -104,6 +114,14 @@ impl Default for AppUpdateProgress {
 
 static UPDATE_PROGRESS: Lazy<Mutex<AppUpdateProgress>> =
     Lazy::new(|| Mutex::new(AppUpdateProgress::default()));
+
+#[cfg(feature = "gui")]
+static TAURI_UPDATE: Lazy<Mutex<Option<tauri_plugin_updater::Update>>> =
+    Lazy::new(|| Mutex::new(None));
+
+#[cfg(feature = "gui")]
+static TAURI_UPDATE_BYTES: Lazy<Mutex<Option<Vec<u8>>>> =
+    Lazy::new(|| Mutex::new(None));
 
 /// GitHub Release asset entry
 #[derive(serde::Deserialize)]
@@ -197,7 +215,6 @@ fn fetch_and_download_update() -> Result<String, String> {
 /// POST /api/v1/app-update/start
 ///
 /// Begin downloading the latest Grove release in the background.
-/// Only applicable when running as a macOS .app bundle.
 pub async fn start_app_update() -> Json<serde_json::Value> {
     // Reject if already downloading
     {
@@ -213,7 +230,71 @@ pub async fn start_app_update() -> Json<serde_json::Value> {
         ..Default::default()
     };
 
-    // Spawn blocking download task
+    // 1. Try GUI mode / AppBundle using Tauri updater first
+    #[cfg(feature = "gui")]
+    {
+        if let Some(app) = crate::cli::gui::TAURI_APP.get() {
+            let app_clone = app.clone();
+            tokio::task::spawn(async move {
+                use tauri_plugin_updater::UpdaterExt;
+                match app_clone.updater() {
+                    Ok(updater) => match updater.check().await {
+                        Ok(Some(update)) => {
+                            let version = update.version.clone();
+                            {
+                                let mut prog = UPDATE_PROGRESS.lock().unwrap();
+                                prog.version = Some(version);
+                            }
+                            *TAURI_UPDATE.lock().unwrap() = Some(update.clone());
+                            
+                            let mut downloaded = 0;
+                            let on_chunk = move |chunk_len: usize, total: Option<u64>| {
+                                downloaded += chunk_len;
+                                let mut prog = UPDATE_PROGRESS.lock().unwrap();
+                                prog.downloaded = downloaded as u64;
+                                if let Some(t) = total {
+                                    prog.total = t;
+                                }
+                            };
+                            let on_download_finish = || {
+                                // Download finished successfully
+                            };
+                            match update.download(on_chunk, on_download_finish).await {
+                                Ok(bytes) => {
+                                    *TAURI_UPDATE_BYTES.lock().unwrap() = Some(bytes);
+                                    let mut prog = UPDATE_PROGRESS.lock().unwrap();
+                                    prog.stage = AppUpdateStage::Ready;
+                                }
+                                Err(e) => {
+                                    let mut prog = UPDATE_PROGRESS.lock().unwrap();
+                                    prog.stage = AppUpdateStage::Error;
+                                    prog.error = Some(format!("Tauri download failed: {e}"));
+                                }
+                            }
+                        }
+                        Ok(None) => {
+                            let mut prog = UPDATE_PROGRESS.lock().unwrap();
+                            prog.stage = AppUpdateStage::Error;
+                            prog.error = Some("No update available".to_string());
+                        }
+                        Err(e) => {
+                            let mut prog = UPDATE_PROGRESS.lock().unwrap();
+                            prog.stage = AppUpdateStage::Error;
+                            prog.error = Some(format!("Tauri update check failed: {e}"));
+                        }
+                    },
+                    Err(e) => {
+                        let mut prog = UPDATE_PROGRESS.lock().unwrap();
+                        prog.stage = AppUpdateStage::Error;
+                        prog.error = Some(format!("Tauri updater initialization failed: {e}"));
+                    }
+                }
+            });
+            return Json(serde_json::json!({"ok": true}));
+        }
+    }
+
+    // 2. Fallback to CLI / User-Local path mode (downloading manually via fetch_and_download_update)
     tokio::task::spawn_blocking(|| match fetch_and_download_update() {
         Ok(version) => {
             let mut prog = UPDATE_PROGRESS.lock().unwrap();
@@ -250,6 +331,33 @@ pub async fn install_app_update() -> Json<serde_json::Value> {
         }
     }
 
+    // 1. Try GUI mode / AppBundle using Tauri updater first
+    #[cfg(feature = "gui")]
+    {
+        if crate::cli::gui::TAURI_APP.get().is_some() {
+            let update_opt = TAURI_UPDATE.lock().unwrap().take();
+            let bytes_opt = TAURI_UPDATE_BYTES.lock().unwrap().take();
+            if let (Some(update), Some(bytes)) = (update_opt, bytes_opt) {
+                UPDATE_PROGRESS.lock().unwrap().stage = AppUpdateStage::Installing;
+                match update.install(bytes) {
+                    Ok(_) => {
+                        tokio::spawn(async move {
+                            tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+                            std::process::exit(0);
+                        });
+                        return Json(serde_json::json!({"ok": true}));
+                    }
+                    Err(e) => {
+                        let mut prog = UPDATE_PROGRESS.lock().unwrap();
+                        prog.stage = AppUpdateStage::Error;
+                        prog.error = Some(format!("Tauri installation failed: {e}"));
+                    }
+                }
+            }
+        }
+    }
+
+    // 2. Fallback to CLI / User-Local path mode (custom helper script replacement & relaunch)
     let current_exe = match std::env::current_exe() {
         Ok(p) => p,
         Err(e) => {
@@ -304,16 +412,21 @@ pub async fn install_app_update() -> Json<serde_json::Value> {
         return Json(serde_json::json!({"ok": false, "error": "Failed to copy binary"}));
     }
 
-    // Write the helper script that replaces the binary and re-opens the app
+    // Get current arguments to relaunch the server identically
+    let args: Vec<String> = std::env::args().collect();
+    let args_str = args[1..].join(" ");
+
+    // Write the helper script that replaces the binary and re-launches the app
     let script = format!(
         "#!/bin/bash\n\
          sleep 1\n\
          cp /tmp/grove-update-binary {exe}\n\
          chmod +x {exe}\n\
-         open /Applications/Grove.app\n\
+         nohup {exe} {args_str} >/dev/null 2>&1 &\n\
          rm -rf /tmp/grove-update-binary /tmp/grove-update.tar.gz /tmp/grove-update-extract\n\
          rm -f \"$0\"\n",
-        exe = current_exe_str
+        exe = current_exe_str,
+        args_str = args_str
     );
 
     if let Err(e) = std::fs::write("/tmp/grove-updater.sh", &script) {

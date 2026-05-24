@@ -5,7 +5,15 @@
 set -e
 
 REPO="GarrickZ2/grove"
-INSTALL_DIR="${INSTALL_DIR:-/usr/local/bin}"
+# Setup default installation directory (prefer ~/.local/bin if it's in PATH, otherwise fallback to /usr/local/bin)
+if [ -z "$INSTALL_DIR" ]; then
+    LOCAL_BIN="$HOME/.local/bin"
+    if [ -d "$LOCAL_BIN" ] && echo "$PATH" | grep -q "$LOCAL_BIN"; then
+        INSTALL_DIR="$LOCAL_BIN"
+    else
+        INSTALL_DIR="/usr/local/bin"
+    fi
+fi
 BINARY_NAME="grove"
 GROVE_GUI="${GROVE_GUI:-0}"
 

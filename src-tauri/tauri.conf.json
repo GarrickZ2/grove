@@ -36,5 +36,14 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ]
+  },
+  "plugins": {
+    "updater": {
+      "active": true,
+      "pubkey": "RWRzdHA3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3c=",
+      "endpoints": [
+        "https://raw.githubusercontent.com/GarrickZ2/grove/master/updater.json"
+      ]
+    }
   }
 }
