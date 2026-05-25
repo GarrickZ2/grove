@@ -20,6 +20,7 @@ import { DiffReviewPage } from "./components/Review";
 import { HelpOverlay } from "./components/Tasks/HelpOverlay";
 import { SkillsPage } from "./components/Skills";
 import { AIPage, GlobalAudioRecorder } from "./components/AI";
+import { AutomationPage } from "./components/Automation/AutomationPage";
 import { ProjectStatsPage } from "./components/Stats/ProjectStatsPage";
 import { UpdateBanner } from "./components/ui/UpdateBanner";
 import { CommandPalette } from "./components/ui/CommandPalette";
@@ -724,6 +725,43 @@ function AppContent() {
         return <WorkPage key="work" />;
       case "resource":
         return <ResourcePage />;
+      case "automation":
+        return (
+          <AutomationPage
+            onOpenChat={(taskId, chatId) => {
+              // Mirror the tray's deep-link handoff (this same file,
+              // `handleNavigate` around line 552). Two paths exist:
+              //
+              //   • Tasks route → setNavigationData({taskId, chatId}).
+              //     TasksPage consumes it and itself dispatches
+              //     grove:switch-chat once mounted.
+              //   • Work route (Local Task) → TasksPage isn't on the
+              //     path at all, so we must plant `__grove_pending_chat`
+              //     on window before mount. WorkPage's TaskChat reads
+              //     this on init; without it useInitialChatLoad falls
+              //     back to readLastActiveTab and our chatId is ignored.
+              const projectId = selectedProject?.id;
+              if (!projectId) return;
+              const isLocal = taskId === "_local";
+              if (isLocal) {
+                (window as unknown as Record<string, unknown>).__grove_pending_chat = {
+                  projectId,
+                  taskId,
+                  chatId,
+                };
+                setActiveItem("work");
+                window.dispatchEvent(
+                  new CustomEvent("grove:switch-chat", {
+                    detail: { projectId, taskId, chatId },
+                  }),
+                );
+              } else {
+                setActiveItem("tasks");
+                setNavigationData({ taskId, chatId });
+              }
+            }}
+          />
+        );
       case "skills":
         return <SkillsPage />;
       case "ai":
@@ -756,6 +794,7 @@ function AppContent() {
     activeItem === "skills" ||
     activeItem === "ai" ||
     activeItem === "resource" ||
+    activeItem === "automation" ||
     activeItem === "statistics";
 
   const sidebarProps = {

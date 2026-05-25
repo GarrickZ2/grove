@@ -21,6 +21,7 @@
     "@xterm/addon-webgl": "^0.19.0",
     "@xterm/xterm": "^6.0.0",
     "boring-avatars": "^2.0.4",
+    "cronstrue": "^2.61.0",
     "d3-force": "^3.0.0",
     "flexlayout-react": "^0.8.18",
     "framer-motion": "^12.30.1",

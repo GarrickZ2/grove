@@ -3645,6 +3645,17 @@ impl AcpSessionHandle {
         q.clone()
     }
 
+    /// Remove every pending message whose `sender` matches the given filter
+    /// exactly. Used by the Automation cancel path to drop all queued prompts
+    /// tagged `automation:<run_id>` in one call without having to track the
+    /// individual `QueuedMessage.id`s. Returns the number of removed entries.
+    pub fn dequeue_messages_by_sender(&self, sender: &str) -> usize {
+        let mut q = self.pending_queue.lock().unwrap();
+        let before = q.len();
+        q.retain(|m| m.sender.as_deref() != Some(sender));
+        before - q.len()
+    }
+
     /// 删除队列中指定 id 的消息。返回 `(found, snapshot)`:
     /// - `found = false` 时调用方应回报"消息已被发送/已不在队列"以让前端关闭编辑态。
     pub fn dequeue_message_by_id(&self, id: &str) -> (bool, Vec<QueuedMessage>) {

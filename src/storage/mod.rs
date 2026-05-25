@@ -3,6 +3,7 @@ pub mod agent_install;
 pub mod agent_registry;
 pub mod agent_supplement;
 pub mod ai;
+pub mod automations;
 pub mod chat_attachments;
 pub mod chat_history;
 pub mod comments;

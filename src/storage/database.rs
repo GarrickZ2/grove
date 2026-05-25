@@ -101,6 +101,26 @@ fn open_at(db_path: &std::path::Path) -> Result<Connection> {
 
 /// Create all tables if they don't exist
 pub(crate) fn create_schema(conn: &Connection) -> Result<()> {
+    // Dev-only schema reset for automation_runs. The table evolved during
+    // development (started_at/finished_at → triggered_at/queued_at/completed_at
+    // + several new columns) and the new CREATE INDEX references columns the
+    // old schema doesn't have. CREATE TABLE IF NOT EXISTS won't update an
+    // existing table, so we detect the legacy column and drop the table here
+    // — automation_runs is dev-time history, no migration owed. Remove this
+    // block once the new schema has shipped to users.
+    let has_legacy_automation_runs: bool = conn
+        .query_row(
+            "SELECT COUNT(*) FROM pragma_table_info('automation_runs') WHERE name = 'started_at'",
+            [],
+            |row| row.get::<_, i64>(0),
+        )
+        .unwrap_or(0)
+        > 0;
+    if has_legacy_automation_runs {
+        conn.execute_batch("DROP TABLE IF EXISTS automation_runs;")?;
+        eprintln!("[automation] dropped legacy automation_runs (dev-phase schema reset)");
+    }
+
     conn.execute_batch(
         "
         -- Projects
@@ -427,6 +447,71 @@ pub(crate) fn create_schema(conn: &Connection) -> Result<()> {
             ON chat_token_usage(project_key, end_ts);
         CREATE INDEX IF NOT EXISTS ix_chat_token_usage_end
             ON chat_token_usage(end_ts);
+
+        -- Automations: scheduled prompts that fire into a (task, chat session)
+        -- pair on a cron schedule. task_template / session_template are JSON
+        -- payloads consumed only when task_mode / session_mode = 'new'.
+        CREATE TABLE IF NOT EXISTS automations (
+            id               TEXT PRIMARY KEY,
+            project          TEXT NOT NULL,
+            name             TEXT NOT NULL,
+            enabled          INTEGER NOT NULL DEFAULT 1,
+            task_mode        TEXT NOT NULL,        -- 'new' | 'existing'
+            task_id          TEXT,
+            task_template    TEXT,                 -- JSON {name,target,notes}
+            session_mode     TEXT NOT NULL,        -- 'new' | 'existing'
+            chat_id          TEXT,
+            session_template TEXT,                 -- JSON {agent,launch_mode,title,custom_agent_id}
+            prompt           TEXT NOT NULL,
+            schedule_cron    TEXT NOT NULL,
+            last_run_at      INTEGER,
+            last_run_status  TEXT,
+            last_run_error   TEXT,
+            next_run_at      INTEGER,
+            created_at       INTEGER NOT NULL,
+            updated_at       INTEGER NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS ix_automations_project
+            ON automations(project, updated_at DESC);
+        CREATE INDEX IF NOT EXISTS ix_automations_next_run
+            ON automations(enabled, next_run_at);
+
+        -- Automation run history. One row per trigger. Three-stage timeline:
+        --   triggered_at  cron tick or manual click
+        --   queued_at     prompt successfully entered the ACP pending queue
+        --   completed_at  agent reported Complete (or Error / timeout / cancel)
+        -- Status state machine:
+        --   queued → running → success | failed | timeout | cancelled | interrupted
+        -- 'running' is skipped on pre-pickup terminal transitions (resolve_*
+        -- error, spawn_acp error, or a user cancel before the agent saw our
+        -- prompt). 'interrupted' is set on startup-sweep when Grove restarted
+        -- while runs were still in 'queued' OR 'running' (round-3 fix).
+        -- agent_response captures up to 16KB of the agent's last_assistant_text
+        -- at Complete time — NULL when the agent only ran tools (no text), or
+        -- when the run never completed.
+        --
+        -- Snapshots (prompt_snapshot, agent_snapshot) are frozen at trigger
+        -- time so editing the automation later doesn't rewrite history.
+        CREATE TABLE IF NOT EXISTS automation_runs (
+            id                 TEXT PRIMARY KEY,
+            automation_id      TEXT NOT NULL,
+            trigger_kind       TEXT NOT NULL,           -- 'cron' | 'manual'
+            prompt_snapshot    TEXT NOT NULL,
+            agent_snapshot     TEXT,
+            resolved_task_id   TEXT,
+            resolved_chat_id   TEXT,
+            triggered_at       INTEGER NOT NULL,
+            queued_at          INTEGER,
+            completed_at       INTEGER,
+            status             TEXT NOT NULL,           -- queued|running|success|failed|timeout|cancelled|interrupted
+            phase              TEXT,                    -- resolve_task|resolve_session|spawn_acp|queue|agent_run
+            error              TEXT,
+            agent_response     TEXT                     -- last_assistant_text, max 16KB
+        );
+        CREATE INDEX IF NOT EXISTS ix_automation_runs_by_automation
+            ON automation_runs(automation_id, triggered_at DESC);
+        CREATE INDEX IF NOT EXISTS ix_automation_runs_queued
+            ON automation_runs(status, triggered_at) WHERE status = 'queued';
     ",
     )?;
 

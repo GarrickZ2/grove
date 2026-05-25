@@ -6,6 +6,7 @@ mod api;
 mod app;
 #[cfg(not(windows))]
 mod async_ops_state;
+mod automation;
 mod check;
 mod cli;
 #[cfg(not(windows))]

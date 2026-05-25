@@ -725,6 +725,10 @@ pub fn create_api_router() -> Router {
             "/projects/{id}/automations/{aid}/runs",
             get(handlers::automations::list_runs),
         )
+        .route(
+            "/projects/{id}/automations/{aid}/runs/{run_id}/cancel",
+            post(handlers::automations::cancel_run),
+        )
         // Walkie-Talkie / Radio
         .route(
             "/radio/connect-info",
@@ -1043,11 +1047,11 @@ pub async fn start_server(
     let sweep_now = chrono::Utc::now().timestamp();
     match crate::storage::automations::sweep_interrupted_runs(sweep_now) {
         Ok(n) if n > 0 => {
-            eprintln!("[automation] swept {n} stale queued run(s) → interrupted");
+            crate::automation::awarn!("swept {n} stale queued run(s) → interrupted");
         }
         Ok(_) => {}
         Err(e) => {
-            eprintln!("[automation] startup sweep failed: {e}");
+            crate::automation::awarn!("startup sweep failed: {e}");
         }
     }
     crate::automation::scheduler::spawn();

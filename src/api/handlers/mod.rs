@@ -6,6 +6,7 @@ pub mod agent_pty;
 pub mod agent_usage;
 pub mod agents;
 pub mod ai;
+pub mod automations;
 pub mod common;
 pub mod config;
 pub mod custom_agent;

@@ -14,6 +14,7 @@ import {
   Bell,
   Search,
   Layers,
+  Repeat,
 } from "lucide-react";
 import { ProjectSelector } from "./ProjectSelector";
 import { NotificationPopover } from "./NotificationPopover";
@@ -37,6 +38,7 @@ const ALL_NAV_ITEMS: Record<string, NavItem> = {
   work: { id: "work", label: "Work", icon: Laptop },
   tasks: { id: "tasks", label: "Tasks", icon: ListTodo },
   resource: { id: "resource", label: "Studio", icon: Layers },
+  automation: { id: "automation", label: "Automation", icon: Repeat },
   skills: { id: "skills", label: "Skills", icon: Blocks },
   ai: { id: "ai", label: "AI", icon: Sparkles },
   statistics: { id: "statistics", label: "Statistics", icon: BarChart2 },
