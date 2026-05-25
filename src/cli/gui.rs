@@ -9,7 +9,8 @@ use std::sync::Arc;
 
 const DAEMON_ENV: &str = "GROVE_GUI_DAEMON";
 
-pub static TAURI_APP: once_cell::sync::OnceCell<tauri::AppHandle> = once_cell::sync::OnceCell::new();
+pub static TAURI_APP: once_cell::sync::OnceCell<tauri::AppHandle> =
+    once_cell::sync::OnceCell::new();
 
 /// Open an http(s) URL in the OS default browser.
 ///

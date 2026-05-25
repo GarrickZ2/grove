@@ -48,8 +48,8 @@ use serde::Deserialize;
 use crate::agent_graph::error::AgentGraphError;
 use crate::agent_graph::tools::{
     grove_agent_capability, grove_agent_contacts, grove_agent_reply, grove_agent_send,
-    grove_agent_spawn, CapabilityInput, ContactsInput, ReplyInput, SendInput, SpawnInput,
-    ToolContext,
+    grove_agent_spawn, grove_agent_set_title, CapabilityInput, ContactsInput, ReplyInput,
+    SendInput, SpawnInput, SetTitleInput, ToolContext,
 };
 use crate::storage::config;
 
@@ -312,7 +312,7 @@ impl ServerHandler for AgentGraphMcpService {
 #[tool_router]
 impl AgentGraphMcpService {
     #[tool(
-        name = "grove_agent_spawn",
+        name = "graph_spawn",
         description = "Create a new sibling Session in your task and auto-establish caller→child edge. Blocks until the spawned ACP agent is ready (90s timeout). Returns session_id + capabilities."
     )]
     async fn grove_agent_spawn_tool(
@@ -328,7 +328,7 @@ impl AgentGraphMcpService {
     }
 
     #[tool(
-        name = "grove_agent_send",
+        name = "graph_send",
         description = "Deliver a message to another Session in your task. Requires a caller→to outgoing edge. The target sees the message as a user prompt wrapped in a `<grove-meta>{...}</grove-meta>` envelope (JSON inside). The envelope's `system-prompt` field carries the human-readable framing (sender name, session id, kind=send, msg_id) and the `message` field carries your raw text. If the target is busy, the message is queued and visible in its pending list; it dequeues automatically when the current turn ends. Single-in-flight: cannot send a second message before the previous one is replied to."
     )]
     async fn grove_agent_send_tool(
@@ -344,7 +344,7 @@ impl AgentGraphMcpService {
     }
 
     #[tool(
-        name = "grove_agent_reply",
+        name = "graph_reply",
         description = "Reply to a pending message addressed to you. Consumes the reply ticket. The original sender receives the reply wrapped in a `<grove-meta>{...}</grove-meta>` envelope (JSON), with `system-prompt` describing the reply framing (sender, session id, kind=reply, msg_id) and `message` carrying your raw text. No edge requirement; reply is always permitted on a valid ticket."
     )]
     async fn grove_agent_reply_tool(
@@ -360,7 +360,7 @@ impl AgentGraphMcpService {
     }
 
     #[tool(
-        name = "grove_agent_contacts",
+        name = "graph_contacts",
         description = "Return your own metadata, who you can contact (outgoing edges), pending replies you owe, pending messages awaiting reply from others, and all spawnable targets (base agents, custom servers, personas) via can_spawn[]."
     )]
     async fn grove_agent_contacts_tool(
@@ -376,8 +376,8 @@ impl AgentGraphMcpService {
     }
 
     #[tool(
-        name = "grove_agent_capability",
-        description = "Inspect a session's available models, modes, and thought_levels. The session must be in your task and currently online (its session.json exists). NOTE: this tool does NOT auto-spawn — if you get AgentOffline, send the target a message via grove_agent_send first to wake it, then re-query."
+        name = "graph_capability",
+        description = "Inspect a session's available models, modes, and thought_levels. The session must be in your task and currently online (its session.json exists). NOTE: this tool does NOT auto-spawn — if you get AgentOffline, send the target a message via graph_send first to wake it, then re-query."
     )]
     async fn grove_agent_capability_tool(
         &self,
@@ -386,6 +386,22 @@ impl AgentGraphMcpService {
     ) -> Result<CallToolResult, McpError> {
         let cx = caller_context_from_parts(&parts)?;
         match grove_agent_capability(&cx, input).await {
+            Ok(out) => json_success(&out),
+            Err(e) => Ok(tool_error(e)),
+        }
+    }
+
+    #[tool(
+        name = "set_title",
+        description = "Rename the current Session's title. Broadcasts changes to update frontend UI and menu tray."
+    )]
+    async fn grove_agent_set_title_tool(
+        &self,
+        Parameters(input): Parameters<SetTitleInput>,
+        Extension(parts): Extension<Parts>,
+    ) -> Result<CallToolResult, McpError> {
+        let cx = caller_context_from_parts(&parts)?;
+        match grove_agent_set_title(&cx, input).await {
             Ok(out) => json_success(&out),
             Err(e) => Ok(tool_error(e)),
         }
@@ -401,8 +417,8 @@ impl AgentGraphMcpService {
 
     /// Open a URL in the user's Chrome browser
     #[tool(
-        name = "grove_browser_open",
-        description = "Open a URL in the user's Chrome browser and return the new tab_id. When browser_control.auto_groups is enabled, the new tab is auto-organized into a Chrome Tab Group named after the current task. Use the returned tab_id with grove_browser_snapshot / _interact / _extract / _screenshot. Requires the Chrome Companion Extension to be connected."
+        name = "browser_open",
+        description = "Open a URL in the user's Chrome browser and return the new tab_id. When browser_control.auto_groups is enabled, the new tab is auto-organized into a Chrome Tab Group named after the current task. Use the returned tab_id with browser_snapshot / _interact / _extract / _screenshot. Requires the Chrome Companion Extension to be connected."
     )]
     async fn grove_browser_open_tool(
         &self,
@@ -434,8 +450,8 @@ impl AgentGraphMcpService {
 
     /// Take an accessibility-tree snapshot of a specific browser tab
     #[tool(
-        name = "grove_browser_snapshot",
-        description = "Snapshot a specific browser tab (identified by tab_id from grove_browser_open). Returns a simplified Accessibility Tree with interactive elements tagged @e1, @e2, … for use in grove_browser_interact."
+        name = "browser_snapshot",
+        description = "Snapshot a specific browser tab (identified by tab_id from browser_open). Returns a simplified Accessibility Tree with interactive elements tagged @e1, @e2, … for use in browser_interact."
     )]
     async fn grove_browser_snapshot_tool(
         &self,
@@ -456,8 +472,8 @@ impl AgentGraphMcpService {
 
     /// Perform a DOM interaction on a specific browser tab
     #[tool(
-        name = "grove_browser_interact",
-        description = "Perform an interactive DOM gesture on a specific browser tab (identified by tab_id from grove_browser_open). Target elements via @e1/@e2 refs from grove_browser_snapshot, or CSS selectors. Actions: click, dblclick, fill, type, focus, hover, check, uncheck, press."
+        name = "browser_interact",
+        description = "Perform an interactive DOM gesture on a specific browser tab (identified by tab_id from browser_open). Target elements via @e1/@e2 refs from browser_snapshot, or CSS selectors. Actions: click, dblclick, fill, type, focus, hover, check, uncheck, press."
     )]
     async fn grove_browser_interact_tool(
         &self,
@@ -483,8 +499,8 @@ impl AgentGraphMcpService {
 
     /// Extract text or HTML content from a specific browser tab
     #[tool(
-        name = "grove_browser_extract",
-        description = "Extract structured content from a specific browser tab (identified by tab_id from grove_browser_open). extract_type: text (innerText), html (outerHTML), value (input value), url, title. Optionally target a specific element via @e ref or CSS selector."
+        name = "browser_extract",
+        description = "Extract structured content from a specific browser tab (identified by tab_id from browser_open). extract_type: text (innerText), html (outerHTML), value (input value), url, title. Optionally target a specific element via @e ref or CSS selector."
     )]
     async fn grove_browser_extract_tool(
         &self,
@@ -509,8 +525,8 @@ impl AgentGraphMcpService {
 
     /// Capture a screenshot of a specific browser tab
     #[tool(
-        name = "grove_browser_screenshot",
-        description = "Capture a screenshot of a specific browser tab (identified by tab_id from grove_browser_open). Returns the image as an MCP `image` content (PNG) — the client renders it directly, no base64 in text."
+        name = "browser_screenshot",
+        description = "Capture a screenshot of a specific browser tab (identified by tab_id from browser_open). Returns the image as an MCP `image` content (PNG) — the client renders it directly, no base64 in text."
     )]
     async fn grove_browser_screenshot_tool(
         &self,
@@ -916,17 +932,18 @@ mod tests {
             .into_iter()
             .map(|t| t.name.to_string())
             .collect();
-        assert!(names.contains(&"grove_agent_spawn".to_string()));
-        assert!(names.contains(&"grove_agent_send".to_string()));
-        assert!(names.contains(&"grove_agent_reply".to_string()));
-        assert!(names.contains(&"grove_agent_contacts".to_string()));
-        assert!(names.contains(&"grove_agent_capability".to_string()));
-        assert!(names.contains(&"grove_browser_open".to_string()));
-        assert!(names.contains(&"grove_browser_snapshot".to_string()));
-        assert!(names.contains(&"grove_browser_interact".to_string()));
-        assert!(names.contains(&"grove_browser_extract".to_string()));
-        assert!(names.contains(&"grove_browser_screenshot".to_string()));
-        assert_eq!(names.len(), 10);
+        assert!(names.contains(&"graph_spawn".to_string()));
+        assert!(names.contains(&"graph_send".to_string()));
+        assert!(names.contains(&"graph_reply".to_string()));
+        assert!(names.contains(&"graph_contacts".to_string()));
+        assert!(names.contains(&"graph_capability".to_string()));
+        assert!(names.contains(&"browser_open".to_string()));
+        assert!(names.contains(&"browser_snapshot".to_string()));
+        assert!(names.contains(&"browser_interact".to_string()));
+        assert!(names.contains(&"browser_extract".to_string()));
+        assert!(names.contains(&"browser_screenshot".to_string()));
+        assert!(names.contains(&"set_title".to_string()));
+        assert_eq!(names.len(), 11);
     }
 
     /// End-to-end test of the HTTP transport: real axum listener bound on a
@@ -1078,11 +1095,11 @@ mod tests {
         let list_body: String = list_resp.text().await.expect("body");
         // Body may be JSON or SSE-framed. Inspect for tool names.
         for tool in [
-            "grove_agent_spawn",
-            "grove_agent_send",
-            "grove_agent_reply",
-            "grove_agent_contacts",
-            "grove_agent_capability",
+            "graph_spawn",
+            "graph_send",
+            "graph_reply",
+            "graph_contacts",
+            "graph_capability",
         ] {
             assert!(list_body.contains(tool), "tools/list missing {tool}");
         }
@@ -1093,7 +1110,7 @@ mod tests {
             "id": 3,
             "method": "tools/call",
             "params": {
-                "name": "grove_agent_contacts",
+                "name": "graph_contacts",
                 "arguments": {}
             }
         });

@@ -134,7 +134,7 @@ pub fn build_injected_prompt(
     let system_prompt = match (kind, msg_id) {
         (InjectKind::Send, Some(id)) => format!(
             "From session \"{name}\" (id={sid}). To reply, call the MCP tool \
-             `grove_agent_reply` with msg_id=\"{id}\". Do not reply by sending a \
+             `grove_agent_graph_reply` with msg_id=\"{id}\". Do not reply by sending a \
              new message; replies are routed by msg_id.",
             name = sender_name,
             sid = sender_chat_id,
@@ -152,7 +152,7 @@ pub fn build_injected_prompt(
         (InjectKind::Remind, Some(id)) => format!(
             "REMINDER (not a new request): the user is asking you to look at the \
              pending message from session \"{name}\" (id={sid}, msg_id={id}). \
-             Reply via `grove_agent_reply` with that msg_id when ready.",
+             Reply via `grove_agent_graph_reply` with that msg_id when ready.",
             name = sender_name,
             sid = sender_chat_id,
         ),
@@ -219,7 +219,7 @@ mod tests {
         assert_eq!(env["data"]["agent"], "claude");
         assert_eq!(env["data"]["msg_id"], "msg-1");
         let system_prompt = env["system-prompt"].as_str().unwrap();
-        assert!(system_prompt.contains("grove_agent_reply"));
+        assert!(system_prompt.contains("grove_agent_graph_reply"));
         assert!(system_prompt.contains("msg_id=\"msg-1\""));
         assert!(s.ends_with("\n\nhi"));
     }
@@ -241,7 +241,7 @@ mod tests {
         assert!(!env["system-prompt"]
             .as_str()
             .unwrap()
-            .contains("grove_agent_reply"));
+            .contains("grove_agent_graph_reply"));
         assert!(s.ends_with("\n\nhi"));
     }
 

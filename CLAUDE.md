@@ -6,7 +6,7 @@ Grove is a workspace for humans + AI agents to build software together. Single R
 
 **Headline features**:
 - **Every coding agent in parallel** — 10 built-in (Claude Code, Codex, Gemini CLI, Copilot, Cursor, Junie, Trae, Kimi, Qwen, OpenCode), 3 more ACP-ready (Hermes, Kiro, OpenClaw), plus BYO via ACP-over-stdio or HTTP. Each task = its own git worktree + terminal session, so agents don't collide.
-- **Agent Graph** — typed DAG of agents exchanging structured `<grove-meta>` messages. Planner spawns coder; coder spawns reviewer. 6 MCP tools (`grove_agent_spawn` / `_send` / `_reply` / `_contacts` / `_capability` / `_get_spawn_candidates`).
+- **Agent Graph** — typed DAG of agents exchanging structured `<grove-meta>` messages. Planner spawns coder; coder spawns reviewer. 6 MCP tools (`grove_agent_graph_spawn` / `_send` / `_reply` / `_contacts` / `_capability` / `_set_title`).
 - **Studio** — first-class surface for non-coders (designers, PMs, brand). Excalidraw canvases agents can read, shared assets hard-linked across worktrees, Project Memory + Workspace Instructions editor.
 - **Code Review** — threaded resolvable comments, AI batch-fixer, commit → rebase → merge → archive in one step with squash-merge detection.
 - **Five surfaces from one binary**: TUI · Web · GUI · Mobile (LAN + HMAC) · Radio (voice walkie-talkie from phone).

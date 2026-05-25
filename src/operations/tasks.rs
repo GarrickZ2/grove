@@ -639,12 +639,13 @@ fn create_task_inner(
              ```\n\
              ## Getting Started\n\
              \n\
-             1. Read `instructions.md` for project-level context and guidelines.\n\
-             2. Read `memory.md` for accumulated project knowledge from past sessions.\n\
-             3. Ask the user what they need, or read their chat message. Browse `input/` and `resource/` for any material they reference.\n\
-             4. Write final results and deliverables to `output/`.\n\
-             5. Use `internal/` for intermediate files, scratch work, and working data.\n\
-             6. Place any scripts in `scripts/`.\n\n\
+             1. **Analyze user intent and rename session immediately**: First, read the user\'s chat message to identify their primary goal or intent. You **MUST** immediately call the `grove_agent_set_title` MCP tool to rename this chat session to a concise, descriptive title (e.g., \"Refactor Auth\", \"Fix memory leak\") reflecting that intent. Do not start work under a generic or default title.\n\
+             2. Read `instructions.md` for project-level context and guidelines.\n\
+             3. Read `memory.md` for accumulated project knowledge from past sessions.\n\
+             4. Browse `input/` and `resource/` for any material the user references.\n\
+             5. Write final results and deliverables to `output/`.\n\
+             6. Use `internal/` for intermediate files, scratch work, and working data.\n\
+             7. Place any scripts in `scripts/`.\n\n\
              ## Rules\n\
              \n\
              - ALWAYS read `instructions.md` before starting work.\n\
@@ -655,7 +656,12 @@ fn create_task_inner(
              - NEVER modify files in `resource/` — it is a read-only symlink to the project vault.\n\
              - NEVER modify files in `input/` unless the user explicitly asks you to.\n\
              - NEVER modify `instructions.md` — it is a read-only symlink.\n\
-             - Keep `output/` organized. Use subdirectories if you produce many files.\n\n\
+             - Keep `output/` organized. Use subdirectories if you produce many files.\n\
+             - **CRITICAL Session Renaming Rule (MANDATORY)**: You **MUST** ensure this chat session has a descriptive, concise title.\n\
+               1. **On Start**: Immediately upon reading the user\'s initial prompt and identifying their goal, rename the session using the `grove_agent_set_title` MCP tool.\n\
+               2. **During the Turn**: If the conversation topic shifts, a new subtask is identified, or the user requests it, you **MUST** call `grove_agent_set_title` again to update the title to keep the workspace task graph organized.\n\
+               Do NOT leave the chat session with a generic or default title. Adherence to this renaming rule is a hard requirement.\n\
+             \n\
              ## Memory\n\
              \n\
              `memory.md` is a shared project memory file. It persists across all tasks and\n\

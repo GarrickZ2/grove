@@ -693,7 +693,7 @@ fn build_mcp_servers(
     if let Some(token) = agent_graph_token {
         if let Some(url) = crate::api::handlers::agent_graph_mcp::build_mcp_url(token) {
             servers.push(acp::McpServer::Http(acp::McpServerHttp::new(
-                "grove_agent_graph",
+                "grove_agent",
                 url,
             )));
         }

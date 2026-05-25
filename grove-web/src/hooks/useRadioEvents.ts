@@ -14,7 +14,7 @@ export interface RadioEventCallbacks {
   ) => void;
   onHookAdded?: (projectId: string, taskId: string) => void;
   /** Fired when the chat list under a task changes — typically after the
-   *  `grove_agent_spawn` MCP tool creates a sibling session. Consumers should
+   *  `grove_agent_graph_spawn` MCP tool creates a sibling session. Consumers should
    *  refetch the task's chat list (e.g. `listChats(projectId, taskId)`) so the
    *  new chat appears in the UI without manual refresh. */
   onChatListChanged?: (projectId: string, taskId: string) => void;

@@ -1114,6 +1114,32 @@ pub async fn update_chat(
         },
     );
 
+    // Get the current ACP session handle status if it exists, otherwise "disconnected".
+    let session_key = format!("{}:{}:{}", project_key, task_id, chat_id);
+    let status = if let Some(h) = acp::get_session_handle(&session_key) {
+        h.derive_node_status().to_string()
+    } else {
+        "disconnected".to_string()
+    };
+
+    crate::api::handlers::walkie_talkie::broadcast_radio_event(
+        crate::api::handlers::walkie_talkie::RadioEvent::ChatStatus {
+            project_id: project_id.clone(),
+            task_id: task_id.clone(),
+            chat_id: chat_id.clone(),
+            status,
+            permission: None,
+            project_name: None,
+            task_name: None,
+            chat_title: Some(body.title.clone()),
+            agent: Some(chat.agent.clone()),
+            prompt: None,
+            message: None,
+            todo_completed: None,
+            todo_total: None,
+        },
+    );
+
     Ok(Json(ChatSessionResponse::build(
         &project_key,
         &task_id,

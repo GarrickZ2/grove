@@ -1189,7 +1189,7 @@ function expandAgentMentionChip(node: HTMLElement): string {
     return buildGroveMetaTag(
       "mention_spawn",
       { agent },
-      `@[agent=${agent} · use grove_agent_spawn to create a Session, then grove_agent_send to dispatch]`,
+      `@[agent=${agent} · use grove_agent_graph_spawn to create a Session, then grove_agent_graph_send to dispatch]`,
     );
   }
   if (kind === "agent_send") {
@@ -1203,7 +1203,7 @@ function expandAgentMentionChip(node: HTMLElement): string {
     return buildGroveMetaTag(
       "mention_send",
       data,
-      `@[session id=${id}, name=${name}, duty="${duty}" · use grove_agent_send(to="${id}") to dispatch]`,
+      `@[session id=${id}, name=${name}, duty="${duty}" · use grove_agent_graph_send(to="${id}") to dispatch]`,
     );
   }
   if (kind === "agent_reply") {
@@ -1216,7 +1216,7 @@ function expandAgentMentionChip(node: HTMLElement): string {
     return buildGroveMetaTag(
       "mention_reply",
       data,
-      `@[session id=${id}, name=${name}, pending_msg=${msg} · use grove_agent_reply(msg_id="${msg}") to respond]`,
+      `@[session id=${id}, name=${name}, pending_msg=${msg} · use grove_agent_graph_reply(msg_id="${msg}") to respond]`,
     );
   }
   if (kind === "chat_history") {
@@ -2942,7 +2942,7 @@ export function TaskChat({
   );
 
   // ─── Auto-refetch chat list on RadioEvent::ChatListChanged ─────────────
-  // Fired by the `grove_agent_spawn` MCP tool after a sibling session is
+  // Fired by the `grove_agent_graph_spawn` MCP tool after a sibling session is
   // spawned. Without this hook, an agent-spawned chat would be invisible in
   // the UI until the user manually refreshed.
   useRadioEvents({
@@ -2968,7 +2968,7 @@ export function TaskChat({
         setChats(fresh);
 
         // If a tray/notification deep-link was waiting on this chat to
-        // appear (race: Open clicked before grove_agent_spawn's chat is in
+        // appear (race: Open clicked before grove_agent_graph_spawn's chat is in
         // listChats yet), satisfy it now.
         const pending = (window as unknown as Record<string, unknown>)
           .__grove_pending_chat as

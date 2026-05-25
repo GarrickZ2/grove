@@ -217,14 +217,36 @@ export function TrayPopover() {
     ) => {
       setChats((prev) => {
         const ts = Date.now();
-        const existing = prev.get(chatId);
+        const originalExisting = prev.get(chatId);
         const next = new Map(prev);
 
         const project_name =
-          payload?.project_name ?? existing?.project_name ?? projectId;
-        const task_name = payload?.task_name ?? existing?.task_name ?? taskId;
-        const chat_title = payload?.chat_title ?? existing?.chat_title ?? null;
-        const agent = payload?.agent ?? existing?.agent ?? null;
+          payload?.project_name ?? originalExisting?.project_name ?? projectId;
+        const task_name = payload?.task_name ?? originalExisting?.task_name ?? taskId;
+        const chat_title = payload?.chat_title ?? originalExisting?.chat_title ?? null;
+        const agent = payload?.agent ?? originalExisting?.agent ?? null;
+
+        // Keep existing as a const to allow TypeScript's type narrowing!
+        const existing = originalExisting
+          ? {
+              ...originalExisting,
+              chat_title,
+              project_name,
+              task_name,
+              agent,
+            }
+          : undefined;
+
+        if (originalExisting && existing) {
+          const hasMetaChanges =
+            originalExisting.chat_title !== chat_title ||
+            originalExisting.project_name !== project_name ||
+            originalExisting.task_name !== task_name ||
+            originalExisting.agent !== agent;
+          if (hasMetaChanges) {
+            next.set(chatId, existing);
+          }
+        }
 
         switch (status) {
           case "busy": {

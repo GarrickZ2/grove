@@ -120,8 +120,7 @@ static TAURI_UPDATE: Lazy<Mutex<Option<tauri_plugin_updater::Update>>> =
     Lazy::new(|| Mutex::new(None));
 
 #[cfg(feature = "gui")]
-static TAURI_UPDATE_BYTES: Lazy<Mutex<Option<Vec<u8>>>> =
-    Lazy::new(|| Mutex::new(None));
+static TAURI_UPDATE_BYTES: Lazy<Mutex<Option<Vec<u8>>>> = Lazy::new(|| Mutex::new(None));
 
 /// GitHub Release asset entry
 #[derive(serde::Deserialize)]
@@ -246,7 +245,7 @@ pub async fn start_app_update() -> Json<serde_json::Value> {
                                 prog.version = Some(version);
                             }
                             *TAURI_UPDATE.lock().unwrap() = Some(update.clone());
-                            
+
                             let mut downloaded = 0;
                             let on_chunk = move |chunk_len: usize, total: Option<u64>| {
                                 downloaded += chunk_len;

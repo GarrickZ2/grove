@@ -1073,6 +1073,66 @@ pub(crate) async fn ensure_target_handle(
     }
 }
 
+// ─── grove_agent_set_title ────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
+pub struct SetTitleInput {
+    /// The new title for this session. Must be a non-empty string.
+    pub title: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct SetTitleOutput {
+    pub session_id: String,
+    pub old_title: String,
+    pub new_title: String,
+}
+
+pub async fn grove_agent_set_title(
+    cx: &ToolContext,
+    input: SetTitleInput,
+) -> AgentGraphResult<SetTitleOutput> {
+    let (project_key, task_id, caller_chat) = cx.caller_context()?;
+
+    let trimmed_title = input.title.trim();
+    if trimmed_title.is_empty() {
+        return Err(AgentGraphError::Internal("title cannot be empty".to_string()));
+    }
+
+    tasks::update_chat_title(&project_key, &task_id, &caller_chat.id, trimmed_title)
+        .map_err(AgentGraphError::from)?;
+
+    // Broadcast ChatListChanged so sidebar/other views pick up the change
+    broadcast_radio_event(RadioEvent::ChatListChanged {
+        project_id: project_key.clone(),
+        task_id: task_id.clone(),
+    });
+
+    // Broadcast ChatStatus so menu tray and graph pick up the change.
+    // Since the AI caller is calling a tool right now, the derived node status is "busy".
+    broadcast_radio_event(RadioEvent::ChatStatus {
+        project_id: project_key.clone(),
+        task_id: task_id.clone(),
+        chat_id: caller_chat.id.clone(),
+        status: "busy".to_string(),
+        permission: None,
+        project_name: None,
+        task_name: None,
+        chat_title: Some(trimmed_title.to_string()),
+        agent: Some(caller_chat.agent.clone()),
+        prompt: None,
+        message: None,
+        todo_completed: None,
+        todo_total: None,
+    });
+
+    Ok(SetTitleOutput {
+        session_id: caller_chat.id,
+        old_title: caller_chat.title,
+        new_title: trimmed_title.to_string(),
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1527,7 +1587,7 @@ mod tests {
                 assert!(text.contains("\"name\":\"Alice\""));
                 assert!(text.contains("\"msg_id\":\"msg-"));
                 assert!(text.contains("\n\nhello from A"));
-                assert!(text.contains("grove_agent_reply"));
+                assert!(text.contains("grove_agent_graph_reply"));
                 assert_eq!(sender.as_deref(), Some("agent:chat-A"));
             }
             other => panic!("expected UserMessage, got {:?}", other),
@@ -1695,5 +1755,32 @@ mod tests {
         assert!(graph_db::get_pending_message(&conn, "msg-1")
             .expect("query")
             .is_none());
+    }
+
+    #[tokio::test]
+    async fn set_title_updates_session_title_and_broadcasts() {
+        let _l = test_lock().lock().await;
+        let _h = TempHome::new();
+        seed_chat("p", "t", "chat-A", "Alice", Some("dispatcher"));
+
+        let cx = ToolContext::new("chat-A".into());
+        let out = grove_agent_set_title(
+            &cx,
+            SetTitleInput {
+                title: "NewAliceName".into(),
+            },
+        )
+        .await
+        .expect("set_title ok");
+
+        assert_eq!(out.session_id, "chat-A");
+        assert_eq!(out.old_title, "Alice");
+        assert_eq!(out.new_title, "NewAliceName");
+
+        // Verify database is updated
+        let chat = tasks::get_chat_session("p", "t", "chat-A")
+            .expect("query chat")
+            .expect("row exists");
+        assert_eq!(chat.title, "NewAliceName");
     }
 }

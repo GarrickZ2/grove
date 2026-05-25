@@ -372,20 +372,20 @@ fn get_instructions() -> &'static str {
 fn filter_tools(all: Vec<Tool>) -> Vec<Tool> {
     // Visible in every in-task context (Coding, Studio, and the unknown-project
     // fallback state).
-    let common_in_task: HashSet<&'static str> = HashSet::from(["grove_status", "grove_read_notes"]);
+    let common_in_task: HashSet<&'static str> = HashSet::from(["status", "read_notes"]);
     // Coding-task-only tools.
     let coding_only: HashSet<&'static str> = HashSet::from([
-        "grove_read_review",
-        "grove_reply_review",
-        "grove_add_comment",
-        "grove_complete_task",
+        "read_review",
+        "reply_review",
+        "add_comment",
+        "complete_task",
     ]);
     // Studio-task-only tools (also exposed to the orchestrator, see below).
     let studio_only: HashSet<&'static str> = HashSet::from([
-        "grove_sketch_read_me",
-        "grove_sketch_list",
-        "grove_sketch_read",
-        "grove_sketch_draw",
+        "sketch_read_me",
+        "sketch_list",
+        "sketch_read",
+        "sketch_draw",
     ]);
     // Union of every in-task tool (used to carve out the orchestrator surface
     // — orchestrator never sees any in-task tool, including sketch).
@@ -1091,7 +1091,7 @@ fn resolve_agent_identity(
 impl GroveMcpServer {
     /// Check if running inside a Grove task and get task context
     #[tool(
-        name = "grove_status",
+        name = "status",
         description = "CALL THIS FIRST before using any other Grove tools. Checks if you are running inside a Grove task environment. Returns task context including task_id, branch name, target branch, and project name. If in_grove_task is false, do NOT use other Grove tools."
     )]
     async fn grove_status(&self) -> Result<CallToolResult, McpError> {
@@ -1121,7 +1121,7 @@ impl GroveMcpServer {
 
     /// Register a project by local path (idempotent)
     #[tool(
-        name = "grove_add_project_by_path",
+        name = "add_project_by_path",
         description = "Register a Git project by its local filesystem path. Idempotent — safe to call repeatedly."
     )]
     async fn grove_add_project_by_path(
@@ -1135,7 +1135,7 @@ impl GroveMcpServer {
 
     /// List all registered projects
     #[tool(
-        name = "grove_list_projects",
+        name = "list_projects",
         description = "List registered projects. Use `query` to fuzzy-filter by path."
     )]
     async fn grove_list_projects(
@@ -1149,7 +1149,7 @@ impl GroveMcpServer {
 
     /// Create a task/worktree under a project (does NOT start tmux/zellij session)
     #[tool(
-        name = "grove_create_task",
+        name = "create_task",
         description = "Create an isolated subtask under a project. Tasks run in parallel without interfering with each other."
     )]
     async fn grove_create_task(
@@ -1163,7 +1163,7 @@ impl GroveMcpServer {
 
     /// List active tasks under a project
     #[tool(
-        name = "grove_list_tasks",
+        name = "list_tasks",
         description = "List active tasks under a project. Use `query` to fuzzy-filter by name or branch."
     )]
     async fn grove_list_tasks(
@@ -1178,7 +1178,7 @@ impl GroveMcpServer {
 
     /// Write or update notes for a task (management tool for orchestrator agents)
     #[tool(
-        name = "grove_edit_note",
+        name = "edit_note",
         description = "Write or update notes for a task. Used to set task spec, context, and instructions before the task agent starts working."
     )]
     async fn grove_edit_note(
@@ -1192,7 +1192,7 @@ impl GroveMcpServer {
 
     /// List available agents
     #[tool(
-        name = "grove_list_agents",
+        name = "list_agents",
         description = "List available agents that can be used to start chat sessions. Returns built-in and custom agents with their capabilities."
     )]
     async fn grove_list_agents(&self) -> Result<CallToolResult, McpError> {
@@ -1202,7 +1202,7 @@ impl GroveMcpServer {
 
     /// Start a new chat session for a task
     #[tool(
-        name = "grove_start_chat",
+        name = "start_chat",
         description = "Create and start a chat session for a task. Spawns the agent process. Returns chat_id, name, and agent. After calling this, use grove_chat_status to wait for the agent to be ready and get available modes/models."
     )]
     async fn grove_start_chat(
@@ -1216,7 +1216,7 @@ impl GroveMcpServer {
 
     /// Send a prompt, respond to permission, or cancel a chat turn
     #[tool(
-        name = "grove_send_prompt",
+        name = "send_prompt",
         description = "Interact with a chat session. Three mutually exclusive actions: (1) `text` — send a prompt (optionally set mode_id/model_id, or both thought_level_config_id + thought_level_value_id for reasoning-effort). (2) `permission_option_id` — respond to a pending permission request. (3) `cancel: true` — cancel the current turn. Returns immediately. IMPORTANT: Always call grove_chat_status first to check the session state and available modes/models/thought_levels before sending."
     )]
     async fn grove_send_prompt(
@@ -1230,7 +1230,7 @@ impl GroveMcpServer {
 
     /// Query chat status (auto-connects the session if not running)
     #[tool(
-        name = "grove_chat_status",
+        name = "chat_status",
         description = "Get the current state of a chat session. Auto-connects the agent if not already running. Returns: state (idle/busy/permission_needed), available_modes, available_models, available_thought_levels (+ current_thought_level_id / thought_level_config_id when the agent exposes one), turn_count, last_message, plan, and permission details. Always call this before grove_send_prompt to know the session state and available selectors."
     )]
     async fn grove_chat_status(
@@ -1244,7 +1244,7 @@ impl GroveMcpServer {
 
     /// List chats for a task
     #[tool(
-        name = "grove_list_chats",
+        name = "list_chats",
         description = "List all chat sessions under a task. Returns id, title, agent, and creation time for each chat."
     )]
     async fn grove_list_chats(
@@ -1258,7 +1258,7 @@ impl GroveMcpServer {
 
     /// Return the Grove sketch element-format reference (cheat sheet).
     #[tool(
-        name = "grove_sketch_read_me",
+        name = "sketch_read_me",
         description = "Return the Grove sketch drawing reference: Excalidraw element format, color palette, Grove pseudo-elements (restoreCheckpoint / delete / cameraUpdate), camera sizing rules, and worked examples. Call this ONCE before your first `grove_sketch_draw` in a conversation. Do not call it repeatedly — the content does not change."
     )]
     async fn grove_sketch_read_me(&self) -> Result<CallToolResult, McpError> {
@@ -1270,7 +1270,7 @@ impl GroveMcpServer {
 
     /// List Excalidraw sketches in the current Studio task.
     #[tool(
-        name = "grove_sketch_list",
+        name = "sketch_list",
         description = "List sketches in the current Studio task. Returns [{id, name, created_at, updated_at}]. No arguments — task is taken from GROVE_* env. Call this before `grove_sketch_read` to find sketches by name."
     )]
     async fn grove_sketch_list(
@@ -1288,7 +1288,7 @@ impl GroveMcpServer {
 
     /// Read a sketch summary (and optionally the full scene) from the current task.
     #[tool(
-        name = "grove_sketch_read",
+        name = "sketch_read",
         description = "Read a sketch in the current Studio task. Returns a rendered image (if the web client has uploaded a fresh thumbnail), a summary (element count, type breakdown, content bounds), and a FRESH checkpoint_id you can pass back via `restoreCheckpoint` in grove_sketch_draw. Set detail_full=true to also include the full Excalidraw scene JSON (costs more tokens)."
     )]
     async fn grove_sketch_read(
@@ -1316,7 +1316,7 @@ impl GroveMcpServer {
 
     /// Draw / modify a sketch in the current Studio task.
     #[tool(
-        name = "grove_sketch_draw",
+        name = "sketch_draw",
         description = "Draw or modify a sketch in the current Studio task. `sketch` is the sketch name (auto-created if no sketch with that name exists). `elements` is an ordered array of Excalidraw elements plus Grove pseudo-elements (`restoreCheckpoint` first to continue from a prior state, `delete` to remove elements, `cameraUpdate` for viewport hints). Returns a new checkpoint_id; save it and pass it back via `restoreCheckpoint` on the next call to append incrementally. Call `grove_sketch_read_me` once for the format reference, and `grove_sketch_read` before editing an existing sketch."
     )]
     async fn grove_sketch_draw(
@@ -1435,7 +1435,7 @@ impl GroveMcpServer {
 
     /// Read user-written notes for the current task
     #[tool(
-        name = "grove_read_notes",
+        name = "read_notes",
         description = "Read user-written notes for the current Grove task. Notes contain important context, requirements, and instructions set by the user. Call grove_status first to ensure you are in a Grove task."
     )]
     async fn grove_read_notes(&self) -> Result<CallToolResult, McpError> {
@@ -1458,7 +1458,7 @@ impl GroveMcpServer {
 
     /// Read review comments for the current task
     #[tool(
-        name = "grove_read_review",
+        name = "read_review",
         description = "Read code review comments for the current Grove task. Returns comments with IDs, locations, content, and status (open/resolved/outdated). Use grove_reply_review to respond to comments. Call grove_status first to ensure you are in a Grove task."
     )]
     async fn grove_read_review(&self) -> Result<CallToolResult, McpError> {
@@ -1542,7 +1542,7 @@ impl GroveMcpServer {
 
     /// Reply to review comments (supports batch)
     #[tool(
-        name = "grove_reply_review",
+        name = "reply_review",
         description = "Reply to one or more code review comments. Supports batch replies to reduce tool calls. Call grove_read_review first to get comment IDs. You can also mark comments as resolved by setting resolve=true — only the original comment creator (matched by agent_name + role) is allowed to resolve."
     )]
     async fn grove_reply_review(
@@ -1659,7 +1659,7 @@ impl GroveMcpServer {
     /// Add review comments. Supports three levels: inline (code lines), file (entire file),
     /// project (overall). Use for code review, questions, improvements, or visualizing plans.
     #[tool(
-        name = "grove_add_comment",
+        name = "add_comment",
         description = "Create review comments. Three levels: 'inline' (specific lines), 'file' (entire file), 'project' (overall feedback). Use for code review, raising questions, suggesting improvements, or visualizing implementation plans by marking key points. Pass array with one item to create single comment, multiple items for batch."
     )]
     async fn grove_add_comment(
@@ -1805,7 +1805,7 @@ impl GroveMcpServer {
 
     /// Complete the current task: commit, sync (rebase), and merge
     #[tool(
-        name = "grove_complete_task",
+        name = "complete_task",
         description = "Complete the current Grove task in one operation. This will: (1) commit all changes with your message, (2) sync with target branch via rebase, (3) merge into target branch. If rebase conflicts occur, resolve them and call this tool again. IMPORTANT: ONLY call this tool when the user explicitly requests task completion. NEVER call it automatically or proactively. Call grove_status first to ensure you are in a Grove task."
     )]
     async fn grove_complete_task(
@@ -3831,16 +3831,16 @@ mod tests {
 
         // Management tools are visible to the orchestrator.
         for name in [
-            "grove_add_project_by_path",
-            "grove_list_projects",
-            "grove_create_task",
-            "grove_list_tasks",
-            "grove_edit_note",
-            "grove_list_agents",
-            "grove_start_chat",
-            "grove_send_prompt",
-            "grove_chat_status",
-            "grove_list_chats",
+            "add_project_by_path",
+            "list_projects",
+            "create_task",
+            "list_tasks",
+            "edit_note",
+            "list_agents",
+            "start_chat",
+            "send_prompt",
+            "chat_status",
+            "list_chats",
         ] {
             assert!(
                 names.contains(name),
@@ -3850,17 +3850,16 @@ mod tests {
         }
         // In-task tools (including sketch — Studio-worker-exclusive) must NOT appear.
         for name in [
-            "grove_status",
-            "grove_read_notes",
-            "grove_read_review",
-            "grove_reply_review",
-            "grove_add_comment",
-            "grove_complete_task",
-            "grove_sketch_list",
-            "grove_sketch_new",
-            "grove_sketch_read",
-            "grove_sketch_patch",
-            "grove_sketch_replace",
+            "status",
+            "read_notes",
+            "read_review",
+            "reply_review",
+            "add_comment",
+            "complete_task",
+            "sketch_read_me",
+            "sketch_list",
+            "sketch_read",
+            "sketch_draw",
         ] {
             assert!(!names.contains(name), "tool '{}' leaked out of task", name);
         }
@@ -3879,30 +3878,29 @@ mod tests {
         let names: HashSet<String> = tools.into_iter().map(|t| t.name.to_string()).collect();
 
         // Only the always-on in-task pair is visible in this degraded state.
-        for name in ["grove_status", "grove_read_notes"] {
+        for name in ["status", "read_notes"] {
             assert!(names.contains(name), "expected '{}' in unknown state", name);
         }
         // Coding-only, Studio-only, and management tools are all hidden.
         for name in [
-            "grove_read_review",
-            "grove_reply_review",
-            "grove_add_comment",
-            "grove_complete_task",
-            "grove_sketch_list",
-            "grove_sketch_new",
-            "grove_sketch_read",
-            "grove_sketch_patch",
-            "grove_sketch_replace",
-            "grove_add_project_by_path",
-            "grove_list_projects",
-            "grove_create_task",
-            "grove_list_tasks",
-            "grove_edit_note",
-            "grove_list_agents",
-            "grove_start_chat",
-            "grove_send_prompt",
-            "grove_chat_status",
-            "grove_list_chats",
+            "read_review",
+            "reply_review",
+            "add_comment",
+            "complete_task",
+            "sketch_read_me",
+            "sketch_list",
+            "sketch_read",
+            "sketch_draw",
+            "add_project_by_path",
+            "list_projects",
+            "create_task",
+            "list_tasks",
+            "edit_note",
+            "list_agents",
+            "start_chat",
+            "send_prompt",
+            "chat_status",
+            "list_chats",
         ] {
             assert!(
                 !names.contains(name),
@@ -3963,7 +3961,7 @@ mod tests {
         let add_resp = client
             .call_tool(
                 2,
-                "grove_add_project_by_path",
+                "add_project_by_path",
                 json!({"path": repo.to_string_lossy()}),
             )
             .await;
@@ -3975,7 +3973,7 @@ mod tests {
         let create_resp = client
             .call_tool(
                 3,
-                "grove_create_task",
+                "create_task",
                 json!({"project_id": project_id, "name": "mcp smoke task"}),
             )
             .await;
@@ -4027,46 +4025,46 @@ mod tests {
         let resp_2 = client
             .call_tool(
                 2,
-                "grove_add_project_by_path",
+                "add_project_by_path",
                 json!({"path": repo.to_string_lossy()}),
             )
             .await;
         assert_tool_rejected(&resp_2);
 
-        let resp_3 = client.call_tool(3, "grove_list_projects", json!({})).await;
+        let resp_3 = client.call_tool(3, "list_projects", json!({})).await;
         assert_tool_rejected(&resp_3);
 
         let resp_4 = client
             .call_tool(
                 4,
-                "grove_create_task",
+                "create_task",
                 json!({"project_id": "deadbeef", "name": "task"}),
             )
             .await;
         assert_tool_rejected(&resp_4);
 
         let resp_5 = client
-            .call_tool(5, "grove_list_tasks", json!({"project_id": "deadbeef"}))
+            .call_tool(5, "list_tasks", json!({"project_id": "deadbeef"}))
             .await;
         assert_tool_rejected(&resp_5);
 
         let resp_6 = client
             .call_tool(
                 6,
-                "grove_edit_note",
+                "edit_note",
                 json!({"project_id": "deadbeef", "task_id": "t1", "content": "hello"}),
             )
             .await;
         assert_tool_rejected(&resp_6);
 
         // New ACP management tools should also be rejected inside task context
-        let resp_7 = client.call_tool(7, "grove_list_agents", json!({})).await;
+        let resp_7 = client.call_tool(7, "list_agents", json!({})).await;
         assert_tool_rejected(&resp_7);
 
         let resp_8 = client
             .call_tool(
                 8,
-                "grove_start_chat",
+                "start_chat",
                 json!({"project_id": "x", "task_id": "y"}),
             )
             .await;
@@ -4075,7 +4073,7 @@ mod tests {
         let resp_9 = client
             .call_tool(
                 9,
-                "grove_send_prompt",
+                "send_prompt",
                 json!({"project_id": "x", "task_id": "y", "chat_id": "z", "text": "hi"}),
             )
             .await;
@@ -4084,7 +4082,7 @@ mod tests {
         let resp_10 = client
             .call_tool(
                 10,
-                "grove_chat_status",
+                "chat_status",
                 json!({"project_id": "x", "task_id": "y", "chat_id": "z"}),
             )
             .await;
@@ -4093,7 +4091,7 @@ mod tests {
         let resp_11 = client
             .call_tool(
                 11,
-                "grove_list_chats",
+                "list_chats",
                 json!({"project_id": "x", "task_id": "y"}),
             )
             .await;
@@ -4128,8 +4126,8 @@ mod tests {
         let mut client = McpTestClient::start().await;
         client.handshake().await;
 
-        // grove_status should return all task context fields
-        let resp = client.call_tool(2, "grove_status", json!({})).await;
+        // status should return all task context fields
+        let resp = client.call_tool(2, "status", json!({})).await;
         let text = resp["result"]["content"][0]["text"].as_str().unwrap();
         let status: serde_json::Value = serde_json::from_str(text).unwrap();
 
@@ -4179,22 +4177,22 @@ mod tests {
         let mut client = McpTestClient::start().await;
         client.handshake().await;
 
-        // --- grove_read_notes: no notes exist → friendly message ---
-        let resp = client.call_tool(2, "grove_read_notes", json!({})).await;
+        // --- read_notes: no notes exist → friendly message ---
+        let resp = client.call_tool(2, "read_notes", json!({})).await;
         let text = resp["result"]["content"][0]["text"].as_str().unwrap();
         assert_eq!(text, "No notes yet.");
 
-        // --- grove_read_notes: save notes, then read back ---
+        // --- read_notes: save notes, then read back ---
         notes::save_notes(&project_key, &task_id, "Remember to add tests").unwrap();
-        let resp = client.call_tool(3, "grove_read_notes", json!({})).await;
+        let resp = client.call_tool(3, "read_notes", json!({})).await;
         let text = resp["result"]["content"][0]["text"].as_str().unwrap();
         assert_eq!(text, "Remember to add tests");
 
-        // --- grove_add_comment: project-level → success ---
+        // --- add_comment: project-level → success ---
         let resp = client
             .call_tool(
                 4,
-                "grove_add_comment",
+                "add_comment",
                 json!({
                     "comments": [{"comment_type": "project", "content": "Needs more tests"}]
                 }),
@@ -4206,11 +4204,11 @@ mod tests {
         let comment_id = add_result["created"][0]["comment_id"].as_u64().unwrap();
         assert_eq!(add_result["created"][0]["type"].as_str(), Some("project"));
 
-        // --- grove_add_comment: inline missing file_path → error ---
+        // --- add_comment: inline missing file_path → error ---
         let resp = client
             .call_tool(
                 5,
-                "grove_add_comment",
+                "add_comment",
                 json!({
                     "comments": [{"comment_type": "inline", "content": "fix this", "start_line": 1}]
                 }),
@@ -4222,8 +4220,8 @@ mod tests {
             serde_json::to_string(&resp).unwrap()
         );
 
-        // --- grove_read_review: returns the created comment ---
-        let resp = client.call_tool(6, "grove_read_review", json!({})).await;
+        // --- read_review: returns the created comment ---
+        let resp = client.call_tool(6, "read_review", json!({})).await;
         let text = resp["result"]["content"][0]["text"].as_str().unwrap();
         let review: serde_json::Value = serde_json::from_str(text).unwrap();
         assert_eq!(review["open_count"].as_u64(), Some(1));
@@ -4233,11 +4231,11 @@ mod tests {
         );
         assert_eq!(review["comments"][0]["type"].as_str(), Some("project"));
 
-        // --- grove_reply_review: reply to existing comment → success ---
+        // --- reply_review: reply to existing comment → success ---
         let resp = client
             .call_tool(
                 7,
-                "grove_reply_review",
+                "reply_review",
                 json!({
                     "replies": [{"comment_id": comment_id, "message": "Done, added tests"}]
                 }),
@@ -4247,20 +4245,20 @@ mod tests {
         let reply_result: serde_json::Value = serde_json::from_str(text).unwrap();
         assert_eq!(reply_result["replies"][0]["success"].as_bool(), Some(true));
 
-        // --- grove_reply_review: empty replies → error ---
+        // --- reply_review: empty replies → error ---
         let resp = client
-            .call_tool(8, "grove_reply_review", json!({"replies": []}))
+            .call_tool(8, "reply_review", json!({"replies": []}))
             .await;
         assert!(
             resp.get("error").is_some(),
             "expected error for empty replies array"
         );
 
-        // --- grove_reply_review: nonexistent comment → error ---
+        // --- reply_review: nonexistent comment → error ---
         let resp = client
             .call_tool(
                 9,
-                "grove_reply_review",
+                "reply_review",
                 json!({"replies": [{"comment_id": 9999, "message": "hello"}]}),
             )
             .await;
@@ -4313,31 +4311,31 @@ mod tests {
             );
         }
 
-        // grove_read_notes: no data on disk → graceful message, not a crash
-        let resp = client.call_tool(2, "grove_read_notes", json!({})).await;
+        // read_notes: no data on disk → graceful message, not a crash
+        let resp = client.call_tool(2, "read_notes", json!({})).await;
         let text = resp["result"]["content"][0]["text"].as_str().unwrap();
         assert_eq!(text, "No notes yet.");
 
-        // grove_read_review: no data on disk → graceful message
-        let resp = client.call_tool(3, "grove_read_review", json!({})).await;
+        // read_review: no data on disk → graceful message
+        let resp = client.call_tool(3, "read_review", json!({})).await;
         let text = resp["result"]["content"][0]["text"].as_str().unwrap();
         assert_eq!(text, "No code review comments yet.");
 
-        // grove_reply_review: project not registered → rejected
+        // reply_review: project not registered → rejected
         let resp = client
             .call_tool(
                 4,
-                "grove_reply_review",
+                "reply_review",
                 json!({"replies": [{"comment_id": 1, "message": "hi"}]}),
             )
             .await;
         assert_error_contains(&resp, "Project not found");
 
-        // grove_add_comment: project not registered → rejected (no orphan data)
+        // add_comment: project not registered → rejected (no orphan data)
         let resp = client
             .call_tool(
                 5,
-                "grove_add_comment",
+                "add_comment",
                 json!({
                     "comments": [{"comment_type": "project", "content": "orphan comment"}]
                 }),
@@ -4353,11 +4351,11 @@ mod tests {
         env.set("GROVE_PROJECT", &canonical_repo);
         // GROVE_TASK_ID still points to "ghost-task" which doesn't exist
 
-        // grove_add_comment: project exists but task doesn't → rejected
+        // add_comment: project exists but task doesn't → rejected
         let resp = client
             .call_tool(
                 6,
-                "grove_add_comment",
+                "add_comment",
                 json!({
                     "comments": [{"comment_type": "project", "content": "orphan comment"}]
                 }),
@@ -4365,11 +4363,11 @@ mod tests {
             .await;
         assert_error_contains(&resp, "Task not found");
 
-        // grove_reply_review: project exists but task doesn't → rejected
+        // reply_review: project exists but task doesn't → rejected
         let resp = client
             .call_tool(
                 7,
-                "grove_reply_review",
+                "reply_review",
                 json!({"replies": [{"comment_id": 1, "message": "hi"}]}),
             )
             .await;
@@ -4419,7 +4417,7 @@ mod tests {
         let resp = client
             .call_tool(
                 2,
-                "grove_edit_note",
+                "edit_note",
                 json!({"project_id": "nonexistent", "task_id": &task_id, "content": "x"}),
             )
             .await;
@@ -4432,7 +4430,7 @@ mod tests {
         let resp = client
             .call_tool(
                 3,
-                "grove_edit_note",
+                "edit_note",
                 json!({"project_id": &project_id, "task_id": "ghost", "content": "x"}),
             )
             .await;
@@ -4445,7 +4443,7 @@ mod tests {
         let resp = client
             .call_tool(
                 4,
-                "grove_edit_note",
+                "edit_note",
                 json!({
                     "project_id": &project_id,
                     "task_id": &task_id,
@@ -4468,7 +4466,7 @@ mod tests {
         let mut client = McpTestClient::start().await;
         client.handshake().await;
 
-        let resp = client.call_tool(2, "grove_read_notes", json!({})).await;
+        let resp = client.call_tool(2, "read_notes", json!({})).await;
         let text = resp["result"]["content"][0]["text"].as_str().unwrap();
         assert_eq!(text, "## Task Spec\nImplement feature X");
 

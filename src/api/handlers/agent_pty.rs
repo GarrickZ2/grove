@@ -265,7 +265,7 @@ fn build_mcp_config_file(
         // env (set on the parent claude process by the launcher above) and
         // proxies stdio JSON-RPC to the HTTP listener.
         servers.insert(
-            "grove_agent_graph".into(),
+            "grove_agent".into(),
             json!({
                 "command": "grove",
                 "args": ["mcp-bridge"],

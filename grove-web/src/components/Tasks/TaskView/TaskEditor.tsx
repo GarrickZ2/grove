@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import Editor, { type Monaco } from "@monaco-editor/react";
 import { X, FileCode, Loader2, Save, Maximize2, Minimize2, PanelLeftOpen, PanelLeftClose, RefreshCw, AlertCircle } from "lucide-react";
-import { Button } from "../../ui";
+import { Button, getPreviewType } from "../../ui";
 import { FileTree } from "./FileTree";
 import type { FileTreeNode } from "../../../utils/fileTree";
 import { useIsMobile } from "../../../hooks";
@@ -503,6 +503,13 @@ export function TaskEditor({ projectId, taskId, onClose, fullscreen = false, onT
     // On mobile, close file tree after selecting
     if (isMobile) setFileTreeVisible(false);
 
+    if (getPreviewType(path) === 'image') {
+      setFileContent('');
+      editorContentRef.current = '';
+      setLoading(false);
+      return;
+    }
+
     try {
       const res = await getFileContent(projectId, taskId, path);
       setFileContent(res.content);
@@ -553,6 +560,7 @@ export function TaskEditor({ projectId, taskId, onClose, fullscreen = false, onT
   // Save file
   const handleSave = useCallback(async () => {
     if (!selectedFile || saving || refreshing) return;
+    if (getPreviewType(selectedFile) === 'image') return;
 
     setSaving(true);
     try {
@@ -601,10 +609,16 @@ export function TaskEditor({ projectId, taskId, onClose, fullscreen = false, onT
       setTreeKey(k => k + 1);
 
       if (selectedFile) {
-        const fileRes = await getFileContent(projectId, taskId, selectedFile);
-        setFileContent(fileRes.content);
-        editorContentRef.current = fileRes.content;
-        setModified(false);
+        if (getPreviewType(selectedFile) === 'image') {
+          setFileContent('');
+          editorContentRef.current = '';
+          setModified(false);
+        } else {
+          const fileRes = await getFileContent(projectId, taskId, selectedFile);
+          setFileContent(fileRes.content);
+          editorContentRef.current = fileRes.content;
+          setModified(false);
+        }
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -948,59 +962,96 @@ export function TaskEditor({ projectId, taskId, onClose, fullscreen = false, onT
               </div>
             </div>
           ) : selectedFile ? (
-            <Editor
-              height="100%"
-              language={getLanguage(selectedFile)}
-              value={fileContent}
-              onChange={handleEditorChange}
-              onMount={(editor, monaco) => {
-                editorRef.current = editor;
-                setMonacoInstance(monaco);
-                const sessionId = editor.getId?.() as string | undefined;
-                if (sessionId) {
-                  editorRegistry.set(sessionId, {
-                    projectId,
-                    taskId,
-                    monaco,
-                    selectedFileRef,
-                    pendingJumpRef,
-                    handleSelectFileRef,
-                    editor,
-                  });
-                  // Drop the registry entry when Monaco disposes the
-                  // editor (panel close, tab switch, FlexLayout
-                  // re-mount). Without this, late provider lookups
-                  // would target a dead editor.
-                  editor.onDidDispose?.(() => {
-                    editorRegistry.delete(sessionId);
-                  });
-                }
-                const underlineDisposables = attachUnderlineListeners(editor, monaco);
-                editor.onDidDispose?.(() => {
-                  for (const d of underlineDisposables) {
-                    try {
-                      d.dispose();
-                    } catch {
-                      // Monaco disposes its own listeners on
-                      // editor.dispose; this is just defensive.
-                    }
+            getPreviewType(selectedFile) === 'image' ? (
+              <div 
+                className="flex-1 flex flex-col items-center justify-center overflow-auto p-8 relative"
+                style={{
+                  backgroundColor: "var(--color-bg-secondary)",
+                  backgroundImage: "radial-gradient(var(--color-border) 1px, transparent 1px)",
+                  backgroundSize: "16px 16px",
+                }}
+              >
+                <div className="max-w-full max-h-full flex flex-col items-center justify-center gap-3">
+                  <div className="relative rounded-lg overflow-hidden border border-[var(--color-border)] shadow-md bg-[var(--color-bg)] transition-transform duration-200 hover:scale-[1.01]">
+                    <img
+                      src={`/api/v1/projects/${projectId}/tasks/${taskId}/file/raw?path=${encodeURIComponent(selectedFile)}`}
+                      alt={selectedFile}
+                      className="max-w-full max-h-[70vh] object-contain block"
+                      onError={(e) => {
+                        (e.target as HTMLImageElement).style.display = 'none';
+                        (e.target as HTMLImageElement).nextElementSibling?.classList.remove('hidden');
+                      }}
+                    />
+                    <div className="hidden flex-col items-center gap-2 p-8 text-sm text-[var(--color-text-muted)] bg-[var(--color-bg-secondary)]">
+                      <AlertCircle className="w-8 h-8" />
+                      <span>Failed to load image</span>
+                    </div>
+                  </div>
+                  <div className="flex flex-col items-center gap-1">
+                    <span className="text-sm font-medium text-[var(--color-text)]">
+                      {selectedFile.split('/').pop()}
+                    </span>
+                    <span className="text-xs text-[var(--color-text-muted)]">
+                      {selectedFile}
+                    </span>
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <Editor
+                height="100%"
+                language={getLanguage(selectedFile)}
+                value={fileContent}
+                onChange={handleEditorChange}
+                onMount={(editor, monaco) => {
+                  editorRef.current = editor;
+                  setMonacoInstance(monaco);
+                  const sessionId = editor.getId?.() as string | undefined;
+                  if (sessionId) {
+                    editorRegistry.set(sessionId, {
+                      projectId,
+                      taskId,
+                      monaco,
+                      selectedFileRef,
+                      pendingJumpRef,
+                      handleSelectFileRef,
+                      editor,
+                    });
+                    // Drop the registry entry when Monaco disposes the
+                    // editor (panel close, tab switch, FlexLayout
+                    // re-mount). Without this, late provider lookups
+                    // would target a dead editor.
+                    editor.onDidDispose?.(() => {
+                      editorRegistry.delete(sessionId);
+                    });
                   }
-                });
-                void ensureDefinitionProvidersRegistered(monaco);
-                void ensureGlobalEditorServiceHook(editor);
-              }}
-              theme="grove-theme"
-              options={{
-                minimap: { enabled: false },
-                fontSize: 13,
-                lineNumbers: 'on',
-                scrollBeyondLastLine: false,
-                wordWrap: 'on',
-                automaticLayout: true,
-                padding: { top: 8 },
-                renderWhitespace: 'selection',
-              }}
-            />
+                  const underlineDisposables = attachUnderlineListeners(editor, monaco);
+                  editor.onDidDispose?.(() => {
+                    for (const d of underlineDisposables) {
+                      try {
+                        d.dispose();
+                      } catch {
+                        // Monaco disposes its own listeners on
+                        // editor.dispose; this is just defensive.
+                      }
+                    }
+                  });
+                  void ensureDefinitionProvidersRegistered(monaco);
+                  void ensureGlobalEditorServiceHook(editor);
+                }}
+                theme="grove-theme"
+                options={{
+                  minimap: { enabled: false },
+                  fontSize: 13,
+                  lineNumbers: 'on',
+                  scrollBeyondLastLine: false,
+                  wordWrap: 'on',
+                  automaticLayout: true,
+                  padding: { top: 8 },
+                  renderWhitespace: 'selection',
+                }}
+              />
+            )
           ) : (
             <div className="flex-1 flex items-center justify-center">
               <p className="text-sm text-[var(--color-text-muted)]">
