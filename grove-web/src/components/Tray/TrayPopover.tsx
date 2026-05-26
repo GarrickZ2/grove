@@ -469,12 +469,12 @@ export function TrayPopover() {
 
   return (
     <div
-      className={`relative flex h-screen flex-col overflow-hidden bg-[var(--color-bg-secondary)] text-[var(--color-text)] border ${pinned ? "border-[var(--color-highlight)]" : "border-[color-mix(in_srgb,var(--color-border)_70%,transparent)]"}`}
+      className={`relative flex h-full flex-col overflow-hidden bg-[var(--color-bg-secondary)] text-[var(--color-text)] border ${pinned ? "border-[var(--color-highlight)]" : "border-[color-mix(in_srgb,var(--color-border)_70%,transparent)]"}`}
     >
       {/* Header — when pinned, the title strip becomes the drag handle so
           the user can move the floating widget around the screen. */}
       <header
-        className={`flex items-center gap-3 border-b border-[color-mix(in_srgb,var(--color-border)_35%,transparent)] px-4 pt-3.5 pb-3 ${pinned ? "cursor-grab active:cursor-grabbing select-none" : ""}`}
+        className={`flex shrink-0 items-center gap-3 border-b border-[color-mix(in_srgb,var(--color-border)_35%,transparent)] px-4 pt-3.5 pb-3 ${pinned ? "cursor-grab active:cursor-grabbing select-none" : ""}`}
         onMouseDown={handleHeaderMouseDown}
         data-tauri-drag-region={pinned ? "" : undefined}
       >
@@ -545,7 +545,12 @@ export function TrayPopover() {
           inspired by the glass mockup but theme-friendly (works under any
           of Grove's 8 themes via color-mix on the existing tokens). */}
       <LayoutGroup>
-        <div className="flex flex-1 flex-col gap-2 overflow-y-auto overflow-x-hidden p-2">
+        {/* `min-h-0` is load-bearing: without it a flex child's default
+            `min-height: auto` lets the content size dominate, so a long
+            Done list (24 rows) overflows the popover instead of scrolling,
+            and multiple sections appear to "squeeze" each other off-screen
+            instead of producing a single scroll region. */}
+        <div className="flex flex-1 flex-col gap-2 overflow-y-auto overflow-x-hidden p-2 min-h-0">
           {totalAll === 0 ? (
             <EmptyState />
           ) : (
