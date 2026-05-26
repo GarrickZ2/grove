@@ -1,4 +1,4 @@
-import { Terminal, GitCommit, GitBranchPlus, RefreshCw, GitMerge, Archive, RotateCcw, Trash2 } from "lucide-react";
+import { Terminal, GitCommit, GitBranchPlus, RefreshCw, GitMerge, Archive, RotateCcw, Trash2, Edit3 } from "lucide-react";
 import type { Task } from "../data/types";
 import type { ContextMenuItem } from "../components/ui/ContextMenu";
 
@@ -8,6 +8,7 @@ import type { ContextMenuItem } from "../components/ui/ContextMenu";
  */
 export interface TaskOperationHandlers {
   onEnterTerminal?: () => void;
+  onRename?: () => void;
   onCommit?: () => void;
   onRebase?: () => void;
   onSync?: () => void;
@@ -95,6 +96,17 @@ export function buildContextMenuItems(
       icon: Terminal,
       variant: "default",
       onClick: handlers.onEnterTerminal,
+    });
+  }
+
+  // Rename
+  if (handlers.onRename) {
+    items.push({
+      id: "rename",
+      label: "Rename",
+      icon: Edit3,
+      variant: "default",
+      onClick: handlers.onRename,
     });
   }
 

@@ -1,5 +1,5 @@
 import { CommitDialog, ConfirmDialog, DirtyBranchDialog, MergeDialog } from "../Dialogs";
-import { RebaseDialog } from "./dialogs";
+import { RebaseDialog, RenameTaskDialog } from "./dialogs";
 import type { Task } from "../../data/types";
 import type {
   TaskOperationsState,
@@ -158,6 +158,15 @@ export function TaskOperationDialogs({
       <DirtyBranchDialog
         error={opsState.dirtyBranchError}
         onClose={opsHandlers.handleDirtyBranchErrorClose}
+      />
+
+      {/* Rename Dialog */}
+      <RenameTaskDialog
+        key={`rename-${taskName}`}
+        isOpen={opsState.showRenameDialog}
+        taskName={taskName}
+        onClose={opsHandlers.handleRenameCancel}
+        onRename={opsHandlers.handleRenameSubmit}
       />
     </>
   );

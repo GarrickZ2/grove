@@ -512,6 +512,40 @@ pub async fn recover_task(
     })
 }
 
+/// PATCH /api/v1/projects/{id}/tasks/{taskId}
+pub async fn rename_task(
+    Path((id, task_id)): Path<(String, String)>,
+    Json(req): Json<RenameTaskRequest>,
+) -> Result<Json<TaskResponse>, StatusCode> {
+    let (_project, project_key) = common::find_project_by_id(&id)?;
+
+    let name = req.name.trim().to_string();
+    if name.is_empty() || name.len() > 200 {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+
+    let pk = project_key.clone();
+    let tid = task_id.clone();
+    let new_name = name.clone();
+
+    tokio::task::spawn_blocking(move || tasks::update_task_name(&pk, &tid, &new_name))
+        .await
+        .map_err(|e| {
+            eprintln!("[rename_task] join error for task {}: {}", task_id, e);
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?
+        .map_err(|e| {
+            eprintln!("[rename_task] storage error for task {}: {}", task_id, e);
+            match e {
+                crate::error::GroveError::NotFound(_) => StatusCode::NOT_FOUND,
+                _ => StatusCode::INTERNAL_SERVER_ERROR,
+            }
+        })?;
+
+    // Return the updated task
+    get_task(Path((id, task_id))).await
+}
+
 /// DELETE /api/v1/projects/{id}/tasks/{taskId}
 pub async fn delete_task(
     Path((id, task_id)): Path<(String, String)>,

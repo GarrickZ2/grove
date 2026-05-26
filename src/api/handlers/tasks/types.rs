@@ -88,6 +88,12 @@ pub struct CreateTaskRequest {
     pub notes: Option<String>,
 }
 
+/// Rename task request
+#[derive(Debug, Deserialize)]
+pub struct RenameTaskRequest {
+    pub name: String,
+}
+
 /// Notes response
 #[derive(Debug, Serialize)]
 pub struct NotesResponse {
@@ -244,10 +250,20 @@ pub struct ReviewCommentsResponse {
     pub git_user_name: Option<String>,
 }
 
+/// File metadata
+#[derive(Debug, Serialize, Deserialize)]
+pub struct FileMetadata {
+    pub path: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub favicon: Option<String>,
+}
+
 /// File list response
 #[derive(serde::Serialize)]
 pub struct FilesResponse {
     pub files: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub metadata: Option<Vec<FileMetadata>>,
 }
 
 /// File content response

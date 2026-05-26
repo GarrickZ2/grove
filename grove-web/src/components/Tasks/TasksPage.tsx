@@ -576,6 +576,7 @@ export function TasksPage({ initialTaskId, initialChatId, initialViewMode, onNav
   const contextMenuItems = pageState.contextMenu
     ? buildContextMenuItems(pageState.contextMenu.task, {
         onEnterTerminal: () => handleDoubleClickTask(pageState.contextMenu!.task),
+        onRename: opsHandlers.handleRename,
         onCommit: isStudio ? undefined : opsHandlers.handleCommit,
         onRebase: isStudio ? undefined : opsHandlers.handleRebase,
         onSync: isStudio ? undefined : opsHandlers.handleSync,
@@ -839,6 +840,7 @@ export function TasksPage({ initialTaskId, initialChatId, initialViewMode, onNav
 
       {/* New Task Dialog */}
       <NewTaskDialog
+        key={showNewTaskDialog ? "open" : "closed"}
         isOpen={showNewTaskDialog}
         onClose={() => {
           setShowNewTaskDialog(false);

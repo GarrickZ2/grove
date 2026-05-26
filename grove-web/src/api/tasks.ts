@@ -184,6 +184,20 @@ export async function createTask(
 }
 
 /**
+ * Rename a task
+ */
+export async function renameTask(
+  projectId: string,
+  taskId: string,
+  name: string
+): Promise<TaskResponse> {
+  return apiClient.patch<{ name: string }, TaskResponse>(
+    `/api/v1/projects/${projectId}/tasks/${taskId}`,
+    { name }
+  );
+}
+
+/**
  * Archive a task
  */
 export async function archiveTask(
@@ -388,8 +402,14 @@ export async function resetTask(
   );
 }
 
-interface FilesResponse {
+export interface FileMetadata {
+  path: string;
+  favicon?: string;
+}
+
+export interface FilesResponse {
   files: string[];
+  metadata?: FileMetadata[];
 }
 
 export interface DirEntry {

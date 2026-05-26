@@ -2,6 +2,7 @@ import { useState, useCallback } from "react";
 import {
   commitTask as apiCommitTask,
   mergeTask as apiMergeTask,
+  renameTask as apiRenameTask,
   archiveTask as apiArchiveTask,
   syncTask as apiSyncTask,
   rebaseToTask as apiRebaseToTask,
@@ -104,6 +105,10 @@ export interface TaskOperationsState {
   isMerging: boolean;
   mergeError: string | null;
 
+  // Rename
+  showRenameDialog: boolean;
+  isRenaming: boolean;
+
   // Archive (handled via pendingArchiveConfirm in config)
 
   // Sync
@@ -139,6 +144,11 @@ export interface TaskOperationsHandlers {
   handleMerge: () => Promise<void>;
   handleMergeSubmit: (method: "squash" | "merge-commit") => Promise<void>;
   handleMergeCancel: () => void;
+
+  // Rename
+  handleRename: () => void;
+  handleRenameSubmit: (newName: string) => Promise<void>;
+  handleRenameCancel: () => void;
 
   // Archive
   handleArchive: () => Promise<void>;
@@ -195,6 +205,10 @@ export function useTaskOperations(
   const [showMergeDialog, setShowMergeDialog] = useState(false);
   const [isMerging, setIsMerging] = useState(false);
   const [mergeError, setMergeError] = useState<string | null>(null);
+
+  // Rename state
+  const [showRenameDialog, setShowRenameDialog] = useState(false);
+  const [isRenaming, setIsRenaming] = useState(false);
 
   // Sync state
   const [isSyncing, setIsSyncing] = useState(false);
@@ -362,6 +376,42 @@ export function useTaskOperations(
   const handleMergeCancel = useCallback(() => {
     setShowMergeDialog(false);
     setMergeError(null);
+  }, []);
+
+  // --- Rename handlers ---
+  const handleRename = useCallback(() => {
+    setShowRenameDialog(true);
+  }, []);
+
+  const handleRenameSubmit = useCallback(
+    async (newName: string) => {
+      if (!projectId || !selectedTask || isRenaming) return;
+      setIsRenaming(true);
+      try {
+        try {
+          await apiRenameTask(projectId, selectedTask.id, newName);
+        } catch (err) {
+          console.error("Failed to rename task:", err);
+          onShowMessage("Failed to rename task");
+          return;
+        }
+        onShowMessage("Task renamed");
+        setShowRenameDialog(false);
+        // Refresh failures shouldn't masquerade as rename failures
+        try {
+          await onRefresh();
+        } catch (err) {
+          console.error("Failed to refresh after rename:", err);
+        }
+      } finally {
+        setIsRenaming(false);
+      }
+    },
+    [projectId, selectedTask, isRenaming, onRefresh, onShowMessage]
+  );
+
+  const handleRenameCancel = useCallback(() => {
+    setShowRenameDialog(false);
   }, []);
 
   // --- Archive handlers ---
@@ -609,6 +659,8 @@ export function useTaskOperations(
     showMergeDialog,
     isMerging,
     mergeError,
+    showRenameDialog,
+    isRenaming,
     isSyncing,
     showRebaseDialog,
     isRebasing,
@@ -627,6 +679,9 @@ export function useTaskOperations(
     handleMerge,
     handleMergeSubmit,
     handleMergeCancel,
+    handleRename,
+    handleRenameSubmit,
+    handleRenameCancel,
     handleArchive,
     handleArchiveConfirm,
     handleArchiveCancel,

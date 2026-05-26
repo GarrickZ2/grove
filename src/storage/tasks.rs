@@ -291,6 +291,21 @@ pub fn remove_archived_task(project: &str, task_id: &str) -> Result<()> {
     Ok(())
 }
 
+/// 更新任务名称
+pub fn update_task_name(project: &str, task_id: &str, new_name: &str) -> Result<()> {
+    let conn = crate::storage::database::connection();
+    let affected = conn.execute(
+        "UPDATE tasks SET name = ?1, updated_at = ?2 WHERE project = ?3 AND id = ?4",
+        params![new_name, Utc::now().to_rfc3339(), project, task_id],
+    )?;
+    if affected == 0 {
+        return Err(GroveError::not_found(format!(
+            "task {task_id} not found in project {project}"
+        )));
+    }
+    Ok(())
+}
+
 /// 更新任务的 target branch
 pub fn update_task_target(project: &str, task_id: &str, new_target: &str) -> Result<()> {
     let conn = crate::storage::database::connection();

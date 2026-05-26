@@ -332,7 +332,7 @@ pub fn create_api_router() -> Router {
         )
         .route(
             "/projects/{id}/tasks/{taskId}",
-            get(handlers::tasks::get_task),
+            get(handlers::tasks::get_task).patch(handlers::tasks::rename_task),
         )
         .route(
             "/projects/{id}/tasks/{taskId}",

@@ -34,6 +34,7 @@ export type {
 export {
   listTasks,
   createTask,
+  renameTask,
   activateTask,
   lookupSymbol,
   reindexSymbols,
