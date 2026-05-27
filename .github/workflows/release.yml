@@ -68,7 +68,7 @@ jobs:
 
   # Build for macOS (Apple Silicon)
   build-macos-arm:
-    needs: [create-release, build-frontend]
+    needs: [create-release, build-frontend, build-extension]
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
@@ -77,6 +77,11 @@ jobs:
         with:
           name: frontend-dist
           path: grove-web/dist
+      - name: Download extension dist
+        uses: actions/download-artifact@v4
+        with:
+          name: grove-extension-dist
+          path: grove-extension/dist
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
@@ -102,7 +107,7 @@ jobs:
 
   # Build for macOS (Intel)
   build-macos-intel:
-    needs: [create-release, build-frontend]
+    needs: [create-release, build-frontend, build-extension]
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
@@ -111,6 +116,11 @@ jobs:
         with:
           name: frontend-dist
           path: grove-web/dist
+      - name: Download extension dist
+        uses: actions/download-artifact@v4
+        with:
+          name: grove-extension-dist
+          path: grove-extension/dist
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
@@ -136,7 +146,7 @@ jobs:
 
   # Build for Linux (x86_64) - using musl for maximum compatibility
   build-linux-x64:
-    needs: [create-release, build-frontend]
+    needs: [create-release, build-frontend, build-extension]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -145,6 +155,11 @@ jobs:
         with:
           name: frontend-dist
           path: grove-web/dist
+      - name: Download extension dist
+        uses: actions/download-artifact@v4
+        with:
+          name: grove-extension-dist
+          path: grove-extension/dist
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
@@ -172,7 +187,7 @@ jobs:
 
   # Build for Linux (ARM64) - using cross for reliable cross-compilation
   build-linux-arm:
-    needs: [create-release, build-frontend]
+    needs: [create-release, build-frontend, build-extension]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -181,6 +196,11 @@ jobs:
         with:
           name: frontend-dist
           path: grove-web/dist
+      - name: Download extension dist
+        uses: actions/download-artifact@v4
+        with:
+          name: grove-extension-dist
+          path: grove-extension/dist
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
       - name: Cache Rust dependencies
@@ -207,7 +227,7 @@ jobs:
 
   # Build Linux desktop GUI (x86_64)
   build-linux-gui-x64:
-    needs: [create-release, build-frontend]
+    needs: [create-release, build-frontend, build-extension]
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
@@ -216,6 +236,11 @@ jobs:
         with:
           name: frontend-dist
           path: grove-web/dist
+      - name: Download extension dist
+        uses: actions/download-artifact@v4
+        with:
+          name: grove-extension-dist
+          path: grove-extension/dist
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
@@ -255,7 +280,7 @@ jobs:
 
   # Build for Windows (x86_64)
   build-windows-x64:
-    needs: [create-release, build-frontend]
+    needs: [create-release, build-frontend, build-extension]
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -264,6 +289,11 @@ jobs:
         with:
           name: frontend-dist
           path: grove-web/dist
+      - name: Download extension dist
+        uses: actions/download-artifact@v4
+        with:
+          name: grove-extension-dist
+          path: grove-extension/dist
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
@@ -291,7 +321,7 @@ jobs:
 
   # Build macOS universal .app + DMG (arm64 + x86_64 combined)
   build-macos-dmg:
-    needs: [create-release, build-frontend]
+    needs: [create-release, build-frontend, build-extension]
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
@@ -300,6 +330,11 @@ jobs:
         with:
           name: frontend-dist
           path: grove-web/dist
+      - name: Download extension dist
+        uses: actions/download-artifact@v4
+        with:
+          name: grove-extension-dist
+          path: grove-extension/dist
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
@@ -333,7 +368,14 @@ jobs:
           cp "$DMG" "grove-${TAG}-universal-apple-darwin.dmg"
           gh release upload "${TAG}" "grove-${TAG}-universal-apple-darwin.dmg" --clobber
 
-  # Build Chrome extension and upload to release assets
+  # Build Chrome extension. Two roles:
+  #   1. Upload the unpacked `dist/` as an actions artifact so every grove
+  #      binary build job below can rust-embed it (extension.rs uses
+  #      `#[derive(Embed)] #[folder = "grove-extension/dist"]` — without
+  #      this, the in-app "Download Companion" button serves an empty zip
+  #      because the embed had nothing to bake in at compile time).
+  #   2. Upload the standalone zip as a release attachment for users who
+  #      want to side-load the extension without running grove.
   build-extension:
     needs: [create-release]
     runs-on: ubuntu-latest
@@ -354,6 +396,13 @@ jobs:
           cd grove-extension
           pnpm install --frozen-lockfile
           pnpm run build
+      - name: Upload extension dist artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: grove-extension-dist
+          path: grove-extension/dist
+          retention-days: 1
+          if-no-files-found: error
       - name: Zip extension dist
         run: |
           cd grove-extension/dist
