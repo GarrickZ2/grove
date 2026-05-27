@@ -1021,38 +1021,54 @@ function createFileChip(
   const isLink = filePath.toLowerCase().endsWith(".link.json");
   const baseName = filePath.split("/").filter(Boolean).pop() || "";
 
-  // Material file icon via shared resolver (same matcher as <VSCodeIcon>).
-  // `.link.json` is grove's worktree-link sentinel; render it as a plain JSON
-  // so the chip reads as "linked file" rather than the generic JSON-anything.
-  const iconUrl = isLink
-    ? iconUrlForFile("link.json")
-    : iconUrlForFile(baseName, { isFolder: isDir });
+  if (category === "Sketch") {
+    // Render Lucide Palette icon in SVG for visual consistency and premium look!
+    const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    svg.setAttribute("width", "13");
+    svg.setAttribute("height", "13");
+    svg.setAttribute("viewBox", "0 0 24 24");
+    svg.setAttribute("fill", "none");
+    svg.setAttribute("stroke", "currentColor");
+    svg.setAttribute("stroke-width", "2.5");
+    svg.setAttribute("stroke-linecap", "round");
+    svg.setAttribute("stroke-linejoin", "round");
+    svg.style.cssText = "display:inline-block;vertical-align:middle;flex-shrink:0;";
+    svg.innerHTML = '<path d="M12 22C17.5228 22 22 17.5228 22 12C22 9.27457 20.8967 6.80675 19.1022 5.01218C18.2562 4.16622 17.2163 3.48624 16.068 3.0182C15.0084 2.58616 13.8341 2.30232 12.593 2.08311C12.2023 2.0141 11.817 2.29631 11.7981 2.6923C11.7644 3.39864 11.4589 4.09345 10.9255 4.62689C10.2224 5.33002 9.21556 5.65655 8.24357 5.51268C7.8485 5.4542 7.47271 5.71961 7.4287 6.11902C7.30403 7.25055 6.85223 8.35825 6.09633 9.22213C5.5564 9.83918 4.8213 10.222 4.02058 10.3168C3.62648 10.3635 3.32356 10.6868 3.32043 11.0857C3.3106 12.3332 3.52458 13.5676 3.9482 14.716C4.4172 15.9877 5.16335 17.1472 6.13682 18.1207C8.7562 20.74 12 22 12 22Z"/><circle cx="7.5" cy="10.5" r="1"/><circle cx="11.5" cy="7.5" r="1"/><circle cx="16.5" cy="9.5" r="1"/><circle cx="15.5" cy="14.5" r="1"/>';
+    chip.appendChild(svg);
+  } else {
+    // Material file icon via shared resolver (same matcher as <VSCodeIcon>).
+    // `.link.json` is grove's worktree-link sentinel; render it as a plain JSON
+    // so the chip reads as "linked file" rather than the generic JSON-anything.
+    const iconUrl = isLink
+      ? iconUrlForFile("link.json")
+      : iconUrlForFile(baseName, { isFolder: isDir });
 
-  const img = document.createElement("img");
-  img.src = favIconUrl || iconUrl;
-  img.alt = "";
-  img.width = 13;
-  img.height = 13;
-  img.style.cssText =
-    "display:inline-block;vertical-align:middle;flex-shrink:0;";
-  if (favIconUrl) {
-    img.style.borderRadius = "2px";
-    img.style.objectFit = "contain";
-    img.onerror = () => {
-      img.src = iconUrl;
+    const img = document.createElement("img");
+    img.src = favIconUrl || iconUrl;
+    img.alt = "";
+    img.width = 13;
+    img.height = 13;
+    img.style.cssText =
+      "display:inline-block;vertical-align:middle;flex-shrink:0;";
+    if (favIconUrl) {
+      img.style.borderRadius = "2px";
+      img.style.objectFit = "contain";
+      img.onerror = () => {
+        img.src = iconUrl;
+        img.onerror = () => {
+          img.style.display = "none";
+        };
+        img.style.borderRadius = "0";
+      };
+    } else {
+      // Hide the broken-image glyph if the CDN is blocked / offline.
+      // The chip's text label is still meaningful without the icon.
       img.onerror = () => {
         img.style.display = "none";
       };
-      img.style.borderRadius = "0";
-    };
-  } else {
-    // Hide the broken-image glyph if the CDN is blocked / offline.
-    // The chip's text label is still meaningful without the icon.
-    img.onerror = () => {
-      img.style.display = "none";
-    };
+    }
+    chip.appendChild(img);
   }
-  chip.appendChild(img);
 
   const label = document.createElement("span");
   const text = displayLabel || (isDir ? filePath : filePath.split("/").pop() || filePath);
@@ -1952,11 +1968,16 @@ export function TaskChat({
       { path: "agent", displayName: "Agents", category: "category_selector", kind: "agent_spawn", isDir: false },
       { path: "project", displayName: "Projects", category: "category_selector", kind: "file", isDir: true },
     ];
+    if (isStudioProject) {
+      base.push(
+        { path: "sketch", displayName: "Sketches", category: "category_selector", kind: "file", isDir: true }
+      );
+    }
     if (isExtensionConnected) {
       base.push({ path: "browsertabs", displayName: "Browser Tabs", category: "category_selector", kind: "browsertabs", isDir: false });
     }
     return base;
-  }, [isExtensionConnected]);
+  }, [isExtensionConnected, isStudioProject]);
 
   const [promptCaps, setPromptCaps] = useState<PromptCaps>({
     image: false,
@@ -2235,6 +2256,10 @@ export function TaskChat({
     if (activeCategory === "browsertabs") {
       return filterMentionItems(browserTabs, deferredFileFilter, 20);
     }
+    if (activeCategory === "sketch") {
+      const sketchItems = fileItems.filter(item => item.category === "Sketch");
+      return filterMentionItems(sketchItems, deferredFileFilter, 20);
+    }
 
     if (activeCategory === "project") {
       const slashIdx = deferredFileFilter.indexOf("/");
@@ -2258,6 +2283,26 @@ export function TaskChat({
               sessionId: project.id,
             };
             
+            // Extract directories from flat project files to allow selecting folders!
+            const dirs = new Set<string>();
+            for (const file of files) {
+              const parts = file.split("/");
+              for (let i = 1; i < parts.length; i++) {
+                dirs.add(parts.slice(0, i).join("/"));
+              }
+            }
+            
+            const dirItemsList: MentionItem[] = Array.from(dirs).sort().map(dirPath => {
+              const absPath = `${project.path}/${dirPath}`;
+              return {
+                path: absPath,
+                isDir: true,
+                displayName: dirPath,
+                category: project.project_type === "studio" ? "Shared Asset · Folder" : "Project Folder",
+                kind: "file",
+              };
+            });
+            
             const fileItemsList: MentionItem[] = files.map(filePath => {
               const absPath = `${project.path}/${filePath}`;
               const isDir = filePath.endsWith("/");
@@ -2272,9 +2317,11 @@ export function TaskChat({
                 kind: "file",
               };
             });
+
+            const combinedList = [...dirItemsList, ...fileItemsList];
             
-            // Filter files
-            const filteredFilesList = filterMentionItems(fileItemsList, subFilter, 20);
+            // Filter files and folders
+            const filteredFilesList = filterMentionItems(combinedList, subFilter, 20);
             
             // If the query is empty or matches "Select", put the root item at the top!
             if (!subFilter || rootItem.displayName?.toLowerCase().includes(subFilter.toLowerCase())) {
@@ -5180,7 +5227,9 @@ export function TaskChat({
       const hasCategory = segment.startsWith("@project:") || 
                           segment.startsWith("@file:") || 
                           segment.startsWith("@agent:") || 
-                          segment.startsWith("@conversation:");
+                          segment.startsWith("@conversation:") ||
+                          segment.startsWith("@browsertabs:") ||
+                          segment.startsWith("@sketch:");
       const hasNoSpaces = !/\s/.test(segment);
       if (hasCategory || hasNoSpaces) {
         atIdx = lastAt;
@@ -5207,7 +5256,7 @@ export function TaskChat({
       const colonIdx = mentionText.indexOf(":");
       if (colonIdx >= 0) {
         const possibleCat = mentionText.slice(0, colonIdx).toLowerCase();
-        if (["conversation", "file", "agent", "project", "browsertabs"].includes(possibleCat)) {
+        if (["conversation", "file", "agent", "project", "browsertabs", "sketch"].includes(possibleCat)) {
           cat = possibleCat;
           filter = mentionText.slice(colonIdx + 1);
         }
@@ -5325,7 +5374,8 @@ export function TaskChat({
                             segment.startsWith("@file:") || 
                             segment.startsWith("@agent:") || 
                             segment.startsWith("@conversation:") ||
-                            segment.startsWith("@browsertabs:");
+                            segment.startsWith("@browsertabs:") ||
+                            segment.startsWith("@sketch:");
         const hasNoSpaces = !/\s/.test(segment);
         if (hasCategory || hasNoSpaces) {
           atIdx = lastAt;

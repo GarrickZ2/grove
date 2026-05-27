@@ -2,9 +2,34 @@
 
 import { apiClient } from './client';
 
+export interface CustomThemeConfig {
+  id: string;
+  name: string;
+  colors: {
+    bg: string;
+    bg_secondary: string;
+    bg_tertiary: string;
+    border: string;
+    text: string;
+    text_muted: string;
+    highlight: string;
+    accent: string;
+    success: string;
+    warning: string;
+    error: string;
+    info: string;
+  };
+  accent_palette: string[];
+  is_light: boolean;
+}
+
 // Types
 export interface ThemeConfig {
   name: string;
+  mode: string;
+  light_theme: string;
+  dark_theme: string;
+  custom_themes: CustomThemeConfig[];
 }
 
 export interface LayoutConfig {

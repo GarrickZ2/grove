@@ -1,9 +1,9 @@
-import { createContext, useContext, useState, useEffect, useMemo } from "react";
+import { createContext, useContext, useState, useEffect, useMemo, useCallback } from "react";
 import type { ReactNode } from "react";
 import { apiClient } from "../api/client";
 
 // Theme definitions matching TUI themes
-interface ThemeColors {
+export interface ThemeColors {
   bg: string;
   bgSecondary: string;
   bgTertiary: string;
@@ -18,30 +18,22 @@ interface ThemeColors {
   info: string;
 }
 
-interface Theme {
+export interface Theme {
   id: string;
   name: string;
   colors: ThemeColors;
   accentPalette: string[]; // Per-theme accent colors for project icons
-  isAuto?: boolean; // Marker for auto theme
+  isLight: boolean;
+  isCustom?: boolean;
 }
 
-// Auto theme placeholder - colors will be resolved dynamically
-const autoTheme: Theme = {
-  id: "auto",
-  name: "Auto",
-  colors: {} as ThemeColors, // Will be resolved to dark/light
-  accentPalette: [], // Will be resolved to dark/light
-  isAuto: true,
-};
-
 // eslint-disable-next-line react-refresh/only-export-components
-export const themes: Theme[] = [
-  autoTheme,
-  // Light themes first
+export const builtInThemes: Theme[] = [
+  // ─── Light Themes ──────────────────────────────────────────────────────────
   {
     id: "light",
     name: "Light",
+    isLight: true,
     colors: {
       bg: "#fafafa",
       bgSecondary: "#f4f4f5",
@@ -56,14 +48,12 @@ export const themes: Theme[] = [
       error: "#dc2626",
       info: "#2563eb",
     },
-    accentPalette: [
-      "#dc5050", "#e68c3c", "#c8aa28", "#3caa5a", "#28a0a0",
-      "#3282c8", "#6464d2", "#965ac8", "#be5096", "#d25a6e",
-    ],
+    accentPalette: ["#dc5050", "#e68c3c", "#c8aa28", "#3caa5a", "#28a0a0", "#3282c8"],
   },
   {
     id: "solarized-light",
     name: "Solarized Light",
+    isLight: true,
     colors: {
       bg: "#fdf6e3",
       bgSecondary: "#eee8d5",
@@ -78,14 +68,12 @@ export const themes: Theme[] = [
       error: "#dc322f",
       info: "#268bd2",
     },
-    accentPalette: [
-      "#dc322f", "#cb4b16", "#b58900", "#859900", "#2aa198",
-      "#268bd2", "#6c71c4", "#d33682", "#93a1a1", "#657b83",
-    ],
+    accentPalette: ["#dc322f", "#cb4b16", "#b58900", "#859900", "#2aa198", "#268bd2"],
   },
   {
     id: "github-light",
     name: "GitHub Light",
+    isLight: true,
     colors: {
       bg: "#ffffff",
       bgSecondary: "#f6f8fa",
@@ -100,14 +88,12 @@ export const themes: Theme[] = [
       error: "#cf222e",
       info: "#0969da",
     },
-    accentPalette: [
-      "#cf222e", "#bc4c00", "#9a6700", "#1a7f37", "#087d8b",
-      "#0969da", "#8250df", "#bf3989", "#656d76", "#1f2328",
-    ],
+    accentPalette: ["#cf222e", "#bc4c00", "#9a6700", "#1a7f37", "#087d8b", "#0969da"],
   },
   {
     id: "rose-pine-dawn",
     name: "Rosé Pine Dawn",
+    isLight: true,
     colors: {
       bg: "#faf4ed",
       bgSecondary: "#f2e9de",
@@ -122,14 +108,12 @@ export const themes: Theme[] = [
       error: "#b4637a",
       info: "#286983",
     },
-    accentPalette: [
-      "#b4637a", "#d7827e", "#ea9d34", "#286983", "#56949f",
-      "#907aa9", "#9893a5", "#797593", "#c88a8a", "#575279",
-    ],
+    accentPalette: ["#b4637a", "#d7827e", "#ea9d34", "#286983", "#56949f", "#907aa9"],
   },
   {
     id: "catppuccin-latte",
     name: "Catppuccin Latte",
+    isLight: true,
     colors: {
       bg: "#eff1f5",
       bgSecondary: "#dce0e8",
@@ -144,15 +128,74 @@ export const themes: Theme[] = [
       error: "#d20f39",
       info: "#1e66f5",
     },
-    accentPalette: [
-      "#d20f39", "#fe640b", "#df8e1d", "#40a02b", "#179299",
-      "#1e66f5", "#209fb5", "#8839ef", "#ea76cb", "#dd7878",
-    ],
+    accentPalette: ["#d20f39", "#fe640b", "#df8e1d", "#40a02b", "#179299", "#1e66f5"],
   },
-  // Dark themes
+  {
+    id: "one-light",
+    name: "One Light",
+    isLight: true,
+    colors: {
+      bg: "#fafafa",
+      bgSecondary: "#f0f0f0",
+      bgTertiary: "#e5e5e6",
+      border: "#dbdbdc",
+      text: "#383a42",
+      textMuted: "#a0a1a7",
+      highlight: "#0184bc",
+      accent: "#4078f2",
+      success: "#50a14f",
+      warning: "#986801",
+      error: "#e45649",
+      info: "#4078f2",
+    },
+    accentPalette: ["#e45649", "#986801", "#50a14f", "#0184bc", "#4078f2", "#a626a4"],
+  },
+  {
+    id: "ayu-light",
+    name: "Ayu Light",
+    isLight: true,
+    colors: {
+      bg: "#fafafa",
+      bgSecondary: "#f3f3f3",
+      bgTertiary: "#ededed",
+      border: "#e0e0e0",
+      text: "#5c6773",
+      textMuted: "#abb0b6",
+      highlight: "#ff9940",
+      accent: "#36a3d9",
+      success: "#86b300",
+      warning: "#f29718",
+      error: "#ff3333",
+      info: "#36a3d9",
+    },
+    accentPalette: ["#ff3333", "#f29718", "#86b300", "#36a3d9", "#ff9940", "#a37acc"],
+  },
+  {
+    id: "everforest-light",
+    name: "Everforest Light",
+    isLight: true,
+    colors: {
+      bg: "#fdf6e3",
+      bgSecondary: "#f3ead3",
+      bgTertiary: "#e9e0ca",
+      border: "#d3c6aa",
+      text: "#5c6a72",
+      textMuted: "#939f91",
+      highlight: "#8da101",
+      accent: "#dfa000",
+      success: "#8da101",
+      warning: "#dfa000",
+      error: "#f85552",
+      info: "#35a775",
+    },
+    accentPalette: ["#f85552", "#dfa000", "#8da101", "#35a775", "#3a94c5", "#df69ba"],
+  },
+
+  // ─── Dark Themes ───────────────────────────────────────────────────────────
   {
     id: "dark",
     name: "Dark",
+    isLight: false,
     colors: {
       bg: "#0a0a0b",
       bgSecondary: "#141416",
@@ -167,14 +210,12 @@ export const themes: Theme[] = [
       error: "#ef4444",
       info: "#3b82f6",
     },
-    accentPalette: [
-      "#eb8282", "#f0aa73", "#e6c869", "#82cd91", "#6ec6c3",
-      "#78afe1", "#969be6", "#b994e1", "#dc94c3", "#e696a0",
-    ],
+    accentPalette: ["#eb8282", "#f0aa73", "#e6c869", "#82cd91", "#6ec6c3", "#78afe1"],
   },
   {
     id: "dracula",
     name: "Dracula",
+    isLight: false,
     colors: {
       bg: "#282a36",
       bgSecondary: "#343746",
@@ -189,14 +230,12 @@ export const themes: Theme[] = [
       error: "#ff5555",
       info: "#8be9fd",
     },
-    accentPalette: [
-      "#ff5555", "#ffb86c", "#f1fa8c", "#50fa7b", "#8be9fd",
-      "#6272a4", "#bd93f9", "#ff79c6", "#f8f8f2", "#ff9696",
-    ],
+    accentPalette: ["#ff5555", "#ffb86c", "#f1fa8c", "#50fa7b", "#8be9fd", "#6272a4"],
   },
   {
     id: "nord",
     name: "Nord",
+    isLight: false,
     colors: {
       bg: "#2e3440",
       bgSecondary: "#3b4252",
@@ -211,14 +250,12 @@ export const themes: Theme[] = [
       error: "#bf616a",
       info: "#88c0d0",
     },
-    accentPalette: [
-      "#bf616a", "#d08770", "#ebcb8b", "#a3be8c", "#8fbcbb",
-      "#88c0d0", "#81a1c1", "#b48ead", "#d2a0aa", "#c88278",
-    ],
+    accentPalette: ["#bf616a", "#d08770", "#ebcb8b", "#a3be8c", "#8fbcbb", "#88c0d0"],
   },
   {
     id: "gruvbox",
     name: "Gruvbox",
+    isLight: false,
     colors: {
       bg: "#282828",
       bgSecondary: "#3c3836",
@@ -233,14 +270,12 @@ export const themes: Theme[] = [
       error: "#fb4934",
       info: "#83a598",
     },
-    accentPalette: [
-      "#fb4934", "#fe8019", "#fabd2f", "#b8bb26", "#83a598",
-      "#458588", "#689d6a", "#d3869b", "#ebdbb2", "#d65d0e",
-    ],
+    accentPalette: ["#fb4934", "#fe8019", "#fabd2f", "#b8bb26", "#83a598", "#458588"],
   },
   {
     id: "tokyo-night",
     name: "Tokyo Night",
+    isLight: false,
     colors: {
       bg: "#1a1b26",
       bgSecondary: "#24283b",
@@ -255,14 +290,12 @@ export const themes: Theme[] = [
       error: "#f7768e",
       info: "#7dcfff",
     },
-    accentPalette: [
-      "#f7768e", "#e0af68", "#e0dc8c", "#9ece6a", "#73daca",
-      "#7dcfff", "#7aa2f7", "#bb9af7", "#f5c2e7", "#ff9eaa",
-    ],
+    accentPalette: ["#f7768e", "#e0af68", "#e0dc8c", "#9ece6a", "#73daca", "#7dcfff"],
   },
   {
     id: "catppuccin",
     name: "Catppuccin",
+    isLight: false,
     colors: {
       bg: "#1e1e2e",
       bgSecondary: "#313244",
@@ -277,16 +310,60 @@ export const themes: Theme[] = [
       error: "#f38ba8",
       info: "#89b4fa",
     },
-    accentPalette: [
-      "#f38ba8", "#fab387", "#f9e2af", "#a6e3a1", "#94e2d5",
-      "#89b4fa", "#74c7ec", "#cba6f7", "#f5c2e7", "#f2cdcd",
-    ],
+    accentPalette: ["#f38ba8", "#fab387", "#f9e2af", "#a6e3a1", "#94e2d5", "#89b4fa"],
+  },
+  {
+    id: "one-dark",
+    name: "One Dark",
+    isLight: false,
+    colors: {
+      bg: "#282c34",
+      bgSecondary: "#21252b",
+      bgTertiary: "#181a1f",
+      border: "#181a1f",
+      text: "#abb2bf",
+      textMuted: "#5c6370",
+      highlight: "#61afef",
+      accent: "#c678dd",
+      success: "#98c379",
+      warning: "#d19a66",
+      error: "#e06c75",
+      info: "#61afef",
+    },
+    accentPalette: ["#e06c75", "#d19a66", "#98c379", "#61afef", "#c678dd", "#56b6c2"],
+  },
+  {
+    id: "night-owl",
+    name: "Night Owl",
+    isLight: false,
+    colors: {
+      bg: "#011627",
+      bgSecondary: "#0b2942",
+      bgTertiary: "#010e17",
+      border: "#1d3b53",
+      text: "#d6deeb",
+      textMuted: "#5f7e97",
+      highlight: "#82aaff",
+      accent: "#c792ea",
+      success: "#addb67",
+      warning: "#ecc48d",
+      error: "#ef5350",
+      info: "#82aaff",
+    },
+    accentPalette: ["#ef5350", "#ecc48d", "#addb67", "#82aaff", "#c792ea", "#7fdbca"],
   },
 ];
 
+export type ThemeMode = "auto" | "light" | "dark";
+
 interface ThemeContextType {
-  theme: Theme;
-  setTheme: (themeId: string) => void;
+  theme: Theme; // Current effective theme
+  mode: ThemeMode;
+  lightThemeId: string;
+  darkThemeId: string;
+  customThemes: Theme[];
+  themes: Theme[]; // All available themes (built-in + custom)
+  setAppearance: (params: { mode?: ThemeMode; lightThemeId?: string; darkThemeId?: string; customThemes?: Theme[] }) => Promise<void>;
 }
 
 const ThemeContext = createContext<ThemeContextType | undefined>(undefined);
@@ -296,92 +373,76 @@ function getSystemIsDark(): boolean {
   return window.matchMedia?.("(prefers-color-scheme: dark)").matches ?? true;
 }
 
-// Get the dark theme definition
-function getDarkTheme(): Theme {
-  return themes.find((t) => t.id === "dark") || themes[1];
-}
-
-// Get the light theme definition
-function getLightTheme(): Theme {
-  return themes.find((t) => t.id === "light") || themes[2];
-}
-
 export function ThemeProvider({ children }: { children: ReactNode }) {
-  // Store the selected theme ID (could be "auto")
-  const [selectedThemeId, setSelectedThemeId] = useState<string>("auto");
-  // Track system dark mode for auto theme
+  const [mode, setMode] = useState<ThemeMode>("auto");
+  const [lightThemeId, setLightThemeId] = useState("light");
+  const [darkThemeId, setDarkThemeId] = useState("dark");
+  const [customThemes, setCustomThemes] = useState<Theme[]>([]);
   const [systemIsDark, setSystemIsDark] = useState<boolean>(getSystemIsDark);
 
+  const allThemes = useMemo(() => [...builtInThemes, ...customThemes], [customThemes]);
+
   // Load theme from backend config on mount and on focus regain.
-  // The focus listener exists so secondary entry points (e.g. the menubar
-  // tray popover) pick up theme changes the user makes in the main window
-  // without needing their own broadcast subscription.
   useEffect(() => {
     const loadTheme = async () => {
-      // apiClient signs requests with HMAC in mobile mode; raw fetch would 401.
-      let config: { theme?: { theme?: string } } | null = null;
       try {
-        config = await apiClient.get<{ theme?: { theme?: string } }>("/api/v1/config");
+        const config = await apiClient.get<{ theme?: { mode: string; light_theme: string; dark_theme: string; custom_themes?: any[] } }>("/api/v1/config");
+        const t = config.theme;
+        if (t) {
+          if (t.mode) setMode(t.mode as ThemeMode);
+          if (t.light_theme) setLightThemeId(t.light_theme);
+          if (t.dark_theme) setDarkThemeId(t.dark_theme);
+          if (t.custom_themes) {
+            const parsed: Theme[] = t.custom_themes.map(ct => ({
+              id: ct.id,
+              name: ct.name,
+              colors: {
+                bg: ct.colors.bg,
+                bgSecondary: ct.colors.bg_secondary,
+                bgTertiary: ct.colors.bg_tertiary,
+                border: ct.colors.border,
+                text: ct.colors.text,
+                textMuted: ct.colors.text_muted,
+                highlight: ct.colors.highlight,
+                accent: ct.colors.accent,
+                success: ct.colors.success,
+                warning: ct.colors.warning,
+                error: ct.colors.error,
+                info: ct.colors.info,
+              },
+              accentPalette: ct.accent_palette,
+              isLight: ct.is_light,
+              isCustom: true,
+            }));
+            setCustomThemes(parsed);
+          }
+        }
       } catch (error) {
         console.error("Failed to load theme from config:", error);
-      }
-      const themeRaw = config?.theme?.theme;
-      if (themeRaw) {
-        const themeId = themeRaw.toLowerCase();
-        const found = themes.find((t) => t.id === themeId);
-        if (found) {
-          setSelectedThemeId(themeId);
-          return;
-        }
-      }
-
-      // Fallback to localStorage if API fails
-      const savedTheme = localStorage.getItem("grove-theme");
-      if (savedTheme) {
-        const found = themes.find((t) => t.id === savedTheme);
-        if (found) setSelectedThemeId(savedTheme);
       }
     };
 
     loadTheme();
-    const onFocus = () => {
-      loadTheme();
-    };
-    const onVisible = () => {
-      if (document.visibilityState === "visible") loadTheme();
-    };
-    window.addEventListener("focus", onFocus);
-    document.addEventListener("visibilitychange", onVisible);
-    return () => {
-      window.removeEventListener("focus", onFocus);
-      document.removeEventListener("visibilitychange", onVisible);
-    };
+    window.addEventListener("focus", loadTheme);
+    return () => window.removeEventListener("focus", loadTheme);
   }, []);
 
   // Listen for system theme changes
   useEffect(() => {
     const mediaQuery = window.matchMedia("(prefers-color-scheme: dark)");
-    const handleChange = (e: MediaQueryListEvent) => {
-      setSystemIsDark(e.matches);
-    };
-
+    const handleChange = (e: MediaQueryListEvent) => setSystemIsDark(e.matches);
     mediaQuery.addEventListener("change", handleChange);
     return () => mediaQuery.removeEventListener("change", handleChange);
   }, []);
 
   // Resolve the actual theme to use
   const theme = useMemo<Theme>(() => {
-    if (selectedThemeId === "auto") {
-      // Return auto theme with resolved colors and palette
-      const resolvedTheme = systemIsDark ? getDarkTheme() : getLightTheme();
-      return {
-        ...autoTheme,
-        colors: resolvedTheme.colors,
-        accentPalette: resolvedTheme.accentPalette,
-      };
-    }
-    return themes.find((t) => t.id === selectedThemeId) || getDarkTheme();
-  }, [selectedThemeId, systemIsDark]);
+    const targetId = mode === "auto" 
+      ? (systemIsDark ? darkThemeId : lightThemeId)
+      : (mode === "dark" ? darkThemeId : lightThemeId);
+    
+    return allThemes.find(t => t.id === targetId) || (systemIsDark ? builtInThemes.find(t => t.id === "dark")! : builtInThemes.find(t => t.id === "light")!);
+  }, [mode, lightThemeId, darkThemeId, systemIsDark, allThemes]);
 
   // Apply CSS variables when theme changes
   useEffect(() => {
@@ -393,7 +454,6 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     root.style.setProperty("--color-border", colors.border);
     root.style.setProperty("--color-text", colors.text);
     root.style.setProperty("--color-text-muted", colors.textMuted);
-    // Alias for flexlayout override (flexlayout's light.css redefines --color-text on .flexlayout__layout)
     root.style.setProperty("--grove-text", colors.text);
     root.style.setProperty("--grove-bg", colors.bg);
     root.style.setProperty("--color-highlight", colors.highlight);
@@ -404,16 +464,56 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     root.style.setProperty("--color-info", colors.info);
   }, [theme]);
 
-  const setTheme = (themeId: string) => {
-    const found = themes.find((t) => t.id === themeId);
-    if (found) {
-      setSelectedThemeId(themeId);
-      localStorage.setItem("grove-theme", themeId);
+  const setAppearance = useCallback(async (params: { mode?: ThemeMode; lightThemeId?: string; darkThemeId?: string; customThemes?: Theme[] }) => {
+    if (params.mode !== undefined) setMode(params.mode);
+    if (params.lightThemeId !== undefined) setLightThemeId(params.lightThemeId);
+    if (params.darkThemeId !== undefined) setDarkThemeId(params.darkThemeId);
+    if (params.customThemes !== undefined) setCustomThemes(params.customThemes);
+
+    // Persist to backend
+    try {
+      await apiClient.patch("/api/v1/config", {
+        theme: {
+          mode: params.mode,
+          light_theme: params.lightThemeId,
+          dark_theme: params.darkThemeId,
+          custom_themes: params.customThemes?.map(ct => ({
+            id: ct.id,
+            name: ct.name,
+            colors: {
+              bg: ct.colors.bg,
+              bg_secondary: ct.colors.bgSecondary,
+              bg_tertiary: ct.colors.bgTertiary,
+              border: ct.colors.border,
+              text: ct.colors.text,
+              text_muted: ct.colors.textMuted,
+              highlight: ct.colors.highlight,
+              accent: ct.colors.accent,
+              success: ct.colors.success,
+              warning: ct.colors.warning,
+              error: ct.colors.error,
+              info: ct.colors.info,
+            },
+            accent_palette: ct.accentPalette,
+            is_light: ct.isLight,
+          }))
+        }
+      });
+    } catch (error) {
+      console.error("Failed to save appearance to backend:", error);
     }
-  };
+  }, []);
 
   return (
-    <ThemeContext.Provider value={{ theme, setTheme }}>
+    <ThemeContext.Provider value={{ 
+      theme, 
+      mode, 
+      lightThemeId, 
+      darkThemeId, 
+      customThemes, 
+      themes: allThemes,
+      setAppearance 
+    }}>
       {children}
     </ThemeContext.Provider>
   );
@@ -422,8 +522,6 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
 // eslint-disable-next-line react-refresh/only-export-components
 export function useTheme() {
   const context = useContext(ThemeContext);
-  if (!context) {
-    throw new Error("useTheme must be used within ThemeProvider");
-  }
+  if (!context) throw new Error("useTheme must be used within ThemeProvider");
   return context;
 }

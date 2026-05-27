@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from "react";
 import { useWalkieTalkie } from "../../hooks/useWalkieTalkie";
 import { useAudioRecorder } from "../../hooks/useAudioRecorder";
 import { getAudioSettings, transcribeAudio } from "../../api/ai";
-import { themes } from "../../context/ThemeContext";
+import { builtInThemes, type Theme } from "../../context/ThemeContext";
 import type { TargetMode } from "../../api/walkieTalkie";
 import type { ChatRef } from "../../data/types";
 import GroupSelector from "./GroupSelector";
@@ -50,9 +50,9 @@ export function RadioPage() {
   useEffect(() => {
     if (!state.theme) return;
     const systemIsDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
-    let resolved = themes.find((t) => t.id === state.theme);
+    let resolved = (builtInThemes as Theme[]).find((t: Theme) => t.id === state.theme);
     if (!resolved || resolved.id === "auto") {
-      resolved = themes.find((t) => t.id === (systemIsDark ? "dark" : "light")) ?? themes[1];
+      resolved = (builtInThemes as Theme[]).find((t: Theme) => t.id === (systemIsDark ? "dark" : "light")) ?? builtInThemes[1];
     }
     const root = document.documentElement;
     const c = resolved.colors;

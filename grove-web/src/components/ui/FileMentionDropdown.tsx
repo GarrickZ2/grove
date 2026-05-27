@@ -6,7 +6,6 @@ import {
   Folder,
   BookOpen,
   Brain,
-  Pencil,
   FileJson,
   FileCode,
   Image as ImageIcon,
@@ -19,6 +18,7 @@ import {
   Bot,
   Briefcase,
   Globe,
+  Palette,
 } from "lucide-react";
 import type { FilteredMentionItem, MentionItem } from "../../utils/fileMention";
 import { agentIconComponent } from "../../utils/agentIcon";
@@ -41,6 +41,7 @@ function iconFor(
     if (item.path === "agent") return Bot;
     if (item.path === "project") return Briefcase;
     if (item.path === "browsertabs") return Globe;
+    if (item.path === "sketch") return Palette;
   }
   // Agent-graph kinds: render the underlying agent's brand icon when known.
   // `agentIconComponent` already falls back to lucide Bot for unknown keys,
@@ -56,7 +57,7 @@ function iconFor(
     case "Memory":
       return Brain;
     case "Sketch":
-      return Pencil;
+      return Palette;
   }
   if (item.isDir) return Folder;
   const dot = item.path.lastIndexOf(".");
@@ -212,6 +213,38 @@ interface MentionRowProps {
   onMouseEnter: FileMentionDropdownProps["onMouseEnter"];
 }
 
+function styleForCategorySelector(path: string): { bg: string; fg: string } {
+  switch (path) {
+    case "conversation":
+      return { bg: "rgba(139, 92, 246, 0.15)", fg: "rgb(167, 139, 250)" }; // Purple
+    case "file":
+      return { bg: "rgba(59, 130, 246, 0.15)", fg: "rgb(96, 165, 250)" }; // Blue
+    case "agent":
+      return { bg: "rgba(245, 158, 11, 0.15)", fg: "rgb(251, 191, 36)" }; // Gold
+    case "project":
+      return { bg: "rgba(16, 185, 129, 0.15)", fg: "rgb(52, 211, 153)" }; // Emerald
+    case "browsertabs":
+      return { bg: "rgba(99, 102, 241, 0.15)", fg: "rgb(129, 140, 248)" }; // Indigo
+    case "sketch":
+      return { bg: "rgba(236, 72, 153, 0.15)", fg: "rgb(244, 114, 182)" }; // Rose/Pink
+    default:
+      return { bg: "rgba(107, 114, 128, 0.15)", fg: "rgb(156, 163, 175)" }; // Gray
+  }
+}
+
+function styleForSpecialCategory(category: string): { bg: string; fg: string } | null {
+  switch (category) {
+    case "Instruction":
+      return { bg: "rgba(6, 182, 212, 0.15)", fg: "rgb(34, 211, 238)" }; // Cyan
+    case "Memory":
+      return { bg: "rgba(168, 85, 247, 0.15)", fg: "rgb(192, 132, 252)" }; // Purple
+    case "Sketch":
+      return { bg: "rgba(236, 72, 153, 0.15)", fg: "rgb(244, 114, 182)" }; // Rose/Pink
+    default:
+      return null;
+  }
+}
+
 const MentionRow = memo(function MentionRow({
   item,
   index,
@@ -230,6 +263,8 @@ const MentionRow = memo(function MentionRow({
   const { theme } = useTheme();
   const isProjectItem = item.category === "Coding Project" || item.category === "Studio Project" || item.category === "Project Root";
   const projectStyle = isProjectItem ? getProjectStyle(item.sessionId || item.path, theme.accentPalette) : null;
+  const categoryStyle = item.category === "category_selector" ? styleForCategorySelector(item.path) : null;
+  const specialStyle = item.category && item.category !== "category_selector" ? styleForSpecialCategory(item.category) : null;
 
   let resolvedFavicon: string | null = null;
   // Only allow https favicons — Studio `.link.json` files are agent-authored
@@ -267,6 +302,24 @@ const MentionRow = memo(function MentionRow({
         >
           <projectStyle.Icon className="w-3 h-3" style={{ color: projectStyle.color.fg }} />
         </div>
+      ) : categoryStyle ? (
+        <div
+          className="w-5 h-5 rounded flex items-center justify-center shrink-0 transition-transform hover:scale-110"
+          style={{ backgroundColor: categoryStyle.bg, color: categoryStyle.fg }}
+        >
+          {createElement(iconFor(item), {
+            className: "w-3 h-3 shrink-0",
+          })}
+        </div>
+      ) : specialStyle ? (
+        <div
+          className="w-5 h-5 rounded flex items-center justify-center shrink-0 transition-transform hover:scale-110"
+          style={{ backgroundColor: specialStyle.bg, color: specialStyle.fg }}
+        >
+          {createElement(iconFor(item), {
+            className: "w-3 h-3 shrink-0",
+          })}
+        </div>
       ) : resolvedFavicon ? (
         <img
           src={resolvedFavicon}
@@ -276,7 +329,7 @@ const MentionRow = memo(function MentionRow({
             e.currentTarget.style.display = 'none';
           }}
         />
-      ) : item.kind && item.kind !== "file" || item.category === "category_selector" ? (
+      ) : item.kind && item.kind !== "file" ? (
         createElement(iconFor(item), {
           className: "w-3.5 h-3.5 shrink-0",
         })

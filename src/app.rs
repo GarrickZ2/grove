@@ -1247,8 +1247,11 @@ impl App {
     fn save_theme_config(&self) {
         use storage::config::{load_config, save_config, ThemeConfig};
         let mut config = load_config();
+        let name = self.ui.theme.label().to_string();
         config.theme = ThemeConfig {
-            name: self.ui.theme.label().to_string(),
+            name: name.clone(),
+            mode: name.to_lowercase(),
+            ..Default::default()
         };
         let _ = save_config(&config);
     }

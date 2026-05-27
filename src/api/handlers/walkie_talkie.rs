@@ -52,7 +52,7 @@ pub enum RadioEvent {
     /// TaskGroup data changed (Blitz updated groups via REST).
     GroupChanged,
     /// Theme changed on desktop.
-    ThemeChanged,
+    ThemeChanged { name: String },
     /// An ACP session's busy state changed — push status to Radio clients.
     ///
     /// TODO: `prompt` and `started_at` are forward-compatible scaffolding —
@@ -483,9 +483,8 @@ pub async fn handle_walkie_talkie_ws_inner(socket: WebSocket) {
                         }
                         let _ = msg_tx.send(ServerMessage::GroupUpdated { groups: snapshot });
                     }
-                    Ok(RadioEvent::ThemeChanged) => {
-                        let theme_name = crate::storage::config::load_config().theme.name;
-                        let _ = msg_tx.send(ServerMessage::ThemeChanged { theme: theme_name });
+                    Ok(RadioEvent::ThemeChanged { name }) => {
+                        let _ = msg_tx.send(ServerMessage::ThemeChanged { theme: name });
                     }
                     Ok(RadioEvent::HookAdded { project_id, task_id, level, message }) => {
                         let _ = msg_tx.send(ServerMessage::HookAdded {

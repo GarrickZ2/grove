@@ -456,10 +456,66 @@ impl Default for LayoutConfig {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct CustomThemeColors {
+    #[serde(default)]
+    pub bg: String,
+    #[serde(default)]
+    pub bg_secondary: String,
+    #[serde(default)]
+    pub bg_tertiary: String,
+    #[serde(default)]
+    pub border: String,
+    #[serde(default)]
+    pub text: String,
+    #[serde(default)]
+    pub text_muted: String,
+    #[serde(default)]
+    pub highlight: String,
+    #[serde(default)]
+    pub accent: String,
+    #[serde(default)]
+    pub success: String,
+    #[serde(default)]
+    pub warning: String,
+    #[serde(default)]
+    pub error: String,
+    #[serde(default)]
+    pub info: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct CustomThemeConfig {
+    #[serde(default)]
+    pub id: String,
+    #[serde(default)]
+    pub name: String,
+    #[serde(default)]
+    pub colors: CustomThemeColors,
+    #[serde(default)]
+    pub accent_palette: Vec<String>,
+    #[serde(default)]
+    pub is_light: bool,
+}
+
+fn default_theme_name() -> String { "auto".to_string() }
+fn default_theme_mode() -> String { "auto".to_string() }
+fn default_light_theme() -> String { "light".to_string() }
+fn default_dark_theme() -> String { "dark".to_string() }
+
 /// 主题配置
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ThemeConfig {
+    #[serde(default = "default_theme_name")]
     pub name: String,
+    #[serde(default = "default_theme_mode")]
+    pub mode: String,
+    #[serde(default = "default_light_theme")]
+    pub light_theme: String,
+    #[serde(default = "default_dark_theme")]
+    pub dark_theme: String,
+    #[serde(default)]
+    pub custom_themes: Vec<CustomThemeConfig>,
 }
 
 /// 更新检查配置
@@ -513,7 +569,11 @@ impl Default for AutoLinkConfig {
 impl Default for ThemeConfig {
     fn default() -> Self {
         Self {
-            name: "Auto".to_string(),
+            name: default_theme_name(),
+            mode: default_theme_mode(),
+            light_theme: default_light_theme(),
+            dark_theme: default_dark_theme(),
+            custom_themes: vec![],
         }
     }
 }

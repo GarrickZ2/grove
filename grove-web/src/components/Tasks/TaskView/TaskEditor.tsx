@@ -461,8 +461,23 @@ export function TaskEditor({ projectId, taskId, onClose, fullscreen = false, onT
     
     // For light mode comments, we use a darker gray to improve readability on light backgrounds.
     // Standard comments are often too faint.
-    const commentColor = isLight ? '5e6e7a' : '9ca3af'; 
-    const commentDocColor = isLight ? '4b5563' : '9ca3af';
+    const commentColor = isLight ? '4b5563' : '9ca3af'; 
+    const commentDocColor = isLight ? '374151' : '9ca3af';
+
+    const hex = (c: string) => c.replace('#', '');
+    const colors = theme.colors;
+    
+    // High-contrast overrides for light mode to ensure readability
+    // In light mode, theme colors like 'info' or 'accent' might be too bright/light.
+    // We prefer darker, more saturated versions for the code.
+    const keywordColor = isLight ? '0550ae' : hex(colors.info);      // Saturated Blue
+    const typeColor = isLight ? '953800' : hex(colors.accent);       // Saturated Brown/Orange
+    const stringColor = isLight ? '0a3069' : hex(colors.success);    // Deep Navy/Green
+    const variableColor = isLight ? 'e36209' : hex(colors.warning);  // Darker Orange
+    const numberColor = isLight ? '005cc5' : hex(colors.warning);    // Saturated Blue
+    const identifierColor = isLight ? '111827' : hex(colors.text);   // Near Black
+    const tagColor = isLight ? '116329' : hex(colors.highlight);    // Saturated Green
+    const attributeColor = isLight ? '005cc5' : hex(colors.info);    // Saturated Blue
 
     monacoInstance.editor.defineTheme('grove-theme', {
       base: isLight ? 'vs' : 'vs-dark',
@@ -470,6 +485,26 @@ export function TaskEditor({ projectId, taskId, onClose, fullscreen = false, onT
       rules: [
         { token: 'comment', foreground: commentColor },
         { token: 'comment.doc', foreground: commentDocColor },
+        // Explicit rules for better legibility using high-contrast colors
+        { token: 'keyword', foreground: keywordColor, fontStyle: 'bold' },
+        { token: 'type', foreground: typeColor },
+        { token: 'type.identifier', foreground: typeColor },
+        { token: 'string', foreground: stringColor },
+        { token: 'variable', foreground: variableColor },
+        { token: 'variable.parameter', foreground: variableColor },
+        { token: 'number', foreground: numberColor },
+        { token: 'identifier', foreground: identifierColor },
+        { token: 'tag', foreground: tagColor },
+        { token: 'attribute.name', foreground: attributeColor },
+        { token: 'operator', foreground: identifierColor },
+        { token: 'delimiter', foreground: isLight ? '374151' : hex(colors.textMuted) },
+        { token: 'meta', foreground: keywordColor },
+        { token: 'support', foreground: typeColor },
+        { token: 'predefined', foreground: keywordColor },
+        { token: 'annotation', foreground: typeColor },
+        // Special case for GraphQL fields which often come as 'identifier'
+        { token: 'key', foreground: identifierColor },
+        { token: 'string.key', foreground: identifierColor },
       ],
       colors: {
         'editor.background': theme.colors.bg,
@@ -478,6 +513,9 @@ export function TaskEditor({ projectId, taskId, onClose, fullscreen = false, onT
         'editorGutter.background': theme.colors.bg,
         'editorLineNumber.foreground': isLight ? '#6b7280' : '#888888',
         'editorLineNumber.activeForeground': theme.colors.text,
+        'editorIndentGuide.background': isLight ? '#00000012' : '#ffffff12',
+        'editorIndentGuide.activeBackground': isLight ? '#00000024' : '#ffffff24',
+        'editor.selectionBackground': isLight ? '#00000015' : '#ffffff15',
       }
     });
     monacoInstance.editor.setTheme('grove-theme');

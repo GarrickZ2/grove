@@ -26,11 +26,15 @@ import {
   Server,
   UserCog,
   Package,
+  Trash2,
+  Download,
+  Share2,
   ChevronRight,
 } from "lucide-react";
 import { Button, Combobox, AppPicker, AgentPicker, agentOptions, ideAppOptions, terminalAppOptions, CustomAgentModal, VSCodeIcon } from "../ui";
 import type { ComboboxOption } from "../ui";
-import { useTheme, themes, useConfig } from "../../context";
+import { useTheme, useConfig } from "../../context";
+import { type Theme } from "../../context/ThemeContext";
 import {
   getConfig,
   patchConfig,
@@ -48,12 +52,14 @@ import {
 import { LayoutEditor, type CustomLayoutConfig, type PaneType, type LayoutNode, createDefaultLayout, countPanes } from "./LayoutEditor";
 import { CustomAgentsModal } from "./CustomAgentsModal";
 import { MarketplaceModal } from "./MarketplaceModal";
+import { CustomThemeDialog } from "./CustomThemeDialog";
+import { ImportThemeDialog } from "./ImportThemeDialog";
 import { InstallExtensionDialog } from "./InstallExtensionDialog";
 import {
   setCustomAgentPersonas as setCustomAgentPersonasIconRegistry,
   loadCustomAgentPersonas as loadCustomAgentPersonasIcon,
 } from "../../utils/agentIcon";
-import { useIsMobile, useExtensionConnection } from "../../hooks";
+import { useExtensionConnection } from "../../hooks";
 import { formatShortcut } from "../AI/utils";
 
 interface SettingsPageProps {
@@ -204,9 +210,8 @@ interface DependencyState {
 }
 
 export function SettingsPage({ config }: SettingsPageProps) {
-  const { theme, setTheme } = useTheme();
+  const { theme, mode, lightThemeId, darkThemeId, customThemes, themes, setAppearance } = useTheme();
   const { updateAvailability, refresh: refreshGlobalConfig } = useConfig();
-  const { isMobile } = useIsMobile();
 
   const [openSections, setOpenSections] = useState<Record<string, boolean>>({
     terminal: false,
@@ -271,6 +276,7 @@ export function SettingsPage({ config }: SettingsPageProps) {
   const [selectedCustomLayoutId, setSelectedCustomLayoutId] = useState<string | null>(defaultCustomLayouts[0]?.id || null);
   const [customLayoutsLoaded, setCustomLayoutsLoaded] = useState(false); // Track if custom layouts were loaded from API
   const [isLayoutEditorOpen, setIsLayoutEditorOpen] = useState(false);
+  const [isCustomThemeDialogOpen, setIsCustomThemeDialogOpen] = useState(false);
 
   const [hooksResponseSoundEnabled, setHooksResponseSoundEnabled] = useState(true);
   const [hooksResponseSound, setHooksResponseSound] = useState("Glass");
@@ -379,11 +385,33 @@ export function SettingsPage({ config }: SettingsPageProps) {
     setShowHideWindowShortcut(cfg.web.show_hide_window_shortcut || "");
 
     // Load theme - sync with context
-    // API stores theme id (e.g., "dark", "tokyo-night")
-    if (cfg.theme.name && cfg.theme.name.toLowerCase() !== "auto") {
-      // Try to match by id (lowercase, with dash)
-      const themeId = cfg.theme.name.toLowerCase().replace(/\s+/g, "-");
-      setTheme(themeId);
+    if (cfg.theme.mode) {
+      setAppearance({
+        mode: cfg.theme.mode as any,
+        lightThemeId: cfg.theme.light_theme,
+        darkThemeId: cfg.theme.dark_theme,
+        customThemes: cfg.theme.custom_themes?.map((ct: any) => ({
+          id: ct.id,
+          name: ct.name,
+          colors: {
+            bg: ct.colors.bg,
+            bgSecondary: ct.colors.bg_secondary,
+            bgTertiary: ct.colors.bg_tertiary,
+            border: ct.colors.border,
+            text: ct.colors.text,
+            textMuted: ct.colors.text_muted,
+            highlight: ct.colors.highlight,
+            accent: ct.colors.accent,
+            success: ct.colors.success,
+            warning: ct.colors.warning,
+            error: ct.colors.error,
+            info: ct.colors.info,
+          },
+          accentPalette: ct.accent_palette,
+          isLight: ct.is_light,
+          isCustom: true,
+        }))
+      });
     }
 
     // Load custom layouts
@@ -466,7 +494,7 @@ export function SettingsPage({ config }: SettingsPageProps) {
     }
 
     setIsLoaded(true);
-  }, [config.agent.command, setTheme]);
+  }, [config.agent.command, setAppearance]);
 
   // Load config from API
   const loadConfig = useCallback(async () => {
@@ -656,15 +684,21 @@ export function SettingsPage({ config }: SettingsPageProps) {
   }, [isLoaded, selectedLayout, agentCommand, acpAgent, chatRenderWindowLimit, chatRenderWindowTrigger, customLayouts, selectedCustomLayoutId, customLayoutsLoaded, ideCommand, terminalCommand, terminalMultiplexer, webTerminalMode, workspaceLayout, showHideWindowShortcut, autoLinkPatterns, hooksResponseSoundEnabled, hooksResponseSound, hooksPermissionSoundEnabled, hooksPermissionSound, trayEnabled, trayShowPermission, trayShowDone, trayShowRunning, menubarShortcut, systemNotifEnabled, systemNotifShowPermission, systemNotifShowDone, systemNotifShowRunning, indexingEnabled, indexingDisabledLangs, browserControlEnabled, browserControlAutoGroups, refreshGlobalConfig]);
 
   // Handle theme change with immediate save
-  const handleThemeChange = useCallback((newThemeId: string) => {
-    setTheme(newThemeId);
-    // Save immediately with the new theme ID to avoid stale closure issues
-    if (isLoaded) {
-      patchConfig({
-        theme: { name: newThemeId },
-      }).then(() => refreshGlobalConfig()).catch(() => console.error("Failed to save theme"));
-    }
-  }, [setTheme, isLoaded, refreshGlobalConfig]);
+  const handleModeChange = useCallback((newMode: "auto" | "light" | "dark") => {
+    setAppearance({ mode: newMode });
+  }, [setAppearance]);
+
+  const handleLightThemeChange = useCallback((id: string) => {
+    setAppearance({ lightThemeId: id });
+  }, [setAppearance]);
+
+  const handleDarkThemeChange = useCallback((id: string) => {
+    setAppearance({ darkThemeId: id });
+  }, [setAppearance]);
+
+  const handleSaveCustomTheme = useCallback((newTheme: Theme) => {
+    setAppearance({ customThemes: [...customThemes, newTheme] });
+  }, [customThemes, setAppearance]);
 
   // Auto-save when any config value changes (debounced)
   useEffect(() => {
@@ -1520,71 +1554,139 @@ env_vars = [
         <Section
           id="appearance"
           title="Appearance"
-          description={`Theme: ${theme.name}`}
+          description={`Mode: ${mode === "auto" ? "Auto" : mode === "light" ? "Light" : "Dark"} | Theme: ${theme.name}`}
           icon={Palette}
           iconColor="#ec4899"
           isOpen={openSections.appearance}
           onToggle={() => toggleSection("appearance")}
         >
-          <div className="space-y-3">
-            <div className="text-sm font-medium text-[var(--color-text-muted)] mb-2 select-none">Select Theme</div>
-            <div className={`grid ${isMobile ? "grid-cols-3" : "grid-cols-4"} gap-2`}>
-              {themes.map((t) => {
-                const isAuto = t.id === "auto";
-                // For Auto theme, show half dark / half light preview
-                const darkTheme = themes.find((th) => th.id === "dark");
-                const lightTheme = themes.find((th) => th.id === "light");
-
-                return (
-                  <motion.button
-                    key={t.id}
-                    whileHover={{ scale: 1.02 }}
-                    whileTap={{ scale: 0.98 }}
-                    onClick={() => handleThemeChange(t.id)}
-                    className={`relative p-3 rounded-lg border text-center transition-all
-                      ${theme.id === t.id
-                        ? "border-[var(--color-highlight)] bg-[var(--color-highlight)]/10"
-                        : "border-[var(--color-border)] hover:border-[var(--color-text-muted)] bg-[var(--color-bg-secondary)]"
-                      }`}
+          <div className="space-y-6">
+            {/* Mode Selection & Action Header */}
+            <div className="flex flex-col gap-4">
+              <div className="flex items-center justify-between">
+                <div className="text-sm font-medium text-[var(--color-text)] select-none">Appearance Mode</div>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => setIsCustomThemeDialogOpen(true)}
+                >
+                  <Plus className="w-3.5 h-3.5 mr-1" /> Create Theme
+                </Button>
+              </div>
+              <div className="flex p-1 bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-xl max-w-sm">
+                {(["auto", "light", "dark"] as const).map((m) => (
+                  <button
+                    key={m}
+                    onClick={() => handleModeChange(m)}
+                    className={`flex-1 py-1.5 text-xs font-medium rounded-lg transition-all
+                      ${mode === m 
+                        ? "bg-[var(--color-bg)] text-[var(--color-text)] shadow-sm border border-[var(--color-border)]" 
+                        : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}
                   >
-                    {theme.id === t.id && (
-                      <div className="absolute top-1.5 right-1.5 w-4 h-4 rounded-full bg-[var(--color-highlight)] flex items-center justify-center">
-                        <Check className="w-2.5 h-2.5 text-white" />
-                      </div>
-                    )}
-                    {/* Color Preview */}
-                    <div className="flex gap-1 mb-2 justify-center">
-                      {isAuto ? (
-                        // Auto theme: show half dark / half light
-                        <>
-                          <div className="w-3 h-3 rounded-full overflow-hidden flex">
-                            <div className="w-1.5 h-3" style={{ backgroundColor: darkTheme?.colors.highlight }} />
-                            <div className="w-1.5 h-3" style={{ backgroundColor: lightTheme?.colors.highlight }} />
-                          </div>
-                          <div className="w-3 h-3 rounded-full overflow-hidden flex">
-                            <div className="w-1.5 h-3" style={{ backgroundColor: darkTheme?.colors.accent }} />
-                            <div className="w-1.5 h-3" style={{ backgroundColor: lightTheme?.colors.accent }} />
-                          </div>
-                          <div className="w-3 h-3 rounded-full overflow-hidden flex">
-                            <div className="w-1.5 h-3" style={{ backgroundColor: darkTheme?.colors.info }} />
-                            <div className="w-1.5 h-3" style={{ backgroundColor: lightTheme?.colors.info }} />
-                          </div>
-                        </>
-                      ) : (
-                        <>
-                          <div className="w-3 h-3 rounded-full" style={{ backgroundColor: t.colors.highlight }} />
-                          <div className="w-3 h-3 rounded-full" style={{ backgroundColor: t.colors.accent }} />
-                          <div className="w-3 h-3 rounded-full" style={{ backgroundColor: t.colors.info }} />
-                        </>
-                      )}
-                    </div>
-                    <div className="text-xs font-medium text-[var(--color-text)]">{t.name}</div>
-                  </motion.button>
-                );
-              })}
+                    {m === "auto" ? "Auto" : m === "light" ? "Light" : "Dark"}
+                  </button>
+                ))}
+              </div>
             </div>
-          </div>
 
+            {/* Light Themes */}
+            {(mode === "auto" || mode === "light") && (
+              <div>
+                <div className="text-sm font-medium text-[var(--color-text-muted)] mb-3 select-none">
+                  {mode === "auto" ? "Preferred Light Theme" : "Light Themes"}
+                </div>
+                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2">
+                  {themes.filter(t => t.isLight).map((t) => (
+                    <motion.button
+                      key={t.id}
+                      whileHover={{ scale: 1.02 }}
+                      whileTap={{ scale: 0.98 }}
+                      onClick={() => handleLightThemeChange(t.id)}
+                      className={`relative p-3 rounded-lg border text-center transition-all group
+                        ${lightThemeId === t.id
+                          ? "border-[var(--color-highlight)] bg-[var(--color-highlight)]/10"
+                          : "border-[var(--color-border)] hover:border-[var(--color-text-muted)] bg-[var(--color-bg-secondary)]"
+                        }`}
+                    >
+                      {lightThemeId === t.id && (
+                        <div className="absolute top-1.5 right-1.5 w-4 h-4 rounded-full bg-[var(--color-highlight)] flex items-center justify-center">
+                          <Check className="w-2.5 h-2.5 text-white" />
+                        </div>
+                      )}
+                      <div className="flex gap-1 mb-2 justify-center">
+                        <div className="w-3 h-3 rounded-full" style={{ backgroundColor: t.colors.highlight }} />
+                        <div className="w-3 h-3 rounded-full" style={{ backgroundColor: t.colors.accent }} />
+                        <div className="w-3 h-3 rounded-full" style={{ backgroundColor: t.colors.info }} />
+                      </div>
+                      <div className="text-xs font-medium text-[var(--color-text)] truncate">{t.name}</div>
+                      {t.isCustom && (
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            const newCustoms = customThemes.filter((ct: any) => ct.id !== t.id);
+                            const nextLightThemeId = lightThemeId === t.id ? "light" : lightThemeId;
+                            setAppearance({ customThemes: newCustoms, lightThemeId: nextLightThemeId });
+                          }}
+                          className="absolute bottom-1 right-1 p-1 text-[var(--color-text-muted)] hover:text-[var(--color-error)] opacity-0 group-hover:opacity-100 transition-opacity"
+                        >
+                          <Trash2 className="w-3 h-3" />
+                        </button>
+                      )}
+                    </motion.button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Dark Themes */}
+            {(mode === "auto" || mode === "dark") && (
+              <div>
+                <div className="text-sm font-medium text-[var(--color-text-muted)] mb-3 select-none">
+                  {mode === "auto" ? "Preferred Dark Theme" : "Dark Themes"}
+                </div>
+                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2">
+                  {themes.filter(t => !t.isLight).map((t) => (
+                    <motion.button
+                      key={t.id}
+                      whileHover={{ scale: 1.02 }}
+                      whileTap={{ scale: 0.98 }}
+                      onClick={() => handleDarkThemeChange(t.id)}
+                      className={`relative p-3 rounded-lg border text-center transition-all group
+                        ${darkThemeId === t.id
+                          ? "border-[var(--color-highlight)] bg-[var(--color-highlight)]/10"
+                          : "border-[var(--color-border)] hover:border-[var(--color-text-muted)] bg-[var(--color-bg-secondary)]"
+                        }`}
+                    >
+                      {darkThemeId === t.id && (
+                        <div className="absolute top-1.5 right-1.5 w-4 h-4 rounded-full bg-[var(--color-highlight)] flex items-center justify-center">
+                          <Check className="w-2.5 h-2.5 text-white" />
+                        </div>
+                      )}
+                      <div className="flex gap-1 mb-2 justify-center">
+                        <div className="w-3 h-3 rounded-full" style={{ backgroundColor: t.colors.highlight }} />
+                        <div className="w-3 h-3 rounded-full" style={{ backgroundColor: t.colors.accent }} />
+                        <div className="w-3 h-3 rounded-full" style={{ backgroundColor: t.colors.info }} />
+                      </div>
+                      <div className="text-xs font-medium text-[var(--color-text)] truncate">{t.name}</div>
+                      {t.isCustom && (
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            const newCustoms = customThemes.filter((ct: any) => ct.id !== t.id);
+                            const nextDarkThemeId = darkThemeId === t.id ? "dark" : darkThemeId;
+                            setAppearance({ customThemes: newCustoms, darkThemeId: nextDarkThemeId });
+                          }}
+                          className="absolute bottom-1 right-1 p-1 text-[var(--color-text-muted)] hover:text-[var(--color-error)] opacity-0 group-hover:opacity-100 transition-opacity"
+                        >
+                          <Trash2 className="w-3 h-3" />
+                        </button>
+                      )}
+                    </motion.button>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
         </Section>
 
         {/* General Section (IDE + Terminal App) */}
@@ -1994,19 +2096,6 @@ env_vars = [
                 </div>
               )}
             </Section>
-
-            {/* Layout Editor Dialog */}
-            <LayoutEditor
-              isOpen={isLayoutEditorOpen}
-              onClose={() => setIsLayoutEditorOpen(false)}
-              layouts={customLayouts}
-              onChange={(layouts) => {
-                setCustomLayouts(layouts);
-                setCustomLayoutsLoaded(true); // Mark as edited, so we can save
-              }}
-              selectedLayoutId={selectedCustomLayoutId}
-              onSelectLayout={setSelectedCustomLayoutId}
-            />
           </>
         )}
 
@@ -2389,6 +2478,26 @@ env_vars = [
       {installDialogOpen && (
         <InstallExtensionDialog onClose={() => setInstallDialogOpen(false)} />
       )}
+
+      {/* Layout Editor Dialog */}
+      <LayoutEditor
+        isOpen={isLayoutEditorOpen}
+        onClose={() => setIsLayoutEditorOpen(false)}
+        layouts={customLayouts}
+        onChange={(layouts) => {
+          setCustomLayouts(layouts);
+          setCustomLayoutsLoaded(true); // Mark as edited, so we can save
+        }}
+        selectedLayoutId={selectedCustomLayoutId}
+        onSelectLayout={setSelectedCustomLayoutId}
+      />
+
+      {/* Custom Theme Dialog */}
+      <CustomThemeDialog
+        isOpen={isCustomThemeDialogOpen}
+        onClose={() => setIsCustomThemeDialogOpen(false)}
+        onSave={handleSaveCustomTheme}
+      />
     </motion.div>
   );
 }

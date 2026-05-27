@@ -10,7 +10,7 @@ use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 
-use crate::storage::config::{self, Config, CustomAgentServer, CustomLayoutConfig, ThemeConfig};
+use crate::storage::config::{self, Config, CustomAgentServer, CustomLayoutConfig};
 
 /// M6: serialize PATCH /api/v1/config 调用，避免并发 PATCH 互相覆盖
 /// (load → mutate → save 三段不是原子的)。
@@ -83,6 +83,10 @@ pub struct HooksConfigDto {
 #[derive(Debug, Serialize)]
 pub struct ThemeConfigDto {
     pub name: String,
+    pub mode: String,
+    pub light_theme: String,
+    pub dark_theme: String,
+    pub custom_themes: Vec<config::CustomThemeConfig>,
 }
 
 #[derive(Debug, Serialize)]
@@ -138,6 +142,10 @@ impl From<&Config> for ConfigResponse {
         Self {
             theme: ThemeConfigDto {
                 name: config.theme.name.clone(),
+                mode: config.theme.mode.clone(),
+                light_theme: config.theme.light_theme.clone(),
+                dark_theme: config.theme.dark_theme.clone(),
+                custom_themes: config.theme.custom_themes.clone(),
             },
             layout: LayoutConfigDto {
                 default: config.layout.default.clone(),
@@ -275,6 +283,10 @@ pub struct AcpConfigPatch {
 #[derive(Debug, Deserialize)]
 pub struct ThemeConfigPatch {
     pub name: Option<String>,
+    pub mode: Option<String>,
+    pub light_theme: Option<String>,
+    pub dark_theme: Option<String>,
+    pub custom_themes: Option<Vec<config::CustomThemeConfig>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -320,8 +332,31 @@ pub async fn patch_config(
         if let Some(name) = theme_patch.name {
             if config.theme.name != name {
                 theme_changed = true;
+                config.theme.name = name;
             }
-            config.theme = ThemeConfig { name };
+        }
+        if let Some(mode) = theme_patch.mode {
+            if config.theme.mode != mode {
+                theme_changed = true;
+                config.theme.mode = mode;
+            }
+        }
+        if let Some(light_theme) = theme_patch.light_theme {
+            if config.theme.light_theme != light_theme {
+                theme_changed = true;
+                config.theme.light_theme = light_theme;
+            }
+        }
+        if let Some(dark_theme) = theme_patch.dark_theme {
+            if config.theme.dark_theme != dark_theme {
+                theme_changed = true;
+                config.theme.dark_theme = dark_theme;
+            }
+        }
+        if let Some(custom_themes) = theme_patch.custom_themes {
+            // Assume custom themes change implies theme changed for simplicity
+            theme_changed = true;
+            config.theme.custom_themes = custom_themes;
         }
     }
 
@@ -500,7 +535,15 @@ pub async fn patch_config(
     // Notify Radio clients if theme changed
     if theme_changed {
         use crate::api::handlers::walkie_talkie::{broadcast_radio_event, RadioEvent};
-        broadcast_radio_event(RadioEvent::ThemeChanged);
+        // Use the current active theme name or the first selected theme
+        let name = if config.theme.mode == "auto" {
+            config.theme.light_theme.clone()
+        } else if config.theme.mode == "dark" {
+            config.theme.dark_theme.clone()
+        } else {
+            config.theme.light_theme.clone()
+        };
+        broadcast_radio_event(RadioEvent::ThemeChanged { name });
     }
 
     Ok(Json(ConfigResponse::from(&config)))

@@ -84,14 +84,18 @@ Workspace (multiple projects) → Project (git repo) → Task (worktree + tmux s
 
 Use the **Makefile** for everything common — `make` lists targets.
 
+Run targets align with `grove` subcommands. Append `PERF=1` to enable the
+perf-monitor (backend instrumentation + frontend perf panel); applies to
+`gui` / `web` / `web-build`.
+
 ```
-make run            # web (prod) + cargo run --features gui -- gui
-make perf           # web (perf) + cargo run --features gui,perf-monitor -- gui
-make perf-run       # cargo run only (skip web rebuild)
-make web-perf       # web build with perf monitor wired in
-make web            # web build (clean prod)
-make web-dev        # vite dev server (proxy /api → 3001)
+make gui            # web build + cargo run --features gui -- gui
+PERF=1 make gui     # web build (perf) + cargo run --features gui,perf-monitor -- gui
+make web            # web build + cargo run -- web (browser at localhost:3001)
+PERF=1 make web     # web build (perf) + cargo run --features perf-monitor -- web
 make tui            # cargo run (no GUI, no web build)
+make web-build      # web build only (PERF=1 wires in perf monitor)
+make web-dev        # vite dev server (proxy /api → 3001)
 make check          # cargo check across all feature combos
 make fmt / lint     # cargo fmt / cargo clippy -D warnings
 make ci             # full pre-push: fmt + clippy + test + web-lint + web build
@@ -163,7 +167,7 @@ Grove ships an in-house perf monitor that's **only included in dev/perf builds**
 ### How to use
 
 ```
-make perf           # full rebuild + run with monitoring
+PERF=1 make gui     # full rebuild + run with monitoring
 ```
 
 Then in the Tauri window:

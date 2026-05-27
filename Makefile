@@ -1,9 +1,25 @@
 # Grove dev convenience targets.
 # Run `make` (no args) to see this help.
+#
+# Append `PERF=1` to enable perf-monitor (backend instrumentation + frontend
+# perf panel). Applies to gui / web / web-build:
+#   make gui              # plain
+#   PERF=1 make gui       # with perf-monitor
+#   PERF=1 make web
 
 WEB_DIR := grove-web
 
 .DEFAULT_GOAL := help
+
+ifeq ($(PERF),1)
+  WEB_BUILD_SCRIPT := build:perf
+  GUI_FEATURES := gui,perf-monitor
+  WEB_FEATURES := --features perf-monitor
+else
+  WEB_BUILD_SCRIPT := build
+  GUI_FEATURES := gui
+  WEB_FEATURES :=
+endif
 
 .PHONY: help
 help:
@@ -11,30 +27,23 @@ help:
 
 # ─── Run ────────────────────────────────────────────────────────────────
 
-.PHONY: run
-run: web ## Build web (prod) + run GUI without perf monitor
-	cargo run --features gui -- gui
+.PHONY: gui
+gui: web-build ## Run GUI desktop window (PERF=1 enables perf-monitor)
+	cargo run --features $(GUI_FEATURES) -- gui
 
-.PHONY: perf
-perf: web-perf perf-run ## Build web (perf) + run GUI with backend perf-monitor enabled
-
-.PHONY: perf-run
-perf-run: ## Run GUI with perf-monitor (skip web rebuild — use existing dist)
-	cargo run --features gui,perf-monitor -- gui
+.PHONY: web
+web: web-build ## Run grove web server (browser at localhost:3001; PERF=1 for perf-monitor)
+	cargo run $(WEB_FEATURES) -- web
 
 .PHONY: tui
-tui: ## Run TUI (no GUI / no web build)
+tui: ## Run TUI (no web build)
 	cargo run
 
 # ─── Web ────────────────────────────────────────────────────────────────
 
-.PHONY: web
-web: ## Build web frontend (production, no perf monitor)
-	cd $(WEB_DIR) && pnpm run build
-
-.PHONY: web-perf
-web-perf: ## Build web frontend with perf monitor wired in
-	cd $(WEB_DIR) && pnpm run build:perf
+.PHONY: web-build
+web-build: ## Build web frontend (PERF=1 wires in perf monitor)
+	cd $(WEB_DIR) && pnpm run $(WEB_BUILD_SCRIPT)
 
 .PHONY: web-dev
 web-dev: ## Start vite dev server (proxy /api to localhost:3001)
@@ -67,7 +76,7 @@ test: ## cargo test
 # ─── Combined ───────────────────────────────────────────────────────────
 
 .PHONY: ci
-ci: fmt lint test web-lint web ## Full pre-push check (fmt + clippy + test + web build)
+ci: fmt lint test web-lint web-build ## Full pre-push check (fmt + clippy + test + web build)
 
 .PHONY: clean
 clean: ## Clean cargo + dist + node_modules build artifacts (keeps node_modules)
@@ -87,7 +96,8 @@ flamegraph-install: ## Install samply (Rust flamegraph profiler) if missing
 	@echo "samply ready: $$(samply --version)"
 
 .PHONY: flamegraph-build
-flamegraph-build: web-perf ## Build release binary with debuginfo for profiling
+flamegraph-build: ## Build release binary with debuginfo for profiling (uses PERF=1 web build)
+	$(MAKE) PERF=1 web-build
 	RUSTFLAGS="-C force-frame-pointers=yes" cargo build --release --features gui,perf-monitor
 
 .PHONY: flamegraph
