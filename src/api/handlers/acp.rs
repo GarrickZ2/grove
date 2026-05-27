@@ -158,6 +158,8 @@ enum ServerMessage {
         start_ts: Option<i64>,
         #[serde(skip_serializing_if = "Option::is_none")]
         end_ts: Option<i64>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        cost: Option<crate::acp::UsageCost>,
     },
     Busy {
         value: bool,
@@ -426,11 +428,13 @@ impl From<AcpUpdate> for ServerMessage {
                 usage,
                 start_ts,
                 end_ts,
+                cost,
             } => ServerMessage::Complete {
                 stop_reason,
                 usage,
                 start_ts,
                 end_ts,
+                cost,
             },
             AcpUpdate::Busy { value } => ServerMessage::Busy { value },
             AcpUpdate::Error { message } => ServerMessage::Error { message },

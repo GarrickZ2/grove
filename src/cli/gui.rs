@@ -482,7 +482,7 @@ pub async fn execute(port: u16) {
             let _ = TAURI_APP.set(app.handle().clone());
             // Create a window pointing to our HTTP server
             let url = format!("http://localhost:{}", actual_port);
-            let main_window = tauri::WebviewWindowBuilder::new(
+            let builder = tauri::WebviewWindowBuilder::new(
                 app,
                 "main",
                 tauri::WebviewUrl::External(url.parse().unwrap()),
@@ -491,8 +491,18 @@ pub async fn execute(port: u16) {
             .inner_size(1440.0, 900.0)
             .min_inner_size(1280.0, 720.0)
             .center()
-            .disable_drag_drop_handler()
-            .build()?;
+            .disable_drag_drop_handler();
+
+            // macOS: overlay title bar so traffic lights float over content
+            // (Raycast / Tahoe System Settings look). Sidebar's logo area has
+            // a pt-8 + data-tauri-drag-region to reserve clearance and let
+            // users drag the window from the top strip.
+            #[cfg(target_os = "macos")]
+            let builder = builder
+                .title_bar_style(tauri::TitleBarStyle::Overlay)
+                .hidden_title(true);
+
+            let main_window = builder.build()?;
 
             // WKWebView on macOS does NOT expose `navigator.mediaDevices` by
             // default — getUserMedia returns "undefined is not an object" and

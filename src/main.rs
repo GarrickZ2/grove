@@ -121,6 +121,10 @@ fn ensure_storage_version() {
             // v2.3 → v2.4: Tasks TOML → SQLite
             let _ = storage::database::connection();
         }
+        Some("2.4") => {
+            // v2.4 → v2.5: Cost columns added
+            let _ = storage::database::connection();
+        }
         Some(v) => {
             eprintln!(
                 "Unknown storage version: {}. Expected {}.",

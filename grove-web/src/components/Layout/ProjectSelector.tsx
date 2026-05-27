@@ -225,7 +225,7 @@ export function ProjectSelector({ collapsed, onManageProjects, onAddProject, onP
               animate={{ opacity: 1, x: 0 }}
               exit={{ opacity: 0, x: -8 }}
               transition={{ duration: 0.15 }}
-              className="absolute left-full top-0 ml-2 z-50 w-72 max-w-sm bg-[var(--color-bg)] border border-[var(--color-border)] rounded-lg shadow-lg overflow-hidden"
+              className="glass-popover absolute left-full top-0 ml-2 z-50 w-72 max-w-sm rounded-lg overflow-hidden"
             >
               {/* Search Input */}
               <div className="p-2 border-b border-[var(--color-border)]">
@@ -331,7 +331,7 @@ export function ProjectSelector({ collapsed, onManageProjects, onAddProject, onP
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -10 }}
             transition={{ duration: 0.15 }}
-            className="absolute left-3 mt-1 z-50 w-72 max-w-sm min-w-[calc(100%-1.5rem)] bg-[var(--color-bg)] border border-[var(--color-border)] rounded-lg shadow-lg overflow-hidden"
+            className="glass-popover absolute left-3 mt-1 z-50 w-72 max-w-sm min-w-[calc(100%-1.5rem)] rounded-lg overflow-hidden"
           >
             {/* Search Input */}
             <div className="p-2 border-b border-[var(--color-border)]">

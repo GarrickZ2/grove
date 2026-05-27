@@ -50,6 +50,7 @@ pub struct KpiData {
     pub avg_tokens_per_turn: u64,
     pub avg_duration_secs: f64,
     pub p50_duration_secs: f64,
+    pub cost_total: f64,
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -61,6 +62,7 @@ pub struct TimeseriesBucket {
     pub tokens_cached: u64,
     pub tokens_out: u64,
     pub per_agent: Vec<AgentBucket>,
+    pub cost_total: f64,
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -68,6 +70,7 @@ pub struct AgentBucket {
     pub agent: String,
     pub tokens: u64,
     pub turns: u64,
+    pub cost: f64,
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -76,6 +79,7 @@ pub struct AgentShareItem {
     pub turns: u64,
     pub tokens: u64,
     pub percent: f64,
+    pub cost: f64,
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -87,6 +91,7 @@ pub struct ModelItem {
     pub cached_tokens: u64,
     pub output_tokens: u64,
     pub turns: u64,
+    pub cost: f64,
 }
 
 /// Top entity in the period — projects (Global scope) or tasks (Project scope).
@@ -101,6 +106,7 @@ pub struct TopItem {
     pub cached_tokens: u64,
     pub output_tokens: u64,
     pub agent_split: Vec<AgentBucket>,
+    pub cost: f64,
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -199,7 +205,7 @@ fn kpi_only(scope: &Scope, from_ts: i64, to_ts: i64) -> KpiData {
     // `query_durations` re-acquires it. Holding two nested guards on the
     // same process-wide Mutex deadlocks every other API request.
     let where_scope = scope_clause(scope);
-    let row: (i64, i64, i64, i64, i64, i64) = {
+    let row: (i64, i64, i64, i64, i64, i64, f64) = {
         let conn = database::connection();
         let sql = format!(
             "SELECT
@@ -208,7 +214,8 @@ fn kpi_only(scope: &Scope, from_ts: i64, to_ts: i64) -> KpiData {
                 COALESCE(SUM(output_tokens), 0),
                 COALESCE(SUM(cached_read_tokens), 0),
                 COALESCE(SUM(total_tokens), 0),
-                COALESCE(SUM(end_ts - start_ts), 0)
+                COALESCE(SUM(end_ts - start_ts), 0),
+                COALESCE(SUM(cost_amount), 0.0)
              FROM chat_token_usage
              WHERE end_ts BETWEEN ?1 AND ?2 AND {where_scope}",
         );
@@ -221,9 +228,10 @@ fn kpi_only(scope: &Scope, from_ts: i64, to_ts: i64) -> KpiData {
                     r.get(3)?,
                     r.get(4)?,
                     r.get(5)?,
+                    r.get(6)?,
                 ))
             })
-            .unwrap_or((0, 0, 0, 0, 0, 0))
+            .unwrap_or((0, 0, 0, 0, 0, 0, 0.0))
         } else {
             conn.query_row(&sql, params![from_ts, to_ts], |r| {
                 Ok((
@@ -233,13 +241,14 @@ fn kpi_only(scope: &Scope, from_ts: i64, to_ts: i64) -> KpiData {
                     r.get(3)?,
                     r.get(4)?,
                     r.get(5)?,
+                    r.get(6)?,
                 ))
             })
-            .unwrap_or((0, 0, 0, 0, 0, 0))
+            .unwrap_or((0, 0, 0, 0, 0, 0, 0.0))
         }
     };
 
-    let (turns, tin, tout, tcached, ttotal, tcompute) = row;
+    let (turns, tin, tout, tcached, ttotal, tcompute, tcost) = row;
     let turns = turns as u64;
 
     // Pull all turn durations to compute p50 in memory (small N — single user).
@@ -261,6 +270,7 @@ fn kpi_only(scope: &Scope, from_ts: i64, to_ts: i64) -> KpiData {
         avg_tokens_per_turn: (ttotal as u64).checked_div(turns).unwrap_or(0),
         avg_duration_secs: avg_dur,
         p50_duration_secs: p50,
+        cost_total: tcost,
     }
 }
 
@@ -350,7 +360,8 @@ fn query_timeseries(
                 COUNT(*),
                 COALESCE(SUM(input_tokens), 0),
                 COALESCE(SUM(cached_read_tokens), 0),
-                COALESCE(SUM(output_tokens), 0)
+                COALESCE(SUM(output_tokens), 0),
+                COALESCE(SUM(cost_amount), 0.0)
              FROM chat_token_usage
              WHERE end_ts BETWEEN ?1 AND ?2 AND {where_scope}
              GROUP BY bk
@@ -394,6 +405,7 @@ fn map_timeseries_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<TimeseriesBucke
         tokens_cached: r.get::<_, i64>(4)? as u64,
         tokens_out: r.get::<_, i64>(5)? as u64,
         per_agent: Vec::new(),
+        cost_total: r.get::<_, f64>(6)?,
     })
 }
 
@@ -421,7 +433,8 @@ fn query_timeseries_per_agent(
             strftime('{fmt}', end_ts, 'unixepoch') AS bk,
             agent,
             COUNT(*),
-            COALESCE(SUM(total_tokens), 0)
+            COALESCE(SUM(total_tokens), 0),
+            COALESCE(SUM(cost_amount), 0.0)
          FROM chat_token_usage
          WHERE end_ts BETWEEN ?1 AND ?2 AND {where_scope}
          GROUP BY bk, agent",
@@ -433,13 +446,14 @@ fn query_timeseries_per_agent(
         Ok(s) => s,
         Err(_) => return out,
     };
-    let collected: Vec<(String, String, i64, i64)> = if let Some(p) = project_param(scope) {
+    let collected: Vec<(String, String, i64, i64, f64)> = if let Some(p) = project_param(scope) {
         match stmt.query_map(params![from_ts, to_ts, p], |r| {
             Ok((
                 r.get::<_, String>(0)?,
                 r.get::<_, String>(1)?,
                 r.get::<_, i64>(2)?,
                 r.get::<_, i64>(3)?,
+                r.get::<_, f64>(4)?,
             ))
         }) {
             Ok(it) => it.flatten().collect(),
@@ -452,17 +466,19 @@ fn query_timeseries_per_agent(
                 r.get::<_, String>(1)?,
                 r.get::<_, i64>(2)?,
                 r.get::<_, i64>(3)?,
+                r.get::<_, f64>(4)?,
             ))
         }) {
             Ok(it) => it.flatten().collect(),
             Err(_) => return out,
         }
     };
-    for (key, agent, turns, tokens) in collected {
+    for (key, agent, turns, tokens, cost) in collected {
         out.entry(key).or_default().push(AgentBucket {
             agent,
             tokens: tokens as u64,
             turns: turns as u64,
+            cost,
         });
     }
     out
@@ -473,7 +489,7 @@ fn query_timeseries_per_agent(
 fn query_agent_share(scope: &Scope, from_ts: i64, to_ts: i64) -> Vec<AgentShareItem> {
     let conn = database::connection();
     let sql = format!(
-        "SELECT agent, COUNT(*), COALESCE(SUM(total_tokens), 0)
+        "SELECT agent, COUNT(*), COALESCE(SUM(total_tokens), 0), COALESCE(SUM(cost_amount), 0.0)
          FROM chat_token_usage
          WHERE end_ts BETWEEN ?1 AND ?2 AND {}
          GROUP BY agent
@@ -484,12 +500,13 @@ fn query_agent_share(scope: &Scope, from_ts: i64, to_ts: i64) -> Vec<AgentShareI
         Ok(s) => s,
         Err(_) => return Vec::new(),
     };
-    let collected: Vec<(String, i64, i64)> = if let Some(p) = project_param(scope) {
+    let collected: Vec<(String, i64, i64, f64)> = if let Some(p) = project_param(scope) {
         match stmt.query_map(params![from_ts, to_ts, p], |r| {
             Ok((
                 r.get::<_, String>(0)?,
                 r.get::<_, i64>(1)?,
                 r.get::<_, i64>(2)?,
+                r.get::<_, f64>(3)?,
             ))
         }) {
             Ok(it) => it.flatten().collect(),
@@ -501,6 +518,7 @@ fn query_agent_share(scope: &Scope, from_ts: i64, to_ts: i64) -> Vec<AgentShareI
                 r.get::<_, String>(0)?,
                 r.get::<_, i64>(1)?,
                 r.get::<_, i64>(2)?,
+                r.get::<_, f64>(3)?,
             ))
         }) {
             Ok(it) => it.flatten().collect(),
@@ -510,7 +528,7 @@ fn query_agent_share(scope: &Scope, from_ts: i64, to_ts: i64) -> Vec<AgentShareI
     let total_turns: i64 = collected.iter().map(|x| x.1).sum();
     collected
         .into_iter()
-        .map(|(agent, turns, tokens)| AgentShareItem {
+        .map(|(agent, turns, tokens, cost)| AgentShareItem {
             agent,
             turns: turns as u64,
             tokens: tokens as u64,
@@ -519,6 +537,7 @@ fn query_agent_share(scope: &Scope, from_ts: i64, to_ts: i64) -> Vec<AgentShareI
             } else {
                 0.0
             },
+            cost,
         })
         .collect()
 }
@@ -535,7 +554,8 @@ fn query_models(scope: &Scope, from_ts: i64, to_ts: i64) -> Vec<ModelItem> {
             COALESCE(SUM(input_tokens), 0),
             COALESCE(SUM(cached_read_tokens), 0),
             COALESCE(SUM(output_tokens), 0),
-            COUNT(*)
+            COUNT(*),
+            COALESCE(SUM(cost_amount), 0.0)
          FROM chat_token_usage
          WHERE end_ts BETWEEN ?1 AND ?2 AND {}
          GROUP BY m, agent
@@ -569,6 +589,7 @@ fn map_model_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<ModelItem> {
         cached_tokens: r.get::<_, i64>(4)? as u64,
         output_tokens: r.get::<_, i64>(5)? as u64,
         turns: r.get::<_, i64>(6)? as u64,
+        cost: r.get::<_, f64>(7)?,
     })
 }
 
@@ -587,13 +608,14 @@ fn query_top_projects(from_ts: i64, to_ts: i64) -> Vec<TopItem> {
     // Mutex; nesting calls (e.g. `workspace::load_projects()` while still
     // holding `conn`) deadlocks the entire API since every other handler
     // queues behind the same mutex.
-    let raw: Vec<(String, i64, i64, i64, i64, i64)> = {
+    let raw: Vec<(String, i64, i64, i64, i64, i64, f64)> = {
         let conn = database::connection();
         let sql = "SELECT project_key, COUNT(*),
                           COALESCE(SUM(total_tokens), 0),
                           COALESCE(SUM(input_tokens), 0),
                           COALESCE(SUM(cached_read_tokens), 0),
-                          COALESCE(SUM(output_tokens), 0)
+                          COALESCE(SUM(output_tokens), 0),
+                          COALESCE(SUM(cost_amount), 0.0)
                    FROM chat_token_usage
                    WHERE end_ts BETWEEN ?1 AND ?2
                    GROUP BY project_key
@@ -611,6 +633,7 @@ fn query_top_projects(from_ts: i64, to_ts: i64) -> Vec<TopItem> {
                 r.get::<_, i64>(3)?,
                 r.get::<_, i64>(4)?,
                 r.get::<_, i64>(5)?,
+                r.get::<_, f64>(6)?,
             ))
         });
         match rows {
@@ -630,7 +653,7 @@ fn query_top_projects(from_ts: i64, to_ts: i64) -> Vec<TopItem> {
             .collect();
 
     raw.into_iter()
-        .map(|(key, turns, tokens, input, cached, output)| {
+        .map(|(key, turns, tokens, input, cached, output, cost)| {
             let name = project_names
                 .get(&key)
                 .cloned()
@@ -645,6 +668,7 @@ fn query_top_projects(from_ts: i64, to_ts: i64) -> Vec<TopItem> {
                 cached_tokens: cached as u64,
                 output_tokens: output as u64,
                 agent_split,
+                cost,
             }
         })
         .collect()
@@ -653,13 +677,14 @@ fn query_top_projects(from_ts: i64, to_ts: i64) -> Vec<TopItem> {
 fn query_top_tasks(project_key: &str, from_ts: i64, to_ts: i64) -> Vec<TopItem> {
     // Drop the DB guard before calling load_tasks — see `query_top_projects`
     // for the deadlock rationale.
-    let raw: Vec<(String, i64, i64, i64, i64, i64)> = {
+    let raw: Vec<(String, i64, i64, i64, i64, i64, f64)> = {
         let conn = database::connection();
         let sql = "SELECT task_id, COUNT(*),
                           COALESCE(SUM(total_tokens), 0),
                           COALESCE(SUM(input_tokens), 0),
                           COALESCE(SUM(cached_read_tokens), 0),
-                          COALESCE(SUM(output_tokens), 0)
+                          COALESCE(SUM(output_tokens), 0),
+                          COALESCE(SUM(cost_amount), 0.0)
                    FROM chat_token_usage
                    WHERE end_ts BETWEEN ?1 AND ?2 AND project_key = ?3
                    GROUP BY task_id
@@ -677,6 +702,7 @@ fn query_top_tasks(project_key: &str, from_ts: i64, to_ts: i64) -> Vec<TopItem> 
                 r.get::<_, i64>(3)?,
                 r.get::<_, i64>(4)?,
                 r.get::<_, i64>(5)?,
+                r.get::<_, f64>(6)?,
             ))
         });
         match rows {
@@ -690,7 +716,7 @@ fn query_top_tasks(project_key: &str, from_ts: i64, to_ts: i64) -> Vec<TopItem> 
         tasks.into_iter().map(|t| (t.id.clone(), t.name)).collect();
 
     raw.into_iter()
-        .map(|(task_id, turns, tokens, input, cached, output)| {
+        .map(|(task_id, turns, tokens, input, cached, output, cost)| {
             let name = task_names
                 .get(&task_id)
                 .cloned()
@@ -705,6 +731,7 @@ fn query_top_tasks(project_key: &str, from_ts: i64, to_ts: i64) -> Vec<TopItem> 
                 cached_tokens: cached as u64,
                 output_tokens: output as u64,
                 agent_split,
+                cost,
             }
         })
         .collect()
@@ -712,7 +739,7 @@ fn query_top_tasks(project_key: &str, from_ts: i64, to_ts: i64) -> Vec<TopItem> 
 
 fn query_agent_split_for_project(key: &str, from_ts: i64, to_ts: i64) -> Vec<AgentBucket> {
     let conn = database::connection();
-    let sql = "SELECT agent, COUNT(*), COALESCE(SUM(total_tokens), 0)
+    let sql = "SELECT agent, COUNT(*), COALESCE(SUM(total_tokens), 0), COALESCE(SUM(cost_amount), 0.0)
                FROM chat_token_usage
                WHERE end_ts BETWEEN ?1 AND ?2 AND project_key = ?3
                GROUP BY agent
@@ -726,6 +753,7 @@ fn query_agent_split_for_project(key: &str, from_ts: i64, to_ts: i64) -> Vec<Age
             agent: r.get(0)?,
             turns: r.get::<_, i64>(1)? as u64,
             tokens: r.get::<_, i64>(2)? as u64,
+            cost: r.get::<_, f64>(3)?,
         })
     });
     match rows {
@@ -741,7 +769,7 @@ fn query_agent_split_for_task(
     to_ts: i64,
 ) -> Vec<AgentBucket> {
     let conn = database::connection();
-    let sql = "SELECT agent, COUNT(*), COALESCE(SUM(total_tokens), 0)
+    let sql = "SELECT agent, COUNT(*), COALESCE(SUM(total_tokens), 0), COALESCE(SUM(cost_amount), 0.0)
                FROM chat_token_usage
                WHERE end_ts BETWEEN ?1 AND ?2 AND project_key = ?3 AND task_id = ?4
                GROUP BY agent
@@ -755,6 +783,7 @@ fn query_agent_split_for_task(
             agent: r.get(0)?,
             turns: r.get::<_, i64>(1)? as u64,
             tokens: r.get::<_, i64>(2)? as u64,
+            cost: r.get::<_, f64>(3)?,
         })
     });
     match rows {

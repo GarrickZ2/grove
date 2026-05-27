@@ -89,8 +89,12 @@ export function Sidebar({ activeItem, onItemClick, collapsed, onToggleCollapse, 
 
   const content = (
     <>
-      {/* Logo + Mode Brand */}
-      <div className="p-4 select-none">
+      {/* Logo + Mode Brand
+         px+pb 4 = 16px, pt-8 = 32px to clear macOS traffic lights when Tauri
+         title bar is in Overlay mode. data-tauri-drag-region lets the user
+         drag the window from this top strip. Inner button still receives
+         clicks (Tauri excludes interactive children from drag). */}
+      <div className="px-4 pt-8 pb-4 select-none" data-tauri-drag-region>
         {isCollapsed ? (
           <button
             onClick={() => onTasksModeChange(tasksMode === "zen" ? "blitz" : "zen")}
@@ -108,7 +112,7 @@ export function Sidebar({ activeItem, onItemClick, collapsed, onToggleCollapse, 
       </div>
 
       {/* Project Selector */}
-      <div className="relative border-b border-[var(--color-border)]">
+      <div className="relative">
         <ProjectSelector collapsed={isCollapsed} onManageProjects={(tab) => { onManageProjects?.(tab); onDrawerClose?.(); }} onAddProject={(studioMode) => { onAddProject?.(studioMode); onDrawerClose?.(); }} onProjectSwitch={onProjectSwitch} />
       </div>
 
@@ -153,7 +157,7 @@ export function Sidebar({ activeItem, onItemClick, collapsed, onToggleCollapse, 
       </nav>
 
       {/* Footer */}
-      <div className="p-2 border-t border-[var(--color-border)] select-none">
+      <div className="p-2 select-none">
         {/* Search / Command Palette */}
         {onSearch && (
           <motion.button
@@ -163,7 +167,7 @@ export function Sidebar({ activeItem, onItemClick, collapsed, onToggleCollapse, 
             title={isCollapsed ? "Search (⌘K)" : undefined}
             className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-colors duration-150
               ${isCollapsed ? "justify-center" : ""}
-              text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-bg-secondary)]`}
+              text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-border)]`}
           >
             <Search className="w-5 h-5 flex-shrink-0" />
             {!isCollapsed && (
@@ -182,12 +186,21 @@ export function Sidebar({ activeItem, onItemClick, collapsed, onToggleCollapse, 
             whileTap={{ scale: 0.98 }}
             onClick={() => setNotifOpen(!notifOpen)}
             title={isCollapsed ? "Notifications" : undefined}
-            className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-colors duration-150
+            className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm transition-colors duration-150
               ${isCollapsed ? "justify-center" : ""}
               ${notifOpen
-                ? "bg-[var(--color-highlight)]/10 text-[var(--color-highlight)]"
-                : "text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-bg-secondary)]"
+                ? "font-semibold text-[var(--color-highlight)]"
+                : "font-medium text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-border)]"
               }`}
+            style={
+              notifOpen
+                ? {
+                    backgroundColor: "color-mix(in oklab, var(--color-highlight) 18%, transparent)",
+                    boxShadow:
+                      "0 1px 2px rgba(0, 0, 0, 0.05), inset 0 0 0 1px color-mix(in oklab, var(--color-highlight) 28%, transparent)",
+                  }
+                : undefined
+            }
           >
             <div className="relative flex-shrink-0">
               <Bell className="w-5 h-5" />
@@ -220,7 +233,7 @@ export function Sidebar({ activeItem, onItemClick, collapsed, onToggleCollapse, 
             whileHover={{ scale: 1.02 }}
             whileTap={{ scale: 0.98 }}
             onClick={onToggleCollapse}
-            className="w-full flex items-center justify-center gap-3 px-3 py-2.5 mt-1 rounded-xl text-sm font-medium text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-bg-secondary)] transition-colors"
+            className="w-full flex items-center justify-center gap-3 px-3 py-2.5 mt-1 rounded-xl text-sm font-medium text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-border)] transition-colors"
           >
             {collapsed ? (
               <ChevronRight className="w-4 h-4" />
@@ -246,7 +259,7 @@ export function Sidebar({ activeItem, onItemClick, collapsed, onToggleCollapse, 
       initial={false}
       animate={{ width: collapsed ? 72 : 256 }}
       transition={{ duration: 0.2, ease: "easeInOut" }}
-      className="h-screen bg-[var(--color-bg)] border-r border-[var(--color-border)] flex flex-col flex-shrink-0 select-none"
+      className="glass-panel fixed top-2 bottom-2 left-2 z-40 rounded-2xl flex flex-col select-none"
     >
       {content}
     </motion.aside>
@@ -354,7 +367,7 @@ function TasksHoverPopup({ tasks, onTaskSelect, top, left, onMouseEnter, onMouse
       exit={{ opacity: 0, x: -6, scale: 0.97 }}
       transition={{ duration: 0.15, ease: "easeOut" }}
       style={{ top, left, position: "fixed" }}
-      className="z-[9999] w-[260px] bg-[var(--color-bg)] border border-[var(--color-border)] rounded-xl shadow-xl overflow-hidden"
+      className="glass-popover z-[9999] w-[260px] rounded-xl overflow-hidden"
       onMouseEnter={onMouseEnter}
       onMouseLeave={onMouseLeave}
     >
@@ -411,32 +424,33 @@ function NavButton({ item, isActive, onClick, collapsed }: NavButtonProps) {
       whileTap={{ scale: 0.98 }}
       onClick={onClick}
       title={collapsed ? item.label : undefined}
-      className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-colors duration-150
+      className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm transition-colors duration-150
         ${collapsed ? "justify-center" : ""}
         ${
           isActive
-            ? "bg-[var(--color-highlight)]/10 text-[var(--color-highlight)]"
-            : "text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-bg-secondary)]"
+            ? "font-semibold text-[var(--color-highlight)]"
+            : "font-medium text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-border)]"
         }`}
+      style={
+        isActive
+          ? {
+              backgroundColor: "color-mix(in oklab, var(--color-highlight) 28%, transparent)",
+              boxShadow:
+                "0 2px 6px -1px color-mix(in oklab, var(--color-highlight) 25%, transparent), inset 0 0 0 1px color-mix(in oklab, var(--color-highlight) 45%, transparent)",
+            }
+          : undefined
+      }
     >
       <Icon className="w-5 h-5 flex-shrink-0" />
       {!collapsed && (
-        <>
-          <span className="flex-1 flex items-center gap-1.5">
-            <span>{item.label}</span>
-            {item.beta && (
-              <span className="px-1.5 py-0.5 text-[10px] font-semibold rounded-md bg-amber-500/15 text-amber-500 leading-none">
-                beta
-              </span>
-            )}
-          </span>
-          {isActive && (
-            <motion.div
-              layoutId="activeIndicator"
-              className="w-1.5 h-1.5 rounded-full bg-[var(--color-highlight)]"
-            />
+        <span className="flex-1 flex items-center gap-1.5">
+          <span>{item.label}</span>
+          {item.beta && (
+            <span className="px-1.5 py-0.5 text-[10px] font-semibold rounded-md bg-amber-500/15 text-amber-500 leading-none">
+              beta
+            </span>
           )}
-        </>
+        </span>
       )}
     </motion.button>
   );

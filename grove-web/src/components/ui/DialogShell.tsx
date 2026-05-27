@@ -123,7 +123,7 @@ export function DialogShell({
                 className="pointer-events-auto w-full max-h-full overflow-y-auto overscroll-contain"
                 style={{ WebkitOverflowScrolling: "touch" }}
               >
-                <div className="bg-[var(--color-bg-secondary)] border-t border-[var(--color-border)] rounded-t-2xl shadow-xl overflow-hidden">
+                <div className="glass-overlay rounded-t-2xl overflow-hidden">
                   {/* Drag indicator */}
                   <div className="flex justify-center pt-3 pb-1">
                     <div className="w-10 h-1 rounded-full bg-[var(--color-border)]" />

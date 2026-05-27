@@ -2,40 +2,23 @@
  * Stacked area / bar chart — single metric over time, stacked by agent
  * when the data permits.
  *
- * Metric selector:
- *   turns  – per-agent turns (stacked)
- *   total  – per-agent tokens summed (stacked)
- *   input  – bucket-level input tokens (single area; backend does not split
- *            input/cached/output per agent today)
- *   cached – bucket-level cached_read tokens
- *   output – bucket-level output tokens
- *
- * Hand-rolled SVG (no chart library) keeps the dependency surface small;
- * stat panels render a few hundred buckets max, well under what plain SVG
- * handles. Hover tooltip surfaces the bucket's segment breakdown.
+ * Receives MetricType and Unit from the board-level state.
+ * Smooth SVG curves via cubic Bezier smoothing.
  */
 
 import { useLayoutEffect, useMemo, useRef, useState } from "react";
 
 import type { Bucket, TimeseriesBucket } from "../../../api/statistics";
 import { agentColor } from "../agentColors";
-import { formatTokens, formatNumber } from "../formatters";
+import { formatTokens, formatCost } from "../formatters";
 import { TOKEN_TYPE_COLORS } from "./KpiRow";
-
-type Metric = "turns" | "total" | "input" | "cached" | "output";
-
-const METRICS: { id: Metric; label: string }[] = [
-  { id: "turns", label: "Turns" },
-  { id: "total", label: "Total" },
-  { id: "input", label: "Input" },
-  { id: "cached", label: "Cached" },
-  { id: "output", label: "Output" },
-];
+import type { MetricType, Unit } from "../ProjectStatsPage";
+import type { AverageRates } from "./pricing";
 
 interface Segment {
   /** Display label for legend / tooltip. */
   label: string;
-  /** Numeric value (token count or turn count). */
+  /** Numeric value (token count or cost amount). */
   value: number;
   /** SVG fill color. */
   color: string;
@@ -47,40 +30,75 @@ interface Stack {
 }
 
 /** Whether a metric stacks per agent (true) or renders as a single layer. */
-function isAgentStacked(m: Metric): boolean {
-  return m === "turns" || m === "total";
+function isAgentStacked(m: MetricType): boolean {
+  return m === "total";
 }
 
 /** Color used when a metric is rendered as a single layer (input/cached/output). */
-function singleColor(m: Metric): string {
+function singleColor(m: MetricType): string {
   if (m === "input") return TOKEN_TYPE_COLORS.input;
   if (m === "cached") return TOKEN_TYPE_COLORS.cached;
   if (m === "output") return TOKEN_TYPE_COLORS.output;
   return "var(--color-highlight)";
 }
 
-function bucketTotal(b: TimeseriesBucket, m: Metric): number {
-  switch (m) {
-    case "turns":
-      return b.turns;
-    case "total":
-      return b.tokens_in + b.tokens_cached + b.tokens_out;
-    case "input":
-      return b.tokens_in;
-    case "cached":
-      return b.tokens_cached;
-    case "output":
-      return b.tokens_out;
+function bucketValue(b: TimeseriesBucket, m: MetricType, u: Unit, r: AverageRates): number {
+  let cost_in = b.tokens_in * r.input;
+  let cost_cached = b.tokens_cached * r.cached;
+  let cost_out = b.tokens_out * r.output;
+
+  if (u === "cost" && b.cost_total > 0) {
+    const est_total = cost_in + cost_cached + cost_out;
+    if (est_total > 0) {
+      const ratio = b.cost_total / est_total;
+      cost_in *= ratio;
+      cost_cached *= ratio;
+      cost_out *= ratio;
+    } else {
+      cost_in = b.cost_total;
+    }
+  }
+
+  if (u === "cost") {
+    switch (m) {
+      case "total":
+        return b.cost_total > 0 ? b.cost_total : cost_in + cost_cached + cost_out;
+      case "input":
+        return cost_in;
+      case "cached":
+        return cost_cached;
+      case "output":
+        return cost_out;
+    }
+  } else {
+    switch (m) {
+      case "total":
+        return b.tokens_in + b.tokens_cached + b.tokens_out;
+      case "input":
+        return b.tokens_in;
+      case "cached":
+        return b.tokens_cached;
+      case "output":
+        return b.tokens_out;
+    }
   }
 }
 
 interface ActivityOverTimeProps {
   buckets: TimeseriesBucket[];
   bucket?: Bucket;
+  metricType: MetricType;
+  unit: Unit;
+  averageRates: AverageRates;
 }
 
-export function ActivityOverTime({ buckets, bucket }: ActivityOverTimeProps) {
-  const [metric, setMetric] = useState<Metric>("total");
+export function ActivityOverTime({
+  buckets,
+  bucket,
+  metricType,
+  unit,
+  averageRates,
+}: ActivityOverTimeProps) {
 
   // Stable agent ordering used both for stacking order and the legend in
   // agent-stacked modes. Sort by total contribution descending so the
@@ -89,45 +107,61 @@ export function ActivityOverTime({ buckets, bucket }: ActivityOverTimeProps) {
     const totals = new Map<string, number>();
     for (const b of buckets) {
       for (const a of b.per_agent) {
-        const v = metric === "turns" ? a.turns : a.tokens;
-        totals.set(a.agent, (totals.get(a.agent) ?? 0) + v);
+        totals.set(a.agent, (totals.get(a.agent) ?? 0) + a.tokens);
       }
     }
     return [...totals.entries()]
       .sort((a, b) => b[1] - a[1])
       .map(([k]) => k);
-  }, [buckets, metric]);
+  }, [buckets]);
 
   const stacks: Stack[] = useMemo(() => {
-    if (isAgentStacked(metric)) {
+    if (isAgentStacked(metricType)) {
       return buckets.map((b) => {
         const map = new Map(b.per_agent.map((a) => [a.agent, a]));
+        
+        const total_tokens = b.tokens_in + b.tokens_cached + b.tokens_out;
+        const cost_in = b.tokens_in * averageRates.input;
+        const cost_cached = b.tokens_cached * averageRates.cached;
+        const cost_out = b.tokens_out * averageRates.output;
+        const total_cost = b.cost_total > 0 ? b.cost_total : cost_in + cost_cached + cost_out;
+        const avg_cost_per_token = total_tokens > 0 ? total_cost / total_tokens : 0;
+
         return {
           ts: b.bucket_start,
-          segs: agentOrder.map((agent) => ({
-            label: agent,
-            value:
-              metric === "turns"
-                ? (map.get(agent)?.turns ?? 0)
-                : (map.get(agent)?.tokens ?? 0),
-            color: agentColor(agent),
-          })),
+          segs: agentOrder.map((agent) => {
+            const agentBucket = map.get(agent);
+            const agentTokens = agentBucket?.tokens ?? 0;
+            const agentCost = agentBucket?.cost ?? 0;
+
+            const value = unit === "cost"
+              ? (agentCost > 0 ? agentCost : agentTokens * avg_cost_per_token)
+              : agentTokens;
+
+            return {
+              label: agent,
+              value,
+              color: agentColor(agent),
+            };
+          }),
         };
       });
     }
+
     // Single-layer mode: input / cached / output don't have per-agent
     // detail in the timeseries today, so we render the bucket total in
     // the metric's brand color.
-    const color = singleColor(metric);
+    const color = singleColor(metricType);
+    const label = metricType === "cached" ? "cache" : metricType;
     return buckets.map((b) => ({
       ts: b.bucket_start,
-      segs: [{ label: metric, value: bucketTotal(b, metric), color }],
+      segs: [{ label, value: bucketValue(b, metricType, unit, averageRates), color }],
     }));
-  }, [buckets, metric, agentOrder]);
+  }, [buckets, metricType, unit, agentOrder, averageRates]);
 
-  const legend: { label: string; color: string }[] = isAgentStacked(metric)
+  const legend: { label: string; color: string }[] = isAgentStacked(metricType)
     ? agentOrder.map((a) => ({ label: a, color: agentColor(a) }))
-    : [{ label: metric, color: singleColor(metric) }];
+    : [{ label: metricType === "cached" ? "cache" : metricType, color: singleColor(metricType) }];
 
   return (
     <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)] p-4 h-full flex flex-col min-h-0">
@@ -138,12 +172,11 @@ export function ActivityOverTime({ buckets, bucket }: ActivityOverTimeProps) {
           </h2>
           <Legend items={legend} />
         </div>
-        <MetricSelector value={metric} onChange={setMetric} />
       </div>
       {buckets.length === 0 ? (
         <Empty />
       ) : (
-        <Chart stacks={stacks} metric={metric} bucket={bucket} />
+        <Chart stacks={stacks} metricType={metricType} unit={unit} bucket={bucket} />
       )}
     </div>
   );
@@ -166,33 +199,6 @@ function Legend({ items }: { items: { label: string; color: string }[] }) {
   );
 }
 
-function MetricSelector({
-  value,
-  onChange,
-}: {
-  value: Metric;
-  onChange: (m: Metric) => void;
-}) {
-  return (
-    <div className="inline-flex rounded-md border border-[var(--color-border)] bg-[var(--color-bg-tertiary)] p-0.5 shrink-0">
-      {METRICS.map((m) => (
-        <button
-          key={m.id}
-          type="button"
-          onClick={() => onChange(m.id)}
-          className={`px-2 py-0.5 rounded text-[10px] font-medium ${
-            value === m.id
-              ? "bg-[var(--color-bg)] text-[var(--color-text)]"
-              : "text-[var(--color-text-muted)]"
-          }`}
-        >
-          {m.label}
-        </button>
-      ))}
-    </div>
-  );
-}
-
 function Empty() {
   return (
     <div className="flex-1 flex items-center justify-center text-xs text-[var(--color-text-muted)]">
@@ -203,15 +209,49 @@ function Empty() {
 
 // ── Chart ───────────────────────────────────────────────────────────────
 
-const PADDING = { top: 8, right: 12, bottom: 22, left: 40 };
+const PADDING = { top: 8, right: 12, bottom: 22, left: 45 };
+
+/**
+ * Custom cubic Bezier curve path generator.
+ * Takes control points based on neighboring coordinates to ensure smooth, natural lines
+ * that avoid rigid sharp corners while perfectly maintaining stack boundaries.
+ */
+function getBezierPath(points: { x: number; y: number }[]): string {
+  if (points.length === 0) return "";
+  if (points.length === 1) return `M ${points[0].x.toFixed(1)},${points[0].y.toFixed(1)}`;
+  if (points.length === 2) {
+    return `M ${points[0].x.toFixed(1)},${points[0].y.toFixed(1)} L ${points[1].x.toFixed(1)},${points[1].y.toFixed(1)}`;
+  }
+
+  let d = `M ${points[0].x.toFixed(1)},${points[0].y.toFixed(1)}`;
+  const t = 0.15; // tension factor for smoothing
+
+  for (let i = 0; i < points.length - 1; i++) {
+    const p0 = points[i - 1] ?? points[i];
+    const p1 = points[i];
+    const p2 = points[i + 1];
+    const p3 = points[i + 2] ?? p2;
+
+    const cp1x = p1.x + (p2.x - p0.x) * t;
+    const cp1y = p1.y + (p2.y - p0.y) * t;
+
+    const cp2x = p2.x - (p3.x - p1.x) * t;
+    const cp2y = p2.y - (p3.y - p1.y) * t;
+
+    d += ` C ${cp1x.toFixed(1)},${cp1y.toFixed(1)} ${cp2x.toFixed(1)},${cp2y.toFixed(1)} ${p2.x.toFixed(1)},${p2.y.toFixed(1)}`;
+  }
+  return d;
+}
 
 function Chart({
   stacks,
-  metric,
+  metricType,
+  unit,
   bucket,
 }: {
   stacks: Stack[];
-  metric: Metric;
+  metricType: MetricType;
+  unit: Unit;
   bucket?: Bucket;
 }) {
   const [hoverIdx, setHoverIdx] = useState<number | null>(null);
@@ -228,7 +268,7 @@ function Chart({
     });
   }, [stacks]);
 
-  const yMax = Math.max(...computed.map((s) => s.total), 1);
+  const yMax = Math.max(...computed.map((s) => s.total), 0.0001);
 
   const W = 1000;
   const H = 280;
@@ -265,32 +305,41 @@ function Chart({
         h: Math.max(0, y0 - y1),
       };
     }
-    const top: string[] = [];
-    const bot: string[] = [];
+    
+    const topPoints: { x: number; y: number }[] = [];
+    const botPoints: { x: number; y: number }[] = [];
     computed.forEach((s, i) => {
       const seg = s.layers[layerIdx];
       const x = xAt(i);
-      top.push(`${x},${yAt(seg.base + seg.value)}`);
-      bot.push(`${x},${yAt(seg.base)}`);
+      topPoints.push({ x, y: yAt(seg.base + seg.value) });
+      botPoints.push({ x, y: yAt(seg.base) });
     });
-    bot.reverse();
+
+    const topPath = getBezierPath(topPoints);
+    const botPointsReversed = [...botPoints].reverse();
+    const botPathRaw = getBezierPath(botPointsReversed);
+    // Connect top path to bot path, then close with Z
+    const botPath = botPathRaw.replace(/^M/, "L");
+    const d = `${topPath} ${botPath} Z`;
+
     return {
       label: layerLabel,
       color: layerColor,
       kind: "path" as const,
-      d: `M ${top.join(" L ")} L ${bot.join(" L ")} Z`,
+      d,
+      topPath,
     };
   });
 
   const yTicks = makeTicks(yMax, 4);
-  const valueFmt = metric === "turns" ? formatNumber : formatTokens;
+  const valueFmt = unit === "cost" ? formatCost : formatTokens;
 
   return (
     <div className="flex-1 min-h-0 relative">
       <svg
         viewBox={`0 0 ${W} ${H}`}
         preserveAspectRatio="none"
-        className="w-full h-full"
+        className="w-full h-full animate-fade-in"
         onMouseLeave={() => setHoverIdx(null)}
       >
         {yTicks.map((t, i) => (
@@ -343,7 +392,25 @@ function Chart({
               fill={sh.color}
             />
           ) : (
-            <path key={sh.label} d={sh.d} fill={sh.color} />
+            <g key={sh.label}>
+              {/* Stack filled area */}
+              <path 
+                d={sh.d} 
+                fill={sh.color} 
+                fillOpacity="0.85"
+                className="transition-all duration-300"
+              />
+              {/* Crisp top highlight border line */}
+              <path
+                d={sh.topPath}
+                fill="none"
+                stroke={sh.color}
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                className="transition-all duration-300"
+              />
+            </g>
           ),
         )}
 
@@ -377,7 +444,8 @@ function Chart({
       {hoverIdx != null && computed[hoverIdx] && (
         <Tooltip
           stack={computed[hoverIdx]}
-          metric={metric}
+          metricType={metricType}
+          unit={unit}
           xPct={(hoverIdx / Math.max(computed.length - 1, 1)) * 100}
           bucket={bucket}
         />
@@ -388,37 +456,38 @@ function Chart({
 
 function Tooltip({
   stack,
-  metric,
+  metricType,
+  unit,
   xPct,
   bucket,
 }: {
   stack: { ts: number; total: number; layers: Segment[] };
-  metric: Metric;
+  metricType: MetricType;
+  unit: Unit;
   xPct: number;
   bucket?: Bucket;
 }) {
-  const fmt = metric === "turns" ? formatNumber : formatTokens;
-  // Measure the rendered tooltip width on first paint so the right-edge
-  // clamp uses the actual size instead of a hardcoded 180px guess (which
-  // broke whenever locale formatting or bucket label pushed it wider).
+  const fmt = unit === "cost" ? formatCost : formatTokens;
   const ref = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(180);
   useLayoutEffect(() => {
     if (ref.current) setWidth(ref.current.offsetWidth);
-  }, [stack, metric]);
+  }, [stack, metricType, unit]);
+  
   const left = `clamp(8px, calc(${xPct}% + 4px), calc(100% - ${width + 8}px))`;
-  const unit = metric === "turns" ? "turns" : "tokens";
+  const unitLabel = unit === "cost" ? "" : " tokens";
+  
   return (
     <div
       ref={ref}
-      className="absolute top-2 pointer-events-none rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-2.5 py-1.5 text-[10px] shadow-lg"
+      className="absolute top-2 pointer-events-none rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-2.5 py-1.5 text-[10px] shadow-lg z-10"
       style={{ left, minWidth: 160 }}
     >
       <div className="text-[var(--color-text-muted)] mb-1">
         {formatBucketLabel(stack.ts, true, bucket)}
       </div>
       <div className="text-[var(--color-text)] font-semibold mb-1 tabular-nums">
-        {fmt(stack.total)} {unit}
+        {fmt(stack.total)}{unitLabel}
       </div>
       {stack.layers
         .filter((s) => s.value > 0)
@@ -445,14 +514,12 @@ function makeTicks(max: number, count: number): number[] {
   if (max <= 0) return [0];
   const step = max / count;
   const ticks: number[] = [];
-  for (let i = 0; i <= count; i++) ticks.push(Math.round(step * i));
+  for (let i = 0; i <= count; i++) ticks.push(step * i);
   return ticks;
 }
 
 function formatBucketLabel(ts: number, full = false, bucket?: Bucket): string {
   const d = new Date(ts * 1000);
-  // Match label granularity to bucket size — showing "Mar 5, 14:30" for a
-  // monthly bucket implies precision the data doesn't have.
   if (bucket === "monthly") {
     return d.toLocaleDateString(undefined, { year: "numeric", month: "short" });
   }

@@ -13,7 +13,7 @@ use std::sync::Mutex;
 use super::grove_dir;
 use crate::error::Result;
 
-pub const CURRENT_STORAGE_VERSION: &str = "2.4";
+pub const CURRENT_STORAGE_VERSION: &str = "2.5";
 
 /// Database state: caches connection + its path so we can detect HOME changes.
 struct DbState {
@@ -439,7 +439,9 @@ pub(crate) fn create_schema(conn: &Connection) -> Result<()> {
             output_tokens      INTEGER NOT NULL,
             total_tokens       INTEGER NOT NULL,
             start_ts           INTEGER NOT NULL,
-            end_ts             INTEGER NOT NULL
+            end_ts             INTEGER NOT NULL,
+            cost_amount        REAL,
+            cost_currency      TEXT
         );
 
         -- Stats hot path: GROUP BY date(end_ts, 'unixepoch') WHERE project_key = ?
@@ -523,6 +525,8 @@ pub(crate) fn create_schema(conn: &Connection) -> Result<()> {
     // chat_id is nullable: pre-migration rows have no chat context, and the
     // notification UI falls back to navigating to the task only when NULL.
     let _ = conn.execute_batch("ALTER TABLE hook_notifications ADD COLUMN chat_id TEXT;");
+    let _ = conn.execute_batch("ALTER TABLE chat_token_usage ADD COLUMN cost_amount REAL;");
+    let _ = conn.execute_batch("ALTER TABLE chat_token_usage ADD COLUMN cost_currency TEXT;");
     let _ =
         conn.execute_batch("ALTER TABLE agent_edge ADD COLUMN project TEXT NOT NULL DEFAULT '';");
     let _ = conn.execute_batch(

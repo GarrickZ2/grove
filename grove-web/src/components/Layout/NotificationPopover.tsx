@@ -121,8 +121,8 @@ export function NotificationPopover({ isOpen, onClose, onNavigate }: Notificatio
             exit={isMobile ? { y: "100%" } : { opacity: 0, x: -8 }}
             transition={isMobile ? { type: "spring", damping: 30, stiffness: 300 } : { duration: 0.15 }}
             className={isMobile
-              ? "fixed inset-x-0 bottom-0 z-50 bg-[var(--color-bg)] border-t border-[var(--color-border)] rounded-t-2xl shadow-xl"
-              : "fixed z-50 bg-[var(--color-bg)] border border-[var(--color-border)] rounded-xl shadow-xl"
+              ? "glass-overlay fixed inset-x-0 bottom-0 z-50 rounded-t-2xl"
+              : "glass-popover fixed z-50 rounded-xl"
             }
             style={isMobile ? { maxHeight: "70vh" } : {
               left: 72,

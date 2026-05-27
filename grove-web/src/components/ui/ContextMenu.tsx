@@ -67,7 +67,7 @@ function ActionSheet({ items, isOpen, onClose }: { items: ContextMenuItem[]; isO
             transition={{ type: "spring", damping: 30, stiffness: 300 }}
             className="fixed inset-x-0 bottom-0 z-[9999] pb-[env(safe-area-inset-bottom)]"
           >
-            <div className="bg-[var(--color-bg)] rounded-t-2xl border-t border-[var(--color-border)] shadow-xl">
+            <div className="glass-overlay rounded-t-2xl">
               {/* Drag indicator */}
               <div className="flex justify-center pt-3 pb-2">
                 <div className="w-10 h-1 rounded-full bg-[var(--color-border)]" />
@@ -257,7 +257,7 @@ function DesktopContextMenu({ items, position, onClose }: ContextMenuProps) {
           exit={{ opacity: 0, scale: 0.95 }}
           transition={{ duration: 0.12 }}
           style={{ top: pos.y, left: pos.x }}
-          className="fixed z-[9999] min-w-[160px] py-1 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] shadow-xl"
+          className="glass-popover fixed z-[9999] min-w-[160px] py-1 rounded-lg"
           data-hotkeys-dialog
         >
           {items.map((item, index) => {

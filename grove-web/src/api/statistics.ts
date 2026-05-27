@@ -14,12 +14,14 @@ export interface KpiData {
   avg_tokens_per_turn: number;
   avg_duration_secs: number;
   p50_duration_secs: number;
+  cost_total: number;
 }
 
 export interface AgentBucket {
   agent: string;
   tokens: number;
   turns: number;
+  cost: number;
 }
 
 export interface TimeseriesBucket {
@@ -29,6 +31,7 @@ export interface TimeseriesBucket {
   tokens_cached: number;
   tokens_out: number;
   per_agent: AgentBucket[];
+  cost_total: number;
 }
 
 export interface AgentShareItem {
@@ -36,6 +39,7 @@ export interface AgentShareItem {
   turns: number;
   tokens: number;
   percent: number;
+  cost: number;
 }
 
 export interface ModelItem {
@@ -46,6 +50,7 @@ export interface ModelItem {
   cached_tokens: number;
   output_tokens: number;
   turns: number;
+  cost: number;
 }
 
 export interface TopItem {
@@ -57,6 +62,7 @@ export interface TopItem {
   cached_tokens: number;
   output_tokens: number;
   agent_split: AgentBucket[];
+  cost: number;
 }
 
 export interface HeatmapCell {

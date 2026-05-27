@@ -1034,7 +1034,10 @@ function AppContent() {
             transition={{ duration: 0.3, ease: [0.25, 1, 0.5, 1] }}
           >
             <Sidebar {...sidebarProps} />
-            <main className={`relative flex-1 ${isFullWidthPage && !isDashboardPage ? "overflow-hidden" : "overflow-y-auto"}`}>
+            <main
+              className={`relative flex-1 transition-[padding] duration-200 ease-out ${isFullWidthPage && !isDashboardPage ? "overflow-hidden" : "overflow-y-auto"}`}
+              style={{ paddingLeft: effectiveSidebarCollapsed ? "96px" : "280px" }}
+            >
               {/* TasksPage always mounted to preserve workspace state across tab switches */}
               <div
                 className={`h-full transition-[padding] duration-300 ease-out ${inWorkspace ? 'p-2' : 'p-6'}`}

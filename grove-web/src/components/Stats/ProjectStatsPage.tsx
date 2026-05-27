@@ -25,6 +25,11 @@ import { AgentShare } from "./components/AgentShare";
 import { ModelsList } from "./components/ModelsList";
 import { TopList } from "./components/TopList";
 import { ActivityHeatmap } from "./components/ActivityHeatmap";
+import { computeAverageRates } from "./components/pricing";
+
+export type MetricType = "total" | "input" | "cached" | "output";
+export type Unit = "token" | "cost";
+
 
 // ── Range & bucket presets ──────────────────────────────────────────────
 
@@ -91,6 +96,8 @@ export function ProjectStatsPage({ projectId }: ProjectStatsPageProps) {
   );
   const [range, setRange] = useState<RangeId>("7d");
   const [bucket, setBucket] = useState<Bucket>(DEFAULT_BUCKET["7d"]);
+  const [metricType, setMetricType] = useState<MetricType>("total");
+  const [unit, setUnit] = useState<Unit>("token");
   const [data, setData] = useState<StatisticsResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -114,6 +121,10 @@ export function ProjectStatsPage({ projectId }: ProjectStatsPageProps) {
   );
 
   const allowedBuckets = useMemo(() => ALLOWED_BUCKETS[range], [range]);
+
+  const averageRates = useMemo(() => {
+    return computeAverageRates(data?.current.models ?? []);
+  }, [data]);
 
   const fetchData = useCallback(async () => {
     if (effectiveScope === "project" && !projectId) {
@@ -161,6 +172,28 @@ export function ProjectStatsPage({ projectId }: ProjectStatsPageProps) {
         />
 
         <Spacer />
+
+        <Label>Metric</Label>
+        <SegmentedControl
+          options={[
+            { id: "total", label: "Total" },
+            { id: "input", label: "Input" },
+            { id: "cached", label: "Cache" },
+            { id: "output", label: "Output" },
+          ]}
+          value={metricType}
+          onChange={(v) => setMetricType(v as MetricType)}
+        />
+
+        <Label>Unit</Label>
+        <SegmentedControl
+          options={[
+            { id: "token", label: "Token" },
+            { id: "cost", label: "Cost" },
+          ]}
+          value={unit}
+          onChange={(v) => setUnit(v as Unit)}
+        />
 
         <Label>Range</Label>
         <SegmentedControl
@@ -213,26 +246,46 @@ export function ProjectStatsPage({ projectId }: ProjectStatsPageProps) {
       {/* ── Dashboard grid ─────────────────────────────────────────── */}
       {(scopeRaw === "global" || projectId) && (
         <>
-          <KpiRow current={data?.current.kpi} previous={data?.previous.kpi} />
+          <KpiRow
+            current={data?.current.kpi}
+            previous={data?.previous.kpi}
+            metricType={metricType}
+            unit={unit}
+            averageRates={averageRates}
+          />
 
           <div className="flex-1 grid grid-cols-12 grid-rows-2 gap-3 min-h-0">
             <div className="col-span-8 row-span-1 min-h-0">
               <ActivityOverTime
                 buckets={data?.current.timeseries ?? []}
                 bucket={bucket}
+                metricType={metricType}
+                unit={unit}
+                averageRates={averageRates}
               />
             </div>
             <div className="col-span-4 row-span-1 min-h-0">
-              <AgentShare items={data?.current.agent_share ?? []} />
+              <AgentShare
+                items={data?.current.agent_share ?? []}
+                unit={unit}
+                averageRates={averageRates}
+              />
             </div>
 
             <div className="col-span-4 row-span-1 min-h-0">
-              <ModelsList items={data?.current.models ?? []} />
+              <ModelsList
+                items={data?.current.models ?? []}
+                metricType={metricType}
+                unit={unit}
+              />
             </div>
             <div className="col-span-4 row-span-1 min-h-0">
               <TopList
                 scope={effectiveScope}
                 items={data?.current.top ?? []}
+                metricType={metricType}
+                unit={unit}
+                averageRates={averageRates}
               />
             </div>
             <div className="col-span-4 row-span-1 min-h-0">

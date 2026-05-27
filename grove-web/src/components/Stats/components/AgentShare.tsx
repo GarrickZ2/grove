@@ -1,18 +1,29 @@
 /**
  * Donut chart of "agent share by tokens" + a bar list on the right.
  *
- * Token-weighted (not turn-weighted) because turns are message-count noise:
- * "hi" and "rebuild the build pipeline" both count as 1 turn but represent
- * vastly different agent workloads. Tokens are the closest proxy we have to
- * real work done.
+ * Weight-adjusted dynamically by unit (Tokens vs Cost).
  */
 
 import type { AgentShareItem } from "../../../api/statistics";
 import { agentColor } from "../agentColors";
-import { formatTokens } from "../formatters";
+import { formatTokens, formatCost } from "../formatters";
+import type { Unit } from "../ProjectStatsPage";
+import type { AverageRates } from "./pricing";
 
-export function AgentShare({ items }: { items: AgentShareItem[] }) {
-  const total = items.reduce((sum, i) => sum + i.tokens, 0);
+interface AgentShareProps {
+  items: AgentShareItem[];
+  unit: Unit;
+  averageRates: AverageRates;
+}
+
+export function AgentShare({ items, unit, averageRates }: AgentShareProps) {
+  const valueFor = (item: AgentShareItem) => {
+    if (unit === "cost") {
+      return item.cost > 0 ? item.cost : item.tokens * averageRates.total;
+    }
+    return item.tokens;
+  };
+  const total = items.reduce((sum, i) => sum + valueFor(i), 0);
 
   return (
     <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)] p-4 h-full flex flex-col min-h-0">
@@ -21,7 +32,7 @@ export function AgentShare({ items }: { items: AgentShareItem[] }) {
           Agent share
         </h2>
         <span className="text-[10px] text-[var(--color-text-muted)]">
-          by tokens
+          by {unit === "cost" ? "cost" : "tokens"}
         </span>
       </div>
       {total === 0 ? (
@@ -30,8 +41,8 @@ export function AgentShare({ items }: { items: AgentShareItem[] }) {
         </div>
       ) : (
         <div className="flex-1 grid grid-cols-2 gap-4 items-center min-h-0">
-          <Donut items={items} total={total} />
-          <BarList items={items} total={total} />
+          <Donut items={items} total={total} unit={unit} valueFor={valueFor} />
+          <BarList items={items} total={total} unit={unit} valueFor={valueFor} />
         </div>
       )}
     </div>
@@ -41,26 +52,29 @@ export function AgentShare({ items }: { items: AgentShareItem[] }) {
 function Donut({
   items,
   total,
+  unit,
+  valueFor,
 }: {
   items: AgentShareItem[];
   total: number;
+  unit: Unit;
+  valueFor: (item: AgentShareItem) => number;
 }) {
-  // SVG circle math — circumference = 2πr; we slice via stroke-dasharray.
-  // Pre-compute cumulative offsets so the render path stays purely
-  // functional (no mutation during map).
   const r = 42;
   const cx = 60;
   const cy = 60;
   const c = 2 * Math.PI * r;
   const slices = items.map((item) => ({
     ...item,
-    slice: (item.tokens / total) * c,
+    slice: (valueFor(item) / total) * c,
   }));
   const offsets: number[] = [];
   slices.reduce((acc, s, i) => {
     offsets[i] = acc;
     return acc + s.slice;
   }, 0);
+
+  const fmt = unit === "cost" ? formatCost : formatTokens;
 
   return (
     <div className="relative w-full max-w-[180px] aspect-square mx-auto">
@@ -89,10 +103,10 @@ function Donut({
       </svg>
       <div className="absolute inset-0 flex flex-col items-center justify-center select-none">
         <div className="text-2xl font-bold text-[var(--color-text)] tabular-nums leading-none">
-          {formatTokens(total)}
+          {fmt(total)}
         </div>
         <div className="text-[9px] uppercase tracking-[0.08em] text-[var(--color-text-muted)] mt-1">
-          tokens
+          {unit === "cost" ? "USD" : "tokens"}
         </div>
       </div>
     </div>
@@ -102,14 +116,21 @@ function Donut({
 function BarList({
   items,
   total,
+  unit,
+  valueFor,
 }: {
   items: AgentShareItem[];
   total: number;
+  unit: Unit;
+  valueFor: (item: AgentShareItem) => number;
 }) {
+  const fmt = unit === "cost" ? formatCost : formatTokens;
+
   return (
     <div className="space-y-2 overflow-y-auto pr-1 min-h-0">
       {items.slice(0, 8).map((it) => {
-        const pct = total > 0 ? (it.tokens / total) * 100 : 0;
+        const val = valueFor(it);
+        const pct = total > 0 ? (val / total) * 100 : 0;
         return (
           <div key={it.agent} className="text-[11px]">
             <div className="flex items-center justify-between gap-2 mb-0.5">
@@ -126,7 +147,7 @@ function BarList({
                 </span>
               </span>
               <span className="text-[var(--color-text-muted)] tabular-nums shrink-0">
-                {formatTokens(it.tokens)} · {pct.toFixed(0)}%
+                {fmt(val)} · {pct.toFixed(0)}%
               </span>
             </div>
             <div

@@ -706,8 +706,10 @@ export function BlitzPage({ onSwitchToZen, onNavigate }: BlitzPageProps) {
     <>
       {/* Blitz Sidebar — replaces the normal app sidebar */}
       <aside className={`${isMobile ? (mobileShowDetail ? "hidden" : "w-full h-full") : "w-72 h-screen"} bg-[var(--color-bg)] ${isMobile ? "" : "border-r border-[var(--color-border)]"} flex flex-col flex-shrink-0`}>
-        {/* Logo + Mode Brand */}
-        <div className="p-4 flex items-center justify-between">
+        {/* Logo + Mode Brand
+           pt-8 clears macOS traffic lights when Tauri title bar is Overlay.
+           data-tauri-drag-region lets the user drag the window from here. */}
+        <div className="px-4 pt-8 pb-4 flex items-center justify-between" data-tauri-drag-region>
           <LogoBrand mode="blitz" onToggle={onSwitchToZen} />
           <button
             onClick={() => setShowRadioConnect(true)}

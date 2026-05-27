@@ -24,6 +24,8 @@ pub struct TokenUsageRecord<'a> {
     pub total_tokens: u64,
     pub start_ts: i64,
     pub end_ts: i64,
+    pub cost_amount: Option<f64>,
+    pub cost_currency: Option<&'a str>,
 }
 
 /// Insert a per-turn token usage row. Best-effort — errors are logged at
@@ -34,8 +36,8 @@ pub fn insert(rec: &TokenUsageRecord<'_>) -> Result<()> {
         "INSERT INTO chat_token_usage (
             project_key, task_id, chat_id, agent, model,
             input_tokens, cached_read_tokens, output_tokens, total_tokens,
-            start_ts, end_ts
-        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+            start_ts, end_ts, cost_amount, cost_currency
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
         rusqlite::params![
             rec.project_key,
             rec.task_id,
@@ -48,6 +50,8 @@ pub fn insert(rec: &TokenUsageRecord<'_>) -> Result<()> {
             rec.total_tokens as i64,
             rec.start_ts,
             rec.end_ts,
+            rec.cost_amount,
+            rec.cost_currency,
         ],
     )?;
     Ok(())

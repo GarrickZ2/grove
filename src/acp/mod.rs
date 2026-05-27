@@ -256,6 +256,8 @@ pub enum AcpUpdate {
         start_ts: Option<i64>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         end_ts: Option<i64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        cost: Option<UsageCost>,
     },
     /// Agent busy 状态变化
     Busy { value: bool },
@@ -2877,6 +2879,8 @@ async fn drive_session(
                         });
                         // Layer A: persist per-turn usage to SQLite for stats.
                         // Best-effort — a write error here must not fail the turn.
+                        let cost_owned = handle.current_usage.lock().ok()
+                            .and_then(|g| g.as_ref().and_then(|s| s.cost.clone()));
                         if let (Some(usage), Some(chat_id)) =
                             (&turn_usage, config.chat_id.as_deref())
                         {
@@ -2894,6 +2898,8 @@ async fn drive_session(
                                 total_tokens: usage.total_tokens,
                                 start_ts: turn_start_ts,
                                 end_ts: turn_end_ts,
+                                cost_amount: cost_owned.as_ref().map(|c| c.amount),
+                                cost_currency: cost_owned.as_ref().map(|c| c.currency.as_str()),
                             };
                             if let Err(e) = crate::storage::token_usage::insert(&rec) {
                                 eprintln!("[token_usage] insert failed: {}", e);
@@ -2904,6 +2910,7 @@ async fn drive_session(
                             usage: turn_usage,
                             start_ts: Some(turn_start_ts),
                             end_ts: Some(turn_end_ts),
+                            cost: cost_owned,
                         });
                     }
                     Err(e) => {

@@ -48,3 +48,13 @@ export function computeDelta(
   const direction = pct > 0.05 ? 1 : pct < -0.05 ? -1 : 0;
   return { pct, direction };
 }
+
+export function formatCost(amount: number): string {
+  if (amount === 0) return "$0";
+  if (amount < 0.01) return `$${amount.toFixed(4)}`;
+  if (amount < 1) return `$${amount.toFixed(3)}`;
+  if (amount >= 1_000_000) return `$${(amount / 1_000_000).toFixed(2)}M`;
+  if (amount >= 1_000) return `$${(amount / 1_000).toFixed(1)}k`;
+  return `$${amount.toFixed(2)}`;
+}
+

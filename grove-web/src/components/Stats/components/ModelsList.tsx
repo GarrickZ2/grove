@@ -1,16 +1,64 @@
 /**
- * Models breakdown list — one row per (model, agent) pair, sorted by tokens.
- * Each row's bar is a 3-segment stack (input / cached / output) using three
- * shades of the agent's brand color. Width of the whole bar encodes the
- * row's share of the heaviest model's total.
+ * Models breakdown list — one row per (model, agent) pair, sorted by tokens/cost.
+ * Width of the whole bar encodes the row's share of the heaviest model's total.
  */
 
 import type { ModelItem } from "../../../api/statistics";
 import { agentShades } from "../agentColors";
-import { formatTokens } from "../formatters";
+import { formatTokens, formatCost } from "../formatters";
+import type { MetricType, Unit } from "../ProjectStatsPage";
+import { getModelRates } from "./pricing";
 
-export function ModelsList({ items }: { items: ModelItem[] }) {
-  const max = Math.max(...items.map((i) => i.tokens), 1);
+interface ModelsListProps {
+  items: ModelItem[];
+  metricType: MetricType;
+  unit: Unit;
+}
+
+export function ModelsList({ items, metricType, unit }: ModelsListProps) {
+  // Map items to include their exact costs
+  const enrichedItems = items.map((it) => {
+    const rates = getModelRates(it.model || it.agent);
+    let cost_in = it.input_tokens * rates.input;
+    let cost_cached = it.cached_tokens * rates.cached;
+    let cost_out = it.output_tokens * rates.output;
+    const cost_total = it.cost > 0 ? it.cost : cost_in + cost_cached + cost_out;
+
+    if (it.cost > 0) {
+      const est_total = cost_in + cost_cached + cost_out;
+      if (est_total > 0) {
+        const ratio = it.cost / est_total;
+        cost_in *= ratio;
+        cost_cached *= ratio;
+        cost_out *= ratio;
+      } else {
+        cost_in = it.cost;
+      }
+    }
+
+    const v_total = unit === "cost" ? cost_total : it.tokens;
+    const v_in = unit === "cost" ? cost_in : it.input_tokens;
+    const v_cached = unit === "cost" ? cost_cached : it.cached_tokens;
+    const v_out = unit === "cost" ? cost_out : it.output_tokens;
+
+    let displayValue = v_total;
+    if (metricType === "input") displayValue = v_in;
+    else if (metricType === "cached") displayValue = v_cached;
+    else if (metricType === "output") displayValue = v_out;
+
+    return {
+      ...it,
+      v_total,
+      v_in,
+      v_cached,
+      v_out,
+      displayValue,
+    };
+  });
+
+  // Sort by display value descending
+  const sortedItems = [...enrichedItems].sort((a, b) => b.displayValue - a.displayValue);
+  const max = Math.max(...sortedItems.map((i) => i.displayValue), 0.0001);
 
   return (
     <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)] p-4 h-full flex flex-col min-h-0">
@@ -19,17 +67,23 @@ export function ModelsList({ items }: { items: ModelItem[] }) {
           Models
         </h2>
         <span className="text-[10px] text-[var(--color-text-muted)]">
-          input · cached · output
+          by {unit === "cost" ? "cost" : "tokens"}
         </span>
       </div>
-      {items.length === 0 ? (
+      {sortedItems.length === 0 ? (
         <div className="flex-1 flex items-center justify-center text-xs text-[var(--color-text-muted)]">
           No data.
         </div>
       ) : (
         <div className="space-y-2.5 overflow-y-auto pr-1 min-h-0">
-          {items.map((it, i) => (
-            <Row key={`${it.model}-${it.agent}-${i}`} item={it} max={max} />
+          {sortedItems.map((it, i) => (
+            <Row
+              key={`${it.model}-${it.agent}-${i}`}
+              item={it}
+              max={max}
+              metricType={metricType}
+              unit={unit}
+            />
           ))}
         </div>
       )}
@@ -37,14 +91,41 @@ export function ModelsList({ items }: { items: ModelItem[] }) {
   );
 }
 
-function Row({ item, max }: { item: ModelItem; max: number }) {
-  const widthPct = (item.tokens / max) * 100;
-  const total = item.tokens || 1;
-  const ipct = (item.input_tokens / total) * 100;
-  const cpct = (item.cached_tokens / total) * 100;
-  const opct = (item.output_tokens / total) * 100;
+function Row({
+  item,
+  max,
+  metricType,
+  unit,
+}: {
+  item: {
+    model: string;
+    agent: string;
+    v_total: number;
+    v_in: number;
+    v_cached: number;
+    v_out: number;
+    displayValue: number;
+    turns: number;
+    input_tokens: number;
+    cached_tokens: number;
+    output_tokens: number;
+    tokens: number;
+  };
+  max: number;
+  metricType: MetricType;
+  unit: Unit;
+}) {
+  const widthPct = (item.displayValue / max) * 100;
+  
+  const totalForBar = item.displayValue || 0.0001;
+  const ipct = metricType === "total" ? (item.v_in / totalForBar) * 100 : (metricType === "input" ? 100 : 0);
+  const cpct = metricType === "total" ? (item.v_cached / totalForBar) * 100 : (metricType === "cached" ? 100 : 0);
+  const opct = metricType === "total" ? (item.v_out / totalForBar) * 100 : (metricType === "output" ? 100 : 0);
+  
   const shades = agentShades(item.agent);
   const modelLabel = item.model || "(unknown)";
+  const fmt = unit === "cost" ? formatCost : formatTokens;
+  const unitLabel = unit === "cost" ? "" : " tokens";
 
   return (
     <div className="text-[11px]">
@@ -59,11 +140,11 @@ function Row({ item, max }: { item: ModelItem; max: number }) {
         </span>
         <span
           className="text-[var(--color-text-muted)] tabular-nums shrink-0"
-          title={`${formatTokens(item.input_tokens)} input · ${formatTokens(
-            item.cached_tokens,
-          )} cached · ${formatTokens(item.output_tokens)} output`}
+          title={`${fmt(item.v_in)}${unitLabel} input · ${fmt(
+            item.v_cached,
+          )}${unitName(unit)} cached · ${fmt(item.v_out)}${unitName(unit)} output`}
         >
-          {formatTokens(item.tokens)} · {item.turns} turns
+          {fmt(item.displayValue)} · {item.turns} turns
         </span>
       </div>
       <div
@@ -73,8 +154,6 @@ function Row({ item, max }: { item: ModelItem; max: number }) {
         aria-valuemin={0}
         aria-valuemax={100}
       >
-        {/* Outer width = row's share of max; the three inner segments split
-            that width by input / cached / output proportions of this row. */}
         <div
           className="absolute left-0 top-0 h-full flex"
           style={{ width: `${widthPct}%` }}
@@ -86,4 +165,8 @@ function Row({ item, max }: { item: ModelItem; max: number }) {
       </div>
     </div>
   );
+}
+
+function unitName(unit: Unit): string {
+  return unit === "cost" ? "" : " tokens";
 }

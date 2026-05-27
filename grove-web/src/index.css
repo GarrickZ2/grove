@@ -478,3 +478,82 @@ mark[data-grove-search-mark][data-grove-search-mark-current="true"] {
   text-underline-offset: 2px;
   cursor: pointer;
 }
+
+/* ──────────────────────────────────────────────────────────────────────────
+   Liquid Glass material system — TEMPERED GLASS PANELS, not windows.
+
+   Each class simulates the look of a solid tempered-glass plate floating
+   above the page:
+   - Solid base (95-98% opacity) — content behind is hinted, never legible
+   - Subtle vertical gradient — light falls from above, gives "thickness"
+   - Specular top-edge highlight (inset white) — the glass catching light
+   - Crisp 1px inset border — the glass plate's own edge
+   - Multi-layer soft drop shadow — the plate lifted off the surface
+   - NO backdrop-filter — the material is the surface, not the see-through
+
+   The caller still picks border-radius (sheet can be rounded-top-only,
+   panel can be 2xl, etc) since the radius is a per-component decision.
+
+   DO NOT apply to content surfaces: Monaco editor, xterm, diff viewer,
+   Excalidraw canvas, long-form markdown — the gradient + shadow add
+   visual weight that competes with reading.
+   ────────────────────────────────────────────────────────────────────────── */
+
+/* .glass-panel — sidebar, fixed side panels. Most prominent material. */
+.glass-panel {
+  background: linear-gradient(
+    180deg,
+    color-mix(in oklab, var(--color-bg) 95%, var(--color-text) 5%) 0%,
+    var(--color-bg) 100%
+  );
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.22),
+    inset 0 0 0 1px color-mix(in oklab, var(--color-border) 60%, transparent),
+    0 1px 3px rgba(0, 0, 0, 0.04),
+    0 8px 24px rgba(0, 0, 0, 0.08),
+    0 24px 56px rgba(0, 0, 0, 0.06);
+}
+
+/* .glass-overlay — dialogs / bottom sheets. Strongest lift, top stack. */
+.glass-overlay {
+  background: linear-gradient(
+    180deg,
+    color-mix(in oklab, var(--color-bg) 96%, var(--color-text) 4%) 0%,
+    var(--color-bg) 100%
+  );
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.25),
+    inset 0 0 0 1px color-mix(in oklab, var(--color-border) 70%, transparent),
+    0 4px 12px rgba(0, 0, 0, 0.10),
+    0 16px 40px rgba(0, 0, 0, 0.14),
+    0 40px 80px rgba(0, 0, 0, 0.10);
+}
+
+/* .glass-popover — context menus, dropdown popovers. Medium lift. */
+.glass-popover {
+  background: linear-gradient(
+    180deg,
+    color-mix(in oklab, var(--color-bg) 96%, var(--color-text) 4%) 0%,
+    var(--color-bg) 100%
+  );
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.20),
+    inset 0 0 0 1px color-mix(in oklab, var(--color-border) 65%, transparent),
+    0 2px 6px rgba(0, 0, 0, 0.06),
+    0 8px 20px rgba(0, 0, 0, 0.10),
+    0 20px 40px rgba(0, 0, 0, 0.06);
+}
+
+/* .glass-control — segmented controls, inline button strips. Minimal lift. */
+.glass-control {
+  background: linear-gradient(
+    180deg,
+    color-mix(in oklab, var(--color-bg) 97%, var(--color-text) 3%) 0%,
+    var(--color-bg) 100%
+  );
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.15),
+    inset 0 0 0 1px color-mix(in oklab, var(--color-border) 50%, transparent),
+    0 1px 2px rgba(0, 0, 0, 0.04),
+    0 4px 12px rgba(0, 0, 0, 0.06);
+}
