@@ -293,3 +293,32 @@ export async function getMemory(id: string): Promise<{ content: string }> {
 export async function updateMemory(id: string, content: string): Promise<{ content: string }> {
   return apiClient.put<{ content: string }, { content: string }>(`/api/v1/projects/${id}/memory`, { content });
 }
+
+// ============================================================================
+// Folder picker (web fallback for native browse_folder)
+// ============================================================================
+
+export interface FolderEntry {
+  name: string;
+  is_git_repo: boolean;
+}
+
+export interface ListFolderResponse {
+  /** Absolute path that was listed. */
+  path: string;
+  /** Parent dir, or null at filesystem root. */
+  parent: string | null;
+  /** Sub-directories (files + dotfiles excluded), sorted case-insensitively. */
+  entries: FolderEntry[];
+  /** User's home dir on the Grove server, for the "Home" button. */
+  home: string | null;
+}
+
+/**
+ * List sub-directories under `path` for the web folder picker.
+ * Throws on absolute-path violations, .. traversal, missing path, or non-dir.
+ */
+export async function listFolder(path: string): Promise<ListFolderResponse> {
+  const qs = new URLSearchParams({ path });
+  return apiClient.get<ListFolderResponse>(`/api/v1/folders/list?${qs.toString()}`);
+}
