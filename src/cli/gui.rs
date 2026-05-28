@@ -536,6 +536,7 @@ pub async fn execute(port: u16, remote_url: Option<String>) {
                 .hidden_title(true)
                 .traffic_light_position(tauri::LogicalPosition::new(24.0, 32.0));
 
+            #[cfg_attr(not(target_os = "macos"), allow(unused_variables))]
             let main_window = builder.build()?;
 
             // WKWebView on macOS does NOT expose `navigator.mediaDevices` by
