@@ -76,6 +76,7 @@ export function AddProjectDialog({
       setGitName("");
       setGitNameTouched(false);
       setError("");
+      setPickerOpen(null);
     }
     prevIsOpenRef.current = isOpen;
   }, [isOpen, initialMode]);
@@ -140,6 +141,7 @@ export function AddProjectDialog({
       if (data.path) {
         setPath(data.path);
         if (!existingNameTouched) setExistingName(data.path.split("/").pop() || "");
+        setError("");
       } else {
         // Native dialog unavailable (headless host) — open web picker.
         setPickerOpen("existing");
@@ -156,6 +158,7 @@ export function AddProjectDialog({
       const data = await apiClient.get<{ path: string | null }>("/api/v1/browse-folder");
       if (data.path) {
         setParentDir(data.path);
+        setError("");
       } else {
         setPickerOpen("parent");
       }
@@ -551,6 +554,7 @@ export function AddProjectDialog({
         } else if (pickerOpen === "parent") {
           setParentDir(p);
         }
+        setError("");
         setPickerOpen(null);
       }}
       title={pickerOpen === "parent" ? "Select Parent Directory" : "Select Project Folder"}

@@ -50,7 +50,10 @@ export function FolderTreePickerDialog({
       const resp = await listFolder(path);
       if (reqIdRef.current === myId) setData(resp);
     } catch (e: unknown) {
-      if (reqIdRef.current === myId) setError(extractErrorMessage(e));
+      if (reqIdRef.current === myId) {
+        setError(extractErrorMessage(e));
+        setData(null);
+      }
     } finally {
       if (reqIdRef.current === myId) setLoading(false);
     }
@@ -64,14 +67,13 @@ export function FolderTreePickerDialog({
         void load(initialPath);
       } else {
         void (async () => {
+          const myId = ++reqIdRef.current;
           try {
             const probe = await listFolder("/");
+            if (reqIdRef.current !== myId) return;
             await load(probe.home || "/");
           } catch (e: unknown) {
-            // The probe failed (couldn't list "/"). Race-guard isn't needed
-            // here because this only runs once on open, before any folder
-            // click. Just surface the error.
-            setError(extractErrorMessage(e));
+            if (reqIdRef.current === myId) setError(extractErrorMessage(e));
           }
         })();
       }
@@ -172,9 +174,7 @@ export function FolderTreePickerDialog({
                 <button
                   key={e.name}
                   type="button"
-                  onClick={() =>
-                    void load(`${data.path === "/" ? "" : data.path}/${e.name}`)
-                  }
+                  onClick={() => void load(e.path)}
                   disabled={loading}
                   className="w-full text-left px-3 py-2 flex items-center gap-2 hover:bg-[var(--color-bg-tertiary)] border-b border-[var(--color-border)] last:border-b-0 text-sm text-[var(--color-text)] disabled:opacity-50"
                 >

@@ -135,6 +135,8 @@ pub struct ListFolderQuery {
 #[derive(Debug, Serialize)]
 pub struct FolderEntry {
     pub name: String,
+    /// Absolute path of this entry (parent + name, properly joined).
+    pub path: String,
     pub is_git_repo: bool,
 }
 
@@ -154,6 +156,7 @@ pub struct ListFolderResponse {
 #[derive(Debug)]
 pub enum ListFolderError {
     BadRequest(String),
+    Forbidden(String),
     NotFound(String),
     Internal(String),
 }
@@ -161,7 +164,9 @@ pub enum ListFolderError {
 impl std::fmt::Display for ListFolderError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::BadRequest(m) | Self::NotFound(m) | Self::Internal(m) => f.write_str(m),
+            Self::BadRequest(m) | Self::Forbidden(m) | Self::NotFound(m) | Self::Internal(m) => {
+                f.write_str(m)
+            }
         }
     }
 }
@@ -188,6 +193,9 @@ pub fn list_folder_inner(q: ListFolderQuery) -> Result<ListFolderResponse, ListF
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
             return Err(ListFolderError::NotFound("path not found".into()))
         }
+        Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => {
+            return Err(ListFolderError::Forbidden("permission denied".into()))
+        }
         Err(e) => return Err(ListFolderError::Internal(format!("stat failed: {}", e))),
     };
     if !meta.is_dir() {
@@ -195,8 +203,12 @@ pub fn list_folder_inner(q: ListFolderQuery) -> Result<ListFolderResponse, ListF
             "path is not a directory".into(),
         ));
     }
-    let read = std::fs::read_dir(p)
-        .map_err(|e| ListFolderError::Internal(format!("read_dir failed: {}", e)))?;
+    let read = std::fs::read_dir(p).map_err(|e| match e.kind() {
+        std::io::ErrorKind::PermissionDenied => {
+            ListFolderError::Forbidden("permission denied".into())
+        }
+        _ => ListFolderError::Internal(format!("read_dir failed: {}", e)),
+    })?;
     let mut entries: Vec<FolderEntry> = read
         .filter_map(|r| r.ok())
         .filter_map(|de| {
@@ -211,7 +223,11 @@ pub fn list_folder_inner(q: ListFolderQuery) -> Result<ListFolderResponse, ListF
             // try_exists distinguishes "doesn't exist" from "couldn't stat" — the
             // latter (permission denied, etc.) shouldn't false-flag as a git repo.
             let is_git_repo = de.path().join(".git").try_exists().unwrap_or(false);
-            Some(FolderEntry { name, is_git_repo })
+            Some(FolderEntry {
+                name,
+                path: de.path().to_string_lossy().to_string(),
+                is_git_repo,
+            })
         })
         .collect();
     entries.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
@@ -219,7 +235,9 @@ pub fn list_folder_inner(q: ListFolderQuery) -> Result<ListFolderResponse, ListF
         path: raw.to_string(),
         parent: p.parent().map(|pp| pp.to_string_lossy().to_string()),
         entries,
-        home: std::env::var("HOME").ok(),
+        home: std::env::var("HOME")
+            .or_else(|_| std::env::var("USERPROFILE"))
+            .ok(),
     })
 }
 
@@ -229,6 +247,7 @@ pub async fn list_folder(
     match list_folder_inner(q) {
         Ok(r) => Ok(Json(r)),
         Err(ListFolderError::BadRequest(msg)) => Err(ApiError::bad_request(&msg)),
+        Err(ListFolderError::Forbidden(msg)) => Err(ApiError::forbidden(&msg)),
         Err(ListFolderError::NotFound(msg)) => Err(ApiError::not_found(&msg)),
         Err(ListFolderError::Internal(msg)) => Err(ApiError::internal(&msg)),
     }
@@ -267,6 +286,7 @@ mod tests {
         assert!(!names.contains(&".hidden"), "dotfiles hidden by default");
         let repo_a = resp.entries.iter().find(|e| e.name == "repo-a").unwrap();
         assert!(repo_a.is_git_repo);
+        assert_eq!(repo_a.path, td.path().join("repo-a").to_string_lossy());
         let plain = resp.entries.iter().find(|e| e.name == "plain-dir").unwrap();
         assert!(!plain.is_git_repo);
         assert_eq!(resp.path, td.path().to_string_lossy());

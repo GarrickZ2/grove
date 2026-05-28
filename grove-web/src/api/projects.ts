@@ -300,6 +300,8 @@ export async function updateMemory(id: string, content: string): Promise<{ conte
 
 export interface FolderEntry {
   name: string;
+  /** Absolute path of this entry — use this for navigation, don't join client-side. */
+  path: string;
   is_git_repo: boolean;
 }
 
