@@ -1,0 +1,14 @@
+{
+  "$schema": "https://schema.tauri.app/config/2/schema.json",
+  "identifier": "main-window",
+  "description": "Main app window — needs start_dragging for the custom top-edge drag strip in Tauri Overlay title-bar mode (Sidebar.tsx + App.tsx top strip).",
+  "windows": ["main"],
+  "local": true,
+  "remote": {
+    "urls": ["http://localhost:*"]
+  },
+  "permissions": [
+    "core:default",
+    "core:window:allow-start-dragging"
+  ]
+}

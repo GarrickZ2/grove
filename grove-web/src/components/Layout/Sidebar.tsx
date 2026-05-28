@@ -90,11 +90,10 @@ export function Sidebar({ activeItem, onItemClick, collapsed, onToggleCollapse, 
   const content = (
     <>
       {/* Logo + Mode Brand
-         px+pb 4 = 16px, pt-8 = 32px to clear macOS traffic lights when Tauri
-         title bar is in Overlay mode. data-tauri-drag-region lets the user
-         drag the window from this top strip. Inner button still receives
-         clicks (Tauri excludes interactive children from drag). */}
-      <div className="px-4 pt-8 pb-4 select-none" data-tauri-drag-region>
+         pt-8 reserves clearance for macOS traffic lights (Tauri Overlay
+         title-bar mode). Drag is handled at the app root via a top strip
+         in App.tsx, so this wrapper only needs the inner padding. */}
+      <div className="px-4 pt-8 pb-4 select-none">
         {isCollapsed ? (
           <button
             onClick={() => onTasksModeChange(tasksMode === "zen" ? "blitz" : "zen")}
@@ -259,7 +258,7 @@ export function Sidebar({ activeItem, onItemClick, collapsed, onToggleCollapse, 
       initial={false}
       animate={{ width: collapsed ? 72 : 256 }}
       transition={{ duration: 0.2, ease: "easeInOut" }}
-      className="glass-panel fixed top-2 bottom-2 left-2 z-40 rounded-2xl flex flex-col select-none"
+      className="glass-panel fixed top-3 bottom-3 left-3 z-40 rounded-2xl flex flex-col select-none"
     >
       {content}
     </motion.aside>

@@ -76,6 +76,61 @@ function AppContent() {
     window.addEventListener("resize", update);
     return () => window.removeEventListener("resize", update);
   }, []);
+
+  // Approximate native macOS "scroll bars: when scrolling" behavior. Listen
+  // for any scroll event in capture phase and flip a body class so the
+  // .blitz-area scrollbar thumb appears for ~900ms after the last scroll,
+  // then fades away. CSS-only :hover proved unreliable (webkit pseudo-
+  // elements don't always honor ancestor hover state for scrollbar
+  // visibility), so this is the standard escape hatch.
+  useEffect(() => {
+    let hideTimer: ReturnType<typeof setTimeout> | undefined;
+    const onScroll = () => {
+      document.body.classList.add("grove-scrolling");
+      if (hideTimer) clearTimeout(hideTimer);
+      hideTimer = setTimeout(() => {
+        document.body.classList.remove("grove-scrolling");
+      }, 900);
+    };
+    document.addEventListener("scroll", onScroll, true);
+    return () => {
+      document.removeEventListener("scroll", onScroll, true);
+      if (hideTimer) clearTimeout(hideTimer);
+      document.body.classList.remove("grove-scrolling");
+    };
+  }, []);
+
+  // Top-edge drag for Tauri Overlay title-bar mode. data-tauri-drag-region
+  // alone gives us double-click-maximize but NOT drag when the webview is
+  // loaded from an external URL (http://localhost) — drag silently fails
+  // after the first attempt. Bind a native (non-React) mousedown listener
+  // and call startDragging() ourselves. Native listener avoids the stale
+  // event-handler issue observed with React's synthetic events here.
+  useEffect(() => {
+    let win: { startDragging: () => Promise<void> } | null = null;
+    let cancelled = false;
+    import("@tauri-apps/api/window")
+      .then((mod) => {
+        if (cancelled) return;
+        win = mod.getCurrentWindow();
+      })
+      .catch(() => {
+        // Not in Tauri runtime — leave win null, handler becomes a no-op
+      });
+
+    const handler = (e: MouseEvent) => {
+      if (!win) return;
+      const target = e.target as HTMLElement | null;
+      if (!target?.closest('[data-window-drag-strip]')) return;
+      void win.startDragging().catch(() => {});
+    };
+    document.addEventListener("mousedown", handler);
+    return () => {
+      cancelled = true;
+      document.removeEventListener("mousedown", handler);
+    };
+  }, []);
+
   const effectiveSidebarCollapsed = sidebarCollapsed || viewportTooNarrowForSidebar;
   const [hasExitedWelcome, setHasExitedWelcome] = useState(false);
   const [navigationData, setNavigationData] = useState<Record<string, unknown> | null>(null);
@@ -1011,6 +1066,21 @@ function AppContent() {
   // Desktop layout (unchanged)
   return (
     <div className="flex h-screen bg-[var(--color-bg)] overflow-hidden">
+      {/* Invisible top-edge drag strip — Tauri Overlay title-bar mode hides
+          the OS title bar, so the user expects to drag the window from
+          anywhere along the top edge (Raycast / Tahoe convention).
+          h-6 = 24px matches main's `p-6` top padding so the strip never
+          covers actual card content. z-[45] sits above the sidebar (z-40)
+          but below modals/popovers (z-50+).
+
+          data-tauri-drag-region: gives us double-click-maximize for free.
+          data-window-drag-strip: picked up by the document-level mousedown
+            listener in the parent useEffect to trigger startDragging(). */}
+      <div
+        className="fixed top-0 left-0 right-0 h-6 z-[45]"
+        data-tauri-drag-region
+        data-window-drag-strip
+      />
       <UpdateBanner />
       <AnimatePresence mode="wait">
         {tasksMode === "blitz" ? (
@@ -1034,9 +1104,18 @@ function AppContent() {
             transition={{ duration: 0.3, ease: [0.25, 1, 0.5, 1] }}
           >
             <Sidebar {...sidebarProps} />
+            {/* Floating main card — mirrors the sidebar's "floating panel"
+               language so the chrome reads as a single design system:
+               two cards on a desktop, 12px gap between them and to all
+               window edges. left tracks the sidebar collapsed state so
+               the gap stays visually consistent in both modes. */}
             <main
-              className={`relative flex-1 transition-[padding] duration-200 ease-out ${isFullWidthPage && !isDashboardPage ? "overflow-hidden" : "overflow-y-auto"}`}
-              style={{ paddingLeft: effectiveSidebarCollapsed ? "96px" : "280px" }}
+              className={`fixed top-3 right-3 bottom-3 rounded-2xl bg-[var(--color-bg)] transition-[left] duration-200 ease-out ${isFullWidthPage && !isDashboardPage ? "overflow-hidden" : "overflow-y-auto"}`}
+              style={{
+                left: effectiveSidebarCollapsed ? "96px" : "280px",
+                boxShadow:
+                  "0 1px 3px rgba(0, 0, 0, 0.04), 0 8px 24px rgba(0, 0, 0, 0.06), 0 0 0 1px color-mix(in oklab, var(--color-border) 35%, transparent)",
+              }}
             >
               {/* TasksPage always mounted to preserve workspace state across tab switches */}
               <div

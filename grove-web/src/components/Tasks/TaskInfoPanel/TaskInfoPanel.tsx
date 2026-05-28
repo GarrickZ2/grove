@@ -133,7 +133,7 @@ export function TaskInfoPanel({
         initial={{ width: 48 }}
         animate={{ width: expanded ? "60%" : 48 }}
         transition={{ type: "spring", damping: 25, stiffness: 200 }}
-        className="h-full flex border border-[var(--color-border)] bg-[var(--color-bg-secondary)] overflow-hidden"
+        className="h-full flex rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)] overflow-hidden"
         style={{ maxWidth: expanded ? "calc(100% - 400px)" : 48, minWidth: expanded ? 400 : 48 }}
       >
         {/* Vertical Tab Bar (always visible) */}
@@ -244,7 +244,7 @@ export function TaskInfoPanel({
                     animate={{ opacity: 1, y: 0 }}
                     exit={{ opacity: 0, y: -10 }}
                     transition={{ duration: 0.15 }}
-                    className="flex-1 min-h-0 overflow-y-auto"
+                    className="flex-1 min-h-0 overflow-y-auto pb-3"
                   >
                     {renderTabContent()}
                   </motion.div>
@@ -264,7 +264,7 @@ export function TaskInfoPanel({
       animate={{ x: 0, opacity: 1 }}
       exit={{ opacity: 0 }}
       transition={{ type: "spring", damping: 25, stiffness: 200 }}
-      className="h-full flex flex-col border border-[var(--color-border)] bg-[var(--color-bg-secondary)] overflow-hidden"
+      className="h-full flex flex-col rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)] overflow-hidden"
     >
       {/* Header */}
       <div className="flex items-center justify-end gap-2 px-3 py-2 border-b border-[var(--color-border)] bg-[var(--color-bg)]">
@@ -510,7 +510,7 @@ export function TaskInfoPanel({
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -10 }}
             transition={{ duration: 0.15 }}
-            className="flex-1 min-h-0 overflow-y-auto"
+            className="flex-1 min-h-0 overflow-y-auto pb-3"
           >
             {renderTabContent()}
           </motion.div>

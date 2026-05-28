@@ -120,6 +120,25 @@ body {
   background: var(--color-text-muted);
 }
 
+/* Blitz scroll regions: hide the scrollbar thumb at rest. App.tsx sets
+   `body.grove-scrolling` for ~900ms after any scroll event, so the thumb
+   appears while scrolling and fades back to transparent when idle —
+   approximating the native macOS "scroll bars: when scrolling" behavior.
+   Scoped to .blitz-area so Zen keeps its always-visible scrollbars. */
+.blitz-area ::-webkit-scrollbar-track {
+  background: transparent;
+}
+.blitz-area ::-webkit-scrollbar-thumb {
+  background: transparent;
+  transition: background 200ms ease;
+}
+body.grove-scrolling .blitz-area ::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--color-border) 85%, transparent);
+}
+.blitz-area ::-webkit-scrollbar-thumb:hover {
+  background: var(--color-text-muted);
+}
+
 /* Selection */
 ::selection {
   background: var(--color-highlight);

@@ -497,10 +497,19 @@ pub async fn execute(port: u16) {
             // (Raycast / Tahoe System Settings look). Sidebar's logo area has
             // a pt-8 + data-tauri-drag-region to reserve clearance and let
             // users drag the window from the top strip.
+            //
+            // Traffic light position. Tuned by user feedback — earlier values
+            // (12,12) clipped against the sidebar's rounded corner, (20,20)
+            // still felt too close to the window's top-left. (32,32) pulls
+            // the buttons well inside the sidebar's content area so they sit
+            // comfortably in the "title-bar zone" above the GROVE logo
+            // (logo lives at y ≈ 44 because of pt-8 padding inside top-3
+            // sidebar).
             #[cfg(target_os = "macos")]
             let builder = builder
                 .title_bar_style(tauri::TitleBarStyle::Overlay)
-                .hidden_title(true);
+                .hidden_title(true)
+                .traffic_light_position(tauri::LogicalPosition::new(24.0, 32.0));
 
             let main_window = builder.build()?;
 

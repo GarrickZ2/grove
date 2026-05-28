@@ -146,7 +146,7 @@ export function BlitzTaskListItem({
             <div className="flex items-center gap-1.5 min-w-0">
               {shortcutNumber !== undefined && (
                 <span
-                  className="blitz-shortcut flex-shrink-0 text-xs font-bold px-1.5 py-0.5 rounded opacity-0 transition-opacity duration-100"
+                  className="blitz-shortcut flex-shrink-0 text-xs font-bold px-1.5 py-0.5 rounded opacity-0"
                   style={{
                     backgroundColor: 'var(--color-highlight)',
                     color: 'var(--color-bg)',

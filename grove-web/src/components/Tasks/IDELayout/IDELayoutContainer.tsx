@@ -309,11 +309,17 @@ function PanelSlot({
 
 export const IDELayoutContainer = forwardRef<IDELayoutHandle, IDELayoutContainerProps>(
   function IDELayoutContainer({ task, projectId, toolbarLeading, toolbarTrailing }, ref) {
-    const { selectedProject } = useProject();
+    const { selectedProject, projects } = useProject();
     const { terminalAvailable } = useConfig();
     const { isMobile } = useIsMobile();
-    const isStudio = selectedProject?.projectType === "studio";
-    const isGitRepo = selectedProject?.isGitRepo;
+    // Resolve the project this task actually belongs to by its projectId,
+    // not the globally-selected project. Blitz lets the user open a task
+    // from any project while sidebar still shows a different one; using
+    // `selectedProject` here mis-classifies Studio tasks as Coding and
+    // surfaces Code Review / Git / Comments tabs that don't apply.
+    const taskProject = projects.find((p) => p.id === projectId) ?? selectedProject;
+    const isStudio = taskProject?.projectType === "studio";
+    const isGitRepo = taskProject?.isGitRepo;
 
     // Read persisted state once at mount via useState lazy initializer (avoids repeated localStorage reads)
     const [persisted] = useState<Partial<PersistedIDEState>>(() =>
