@@ -3,6 +3,7 @@ import { motion } from "framer-motion";
 import { X, Plus, FolderOpen, GitBranch, Sparkles, Code2, Globe } from "lucide-react";
 import { Button } from "../ui";
 import { DialogShell } from "../ui/DialogShell";
+import { FolderTreePickerDialog } from "./FolderTreePickerDialog";
 import { useIsMobile } from "../../hooks";
 import { apiClient } from "../../api/client";
 
@@ -54,6 +55,8 @@ export function AddProjectDialog({
 
   const [error, setError] = useState("");
   const { isMobile } = useIsMobile();
+
+  const [pickerOpen, setPickerOpen] = useState<null | "existing" | "parent">(null);
 
   const prevIsOpenRef = useRef(isOpen);
 
@@ -136,11 +139,15 @@ export function AddProjectDialog({
       const data = await apiClient.get<{ path: string | null }>("/api/v1/browse-folder");
       if (data.path) {
         setPath(data.path);
-        setError("");
+        if (!existingNameTouched) setExistingName(data.path.split("/").pop() || "");
+      } else {
+        // Native dialog unavailable (headless host) — open web picker.
+        setPickerOpen("existing");
       }
     } catch (err) {
       console.error("Failed to browse folder:", err);
-      setError("Failed to open folder picker");
+      // Network/API failure — fall back to web picker rather than dead-ending.
+      setPickerOpen("existing");
     }
   };
 
@@ -149,11 +156,12 @@ export function AddProjectDialog({
       const data = await apiClient.get<{ path: string | null }>("/api/v1/browse-folder");
       if (data.path) {
         setParentDir(data.path);
-        setError("");
+      } else {
+        setPickerOpen("parent");
       }
     } catch (err) {
       console.error("Failed to browse folder:", err);
-      setError("Failed to open folder picker");
+      setPickerOpen("parent");
     }
   };
 
@@ -244,6 +252,7 @@ export function AddProjectDialog({
   };
 
   return (
+    <>
     <DialogShell isOpen={isOpen} onClose={resetAndClose}>
       <div
         onKeyDown={handleKeyDown}
@@ -532,6 +541,21 @@ export function AddProjectDialog({
         </div>
       </div>
     </DialogShell>
+    <FolderTreePickerDialog
+      isOpen={pickerOpen !== null}
+      onClose={() => setPickerOpen(null)}
+      onSelect={(p) => {
+        if (pickerOpen === "existing") {
+          setPath(p);
+          if (!existingNameTouched) setExistingName(p.split("/").pop() || "");
+        } else if (pickerOpen === "parent") {
+          setParentDir(p);
+        }
+        setPickerOpen(null);
+      }}
+      title={pickerOpen === "parent" ? "Select Parent Directory" : "Select Project Folder"}
+    />
+    </>
   );
 }
 
