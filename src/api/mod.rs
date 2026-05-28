@@ -179,6 +179,7 @@ pub fn create_api_router() -> Router {
         )
         // Folder selection API
         .route("/browse-folder", get(handlers::folder::browse_folder))
+        .route("/folders/list", get(handlers::folder::list_folder))
         // Read file API (for Plan File rendering)
         .route("/read-file", get(handlers::folder::read_file))
         // Terminal WebSocket
