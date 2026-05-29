@@ -16,9 +16,9 @@ pub use state::{init_file_watchers, shutdown_file_watchers};
 
 use axum::{
     body::Body,
-    extract::{DefaultBodyLimit, State},
+    extract::{DefaultBodyLimit, Request, State},
     http::{header, Response, StatusCode, Uri},
-    middleware,
+    middleware::{self, Next},
     response::IntoResponse,
     routing::{delete, get, patch, post, put},
     Router,
@@ -772,6 +772,21 @@ fn cache_control_for(path: &str) -> Option<&'static str> {
     }
 }
 
+/// Axum middleware that adds `Cache-Control: no-cache` to `sw.js` responses
+/// served by tower-http's `ServeDir` (used in debug / static-dir mode).
+/// The embedded-asset path (`serve_embedded`) handles this directly on the
+/// response builder, so this middleware only needs to run on the ServeDir path.
+async fn sw_cache_control_middleware(request: Request, next: Next) -> impl IntoResponse {
+    let is_sw = request.uri().path() == "/sw.js";
+    let mut response = next.run(request).await;
+    if is_sw {
+        response
+            .headers_mut()
+            .insert(header::CACHE_CONTROL, "no-cache".parse().unwrap());
+    }
+    response
+}
+
 /// Serve embedded static files
 async fn serve_embedded(uri: Uri) -> impl IntoResponse {
     let path = uri.path().trim_start_matches('/');
@@ -869,7 +884,10 @@ pub fn create_router(
     if let Some(dir) = static_dir {
         let index_file = dir.join("index.html");
         let serve_dir = ServeDir::new(&dir).not_found_service(ServeFile::new(&index_file));
-        api_router.fallback_service(serve_dir).layer(cors)
+        api_router
+            .fallback_service(serve_dir)
+            .layer(middleware::from_fn(sw_cache_control_middleware))
+            .layer(cors)
     } else if has_embedded_assets() {
         api_router.fallback(serve_embedded).layer(cors)
     } else {
