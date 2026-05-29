@@ -134,8 +134,22 @@ export function AddProjectDialog({
   const displayedExistingName = existingNameTouched ? existingName : deriveNameFromPath(path);
   const displayedGitName = gitNameTouched ? gitName : deriveNameFromGitUrl(gitUrl);
 
+  // In remote/mobile mode the native dialog would open on the server's
+  // physical screen (invisible to the remote user) and `Command::output()`
+  // blocks until someone dismisses it on that screen — so the request hangs
+  // and our "fallback when null/throw" path never triggers. Skip the native
+  // call entirely in that mode and go straight to the web picker.
+  // `window.__GROVE_REMOTE__` is set by AuthGate when `/api/v1/auth/info`
+  // reports either `remote: true` or `required: true`.
+  const isRemoteMode = (): boolean =>
+    (window as unknown as Record<string, unknown>).__GROVE_REMOTE__ === true;
+
   // Use apiClient (not raw fetch) so HMAC headers are attached in mobile mode.
   const handleBrowseExisting = async () => {
+    if (isRemoteMode()) {
+      setPickerOpen("existing");
+      return;
+    }
     try {
       const data = await apiClient.get<{ path: string | null }>("/api/v1/browse-folder");
       if (data.path) {
@@ -154,6 +168,10 @@ export function AddProjectDialog({
   };
 
   const handleBrowseParent = async () => {
+    if (isRemoteMode()) {
+      setPickerOpen("parent");
+      return;
+    }
     try {
       const data = await apiClient.get<{ path: string | null }>("/api/v1/browse-folder");
       if (data.path) {

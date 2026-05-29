@@ -84,20 +84,33 @@ export function FolderTreePickerDialog({
 
   if (!isOpen) return null;
 
-  // Build breadcrumb segments. data.path = "/home/dev/projects" → [{label:"/", path:""}, {label:"home", path:"/home"}, ...]
-  const crumbs = data
-    ? data.path
-        .split("/")
-        .filter(Boolean)
-        .reduce<Array<{ label: string; path: string }>>(
-          (acc, seg) => {
-            const prev = acc.length ? acc[acc.length - 1].path : "";
-            acc.push({ label: seg, path: `${prev}/${seg}` });
-            return acc;
-          },
-          [{ label: "/", path: "" }],
-        )
-    : [];
+  // Detect path separator from the response. Windows paths use '\' and start
+  // with a drive letter (e.g. "C:\Users\dev"); Unix uses '/' with a synthetic
+  // root. We assume paths don't mix separators within a single response.
+  const sep: "/" | "\\" = data?.path.includes("\\") ? "\\" : "/";
+
+  // Build breadcrumb segments cross-platform.
+  // Linux "/home/dev"   → [{/, /}, {home, /home}, {dev, /home/dev}]
+  // Windows "C:\Users\dev" → [{C:, C:\}, {Users, C:\Users}, {dev, C:\Users\dev}]
+  const crumbs: Array<{ label: string; path: string }> = [];
+  if (data) {
+    const segs = data.path.split(sep).filter(Boolean);
+    if (sep === "/") {
+      crumbs.push({ label: "/", path: "/" });
+    }
+    let acc = "";
+    segs.forEach((seg, i) => {
+      if (sep === "\\" && i === 0) {
+        // First Windows segment is the drive letter; root path is "DRIVE\"
+        acc = `${seg}${sep}`;
+      } else if (sep === "/" && i === 0) {
+        acc = `/${seg}`;
+      } else {
+        acc = `${acc}${sep}${seg}`;
+      }
+      crumbs.push({ label: seg, path: acc });
+    });
+  }
 
   return (
     <DialogShell isOpen={isOpen} onClose={onClose} maxWidth="max-w-2xl">
@@ -139,12 +152,12 @@ export function FolderTreePickerDialog({
             </Button>
             <div className="flex-1 overflow-x-auto text-xs text-[var(--color-text-muted)] whitespace-nowrap">
               {crumbs.map((c, i) => (
-                <span key={c.path || "/"}>
-                  {i > 0 && <span className="mx-1">/</span>}
+                <span key={c.path || sep}>
+                  {i > 0 && <span className="mx-1">{sep}</span>}
                   <button
                     type="button"
                     className="hover:underline hover:text-[var(--color-text)] disabled:opacity-50"
-                    onClick={() => void load(c.path || "/")}
+                    onClick={() => void load(c.path || sep)}
                     disabled={loading}
                   >
                     {c.label}

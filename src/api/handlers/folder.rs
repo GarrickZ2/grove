@@ -174,7 +174,7 @@ impl std::fmt::Display for ListFolderError {
 /// Pure function for unit-testing. The axum handler wraps this with Result→HTTP.
 pub fn list_folder_inner(q: ListFolderQuery) -> Result<ListFolderResponse, ListFolderError> {
     let raw = q.path.trim();
-    if !raw.starts_with('/') {
+    if !std::path::Path::new(raw).is_absolute() {
         return Err(ListFolderError::BadRequest("path must be absolute".into()));
     }
     // Textual `..` check only — this does NOT defend against symlink-based
