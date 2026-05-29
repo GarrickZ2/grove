@@ -5,6 +5,7 @@ import { FieldGroup, PipelineSection } from "./components/PipelineLayout";
 import { ProfilePicker } from "./components/ProfilePicker";
 import type { AudioSettings, ProviderProfile } from "./types";
 import { buildVocabularyRows, formatShortcut, formatPTTKey, pttKeyLabel, type VocabularyRow, type VocabularyTab } from "./utils";
+import { persistOverride, persistRemoveOverride } from "../../keyboard";
 
 type PromptScope = "global" | "project";
 
@@ -74,6 +75,28 @@ export function AudioPanel({
     patchAudioState((prev) => ({ ...prev, [key]: value }));
   }, [patchAudioState]);
 
+  // Mirror PTT key changes into the keymap_overrides table so the binding is
+  // visible / editable from Settings → Keyboard Shortcuts. Empty key clears
+  // the override. The keymap dispatcher isn't the active path for PTT (the
+  // raw keydown/keyup listener in GlobalAudioRecorder still owns that), so
+  // a write-failure here doesn't break recording — just log and move on.
+  const mirrorPTTToKeymap = useCallback(async (key: string) => {
+    try {
+      if (key) {
+        await persistOverride({
+          command_id: "audio.ptt.start",
+          key,
+          when_ctx: undefined,
+          scope: undefined,
+        });
+      } else {
+        await persistRemoveOverride("audio.ptt.start");
+      }
+    } catch (err) {
+      console.error("[AudioPanel] mirror PTT → keymap failed:", err);
+    }
+  }, []);
+
   const commitMinDuration = useCallback(() => {
     const parsed = Number(draftMinDuration);
     const next = Number.isFinite(parsed)
@@ -118,6 +141,7 @@ export function AudioPanel({
         const key = formatPTTKey(event);
         if (key) {
           patchAudioState((prev) => ({ ...prev, pushToTalkKey: key }));
+          void mirrorPTTToKeymap(key);
           setRecordingTarget(null);
         }
       }
@@ -125,7 +149,7 @@ export function AudioPanel({
 
     window.addEventListener("keydown", handleKeyDown, true);
     return () => window.removeEventListener("keydown", handleKeyDown, true);
-  }, [recordingTarget, patchAudioState]);
+  }, [recordingTarget, patchAudioState, mirrorPTTToKeymap]);
 
   const vocabularyRows = useMemo(() => buildVocabularyRows(audio), [audio]);
   const filteredRows = useMemo(
@@ -359,7 +383,10 @@ export function AudioPanel({
                   {audio.pushToTalkKey && (
                     <button
                       type="button"
-                      onClick={() => patchAudio("pushToTalkKey", "")}
+                      onClick={() => {
+                        patchAudio("pushToTalkKey", "");
+                        void mirrorPTTToKeymap("");
+                      }}
                       className="inline-flex h-6 w-6 items-center justify-center rounded-full text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-bg)] hover:text-[var(--color-error)]"
                       title="Clear shortcut"
                     >

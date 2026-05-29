@@ -5,6 +5,7 @@ import { Button } from "../ui";
 import { AgentIcon } from "./AgentIcon";
 import { installSkill } from "../../api";
 import type { AgentDef, InstalledSkill, ApiError } from "../../api";
+import { useCommand, useKeyboardScope } from "../../keyboard";
 
 interface InstallDialogProps {
   isOpen: boolean;
@@ -94,15 +95,14 @@ export function InstallDialog({
     }
   }
 
-  // Escape to close
-  useEffect(() => {
-    if (!isOpen) return;
-    const handler = (e: KeyboardEvent) => {
-      if (e.key === "Escape") { e.preventDefault(); onClose(); }
-    };
-    window.addEventListener("keydown", handler);
-    return () => window.removeEventListener("keydown", handler);
-  }, [isOpen, onClose]);
+  // Escape to close (scoped command).
+  //
+  // Catalog handlers register inside <InstallDialogBindings> only while
+  // isOpen=true. Multiple InstallDialog wrappers can coexist (the Skills
+  // page can mount one per skill row, all isOpen=false at rest); a
+  // top-level useCommand would otherwise overwrite each other on every
+  // re-render — only the last-mounted dialog's binding would be live.
+  useKeyboardScope("dialog.installSkill", isOpen);
 
   // Common install params
   const commonInstallParams = useCallback(
@@ -246,6 +246,7 @@ export function InstallDialog({
     <AnimatePresence>
       {isOpen && (
         <>
+          <InstallDialogBindings onClose={onClose} />
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
@@ -418,6 +419,13 @@ export function InstallDialog({
       )}
     </AnimatePresence>
   );
+}
+
+// Registers the dialog.installSkill.* catalog handlers only while the dialog
+// is actually open. See top-of-component comment for the multi-mount rationale.
+function InstallDialogBindings({ onClose }: { onClose: () => void }) {
+  useCommand("dialog.installSkill.close", onClose, [onClose]);
+  return null;
 }
 
 function AgentActionRow({

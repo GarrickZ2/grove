@@ -5,6 +5,7 @@ import { Button } from "../ui";
 import { DialogShell } from "../ui/DialogShell";
 import { useIsMobile } from "../../hooks";
 import { apiClient } from "../../api/client";
+import { useCommand, useKeyboardScope } from "../../keyboard";
 
 type ProjectMode = "coding" | "studio";
 type CodingTab = "existing" | "new" | "git";
@@ -236,17 +237,22 @@ export function AddProjectDialog({
     return "Create Project";
   };
 
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
-      e.preventDefault();
-      handleSubmit();
-    }
-  };
+  // Catalog handlers register inside <AddProjectDialogBindings> only while
+  // isOpen=true. Multiple AddProjectDialog wrappers can coexist (Workspace +
+  // Projects pane); a top-level useCommand would otherwise overwrite each
+  // other on every re-render — only the last-mounted dialog's binding
+  // would be live.
+  useKeyboardScope("dialog.addProject", isOpen);
 
   return (
     <DialogShell isOpen={isOpen} onClose={resetAndClose}>
+      {isOpen && (
+        <AddProjectDialogBindings
+          onClose={resetAndClose}
+          onSubmit={handleSubmit}
+        />
+      )}
       <div
-        onKeyDown={handleKeyDown}
         className="bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-xl shadow-xl overflow-hidden w-[480px] max-w-[95vw]"
       >
         {/* Header */}
@@ -533,6 +539,26 @@ export function AddProjectDialog({
       </div>
     </DialogShell>
   );
+}
+
+// Registers the dialog.addProject.* catalog handlers only while the dialog
+// is actually open. See top-of-component comment for the multi-mount rationale.
+function AddProjectDialogBindings({
+  onClose,
+  onSubmit,
+}: {
+  onClose: () => void;
+  onSubmit: () => void | Promise<void>;
+}) {
+  useCommand("dialog.addProject.close", onClose, [onClose]);
+  useCommand(
+    "dialog.addProject.submit",
+    () => {
+      void onSubmit();
+    },
+    [onSubmit],
+  );
+  return null;
 }
 
 /** Wrapper that animates height changes smoothly and enforces a min-height */

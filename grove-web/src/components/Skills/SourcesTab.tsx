@@ -5,6 +5,7 @@ import { Button } from "../ui";
 import { AddSourceDialog } from "./AddSourceDialog";
 import { syncSource, syncAllSources, deleteSource as apiDeleteSource, checkSourceUpdates } from "../../api";
 import type { SkillSource } from "../../api";
+import { useCommand, useDefineCommand, useKeyboardScope } from "../../keyboard";
 
 interface SourcesTabProps {
   sources: SkillSource[];
@@ -75,6 +76,23 @@ export function SourcesTab({ sources, onRefresh }: SourcesTabProps) {
     setEditSource(null);
     await onRefresh();
   };
+
+  // Catalog-declared command handlers. Each mirrors a header button:
+  // enabled/disabled state matches the button's `disabled` prop so the
+  // palette shows the same affordance the UI does.
+  useCommand("skills.source.add", () => setShowAdd(true), []);
+  useCommand(
+    "skills.source.checkUpdates",
+    () => { void handleCheckUpdates(); },
+    { enabled: () => !isChecking },
+    [isChecking],
+  );
+  useCommand(
+    "skills.source.syncAll",
+    () => { void handleSyncAll(); },
+    { enabled: () => hasAnyUpdates && !syncingAll },
+    [hasAnyUpdates, syncingAll],
+  );
 
   // Tick `now` once per minute so relative-time labels stay roughly fresh
   // without requiring a parent re-render. `Date.now()` is impure, so we
@@ -257,14 +275,21 @@ function DeleteSourceDialog({
   onConfirm: () => void;
   onCancel: () => void;
 }) {
-  useEffect(() => {
-    if (!source) return;
-    const handler = (e: KeyboardEvent) => {
-      if (e.key === "Escape") { e.preventDefault(); onCancel(); }
-    };
-    window.addEventListener("keydown", handler);
-    return () => window.removeEventListener("keydown", handler);
-  }, [source, onCancel]);
+  // Escape to cancel — Scoped Command Registry.
+  const isOpen = !!source;
+  useKeyboardScope("skills.source.deleteConfirm", isOpen);
+  useDefineCommand(
+    {
+      id: "skills.source.deleteConfirm.cancel",
+      name: "Cancel Remove Source",
+      category: "Skills",
+      defaultBindings: [{ key: "Escape" }],
+      scope: "skills.source.deleteConfirm",
+      passThroughTextInput: true,
+      handler: onCancel,
+    },
+    [onCancel],
+  );
 
   return (
     <AnimatePresence>

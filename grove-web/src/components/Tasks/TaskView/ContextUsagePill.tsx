@@ -13,6 +13,7 @@ import { Brain, Zap } from "lucide-react";
 
 import { contextHealthColor } from "./quotaColors";
 import { formatTokens } from "../../Stats/formatters";
+import { useDefineCommand, useKeyboardScope } from "../../../keyboard";
 
 export interface ContextUsageData {
   used: number;
@@ -198,20 +199,27 @@ export function ContextUsagePill({
     };
   }, [open, recomputePosition]);
 
-  useEffect(() => {
-    if (!open) return;
-    const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        triggerHoveredRef.current = false;
-        popoverHoveredRef.current = false;
-        focusedRef.current = false;
-        cancelHide();
-        setOpen(false);
-      }
-    };
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, [open]);
+  // Escape-to-close — Scoped Command Registry.
+  const handleEscapeClose = useCallback(() => {
+    triggerHoveredRef.current = false;
+    popoverHoveredRef.current = false;
+    focusedRef.current = false;
+    cancelHide();
+    setOpen(false);
+  }, []);
+  useKeyboardScope("popover.contextUsage", open);
+  useDefineCommand(
+    {
+      id: "popover.contextUsage.close",
+      name: "Close Context Usage Popover",
+      category: "Popover",
+      defaultBindings: [{ key: "Escape" }],
+      scope: "popover.contextUsage",
+      passThroughTextInput: true,
+      handler: handleEscapeClose,
+    },
+    [handleEscapeClose],
+  );
 
   useEffect(() => {
     return () => {

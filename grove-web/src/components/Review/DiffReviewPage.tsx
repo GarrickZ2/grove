@@ -65,10 +65,10 @@ import { FileTreeSidebar } from './FileTreeSidebar';
 import { DiffFileView, resetGlobalMatchIndex } from './DiffFileView';
 import { ConversationSidebar } from './ConversationSidebar';
 import { CodeSearchBar } from './CodeSearchBar';
-import { MessageSquare, ChevronUp, ChevronDown, PanelLeftClose, PanelLeftOpen, Crosshair, GitCompare, FileText, RefreshCw, Code, Columns2, Eye } from 'lucide-react';
+import { MessageSquare, ChevronUp, ChevronDown, PanelLeftClose, PanelLeftOpen, Crosshair, GitCompare, FileText, RefreshCw, Code, Columns2, Eye, ZoomIn, ZoomOut } from 'lucide-react';
 import { VersionSelector } from './VersionSelector';
 import { useIsMobile } from '../../hooks';
-import { useHotkeys } from '../../hooks/useHotkeys';
+import { useKeyboardScope, useCommand, useContextKey } from '../../keyboard';
 import './diffTheme.css';
 
 /** External navigation request — navigate to a file (optionally at a line) */
@@ -253,6 +253,33 @@ export function DiffReviewPage({ projectId, taskId, embedded, navigateToFile, is
     }
     return 'latest';
   });
+
+  const [fontSize, setFontSize] = useState<number>(() => {
+    const saved = localStorage.getItem("grove:review.fontSize");
+    return saved ? parseInt(saved, 10) : 12;
+  });
+
+  const handleZoomIn = useCallback(() => {
+    setFontSize((prev) => {
+      const next = Math.min(prev + 1, 30);
+      localStorage.setItem("grove:review.fontSize", String(next));
+      return next;
+    });
+  }, []);
+
+  const handleZoomOut = useCallback(() => {
+    setFontSize((prev) => {
+      const next = Math.max(prev - 1, 9);
+      localStorage.setItem("grove:review.fontSize", String(next));
+      return next;
+    });
+  }, []);
+
+  const handleZoomReset = useCallback(() => {
+    setFontSize(12);
+    localStorage.setItem("grove:review.fontSize", "12");
+  }, []);
+
   const [collapsedCommentIds, setCollapsedCommentIds] = useState<Set<number>>(new Set());
   const [versions, setVersions] = useState<VersionOption[]>([]);
   const currentDiffRefs = useMemo(() => {
@@ -1263,22 +1290,28 @@ export function DiffReviewPage({ projectId, taskId, embedded, navigateToFile, is
   }, [viewMode, focusMode, diffData, projectId, taskId, versions, fromVersion, toVersion]);
 
 
-  // Listen for Ctrl+F / Cmd+F to open code search
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if ((e.ctrlKey || e.metaKey) && e.key === 'f') {
-        e.preventDefault();
-        setCodeSearchVisible(true);
-      }
-      // ESC to close code search — skip if a lightbox is open (it handles ESC itself)
-      if (e.key === 'Escape' && codeSearchVisible && !document.querySelector('[data-lightbox-active]')) {
-        setCodeSearchVisible(false);
-        setCodeSearchQuery('');
-      }
-    };
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [codeSearchVisible]);
+  // ── Keyboard scopes & commands ─────────────────────────────────────────
+  // diffReview        — page-level scope, always active while mounted
+  // diffReview.search — pushed when code search is visible; its Escape
+  //                     command sits on top of stack and closes search
+  //                     before the page-level commands run.
+  useKeyboardScope('diffReview');
+  useKeyboardScope('diffReview.search', codeSearchVisible);
+  useContextKey('fileOpen', !!activeFilePath);
+
+  const lightboxNotOpen = useCallback(() => !document.querySelector('[data-lightbox-active]'), []);
+
+  useCommand('diffReview.openSearch', () => setCodeSearchVisible(true), []);
+
+  useCommand(
+    'diffReview.closeSearch',
+    () => {
+      setCodeSearchVisible(false);
+      setCodeSearchQuery('');
+    },
+    { enabled: lightboxNotOpen },
+    [lightboxNotOpen],
+  );
 
   // Update match count and handle navigation. setState happens inside the timer
   // (asynchronous), so it does not cascade-render synchronously inside the effect.
@@ -1477,24 +1510,47 @@ export function DiffReviewPage({ projectId, taskId, embedded, navigateToFile, is
     if (activeFilePath) handleToggleViewed(activeFilePath);
   }, [activeFilePath, handleToggleViewed]);
 
+  // Mark active file as viewed (one-way; never unmarks). Used by the
+  // diffReview.markViewed command for an unambiguous "I'm done with this file"
+  // intent — toggleViewed already covers the bi-directional case.
+  const handleMarkActiveViewed = useCallback(() => {
+    if (!activeFilePath) return;
+    setViewedFiles((prev) => {
+      const hash = fileHashes.get(activeFilePath) || '';
+      // No-op if already viewed with the same hash — avoids a needless re-render
+      // + localStorage write whenever the user re-fires the command.
+      if (prev.get(activeFilePath) === hash) return prev;
+      const next = new Map(prev);
+      next.set(activeFilePath, hash);
+      try {
+        localStorage.setItem(viewedStorageKey, JSON.stringify(Array.from(next.entries())));
+      } catch { /* ignore quota errors */ }
+      return next;
+    });
+    setCollapsedFiles((prev) => {
+      if (prev.has(activeFilePath)) return prev;
+      return new Set(prev).add(activeFilePath);
+    });
+  }, [activeFilePath, fileHashes, viewedStorageKey]);
+
   // Toggle Changes / All Files mode
   const handleToggleViewMode = useCallback(() => {
     const nextMode = viewMode === 'diff' ? 'full' : 'diff';
     void handleSetViewMode(nextMode);
   }, [viewMode, handleSetViewMode]);
 
-  // Review panel keyboard shortcuts
-  useHotkeys(
-    [
-      { key: 'j', handler: goToNextFile },
-      { key: 'k', handler: goToPrevFile },
-      { key: 'v', handler: handleToggleActiveViewed },
-      { key: 'r', handler: handleRefresh },
-      { key: 'Shift+Tab', handler: handleToggleViewMode, options: { preventDefault: true } },
-      { key: 'p', handler: handleToggleActivePreview },
-    ],
-    [goToNextFile, goToPrevFile, handleToggleActiveViewed, handleRefresh, handleToggleViewMode, handleToggleActivePreview]
-  );
+  // Review panel keyboard shortcuts — all scoped to the diff review page.
+  useCommand('diffReview.nextFile', goToNextFile, { enabled: () => displayFiles.length > 0 }, [goToNextFile, displayFiles.length]);
+  useCommand('diffReview.prevFile', goToPrevFile, { enabled: () => displayFiles.length > 0 }, [goToPrevFile, displayFiles.length]);
+  useCommand('diffReview.toggleViewed', handleToggleActiveViewed, { enabled: () => !!activeFilePath }, [handleToggleActiveViewed, activeFilePath]);
+  useCommand('diffReview.refresh', handleRefresh, [handleRefresh]);
+  useCommand('diffReview.toggleViewMode', handleToggleViewMode, [handleToggleViewMode]);
+  useCommand('diffReview.togglePreview', handleToggleActivePreview, { enabled: () => !!activeFilePath && !!getPreviewRenderer(activeFilePath ?? '') }, [handleToggleActivePreview, activeFilePath]);
+  useCommand('diffReview.markViewed', handleMarkActiveViewed, { enabled: () => !!activeFilePath }, [handleMarkActiveViewed, activeFilePath]);
+
+  useCommand('view.zoom.increase', handleZoomIn, [handleZoomIn]);
+  useCommand('view.zoom.decrease', handleZoomOut, [handleZoomOut]);
+  useCommand('view.zoom.reset', handleZoomReset, [handleZoomReset]);
 
   // Toggle collapse — in diff mode, load the diff when expanding a previously-collapsed file
   const handleToggleCollapse = useCallback((path: string) => {
@@ -1777,7 +1833,13 @@ export function DiffReviewPage({ projectId, taskId, embedded, navigateToFile, is
   const validSelectedFile = activeFilePath;
 
   return (
-    <div className={`diff-review-page ${isEmbedded ? 'embedded' : ''}`}>
+    <div
+      className={`diff-review-page ${isEmbedded ? 'embedded' : ''}`}
+      style={{
+        '--diff-font-size': `${fontSize}px`,
+        '--diff-line-height': `${fontSize + 8}px`,
+      } as React.CSSProperties}
+    >
       {/* Page Header with Mode Selector */}
       <div className="diff-page-header">
         <div className="diff-page-title">Code Review</div>
@@ -1829,7 +1891,7 @@ export function DiffReviewPage({ projectId, taskId, embedded, navigateToFile, is
             title="Focus mode — show one file at a time"
           >
             <Crosshair style={{ width: 12, height: 12 }} />
-            Focus
+            <span className="toolbar-label">Focus</span>
           </button>
           {focusModeWarn && (
             <span
@@ -1852,7 +1914,9 @@ export function DiffReviewPage({ projectId, taskId, embedded, navigateToFile, is
             ) : (
               <Eye style={{ width: 12, height: 12 }} />
             )}
-            {displayMode === 'code' ? 'Code' : displayMode === 'split' ? 'Split' : 'Preview'}
+            <span className="toolbar-label">
+              {displayMode === 'code' ? 'Code' : displayMode === 'split' ? 'Split' : 'Preview'}
+            </span>
           </button>
           {viewMode === 'diff' && (
             <div className="diff-view-toggle">
@@ -1860,14 +1924,16 @@ export function DiffReviewPage({ projectId, taskId, embedded, navigateToFile, is
                 className={viewType === 'unified' ? 'active' : ''}
                 onClick={() => setViewType('unified')}
               >
-                Unified
+                <span className="toolbar-label">Unified</span>
+                <span className="toolbar-label-short">Uni</span>
               </button>
               {!isMobile && (
                 <button
                   className={viewType === 'split' ? 'active' : ''}
                   onClick={() => setViewType('split')}
                 >
-                  Split
+                  <span className="toolbar-label">Split</span>
+                  <span className="toolbar-label-short">Spl</span>
                 </button>
               )}
             </div>
@@ -1880,39 +1946,65 @@ export function DiffReviewPage({ projectId, taskId, embedded, navigateToFile, is
             </div>
           )}
           <span style={{ fontWeight: 600, color: 'var(--color-text)' }}>
-            {totalFiles} file{totalFiles !== 1 ? 's' : ''}
+            {totalFiles}
+            <span className="toolbar-label"> file{totalFiles !== 1 ? 's' : ''}</span>
           </span>
           {viewMode === 'diff' && (
-            <>
+            <span className="diff-stats flex items-center gap-1.5">
               <span className="stat-add">+{diffData?.total_additions ?? 0}</span>
               <span className="stat-del">-{diffData?.total_deletions ?? 0}</span>
-            </>
+            </span>
           )}
         </div>
         <div className="diff-toolbar-right">
           <ViewedProgress viewed={viewedCount} total={totalFiles} />
-          <button
-            className="diff-toolbar-btn"
-            onClick={goToPrevFile}
-            title="Previous file"
-            disabled={currentFileIndex === 0}
-          >
-            <ChevronUp style={{ width: 14, height: 14 }} />
-          </button>
-          <button
-            className="diff-toolbar-btn"
-            onClick={goToNextFile}
-            title="Next file"
-            disabled={currentFileIndex === totalFiles - 1}
-          >
-            <ChevronDown style={{ width: 14, height: 14 }} />
-          </button>
+          <div className="flex items-center border border-[var(--color-border)] rounded-md bg-[var(--color-bg)] h-7 p-0.5 ml-1.5 mr-1">
+            <button
+              onClick={handleZoomOut}
+              className="px-2 h-full flex items-center justify-center text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-bg-tertiary)] rounded-[4px] cursor-pointer transition-colors"
+              title="Zoom out"
+            >
+              <ZoomOut className="w-3.5 h-3.5" />
+            </button>
+            <button
+              onClick={handleZoomReset}
+              className="px-2.5 h-full flex items-center justify-center text-xs font-medium text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-bg-tertiary)] rounded-[4px] cursor-pointer select-none transition-colors"
+              title="Reset zoom (12px)"
+            >
+              {fontSize}px
+            </button>
+            <button
+              onClick={handleZoomIn}
+              className="px-2 h-full flex items-center justify-center text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-bg-tertiary)] rounded-[4px] cursor-pointer transition-colors"
+              title="Zoom in"
+            >
+              <ZoomIn className="w-3.5 h-3.5" />
+            </button>
+          </div>
+          <div className="flex items-center border border-[var(--color-border)] rounded-md bg-[var(--color-bg)] h-7 p-0.5 mr-1">
+            <button
+              onClick={goToPrevFile}
+              className="w-7 h-full flex items-center justify-center rounded-[4px] text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-bg-tertiary)] disabled:opacity-40 disabled:hover:bg-transparent disabled:cursor-not-allowed cursor-pointer transition-colors"
+              title="Previous file"
+              disabled={currentFileIndex === 0}
+            >
+              <ChevronUp className="w-3.5 h-3.5" />
+            </button>
+            <button
+              onClick={goToNextFile}
+              className="w-7 h-full flex items-center justify-center rounded-[4px] text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-bg-tertiary)] disabled:opacity-40 disabled:hover:bg-transparent disabled:cursor-not-allowed cursor-pointer transition-colors"
+              title="Next file"
+              disabled={currentFileIndex === totalFiles - 1}
+            >
+              <ChevronDown className="w-3.5 h-3.5" />
+            </button>
+          </div>
           <button
             className={`diff-toolbar-btn ${convSidebarVisible ? 'active' : ''}`}
             onClick={() => setConvSidebarVisible((v) => !v)}
             title={convSidebarVisible ? 'Hide conversation' : 'Show conversation'}
           >
-            <MessageSquare style={{ width: 14, height: 14 }} />
+            <MessageSquare className="w-3.5 h-3.5" />
           </button>
         </div>
       </div>

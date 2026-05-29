@@ -1,8 +1,8 @@
-import { useEffect } from "react";
 import { motion } from "framer-motion";
 import { AlertTriangle, X } from "lucide-react";
 import { Button } from "../ui";
 import { DialogShell } from "../ui/DialogShell";
+import { useCommand, useKeyboardScope } from "../../keyboard";
 
 interface ConfirmDialogProps {
   isOpen: boolean;
@@ -25,16 +25,13 @@ export function ConfirmDialog({
   onConfirm,
   onCancel,
 }: ConfirmDialogProps) {
-  // Escape to close, Enter to confirm
-  useEffect(() => {
-    if (!isOpen) return;
-    const handler = (e: KeyboardEvent) => {
-      if (e.key === "Escape") { e.preventDefault(); onCancel(); }
-      else if (e.key === "Enter") { e.preventDefault(); onConfirm(); }
-    };
-    window.addEventListener("keydown", handler);
-    return () => window.removeEventListener("keydown", handler);
-  }, [isOpen, onCancel, onConfirm]);
+  // Escape to cancel, Cmd/Ctrl+Enter to confirm (catalog: dialog.confirm).
+  // Register the handlers in a child component that only mounts while
+  // isOpen=true. Multiple ConfirmDialog wrappers (TaskOperationDialogs
+  // renders ~6 at once, each with isOpen=false) would otherwise all
+  // register the same handler and noisily overwrite each other on every
+  // re-render — only the last-mounted one would actually be live.
+  useKeyboardScope("dialog.confirm", isOpen);
 
   const variantStyles = {
     danger: {
@@ -58,6 +55,9 @@ export function ConfirmDialog({
 
   return (
     <DialogShell isOpen={isOpen} onClose={onCancel}>
+      {isOpen && (
+        <ConfirmDialogBindings onConfirm={onConfirm} onCancel={onCancel} />
+      )}
       <div className="bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-xl shadow-xl overflow-hidden">
         {/* Header */}
         <div className="flex items-center justify-between px-5 py-4 border-b border-[var(--color-border)]">
@@ -101,4 +101,21 @@ export function ConfirmDialog({
       </div>
     </DialogShell>
   );
+}
+
+// Wires the catalog handlers only while the dialog is actually open.
+// If we declared these at the outer level, every ConfirmDialog wrapper
+// (TaskOperationDialogs renders ~6 simultaneously, all isOpen=false)
+// would register identical handlers and noisily overwrite each other —
+// only the last-mounted dialog's binding would be live.
+function ConfirmDialogBindings({
+  onConfirm,
+  onCancel,
+}: {
+  onConfirm: () => void;
+  onCancel: () => void;
+}) {
+  useCommand("dialog.confirm.cancel", onCancel, [onCancel]);
+  useCommand("dialog.confirm.submit", onConfirm, [onConfirm]);
+  return null;
 }

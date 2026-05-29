@@ -2,6 +2,7 @@ import { useState, useRef, useEffect, useMemo, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Search, Code, Laptop, Zap } from "lucide-react";
 import type { Task } from "../../data/types";
+import { useCommand } from "../../keyboard";
 
 interface TaskCommandPaletteProps {
   isOpen: boolean;
@@ -64,6 +65,19 @@ export function TaskCommandPalette({ isOpen, onClose, tasks, selectedTask, onTas
     onTaskSelect(task);
     onClose();
   }, [onTaskSelect, onClose]);
+
+  // Register the `palette.task.select` catalog command so it is
+  // discoverable / rebindable. Mirrors the local Enter key path; the
+  // local onKeyDown still handles Enter directly since this palette
+  // does not push its own keyboard scope.
+  useCommand(
+    "palette.task.select",
+    () => {
+      const task = filteredTasks[highlightedIndex];
+      if (task) handleSelect(task);
+    },
+    { enabled: () => isOpen && filteredTasks.length > 0 },
+  );
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
     if (e.nativeEvent.isComposing || e.keyCode === 229) return;

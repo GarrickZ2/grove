@@ -1068,11 +1068,13 @@ fn resolve_agent_identity(
             let agent = normalize_agent_name(&meta.agent_name);
             let model = meta
                 .current_model_id
+                .clone()
                 .and_then(|id| {
                     meta.available_models
                         .iter()
                         .find(|(m_id, _)| m_id == &id)
                         .map(|(_, name)| name.clone())
+                        .or(Some(id))
                 })
                 .unwrap_or_default();
             let role = params_role.unwrap_or("").to_string();

@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { useIsMobile } from "../../hooks";
 
@@ -81,7 +82,14 @@ export function DialogShell({
     };
   }, [isOpen, isMobile]);
 
-  return (
+  // Render the dialog into document.body so it escapes any ancestor with
+  // `display: none` (e.g. TasksPage is display:none while a different nav
+  // tab is active, so without portal a "Cmd+N from anywhere → open New
+  // Task" path wouldn't actually show the dialog). Portal also dodges any
+  // ancestor stacking context / overflow:hidden / transform that would
+  // otherwise clip a centered modal.
+  if (typeof document === "undefined") return null;
+  return createPortal(
     <AnimatePresence>
       {isOpen && (
         <>
@@ -149,6 +157,7 @@ export function DialogShell({
           )}
         </>
       )}
-    </AnimatePresence>
+    </AnimatePresence>,
+    document.body,
   );
 }

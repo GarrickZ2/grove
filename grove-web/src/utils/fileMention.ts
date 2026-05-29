@@ -61,29 +61,87 @@ export interface FilteredMentionItem extends MentionItem {
   indices: number[];
 }
 
-/** Fuzzy match a query against a target string */
+/** Fuzzy match a query against a target string using optimal non-greedy matching and filename priority */
 function fuzzyMatch(
   query: string,
   target: string,
 ): { match: boolean; score: number; indices: number[] } {
   const q = query.toLowerCase();
   const t = target.toLowerCase();
+  
+  // Fast pre-filter: check if all query chars exist in target in order
   let qi = 0;
-  let score = 0;
-  let lastMatchIndex = -1;
-  const indices: number[] = [];
-
   for (let ti = 0; ti < t.length && qi < q.length; ti++) {
     if (t[ti] === q[qi]) {
-      score += ti === lastMatchIndex + 1 ? 2 : 1;
-      if (ti === 0 || t[ti - 1] === "/") score += 3;
-      lastMatchIndex = ti;
-      indices.push(ti);
       qi++;
     }
   }
+  if (qi < q.length) {
+    return { match: false, score: 0, indices: [] };
+  }
 
-  return { match: qi === q.length, score, indices };
+  const memo = new Map<string, { score: number; indices: number[] }>();
+  const lastSlash = t.lastIndexOf("/");
+
+  function matchFrom(
+    qIdx: number,
+    tIdx: number,
+    lastMatchIdx: number,
+  ): { score: number; indices: number[] } {
+    if (qIdx === q.length) {
+      return { score: 0, indices: [] };
+    }
+    if (tIdx === t.length) {
+      return { score: -Infinity, indices: [] };
+    }
+
+    const memoKey = `${qIdx},${tIdx},${lastMatchIdx}`;
+    const cached = memo.get(memoKey);
+    if (cached) return cached;
+
+    let bestScore = -Infinity;
+    let bestIndices: number[] = [];
+
+    const nextChar = q[qIdx];
+    let ti = t.indexOf(nextChar, tIdx);
+    while (ti !== -1) {
+      let currentMatchScore = ti === lastMatchIdx + 1 ? 2 : 1;
+      
+      // Bonus for matching after a slash or start of path
+      if (ti === 0 || t[ti - 1] === "/") {
+        currentMatchScore += 3;
+      } else if (t[ti - 1] === "_" || t[ti - 1] === "-") {
+        currentMatchScore += 2;
+      }
+
+      // Filename priority bonus: matches inside the filename get higher weight
+      if (ti > lastSlash) {
+        currentMatchScore += 5;
+      }
+
+      const rest = matchFrom(qIdx + 1, ti + 1, ti);
+      if (rest.score !== -Infinity) {
+        const totalScore = currentMatchScore + rest.score;
+        if (totalScore > bestScore) {
+          bestScore = totalScore;
+          bestIndices = [ti, ...rest.indices];
+        }
+      }
+
+      ti = t.indexOf(nextChar, ti + 1);
+    }
+
+    const result = { score: bestScore, indices: bestIndices };
+    memo.set(memoKey, result);
+    return result;
+  }
+
+  const result = matchFrom(0, 0, -2);
+  return {
+    match: result.score !== -Infinity,
+    score: result.score,
+    indices: result.indices,
+  };
 }
 
 /** Extract unique directory paths from a flat file list */

@@ -54,12 +54,14 @@ import { CustomAgentsModal } from "./CustomAgentsModal";
 import { MarketplaceModal } from "./MarketplaceModal";
 import { CustomThemeDialog } from "./CustomThemeDialog";
 import { InstallExtensionDialog } from "./InstallExtensionDialog";
+import { ShortcutSettingsPanel } from "./ShortcutSettingsPanel";
 import {
   setCustomAgentPersonas as setCustomAgentPersonasIconRegistry,
   loadCustomAgentPersonas as loadCustomAgentPersonasIcon,
 } from "../../utils/agentIcon";
 import { getExtensionStatus } from "../../api/extension";
 import { formatShortcut } from "../AI/utils";
+import { useKeyboardScope } from "../../keyboard";
 
 interface SettingsPageProps {
   config: {
@@ -223,6 +225,7 @@ export function SettingsPage({ config }: SettingsPageProps) {
     indexing: false,
     mcp: false,
     browserControl: false,
+    shortcuts: false,
   });
 
   // Environment state
@@ -370,6 +373,10 @@ export function SettingsPage({ config }: SettingsPageProps) {
       return newSections;
     });
   };
+
+  // Push the `settings` keyboard scope while the page is mounted so the
+  // catalog's `settings.close` (Escape) fires only inside the page.
+  useKeyboardScope("settings", true);
 
   const handleCopy = (field: string, value: string) => {
     navigator.clipboard.writeText(value);
@@ -1946,6 +1953,19 @@ env_vars = [
               </div>
             </div>
           </div>
+        </Section>
+
+        {/* Keyboard Shortcuts Section (moved here, right under General) */}
+        <Section
+          id="shortcuts"
+          title="Keyboard Shortcuts"
+          description="Customize the binding, scope, and conditions for any command"
+          icon={Keyboard}
+          iconColor="#a855f7"
+          isOpen={openSections.shortcuts}
+          onToggle={() => toggleSection("shortcuts")}
+        >
+          <ShortcutSettingsPanel />
         </Section>
 
         {/* AutoLink Section */}

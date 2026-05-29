@@ -129,6 +129,7 @@ import {
 import type { ChatSessionResponse, CustomAgentServer } from "../../../api";
 import { listProjects, getProject, listResources, type ProjectListItem } from "../../../api/projects";
 import { openExternalUrl } from "../../../utils/openExternal";
+import { useCommand, useContextKey } from "../../../keyboard";
 import "./task-chat.css";
 
 // ─── Chat draft persistence (localStorage) ────────────────────────────────
@@ -2210,21 +2211,44 @@ export function TaskChat({
   // ── Chat search (Cmd/Ctrl+F) ────────────────────────────────────────
   // Skip thinking blocks (data-grove-search-skip) and our own UI.
   // chatSearch is wired below once `renderItems` is computed.
-  useEffect(() => {
-    const handler = (e: KeyboardEvent) => {
-      if (e.key !== "f" || !(e.metaKey || e.ctrlKey)) return;
-      const root = taskChatRootRef.current;
-      if (!root) return;
-      const target = document.activeElement;
-      if (!target || !root.contains(target)) return;
-      e.preventDefault();
-      e.stopPropagation();
-      e.stopImmediatePropagation();
-      setChatSearchOpen((v) => !v);
-    };
-    window.addEventListener("keydown", handler, true);
-    return () => window.removeEventListener("keydown", handler, true);
-  }, []);
+  //
+  // Routed through the Scoped Command Registry — catalog entry lives in
+  // src/keyboard/catalog/chat.ts (chat.search.toggle, Mod+f, workspace
+  // scope, defaultWhen "chatPanelActive"). `chatPanelActive` is set true
+  // while TaskChat is mounted. `chatFocus` exists so the catalog's
+  // chat.send binding (Enter when chatFocus && messageNotEmpty) keeps
+  // working — TaskChat owns the chatbox composer.
+  useContextKey("chatPanelActive", true);
+  useContextKey("chatFocus", isInputFocused);
+  // `messageNotEmpty` gates chat.send (Enter when chatFocus && messageNotEmpty).
+  // Reuse `hasContent` — the same flag the send button uses (line ~7788 and
+  // friends). It's true when the composer contenteditable has trimmed text,
+  // a chip ([data-command]/[data-file]), or any attachment — i.e. anything
+  // that would form a non-empty outgoing message.
+  useContextKey("messageNotEmpty", hasContent);
+  // `messageSelected` gates chat.fork. TaskChat has no per-history-message
+  // selection state (fork operates on the whole chat via handleForkChat).
+  // Hold the key at false so the catalog entry stays disabled until a real
+  // per-message selection model lands.
+  useContextKey("messageSelected", false);
+  useCommand(
+    "chat.search.toggle",
+    () => setChatSearchOpen((v) => !v),
+    {
+      // Preserve the original "root contains active element" gate so
+      // Cmd+F only flips search when focus is inside this chat panel —
+      // multiple TaskChats may coexist in split layouts.
+      enabled: () => {
+        const root = taskChatRootRef.current;
+        const active = document.activeElement;
+        return !!(root && active && root.contains(active));
+      },
+    },
+  );
+
+  // Chat lifecycle commands (catalog: workspace scope) are wired below near
+  // handleSend / handleForkChat where their dependencies are in scope —
+  // see "Chat command registrations" further down.
 
   const [prevChatIdForSearch, setPrevChatIdForSearch] = useState(activeChatId);
   if (activeChatId !== prevChatIdForSearch) {
@@ -4279,6 +4303,35 @@ export function TaskChat({
     [projectId, task.id, switchChat],
   );
 
+  // Listen for the two agent-related catalog dispatches:
+  //   agent.new.default    → spawn a session with whatever agent the
+  //                          user has flagged as default. TODO: read
+  //                          from a user-preference store; for now we
+  //                          fall back to the last session's agent and
+  //                          ultimately "claude".
+  //   agent.picker.show    → just open the picker, user chooses.
+  useEffect(() => {
+    const onDefault = () => {
+      const fallback =
+        chats[chats.length - 1]?.agent || "claude";
+      void handleNewChatWithAgent(fallback);
+    };
+    const onPicker = () => {
+      // Prefer the header button as anchor; fall back to the sidebar
+      // rail (Studio task) or just open without an anchor.
+      const anchor =
+        headerAgentPickerRef.current ?? sidebarAgentPickerRef.current;
+      if (anchor) toggleAgentPicker(anchor);
+      else setShowAgentPicker(true);
+    };
+    window.addEventListener("grove:new-session-default-agent", onDefault);
+    window.addEventListener("grove:show-agent-picker", onPicker);
+    return () => {
+      window.removeEventListener("grove:new-session-default-agent", onDefault);
+      window.removeEventListener("grove:show-agent-picker", onPicker);
+    };
+  }, [handleNewChatWithAgent, chats, toggleAgentPicker]);
+
   // ─── Chat title editing ─────────────────────────────────────────────────
 
   const handleTitleSave = useCallback(async () => {
@@ -5091,6 +5144,102 @@ export function TaskChat({
     setEditingPendingValue("");
   }, []);
 
+  // ── Chat command registrations (catalog: workspace scope) ─────────────
+  // These mirror existing UI handlers so the same actions are reachable
+  // via shortcuts / the Cmd+K palette / Settings rebinding. Local DOM
+  // keybindings in onKeyDown still own composer-local semantics (Enter vs
+  // Shift+Enter inside contenteditable) — these registry entries only
+  // surface for catalog binding overrides + palette discovery.
+  useCommand(
+    "chat.send",
+    () => { void handleSend(); },
+    { enabled: () => !!activeChatId },
+    [activeChatId, handleSend],
+  );
+  useCommand(
+    "chat.send.alt",
+    () => { void handleSend(); },
+    { enabled: () => !!activeChatId },
+    [activeChatId, handleSend],
+  );
+  useCommand(
+    "chat.permission.cycle",
+    () => {
+      if (modeOptions.length === 0) return;
+      const currentIdx = modeOptions.findIndex((m) => m.value === permissionLevel);
+      const nextIdx = (currentIdx + 1) % modeOptions.length;
+      setPermissionLevel(modeOptions[nextIdx].value);
+    },
+    { enabled: () => modeOptions.length > 0 },
+    [modeOptions, permissionLevel],
+  );
+  useCommand(
+    "chat.pending.clear",
+    () => { handleClearPending(); },
+    { enabled: () => pendingMessages.length > 0 },
+    [pendingMessages, handleClearPending],
+  );
+  useCommand(
+    "chat.fork",
+    () => { if (activeChatId && forkCapable) void handleForkChat(activeChatId); },
+    { enabled: () => !!activeChatId && forkCapable },
+    [activeChatId, forkCapable, handleForkChat],
+  );
+  useCommand(
+    "chat.clear",
+    () => {
+      // Local UI clear — wipes the rendered message list for the active
+      // chat. Doesn't delete the persisted ACP session (deleteChat would,
+      // but that's destructive and not what "Clear Conversation" implies).
+      setMessages([]);
+    },
+    { enabled: () => !!activeChatId },
+    [activeChatId],
+  );
+  useCommand(
+    "chat.scrollToBottom",
+    () => {
+      virtuosoRef.current?.scrollToIndex({
+        index: "LAST",
+        align: "end",
+        behavior: "smooth",
+      });
+    },
+    { enabled: () => !!activeChatId },
+    [activeChatId],
+  );
+  useCommand(
+    "chat.attachment.add",
+    () => { fileInputRef.current?.click(); },
+    { enabled: () => !!activeChatId },
+    [activeChatId],
+  );
+
+  // ── Agent picker / switch commands (catalog: workspace scope) ─────────
+  // agent.picker.show is wired centrally in App.tsx (catalog → dispatch
+  // grove:show-agent-picker). TaskChat listens for that event above
+  // (line ~4321) and toggles the picker — registering useCommand here
+  // would just overwrite App.tsx's handler and produce noisy
+  // "handler already registered — replacing" warnings every time a
+  // new TaskChat mounts (which happens whenever the user switches
+  // chat sessions).
+
+  // Cycle through chats — switch active chat to the next/previous in the
+  // chats list, wrapping at the ends. No-op when there's 0 or 1 chat.
+  const cycleChat = useCallback((delta: 1 | -1) => {
+    const list = chatsRef.current;
+    if (list.length < 2) return;
+    const cur = list.findIndex((c) => c.id === activeChatId);
+    if (cur < 0) {
+      void switchChat(list[0].id);
+      return;
+    }
+    const next = (cur + delta + list.length) % list.length;
+    void switchChat(list[next].id);
+  }, [activeChatId, switchChat]);
+  useCommand("agent.switch.next", () => cycleChat(1), [cycleChat]);
+  useCommand("agent.switch.previous", () => cycleChat(-1), [cycleChat]);
+
   /** Submit an ask_form response as a regular user prompt. Mirrors the queue /
    *  prompt branch in onSendPrompt — busy session gets queued, idle session
    *  posts directly. Attachments are always empty (form responses are pure
@@ -5558,6 +5707,184 @@ export function TaskChat({
     [checkContent, filteredFiles, triggerProjectFilesLoad, isStudioProject],
   );
 
+  const autocompleteFileAtCursor = useCallback(
+    (filePath: string, isDir?: boolean) => {
+      const el = editableRef.current;
+      if (!el) return;
+      const sel = window.getSelection();
+      if (!sel || sel.rangeCount === 0) return;
+      const range = sel.getRangeAt(0);
+      const node = range.startContainer;
+      if (node.nodeType !== Node.TEXT_NODE) return;
+      const text = node.textContent || "";
+      const offset = range.startOffset;
+
+      // Find the "@" start
+      let atIdx = -1;
+      const lastAt = text.lastIndexOf("@", offset - 1);
+      if (lastAt >= 0 && (lastAt === 0 || /\s/.test(text[lastAt - 1]))) {
+        const segment = text.slice(lastAt, offset);
+        const hasCategory = segment.startsWith("@project:") ||
+                            segment.startsWith("@file:") ||
+                            segment.startsWith("@agent:") ||
+                            segment.startsWith("@conversation:") ||
+                            segment.startsWith("@browsertabs:") ||
+                            (isStudioProject && segment.startsWith("@sketch:"));
+        const hasNoSpaces = !/\s/.test(segment);
+        if (hasCategory || hasNoSpaces) {
+          atIdx = lastAt;
+        }
+      }
+      if (atIdx < 0) return;
+      const before = text.slice(0, atIdx);
+      const after = text.slice(offset);
+      const parent = node.parentNode;
+      if (!parent) return;
+
+      let categoryPrefix = "";
+      const segment = text.slice(atIdx, offset);
+      const colonIdx = segment.indexOf(":");
+      if (colonIdx >= 0) {
+        categoryPrefix = segment.slice(0, colonIdx + 1);
+      } else {
+        categoryPrefix = "@";
+      }
+
+      const autocompleteText = `${categoryPrefix}${filePath}${isDir ? "/" : ""}`;
+      const newTextNode = document.createTextNode(before + autocompleteText + after);
+      parent.replaceChild(newTextNode, node);
+
+      const newRange = document.createRange();
+      newRange.setStart(newTextNode, before.length + autocompleteText.length);
+      newRange.collapse(true);
+      sel.removeAllRanges();
+      sel.addRange(newRange);
+
+      const newFilter = filePath + (isDir ? "/" : "");
+      setFileFilter(newFilter);
+      setShowFileMenu(true);
+      setFileSelectedIdx(0);
+    },
+    [isStudioProject],
+  );
+
+  // ── Mention / slash trigger helper ───────────────────────────────────
+  // The composer recognises `@` / `/` reactively in handleInput by
+  // scanning textContent at the caret. To surface the picker from a
+  // command (palette / keybinding), we focus the editor, place the
+  // caret at the document end if it's not already inside, insert the
+  // trigger string via the standard text-input idiom, then nudge
+  // handleInput so the file / agent / slash menu opens just as it
+  // would for a real keystroke. A leading space is prepended when
+  // needed because checkContent only recognises `@` / `/` at start
+  // or after whitespace.
+  const triggerComposerInsert = useCallback((text: string) => {
+    const el = editableRef.current;
+    if (!el) return;
+    el.focus();
+    const sel = window.getSelection();
+    if (!sel) return;
+    let inside = false;
+    if (sel.rangeCount > 0) {
+      const anchor = sel.anchorNode;
+      if (anchor && (anchor === el || el.contains(anchor))) inside = true;
+    }
+    if (!inside) {
+      const range = document.createRange();
+      range.selectNodeContents(el);
+      range.collapse(false);
+      sel.removeAllRanges();
+      sel.addRange(range);
+    }
+    // Prepend a space when the char immediately before the caret is a
+    // non-whitespace character — otherwise `@` / `/` won't be picked up
+    // by checkContent (which only treats them as triggers at BOL or
+    // after whitespace).
+    let needsSpace = false;
+    if (sel.rangeCount > 0) {
+      const r = sel.getRangeAt(0);
+      const node = r.startContainer;
+      if (node.nodeType === Node.TEXT_NODE) {
+        const before = (node.textContent ?? "").slice(0, r.startOffset);
+        if (before.length > 0 && !/\s$/.test(before)) needsSpace = true;
+      } else if (
+        node.nodeType === Node.ELEMENT_NODE &&
+        r.startOffset > 0 &&
+        (el.textContent ?? "").length > 0
+      ) {
+        // Caret sits between block-level / chip nodes — safest to add a
+        // separator so the preceding chip's trailing text doesn't merge
+        // with the trigger char.
+        needsSpace = true;
+      }
+    }
+    document.execCommand("insertText", false, needsSpace ? ` ${text}` : text);
+    handleInput();
+  }, [handleInput]);
+
+  useCommand(
+    "chat.mention.file",
+    () => { triggerComposerInsert("@file:"); },
+    {
+      enabled: () =>
+        !!activeChatId &&
+        isConnected &&
+        !isRemoteSession &&
+        !activePermissionMessage &&
+        (taskFiles.length > 0 || agentMentionItems.length > 0),
+    },
+    [
+      activeChatId,
+      isConnected,
+      isRemoteSession,
+      activePermissionMessage,
+      taskFiles.length,
+      agentMentionItems.length,
+      triggerComposerInsert,
+    ],
+  );
+  useCommand(
+    "chat.mention.agent",
+    () => { triggerComposerInsert("@agent:"); },
+    {
+      enabled: () =>
+        !!activeChatId &&
+        isConnected &&
+        !isRemoteSession &&
+        !activePermissionMessage &&
+        (taskFiles.length > 0 || agentMentionItems.length > 0),
+    },
+    [
+      activeChatId,
+      isConnected,
+      isRemoteSession,
+      activePermissionMessage,
+      taskFiles.length,
+      agentMentionItems.length,
+      triggerComposerInsert,
+    ],
+  );
+  useCommand(
+    "chat.slash.command",
+    () => { triggerComposerInsert("/"); },
+    {
+      enabled: () =>
+        !!activeChatId &&
+        isConnected &&
+        !isRemoteSession &&
+        !activePermissionMessage &&
+        slashCommands.length > 0,
+    },
+    [
+      activeChatId,
+      isConnected,
+      isRemoteSession,
+      activePermissionMessage,
+      slashCommands.length,
+      triggerComposerInsert,
+    ],
+  );
+
   /** Delegated click handler for chip close buttons */
   const handleEditableMouseDown = useCallback(
     (e: React.MouseEvent) => {
@@ -5907,7 +6234,26 @@ export function TaskChat({
           );
           return;
         }
-        if (e.key === "Tab" || (e.key === "Enter" && !e.shiftKey)) {
+        if (e.key === "Tab") {
+          e.preventDefault();
+          const sel_item = filteredFiles[fileSelectedIdx];
+          if (
+            sel_item.category === "category_selector" ||
+            sel_item.category === "Coding Project" ||
+            sel_item.category === "Studio Project"
+          ) {
+            insertFileAtCursor(
+              sel_item.path,
+              sel_item.isDir,
+              sel_item.displayName,
+              sel_item.category,
+            );
+          } else {
+            autocompleteFileAtCursor(sel_item.path, sel_item.isDir);
+          }
+          return;
+        }
+        if (e.key === "Enter" && !e.shiftKey) {
           e.preventDefault();
           const sel_item = filteredFiles[fileSelectedIdx];
           insertFileAtCursor(
@@ -5925,29 +6271,11 @@ export function TaskChat({
           return;
         }
       }
-      // Shift+Tab → cycle permission mode
-      if (e.key === "Tab" && e.shiftKey && modeOptions.length > 0) {
-        e.preventDefault();
-        const currentIdx = modeOptions.findIndex(
-          (m) => m.value === permissionLevel,
-        );
-        const nextIdx = (currentIdx + 1) % modeOptions.length;
-        const next = modeOptions[nextIdx];
-        // Local-only: mode now travels with the next prompt's config bundle.
-        setPermissionLevel(next.value);
-        return;
-      }
-      // Cmd+Option+Backspace → clear pending queue
-      if (
-        e.key === "Backspace" &&
-        e.metaKey &&
-        e.altKey &&
-        pendingMessages.length > 0
-      ) {
-        e.preventDefault();
-        handleClearPending();
-        return;
-      }
+      // Shift+Tab → permission cycle and Cmd+Opt+Backspace → clear queue
+      // both moved to the keyboard catalog (chat.permission.cycle /
+      // chat.pending.clear). KeyboardManager handles them in a window
+      // capture listener with passThroughTextInput=true so they fire
+      // from within the contenteditable composer.
       // Plain input: Escape → blur editor
       if (e.key === "Escape") {
         e.preventDefault();
@@ -5957,22 +6285,11 @@ export function TaskChat({
         }
         return;
       }
-      // Expanded mode: Cmd/Ctrl+Enter → send, plain Enter → newline
-      // Inline mode: Enter → send, Shift+Enter → newline
-      if (isInputExpanded) {
-        if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
-          e.preventDefault();
-          handleSend();
-        }
-      } else {
-        if (e.key === "Enter" && !e.shiftKey) {
-          e.preventDefault();
-          handleSend();
-        }
-      }
+      // Enter / Cmd+Enter → send moved to the catalog (chat.send /
+      // chat.send.alt) so the binding is rebindable in Settings.
+      // KeyboardManager handles them via passThroughTextInput.
     },
     [
-      handleSend,
       isTerminalMode,
       isInputExpanded,
       showSlashMenu,
@@ -5983,10 +6300,7 @@ export function TaskChat({
       filteredFiles,
       fileSelectedIdx,
       insertFileAtCursor,
-      pendingMessages,
-      handleClearPending,
-      modeOptions,
-      permissionLevel,
+      autocompleteFileAtCursor,
       checkContent,
     ],
   );
@@ -6116,6 +6430,7 @@ export function TaskChat({
   // bottom while auto-stick is on.
   const handleTotalListHeightChanged = useCallback(() => {
     if (!autoStickToBottomRef.current) return;
+    if (isUserScrollingRef.current) return;
     virtuosoRef.current?.scrollToIndex({
       index: "LAST",
       align: "end",
@@ -6960,9 +7275,9 @@ export function TaskChat({
                       {activeComposerPanel === "permission" &&
                         activePermissionMessage && (
                           <div className="space-y-3">
-                            <div className="flex items-center gap-2">
-                              <ShieldCheck className="h-4 w-4 shrink-0 text-[var(--color-warning)]" />
-                              <span className="text-sm font-medium text-[var(--color-text)]">
+                            <div className="flex items-start gap-2">
+                              <ShieldCheck className="h-4 w-4 shrink-0 text-[var(--color-warning)] mt-0.5" />
+                              <span className="text-sm font-medium text-[var(--color-text)] break-all whitespace-pre-wrap min-w-0">
                                 {activePermissionMessage.description}
                               </span>
                             </div>
@@ -8241,7 +8556,7 @@ function AuthRequiredPanel({
           <div className="text-sm font-medium text-[var(--color-text)]">
             {title}
           </div>
-          <p className="mt-0.5 text-xs text-[var(--color-text-muted)] break-words leading-relaxed">
+          <p className="mt-0.5 text-xs text-[var(--color-text-muted)] break-all whitespace-pre-wrap leading-relaxed">
             {description}
           </p>
         </div>
@@ -8354,7 +8669,7 @@ function PermissionCard({
             Permission Required
           </span>
         </div>
-        <p className="text-xs text-[var(--color-text-muted)] mb-3 ml-6 break-words">
+        <p className="text-xs text-[var(--color-text-muted)] mb-3 ml-6 break-all whitespace-pre-wrap">
           {message.description}
         </p>
         <div className="flex items-center gap-2 ml-6 flex-wrap">

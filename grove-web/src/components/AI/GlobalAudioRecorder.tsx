@@ -11,10 +11,11 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useAudioRecorder } from "../../hooks/useAudioRecorder";
-import { getAudioSettings, transcribeAudio } from "../../api";
+import { getAudioSettings, saveAudioGlobal, transcribeAudio } from "../../api";
 import { matchesShortcut, matchesPTTKey } from "./utils";
 import { RecordingIndicator } from "./RecordingIndicator";
 import type { AudioSettings } from "./types";
+import { useCommand, useContextKey, userKeymapStore, persistOverride } from "../../keyboard";
 
 /** Insert text into a React-controlled input/textarea by using the native value setter */
 function insertTextIntoInput(el: HTMLInputElement | HTMLTextAreaElement, text: string) {
@@ -95,6 +96,7 @@ export function GlobalAudioRecorder({ projectId }: GlobalAudioRecorderProps) {
   const activeElementRef = useRef<Element | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const pttActiveRef = useRef(false);
+  const [pttActive, setPttActive] = useState(false);
   const pttTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [pttWarming, setPttWarming] = useState(false);
   const [pttWarmElapsed, setPttWarmElapsed] = useState(0);
@@ -118,6 +120,20 @@ export function GlobalAudioRecorder({ projectId }: GlobalAudioRecorderProps) {
       .then((s) => {
         setSettings(s);
         settingsRef.current = s;
+        // Seed: if audio_config has a PTT key but keymap_overrides has no
+        // override for audio.ptt.start, copy it across so Settings → Keyboard
+        // Shortcuts shows the binding the AudioPanel already configured.
+        // Only seeds when the keymap is silent — never overwrites an existing
+        // user override (the keymap → audio_config sync below handles that
+        // direction).
+        if (s.pushToTalkKey && !userKeymapStore.getOverrides("audio.ptt.start")?.length) {
+          void persistOverride({
+            command_id: "audio.ptt.start",
+            key: s.pushToTalkKey,
+            when_ctx: undefined,
+            scope: undefined,
+          }).catch((err) => console.error("[GlobalAudioRecorder] seed keymap failed:", err));
+        }
       })
       .catch(() => {});
   }, [projectId]);
@@ -129,6 +145,36 @@ export function GlobalAudioRecorder({ projectId }: GlobalAudioRecorderProps) {
     window.addEventListener("grove:audio-settings-changed", handler);
     return () => window.removeEventListener("grove:audio-settings-changed", handler);
   }, [fetchSettings]);
+
+  // Reverse sync: when the user edits `audio.ptt.start` in Settings →
+  // Keyboard Shortcuts, the keymap store fires. Write the new key back into
+  // audio_config so the raw PTT listener picks it up and the AudioPanel
+  // shows the same value next time it opens.
+  //
+  // Guarded against loops: only writes when the keymap value actually
+  // differs from settingsRef.current.pushToTalkKey. The other direction
+  // (AudioPanel.tsx → keymap) is symmetric — it writes the keymap only
+  // when the user touches the PTT field, so the two writes never race
+  // each other in a cycle.
+  useEffect(() => {
+    const unsub = userKeymapStore.subscribe(() => {
+      const cur = settingsRef.current;
+      if (!cur) return;
+      // PTT is a single key; if the user bound multiple, the first wins.
+      const override = userKeymapStore.getOverrides("audio.ptt.start");
+      const next = override?.[0]?.key ?? "";
+      if (next === cur.pushToTalkKey) return;
+      const merged: AudioSettings = { ...cur, pushToTalkKey: next };
+      // Optimistically update local state so PTT listener uses new key
+      // even before the server PUT resolves.
+      settingsRef.current = merged;
+      setSettings(merged);
+      void saveAudioGlobal(merged).catch((err) =>
+        console.error("[GlobalAudioRecorder] keymap → audio_config write failed:", err),
+      );
+    });
+    return unsub;
+  }, []);
 
   // Cleanup PTT timer on unmount
   useEffect(() => {
@@ -225,6 +271,53 @@ export function GlobalAudioRecorder({ projectId }: GlobalAudioRecorderProps) {
     }
   }, [handleRecordingComplete]);
 
+  // Command-style entry points. These are the handlers registered for
+  // `audio.ptt.start` / `audio.ptt.stop` / `audio.recording.cancel` via
+  // useCommand below — invoking them from the Command Palette or a
+  // Settings-driven binding goes through the exact same code path as the
+  // existing raw keydown/keyup listener. The raw listener stays for the
+  // PTT hold-to-talk timing (warming delay, key-release stop), since the
+  // keymap dispatcher's bare-key paths only see discrete fires.
+  const startRecording = useCallback(() => {
+    const s = settingsRef.current;
+    if (!s?.enabled) return;
+    const status = recorderRef.current.status;
+    if (status !== "idle" && status !== "error") return;
+    captureActiveElement();
+    setErrorMessage(null);
+    recorderRef.current.start();
+  }, [captureActiveElement]);
+
+  const stopRecording = useCallback(() => {
+    void handleToggleStop();
+  }, [handleToggleStop]);
+
+  const cancelRecording = useCallback(() => {
+    recorder.cancel();
+    abortRef.current?.abort();
+    setTranscribing(false);
+    setErrorMessage(null);
+  }, [recorder]);
+
+  useCommand("audio.ptt.start", startRecording, [startRecording]);
+  useCommand("audio.ptt.stop", stopRecording, [stopRecording]);
+  useCommand("audio.recording.cancel", cancelRecording, [cancelRecording]);
+
+  // Context keys for when-expressions on the audio commands.
+  //
+  // - `micEnabled` reflects whether the user has the audio pipeline
+  //   enabled AND the recorder isn't in a denied/permission-error state.
+  //   Used to gate `audio.ptt.start` (catalog `defaultWhen: "micEnabled"`).
+  // - `pttActive` is true while the PTT key is held — covers both the
+  //   warming-delay window and the active recording phase, and clears
+  //   on key release / cancel. Used to gate `audio.ptt.stop`.
+  const micEnabled = !!settings?.enabled && !recorder.error;
+  useContextKey("micEnabled", micEnabled);
+  useContextKey("pttActive", pttActive);
+  // `recording` gates audio.recording.cancel — true only while the recorder
+  // is actively capturing (not idle / warming / processing).
+  useContextKey("recording", recorder.status === "recording");
+
   // Cancel PTT warming
   const cancelPTTWarming = useCallback(() => {
     if (pttTimerRef.current) {
@@ -236,6 +329,7 @@ export function GlobalAudioRecorder({ projectId }: GlobalAudioRecorderProps) {
       pttWarmIntervalRef.current = null;
     }
     pttActiveRef.current = false;
+    setPttActive(false);
     setPttWarming(false);
     setPttWarmElapsed(0);
   }, []);
@@ -251,6 +345,7 @@ export function GlobalAudioRecorder({ projectId }: GlobalAudioRecorderProps) {
     }
 
     pttActiveRef.current = false;
+    setPttActive(false);
     setPttWarming(false);
     setPttWarmElapsed(0);
     if (pttWarmIntervalRef.current) {
@@ -303,6 +398,7 @@ export function GlobalAudioRecorder({ projectId }: GlobalAudioRecorderProps) {
           captureActiveElement();
           setErrorMessage(null);
           pttActiveRef.current = true;
+          setPttActive(true);
           setPttWarming(true);
           setPttWarmElapsed(0);
           pttWarmStartRef.current = Date.now();

@@ -4,6 +4,7 @@ import { Search } from "lucide-react";
 import { useProject, useTheme } from "../../context";
 import type { Project } from "../../data/types";
 import { getProjectStyle } from "../../utils/projectStyle";
+import { useCommand } from "../../keyboard";
 
 interface ProjectCommandPaletteProps {
   isOpen: boolean;
@@ -53,6 +54,19 @@ export function ProjectCommandPalette({ isOpen, onClose, onProjectSelect }: Proj
     onClose();
     if (switched) onProjectSelect?.();
   }, [selectedProject, selectProject, onClose, onProjectSelect]);
+
+  // Register the `palette.project.select` catalog command so it is
+  // discoverable / rebindable. Mirrors the local Enter key path; the
+  // local onKeyDown still handles Enter directly since this palette
+  // does not push its own keyboard scope.
+  useCommand(
+    "palette.project.select",
+    () => {
+      const project = filteredProjects[highlightedIndex];
+      if (project) handleSelect(project);
+    },
+    { enabled: () => isOpen && filteredProjects.length > 0 },
+  );
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
     if (e.nativeEvent.isComposing || e.keyCode === 229) return;

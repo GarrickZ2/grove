@@ -21,6 +21,7 @@ import { NotificationPopover } from "./NotificationPopover";
 import { LogoBrand } from "./LogoBrand";
 import { GroveIcon } from "./GroveIcon";
 import { useNotifications, useProject } from "../../context";
+import { useCommand } from "../../keyboard";
 import { REPO_NAV_IDS, STUDIO_NAV_IDS } from "../../data/nav";
 import type { TasksMode } from "../../App";
 import { Zap, Code } from "lucide-react";
@@ -79,6 +80,11 @@ export function Sidebar({ activeItem, onItemClick, collapsed, onToggleCollapse, 
   const { unreadCount } = useNotifications();
   const { selectedProject } = useProject();
   const navItems = resolveNavItems(selectedProject?.projectType === "studio");
+
+  // Catalog → Sidebar wire for the notifications popover. Sidebar is
+  // always mounted (drawer or desktop), so this handler is reachable
+  // from any page.
+  useCommand("nav.notifications.toggle", () => setNotifOpen((v) => !v), []);
 
   const isCollapsed = drawerMode ? false : collapsed;
 

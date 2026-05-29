@@ -6,6 +6,7 @@ import { AgentIcon } from "./AgentIcon";
 import { AddAgentDialog } from "./AddAgentDialog";
 import { toggleAgentEnabled, deleteAgent as apiDeleteAgent } from "../../api";
 import type { AgentDef } from "../../api";
+import { useCommand } from "../../keyboard";
 
 interface AgentsTabProps {
   agents: AgentDef[];
@@ -44,6 +45,9 @@ export function AgentsTab({ agents, onRefresh }: AgentsTabProps) {
     setEditAgent(null);
     await onRefresh();
   };
+
+  // Catalog-declared command handlers. Mirrors the "Add Custom Agent" button.
+  useCommand("skills.agent.add", () => setShowAdd(true), []);
 
   return (
     <div>

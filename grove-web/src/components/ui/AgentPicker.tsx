@@ -130,6 +130,67 @@ export function AgentPicker({
   const inputRef = useRef<HTMLInputElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
 
+  // Keyboard navigation: when the dropdown is open, ↑/↓ moves focus
+  // through the visible items, Enter activates the focused one, Escape
+  // closes. We walk the actual DOM (querySelectorAll on the dropdown
+  // ref) rather than reproducing the item taxonomy here — the menu
+  // mixes built-ins / custom servers / personas / a "custom" trailer,
+  // and any of those categories may be empty depending on what's
+  // installed. Walking the DOM stays correct without enumerating them.
+  useEffect(() => {
+    if (!isOpen || isCustomMode) return;
+    const focusFirst = () => {
+      if (!dropdownRef.current) return;
+      const first = dropdownRef.current.querySelector<HTMLButtonElement>(
+        "button:not([disabled])",
+      );
+      first?.focus();
+    };
+    // The dropdown is portal'd, so it isn't mounted on the very first
+    // synchronous tick after isOpen flips. Defer one frame so the items
+    // exist before we try to focus.
+    const t = window.setTimeout(focusFirst, 16);
+
+    const onKey = (e: KeyboardEvent) => {
+      if (!dropdownRef.current) return;
+      if (e.key !== "ArrowDown" && e.key !== "ArrowUp" && e.key !== "Enter" && e.key !== "Escape") {
+        return;
+      }
+      const items = Array.from(
+        dropdownRef.current.querySelectorAll<HTMLButtonElement>(
+          "button:not([disabled])",
+        ),
+      );
+      if (items.length === 0) return;
+      const currentIdx = items.findIndex((b) => b === document.activeElement);
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        const next = currentIdx < 0 ? 0 : (currentIdx + 1) % items.length;
+        items[next].focus();
+      } else if (e.key === "ArrowUp") {
+        e.preventDefault();
+        const next =
+          currentIdx < 0
+            ? items.length - 1
+            : (currentIdx - 1 + items.length) % items.length;
+        items[next].focus();
+      } else if (e.key === "Enter") {
+        if (currentIdx >= 0) {
+          e.preventDefault();
+          items[currentIdx].click();
+        }
+      } else if (e.key === "Escape") {
+        e.preventDefault();
+        setIsOpen(false);
+      }
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => {
+      window.clearTimeout(t);
+      window.removeEventListener("keydown", onKey, true);
+    };
+  }, [isOpen, isCustomMode]);
+
   // Calculate dropdown position (fixed positioning, viewport-relative).
   // Auto-flips above the trigger when there isn't enough room below — needed
   // for use inside the bottom-floating Graph toolbar where the trigger sits

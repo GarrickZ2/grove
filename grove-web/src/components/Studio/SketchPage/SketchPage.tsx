@@ -9,6 +9,7 @@ import { SketchHistoryDialog } from "./SketchHistoryDialog";
 import { OPEN_SKETCH_EVENT, type OpenSketchDetail, setSketchNames } from "../../ui/sketchChipCache";
 import { saveBlobAsFile } from "../../ui/filePreview";
 import { readLastActiveTab, writeLastActiveTab } from "../../../utils/lastActiveTab";
+import { useCommand, useContextKey } from "../../../keyboard";
 
 interface Props {
   projectId: string;
@@ -167,6 +168,52 @@ export function SketchPage({ projectId, taskId, isChatBusy, lastChatIdleAt }: Pr
       console.error("sketch export failed", e);
     }
   }, [apiRef, sketches, activeId]);
+
+  // Catalog-declared sketch commands. Several entries gate on the
+  // `sketchSelected` context key — set it from `activeId` so keyboard
+  // bindings (and the Settings UI conflict view) evaluate correctly.
+  useContextKey("sketchSelected", activeId !== null);
+
+  // Create a new sketch — same handler as the "+" button in the tab bar.
+  useCommand(
+    "studio.sketch.create",
+    () => {
+      void handleCreate();
+    },
+    [handleCreate],
+  );
+
+  // Export the active sketch as PNG. Gate on `apiRef` so the binding is
+  // inert before the canvas mounts (mirrors handleExport's early return).
+  useCommand(
+    "studio.sketch.export",
+    () => {
+      void handleExport();
+    },
+    { enabled: () => activeId !== null && apiRef !== null },
+    [handleExport, activeId, apiRef],
+  );
+
+  // Delete the active sketch. Mirrors the tab bar's per-tab delete (which
+  // routes through useSketchList.remove); skips the confirm dialog because
+  // the keyboard binding is opt-in. Gate on `activeId`.
+  useCommand(
+    "studio.sketch.delete",
+    () => {
+      if (activeId !== null) void remove(activeId);
+    },
+    { enabled: () => activeId !== null },
+    [activeId, remove],
+  );
+
+  // Open the History dialog for the active sketch — same as the History
+  // button in the tab bar.
+  useCommand(
+    "studio.sketch.history.open",
+    () => setHistoryOpen(true),
+    { enabled: () => activeId !== null },
+    [activeId],
+  );
 
   return (
     <div

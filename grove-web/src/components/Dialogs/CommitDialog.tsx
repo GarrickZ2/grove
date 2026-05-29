@@ -1,7 +1,8 @@
-import { useState, useEffect } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { GitCommit, X, Loader2 } from "lucide-react";
 import { Button } from "../ui";
 import { DialogShell } from "../ui/DialogShell";
+import { useCommand, useContextKey, useKeyboardScope } from "../../keyboard";
 
 interface CommitDialogProps {
   isOpen: boolean;
@@ -28,22 +29,22 @@ export function CommitDialog({
     }
   }, [isOpen]);
 
-  // Escape to close
-  useEffect(() => {
-    if (!isOpen) return;
-    const handler = (e: KeyboardEvent) => {
-      if (e.key === "Escape") { e.preventDefault(); onCancel(); }
-    };
-    window.addEventListener("keydown", handler);
-    return () => window.removeEventListener("keydown", handler);
-  }, [isOpen, onCancel]);
+  // Catalog handlers register inside <CommitDialogBindings> only while
+  // isOpen=true. Multiple CommitDialog wrappers can coexist (TaskOperation
+  // dialogs mount several at once, all but one with isOpen=false); a
+  // top-level useCommand would otherwise overwrite each other on every
+  // re-render — only the last-mounted dialog's binding would be live.
+  useKeyboardScope("dialog.commit", isOpen);
 
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (message.trim() && !isLoading) {
-      onCommit(message.trim());
-    }
-  };
+  const handleSubmit = useCallback(
+    (e?: React.FormEvent) => {
+      e?.preventDefault();
+      if (message.trim() && !isLoading) {
+        onCommit(message.trim());
+      }
+    },
+    [message, isLoading, onCommit],
+  );
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     // Cmd/Ctrl + Enter to submit
@@ -54,6 +55,9 @@ export function CommitDialog({
 
   return (
     <DialogShell isOpen={isOpen} onClose={onCancel} maxWidth="max-w-lg">
+      {isOpen && (
+        <CommitDialogBindings onCancel={onCancel} onSubmit={handleSubmit} messageNotEmpty={message.trim().length > 0} />
+      )}
       <form
         onSubmit={handleSubmit}
         className="bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-xl shadow-xl overflow-hidden"
@@ -119,4 +123,22 @@ export function CommitDialog({
       </form>
     </DialogShell>
   );
+}
+
+// Registers the git.commit.* catalog handlers only while the dialog is
+// actually open. See top-of-component comment for the multi-mount rationale.
+function CommitDialogBindings({
+  onCancel,
+  onSubmit,
+  messageNotEmpty,
+}: {
+  onCancel: () => void;
+  onSubmit: () => void;
+  messageNotEmpty: boolean;
+}) {
+  // git.commit.submit gates on a non-empty commit message.
+  useContextKey("commitMessageNotEmpty", messageNotEmpty);
+  useCommand("git.commit.cancel", onCancel, [onCancel]);
+  useCommand("git.commit.submit", onSubmit, [onSubmit]);
+  return null;
 }

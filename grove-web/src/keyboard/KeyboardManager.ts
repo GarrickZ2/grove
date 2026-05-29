@@ -1,15 +1,12 @@
-import type { CommandDef, ParsedKey } from "./types";
+import type { ModifierSides, ParsedKey } from "./types";
 import { parseHotkey, matchesHotkey } from "./keyParser";
+import { parseWhen, type WhenEvaluator } from "./whenExpression";
+import { commandRegistry } from "./CommandRegistry";
+import { contextKeyService } from "./ContextKeyService";
+import { userKeymapStore } from "./userKeymapStore";
+import { effectiveBindings } from "./conflict";
 
-const GLOBAL_SCOPE = "__global__";
-
-// Meta combos that bypass focus-based suppression. Preserved from the
-// pre-refactor useHotkeys.ts so palette / sidebar still work when focus
-// is stuck inside Monaco / xterm / textareas in Tauri's WKWebView.
-const APP_OWNED_META_KEYS: ReadonlySet<string> = new Set([
-  "k", "p", "o",
-  "1", "2", "3", "4", "5", "6", "7", "8", "9",
-]);
+const GLOBAL_SCOPE = "";
 
 type Suppression = "all" | "alpha" | false;
 
@@ -18,38 +15,45 @@ interface ScopeEntry {
   refCount: number;
 }
 
-interface RegisteredCommand {
-  def: CommandDef;
+/**
+ * Pre-resolved binding ready for fast match. Rebuilt whenever the
+ * command registry or user keymap changes.
+ */
+interface ResolvedBinding {
+  commandId: string;
+  scope: string;
   parsed: ParsedKey;
+  when: WhenEvaluator;
+  preventDefault: boolean;
+  passThroughTextInput: boolean;
+  trigger: "keydown" | "keyup";
 }
 
-function detectSuppression(e: KeyboardEvent): Suppression {
-  if (e.metaKey && APP_OWNED_META_KEYS.has(e.key.toLowerCase())) {
-    return false;
-  }
+function detectSuppression(): Suppression {
   const active = document.activeElement;
-  if (active?.closest(".xterm")) return "all";
+  // Suppress only unmodified printable keys ("alpha") so the focused
+  // text surface (xterm / Monaco / textarea / contenteditable / input)
+  // gets to type characters. Modifier combinations (Cmd+Y, Ctrl+Shift+P,
+  // …) always reach the catalog — they're never plain text input.
+  //
+  // Commands that need to fire on a bare alpha key while text input is
+  // focused (e.g. `chat.send` on Enter inside the composer) opt in with
+  // `passThroughTextInput: true`.
+  //
+  // NOTE: Intentionally NOT checking [data-hotkeys-dialog]. Dialogs
+  // declare their own scope via useKeyboardScope; their commands sit
+  // at the stack top and win naturally. Checking this attribute would
+  // suppress the dialog's own commands too.
   if (
+    active?.closest(".xterm") ||
     active?.closest(".monaco-editor") ||
     active?.closest(".cm-editor") ||
-    active?.closest(".CodeMirror")
-  ) {
-    return "all";
-  }
-  // NOTE: Intentionally NOT checking [data-hotkeys-dialog] here. The old
-  // useHotkeys.ts uses that attribute as a coarse "swallow everything"
-  // signal because it has no scope concept. With scope stacks, dialogs
-  // declare their own scope via useKeyboardScope — their commands sit at
-  // the stack top and win naturally. Checking this attribute would
-  // suppress the dialog's own commands too (the very bug it would be
-  // trying to prevent for global ones).
-  if (
+    active?.closest(".CodeMirror") ||
     active instanceof HTMLTextAreaElement ||
+    active instanceof HTMLInputElement ||
+    active instanceof HTMLSelectElement ||
     (active as HTMLElement | null)?.isContentEditable
   ) {
-    return "all";
-  }
-  if (active instanceof HTMLInputElement || active instanceof HTMLSelectElement) {
     return "alpha";
   }
   return false;
@@ -61,28 +65,47 @@ function isAlphaKey(e: KeyboardEvent): boolean {
 
 export class KeyboardManagerImpl {
   private scopeStack: ScopeEntry[] = [];
-  private commands: Map<string, RegisteredCommand[]> = new Map();
+  private resolvedCache: ResolvedBinding[] | null = null;
   private listenerAttached = false;
+  private unsubRegistry: (() => void) | null = null;
+  private unsubKeymap: (() => void) | null = null;
+  // Refcount of "recording" sessions (Shortcut edit modal). While > 0,
+  // skip all dispatch so the modal can capture raw keystrokes without
+  // commands firing first. Refcounted in case of overlapping modals.
+  private suppressCount = 0;
+  // Physical side (left/right) each modifier is currently held on. Updated on
+  // every keydown/keyup from e.code, cleared on window blur. Lets a binding
+  // pin to e.g. left Cmd vs right Cmd.
+  private modifierSides: ModifierSides = { meta: null, alt: null, ctrl: null, shift: null };
 
   constructor() {
     this.attach();
+    this.unsubRegistry = commandRegistry.subscribe(() => this.invalidateCache());
+    this.unsubKeymap = userKeymapStore.subscribe(() => this.invalidateCache());
   }
 
   private attach(): void {
     if (this.listenerAttached) return;
     if (typeof window === "undefined") return;
     window.addEventListener("keydown", this.handleKeyDown, true);
+    window.addEventListener("keyup", this.handleKeyUp, true);
+    window.addEventListener("blur", this.handleBlur);
     this.listenerAttached = true;
   }
 
-  /** Detach window listener. For tests + teardown only. */
+  /** Detach window listener + unsubscribe. Test teardown only. */
   detach(): void {
     if (!this.listenerAttached) return;
     window.removeEventListener("keydown", this.handleKeyDown, true);
+    window.removeEventListener("keyup", this.handleKeyUp, true);
+    window.removeEventListener("blur", this.handleBlur);
     this.listenerAttached = false;
+    this.unsubRegistry?.();
+    this.unsubKeymap?.();
+    this.unsubRegistry = null;
+    this.unsubKeymap = null;
   }
 
-  /** Push a scope onto the stack. Returns a dispose function. */
   pushScope(id: string): () => void {
     const top = this.scopeStack[this.scopeStack.length - 1];
     if (top && top.id === id) {
@@ -90,84 +113,215 @@ export class KeyboardManagerImpl {
     } else {
       this.scopeStack.push({ id, refCount: 1 });
     }
+    if (typeof window !== "undefined" && (window as Window & { __GROVE_KEYBOARD_DEBUG__?: boolean }).__GROVE_KEYBOARD_DEBUG__) {
+      console.log("[grove debug] pushScope", id, "→ stack:", this.scopeStack.map((s) => `${s.id}(${s.refCount})`).join(" / "));
+    }
     return () => this.popScope(id);
   }
 
   private popScope(id: string): void {
-    // Walk top-down; same id may sit below if a different scope was pushed
-    // on top while this one was still mounted.
     for (let i = this.scopeStack.length - 1; i >= 0; i--) {
-      const entry = this.scopeStack[i];
-      if (entry.id === id) {
-        entry.refCount--;
-        if (entry.refCount <= 0) this.scopeStack.splice(i, 1);
+      const e = this.scopeStack[i];
+      if (e.id === id) {
+        e.refCount--;
+        if (e.refCount <= 0) this.scopeStack.splice(i, 1);
+        if (typeof window !== "undefined" && (window as Window & { __GROVE_KEYBOARD_DEBUG__?: boolean }).__GROVE_KEYBOARD_DEBUG__) {
+          console.log("[grove debug] popScope", id, "→ stack:", this.scopeStack.map((s) => `${s.id}(${s.refCount})`).join(" / "));
+        }
         return;
       }
     }
-  }
-
-  /** Register a command. Returns a dispose function. */
-  registerCommand(def: CommandDef): () => void {
-    const scope = def.scope ?? GLOBAL_SCOPE;
-    const entry: RegisteredCommand = { def, parsed: parseHotkey(def.key) };
-    let list = this.commands.get(scope);
-    if (!list) {
-      list = [];
-      this.commands.set(scope, list);
+    if (typeof window !== "undefined" && (window as Window & { __GROVE_KEYBOARD_DEBUG__?: boolean }).__GROVE_KEYBOARD_DEBUG__) {
+      console.log("[grove debug] popScope", id, "→ NOT FOUND in stack:", this.scopeStack.map((s) => `${s.id}(${s.refCount})`).join(" / "));
     }
-    list.push(entry);
-    return () => {
-      const current = this.commands.get(scope);
-      if (!current) return;
-      const idx = current.indexOf(entry);
-      if (idx >= 0) current.splice(idx, 1);
-      if (current.length === 0) this.commands.delete(scope);
-    };
   }
 
-  /** Test/debug helper: returns the current scope stack ids top-down. */
+  /** Test helper. */
   getScopeStack(): string[] {
     return this.scopeStack.map((e) => e.id).reverse();
   }
 
+  /** Test helper — clear scope stack. */
+  _resetScopes(): void {
+    this.scopeStack = [];
+  }
+
+  private invalidateCache(): void {
+    this.resolvedCache = null;
+  }
+
+  private buildCache(): ResolvedBinding[] {
+    const out: ResolvedBinding[] = [];
+    const overrides = userKeymapStore.getAllOverrides();
+    const disabled = userKeymapStore.getDisabled();
+
+    for (const def of commandRegistry.listCommands()) {
+      if (disabled.has(def.id)) continue;
+      const override = overrides.get(def.id);
+      const bindings = effectiveBindings(def, override);
+      if (bindings.length === 0) continue;
+
+      for (const b of bindings) {
+        const scope = b.scope ?? def.scope ?? GLOBAL_SCOPE;
+        let parsed: ParsedKey;
+        try {
+          parsed = parseHotkey(b.key);
+        } catch {
+          continue;
+        }
+        let whenEval: WhenEvaluator;
+        try {
+          whenEval = parseWhen(b.when ?? def.defaultWhen);
+        } catch {
+          // Invalid when (typically user override) — fall back to
+          // always-true so the binding still works; the Settings UI
+          // surfaces the parse error.
+          whenEval = () => true;
+        }
+        out.push({
+          commandId: def.id,
+          scope,
+          parsed,
+          when: whenEval,
+          preventDefault: def.preventDefault !== false,
+          passThroughTextInput: def.passThroughTextInput === true,
+          trigger: def.trigger ?? "keydown",
+        });
+      }
+    }
+    return out;
+  }
+
+  private getResolved(): ResolvedBinding[] {
+    if (this.resolvedCache === null) {
+      this.resolvedCache = this.buildCache();
+    }
+    return this.resolvedCache;
+  }
+
+  /** Pause dispatch (Shortcut editor uses this while recording). */
+  pushSuppress(): () => void {
+    this.suppressCount++;
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      this.suppressCount = Math.max(0, this.suppressCount - 1);
+    };
+  }
+
   private handleKeyDown = (e: KeyboardEvent): void => {
+    this.updateModifierSides(e);
+    this.dispatch(e, "keydown");
+  };
+
+  // Keyup-triggered commands are rare (hold-to-release style bindings that
+  // fire when the key is let go). A command opts in with `trigger: "keyup"`;
+  // everything else defaults to "keydown" and is skipped on this path.
+  //
+  // Caveat: a keyup event's modifier flags reflect the instant of release,
+  // so a multi-key combo bound to keyup can fail to match if the user lifts
+  // the modifier before the main key — single-key keyup bindings are the
+  // reliable case. Push-to-talk does NOT ride this path; its hold timing,
+  // "release any involved key" matching, and window-blur stop live in
+  // GlobalAudioRecorder's dedicated raw listener (see the comment there).
+  private handleKeyUp = (e: KeyboardEvent): void => {
+    this.updateModifierSides(e);
+    this.dispatch(e, "keyup");
+  };
+
+  private handleBlur = (): void => {
+    // Lost focus → we'll miss the modifier keyups, so assume all released.
+    this.modifierSides = { meta: null, alt: null, ctrl: null, shift: null };
+  };
+
+  /** Track which physical side each modifier is held on, from e.code. */
+  private updateModifierSides(e: KeyboardEvent): void {
+    const MAP: Record<string, keyof ModifierSides> = {
+      MetaLeft: "meta",
+      MetaRight: "meta",
+      AltLeft: "alt",
+      AltRight: "alt",
+      ControlLeft: "ctrl",
+      ControlRight: "ctrl",
+      ShiftLeft: "shift",
+      ShiftRight: "shift",
+    };
+    const mod = MAP[e.code];
+    if (!mod) return;
+    const side = e.code.endsWith("Right") ? "right" : "left";
+    if (e.type === "keydown") {
+      this.modifierSides[mod] = side;
+    } else if (this.modifierSides[mod] === side) {
+      // Only clear if the released side is the one we recorded (the other
+      // side might still be held).
+      this.modifierSides[mod] = null;
+    }
+  }
+
+  /** Snapshot of current modifier sides (recorder / external consumers). */
+  getModifierSides(): ModifierSides {
+    return { ...this.modifierSides };
+  }
+
+  private dispatch(e: KeyboardEvent, trigger: "keydown" | "keyup"): void {
+    if (this.suppressCount > 0) return;
     if (e.defaultPrevented) return;
-    // IME composition (e.g. CJK input) emits keydown with key="Process" or
-    // keyCode 229 — never dispatch.
     if (e.isComposing || e.keyCode === 229) return;
 
-    const suppression = detectSuppression(e);
+    const suppression = detectSuppression();
+    const ctx = contextKeyService.getSnapshot();
+    const resolved = this.getResolved();
 
-    // Walk stack top-down, then fall back to global scope.
+    // Walk scope stack top-down, then global.
     for (let i = this.scopeStack.length - 1; i >= 0; i--) {
-      if (this.tryDispatch(this.scopeStack[i].id, e, suppression)) return;
+      if (this.tryDispatch(this.scopeStack[i].id, e, trigger, suppression, ctx, resolved)) return;
     }
-    this.tryDispatch(GLOBAL_SCOPE, e, suppression);
-  };
+    this.tryDispatch(GLOBAL_SCOPE, e, trigger, suppression, ctx, resolved);
+  }
 
   private tryDispatch(
     scope: string,
     e: KeyboardEvent,
+    trigger: "keydown" | "keyup",
     suppression: Suppression,
+    ctx: Record<string, unknown>,
+    resolved: ResolvedBinding[],
   ): boolean {
-    const list = this.commands.get(scope);
-    if (!list) return false;
-    for (const { def, parsed } of list) {
-      if (!matchesHotkey(e, parsed)) continue;
+    for (const r of resolved) {
+      if (r.scope !== scope) continue;
+      if (r.trigger !== trigger) continue;
+      if (!matchesHotkey(e, r.parsed, this.modifierSides)) continue;
 
-      // Suppression gates — let native input handle the keystroke unless
-      // the command explicitly opts into passing through.
-      if (!def.passThroughTextInput) {
-        if (suppression === "all") continue;
-        if (suppression === "alpha" && isAlphaKey(e)) continue;
+      // Temporary diagnostic — prints why a matched binding does or doesn't
+      // dispatch. Delete once shortcuts are verified end-to-end.
+      const debugFor = r.commandId === "panel.artifacts.open";
+
+      if (!r.passThroughTextInput) {
+        if (suppression === "all") {
+          if (debugFor) console.log("[grove debug] artifacts: key matched but suppression=all", { activeElement: document.activeElement });
+          continue;
+        }
+        if (suppression === "alpha" && isAlphaKey(e)) {
+          if (debugFor) console.log("[grove debug] artifacts: key matched but alpha-suppressed (text input has focus)", { activeElement: document.activeElement });
+          continue;
+        }
       }
 
-      if (def.enabled && !def.enabled()) continue;
-
-      if (def.preventDefault !== false) {
-        e.preventDefault();
+      if (!r.when(ctx)) {
+        if (debugFor) console.log("[grove debug] artifacts: when expression false", { ctx, when: r.when.toString() });
+        continue;
       }
-      def.handler();
+
+      const enabled = commandRegistry.getEnabled(r.commandId);
+      if (enabled && !enabled()) {
+        if (debugFor) console.log("[grove debug] artifacts: enabled gate returned false");
+        continue;
+      }
+
+      if (debugFor) console.log("[grove debug] artifacts: about to invoke handler", { scope });
+      if (r.preventDefault) e.preventDefault();
+      commandRegistry.invoke(r.commandId);
       return true;
     }
     return false;
@@ -175,4 +329,3 @@ export class KeyboardManagerImpl {
 }
 
 export const keyboardManager = new KeyboardManagerImpl();
-export { GLOBAL_SCOPE, APP_OWNED_META_KEYS };

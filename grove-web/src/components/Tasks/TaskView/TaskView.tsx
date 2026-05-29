@@ -21,8 +21,9 @@ import type { Task } from "../../../data/types";
 import type { PanelType } from "../PanelSystem/types";
 import { sendInputToTerminal, pasteToTerminal } from "../TaskDetail/terminalCache";
 import { activateTask } from "../../../api";
+import { patchConfig } from "../../../api/config";
 import { useConfig } from "../../../context";
-import { useHotkeys } from "../../../hooks";
+import { useCommand, useKeyboardScope, useContextKey } from "../../../keyboard";
 
 // --- Workspace Bar Dropdown (for overflow actions) ---
 function OverflowDropdown({ items }: { items: OverflowItem[] }) {
@@ -124,6 +125,15 @@ interface OverflowItem {
 }
 
 interface TaskViewProps {
+  /**
+   * Whether this TaskView is the currently *visible* surface. When the
+   * user navigates away from Tasks (sidebar to AI / Dashboard / …) the
+   * parent stays mounted to preserve workspace state, but the
+   * workspace keyboard scope and command handlers must not still
+   * compete with the page they actually see. Default true for
+   * backwards compatibility.
+   */
+  isActive?: boolean;
   projectId: string;
   task: Task;
   projectName?: string;
@@ -167,10 +177,11 @@ export const TaskView = forwardRef<TaskViewHandle, TaskViewProps>((props, ref) =
     onArchive,
     onClean,
     onReset,
+    isActive = true,
   } = props;
   const layoutRef = useRef<FlexLayoutContainerHandle>(null);
   const ideLayoutRef = useRef<IDELayoutHandle>(null);
-  const { config } = useConfig();
+  const { config, refresh: refreshConfig } = useConfig();
   const layoutMode: LayoutMode = (config?.web?.workspace_layout === "flex" ? "flex" : "ide") as LayoutMode;
   const fullscreen = externalFullscreen ?? false;
   const toggleFullscreen = () => onFullscreenChange?.(!fullscreen);
@@ -270,26 +281,107 @@ export const TaskView = forwardRef<TaskViewHandle, TaskViewProps>((props, ref) =
   // different `enabled` conditions, which is how WorkPage ended up with no
   // shortcuts at all. Gated by `!isArchived` since opening panels on an
   // archived task still makes sense, but git ops don't.
-  const panelShortcutsEnabled = !isArchived;
-  useHotkeys(
-    [
-      { key: "t", handler: () => handleAddPanel("terminal"), options: { enabled: panelShortcutsEnabled } },
-      { key: "e", handler: () => handleAddPanel("editor"), options: { enabled: panelShortcutsEnabled } },
-      { key: "r", handler: () => handleAddPanel("review"), options: { enabled: panelShortcutsEnabled } },
-      { key: "g", handler: () => handleAddPanel("graph"), options: { enabled: panelShortcutsEnabled } },
-      { key: "i", handler: () => handleAddPanel("chat"), options: { enabled: panelShortcutsEnabled } },
-      // Git ops — only bound if the parent actually wired a handler (Studio
-      // has no commit/merge/etc; Work may omit them on non-git projects).
-      { key: "c", handler: () => onCommit?.(), options: { enabled: canOperate && !!onCommit } },
-      { key: "s", handler: () => onSync?.(), options: { enabled: canOperate && !!onSync } },
-      { key: "m", handler: () => onMerge?.(), options: { enabled: canOperate && !!onMerge } },
-      { key: "b", handler: () => onRebase?.(), options: { enabled: canOperate && !!onRebase } },
-    ],
-    [
-      panelShortcutsEnabled, canOperate, handleAddPanel,
-      onCommit, onSync, onMerge, onRebase,
-    ],
+  const panelShortcutsEnabled = !isArchived && isActive;
+  useKeyboardScope("workspace", isActive);
+
+  // Maintain the catalog's expected context keys. The catalog declares
+  // defaultWhen clauses like "selectedTask && !archived" everywhere;
+  // without these being set, the KeyboardManager treats them as false
+  // and the bindings never fire. TaskView is the canonical owner of
+  // "we're inside a task workspace" state.
+  useContextKey("taskSelected", true);
+  useContextKey("inWorkspace", true);
+  useContextKey("archived", isArchived);
+  useContextKey("canOperate", canOperate);
+  // panelOpen gates Mod+w (panel.closeActive). The IDE layout always boots
+  // with the chat column visible (chatVisible defaults to true in
+  // IDELayoutContainer's persisted state) and the flex layout always
+  // renders at least one panel, so within TaskView there is always
+  // *something* closeable. Setting this whenever TaskView is mounted
+  // matches the catalog intent ("close the currently focused panel tab").
+  // Fine-grained tracking of aux/info/chat visibility would require
+  // hoisting IDELayoutContainer state; not worth it for one command.
+  useContextKey("panelOpen", true);
+
+  const panelEnabled = useCallback(() => panelShortcutsEnabled, [panelShortcutsEnabled]);
+  const commitEnabled = useCallback(() => canOperate && !!onCommit, [canOperate, onCommit]);
+  const syncEnabled = useCallback(() => canOperate && !!onSync, [canOperate, onSync]);
+  const mergeEnabled = useCallback(() => canOperate && !!onMerge, [canOperate, onMerge]);
+  const rebaseEnabled = useCallback(() => canOperate && !!onRebase, [canOperate, onRebase]);
+
+  useCommand("panel.terminal.open", () => handleAddPanel("terminal"), { enabled: panelEnabled }, [handleAddPanel, panelEnabled]);
+  useCommand("panel.editor.open", () => handleAddPanel("editor"), { enabled: panelEnabled }, [handleAddPanel, panelEnabled]);
+  useCommand("panel.review.open", () => handleAddPanel("review"), { enabled: panelEnabled }, [handleAddPanel, panelEnabled]);
+  useCommand("panel.graph.open", () => handleAddPanel("graph"), { enabled: panelEnabled }, [handleAddPanel, panelEnabled]);
+  useCommand("panel.chat.open", () => handleAddPanel("chat"), { enabled: panelEnabled }, [handleAddPanel, panelEnabled]);
+  useCommand(
+    "panel.artifacts.open",
+    () => {
+      console.log("[grove debug] panel.artifacts.open handler entered", {
+        layoutMode,
+        hasIdeRef: !!ideLayoutRef.current,
+        hasFlexRef: !!layoutRef.current,
+        panelShortcutsEnabled,
+        isArchived,
+      });
+      handleAddPanel("artifacts");
+    },
+    { enabled: panelEnabled },
+    [handleAddPanel, panelEnabled, layoutMode, panelShortcutsEnabled, isArchived],
   );
+  // Info-panel tabs (stats/git/notes/comments). routePanelCommand maps these
+  // to focusInfoPanel(tab) in IDE mode and addPanel(type) in Flex mode, since
+  // PanelType covers both. Same enabled gate as the other panel openers.
+  useCommand("panel.stats.open", () => handleAddPanel("stats"), { enabled: panelEnabled }, [handleAddPanel, panelEnabled]);
+  useCommand("panel.git.open", () => handleAddPanel("git"), { enabled: panelEnabled }, [handleAddPanel, panelEnabled]);
+  useCommand("panel.notes.open", () => handleAddPanel("notes"), { enabled: panelEnabled }, [handleAddPanel, panelEnabled]);
+  useCommand("panel.comments.open", () => handleAddPanel("comments"), { enabled: panelEnabled }, [handleAddPanel, panelEnabled]);
+  // Git ops — only bound if the parent actually wired a handler (Studio
+  // has no commit/merge/etc; Work may omit them on non-git projects).
+  useCommand("git.commit", () => onCommit?.(), { enabled: commitEnabled }, [onCommit, commitEnabled]);
+  useCommand("git.sync", () => onSync?.(), { enabled: syncEnabled }, [onSync, syncEnabled]);
+  useCommand("git.merge", () => onMerge?.(), { enabled: mergeEnabled }, [onMerge, mergeEnabled]);
+  useCommand("git.rebase", () => onRebase?.(), { enabled: rebaseEnabled }, [onRebase, rebaseEnabled]);
+
+  // Panel / workspace toggles. Info panel toggle only meaningful in IDE
+  // layout where the Info column actually exists; in Flex mode the same
+  // info content lives as panel tabs (panel.review.open, etc) so the
+  // catalog item maps to focusInfoPanel("stats") as a sensible default.
+  useCommand(
+    "panel.info.toggle",
+    () => {
+      if (layoutMode === "ide") {
+        ideLayoutRef.current?.focusInfoPanel("stats");
+      }
+    },
+    { enabled: panelEnabled },
+    [layoutMode, panelEnabled],
+  );
+
+  // Workspace fullscreen toggle — same effect as the toolbar button.
+  // mode.fullscreen.toggle (Mode category) and workspace.fullscreen.toggle
+  // (Workspace category) are catalog aliases pointing at the same action.
+  useCommand("workspace.fullscreen.toggle", toggleFullscreen, [toggleFullscreen]);
+  useCommand("mode.fullscreen.toggle", toggleFullscreen, [toggleFullscreen]);
+
+  // Workspace layout toggle — flip workspace_layout config between flex/ide
+  // and refresh; refreshConfig reloads from backend so every TaskView
+  // re-renders into the new layoutMode. Fire-and-forget; errors logged.
+  const toggleLayoutMode = useCallback(() => {
+    const next = layoutMode === "ide" ? "flex" : "ide";
+    void patchConfig({ web: { workspace_layout: next } })
+      .then(() => refreshConfig())
+      .catch((err) => console.error("[TaskView] toggle layout failed:", err));
+  }, [layoutMode, refreshConfig]);
+  useCommand("workspace.layout.toggle", toggleLayoutMode, [toggleLayoutMode]);
+  useCommand("workspace.ideLayout.toggle", toggleLayoutMode, [toggleLayoutMode]);
+  useCommand("mode.ide.layout.toggle", toggleLayoutMode, [toggleLayoutMode]);
+
+  // Close workspace (Esc): return to the task list. Only meaningful when a
+  // parent wired `onBack` — Work mode opens TaskView with no back affordance,
+  // in which case Esc has nothing to do here.
+  const closeEnabled = useCallback(() => !!onBack, [onBack]);
+  useCommand("task.close", () => onBack?.(), { enabled: closeEnabled }, [onBack, closeEnabled]);
 
   const overflowItems = useMemo<OverflowItem[]>(() => [
     ...(!isLocal && onRebase ? [{

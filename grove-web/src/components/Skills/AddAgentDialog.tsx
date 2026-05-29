@@ -1,9 +1,10 @@
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { X } from "lucide-react";
 import { Button } from "../ui";
 import { DialogShell } from "../ui/DialogShell";
 import { addAgent, updateAgent } from "../../api";
 import type { AgentDef } from "../../api";
+import { useCommand, useKeyboardScope } from "../../keyboard";
 
 interface AddAgentDialogProps {
   isOpen: boolean;
@@ -39,14 +40,12 @@ export function AddAgentDialog({ isOpen, editingAgent, onClose, onSaved }: AddAg
     setError(null);
   }
 
-  useEffect(() => {
-    if (!isOpen) return;
-    const handler = (e: KeyboardEvent) => {
-      if (e.key === "Escape") { e.preventDefault(); onClose(); }
-    };
-    window.addEventListener("keydown", handler);
-    return () => window.removeEventListener("keydown", handler);
-  }, [isOpen, onClose]);
+  // Catalog handlers register inside <AddAgentDialogBindings> only while
+  // isOpen=true. Multiple AddAgentDialog wrappers can coexist (Skills page
+  // can render one per agent row, all isOpen=false at rest); a top-level
+  // useCommand would otherwise overwrite each other on every re-render —
+  // only the last-mounted dialog's binding would be live.
+  useKeyboardScope("dialog.addAgent", isOpen);
 
   // Auto-generate directory paths from name when the user first types into
   // the (still empty) name field. Wired into onChange instead of useEffect to
@@ -91,6 +90,9 @@ export function AddAgentDialog({ isOpen, editingAgent, onClose, onSaved }: AddAg
 
   return (
     <DialogShell isOpen={isOpen} onClose={onClose} maxWidth="max-w-lg">
+      {isOpen && (
+        <AddAgentDialogBindings onClose={onClose} onSubmit={handleSubmit} />
+      )}
       <div className="bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-xl shadow-xl overflow-hidden">
               {/* Header */}
               <div className="flex items-center justify-between px-5 py-4 border-b border-[var(--color-border)]">
@@ -170,4 +172,24 @@ export function AddAgentDialog({ isOpen, editingAgent, onClose, onSaved }: AddAg
       </div>
     </DialogShell>
   );
+}
+
+// Registers the dialog.addAgent.* catalog handlers only while the dialog is
+// actually open. See top-of-component comment for the multi-mount rationale.
+function AddAgentDialogBindings({
+  onClose,
+  onSubmit,
+}: {
+  onClose: () => void;
+  onSubmit: () => Promise<void>;
+}) {
+  useCommand("dialog.addAgent.close", onClose, [onClose]);
+  useCommand(
+    "dialog.addAgent.submit",
+    () => {
+      void onSubmit();
+    },
+    [onSubmit],
+  );
+  return null;
 }

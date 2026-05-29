@@ -3,6 +3,7 @@ import { perfRecorder } from "./recorder";
 import type { PerfEvent, PerfEventKind, PerfSnapshot } from "./types";
 import { useDebugIds, type DebugIdLevel } from "./debugIdsStore";
 import { apiClient } from "../api/client";
+import { useCommand } from "../keyboard";
 
 type Tab = "timeline" | "memory" | "renders" | "network" | "backend";
 
@@ -112,16 +113,7 @@ export function PerfPanel() {
     window.addEventListener("mouseup", onUp);
   };
 
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.ctrlKey && e.shiftKey && (e.key === "P" || e.key === "p")) {
-        e.preventDefault();
-        setOpen((v) => !v);
-      }
-    };
-    window.addEventListener("keydown", onKey, true);
-    return () => window.removeEventListener("keydown", onKey, true);
-  }, []);
+  useCommand("debug.perfPanel.toggle", () => setOpen((v) => !v), {}, []);
 
   const [now, setNow] = useState(() => performance.now());
   useEffect(() => {

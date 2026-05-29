@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Edit3, X } from "lucide-react";
 import { Button, Input } from "../ui";
 import { DialogShell } from "../ui/DialogShell";
+import { useCommand, useKeyboardScope } from "../../keyboard";
 
 interface RenameBranchDialogProps {
   isOpen: boolean;
@@ -36,8 +37,26 @@ export function RenameBranchDialog({
     onClose();
   };
 
+  // Escape closes; Enter renames when the new name is non-empty and changed.
+  // Catalog scope: dialog.renameBranch.
+  //
+  // Catalog handlers register inside <RenameBranchDialogBindings> only while
+  // isOpen=true. Multiple RenameBranchDialog wrappers can coexist (one per
+  // task row, all isOpen=false at rest); a top-level useCommand would
+  // otherwise overwrite each other on every re-render — only the last-
+  // mounted dialog's binding would be live.
+  useKeyboardScope("dialog.renameBranch", isOpen);
+
   return (
     <DialogShell isOpen={isOpen} onClose={handleClose}>
+      {isOpen && (
+        <RenameBranchDialogBindings
+          onClose={handleClose}
+          onSubmit={handleRename}
+          newName={newName}
+          branchName={branchName}
+        />
+      )}
       <div className="bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-xl shadow-xl overflow-hidden">
               {/* Header */}
               <div className="flex items-center justify-between px-5 py-4 border-b border-[var(--color-border)]">
@@ -97,4 +116,27 @@ export function RenameBranchDialog({
       </div>
     </DialogShell>
   );
+}
+
+// Registers the dialog.renameBranch.* catalog handlers only while the dialog
+// is actually open. See top-of-component comment for the multi-mount rationale.
+function RenameBranchDialogBindings({
+  onClose,
+  onSubmit,
+  newName,
+  branchName,
+}: {
+  onClose: () => void;
+  onSubmit: () => void;
+  newName: string;
+  branchName: string;
+}) {
+  useCommand("dialog.renameBranch.close", onClose, [onClose]);
+  useCommand(
+    "dialog.renameBranch.submit",
+    onSubmit,
+    { enabled: () => newName.trim().length > 0 && newName !== branchName },
+    [onSubmit, newName, branchName],
+  );
+  return null;
 }

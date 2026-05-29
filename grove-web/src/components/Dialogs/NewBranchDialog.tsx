@@ -4,6 +4,7 @@ import { GitBranch, X, ChevronDown, Check } from "lucide-react";
 import { Button, Input } from "../ui";
 import { DialogShell } from "../ui/DialogShell";
 import type { Branch } from "../../data/types";
+import { useCommand, useKeyboardScope } from "../../keyboard";
 
 interface NewBranchDialogProps {
   isOpen: boolean;
@@ -43,8 +44,23 @@ export function NewBranchDialog({
     onClose();
   };
 
+  // Escape closes; Enter creates when name is valid. Catalog scope: dialog.newBranch.
+  //
+  // Catalog handlers register inside <NewBranchDialogBindings> only while
+  // isOpen=true. Multiple NewBranchDialog wrappers can coexist; a top-level
+  // useCommand would otherwise overwrite each other on every re-render —
+  // only the last-mounted dialog's binding would be live.
+  useKeyboardScope("dialog.newBranch", isOpen);
+
   return (
     <DialogShell isOpen={isOpen} onClose={handleClose}>
+      {isOpen && (
+        <NewBranchDialogBindings
+          onClose={handleClose}
+          onSubmit={handleCreate}
+          branchName={branchName}
+        />
+      )}
       <div className="bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-xl shadow-xl overflow-hidden">
               {/* Header */}
               <div className="flex items-center justify-between px-5 py-4 border-b border-[var(--color-border)]">
@@ -168,4 +184,25 @@ export function NewBranchDialog({
       </div>
     </DialogShell>
   );
+}
+
+// Registers the dialog.newBranch.* catalog handlers only while the dialog is
+// actually open. See top-of-component comment for the multi-mount rationale.
+function NewBranchDialogBindings({
+  onClose,
+  onSubmit,
+  branchName,
+}: {
+  onClose: () => void;
+  onSubmit: () => void;
+  branchName: string;
+}) {
+  useCommand("dialog.newBranch.close", onClose, [onClose]);
+  useCommand(
+    "dialog.newBranch.submit",
+    onSubmit,
+    { enabled: () => branchName.trim().length > 0 },
+    [onSubmit, branchName],
+  );
+  return null;
 }

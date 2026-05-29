@@ -1,10 +1,11 @@
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
 import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { X, Plus, Pencil, Trash2, Globe, Terminal, Server } from "lucide-react";
 import type { CustomAgentServer } from "../../api/config";
 import { Button } from "./Button";
 import { useIsMobile } from "../../hooks";
+import { useCommand, useKeyboardScope } from "../../keyboard";
 
 interface CustomAgentModalProps {
   isOpen: boolean;
@@ -151,37 +152,23 @@ export function CustomAgentModal({
   };
 
   // Keyboard a11y — Esc unwinds in layers (inline rename → close).
-  // Cmd/Ctrl+Enter triggers Save (blocked when ID draft is in collision).
-  // We bind once on open and read the latest handlers via refs to avoid
-  // re-binding on every keystroke (and to keep the React Compiler happy
-  // about the deps array).
-  const handleSaveRef = useRef(handleSave);
-  const onCloseRef = useRef(onClose);
-  const editingNameIdRef = useRef(editingNameId);
-  useEffect(() => {
-    handleSaveRef.current = handleSave;
-    onCloseRef.current = onClose;
-    editingNameIdRef.current = editingNameId;
-  });
-  useEffect(() => {
-    if (!isOpen) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        if (editingNameIdRef.current) {
-          e.preventDefault();
-          setEditingNameId(null);
-          return;
-        }
-        e.preventDefault();
-        onCloseRef.current();
-      } else if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
-        e.preventDefault();
-        handleSaveRef.current();
-      }
-    };
-    document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
-  }, [isOpen]);
+  // Cmd/Ctrl+Enter triggers Save (blocked when ID draft is in collision via
+  // handleSave's own guard).
+  //
+  // The actual catalog handlers are registered in <CustomAgentModalBindings>,
+  // which only mounts while isOpen=true. Multiple CustomAgentModal wrappers
+  // can be mounted simultaneously (all but one with isOpen=false) and a
+  // top-level useCommand would otherwise overwrite each other on every
+  // re-render — only the last-mounted dialog's binding would be live.
+  useKeyboardScope("dialog.customAgent", isOpen);
+
+  const handleClose = () => {
+    if (editingNameId) {
+      setEditingNameId(null);
+      return;
+    }
+    onClose();
+  };
 
   if (!isOpen) return null;
 
@@ -193,6 +180,7 @@ export function CustomAgentModal({
         exit={{ opacity: 0 }}
         className="fixed inset-0 z-[9999] flex items-end sm:items-center justify-center sm:p-4"
       >
+        <CustomAgentModalBindings onClose={handleClose} onSubmit={handleSave} />
         <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={onClose} />
 
         <motion.div
@@ -531,4 +519,18 @@ export function CustomAgentModal({
     </AnimatePresence>,
     document.body,
   );
+}
+
+// Registers the dialog.customAgent.* catalog handlers only while the modal
+// is actually open. See top-of-component comment for the multi-mount rationale.
+function CustomAgentModalBindings({
+  onClose,
+  onSubmit,
+}: {
+  onClose: () => void;
+  onSubmit: () => void;
+}) {
+  useCommand("dialog.customAgent.close", onClose, [onClose]);
+  useCommand("dialog.customAgent.submit", onSubmit, [onSubmit]);
+  return null;
 }

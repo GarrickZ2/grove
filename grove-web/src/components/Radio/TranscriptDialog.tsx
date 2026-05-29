@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from "react";
+import { useCommand, useKeyboardScope } from "../../keyboard";
 
 interface TranscriptDialogProps {
   text: string | null;
@@ -40,17 +41,9 @@ function TranscriptDialogInner({
     setTimeout(() => textareaRef.current?.focus(), 50);
   }, []);
 
-  // Close on Escape key
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        e.preventDefault();
-        onCancel();
-      }
-    };
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [onCancel]);
+  // Close on Escape (scoped command).
+  useKeyboardScope("dialog.transcript", true);
+  useCommand("dialog.transcript.close", onCancel, [onCancel]);
 
   const handleBackdropClick = useCallback((e: React.MouseEvent) => {
     if (e.target === e.currentTarget) {

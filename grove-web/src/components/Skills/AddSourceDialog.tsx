@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { X, GitBranch, FolderOpen } from "lucide-react";
 import { Button } from "../ui";
 import { DialogShell } from "../ui/DialogShell";
@@ -6,6 +6,7 @@ import { useIsMobile } from "../../hooks";
 import { apiClient } from "../../api/client";
 import { addSource, updateSource } from "../../api";
 import type { SkillSource } from "../../api";
+import { useCommand, useKeyboardScope } from "../../keyboard";
 
 function extractNameFromUrl(url: string): string {
   let cleaned = url.trim();
@@ -194,14 +195,12 @@ export function AddSourceDialog({ isOpen, editingSource, onClose, onSaved }: Add
     }
   };
 
-  useEffect(() => {
-    if (!isOpen) return;
-    const handler = (e: KeyboardEvent) => {
-      if (e.key === "Escape") { e.preventDefault(); onClose(); }
-    };
-    window.addEventListener("keydown", handler);
-    return () => window.removeEventListener("keydown", handler);
-  }, [isOpen, onClose]);
+  // Catalog handlers register inside <AddSourceDialogBindings> only while
+  // isOpen=true. Multiple AddSourceDialog wrappers can coexist (the Skills
+  // page renders one per source row, all isOpen=false at rest); a top-level
+  // useCommand would otherwise overwrite each other on every re-render —
+  // only the last-mounted dialog's binding would be live.
+  useKeyboardScope("dialog.addSource", isOpen);
 
   const handleBrowse = async () => {
     setIsBrowsing(true);
@@ -256,6 +255,12 @@ export function AddSourceDialog({ isOpen, editingSource, onClose, onSaved }: Add
 
   return (
     <DialogShell isOpen={isOpen} onClose={onClose} maxWidth="max-w-lg">
+      {isOpen && (
+        <AddSourceDialogBindings
+          onClose={onClose}
+          onSubmit={handleSubmit}
+        />
+      )}
       <div className="bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-xl shadow-xl overflow-hidden">
               {/* Header */}
               <div className="flex items-center justify-between px-5 py-4 border-b border-[var(--color-border)]">
@@ -376,4 +381,24 @@ export function AddSourceDialog({ isOpen, editingSource, onClose, onSaved }: Add
       </div>
     </DialogShell>
   );
+}
+
+// Registers the dialog.addSource.* catalog handlers only while the dialog
+// is actually open. See top-of-component comment for the multi-mount rationale.
+function AddSourceDialogBindings({
+  onClose,
+  onSubmit,
+}: {
+  onClose: () => void;
+  onSubmit: () => Promise<void>;
+}) {
+  useCommand("dialog.addSource.close", onClose, [onClose]);
+  useCommand(
+    "dialog.addSource.submit",
+    () => {
+      void onSubmit();
+    },
+    [onSubmit],
+  );
+  return null;
 }

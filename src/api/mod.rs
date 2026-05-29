@@ -85,6 +85,18 @@ pub fn create_api_router() -> Router {
             "/custom-agents/{id}",
             patch(handlers::custom_agent::update).delete(handlers::custom_agent::delete),
         )
+        // User keymap (Command System)
+        .route(
+            "/keymap",
+            get(handlers::keymap::list).delete(handlers::keymap::reset_all),
+        )
+        .route("/keymap/override", put(handlers::keymap::set_override))
+        .route("/keymap/overrides", put(handlers::keymap::set_overrides))
+        .route(
+            "/keymap/override/{id}",
+            delete(handlers::keymap::remove_override),
+        )
+        .route("/keymap/disabled", put(handlers::keymap::set_disabled))
         // Environment API
         .route("/env/check", get(handlers::env::check_all))
         .route("/env/check/{name}", get(handlers::env::check_one))

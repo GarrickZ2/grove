@@ -15,6 +15,7 @@ pub mod extension;
 pub mod folder;
 pub mod git;
 pub mod hooks;
+pub mod keymap;
 pub mod libraries;
 pub mod marketplace;
 #[cfg(feature = "perf-monitor")]

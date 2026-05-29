@@ -18,6 +18,7 @@ import { PreviewSearchBar } from './PreviewSearchBar';
 import { useDomSearch } from './useDomSearch';
 import { ImageLightbox } from '../ui/ImageLightbox';
 import { usePreviewComments, type PreviewCommentLocator } from '../../context';
+import { useCommand, useContextKey, useDefineCommand, useKeyboardScope } from '../../keyboard';
 
 // ============================================================================
 // Types for context line expansion
@@ -517,23 +518,29 @@ export function DiffFileView({
     }
   }
 
-  // Cmd/Ctrl+F when focus is inside preview drawer
-  useEffect(() => {
-    if (!isPreviewOpen) return;
-    const handler = (e: KeyboardEvent) => {
-      if (e.key !== 'f' || !(e.metaKey || e.ctrlKey)) return;
-      const root = previewDrawerRef.current;
-      if (!root) return;
-      const target = document.activeElement;
-      if (!target || !root.contains(target)) return;
-      e.preventDefault();
-      e.stopPropagation();
-      e.stopImmediatePropagation();
-      setSearchOpen((v) => !v);
-    };
-    window.addEventListener('keydown', handler, true);
-    return () => window.removeEventListener('keydown', handler, true);
-  }, [isPreviewOpen]);
+  // Cmd/Ctrl+F when focus is inside preview drawer — Scoped Command Registry.
+  // Multiple files may have preview open simultaneously, so each instance
+  // gates with `enabled` on document.activeElement being inside its own
+  // drawer ref. Only the file whose drawer has focus toggles search.
+  useKeyboardScope("diffFileView.preview", isPreviewOpen);
+  useDefineCommand(
+    {
+      id: "diffFileView.search.toggle",
+      name: "Toggle Preview Search",
+      category: "Diff Review",
+      description: "Toggle the search overlay inside the preview drawer",
+      defaultBindings: [{ key: "Mod+f" }],
+      scope: "diffFileView.preview",
+      passThroughTextInput: true,
+      handler: () => setSearchOpen((v) => !v),
+      enabled: () => {
+        const root = previewDrawerRef.current;
+        const target = document.activeElement;
+        return !!(root && target && root.contains(target));
+      },
+    },
+    [],
+  );
 
   // Close search when drawer closes or file changes. Using the
   // store-previous-value idiom so the reset doesn't fire from inside an
@@ -637,18 +644,24 @@ export function DiffFileView({
     setEditingPreviewDraftId(null);
   }, []);
 
-  useEffect(() => {
-    if (!pendingPreviewLocator) return;
-    const handler = (e: KeyboardEvent) => {
-      if (e.key !== 'Escape') return;
-      e.preventDefault();
-      e.stopPropagation();
-      e.stopImmediatePropagation();
-      closePreviewCommentModal();
-    };
-    window.addEventListener('keydown', handler, true);
-    return () => window.removeEventListener('keydown', handler, true);
-  }, [pendingPreviewLocator, closePreviewCommentModal]);
+  // Escape closes the preview comment draft modal — Scoped Command Registry.
+  // Nested scope inside diffFileView.preview so it wins Escape only while
+  // a locator is pending. passThroughTextInput because the modal contains
+  // a textarea.
+  useKeyboardScope("diffFileView.commentForm", !!pendingPreviewLocator);
+  useDefineCommand(
+    {
+      id: "diffFileView.commentForm.cancel",
+      name: "Cancel Preview Comment",
+      category: "Diff Review",
+      description: "Discard the preview comment draft",
+      defaultBindings: [{ key: "Escape" }],
+      scope: "diffFileView.commentForm",
+      passThroughTextInput: true,
+      handler: closePreviewCommentModal,
+    },
+    [closePreviewCommentModal],
+  );
 
   const submitReviewPreviewComment = useCallback(() => {
     if (!pendingPreviewLocator || !previewCommentText.trim() || !projectId || !taskId || !previewRenderer) return;
@@ -1567,6 +1580,22 @@ export function DiffFileView({
         onClose={() => { setLightboxUrl(null); setLightboxSvg(null); }}
       />
 
+      {isActive && (
+        <DiffFileContextKeys
+          previewOpen={isPreviewOpen}
+          commentable={!!previewRenderer && previewRenderer.supportsComments !== false}
+          commentText={previewCommentText}
+        />
+      )}
+
+      {isActive && previewRenderer && previewRenderer.supportsComments !== false && isPreviewOpen && (
+        <PreviewCommentPaletteCommands
+          hasLocator={!!pendingPreviewLocator}
+          textIsNonEmpty={previewCommentText.trim().length > 0}
+          onSubmit={submitReviewPreviewComment}
+        />
+      )}
+
       {pendingPreviewLocator && (
         <div
           data-hotkeys-dialog="true"
@@ -1690,6 +1719,63 @@ export function DiffFileView({
       )}
     </div>
   );
+}
+
+// ============================================================================
+// Context keys for the active DiffFileView
+// ============================================================================
+
+/**
+ * Owns the `previewOpen` / `commentable` / `supportsComments` / `commentText`
+ * context keys for whichever DiffFileView is currently active. Mounted only
+ * when `isActive` so among concurrently-mounted DiffFileViews exactly one ever
+ * writes these keys (useContextKey is last-write-wins).
+ */
+function DiffFileContextKeys({
+  previewOpen,
+  commentable,
+  commentText,
+}: {
+  previewOpen: boolean;
+  commentable: boolean;
+  commentText: string;
+}) {
+  useContextKey('previewOpen', previewOpen);
+  useContextKey('commentable', commentable);
+  // Catalog when-expressions reference `supportsComments` separately; mirror the
+  // same value so either spelling resolves correctly.
+  useContextKey('supportsComments', commentable);
+  useContextKey('commentText', commentText.trim().length > 0);
+  return null;
+}
+
+// ============================================================================
+// Preview comment palette commands
+// ============================================================================
+
+/**
+ * Wires the `diffReview.comment.{add,submit,delete}` catalog commands to the
+ * active file's preview comment modal. Mounted only when this DiffFileView is
+ * the active one AND the preview pane supports comments — so among many
+ * concurrently-mounted DiffFileViews exactly one ever holds these handlers,
+ * sidestepping "duplicate registration" warnings from the command registry.
+ */
+function PreviewCommentPaletteCommands({
+  hasLocator,
+  textIsNonEmpty,
+  onSubmit,
+}: {
+  hasLocator: boolean;
+  textIsNonEmpty: boolean;
+  onSubmit: () => void;
+}) {
+  useCommand(
+    'diffReview.comment.submit',
+    onSubmit,
+    { enabled: () => hasLocator && textIsNonEmpty },
+    [onSubmit, hasLocator, textIsNonEmpty],
+  );
+  return null;
 }
 
 // ============================================================================

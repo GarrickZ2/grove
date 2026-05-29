@@ -2,6 +2,7 @@ import { useState, useMemo, useEffect, useCallback } from "react";
 import { X, GitBranchPlus, Check, Search } from "lucide-react";
 import { Button } from "../../ui";
 import { DialogShell } from "../../ui/DialogShell";
+import { useCommand, useContextKey, useKeyboardScope } from "../../../keyboard";
 
 interface RebaseDialogProps {
   isOpen: boolean;
@@ -29,22 +30,19 @@ export function RebaseDialog({
     onClose();
   }, [currentTarget, onClose]);
 
-  // Escape to close
-  useEffect(() => {
-    if (!isOpen) return;
-    const handler = (e: KeyboardEvent) => {
-      if (e.key === "Escape") { e.preventDefault(); handleClose(); }
-    };
-    window.addEventListener("keydown", handler);
-    return () => window.removeEventListener("keydown", handler);
-  }, [isOpen, handleClose]);
+  // Catalog handlers register inside <RebaseDialogBindings> only while
+  // isOpen=true. Multiple RebaseDialog wrappers can coexist (one per task
+  // row, all but the active one with isOpen=false); a top-level useCommand
+  // would otherwise overwrite each other on every re-render — only the
+  // last-mounted dialog's binding would be live.
+  useKeyboardScope("dialog.rebase", isOpen);
 
   // Reset state when dialog opens
   useEffect(() => {
     if (isOpen) {
       // eslint-disable-next-line react-hooks/set-state-in-effect
       setSelectedBranch(currentTarget);
-       
+
       setSearchQuery("");
     }
   }, [isOpen, currentTarget]);
@@ -58,16 +56,22 @@ export function RebaseDialog({
     );
   }, [availableBranches, searchQuery]);
 
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (selectedBranch && selectedBranch !== currentTarget) {
-      onRebase(selectedBranch);
-      onClose();
-    }
-  };
+  const handleSubmit = useCallback(
+    (e?: React.FormEvent) => {
+      e?.preventDefault();
+      if (selectedBranch && selectedBranch !== currentTarget) {
+        onRebase(selectedBranch);
+        onClose();
+      }
+    },
+    [selectedBranch, currentTarget, onRebase, onClose],
+  );
 
   return (
     <DialogShell isOpen={isOpen} onClose={handleClose}>
+      {isOpen && (
+        <RebaseDialogBindings onCancel={handleClose} onSubmit={handleSubmit} canSubmit={selectedBranch !== currentTarget} />
+      )}
       <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)] shadow-xl overflow-hidden">
               {/* Header */}
               <div className="flex items-center justify-between px-4 py-3 border-b border-[var(--color-border)]">
@@ -192,4 +196,23 @@ export function RebaseDialog({
       </div>
     </DialogShell>
   );
+}
+
+// Registers the git.rebase.* catalog handlers only while the dialog is
+// actually open. See top-of-component comment for the multi-mount rationale.
+function RebaseDialogBindings({
+  onCancel,
+  onSubmit,
+  canSubmit,
+}: {
+  onCancel: () => void;
+  onSubmit: () => void;
+  canSubmit: boolean;
+}) {
+  // git.rebase.submit gates on `targetSelected` — only meaningful when a
+  // branch other than the current target is chosen (matches handleSubmit).
+  useContextKey("targetSelected", canSubmit);
+  useCommand("git.rebase.cancel", onCancel, [onCancel]);
+  useCommand("git.rebase.submit", onSubmit, [onSubmit]);
+  return null;
 }

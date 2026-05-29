@@ -12,13 +12,13 @@ import { useProject, useCommandPalette } from "../../context";
 import { useReportDebugId } from "../../perf/debugIdsStore";
 import {
   useIsMobile,
-  useHotkeys,
   useTaskPageState,
   useTaskNavigation,
   usePostMergeArchive,
   useTaskOperations,
   buildCommands,
 } from "../../hooks";
+import { useCommand, useDefineCommand, useKeyboardScope, useContextKey } from "../../keyboard";
 import {
   createTask as apiCreateTask,
   recoverTask as apiRecoverTask,
@@ -50,9 +50,15 @@ interface TasksPageProps {
   initialOpenNewTask?: boolean;
   /** Increment to signal TasksPage to exit the current workspace (e.g. when Tasks tab is re-clicked) */
   exitWorkspaceSignal?: number;
+  /** Whether the page is the currently visible surface. App.tsx keeps
+   *  TasksPage mounted across nav switches (display:none) to preserve
+   *  workspace state, so we forward visibility down to TaskView so it
+   *  can drop the `workspace` keyboard scope while the user is on
+   *  another page. Defaults to true for backwards compatibility. */
+  pageVisible?: boolean;
 }
 
-export function TasksPage({ initialTaskId, initialChatId, initialViewMode, onNavigationConsumed, onNavByIndex, initialOpenNewTask, exitWorkspaceSignal }: TasksPageProps) {
+export function TasksPage({ initialTaskId, initialChatId, initialViewMode, onNavigationConsumed, onNavByIndex, initialOpenNewTask, exitWorkspaceSignal, pageVisible = true }: TasksPageProps) {
   const { selectedProject, refreshSelectedProject } = useProject();
   const prevProjectIdRef = useRef<string | undefined>(selectedProject?.id);
   const isStudio = selectedProject?.projectType === "studio";
@@ -77,6 +83,16 @@ export function TasksPage({ initialTaskId, initialChatId, initialViewMode, onNav
   const [archivedTasks, setArchivedTasks] = useState<Task[]>([]);
   const [isLoadingArchived, setIsLoadingArchived] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
+  // Mirror fullscreen state onto <body> so the sidebar (lives in App.tsx,
+  // out of TasksPage's tree) can be hidden via CSS. Otherwise toggling
+  // "fullscreen" only hides the TaskView header — the sidebar stays and
+  // squeezes the workspace, which is what users see as a UI break.
+  useEffect(() => {
+    document.body.classList.toggle("grove-workspace-fullscreen", isFullscreen);
+    return () => {
+      document.body.classList.remove("grove-workspace-fullscreen");
+    };
+  }, [isFullscreen]);
   const searchInputRef = useRef<HTMLInputElement | null>(null);
   const taskViewRef = useRef<TaskViewHandle>(null);
 
@@ -411,115 +427,325 @@ export function TasksPage({ initialTaskId, initialChatId, initialViewMode, onNav
   const canOperate = isActive;
   const notInWorkspace = !pageState.inWorkspace;
 
-  // Workspace keyboard shortcuts (higher priority than App-level)
-  // Cmd+1-9: switch panel tabs, Cmd+W / Alt+W: close active tab
-  useEffect(() => {
-    if (!pageState.inWorkspace) return;
-    const isTauri = !!((window as Window & { __TAURI__?: unknown }).__TAURI__);
-    const handler = (e: KeyboardEvent) => {
-      // Cmd+1-9: switch panel tabs.
-      // Fallback to sidebar navigation only when workspace has no tabs.
-      // When tabs exist but index is out of range, do nothing (user intended a tab switch).
-      if (e.metaKey && !e.altKey && !e.ctrlKey && !e.shiftKey && e.key >= "1" && e.key <= "9") {
-        const index = parseInt(e.key) - 1;
-        const result = taskViewRef.current?.selectTabByIndex(index) ?? "no_tabs";
-        if (result === "handled") {
-          e.preventDefault();
-          e.stopImmediatePropagation();
-        } else if (result === "no_tabs" && onNavByIndex) {
-          e.preventDefault();
-          e.stopImmediatePropagation();
-          onNavByIndex(index);
-        }
-        // "out_of_range": tabs exist but index exceeds count — do nothing
-        return;
-      }
-      // Cmd+Shift+[/]: switch workspace tabs
-      if (e.metaKey && e.shiftKey && !e.altKey && (e.key === "[" || e.key === "]")) {
-        e.preventDefault();
-        e.stopImmediatePropagation();
-        const delta = e.key === "]" ? 1 : -1;
-        taskViewRef.current?.selectAdjacentTab(delta);
-        return;
-      }
-      // Option+Cmd+Up/Down: switch sidebar nav items
-      if (e.metaKey && e.altKey && (e.code === "ArrowUp" || e.code === "ArrowDown")) {
-        e.preventDefault();
-        e.stopImmediatePropagation();
-        if (onNavByIndex) {
-          onNavByIndex(e.code === "ArrowDown" ? 1 : -1, true);
-        }
-        return;
-      }
-      // Close active tab: Cmd+W (Tauri) or Alt+W (web)
-      // Note: macOS Alt produces special chars (e.g. Alt+W → ∑), so use e.code
-      const isCloseTab = (isTauri && e.metaKey && e.code === "KeyW")
-        || (e.altKey && !e.metaKey && e.code === "KeyW");
-      if (isCloseTab) {
-        e.preventDefault();
-        e.stopImmediatePropagation();
-        taskViewRef.current?.closeActiveTab();
-      }
-    };
-    window.addEventListener("keydown", handler, true);
-    return () => window.removeEventListener("keydown", handler, true);
-  }, [pageState.inWorkspace, onNavByIndex]);
+  // --- Keyboard scopes & commands ---
+  // `tasks` scope is active only while the user is on the task-list surface;
+  // TaskView pushes its own `workspace` scope on top when entering a task.
+  useKeyboardScope("tasks", !pageState.inWorkspace);
 
-  // --- Register all hotkeys ---
-  useHotkeys(
-    [
-      // Navigation
-      { key: "j", handler: navHandlers.selectNextTask, options: { enabled: notInWorkspace } },
-      { key: "ArrowDown", handler: navHandlers.selectNextTask, options: { enabled: notInWorkspace } },
-      { key: "k", handler: navHandlers.selectPreviousTask, options: { enabled: notInWorkspace } },
-      { key: "ArrowUp", handler: navHandlers.selectPreviousTask, options: { enabled: notInWorkspace } },
-      {
-        key: "Enter",
-        handler: () => {
-          if (!pageState.inWorkspace && pageState.selectedTask && pageState.selectedTask.status !== "archived") {
-            pageHandlers.handleEnterWorkspace();
-          }
-        },
-        options: { enabled: notInWorkspace && hasTask },
-      },
-      {
-        key: "Escape",
-        handler: pageHandlers.handleCloseTask,
-        options: { enabled: pageState.inWorkspace || hasTask },
-      },
-
-      // Info panel tabs (only in Task List page, not in Workspace)
-      { key: "1", handler: () => pageHandlers.setInfoPanelTab("stats"), options: { enabled: notInWorkspace && hasTask } },
-      { key: "2", handler: () => pageHandlers.setInfoPanelTab("git"), options: { enabled: notInWorkspace && hasTask } },
-      { key: "3", handler: () => pageHandlers.setInfoPanelTab("notes"), options: { enabled: notInWorkspace && hasTask } },
-      { key: "4", handler: () => pageHandlers.setInfoPanelTab("comments"), options: { enabled: notInWorkspace && hasTask } },
-
-      // Actions (work in all modes; xterm focus auto-suppresses via useHotkeys)
-      { key: "n", handler: () => setShowNewTaskDialog(true) },
-      { key: "Space", handler: navHandlers.openContextMenuAtSelectedTask, options: { enabled: hasTask && notInWorkspace } },
-      // Panel shortcuts in the task-LIST view: enter workspace + open panel.
-      // The in-workspace versions (and the git ops c/s/m/b/a/x/Shift+x) are
-      // owned by TaskView itself, which is where the workspace lives — that
-      // way every host (Tasks / Blitz / Work) gets the same behavior with
-      // one registration instead of three copies drifting apart.
-      { key: "r", handler: () => handleAddPanelFromInfo("review"), options: { enabled: hasTask && isActive && notInWorkspace } },
-      { key: "e", handler: () => handleAddPanelFromInfo("editor"), options: { enabled: hasTask && isActive && notInWorkspace } },
-      { key: "i", handler: () => handleAddPanelFromInfo("chat"), options: { enabled: hasTask && isActive && notInWorkspace } },
-      { key: "t", handler: () => handleAddPanelFromInfo("terminal"), options: { enabled: hasTask && isActive && notInWorkspace } },
-
-      // Search
-      {
-        key: "/",
-        handler: () => searchInputRef.current?.focus(),
-        options: { enabled: notInWorkspace },
-      },
-
-    ],
-    [
-      navHandlers, pageHandlers, opsHandlers, handleAddPanel, handleAddPanelFromInfo, refreshSelectedProject,
-      pageState.inWorkspace, pageState.selectedTask, hasTask, isActive, isArchived, canOperate, notInWorkspace,
-    ]
+  // Navigation / task-list commands (catalog: tasks scope)
+  const enabledTask = useCallback(() => hasTask, [hasTask]);
+  const enabledOpenWorkspace = useCallback(
+    () => !!pageState.selectedTask && pageState.selectedTask.status !== "archived",
+    [pageState.selectedTask],
   );
+
+  useCommand("task.selectNext", navHandlers.selectNextTask, [navHandlers]);
+  useCommand("task.selectPrevious", navHandlers.selectPreviousTask, [navHandlers]);
+  useCommand(
+    "task.open",
+    () => {
+      if (!pageState.inWorkspace && pageState.selectedTask && pageState.selectedTask.status !== "archived") {
+        pageHandlers.handleEnterWorkspace();
+      }
+    },
+    { enabled: enabledOpenWorkspace },
+    [pageState.inWorkspace, pageState.selectedTask, pageHandlers, enabledOpenWorkspace],
+  );
+  useCommand("task.new", () => setShowNewTaskDialog(true), []);
+
+  // Publish taskSelected for the catalog (palette.task.* etc.). Last-write
+  // wins between TasksPage and BlitzPage — fine since both reflect the same
+  // semantic "user has a task highlighted somewhere".
+  useContextKey("taskSelected", !!pageState.selectedTask);
+
+  useCommand(
+    "task.contextMenu",
+    navHandlers.openContextMenuAtSelectedTask,
+    { enabled: enabledTask },
+    [navHandlers, enabledTask],
+  );
+  useCommand(
+    "task.search",
+    () => searchInputRef.current?.focus(),
+    [],
+  );
+
+  // Task lifecycle commands (catalog: workspace scope) — handlers come from
+  // useTaskOperations. Gated by whether the operation makes sense for the
+  // currently selected task. `task.duplicate` is not implemented (no API);
+  // skipped here so it remains in the catalog as "not implemented" rather
+  // than silently no-op.
+  const enabledArchive = useCallback(
+    () => hasTask && !isArchived && canOperate,
+    [hasTask, isArchived, canOperate],
+  );
+  const enabledUnarchive = useCallback(
+    () => hasTask && isArchived,
+    [hasTask, isArchived],
+  );
+  const enabledReset = useCallback(
+    () => hasTask && canOperate && !isStudio,
+    [hasTask, canOperate, isStudio],
+  );
+  const enabledClean = useCallback(
+    () => hasTask,
+    [hasTask],
+  );
+  useCommand("task.rename", opsHandlers.handleRename, { enabled: enabledTask }, [opsHandlers, enabledTask]);
+  useCommand("task.archive", () => { void opsHandlers.handleArchive(); }, { enabled: enabledArchive }, [opsHandlers, enabledArchive]);
+  useCommand("task.unarchive", handleRecover, { enabled: enabledUnarchive }, [handleRecover, enabledUnarchive]);
+  useCommand("task.reset", opsHandlers.handleReset, { enabled: enabledReset }, [opsHandlers, enabledReset]);
+  useCommand("task.clean", opsHandlers.handleClean, { enabled: enabledClean }, [opsHandlers, enabledClean]);
+
+  // Info panel tabs (catalog: tasks scope)
+  useCommand("infotab.stats.show", () => pageHandlers.setInfoPanelTab("stats"), { enabled: enabledTask }, [pageHandlers, enabledTask]);
+  useCommand("infotab.git.show", () => pageHandlers.setInfoPanelTab("git"), { enabled: enabledTask }, [pageHandlers, enabledTask]);
+  useCommand("infotab.notes.show", () => pageHandlers.setInfoPanelTab("notes"), { enabled: enabledTask }, [pageHandlers, enabledTask]);
+  useCommand("infotab.comments.show", () => pageHandlers.setInfoPanelTab("comments"), { enabled: enabledTask }, [pageHandlers, enabledTask]);
+
+  // Panel shortcuts in the task-LIST view: enter workspace + open panel.
+  // The in-workspace versions (and the git ops c/s/m/b/a/x/Shift+x) are
+  // owned by TaskView itself. These are tasks-scoped wrappers that perform
+  // the "enter workspace + open panel" combo when triggered from the list.
+  useDefineCommand({
+    id: "tasks.openPanel.review",
+    name: "Open Review Panel (From List)",
+    category: "Task Navigation",
+    defaultBindings: [{ key: "r" }],
+    scope: "tasks",
+    hidden: true,
+    handler: () => handleAddPanelFromInfo("review"),
+    enabled: () => hasTask && isActive,
+  }, [handleAddPanelFromInfo, hasTask, isActive]);
+  useDefineCommand({
+    id: "tasks.openPanel.editor",
+    name: "Open Editor Panel (From List)",
+    category: "Task Navigation",
+    defaultBindings: [{ key: "e" }],
+    scope: "tasks",
+    hidden: true,
+    handler: () => handleAddPanelFromInfo("editor"),
+    enabled: () => hasTask && isActive,
+  }, [handleAddPanelFromInfo, hasTask, isActive]);
+  useDefineCommand({
+    id: "tasks.openPanel.chat",
+    name: "Open Chat Panel (From List)",
+    category: "Task Navigation",
+    defaultBindings: [{ key: "i" }],
+    scope: "tasks",
+    hidden: true,
+    handler: () => handleAddPanelFromInfo("chat"),
+    enabled: () => hasTask && isActive,
+  }, [handleAddPanelFromInfo, hasTask, isActive]);
+  useDefineCommand({
+    id: "tasks.openPanel.terminal",
+    name: "Open Terminal Panel (From List)",
+    category: "Task Navigation",
+    defaultBindings: [{ key: "t" }],
+    scope: "tasks",
+    hidden: true,
+    handler: () => handleAddPanelFromInfo("terminal"),
+    enabled: () => hasTask && isActive,
+  }, [handleAddPanelFromInfo, hasTask, isActive]);
+
+  // Close-task: Escape in workspace OR with a task selected.
+  // The catalog's `task.close` is in workspace scope only; we register a
+  // tasks-scoped variant so Escape clears the selection in list view too.
+  useDefineCommand({
+    id: "tasks.escape",
+    name: "Close Workspace / Clear Selection",
+    category: "Task Navigation",
+    defaultBindings: [{ key: "Escape" }],
+    scope: "tasks",
+    hidden: true,
+    handler: pageHandlers.handleCloseTask,
+    enabled: () => pageState.inWorkspace || hasTask,
+  }, [pageHandlers, pageState.inWorkspace, hasTask]);
+
+  // --- Workspace tab switching (Cmd+1-9 / Cmd+Shift+[ ] / Option+Cmd+Up/Down / Cmd+W).
+  // These live in the `workspace` scope (pushed by TaskView) so they only
+  // fire while the user is inside a task workspace.
+  const inWorkspace = pageState.inWorkspace;
+  const isTauri = useMemo(() => !!((window as Window & { __TAURI__?: unknown }).__TAURI__), []);
+
+  const makeTabSelectHandler = useCallback(
+    (idx: number) => () => {
+      const result = taskViewRef.current?.selectTabByIndex(idx) ?? "no_tabs";
+      if (result === "no_tabs" && onNavByIndex) {
+        onNavByIndex(idx);
+      }
+    },
+    [onNavByIndex],
+  );
+  useDefineCommand({
+    id: "workspace.tab.select1",
+    name: "Select Workspace Tab 1",
+    category: "Workspace Tabs",
+    defaultBindings: [{ key: "Mod+1" }],
+    scope: "workspace",
+    hidden: true,
+    passThroughTextInput: true,
+    handler: makeTabSelectHandler(0),
+    enabled: () => inWorkspace,
+  }, [inWorkspace, makeTabSelectHandler]);
+  useDefineCommand({
+    id: "workspace.tab.select2",
+    name: "Select Workspace Tab 2",
+    category: "Workspace Tabs",
+    defaultBindings: [{ key: "Mod+2" }],
+    scope: "workspace",
+    hidden: true,
+    passThroughTextInput: true,
+    handler: makeTabSelectHandler(1),
+    enabled: () => inWorkspace,
+  }, [inWorkspace, makeTabSelectHandler]);
+  useDefineCommand({
+    id: "workspace.tab.select3",
+    name: "Select Workspace Tab 3",
+    category: "Workspace Tabs",
+    defaultBindings: [{ key: "Mod+3" }],
+    scope: "workspace",
+    hidden: true,
+    passThroughTextInput: true,
+    handler: makeTabSelectHandler(2),
+    enabled: () => inWorkspace,
+  }, [inWorkspace, makeTabSelectHandler]);
+  useDefineCommand({
+    id: "workspace.tab.select4",
+    name: "Select Workspace Tab 4",
+    category: "Workspace Tabs",
+    defaultBindings: [{ key: "Mod+4" }],
+    scope: "workspace",
+    hidden: true,
+    passThroughTextInput: true,
+    handler: makeTabSelectHandler(3),
+    enabled: () => inWorkspace,
+  }, [inWorkspace, makeTabSelectHandler]);
+  useDefineCommand({
+    id: "workspace.tab.select5",
+    name: "Select Workspace Tab 5",
+    category: "Workspace Tabs",
+    defaultBindings: [{ key: "Mod+5" }],
+    scope: "workspace",
+    hidden: true,
+    passThroughTextInput: true,
+    handler: makeTabSelectHandler(4),
+    enabled: () => inWorkspace,
+  }, [inWorkspace, makeTabSelectHandler]);
+  useDefineCommand({
+    id: "workspace.tab.select6",
+    name: "Select Workspace Tab 6",
+    category: "Workspace Tabs",
+    defaultBindings: [{ key: "Mod+6" }],
+    scope: "workspace",
+    hidden: true,
+    passThroughTextInput: true,
+    handler: makeTabSelectHandler(5),
+    enabled: () => inWorkspace,
+  }, [inWorkspace, makeTabSelectHandler]);
+  useDefineCommand({
+    id: "workspace.tab.select7",
+    name: "Select Workspace Tab 7",
+    category: "Workspace Tabs",
+    defaultBindings: [{ key: "Mod+7" }],
+    scope: "workspace",
+    hidden: true,
+    passThroughTextInput: true,
+    handler: makeTabSelectHandler(6),
+    enabled: () => inWorkspace,
+  }, [inWorkspace, makeTabSelectHandler]);
+  useDefineCommand({
+    id: "workspace.tab.select8",
+    name: "Select Workspace Tab 8",
+    category: "Workspace Tabs",
+    defaultBindings: [{ key: "Mod+8" }],
+    scope: "workspace",
+    hidden: true,
+    passThroughTextInput: true,
+    handler: makeTabSelectHandler(7),
+    enabled: () => inWorkspace,
+  }, [inWorkspace, makeTabSelectHandler]);
+  useDefineCommand({
+    id: "workspace.tab.select9",
+    name: "Select Workspace Tab 9",
+    category: "Workspace Tabs",
+    defaultBindings: [{ key: "Mod+9" }],
+    scope: "workspace",
+    hidden: true,
+    passThroughTextInput: true,
+    handler: makeTabSelectHandler(8),
+    enabled: () => inWorkspace,
+  }, [inWorkspace, makeTabSelectHandler]);
+
+  useDefineCommand({
+    id: "workspace.tab.next",
+    name: "Next Workspace Tab",
+    category: "Workspace Tabs",
+    defaultBindings: [{ key: "Mod+Shift+]" }],
+    scope: "workspace",
+    hidden: true,
+    handler: () => { taskViewRef.current?.selectAdjacentTab(1); },
+    enabled: () => inWorkspace,
+  }, [inWorkspace]);
+  useDefineCommand({
+    id: "workspace.tab.previous",
+    name: "Previous Workspace Tab",
+    category: "Workspace Tabs",
+    defaultBindings: [{ key: "Mod+Shift+[" }],
+    scope: "workspace",
+    hidden: true,
+    handler: () => { taskViewRef.current?.selectAdjacentTab(-1); },
+    enabled: () => inWorkspace,
+  }, [inWorkspace]);
+
+  useDefineCommand({
+    id: "workspace.nav.cycleNext",
+    name: "Cycle to Next Sidebar Nav Item",
+    category: "Workspace Tabs",
+    defaultBindings: [{ key: "Mod+Alt+ArrowDown" }],
+    scope: "workspace",
+    hidden: true,
+    handler: () => onNavByIndex?.(1, true),
+    enabled: () => inWorkspace && !!onNavByIndex,
+  }, [inWorkspace, onNavByIndex]);
+  useDefineCommand({
+    id: "workspace.nav.cyclePrevious",
+    name: "Cycle to Previous Sidebar Nav Item",
+    category: "Workspace Tabs",
+    defaultBindings: [{ key: "Mod+Alt+ArrowUp" }],
+    scope: "workspace",
+    hidden: true,
+    handler: () => onNavByIndex?.(-1, true),
+    enabled: () => inWorkspace && !!onNavByIndex,
+  }, [inWorkspace, onNavByIndex]);
+
+  // Close active tab: Cmd+W (Tauri) or Alt+W (web).
+  useCommand(
+    "panel.closeActive",
+    () => taskViewRef.current?.closeActiveTab(),
+    { enabled: () => inWorkspace },
+    [inWorkspace],
+  );
+  // Browser builds (non-Tauri) historically supported Alt+W as a fallback
+  // because Cmd+W is owned by the browser tab close.
+  useDefineCommand({
+    id: "workspace.tab.closeAlt",
+    name: "Close Active Tab (Alt+W)",
+    category: "Workspace Tabs",
+    defaultBindings: [{ key: "Alt+w" }],
+    scope: "workspace",
+    hidden: true,
+    handler: () => taskViewRef.current?.closeActiveTab(),
+    enabled: () => inWorkspace && !isTauri,
+  }, [inWorkspace, isTauri]);
+
+  // Suppress unused-binding warnings — these arrays mirror previous useHotkeys deps.
+  void opsHandlers;
+  void handleAddPanel;
+  void refreshSelectedProject;
+  void isArchived;
+  void canOperate;
+  void notInWorkspace;
 
   // Register page-level commands for Cmd+K command palette
   const {
@@ -654,6 +880,7 @@ export function TasksPage({ initialTaskId, initialChatId, initialViewMode, onNav
                   <div className="h-full flex flex-col">
                     <TaskView
                       ref={taskViewRef}
+                      isActive={pageVisible}
                       projectId={selectedProject.id}
                       task={pageState.selectedTask}
                       projectName={selectedProject.name}
@@ -810,6 +1037,7 @@ export function TasksPage({ initialTaskId, initialChatId, initialViewMode, onNav
                 >
                   <TaskView
                     ref={taskViewRef}
+                    isActive={pageVisible}
                     projectId={selectedProject.id}
                     task={pageState.selectedTask}
                     projectName={selectedProject.name}

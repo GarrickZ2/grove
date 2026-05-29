@@ -10,7 +10,6 @@ import { LogoBrand } from "../Layout/LogoBrand";
 import { useNotifications, useCommandPalette } from "../../context";
 import {
   useIsMobile,
-  useHotkeys,
   useTaskPageState,
   useTaskNavigation,
   usePostMergeArchive,
@@ -19,6 +18,7 @@ import {
   useRadioEvents,
   buildCommands,
 } from "../../hooks";
+import { useCommand, useDefineCommand, useKeyboardScope, useContextKey } from "../../keyboard";
 import { RadioConnectDialog } from "./RadioConnectDialog";
 import { useBlitzTasks } from "./useBlitzTasks";
 import { BlitzTaskListItem } from "./BlitzTaskListItem";
@@ -345,29 +345,14 @@ export function BlitzPage({ onSwitchToZen, onNavigate }: BlitzPageProps) {
     };
 
     const handleKeyDown = (e: KeyboardEvent) => {
-      // Only listen for Command key (metaKey), not Control
+      // Visual-only: show the Cmd+1..0 chips on each task row while the
+      // Command key is held. The actual jump bindings are catalog
+      // commands (blitz.task.jump.{1..10}) registered below — keeps the
+      // shortcuts rebindable in Settings.
       if (e.metaKey) {
-        // Add CSS class to body to show shortcuts (no React re-render)
         document.body.classList.add('blitz-command-pressed');
-
-        // Safety net: if every cleanup path fails (rare), drop the class
-        // after 3s anyway so chips don't stay forever.
         if (safetyTimer) clearTimeout(safetyTimer);
         safetyTimer = setTimeout(clearChips, 3000);
-
-        // Handle Command+0-9 for quick navigation
-        if (e.key >= '0' && e.key <= '9') {
-          e.preventDefault();
-          const index = e.key === '0' ? 9 : parseInt(e.key) - 1; // 1->0, 2->1, ..., 0->9
-          if (index < mainListTasks.length) {
-            const taskToSelect = mainListTasks[index];
-            const notif = getTaskNotification(taskToSelect.task.id);
-            if (notif) {
-              dismissNotification(notif.project_id, notif.task_id);
-            }
-            handleSelectTask(taskToSelect);
-          }
-        }
       }
     };
 
@@ -614,72 +599,279 @@ export function BlitzPage({ onSwitchToZen, onNavigate }: BlitzPageProps) {
   const canOperate = isActive;
   const notInWorkspace = !pageState.inWorkspace;
 
-  // Workspace keyboard shortcuts (higher priority than Blitz task selection)
-  // Cmd+1-9: switch panel tabs, Cmd+W / Alt+W: close active tab
-  useEffect(() => {
-    if (!pageState.inWorkspace) return;
-    const isTauri = !!((window as Window & { __TAURI__?: unknown }).__TAURI__);
-    const handler = (e: KeyboardEvent) => {
-      if (e.metaKey && !e.altKey && !e.ctrlKey && e.key >= "1" && e.key <= "9") {
-        e.preventDefault();
-        e.stopImmediatePropagation();
-        taskViewRef.current?.selectTabByIndex(parseInt(e.key) - 1);
-        return;
-      }
-      const isCloseTab = (isTauri && e.metaKey && e.code === "KeyW")
-        || (e.altKey && !e.metaKey && e.code === "KeyW");
-      if (isCloseTab) {
-        e.preventDefault();
-        e.stopImmediatePropagation();
-        taskViewRef.current?.closeActiveTab();
-      }
-    };
-    window.addEventListener("keydown", handler, true);
-    return () => window.removeEventListener("keydown", handler, true);
-  }, [pageState.inWorkspace]);
+  // --- Keyboard scopes & commands ---
+  // Push `tasks` scope while the user is on the Blitz list surface.
+  useKeyboardScope("tasks", !pageState.inWorkspace);
 
-  useHotkeys(
-    [
-      { key: "j", handler: navHandlers.selectNextTask, options: { enabled: notInWorkspace } },
-      { key: "ArrowDown", handler: navHandlers.selectNextTask, options: { enabled: notInWorkspace } },
-      { key: "k", handler: navHandlers.selectPreviousTask, options: { enabled: notInWorkspace } },
-      { key: "ArrowUp", handler: navHandlers.selectPreviousTask, options: { enabled: notInWorkspace } },
-      {
-        key: "Enter",
-        handler: () => {
-          if (!pageState.inWorkspace && selectedTask && selectedTask.status !== "archived") {
-            pageHandlers.handleEnterWorkspace();
-          }
-        },
-        options: { enabled: notInWorkspace && hasTask },
-      },
-      { key: "Escape", handler: handleCloseTask, options: { enabled: pageState.inWorkspace || hasTask } },
+  // Publish taskSelected for the catalog (palette.task.* etc.). Mirrors the
+  // same key TasksPage publishes; last-write wins, both reflect the same
+  // semantic "user has a task highlighted somewhere".
+  useContextKey("taskSelected", hasTask);
 
-      // Info panel tabs (only in Task List page)
-      { key: "1", handler: () => pageHandlers.setInfoPanelTab("stats"), options: { enabled: notInWorkspace && hasTask } },
-      { key: "2", handler: () => pageHandlers.setInfoPanelTab("git"), options: { enabled: notInWorkspace && hasTask } },
-      { key: "3", handler: () => pageHandlers.setInfoPanelTab("notes"), options: { enabled: notInWorkspace && hasTask } },
-      { key: "4", handler: () => pageHandlers.setInfoPanelTab("comments"), options: { enabled: notInWorkspace && hasTask } },
-
-      // Actions (no 'n' for new task in Blitz)
-      { key: "Space", handler: navHandlers.openContextMenuAtSelectedTask, options: { enabled: hasTask && notInWorkspace } },
-      // Panel shortcuts in the task-LIST view: enter workspace + open panel.
-      // In-workspace panel + git op shortcuts are registered by TaskView
-      // itself so every host page has consistent behavior.
-      { key: "r", handler: () => handleAddPanelFromInfo("review"), options: { enabled: hasTask && isActive && notInWorkspace } },
-      { key: "e", handler: () => handleAddPanelFromInfo("editor"), options: { enabled: hasTask && isActive && notInWorkspace } },
-      { key: "i", handler: () => handleAddPanelFromInfo("chat"), options: { enabled: hasTask && isActive && notInWorkspace } },
-      { key: "t", handler: () => handleAddPanelFromInfo("terminal"), options: { enabled: hasTask && isActive && notInWorkspace } },
-
-      // Search
-      { key: "/", handler: () => searchInputRef.current?.focus(), options: { enabled: notInWorkspace } },
-
-    ],
-    [
-      navHandlers, pageHandlers, opsHandlers, handleCloseTask, handleAddPanelFromInfo, refresh,
-      pageState.inWorkspace, pageState.showHelp, selectedTask, hasTask, isActive, canOperate, notInWorkspace,
-    ]
+  const enabledTask = useCallback(() => hasTask, [hasTask]);
+  const enabledOpenWorkspace = useCallback(
+    () => !!selectedTask && selectedTask.status !== "archived",
+    [selectedTask],
   );
+
+  useCommand("task.selectNext", navHandlers.selectNextTask, [navHandlers]);
+  useCommand("task.selectPrevious", navHandlers.selectPreviousTask, [navHandlers]);
+  useCommand(
+    "task.open",
+    () => {
+      if (!pageState.inWorkspace && selectedTask && selectedTask.status !== "archived") {
+        pageHandlers.handleEnterWorkspace();
+      }
+    },
+    { enabled: enabledOpenWorkspace },
+    [pageState.inWorkspace, selectedTask, pageHandlers, enabledOpenWorkspace],
+  );
+  useCommand(
+    "task.contextMenu",
+    navHandlers.openContextMenuAtSelectedTask,
+    { enabled: enabledTask },
+    [navHandlers, enabledTask],
+  );
+  useCommand("task.search", () => searchInputRef.current?.focus(), []);
+
+  // Task lifecycle commands (catalog: workspace scope) — Blitz doesn't show
+  // archived tasks so task.unarchive isn't wired here; Zen owns it. Studio
+  // tasks have no clean/reset semantics; gated via isStudioTask.
+  const isArchived = selectedTask?.status === "archived";
+  const enabledArchiveCmd = useCallback(
+    () => hasTask && !isArchived && canOperate,
+    [hasTask, isArchived, canOperate],
+  );
+  const enabledResetCmd = useCallback(
+    () => hasTask && canOperate && !isStudioTask,
+    [hasTask, canOperate, isStudioTask],
+  );
+  const enabledCleanCmd = useCallback(
+    () => hasTask && !isStudioTask,
+    [hasTask, isStudioTask],
+  );
+  useCommand("task.rename", opsHandlers.handleRename, { enabled: enabledTask }, [opsHandlers, enabledTask]);
+  useCommand("task.archive", () => { void opsHandlers.handleArchive(); }, { enabled: enabledArchiveCmd }, [opsHandlers, enabledArchiveCmd]);
+  useCommand("task.reset", opsHandlers.handleReset, { enabled: enabledResetCmd }, [opsHandlers, enabledResetCmd]);
+  useCommand("task.clean", opsHandlers.handleClean, { enabled: enabledCleanCmd }, [opsHandlers, enabledCleanCmd]);
+
+  // Cmd+1..0 → jump to the Nth main-list task. The body class for the
+  // shortcut hint chips is still maintained by the raw keydown/keyup
+  // listener above (visual hover state, not a binding); the jump action
+  // itself is now catalog-driven via blitz.task.jump1..10 (Mod+1..0).
+  const jumpToTaskAt = useCallback((index: number) => {
+    if (index >= mainListTasks.length) return;
+    const target = mainListTasks[index];
+    const notif = getTaskNotification(target.task.id);
+    if (notif) dismissNotification(notif.project_id, notif.task_id);
+    handleSelectTask(target);
+  }, [mainListTasks, getTaskNotification, dismissNotification, handleSelectTask]);
+  useCommand("blitz.task.jump1",  () => jumpToTaskAt(0), [jumpToTaskAt]);
+  useCommand("blitz.task.jump2",  () => jumpToTaskAt(1), [jumpToTaskAt]);
+  useCommand("blitz.task.jump3",  () => jumpToTaskAt(2), [jumpToTaskAt]);
+  useCommand("blitz.task.jump4",  () => jumpToTaskAt(3), [jumpToTaskAt]);
+  useCommand("blitz.task.jump5",  () => jumpToTaskAt(4), [jumpToTaskAt]);
+  useCommand("blitz.task.jump6",  () => jumpToTaskAt(5), [jumpToTaskAt]);
+  useCommand("blitz.task.jump7",  () => jumpToTaskAt(6), [jumpToTaskAt]);
+  useCommand("blitz.task.jump8",  () => jumpToTaskAt(7), [jumpToTaskAt]);
+  useCommand("blitz.task.jump9",  () => jumpToTaskAt(8), [jumpToTaskAt]);
+  useCommand("blitz.task.jump10", () => jumpToTaskAt(9), [jumpToTaskAt]);
+
+  // Info panel tabs (catalog: tasks scope)
+  useCommand("infotab.stats.show", () => pageHandlers.setInfoPanelTab("stats"), { enabled: enabledTask }, [pageHandlers, enabledTask]);
+  useCommand("infotab.git.show", () => pageHandlers.setInfoPanelTab("git"), { enabled: enabledTask }, [pageHandlers, enabledTask]);
+  useCommand("infotab.notes.show", () => pageHandlers.setInfoPanelTab("notes"), { enabled: enabledTask }, [pageHandlers, enabledTask]);
+  useCommand("infotab.comments.show", () => pageHandlers.setInfoPanelTab("comments"), { enabled: enabledTask }, [pageHandlers, enabledTask]);
+
+  // Panel shortcuts in the task-LIST view: enter workspace + open panel.
+  // Tasks-scope inline commands so they don't collide with TaskView's
+  // workspace-scope panel.X.open handlers.
+  useDefineCommand({
+    id: "tasks.openPanel.review",
+    name: "Open Review Panel (From List)",
+    category: "Task Navigation",
+    defaultBindings: [{ key: "r" }],
+    scope: "tasks",
+    hidden: true,
+    handler: () => handleAddPanelFromInfo("review"),
+    enabled: () => hasTask && isActive,
+  }, [handleAddPanelFromInfo, hasTask, isActive]);
+  useDefineCommand({
+    id: "tasks.openPanel.editor",
+    name: "Open Editor Panel (From List)",
+    category: "Task Navigation",
+    defaultBindings: [{ key: "e" }],
+    scope: "tasks",
+    hidden: true,
+    handler: () => handleAddPanelFromInfo("editor"),
+    enabled: () => hasTask && isActive,
+  }, [handleAddPanelFromInfo, hasTask, isActive]);
+  useDefineCommand({
+    id: "tasks.openPanel.chat",
+    name: "Open Chat Panel (From List)",
+    category: "Task Navigation",
+    defaultBindings: [{ key: "i" }],
+    scope: "tasks",
+    hidden: true,
+    handler: () => handleAddPanelFromInfo("chat"),
+    enabled: () => hasTask && isActive,
+  }, [handleAddPanelFromInfo, hasTask, isActive]);
+  useDefineCommand({
+    id: "tasks.openPanel.terminal",
+    name: "Open Terminal Panel (From List)",
+    category: "Task Navigation",
+    defaultBindings: [{ key: "t" }],
+    scope: "tasks",
+    hidden: true,
+    handler: () => handleAddPanelFromInfo("terminal"),
+    enabled: () => hasTask && isActive,
+  }, [handleAddPanelFromInfo, hasTask, isActive]);
+
+  // Escape: close workspace OR clear selection.
+  useDefineCommand({
+    id: "tasks.escape",
+    name: "Close Workspace / Clear Selection",
+    category: "Task Navigation",
+    defaultBindings: [{ key: "Escape" }],
+    scope: "tasks",
+    hidden: true,
+    handler: handleCloseTask,
+    enabled: () => pageState.inWorkspace || hasTask,
+  }, [handleCloseTask, pageState.inWorkspace, hasTask]);
+
+  // --- Workspace tab switching (Cmd+1-9, Cmd+W).
+  const inWorkspace = pageState.inWorkspace;
+  const isTauri = useMemo(() => !!((window as Window & { __TAURI__?: unknown }).__TAURI__), []);
+
+  const makeTabSelectHandler = useCallback(
+    (idx: number) => () => {
+      taskViewRef.current?.selectTabByIndex(idx);
+    },
+    [],
+  );
+  useDefineCommand({
+    id: "blitz.workspace.tab.select1",
+    name: "Select Workspace Tab 1",
+    category: "Workspace Tabs",
+    defaultBindings: [{ key: "Mod+1" }],
+    scope: "workspace",
+    hidden: true,
+    passThroughTextInput: true,
+    handler: makeTabSelectHandler(0),
+    enabled: () => inWorkspace,
+  }, [inWorkspace, makeTabSelectHandler]);
+  useDefineCommand({
+    id: "blitz.workspace.tab.select2",
+    name: "Select Workspace Tab 2",
+    category: "Workspace Tabs",
+    defaultBindings: [{ key: "Mod+2" }],
+    scope: "workspace",
+    hidden: true,
+    passThroughTextInput: true,
+    handler: makeTabSelectHandler(1),
+    enabled: () => inWorkspace,
+  }, [inWorkspace, makeTabSelectHandler]);
+  useDefineCommand({
+    id: "blitz.workspace.tab.select3",
+    name: "Select Workspace Tab 3",
+    category: "Workspace Tabs",
+    defaultBindings: [{ key: "Mod+3" }],
+    scope: "workspace",
+    hidden: true,
+    passThroughTextInput: true,
+    handler: makeTabSelectHandler(2),
+    enabled: () => inWorkspace,
+  }, [inWorkspace, makeTabSelectHandler]);
+  useDefineCommand({
+    id: "blitz.workspace.tab.select4",
+    name: "Select Workspace Tab 4",
+    category: "Workspace Tabs",
+    defaultBindings: [{ key: "Mod+4" }],
+    scope: "workspace",
+    hidden: true,
+    passThroughTextInput: true,
+    handler: makeTabSelectHandler(3),
+    enabled: () => inWorkspace,
+  }, [inWorkspace, makeTabSelectHandler]);
+  useDefineCommand({
+    id: "blitz.workspace.tab.select5",
+    name: "Select Workspace Tab 5",
+    category: "Workspace Tabs",
+    defaultBindings: [{ key: "Mod+5" }],
+    scope: "workspace",
+    hidden: true,
+    passThroughTextInput: true,
+    handler: makeTabSelectHandler(4),
+    enabled: () => inWorkspace,
+  }, [inWorkspace, makeTabSelectHandler]);
+  useDefineCommand({
+    id: "blitz.workspace.tab.select6",
+    name: "Select Workspace Tab 6",
+    category: "Workspace Tabs",
+    defaultBindings: [{ key: "Mod+6" }],
+    scope: "workspace",
+    hidden: true,
+    passThroughTextInput: true,
+    handler: makeTabSelectHandler(5),
+    enabled: () => inWorkspace,
+  }, [inWorkspace, makeTabSelectHandler]);
+  useDefineCommand({
+    id: "blitz.workspace.tab.select7",
+    name: "Select Workspace Tab 7",
+    category: "Workspace Tabs",
+    defaultBindings: [{ key: "Mod+7" }],
+    scope: "workspace",
+    hidden: true,
+    passThroughTextInput: true,
+    handler: makeTabSelectHandler(6),
+    enabled: () => inWorkspace,
+  }, [inWorkspace, makeTabSelectHandler]);
+  useDefineCommand({
+    id: "blitz.workspace.tab.select8",
+    name: "Select Workspace Tab 8",
+    category: "Workspace Tabs",
+    defaultBindings: [{ key: "Mod+8" }],
+    scope: "workspace",
+    hidden: true,
+    passThroughTextInput: true,
+    handler: makeTabSelectHandler(7),
+    enabled: () => inWorkspace,
+  }, [inWorkspace, makeTabSelectHandler]);
+  useDefineCommand({
+    id: "blitz.workspace.tab.select9",
+    name: "Select Workspace Tab 9",
+    category: "Workspace Tabs",
+    defaultBindings: [{ key: "Mod+9" }],
+    scope: "workspace",
+    hidden: true,
+    passThroughTextInput: true,
+    handler: makeTabSelectHandler(8),
+    enabled: () => inWorkspace,
+  }, [inWorkspace, makeTabSelectHandler]);
+
+  // Close active tab. Cmd+W in Tauri; Alt+W as a browser fallback.
+  useCommand(
+    "panel.closeActive",
+    () => taskViewRef.current?.closeActiveTab(),
+    { enabled: () => inWorkspace },
+    [inWorkspace],
+  );
+  useDefineCommand({
+    id: "blitz.workspace.tab.closeAlt",
+    name: "Close Active Tab (Alt+W)",
+    category: "Workspace Tabs",
+    defaultBindings: [{ key: "Alt+w" }],
+    scope: "workspace",
+    hidden: true,
+    handler: () => taskViewRef.current?.closeActiveTab(),
+    enabled: () => inWorkspace && !isTauri,
+  }, [inWorkspace, isTauri]);
+
+  // Suppress unused-binding warnings — these mirror prior useHotkeys deps.
+  void opsHandlers;
+  void refresh;
+  void canOperate;
+  void notInWorkspace;
 
   // Register page-level commands for Cmd+K command palette
   const {

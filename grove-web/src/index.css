@@ -22,6 +22,19 @@
   box-sizing: border-box;
 }
 
+/* TaskView "fullscreen" mode (toggled by TasksPage when the user fires
+ * workspace.fullscreen.toggle) — hide the sidebar and let the floating
+ * main card take the whole viewport. Without this, fullscreen only
+ * hid the TaskView header but kept the sidebar visible, which squeezed
+ * the workspace and made the UI look broken. */
+body.grove-workspace-fullscreen [data-grove-sidebar] {
+  display: none !important;
+}
+body.grove-workspace-fullscreen main {
+  left: 0 !important;
+  inset-inline-start: 0 !important;
+}
+
 button {
   user-select: none;
   -webkit-user-select: none;

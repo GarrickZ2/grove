@@ -556,14 +556,14 @@ export function TrayPopover() {
           ) : (
             <>
               {showPerms && permList.length > 0 ? (
-                <Panel tone="warning">
+                <Panel tone="warning" className="shrink-0">
                   <ChipHeader
                     tone="warning"
                     icon={<Zap size={11} />}
                     label="Needs you"
                     count={permList.length}
                   />
-                  <div className="flex flex-col">
+                  <div className="flex flex-col overflow-y-auto overflow-x-hidden max-h-[240px]">
                     {permList.map((c) => (
                       <PermissionCard
                         key={c.chat_id}
@@ -578,14 +578,14 @@ export function TrayPopover() {
               ) : null}
 
               {showRunning && runList.length > 0 ? (
-                <Panel tone="highlight">
+                <Panel tone="highlight" className="shrink-0">
                   <ChipHeader
                     tone="highlight"
                     pulseDot
                     label="Running"
                     count={runList.length}
                   />
-                  <div className="flex flex-col">
+                  <div className="flex flex-col overflow-y-auto overflow-x-hidden max-h-[240px]">
                     {runList.map((c) => (
                       <RunningCard
                         key={c.chat_id}
@@ -599,10 +599,10 @@ export function TrayPopover() {
               ) : null}
 
               {showDone && doneList.length > 0 ? (
-                <Panel tone="muted">
+                <Panel tone="muted" className="flex flex-col min-h-0 shrink">
                   <button
                     onClick={() => setRecentOpen((v) => !v)}
-                    className="flex w-full items-center gap-1.5 px-2 pt-2 pb-1.5 text-left"
+                    className="flex w-full items-center gap-1.5 px-2 pt-2 pb-1.5 text-left shrink-0"
                   >
                     <ChevronDown
                       size={11}
@@ -633,9 +633,9 @@ export function TrayPopover() {
                         animate={{ opacity: 1, height: "auto" }}
                         exit={{ opacity: 0, height: 0 }}
                         transition={{ duration: 0.18, ease: [0.4, 0, 0.2, 1] }}
-                        className="overflow-hidden"
+                        className="overflow-hidden flex-1 min-h-0 flex flex-col"
                       >
-                        <div className="flex flex-col">
+                        <div className="flex flex-col overflow-y-auto overflow-x-hidden max-h-[240px] flex-1 min-h-0">
                           {doneList.map((c) => (
                             <DoneRow
                               key={c.chat_id}
@@ -680,7 +680,15 @@ const TONE_VAR: Record<Tone, string> = {
   muted: "var(--color-text-muted)",
 };
 
-function Panel({ tone, children }: { tone: Tone; children: React.ReactNode }) {
+function Panel({
+  tone,
+  className,
+  children,
+}: {
+  tone: Tone;
+  className?: string;
+  children: React.ReactNode;
+}) {
   // Translucent panel: sits on the popover's bg-secondary base. Subtle
   // tone-tinted hairline border + soft inner background gives the
   // "glass card" silhouette without depending on backdrop-filter (which
@@ -688,7 +696,7 @@ function Panel({ tone, children }: { tone: Tone; children: React.ReactNode }) {
   const accent = TONE_VAR[tone];
   return (
     <div
-      className="overflow-hidden border"
+      className={`overflow-hidden border ${className || ""}`}
       style={{
         background: `color-mix(in srgb, ${accent} 4%, var(--color-bg-tertiary))`,
         borderColor: `color-mix(in srgb, ${accent} 22%, var(--color-border))`,

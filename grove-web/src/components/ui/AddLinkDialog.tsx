@@ -9,6 +9,7 @@ import { Link as LinkIcon, Loader2, X, Globe } from "lucide-react";
 import { fetchUrlMetadata, type ApiError } from "../../api";
 import { listExtensionTabs, type ExtensionTab } from "../../api/extension";
 import { hostnameOf } from "./linkFile";
+import { useCommand, useKeyboardScope } from "../../keyboard";
 
 interface AddLinkDialogProps {
   open: boolean;
@@ -228,8 +229,6 @@ export function AddLinkDialog({ open, title = "Add Link", initial, submitLabel, 
     });
   }, [extensionTabs, url]);
 
-  if (!open) return null;
-
   const canSubmit =
     /^https?:\/\/\S+$/i.test(url.trim()) && name.trim().length > 0 && !submitting;
 
@@ -263,26 +262,23 @@ export function AddLinkDialog({ open, title = "Add Link", initial, submitLabel, 
     if (succeeded) onClose();
   };
 
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === "Escape") {
-      e.preventDefault();
-      onClose();
-      return;
-    }
-    if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
-      e.preventDefault();
-      void handleSubmit();
-    }
-  };
+  // Catalog handlers register inside <AddLinkDialogBindings> only while
+  // open=true. Multiple AddLinkDialog wrappers can coexist (sidebar +
+  // panel + task-level), all but one with open=false; a top-level
+  // useCommand would otherwise overwrite each other on every re-render —
+  // only the last-mounted dialog's binding would be live.
+  useKeyboardScope("dialog.addLink", open);
+
+  if (!open) return null;
 
   return (
     <div
       className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/40"
       onClick={onClose}
     >
+      <AddLinkDialogBindings onClose={onClose} onSubmit={handleSubmit} />
       <div
         onClick={(e) => e.stopPropagation()}
-        onKeyDown={handleKeyDown}
         data-hotkeys-dialog="true"
         className="w-[min(92vw,480px)] rounded-lg shadow-2xl"
         style={{
@@ -484,4 +480,24 @@ export function AddLinkDialog({ open, title = "Add Link", initial, submitLabel, 
       </div>
     </div>
   );
+}
+
+// Registers the dialog.addLink.* catalog handlers only while the dialog is
+// actually open. See top-of-component comment for the multi-mount rationale.
+function AddLinkDialogBindings({
+  onClose,
+  onSubmit,
+}: {
+  onClose: () => void;
+  onSubmit: () => Promise<void>;
+}) {
+  useCommand("dialog.addLink.close", onClose, [onClose]);
+  useCommand(
+    "dialog.addLink.submit",
+    () => {
+      void onSubmit();
+    },
+    [onSubmit],
+  );
+  return null;
 }

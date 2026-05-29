@@ -10,6 +10,7 @@ import GroupSelector from "./GroupSelector";
 import ChannelGrid from "./ChannelGrid";
 import InfoDisplay from "./InfoDisplay";
 import TranscriptDialog from "./TranscriptDialog";
+import { useCommand, useContextKey, useKeyboardScope } from "../../keyboard";
 
 type TargetModeType = "chat" | "terminal";
 
@@ -465,32 +466,33 @@ export function RadioPage() {
     setPendingPrompt(null);
   };
 
-  // ── Volume key support (works on physical keyboards / tablets, not iOS Safari) ──
-
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (!state.currentGroupId || state.currentPosition === null) return;
-
-      if (e.key === "AudioVolumeUp") {
-        e.preventDefault();
-        actions.switchChat(
-          state.currentGroupId,
-          state.currentPosition,
-          "prev",
-        );
-      } else if (e.key === "AudioVolumeDown") {
-        e.preventDefault();
-        actions.switchChat(
-          state.currentGroupId,
-          state.currentPosition,
-          "next",
-        );
+  // ── Volume key support (works on physical keyboards / tablets, not
+  //    iOS Safari) ─ routed through the catalog so the bindings are
+  //    rebindable in Settings (radio.chat.prev / radio.chat.next).
+  useKeyboardScope("radio");
+  const radioActive =
+    !!state.currentGroupId && state.currentPosition !== null;
+  useContextKey("radioActive", radioActive);
+  useCommand(
+    "radio.chat.prev",
+    () => {
+      if (state.currentGroupId && state.currentPosition !== null) {
+        actions.switchChat(state.currentGroupId, state.currentPosition, "prev");
       }
-    };
-
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [state.currentGroupId, state.currentPosition, actions]);
+    },
+    { enabled: () => radioActive },
+    [state.currentGroupId, state.currentPosition, actions, radioActive],
+  );
+  useCommand(
+    "radio.chat.next",
+    () => {
+      if (state.currentGroupId && state.currentPosition !== null) {
+        actions.switchChat(state.currentGroupId, state.currentPosition, "next");
+      }
+    },
+    { enabled: () => radioActive },
+    [state.currentGroupId, state.currentPosition, actions, radioActive],
+  );
 
   // ── Render ────────────────────────────────────────────────────────────────
 

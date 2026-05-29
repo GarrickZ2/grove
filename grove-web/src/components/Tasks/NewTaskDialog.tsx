@@ -5,6 +5,7 @@ import { DialogShell } from "../ui/DialogShell";
 import { useProject } from "../../context";
 import { previewBranchName } from "../../utils/branch";
 import { getBranches } from "../../api";
+import { useCommand, useContextKey, useKeyboardScope } from "../../keyboard";
 
 interface NewTaskDialogProps {
   isOpen: boolean;
@@ -153,34 +154,41 @@ export function NewTaskDialog({ isOpen, onClose, onCreate, isLoading, externalEr
     onClose();
   };
 
-  // Keyboard shortcuts: Escape to close, Alt+Enter to submit
-  useEffect(() => {
-    if (!isOpen) return;
-    const handler = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        e.preventDefault();
-        if (showBranchDropdown) {
-          setShowBranchDropdown(false);
-        } else {
-          handleClose();
-        }
-      } else if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
-        e.preventDefault();
-        handleSubmit();
-      }
-    };
-    window.addEventListener("keydown", handler);
-    return () => window.removeEventListener("keydown", handler);
-  });
-
   // Detect empty repo (no commits → currentBranch is "unknown") — Studio always valid
   const hasValidBranch = isStudio || (!!selectedProject?.currentBranch && selectedProject.currentBranch !== "unknown");
+
+  // Keyboard shortcuts: Escape to close (or close branch dropdown first), Cmd/Ctrl+Enter to submit.
+  // The catalog binding for dialog.newTask.submit gates on `taskNameValid`. Original behavior
+  // surfaced the "Task name is required" inline error on empty-name submit, so we publish the
+  // context key as just "dialog is open" — handleSubmit itself does the validation + error.
+  //
+  // Catalog handlers register inside <NewTaskDialogBindings>, which only
+  // mounts while isOpen=true. Multiple NewTaskDialog wrappers can be
+  // mounted simultaneously (all but one with isOpen=false); a top-level
+  // useCommand would otherwise overwrite each other on every re-render —
+  // only the last-mounted dialog's binding would be live.
+  useKeyboardScope("dialog.newTask", isOpen);
+  useContextKey("taskNameValid", isOpen);
+
+  const handleCancelOrCloseDropdown = () => {
+    if (showBranchDropdown) {
+      setShowBranchDropdown(false);
+    } else {
+      handleClose();
+    }
+  };
 
   // Generate branch preview
   const branchPreview = previewBranchName(taskName);
 
   return (
     <DialogShell isOpen={isOpen} onClose={handleClose}>
+      {isOpen && (
+        <NewTaskDialogBindings
+          onClose={handleCancelOrCloseDropdown}
+          onSubmit={handleSubmit}
+        />
+      )}
       <div className="bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-xl shadow-xl overflow-hidden">
               {/* Header */}
               <div className="flex items-center justify-between px-5 py-4 border-b border-[var(--color-border)]">
@@ -398,4 +406,24 @@ export function NewTaskDialog({ isOpen, onClose, onCreate, isLoading, externalEr
       </div>
     </DialogShell>
   );
+}
+
+// Registers the dialog.newTask.* catalog handlers only while the dialog is
+// actually open. See top-of-component comment for the multi-mount rationale.
+function NewTaskDialogBindings({
+  onClose,
+  onSubmit,
+}: {
+  onClose: () => void;
+  onSubmit: () => Promise<void>;
+}) {
+  useCommand("dialog.newTask.close", onClose, [onClose]);
+  useCommand(
+    "dialog.newTask.submit",
+    () => {
+      void onSubmit();
+    },
+    [onSubmit],
+  );
+  return null;
 }

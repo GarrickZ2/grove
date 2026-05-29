@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { X, Download, CheckCircle2, Loader2, Tag, Settings2, Wrench, Scale, User, Monitor } from "lucide-react";
 import { Button } from "../ui";
@@ -6,6 +6,7 @@ import { MarkdownRenderer } from "../ui/MarkdownRenderer";
 import { InstallDialog } from "./InstallDialog";
 import { getSkillDetail } from "../../api";
 import type { SkillDetail, AgentDef, InstalledSkill } from "../../api";
+import { useCommand, useContextKey, useDefineCommand, useKeyboardScope } from "../../keyboard";
 
 interface SkillDetailPanelProps {
   selectedSkill: { source: string; name: string } | null;
@@ -37,15 +38,26 @@ export function SkillDetailPanel({ selectedSkill, agents, installed, projectPath
     return () => { cancelled = true; };
   }, [selectedSkill]);
 
-  // Escape key to close
-  useEffect(() => {
-    if (!selectedSkill) return;
-    const handler = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && !showInstall) { e.preventDefault(); onClose(); }
-    };
-    window.addEventListener("keydown", handler);
-    return () => window.removeEventListener("keydown", handler);
-  }, [selectedSkill, showInstall, onClose]);
+  // Escape key to close — Scoped Command Registry. Skip when InstallDialog
+  // is open so the dialog handles its own Escape first.
+  const isOpen = !!selectedSkill;
+  const handleClose = useCallback(() => {
+    if (showInstall) return;
+    onClose();
+  }, [showInstall, onClose]);
+  useKeyboardScope("skills.detail", isOpen);
+  useDefineCommand(
+    {
+      id: "skills.detail.close",
+      name: "Close Skill Details",
+      category: "Skills",
+      defaultBindings: [{ key: "Escape" }],
+      scope: "skills.detail",
+      passThroughTextInput: true,
+      handler: handleClose,
+    },
+    [handleClose],
+  );
 
   const rawInstalledRecord = detail ? installed.find((i) => i.repo_key === detail.repo_key && i.repo_path === detail.repo_path) : null;
   // Filter agents to only show those relevant to current project context
@@ -60,6 +72,47 @@ export function SkillDetailPanel({ selectedSkill, agents, installed, projectPath
     ? new Set(installedRecord.agents.map((a) => a.agent_id)).size
     : 0;
   const hasInstall = uniqueInstalledCount > 0;
+
+  // Context keys exposed to when-expressions on the catalog-declared
+  // commands below. `skillSelected` mirrors whether the panel currently has
+  // a skill detail in view; `skillAvailable` / `skillInstalled` mirror the
+  // primary action gate (the install/uninstall buttons rendered at the
+  // bottom of the drawer).
+  useContextKey("skillSelected", !!detail);
+  useContextKey("skillAvailable", !!detail && !hasInstall);
+  useContextKey("skillInstalled", !!detail && hasInstall);
+
+  // Catalog-declared command handlers. Install / Uninstall both open the
+  // InstallDialog (which manages per-agent install/uninstall); gates mirror
+  // the primary action button shown at the bottom of the drawer:
+  // - `skills.skill.install`  available when a skill is loaded and not yet installed.
+  // - `skills.skill.uninstall` available when a skill is loaded and at least one
+  //   agent has it installed.
+  // - `skills.skill.details`  opens / focuses the detail panel; here it's a no-op
+  //   because the panel is already shown for the selected skill — we still register
+  //   it so the palette can confirm the skill is "currently viewed".
+  const openInstall = useCallback(() => {
+    if (!detail) return;
+    setShowInstall(true);
+  }, [detail]);
+  useCommand(
+    "skills.skill.install",
+    openInstall,
+    { enabled: () => !!detail && !hasInstall },
+    [openInstall, detail, hasInstall],
+  );
+  useCommand(
+    "skills.skill.uninstall",
+    openInstall,
+    { enabled: () => !!detail && hasInstall },
+    [openInstall, detail, hasInstall],
+  );
+  useCommand(
+    "skills.skill.details",
+    () => { /* panel is already visible for the selected skill */ },
+    { enabled: () => !!detail },
+    [detail],
+  );
 
   /** Parse allowed-tools: comma-delimited or space-delimited (respecting parens) */
   const parseAllowedTools = (raw: string): string[] => {

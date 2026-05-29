@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import type { PreviewCommentMarker, RenderFullProps } from './previewRenderers';
 import type { PreviewCommentLocator } from '../../context';
+import { useDefineCommand, useKeyboardScope } from '../../keyboard';
 
 interface ResolvedMarker {
   id: string;
@@ -234,42 +235,50 @@ export function PreviewCommentHost({ previewComment, children }: Props) {
     };
   }, []);
 
+  // Drag state lives in a ref so both the mouse-listener effect (which
+  // mutates startBlock / lastBlocks) and the Escape command handler
+  // (which has to reset them) share the same instance without re-running
+  // the effect whenever drag state changes.
+  const dragStateRef = useRef<{ startBlock: Element | null; lastBlocks: Element[] }>({
+    startBlock: null,
+    lastBlocks: [],
+  });
+
   // Comment mode listeners
   useEffect(() => {
     const content = contentRef.current;
     if (!content || !enabled || !previewId) return;
 
-    let startBlock: Element | null = null;
-    let lastBlocks: Element[] = [];
+    const drag = dragStateRef.current;
 
     const resetDrag = () => {
-      startBlock = null;
-      lastBlocks = [];
+      drag.startBlock = null;
+      drag.lastBlocks = [];
     };
 
     const onMouseDown = (e: MouseEvent) => {
       const el = pickBlock(e.target as Element, content);
       if (!el) return;
-      startBlock = el;
-      lastBlocks = [el];
+      drag.startBlock = el;
+      drag.lastBlocks = [el];
       setHoverRects([el.getBoundingClientRect()]);
     };
 
     const onMouseMove = (e: MouseEvent) => {
       // Defensive: if button is released and we still think we're dragging
       // (mouseup was missed because it fired outside this listener), reset.
-      if (startBlock && e.buttons === 0) resetDrag();
+      if (drag.startBlock && e.buttons === 0) resetDrag();
       const el = pickBlock(e.target as Element, content);
       if (!el) {
-        if (!startBlock) setHoverRects([]);
+        if (!drag.startBlock) setHoverRects([]);
         return;
       }
-      if (startBlock) {
-        const blocks = blocksBetween(startBlock, el, content);
-        lastBlocks = blocks;
+      if (drag.startBlock) {
+        const blocks = blocksBetween(drag.startBlock, el, content);
+        drag.lastBlocks = blocks;
         setHoverRects(blocks.map((b) => b.getBoundingClientRect()));
       } else {
-        lastBlocks = [el];
+        drag.lastBlocks = [el];
         setHoverRects([el.getBoundingClientRect()]);
       }
     };
@@ -283,7 +292,7 @@ export function PreviewCommentHost({ previewComment, children }: Props) {
         resetDrag();
         return;
       }
-      let blocks = lastBlocks;
+      let blocks = drag.lastBlocks;
       if (blocks.length === 0) {
         const el = pickBlock(e.target as Element, content);
         if (!el) { resetDrag(); return; }
@@ -308,19 +317,8 @@ export function PreviewCommentHost({ previewComment, children }: Props) {
       if (e.buttons === 0) {
         resetDrag();
         setHoverRects([]);
-      } else if (!startBlock) {
+      } else if (!drag.startBlock) {
         setHoverRects([]);
-      }
-    };
-
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        e.preventDefault();
-        e.stopPropagation();
-        e.stopImmediatePropagation();
-        resetDrag();
-        setHoverRects([]);
-        window.postMessage({ type: 'grove-preview-comment:cancel', previewId }, '*');
       }
     };
 
@@ -329,7 +327,6 @@ export function PreviewCommentHost({ previewComment, children }: Props) {
     content.addEventListener('mouseup', onMouseUp, true);
     content.addEventListener('mouseleave', onMouseLeave, true);
     window.addEventListener('mouseup', onMouseUp, true);
-    window.addEventListener('keydown', onKey, true);
     content.style.cursor = 'crosshair';
 
     return () => {
@@ -338,11 +335,32 @@ export function PreviewCommentHost({ previewComment, children }: Props) {
       content.removeEventListener('mouseup', onMouseUp, true);
       content.removeEventListener('mouseleave', onMouseLeave, true);
       window.removeEventListener('mouseup', onMouseUp, true);
-      window.removeEventListener('keydown', onKey, true);
       content.style.cursor = '';
       setHoverRects([]);
     };
   }, [enabled, previewId]);
+
+  // Comment-mode Escape via Scoped Command Registry. Scope is active only
+  // while comment-mode is on; sits at the top of the stack and wins over
+  // the host's outer preview.commentMode scope when both are pushed.
+  useKeyboardScope('commentMode', enabled);
+  useDefineCommand({
+    id: 'preview.commentMode.exit',
+    name: 'Exit Preview Comment Mode',
+    category: 'File Preview',
+    description: 'Cancel the in-flight preview comment selection',
+    defaultBindings: [{ key: 'Escape' }],
+    scope: 'commentMode',
+    handler: () => {
+      const drag = dragStateRef.current;
+      drag.startBlock = null;
+      drag.lastBlocks = [];
+      setHoverRects([]);
+      if (previewId) {
+        window.postMessage({ type: 'grove-preview-comment:cancel', previewId }, '*');
+      }
+    },
+  }, [previewId]);
 
   // Resolve marker bounding rects + reposition on layout changes
   useEffect(() => {

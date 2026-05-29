@@ -6,6 +6,7 @@ import { formatAgentDisplay } from './agentDisplay';
 import { MarkdownRenderer, FileMentionDropdown } from '../ui';
 import { useFileMention } from '../../hooks';
 import type { MentionItem } from '../../utils/fileMention';
+import { useDefineCommand, useKeyboardScope } from '../../keyboard';
 
 /** Format ISO timestamp to human-readable local time, e.g. "2026-02-10 08:37:24" */
 function formatTime(ts: string): string {
@@ -72,26 +73,50 @@ export function CommentDetailModal({
   const editCommentMention = useFileMention({ mentionItems: mentionItems ?? null, textareaRef: editCommentTextareaRef });
   const editReplyMention = useFileMention({ mentionItems: mentionItems ?? null, textareaRef: editReplyTextareaRef });
 
-  // Layered Escape: edit forms → reply form → modal, and always stop propagation
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        e.stopPropagation();
-        if (editingReplyIdRef.current !== null) {
-          setEditingReplyId(null);
-        } else if (editingCommentRef.current) {
-          setEditingComment(false);
-        } else if (showReplyFormRef.current) {
-          setShowReplyForm(false);
-          setReplyText('');
-        } else {
-          onClose();
-        }
+  // Layered Escape via Scoped Command Registry:
+  //   - "commentDetail" scope (always while mounted) closes the modal.
+  //   - "commentDetail.editing" scope sits on top whenever an inline edit
+  //     form / reply form is open; its Escape handler cascades through
+  //     edit-reply → edit-comment → reply-form, matching the original
+  //     ref-mirrored cascade. When no editing state is active the
+  //     inner scope is unmounted so Escape falls through to the base
+  //     "commentDetail.close" handler.
+  // Both commands need passThroughTextInput because focus typically lives
+  // inside the modal's textareas while Escape is pressed.
+  const editingActive = editingReplyId !== null || editingComment || showReplyForm;
+  useKeyboardScope('commentDetail');
+  useKeyboardScope('commentDetail.editing', editingActive);
+
+  useDefineCommand({
+    id: 'commentDetail.close',
+    name: 'Close Comment Detail',
+    category: 'Review',
+    description: 'Close the comment detail modal',
+    defaultBindings: [{ key: 'Escape' }],
+    scope: 'commentDetail',
+    passThroughTextInput: true,
+    handler: onClose,
+  });
+
+  useDefineCommand({
+    id: 'commentDetail.cancelEdit',
+    name: 'Cancel Comment Edit',
+    category: 'Review',
+    description: 'Cancel the inline edit / reply form inside the comment modal',
+    defaultBindings: [{ key: 'Escape' }],
+    scope: 'commentDetail.editing',
+    passThroughTextInput: true,
+    handler: () => {
+      if (editingReplyIdRef.current !== null) {
+        setEditingReplyId(null);
+      } else if (editingCommentRef.current) {
+        setEditingComment(false);
+      } else if (showReplyFormRef.current) {
+        setShowReplyForm(false);
+        setReplyText('');
       }
-    };
-    document.addEventListener('keydown', handleKeyDown, true); // capture phase
-    return () => document.removeEventListener('keydown', handleKeyDown, true);
-  }, [onClose]);
+    },
+  });
 
   const statusColor =
     comment.status === 'resolved'
@@ -205,8 +230,7 @@ export function CommentDetailModal({
             <AgentAvatar agent={comment.agent} size={24} />
             <div>
               <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--color-text)', display: 'flex', alignItems: 'center', gap: 8 }}>
-                {formatAgentDisplay(comment.agent, comment.role)}
-                {comment.model && <span style={{ fontSize: 11, fontFamily: 'monospace', opacity: 0.5 }}>{comment.model}</span>}
+                {formatAgentDisplay(comment.agent, comment.role, comment.model)}
                 <span style={{ fontSize: 11, fontWeight: 500, color: 'var(--color-text-muted)' }}>#{comment.id}</span>
                 <span style={{ fontSize: 11, fontWeight: 400, color: 'var(--color-text-muted)' }}>{formatTime(comment.timestamp)}</span>
               </div>
@@ -343,7 +367,7 @@ export function CommentDetailModal({
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
                     <AgentAvatar agent={reply.agent} size={18} />
                     <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--color-text)' }}>
-                      {formatAgentDisplay(reply.agent, reply.role)}
+                      {formatAgentDisplay(reply.agent, reply.role, reply.model)}
                     </span>
                     <span style={{ fontSize: 11, color: 'var(--color-text-muted)' }}>{formatTime(reply.timestamp)}</span>
                     <span style={{ flex: 1 }} />

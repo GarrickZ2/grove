@@ -13,6 +13,7 @@ import { RefreshCw } from "lucide-react";
 
 import type { AgentUsage, UsageWindow } from "../../../api";
 import { quotaHealthColor } from "./quotaColors";
+import { useDefineCommand, useKeyboardScope } from "../../../keyboard";
 
 interface AgentQuotaPopoverProps {
   usage: AgentUsage;
@@ -215,21 +216,27 @@ export function AgentQuotaPopover({
     };
   }, [open, recomputePosition]);
 
-  // Escape-to-close for keyboard users.
-  useEffect(() => {
-    if (!open) return;
-    const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        triggerHoveredRef.current = false;
-        popoverHoveredRef.current = false;
-        focusedRef.current = false;
-        cancelHide();
-        setOpen(false);
-      }
-    };
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, [open]);
+  // Escape-to-close for keyboard users — Scoped Command Registry.
+  const handleEscapeClose = useCallback(() => {
+    triggerHoveredRef.current = false;
+    popoverHoveredRef.current = false;
+    focusedRef.current = false;
+    cancelHide();
+    setOpen(false);
+  }, []);
+  useKeyboardScope("popover.agentQuota", open);
+  useDefineCommand(
+    {
+      id: "popover.agentQuota.close",
+      name: "Close Agent Quota Popover",
+      category: "Popover",
+      defaultBindings: [{ key: "Escape" }],
+      scope: "popover.agentQuota",
+      passThroughTextInput: true,
+      handler: handleEscapeClose,
+    },
+    [handleEscapeClose],
+  );
 
   useEffect(() => {
     return () => {

@@ -9,6 +9,7 @@
   overflow: hidden;
   user-select: none;
   -webkit-user-select: none;
+  container-type: inline-size;
 }
 
 .diff-review-page.embedded {
@@ -461,8 +462,8 @@
   width: 100%;
   border-collapse: collapse;
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-  font-size: 12px;
-  line-height: 20px;
+  font-size: var(--diff-font-size, 12px);
+  line-height: var(--diff-line-height, 20px);
 }
 
 .diff-table td {
@@ -2680,4 +2681,55 @@ tr.diff-line-nav-highlight td {
 .conv-cleanup-delete:disabled {
   opacity: 0.4;
   cursor: not-allowed;
+}
+
+/* ============================================================================
+   Container-queries responsive toolbar sizing
+   ============================================================================ */
+
+.toolbar-label-short {
+  display: none !important;
+}
+
+@container (max-width: 900px) {
+  .diff-stats {
+    display: none !important;
+  }
+}
+
+@container (max-width: 800px) {
+  .diff-toolbar {
+    padding: 6px 12px !important;
+    gap: 8px !important;
+  }
+  .diff-toolbar-left {
+    gap: 8px !important;
+  }
+  .diff-toolbar-right {
+    gap: 6px !important;
+  }
+  .diff-version-arrow {
+    margin: 0 2px !important;
+  }
+}
+
+@container (max-width: 720px) {
+  .toolbar-label {
+    display: none !important;
+  }
+  .toolbar-label-short {
+    display: inline-block !important;
+  }
+}
+
+@container (max-width: 600px) {
+  .diff-viewed-progress-text {
+    display: none !important;
+  }
+  .diff-view-toggle {
+    display: none !important;
+  }
+  .diff-version-range {
+    display: none !important;
+  }
 }

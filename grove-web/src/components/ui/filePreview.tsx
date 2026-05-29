@@ -17,7 +17,7 @@ import {
 } from "./VirtualizedMarkdownRenderer";
 import { PreviewCommentHost } from "../Review/PreviewCommentHost";
 import type { PreviewCommentLocator, PreviewCommentDraft } from "../../context";
-import { useKeyboardScope, useCommand } from "../../keyboard";
+import { useKeyboardScope, useCommand, useContextKey } from "../../keyboard";
 
 
 export function getExtBadge(name: string): string {
@@ -309,81 +309,71 @@ export function FilePreviewDrawer({
   // Escape first via stack ordering — no priority field, no
   // stopImmediatePropagation. Cmd/Ctrl+F gated by `enabled` so it only
   // fires when focus is inside the drawer (preserving the original
-  // root.contains check).
-  useKeyboardScope("filePreview");
-  useKeyboardScope("filePreview.search", searchOpen);
-  useKeyboardScope("filePreview.fullscreen", fullscreen || groveFullscreen);
-  useKeyboardScope("filePreview.commentMode", commentMode);
-  useKeyboardScope("filePreview.commentModal", pendingLocator !== null);
+  // root.contains check). Scope names match the catalog declarations in
+  // src/keyboard/catalog/filePreview.ts ("preview", "preview.search",
+  // "preview.fullscreen", "preview.commentMode", "preview.commentModal").
+  useKeyboardScope("preview");
+  useKeyboardScope("preview.search", searchOpen);
+  useKeyboardScope("preview.fullscreen", fullscreen || groveFullscreen);
+  useKeyboardScope("preview.commentMode", commentMode);
+  useKeyboardScope("preview.commentModal", pendingLocator !== null);
+  useContextKey("canToggleSource", canToggleSource);
 
   const drawerContainsFocus = () =>
     !!drawerRef.current?.contains(document.activeElement);
 
-  useCommand({
-    id: "preview.toggleSearch.meta",
-    key: "Meta+f",
-    scope: "filePreview",
-    enabled: drawerContainsFocus,
-    handler: () => setSearchOpen((v) => !v),
-  }, []);
-  useCommand({
-    id: "preview.toggleSearch.ctrl",
-    key: "Ctrl+f",
-    scope: "filePreview",
-    enabled: drawerContainsFocus,
-    handler: () => setSearchOpen((v) => !v),
-  }, []);
-
-  // Escape lightbox check: when the lightbox is open it owns Escape — let
-  // it handle the event by skipping all preview Escape commands. (Lightbox
-  // doesn't yet declare its own scope; once it migrates this gate
-  // disappears.)
+  // Escape lightbox check: when the lightbox is open it owns Escape via its
+  // own scope (see ImageLightbox). Until every consumer of FilePreviewDrawer
+  // mounts a lightbox-aware version, keep the data-attribute fallback so a
+  // stray lightbox doesn't double-fire close handlers.
   const lightboxNotOpen = () =>
     !document.querySelector('[data-lightbox-active="true"]');
 
-  useCommand({
-    id: "preview.close",
-    key: "Escape",
-    scope: "filePreview",
-    enabled: lightboxNotOpen,
-    handler: onClose,
-  }, [onClose]);
+  useCommand("preview.toggleSearch", () => setSearchOpen((v) => !v), {
+    enabled: drawerContainsFocus,
+  });
 
-  useCommand({
-    id: "preview.exitFullscreen",
-    key: "Escape",
-    scope: "filePreview.fullscreen",
-    enabled: lightboxNotOpen,
-    handler: () => {
+  useCommand("preview.close", onClose, { enabled: lightboxNotOpen }, [onClose]);
+
+  useCommand(
+    "preview.exitFullscreen",
+    () => {
       if (groveFullscreen) setGroveFullscreen(false);
       else if (fullscreen) setFullscreen(false);
     },
-  }, [fullscreen, groveFullscreen]);
+    { enabled: lightboxNotOpen },
+    [fullscreen, groveFullscreen],
+  );
 
-  useCommand({
-    id: "preview.closeSearch",
-    key: "Escape",
-    scope: "filePreview.search",
-    handler: () => setSearchOpen(false),
-  }, []);
+  useCommand("preview.closeSearch", () => setSearchOpen(false));
 
-  useCommand({
-    id: "preview.exitCommentMode",
-    key: "Escape",
-    scope: "filePreview.commentMode",
-    handler: () => setCommentMode(false),
-  }, []);
+  useCommand("preview.exitCommentMode", () => setCommentMode(false));
 
-  useCommand({
-    id: "preview.closeCommentModal",
-    key: "Escape",
-    scope: "filePreview.commentModal",
-    handler: () => {
-      setPendingLocator(null);
-      setCommentText("");
-      setEditingDraftId(null);
-    },
-  }, []);
+  useCommand("preview.closeCommentModal", () => {
+    setPendingLocator(null);
+    setCommentText("");
+    setEditingDraftId(null);
+  });
+
+  // Action commands — mirror the header button behaviour so the command
+  // palette / future key bindings drive the same UI state. `toggleFullscreen`
+  // targets the panel-fullscreen mode (the Maximize2 button); the Grove
+  // fullscreen mode stays mouse-only since the catalog only ships one
+  // "Toggle Fullscreen" entry.
+  useCommand("preview.toggleFullscreen", () => setFullscreen((f) => !f));
+  useCommand("preview.download", onDownload, [onDownload]);
+  useCommand(
+    "preview.toggleSource",
+    () => setShowSource((s) => !s),
+    { enabled: () => canToggleSource },
+    [canToggleSource],
+  );
+  useCommand(
+    "preview.toggleComment",
+    () => setCommentMode((v) => !v),
+    { enabled: () => commentable && !showSource },
+    [commentable, showSource],
+  );
 
   // Reset search state when file changes
   useEffect(() => {

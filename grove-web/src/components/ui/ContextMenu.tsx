@@ -2,6 +2,7 @@ import { useRef, useEffect, useLayoutEffect, useState, useCallback } from "react
 import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { useIsMobile } from "../../hooks";
+import { useDefineCommand, useKeyboardScope } from "../../keyboard";
 
 export interface ContextMenuItem {
   id: string;
@@ -190,40 +191,46 @@ function DesktopContextMenu({ items, position, onClose }: ContextMenuProps) {
     }
   }, [focusedIndex, items, onClose]);
 
-  // Keyboard navigation: Escape, arrows, j/k, Enter
-  useEffect(() => {
-    if (!position) return;
-    const handleKeyDown = (e: KeyboardEvent) => {
-      switch (e.key) {
-        case "Escape":
-          e.preventDefault();
-          e.stopPropagation();
-          onClose();
-          break;
-        case "ArrowDown":
-        case "j":
-          e.preventDefault();
-          e.stopPropagation();
-          moveFocus(1);
-          break;
-        case "ArrowUp":
-        case "k":
-          e.preventDefault();
-          e.stopPropagation();
-          moveFocus(-1);
-          break;
-        case "Enter":
-        case " ":
-          e.preventDefault();
-          e.stopPropagation();
-          activateItem();
-          break;
-      }
-    };
-    // Use capture phase to intercept before useHotkeys
-    document.addEventListener("keydown", handleKeyDown, true);
-    return () => document.removeEventListener("keydown", handleKeyDown, true);
-  }, [position, onClose, moveFocus, activateItem]);
+  // Keyboard navigation: Escape, arrows, j/k, Enter — scoped so they only
+  // intercept while the menu is open and sit at the top of the scope stack.
+  const menuOpen = !!position;
+  useKeyboardScope("contextMenu", menuOpen);
+  useDefineCommand({
+    id: "contextMenu.next",
+    name: "Context Menu: Next Item",
+    category: "Context Menu",
+    defaultBindings: [{ key: "j" }, { key: "ArrowDown" }],
+    scope: "contextMenu",
+    hidden: true,
+    handler: () => moveFocus(1),
+  }, [moveFocus]);
+  useDefineCommand({
+    id: "contextMenu.previous",
+    name: "Context Menu: Previous Item",
+    category: "Context Menu",
+    defaultBindings: [{ key: "k" }, { key: "ArrowUp" }],
+    scope: "contextMenu",
+    hidden: true,
+    handler: () => moveFocus(-1),
+  }, [moveFocus]);
+  useDefineCommand({
+    id: "contextMenu.activate",
+    name: "Context Menu: Activate Item",
+    category: "Context Menu",
+    defaultBindings: [{ key: "Enter" }, { key: "Space" }],
+    scope: "contextMenu",
+    hidden: true,
+    handler: activateItem,
+  }, [activateItem]);
+  useDefineCommand({
+    id: "contextMenu.close",
+    name: "Context Menu: Close",
+    category: "Context Menu",
+    defaultBindings: [{ key: "Escape" }],
+    scope: "contextMenu",
+    hidden: true,
+    handler: onClose,
+  }, [onClose]);
 
   // Close on scroll
   useEffect(() => {

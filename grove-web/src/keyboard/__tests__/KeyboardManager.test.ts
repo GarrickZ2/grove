@@ -1,5 +1,15 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { KeyboardManagerImpl } from "../KeyboardManager";
+import { CommandRegistryImpl } from "../CommandRegistry";
+import { ContextKeyServiceImpl } from "../ContextKeyService";
+import { UserKeymapStoreImpl } from "../userKeymapStore";
+
+// The KeyboardManager singleton reaches into the module-level singletons
+// of CommandRegistry / ContextKeyService / userKeymapStore. To get a
+// clean slate per test we reset their state via the imported singletons.
+import { commandRegistry } from "../CommandRegistry";
+import { contextKeyService } from "../ContextKeyService";
+import { userKeymapStore } from "../userKeymapStore";
 
 function dispatchKey(
   key: string,
@@ -22,6 +32,9 @@ describe("KeyboardManager — dispatch", () => {
   let mgr: KeyboardManagerImpl;
 
   beforeEach(() => {
+    commandRegistry._resetAll();
+    userKeymapStore.reset();
+    contextKeyService._resetAll();
     mgr = new KeyboardManagerImpl();
   });
 
@@ -32,15 +45,20 @@ describe("KeyboardManager — dispatch", () => {
 
   it("global command triggers without scope active", () => {
     const handler = vi.fn();
-    mgr.registerCommand({ id: "g", key: "g", handler });
+    commandRegistry.contribute(
+      { id: "g", name: "g", category: "t", defaultBindings: [{ key: "g" }] },
+      handler,
+    );
     dispatchKey("g");
     expect(handler).toHaveBeenCalledOnce();
   });
 
   it("scoped command only triggers when its scope is active", () => {
     const handler = vi.fn();
-    mgr.registerCommand({ id: "j", key: "j", scope: "list", handler });
-
+    commandRegistry.contribute(
+      { id: "j", name: "j", category: "t", defaultBindings: [{ key: "j" }], scope: "list" },
+      handler,
+    );
     dispatchKey("j");
     expect(handler).not.toHaveBeenCalled();
 
@@ -53,11 +71,17 @@ describe("KeyboardManager — dispatch", () => {
     expect(handler).toHaveBeenCalledOnce();
   });
 
-  it("scope stack: top wins for same key", () => {
+  it("scope stack top wins for same key", () => {
     const outer = vi.fn();
     const inner = vi.fn();
-    mgr.registerCommand({ id: "out", key: "Escape", scope: "preview", handler: outer });
-    mgr.registerCommand({ id: "in", key: "Escape", scope: "preview.modal", handler: inner });
+    commandRegistry.contribute(
+      { id: "out", name: "out", category: "t", defaultBindings: [{ key: "Escape" }], scope: "preview" },
+      outer,
+    );
+    commandRegistry.contribute(
+      { id: "in", name: "in", category: "t", defaultBindings: [{ key: "Escape" }], scope: "preview.modal" },
+      inner,
+    );
 
     mgr.pushScope("preview");
     mgr.pushScope("preview.modal");
@@ -67,9 +91,12 @@ describe("KeyboardManager — dispatch", () => {
     expect(outer).not.toHaveBeenCalled();
   });
 
-  it("scope stack: falls through when top has no match for that key", () => {
+  it("falls through to next scope when top has no match", () => {
     const outer = vi.fn();
-    mgr.registerCommand({ id: "out", key: "Escape", scope: "preview", handler: outer });
+    commandRegistry.contribute(
+      { id: "out", name: "out", category: "t", defaultBindings: [{ key: "Escape" }], scope: "preview" },
+      outer,
+    );
 
     mgr.pushScope("preview");
     mgr.pushScope("preview.modal");
@@ -78,11 +105,18 @@ describe("KeyboardManager — dispatch", () => {
     expect(outer).toHaveBeenCalledOnce();
   });
 
-  it("enabled() false skips command, continues to next match", () => {
+  it("enabled() false skips command and falls through", () => {
     const top = vi.fn();
     const bottom = vi.fn();
-    mgr.registerCommand({ id: "top", key: "f", scope: "top", enabled: () => false, handler: top });
-    mgr.registerCommand({ id: "bot", key: "f", scope: "bottom", handler: bottom });
+    commandRegistry.contribute(
+      { id: "top", name: "top", category: "t", defaultBindings: [{ key: "f" }], scope: "top" },
+      top,
+      () => false,
+    );
+    commandRegistry.contribute(
+      { id: "bot", name: "bot", category: "t", defaultBindings: [{ key: "f" }], scope: "bottom" },
+      bottom,
+    );
 
     mgr.pushScope("bottom");
     mgr.pushScope("top");
@@ -92,21 +126,30 @@ describe("KeyboardManager — dispatch", () => {
     expect(bottom).toHaveBeenCalledOnce();
   });
 
-  it("global scope acts as final fallback after stack exhausted", () => {
+  it("global fallback after all scopes", () => {
     const scoped = vi.fn();
     const global = vi.fn();
-    mgr.registerCommand({ id: "s", key: "g", scope: "x", handler: scoped });
-    mgr.registerCommand({ id: "g", key: "g", handler: global });
+    commandRegistry.contribute(
+      { id: "s", name: "s", category: "t", defaultBindings: [{ key: "g" }], scope: "x" },
+      scoped,
+    );
+    commandRegistry.contribute(
+      { id: "g", name: "g", category: "t", defaultBindings: [{ key: "g" }] },
+      global,
+    );
 
-    mgr.pushScope("y"); // no command registered for "y"
+    mgr.pushScope("y");
     dispatchKey("g");
     expect(scoped).not.toHaveBeenCalled();
     expect(global).toHaveBeenCalledOnce();
   });
 
-  it("scope ref-counting: pushing same id twice keeps it active until both dispose", () => {
+  it("scope ref-counting: pushed twice → both must dispose", () => {
     const handler = vi.fn();
-    mgr.registerCommand({ id: "x", key: "x", scope: "s", handler });
+    commandRegistry.contribute(
+      { id: "x", name: "x", category: "t", defaultBindings: [{ key: "x" }], scope: "s" },
+      handler,
+    );
 
     const d1 = mgr.pushScope("s");
     const d2 = mgr.pushScope("s");
@@ -120,63 +163,226 @@ describe("KeyboardManager — dispatch", () => {
     expect(handler).toHaveBeenCalledOnce();
   });
 
-  it("unregister removes the command from dispatch", () => {
+  it("ignores defaultPrevented", () => {
     const handler = vi.fn();
-    const dispose = mgr.registerCommand({ id: "x", key: "x", handler });
-    dispose();
-    dispatchKey("x");
-    expect(handler).not.toHaveBeenCalled();
-  });
-
-  it("ignores events already defaultPrevented by earlier listeners", () => {
-    const handler = vi.fn();
-    mgr.registerCommand({ id: "x", key: "x", handler });
-
+    commandRegistry.contribute(
+      { id: "x", name: "x", category: "t", defaultBindings: [{ key: "x" }] },
+      handler,
+    );
     const event = new KeyboardEvent("keydown", { key: "x", bubbles: true, cancelable: true });
     event.preventDefault();
     window.dispatchEvent(event);
-
     expect(handler).not.toHaveBeenCalled();
   });
 
-  it("ignores IME composition events", () => {
+  it("ignores IME composition", () => {
     const handler = vi.fn();
-    mgr.registerCommand({ id: "x", key: "x", handler });
-
+    commandRegistry.contribute(
+      { id: "x", name: "x", category: "t", defaultBindings: [{ key: "x" }] },
+      handler,
+    );
     const event = new KeyboardEvent("keydown", {
       key: "x", isComposing: true, bubbles: true, cancelable: true,
     });
     window.dispatchEvent(event);
-
     expect(handler).not.toHaveBeenCalled();
   });
 
-  it("preventDefault by default", () => {
-    mgr.registerCommand({ id: "x", key: "x", handler: () => {} });
+  it("preventDefault default true", () => {
+    commandRegistry.contribute(
+      { id: "x", name: "x", category: "t", defaultBindings: [{ key: "x" }] },
+      () => {},
+    );
     const event = dispatchKey("x");
     expect(event.defaultPrevented).toBe(true);
   });
 
-  it("preventDefault: false respects opt-out", () => {
-    mgr.registerCommand({ id: "x", key: "x", preventDefault: false, handler: () => {} });
+  it("preventDefault: false respected", () => {
+    commandRegistry.contribute(
+      { id: "x", name: "x", category: "t", defaultBindings: [{ key: "x" }], preventDefault: false },
+      () => {},
+    );
     const event = dispatchKey("x");
     expect(event.defaultPrevented).toBe(false);
   });
 
-  it("getScopeStack returns top-down view", () => {
-    mgr.pushScope("a");
-    mgr.pushScope("b");
-    mgr.pushScope("c");
-    expect(mgr.getScopeStack()).toEqual(["c", "b", "a"]);
+  it("data-hotkeys-dialog does NOT suppress (regression)", () => {
+    const dialog = document.createElement("div");
+    dialog.setAttribute("data-hotkeys-dialog", "true");
+    document.body.appendChild(dialog);
+
+    const handler = vi.fn();
+    commandRegistry.contribute(
+      { id: "esc", name: "esc", category: "t", defaultBindings: [{ key: "Escape" }], scope: "dialog" },
+      handler,
+    );
+    mgr.pushScope("dialog");
+    dispatchKey("Escape");
+    expect(handler).toHaveBeenCalledOnce();
+
+    document.body.removeChild(dialog);
   });
 });
 
-describe("KeyboardManager — text-input suppression", () => {
+describe("KeyboardManager — when expression", () => {
+  let mgr: KeyboardManagerImpl;
+
+  beforeEach(() => {
+    commandRegistry._resetAll();
+    userKeymapStore.reset();
+    contextKeyService._resetAll();
+    mgr = new KeyboardManagerImpl();
+  });
+
+  afterEach(() => {
+    mgr.detach();
+  });
+
+  it("command with when=true context fires", () => {
+    contextKeyService.createKey("canOperate", false).set(true);
+    const handler = vi.fn();
+    commandRegistry.contribute(
+      { id: "c", name: "c", category: "t", defaultBindings: [{ key: "c" }], defaultWhen: "canOperate" },
+      handler,
+    );
+    dispatchKey("c");
+    expect(handler).toHaveBeenCalledOnce();
+  });
+
+  it("command with when=false context doesn't fire", () => {
+    contextKeyService.createKey("canOperate", false).set(false);
+    const handler = vi.fn();
+    commandRegistry.contribute(
+      { id: "c", name: "c", category: "t", defaultBindings: [{ key: "c" }], defaultWhen: "canOperate" },
+      handler,
+    );
+    dispatchKey("c");
+    expect(handler).not.toHaveBeenCalled();
+  });
+
+  it("binding-level when overrides command default", () => {
+    contextKeyService.createKey("a", false).set(true);
+    contextKeyService.createKey("b", false).set(false);
+    const handler = vi.fn();
+    commandRegistry.contribute(
+      {
+        id: "c",
+        name: "c",
+        category: "t",
+        defaultBindings: [{ key: "c", when: "b" }],
+        defaultWhen: "a",
+      },
+      handler,
+    );
+    dispatchKey("c");
+    expect(handler).not.toHaveBeenCalled(); // binding when=b is false
+  });
+
+  it("complex when expression with parens", () => {
+    contextKeyService.createKey("a", false).set(true);
+    contextKeyService.createKey("b", false).set(false);
+    contextKeyService.createKey("c", false).set(true);
+    const handler = vi.fn();
+    commandRegistry.contribute(
+      {
+        id: "x",
+        name: "x",
+        category: "t",
+        defaultBindings: [{ key: "x" }],
+        defaultWhen: "a && (b || c)",
+      },
+      handler,
+    );
+    dispatchKey("x");
+    expect(handler).toHaveBeenCalledOnce();
+  });
+});
+
+describe("KeyboardManager — user keymap overrides", () => {
+  let mgr: KeyboardManagerImpl;
+
+  beforeEach(() => {
+    commandRegistry._resetAll();
+    userKeymapStore.reset();
+    contextKeyService._resetAll();
+    mgr = new KeyboardManagerImpl();
+  });
+
+  afterEach(() => {
+    mgr.detach();
+  });
+
+  it("override replaces default key", () => {
+    const handler = vi.fn();
+    commandRegistry.contribute(
+      { id: "j", name: "j", category: "t", defaultBindings: [{ key: "j" }] },
+      handler,
+    );
+    userKeymapStore.setOverrides("j", [{ command_id: "j", key: "n" }]);
+
+    dispatchKey("j");
+    expect(handler).not.toHaveBeenCalled(); // default key disabled
+
+    dispatchKey("n");
+    expect(handler).toHaveBeenCalledOnce(); // user override active
+  });
+
+  it("disabled command never fires", () => {
+    const handler = vi.fn();
+    commandRegistry.contribute(
+      { id: "j", name: "j", category: "t", defaultBindings: [{ key: "j" }] },
+      handler,
+    );
+    userKeymapStore.setDisabled("j", true);
+    dispatchKey("j");
+    expect(handler).not.toHaveBeenCalled();
+  });
+
+  it("re-enable command resumes default binding", () => {
+    const handler = vi.fn();
+    commandRegistry.contribute(
+      { id: "j", name: "j", category: "t", defaultBindings: [{ key: "j" }] },
+      handler,
+    );
+    userKeymapStore.setDisabled("j", true);
+    userKeymapStore.setDisabled("j", false);
+    dispatchKey("j");
+    expect(handler).toHaveBeenCalledOnce();
+  });
+
+  it("override with custom scope routes to that scope", () => {
+    const handler = vi.fn();
+    commandRegistry.contribute(
+      { id: "j", name: "j", category: "t", defaultBindings: [{ key: "j" }], scope: "list" },
+      handler,
+    );
+    userKeymapStore.setOverrides("j", [
+      {
+        command_id: "j",
+        key: "j",
+        scope: "diff",
+      },
+    ]);
+
+    mgr.pushScope("list");
+    dispatchKey("j");
+    expect(handler).not.toHaveBeenCalled(); // moved out of list scope
+
+    mgr.pushScope("diff");
+    dispatchKey("j");
+    expect(handler).toHaveBeenCalledOnce();
+  });
+});
+
+describe("KeyboardManager — text input suppression", () => {
   let mgr: KeyboardManagerImpl;
   let input: HTMLInputElement;
   let textarea: HTMLTextAreaElement;
 
   beforeEach(() => {
+    commandRegistry._resetAll();
+    userKeymapStore.reset();
+    contextKeyService._resetAll();
     mgr = new KeyboardManagerImpl();
     input = document.createElement("input");
     textarea = document.createElement("textarea");
@@ -190,71 +396,131 @@ describe("KeyboardManager — text-input suppression", () => {
     document.body.removeChild(textarea);
   });
 
-  it("alpha key suppressed when input focused", () => {
+  it("alpha key suppressed in input", () => {
     const handler = vi.fn();
-    mgr.registerCommand({ id: "j", key: "j", handler });
+    commandRegistry.contribute(
+      { id: "j", name: "j", category: "t", defaultBindings: [{ key: "j" }] },
+      handler,
+    );
     input.focus();
     dispatchKey("j");
     expect(handler).not.toHaveBeenCalled();
   });
 
-  it("Escape still works when input focused (not alpha)", () => {
+  it("Escape still works in input (not alpha)", () => {
     const handler = vi.fn();
-    mgr.registerCommand({ id: "esc", key: "Escape", handler });
+    commandRegistry.contribute(
+      { id: "esc", name: "esc", category: "t", defaultBindings: [{ key: "Escape" }] },
+      handler,
+    );
     input.focus();
     dispatchKey("Escape");
     expect(handler).toHaveBeenCalledOnce();
   });
 
-  it("all keys suppressed when textarea focused", () => {
-    const escHandler = vi.fn();
-    mgr.registerCommand({ id: "esc", key: "Escape", handler: escHandler });
+  it("alpha keys suppressed in textarea (so user can type)", () => {
+    const handler = vi.fn();
+    commandRegistry.contribute(
+      { id: "a", name: "a", category: "t", defaultBindings: [{ key: "a" }] },
+      handler,
+    );
     textarea.focus();
-    dispatchKey("Escape");
-    expect(escHandler).not.toHaveBeenCalled();
+    dispatchKey("a");
+    expect(handler).not.toHaveBeenCalled();
   });
 
-  it("APP_OWNED_META_KEYS (Cmd+K) bypasses textarea suppression", () => {
+  it("non-alpha keys (Escape, Tab, …) NOT suppressed in textarea", () => {
+    // Escape, Arrow keys etc. aren't text input — they're control keys,
+    // so commands bound to them should still fire even with text focus
+    // (e.g. dialog Escape-to-close).
     const handler = vi.fn();
-    mgr.registerCommand({ id: "palette", key: "Meta+k", handler });
+    commandRegistry.contribute(
+      { id: "esc", name: "esc", category: "t", defaultBindings: [{ key: "Escape" }] },
+      handler,
+    );
+    textarea.focus();
+    dispatchKey("Escape");
+    expect(handler).toHaveBeenCalledOnce();
+  });
+
+  it("passThroughTextInput overrides suppression", () => {
+    const handler = vi.fn();
+    commandRegistry.contribute(
+      {
+        id: "palette",
+        name: "palette",
+        category: "t",
+        defaultBindings: [{ key: "Meta+k" }],
+        passThroughTextInput: true,
+      },
+      handler,
+    );
     textarea.focus();
     dispatchKey("k", { meta: true });
     expect(handler).toHaveBeenCalledOnce();
   });
 
-  it("non-app-owned meta combo (Cmd+F) suppressed in textarea", () => {
+  it("modifier combos always pass through in textarea", () => {
+    // Modifier combos (Cmd+F, Ctrl+S, …) are never plain text input,
+    // so they should reach the command catalog regardless of focus.
+    // Users who bind Cmd+A etc. accept overriding browser defaults.
     const handler = vi.fn();
-    mgr.registerCommand({ id: "find", key: "Meta+f", handler });
-    textarea.focus();
-    dispatchKey("f", { meta: true });
-    expect(handler).not.toHaveBeenCalled();
-  });
-
-  it("passThroughTextInput lets command fire in textarea", () => {
-    const handler = vi.fn();
-    mgr.registerCommand({
-      id: "custom", key: "Meta+f", passThroughTextInput: true, handler,
-    });
+    commandRegistry.contribute(
+      { id: "find", name: "find", category: "t", defaultBindings: [{ key: "Meta+f" }] },
+      handler,
+    );
     textarea.focus();
     dispatchKey("f", { meta: true });
     expect(handler).toHaveBeenCalledOnce();
-  });
-
-  it("[data-hotkeys-dialog] does NOT suppress dispatch (regression: PoC fix)", () => {
-    // Old useHotkeys treats this attribute as 'swallow all'. KeyboardManager
-    // intentionally does not — scoped commands should still fire inside
-    // dialogs that opt into the legacy attribute for the old system.
-    const dialog = document.createElement("div");
-    dialog.setAttribute("data-hotkeys-dialog", "true");
-    document.body.appendChild(dialog);
-
-    const handler = vi.fn();
-    mgr.registerCommand({ id: "esc", key: "Escape", scope: "dialog", handler });
-    mgr.pushScope("dialog");
-
-    dispatchKey("Escape");
-    expect(handler).toHaveBeenCalledOnce();
-
-    document.body.removeChild(dialog);
   });
 });
+
+describe("KeyboardManager — Mod alias cross-platform", () => {
+  let mgr: KeyboardManagerImpl;
+
+  beforeEach(() => {
+    commandRegistry._resetAll();
+    userKeymapStore.reset();
+    contextKeyService._resetAll();
+    mgr = new KeyboardManagerImpl();
+  });
+
+  afterEach(() => {
+    mgr.detach();
+  });
+
+  it("Mod+f fires on Meta+f (mac)", () => {
+    const handler = vi.fn();
+    commandRegistry.contribute(
+      { id: "f", name: "f", category: "t", defaultBindings: [{ key: "Mod+f" }] },
+      handler,
+    );
+    dispatchKey("f", { meta: true });
+    expect(handler).toHaveBeenCalledOnce();
+  });
+
+  it("Mod+f fires on Ctrl+f (linux/win)", () => {
+    const handler = vi.fn();
+    commandRegistry.contribute(
+      { id: "f", name: "f", category: "t", defaultBindings: [{ key: "Mod+f" }] },
+      handler,
+    );
+    dispatchKey("f", { ctrl: true });
+    expect(handler).toHaveBeenCalledOnce();
+  });
+
+  it("Mod+f doesn't fire on bare f", () => {
+    const handler = vi.fn();
+    commandRegistry.contribute(
+      { id: "f", name: "f", category: "t", defaultBindings: [{ key: "Mod+f" }] },
+      handler,
+    );
+    dispatchKey("f");
+    expect(handler).not.toHaveBeenCalled();
+  });
+});
+
+// Pull in unused imports so TS doesn't whinge in strict mode
+void CommandRegistryImpl;
+void ContextKeyServiceImpl;
+void UserKeymapStoreImpl;

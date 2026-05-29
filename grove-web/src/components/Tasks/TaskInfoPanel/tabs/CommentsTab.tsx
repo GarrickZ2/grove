@@ -111,7 +111,7 @@ function ReviewCommentCard({ comment }: { comment: ReviewCommentEntry }) {
       <div className="p-3">
         <div className="flex items-center gap-2 mb-1.5">
           <AgentAvatar agent={comment.agent} size={18} />
-          <span className="text-xs font-medium text-[var(--color-text)]">{formatAgentDisplay(comment.agent, comment.role)}</span>
+          <span className="text-xs font-medium text-[var(--color-text)]">{formatAgentDisplay(comment.agent, comment.role, comment.model)}</span>
           <span className="text-xs text-[var(--color-text-muted)]">{formatTimestamp(comment.timestamp)}</span>
         </div>
         <div className="text-sm text-[var(--color-text)] pl-[26px] markdown-content">
@@ -123,7 +123,7 @@ function ReviewCommentCard({ comment }: { comment: ReviewCommentEntry }) {
           <div key={reply.id} className="mt-2.5 pt-2.5 border-t border-[var(--color-border)] pl-[26px]">
             <div className="flex items-center gap-2 mb-1">
               <AgentAvatar agent={reply.agent} size={16} />
-              <span className="text-xs font-medium text-[var(--color-text)]">{formatAgentDisplay(reply.agent, reply.role)}</span>
+              <span className="text-xs font-medium text-[var(--color-text)]">{formatAgentDisplay(reply.agent, reply.role, reply.model)}</span>
               <span className="text-xs text-[var(--color-text-muted)]">{formatTimestamp(reply.timestamp)}</span>
             </div>
             <div className="text-sm text-[var(--color-text-muted)] pl-[24px] markdown-content">

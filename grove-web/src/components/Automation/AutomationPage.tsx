@@ -34,6 +34,7 @@ import {
   RotateCcw,
 } from "lucide-react";
 import { useProject } from "../../context";
+import { useCommand, useContextKey } from "../../keyboard";
 import { ConfirmDialog } from "../Dialogs/ConfirmDialog";
 import {
   type Automation,
@@ -187,6 +188,53 @@ export function AutomationPage({ onOpenChat }: AutomationPageProps = {}) {
       setErrorMsg(e instanceof Error ? e.message : String(e));
     }
   }
+
+  // Catalog-declared "New Automation" command — opens the create dialog,
+  // same path the header "New Automation" button takes. Gated on having a
+  // project context; without one the page itself shows a placeholder.
+  useCommand(
+    "automation.new",
+    () => {
+      setEditing(null);
+      setDialogOpen(true);
+    },
+    { enabled: () => !!projectId },
+    [projectId],
+  );
+
+  // The expanded row is the "current" automation for edit / delete / run —
+  // those commands gate on `automationSelected`. Expanding a card selects it.
+  const expandedAutomation = useMemo(
+    () => automations.find((a) => a.id === expandedId) ?? null,
+    [automations, expandedId],
+  );
+  useContextKey("automationSelected", !!expandedAutomation);
+  useCommand(
+    "automation.edit",
+    () => {
+      if (!expandedAutomation) return;
+      setEditing(expandedAutomation);
+      setDialogOpen(true);
+    },
+    { enabled: () => !!expandedAutomation },
+    [expandedAutomation],
+  );
+  useCommand(
+    "automation.delete",
+    () => {
+      if (expandedAutomation) setDeletingTarget(expandedAutomation);
+    },
+    { enabled: () => !!expandedAutomation },
+    [expandedAutomation],
+  );
+  useCommand(
+    "automation.run",
+    () => {
+      if (expandedAutomation) void handleTrigger(expandedAutomation.id);
+    },
+    { enabled: () => !!expandedAutomation },
+    [expandedAutomation],
+  );
 
   if (!projectId) {
     return (

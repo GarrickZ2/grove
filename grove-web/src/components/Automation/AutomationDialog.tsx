@@ -33,6 +33,7 @@ import { useACPAvailability } from "../Tasks/TaskView/useACPAvailability";
 import { useProject } from "../../context";
 import { getBranches } from "../../api";
 import { listChats, listTasks } from "../../api";
+import { useCommand, useKeyboardScope } from "../../keyboard";
 import type {
   Automation,
   AutomationUpsert,
@@ -495,40 +496,30 @@ export function AutomationDialog({
     }
   }
 
-  // Cmd+Enter to submit, Esc to close.
+  // Cmd+Enter to submit, Esc to close — wired through the scoped command
+  // registry. Escape becomes a no-op when the branch dropdown is open so the
+  // dropdown's own dismiss path runs first.
   //
-  // handleSubmit closes over a lot of form state — declaring it in the
-  // dep list would attach a new listener on every keystroke. We hold the
-  // latest handler in a ref so the listener can stay attached for the
-  // lifetime of `isOpen` while still calling whatever the freshest
-  // handleSubmit is.
-  const handleSubmitRef = useRef(handleSubmit);
-  // Canonical "store latest closure in a ref" pattern: run after every
-  // render so the listener below always calls the freshest handleSubmit.
-  // The intentional absence of a deps array is what makes this work —
-  // adding `[handleSubmit]` would force the effect to fire every render
-  // anyway (handleSubmit's identity changes whenever any form state
-  // mutates) without any benefit. ESLint accepts the bare effect form.
-  useEffect(() => {
-    handleSubmitRef.current = handleSubmit;
-  });
-  useEffect(() => {
-    if (!isOpen) return;
-    const handler = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && !branchDropdownOpen) {
-        e.preventDefault();
-        onClose();
-      } else if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
-        e.preventDefault();
-        void handleSubmitRef.current();
-      }
-    };
-    window.addEventListener("keydown", handler);
-    return () => window.removeEventListener("keydown", handler);
-  }, [isOpen, branchDropdownOpen, onClose]);
+  // Catalog handlers register inside <AutomationDialogBindings> only while
+  // isOpen=true. Multiple AutomationDialog wrappers can coexist (one per
+  // automation row, all isOpen=false at rest); a top-level useCommand would
+  // otherwise overwrite each other on every re-render — only the last-
+  // mounted dialog's binding would be live.
+  useKeyboardScope("dialog.automation", isOpen);
+
+  const handleCloseGuarded = () => {
+    if (branchDropdownOpen) return;
+    onClose();
+  };
 
   return (
     <DialogShell isOpen={isOpen} onClose={onClose} maxWidth="max-w-4xl">
+      {isOpen && (
+        <AutomationDialogBindings
+          onClose={handleCloseGuarded}
+          onSubmit={handleSubmit}
+        />
+      )}
       <div className="bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-xl shadow-xl overflow-hidden flex flex-col max-h-[90vh]">
         {/* Header */}
         <div className="flex items-center justify-between px-5 py-4 border-b border-[var(--color-border)]">
@@ -894,6 +885,26 @@ export function AutomationDialog({
       </div>
     </DialogShell>
   );
+}
+
+// Registers the dialog.automation.* catalog handlers only while the dialog
+// is actually open. See top-of-component comment for the multi-mount rationale.
+function AutomationDialogBindings({
+  onClose,
+  onSubmit,
+}: {
+  onClose: () => void;
+  onSubmit: () => Promise<void>;
+}) {
+  useCommand("dialog.automation.close", onClose, [onClose]);
+  useCommand(
+    "dialog.automation.submit",
+    () => {
+      void onSubmit();
+    },
+    [onSubmit],
+  );
+  return null;
 }
 
 // ── helpers ─────────────────────────────────────────────────────────────

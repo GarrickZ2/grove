@@ -97,8 +97,7 @@ export function CommentCard({ comment, onDelete, onReply, onResolve, onReopen, o
       {/* Header: avatar + author + time + line range + status badge + actions */}
       <div className="diff-comment-header">
         <AgentAvatar agent={comment.agent || '?'} size={24} className="diff-comment-avatar" />
-        <span className="diff-comment-author">{formatAgentDisplay(comment.agent, comment.role)}</span>
-        {comment.model && <span className="diff-comment-model" style={{ fontSize: 10, opacity: 0.5, fontFamily: 'monospace' }}>{comment.model}</span>}
+        <span className="diff-comment-author">{formatAgentDisplay(comment.agent, comment.role, comment.model)}</span>
         <span className="diff-comment-id">#{comment.id}</span>
         <span className="diff-comment-time">{formatTime(comment.timestamp)}</span>
         {lineRange && (
@@ -245,7 +244,7 @@ export function CommentCard({ comment, onDelete, onReply, onResolve, onReopen, o
             <div key={reply.id} className="diff-comment-reply">
               <div className="diff-comment-header">
                 <AgentAvatar agent={reply.agent} size={18} className="diff-comment-avatar small" />
-                <span className="diff-comment-author" style={{ fontSize: 11 }}>{formatAgentDisplay(reply.agent, reply.role)}</span>
+                <span className="diff-comment-author" style={{ fontSize: 11 }}>{formatAgentDisplay(reply.agent, reply.role, reply.model)}</span>
                 <span className="diff-comment-time">{formatTime(reply.timestamp)}</span>
                 <span className="diff-comment-actions">
                   {onReply && (

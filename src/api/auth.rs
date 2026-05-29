@@ -280,6 +280,28 @@ pub struct VerifyResponse {
     pub valid: bool,
 }
 
+/// `POST /api/v1/auth/verify` — client sends `HMAC(SK, "grove-verify")` as proof.
+pub async fn auth_verify(
+    axum::extract::State(auth): axum::extract::State<Arc<ServerAuth>>,
+    Json(req): Json<VerifyRequest>,
+) -> Result<Json<VerifyResponse>, StatusCode> {
+    match &auth.secret_key {
+        None => Ok(Json(VerifyResponse { valid: true })),
+        Some(sk) => {
+            let mut mac =
+                HmacSha256::new_from_slice(sk.as_bytes()).expect("HMAC accepts any key length");
+            mac.update(b"grove-verify");
+            let expected = hex::encode(mac.finalize().into_bytes());
+
+            if req.proof == expected {
+                Ok(Json(VerifyResponse { valid: true }))
+            } else {
+                Err(StatusCode::UNAUTHORIZED)
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::canonical_path;
@@ -332,27 +354,5 @@ mod tests {
     fn value_without_equals() {
         // `?flag` (no =) → key "flag", value ""
         assert_eq!(canonical_path("/x", Some("flag"), &[]), "/x?flag=");
-    }
-}
-
-/// `POST /api/v1/auth/verify` — client sends `HMAC(SK, "grove-verify")` as proof.
-pub async fn auth_verify(
-    axum::extract::State(auth): axum::extract::State<Arc<ServerAuth>>,
-    Json(req): Json<VerifyRequest>,
-) -> Result<Json<VerifyResponse>, StatusCode> {
-    match &auth.secret_key {
-        None => Ok(Json(VerifyResponse { valid: true })),
-        Some(sk) => {
-            let mut mac =
-                HmacSha256::new_from_slice(sk.as_bytes()).expect("HMAC accepts any key length");
-            mac.update(b"grove-verify");
-            let expected = hex::encode(mac.finalize().into_bytes());
-
-            if req.proof == expected {
-                Ok(Json(VerifyResponse { valid: true }))
-            } else {
-                Err(StatusCode::UNAUTHORIZED)
-            }
-        }
     }
 }

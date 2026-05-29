@@ -7,6 +7,7 @@ import { AgentsTab } from "./AgentsTab";
 import type { AgentDef, SkillSource, InstalledSkill } from "../../api";
 import { getAgentDefs, listSources, listInstalled } from "../../api";
 import { useProject } from "../../context";
+import { useCommand } from "../../keyboard";
 
 type TabId = "explore" | "sources" | "agents";
 
@@ -68,6 +69,13 @@ export function SkillsPage() {
       listSources().then(setSources),
     ]);
   }, []);
+
+  // Catalog-declared tab switchers — Command Palette / Settings shortcut
+  // both call setActiveTab so the page jumps to that tab regardless of
+  // current selection.
+  useCommand("skills.tab.explore", () => setActiveTab("explore"), []);
+  useCommand("skills.tab.sources", () => setActiveTab("sources"), []);
+  useCommand("skills.tab.agents", () => setActiveTab("agents"), []);
 
   if (isLoading) {
     return (

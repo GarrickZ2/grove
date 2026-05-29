@@ -38,12 +38,22 @@ function findAtIndex(textarea: HTMLTextAreaElement): number {
 }
 
 /** Build new text by replacing @query with filePath */
-function buildInsertedText(textarea: HTMLTextAreaElement, atIdx: number, filePath: string) {
+function buildInsertedText(
+  textarea: HTMLTextAreaElement,
+  atIdx: number,
+  filePath: string,
+  appendSpace: boolean = true,
+  keepAtPrefix: boolean = false,
+  isDir: boolean = false,
+) {
   const text = textarea.value;
   const cursor = textarea.selectionStart;
   const before = text.slice(0, atIdx);
   const after = text.slice(cursor);
-  const insertion = filePath + " ";
+  const prefix = keepAtPrefix ? "@" : "";
+  const suffix = isDir ? "/" : "";
+  const space = appendSpace ? " " : "";
+  const insertion = prefix + filePath + suffix + space;
   return {
     newValue: before + insertion + after,
     newCursor: before.length + insertion.length,
@@ -106,15 +116,55 @@ export function useFileMention({ mentionItems, textareaRef }: UseFileMentionConf
         setSelectedIdx((prev) => (prev - 1 + filteredItems.length) % filteredItems.length);
         return true;
       }
-      if (e.key === "Tab" || (e.key === "Enter" && !e.metaKey && !e.ctrlKey && !e.shiftKey)) {
+      if (e.key === "Tab") {
         e.preventDefault();
         const textarea = textareaRef.current;
         if (!textarea) return true;
         const atIdx = findAtIndex(textarea);
         if (atIdx < 0) return true;
 
-        const filePath = filteredItems[selectedIdx].path;
-        const { newValue, newCursor } = buildInsertedText(textarea, atIdx, filePath);
+        const selectedItem = filteredItems[selectedIdx];
+        const filePath = selectedItem.path;
+        const isDir = selectedItem.isDir;
+
+        const { newValue, newCursor } = buildInsertedText(
+          textarea,
+          atIdx,
+          filePath,
+          false, // appendSpace = false
+          true,  // keepAtPrefix = true
+          isDir,
+        );
+        setText(newValue);
+
+        const newFilter = filePath + (isDir ? "/" : "");
+        setFileFilter(newFilter);
+        setSelectedIdx(0);
+
+        requestAnimationFrame(() => {
+          textarea.focus();
+          textarea.setSelectionRange(newCursor, newCursor);
+        });
+        return true;
+      }
+      if (e.key === "Enter" && !e.metaKey && !e.ctrlKey && !e.shiftKey) {
+        e.preventDefault();
+        const textarea = textareaRef.current;
+        if (!textarea) return true;
+        const atIdx = findAtIndex(textarea);
+        if (atIdx < 0) return true;
+
+        const selectedItem = filteredItems[selectedIdx];
+        const filePath = selectedItem.path;
+
+        const { newValue, newCursor } = buildInsertedText(
+          textarea,
+          atIdx,
+          filePath,
+          true,  // appendSpace = true
+          false, // keepAtPrefix = false
+          false,
+        );
         setText(newValue);
         setShowDropdown(false);
 

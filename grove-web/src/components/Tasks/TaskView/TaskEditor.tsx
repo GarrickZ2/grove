@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import Editor, { type Monaco } from "@monaco-editor/react";
-import { X, FileCode, Eye, Columns2, Loader2, Save, Maximize2, Minimize2, PanelLeftOpen, PanelLeftClose, RefreshCw, AlertCircle } from "lucide-react";
+import { X, FileCode, Eye, Columns2, Loader2, Save, Maximize2, Minimize2, PanelLeftOpen, PanelLeftClose, RefreshCw, AlertCircle, ZoomIn, ZoomOut } from "lucide-react";
 import { Button, getPreviewType, ImageLightbox } from "../../ui";
 import { getPreviewRenderer } from "../../Review/previewRenderers";
 
@@ -41,6 +41,7 @@ import {
 import type { DirEntry } from "../../../api";
 import { FileContextMenu, type ContextMenuPosition, type ContextMenuTarget } from "./FileContextMenu";
 import { ConfirmDialog } from "../../Dialogs/ConfirmDialog";
+import { useCommand, useDefineCommand, useContextKey } from "../../../keyboard";
 
 interface TaskEditorProps {
   projectId: string;
@@ -534,6 +535,32 @@ export function TaskEditor({ projectId, taskId, onClose, fullscreen = false, onT
   const [contentVersion, setContentVersion] = useState(0);
   const [lightboxUrl, setLightboxUrl] = useState<string | null>(null);
   const [lightboxSvg, setLightboxSvg] = useState<string | null>(null);
+  const [editorFocused, setEditorFocused] = useState(false);
+  const [fontSize, setFontSize] = useState<number>(() => {
+    const saved = localStorage.getItem("grove:editor.fontSize");
+    return saved ? parseInt(saved, 10) : 13;
+  });
+
+  const handleZoomIn = useCallback(() => {
+    setFontSize((prev) => {
+      const next = Math.min(prev + 1, 30);
+      localStorage.setItem("grove:editor.fontSize", String(next));
+      return next;
+    });
+  }, []);
+
+  const handleZoomOut = useCallback(() => {
+    setFontSize((prev) => {
+      const next = Math.max(prev - 1, 9);
+      localStorage.setItem("grove:editor.fontSize", String(next));
+      return next;
+    });
+  }, []);
+
+  const handleZoomReset = useCallback(() => {
+    setFontSize(13);
+    localStorage.setItem("grove:editor.fontSize", "13");
+  }, []);
   const editorContentRef = useRef<string>('');
 
   // Symbol jump (cmd+click navigation):
@@ -713,17 +740,28 @@ export function TaskEditor({ projectId, taskId, onClose, fullscreen = false, onT
     setSaving(false);
   }, [projectId, taskId, selectedFile, saving, refreshing]);
 
-  // Keyboard shortcut: Cmd/Ctrl+S to save
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key === 's') {
-        e.preventDefault();
-        handleSave();
-      }
-    };
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
+  // Cmd/Ctrl+S → save, routed through the Scoped Command Registry. There's
+  // no static catalog entry for the task editor save (it isn't part of
+  // Studio), so we define it inline. `editorFocus` is mirrored from Monaco's
+  // focus events and gates the binding; `passThroughTextInput` is required
+  // because Monaco's surface otherwise suppresses commands while it owns
+  // focus (the very state in which we want Cmd+S to fire).
+  useContextKey('editorFocus', editorFocused);
+  useDefineCommand({
+    id: 'task.editor.save',
+    name: 'Save Task Editor',
+    category: 'Editor',
+    description: 'Save the current file open in the task editor',
+    defaultBindings: [{ key: 'Mod+s' }],
+    scope: 'workspace',
+    defaultWhen: 'editorFocus',
+    passThroughTextInput: true,
+    handler: handleSave,
   }, [handleSave]);
+
+  useCommand("view.zoom.increase", handleZoomIn, { enabled: () => editorFocused }, [handleZoomIn, editorFocused]);
+  useCommand("view.zoom.decrease", handleZoomOut, { enabled: () => editorFocused }, [handleZoomOut, editorFocused]);
+  useCommand("view.zoom.reset", handleZoomReset, { enabled: () => editorFocused }, [handleZoomReset, editorFocused]);
 
   // Auto-save on unmount when there are unsaved edits. TaskView force-remounts
   // its child layouts on task switch (TaskView.tsx key={projectId-taskId}),
@@ -1122,39 +1160,66 @@ export function TaskEditor({ projectId, taskId, onClose, fullscreen = false, onT
 
         {/* Editor area */}
         <div className="flex-1 flex flex-col min-w-0">
-          {selectedFile && isPreviewable && (
+          {selectedFile && (
             <div className="flex items-center justify-between px-4 h-[38px] bg-[var(--color-bg)] border-b border-[var(--color-border)] text-xs flex-shrink-0 select-none">
               <span className="text-[var(--color-text-muted)] font-medium">
-                {renderer?.label}
+                {renderer?.label || "Source File"}
               </span>
-              <div className="flex items-center gap-1 bg-[var(--color-bg-secondary)] border border-[var(--color-border)] p-0.5 rounded-md">
-                <button
-                  onClick={() => setViewMode('code')}
-                  className={`px-2 py-1 rounded transition-colors flex items-center gap-1 font-medium cursor-pointer ${viewMode === 'code' ? 'bg-[var(--color-bg)] text-[var(--color-text)] shadow-sm' : 'text-[var(--color-text-muted)] hover:text-[var(--color-text)]'}`}
-                >
-                  <FileCode className="w-3.5 h-3.5" />
-                  Code
-                </button>
-                <button
-                  onClick={() => {
-                    setFileContent(editorContentRef.current);
-                    setViewMode('split');
-                  }}
-                  className={`px-2 py-1 rounded transition-colors flex items-center gap-1 font-medium cursor-pointer ${viewMode === 'split' ? 'bg-[var(--color-bg)] text-[var(--color-text)] shadow-sm' : 'text-[var(--color-text-muted)] hover:text-[var(--color-text)]'}`}
-                >
-                  <Columns2 className="w-3.5 h-3.5" />
-                  Split
-                </button>
-                <button
-                  onClick={() => {
-                    setFileContent(editorContentRef.current);
-                    setViewMode('preview');
-                  }}
-                  className={`px-2 py-1 rounded transition-colors flex items-center gap-1 font-medium cursor-pointer ${viewMode === 'preview' ? 'bg-[var(--color-bg)] text-[var(--color-text)] shadow-sm' : 'text-[var(--color-text-muted)] hover:text-[var(--color-text)]'}`}
-                >
-                  <Eye className="w-3.5 h-3.5" />
-                  Preview
-                </button>
+              <div className="flex items-center gap-2">
+                {isPreviewable && (
+                  <div className="flex items-center gap-1 bg-[var(--color-bg-secondary)] border border-[var(--color-border)] p-0.5 rounded-md">
+                    <button
+                      onClick={() => setViewMode('code')}
+                      className={`px-2 py-1 rounded transition-colors flex items-center gap-1 font-medium cursor-pointer ${viewMode === 'code' ? 'bg-[var(--color-bg)] text-[var(--color-text)] shadow-sm' : 'text-[var(--color-text-muted)] hover:text-[var(--color-text)]'}`}
+                    >
+                      <FileCode className="w-3.5 h-3.5" />
+                      Code
+                    </button>
+                    <button
+                      onClick={() => {
+                        setFileContent(editorContentRef.current);
+                        setViewMode('split');
+                      }}
+                      className={`px-2 py-1 rounded transition-colors flex items-center gap-1 font-medium cursor-pointer ${viewMode === 'split' ? 'bg-[var(--color-bg)] text-[var(--color-text)] shadow-sm' : 'text-[var(--color-text-muted)] hover:text-[var(--color-text)]'}`}
+                    >
+                      <Columns2 className="w-3.5 h-3.5" />
+                      Split
+                    </button>
+                    <button
+                      onClick={() => {
+                        setFileContent(editorContentRef.current);
+                        setViewMode('preview');
+                      }}
+                      className={`px-2 py-1 rounded transition-colors flex items-center gap-1 font-medium cursor-pointer ${viewMode === 'preview' ? 'bg-[var(--color-bg)] text-[var(--color-text)] shadow-sm' : 'text-[var(--color-text-muted)] hover:text-[var(--color-text)]'}`}
+                    >
+                      <Eye className="w-3.5 h-3.5" />
+                      Preview
+                    </button>
+                  </div>
+                )}
+                <div className="flex items-center border border-[var(--color-border)] rounded-md bg-[var(--color-bg)] h-7 p-0.5 ml-1">
+                  <button
+                    onClick={handleZoomOut}
+                    className="px-2 h-full flex items-center justify-center text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-bg-tertiary)] rounded-[4px] cursor-pointer transition-colors"
+                    title="Zoom out"
+                  >
+                    <ZoomOut className="w-3.5 h-3.5" />
+                  </button>
+                  <button
+                    onClick={handleZoomReset}
+                    className="px-2 h-full flex items-center justify-center text-xs font-medium text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-bg-tertiary)] rounded-[4px] cursor-pointer select-none transition-colors"
+                    title="Reset zoom (13px)"
+                  >
+                    {fontSize}px
+                  </button>
+                  <button
+                    onClick={handleZoomIn}
+                    className="px-2 h-full flex items-center justify-center text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-bg-tertiary)] rounded-[4px] cursor-pointer transition-colors"
+                    title="Zoom in"
+                  >
+                    <ZoomIn className="w-3.5 h-3.5" />
+                  </button>
+                </div>
               </div>
             </div>
           )}
@@ -1253,6 +1318,11 @@ export function TaskEditor({ projectId, taskId, onClose, fullscreen = false, onT
                           editorRegistry.delete(sessionId);
                         });
                       }
+                      // Track Monaco focus → drives the `editorFocus` context
+                      // key. The Cmd+S save command's defaultWhen gates on it
+                      // so the binding only fires while the editor owns focus.
+                      editor.onDidFocusEditorText?.(() => setEditorFocused(true));
+                      editor.onDidBlurEditorText?.(() => setEditorFocused(false));
                       const underlineDisposables = attachUnderlineListeners(editor, monaco);
                       editor.onDidDispose?.(() => {
                         for (const d of underlineDisposables) {
@@ -1269,7 +1339,7 @@ export function TaskEditor({ projectId, taskId, onClose, fullscreen = false, onT
                     theme="grove-theme"
                     options={{
                       minimap: { enabled: false },
-                      fontSize: 13,
+                      fontSize: fontSize,
                       lineNumbers: 'on',
                       scrollBeyondLastLine: false,
                       wordWrap: 'on',
@@ -1320,6 +1390,11 @@ export function TaskEditor({ projectId, taskId, onClose, fullscreen = false, onT
                       editorRegistry.delete(sessionId);
                     });
                   }
+                  // Track Monaco focus → drives the `editorFocus` context
+                  // key. The Cmd+S save command's defaultWhen gates on it
+                  // so the binding only fires while the editor owns focus.
+                  editor.onDidFocusEditorText?.(() => setEditorFocused(true));
+                  editor.onDidBlurEditorText?.(() => setEditorFocused(false));
                   const underlineDisposables = attachUnderlineListeners(editor, monaco);
                   editor.onDidDispose?.(() => {
                     for (const d of underlineDisposables) {
@@ -1337,7 +1412,7 @@ export function TaskEditor({ projectId, taskId, onClose, fullscreen = false, onT
                 theme="grove-theme"
                 options={{
                   minimap: { enabled: false },
-                  fontSize: 13,
+                  fontSize: fontSize,
                   lineNumbers: 'on',
                   scrollBeyondLastLine: false,
                   wordWrap: 'on',

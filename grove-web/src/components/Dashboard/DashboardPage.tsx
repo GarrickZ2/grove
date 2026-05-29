@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
+import { useCommand, useKeyboardScope } from "../../keyboard";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   ArrowDown,
@@ -274,6 +275,44 @@ export function DashboardPage({ onNavigate }: DashboardPageProps) {
     setOperationMessage(message);
     setTimeout(() => setOperationMessage(null), 3000);
   };
+
+  // ── Keyboard scope + branch commands ───────────────────────────────────
+  // The catalog scopes git.branch.* under "workspace". DashboardPage and
+  // TaskView never mount together (different App routes), so pushing
+  // "workspace" here doesn't collide with TaskView's own push. Hook calls
+  // must precede the early return below to keep hook order stable.
+  useKeyboardScope("workspace");
+
+  const branchOpsEnabled = () =>
+    !!selectedProject && selectedProject.isGitRepo && !isOperating;
+  const renameBranchEnabled = () =>
+    branchOpsEnabled() &&
+    (repoStatus?.currentBranch || selectedProject?.currentBranch || "").length > 0;
+
+  useCommand(
+    "git.branch.new",
+    () => setShowNewBranchDialog(true),
+    { enabled: branchOpsEnabled },
+    [selectedProject, isOperating],
+  );
+  useCommand(
+    "git.branch.rename",
+    () => {
+      const currentName =
+        repoStatus?.currentBranch || selectedProject?.currentBranch || "";
+      if (!currentName) return;
+      // Prefer the hydrated Branch entry (carries isLocal/isCurrent), but
+      // fall back to a minimal stub so the rename dialog still surfaces
+      // before the branches list finishes loading.
+      const current =
+        branches.find((b) => b.name === currentName) ??
+        ({ name: currentName, isLocal: true, isCurrent: true } as Branch);
+      setSelectedBranch(current);
+      setShowRenameBranchDialog(true);
+    },
+    { enabled: renameBranchEnabled },
+    [branches, selectedProject, repoStatus, isOperating],
+  );
 
   if (!selectedProject) {
     return (

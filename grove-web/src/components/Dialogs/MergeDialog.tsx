@@ -1,7 +1,8 @@
-import { useState, useEffect } from "react";
+import { useCallback, useState } from "react";
 import { GitMerge, X, Loader2, GitBranch } from "lucide-react";
 import { Button } from "../ui";
 import { DialogShell } from "../ui/DialogShell";
+import { useCommand, useContextKey, useKeyboardScope } from "../../keyboard";
 
 type MergeMethod = "squash" | "merge-commit";
 
@@ -28,25 +29,28 @@ export function MergeDialog({
 }: MergeDialogProps) {
   const [selectedMethod, setSelectedMethod] = useState<MergeMethod>("squash");
 
-  // Escape to close
-  useEffect(() => {
-    if (!isOpen) return;
-    const handler = (e: KeyboardEvent) => {
-      if (e.key === "Escape") { e.preventDefault(); onCancel(); }
-    };
-    window.addEventListener("keydown", handler);
-    return () => window.removeEventListener("keydown", handler);
-  }, [isOpen, onCancel]);
+  // Catalog handlers register inside <MergeDialogBindings> only while
+  // isOpen=true. Multiple MergeDialog wrappers can coexist (one per task
+  // row, all but the active one with isOpen=false); a top-level useCommand
+  // would otherwise overwrite each other on every re-render — only the
+  // last-mounted dialog's binding would be live.
+  useKeyboardScope("dialog.merge", isOpen);
 
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!isLoading) {
-      onMerge(selectedMethod);
-    }
-  };
+  const handleSubmit = useCallback(
+    (e?: React.FormEvent) => {
+      e?.preventDefault();
+      if (!isLoading) {
+        onMerge(selectedMethod);
+      }
+    },
+    [isLoading, onMerge, selectedMethod],
+  );
 
   return (
     <DialogShell isOpen={isOpen} onClose={onCancel}>
+      {isOpen && (
+        <MergeDialogBindings onCancel={onCancel} onSubmit={handleSubmit} methodSelected={!!selectedMethod} />
+      )}
       <form
         onSubmit={handleSubmit}
         className="bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-xl shadow-xl overflow-hidden"
@@ -165,4 +169,24 @@ export function MergeDialog({
       </form>
     </DialogShell>
   );
+}
+
+// Registers the git.merge.* catalog handlers only while the dialog is
+// actually open. See top-of-component comment for the multi-mount rationale.
+function MergeDialogBindings({
+  onCancel,
+  onSubmit,
+  methodSelected,
+}: {
+  onCancel: () => void;
+  onSubmit: () => void;
+  methodSelected: boolean;
+}) {
+  // git.merge.submit gates on `methodSelected`. A merge method always has a
+  // default, so this is effectively "the dialog is open" — kept for catalog
+  // consistency with the other submit gates.
+  useContextKey("methodSelected", methodSelected);
+  useCommand("git.merge.cancel", onCancel, [onCancel]);
+  useCommand("git.merge.submit", onSubmit, [onSubmit]);
+  return null;
 }

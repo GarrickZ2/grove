@@ -38,6 +38,7 @@ import {
   type FileConflictState,
 } from "../ui";
 import { openExternalUrl } from "../../utils/openExternal";
+import { useCommand, useContextKey, useKeyboardScope } from "../../keyboard";
 
 const DRAG_TYPE = "application/x-grove-resource-path";
 
@@ -476,22 +477,101 @@ export function ResourcePage() {
     setIsSaving(false);
   }, [projectId, instructions]);
 
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key === "s") {
-        const active = document.activeElement;
-        if (active?.id === "resource-instructions-editor") {
-          e.preventDefault();
-          if (hasUnsaved) handleSaveInstructions();
-        } else if (active?.id === "resource-memory-editor") {
-          e.preventDefault();
-          if (hasUnsavedMemory) handleSaveMemory();
-        }
-      }
-    };
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [hasUnsaved, handleSaveInstructions, hasUnsavedMemory, handleSaveMemory]);
+  // Cmd/Ctrl+S → save instructions or memory, routed through the Scoped
+  // Command Registry. Catalog declarations live in keyboard/catalog/studio.ts
+  // (studio.instructions.save / studio.memory.save). Context keys gate the
+  // "when" expression so the binding is inert when the buffer is unchanged
+  // or focus is outside the relevant Monaco editor.
+  // - studioMode: ResourcePage only mounts inside Studio surfaces.
+  // - instructionsEdited / memoryEdited: surface the "has unsaved" boolean.
+  // - The catalog entries have passThroughTextInput: true so the binding
+  //   fires while the Monaco editor (which suppresses commands by default)
+  //   owns focus.
+  // The catalog scopes save commands to "workspace"; ResourcePage is
+  // rendered directly under App (not inside TaskView, which would have
+  // already pushed it), so we push the scope ourselves.
+  useKeyboardScope("workspace");
+  useContextKey("studioMode", true);
+  useContextKey("instructionsEdited", hasUnsaved);
+  useContextKey("memoryEdited", hasUnsavedMemory);
+
+  // `enabled` keeps the original focus-bound behavior — Cmd+S only saves the
+  // editor that currently owns focus. Without this, having both editors
+  // present would race for the same chord.
+  useCommand(
+    "studio.instructions.save",
+    () => {
+      if (hasUnsaved) handleSaveInstructions();
+    },
+    {
+      enabled: () =>
+        document.activeElement?.id === "resource-instructions-editor",
+    },
+    [hasUnsaved, handleSaveInstructions],
+  );
+  useCommand(
+    "studio.memory.save",
+    () => {
+      if (hasUnsavedMemory) handleSaveMemory();
+    },
+    {
+      enabled: () =>
+        document.activeElement?.id === "resource-memory-editor",
+    },
+    [hasUnsavedMemory, handleSaveMemory],
+  );
+
+  // Edit-mode toggles for the Workspace Instructions / Project Memory
+  // editors. Mirror the "Edit" button: switch the panel into the edit
+  // state. Disabled while the relevant content is still loading.
+  useCommand(
+    "studio.instructions.edit",
+    () => setIsEditingInstructions(true),
+    { enabled: () => !isLoadingInstructions && !isEditingInstructions },
+    [isLoadingInstructions, isEditingInstructions],
+  );
+  useCommand(
+    "studio.memory.edit",
+    () => setIsEditingMemory(true),
+    { enabled: () => !isLoadingMemory && !isEditingMemory },
+    [isLoadingMemory, isEditingMemory],
+  );
+
+  // Import = primary file upload button (Upload). Disabled while a previous
+  // upload is in flight, mirroring the toolbar button's `disabled` state.
+  useCommand(
+    "studio.resource.import",
+    () => fileInputRef.current?.click(),
+    { enabled: () => !isUploading },
+    [isUploading],
+  );
+
+  // Refresh both the file list and the linked workdirs — same handler as
+  // the toolbar's Refresh button.
+  useCommand(
+    "studio.resource.refresh",
+    () => {
+      void loadFiles();
+      void loadWorkdirs();
+    },
+    [loadFiles, loadWorkdirs],
+  );
+
+  // Add Link / Add Folder — mirror the toolbar buttons. AddLink opens the
+  // dialog; AddFolder triggers the native folder picker via the existing
+  // handler. AddFolder is gated by `isAddingWorkdir` to match the button's
+  // disabled state and avoid stacking duplicate picker invocations.
+  useCommand(
+    "studio.resource.addLink",
+    () => setAddLinkOpen(true),
+    [],
+  );
+  useCommand(
+    "studio.resource.addFolder",
+    () => { void handleAddWorkdir(); },
+    { enabled: () => !isAddingWorkdir },
+    [handleAddWorkdir, isAddingWorkdir],
+  );
 
   const handleDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault();

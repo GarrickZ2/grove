@@ -1,7 +1,5 @@
 export { useIsMobile } from "./useIsMobile";
 
-export { useHotkeys } from "./useHotkeys";
-
 export { useTaskPageState } from "./useTaskPageState";
 
 export { useTaskNavigation } from "./useTaskNavigation";

@@ -15,6 +15,7 @@ import {
 } from "../../api";
 import { loadCustomAgentPersonas as loadCustomAgentPersonasIcon } from "../../utils/agentIcon";
 import { useIsMobile } from "../../hooks";
+import { useDefineCommand, useKeyboardScope } from "../../keyboard";
 
 interface AgentOption {
   id: string;
@@ -127,30 +128,44 @@ export function CustomAgentsModal({
   // Keyboard a11y — Esc unwinds inner state in layers (delete confirm →
   // editing form → modal close), so users don't lose unsaved work to a
   // single keystroke. Cmd/Ctrl+Enter saves the form when in editing mode.
-  useEffect(() => {
-    if (!isOpen) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
+  // Catalog doesn't have entries for this dialog, so we declare them inline
+  // via useDefineCommand under the `dialog.customAgentPersonas` scope.
+  useKeyboardScope("dialog.customAgentPersonas", isOpen);
+  useDefineCommand(
+    {
+      id: "dialog.customAgentPersonas.close",
+      name: "Close Custom Agents Modal",
+      category: "Dialog",
+      defaultBindings: [{ key: "Escape" }],
+      scope: "dialog.customAgentPersonas",
+      handler: () => {
         if (confirmDeleteId) {
-          e.preventDefault();
           setConfirmDeleteId(null);
           return;
         }
         if (editingId) {
-          e.preventDefault();
           cancelEditRef.current();
           return;
         }
-        e.preventDefault();
         onCloseRef.current();
-      } else if ((e.metaKey || e.ctrlKey) && e.key === "Enter" && editingId && form) {
-        e.preventDefault();
+      },
+    },
+    [confirmDeleteId, editingId],
+  );
+  useDefineCommand(
+    {
+      id: "dialog.customAgentPersonas.submit",
+      name: "Save Custom Agent Persona",
+      category: "Dialog",
+      defaultBindings: [{ key: "Mod+Enter" }],
+      scope: "dialog.customAgentPersonas",
+      handler: () => {
+        if (!editingId || !form) return;
         void saveEditRef.current();
-      }
-    };
-    document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
-  }, [isOpen, editingId, form, confirmDeleteId]);
+      },
+    },
+    [editingId, form],
+  );
 
   // Sync from props on open. Drafts are dropped on close.
   // Uses the documented "Adjusting state on prop change" pattern with a stored

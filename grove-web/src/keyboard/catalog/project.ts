@@ -1,0 +1,37 @@
+import type { CommandDef } from "../types";
+
+/**
+ * Project-level commands — add / switch / refresh projects, and open the
+ * current project in external tools (IDE, terminal).
+ */
+export const PROJECT_COMMANDS: CommandDef[] = [
+  {
+    id: "project.add",
+    name: "Add Project",
+    category: "Project",
+  },
+  {
+    id: "project.switch",
+    name: "Switch Project",
+    category: "Project",
+  },
+  {
+    id: "project.openIDE",
+    name: "Open Project in IDE",
+    category: "Project",
+    scope: "workspace",
+    defaultWhen: "projectSelected",
+  },
+  {
+    id: "project.openTerminal",
+    name: "Open Project in Terminal",
+    category: "Project",
+    scope: "workspace",
+    defaultWhen: "projectSelected",
+  },
+  {
+    id: "project.refresh",
+    name: "Refresh Project",
+    category: "Project",
+  },
+];

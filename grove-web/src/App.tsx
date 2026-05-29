@@ -35,9 +35,11 @@ import type { Task } from "./data/types";
 import { mockConfig } from "./data/mockData";
 import { getConfig, patchConfig, checkCommands, openIDE, openTerminal } from "./api";
 import { agentOptions } from "./components/ui";
-import { useIsMobile, useHotkeys, buildCommands, useAddLibraryHashHandler } from "./hooks";
+import { useIsMobile, buildCommands, useAddLibraryHashHandler } from "./hooks";
 import type { UseCommandsOptions } from "./hooks/useCommands";
 import { REPO_NAV_IDS, STUDIO_NAV_IDS } from "./data/nav";
+import { useCommand, useContextKey, commandRegistry } from "./keyboard";
+import { ActionCommandPalette } from "./components/Palette/ActionCommandPalette";
 
 export type TasksMode = "zen" | "blitz";
 
@@ -145,24 +147,17 @@ function AppContent() {
   const [showHelp, setShowHelp] = useState(false);
   const { isMobile } = useIsMobile();
   const {
-    isOpen: commandPaletteOpen,
-    open: openCommandPalette, close: closeCommandPalette,
+    open: openCommandPalette,
     openProjectPalette, openTaskPalette,
     closeProjectPalette, closeTaskPalette,
     projectPaletteOpen, taskPaletteOpen,
     registerGlobalCommands,
     inWorkspace,
   } = useCommandPalette();
-  const { theme } = useTheme();
+  const { theme, mode: themeMode, setAppearance } = useTheme();
   const { config: globalConfig } = useConfig();
   const navItems: readonly string[] = selectedProject?.projectType === "studio" ? STUDIO_NAV_IDS : REPO_NAV_IDS;
 
-  const setActiveNavItem = (index: number) => {
-    const nextItem = navItems[index];
-    if (nextItem) {
-      setActiveItem(nextItem);
-    }
-  };
   // Navigate sidebar by absolute index or relative delta (based on current active item)
   const navigateSidebar = useCallback((indexOrDelta: number, relative?: boolean) => {
     if (relative) {
@@ -176,51 +171,13 @@ function AppContent() {
     }
   }, [activeItem, navItems]);
 
-  const isZenMode = tasksMode === "zen";
-
-  // Track palette open flags via refs so the toggle hotkeys don't have to
-  // re-bind (and the whole useHotkeys listener tear down + re-install) on
-  // every open/close. Without this, every palette toggle remounted the
-  // global keydown listener, which intermittently dropped keystrokes that
-  // arrived during the swap window. All three palette flags get the same
-  // pattern so adding a fourth palette later doesn't reintroduce the bug.
-  const commandPaletteOpenRef = useRef(commandPaletteOpen);
-  const projectPaletteOpenRef = useRef(projectPaletteOpen);
-  const taskPaletteOpenRef = useRef(taskPaletteOpen);
-  useEffect(() => {
-    commandPaletteOpenRef.current = commandPaletteOpen;
-  }, [commandPaletteOpen]);
-  useEffect(() => {
-    projectPaletteOpenRef.current = projectPaletteOpen;
-  }, [projectPaletteOpen]);
-  useEffect(() => {
-    taskPaletteOpenRef.current = taskPaletteOpen;
-  }, [taskPaletteOpen]);
-
-  // Cmd+K = command palette, Cmd+P = project palette, Cmd+T = task palette
-  // Cmd+1-5 = tab switch (Zen mode only; Blitz uses Cmd+1-9 for task selection)
-  useHotkeys([
-    { key: "Meta+k", handler: () => (commandPaletteOpenRef.current ? closeCommandPalette() : openCommandPalette()) },
-    { key: "Meta+p", handler: () => (projectPaletteOpenRef.current ? closeProjectPalette() : openProjectPalette()) },
-    { key: "Meta+o", handler: () => (taskPaletteOpenRef.current ? closeTaskPalette() : openTaskPalette()) },
-    { key: "Meta+1", handler: () => setActiveNavItem(0), options: { enabled: isZenMode && !inWorkspace } },
-    { key: "Meta+2", handler: () => setActiveNavItem(1), options: { enabled: isZenMode && !inWorkspace } },
-    { key: "Meta+3", handler: () => setActiveNavItem(2), options: { enabled: isZenMode && !inWorkspace } },
-    { key: "Meta+4", handler: () => setActiveNavItem(3), options: { enabled: isZenMode && !inWorkspace } },
-    { key: "Meta+5", handler: () => setActiveNavItem(4), options: { enabled: isZenMode && !inWorkspace } },
-    { key: "Meta+6", handler: () => setActiveNavItem(5), options: { enabled: isZenMode && !inWorkspace } },
-    { key: "Meta+Alt+ArrowUp", handler: () => navigateSidebar(-1, true), options: { enabled: isZenMode && !inWorkspace } },
-    { key: "Meta+Alt+ArrowDown", handler: () => navigateSidebar(1, true), options: { enabled: isZenMode && !inWorkspace } },
-    // Help overlay — lives at App level so it works from every page (Tasks,
-    // Work, Dashboard, Skills, …) instead of only when TasksPage happens to
-    // be the visible tab.
-    { key: "?", handler: () => setShowHelp((v) => !v) },
-  ], [
-    openCommandPalette, closeCommandPalette,
-    openProjectPalette, closeProjectPalette,
-    openTaskPalette, closeTaskPalette,
-    isZenMode, inWorkspace, navigateSidebar,
-  ]);
+  // Global context keys — feed catalog `when` expressions for nav.* /
+  // project.* / mode.* etc. Last-write-wins; we own these four at the
+  // App level.
+  useContextKey("projectSelected", !!selectedProject);
+  useContextKey("studioProject", selectedProject?.projectType === "studio");
+  useContextKey("inZenMode", tasksMode === "zen");
+  useContextKey("inBlitzMode", tasksMode === "blitz");
 
   // Allow any page's "help" button (e.g. Blitz toolbar) to open the same
   // overlay by dispatching a custom event instead of duplicating state.
@@ -704,6 +661,242 @@ function AppContent() {
     if (selectedProject) openTerminal(selectedProject.id);
   }, [selectedProject]);
 
+  // ─── Global command wiring (catalog handlers) ─────────────────────────
+  // These mirror the catalog: every id below has a matching CommandDef in
+  // src/keyboard/catalog/. The catalog owns the keybinding + scope + when
+  // expression — we just provide the handler. Keep these grouped by
+  // category to match the catalog files.
+
+  // Navigation
+  useCommand("nav.dashboard", () => setActiveItem("dashboard"), []);
+  useCommand("nav.work", () => setActiveItem("work"), []);
+  useCommand("nav.tasks", () => setActiveItem("tasks"), []);
+  useCommand("nav.resource", () => setActiveItem("resource"), []);
+  useCommand("nav.skills", () => setActiveItem("skills"), []);
+  useCommand("nav.ai", () => setActiveItem("ai"), []);
+  useCommand("nav.statistics", () => setActiveItem("statistics"), []);
+  useCommand("nav.settings", () => setActiveItem("settings"), []);
+  useCommand("nav.projects", () => setActiveItem("projects"), []);
+  // nav.sidebar.collapse removed — view.sidebar.toggle is the SSoT.
+  useCommand("nav.cycle.next", () => navigateSidebar(1, true), [navigateSidebar]);
+  useCommand("nav.cycle.previous", () => navigateSidebar(-1, true), [navigateSidebar]);
+
+  // Native window controls (Tauri GUI only; no-op in the browser Web IDE,
+  // gated by `enabled: isTauriShell` so they don't surface as dead commands).
+  const isTauriShell =
+    typeof window !== "undefined" &&
+    !!(
+      (window as Window & { __TAURI__?: unknown }).__TAURI__ ||
+      (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__
+    );
+  const runWindowAction = useCallback(
+    async (action: "minimize" | "maximizeToggle" | "fullscreenToggle" | "close") => {
+      try {
+        const mod = await import("@tauri-apps/api/window");
+        const win = mod.getCurrentWindow();
+        if (action === "minimize") await win.minimize();
+        else if (action === "maximizeToggle") await win.toggleMaximize();
+        else if (action === "fullscreenToggle")
+          await win.setFullscreen(!(await win.isFullscreen()));
+        else if (action === "close") await win.close();
+      } catch (e) {
+        console.error("[window] action failed:", e);
+      }
+    },
+    [],
+  );
+  useCommand("window.minimize", () => void runWindowAction("minimize"), { enabled: () => isTauriShell }, [runWindowAction, isTauriShell]);
+  useCommand("window.maximize.toggle", () => void runWindowAction("maximizeToggle"), { enabled: () => isTauriShell }, [runWindowAction, isTauriShell]);
+  useCommand("window.fullscreen.toggle", () => void runWindowAction("fullscreenToggle"), { enabled: () => isTauriShell }, [runWindowAction, isTauriShell]);
+  useCommand("window.close", () => void runWindowAction("close"), { enabled: () => isTauriShell }, [runWindowAction, isTauriShell]);
+
+  // Project
+  useCommand("project.add", () => {
+    setAddProjectInitialMode("coding");
+    setShowAddProject(true);
+  }, []);
+  useCommand("project.switch", () => openProjectPalette(), [openProjectPalette]);
+  useCommand(
+    "project.refresh",
+    () => {
+      refreshProjects();
+      refreshSelectedProject();
+    },
+    [refreshProjects, refreshSelectedProject],
+  );
+  useCommand(
+    "project.openIDE",
+    () => {
+      if (selectedProject) openIDE(selectedProject.id);
+    },
+    { enabled: () => !!selectedProject },
+    [selectedProject],
+  );
+  useCommand(
+    "project.openTerminal",
+    () => {
+      if (selectedProject) openTerminal(selectedProject.id);
+    },
+    { enabled: () => !!selectedProject },
+    [selectedProject],
+  );
+
+  // View — sidebar toggle, zoom, density
+  useCommand("view.sidebar.toggle", () => setSidebarCollapsed((v) => !v), []);
+
+  const setZoom = useCallback((z: number) => {
+    if (typeof document === "undefined") return;
+    const clamped = Math.max(0.5, Math.min(2, z));
+    (document.body.style as CSSStyleDeclaration & { zoom?: string }).zoom = String(clamped);
+    try {
+      window.localStorage.setItem("grove:view.zoom", String(clamped));
+    } catch {
+      /* ignore */
+    }
+  }, []);
+  const getZoom = useCallback(() => {
+    if (typeof document === "undefined") return 1;
+    const raw = (document.body.style as CSSStyleDeclaration & { zoom?: string }).zoom;
+    const n = raw ? parseFloat(raw) : 1;
+    return Number.isFinite(n) && n > 0 ? n : 1;
+  }, []);
+  useEffect(() => {
+    try {
+      const saved = window.localStorage.getItem("grove:view.zoom");
+      if (saved) setZoom(parseFloat(saved));
+    } catch {
+      /* ignore */
+    }
+  }, [setZoom]);
+  useCommand("view.zoom.increase", () => setZoom(getZoom() + 0.1), [setZoom, getZoom]);
+  useCommand("view.zoom.decrease", () => setZoom(getZoom() - 0.1), [setZoom, getZoom]);
+  useCommand("view.zoom.reset", () => setZoom(1), [setZoom]);
+
+  const setDensity = useCallback((value: "compact" | "cozy" | "spacious") => {
+    if (typeof document !== "undefined") {
+      document.documentElement.setAttribute("data-density", value);
+    }
+    try {
+      window.localStorage.setItem("grove:view.density", value);
+    } catch {
+      /* ignore */
+    }
+  }, []);
+  useEffect(() => {
+    try {
+      const saved = window.localStorage.getItem("grove:view.density");
+      if (saved === "compact" || saved === "cozy" || saved === "spacious") {
+        document.documentElement.setAttribute("data-density", saved);
+      }
+    } catch {
+      /* ignore */
+    }
+  }, []);
+  useCommand("view.density.compact", () => setDensity("compact"), [setDensity]);
+  useCommand("view.density.cozy", () => setDensity("cozy"), [setDensity]);
+  useCommand("view.density.spacious", () => setDensity("spacious"), [setDensity]);
+
+  // Mode — theme + zen/blitz
+  useCommand(
+    "mode.theme.toggle",
+    () => {
+      const next = themeMode === "dark" ? "light" : "dark";
+      void setAppearance({ mode: next });
+    },
+    [themeMode, setAppearance],
+  );
+  useCommand(
+    "mode.zen.activate",
+    () => setTasksMode("zen"),
+    { enabled: () => tasksMode !== "zen" },
+    [tasksMode],
+  );
+  useCommand(
+    "mode.blitz.activate",
+    () => setTasksMode("blitz"),
+    { enabled: () => tasksMode !== "blitz" },
+    [tasksMode],
+  );
+
+  // Help / Settings
+  useCommand("help.toggle", () => setShowHelp((v) => !v), []);
+  useCommand("help.openShortcutSettings", () => {
+    setActiveItem("settings");
+    // SettingsPage scrolls to #shortcuts on mount if the hash is present.
+    setTimeout(() => {
+      window.location.hash = "#shortcuts";
+    }, 50);
+  }, []);
+  // settings.open removed — nav.settings is now the SSoT and owns Mod+,.
+  useCommand(
+    "settings.close",
+    () => setActiveItem("dashboard"),
+    { enabled: () => activeItem === "settings" },
+    [activeItem],
+  );
+
+  // Palette close — open variants are wired via useCommandPalette elsewhere
+  useCommand("palette.project.close", () => closeProjectPalette(), [closeProjectPalette]);
+  useCommand("palette.task.close", () => closeTaskPalette(), [closeTaskPalette]);
+
+  // Debug
+  useCommand("debug.reload", () => window.location.reload(), []);
+  useCommand(
+    "debug.logState",
+    () => {
+      console.log("[grove] selectedProject:", selectedProject);
+      console.log("[grove] activeItem:", activeItem);
+      console.log("[grove] themeMode:", themeMode);
+      console.log("[grove] tasksMode:", tasksMode);
+    },
+    [selectedProject, activeItem, themeMode, tasksMode],
+  );
+  useCommand("debug.commandRegistry.list", () => {
+    const all = commandRegistry.listCommands();
+    console.table(
+      all.map((c) => ({
+        id: c.id,
+        name: c.name,
+        category: c.category,
+        scope: c.scope ?? "(global)",
+        bindings: (c.defaultBindings ?? []).map((b) => b.key).join(", "),
+      })),
+    );
+    console.log(`[grove] ${all.length} commands registered`);
+  }, []);
+
+  // agent.new.default / agent.picker.show — dispatch events TaskChat
+  // listens for. Catalog scopes both to `workspace`, so they only fire
+  // while a TaskChat is mounted. No per-agent commands: custom and
+  // marketplace-installed agents can't be predeclared in the catalog,
+  // so a generic "default" + "picker" pair covers everyone uniformly.
+  useCommand(
+    "agent.new.default",
+    () => {
+      window.dispatchEvent(new CustomEvent("grove:new-session-default-agent"));
+    },
+    [],
+  );
+  useCommand(
+    "agent.picker.show",
+    () => {
+      window.dispatchEvent(new CustomEvent("grove:show-agent-picker"));
+    },
+    [],
+  );
+
+  // F12 / Cmd+Alt+I — toggle Tauri devtools. Routes through the catalog
+  // so the binding is rebindable in Settings; the actual platform call
+  // is a Tauri command (no-op in a regular browser).
+  useCommand(
+    "debug.devtools.toggle",
+    () => {
+      const w = window as Window & { __TAURI_INTERNALS__?: { invoke: (cmd: string) => Promise<unknown> } };
+      void w.__TAURI_INTERNALS__?.invoke("toggle_devtools").catch(() => {});
+    },
+    [],
+  );
+
   // Register global command builder — uses refs internally, no re-renders
   const globalOptionsRef = useRef<UseCommandsOptions>(null!);
   const nextGlobalOptions: UseCommandsOptions = {
@@ -986,6 +1179,7 @@ function AppContent() {
             style={{ display: activeItem === "tasks" && tasksMode !== "blitz" ? "block" : "none" }}
           >
             <TasksPage
+              pageVisible={activeItem === "tasks" && tasksMode !== "blitz"}
               initialTaskId={navigationData?.taskId as string | undefined}
               initialChatId={navigationData?.chatId as string | undefined}
               initialViewMode={navigationData?.viewMode as string | undefined}
@@ -1045,6 +1239,7 @@ function AppContent() {
           initialMode={addProjectInitialMode}
         />
         <CommandPalette />
+        <ActionCommandPalette />
         <ProjectCommandPalette
           isOpen={projectPaletteOpen}
           onClose={closeProjectPalette}
@@ -1107,7 +1302,7 @@ function AppContent() {
             exit={{ opacity: 0, x: -40 }}
             transition={{ duration: 0.3, ease: [0.25, 1, 0.5, 1] }}
           >
-            <Sidebar {...sidebarProps} />
+            <div data-grove-sidebar><Sidebar {...sidebarProps} /></div>
             {/* Floating main card — mirrors the sidebar's "floating panel"
                language so the chrome reads as a single design system:
                two cards on a desktop, 12px gap between them and to all
@@ -1127,6 +1322,7 @@ function AppContent() {
                 style={{ display: activeItem === "tasks" ? "block" : "none" }}
               >
                 <TasksPage
+                  pageVisible={activeItem === "tasks"}
                   initialTaskId={navigationData?.taskId as string | undefined}
                   initialChatId={navigationData?.chatId as string | undefined}
                   initialViewMode={navigationData?.viewMode as string | undefined}
@@ -1165,6 +1361,7 @@ function AppContent() {
         initialMode={addProjectInitialMode}
       />
       <CommandPalette />
+      <ActionCommandPalette />
       <ProjectCommandPalette
         isOpen={projectPaletteOpen}
         onClose={closeProjectPalette}

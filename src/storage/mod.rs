@@ -11,6 +11,7 @@ pub mod config;
 pub mod custom_agent;
 pub mod database;
 pub mod installed_agents;
+pub mod keymap;
 pub mod libraries;
 pub mod migrate_chats;
 pub mod notes;
