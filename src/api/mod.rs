@@ -772,17 +772,27 @@ fn cache_control_for(path: &str) -> Option<&'static str> {
     }
 }
 
-/// Axum middleware that adds `Cache-Control: no-cache` to `sw.js` responses
-/// served by tower-http's `ServeDir` (used in debug / static-dir mode).
-/// The embedded-asset path (`serve_embedded`) handles this directly on the
-/// response builder, so this middleware only needs to run on the ServeDir path.
+/// Axum middleware that adds `Cache-Control: no-cache` to `sw.js` responses.
+///
+/// Attached on the ServeDir branch of `create_router` (debug / static-dir mode).
+/// Because `.layer()` after `.fallback_service()` wraps the entire `api_router`,
+/// this runs on every request — but the explicit `/sw.js` path check below
+/// no-ops for everything else, so the only cost on non-matching requests is one
+/// string comparison.
+///
+/// Note the leading slash in the path comparison: axum exposes the URI as the
+/// absolute path here, whereas `cache_control_for` (used in `serve_embedded`)
+/// receives a path already trimmed of its leading slash. The serve_embedded
+/// branch handles the same concern inline; this middleware only exists because
+/// ServeDir bypasses serve_embedded entirely.
 async fn sw_cache_control_middleware(request: Request, next: Next) -> impl IntoResponse {
     let is_sw = request.uri().path() == "/sw.js";
     let mut response = next.run(request).await;
     if is_sw {
-        response
-            .headers_mut()
-            .insert(header::CACHE_CONTROL, "no-cache".parse().unwrap());
+        response.headers_mut().insert(
+            header::CACHE_CONTROL,
+            "no-cache".parse().expect("static header value parses"),
+        );
     }
     response
 }
