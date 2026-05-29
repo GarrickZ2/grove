@@ -17,6 +17,11 @@ interface Params {
   taskId: string;
   setChats: (chats: ChatSessionResponse[]) => void;
   setActiveChatId: (id: string) => void;
+  /** If provided, the parent has pinned a specific chat (Blitz grid
+   *  slot). Skip the active-chat-restoration logic so the pinned
+   *  chat (already set by useState seed) remains active. We still
+   *  load and publish the chat list via setChats. */
+  pinnedChatId?: string;
 }
 
 /**
@@ -32,6 +37,7 @@ export function useInitialChatLoad({
   taskId,
   setChats,
   setActiveChatId,
+  pinnedChatId,
 }: Params): void {
   useEffect(() => {
     let cancelled = false;
@@ -62,6 +68,12 @@ export function useInitialChatLoad({
       }
       if (cancelled) return;
       setChats(chatList);
+      if (pinnedChatId) {
+        // Pinned mode (Blitz grid slot): parent has already seeded
+        // activeChatId from pinnedChatId via useState. Skip the
+        // pending-match / last-tab restoration logic so the pin sticks.
+        return;
+      }
       const win = window as unknown as Record<string, unknown>;
       const pending = win.__grove_pending_chat as
         | { projectId: string; taskId: string; chatId: string }
@@ -89,5 +101,5 @@ export function useInitialChatLoad({
     return () => {
       cancelled = true;
     };
-  }, [projectId, taskId, setChats, setActiveChatId]);
+  }, [projectId, taskId, setChats, setActiveChatId, pinnedChatId]);
 }
