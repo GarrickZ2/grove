@@ -9,6 +9,14 @@ installTauriDevtoolsShortcut()
 installExternalLinkInterceptor()
 installGlobalDragDropInterceptor()
 
+if (typeof window !== "undefined" && "serviceWorker" in navigator) {
+  window.addEventListener("load", () => {
+    navigator.serviceWorker.register("/sw.js").catch((err) => {
+      console.warn("[main] service worker registration failed", err);
+    });
+  });
+}
+
 if (import.meta.env.MODE === "perf") {
   void import("./perf").then(({ startPerfMonitor }) => startPerfMonitor())
 }
