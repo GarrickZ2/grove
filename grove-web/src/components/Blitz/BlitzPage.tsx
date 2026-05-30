@@ -1,6 +1,6 @@
 import { useState, useMemo, useCallback, useRef, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Search, ArrowLeft, ChevronRight, Laptop, Radio, Plus, Folder } from "lucide-react";
+import { Search, ArrowLeft, ChevronRight, Laptop, Radio, Plus, Folder, LayoutGrid } from "lucide-react";
 import { TaskInfoPanel } from "../Tasks/TaskInfoPanel";
 import { TaskView, type TaskViewHandle } from "../Tasks/TaskView";
 import { CommitDialog, ConfirmDialog, DirtyBranchDialog, MergeDialog } from "../Dialogs";
@@ -21,6 +21,7 @@ import {
 import { useCommand, useDefineCommand, useKeyboardScope, useContextKey, useHelpKeyDisplay } from "../../keyboard";
 import { RadioConnectDialog } from "./RadioConnectDialog";
 import { useBlitzTasks } from "./useBlitzTasks";
+import { BlitzGridWorkspace } from "./BlitzGridWorkspace";
 import { BlitzTaskListItem } from "./BlitzTaskListItem";
 import type { BlitzTask } from "../../data/types";
 import { MAIN_GROUP_ID, LOCAL_GROUP_ID } from "../../data/types";
@@ -71,6 +72,7 @@ export function BlitzPage({ onSwitchToZen, onNavigate }: BlitzPageProps) {
   // Blitz-specific state
   const [selectedBlitzTask, setSelectedBlitzTask] = useState<BlitzTask | null>(null);
   const [mobileShowDetail, setMobileShowDetail] = useState(false);
+  const [gridMode, setGridMode] = useState(false);
 
   // ── Unified drag-and-drop state ──────────────────────────────────────────
   // Single ref tracks the drag source; render state tracks visual feedback
@@ -355,6 +357,34 @@ export function BlitzPage({ onSwitchToZen, onNavigate }: BlitzPageProps) {
         if (safetyTimer) clearTimeout(safetyTimer);
         safetyTimer = setTimeout(clearChips, 3000);
       }
+
+      // Handle Cmd+G (macOS) or Ctrl+G (Linux/Windows) to toggle grid
+      // workspace. Outside the metaKey block above so Ctrl+G works on
+      // platforms where Cmd+0-9 navigation doesn't make sense.
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'g') {
+        const target = e.target as HTMLElement | null;
+        if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) {
+          return;
+        }
+        e.preventDefault();
+        // Skip auto-repeats — holding the key would otherwise toggle
+        // gridMode on every native keydown event.
+        if (e.repeat) return;
+        setGridMode((v) => !v);
+      }
+
+      // Escape exits grid view back to the task list (per design spec).
+      // Skip when input/textarea/contenteditable is focused — the active
+      // picker dropdown / shrink-confirm modal handle their own Escape
+      // before this fires (their listeners attach later, so they receive
+      // the event first via standard DOM ordering).
+      if (gridMode && e.key === 'Escape') {
+        const target = e.target as HTMLElement | null;
+        if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) {
+          return;
+        }
+        setGridMode(false);
+      }
     };
 
     const handleKeyUp = (e: KeyboardEvent) => {
@@ -382,7 +412,7 @@ export function BlitzPage({ onSwitchToZen, onNavigate }: BlitzPageProps) {
       // Clean up class on unmount
       document.body.classList.remove('blitz-command-pressed');
     };
-  }, [mainListTasks, handleSelectTask, getTaskNotification, dismissNotification]);
+  }, [gridMode]);
 
   // ── Unified drag handlers ───────────────────────────────────────────────
 
@@ -940,21 +970,37 @@ export function BlitzPage({ onSwitchToZen, onNavigate }: BlitzPageProps) {
            the webview is loaded from http://localhost). */}
         <div className="px-4 pt-8 pb-4 flex items-center justify-between" data-tauri-drag-region data-window-drag-strip>
           <LogoBrand mode="blitz" onToggle={onSwitchToZen} />
-          <button
-            onClick={() => setShowRadioConnect(true)}
-            className={`relative flex items-center gap-1.5 px-2.5 py-1.5 text-xs border rounded-lg transition-colors ${
-              radioConnected
-                ? "text-[var(--color-success)] border-[var(--color-success)]/30 bg-[var(--color-success)]/10 hover:bg-[var(--color-success)]/20"
-                : "text-[var(--color-text-muted)] hover:text-[var(--color-text)] bg-[var(--color-bg-secondary)] hover:bg-[var(--color-bg-tertiary)] border-[var(--color-border)]"
-            }`}
-            title={radioConnected ? `Radio Connected (${radioClients} device${radioClients > 1 ? "s" : ""})` : "Connect Radio (Walkie-Talkie)"}
-          >
-            <Radio className="w-3.5 h-3.5" />
-            Radio
-            {radioConnected && (
-              <span className="w-1.5 h-1.5 rounded-full bg-[var(--color-success)] animate-pulse" />
-            )}
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setGridMode((v) => !v)}
+              aria-pressed={gridMode}
+              className={`relative flex items-center gap-1.5 px-2.5 py-1.5 text-xs border rounded-lg transition-colors ${
+                gridMode
+                  ? "text-[var(--color-highlight)] border-[var(--color-highlight)]/30 bg-[var(--color-highlight)]/10 hover:bg-[var(--color-highlight)]/20"
+                  : "text-[var(--color-text-muted)] hover:text-[var(--color-text)] bg-[var(--color-bg-secondary)] hover:bg-[var(--color-bg-tertiary)] border-[var(--color-border)]"
+              }`}
+              title="Toggle grid workspace (⌘G)"
+            >
+              <LayoutGrid className="w-3.5 h-3.5" />
+              Grid view
+            </button>
+            <button
+              onClick={() => setShowRadioConnect(true)}
+              className={`relative flex items-center gap-1.5 px-2.5 py-1.5 text-xs border rounded-lg transition-colors ${
+                radioConnected
+                  ? "text-[var(--color-success)] border-[var(--color-success)]/30 bg-[var(--color-success)]/10 hover:bg-[var(--color-success)]/20"
+                  : "text-[var(--color-text-muted)] hover:text-[var(--color-text)] bg-[var(--color-bg-secondary)] hover:bg-[var(--color-bg-tertiary)] border-[var(--color-border)]"
+              }`}
+              title={radioConnected ? `Radio Connected (${radioClients} device${radioClients > 1 ? "s" : ""})` : "Connect Radio (Walkie-Talkie)"}
+            >
+              <Radio className="w-3.5 h-3.5" />
+              Radio
+              {radioConnected && (
+                <span className="w-1.5 h-1.5 rounded-full bg-[var(--color-success)] animate-pulse" />
+              )}
+            </button>
+          </div>
         </div>
 
         {/* Search */}
@@ -1382,6 +1428,9 @@ export function BlitzPage({ onSwitchToZen, onNavigate }: BlitzPageProps) {
            a task-centric panel (no "breathing-room dashboard" page like Zen
            has). */}
         <div className="h-full relative p-2">
+          {gridMode ? (
+            <BlitzGridWorkspace blitzTasks={blitzTasks} />
+          ) : (
           <div className="h-full relative">
             {/* Task List Page */}
             <motion.div
@@ -1472,6 +1521,7 @@ export function BlitzPage({ onSwitchToZen, onNavigate }: BlitzPageProps) {
               )}
             </AnimatePresence>
           </div>
+          )}
         </div>
       </main>
 
