@@ -2226,6 +2226,7 @@ export function TaskChat({
   // a chip ([data-command]/[data-file]), or any attachment — i.e. anything
   // that would form a non-empty outgoing message.
   useContextKey("messageNotEmpty", hasContent);
+  useContextKey("chatInputExpanded", isInputExpanded);
   // `messageSelected` gates chat.fork. TaskChat has no per-history-message
   // selection state (fork operates on the whole chat via handleForkChat).
   // Hold the key at false so the catalog entry stays disabled until a real
@@ -3651,12 +3652,12 @@ export function TaskChat({
   // Synchronize activeChatId to window.__groveActiveChatId and listen to comment send event
   useEffect(() => {
     if (typeof window !== "undefined") {
-      (window as any).__groveActiveChatId = activeChatId;
+      (window as Window & { __groveActiveChatId?: string | null }).__groveActiveChatId = activeChatId;
       window.dispatchEvent(new CustomEvent("grove-active-chat-changed", { detail: activeChatId }));
     }
     return () => {
       if (typeof window !== "undefined") {
-        (window as any).__groveActiveChatId = null;
+        (window as Window & { __groveActiveChatId?: string | null }).__groveActiveChatId = null;
         window.dispatchEvent(new CustomEvent("grove-active-chat-changed", { detail: null }));
       }
     };
@@ -5230,8 +5231,8 @@ export function TaskChat({
   useCommand(
     "chat.send",
     () => { void handleSend(); },
-    { enabled: () => !!activeChatId && !showFileMenu && !showSlashMenu },
-    [activeChatId, showFileMenu, showSlashMenu, handleSend],
+    { enabled: () => !!activeChatId && !showFileMenu && !showSlashMenu && !isInputExpanded },
+    [activeChatId, showFileMenu, showSlashMenu, isInputExpanded, handleSend],
   );
   useCommand(
     "chat.send.alt",

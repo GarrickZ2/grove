@@ -106,6 +106,12 @@ export function useFileMention({ mentionItems, textareaRef }: UseFileMentionConf
     (e: React.KeyboardEvent<HTMLTextAreaElement>, setText: (v: string) => void): boolean => {
       if (!showDropdown || filteredItems.length === 0) return false;
 
+      const keysToIntercept = ["ArrowDown", "ArrowUp", "Tab", "Enter", "Escape"];
+      if (keysToIntercept.includes(e.key) && !(e.key === "Enter" && (e.metaKey || e.ctrlKey || e.shiftKey))) {
+        e.stopPropagation();
+        e.nativeEvent.stopImmediatePropagation();
+      }
+
       if (e.key === "ArrowDown") {
         e.preventDefault();
         setSelectedIdx((prev) => (prev + 1) % filteredItems.length);

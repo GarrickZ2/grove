@@ -686,6 +686,7 @@ td.diff-code.diff-line-highlighted::before {
   cursor: pointer;
   transition: all 0.15s;
   white-space: nowrap;
+  flex-shrink: 0;
 }
 
 .diff-toggle-pill:hover {
@@ -717,6 +718,7 @@ td.diff-code.diff-line-highlighted::before {
   border: 1px solid var(--color-border);
   border-radius: 6px;
   overflow: hidden;
+  flex-shrink: 0;
 }
 
 .diff-view-toggle button {
@@ -730,6 +732,7 @@ td.diff-code.diff-line-highlighted::before {
   display: flex;
   align-items: center;
   gap: 4px;
+  flex-shrink: 0;
 }
 
 .diff-view-toggle button:not(:last-child) {
@@ -784,6 +787,12 @@ td.diff-code.diff-line-highlighted::before {
   border-bottom: 1px solid var(--color-border);
   flex-shrink: 0;
   gap: 12px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.diff-toolbar::-webkit-scrollbar {
+  display: none;
 }
 
 .diff-toolbar-left {
@@ -791,12 +800,14 @@ td.diff-code.diff-line-highlighted::before {
   align-items: center;
   gap: 12px;
   font-size: 13px;
+  flex-shrink: 0;
 }
 
 .diff-toolbar-right {
   display: flex;
   align-items: center;
   gap: 8px;
+  flex-shrink: 0;
 }
 
 .diff-toolbar-btn {
@@ -1212,6 +1223,7 @@ td.diff-code.diff-line-highlighted::before {
   display: flex;
   align-items: center;
   gap: 8px;
+  flex-shrink: 0;
 }
 
 .diff-version-arrow {
@@ -2691,13 +2703,13 @@ tr.diff-line-nav-highlight td {
   display: none !important;
 }
 
-@container (max-width: 900px) {
+@container (max-width: 960px) {
   .diff-stats {
     display: none !important;
   }
 }
 
-@container (max-width: 800px) {
+@container (max-width: 860px) {
   .diff-toolbar {
     padding: 6px 12px !important;
     gap: 8px !important;
@@ -2711,10 +2723,13 @@ tr.diff-line-nav-highlight td {
   .diff-version-arrow {
     margin: 0 2px !important;
   }
+  .toolbar-label {
+    display: none !important;
+  }
 }
 
-@container (max-width: 720px) {
-  .toolbar-label {
+@container (max-width: 740px) {
+  .diff-viewed-progress-text {
     display: none !important;
   }
   .toolbar-label-short {
@@ -2722,14 +2737,14 @@ tr.diff-line-nav-highlight td {
   }
 }
 
-@container (max-width: 600px) {
-  .diff-viewed-progress-text {
-    display: none !important;
-  }
-  .diff-view-toggle {
-    display: none !important;
-  }
+@container (max-width: 660px) {
   .diff-version-range {
+    display: none !important;
+  }
+}
+
+@container (max-width: 580px) {
+  .diff-view-toggle {
     display: none !important;
   }
 }

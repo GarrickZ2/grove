@@ -578,8 +578,12 @@ export function DiffReviewPage({ projectId, taskId, embedded, navigateToFile, is
   }, [displayFiles, navigateToFile, viewMode, focusMode, projectId, taskId, appendLazyFiles]);
 
   // Load full file content with concurrency control
-  const loadFullFileContent = useCallback(async (filePath: string) => {
-    if (fullFileContents.has(filePath) || loadingFiles.has(filePath) || failedFullFilesRef.current.has(filePath)) return;
+  const loadFullFileContent = useCallback(async (filePath: string, forceReload = false) => {
+    if ((!forceReload && fullFileContents.has(filePath)) || loadingFiles.has(filePath) || failedFullFilesRef.current.has(filePath)) return;
+
+    if (forceReload) {
+      failedFullFilesRef.current.delete(filePath);
+    }
 
     // Add to queue
     requestQueue.current.push(filePath);
@@ -651,8 +655,8 @@ export function DiffReviewPage({ projectId, taskId, embedded, navigateToFile, is
     setFocusMode(false);
   }, [focusMode, allFiles, projectId, taskId]);
 
-  const loadFileDiff = useCallback(async (filePath: string, fromRef?: string, toRef?: string) => {
-    if (fileDiffCacheRef.current.has(filePath) || loadingDiffsRef.current.has(filePath)) return;
+  const loadFileDiff = useCallback(async (filePath: string, fromRef?: string, toRef?: string, forceReload = false) => {
+    if ((!forceReload && fileDiffCacheRef.current.has(filePath)) || loadingDiffsRef.current.has(filePath)) return;
     loadingDiffsRef.current = new Set(loadingDiffsRef.current).add(filePath);
     let caught: unknown = null;
     try {
@@ -786,17 +790,6 @@ export function DiffReviewPage({ projectId, taskId, embedded, navigateToFile, is
       setLoading(true);
       setFileDiffCache(new Map());
       loadingDiffsRef.current = new Set();
-    } else {
-      // In silent mode, only clear the cache of the active selected file
-      // so it is allowed to reload its diff data silently.
-      const selected = selectedFileRef.current;
-      if (selected) {
-        setFileDiffCache((prev) => {
-          const next = new Map(prev);
-          next.delete(selected);
-          return next;
-        });
-      }
     }
 
     let data: Awaited<ReturnType<typeof getDiffStats>> | null = null;
@@ -822,7 +815,7 @@ export function DiffReviewPage({ projectId, taskId, embedded, navigateToFile, is
         const selected = selectedFileRef.current;
         const stillPresent = selected ? data.files.some((f) => f.path === selected) : false;
         if (selected && stillPresent) {
-          loadFileDiff(selected, fromRef, toRef);
+          loadFileDiff(selected, fromRef, toRef, silent);
         }
       }
     }
@@ -856,11 +849,18 @@ export function DiffReviewPage({ projectId, taskId, embedded, navigateToFile, is
       });
     } else {
       // Changes mode: fetch commits first to ensure the version dropdown is up-to-date.
-      // Read fromVersion/toVersion via refs so an in-mode dropdown change doesn't
-      // re-fire this whole effect (spinner flash + scroll reset + double-fetch).
-      getCommits(projectId, taskId)
-        .then((commitsData) => {
+      // Parallel-fetch task files so allFiles is populated for file autocomplete (@) support!
+      Promise.all([
+        getCommits(projectId, taskId),
+        getTaskFiles(projectId, taskId).catch(() => ({ files: [] as string[] }))
+      ])
+        .then(([commitsData, filesData]) => {
           if (fetchGenRef.current !== gen) return;
+
+          if (filesData && filesData.files) {
+            setAllFiles(filesData.files);
+          }
+
           const opts = buildVersionOpts(commitsData);
           setVersions(opts);
 
@@ -922,31 +922,9 @@ export function DiffReviewPage({ projectId, taskId, embedded, navigateToFile, is
       setFileDiffCache(new Map());
       loadingDiffsRef.current = new Set();
       lazyRootDirEntriesRef.current = [];
-    } else {
-      // Silent path: only invalidate the active file's caches. Wiping
-      // fullFileContents/loadingFiles globally would flash the visible file's
-      // content during an "Agent turn finished" auto-refresh.
-      const selected = selectedFileRef.current;
-      if (selected) {
-        setFileDiffCache((prev) => {
-          const next = new Map(prev);
-          next.delete(selected);
-          return next;
-        });
-        setFullFileContents((prev) => {
-          if (!prev.has(selected)) return prev;
-          const next = new Map(prev);
-          next.delete(selected);
-          return next;
-        });
-        setLoadingFiles((prev) => {
-          if (!prev.has(selected)) return prev;
-          const next = new Set(prev);
-          next.delete(selected);
-          return next;
-        });
-      }
     }
+
+    const selected = selectedFileRef.current;
 
     const commentsPromise = getReviewComments(projectId, taskId).then((result) => {
       if (fetchGenRef.current !== gen) return;
@@ -979,13 +957,23 @@ export function DiffReviewPage({ projectId, taskId, embedded, navigateToFile, is
         const fromOpt = opts.find((v) => v.id === from);
         const toOpt = opts.find((v) => v.id === to);
 
+        const filesPromise = getTaskFiles(projectId, taskId)
+          .then((result) => {
+            if (fetchGenRef.current !== gen) return;
+            setAllFiles(result.files);
+          })
+          .catch(() => null);
+
         await Promise.all([
           refetchDiff({ fromRef: fromOpt?.ref, toRef: toOpt?.ref, keepSelection: true, silent, gen }),
           commentsPromise,
+          filesPromise,
         ]);
       } else if (focusMode) {
+        const fullContentPromise = selected ? loadFullFileContent(selected, true).catch(() => null) : Promise.resolve();
         await Promise.all([
           commentsPromise,
+          fullContentPromise,
           getTaskDirEntries(projectId, taskId, '').then((result) => {
             if (fetchGenRef.current !== gen) return;
             lazyRootDirEntriesRef.current = result.entries;
@@ -993,8 +981,10 @@ export function DiffReviewPage({ projectId, taskId, embedded, navigateToFile, is
           }).catch(() => null),
         ]);
       } else {
+        const fullContentPromise = selected ? loadFullFileContent(selected, true).catch(() => null) : Promise.resolve();
         await Promise.all([
           commentsPromise,
+          fullContentPromise,
           getTaskFiles(projectId, taskId).then((result) => {
             if (fetchGenRef.current !== gen) return;
             setAllFiles(result.files);
@@ -1010,7 +1000,7 @@ export function DiffReviewPage({ projectId, taskId, embedded, navigateToFile, is
     if (caught !== null) {
       throw caught;
     }
-  }, [refetchDiff, projectId, taskId, viewMode, focusMode, appendLazyFiles]);
+  }, [refetchDiff, projectId, taskId, viewMode, focusMode, appendLazyFiles, loadFullFileContent]);
 
   // Two callers: the manual refresh button / hotkey-r path (loud, shows
   // spinner) and the agent-turn-finished auto-refresh path (silent). Splitting
@@ -1547,6 +1537,7 @@ export function DiffReviewPage({ projectId, taskId, embedded, navigateToFile, is
   useCommand('diffReview.toggleViewMode', handleToggleViewMode, [handleToggleViewMode]);
   useCommand('diffReview.togglePreview', handleToggleActivePreview, { enabled: () => !!activeFilePath && !!getPreviewRenderer(activeFilePath ?? '') }, [handleToggleActivePreview, activeFilePath]);
   useCommand('diffReview.markViewed', handleMarkActiveViewed, { enabled: () => !!activeFilePath }, [handleMarkActiveViewed, activeFilePath]);
+  useCommand('diffReview.toggleSidebar', () => setSidebarVisible((v) => !v), [setSidebarVisible]);
 
   useCommand('view.zoom.increase', handleZoomIn, [handleZoomIn]);
   useCommand('view.zoom.decrease', handleZoomOut, [handleZoomOut]);
