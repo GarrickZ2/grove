@@ -968,7 +968,7 @@ export function BlitzPage({ onSwitchToZen, onNavigate }: BlitzPageProps) {
            is what the App.tsx native mousedown listener uses to call startDragging()
            (the bare data-tauri-drag-region silently fails after the first drag when
            the webview is loaded from http://localhost). */}
-        <div className="px-4 pt-8 pb-4 flex items-center justify-between" data-tauri-drag-region data-window-drag-strip>
+        <div className="px-4 pt-8 pb-4 flex flex-col items-start gap-3" data-tauri-drag-region data-window-drag-strip>
           <LogoBrand mode="blitz" onToggle={onSwitchToZen} />
           <div className="flex items-center gap-2">
             <button

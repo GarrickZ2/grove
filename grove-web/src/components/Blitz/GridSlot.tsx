@@ -87,7 +87,10 @@ export function GridSlot({ slotIdx, assignment, blitzTasks, onAssign, onClear }:
   return (
     <div className="flex flex-col h-full min-h-0 min-w-0 border border-[var(--color-border)] rounded-md overflow-hidden">
       {titleBar}
-      <div className="flex-1 overflow-hidden">
+      {/* `flex` (not just block) so TaskChat's own `flex-1` resolves to a
+          real height. Without this the chat body collapses to zero and
+          only the title bar + composer are visible. */}
+      <div className="flex-1 flex min-h-0 min-w-0 overflow-hidden">
         {stale ? (
           <div className="h-full flex items-center justify-center text-sm text-[var(--color-text-muted)]">
             Connection lost — click the slot's clear button and reassign to retry.
