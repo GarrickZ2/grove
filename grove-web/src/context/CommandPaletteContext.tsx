@@ -26,6 +26,7 @@ interface CommandPaletteContextType {
   isOpen: boolean;
   open: () => void;
   close: () => void;
+  toggle: () => void;
   /** Get all commands (built lazily when palette opens) */
   getCommands: () => Command[];
   /** Register a command builder (global or page-level) */
@@ -36,10 +37,12 @@ interface CommandPaletteContextType {
   taskPaletteOpen: boolean;
   openTaskPalette: () => void;
   closeTaskPalette: () => void;
+  toggleTaskPalette: () => void;
   /** Project palette (Cmd+P) */
   projectPaletteOpen: boolean;
   openProjectPalette: () => void;
   closeProjectPalette: () => void;
+  toggleProjectPalette: () => void;
   pageContext: CommandPalettePageContext;
   setPageContext: (value: CommandPalettePageContext) => void;
   /** Whether a workspace is currently active (for Cmd+1-9 priority) */
@@ -60,12 +63,54 @@ export function CommandPaletteProvider({ children }: { children: ReactNode }) {
   const globalBuilderRef = useRef<CommandBuilder>(() => []);
   const pageBuilderRef = useRef<CommandBuilder>(() => []);
 
-  const open = useCallback(() => setIsOpen(true), []);
+  // The three palettes are mutually exclusive — opening one closes the
+  // other two so they never stack (e.g. Cmd+K then Cmd+P swaps search for
+  // the project switcher instead of overlaying it).
+  const open = useCallback(() => {
+    setIsOpen(true);
+    setTaskPaletteOpen(false);
+    setProjectPaletteOpen(false);
+  }, []);
   const close = useCallback(() => setIsOpen(false), []);
-  const openTaskPalette = useCallback(() => setTaskPaletteOpen(true), []);
+  const toggle = useCallback(() => {
+    setIsOpen((v) => {
+      if (!v) {
+        setTaskPaletteOpen(false);
+        setProjectPaletteOpen(false);
+      }
+      return !v;
+    });
+  }, []);
+  const openTaskPalette = useCallback(() => {
+    setTaskPaletteOpen(true);
+    setIsOpen(false);
+    setProjectPaletteOpen(false);
+  }, []);
   const closeTaskPalette = useCallback(() => setTaskPaletteOpen(false), []);
-  const openProjectPalette = useCallback(() => setProjectPaletteOpen(true), []);
+  const toggleTaskPalette = useCallback(() => {
+    setTaskPaletteOpen((v) => {
+      if (!v) {
+        setIsOpen(false);
+        setProjectPaletteOpen(false);
+      }
+      return !v;
+    });
+  }, []);
+  const openProjectPalette = useCallback(() => {
+    setProjectPaletteOpen(true);
+    setIsOpen(false);
+    setTaskPaletteOpen(false);
+  }, []);
   const closeProjectPalette = useCallback(() => setProjectPaletteOpen(false), []);
+  const toggleProjectPalette = useCallback(() => {
+    setProjectPaletteOpen((v) => {
+      if (!v) {
+        setIsOpen(false);
+        setTaskPaletteOpen(false);
+      }
+      return !v;
+    });
+  }, []);
   const setInWorkspace = useCallback((value: boolean) => setInWorkspaceState(value), []);
   const setPageContext = useCallback((value: CommandPalettePageContext) => setPageContextState(value), []);
 
@@ -92,6 +137,7 @@ export function CommandPaletteProvider({ children }: { children: ReactNode }) {
         isOpen,
         open,
         close,
+        toggle,
         getCommands,
         registerGlobalCommands,
         registerPageCommands,
@@ -99,9 +145,11 @@ export function CommandPaletteProvider({ children }: { children: ReactNode }) {
         taskPaletteOpen,
         openTaskPalette,
         closeTaskPalette,
+        toggleTaskPalette,
         projectPaletteOpen,
         openProjectPalette,
         closeProjectPalette,
+        toggleProjectPalette,
         pageContext,
         setPageContext,
         inWorkspace,

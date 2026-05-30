@@ -25,6 +25,9 @@ export {
   persistResetAll,
 } from "./userKeymapSync";
 
+// Help-key display hint
+export { useHelpKeyDisplay } from "./useHelpKeyDisplay";
+
 // Parsers / evaluators
 export { parseHotkey, matchesHotkey, formatKeyboardEvent, formatKeyDisplay } from "./keyParser";
 export { parseWhen, validateWhen, extractContextKeys, WhenParseError } from "./whenExpression";

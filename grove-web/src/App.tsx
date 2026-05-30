@@ -148,7 +148,9 @@ function AppContent() {
   const { isMobile } = useIsMobile();
   const {
     open: openCommandPalette,
+    toggle: toggleCommandPalette,
     openProjectPalette, openTaskPalette,
+    toggleProjectPalette, toggleTaskPalette,
     closeProjectPalette, closeTaskPalette,
     projectPaletteOpen, taskPaletteOpen,
     registerGlobalCommands,
@@ -672,6 +674,7 @@ function AppContent() {
   useCommand("nav.work", () => setActiveItem("work"), []);
   useCommand("nav.tasks", () => setActiveItem("tasks"), []);
   useCommand("nav.resource", () => setActiveItem("resource"), []);
+  useCommand("nav.automation", () => setActiveItem("automation"), []);
   useCommand("nav.skills", () => setActiveItem("skills"), []);
   useCommand("nav.ai", () => setActiveItem("ai"), []);
   useCommand("nav.statistics", () => setActiveItem("statistics"), []);
@@ -715,7 +718,9 @@ function AppContent() {
     setAddProjectInitialMode("coding");
     setShowAddProject(true);
   }, []);
-  useCommand("project.switch", () => openProjectPalette(), [openProjectPalette]);
+  // Cmd+P toggles the project palette (press again to close); other palettes
+  // close automatically via the context's mutual exclusion.
+  useCommand("project.switch", () => toggleProjectPalette(), [toggleProjectPalette]);
   useCommand(
     "project.refresh",
     () => {
@@ -838,6 +843,10 @@ function AppContent() {
   // Palette close — open variants are wired via useCommandPalette elsewhere
   useCommand("palette.project.close", () => closeProjectPalette(), [closeProjectPalette]);
   useCommand("palette.task.close", () => closeTaskPalette(), [closeTaskPalette]);
+  // Cmd+T toggles the task palette (was previously unhandled — a dead key).
+  useCommand("palette.task.open", () => toggleTaskPalette(), [toggleTaskPalette]);
+  // Cmd+K toggles the search/command palette (press again to close).
+  useCommand("palette.legacy.command.open", () => toggleCommandPalette(), [toggleCommandPalette]);
 
   // Debug
   useCommand("debug.reload", () => window.location.reload(), []);

@@ -11,7 +11,6 @@ export const NAV_COMMANDS: CommandDef[] = [
     name: "Go to Dashboard",
     category: "Navigation",
     defaultBindings: [{ key: "Mod+1" }],
-    defaultWhen: "!inWorkspace",
     passThroughTextInput: true,
   },
   {
@@ -19,7 +18,7 @@ export const NAV_COMMANDS: CommandDef[] = [
     name: "Go to Work",
     category: "Navigation",
     defaultBindings: [{ key: "Mod+2" }],
-    defaultWhen: "!inWorkspace && !studioProject",
+    defaultWhen: "!studioProject",
     passThroughTextInput: true,
   },
   {
@@ -27,7 +26,7 @@ export const NAV_COMMANDS: CommandDef[] = [
     name: "Go to Tasks",
     category: "Navigation",
     defaultBindings: [{ key: "Mod+3" }],
-    defaultWhen: "!inWorkspace && !studioProject",
+    defaultWhen: "!studioProject",
     passThroughTextInput: true,
   },
   {
@@ -35,31 +34,37 @@ export const NAV_COMMANDS: CommandDef[] = [
     name: "Go to Resource",
     category: "Navigation",
     defaultBindings: [{ key: "Mod+3" }],
-    defaultWhen: "!inWorkspace && studioProject",
+    defaultWhen: "studioProject",
+    passThroughTextInput: true,
+  },
+  {
+    id: "nav.automation",
+    name: "Go to Automation",
+    category: "Navigation",
+    // Automation sits at sidebar position 4 in both repo and studio layouts
+    // (see data/nav.ts), so it owns Mod+4; skills/ai/statistics shift down.
+    defaultBindings: [{ key: "Mod+4" }],
     passThroughTextInput: true,
   },
   {
     id: "nav.skills",
     name: "Go to Skills",
     category: "Navigation",
-    defaultBindings: [{ key: "Mod+4" }],
-    defaultWhen: "!inWorkspace",
+    defaultBindings: [{ key: "Mod+5" }],
     passThroughTextInput: true,
   },
   {
     id: "nav.ai",
     name: "Go to AI",
     category: "Navigation",
-    defaultBindings: [{ key: "Mod+5" }],
-    defaultWhen: "!inWorkspace",
+    defaultBindings: [{ key: "Mod+6" }],
     passThroughTextInput: true,
   },
   {
     id: "nav.statistics",
     name: "Go to Statistics",
     category: "Navigation",
-    defaultBindings: [{ key: "Mod+6" }],
-    defaultWhen: "!inWorkspace",
+    defaultBindings: [{ key: "Mod+7" }],
     passThroughTextInput: true,
   },
   {
@@ -85,13 +90,11 @@ export const NAV_COMMANDS: CommandDef[] = [
     name: "Cycle to Next Nav Item",
     category: "Navigation",
     defaultBindings: [{ key: "Mod+Alt+ArrowDown" }],
-    defaultWhen: "!inWorkspace",
   },
   {
     id: "nav.cycle.previous",
     name: "Cycle to Previous Nav Item",
     category: "Navigation",
     defaultBindings: [{ key: "Mod+Alt+ArrowUp" }],
-    defaultWhen: "!inWorkspace",
   },
 ];

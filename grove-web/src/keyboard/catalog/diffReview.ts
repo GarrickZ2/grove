@@ -89,4 +89,15 @@ export const DIFF_REVIEW_COMMANDS: CommandDef[] = [
     scope: "diffReview",
     defaultWhen: "commentText",
   },
+  {
+    id: "diffReview.toggleSidebar",
+    name: "Toggle File Tree Sidebar",
+    category: "Diff Review",
+    description: "Show or hide the file tree sidebar",
+    // Mod+b is safe despite the global view.sidebar.toggle also using it:
+    // the dispatcher walks the scope stack top-down and the diffReview scope
+    // (pushed while the review is mounted) matches before the global fallback.
+    defaultBindings: [{ key: "Mod+b" }],
+    scope: "diffReview",
+  },
 ];

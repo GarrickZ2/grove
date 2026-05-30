@@ -58,7 +58,8 @@ export const PALETTE_COMMANDS: CommandDef[] = [
     id: "palette.task.open",
     name: "Open Task Palette",
     category: "Palette",
-    defaultBindings: [{ key: "Mod+o" }],
+    // Mod+T (primary) plus Mod+O kept for back-compat.
+    defaultBindings: [{ key: "Mod+t" }, { key: "Mod+o" }],
     passThroughTextInput: true,
   },
   {

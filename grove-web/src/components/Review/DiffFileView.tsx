@@ -1353,7 +1353,7 @@ export function DiffFileView({
                     : 'Binary file changed'}
                 </div>
               ) : viewMode === 'full' ? (
-                isLoadingFullFile ? (
+                (isLoadingFullFile && fullFileContent == null) ? (
                   <div className="diff-loading">Loading full file...</div>
                 ) : fullFileContent != null ? (
                   <FullFileView
@@ -1498,7 +1498,7 @@ export function DiffFileView({
                           : <div className="preview-loading">No content to render</div>;
                       })()
                     ) : viewMode === 'full' ? (
-                      isLoadingFullFile ? (
+                      (isLoadingFullFile && fullFileContent == null) ? (
                         <div className="preview-loading">Loading content...</div>
                       ) : fullFileContent != null ? (
                         previewRenderer

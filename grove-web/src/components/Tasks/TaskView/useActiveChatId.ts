@@ -25,7 +25,7 @@ export function useActiveChatId(initial: string | null = null): Result {
     ref.current = id;
     setActiveChatIdState(id);
     if (typeof window !== "undefined") {
-      (window as any).__groveActiveChatId = id;
+      (window as Window & { __groveActiveChatId?: string | null }).__groveActiveChatId = id;
       window.dispatchEvent(new CustomEvent("grove-active-chat-changed", { detail: id }));
     }
   }, []);
@@ -42,7 +42,7 @@ export function useGlobalActiveChatId(): string | null {
     if (typeof window === "undefined") return;
 
     const checkActiveAndVisible = () => {
-      const globalActiveId = (window as any).__groveActiveChatId || null;
+      const globalActiveId = (window as Window & { __groveActiveChatId?: string | null }).__groveActiveChatId || null;
       if (!globalActiveId) {
         setActiveChatId(null);
         return;

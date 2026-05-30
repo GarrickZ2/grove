@@ -18,7 +18,7 @@ import {
   useRadioEvents,
   buildCommands,
 } from "../../hooks";
-import { useCommand, useDefineCommand, useKeyboardScope, useContextKey } from "../../keyboard";
+import { useCommand, useDefineCommand, useKeyboardScope, useContextKey, useHelpKeyDisplay } from "../../keyboard";
 import { RadioConnectDialog } from "./RadioConnectDialog";
 import { useBlitzTasks } from "./useBlitzTasks";
 import { BlitzTaskListItem } from "./BlitzTaskListItem";
@@ -45,6 +45,7 @@ export function BlitzPage({ onSwitchToZen, onNavigate }: BlitzPageProps) {
   const { blitzTasks, isLoading, refresh } = useBlitzTasks();
   const { getTaskNotification, dismissNotification } = useNotifications();
   const { isMobile } = useIsMobile();
+  const helpKey = useHelpKeyDisplay();
 
   // TaskGroup state (folder-based)
   const taskGroupsHook = useTaskGroups();
@@ -1333,7 +1334,7 @@ export function BlitzPage({ onSwitchToZen, onNavigate }: BlitzPageProps) {
             onClick={() => window.dispatchEvent(new Event("grove:open-help"))}
             className="w-full text-center text-xs text-[var(--color-text-muted)] hover:text-[var(--color-text)] transition-colors"
           >
-            Press <kbd className="px-1 py-0.5 text-[10px] font-mono rounded border bg-[var(--color-bg-secondary)] border-[var(--color-border)]">?</kbd> for shortcuts
+            Press <kbd className="px-1 py-0.5 text-[10px] font-mono rounded border bg-[var(--color-bg-secondary)] border-[var(--color-border)]">{helpKey}</kbd> for shortcuts
           </button>
         </div>
       </aside>
@@ -1432,7 +1433,7 @@ export function BlitzPage({ onSwitchToZen, onNavigate }: BlitzPageProps) {
                         Select a task to view details
                       </p>
                       <p className="text-sm text-[var(--color-text-muted)]">
-                        Press <kbd className="px-1 py-0.5 text-[10px] font-mono rounded border bg-[var(--color-bg)] border-[var(--color-border)]">?</kbd> for keyboard shortcuts
+                        Press <kbd className="px-1 py-0.5 text-[10px] font-mono rounded border bg-[var(--color-bg)] border-[var(--color-border)]">{helpKey}</kbd> for keyboard shortcuts
                       </p>
                     </div>
                   </motion.div>

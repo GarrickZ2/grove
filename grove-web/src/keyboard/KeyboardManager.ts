@@ -113,9 +113,6 @@ export class KeyboardManagerImpl {
     } else {
       this.scopeStack.push({ id, refCount: 1 });
     }
-    if (typeof window !== "undefined" && (window as Window & { __GROVE_KEYBOARD_DEBUG__?: boolean }).__GROVE_KEYBOARD_DEBUG__) {
-      console.log("[grove debug] pushScope", id, "→ stack:", this.scopeStack.map((s) => `${s.id}(${s.refCount})`).join(" / "));
-    }
     return () => this.popScope(id);
   }
 
@@ -125,14 +122,8 @@ export class KeyboardManagerImpl {
       if (e.id === id) {
         e.refCount--;
         if (e.refCount <= 0) this.scopeStack.splice(i, 1);
-        if (typeof window !== "undefined" && (window as Window & { __GROVE_KEYBOARD_DEBUG__?: boolean }).__GROVE_KEYBOARD_DEBUG__) {
-          console.log("[grove debug] popScope", id, "→ stack:", this.scopeStack.map((s) => `${s.id}(${s.refCount})`).join(" / "));
-        }
         return;
       }
-    }
-    if (typeof window !== "undefined" && (window as Window & { __GROVE_KEYBOARD_DEBUG__?: boolean }).__GROVE_KEYBOARD_DEBUG__) {
-      console.log("[grove debug] popScope", id, "→ NOT FOUND in stack:", this.scopeStack.map((s) => `${s.id}(${s.refCount})`).join(" / "));
     }
   }
 
@@ -293,33 +284,24 @@ export class KeyboardManagerImpl {
       if (r.trigger !== trigger) continue;
       if (!matchesHotkey(e, r.parsed, this.modifierSides)) continue;
 
-      // Temporary diagnostic — prints why a matched binding does or doesn't
-      // dispatch. Delete once shortcuts are verified end-to-end.
-      const debugFor = r.commandId === "panel.artifacts.open";
-
       if (!r.passThroughTextInput) {
         if (suppression === "all") {
-          if (debugFor) console.log("[grove debug] artifacts: key matched but suppression=all", { activeElement: document.activeElement });
           continue;
         }
         if (suppression === "alpha" && isAlphaKey(e)) {
-          if (debugFor) console.log("[grove debug] artifacts: key matched but alpha-suppressed (text input has focus)", { activeElement: document.activeElement });
           continue;
         }
       }
 
       if (!r.when(ctx)) {
-        if (debugFor) console.log("[grove debug] artifacts: when expression false", { ctx, when: r.when.toString() });
         continue;
       }
 
       const enabled = commandRegistry.getEnabled(r.commandId);
       if (enabled && !enabled()) {
-        if (debugFor) console.log("[grove debug] artifacts: enabled gate returned false");
         continue;
       }
 
-      if (debugFor) console.log("[grove debug] artifacts: about to invoke handler", { scope });
       if (r.preventDefault) e.preventDefault();
       commandRegistry.invoke(r.commandId);
       return true;

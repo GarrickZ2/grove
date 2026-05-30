@@ -19,7 +19,7 @@ export const CHAT_COMMANDS: CommandDef[] = [
     description: "Send the current message",
     defaultBindings: [{ key: "Enter" }],
     scope: "workspace",
-    defaultWhen: "chatFocus && messageNotEmpty",
+    defaultWhen: "chatFocus && messageNotEmpty && !chatInputExpanded",
   },
   {
     id: "chat.send.alt",

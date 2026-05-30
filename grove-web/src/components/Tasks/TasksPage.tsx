@@ -18,7 +18,7 @@ import {
   useTaskOperations,
   buildCommands,
 } from "../../hooks";
-import { useCommand, useDefineCommand, useKeyboardScope, useContextKey } from "../../keyboard";
+import { useCommand, useDefineCommand, useKeyboardScope, useContextKey, useHelpKeyDisplay } from "../../keyboard";
 import {
   createTask as apiCreateTask,
   recoverTask as apiRecoverTask,
@@ -101,6 +101,7 @@ export function TasksPage({ initialTaskId, initialChatId, initialViewMode, onNav
 
   // Page state hook
   const [pageState, pageHandlers] = useTaskPageState();
+  const helpKey = useHelpKeyDisplay();
   useReportDebugId("taskId", pageState.selectedTask?.id ?? null);
 
   // Post-merge archive hook
@@ -847,9 +848,9 @@ export function TasksPage({ initialTaskId, initialChatId, initialViewMode, onNav
               <button
                 onClick={() => pageHandlers.setShowHelp(true)}
                 className="px-2 py-1 text-xs text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-bg-tertiary)] rounded-md transition-colors"
-                title="Keyboard Shortcuts (?)"
+                title={`Keyboard Shortcuts (${helpKey})`}
               >
-                <kbd className="px-1 py-0.5 text-[10px] font-mono rounded border bg-[var(--color-bg)] border-[var(--color-border)]">?</kbd>
+                <kbd className="px-1 py-0.5 text-[10px] font-mono rounded border bg-[var(--color-bg)] border-[var(--color-border)]">{helpKey}</kbd>
               </button>
             )}
             {!(isMobile && mobileShowDetail) && (
@@ -1015,7 +1016,7 @@ export function TasksPage({ initialTaskId, initialChatId, initialViewMode, onNav
                           Select a task to view details
                         </p>
                         <p className="text-sm text-[var(--color-text-muted)]">
-                          Press <kbd className="px-1 py-0.5 text-[10px] font-mono rounded border bg-[var(--color-bg)] border-[var(--color-border)]">?</kbd> for keyboard shortcuts
+                          Press <kbd className="px-1 py-0.5 text-[10px] font-mono rounded border bg-[var(--color-bg)] border-[var(--color-border)]">{helpKey}</kbd> for keyboard shortcuts
                         </p>
                       </div>
                     </motion.div>

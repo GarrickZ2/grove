@@ -316,18 +316,9 @@ export const TaskView = forwardRef<TaskViewHandle, TaskViewProps>((props, ref) =
   useCommand("panel.chat.open", () => handleAddPanel("chat"), { enabled: panelEnabled }, [handleAddPanel, panelEnabled]);
   useCommand(
     "panel.artifacts.open",
-    () => {
-      console.log("[grove debug] panel.artifacts.open handler entered", {
-        layoutMode,
-        hasIdeRef: !!ideLayoutRef.current,
-        hasFlexRef: !!layoutRef.current,
-        panelShortcutsEnabled,
-        isArchived,
-      });
-      handleAddPanel("artifacts");
-    },
+    () => handleAddPanel("artifacts"),
     { enabled: panelEnabled },
-    [handleAddPanel, panelEnabled, layoutMode, panelShortcutsEnabled, isArchived],
+    [handleAddPanel, panelEnabled],
   );
   // Info-panel tabs (stats/git/notes/comments). routePanelCommand maps these
   // to focusInfoPanel(tab) in IDE mode and addPanel(type) in Flex mode, since

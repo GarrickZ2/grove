@@ -14,6 +14,10 @@ export const PROJECT_COMMANDS: CommandDef[] = [
     id: "project.switch",
     name: "Switch Project",
     category: "Project",
+    // Mod+P opens the project palette. This binding lives here (not on
+    // palette.project.open) so there's exactly one owner of the combo —
+    // palette.project.open stays hidden/unbound to avoid a duplicate.
+    defaultBindings: [{ key: "Mod+p" }],
   },
   {
     id: "project.openIDE",

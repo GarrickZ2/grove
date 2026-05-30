@@ -3225,7 +3225,7 @@ impl AcpSessionHandle {
     }
 
     /// 发送更新并记录到 history buffer（带磁盘持久化）
-    pub fn emit(&self, update: AcpUpdate) {
+    pub fn emit(&self, mut update: AcpUpdate) {
         // load_session 期间抑制大部分 emit；保留 available_commands 以恢复 slash commands
         if self
             .suppress_emit
@@ -3236,7 +3236,7 @@ impl AcpSessionHandle {
         }
 
         if let Some(ref chat_id) = self.chat_id {
-            match &update {
+            match &mut update {
                 AcpUpdate::SessionReady {
                     agent_name,
                     agent_version,
@@ -3256,6 +3256,33 @@ impl AcpSessionHandle {
                         .map(|m| m.available_commands.clone())
                         .unwrap_or_default();
                     let preserved_usage = existing.as_ref().and_then(|m| m.current_usage.clone());
+
+                    if let Some(ref ext) = existing {
+                        if let Some(ref ext_mode) = ext.current_mode_id {
+                            if available_modes.iter().any(|(id, _)| id == ext_mode) {
+                                *current_mode_id = Some(ext_mode.clone());
+                            }
+                        }
+                        if let Some(ref ext_model) = ext.current_model_id {
+                            if available_models.iter().any(|(id, _)| id == ext_model) {
+                                *current_model_id = Some(ext_model.clone());
+                            }
+                        }
+                        if let Some(ref ext_tl) = ext.current_thought_level_id {
+                            if available_thought_levels.iter().any(|(id, _)| id == ext_tl) {
+                                *current_thought_level_id = Some(ext_tl.clone());
+                                *thought_level_config_id = ext.thought_level_config_id.clone();
+                            }
+                        }
+                    }
+
+                    // Sync the restored settings back to the handle's locks
+                    *self.current_mode_id.lock().unwrap() = current_mode_id.clone();
+                    *self.current_model_id.lock().unwrap() = current_model_id.clone();
+                    *self.current_thought_level_id.lock().unwrap() =
+                        current_thought_level_id.clone();
+                    *self.thought_level_config_id.lock().unwrap() = thought_level_config_id.clone();
+
                     write_session_metadata(
                         &self.project_key,
                         &self.task_id,
@@ -3282,6 +3309,14 @@ impl AcpSessionHandle {
                         read_session_metadata(&self.project_key, &self.task_id, chat_id)
                     {
                         meta.current_model_id = Some(model_id.clone());
+                        write_session_metadata(&self.project_key, &self.task_id, chat_id, &meta);
+                    }
+                }
+                AcpUpdate::ModeChanged { mode_id } => {
+                    if let Some(mut meta) =
+                        read_session_metadata(&self.project_key, &self.task_id, chat_id)
+                    {
+                        meta.current_mode_id = Some(mode_id.clone());
                         write_session_metadata(&self.project_key, &self.task_id, chat_id, &meta);
                     }
                 }

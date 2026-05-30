@@ -91,6 +91,11 @@ export function matchesHotkey(
   if (parsed.shift) {
     if (!e.shiftKey) return false;
     if (parsed.shift !== "any" && (sides?.shift ?? null) !== parsed.shift) return false;
+  } else if (e.shiftKey && parsed.key.length > 1) {
+    // For non-character keys (e.g. Enter, Tab, Escape, Backspace), if Shift is not
+    // requested, do not match if Shift is down. This prevents Shift+Enter from
+    // triggering Enter bindings (like chat.send), allowing Enter to act as newline.
+    return false;
   }
 
   // macOS Alt remaps the printable key (Opt+C → "ç", Alt+1 → "¡"), so when

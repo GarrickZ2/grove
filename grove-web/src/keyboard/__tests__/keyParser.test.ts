@@ -135,6 +135,10 @@ describe("matchesHotkey", () => {
     expect(matchesHotkey(ev("?", { shift: true }), parseHotkey("?"))).toBe(true);
     expect(matchesHotkey(ev("?", { shift: false }), parseHotkey("Shift+?"))).toBe(false);
     expect(matchesHotkey(ev("?", { shift: true }), parseHotkey("Shift+?"))).toBe(true);
+    // Non-character keys should not match if Shift is pressed but not requested
+    expect(matchesHotkey(ev("Enter", { shift: true }), parseHotkey("Enter"))).toBe(false);
+    expect(matchesHotkey(ev("Enter", { shift: false }), parseHotkey("Enter"))).toBe(true);
+    expect(matchesHotkey(ev("Tab", { shift: true }), parseHotkey("Tab"))).toBe(false);
   });
 
   it("left/right modifier matching uses the sides argument", () => {
