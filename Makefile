@@ -35,6 +35,10 @@ gui: web-build ## Run GUI desktop window (PERF=1 enables perf-monitor)
 web: web-build ## Run grove web server (browser at localhost:3001; PERF=1 for perf-monitor)
 	cargo run $(WEB_FEATURES) -- web
 
+.PHONY: mobile
+mobile: web-build ## Run mobile LAN server (phone/tablet via HMAC; PERF=1 for perf-monitor)
+	cargo run $(WEB_FEATURES) -- mobile
+
 .PHONY: tui
 tui: ## Run TUI (no web build)
 	cargo run
