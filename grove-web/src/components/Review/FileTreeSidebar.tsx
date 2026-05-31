@@ -2,7 +2,7 @@ import { useState, useRef, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import type { DiffFile } from '../../api/review';
 import type { DirEntry } from '../../api/tasks';
-import { FolderOpen, Folder, Search, MessageSquare, FilePlus, FolderPlus, Copy, FileText, Eye, EyeOff } from 'lucide-react';
+import { FolderOpen, Folder, Search, MessageSquare, FilePlus, FolderPlus, Copy, FileText, Eye, EyeOff, Settings, X, Plus, Info } from 'lucide-react';
 import { VSCodeIcon } from '../ui';
 
 interface FileCommentCount {
@@ -25,6 +25,9 @@ interface FileTreeSidebarProps {
   onLoadFileDiff?: (filePath: string, fromRef?: string, toRef?: string) => Promise<void>;
   /** Absolute worktree path — used to compute "Copy Full Path" */
   taskPath?: string | null;
+  projectId?: string | null;
+  autoViewedRules?: string[];
+  onUpdateAutoViewedRules?: (rules: string[]) => void;
 }
 
 interface DirNode {
@@ -57,6 +60,9 @@ export function FileTreeSidebar({
   onExpandDir,
   onLoadFileDiff,
   taskPath,
+  projectId,
+  autoViewedRules,
+  onUpdateAutoViewedRules,
 }: FileTreeSidebarProps) {
   // Context menu state
   const [contextMenu, setContextMenu] = useState<{
@@ -70,6 +76,8 @@ export function FileTreeSidebar({
   const [hideViewed, setHideViewed] = useState<boolean>(() => {
     return localStorage.getItem('grove:review.hideViewed') === 'true';
   });
+
+  const [showRulesModal, setShowRulesModal] = useState(false);
 
   // Inline input state for creating virtual files
   const [creatingVirtual, setCreatingVirtual] = useState<{
@@ -175,23 +183,48 @@ export function FileTreeSidebar({
             onChange={(e) => onSearchChange(e.target.value)}
           />
           {getFileViewedStatus && (
-            <button
-              className={`diff-sidebar-hide-viewed-btn ${hideViewed ? 'active' : ''}`}
-              onClick={() => {
-                const next = !hideViewed;
-                setHideViewed(next);
-                localStorage.setItem('grove:review.hideViewed', String(next));
-              }}
-              title={hideViewed ? "Show viewed files" : "Hide viewed files"}
-            >
-              {hideViewed ? (
-                <EyeOff style={{ width: 14, height: 14 }} />
-              ) : (
-                <Eye style={{ width: 14, height: 14 }} />
+            <div style={{ display: 'flex', gap: 4 }}>
+              <button
+                className={`diff-sidebar-hide-viewed-btn ${hideViewed ? 'active' : ''}`}
+                onClick={() => {
+                  const next = !hideViewed;
+                  setHideViewed(next);
+                  localStorage.setItem('grove:review.hideViewed', String(next));
+                }}
+                title={hideViewed ? "Show viewed files" : "Hide viewed files"}
+              >
+                {hideViewed ? (
+                  <EyeOff style={{ width: 14, height: 14 }} />
+                ) : (
+                  <Eye style={{ width: 14, height: 14 }} />
+                )}
+              </button>
+              {projectId && onUpdateAutoViewedRules && (
+                <button
+                  className="diff-sidebar-hide-viewed-btn"
+                  onClick={() => setShowRulesModal(true)}
+                  title="Configure Auto-Viewed Rules"
+                >
+                  <Settings style={{ width: 14, height: 14 }} />
+                </button>
               )}
-            </button>
+            </div>
           )}
         </div>
+      )}
+
+      {showRulesModal && createPortal(
+        <AutoViewedRulesModal
+          rules={autoViewedRules || []}
+          onChange={(nextRules) => {
+            if (onUpdateAutoViewedRules) {
+              onUpdateAutoViewedRules(nextRules);
+              localStorage.setItem(`grove:project:${projectId}:autoViewedRules`, JSON.stringify(nextRules));
+            }
+          }}
+          onClose={() => setShowRulesModal(false)}
+        />,
+        document.body
       )}
 
       <div className="diff-sidebar-list">
@@ -593,4 +626,264 @@ function buildTree(files: DiffFile[]): (DirNode | FileNode)[] {
   };
 
   return collapse(root.children);
+}
+
+function AutoViewedRulesModal({
+  rules,
+  onChange,
+  onClose,
+}: {
+  rules: string[];
+  onChange: (rules: string[]) => void;
+  onClose: () => void;
+}) {
+  const [newRule, setNewRule] = useState('');
+
+  const handleAddRule = (rule: string) => {
+    const trimmed = rule.trim();
+    if (!trimmed) return;
+    if (rules.includes(trimmed)) return;
+    const next = [...rules, trimmed];
+    onChange(next);
+    setNewRule('');
+  };
+
+  const handleRemoveRule = (index: number) => {
+    const next = rules.filter((_, i) => i !== index);
+    onChange(next);
+  };
+
+  return (
+    <div
+      style={{
+        position: 'fixed',
+        top: 0,
+        left: 0,
+        right: 0,
+        bottom: 0,
+        background: 'rgba(0, 0, 0, 0.6)',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        zIndex: 2000,
+        backdropFilter: 'blur(4px)',
+      }}
+      onClick={onClose}
+    >
+      <div
+        style={{
+          background: 'var(--color-bg)',
+          borderRadius: 12,
+          width: '90%',
+          maxWidth: 540,
+          maxHeight: '85vh',
+          display: 'flex',
+          flexDirection: 'column',
+          boxShadow: '0 12px 48px rgba(0, 0, 0, 0.4)',
+          border: '1px solid var(--color-border)',
+          overflow: 'hidden',
+          animation: 'modalFadeIn 0.2s cubic-bezier(0.16, 1, 0.3, 1)',
+        }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* Header */}
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            padding: '16px 20px',
+            borderBottom: '1px solid var(--color-border)',
+            flexShrink: 0,
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <Settings style={{ width: 18, height: 18, color: 'var(--color-highlight)' }} />
+            <span style={{ fontWeight: 600, fontSize: 15, color: 'var(--color-text)' }}>
+              Auto-Viewed Rules (Project-Level)
+            </span>
+          </div>
+          <button
+            onClick={onClose}
+            style={{
+              background: 'transparent',
+              border: 'none',
+              cursor: 'pointer',
+              color: 'var(--color-text-muted)',
+              display: 'flex',
+              padding: 4,
+              borderRadius: 4,
+            }}
+            className="hover-bg"
+          >
+            <X style={{ width: 16, height: 16 }} />
+          </button>
+        </div>
+
+        {/* Content */}
+        <div
+          style={{
+            padding: 20,
+            overflowY: 'auto',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 16,
+          }}
+        >
+          <div
+            style={{
+              display: 'flex',
+              gap: 8,
+              padding: '10px 12px',
+              background: 'color-mix(in srgb, var(--color-highlight) 8%, var(--color-bg-secondary))',
+              borderRadius: 8,
+              border: '1px solid color-mix(in srgb, var(--color-highlight) 15%, var(--color-border))',
+            }}
+          >
+            <Info style={{ width: 16, height: 16, color: 'var(--color-highlight)', flexShrink: 0, marginTop: 1 }} />
+            <span style={{ fontSize: 11.5, color: 'var(--color-text-secondary)', lineHeight: '1.4' }}>
+              Files matching these glob patterns will be automatically marked as <strong>Viewed</strong>. Negate a pattern using <code>!</code> (e.g. <code>!pnpm-lock.yaml</code>) to prevent auto-viewing.
+            </span>
+          </div>
+
+          {/* Rules List */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--color-text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+              Active Rules
+            </span>
+            <div
+              style={{
+                border: '1px solid var(--color-border)',
+                borderRadius: 8,
+                background: 'var(--color-bg-secondary)',
+                minHeight: 80,
+                maxHeight: 180,
+                overflowY: 'auto',
+                padding: '8px 12px',
+                display: 'flex',
+                flexWrap: 'wrap',
+                gap: 6,
+                alignContent: 'flex-start',
+              }}
+            >
+              {rules.length === 0 ? (
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: '100%', height: 60, color: 'var(--color-text-muted)', fontSize: 12, fontStyle: 'italic' }}>
+                  No rules configured.
+                </div>
+              ) : (
+                rules.map((rule, idx) => (
+                  <div
+                    key={idx}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 4,
+                      background: rule.startsWith('!')
+                        ? 'color-mix(in srgb, var(--color-warning) 15%, var(--color-bg))'
+                        : 'color-mix(in srgb, var(--color-success) 15%, var(--color-bg))',
+                      color: rule.startsWith('!') ? 'var(--color-warning)' : 'var(--color-success)',
+                      border: `1px solid ${rule.startsWith('!') ? 'var(--color-warning)' : 'var(--color-success)'}`,
+                      borderRadius: 6,
+                      padding: '2px 8px',
+                      fontSize: 12,
+                      fontFamily: 'monospace',
+                      fontWeight: 500,
+                    }}
+                  >
+                    <span>{rule}</span>
+                    <button
+                      onClick={() => handleRemoveRule(idx)}
+                      style={{
+                        background: 'transparent',
+                        border: 'none',
+                        cursor: 'pointer',
+                        color: 'inherit',
+                        padding: 0,
+                        display: 'flex',
+                        alignItems: 'center',
+                      }}
+                    >
+                      <X style={{ width: 12, height: 12 }} />
+                    </button>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+
+          {/* Add Rule Input */}
+          <div style={{ display: 'flex', gap: 8 }}>
+            <input
+              type="text"
+              placeholder="e.g. **/*.lock or !important.lock"
+              value={newRule}
+              onChange={(e) => setNewRule(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  handleAddRule(newRule);
+                }
+              }}
+              style={{
+                flex: 1,
+                background: 'var(--color-bg)',
+                border: '1px solid var(--color-border)',
+                borderRadius: 6,
+                padding: '6px 12px',
+                fontSize: 13,
+                color: 'var(--color-text)',
+                outline: 'none',
+              }}
+            />
+            <button
+              onClick={() => handleAddRule(newRule)}
+              style={{
+                background: 'var(--color-highlight)',
+                color: '#fff',
+                border: 'none',
+                borderRadius: 6,
+                padding: '6px 14px',
+                fontSize: 13,
+                fontWeight: 500,
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                gap: 4,
+              }}
+            >
+              <Plus style={{ width: 14, height: 14 }} />
+              Add
+            </button>
+          </div>
+        </div>
+
+        {/* Footer */}
+        <div
+          style={{
+            padding: '12px 20px',
+            borderTop: '1px solid var(--color-border)',
+            display: 'flex',
+            justifyContent: 'flex-end',
+            background: 'var(--color-bg-secondary)',
+            flexShrink: 0,
+          }}
+        >
+          <button
+            onClick={onClose}
+            style={{
+              background: 'var(--color-highlight)',
+              color: '#fff',
+              border: 'none',
+              borderRadius: 6,
+              padding: '6px 18px',
+              fontSize: 13,
+              fontWeight: 500,
+              cursor: 'pointer',
+            }}
+          >
+            Close
+          </button>
+        </div>
+      </div>
+    </div>
+  );
 }

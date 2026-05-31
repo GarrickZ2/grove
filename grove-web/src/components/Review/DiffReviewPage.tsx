@@ -199,6 +199,15 @@ export function DiffReviewPage({ projectId, taskId, embedded, navigateToFile, is
       return new Map();
     }
   });
+
+  const [autoViewedRules, setAutoViewedRules] = useState<string[]>(() => {
+    try {
+      const stored = localStorage.getItem(`grove:project:${projectId}:autoViewedRules`);
+      return stored ? JSON.parse(stored) as string[] : [];
+    } catch {
+      return [];
+    }
+  });
   const [sidebarSearch, setSidebarSearch] = useState('');
   const [collapsedFiles, setCollapsedFiles] = useState<Set<string>>(new Set());
   const [replyFormCommentId, setReplyFormCommentId] = useState<number | null>(null);
@@ -488,22 +497,8 @@ export function DiffReviewPage({ projectId, taskId, embedded, navigateToFile, is
     displayFilesRef.current = displayFiles;
   }, [displayFiles]);
 
-  const activeFilePath = useMemo(() => {
-    const found = displayFiles.find((f) => f.new_path === selectedFile && !f.new_path.endsWith('/'));
-    if (found) return found.new_path;
-    return displayFiles.find((f) => !f.new_path.endsWith('/'))?.new_path || null;
-  }, [displayFiles, selectedFile]);
-
-
   // Auto-detect iframe mode
   const isEmbedded = embedded ?? (typeof window !== 'undefined' && window !== window.parent);
-
-  // currentFileIndex derived from activeFilePath — stays in sync without setState in effect
-  const currentFileIndex = useMemo(() => {
-    if (!activeFilePath) return 0;
-    const idx = displayFiles.findIndex((f) => f.new_path === activeFilePath);
-    return idx >= 0 ? idx : 0;
-  }, [displayFiles, activeFilePath]);
 
   // Resolve pending navigation once displayFiles updates (after mode switch)
   // Also re-run when navigateToFile changes (for when Review tab already exists)
@@ -678,19 +673,7 @@ export function DiffReviewPage({ projectId, taskId, embedded, navigateToFile, is
     }
   }, [projectId, taskId]);
 
-  // Trigger diff load whenever the active file changes in CHANGES mode.
-  // Uses activeFilePath (derived) so the first file's diff loads even when selectedFile is null.
-  // Note: loadFileDiff dedupes via fileDiffCacheRef + loadingDiffsRef, so it is safe to fire
-  // even while a pending navigation is being resolved — without this, when the resolved
-  // navigation target equals the fallback activeFilePath, neither this effect (deps unchanged)
-  // nor the navigation effect (which doesn't load) ever triggers the fetch.
-  // loadFileDiff sets fetch state internally; this is a legitimate fetch-on-prop-change
-  // sync, not the cascading-render pattern the rule targets.
-  useEffect(() => {
-    if (!activeFilePath || viewMode !== 'diff') return;
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    loadFileDiff(activeFilePath, currentDiffRefs.fromRef, currentDiffRefs.toRef);
-  }, [activeFilePath, viewMode, currentDiffRefs.fromRef, currentDiffRefs.toRef, loadFileDiff]);
+
 
   const handleExpandDir = useCallback(async (dirPath: string): Promise<DirEntry[]> => {
     const result = await getTaskDirEntries(projectId, taskId, dirPath);
@@ -745,14 +728,79 @@ export function DiffReviewPage({ projectId, taskId, embedded, navigateToFile, is
     return hashes;
   }, [diffData, viewMode, displayFiles]);
 
+  const matchesRules = useCallback((path: string) => {
+    let matched = false;
+    for (const rule of autoViewedRules) {
+      const isNegated = rule.startsWith('!');
+      const pattern = isNegated ? rule.slice(1) : rule;
+      // Convert glob to regex
+      const regexStr = pattern
+        .replace(/[.+^${}()|[\]\\]/g, '\\$&')
+        .replace(/\*\*/g, '___DOUBLE_STAR___')
+        .replace(/\*/g, '[^/]*')
+        .replace(/\?/g, '[^/]')
+        .replace(/___DOUBLE_STAR___/g, '.*');
+      const regex = new RegExp(`^${regexStr}$`);
+      if (regex.test(path)) {
+        matched = !isNegated;
+      }
+    }
+    return matched;
+  }, [autoViewedRules]);
+
   // Compute viewed status per file: 'none' | 'viewed' | 'updated'
   const getFileViewedStatus = useCallback((path: string): 'none' | 'viewed' | 'updated' => {
     const savedHash = viewedFiles.get(path);
+    if (savedHash === 'UNVIEWED') {
+      return 'none';
+    }
+    if (matchesRules(path)) {
+      return 'viewed';
+    }
     if (!savedHash) return 'none';
     const currentHash = fileHashes.get(path);
     if (currentHash && savedHash !== currentHash) return 'updated';
     return 'viewed';
-  }, [viewedFiles, fileHashes]);
+  }, [viewedFiles, fileHashes, matchesRules]);
+
+  const activeFilePath = useMemo(() => {
+    const found = displayFiles.find((f) => f.new_path === selectedFile && !f.new_path.endsWith('/'));
+    if (found) return found.new_path;
+
+    // Fallback: If "hide viewed" is enabled, find the first file that is not a directory placeholder and not viewed
+    try {
+      const hideViewed = localStorage.getItem('grove:review.hideViewed') === 'true';
+      if (hideViewed) {
+        const firstNotViewed = displayFiles.find(
+          (f) => !f.new_path.endsWith('/') && getFileViewedStatus(f.new_path) !== 'viewed'
+        );
+        if (firstNotViewed) return firstNotViewed.new_path;
+      }
+    } catch { /* ignore localstorage issues */ }
+
+    return displayFiles.find((f) => !f.new_path.endsWith('/'))?.new_path || null;
+  }, [displayFiles, selectedFile, getFileViewedStatus]);
+
+  // currentFileIndex derived from activeFilePath — stays in sync without setState in effect
+  const currentFileIndex = useMemo(() => {
+    if (!activeFilePath) return 0;
+    const idx = displayFiles.findIndex((f) => f.new_path === activeFilePath);
+    return idx >= 0 ? idx : 0;
+  }, [displayFiles, activeFilePath]);
+
+  // Trigger diff load whenever the active file changes in CHANGES mode.
+  // Uses activeFilePath (derived) so the first file's diff loads even when selectedFile is null.
+  // Note: loadFileDiff dedupes via fileDiffCacheRef + loadingDiffsRef, so it is safe to fire
+  // even while a pending navigation is being resolved — without this, when the resolved
+  // navigation target equals the fallback activeFilePath, neither this effect (deps unchanged)
+  // nor the navigation effect (which doesn't load) ever triggers the fetch.
+  // loadFileDiff sets fetch state internally; this is a legitimate fetch-on-prop-change
+  // sync, not the cascading-render pattern the rule targets.
+  useEffect(() => {
+    if (!activeFilePath || viewMode !== 'diff') return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    loadFileDiff(activeFilePath, currentDiffRefs.fromRef, currentDiffRefs.toRef);
+  }, [activeFilePath, viewMode, currentDiffRefs.fromRef, currentDiffRefs.toRef, loadFileDiff]);
 
   // Version options for FROM / TO selectors
   const versionList = versions;
@@ -1468,18 +1516,27 @@ export function DiffReviewPage({ projectId, taskId, embedded, navigateToFile, is
     setViewedFiles((prev) => {
       const next = new Map(prev);
       const savedHash = prev.get(path);
-      const currentHash = fileHashes.get(path) || '';
+      const matchesRule = matchesRules(path);
 
-      // If already viewed and the hash matches, toggle it off (unviewed)
-      if (savedHash && savedHash === currentHash) {
-        next.delete(path);
-        // When unmarking as viewed, keep current collapsed state
+      if (matchesRule) {
+        if (savedHash === 'UNVIEWED') {
+          next.delete(path);
+        } else {
+          next.set(path, 'UNVIEWED');
+        }
       } else {
-        // If unviewed (no savedHash) OR updated (savedHash !== currentHash),
-        // mark it as viewed (store the new current hash) and clear the Updated status
-        next.set(path, currentHash);
-        // Auto-collapse when marking as viewed
-        setCollapsedFiles((prevCollapsed) => new Set(prevCollapsed).add(path));
+        const currentHash = fileHashes.get(path) || '';
+        // If already viewed and the hash matches, toggle it off (unviewed)
+        if (savedHash && savedHash === currentHash) {
+          next.delete(path);
+          // When unmarking as viewed, keep current collapsed state
+        } else {
+          // If unviewed (no savedHash) OR updated (savedHash !== currentHash),
+          // mark it as viewed (store the new current hash) and clear the Updated status
+          next.set(path, currentHash);
+          // Auto-collapse when marking as viewed
+          setCollapsedFiles((prevCollapsed) => new Set(prevCollapsed).add(path));
+        }
       }
       // Persist to localStorage
       try {
@@ -1487,7 +1544,7 @@ export function DiffReviewPage({ projectId, taskId, embedded, navigateToFile, is
       } catch { /* ignore quota errors */ }
       return next;
     });
-  }, [fileHashes, viewedStorageKey]);
+  }, [fileHashes, viewedStorageKey, matchesRules]);
 
   // Toggle viewed status of the active file
   const handleToggleActiveViewed = useCallback(() => {
@@ -1500,22 +1557,33 @@ export function DiffReviewPage({ projectId, taskId, embedded, navigateToFile, is
   const handleMarkActiveViewed = useCallback(() => {
     if (!activeFilePath) return;
     setViewedFiles((prev) => {
-      const hash = fileHashes.get(activeFilePath) || '';
-      // No-op if already viewed with the same hash — avoids a needless re-render
-      // + localStorage write whenever the user re-fires the command.
-      if (prev.get(activeFilePath) === hash) return prev;
-      const next = new Map(prev);
-      next.set(activeFilePath, hash);
-      try {
-        localStorage.setItem(viewedStorageKey, JSON.stringify(Array.from(next.entries())));
-      } catch { /* ignore quota errors */ }
-      return next;
+      const matchesRule = matchesRules(activeFilePath);
+      if (matchesRule) {
+        if (prev.get(activeFilePath) !== 'UNVIEWED') return prev;
+        const next = new Map(prev);
+        next.delete(activeFilePath);
+        try {
+          localStorage.setItem(viewedStorageKey, JSON.stringify(Array.from(next.entries())));
+        } catch { /* ignore quota errors */ }
+        return next;
+      } else {
+        const hash = fileHashes.get(activeFilePath) || '';
+        // No-op if already viewed with the same hash — avoids a needless re-render
+        // + localStorage write whenever the user re-fires the command.
+        if (prev.get(activeFilePath) === hash) return prev;
+        const next = new Map(prev);
+        next.set(activeFilePath, hash);
+        try {
+          localStorage.setItem(viewedStorageKey, JSON.stringify(Array.from(next.entries())));
+        } catch { /* ignore quota errors */ }
+        return next;
+      }
     });
     setCollapsedFiles((prev) => {
       if (prev.has(activeFilePath)) return prev;
       return new Set(prev).add(activeFilePath);
     });
-  }, [activeFilePath, fileHashes, viewedStorageKey]);
+  }, [activeFilePath, fileHashes, viewedStorageKey, matchesRules]);
 
   // Toggle Changes / All Files mode
   const handleToggleViewMode = useCallback(() => {
@@ -2039,6 +2107,9 @@ export function DiffReviewPage({ projectId, taskId, embedded, navigateToFile, is
               onExpandDir={viewMode === 'full' && focusMode ? handleExpandDir : undefined}
               onLoadFileDiff={viewMode === 'full' && focusMode ? loadFileDiff : undefined}
               taskPath={taskPath}
+              projectId={projectId}
+              autoViewedRules={autoViewedRules}
+              onUpdateAutoViewedRules={setAutoViewedRules}
             />
 
             {/* Diff content */}
