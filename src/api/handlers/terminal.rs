@@ -283,10 +283,10 @@ impl Utf8LossyDecoder {
 
     pub(crate) fn feed(&mut self, input: &[u8]) -> String {
         self.buffer.extend_from_slice(input);
-        
+
         let mut processed_len = 0;
         let mut result = String::new();
-        
+
         loop {
             let remaining = &self.buffer[processed_len..];
             if remaining.is_empty() {
@@ -305,7 +305,7 @@ impl Utf8LossyDecoder {
                         result.push_str(valid_str);
                         processed_len += valid_up_to;
                     }
-                    
+
                     if let Some(error_len) = err.error_len() {
                         // Replace the invalid sequence with U+FFFD (replacement character)
                         result.push('\u{FFFD}');
@@ -318,7 +318,7 @@ impl Utf8LossyDecoder {
                 }
             }
         }
-        
+
         self.buffer.drain(..processed_len);
         result
     }
@@ -330,79 +330,79 @@ pub(crate) async fn handle_pty_terminal(
     cmd: CommandBuilder,
     cols: u16,
     rows: u16,
- ) {
-     // Create PTY in blocking context
-     let pty_result = tokio::task::spawn_blocking(move || {
-         let pty_system = native_pty_system();
-         let pair = pty_system.openpty(PtySize {
-             rows,
-             cols,
-             pixel_width: 0,
-             pixel_height: 0,
-         })?;
- 
-         // Spawn the command
-         let child = pair.slave.spawn_command(cmd)?;
- 
-         // Get reader from PTY master
-         let reader = pair.master.try_clone_reader()?;
- 
-         // Get writer from PTY master
-         let writer = pair.master.take_writer()?;
- 
-         Ok::<_, Box<dyn std::error::Error + Send + Sync>>((pair.master, reader, writer, child))
-     })
-     .await;
- 
-     let (master, reader, writer, child) = match pty_result {
-         Ok(Ok(result)) => result,
-         Ok(Err(e)) => {
-             eprintln!("Failed to setup PTY: {}", e);
-             return;
-         }
-         Err(e) => {
-             eprintln!("Task failed: {}", e);
-             return;
-         }
-     };
- 
-     // Wrap in Arc for sharing
-     let master = Arc::new(std::sync::Mutex::new(master));
-     let reader = Arc::new(std::sync::Mutex::new(reader));
-     let writer = Arc::new(std::sync::Mutex::new(writer));
-     let child = Arc::new(std::sync::Mutex::new(child));
- 
-     // Create channels for communication
-     let (pty_tx, mut pty_rx) = mpsc::channel::<String>(100);
-     let (ws_tx, mut ws_rx) = mpsc::channel::<Vec<u8>>(100);
- 
-     // Split WebSocket
-     let (mut ws_sender, mut ws_receiver) = socket.split();
- 
-     // Task: Read from PTY (blocking) and send to channel
-     let reader_clone = reader.clone();
-     let mut pty_reader_task = tokio::task::spawn_blocking(move || {
-         let mut buf = [0u8; 4096];
-         let mut decoder = Utf8LossyDecoder::new();
-         loop {
-             let n = {
-                 let mut reader = reader_clone.lock().expect("PTY reader mutex poisoned");
-                 match reader.read(&mut buf) {
-                     Ok(0) => break, // EOF
-                     Ok(n) => n,
-                     Err(e) => {
-                         eprintln!("PTY read error: {}", e);
-                         break;
-                     }
-                 }
-             };
- 
-             let data = decoder.feed(&buf[..n]);
-             if !data.is_empty() && pty_tx.blocking_send(data).is_err() {
-                 break;
-             }
-         }
-     });
+) {
+    // Create PTY in blocking context
+    let pty_result = tokio::task::spawn_blocking(move || {
+        let pty_system = native_pty_system();
+        let pair = pty_system.openpty(PtySize {
+            rows,
+            cols,
+            pixel_width: 0,
+            pixel_height: 0,
+        })?;
+
+        // Spawn the command
+        let child = pair.slave.spawn_command(cmd)?;
+
+        // Get reader from PTY master
+        let reader = pair.master.try_clone_reader()?;
+
+        // Get writer from PTY master
+        let writer = pair.master.take_writer()?;
+
+        Ok::<_, Box<dyn std::error::Error + Send + Sync>>((pair.master, reader, writer, child))
+    })
+    .await;
+
+    let (master, reader, writer, child) = match pty_result {
+        Ok(Ok(result)) => result,
+        Ok(Err(e)) => {
+            eprintln!("Failed to setup PTY: {}", e);
+            return;
+        }
+        Err(e) => {
+            eprintln!("Task failed: {}", e);
+            return;
+        }
+    };
+
+    // Wrap in Arc for sharing
+    let master = Arc::new(std::sync::Mutex::new(master));
+    let reader = Arc::new(std::sync::Mutex::new(reader));
+    let writer = Arc::new(std::sync::Mutex::new(writer));
+    let child = Arc::new(std::sync::Mutex::new(child));
+
+    // Create channels for communication
+    let (pty_tx, mut pty_rx) = mpsc::channel::<String>(100);
+    let (ws_tx, mut ws_rx) = mpsc::channel::<Vec<u8>>(100);
+
+    // Split WebSocket
+    let (mut ws_sender, mut ws_receiver) = socket.split();
+
+    // Task: Read from PTY (blocking) and send to channel
+    let reader_clone = reader.clone();
+    let mut pty_reader_task = tokio::task::spawn_blocking(move || {
+        let mut buf = [0u8; 4096];
+        let mut decoder = Utf8LossyDecoder::new();
+        loop {
+            let n = {
+                let mut reader = reader_clone.lock().expect("PTY reader mutex poisoned");
+                match reader.read(&mut buf) {
+                    Ok(0) => break, // EOF
+                    Ok(n) => n,
+                    Err(e) => {
+                        eprintln!("PTY read error: {}", e);
+                        break;
+                    }
+                }
+            };
+
+            let data = decoder.feed(&buf[..n]);
+            if !data.is_empty() && pty_tx.blocking_send(data).is_err() {
+                break;
+            }
+        }
+    });
 
     // Task: Send PTY output to WebSocket
     let mut pty_to_ws = tokio::spawn(async move {

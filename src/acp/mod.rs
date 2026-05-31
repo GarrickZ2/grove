@@ -109,6 +109,14 @@ pub struct AcpSessionHandle {
     /// agent 是否在 initialize 响应里声明了 `session.fork` 能力
     /// (`unstable_session_fork`)。前端据此显示/隐藏 Fork 按钮。
     pub fork_capable: std::sync::atomic::AtomicBool,
+    /// agent 是否在 initialize 响应里声明了 `session.delete` 能力
+    /// (`unstable_session_delete`)。删 chat 时若为 true 且连接活跃,
+    /// best-effort 调 `session/delete` 把 agent 那边的 session 也删掉。
+    pub delete_capable: std::sync::atomic::AtomicBool,
+    /// agent 是否在 initialize 响应里声明了 `session.close` 能力。
+    /// tear down 一个 session 前若为 true,先发 `session/close` 让 agent
+    /// 优雅 cancel + 释放资源,再 SIGKILL 兜底。
+    pub close_capable: std::sync::atomic::AtomicBool,
     /// session/new 阶段被 -32000 卡住后,记录当前 banner 状态(methods + agent_name)。
     /// 用途:WS 重连时,如果还没登录成功,跳过假的 SessionReady,改发 AuthRequired
     /// 让前端继续显示 banner;避免"刷新后看起来连上了但消息发不出去"。
@@ -157,6 +165,11 @@ enum AcpCommand {
     ForkSession {
         cwd: PathBuf,
         reply: tokio::sync::oneshot::Sender<std::result::Result<String, String>>,
+    },
+    /// 调用 ACP `session/delete`(`unstable_session_delete`),要求 agent 删掉
+    /// 当前 session(handle 自己的 session_id)。reply 回传成功/失败。
+    DeleteSession {
+        reply: tokio::sync::oneshot::Sender<std::result::Result<(), String>>,
     },
 }
 
@@ -1617,6 +1630,8 @@ pub async fn get_or_start_session(
                     pending_auth_retry: Mutex::new(None),
                     pending_auth: Mutex::new(None),
                     fork_capable: std::sync::atomic::AtomicBool::new(false),
+                    delete_capable: std::sync::atomic::AtomicBool::new(false),
+                    close_capable: std::sync::atomic::AtomicBool::new(false),
                 });
 
                 // 注册到全局表
@@ -2230,6 +2245,16 @@ async fn drive_session(
     // Trae 目前已在新版中正确声明支持 load_session，此处可直接使用其实际能力声明
     let supports_load = init_resp.agent_capabilities.load_session;
 
+    // Resume 能力(ACP 0.12 stabilized `session/resume`):agent 在 capabilities 里
+    // 声明 resume=Some(_) 表示支持。与 load_session 的本质区别 — resume **不 replay
+    // 历史消息**(load 会把全部历史通过 session/update 回放回来)。Grove 的历史本就
+    // 自己从磁盘加载,所以 resume 路线天然不需要 suppress_emit + 300ms 那套抛弃 hack。
+    let supports_resume = init_resp
+        .agent_capabilities
+        .session_capabilities
+        .resume
+        .is_some();
+
     // Fork 能力(`unstable_session_fork`):agent 在 capabilities 里声明 fork=Some(_)
     // 表示支持 `session/fork`。同时 grove 的 fork 实现依赖 load_session — 派生
     // 出的新 chat 用户首次打开时走的是 fresh process + load_session(forked_id),
@@ -2243,6 +2268,28 @@ async fn drive_session(
     handle
         .fork_capable
         .store(fork_capable, std::sync::atomic::Ordering::Relaxed);
+
+    // Delete 能力(`unstable_session_delete`):agent 声明 session.delete 即可。
+    // 删 chat 时若连接活跃,best-effort 调 session/delete 删掉 agent 侧 session。
+    let delete_capable = init_resp
+        .agent_capabilities
+        .session_capabilities
+        .delete
+        .is_some();
+    handle
+        .delete_capable
+        .store(delete_capable, std::sync::atomic::Ordering::Relaxed);
+
+    // Close 能力(`session/close`,已 stabilized 无需 feature):agent 声明
+    // session.close 即可。tear down 前发 close 让 agent 优雅 cancel + 释放资源。
+    let close_capable = init_resp
+        .agent_capabilities
+        .session_capabilities
+        .close
+        .is_some();
+    handle
+        .close_capable
+        .store(close_capable, std::sync::atomic::Ordering::Relaxed);
 
     // 查找保存的 session_id(从 chat session 读取)
     let saved_id = config.chat_id.as_ref().and_then(|cid| {
@@ -2496,49 +2543,89 @@ async fn drive_session(
         }};
     }
 
-    let session_id = if let (true, Some(saved_id)) = (supports_load, saved_id) {
-        // 抑制 agent 的回放通知(Grove 统一从磁盘回放)
-        handle
-            .suppress_emit
-            .store(true, std::sync::atomic::Ordering::Relaxed);
-        let load_result = {
-            let mcp_servers =
-                build_mcp_servers(&config.env_vars, agent_graph_token).map_err(to_acp_err)?;
-            conn.send_request(
-                acp::LoadSessionRequest::new(acp::SessionId::new(&*saved_id), &config.working_dir)
+    let session_id = match (saved_id, supports_resume, supports_load) {
+        // Resume 路线(优先):agent 支持 session/resume。不 replay 历史,所以
+        // 完全不需要 suppress_emit + 300ms 那套抛弃 agent 回放的机制 — 直接发
+        // ResumeSessionRequest,Grove 照常从磁盘加载自己的历史。
+        (Some(saved_id), true, _) => {
+            let resume_result = {
+                let mcp_servers =
+                    build_mcp_servers(&config.env_vars, agent_graph_token).map_err(to_acp_err)?;
+                conn.send_request(
+                    acp::ResumeSessionRequest::new(
+                        acp::SessionId::new(&*saved_id),
+                        &config.working_dir,
+                    )
                     .mcp_servers(mcp_servers),
-            )
-            .block_task()
-            .await
-        };
-        // load_session spec 保证 response 在所有 replay notification 之后,
-        // 额外等 300ms 作为安全余量
-        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
-        handle
-            .suppress_emit
-            .store(false, std::sync::atomic::Ordering::Relaxed);
-
-        match load_result {
-            Ok(resp) => {
-                (available_modes, current_mode_id) = extract_modes(&resp.modes);
-                (available_models, current_model_id) = extract_models(&resp.models);
-                (
-                    available_thought_levels,
-                    current_thought_level_id,
-                    thought_level_config_id,
-                ) = extract_thought_level(resp.config_options.as_deref().unwrap_or(&[]));
-                saved_id
-            }
-            Err(load_err) => {
-                // Don't emit AcpUpdate::Error here — run_acp_session's caller
-                // already emits a single error message when this function returns
-                // Err(...). Double-emitting shows the user the same banner twice.
-                return Err(acp::Error::internal_error()
-                    .data(format!("Resume session failed: {}", load_err)));
+                )
+                .block_task()
+                .await
+            };
+            match resume_result {
+                Ok(resp) => {
+                    (available_modes, current_mode_id) = extract_modes(&resp.modes);
+                    (available_models, current_model_id) = extract_models(&resp.models);
+                    (
+                        available_thought_levels,
+                        current_thought_level_id,
+                        thought_level_config_id,
+                    ) = extract_thought_level(resp.config_options.as_deref().unwrap_or(&[]));
+                    saved_id
+                }
+                Err(resume_err) => {
+                    // 与 load 失败行为一致:return Err,由 caller 统一 emit 单条错误,
+                    // 避免双重 banner。不 fall-through 到 fresh。
+                    return Err(acp::Error::internal_error()
+                        .data(format!("Resume session failed: {}", resume_err)));
+                }
             }
         }
-    } else {
-        create_new_session!(false)
+        // Load 路线:agent 不支持 resume 但支持 load_session。agent 会 replay 历史
+        // (Grove 统一从磁盘回放),所以抑制其回放 emit。关键:traecli 等 agent 的
+        // replay 在 LoadSessionResponse **之后**才异步流式发出,固定时间窗口抓不住
+        // → suppress 保持 true,直到 cmd loop 收到首个用户 prompt 才解除(见 Prompt
+        // arm)。恢复 session 后、用户发新消息前,agent 主动 emit 的只可能是 replay。
+        (Some(saved_id), false, true) => {
+            handle
+                .suppress_emit
+                .store(true, std::sync::atomic::Ordering::Relaxed);
+            let load_result = {
+                let mcp_servers =
+                    build_mcp_servers(&config.env_vars, agent_graph_token).map_err(to_acp_err)?;
+                conn.send_request(
+                    acp::LoadSessionRequest::new(
+                        acp::SessionId::new(&*saved_id),
+                        &config.working_dir,
+                    )
+                    .mcp_servers(mcp_servers),
+                )
+                .block_task()
+                .await
+            };
+
+            match load_result {
+                Ok(resp) => {
+                    (available_modes, current_mode_id) = extract_modes(&resp.modes);
+                    (available_models, current_model_id) = extract_models(&resp.models);
+                    (
+                        available_thought_levels,
+                        current_thought_level_id,
+                        thought_level_config_id,
+                    ) = extract_thought_level(resp.config_options.as_deref().unwrap_or(&[]));
+                    saved_id
+                }
+                Err(load_err) => {
+                    // Don't emit AcpUpdate::Error here — run_acp_session's caller
+                    // already emits a single error message when this function returns
+                    // Err(...). Double-emitting shows the user the same banner twice.
+                    return Err(acp::Error::internal_error()
+                        .data(format!("Resume session failed: {}", load_err)));
+                }
+            }
+        }
+        // Fresh 路线:无 saved_id,或有 saved_id 但 agent 既不支持 resume 也不支持
+        // load。与现状一致。
+        _ => create_new_session!(false),
     };
 
     let session_id_arc = acp::SessionId::new(&*session_id);
@@ -2599,6 +2686,13 @@ async fn drive_session(
                 terminal,
                 config: prompt_config,
             } => {
+                // load 路线:首个用户 prompt 到来即解除 replay 抑制。此前 agent 的
+                // 主动 emit 都是 load replay(Grove 已从磁盘显示历史),从这条新消息
+                // 起恢复正常。必须在下面第一个 emit(UserMessage) 之前。幂等:
+                // resume/fresh 路线本就 suppress=false,store false 无副作用。
+                handle
+                    .suppress_emit
+                    .store(false, std::sync::atomic::Ordering::Relaxed);
                 // 提前快照,便于 -32000 AuthRequired 时把这条 prompt 暂存起来
                 // 等 authenticate 成功后自动重试。sender/attachments 后续会被
                 // 移动进 emit / content_blocks,所以必须 clone。
@@ -2823,6 +2917,13 @@ async fn drive_session(
                                     // 直到 turn 结束。reply 是 oneshot,drop 不丢。
                                     let _ = reply.send(Err(
                                         "Cannot fork while agent is busy".to_string(),
+                                    ));
+                                }
+                                AcpCommand::DeleteSession { reply } => {
+                                    // 同 fork:busy 期间拒绝。删除是 best-effort,
+                                    // 上层收到 Err 会跳过 agent delete、照常删本地。
+                                    let _ = reply.send(Err(
+                                        "Cannot delete while agent is busy".to_string(),
                                     ));
                                 }
                             }
@@ -3070,10 +3171,38 @@ async fn drive_session(
                 };
                 let _ = reply.send(outcome);
             }
+            AcpCommand::DeleteSession { reply } => {
+                // best-effort:agent 必须声明 delete capability(调用方已校验)。
+                // 删的是当前 session,直接用 session_id_arc。失败透传给上层。
+                let res = conn
+                    .send_request(acp::DeleteSessionRequest::new(session_id_arc.clone()))
+                    .block_task()
+                    .await;
+                let outcome = match res {
+                    Ok(_) => Ok(()),
+                    Err(e) => Err(format!("session/delete failed: {}", e)),
+                };
+                let _ = reply.send(outcome);
+            }
             AcpCommand::Kill => {
                 break;
             }
         }
+    }
+
+    // 优雅退出:tear down 前若 agent 支持 session/close,先让它 cancel 进行中
+    // 的工作 + 释放资源,再由 run_acp_session 的 drop(child) SIGKILL 兜底。
+    // best-effort:失败 / 超时一律忽略,不阻塞 tear down。
+    if handle
+        .close_capable
+        .load(std::sync::atomic::Ordering::Relaxed)
+    {
+        let _ = tokio::time::timeout(
+            std::time::Duration::from_secs(3),
+            conn.send_request(acp::CloseSessionRequest::new(session_id_arc.clone()))
+                .block_task(),
+        )
+        .await;
     }
 
     Ok(())
@@ -3231,11 +3360,16 @@ impl AcpSessionHandle {
 
     /// 发送更新并记录到 history buffer（带磁盘持久化）
     pub fn emit(&self, mut update: AcpUpdate) {
-        // load_session 期间抑制大部分 emit；保留 available_commands 以恢复 slash commands
+        // load_session 期间抑制大部分 emit；保留 available_commands 以恢复 slash
+        // commands，保留 session_ready 让前端就绪(suppress 现在保持到首个用户
+        // prompt，session_ready 在 cmd loop 之前发，必须放行)。
         if self
             .suppress_emit
             .load(std::sync::atomic::Ordering::Relaxed)
-            && !matches!(update, AcpUpdate::AvailableCommands { .. })
+            && !matches!(
+                update,
+                AcpUpdate::AvailableCommands { .. } | AcpUpdate::SessionReady { .. }
+            )
         {
             return;
         }
@@ -3668,6 +3802,23 @@ impl AcpSessionHandle {
         }
     }
 
+    /// 通过 ACP `session/delete` 删掉当前 session(`unstable_session_delete`)。
+    /// 删 chat 时 best-effort 调用 — agent 那边把 session 一并删掉。
+    pub async fn delete_session(&self) -> crate::error::Result<()> {
+        let (reply_tx, reply_rx) = tokio::sync::oneshot::channel();
+        self.cmd_tx
+            .send(AcpCommand::DeleteSession { reply: reply_tx })
+            .await
+            .map_err(|_| crate::error::GroveError::Session("ACP session closed".to_string()))?;
+        match reply_rx.await {
+            Ok(Ok(())) => Ok(()),
+            Ok(Err(msg)) => Err(crate::error::GroveError::Session(msg)),
+            Err(_) => Err(crate::error::GroveError::Session(
+                "Delete request was dropped by ACP loop".to_string(),
+            )),
+        }
+    }
+
     /// 订阅更新流
     pub fn subscribe(&self) -> broadcast::Receiver<AcpUpdate> {
         self.update_tx.subscribe()
@@ -4024,6 +4175,8 @@ pub fn new_handle_for_test(
         pending_auth_retry: Mutex::new(None),
         pending_auth: Mutex::new(None),
         fork_capable: std::sync::atomic::AtomicBool::new(false),
+        delete_capable: std::sync::atomic::AtomicBool::new(false),
+        close_capable: std::sync::atomic::AtomicBool::new(false),
     });
 
     if let Ok(mut sessions) = ACP_SESSIONS.write() {

@@ -1171,8 +1171,23 @@ pub async fn delete_chat(
 ) -> Result<StatusCode, AcpError> {
     let (project_key, _, _) = resolve_project_key(&project_id)?;
 
-    // Kill the ACP session for this chat if running
     let session_key = format!("{}:{}:{}", project_key, task_id, chat_id);
+
+    // best-effort:若该 chat 当前有活跃 ACP 连接且 agent 声明支持 session/delete,
+    // 先让 agent 删掉它那边的 session,再 kill 连接(kill 会关掉连接,故必须在前)。
+    // 失败 / 超时 / agent busy 一律忽略 —— 不阻塞 grove 本地删除。
+    if let Some(handle) = acp::get_session_handle(&session_key) {
+        if handle
+            .delete_capable
+            .load(std::sync::atomic::Ordering::Relaxed)
+        {
+            let _ =
+                tokio::time::timeout(std::time::Duration::from_secs(5), handle.delete_session())
+                    .await;
+        }
+    }
+
+    // Kill the ACP session for this chat if running
     let _ = acp::kill_session(&session_key);
 
     // Remove chat entry from chats.toml
