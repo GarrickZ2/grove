@@ -28,6 +28,10 @@ interface FileTreeSidebarProps {
   projectId?: string | null;
   autoViewedRules?: string[];
   onUpdateAutoViewedRules?: (rules: string[]) => void;
+  /** "Hide viewed files" toggle — controlled by the parent (DiffReviewPage) so
+   *  its jump-to-first-unviewed logic stays in sync with this filter. */
+  hideViewed?: boolean;
+  onToggleHideViewed?: () => void;
 }
 
 interface DirNode {
@@ -63,6 +67,8 @@ export function FileTreeSidebar({
   projectId,
   autoViewedRules,
   onUpdateAutoViewedRules,
+  hideViewed = false,
+  onToggleHideViewed,
 }: FileTreeSidebarProps) {
   // Context menu state
   const [contextMenu, setContextMenu] = useState<{
@@ -71,11 +77,6 @@ export function FileTreeSidebar({
     targetPath: string;
     isDirectory: boolean;
   } | null>(null);
-
-  // Hide Viewed Files state
-  const [hideViewed, setHideViewed] = useState<boolean>(() => {
-    return localStorage.getItem('grove:review.hideViewed') === 'true';
-  });
 
   const [showRulesModal, setShowRulesModal] = useState(false);
 
@@ -186,11 +187,7 @@ export function FileTreeSidebar({
             <div style={{ display: 'flex', gap: 4 }}>
               <button
                 className={`diff-sidebar-hide-viewed-btn ${hideViewed ? 'active' : ''}`}
-                onClick={() => {
-                  const next = !hideViewed;
-                  setHideViewed(next);
-                  localStorage.setItem('grove:review.hideViewed', String(next));
-                }}
+                onClick={() => onToggleHideViewed?.()}
                 title={hideViewed ? "Show viewed files" : "Hide viewed files"}
               >
                 {hideViewed ? (

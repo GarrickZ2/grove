@@ -155,7 +155,7 @@ export function AddProjectDialog({
       const data = await apiClient.get<{ path: string | null }>("/api/v1/browse-folder");
       if (data.path) {
         setPath(data.path);
-        if (!existingNameTouched) setExistingName(data.path.split("/").pop() || "");
+        if (!existingNameTouched) setExistingName(deriveNameFromPath(data.path));
         setError("");
       } else {
         // Native dialog unavailable (headless host) — open web picker.
@@ -574,7 +574,7 @@ export function AddProjectDialog({
       onSelect={(p) => {
         if (pickerOpen === "existing") {
           setPath(p);
-          if (!existingNameTouched) setExistingName(p.split("/").pop() || "");
+          if (!existingNameTouched) setExistingName(deriveNameFromPath(p));
         } else if (pickerOpen === "parent") {
           setParentDir(p);
         }

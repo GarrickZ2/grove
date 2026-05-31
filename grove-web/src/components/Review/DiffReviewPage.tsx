@@ -763,23 +763,36 @@ export function DiffReviewPage({ projectId, taskId, embedded, navigateToFile, is
     return 'viewed';
   }, [viewedFiles, fileHashes, matchesRules]);
 
+  // "Hide viewed files" toggle — lifted here (from FileTreeSidebar) so the
+  // jump-to-first-unviewed fallback below re-runs reactively when it changes.
+  const [hideViewed, setHideViewed] = useState<boolean>(
+    () => localStorage.getItem('grove:review.hideViewed') === 'true'
+  );
+  const handleToggleHideViewed = useCallback(() => {
+    setHideViewed((prev) => {
+      const next = !prev;
+      try {
+        localStorage.setItem('grove:review.hideViewed', String(next));
+      } catch { /* ignore localStorage issues */ }
+      return next;
+    });
+  }, []);
+
   const activeFilePath = useMemo(() => {
     const found = displayFiles.find((f) => f.new_path === selectedFile && !f.new_path.endsWith('/'));
     if (found) return found.new_path;
 
-    // Fallback: If "hide viewed" is enabled, find the first file that is not a directory placeholder and not viewed
-    try {
-      const hideViewed = localStorage.getItem('grove:review.hideViewed') === 'true';
-      if (hideViewed) {
-        const firstNotViewed = displayFiles.find(
-          (f) => !f.new_path.endsWith('/') && getFileViewedStatus(f.new_path) !== 'viewed'
-        );
-        if (firstNotViewed) return firstNotViewed.new_path;
-      }
-    } catch { /* ignore localstorage issues */ }
+    // Fallback: when "hide viewed" is enabled, jump to the first file that is
+    // not a directory placeholder and not yet viewed.
+    if (hideViewed) {
+      const firstNotViewed = displayFiles.find(
+        (f) => !f.new_path.endsWith('/') && getFileViewedStatus(f.new_path) !== 'viewed'
+      );
+      if (firstNotViewed) return firstNotViewed.new_path;
+    }
 
     return displayFiles.find((f) => !f.new_path.endsWith('/'))?.new_path || null;
-  }, [displayFiles, selectedFile, getFileViewedStatus]);
+  }, [displayFiles, selectedFile, getFileViewedStatus, hideViewed]);
 
   // currentFileIndex derived from activeFilePath — stays in sync without setState in effect
   const currentFileIndex = useMemo(() => {
@@ -1878,8 +1891,12 @@ export function DiffReviewPage({ projectId, taskId, embedded, navigateToFile, is
     );
   }
 
-  const viewedCount = displayFiles.filter((f) => getFileViewedStatus(f.new_path) === 'viewed').length;
-  const totalFiles = displayFiles.length;
+  // Exclude directory placeholders (new_path ending in '/') from counts — in
+  // full+focus mode they appear in displayFiles and a broad auto-view rule
+  // (e.g. '**') would otherwise inflate both totals.
+  const countableFiles = displayFiles.filter((f) => !f.new_path.endsWith('/'));
+  const viewedCount = countableFiles.filter((f) => getFileViewedStatus(f.new_path) === 'viewed').length;
+  const totalFiles = countableFiles.length;
   const isEmpty = displayFiles.length === 0;
 
   // Ensure selectedFile is valid - if not, use first file
@@ -2102,6 +2119,8 @@ export function DiffReviewPage({ projectId, taskId, embedded, navigateToFile, is
               fileCommentCounts={fileCommentCounts}
               collapsed={!sidebarVisible}
               getFileViewedStatus={getFileViewedStatus}
+              hideViewed={hideViewed}
+              onToggleHideViewed={handleToggleHideViewed}
               onCreateVirtualPath={handleCreateVirtualPath}
               viewMode={viewMode}
               onExpandDir={viewMode === 'full' && focusMode ? handleExpandDir : undefined}

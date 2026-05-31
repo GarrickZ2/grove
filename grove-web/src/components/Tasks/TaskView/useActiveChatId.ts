@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState, useEffect } from "react";
+import { useCallback, useRef, useState, useSyncExternalStore } from "react";
 
 interface Result {
   activeChatId: string | null;
@@ -35,57 +35,63 @@ export function useActiveChatId(initial: string | null = null): Result {
   return { activeChatId, getActiveChatId, setActiveChatId };
 }
 
-export function useGlobalActiveChatId(): string | null {
-  const [activeChatId, setActiveChatId] = useState<string | null>(null);
+// ─── Shared store for useGlobalActiveChatId ──────────────────────────────
+// Previously every caller (one per comment card / conversation item) installed
+// its own 400ms interval + global click/resize listeners. In a review with many
+// comments that meant N timers all polling the DOM. We hoist a single set of
+// listeners to module scope and fan out to subscribers via useSyncExternalStore,
+// so there is exactly one interval/listener set regardless of caller count.
+let globalActiveChatId: string | null = null;
+const activeChatSubscribers = new Set<() => void>();
+let activeChatTeardown: (() => void) | null = null;
 
-  useEffect(() => {
-    if (typeof window === "undefined") return;
+function computeActiveAndVisible(): string | null {
+  if (typeof window === "undefined") return null;
+  const id = (window as Window & { __groveActiveChatId?: string | null }).__groveActiveChatId || null;
+  if (!id) return null;
+  // The chat panel must actually be visible in the DOM (display !== none).
+  const panelEl = document.querySelector('[data-grove-chat-panel="true"]');
+  if (!panelEl) return null;
+  if ((panelEl as HTMLElement).offsetParent === null) return null;
+  return id;
+}
 
-    const checkActiveAndVisible = () => {
-      const globalActiveId = (window as Window & { __groveActiveChatId?: string | null }).__groveActiveChatId || null;
-      if (!globalActiveId) {
-        setActiveChatId(null);
-        return;
-      }
+function recomputeActiveChat() {
+  const next = computeActiveAndVisible();
+  if (next !== globalActiveChatId) {
+    globalActiveChatId = next;
+    activeChatSubscribers.forEach((fn) => fn());
+  }
+}
 
-      // Check if the chat panel is actually visible in the DOM (display !== none)
-      const panelEl = document.querySelector('[data-grove-chat-panel="true"]');
-      if (panelEl) {
-        const isVisible = (panelEl as HTMLElement).offsetParent !== null;
-        if (!isVisible) {
-          setActiveChatId(null);
-          return;
-        }
-      } else {
-        // If the component is not in DOM at all
-        setActiveChatId(null);
-        return;
-      }
-
-      setActiveChatId(globalActiveId);
-    };
-
-    const handleChanged = () => {
-      checkActiveAndVisible();
-    };
-
-    window.addEventListener("grove-active-chat-changed", handleChanged);
-    window.addEventListener("click", checkActiveAndVisible);
-    window.addEventListener("resize", checkActiveAndVisible);
-
-    // Initial check
-    checkActiveAndVisible();
-
-    // Check periodically in case layout changes without click/resize
-    const interval = setInterval(checkActiveAndVisible, 400);
-
-    return () => {
-      window.removeEventListener("grove-active-chat-changed", handleChanged);
-      window.removeEventListener("click", checkActiveAndVisible);
-      window.removeEventListener("resize", checkActiveAndVisible);
+function subscribeActiveChat(onStoreChange: () => void): () => void {
+  activeChatSubscribers.add(onStoreChange);
+  if (!activeChatTeardown && typeof window !== "undefined") {
+    window.addEventListener("grove-active-chat-changed", recomputeActiveChat);
+    window.addEventListener("click", recomputeActiveChat);
+    window.addEventListener("resize", recomputeActiveChat);
+    const interval = setInterval(recomputeActiveChat, 400);
+    recomputeActiveChat(); // initial
+    activeChatTeardown = () => {
+      window.removeEventListener("grove-active-chat-changed", recomputeActiveChat);
+      window.removeEventListener("click", recomputeActiveChat);
+      window.removeEventListener("resize", recomputeActiveChat);
       clearInterval(interval);
     };
-  }, []);
+  }
+  return () => {
+    activeChatSubscribers.delete(onStoreChange);
+    if (activeChatSubscribers.size === 0 && activeChatTeardown) {
+      activeChatTeardown();
+      activeChatTeardown = null;
+    }
+  };
+}
 
-  return activeChatId;
+export function useGlobalActiveChatId(): string | null {
+  return useSyncExternalStore(
+    subscribeActiveChat,
+    () => globalActiveChatId,
+    () => null,
+  );
 }

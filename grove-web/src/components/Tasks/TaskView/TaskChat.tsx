@@ -3329,7 +3329,16 @@ export function TaskChat({
         }
       };
 
-      ws.onclose = () => {
+      ws.onclose = (event) => {
+        // Surface close code/reason — a silently-permanent "Connecting…" is
+        // usually a proxy/tunnel dropping the WS upgrade (code 1006, no close
+        // frame) rather than an app-level close. Without this there's no
+        // devtools breadcrumb. (Reconnect itself is capped at 5 attempts below.)
+        if (event.code !== 1000) {
+          console.warn(
+            `[grove ws] chat ${chatId} closed: code=${event.code} reason=${event.reason || "(none)"} wasClean=${event.wasClean}`,
+          );
+        }
         wsMapRef.current.delete(chatId);
         if (chatId === getActiveChatId()) {
           setIsConnected(false);
@@ -3377,7 +3386,8 @@ export function TaskChat({
         }
       };
 
-      ws.onerror = () => {
+      ws.onerror = (event) => {
+        console.warn(`[grove ws] chat ${chatId} error`, event);
         if (chatId === getActiveChatId()) {
           setMessages((prev) => appendSystemMessage(prev, "Connection error."));
         }
@@ -3649,19 +3659,20 @@ export function TaskChat({
     };
   }, []);
 
-  // Synchronize activeChatId to window.__groveActiveChatId and listen to comment send event
+  // Clear the global active-chat pointer when this TaskChat unmounts. The
+  // per-change sync is already handled by useActiveChatId.setActiveChatId
+  // (it writes __groveActiveChatId + dispatches on every switch), so we don't
+  // duplicate it here — the old per-change effect caused ~3 dispatches per
+  // switch plus a transient null. activeChatId starts as null, so there's no
+  // initial value to sync on mount.
   useEffect(() => {
-    if (typeof window !== "undefined") {
-      (window as Window & { __groveActiveChatId?: string | null }).__groveActiveChatId = activeChatId;
-      window.dispatchEvent(new CustomEvent("grove-active-chat-changed", { detail: activeChatId }));
-    }
     return () => {
       if (typeof window !== "undefined") {
         (window as Window & { __groveActiveChatId?: string | null }).__groveActiveChatId = null;
         window.dispatchEvent(new CustomEvent("grove-active-chat-changed", { detail: null }));
       }
     };
-  }, [activeChatId]);
+  }, []);
 
   // Save composer draft to localStorage on page unload / navigation /
   // tab hide. `beforeunload` is unreliable on mobile and on fast tab
@@ -4809,9 +4820,6 @@ export function TaskChat({
           config: buildPromptConfig(),
         })
       );
-      
-      // Let's scroll to bottom if needed
-      enableAutoStickToBottom("auto");
     };
 
     window.addEventListener("grove-send-comment-to-chat", handleSendComment);
