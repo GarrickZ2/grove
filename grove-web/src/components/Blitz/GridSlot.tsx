@@ -14,31 +14,17 @@ interface GridSlotProps {
 }
 
 export function GridSlot({ slotIdx, assignment, blitzTasks, onAssign, onClear }: GridSlotProps) {
-  const [stale, setStale] = useState(false);
+  // Which chat (if any) currently shows the "connection lost" overlay, keyed by
+  // chatId. Deriving `isStale` from this (below) means a reassignment to a
+  // different chat clears the overlay automatically — no render-time setState or
+  // identity-reset dance needed.
+  const [staleChatId, setStaleChatId] = useState<string | null>(null);
 
-  // Reset stale when the slot's chat identity changes (clear → reassign).
-  // Without this, the prior chat's disconnect would leak into the new one's
-  // first render frame, briefly flashing "Connection lost" before
-  // onConnected fires for the new TaskChat. Uses React's
-  // adjust-state-during-render pattern (per react.dev/reference/react/useState
-  // "Storing information from previous renders") so eslint's
-  // react-hooks/set-state-in-effect doesn't fire.
-  const prevChatIdRef = useRef<string | undefined>(assignment?.chatId);
-  if (prevChatIdRef.current !== assignment?.chatId) {
-    prevChatIdRef.current = assignment?.chatId;
-    setStale(false);
-  }
-
-  // Track whether onConnected has ever fired for the current assignment.
-  // onDisconnected fires during initial WebSocket setup (before onConnected),
-  // so without this guard every fresh slot mount would flash "Connection lost".
-  // This ref is reset inside onConnected/onDisconnected by comparing against
-  // the stable assignment?.chatId captured at render time — no render-time
-  // ref writes needed, keeping the react-hooks/refs lint rule happy.
-  const wasConnectedRef = useRef<{ chatId: string | undefined; value: boolean }>({
-    chatId: assignment?.chatId,
-    value: false,
-  });
+  // Chats we've successfully connected at least once. onDisconnected fires
+  // during the initial WS setup (before onConnected), so we only flag a chat
+  // stale after it has actually connected — avoids a "Connection lost" flash on
+  // a fresh slot mount.
+  const connectedChatIdsRef = useRef<Set<string>>(new Set());
 
   const liveTask = useMemo(() => {
     if (!assignment) return null;
@@ -84,39 +70,40 @@ export function GridSlot({ slotIdx, assignment, blitzTasks, onAssign, onClear }:
     );
   }
 
+  const isStale = staleChatId === assignment.chatId;
+
   return (
     <div className="flex flex-col h-full min-h-0 min-w-0 border border-[var(--color-border)] rounded-md overflow-hidden">
       {titleBar}
-      {/* `flex` (not just block) so TaskChat's own `flex-1` resolves to a
-          real height. Without this the chat body collapses to zero and
-          only the title bar + composer are visible. */}
-      <div className="flex-1 flex min-h-0 min-w-0 overflow-hidden">
-        {stale ? (
-          <div className="h-full flex items-center justify-center text-sm text-[var(--color-text-muted)]">
-            Connection lost — click the slot's clear button and reassign to retry.
+      {/* `relative` so the reconnect overlay can layer on top; `flex` (not just
+          block) so TaskChat's own `flex-1` resolves to a real height. TaskChat
+          stays MOUNTED even when stale — its WS reconnect machinery (backoff
+          ladder + wake/liveness poll) lives inside it and must keep running to
+          recover. Unmounting it on disconnect (the old `stale ? msg : TaskChat`
+          ternary) tore that machinery down and was exactly why grid quadrants
+          stayed stuck on "Connection lost" until a manual refresh. */}
+      <div className="relative flex-1 flex min-h-0 min-w-0 overflow-hidden">
+        <TaskChat
+          projectId={liveTask.projectId}
+          task={liveTask.task}
+          pinnedChatId={assignment.chatId}
+          hideHeader={true}
+          onConnected={() => {
+            connectedChatIdsRef.current.add(assignment.chatId);
+            setStaleChatId(null);
+          }}
+          onDisconnected={() => {
+            // Only flag stale once we've actually connected for THIS chat — the
+            // initial WS setup fires onDisconnected before onConnected.
+            if (connectedChatIdsRef.current.has(assignment.chatId)) {
+              setStaleChatId(assignment.chatId);
+            }
+          }}
+        />
+        {isStale && (
+          <div className="absolute inset-0 z-10 flex items-center justify-center bg-[var(--color-bg)]/80 text-sm text-[var(--color-text-muted)] pointer-events-none">
+            Connection lost — reconnecting automatically…
           </div>
-        ) : (
-          <TaskChat
-            projectId={liveTask.projectId}
-            task={liveTask.task}
-            pinnedChatId={assignment.chatId}
-            hideHeader={true}
-            onConnected={() => {
-              wasConnectedRef.current = { chatId: assignment.chatId, value: true };
-              setStale(false);
-            }}
-            onDisconnected={() => {
-              // Only show stale if we've previously connected for *this* chat.
-              // If the chatId has changed since wasConnectedRef was last set,
-              // this is a stale closure and we ignore it.
-              if (
-                wasConnectedRef.current.chatId === assignment.chatId &&
-                wasConnectedRef.current.value
-              ) {
-                setStale(true);
-              }
-            }}
-          />
         )}
       </div>
     </div>

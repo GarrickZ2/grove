@@ -777,22 +777,38 @@ async fn handle_acp_ws(socket: WebSocket, session_key: String, config: AcpStartC
 
     // Task: Forward ACP updates to WebSocket
     let updates_to_ws = tokio::spawn(async move {
+        // Heartbeat: keep the connection alive through reverse-proxy idle timeouts.
+        // The public pilot reaches Grove through a Cloudflare tunnel, which reaps
+        // idle WebSockets after ~100s — surfacing as a 1006 "unclean" close that
+        // drops every Blitz grid quadrant at once. A 30s server->client Ping keeps
+        // each chat socket warm even when the agent is idle; the browser auto-replies
+        // Pong (handled by the ws_to_acp `_ => {}` arm). Mirrors sketch_ws.rs.
+        let mut heartbeat = tokio::time::interval(std::time::Duration::from_secs(30));
+        // First tick fires immediately; skip it so we don't ping before any event.
+        heartbeat.tick().await;
         loop {
-            match update_rx.recv().await {
-                Ok(update) => {
-                    let is_ended = matches!(update, AcpUpdate::SessionEnded);
-                    let msg: ServerMessage = update.into();
-                    if let Ok(json) = serde_json::to_string(&msg) {
-                        if ws_sender.send(Message::Text(json.into())).await.is_err() {
+            tokio::select! {
+                recv = update_rx.recv() => match recv {
+                    Ok(update) => {
+                        let is_ended = matches!(update, AcpUpdate::SessionEnded);
+                        let msg: ServerMessage = update.into();
+                        if let Ok(json) = serde_json::to_string(&msg) {
+                            if ws_sender.send(Message::Text(json.into())).await.is_err() {
+                                break;
+                            }
+                        }
+                        if is_ended {
                             break;
                         }
                     }
-                    if is_ended {
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                },
+                _ = heartbeat.tick() => {
+                    if ws_sender.send(Message::Ping(Vec::new().into())).await.is_err() {
                         break;
                     }
                 }
-                Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
-                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
             }
         }
     });

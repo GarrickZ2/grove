@@ -3305,6 +3305,7 @@ export function TaskChat({
       ws.onopen = () => {
         // Successful connect — reset backoff so the next disconnect retries fast.
         reconnectAttemptRef.current.delete(chatId);
+        console.log(`[grove-ws] connected chat ${chatId}`);
       };
 
       ws.onmessage = (event) => {
@@ -3343,8 +3344,11 @@ export function TaskChat({
         }
       };
 
-      ws.onclose = () => {
+      ws.onclose = (ev) => {
         wsMapRef.current.delete(chatId);
+        console.warn(
+          `[grove-ws] closed chat ${chatId}: code=${ev.code} reason=${ev.reason || "(none)"} clean=${ev.wasClean} attempt=${reconnectAttemptRef.current.get(chatId) ?? 0}`,
+        );
         if (chatId === getActiveChatId()) {
           setIsConnected(false);
           onDisconnectedPropRef.current?.();
@@ -3364,11 +3368,17 @@ export function TaskChat({
           const attempt = reconnectAttemptRef.current.get(chatId) ?? 0;
           const WS_MAX_RECONNECT_ATTEMPTS = 5;
           if (attempt >= WS_MAX_RECONNECT_ATTEMPTS) {
+            // Fast ladder exhausted. Don't permanently give up — the liveness
+            // poll below keeps retrying every few seconds (covers wake-from-sleep
+            // where the network isn't back yet within the ladder's ~30s window).
+            console.warn(
+              `[grove-ws] fast-reconnect ladder exhausted for chat ${chatId} after ${attempt} attempts; liveness poll will keep retrying`,
+            );
             if (chatId === getActiveChatId()) {
               setMessages((prev) =>
                 appendSystemMessage(
                   prev,
-                  "Unable to reconnect after multiple attempts. Reopen the chat to retry.",
+                  "Connection lost — retrying automatically…",
                 ),
               );
             }
@@ -3695,6 +3705,63 @@ export function TaskChat({
     return () => {
       window.removeEventListener("beforeunload", flush);
       document.removeEventListener("visibilitychange", visHandler);
+    };
+  }, [getActiveChatId]);
+
+  // Keep chat WebSockets alive across sleep/suspend and network blips. No single
+  // trigger is reliable — notably, closing a MacBook lid on a foreground tab
+  // often does NOT fire `visibilitychange` (the page stays "visible" across the
+  // suspend), and `online` is flaky on wake. So we use BOTH:
+  //   • events (visibilitychange/online/focus/pageshow) — instant when they fire
+  //   • a periodic liveness poll — the dependable backbone: after wake the
+  //     interval resumes and its next tick revives any dead socket regardless of
+  //     whether any DOM event fired.
+  // Either path resets the per-chat backoff so a ladder that already exhausted
+  // its fast attempts recovers instead of waiting on a manual refresh.
+  useEffect(() => {
+    const reviveDeadSockets = () => {
+      if (document.visibilityState !== "visible") return;
+      const activeId = getActiveChatId();
+      const candidates = new Set<string>(wsMapRef.current.keys());
+      if (activeId) candidates.add(activeId);
+      for (const chatId of candidates) {
+        if (intentionalCloseRef.current.has(chatId)) continue;
+        if (connectingRef.current.has(chatId)) continue;
+        const ws = wsMapRef.current.get(chatId);
+        // Healthy or still negotiating → leave it alone.
+        if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
+          continue;
+        }
+        // A dead socket lingering in the map makes connectChatWs bail on its
+        // `wsMapRef.has` guard — drop it first.
+        if (ws) wsMapRef.current.delete(chatId);
+        console.warn(
+          `[grove-ws] reviving dead socket for chat ${chatId} (readyState=${ws?.readyState ?? "none"})`,
+        );
+        // Reset the backoff (clears any pending timer + attempt count) so the
+        // reconnect fires now instead of being blocked by the exhausted ladder.
+        cancelPendingReconnectRef.current(chatId);
+        connectChatWsRef.current(chatId).then(() => {
+          if (chatId === getActiveChatId()) {
+            wsRef.current = wsMapRef.current.get(chatId) ?? null;
+          }
+        });
+      }
+    };
+    const onEvent = () => reviveDeadSockets();
+    document.addEventListener("visibilitychange", onEvent);
+    window.addEventListener("online", onEvent);
+    window.addEventListener("focus", onEvent);
+    window.addEventListener("pageshow", onEvent);
+    // Backbone: poll every 8s. Cheap when healthy (just readyState checks), and
+    // the one trigger guaranteed to run again after a lid-close wake.
+    const pollId = setInterval(reviveDeadSockets, 8000);
+    return () => {
+      document.removeEventListener("visibilitychange", onEvent);
+      window.removeEventListener("online", onEvent);
+      window.removeEventListener("focus", onEvent);
+      window.removeEventListener("pageshow", onEvent);
+      clearInterval(pollId);
     };
   }, [getActiveChatId]);
 
