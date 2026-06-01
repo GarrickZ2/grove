@@ -387,12 +387,16 @@ fn filter_tools(all: Vec<Tool>) -> Vec<Tool> {
         "sketch_read",
         "sketch_draw",
     ]);
+    // Skill-authoring tools — available while working inside any real task
+    // (Coding or Studio) so an agent can capture a skill mid-flow.
+    let authoring: HashSet<&'static str> = HashSet::from(["skill_create", "skill_list"]);
     // Union of every in-task tool (used to carve out the orchestrator surface
     // — orchestrator never sees any in-task tool, including sketch).
     let any_in_task: HashSet<&str> = common_in_task
         .iter()
         .chain(coding_only.iter())
         .chain(studio_only.iter())
+        .chain(authoring.iter())
         .copied()
         .collect();
 
@@ -407,13 +411,17 @@ fn filter_tools(all: Vec<Tool>) -> Vec<Tool> {
         TaskEnvKind::Coding => all
             .into_iter()
             .filter(|t| {
-                common_in_task.contains(t.name.as_ref()) || coding_only.contains(t.name.as_ref())
+                common_in_task.contains(t.name.as_ref())
+                    || coding_only.contains(t.name.as_ref())
+                    || authoring.contains(t.name.as_ref())
             })
             .collect(),
         TaskEnvKind::Studio => all
             .into_iter()
             .filter(|t| {
-                common_in_task.contains(t.name.as_ref()) || studio_only.contains(t.name.as_ref())
+                common_in_task.contains(t.name.as_ref())
+                    || studio_only.contains(t.name.as_ref())
+                    || authoring.contains(t.name.as_ref())
             })
             .collect(),
         TaskEnvKind::InTaskUnknown => all
@@ -592,6 +600,19 @@ pub struct EditNoteParams {
     pub task_id: String,
     /// New note content (markdown). Replaces entire note. Pass empty string to clear.
     pub content: String,
+}
+
+/// Create a local skill entry (in-task authoring tool)
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+pub struct SkillCreateParams {
+    /// Package (category) the skill belongs to. Upserted: reused if it already
+    /// exists as a local package; created under `~/.grove/skills/local/<package>/`
+    /// if new. Fails if the name is an existing read-only git package.
+    pub package: String,
+    /// Skill name — also the directory name and the SKILL.md `name` field.
+    pub name: String,
+    /// One-line description for the SKILL.md front-matter.
+    pub description: String,
 }
 
 /// Start a chat session for a task (management tool)
@@ -1132,6 +1153,39 @@ impl GroveMcpServer {
         let json = serde_json::to_string_pretty(&result)
             .map_err(|e| McpError::internal_error(e.to_string(), None))?;
         Ok(CallToolResult::success(vec![Content::text(json)]))
+    }
+
+    /// Create a new skill entry in a local package, then author it with your own tools
+    #[tool(
+        name = "skill_create",
+        description = "Create a new skill in a local (writable) package, then author its content YOURSELF. Upserts the package: reused if it already exists as a local package, created if new (fails if the name is a read-only git package). Grove only writes a SKILL.md scaffold (name + description front-matter) and returns the absolute skill directory path. After calling this, use YOUR OWN file tools (Write/Edit) to fill in the SKILL.md body and add any sub-files (scripts/, references/, assets/) under that directory — Grove does not need to be told when you're done. The skill then appears in Grove's Explore tab; the user installs/associates it manually."
+    )]
+    async fn grove_skill_create(
+        &self,
+        params: Parameters<SkillCreateParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let p = params.0;
+        blocking_json_result(move || {
+            let created =
+                crate::operations::skills::create_local_skill(&p.package, &p.name, &p.description)
+                    .map_err(|e| mcp_err(&e.to_string()))?;
+            serde_json::to_value(&created)
+                .map_err(|e| McpError::internal_error(e.to_string(), None))
+        })
+        .await
+    }
+
+    /// List skill packages and their skills, flagging which are writable
+    #[tool(
+        name = "skill_list",
+        description = "List all skill packages and the skills inside each. Every package is flagged `writable`: true for local packages you can create/edit/delete skills in, false for read-only git packages. Call this before creating a skill to see what already exists, to pick a package, or to locate a skill to edit."
+    )]
+    async fn grove_skill_list(&self) -> Result<CallToolResult, McpError> {
+        blocking_json(|| {
+            let packages = crate::operations::skills::list_packages();
+            serde_json::json!({ "packages": packages })
+        })
+        .await
     }
 
     /// Register a project by local path (idempotent)

@@ -750,3 +750,332 @@ pub fn get_skill_md_content(source_name: &str, skill_relative_path: &str) -> Res
     std::fs::read_to_string(&skill_md_path)
         .map_err(|e| GroveError::storage(format!("Failed to read SKILL.md: {}", e)))
 }
+
+// ============================================================================
+// Local skill authoring (grove-managed writable packages)
+// ============================================================================
+
+/// Default auto-sync buffer: sources synced more recently than this are skipped.
+pub const AUTO_SYNC_BUFFER_SECS: i64 = 300; // 5 minutes
+
+/// Reject names that could escape the storage directory or break the layout.
+fn is_unsafe_segment(s: &str) -> bool {
+    s.is_empty()
+        || s.contains('/')
+        || s.contains('\\')
+        || s == "."
+        || s == ".."
+        || s.contains("..")
+}
+
+/// Quote a string as a single-line YAML double-quoted scalar.
+fn yaml_quote(s: &str) -> String {
+    let escaped = s
+        .replace('\\', "\\\\")
+        .replace('"', "\\\"")
+        .replace(['\n', '\r'], " ");
+    format!("\"{}\"", escaped)
+}
+
+/// Result of creating a local skill entry.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct CreatedSkill {
+    pub package: String,
+    pub skill_name: String,
+    pub skill_dir: String,
+    pub skill_md_path: String,
+    pub created_package: bool,
+}
+
+/// A skill listed under a package.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct PackageSkillInfo {
+    pub name: String,
+    pub description: String,
+    pub repo_path: String,
+    pub relative_path: String,
+}
+
+/// A package (source) with its skills and writability.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct PackageInfo {
+    pub name: String,
+    pub source_type: String,
+    /// True for local packages — AI may create/edit/delete skills inside them.
+    pub writable: bool,
+    pub path: String,
+    pub skills: Vec<PackageSkillInfo>,
+}
+
+/// Create a local skill entry. Upserts the package (a local source): if the
+/// package name already exists as a local source it is reused; if it exists as
+/// a git source this errors (git sources are read-only); otherwise a new local
+/// package is created under `~/.grove/skills/local/<package>/`.
+///
+/// Only the `SKILL.md` scaffold (name + description front-matter) is written —
+/// the body and any sub-files are left for the AI to author with its own tools.
+pub fn create_local_skill(package: &str, name: &str, description: &str) -> Result<CreatedSkill> {
+    let pkg = package.trim();
+    let skill_name = name.trim();
+    if is_unsafe_segment(pkg) {
+        return Err(GroveError::storage(
+            "package must be a non-empty name without path separators",
+        ));
+    }
+    if is_unsafe_segment(skill_name) {
+        return Err(GroveError::storage(
+            "skill name must be a non-empty name without path separators",
+        ));
+    }
+
+    let mut sources_file = load_sources();
+    let mut created_package = false;
+
+    // Upsert the package source and resolve its base directory.
+    let base_dir = match sources_file.sources.iter().find(|s| s.name == pkg) {
+        Some(existing) => {
+            if existing.source_type != "local" {
+                return Err(GroveError::storage(format!(
+                    "Package '{}' is a {} source and is not writable",
+                    pkg, existing.source_type
+                )));
+            }
+            PathBuf::from(crate::storage::workspace::expand_tilde(&existing.url))
+        }
+        None => {
+            let dir = skills::local_storage_dir().join(pkg);
+            let url = dir.to_string_lossy().to_string();
+            sources_file.sources.push(SkillSourceDef {
+                name: pkg.to_string(),
+                source_type: "local".to_string(),
+                url: url.clone(),
+                subpath: None,
+                repo_key: skills::compute_repo_key(&url),
+                last_synced: None,
+                local_head: None,
+            });
+            save_sources(&sources_file)?;
+            created_package = true;
+            dir
+        }
+    };
+
+    // Create the skill directory and scaffold SKILL.md (never overwrite).
+    let skill_dir = base_dir.join(skill_name);
+    std::fs::create_dir_all(&skill_dir)?;
+    let skill_md_path = skill_dir.join("SKILL.md");
+    if !skill_md_path.exists() {
+        let scaffold = format!(
+            "---\nname: {}\ndescription: {}\n---\n\n# {}\n\n",
+            skill_name,
+            yaml_quote(description),
+            skill_name,
+        );
+        std::fs::write(&skill_md_path, scaffold)?;
+    }
+
+    // Rebuild the package manifest so the new skill shows up immediately.
+    rebuild_manifest_for_source(pkg)?;
+
+    Ok(CreatedSkill {
+        package: pkg.to_string(),
+        skill_name: skill_name.to_string(),
+        skill_dir: skill_dir.to_string_lossy().to_string(),
+        skill_md_path: skill_md_path.to_string_lossy().to_string(),
+        created_package,
+    })
+}
+
+/// List all packages (sources) with their skills, flagging which are writable.
+pub fn list_packages() -> Vec<PackageInfo> {
+    let sources = load_sources();
+    let manifest = load_manifest();
+    sources
+        .sources
+        .iter()
+        .map(|s| {
+            let skills: Vec<PackageSkillInfo> = manifest
+                .skills
+                .iter()
+                .filter(|e| e.source == s.name)
+                .map(|e| PackageSkillInfo {
+                    name: e.name.clone(),
+                    description: e.description.clone(),
+                    repo_path: e.repo_path.clone(),
+                    relative_path: e.relative_path.clone(),
+                })
+                .collect();
+            PackageInfo {
+                name: s.name.clone(),
+                source_type: s.source_type.clone(),
+                writable: s.source_type == "local",
+                path: s.url.clone(),
+                skills,
+            }
+        })
+        .collect()
+}
+
+/// Delete a single skill from a local package: remove its symlinks, manifest
+/// entry, and on-disk directory. Only permitted for local (writable) packages.
+pub fn delete_local_skill(source_name: &str, repo_path: &str) -> Result<()> {
+    let sources_file = load_sources();
+    let source = sources_file
+        .sources
+        .iter()
+        .find(|s| s.name == source_name)
+        .ok_or_else(|| GroveError::not_found(format!("Package not found: {}", source_name)))?;
+
+    if source.source_type != "local" {
+        return Err(GroveError::storage(
+            "Only skills in local packages can be deleted",
+        ));
+    }
+
+    let manifest = load_manifest();
+    let entry = manifest
+        .skills
+        .iter()
+        .find(|e| e.source == source_name && e.repo_path == repo_path)
+        .cloned()
+        .ok_or_else(|| GroveError::not_found(format!("Skill not found: {}", repo_path)))?;
+
+    // Remove symlinks + installed record (ignore if it was never installed).
+    let _ = uninstall_skill(&entry.repo_key, &entry.repo_path);
+
+    // Remove the on-disk skill directory.
+    let skill_dir = resolve_actual_skill_dir(source, &entry.relative_path)?;
+    if skill_dir.exists() {
+        std::fs::remove_dir_all(&skill_dir)?;
+    }
+
+    // Drop the manifest entry.
+    let mut manifest = load_manifest();
+    manifest
+        .skills
+        .retain(|e| !(e.source == source_name && e.repo_path == repo_path));
+    save_manifest(&manifest)?;
+
+    Ok(())
+}
+
+/// Rename a package (source). Enforces global name uniqueness across all
+/// sources (git and local). Updates the manifest and installed records to point
+/// at the new name. The on-disk directory, url, and repo_key are left untouched
+/// so existing install symlinks keep working.
+pub fn rename_source(old: &str, new: &str) -> Result<()> {
+    let new = new.trim();
+    if is_unsafe_segment(new) {
+        return Err(GroveError::storage(
+            "package name must be a non-empty name without path separators",
+        ));
+    }
+
+    let mut sources_file = load_sources();
+    if !sources_file.sources.iter().any(|s| s.name == old) {
+        return Err(GroveError::not_found(format!("Package not found: {}", old)));
+    }
+    if old == new {
+        return Ok(());
+    }
+    if sources_file.sources.iter().any(|s| s.name == new) {
+        return Err(GroveError::storage(format!(
+            "A package named '{}' already exists",
+            new
+        )));
+    }
+
+    for s in &mut sources_file.sources {
+        if s.name == old {
+            s.name = new.to_string();
+        }
+    }
+    save_sources(&sources_file)?;
+
+    let mut manifest = load_manifest();
+    for e in &mut manifest.skills {
+        if e.source == old {
+            e.source = new.to_string();
+        }
+    }
+    save_manifest(&manifest)?;
+
+    let mut installed = load_installed();
+    for i in &mut installed.installed {
+        if i.source_name == old {
+            i.source_name = new.to_string();
+        }
+    }
+    save_installed(&installed)?;
+
+    Ok(())
+}
+
+/// True if a source hasn't been synced within the buffer window.
+fn is_stale(s: &SkillSourceDef, buffer_secs: i64, now: chrono::DateTime<Utc>) -> bool {
+    match s.last_synced {
+        Some(t) => (now - t).num_seconds() >= buffer_secs,
+        None => true,
+    }
+}
+
+/// Re-scan stale local sources (cheap, in-process directory walk). Returns the
+/// number of sources synced. Intended to run synchronously on Explore open.
+pub fn sync_stale_local(buffer_secs: i64) -> Result<usize> {
+    let now = Utc::now();
+    let sources = load_sources();
+    let mut count = 0;
+    for s in &sources.sources {
+        if s.source_type == "local" && is_stale(s, buffer_secs, now) && sync_source(&s.name).is_ok()
+        {
+            count += 1;
+        }
+    }
+    Ok(count)
+}
+
+use std::sync::atomic::{AtomicBool, Ordering};
+
+/// Single-flight flag for the background git sync. A git pull is slow; without
+/// this, repeated Explore opens (each firing auto-sync) could launch concurrent
+/// pulls on the same repo working tree and collide on `.git/index.lock`.
+static GIT_SYNC_IN_FLIGHT: AtomicBool = AtomicBool::new(false);
+
+/// Clears `GIT_SYNC_IN_FLIGHT` on drop so every exit path (incl. errors/panics)
+/// releases the single-flight slot.
+struct GitSyncGuard;
+impl Drop for GitSyncGuard {
+    fn drop(&mut self) {
+        GIT_SYNC_IN_FLIGHT.store(false, Ordering::Release);
+    }
+}
+
+/// Pull stale git sources (network, slow). Deduplicates by repo_key. Intended to
+/// run in the background so it doesn't block Explore open. Returns the number of
+/// distinct repos pulled. Single-flighted: if a background git sync is already
+/// running, returns 0 immediately instead of launching a concurrent pull.
+pub fn sync_stale_git(buffer_secs: i64) -> Result<usize> {
+    if GIT_SYNC_IN_FLIGHT
+        .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+        .is_err()
+    {
+        return Ok(0);
+    }
+    let _guard = GitSyncGuard;
+
+    let now = Utc::now();
+    let sources = load_sources();
+    let mut count = 0;
+    let mut seen = std::collections::HashSet::new();
+    for s in &sources.sources {
+        if s.source_type == "git"
+            && !s.repo_key.is_empty()
+            && is_stale(s, buffer_secs, now)
+            && seen.insert(s.repo_key.clone())
+            && sync_source(&s.name).is_ok()
+        {
+            count += 1;
+        }
+    }
+    Ok(count)
+}

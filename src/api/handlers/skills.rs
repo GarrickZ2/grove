@@ -773,3 +773,74 @@ pub async fn uninstall_skill(
         Err(e) => ApiError::response(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
     }
 }
+
+/// DELETE /api/v1/skills/local/{source}/{*repo_path}
+/// Delete a single skill from a local (writable) package: removes its symlinks,
+/// manifest entry, and on-disk directory.
+pub async fn delete_local_skill(
+    Path((source, repo_path)): Path<(String, String)>,
+) -> impl IntoResponse {
+    match ops::delete_local_skill(&source, &repo_path) {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Err(e) => ApiError::response(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
+    }
+}
+
+#[derive(Debug, Deserialize)]
+pub struct RenameSourceRequest {
+    pub new_name: String,
+}
+
+/// POST /api/v1/skills/sources/{name}/rename
+/// Rename a package (source). Enforces global name uniqueness. The on-disk
+/// directory and install symlinks are left untouched.
+pub async fn rename_source(
+    Path(name): Path<String>,
+    Json(req): Json<RenameSourceRequest>,
+) -> impl IntoResponse {
+    match ops::rename_source(&name, &req.new_name) {
+        Ok(()) => {
+            let sources_file = load_sources();
+            let manifest = load_manifest();
+            match sources_file.sources.iter().find(|s| s.name == req.new_name) {
+                Some(s) => {
+                    let count = manifest.skills.iter().filter(|sk| sk.source == s.name).count();
+                    Json(source_to_response(s, count, false)).into_response()
+                }
+                None => StatusCode::NO_CONTENT.into_response(),
+            }
+        }
+        Err(e) => ApiError::response(StatusCode::CONFLICT, e.to_string()),
+    }
+}
+
+/// POST /api/v1/skills/sources/auto-sync
+/// Re-scan stale local sources inline (cheap) and kick off stale git pulls in
+/// the background (slow), so opening Explore stays fast. Returns the
+/// freshly-updated source list (reflecting the local rescans).
+pub async fn auto_sync_sources() -> impl IntoResponse {
+    let buffer = ops::AUTO_SYNC_BUFFER_SECS;
+    // Local rescans are cheap but still do blocking fs/SQLite work — run them on
+    // the blocking pool and await so the response reflects them.
+    let _ = tokio::task::spawn_blocking(move || ops::sync_stale_local(buffer)).await;
+    // Git pulls are slow — run them in the background so Explore opens fast.
+    tokio::task::spawn_blocking(move || {
+        let _ = ops::sync_stale_git(buffer);
+    });
+
+    let sources_file = load_sources();
+    let manifest = load_manifest();
+    let responses: Vec<SourceResponse> = sources_file
+        .sources
+        .iter()
+        .map(|s| {
+            let count = manifest
+                .skills
+                .iter()
+                .filter(|sk| sk.source == s.name)
+                .count();
+            source_to_response(s, count, false)
+        })
+        .collect();
+    Json(responses).into_response()
+}

@@ -300,6 +300,16 @@ pub fn repos_dir() -> PathBuf {
     grove_dir().join("skills").join("repos")
 }
 
+/// Root directory for grove-managed, writable local skill packages.
+///
+/// Each package is a subdirectory (`<local_storage_dir>/<package>/`), and each
+/// skill inside it is a further subdirectory containing a `SKILL.md`. New
+/// packages created via the `grove_skill_create` MCP tool land here by default;
+/// users may also register local sources pointing at their own paths.
+pub fn local_storage_dir() -> PathBuf {
+    grove_dir().join("skills").join("local")
+}
+
 /// Compute a deterministic 16-char hex key from a URL (FNV-1a, stable across Rust versions)
 pub fn compute_repo_key(url: &str) -> String {
     const FNV_OFFSET_BASIS: u64 = 0xcbf29ce484222325;

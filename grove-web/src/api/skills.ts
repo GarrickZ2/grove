@@ -189,3 +189,33 @@ export async function listInstalled(): Promise<InstalledSkill[]> {
 export async function installSkill(req: InstallSkillRequest): Promise<InstalledSkill> {
   return apiClient.post('/api/v1/skills/install', req);
 }
+
+// --- Local skill management ---
+
+/**
+ * Delete a single skill from a local (writable) package. `repoPath` is the
+ * skill's path within the package and is passed as a wildcard segment, so its
+ * slashes are preserved (not percent-encoded).
+ */
+export async function deleteLocalSkill(source: string, repoPath: string): Promise<void> {
+  // Encode each segment (handles spaces / non-ASCII so the URL and its HMAC
+  // signature stay valid) while preserving the slashes the wildcard route needs.
+  const encodedPath = repoPath.split('/').map(encodeURIComponent).join('/');
+  return apiClient.delete(`/api/v1/skills/local/${encodeURIComponent(source)}/${encodedPath}`);
+}
+
+/** Rename a package (source). Enforces global name uniqueness. */
+export async function renameSource(name: string, newName: string): Promise<SkillSource> {
+  return apiClient.post(`/api/v1/skills/sources/${encodeURIComponent(name)}/rename`, {
+    new_name: newName,
+  });
+}
+
+/**
+ * Re-scan stale local sources (inline) and kick off stale git pulls (background).
+ * Intended to run when Explore opens. Buffered server-side (5 min) so frequent
+ * opens don't re-sync.
+ */
+export async function autoSyncSources(): Promise<SkillSource[]> {
+  return apiClient.post('/api/v1/skills/sources/auto-sync');
+}

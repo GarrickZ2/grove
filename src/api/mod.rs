@@ -686,6 +686,10 @@ pub fn create_api_router() -> Router {
             post(handlers::skills::sync_all_sources),
         )
         .route(
+            "/skills/sources/auto-sync",
+            post(handlers::skills::auto_sync_sources),
+        )
+        .route(
             "/skills/sources/check-updates",
             post(handlers::skills::check_updates),
         )
@@ -696,6 +700,10 @@ pub fn create_api_router() -> Router {
         .route(
             "/skills/sources/{name}/sync",
             post(handlers::skills::sync_source),
+        )
+        .route(
+            "/skills/sources/{name}/rename",
+            post(handlers::skills::rename_source),
         )
         // Skills API — Explore & Install
         .route("/skills/explore", get(handlers::skills::explore_skills))
@@ -708,6 +716,10 @@ pub fn create_api_router() -> Router {
         .route(
             "/skills/installed/{repo_key}/{*repo_path}",
             delete(handlers::skills::uninstall_skill),
+        )
+        .route(
+            "/skills/local/{source}/{*repo_path}",
+            delete(handlers::skills::delete_local_skill),
         )
         // TaskGroup API
         .route(
