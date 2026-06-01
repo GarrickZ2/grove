@@ -19,6 +19,7 @@ export function ProjectCommandPalette({ isOpen, onClose, onProjectSelect }: Proj
   const [highlightedIndex, setHighlightedIndex] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
+  const isKeyboardNav = useRef(false);
 
   const filteredProjects = useMemo(() => {
     if (!searchQuery) return projects;
@@ -42,6 +43,8 @@ export function ProjectCommandPalette({ isOpen, onClose, onProjectSelect }: Proj
   }, [searchQuery]);
 
   useEffect(() => {
+    if (!isKeyboardNav.current) return;
+    isKeyboardNav.current = false;
     if (!listRef.current) return;
     const items = listRef.current.querySelectorAll("[data-palette-item]");
     const item = items[highlightedIndex] as HTMLElement | undefined;
@@ -73,12 +76,14 @@ export function ProjectCommandPalette({ isOpen, onClose, onProjectSelect }: Proj
     switch (e.key) {
       case "ArrowDown":
         e.preventDefault();
+        isKeyboardNav.current = true;
         setHighlightedIndex((prev) =>
           prev < filteredProjects.length - 1 ? prev + 1 : 0
         );
         break;
       case "ArrowUp":
         e.preventDefault();
+        isKeyboardNav.current = true;
         setHighlightedIndex((prev) =>
           prev > 0 ? prev - 1 : filteredProjects.length - 1
         );

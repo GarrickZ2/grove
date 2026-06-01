@@ -21,6 +21,7 @@ export function CommandPalette() {
   const [usageStats, setUsageStats] = useState<CommandUsageMap>({});
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
+  const isKeyboardNav = useRef(false);
 
   // Build commands lazily — only when palette is open
   const allCommands = useMemo(() => isOpen ? getCommands() : [], [isOpen, getCommands]);
@@ -98,8 +99,11 @@ export function CommandPalette() {
     setHighlightedIndex(0);
   }
 
-  // Scroll highlighted item into view
+  // Scroll highlighted item into view (only on keyboard navigation)
   useEffect(() => {
+    if (!isKeyboardNav.current) return;
+    isKeyboardNav.current = false;
+
     const list = listRef.current;
     if (!list) return;
     const items = list.querySelectorAll("[data-cmd-item]");
@@ -151,12 +155,14 @@ export function CommandPalette() {
       switch (e.key) {
         case "ArrowDown":
           e.preventDefault();
+          isKeyboardNav.current = true;
           setHighlightedIndex((prev) =>
             prev < flatCommands.length - 1 ? prev + 1 : 0
           );
           break;
         case "ArrowUp":
           e.preventDefault();
+          isKeyboardNav.current = true;
           setHighlightedIndex((prev) =>
             prev > 0 ? prev - 1 : flatCommands.length - 1
           );

@@ -24,6 +24,7 @@ export function TaskCommandPalette({ isOpen, onClose, tasks, selectedTask, onTas
   const [highlightedIndex, setHighlightedIndex] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
+  const isKeyboardNav = useRef(false);
 
   // Exclude archived tasks, then apply search filter
   const activeTasks = useMemo(() => tasks.filter((t) => t.status !== "archived"), [tasks]);
@@ -55,6 +56,8 @@ export function TaskCommandPalette({ isOpen, onClose, tasks, selectedTask, onTas
   }, [searchQuery]);
 
   useEffect(() => {
+    if (!isKeyboardNav.current) return;
+    isKeyboardNav.current = false;
     if (!listRef.current) return;
     const items = listRef.current.querySelectorAll("[data-palette-item]");
     const item = items[highlightedIndex] as HTMLElement | undefined;
@@ -84,12 +87,14 @@ export function TaskCommandPalette({ isOpen, onClose, tasks, selectedTask, onTas
     switch (e.key) {
       case "ArrowDown":
         e.preventDefault();
+        isKeyboardNav.current = true;
         setHighlightedIndex((prev) =>
           prev < filteredTasks.length - 1 ? prev + 1 : 0
         );
         break;
       case "ArrowUp":
         e.preventDefault();
+        isKeyboardNav.current = true;
         setHighlightedIndex((prev) =>
           prev > 0 ? prev - 1 : filteredTasks.length - 1
         );
