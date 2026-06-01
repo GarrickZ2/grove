@@ -11,6 +11,10 @@ pub struct BaseAgentDto {
     pub available: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub unavailable_reason: Option<String>,
+    /// Launch modes this agent can run in (e.g. `["acp", "terminal"]`). Lets the
+    /// New-chat picker offer a per-chat ACP-vs-terminal choice without a second
+    /// round-trip to the marketplace endpoint.
+    pub supported_launch_modes: Vec<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -35,6 +39,12 @@ pub async fn list_base_agents() -> Json<BaseAgentsResponse> {
             icon_id: status.agent.icon_id.to_string(),
             available: status.available,
             unavailable_reason: status.unavailable_reason,
+            supported_launch_modes: crate::storage::agent_supplement::supported_launch_modes(
+                status.agent.id,
+            )
+            .iter()
+            .map(|m| m.to_string())
+            .collect(),
         })
         .collect();
 

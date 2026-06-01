@@ -256,6 +256,16 @@ pub fn resolve_agent_id(id: &str) -> Cow<'_, str> {
     }
 }
 
+/// Launch modes an agent supports (accepts legacy or canonical ids). Agents
+/// without a supplement entry (registry-only / custom) are ACP-only. Single
+/// source of truth for the ACP-vs-terminal availability shown in the New-chat
+/// picker and enforced when a chat's launch_mode is overridden.
+pub fn supported_launch_modes(id: &str) -> &'static [&'static str] {
+    find_supplement(id)
+        .map(|entry| entry.supported_launch_modes)
+        .unwrap_or(&["acp"])
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
