@@ -1194,7 +1194,7 @@ function AppContent() {
   // Mobile layout
   if (isMobile) {
     return (
-      <div className="flex flex-col h-[100dvh] bg-[var(--color-bg)] overflow-hidden">
+      <div className="flex flex-col h-[100dvh] bg-[var(--color-bg)] overflow-hidden pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)]">
         <UpdateBanner />
         <MobileHeader
           onMenuOpen={() => setDrawerOpen(true)}
