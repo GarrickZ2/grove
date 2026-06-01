@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback, useEffect, useRef } from "react";
+import { useState, useMemo, useCallback, useEffect, useLayoutEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Plus, ArrowLeft, GitBranch } from "lucide-react";
 import { TaskSidebar } from "./TaskSidebar/TaskSidebar";
@@ -18,7 +18,7 @@ import {
   useTaskOperations,
   buildCommands,
 } from "../../hooks";
-import { useCommand, useDefineCommand, useKeyboardScope, useContextKey, useHelpKeyDisplay } from "../../keyboard";
+import { useCommand, useDefineCommand, useKeyboardScope, useHelpKeyDisplay, contextKeyService } from "../../keyboard";
 import {
   createTask as apiCreateTask,
   recoverTask as apiRecoverTask,
@@ -433,6 +433,20 @@ export function TasksPage({ initialTaskId, initialChatId, initialViewMode, onNav
   // TaskView pushes its own `workspace` scope on top when entering a task.
   useKeyboardScope("tasks", !pageState.inWorkspace);
 
+  // Context keys for when-expression evaluation. TaskView also sets these
+  // while mounted, but its cleanup runs after TasksPage's render. We set
+  // synchronously in render so the value is immediately available, and
+  // re-apply in useLayoutEffect (sync, before paint) to override any
+  // stale cleanup from a just-unmounted TaskView.
+  const _taskSelectedKey = contextKeyService.createKey<boolean>("taskSelected", false);
+  _taskSelectedKey.set(!!pageState.selectedTask);
+  const _inWorkspaceKey = contextKeyService.createKey<boolean>("inWorkspace", false);
+  _inWorkspaceKey.set(pageState.inWorkspace);
+  useLayoutEffect(() => {
+    _taskSelectedKey.set(!!pageState.selectedTask);
+    _inWorkspaceKey.set(pageState.inWorkspace);
+  });
+
   // Navigation / task-list commands (catalog: tasks scope)
   const enabledTask = useCallback(() => hasTask, [hasTask]);
   const enabledOpenWorkspace = useCallback(
@@ -450,14 +464,9 @@ export function TasksPage({ initialTaskId, initialChatId, initialViewMode, onNav
       }
     },
     { enabled: enabledOpenWorkspace },
-    [pageState.inWorkspace, pageState.selectedTask, pageHandlers, enabledOpenWorkspace],
+    [pageState.inWorkspace, pageState.selectedTask, pageHandlers.handleEnterWorkspace, enabledOpenWorkspace],
   );
   useCommand("task.new", () => setShowNewTaskDialog(true), []);
-
-  // Publish taskSelected for the catalog (palette.task.* etc.). Last-write
-  // wins between TasksPage and BlitzPage — fine since both reflect the same
-  // semantic "user has a task highlighted somewhere".
-  useContextKey("taskSelected", !!pageState.selectedTask);
 
   useCommand(
     "task.contextMenu",

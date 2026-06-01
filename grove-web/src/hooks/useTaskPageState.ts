@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useMemo } from "react";
 import type { Task } from "../data/types";
 import type { TabType } from "../components/Tasks/TaskInfoPanel";
 import type { PanelType } from "../components/Tasks/PanelSystem/types";
@@ -116,7 +116,7 @@ export function useTaskPageState(): [TaskPageState, TaskPageHandlers] {
     setTimeout(() => setOperationMessage(null), 3000);
   }, []);
 
-  const state: TaskPageState = {
+  const state: TaskPageState = useMemo(() => ({
     selectedTask,
     inWorkspace,
     operationMessage,
@@ -125,9 +125,9 @@ export function useTaskPageState(): [TaskPageState, TaskPageHandlers] {
     showHelp,
     searchQuery,
     pendingPanel,
-  };
+  }), [selectedTask, inWorkspace, operationMessage, contextMenu, infoPanelTab, showHelp, searchQuery, pendingPanel]);
 
-  const handlers: TaskPageHandlers = {
+  const handlers: TaskPageHandlers = useMemo(() => ({
     handleSelectTask,
     handleDoubleClickTask,
     handleCloseTask,
@@ -142,7 +142,7 @@ export function useTaskPageState(): [TaskPageState, TaskPageHandlers] {
     setShowHelp,
     setSearchQuery,
     setPendingPanel,
-  };
+  }), [handleSelectTask, handleDoubleClickTask, handleCloseTask, setSelectedTask, handleEnterWorkspace, setInWorkspace, handleContextMenu, closeContextMenu, setContextMenu, showMessage, setInfoPanelTab, setShowHelp, setSearchQuery, setPendingPanel]);
 
   return [state, handlers];
 }
