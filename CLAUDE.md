@@ -2,11 +2,29 @@
 
 ## What Grove Is
 
-Grove is a workspace for humans + AI agents to build software together. Single Rust binary; multiple surfaces; opinionated on rigorous review and structured agent collaboration.
+Grove is a **Context Harness** built on an **AI-native OS**.
+
+**Two layers.**
+- **AI-native OS (mechanism)** — the ACP-based substrate: connect to any AI, control its context I/O, manage its lifecycle. Defines *how the system talks to the underlying AI*.
+- **Context Harness (policy)** — what the human does on top: capture, organize, inject, and review context to steer the agents. Defines *how humans steer AI, through context*.
+
+The premise: humans no longer produce the final artifact (code, designs) — the agents do. The human's one job is to **manage context**. Everything Grove does drives the friction of that exchange toward zero.
+
+**Where it sits.** ACP standardizes how *software* talks to AI: human · client · agent. Grove is the layer above — it replaces the *client* with **context**, so the triad becomes **human ⇄ context ⇄ agent**. ACP decides how the system reaches AI capability; Grove decides how people do — through context they can see and shape.
+
+**The model.** Two actors — **Human** and **AI**. One object — **Context**, either *internal* (in the system) or *external* (out in the world). Every feature is one action on context:
+- **Capture** — external context → internal. By the human (curating outside info) or the AI itself (web search / Figma / MCP fetch).
+- **Organize** — structure & curate internal context; long-term memory is just AI-produced context, organized for reuse.
+- **Inject** — context → AI. Two modes: *pull* (AI self-fetches, internal or external) and *push* (human loads context & instructions into the prompt).
+- **Negotiate** — human ⇄ AI via *organizing templates* (surveys, review comments) that crystallize the exchange into reusable context.
+
+Everything else people call Grove — "the multi-agent IDE", "parallel agent manager", "AI team tool" — is one action or one downstream effect of this harness, not its essence. Ten agents in parallel is a *topology*; shipping fast is a *result* of feeding the harness good context.
+
+**Plugins** (next phase) open the policy layer: users and the community build new context pipes and organizing templates on top of the stable OS — turning Grove from a tool into a platform.
 
 **Headline features**:
 - **Every coding agent in parallel** — 10 built-in (Claude Code, Codex, Gemini CLI, Copilot, Cursor, Junie, Trae, Kimi, Qwen, OpenCode), 3 more ACP-ready (Hermes, Kiro, OpenClaw), plus BYO via ACP-over-stdio or HTTP. Each task = its own git worktree + terminal session, so agents don't collide.
-- **Agent Graph** — typed DAG of agents exchanging structured `<grove-meta>` messages. Planner spawns coder; coder spawns reviewer. 6 MCP tools (`grove_agent_graph_spawn` / `_send` / `_reply` / `_contacts` / `_capability` / `_set_title`).
+- **Agent Graph** — typed DAG of agents exchanging structured `<grove-meta>` messages. Planner spawns coder; coder spawns reviewer. Exposed as MCP tools so any agent can drive it.
 - **Studio** — first-class surface for non-coders (designers, PMs, brand). Excalidraw canvases agents can read, shared assets hard-linked across worktrees, Project Memory + Workspace Instructions editor.
 - **Code Review** — threaded resolvable comments, AI batch-fixer, commit → rebase → merge → archive in one step with squash-merge detection.
 - **Five surfaces from one binary**: TUI · Web · GUI · Mobile (LAN + HMAC) · Radio (voice walkie-talkie from phone).
@@ -40,7 +58,7 @@ src/
 ├── tmux/                  # tmux session management
 ├── acp/                   # ACP (Agent Client Protocol) integration
 ├── agent_graph/           # Inter-agent spawn / send / reply tools
-├── storage/               # Persistence (config, tasks, notes, ai_data, workspace)
+├── storage/               # Persistence (config, tasks, notes, workspace)
 ├── model/                 # Data structures (Worktree, Task, Workspace)
 ├── theme/                 # 8 themes + dark/light detection
 ├── tray/                  # macOS tray icon
@@ -294,9 +312,3 @@ Style::default().fg(Color::Yellow)      // ❌
 ### Git / tmux
 
 All shell-out wrappers live in `src/git/mod.rs` and `src/tmux/mod.rs` — don't call `Command` from elsewhere.
-
-## TODO
-
-- [ ] Diff view (Code Review)
-- [ ] Ctrl-C exit support
-- [ ] Homebrew formula
