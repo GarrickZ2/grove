@@ -814,12 +814,6 @@ function pruneChatViewMessages(
   };
 }
 
-function buildDefaultSessionTitle() {
-  const now = new Date();
-  const pad = (value: number) => value.toString().padStart(2, "0");
-  return `New Session ${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}`;
-}
-
 function OverflowTitle({
   text,
   className = "",
@@ -4315,10 +4309,13 @@ export function TaskChat({
     async (agent: string) => {
       setShowAgentPicker(false);
       try {
+        // Omit the title so the backend names the session after the chosen
+        // agent ("Claude Code", "Gemini", a persona name, …) — far easier to
+        // tell sessions apart in the Blitz grid than "New Session <date>".
         const newChat = await createChat(
           projectId,
           task.id,
-          buildDefaultSessionTitle(),
+          undefined,
           agent,
         );
         setChats((prev) => [...prev, newChat]);

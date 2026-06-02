@@ -6,12 +6,6 @@ import {
   writeLastActiveTab,
 } from "../../../utils/lastActiveTab";
 
-function buildDefaultSessionTitle(): string {
-  const now = new Date();
-  const pad = (value: number) => value.toString().padStart(2, "0");
-  return `New Session ${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}`;
-}
-
 interface Params {
   projectId: string;
   taskId: string;
@@ -49,11 +43,9 @@ export function useInitialChatLoad({
       }
       if (chatList.length === 0) {
         try {
-          const newChat = await createChat(
-            projectId,
-            taskId,
-            buildDefaultSessionTitle(),
-          );
+          // Omit the title so the backend derives it from the agent
+          // ("Claude Code", "Gemini", …) instead of a "New Session <date>".
+          const newChat = await createChat(projectId, taskId);
           chatList = [newChat];
         } catch (err) {
           console.error("Failed to create initial chat:", err);
