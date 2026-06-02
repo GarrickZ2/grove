@@ -485,11 +485,13 @@ pub async fn execute(port: u16, remote_url: Option<String>) {
     println!("Grove GUI: Launching desktop window...");
 
     let target_url = format!("http://localhost:{}", actual_port);
+    crate::hooks::set_active_base_url(format!("http://127.0.0.1:{}", actual_port));
 
     let tauri_app = tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_deep_link::init())
         .invoke_handler(tauri::generate_handler![
             open_external_url,
             download_file_dialog,
@@ -504,9 +506,23 @@ pub async fn execute(port: u16, remote_url: Option<String>) {
             crate::tray::toggle_tray_popover_visibility,
             crate::tray::tray_set_pinned,
             crate::tray::tray_is_pinned,
+            crate::tray::tray_update_theme_icons,
         ])
         .setup(move |app| {
             let _ = TAURI_APP.set(app.handle().clone());
+
+            let handle = app.handle().clone();
+            use tauri::Listener;
+            app.listen("tauri://deep-link", move |event| {
+                let payload = event.payload();
+                if let Ok(urls) = serde_json::from_str::<Vec<String>>(payload) {
+                    for url in urls {
+                        handle_grove_deep_link(&handle, &url);
+                    }
+                } else if let Ok(url) = serde_json::from_str::<String>(payload) {
+                    handle_grove_deep_link(&handle, &url);
+                }
+            });
             let builder = tauri::WebviewWindowBuilder::new(
                 app,
                 "main",
@@ -514,7 +530,7 @@ pub async fn execute(port: u16, remote_url: Option<String>) {
             )
             .title("Grove")
             .inner_size(1440.0, 900.0)
-            .min_inner_size(1280.0, 720.0)
+            .min_inner_size(380.0, 600.0)
             .center()
             .disable_drag_drop_handler();
 
@@ -752,6 +768,42 @@ pub async fn execute(port: u16, remote_url: Option<String>) {
                 eprintln!("[Grove] API server panicked: {}", msg);
             }
             Err(e) => eprintln!("[Grove] API server error: {}", e),
+        }
+    }
+}
+
+fn handle_grove_deep_link(app: &tauri::AppHandle, url_str: &str) {
+    let Ok(parsed_url) = url::Url::parse(url_str) else { return; };
+    
+    let query: std::collections::HashMap<_, _> = parsed_url
+        .query_pairs()
+        .into_owned()
+        .collect();
+
+    let project_id = query.get("projectId").cloned().unwrap_or_default();
+    let task_id = query.get("taskId").cloned().unwrap_or_default();
+    let chat_id = query.get("chatId").cloned().filter(|s| !s.is_empty());
+
+    if parsed_url.host_str() == Some("open-task") {
+        if let Err(e) = crate::tray::tray_open_task(
+            app.clone(), 
+            project_id, 
+            task_id, 
+            chat_id
+        ) {
+            eprintln!("[DeepLink] Open task navigation failed: {}", e);
+        }
+    } else if parsed_url.host_str() == Some("resolve-permission") {
+        let option_id = query.get("optionId").cloned().unwrap_or_default();
+        if let Some(ref cid) = chat_id {
+            if let Err(e) = crate::tray::tray_resolve_permission(
+                project_id, 
+                task_id, 
+                cid.clone(), 
+                option_id
+            ) {
+                eprintln!("[DeepLink] Resolve permission failed: {}", e);
+            }
         }
     }
 }

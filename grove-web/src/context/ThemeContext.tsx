@@ -3,6 +3,8 @@ import type { ReactNode } from "react";
 import { apiClient } from "../api/client";
 import type { CustomThemeConfig } from "../api/config";
 
+const isTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+
 // Theme definitions matching TUI themes
 export interface ThemeColors {
   bg: string;
@@ -463,6 +465,17 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     root.style.setProperty("--color-warning", colors.warning);
     root.style.setProperty("--color-error", colors.error);
     root.style.setProperty("--color-info", colors.info);
+
+    const faviconEl = document.querySelector<HTMLLinkElement>("link[rel~='icon'][type='image/svg+xml']");
+    if (faviconEl) {
+      faviconEl.href = theme.isLight ? "/favicon-light.svg" : "/favicon.svg";
+    }
+
+    if (isTauri) {
+      import("@tauri-apps/api/core").then(({ invoke }) => {
+        invoke("tray_update_theme_icons", { isLight: theme.isLight }).catch(() => {});
+      });
+    }
   }, [theme]);
 
   // Abort in-flight setAppearance PATCH before sending a new one. Rapid mode

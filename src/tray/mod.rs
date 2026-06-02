@@ -59,6 +59,7 @@ fn record_navigate(payload: NavigatePayload) {
 }
 
 const TRAY_ICON_BYTES: &[u8] = include_bytes!("../../src-tauri/icons/32x32.png");
+const TRAY_ICON_LIGHT_BYTES: &[u8] = include_bytes!("../../src-tauri/icons/32x32-light.png");
 const POPOVER_LABEL: &str = "tray-popover";
 const POPOVER_WIDTH: f64 = 400.0;
 const POPOVER_HEIGHT: f64 = 580.0;
@@ -412,6 +413,87 @@ fn compute_popover_position(app: &AppHandle, anchor: Option<(f64, f64)>) -> Opti
     }
 }
 
+// ─── Theme-adaptive icons ──────────────────────────────────────────────────
+
+/// Switch the tray icon. Safe to call at any point after `init()`.
+pub fn update_tray_icon(app: &AppHandle, is_light: bool) {
+    if let Some(tray) = app.tray_by_id("grove-tray") {
+        let bytes = if is_light { TRAY_ICON_LIGHT_BYTES } else { TRAY_ICON_BYTES };
+        if let Ok(icon) = Image::from_bytes(bytes) {
+            let _ = tray.set_icon(Some(icon));
+        }
+    }
+}
+
+/// Switch the macOS Dock icon by loading the pre-built `.icns` file.
+///
+/// The icns files are generated from the SVG source (with proper 10 %
+/// macOS padding) via Swift + iconutil, so every Retina resolution is
+/// included and the squircle padding matches system icons exactly.
+/// Must NOT be called during `applicationDidFinishLaunching`.
+#[cfg(target_os = "macos")]
+fn set_dock_icon(is_light: bool) {
+    use objc2::msg_send;
+    use objc2::runtime::{AnyClass, AnyObject};
+    use std::ffi::CString;
+
+    let bytes: &[u8] = if is_light {
+        include_bytes!("../../src-tauri/icons/icon-light.icns")
+    } else {
+        include_bytes!("../../src-tauri/icons/icon.icns")
+    };
+
+    let tmp = if is_light { "/tmp/.grove_dock_light.icns" } else { "/tmp/.grove_dock_dark.icns" };
+    if std::fs::write(tmp, bytes).is_err() {
+        return;
+    }
+    let Ok(cpath) = CString::new(tmp) else { return };
+
+    unsafe {
+        // Build NSString path
+        let Some(str_cls) = AnyClass::get("NSString") else { return };
+        let path_obj: *mut AnyObject = msg_send![str_cls, alloc];
+        let path_obj: *mut AnyObject = msg_send![path_obj, initWithUTF8String: cpath.as_ptr()];
+        if path_obj.is_null() {
+            return;
+        }
+
+        // NSImage initWithContentsOfFile:
+        let Some(img_cls) = AnyClass::get("NSImage") else {
+            let _: () = msg_send![path_obj, release];
+            return;
+        };
+        let img: *mut AnyObject = msg_send![img_cls, alloc];
+        let img: *mut AnyObject = msg_send![img, initWithContentsOfFile: path_obj];
+        let _: () = msg_send![path_obj, release];
+
+        if img.is_null() {
+            return;
+        }
+
+        // [NSApp setApplicationIconImage:]
+        let Some(app_cls) = AnyClass::get("NSApplication") else {
+            let _: () = msg_send![img, release];
+            return;
+        };
+        let ns_app: *mut AnyObject = msg_send![app_cls, sharedApplication];
+        if !ns_app.is_null() {
+            let _: () = msg_send![ns_app, setApplicationIconImage: img];
+        }
+        let _: () = msg_send![img, release];
+    }
+}
+
+/// Tauri command: update both tray icon and Dock icon.
+/// Called by the frontend when the resolved theme changes.
+/// Runs in a Tauri worker thread — safe to call post-init.
+#[tauri::command]
+pub fn tray_update_theme_icons(app: AppHandle, is_light: bool) {
+    update_tray_icon(&app, is_light);
+    #[cfg(target_os = "macos")]
+    set_dock_icon(is_light);
+}
+
 // ─── Init ──────────────────────────────────────────────────────────────────
 
 pub fn init(app: &AppHandle, port: u16) -> tauri::Result<()> {
@@ -473,5 +555,27 @@ pub fn init(app: &AppHandle, port: u16) -> tauri::Result<()> {
         eprintln!("[tray] failed to create popover window: {}", e);
     }
 
+    // Set the tray icon for the current theme at startup.
+    // Dock icon is set later via tray_update_theme_icons command (post-init).
+    let is_light = resolve_current_theme_is_light();
+    update_tray_icon(app, is_light);
+
     Ok(())
+}
+
+/// Resolve whether the current saved config produces a light theme.
+fn resolve_current_theme_is_light() -> bool {
+    let config = crate::storage::config::load_config();
+    let theme_id = match config.theme.mode.as_str() {
+        "light" => config.theme.light_theme.clone(),
+        "dark" => config.theme.dark_theme.clone(),
+        _ => {
+            // auto — ask the system (approximate: default to dark if unknown)
+            let dark = crate::theme::detect_system_theme();
+            if dark { config.theme.dark_theme.clone() } else { config.theme.light_theme.clone() }
+        }
+    };
+    // Built-in light themes
+    matches!(theme_id.as_str(), "light" | "solarized-light" | "github-light")
+        || config.theme.custom_themes.iter().any(|t| t.id == theme_id && t.is_light)
 }
