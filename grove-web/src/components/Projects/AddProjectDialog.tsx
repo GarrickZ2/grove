@@ -11,6 +11,74 @@ import { useCommand, useKeyboardScope } from "../../keyboard";
 type ProjectMode = "coding" | "studio";
 type CodingTab = "existing" | "new" | "git";
 
+// Smart-parse a user-pasted string into a canonical git URL.
+// Handles standard https URLs, SSH URLs, bare owner/repo shortcuts, and
+// web UI URLs from GitHub/GitLab (tree, blob, pulls, merge_requests, etc.).
+// Mirrors the logic in Skills/AddSourceDialog.tsx.
+function parseGitInput(raw: string): { url: string; name?: string } {
+  const input = raw.trim();
+  if (!input) return { url: "" };
+  if (input.length > 2000) return { url: "" };
+
+  // HTTP/HTTPS URLs
+  if (/^https?:\/\//i.test(input)) {
+    try {
+      const urlObj = new URL(input);
+      let pathname = urlObj.pathname;
+
+      // Look for web UI markers to split the repo URL from the rest of the path.
+      // Matches: tree, blob, pulls, pull, issues, merge_requests, actions, etc.
+      const markerMatch = pathname.match(
+        /\/(?:-\/)?(?:tree|blob|pulls|pull|issues|issue|merge_requests|actions|projects|wiki|releases|tags|commits|commit|branches|milestones|settings)(?:\/|$)/i
+      );
+
+      if (markerMatch && markerMatch.index !== undefined && markerMatch.index > 0) {
+        pathname = pathname.slice(0, markerMatch.index);
+      }
+
+      // Clean up trailing slash and any trailing .git (handling duplicate .git too)
+      const cleanPathname = pathname.replace(/\/+$/, "").replace(/(?:\.git)+$/i, "");
+
+      if (cleanPathname && cleanPathname !== "/") {
+        urlObj.pathname = cleanPathname + ".git";
+      } else {
+        urlObj.pathname = cleanPathname;
+      }
+
+      // Clear out query parameters and hashes
+      urlObj.search = "";
+      urlObj.hash = "";
+
+      // Derive repo name from the cleaned pathname
+      const segments = cleanPathname.split("/").filter(Boolean);
+      const name = segments.length > 0 ? segments[segments.length - 1] : undefined;
+
+      return { url: urlObj.toString(), name };
+    } catch {
+      // Fallback if URL parsing fails
+    }
+  }
+
+  // SSH form — leave as-is (already canonical, but clean up duplicate .git)
+  if (/^git@[^:]+:[^/]+\/.+/.test(input)) {
+    const cleanedSsh = input.replace(/\/+$/, "").replace(/(?:\.git)+$/i, "");
+    const segments = cleanedSsh.split(/[/:]/).filter(Boolean);
+    const name = segments.length > 0 ? segments[segments.length - 1].replace(/\.git$/, "") : undefined;
+    return { url: `${cleanedSsh}.git`, name };
+  }
+
+  // Bare owner/repo shortcut
+  const shortMatch = input.match(/^([A-Za-z0-9][\w.-]*)\/([A-Za-z0-9][\w.-]*?)(?:\.git)?$/);
+  if (shortMatch) {
+    return {
+      url: `https://github.com/${shortMatch[1]}/${shortMatch[2]}.git`,
+      name: shortMatch[2],
+    };
+  }
+
+  return { url: input };
+}
+
 interface AddProjectDialogProps {
   isOpen: boolean;
   onClose: () => void;
@@ -124,12 +192,15 @@ export function AddProjectDialog({
     return parts[parts.length - 1] ?? "";
   };
 
-  // Auto-derive a project name from a git URL — mirrors backend infer_repo_name.
+  // Auto-derive a project name from a git URL — uses parseGitInput to
+  // handle web UI URLs (merge_requests, pulls, tree, etc.) properly.
   const deriveNameFromGitUrl = (u: string): string => {
-    const trimmed = u.trim().replace(/\/+$/, "");
-    if (!trimmed) return "";
+    const parsed = parseGitInput(u);
+    if (parsed.name) return parsed.name;
+    // Fallback: last path segment
+    const trimmed = (parsed.url || u).trim().replace(/\/+$/, "").replace(/(?:\.git)+$/i, "");
     const last = trimmed.split(/[/:]/).pop() ?? trimmed;
-    return last.replace(/\.git$/, "");
+    return last;
   };
 
   const displayedExistingName = existingNameTouched ? existingName : deriveNameFromPath(path);
@@ -241,9 +312,24 @@ export function AddProjectDialog({
       setError("Git URL is required");
       return;
     }
+    // Normalize the URL before submitting — strip web UI paths, add .git suffix
+    const parsed = parseGitInput(gitUrl);
+    const finalUrl = parsed.url || gitUrl.trim();
     setError("");
-    const finalName = displayedGitName.trim();
-    await onClone(gitUrl.trim(), finalName || undefined);
+    const finalName = (gitNameTouched ? gitName : parsed.name || deriveNameFromGitUrl(gitUrl)).trim();
+    await onClone(finalUrl, finalName || undefined);
+  };
+
+  // Normalize git URL on blur so merge_requests/pulls/tree URLs become clone URLs
+  const handleGitUrlBlur = () => {
+    if (!gitUrl.trim()) return;
+    const parsed = parseGitInput(gitUrl);
+    if (parsed.url && parsed.url !== gitUrl.trim()) {
+      setGitUrl(parsed.url);
+      if (!gitNameTouched && parsed.name) {
+        setGitName(parsed.name);
+      }
+    }
   };
 
   const handleSubmit = () => {
@@ -386,6 +472,7 @@ export function AddProjectDialog({
                       type="text"
                       value={gitUrl}
                       onChange={(e) => { setGitUrl(e.target.value); setError(""); }}
+                      onBlur={handleGitUrlBlur}
                       placeholder="https://github.com/user/repo.git"
                       className={`w-full px-3 py-2 bg-[var(--color-bg)] border rounded-lg
                         text-sm text-[var(--color-text)] placeholder:text-[var(--color-text-muted)]
