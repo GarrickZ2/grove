@@ -16,9 +16,9 @@ pub use state::{init_file_watchers, shutdown_file_watchers};
 
 use axum::{
     body::Body,
-    extract::{DefaultBodyLimit, State},
+    extract::{DefaultBodyLimit, Request, State},
     http::{header, Response, StatusCode, Uri},
-    middleware,
+    middleware::{self, Next},
     response::IntoResponse,
     routing::{delete, get, patch, post, put},
     Router,
@@ -784,6 +784,43 @@ pub fn create_api_router() -> Router {
     v1
 }
 
+/// Cache-Control header value for an embedded asset, or None for the default.
+///
+/// Service workers must revalidate on every request so updates propagate
+/// within one navigation; everything else (Vite content-hashed assets,
+/// index.html served as SPA fallback) uses the browser's default heuristics.
+fn cache_control_for(path: &str) -> Option<&'static str> {
+    if path == "sw.js" {
+        Some("no-cache")
+    } else {
+        None
+    }
+}
+
+/// Axum middleware that applies the `cache_control_for` policy to responses.
+///
+/// Attached to the static-asset fallback on both code paths of `create_router`
+/// (the `ServeDir` debug branch AND the `serve_embedded` release branch), so
+/// the policy lives in exactly one place — `cache_control_for` — and both
+/// serving paths route through it. Because `.layer()` wraps the entire router,
+/// this runs on every request; the explicit policy check no-ops for any path
+/// `cache_control_for` returns `None` for, so the cost on non-matching
+/// requests is one string compare.
+async fn sw_cache_control_middleware(request: Request, next: Next) -> impl IntoResponse {
+    // axum exposes the URI's absolute path; cache_control_for expects the
+    // path trimmed of its leading slash (matches the form serve_embedded
+    // uses internally), so trim here for a single source of truth.
+    let path = request.uri().path().trim_start_matches('/').to_string();
+    let mut response = next.run(request).await;
+    if let Some(cc) = cache_control_for(&path) {
+        response.headers_mut().insert(
+            header::CACHE_CONTROL,
+            cc.parse().expect("static header value parses"),
+        );
+    }
+    response
+}
+
 /// Serve embedded static files
 async fn serve_embedded(uri: Uri) -> impl IntoResponse {
     let path = uri.path().trim_start_matches('/');
@@ -801,6 +838,8 @@ async fn serve_embedded(uri: Uri) -> impl IntoResponse {
     match file {
         Some(content) => {
             let mime = mime_guess::from_path(serve_path).first_or_octet_stream();
+            // Cache-Control is applied by sw_cache_control_middleware on
+            // both router branches, so no inline header injection here.
             Response::builder()
                 .status(StatusCode::OK)
                 .header(header::CONTENT_TYPE, mime.as_ref())
@@ -895,9 +934,15 @@ pub fn create_router(
     if let Some(dir) = static_dir {
         let index_file = dir.join("index.html");
         let serve_dir = ServeDir::new(&dir).not_found_service(ServeFile::new(&index_file));
-        api_router.fallback_service(serve_dir).layer(cors)
+        api_router
+            .fallback_service(serve_dir)
+            .layer(middleware::from_fn(sw_cache_control_middleware))
+            .layer(cors)
     } else if has_embedded_assets() {
-        api_router.fallback(serve_embedded).layer(cors)
+        api_router
+            .fallback(serve_embedded)
+            .layer(middleware::from_fn(sw_cache_control_middleware))
+            .layer(cors)
     } else {
         api_router.layer(cors)
     }
@@ -1555,4 +1600,22 @@ pub async fn start_server(
         })
         .await
         .map_err(std::io::Error::other)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cache_control_for_sw_js_is_no_cache() {
+        assert_eq!(cache_control_for("sw.js"), Some("no-cache"));
+    }
+
+    #[test]
+    fn cache_control_for_other_paths_is_none() {
+        assert_eq!(cache_control_for("index.html"), None);
+        assert_eq!(cache_control_for("assets/main.js"), None);
+        assert_eq!(cache_control_for("manifest.json"), None);
+        assert_eq!(cache_control_for("icon-512.png"), None);
+    }
 }
