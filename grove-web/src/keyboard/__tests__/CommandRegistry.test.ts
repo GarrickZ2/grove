@@ -130,9 +130,44 @@ describe("CommandRegistry", () => {
     expect(listener).not.toHaveBeenCalled();
   });
 
-  it("getEnabled returns the enabled predicate", () => {
-    const enabled = () => false;
-    reg.contribute(def("x"), vi.fn(), enabled);
-    expect(reg.getEnabled("x")).toBe(enabled);
+  it("getEnabled reflects the registered enabled predicate", () => {
+    reg.contribute(def("x"), vi.fn(), () => false);
+    expect(reg.getEnabled("x")?.()).toBe(false);
+  });
+
+  it("getEnabled is undefined when no handler is registered", () => {
+    reg.setStaticCatalog([def("a")]);
+    expect(reg.getEnabled("a")).toBeUndefined();
+  });
+
+  it("multiple handlers: invoke runs the first enabled one (most-recent first)", () => {
+    reg.setStaticCatalog([def("a")]);
+    const h1 = vi.fn();
+    const h2 = vi.fn();
+    // h1 enabled, h2 disabled — newest (h2) is skipped, h1 runs.
+    reg.registerHandler("a", h1, () => true);
+    reg.registerHandler("a", h2, () => false);
+    expect(reg.invoke("a")).toBe(true);
+    expect(h2).not.toHaveBeenCalled();
+    expect(h1).toHaveBeenCalledOnce();
+  });
+
+  it("multiple handlers: getEnabled is true if ANY handler is enabled", () => {
+    reg.setStaticCatalog([def("a")]);
+    reg.registerHandler("a", vi.fn(), () => false);
+    reg.registerHandler("a", vi.fn(), () => true);
+    expect(reg.getEnabled("a")?.()).toBe(true);
+  });
+
+  it("multiple handlers: disposing one leaves the other intact", () => {
+    reg.setStaticCatalog([def("a")]);
+    const h1 = vi.fn();
+    const h2 = vi.fn();
+    reg.registerHandler("a", h1);
+    const dispose2 = reg.registerHandler("a", h2);
+    dispose2();
+    reg.invoke("a");
+    expect(h2).not.toHaveBeenCalled();
+    expect(h1).toHaveBeenCalledOnce();
   });
 });

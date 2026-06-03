@@ -1,6 +1,6 @@
 import { useState, useMemo, useCallback, useRef, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Search, ArrowLeft, ChevronRight, Laptop, Radio, Plus, Folder } from "lucide-react";
+import { Search, ArrowLeft, ChevronRight, ChevronLeft, Laptop, Radio, Plus, Folder, LayoutGrid } from "lucide-react";
 import { TaskInfoPanel } from "../Tasks/TaskInfoPanel";
 import { TaskView, type TaskViewHandle } from "../Tasks/TaskView";
 import { CommitDialog, ConfirmDialog, DirtyBranchDialog, MergeDialog } from "../Dialogs";
@@ -21,6 +21,7 @@ import {
 import { useCommand, useDefineCommand, useKeyboardScope, useContextKey, useHelpKeyDisplay } from "../../keyboard";
 import { RadioConnectDialog } from "./RadioConnectDialog";
 import { useBlitzTasks } from "./useBlitzTasks";
+import { BlitzFlexWorkspace } from "./BlitzFlexWorkspace";
 import { BlitzTaskListItem } from "./BlitzTaskListItem";
 import type { BlitzTask } from "../../data/types";
 import { MAIN_GROUP_ID, LOCAL_GROUP_ID } from "../../data/types";
@@ -83,6 +84,11 @@ export function BlitzPage({ onSwitchToZen, onNavigate }: BlitzPageProps) {
   // Blitz-specific state
   const [selectedBlitzTask, setSelectedBlitzTask] = useState<BlitzTask | null>(null);
   const [mobileShowDetail, setMobileShowDetail] = useState(false);
+  const [gridMode, setGridMode] = useState(false);
+  // Desktop-only: collapse the Blitz task-list sidebar to a slim rail so the
+  // grid quadrants get the full width. Mirrors Zen's sidebar minimize; like
+  // Zen it's in-memory (resets on reload), not persisted.
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
 
   // ── Unified drag-and-drop state ──────────────────────────────────────────
   // Single ref tracks the drag source; render state tracks visual feedback
@@ -367,6 +373,11 @@ export function BlitzPage({ onSwitchToZen, onNavigate }: BlitzPageProps) {
         if (safetyTimer) clearTimeout(safetyTimer);
         safetyTimer = setTimeout(clearChips, 3000);
       }
+
+      // Grid toggle (Cmd/Ctrl+G) and grid Escape are catalog commands now —
+      // `blitz.grid.toggle` / `blitz.grid.exit` registered below — so they're
+      // rebindable, show in ⌘/ help, and respect scopes (no double-fire with
+      // tasks.escape).
     };
 
     const handleKeyUp = (e: KeyboardEvent) => {
@@ -394,7 +405,7 @@ export function BlitzPage({ onSwitchToZen, onNavigate }: BlitzPageProps) {
       // Clean up class on unmount
       document.body.classList.remove('blitz-command-pressed');
     };
-  }, [mainListTasks, handleSelectTask, getTaskNotification, dismissNotification]);
+  }, []);
 
   // ── Unified drag handlers ───────────────────────────────────────────────
 
@@ -620,6 +631,8 @@ export function BlitzPage({ onSwitchToZen, onNavigate }: BlitzPageProps) {
   // same key TasksPage publishes; last-write wins, both reflect the same
   // semantic "user has a task highlighted somewhere".
   useContextKey("taskSelected", hasTask);
+  // Gates blitz.grid.exit (Escape) so it only fires while the grid is showing.
+  useContextKey("blitzGridActive", gridMode);
 
   const enabledTask = useCallback(() => hasTask, [hasTask]);
   const enabledOpenWorkspace = useCallback(
@@ -646,6 +659,17 @@ export function BlitzPage({ onSwitchToZen, onNavigate }: BlitzPageProps) {
     [navHandlers, enabledTask],
   );
   useCommand("task.search", () => searchInputRef.current?.focus(), []);
+
+  // Grid workspace toggle + exit (replaces the old raw window keydown listener).
+  // Both skip while a text surface is focused so the keyboard doesn't toggle the
+  // grid mid-typing or steal Escape from a composer/picker (its own blur/close
+  // handling runs instead) — matching the old raw handler's input skip.
+  const notTypingEnabled = useCallback(() => {
+    const a = document.activeElement as HTMLElement | null;
+    return !(a && (a.tagName === "INPUT" || a.tagName === "TEXTAREA" || a.isContentEditable));
+  }, []);
+  useCommand("blitz.grid.toggle", () => setGridMode((v) => !v), { enabled: notTypingEnabled }, [notTypingEnabled]);
+  useCommand("blitz.grid.exit", () => setGridMode(false), { enabled: notTypingEnabled }, [notTypingEnabled]);
 
   // Task lifecycle commands (catalog: workspace scope) — Blitz doesn't show
   // archived tasks so task.unarchive isn't wired here; Zen owns it. Studio
@@ -749,8 +773,10 @@ export function BlitzPage({ onSwitchToZen, onNavigate }: BlitzPageProps) {
     scope: "tasks",
     hidden: true,
     handler: handleCloseTask,
-    enabled: () => pageState.inWorkspace || hasTask,
-  }, [handleCloseTask, pageState.inWorkspace, hasTask]);
+    // In grid mode, blitz.grid.exit owns Escape — keep these mutually exclusive
+    // so they never both fire when a task is also selected.
+    enabled: () => !gridMode && (pageState.inWorkspace || hasTask),
+  }, [handleCloseTask, pageState.inWorkspace, hasTask, gridMode]);
 
   // --- Workspace tab switching (Cmd+1-9, Cmd+W).
   const inWorkspace = pageState.inWorkspace;
@@ -941,32 +967,73 @@ export function BlitzPage({ onSwitchToZen, onNavigate }: BlitzPageProps) {
         className={
           isMobile
             ? `${mobileShowDetail ? "hidden" : "w-full h-full"} bg-[var(--color-bg)] flex flex-col flex-shrink-0`
-            : "blitz-area glass-panel fixed top-3 bottom-3 left-3 w-72 z-40 rounded-2xl flex flex-col"
+            : `blitz-area glass-panel fixed top-3 bottom-3 left-3 z-40 rounded-2xl flex flex-col transition-[width] duration-200 ease-in-out ${
+                sidebarCollapsed ? "w-[72px]" : "w-72"
+              }`
         }
       >
+        {/* Collapsed rail (desktop): mirrors Zen's collapsed sidebar — the
+           drag strip up top, then the same bottom-pinned expand toggle (just a
+           ChevronRight, styled identically to Zen's Collapse button). Full
+           content is hidden while collapsed. */}
+        {!isMobile && sidebarCollapsed && (
+          <>
+            <div className="pt-8" data-tauri-drag-region data-window-drag-strip />
+            <div className="mt-auto px-2 pb-3">
+              <motion.button
+                whileHover={{ scale: 1.02 }}
+                whileTap={{ scale: 0.98 }}
+                onClick={() => setSidebarCollapsed(false)}
+                aria-label="Expand sidebar"
+                title="Expand sidebar"
+                className="w-full flex items-center justify-center gap-3 px-3 py-2.5 mt-1 rounded-xl text-sm font-medium text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-border)] transition-colors"
+              >
+                <ChevronRight className="w-4 h-4" />
+              </motion.button>
+            </div>
+          </>
+        )}
+        {(isMobile || !sidebarCollapsed) && (
+        <>
         {/* Logo + Mode Brand
            pt-8 clears macOS traffic lights when Tauri title bar is Overlay.
            data-tauri-drag-region gives double-click-maximize; data-window-drag-strip
            is what the App.tsx native mousedown listener uses to call startDragging()
            (the bare data-tauri-drag-region silently fails after the first drag when
            the webview is loaded from http://localhost). */}
-        <div className={`px-4 pb-4 flex items-center justify-between ${shouldAvoidTrafficLights ? "pt-8" : "pt-4"}`} data-tauri-drag-region data-window-drag-strip>
+        <div className={`px-4 pb-4 flex flex-col items-start gap-3 ${shouldAvoidTrafficLights ? "pt-8" : "pt-4"}`} data-tauri-drag-region data-window-drag-strip>
           <LogoBrand mode="blitz" onToggle={onSwitchToZen} />
-          <button
-            onClick={() => setShowRadioConnect(true)}
-            className={`relative flex items-center gap-1.5 px-2.5 py-1.5 text-xs border rounded-lg transition-colors ${
-              radioConnected
-                ? "text-[var(--color-success)] border-[var(--color-success)]/30 bg-[var(--color-success)]/10 hover:bg-[var(--color-success)]/20"
-                : "text-[var(--color-text-muted)] hover:text-[var(--color-text)] bg-[var(--color-bg-secondary)] hover:bg-[var(--color-bg-tertiary)] border-[var(--color-border)]"
-            }`}
-            title={radioConnected ? `Radio Connected (${radioClients} device${radioClients > 1 ? "s" : ""})` : "Connect Radio (Walkie-Talkie)"}
-          >
-            <Radio className="w-3.5 h-3.5" />
-            Radio
-            {radioConnected && (
-              <span className="w-1.5 h-1.5 rounded-full bg-[var(--color-success)] animate-pulse" />
-            )}
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setGridMode((v) => !v)}
+              aria-pressed={gridMode}
+              className={`relative flex items-center gap-1.5 px-2.5 py-1.5 text-xs border rounded-lg transition-colors whitespace-nowrap ${
+                gridMode
+                  ? "text-[var(--color-highlight)] border-[var(--color-highlight)]/30 bg-[var(--color-highlight)]/10 hover:bg-[var(--color-highlight)]/20"
+                  : "text-[var(--color-text-muted)] hover:text-[var(--color-text)] bg-[var(--color-bg-secondary)] hover:bg-[var(--color-bg-tertiary)] border-[var(--color-border)]"
+              }`}
+              title="Toggle grid workspace (⌘G)"
+            >
+              <LayoutGrid className="w-3.5 h-3.5" />
+              Grid view
+            </button>
+            <button
+              onClick={() => setShowRadioConnect(true)}
+              className={`relative flex items-center gap-1.5 px-2.5 py-1.5 text-xs border rounded-lg transition-colors ${
+                radioConnected
+                  ? "text-[var(--color-success)] border-[var(--color-success)]/30 bg-[var(--color-success)]/10 hover:bg-[var(--color-success)]/20"
+                  : "text-[var(--color-text-muted)] hover:text-[var(--color-text)] bg-[var(--color-bg-secondary)] hover:bg-[var(--color-bg-tertiary)] border-[var(--color-border)]"
+              }`}
+              title={radioConnected ? `Radio Connected (${radioClients} device${radioClients > 1 ? "s" : ""})` : "Connect Radio (Walkie-Talkie)"}
+            >
+              <Radio className="w-3.5 h-3.5" />
+              Radio
+              {radioConnected && (
+                <span className="w-1.5 h-1.5 rounded-full bg-[var(--color-success)] animate-pulse" />
+              )}
+            </button>
+          </div>
         </div>
 
         {/* Search */}
@@ -1349,6 +1416,24 @@ export function BlitzPage({ onSwitchToZen, onNavigate }: BlitzPageProps) {
             Press <kbd className="px-1 py-0.5 text-[10px] font-mono rounded border bg-[var(--color-bg-secondary)] border-[var(--color-border)]">{helpKey}</kbd> for shortcuts
           </button>
         </div>
+
+        {/* Collapse toggle — same affordance as the Zen sidebar (bottom-pinned
+           "‹ Collapse" button) so the two modes feel continuous. Desktop only. */}
+        {!isMobile && (
+          <div className="px-2 pb-3">
+            <motion.button
+              whileHover={{ scale: 1.02 }}
+              whileTap={{ scale: 0.98 }}
+              onClick={() => setSidebarCollapsed(true)}
+              className="w-full flex items-center justify-center gap-3 px-3 py-2.5 mt-1 rounded-xl text-sm font-medium text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-border)] transition-colors"
+            >
+              <ChevronLeft className="w-4 h-4" />
+              <span className="flex-1 text-left">Collapse</span>
+            </motion.button>
+          </div>
+        )}
+        </>
+        )}
       </aside>
 
       {/* Main Content
@@ -1364,7 +1449,9 @@ export function BlitzPage({ onSwitchToZen, onNavigate }: BlitzPageProps) {
         className={
           isMobile
             ? `flex-1 overflow-hidden relative ${!mobileShowDetail ? "hidden" : ""}`
-            : "blitz-area flex-1 ml-[312px] mt-3 mr-3 mb-3 rounded-2xl bg-[var(--color-bg)] overflow-hidden relative"
+            : `blitz-area flex-1 mt-3 mr-3 mb-3 rounded-2xl bg-[var(--color-bg)] overflow-hidden relative transition-[margin] duration-200 ease-in-out ${
+                sidebarCollapsed ? "ml-[96px]" : "ml-[312px]"
+              }`
         }
         style={
           isMobile
@@ -1394,6 +1481,9 @@ export function BlitzPage({ onSwitchToZen, onNavigate }: BlitzPageProps) {
            a task-centric panel (no "breathing-room dashboard" page like Zen
            has). */}
         <div className="h-full relative p-2">
+          {gridMode ? (
+            <BlitzFlexWorkspace blitzTasks={blitzTasks} />
+          ) : (
           <div className="h-full relative">
             {/* Task List Page */}
             <motion.div
@@ -1484,6 +1574,7 @@ export function BlitzPage({ onSwitchToZen, onNavigate }: BlitzPageProps) {
               )}
             </AnimatePresence>
           </div>
+          )}
         </div>
       </main>
 

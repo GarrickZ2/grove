@@ -239,6 +239,12 @@ function gcChatDraftsOnce(): void {
 interface TaskChatProps {
   projectId: string;
   task: Task;
+  /** If provided, the chat with this id is pinned as the active chat
+   *  and the chat-switcher tab UI is hidden. Used by the Blitz grid
+   *  workspace to scope each slot to a single chat. Omitted in Zen
+   *  mode and the single-task Blitz workspace (preserves existing
+   *  multi-chat tab behavior). */
+  pinnedChatId?: string;
   collapsed?: boolean;
   onExpand?: () => void;
   onCollapse?: () => void;
@@ -1650,6 +1656,7 @@ function DownloadingLabel({ startedAt, compact }: { startedAt: number; compact?:
 export function TaskChat({
   projectId,
   task,
+  pinnedChatId,
   collapsed = false,
   onExpand,
   onCollapse,
@@ -1685,7 +1692,7 @@ export function TaskChat({
     activeChatId,
     getActiveChatId,
     setActiveChatId,
-  } = useActiveChatId(null);
+  } = useActiveChatId(pinnedChatId ?? null);
   useReportDebugId("chatId", activeChatId);
   const [showChatMenu, setShowChatMenu] = useState(false);
   const [editingTitle, setEditingTitle] = useState<{
@@ -3134,6 +3141,7 @@ export function TaskChat({
     taskId: task.id,
     setChats,
     setActiveChatId,
+    pinnedChatId,
   });
 
   // Forward-declared ref for connectChatWs so handlers defined before its
@@ -3185,7 +3193,9 @@ export function TaskChat({
         if (pendingMatches && pending) {
           const targetId = pending.chatId;
           delete (window as unknown as Record<string, unknown>).__grove_pending_chat;
-          setActiveChatId(targetId);
+          if (!pinnedChatId) {
+            setActiveChatId(targetId);
+          }
           writeLastActiveTab("chat", projectId, task.id, targetId);
           restoreChatState(targetId);
           await connectChatWsRef.current(targetId);
@@ -3198,13 +3208,17 @@ export function TaskChat({
 
         const next = fresh[fresh.length - 1];
         if (next) {
-          setActiveChatId(next.id);
+          if (!pinnedChatId) {
+            setActiveChatId(next.id);
+          }
           writeLastActiveTab("chat", projectId, task.id, next.id);
           restoreChatState(next.id);
           await connectChatWsRef.current(next.id);
           wsRef.current = wsMapRef.current.get(next.id) ?? null;
         } else {
-          setActiveChatId(null);
+          if (!pinnedChatId) {
+            setActiveChatId(null);
+          }
           restoreChatState("__deleted__");
           wsRef.current = null;
         }
@@ -4281,6 +4295,11 @@ export function TaskChat({
 
   const switchChat = useCallback(
     async (chatId: string) => {
+      // Pinned mode (Blitz grid slot): chat switching is suppressed —
+      // the slot is locked to a single chat. Both user-driven and
+      // automatic callers (post-new-chat, grove:switch-chat event,
+      // grove:select-chat event) become no-ops here so the pin holds.
+      if (pinnedChatId) return;
       if (chatId === activeChatId) return;
       perfMark("TaskChat:switchChat", { from: activeChatId, to: chatId });
       saveCurrentChatState();
@@ -4292,7 +4311,7 @@ export function TaskChat({
       await connectChatWs(chatId);
       wsRef.current = wsMapRef.current.get(chatId) ?? null;
     },
-    [activeChatId, projectId, task.id, saveCurrentChatState, restoreChatState, connectChatWs, setActiveChatId],
+    [pinnedChatId, activeChatId, projectId, task.id, saveCurrentChatState, restoreChatState, connectChatWs, setActiveChatId],
   );
   useEffect(() => {
     switchChatRef.current = switchChat;
@@ -4407,7 +4426,9 @@ export function TaskChat({
           const updated = prev.filter((c) => c.id !== chatId);
           if (chatId === activeChatId && updated.length > 0) {
             const next = updated[updated.length - 1];
-            setActiveChatId(next.id);
+            if (!pinnedChatId) {
+              setActiveChatId(next.id);
+            }
             writeLastActiveTab("chat", projectId, task.id, next.id);
             restoreChatState(next.id);
           }
@@ -4418,7 +4439,7 @@ export function TaskChat({
       }
       setShowChatMenu(false);
     },
-    [chats.length, projectId, task.id, activeChatId, restoreChatState, setActiveChatId],
+    [chats.length, projectId, task.id, activeChatId, pinnedChatId, restoreChatState, setActiveChatId],
   );
 
   // ─── Chat fork ─────────────────────────────────────────────────────────
@@ -4430,7 +4451,9 @@ export function TaskChat({
       try {
         const created = await forkChat(projectId, task.id, chatId);
         setChats((prev) => [...prev, created]);
-        setActiveChatId(created.id);
+        if (!pinnedChatId) {
+          setActiveChatId(created.id);
+        }
         writeLastActiveTab("chat", projectId, task.id, created.id);
         restoreChatState(created.id);
       } catch (err) {
@@ -4446,7 +4469,7 @@ export function TaskChat({
       }
       setShowChatMenu(false);
     },
-    [projectId, task.id, restoreChatState, setActiveChatId],
+    [projectId, task.id, pinnedChatId, restoreChatState, setActiveChatId],
   );
 
   // ─── User actions ────────────────────────────────────────────────────────
@@ -5237,16 +5260,27 @@ export function TaskChat({
   // keybindings in onKeyDown still own composer-local semantics (Enter vs
   // Shift+Enter inside contenteditable) — these registry entries only
   // surface for catalog binding overrides + palette discovery.
+  // Multiple TaskChats coexist in the Blitz grid, and each registers
+  // `chat.send`. The command registry now keeps every handler and dispatches
+  // to the first whose `enabled()` passes, so we gate on "is focus inside THIS
+  // panel?" (same guard as chat.search.toggle) to route Enter to the focused
+  // pane. Without it, Enter sent to whichever chat mounted last. In single-pane
+  // Zen the only instance is the focused one, so behaviour is unchanged.
+  const sendFocusInPanel = () => {
+    const root = taskChatRootRef.current;
+    const active = document.activeElement;
+    return !!(root && active && root.contains(active));
+  };
   useCommand(
     "chat.send",
     () => { void handleSend(); },
-    { enabled: () => !!activeChatId && !showFileMenu && !showSlashMenu && !isInputExpanded },
+    { enabled: () => sendFocusInPanel() && !!activeChatId && !showFileMenu && !showSlashMenu && !isInputExpanded },
     [activeChatId, showFileMenu, showSlashMenu, isInputExpanded, handleSend],
   );
   useCommand(
     "chat.send.alt",
     () => { void handleSend(); },
-    { enabled: () => !!activeChatId && !showFileMenu && !showSlashMenu },
+    { enabled: () => sendFocusInPanel() && !!activeChatId && !showFileMenu && !showSlashMenu },
     [activeChatId, showFileMenu, showSlashMenu, handleSend],
   );
   useCommand(
@@ -6386,11 +6420,31 @@ export function TaskChat({
         }
         return;
       }
-      // Enter / Cmd+Enter → send moved to the catalog (chat.send /
-      // chat.send.alt) so the binding is rebindable in Settings.
-      // KeyboardManager handles them via passThroughTextInput.
+      // Enter / Cmd+Enter → send. In single-pane (Zen) this rides the
+      // `chat.send` / `chat.send.alt` catalog commands (scope "workspace",
+      // rebindable in Settings). The Blitz grid mounts TaskChat directly and
+      // never activates the "workspace" scope — and its `chatFocus` /
+      // `messageNotEmpty` context keys are clobbered across the 4 panes — so
+      // the catalog binding can't fire there. When pinned (grid only) we handle
+      // Enter locally on the focused composer instead. Gating on pinnedChatId
+      // keeps single-pane on the catalog path (no double-send).
+      if (pinnedChatId && !isTerminalMode && !showFileMenu && !showSlashMenu && e.key === "Enter") {
+        const withMod = e.metaKey || e.ctrlKey;
+        // Plain Enter sends unless the input is expanded (then Enter = newline);
+        // Cmd/Ctrl+Enter always sends (mirrors chat.send.alt). Shift+Enter is
+        // always a newline.
+        if (!e.shiftKey && (withMod || !isInputExpanded)) {
+          e.preventDefault();
+          e.stopPropagation();
+          e.nativeEvent.stopImmediatePropagation();
+          void handleSend();
+          return;
+        }
+      }
     },
     [
+      pinnedChatId,
+      handleSend,
       isTerminalMode,
       isInputExpanded,
       showSlashMenu,
@@ -6693,7 +6747,7 @@ export function TaskChat({
                     </button>
                   )}
 
-                  {showChatMenu && (
+                  {!pinnedChatId && showChatMenu && (
                     <div className="absolute top-full left-0 z-[80] mt-1 min-w-56 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] shadow-lg">
                       <div className="border-b border-[color-mix(in_srgb,var(--color-border)_72%,transparent)] bg-[var(--color-bg)] px-2 py-1">
                         <button
@@ -6926,7 +6980,7 @@ export function TaskChat({
                     </button>
                   )}
                 </div>
-                {orderedChats.map((chat) => {
+                {!pinnedChatId && orderedChats.map((chat) => {
                   const ChatIcon = getChatIcon(chat.agent);
                   const isActive = chat.id === activeChatId;
                   return (

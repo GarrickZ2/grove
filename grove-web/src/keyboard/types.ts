@@ -34,6 +34,12 @@ export interface CommandDef {
    * the push-to-talk key after audio.ptt.start fired on keydown).
    */
   trigger?: "keydown" | "keyup";
+  /**
+   * When true, auto-repeat keydowns (key held down) are ignored — the command
+   * fires once per physical press. Use for toggles where holding the key
+   * shouldn't flip state repeatedly (e.g. blitz.grid.toggle).
+   */
+  ignoreRepeat?: boolean;
 }
 
 export type CommandHandler<TArgs = unknown> = (args?: TArgs) => void | Promise<void>;
