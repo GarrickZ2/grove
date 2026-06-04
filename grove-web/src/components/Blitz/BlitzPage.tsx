@@ -36,6 +36,18 @@ interface DragInfo {
   groupId: string;           // always present — MAIN_GROUP_ID, LOCAL_GROUP_ID, or custom UUID
 }
 
+const isTauri = typeof window !== "undefined" && (
+  "__TAURI__" in window ||
+  "__TAURI_INTERNALS__" in window
+);
+
+const isMac = typeof navigator !== "undefined" && (
+  /Mac|iPhone|iPad|iPod/i.test(navigator.userAgent || "") ||
+  /Mac|iPhone|iPad/i.test(navigator.platform || "")
+);
+
+const shouldAvoidTrafficLights = isTauri && isMac;
+
 interface BlitzPageProps {
   onSwitchToZen: () => void;
   onNavigate?: (page: string) => void;
@@ -938,7 +950,7 @@ export function BlitzPage({ onSwitchToZen, onNavigate }: BlitzPageProps) {
            is what the App.tsx native mousedown listener uses to call startDragging()
            (the bare data-tauri-drag-region silently fails after the first drag when
            the webview is loaded from http://localhost). */}
-        <div className="px-4 pt-8 pb-4 flex items-center justify-between" data-tauri-drag-region data-window-drag-strip>
+        <div className={`px-4 pb-4 flex items-center justify-between ${shouldAvoidTrafficLights ? "pt-8" : "pt-4"}`} data-tauri-drag-region data-window-drag-strip>
           <LogoBrand mode="blitz" onToggle={onSwitchToZen} />
           <button
             onClick={() => setShowRadioConnect(true)}

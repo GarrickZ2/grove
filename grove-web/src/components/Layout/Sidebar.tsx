@@ -79,6 +79,18 @@ interface SidebarProps {
   sidebarPlugins?: Plugin[];
 }
 
+const isTauri = typeof window !== "undefined" && (
+  "__TAURI__" in window ||
+  "__TAURI_INTERNALS__" in window
+);
+
+const isMac = typeof navigator !== "undefined" && (
+  /Mac|iPhone|iPad|iPod/i.test(navigator.userAgent || "") ||
+  /Mac|iPhone|iPad/i.test(navigator.platform || "")
+);
+
+const shouldAvoidTrafficLights = isTauri && isMac;
+
 export function Sidebar({ activeItem, onItemClick, collapsed, onToggleCollapse, onManageProjects, onAddProject, onNavigate, tasksMode, onTasksModeChange, onProjectSwitch, onSearch, drawerMode, onDrawerClose, tasks, onTaskSelect, inWorkspace, sidebarPlugins }: SidebarProps) {
   const [notifOpen, setNotifOpen] = useState(false);
   const { unreadCount } = useNotifications();
@@ -103,7 +115,7 @@ export function Sidebar({ activeItem, onItemClick, collapsed, onToggleCollapse, 
          pt-8 reserves clearance for macOS traffic lights (Tauri Overlay
          title-bar mode). Drag is handled at the app root via a top strip
          in App.tsx, so this wrapper only needs the inner padding. */}
-      <div className="px-4 pt-8 pb-4 select-none">
+      <div className={`px-4 pb-4 select-none ${shouldAvoidTrafficLights && !drawerMode ? "pt-8" : "pt-4"}`}>
         {isCollapsed ? (
           <button
             onClick={() => onTasksModeChange(tasksMode === "zen" ? "blitz" : "zen")}

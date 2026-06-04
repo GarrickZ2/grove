@@ -6,10 +6,17 @@ interface MobileHeaderProps {
   onNotificationOpen: () => void;
 }
 
+const isTauri = typeof window !== "undefined" && (
+  "__TAURI__" in window ||
+  "__TAURI_INTERNALS__" in window
+);
+
 const isMac = typeof navigator !== "undefined" && (
   /Mac|iPhone|iPad|iPod/i.test(navigator.userAgent || "") ||
   /Mac|iPhone|iPad/i.test(navigator.platform || "")
 );
+
+const shouldAvoidTrafficLights = isTauri && isMac;
 
 export function MacOSSidebarIcon({ className }: { className?: string }) {
   return (
@@ -43,13 +50,13 @@ export function MobileHeader({ onMenuOpen, onNotificationOpen }: MobileHeaderPro
     <header
       data-tauri-drag-region
       className={`flex items-center justify-between bg-[var(--color-bg)] border-b border-[var(--color-border)] flex-shrink-0 select-none ${
-        isMac ? "h-[56px] pl-[80px] pr-4" : "h-12 px-4"
+        shouldAvoidTrafficLights ? "h-[56px] pl-[80px] pr-4" : "h-12 px-4"
       }`}
     >
       <button
         onClick={onMenuOpen}
         className={`rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-bg-secondary)] transition-colors ${
-          isMac ? "p-2" : "p-2 -ml-2"
+          shouldAvoidTrafficLights ? "p-2" : "p-2 -ml-2"
         }`}
         aria-label="Open menu"
       >
@@ -63,7 +70,7 @@ export function MobileHeader({ onMenuOpen, onNotificationOpen }: MobileHeaderPro
       <button
         onClick={onNotificationOpen}
         className={`relative rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-bg-secondary)] transition-colors ${
-          isMac ? "p-2" : "p-2 -mr-2"
+          shouldAvoidTrafficLights ? "p-2" : "p-2 -mr-2"
         }`}
         aria-label="Notifications"
       >

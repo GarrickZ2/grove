@@ -8,10 +8,17 @@ interface MobileDrawerProps {
   children: React.ReactNode;
 }
 
+const isTauri = typeof window !== "undefined" && (
+  "__TAURI__" in window ||
+  "__TAURI_INTERNALS__" in window
+);
+
 const isMac = typeof navigator !== "undefined" && (
   /Mac|iPhone|iPad|iPod/i.test(navigator.userAgent || "") ||
   /Mac|iPhone|iPad/i.test(navigator.platform || "")
 );
+
+const shouldAvoidTrafficLights = isTauri && isMac;
 
 export function MobileDrawer({ isOpen, onClose, children }: MobileDrawerProps) {
   // Lock body scroll when open
@@ -49,7 +56,7 @@ export function MobileDrawer({ isOpen, onClose, children }: MobileDrawerProps) {
             className="fixed inset-y-0 left-0 z-50 w-72 bg-[var(--color-bg)] border-r border-[var(--color-border)] flex flex-col"
           >
             {/* Close button */}
-            <div className={`flex items-center justify-end px-4 ${isMac ? "h-[56px] pt-[14px]" : "h-12"}`}>
+            <div className={`flex items-center justify-end px-4 ${shouldAvoidTrafficLights ? "h-[56px] pt-[14px]" : "h-12"}`}>
               <button
                 onClick={onClose}
                 className="p-2 rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-bg-secondary)] transition-colors"
