@@ -431,18 +431,37 @@ export function TasksPage({ initialTaskId, initialChatId, initialViewMode, onNav
   // --- Keyboard scopes & commands ---
   // `tasks` scope is active only while the user is on the task-list surface;
   // TaskView pushes its own `workspace` scope on top when entering a task.
-  useKeyboardScope("tasks", !pageState.inWorkspace);
+  //
+  // Gate on pageVisible too: TasksPage stays mounted (display:none) when the
+  // user is on another route — e.g. the "work" route's Local Task workspace.
+  // Without this gate the hidden TasksPage keeps `tasks` on the scope stack,
+  // so WorkPage's `workspace` scope ends up stacked on a stale `tasks` scope
+  // (the `tasks(1) > workspace(1)` leak), letting tasks-scoped keys fire on a
+  // surface that has no task list.
+  useKeyboardScope("tasks", pageVisible && !pageState.inWorkspace);
 
   // Context keys for when-expression evaluation. TaskView also sets these
   // while mounted, but its cleanup runs after TasksPage's render. We set
   // synchronously in render so the value is immediately available, and
   // re-apply in useLayoutEffect (sync, before paint) to override any
   // stale cleanup from a just-unmounted TaskView.
+  //
+  // CRITICAL: only write while THIS page is visible. TasksPage stays mounted
+  // (display:none) when the user is on another route — e.g. the "work" route's
+  // Local Task workspace, which renders its OWN TaskView and sets these keys
+  // true. Writing here unconditionally would clobber that workspace's true
+  // values with our empty pageState (inWorkspace=false, selectedTask=null),
+  // making its panel shortcuts (Mod+Alt+T/R/E…) silently no-op because their
+  // `taskSelected && !archived` when-clause evaluates false. When hidden we
+  // stay out of the way and let the active page own these keys.
   const _taskSelectedKey = contextKeyService.createKey<boolean>("taskSelected", false);
-  _taskSelectedKey.set(!!pageState.selectedTask);
   const _inWorkspaceKey = contextKeyService.createKey<boolean>("inWorkspace", false);
-  _inWorkspaceKey.set(pageState.inWorkspace);
+  if (pageVisible) {
+    _taskSelectedKey.set(!!pageState.selectedTask);
+    _inWorkspaceKey.set(pageState.inWorkspace);
+  }
   useLayoutEffect(() => {
+    if (!pageVisible) return;
     _taskSelectedKey.set(!!pageState.selectedTask);
     _inWorkspaceKey.set(pageState.inWorkspace);
   });
