@@ -581,7 +581,10 @@ fn resolve_current_theme_is_light() -> bool {
         "dark" => config.theme.dark_theme.clone(),
         _ => {
             // auto — ask the system (approximate: default to dark if unknown)
+            #[cfg(not(windows))]
             let dark = crate::theme::detect_system_theme();
+            #[cfg(windows)]
+            let dark = false;
             if dark {
                 config.theme.dark_theme.clone()
             } else {
