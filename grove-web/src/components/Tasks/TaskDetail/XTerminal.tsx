@@ -19,6 +19,59 @@ import {
   type CachedTerminal,
 } from "./terminalCache";
 
+/**
+ * Work around an xterm.js gap with the macOS Chinese (and similar) IME.
+ *
+ * Shift+punctuation (e.g. Shift+/ → "?", Shift+1 → "!") is emitted as a direct
+ * `insertText` with keyCode 229 but NO compositionstart/end events. xterm skips
+ * the keyCode-229 keydown (expecting a composition to follow) and its
+ * CompositionHelper never fires — so the character is silently dropped and
+ * never reaches the PTY. Chinese text is unaffected because it goes through a
+ * real composition that xterm finalizes on compositionend.
+ *
+ * Bridge the gap: when the last keydown was keyCode 229 and a non-composing
+ * `insertText` arrives, forward the data to the PTY ourselves and swallow the
+ * native input so xterm doesn't double-handle it. Real composition (Chinese
+ * text) uses insertCompositionText / isComposing=true and is left untouched;
+ * normal ASCII keydown carries a real keyCode, so `imeDirectKey` stays false.
+ *
+ * Idempotent: the helper-textarea persists across cache reattach, so a dataset
+ * flag prevents stacking duplicate listeners on the same element.
+ */
+function attachImeDirectInputFix(terminal: Terminal, container: HTMLElement): void {
+  const ta = container.querySelector(
+    ".xterm-helper-textarea",
+  ) as HTMLTextAreaElement | null;
+  if (!ta || ta.dataset.groveImeFix === "1") return;
+  ta.dataset.groveImeFix = "1";
+
+  let imeDirectKey = false;
+  ta.addEventListener(
+    "keydown",
+    (e) => {
+      imeDirectKey = e.keyCode === 229;
+    },
+    true,
+  );
+  ta.addEventListener(
+    "beforeinput",
+    (e) => {
+      const ie = e as InputEvent;
+      if (
+        imeDirectKey &&
+        ie.inputType === "insertText" &&
+        ie.data &&
+        !ie.isComposing
+      ) {
+        e.preventDefault();
+        terminal.input(ie.data);
+        imeDirectKey = false;
+      }
+    },
+    true,
+  );
+}
+
 interface XTerminalProps {
   /** Task terminal mode: provide projectId and taskId to connect to tmux session */
   projectId?: string;
@@ -222,6 +275,9 @@ export function XTerminal({
         return true;
       });
 
+      // Bridge macOS IME Shift+punctuation into the PTY (idempotent)
+      attachImeDirectInputFix(cached.terminal, cached.container);
+
       // Fit & notify after layout
       requestAnimationFrame(() => {
         if (cancelled) return;
@@ -350,6 +406,9 @@ export function XTerminal({
       }
       return true;
     });
+
+    // Bridge macOS IME Shift+punctuation into the PTY (idempotent)
+    attachImeDirectInputFix(terminal, container);
 
     // Handle terminal input → WS
     const dataDisposable = terminal.onData((data) => {
