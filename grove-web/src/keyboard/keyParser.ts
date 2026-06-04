@@ -77,8 +77,8 @@ export function matchesHotkey(
   if (!matchModifier(e.altKey, parsed.alt, sides?.alt ?? null)) return false;
 
   if (parsed.mod) {
-    // Mod accepts either Meta or Ctrl (but not neither); side-agnostic.
-    if (!(e.metaKey || e.ctrlKey)) return false;
+    // Mod matches exactly one of Meta or Ctrl — neither or both held is not a match.
+    if (e.metaKey === e.ctrlKey) return false;
   } else {
     if (!matchModifier(e.ctrlKey, parsed.ctrl, sides?.ctrl ?? null)) return false;
     if (!matchModifier(e.metaKey, parsed.meta, sides?.meta ?? null)) return false;
@@ -91,11 +91,13 @@ export function matchesHotkey(
   if (parsed.shift) {
     if (!e.shiftKey) return false;
     if (parsed.shift !== "any" && (sides?.shift ?? null) !== parsed.shift) return false;
-  } else if (e.shiftKey && parsed.key.length > 1) {
-    // For non-character keys (e.g. Enter, Tab, Escape, Backspace), if Shift is not
-    // requested, do not match if Shift is down. This prevents Shift+Enter from
-    // triggering Enter bindings (like chat.send), allowing Enter to act as newline.
-    return false;
+  } else if (e.shiftKey) {
+    // Block unintended Shift — it constitutes a different chord.
+    // Exception: non-alphanumeric single chars (e.g. "?", "!") where Shift is
+    // already encoded in the key label on US keyboards. Alphanumeric keys and
+    // named keys (Enter, Tab, …) must match exactly without implicit Shift.
+    const isShiftImplicit = parsed.key.length === 1 && !/^[a-zA-Z0-9]$/.test(parsed.key);
+    if (!isShiftImplicit) return false;
   }
 
   // macOS Alt remaps the printable key (Opt+C → "ç", Alt+1 → "¡"), so when

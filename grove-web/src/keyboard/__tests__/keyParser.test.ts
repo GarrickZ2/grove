@@ -106,9 +106,9 @@ describe("matchesHotkey", () => {
     expect(matchesHotkey(ev("f"), parseHotkey("Mod+f"))).toBe(false);
   });
 
-  it("Mod tolerates both meta and ctrl", () => {
-    // some keyboards / setups press both
-    expect(matchesHotkey(ev("f", { meta: true, ctrl: true }), parseHotkey("Mod+f"))).toBe(true);
+  it("Mod rejects both meta and ctrl held simultaneously", () => {
+    // Cmd+Ctrl+T is a distinct chord, not Mod+T
+    expect(matchesHotkey(ev("f", { meta: true, ctrl: true }), parseHotkey("Mod+f"))).toBe(false);
   });
 
   it("matches named keys", () => {
@@ -132,13 +132,19 @@ describe("matchesHotkey", () => {
   });
 
   it("Shift only enforced when explicit", () => {
+    // Non-alphanumeric single chars: Shift implicit in key label, allowed without explicit Shift
     expect(matchesHotkey(ev("?", { shift: true }), parseHotkey("?"))).toBe(true);
     expect(matchesHotkey(ev("?", { shift: false }), parseHotkey("Shift+?"))).toBe(false);
     expect(matchesHotkey(ev("?", { shift: true }), parseHotkey("Shift+?"))).toBe(true);
-    // Non-character keys should not match if Shift is pressed but not requested
+    // Named keys (Enter, Tab): Shift not requested → reject
     expect(matchesHotkey(ev("Enter", { shift: true }), parseHotkey("Enter"))).toBe(false);
     expect(matchesHotkey(ev("Enter", { shift: false }), parseHotkey("Enter"))).toBe(true);
     expect(matchesHotkey(ev("Tab", { shift: true }), parseHotkey("Tab"))).toBe(false);
+    // Letter keys: Mod+Shift+T must NOT trigger Mod+T
+    expect(matchesHotkey(ev("t", { meta: true, shift: true }), parseHotkey("Mod+t"))).toBe(false);
+    expect(matchesHotkey(ev("t", { meta: true, shift: false }), parseHotkey("Mod+t"))).toBe(true);
+    // Digit keys: Mod+Shift+1 must NOT trigger Mod+1
+    expect(matchesHotkey(ev("1", { meta: true, shift: true }), parseHotkey("Mod+1"))).toBe(false);
   });
 
   it("left/right modifier matching uses the sides argument", () => {
