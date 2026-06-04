@@ -589,3 +589,14 @@ mark[data-grove-search-mark][data-grove-search-mark-current="true"] {
     0 1px 2px rgba(0, 0, 0, 0.04),
     0 4px 12px rgba(0, 0, 0, 0.06);
 }
+
+/* While dragging a panel splitter/resizer, stop iframes (plugin panels,
+   terminals) from swallowing pointermove — otherwise the drag stutters badly.
+   Toggled by body.grove-resizing during the drag. */
+body.grove-resizing iframe {
+  pointer-events: none !important;
+}
+body.grove-resizing {
+  cursor: col-resize;
+  user-select: none;
+}

@@ -1,16 +1,13 @@
-import { useState, useCallback, useRef, forwardRef, useImperativeHandle, useEffect } from "react";
+import { useState, useCallback, useRef, forwardRef, useImperativeHandle, useEffect, useMemo, useLayoutEffect, useSyncExternalStore, Fragment } from "react";
+import { createPortal } from "react-dom";
+import { userKeymapStore, commandRegistry } from "../../../keyboard";
 import {
   X,
   Terminal,
-  FileCode,
-  Code,
-  Package,
   BarChart3,
-  GitBranch,
-  FileText,
   MessageSquare,
-  Pencil,
-  Network,
+  Puzzle,
+  MoreHorizontal,
 } from "lucide-react";
 import "./ide-layout.css";
 import type {
@@ -23,54 +20,24 @@ import type {
 import { AUX_PANEL_TYPES } from "./IDELayout.types";
 import { MultiTabTerminalPanel } from "./MultiTabTerminalPanel";
 import type { FileNavRequest } from "../../Review";
-import { TaskChat } from "../TaskView/TaskChat";
-import { OptionalPerfProfiler } from "../../../perf/profilerShim";
-import { TaskCodeReview } from "../TaskView/TaskCodeReview";
-import { TaskEditor } from "../TaskView/TaskEditor";
-import { TaskGraph } from "../TaskView/TaskGraph";
-import {
-  ArtifactsTab,
-  StatsTab,
-  GitTab,
-  NotesTab,
-  CommentsTab,
-} from "../TaskInfoPanel/tabs";
-import { SketchPage } from "../../Studio/SketchPage";
 import { OPEN_SKETCH_EVENT, type OpenSketchDetail } from "../../ui/sketchChipCache";
 import { useConfig, useProject } from "../../../context";
 import { useIsMobile } from "../../../hooks";
-
-const AUX_PANEL_CONFIG: Record<AuxPanelType, { label: string; icon: typeof Terminal }> = {
-  terminal: { label: "Terminal", icon: Terminal },
-  editor: { label: "Editor", icon: FileCode },
-  review: { label: "Code Review", icon: Code },
-  graph: { label: "Graph", icon: Network },
-  artifacts: { label: "Artifacts", icon: Package },
-  sketch: { label: "Sketch", icon: Pencil },
-};
-
-const INFO_PANEL_CONFIG: Record<InfoTabType, { label: string; icon: typeof BarChart3 }> = {
-  stats: { label: "Info", icon: BarChart3 },
-  git: { label: "Git", icon: GitBranch },
-  notes: { label: "Notes", icon: FileText },
-  comments: { label: "Comments", icon: MessageSquare },
-};
-
-const TOOLBAR_AUX: { type: AuxPanelType; label: string; shortcut: string; icon: typeof Terminal }[] = [
-  { type: "terminal", label: "Terminal", shortcut: "t", icon: Terminal },
-  { type: "editor", label: "Editor", shortcut: "e", icon: FileCode },
-  { type: "review", label: "Code Review", shortcut: "r", icon: Code },
-  { type: "graph", label: "Graph", shortcut: "g", icon: Network },
-  { type: "artifacts", label: "Artifacts", shortcut: "f", icon: Package },
-  { type: "sketch", label: "Sketch", shortcut: "k", icon: Pencil },
-];
-
-const TOOLBAR_INFO: { type: InfoTabType; label: string; shortcut: string; icon: typeof BarChart3 }[] = [
-  { type: "stats", label: "Info", shortcut: "1", icon: BarChart3 },
-  { type: "git", label: "Git", shortcut: "2", icon: GitBranch },
-  { type: "notes", label: "Notes", shortcut: "3", icon: FileText },
-  { type: "comments", label: "Comments", shortcut: "4", icon: MessageSquare },
-];
+import { listPlugins, type Plugin } from "../../../api/plugins";
+import {
+  OPEN_PLUGIN_PANEL_EVENT,
+  PLUGINS_CHANGED_EVENT,
+  type OpenPluginPanelDetail,
+} from "../../Plugins/pluginPanelCommands";
+import {
+  renderPanel,
+  getPanelDescriptor,
+  buildPanelCatalog,
+  panelShortcutDisplay,
+  PLUGIN_PANEL_PREFIX,
+  type PanelRenderCtx,
+  type PanelDescriptor,
+} from "../PanelSystem/panelRegistry";
 
 const CHAT_COL_MIN = 420;
 const AUX_COL_FLOOR = 280;
@@ -82,10 +49,10 @@ function ideLayoutStorageKey(projectId: string, taskId: string) {
 }
 
 interface PersistedIDEState {
-  auxType: AuxPanelType | null;
+  auxType: string | null;
   auxVisible: boolean;
   chatVisible: boolean;
-  infoType: InfoTabType | null;
+  infoType: string | null;
   infoVisible: boolean;
   terminalTabs: TerminalTab[];
   terminalActiveId: string;
@@ -125,10 +92,12 @@ interface TerminalTab {
 }
 
 interface IDELayoutInternalState {
-  auxType: AuxPanelType | null;
+  // Built-in aux panel (AuxPanelType) or a plugin panel (`plugin:<id>`).
+  auxType: string | null;
   auxVisible: boolean;
   chatVisible: boolean;
-  infoType: InfoTabType | null;
+  // Built-in info panel (InfoTabType) or a right-side plugin (`plugin:<id>`).
+  infoType: string | null;
   infoVisible: boolean;
   fileNavRequest: FileNavRequest | null;
   artifactPreviewRequest: ArtifactPreviewRequest | null;
@@ -139,39 +108,201 @@ interface IDELayoutInternalState {
   // Keep-alive: panel types the user has opened at least once. Once a type
   // is in this list it stays mounted (hidden via display:none) so re-opening
   // is instant and doesn't re-fetch data.
-  visitedAux: AuxPanelType[];
-  visitedInfo: InfoTabType[];
+  visitedAux: string[];
+  visitedInfo: string[];
 }
+
+type ToolbarItem = { d: PanelDescriptor; kind: "aux" | "info" };
 
 function Toolbar({
   state,
   update,
-  isStudio,
-  terminalAvailable,
   isMobile,
+  auxPanels,
+  infoPanels,
   leading,
   trailing,
 }: {
   state: IDELayoutInternalState;
   update: (partial: Partial<IDELayoutInternalState>) => void;
-  isStudio: boolean;
-  terminalAvailable: boolean;
   isMobile: boolean;
+  // Already filtered by availability + category, from the shared catalog.
+  auxPanels: PanelDescriptor[];
+  infoPanels: PanelDescriptor[];
   leading?: React.ReactNode;
   trailing?: React.ReactNode;
 }) {
   const hasOpenPanel = state.auxVisible || state.infoVisible;
-  const filteredAux = TOOLBAR_AUX.filter(
-    ({ type }) =>
-      (type !== "artifacts" || isStudio) &&
-      (type !== "sketch" || isStudio) &&
-      (type !== "review" || !isStudio) &&
-      (type !== "terminal" || terminalAvailable),
+
+  // Real keybinding hints: resolve each panel's `panel.<key>.open` command from
+  // the catalog + the user's keymap overrides (NOT a hardcoded guess), and
+  // re-render live when the user edits their shortcuts. Plugins have no command
+  // → no hint.
+  useSyncExternalStore(
+    (cb) => userKeymapStore.subscribe(cb),
+    () => userKeymapStore.getVersion(),
   );
-  const filteredInfo = TOOLBAR_INFO.filter(
-    ({ type }) =>
-      (type !== "git" || !isStudio) &&
-      (type !== "comments" || !isStudio),
+  useSyncExternalStore(
+    (cb) => commandRegistry.subscribe(cb),
+    () => commandRegistry.listCommands().length,
+  );
+  const shortcutFor = panelShortcutDisplay;
+
+  // Aux + info panels share one responsive row (chat stays pinned). As panels
+  // grow or the screen narrows, whatever doesn't fit collapses into ⋯ More.
+  const items: ToolbarItem[] = useMemo(
+    () => [
+      ...auxPanels.map((d) => ({ d, kind: "aux" as const })),
+      ...infoPanels.map((d) => ({ d, kind: "info" as const })),
+    ],
+    [auxPanels, infoPanels],
+  );
+
+  const isItemActive = (item: ToolbarItem) =>
+    item.kind === "aux"
+      ? state.auxVisible && state.auxType === item.d.key
+      : state.infoVisible && state.infoType === item.d.key;
+
+  const activate = (item: ToolbarItem) => {
+    const active = isItemActive(item);
+    if (item.kind === "aux") {
+      if (isMobile) {
+        update(active
+          ? { auxVisible: false, chatVisible: true }
+          : { auxType: item.d.key, auxVisible: true, chatVisible: false, infoVisible: false });
+      } else {
+        update(active ? { auxVisible: false } : { auxType: item.d.key, auxVisible: true });
+      }
+    } else {
+      const key = item.d.key;
+      if (isMobile) {
+        update(active
+          ? { infoVisible: false, chatVisible: true }
+          : { infoType: key, infoVisible: true, chatVisible: false, auxVisible: false });
+      } else {
+        update(active ? { infoVisible: false } : { infoType: key, infoVisible: true });
+      }
+    }
+  };
+
+  // Measure each button's width in a hidden row, then fit as many as the
+  // visible row allows; remainder goes to the ⋯ overflow menu.
+  const rowRef = useRef<HTMLDivElement>(null);
+  const measureRef = useRef<HTMLDivElement>(null);
+  const moreBtnRef = useRef<HTMLButtonElement>(null);
+  const [visibleCount, setVisibleCount] = useState(items.length);
+  const [menuOpen, setMenuOpen] = useState(false);
+  // Portal-positioned (fixed) so the menu escapes the row's overflow:hidden
+  // clip and any stacking context below it.
+  const [menuPos, setMenuPos] = useState<{ top: number; left: number } | null>(null);
+  const [hoveredKey, setHoveredKey] = useState<string | null>(null);
+  const MENU_W = 220;
+  const toggleMenu = () => {
+    if (menuOpen) { setMenuOpen(false); return; }
+    const r = moreBtnRef.current?.getBoundingClientRect();
+    if (r) setMenuPos({ top: r.bottom + 4, left: Math.max(8, r.right - MENU_W) });
+    setMenuOpen(true);
+  };
+
+  useLayoutEffect(() => {
+    const compute = () => {
+      const row = rowRef.current;
+      const measure = measureRef.current;
+      if (!row || !measure) return;
+      // Reserve space for the aux↕info divider shown between the two groups.
+      const hasBoth = items.some((i) => i.kind === "aux") && items.some((i) => i.kind === "info");
+      const avail = row.clientWidth - (hasBoth ? 13 : 0);
+      const widths = Array.from(measure.children).map((c) => (c as HTMLElement).offsetWidth + 4);
+      const MORE_W = 44;
+      let used = 0;
+      let n = 0;
+      for (let i = 0; i < widths.length; i++) {
+        used += widths[i];
+        const needMore = i < widths.length - 1;
+        if (used + (needMore ? MORE_W : 0) > avail) break;
+        n++;
+      }
+      setVisibleCount(n);
+    };
+    compute();
+    const ro = new ResizeObserver(compute);
+    if (rowRef.current) ro.observe(rowRef.current);
+    return () => ro.disconnect();
+  }, [items]);
+
+  useEffect(() => {
+    if (!menuOpen) return;
+    const close = () => setMenuOpen(false);
+    window.addEventListener("pointerdown", close);
+    // A fixed-positioned menu would detach on scroll/resize — just close it.
+    window.addEventListener("resize", close);
+    window.addEventListener("scroll", close, true);
+    return () => {
+      window.removeEventListener("pointerdown", close);
+      window.removeEventListener("resize", close);
+      window.removeEventListener("scroll", close, true);
+    };
+  }, [menuOpen]);
+
+  const visible = items.slice(0, visibleCount);
+  const overflow = items.slice(visibleCount);
+
+  // Horizontal toolbar button (icon + label via the shared class).
+  const renderBtn = (item: ToolbarItem) => {
+    const Icon = item.d.icon;
+    const sc = shortcutFor(item.d.key);
+    const active = isItemActive(item);
+    return (
+      <button
+        key={item.d.key}
+        onClick={() => activate(item)}
+        className={`ide-toolbar__btn ${active ? "ide-toolbar__btn--active" : ""}`}
+        title={sc ? `${item.d.label} (${sc})` : item.d.label}
+      >
+        <Icon size={13} />
+        <span>{item.d.label}</span>
+      </button>
+    );
+  };
+
+  // Overflow-menu row: icon + name + shortcut, left-aligned and readable.
+  const renderMenuRow = (item: ToolbarItem) => {
+    const Icon = item.d.icon;
+    const sc = shortcutFor(item.d.key);
+    const active = isItemActive(item);
+    const hot = hoveredKey === item.d.key;
+    return (
+      <button
+        key={item.d.key}
+        onMouseEnter={() => setHoveredKey(item.d.key)}
+        onMouseLeave={() => setHoveredKey(null)}
+        onClick={() => { activate(item); setMenuOpen(false); }}
+        style={{
+          display: "flex", alignItems: "center", gap: 8, width: "100%",
+          padding: "6px 10px", border: "none", borderRadius: 6, cursor: "pointer",
+          fontSize: 13, textAlign: "left",
+          background: active
+            ? "color-mix(in oklab, var(--color-highlight) 16%, transparent)"
+            : hot ? "var(--color-bg-tertiary)" : "transparent",
+          color: active ? "var(--color-highlight)" : "var(--color-text)",
+        }}
+      >
+        <Icon size={14} style={{ flexShrink: 0 }} />
+        <span style={{ flex: 1, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+          {item.d.label}
+        </span>
+        {sc && (
+          <kbd style={{ fontSize: 10, color: "var(--color-text-muted)", fontFamily: "monospace" }}>{sc}</kbd>
+        )}
+      </button>
+    );
+  };
+
+  const menuHeader = (text: string) => (
+    <div style={{
+      padding: "4px 10px 2px", fontSize: 10, fontWeight: 600, letterSpacing: "0.04em",
+      color: "var(--color-text-muted)", textTransform: "uppercase",
+    }}>{text}</div>
   );
 
   return (
@@ -207,62 +338,68 @@ function Toolbar({
       })()}
       <div className="ide-toolbar__separator" />
 
-      <div className="ide-toolbar__group">
-        {filteredAux.map(({ type, label, shortcut, icon: Icon }) => {
-          const isActive = state.auxVisible && state.auxType === type;
+      <div
+        ref={rowRef}
+        className="ide-toolbar__group"
+        style={{ flex: "1 1 auto", minWidth: 0, overflow: "hidden", position: "relative" }}
+      >
+        {visible.map((item, i) => {
+          const prev = visible[i - 1];
+          const sep = prev && prev.kind === "aux" && item.kind === "info";
           return (
-            <button
-              key={type}
-              onClick={() => {
-                if (isMobile) {
-                  if (isActive) {
-                    update({ auxVisible: false, chatVisible: true });
-                  } else {
-                    update({ auxType: type, auxVisible: true, chatVisible: false, infoVisible: false });
-                  }
-                } else {
-                  if (isActive) update({ auxVisible: false });
-                  else update({ auxType: type, auxVisible: true });
-                }
-              }}
-              className={`ide-toolbar__btn ${isActive ? "ide-toolbar__btn--active" : ""}`}
-              title={`${label} (${shortcut})`}
-            >
-              <Icon size={13} />
-              <span>{label}</span>
-            </button>
+            <Fragment key={item.d.key}>
+              {sep && <div className="ide-toolbar__separator" />}
+              {renderBtn(item)}
+            </Fragment>
           );
         })}
-      </div>
-
-      <div className="ide-toolbar__separator" />
-
-      <div className="ide-toolbar__group">
-        {filteredInfo.map(({ type, label, shortcut, icon: Icon }) => {
-          const isActive = state.infoVisible && state.infoType === type;
-          return (
-            <button
-              key={type}
-              onClick={() => {
-                if (isMobile) {
-                  if (isActive) {
-                    update({ infoVisible: false, chatVisible: true });
-                  } else {
-                    update({ infoType: type, infoVisible: true, chatVisible: false, auxVisible: false });
-                  }
-                } else {
-                  if (isActive) update({ infoVisible: false });
-                  else update({ infoType: type, infoVisible: true });
-                }
-              }}
-              className={`ide-toolbar__btn ${isActive ? "ide-toolbar__btn--active" : ""}`}
-              title={`${label} (${shortcut})`}
-            >
-              <Icon size={13} />
-              <span>{label}</span>
-            </button>
-          );
-        })}
+        {overflow.length > 0 && (
+          <button
+            ref={moreBtnRef}
+            onPointerDown={(e) => e.stopPropagation()}
+            onClick={toggleMenu}
+            className={`ide-toolbar__btn ${overflow.some(isItemActive) ? "ide-toolbar__btn--active" : ""}`}
+            title="More panels"
+          >
+            <MoreHorizontal size={13} />
+          </button>
+        )}
+        {menuOpen && menuPos && overflow.length > 0 && createPortal(
+          <div
+            onPointerDown={(e) => e.stopPropagation()}
+            style={{
+              position: "fixed", top: menuPos.top, left: menuPos.left, width: MENU_W, zIndex: 9999,
+              display: "flex", flexDirection: "column", gap: 1, padding: 4,
+              background: "var(--color-bg-secondary)", border: "1px solid var(--color-border)",
+              borderRadius: 8, boxShadow: "0 8px 24px rgba(0,0,0,0.18)",
+            }}
+          >
+            {(() => {
+              const auxItems = overflow.filter((i) => i.kind === "aux");
+              const infoItems = overflow.filter((i) => i.kind === "info");
+              return (
+                <>
+                  {auxItems.length > 0 && menuHeader("Left panel")}
+                  {auxItems.map(renderMenuRow)}
+                  {auxItems.length > 0 && infoItems.length > 0 && (
+                    <div style={{ height: 1, margin: "4px 6px", background: "var(--color-border)" }} />
+                  )}
+                  {infoItems.length > 0 && menuHeader("Right panel")}
+                  {infoItems.map(renderMenuRow)}
+                </>
+              );
+            })()}
+          </div>,
+          document.body,
+        )}
+        {/* Hidden measurement row — always all items, for stable widths. */}
+        <div
+          ref={measureRef}
+          aria-hidden
+          style={{ position: "absolute", left: 0, top: 0, display: "flex", visibility: "hidden", pointerEvents: "none" }}
+        >
+          {items.map(renderBtn)}
+        </div>
       </div>
 
       {trailing && (
@@ -325,6 +462,24 @@ export const IDELayoutContainer = forwardRef<IDELayoutHandle, IDELayoutContainer
     const [persisted] = useState<Partial<PersistedIDEState>>(() =>
       loadPersistedState(projectId, task.id),
     );
+
+    // Installed plugins that contribute a workspace panel — rendered as extra
+    // aux-panel toolbar buttons (`plugin:<id>`), same as FlexLayout's [+] menu.
+    const [panelPlugins, setPanelPlugins] = useState<Plugin[]>([]);
+    useEffect(() => {
+      let cancelled = false;
+      const load = () => {
+        listPlugins()
+          .then((ps) => { if (!cancelled) setPanelPlugins(ps.filter((p) => p.contributes?.panel)); })
+          .catch(() => { if (!cancelled) setPanelPlugins([]); });
+      };
+      load();
+      window.addEventListener(PLUGINS_CHANGED_EVENT, load);
+      return () => {
+        cancelled = true;
+        window.removeEventListener(PLUGINS_CHANGED_EVENT, load);
+      };
+    }, []);
 
     const [state, setState] = useState<IDELayoutInternalState>(() => {
       const firstTabId = `term-init-${Date.now()}`;
@@ -476,6 +631,27 @@ export const IDELayoutContainer = forwardRef<IDELayoutHandle, IDELayoutContainer
       return () => window.removeEventListener("grove:open-chat", handler);
     }, [update]);
 
+    // Global listener: a plugin keybinding opens its panel in the column its
+    // manifest chose (`side`: right → info column, else aux column).
+    useEffect(() => {
+      const handler = (e: Event) => {
+        const detail = (e as CustomEvent<OpenPluginPanelDetail>).detail;
+        if (!detail || detail.projectId !== projectId || detail.taskId !== task.id) return;
+        const plugin = panelPlugins.find((p) => p.id === detail.pluginId);
+        if (!plugin) return;
+        const key = `${PLUGIN_PANEL_PREFIX}${plugin.id}`;
+        if (plugin.contributes?.panel?.side === "right") {
+          setStateTagged((prev) =>
+            prev.infoVisible && prev.infoType === key ? prev : { ...prev, infoType: key, infoVisible: true });
+        } else {
+          setStateTagged((prev) =>
+            prev.auxVisible && prev.auxType === key ? prev : { ...prev, auxType: key, auxVisible: true });
+        }
+      };
+      window.addEventListener(OPEN_PLUGIN_PANEL_EVENT, handler);
+      return () => window.removeEventListener(OPEN_PLUGIN_PANEL_EVENT, handler);
+    }, [projectId, task.id, panelPlugins, setStateTagged]);
+
     const handleBusyStateChange = useCallback((busy: boolean) => {
       update({ isChatBusy: busy });
     }, [update]);
@@ -533,7 +709,13 @@ export const IDELayoutContainer = forwardRef<IDELayoutHandle, IDELayoutContainer
         }
       };
 
+      // While dragging, disable pointer events on iframes (plugin panels,
+      // terminals) — otherwise the pointer crossing an iframe makes it swallow
+      // mousemove and the drag stutters/sticks.
+      document.body.classList.add("grove-resizing");
+
       const handlePointerUp = () => {
+        document.body.classList.remove("grove-resizing");
         document.removeEventListener("pointermove", handlePointerMove);
         document.removeEventListener("pointerup", handlePointerUp);
       };
@@ -573,22 +755,36 @@ export const IDELayoutContainer = forwardRef<IDELayoutHandle, IDELayoutContainer
           });
         },
         focusAuxPanel: (type: AuxPanelType) => {
-          // Toggle semantics — matches the toolbar button (`isActive ? hide :
-          // show`). Pressing the same shortcut twice closes the panel the
-          // user just opened, which is what shortcut hotkeys are expected to
-          // do in every IDE.
-          setStateTagged((prev) =>
-            prev.auxVisible && prev.auxType === type
+          // Toggle semantics — must match the toolbar button EXACTLY, including
+          // its mobile/desktop split (see `activate`). On mobile the surfaces
+          // are STACKED (chat overlays aux/info), so opening one must hide the
+          // others — omitting `chatVisible: false` here is what made the
+          // shortcut render Chat overlaid on top of Review. On desktop they sit
+          // side by side, so Chat is intentionally left untouched.
+          setStateTagged((prev) => {
+            const active = prev.auxVisible && prev.auxType === type;
+            if (isMobile) {
+              return active
+                ? { ...prev, auxVisible: false, chatVisible: true }
+                : { ...prev, auxType: type, auxVisible: true, chatVisible: false, infoVisible: false };
+            }
+            return active
               ? { ...prev, auxVisible: false }
-              : { ...prev, auxType: type, auxVisible: true },
-          );
+              : { ...prev, auxType: type, auxVisible: true };
+          });
         },
         focusInfoPanel: (type: InfoTabType) => {
-          setStateTagged((prev) =>
-            prev.infoVisible && prev.infoType === type
+          setStateTagged((prev) => {
+            const active = prev.infoVisible && prev.infoType === type;
+            if (isMobile) {
+              return active
+                ? { ...prev, infoVisible: false, chatVisible: true }
+                : { ...prev, infoType: type, infoVisible: true, chatVisible: false, auxVisible: false };
+            }
+            return active
               ? { ...prev, infoVisible: false }
-              : { ...prev, infoType: type, infoVisible: true },
-          );
+              : { ...prev, infoType: type, infoVisible: true };
+          });
         },
         focusChat: () => {
           // Same toggle rule for Chat: pressing `i` again hides it unless
@@ -622,7 +818,7 @@ export const IDELayoutContainer = forwardRef<IDELayoutHandle, IDELayoutContainer
               const idx = delta > 0 ? 0 : auxTypes.length - 1;
               return { ...prev, auxType: auxTypes[idx], auxVisible: true };
             }
-            const currentIdx = auxTypes.indexOf(prev.auxType);
+            const currentIdx = auxTypes.indexOf(prev.auxType as AuxPanelType);
             const nextIdx = (currentIdx + delta + auxTypes.length) % auxTypes.length;
             return { ...prev, auxType: auxTypes[nextIdx] };
           });
@@ -677,95 +873,79 @@ export const IDELayoutContainer = forwardRef<IDELayoutHandle, IDELayoutContainer
           });
         },
       }),
-      [isStudio, terminalAvailable, setStateTagged],
+      [isStudio, terminalAvailable, setStateTagged, isMobile],
     );
 
-    // Render content for a single aux panel type. Caller wraps this in a
-    // pane div whose display toggles between "flex" (active) and "none"
-    // (hidden but mounted, so state survives a close/reopen cycle).
-    const renderAuxContent = (type: AuxPanelType) => {
-      if (type === "terminal" && terminalAvailable) {
-        return (
-          <MultiTabTerminalPanel
-            projectId={projectId}
-            task={task}
-            side="left"
-            tabs={state.terminalTabs}
-            activeId={state.terminalActiveId}
-            onTabsChange={(tabs, activeId) => update({ terminalTabs: tabs, terminalActiveId: activeId })}
-            onClose={() => update({ auxVisible: false })}
-          />
-        );
-      }
-      const config = AUX_PANEL_CONFIG[type];
-      return (
-        <PanelSlot
-          title={config.label}
-          icon={config.icon}
+    // Shared render context (registry-driven). onClose differs per column;
+    // terminal is injected because IDE Layout uses a multi-tab terminal slot
+    // rather than FlexLayout's per-tab terminal.
+    const buildCtx = useCallback((onClose: () => void): PanelRenderCtx => ({
+      projectId,
+      task,
+      isStudio,
+      isGitRepo,
+      terminalAvailable,
+      onClose,
+      fileNavRequest: state.fileNavRequest,
+      artifactPreviewRequest: state.artifactPreviewRequest,
+      lastChatIdleAt: state.lastChatIdleAt,
+      isChatBusy: state.isChatBusy,
+      onChatBecameIdle: handleChatBecameIdle,
+      onUserMessageSent: handleChatBecameIdle,
+      onBusyStateChange: handleBusyStateChange,
+      renderTerminal: () => (
+        <MultiTabTerminalPanel
+          projectId={projectId}
+          task={task}
           side="left"
+          tabs={state.terminalTabs}
+          activeId={state.terminalActiveId}
+          onTabsChange={(tabs, activeId) => update({ terminalTabs: tabs, terminalActiveId: activeId })}
           onClose={() => update({ auxVisible: false })}
-        >
-          {type === "editor" && (
-            <TaskEditor projectId={projectId} taskId={task.id} hideHeader fullscreen onClose={() => update({ auxVisible: false })} />
-          )}
-          {type === "graph" && (
-            <TaskGraph projectId={projectId} taskId={task.id} />
-          )}
-          {type === "review" && !isStudio && (
-            <TaskCodeReview
-              projectId={projectId} taskId={task.id} navigateToFile={state.fileNavRequest}
-              hideHeader fullscreen isGitRepo={isGitRepo} onClose={() => update({ auxVisible: false })}
-              isChatBusy={state.isChatBusy}
-            />
-          )}
-          {type === "artifacts" && isStudio && (
-            <ArtifactsTab projectId={projectId} task={task} previewRequest={state.artifactPreviewRequest} lastChatIdleAt={state.lastChatIdleAt} isChatBusy={state.isChatBusy} />
-          )}
-          {type === "sketch" && isStudio && (
-            <SketchPage
-              projectId={projectId}
-              taskId={task.id}
-              isChatBusy={state.isChatBusy}
-              lastChatIdleAt={state.lastChatIdleAt}
-            />
-          )}
-        </PanelSlot>
-      );
-    };
+        />
+      ),
+      plugins: panelPlugins,
+    }), [projectId, task, isStudio, isGitRepo, terminalAvailable, state.fileNavRequest, state.artifactPreviewRequest, state.lastChatIdleAt, state.isChatBusy, handleChatBecameIdle, handleBusyStateChange, state.terminalTabs, state.terminalActiveId, update, panelPlugins]);
 
-    const renderChat = () => {
-      return (
-        <OptionalPerfProfiler id="TaskChat">
-          <TaskChat
-            key={`${projectId}:${task.id}`}
-            projectId={projectId} task={task} fullscreen
-            onNavigateToFile={handleNavigateToFile}
-            onChatBecameIdle={handleChatBecameIdle}
-            onUserMessageSent={handleChatBecameIdle}
-            onBusyStateChange={handleBusyStateChange}
-          />
-        </OptionalPerfProfiler>
-      );
-    };
-
-    const renderInfoContent = (type: InfoTabType) => {
-      const config = INFO_PANEL_CONFIG[type];
+    // Aux column. Terminal renders its own multi-tab header (no slot);
+    // everything else is wrapped in PanelSlot with the registry's label/icon.
+    const renderAuxContent = useCallback((type: string) => {
+      const closeAux = () => update({ auxVisible: false });
+      if (type === "terminal") return renderPanel("terminal", buildCtx(closeAux));
+      const d = getPanelDescriptor(type, panelPlugins);
       return (
         <PanelSlot
-          title={config.label}
-          icon={config.icon}
-          side="right"
-          onClose={() => update({ infoVisible: false })}
+          title={d?.label ?? "Panel"}
+          icon={(d?.icon ?? Puzzle) as typeof Terminal}
+          side="left"
+          onClose={closeAux}
         >
-          <div className="ide-info-content">
-            {type === "stats" && <StatsTab projectId={projectId} task={task} />}
-            {type === "git" && !isStudio && <GitTab projectId={projectId} task={task} />}
-            {type === "notes" && <NotesTab projectId={projectId} task={task} />}
-            {type === "comments" && !isStudio && <CommentsTab projectId={projectId} task={task} />}
-          </div>
+          {renderPanel(type, buildCtx(closeAux))}
         </PanelSlot>
       );
-    };
+    }, [buildCtx, panelPlugins, update]);
+
+    // Chat is the only panel that needs file navigation — inject it here (kept
+    // out of the shared ctx so aux/info panels don't capture the ref-reader).
+    const renderChat = useCallback(
+      () => renderPanel("chat", { ...buildCtx(() => {}), navigateToFile: handleNavigateToFile }),
+      [buildCtx, handleNavigateToFile],
+    );
+
+    const renderInfoContent = useCallback((type: string) => {
+      const closeInfo = () => update({ infoVisible: false });
+      const d = getPanelDescriptor(type, panelPlugins);
+      return (
+        <PanelSlot
+          title={d?.label ?? "Panel"}
+          icon={(d?.icon ?? BarChart3) as typeof Terminal}
+          side="right"
+          onClose={closeInfo}
+        >
+          <div className="ide-info-content">{renderPanel(type, buildCtx(closeInfo))}</div>
+        </PanelSlot>
+      );
+    }, [buildCtx, panelPlugins, update]);
 
     const showAux = Boolean(state.auxVisible && state.auxType);
     const showInfo = Boolean(state.infoVisible && state.infoType);
@@ -808,13 +988,17 @@ export const IDELayoutContainer = forwardRef<IDELayoutHandle, IDELayoutContainer
       showChat && showInfo ? "8px" : null,
       showInfo ? infoColumn : null,
     ].filter(Boolean).join(" ");
+    // Toolbar buttons come straight from the shared catalog, split by column.
+    const catalog = buildPanelCatalog(panelPlugins, { isStudio, terminalAvailable });
+    const auxPanels = catalog.filter((d) => d.category === "aux");
+    const infoPanels = catalog.filter((d) => d.category === "info");
     const toolbar = (
       <Toolbar
         state={state}
         update={update}
-        isStudio={isStudio}
-        terminalAvailable={terminalAvailable}
         isMobile={isMobile}
+        auxPanels={auxPanels}
+        infoPanels={infoPanels}
         leading={toolbarLeading}
         trailing={toolbarTrailing}
       />

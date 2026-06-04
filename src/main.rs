@@ -24,6 +24,7 @@ mod model;
 #[cfg(not(windows))]
 mod notification_state;
 mod operations;
+mod plugins;
 mod session;
 mod stats;
 mod storage;

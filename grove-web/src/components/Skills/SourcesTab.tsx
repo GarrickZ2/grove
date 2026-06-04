@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Plus, RefreshCw, Trash2, Edit3, GitBranch, FolderOpen, ExternalLink, ArrowUpCircle, AlertTriangle } from "lucide-react";
+import { Plus, RefreshCw, Trash2, Edit3, GitBranch, FolderOpen, ExternalLink, ArrowUpCircle, AlertTriangle, Puzzle } from "lucide-react";
 import { Button } from "../ui";
 import { AddSourceDialog } from "./AddSourceDialog";
 import { syncSource, syncAllSources, deleteSource as apiDeleteSource, checkSourceUpdates } from "../../api";
@@ -10,6 +10,19 @@ import { useCommand, useDefineCommand, useKeyboardScope } from "../../keyboard";
 interface SourcesTabProps {
   sources: SkillSource[];
   onRefresh: () => Promise<void>;
+}
+
+/** A skill source mounted by a plugin is named `plugin:<id>` and points at
+ *  `<plugin-folder>/skills`. Show the plugin's folder name (readable) instead
+ *  of the opaque id. */
+function isPluginSource(s: SkillSource): boolean {
+  return s.name.startsWith("plugin:");
+}
+function sourceDisplayName(s: SkillSource): string {
+  if (!isPluginSource(s)) return s.name;
+  const parts = s.url.replace(/\/+$/, "").split("/");
+  // .../<plugin-folder>/skills → the folder name is the parent of "skills".
+  return parts.length >= 2 ? parts[parts.length - 2] : s.name;
 }
 
 export function SourcesTab({ sources, onRefresh }: SourcesTabProps) {
@@ -170,30 +183,33 @@ export function SourcesTab({ sources, onRefresh }: SourcesTabProps) {
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 mb-1">
                     <h3 className="text-sm font-semibold text-[var(--color-text)] truncate">
-                      {source.name}
+                      {sourceDisplayName(source)}
                     </h3>
                     {source.has_remote_updates && (
                       <span className="px-1.5 py-0.5 text-[9px] font-semibold rounded-md bg-[var(--color-warning)]/10 text-[var(--color-warning)]">
                         Update available
                       </span>
                     )}
-                    <span
-                      className={`px-1.5 py-0.5 text-[10px] font-medium rounded-md ${
-                        source.source_type === "git"
-                          ? "bg-[var(--color-highlight)]/10 text-[var(--color-highlight)]"
-                          : "bg-[var(--color-warning)]/10 text-[var(--color-warning)]"
-                      }`}
-                    >
-                      {source.source_type === "git" ? (
+                    {/* Three distinct origin badges: Git / Plugin / Local. */}
+                    {isPluginSource(source) ? (
+                      <span className="px-1.5 py-0.5 text-[10px] font-medium rounded-md bg-[var(--color-accent)]/10 text-[var(--color-accent)]">
+                        <span className="flex items-center gap-0.5">
+                          <Puzzle className="w-3 h-3" /> Plugin
+                        </span>
+                      </span>
+                    ) : source.source_type === "git" ? (
+                      <span className="px-1.5 py-0.5 text-[10px] font-medium rounded-md bg-[var(--color-highlight)]/10 text-[var(--color-highlight)]">
                         <span className="flex items-center gap-0.5">
                           <GitBranch className="w-3 h-3" /> Git
                         </span>
-                      ) : (
+                      </span>
+                    ) : (
+                      <span className="px-1.5 py-0.5 text-[10px] font-medium rounded-md bg-[var(--color-info)]/10 text-[var(--color-info)]">
                         <span className="flex items-center gap-0.5">
                           <FolderOpen className="w-3 h-3" /> Local
                         </span>
-                      )}
-                    </span>
+                      </span>
+                    )}
                   </div>
 
                   <div className="flex items-center gap-1.5 text-xs text-[var(--color-text-muted)] mb-2">
@@ -235,9 +251,13 @@ export function SourcesTab({ sources, onRefresh }: SourcesTabProps) {
                     whileHover={{ scale: 1.05 }}
                     whileTap={{ scale: 0.95 }}
                     onClick={() => setDeleteConfirm(source)}
-                    disabled={deletingName === source.name}
-                    title="Remove"
-                    className="p-1.5 rounded-md hover:bg-[var(--color-error)]/10 text-[var(--color-text-muted)] hover:text-[var(--color-error)] transition-colors disabled:opacity-50"
+                    disabled={deletingName === source.name || source.name.startsWith("plugin:")}
+                    title={
+                      source.name.startsWith("plugin:")
+                        ? "Managed by its plugin — removed when the plugin is uninstalled"
+                        : "Remove"
+                    }
+                    className="p-1.5 rounded-md hover:bg-[var(--color-error)]/10 text-[var(--color-text-muted)] hover:text-[var(--color-error)] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                   >
                     <Trash2 className="w-4 h-4" />
                   </motion.button>

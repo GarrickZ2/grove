@@ -24,6 +24,7 @@ import { activateTask } from "../../../api";
 import { patchConfig } from "../../../api/config";
 import { useConfig } from "../../../context";
 import { useCommand, useKeyboardScope, useContextKey } from "../../../keyboard";
+import { usePluginPanelCommands } from "../../Plugins/pluginPanelCommands";
 
 // --- Workspace Bar Dropdown (for overflow actions) ---
 function OverflowDropdown({ items }: { items: OverflowItem[] }) {
@@ -202,6 +203,11 @@ export const TaskView = forwardRef<TaskViewHandle, TaskViewProps>((props, ref) =
       else ref?.ensurePanel(type);
     }
   }, [layoutMode]);
+
+  // Register keymap commands for installed plugin panels (configurable in
+  // Settings; pressing the binding opens the plugin's panel). Auto add/remove
+  // on install/uninstall and on unmount.
+  usePluginPanelCommands(projectId, task.id);
 
   // Notify backend the user has entered this task workspace so the file
   // watcher attaches lazily. Fire-and-forget; idempotent on the backend.

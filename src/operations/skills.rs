@@ -689,6 +689,30 @@ pub fn delete_source(name: &str) -> Result<()> {
     Ok(())
 }
 
+/// Register a local skill source pointing at `path`, under `name`. Used by the
+/// plugin system to auto-mount a plugin's `skills/` folder (name = "plugin:<id>").
+/// Idempotent: re-registering the same name refreshes the path and re-syncs.
+pub fn add_local_source(name: &str, path: &str) -> Result<SkillSourceDef> {
+    let mut sources_file = load_sources();
+    sources_file.sources.retain(|s| s.name != name);
+    sources_file.sources.push(SkillSourceDef {
+        name: name.to_string(),
+        source_type: "local".to_string(),
+        url: path.to_string(),
+        subpath: None,
+        repo_key: crate::storage::skills::compute_repo_key(path),
+        last_synced: None,
+        local_head: None,
+    });
+    save_sources(&sources_file)?;
+    sync_source(name)
+}
+
+/// Remove a local skill source by name (used when a plugin is uninstalled).
+pub fn remove_local_source(name: &str) -> Result<()> {
+    delete_source(name)
+}
+
 // ============================================================================
 // Helpers
 // ============================================================================
@@ -760,12 +784,7 @@ pub const AUTO_SYNC_BUFFER_SECS: i64 = 300; // 5 minutes
 
 /// Reject names that could escape the storage directory or break the layout.
 fn is_unsafe_segment(s: &str) -> bool {
-    s.is_empty()
-        || s.contains('/')
-        || s.contains('\\')
-        || s == "."
-        || s == ".."
-        || s.contains("..")
+    s.is_empty() || s.contains('/') || s.contains('\\') || s == "." || s == ".." || s.contains("..")
 }
 
 /// Quote a string as a single-line YAML double-quoted scalar.

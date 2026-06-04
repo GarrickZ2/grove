@@ -189,7 +189,7 @@ fn extract_tar_gz(bytes: &[u8], dest: &Path) -> Result<()> {
     Ok(())
 }
 
-fn extract_zip(bytes: &[u8], dest: &Path) -> Result<()> {
+pub(crate) fn extract_zip(bytes: &[u8], dest: &Path) -> Result<()> {
     let reader = std::io::Cursor::new(bytes);
     let mut zip = zip::ZipArchive::new(reader)
         .map_err(|e| GroveError::storage(format!("zip open: {}", e)))?;

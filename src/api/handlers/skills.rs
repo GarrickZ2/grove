@@ -804,7 +804,11 @@ pub async fn rename_source(
             let manifest = load_manifest();
             match sources_file.sources.iter().find(|s| s.name == req.new_name) {
                 Some(s) => {
-                    let count = manifest.skills.iter().filter(|sk| sk.source == s.name).count();
+                    let count = manifest
+                        .skills
+                        .iter()
+                        .filter(|sk| sk.source == s.name)
+                        .count();
                     Json(source_to_response(s, count, false)).into_response()
                 }
                 None => StatusCode::NO_CONTENT.into_response(),
