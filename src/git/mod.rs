@@ -1158,7 +1158,22 @@ pub fn diff_stat(worktree_path: &str, target: &str) -> Result<Vec<DiffStatEntry>
         })
         .collect();
 
+    // If a Deleted entry has a same-named untracked file on disk, the file was
+    // replaced (e.g. git rm + codegen) — flip status to U so the UI shows it
+    // as present, not gone.
+    for entry in &mut entries {
+        if entry.status == 'D' && untracked_set.contains(&entry.path) {
+            entry.status = 'U';
+        }
+    }
+
+    let existing_paths: std::collections::HashSet<String> =
+        entries.iter().map(|e| e.path.clone()).collect();
+
     for path in &untracked_set {
+        if existing_paths.contains(path) {
+            continue;
+        }
         let null_device = if cfg!(windows) { "NUL" } else { "/dev/null" };
         let output = git_cmd_allow_exit1(
             worktree_path,
