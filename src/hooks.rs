@@ -304,6 +304,7 @@ pub fn load_hooks_with_cleanup(project_path: &str) -> HooksFile {
 
 pub static ACTIVE_BASE_URL: once_cell::sync::OnceCell<String> = once_cell::sync::OnceCell::new();
 
+#[cfg(feature = "gui")]
 pub fn set_active_base_url(url: String) {
     let _ = ACTIVE_BASE_URL.set(url.clone());
     let grove_dir = crate::storage::grove_dir();
@@ -343,6 +344,7 @@ pub fn play_sound(_sound: &str) {
 
 /// Send a desktop notification banner.
 #[cfg(target_os = "macos")]
+#[allow(clippy::too_many_arguments)]
 pub fn send_banner(
     title: &str,
     message: &str,

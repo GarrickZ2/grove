@@ -418,7 +418,11 @@ fn compute_popover_position(app: &AppHandle, anchor: Option<(f64, f64)>) -> Opti
 /// Switch the tray icon. Safe to call at any point after `init()`.
 pub fn update_tray_icon(app: &AppHandle, is_light: bool) {
     if let Some(tray) = app.tray_by_id("grove-tray") {
-        let bytes = if is_light { TRAY_ICON_LIGHT_BYTES } else { TRAY_ICON_BYTES };
+        let bytes = if is_light {
+            TRAY_ICON_LIGHT_BYTES
+        } else {
+            TRAY_ICON_BYTES
+        };
         if let Ok(icon) = Image::from_bytes(bytes) {
             let _ = tray.set_icon(Some(icon));
         }
@@ -443,7 +447,11 @@ fn set_dock_icon(is_light: bool) {
         include_bytes!("../../src-tauri/icons/icon.icns")
     };
 
-    let tmp = if is_light { "/tmp/.grove_dock_light.icns" } else { "/tmp/.grove_dock_dark.icns" };
+    let tmp = if is_light {
+        "/tmp/.grove_dock_light.icns"
+    } else {
+        "/tmp/.grove_dock_dark.icns"
+    };
     if std::fs::write(tmp, bytes).is_err() {
         return;
     }
@@ -451,7 +459,9 @@ fn set_dock_icon(is_light: bool) {
 
     unsafe {
         // Build NSString path
-        let Some(str_cls) = AnyClass::get("NSString") else { return };
+        let Some(str_cls) = AnyClass::get("NSString") else {
+            return;
+        };
         let path_obj: *mut AnyObject = msg_send![str_cls, alloc];
         let path_obj: *mut AnyObject = msg_send![path_obj, initWithUTF8String: cpath.as_ptr()];
         if path_obj.is_null() {
@@ -572,10 +582,20 @@ fn resolve_current_theme_is_light() -> bool {
         _ => {
             // auto — ask the system (approximate: default to dark if unknown)
             let dark = crate::theme::detect_system_theme();
-            if dark { config.theme.dark_theme.clone() } else { config.theme.light_theme.clone() }
+            if dark {
+                config.theme.dark_theme.clone()
+            } else {
+                config.theme.light_theme.clone()
+            }
         }
     };
     // Built-in light themes
-    matches!(theme_id.as_str(), "light" | "solarized-light" | "github-light")
-        || config.theme.custom_themes.iter().any(|t| t.id == theme_id && t.is_light)
+    matches!(
+        theme_id.as_str(),
+        "light" | "solarized-light" | "github-light"
+    ) || config
+        .theme
+        .custom_themes
+        .iter()
+        .any(|t| t.id == theme_id && t.is_light)
 }

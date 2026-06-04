@@ -156,8 +156,10 @@ fn level_to_string(level: NotificationLevel) -> String {
     }
 }
 
+#[cfg(feature = "gui")]
 use axum::extract::Query;
 
+#[cfg(feature = "gui")]
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GuiOpenTaskQuery {
@@ -166,35 +168,29 @@ pub struct GuiOpenTaskQuery {
     pub chat_id: Option<String>,
 }
 
-pub async fn handle_gui_open_task(
-    Query(q): Query<GuiOpenTaskQuery>,
-) -> StatusCode {
-
+#[cfg(feature = "gui")]
+pub async fn handle_gui_open_task(Query(q): Query<GuiOpenTaskQuery>) -> StatusCode {
     // 广播 RadioEvent 焦点切换事件，使得所有连接的 Grove Web 网页端以及移动端客户端都能自动完成跳转！
-    let target = q.chat_id.clone().filter(|s| !s.is_empty()).map(|chat_id| {
-        super::walkie_talkie::TargetMode::Chat { chat_id }
+    let target = q
+        .chat_id
+        .clone()
+        .filter(|s| !s.is_empty())
+        .map(|chat_id| super::walkie_talkie::TargetMode::Chat { chat_id });
+    super::walkie_talkie::broadcast_radio_event(super::walkie_talkie::RadioEvent::FocusTask {
+        project_id: q.project_id.clone(),
+        task_id: q.task_id.clone(),
+        target,
     });
-    super::walkie_talkie::broadcast_radio_event(
-        super::walkie_talkie::RadioEvent::FocusTask {
-            project_id: q.project_id.clone(),
-            task_id: q.task_id.clone(),
-            target,
-        }
-    );
 
     #[cfg(feature = "gui")]
     if let Some(app) = crate::cli::gui::TAURI_APP.get() {
-        let _ = crate::tray::tray_open_task(
-            app.clone(),
-            q.project_id,
-            q.task_id,
-            q.chat_id,
-        );
+        let _ = crate::tray::tray_open_task(app.clone(), q.project_id, q.task_id, q.chat_id);
     }
 
     StatusCode::OK
 }
 
+#[cfg(feature = "gui")]
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GuiResolvePermissionQuery {
@@ -205,18 +201,15 @@ pub struct GuiResolvePermissionQuery {
 }
 
 /// POST /gui/resolve-permission — handle permission response from native macOS action button
+#[cfg(feature = "gui")]
 pub async fn handle_gui_resolve_permission(
     Query(q): Query<GuiResolvePermissionQuery>,
 ) -> StatusCode {
     #[cfg(feature = "gui")]
     {
-        let _ = crate::tray::tray_resolve_permission(
-            q.project_id,
-            q.task_id,
-            q.chat_id,
-            q.option_id,
-        );
-        return StatusCode::OK;
+        let _ =
+            crate::tray::tray_resolve_permission(q.project_id, q.task_id, q.chat_id, q.option_id);
+        StatusCode::OK
     }
     #[cfg(not(feature = "gui"))]
     {

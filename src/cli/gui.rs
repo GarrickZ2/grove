@@ -773,35 +773,26 @@ pub async fn execute(port: u16, remote_url: Option<String>) {
 }
 
 fn handle_grove_deep_link(app: &tauri::AppHandle, url_str: &str) {
-    let Ok(parsed_url) = url::Url::parse(url_str) else { return; };
-    
-    let query: std::collections::HashMap<_, _> = parsed_url
-        .query_pairs()
-        .into_owned()
-        .collect();
+    let Ok(parsed_url) = url::Url::parse(url_str) else {
+        return;
+    };
+
+    let query: std::collections::HashMap<_, _> = parsed_url.query_pairs().into_owned().collect();
 
     let project_id = query.get("projectId").cloned().unwrap_or_default();
     let task_id = query.get("taskId").cloned().unwrap_or_default();
     let chat_id = query.get("chatId").cloned().filter(|s| !s.is_empty());
 
     if parsed_url.host_str() == Some("open-task") {
-        if let Err(e) = crate::tray::tray_open_task(
-            app.clone(), 
-            project_id, 
-            task_id, 
-            chat_id
-        ) {
+        if let Err(e) = crate::tray::tray_open_task(app.clone(), project_id, task_id, chat_id) {
             eprintln!("[DeepLink] Open task navigation failed: {}", e);
         }
     } else if parsed_url.host_str() == Some("resolve-permission") {
         let option_id = query.get("optionId").cloned().unwrap_or_default();
         if let Some(ref cid) = chat_id {
-            if let Err(e) = crate::tray::tray_resolve_permission(
-                project_id, 
-                task_id, 
-                cid.clone(), 
-                option_id
-            ) {
+            if let Err(e) =
+                crate::tray::tray_resolve_permission(project_id, task_id, cid.clone(), option_id)
+            {
                 eprintln!("[DeepLink] Resolve permission failed: {}", e);
             }
         }
