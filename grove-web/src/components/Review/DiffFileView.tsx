@@ -1489,6 +1489,7 @@ export function DiffFileView({
                         return content.trim()
                           ? previewRenderer.renderFull({
                               content,
+                              fileName: file.new_path,
                               onImageClick: setLightboxUrl,
                               onSvgClick: setLightboxSvg,
                               previewComment: previewRenderer.supportsComments !== false && projectId && taskId
@@ -1504,6 +1505,7 @@ export function DiffFileView({
                         previewRenderer
                           ? previewRenderer.renderFull({
                               content: fullFileContent,
+                              fileName: file.new_path,
                               onImageClick: setLightboxUrl,
                               onSvgClick: setLightboxSvg,
                               previewComment: previewRenderer.supportsComments !== false && projectId && taskId
