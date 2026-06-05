@@ -4924,6 +4924,12 @@ const BUILTIN_ACP_AGENTS: &[BuiltinAcpAgent] = &[
         icon_id: "trae",
         aliases: &[],
     },
+    BuiltinAcpAgent {
+        id: "hermes",
+        display_name: "Hermes",
+        icon_id: "hermes",
+        aliases: &[],
+    },
 ];
 
 pub fn builtin_acp_agents() -> &'static [BuiltinAcpAgent] {
@@ -5016,6 +5022,7 @@ fn builtin_acp_unavailable_reason(agent_name: &str) -> Option<String> {
         "opencode" => missing_command("opencode"),
         "qwen" => missing_command("qwen"),
         "traecli" => missing_command("traecli"),
+        "hermes" => missing_command("hermes"),
         _ => Some(format!("unsupported agent: {agent_name}")),
     }
 }
@@ -5172,6 +5179,19 @@ pub fn resolve_agent(agent_name: &str) -> Option<ResolvedAgent> {
                 agent_type: "local".into(),
                 agent_name: "cursor".into(),
                 command: command.into(),
+                args: vec!["acp".into()],
+                url: None,
+                auth_header: None,
+            });
+        }
+        Some("hermes") => {
+            if !command_exists("hermes") {
+                return None;
+            }
+            return Some(ResolvedAgent {
+                agent_type: "local".into(),
+                agent_name: "hermes".into(),
+                command: "hermes".into(),
                 args: vec!["acp".into()],
                 url: None,
                 auth_header: None,
