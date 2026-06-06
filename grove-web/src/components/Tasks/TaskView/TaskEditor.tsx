@@ -42,6 +42,7 @@ import type { DirEntry } from "../../../api";
 import { FileContextMenu, type ContextMenuPosition, type ContextMenuTarget } from "./FileContextMenu";
 import { ConfirmDialog } from "../../Dialogs/ConfirmDialog";
 import { useCommand, useDefineCommand, useContextKey } from "../../../keyboard";
+import "./task-editor.css";
 
 interface TaskEditorProps {
   projectId: string;
@@ -525,6 +526,71 @@ export function TaskEditor({ projectId, taskId, onClose, fullscreen = false, onT
   }, [theme, monacoInstance]);
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
   const [fileTreeVisible, setFileTreeVisible] = useState(true);
+
+  // Resizable file tree sidebar width (desktop only — mobile uses fixed overlay).
+  // Persisted per task so reopening the panel keeps the user's layout.
+  const DEFAULT_FILE_TREE_WIDTH = 250;
+  const SIDEBAR_MIN_WIDTH = 180;
+  const SIDEBAR_MAX_RATIO = 0.5;
+  const fileTreeWidthStorageKey = `grove:editor-file-tree-width:${projectId}:${taskId}`;
+
+  const [fileTreeWidth, setFileTreeWidth] = useState<number>(() => {
+    try {
+      const raw = localStorage.getItem(fileTreeWidthStorageKey);
+      if (!raw) return DEFAULT_FILE_TREE_WIDTH;
+      const parsed = JSON.parse(raw) as { width?: number };
+      const w = parsed.width;
+      return typeof w === 'number' && Number.isFinite(w) && w >= SIDEBAR_MIN_WIDTH
+        ? w
+        : DEFAULT_FILE_TREE_WIDTH;
+    } catch {
+      return DEFAULT_FILE_TREE_WIDTH;
+    }
+  });
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(
+        fileTreeWidthStorageKey,
+        JSON.stringify({ width: Math.round(fileTreeWidth) }),
+      );
+    } catch {
+      // ignore storage errors
+    }
+  }, [fileTreeWidth, fileTreeWidthStorageKey]);
+
+  const clampFileTreeWidth = (value: number, layoutWidth: number): number => {
+    const max = Math.max(SIDEBAR_MIN_WIDTH, Math.floor(layoutWidth * SIDEBAR_MAX_RATIO));
+    return Math.min(max, Math.max(SIDEBAR_MIN_WIDTH, value));
+  };
+
+  const startFileTreeResize = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    const layoutEl = event.currentTarget.parentElement;
+    if (!layoutEl) return;
+    const layoutWidth = layoutEl.getBoundingClientRect().width;
+    if (layoutWidth <= 0) return;
+    const startX = event.clientX;
+    const startWidth = fileTreeWidth;
+
+    const handlePointerMove = (moveEvent: PointerEvent) => {
+      const next = clampFileTreeWidth(
+        startWidth + (moveEvent.clientX - startX),
+        layoutWidth,
+      );
+      setFileTreeWidth(next);
+    };
+    const handlePointerUp = () => {
+      document.body.classList.remove('grove-resizing');
+      document.removeEventListener('pointermove', handlePointerMove);
+      document.removeEventListener('pointerup', handlePointerUp);
+    };
+    // While dragging, disable pointer events on iframes so the drag doesn't
+    // stutter when crossing an embedded preview. See index.css body.grove-resizing.
+    document.body.classList.add('grove-resizing');
+    document.addEventListener('pointermove', handlePointerMove);
+    document.addEventListener('pointerup', handlePointerUp);
+  }, [fileTreeWidth]);
   const [fileContent, setFileContent] = useState<string>('');
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -1118,7 +1184,7 @@ export function TaskEditor({ projectId, taskId, onClose, fullscreen = false, onT
               zIndex: 20,
               boxShadow: '4px 0 16px rgba(0,0,0,0.25)',
             } : {
-              width: 250,
+              width: fileTreeWidth,
             }}
           >
             {/* Collapse button inside sidebar header */}
@@ -1156,6 +1222,19 @@ export function TaskEditor({ projectId, taskId, onClose, fullscreen = false, onT
               onUploadFile={handleUploadFile}
             />
           </div>
+        )}
+
+        {/* Resizer between file tree sidebar and editor area (desktop only) */}
+        {!isMobile && fileTreeVisible && (
+          <div
+            className="editor-resizer"
+            onPointerDown={startFileTreeResize}
+            onDoubleClick={() => setFileTreeWidth(DEFAULT_FILE_TREE_WIDTH)}
+            role="separator"
+            aria-orientation="vertical"
+            aria-label="Resize file tree"
+            title="Drag to resize · Double-click to reset"
+          />
         )}
 
         {/* Editor area */}
