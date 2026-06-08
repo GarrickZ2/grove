@@ -53,7 +53,7 @@ export function MobileDrawer({ isOpen, onClose, children }: MobileDrawerProps) {
             animate={{ x: 0 }}
             exit={{ x: "-100%" }}
             transition={{ type: "spring", damping: 30, stiffness: 300 }}
-            className="fixed inset-y-0 left-0 z-50 w-72 bg-[var(--color-bg)] border-r border-[var(--color-border)] flex flex-col"
+            className="fixed inset-y-0 left-0 z-50 w-72 bg-[var(--color-bg)] border-r border-[var(--color-border)] flex flex-col pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)] pl-[env(safe-area-inset-left)]"
           >
             {/* Close button */}
             <div className={`flex items-center justify-end px-4 ${shouldAvoidTrafficLights ? "h-[56px] pt-[14px]" : "h-12"}`}>

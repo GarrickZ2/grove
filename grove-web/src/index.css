@@ -47,6 +47,38 @@ textarea,
   -webkit-user-select: text;
 }
 
+/* App shell height. In a normal browser tab `100dvh` is correct (it shrinks
+   with the URL bar, unlike `100vh`). But in an installed/standalone iOS PWA
+   with viewport-fit=cover, `100dvh` resolves to the screen height MINUS the
+   top safe-area inset, so the app fails to reach the physical bottom and a
+   blank strip shows there. `100vh` is the true full screen in standalone.
+   CRITICAL: html/body/#root are `height:100%; overflow:hidden` — in standalone
+   that `100%` is the same short viewport, so it clips the shell no matter what
+   height the shell itself uses. The full-screen height must be applied up the
+   whole chain; the shell then just fills its (now full-height) parent. The
+   shell's own top safe-area padding insets the content correctly. */
+.grove-app-shell {
+  height: 100dvh;
+}
+@media (display-mode: standalone) {
+  html,
+  body,
+  #root {
+    height: 100vh;
+  }
+  .grove-app-shell {
+    height: 100%;
+  }
+}
+html.grove-standalone,
+html.grove-standalone body,
+html.grove-standalone #root {
+  height: 100vh;
+}
+html.grove-standalone .grove-app-shell {
+  height: 100%;
+}
+
 /* Prevent iOS Safari from auto-zooming when focusing an input/textarea
    with font-size < 16px. `max(16px, 1em)` lets larger inputs keep their
    intentional size without squashing them down to 16px, while still
@@ -56,7 +88,10 @@ textarea,
 @media (max-width: 768px) {
   input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not(.compact),
   textarea:not(.compact),
-  select:not(.compact) {
+  select:not(.compact),
+  /* The chat composer is a contentEditable div, not a textarea — it must also
+     meet the 16px threshold or iOS auto-zooms (and the zoom sticks) on focus. */
+  [contenteditable="true"]:not(.compact) {
     font-size: max(16px, 1em);
   }
 }

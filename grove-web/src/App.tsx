@@ -225,19 +225,48 @@ function AppContent() {
     const vv = window.visualViewport;
     const root = document.documentElement;
     const recompute = () => {
+      // The keyboard can only be up if a text field is focused. In a
+      // standalone PWA (viewport-fit=cover) `innerHeight - vv.height` is a
+      // non-zero *static* difference even with the keyboard closed — counting
+      // that as a keyboard inset leaves bottom-anchored UI (the chat composer)
+      // floating well above the bottom, with a large empty gap. Gate on focus
+      // so a closed keyboard always yields 0.
+      const ae = document.activeElement as HTMLElement | null;
+      const editing =
+        !!ae && (ae.tagName === "INPUT" || ae.tagName === "TEXTAREA" || ae.isContentEditable);
       const offset = window.innerHeight - vv.height - vv.offsetTop;
-      root.style.setProperty("--grove-kb-inset", `${offset > 50 ? offset : 0}px`);
+      root.style.setProperty("--grove-kb-inset", `${editing && offset > 50 ? offset : 0}px`);
     };
     vv.addEventListener("resize", recompute);
     vv.addEventListener("scroll", recompute);
     window.addEventListener("resize", recompute);
+    // Recompute on focus changes so the inset drops to 0 the moment the
+    // composer blurs (keyboard dismissed), even if no viewport event fires.
+    window.addEventListener("focusin", recompute);
+    window.addEventListener("focusout", recompute);
     recompute();
     return () => {
       vv.removeEventListener("resize", recompute);
       vv.removeEventListener("scroll", recompute);
       window.removeEventListener("resize", recompute);
+      window.removeEventListener("focusin", recompute);
+      window.removeEventListener("focusout", recompute);
       root.style.removeProperty("--grove-kb-inset");
     };
+  }, []);
+
+  // Tag the document when running as an installed/standalone PWA so the app
+  // shell can use `100vh` instead of `100dvh`. On iOS standalone (viewport-fit
+  // =cover) `100dvh` resolves to the screen height MINUS the top safe-area
+  // inset, leaving an unfilled strip at the physical bottom; `100vh` is the
+  // true full screen there. Browser tabs keep `100dvh` (where `100vh` would
+  // overshoot behind the URL bar). Covers both the standard media query and
+  // iOS's legacy `navigator.standalone`.
+  useEffect(() => {
+    const standalone =
+      window.matchMedia?.("(display-mode: standalone)").matches ||
+      (window.navigator as Navigator & { standalone?: boolean }).standalone === true;
+    document.documentElement.classList.toggle("grove-standalone", !!standalone);
   }, []);
 
   useEffect(() => {
@@ -1194,7 +1223,7 @@ function AppContent() {
   // Mobile layout
   if (isMobile) {
     return (
-      <div className="flex flex-col h-[100dvh] bg-[var(--color-bg)] overflow-hidden">
+      <div className="grove-app-shell flex flex-col bg-[var(--color-bg)] overflow-hidden pt-[env(safe-area-inset-top)]">
         <UpdateBanner />
         <MobileHeader
           onMenuOpen={() => setDrawerOpen(true)}
@@ -1213,7 +1242,7 @@ function AppContent() {
           />
         </MobileDrawer>
 
-        <main className={`relative flex-1 ${(activeItem === "tasks" && tasksMode !== "blitz") || activeItem === "work" ? "overflow-hidden" : "overflow-y-auto"}`}>
+        <main className={`relative min-h-0 flex-1 ${(activeItem === "tasks" && tasksMode !== "blitz") || activeItem === "work" ? "overflow-hidden" : "overflow-y-auto"}`}>
           {/* TasksPage always mounted on mobile too */}
           <div
             className="h-full p-3"
