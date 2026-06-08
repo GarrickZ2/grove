@@ -247,6 +247,7 @@ not need to pass it. All tools operate within the caller's task only.
 
 - grove_agent_spawn:   create a new sibling session and auto-establish caller→child edge
 - grove_agent_send:    deliver a message to a session you have an outgoing edge to
+                       (optional `auto_remind` seconds re-nudges a stalled ally to reply)
 - grove_agent_reply:   reply to a pending message you received
 - grove_agent_contacts: list who you can reach, pending messages, and all spawnable targets
 - grove_agent_capability: inspect models / modes / thought_levels of any session in your task
