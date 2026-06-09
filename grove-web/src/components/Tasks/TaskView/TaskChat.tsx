@@ -4932,12 +4932,19 @@ export function TaskChat({
       return;
     }
 
-    if (
-      (!prompt && attachments.length === 0) ||
-      !wsRef.current ||
-      wsRef.current.readyState !== WebSocket.OPEN
-    )
+    if (!prompt && attachments.length === 0) return;
+    if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
+      // Not connected yet — keep the draft, surface a hint so the user
+      // doesn't think their Enter was eaten. appendSystemMessage dedupes
+      // repeated presses of the same message.
+      setMessages((prev) =>
+        appendSystemMessage(
+          prev,
+          "Waiting for the agent to connect. Your message will be sent once the session is ready — try again in a moment.",
+        ),
+      );
       return;
+    }
 
     // Shell mode → send terminal_execute directly (bypasses AI)
     if (isTerminalMode) {
