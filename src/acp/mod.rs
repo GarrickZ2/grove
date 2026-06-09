@@ -104,6 +104,13 @@ pub struct AcpSessionHandle {
     /// the menubar tray can render a real progress bar instead of the
     /// generic pulse strip. None for chats whose agent never emits a plan.
     last_plan: Mutex<Option<(u32, u32)>>,
+    /// Latest pending permission request details (description + options),
+    /// cached at `PermissionRequest` emit time so a one-shot snapshot
+    /// (`GET /api/v1/tray/chats`) can render the request — the `pending_permission`
+    /// field only holds `(id, tx)`, not the human-readable payload. Cleared in
+    /// `respond_permission`. Only meaningful while `has_pending_permission()`
+    /// is true; consumers must gate on that to avoid reading stale data.
+    last_permission_info: Mutex<Option<crate::api::handlers::walkie_talkie::PermissionInfo>>,
     /// agent 在 initialize 响应里声明的登录方法。空 = 未声明 / 不需要。
     /// 收到 `AuthRequired (-32000)` 时,client 用这里的第一个 id 走 `authenticate`。
     pub auth_methods: Mutex<Vec<AuthMethodInfo>>,
@@ -1835,6 +1842,7 @@ pub async fn get_or_start_session(
                     last_assistant_text: Mutex::new(String::new()),
         last_user_prompt: Mutex::new(None),
         last_plan: Mutex::new(None),
+                    last_permission_info: Mutex::new(None),
                     auth_methods: Mutex::new(Vec::new()),
                     pending_auth_retry: Mutex::new(None),
                     pending_auth: Mutex::new(None),
@@ -3620,6 +3628,10 @@ impl AcpSessionHandle {
         let Some((id, tx)) = self.pending_permission.lock().unwrap().take() else {
             return false;
         };
+        // Drop the cached snapshot payload — the request is no longer pending.
+        if let Ok(mut slot) = self.last_permission_info.lock() {
+            *slot = None;
+        }
         let _ = tx.send(option_id.clone());
         self.emit(AcpUpdate::PermissionResponse { id, option_id });
         // Permission gone — announce the post-take status so graph nodes can
@@ -3855,9 +3867,8 @@ impl AcpSessionHandle {
                         description,
                         options,
                         ..
-                    } => (
-                        Some("permission_required"),
-                        Some(PermissionInfo {
+                    } => {
+                        let info = PermissionInfo {
                             description: description.clone(),
                             options: options
                                 .iter()
@@ -3869,8 +3880,15 @@ impl AcpSessionHandle {
                                     }
                                 })
                                 .collect(),
-                        }),
-                    ),
+                        };
+                        // Cache for the one-shot snapshot endpoint; a freshly
+                        // connected phone has no event history to reconstruct
+                        // the pending request from.
+                        if let Ok(mut slot) = self.last_permission_info.lock() {
+                            *slot = Some(info.clone());
+                        }
+                        (Some("permission_required"), Some(info))
+                    }
                     AcpUpdate::SessionEnded => (Some("disconnected"), None),
                     // Plan progress changed — re-emit the chat's current
                     // status so the cached (todo_completed, todo_total) added
@@ -4405,6 +4423,112 @@ pub fn session_exists(key: &str) -> bool {
         .unwrap_or(false)
 }
 
+/// One-shot snapshot of every active chat's status, mirroring the fields a
+/// `RadioEvent::ChatStatus` carries. Used by the tray phone page
+/// (`GET /api/v1/tray/chats`) so a freshly connected phone sees the current
+/// state without waiting for the next live transition.
+///
+/// `message` / context usage are deliberately omitted — they are only
+/// meaningful in the live event stream and the tray panel does not render them.
+pub fn snapshot_active_chats() -> Vec<crate::api::handlers::walkie_talkie::ChatSnapshot> {
+    use crate::api::handlers::walkie_talkie::ChatSnapshot;
+    use std::collections::HashMap;
+
+    let handles: Vec<Arc<AcpSessionHandle>> = match ACP_SESSIONS.read() {
+        Ok(sessions) => sessions.values().cloned().collect(),
+        Err(_) => return Vec::new(),
+    };
+
+    // Lazily cache storage lookups so N sessions in the same project/task don't
+    // re-read the same tables N times.
+    let project_names: HashMap<String, String> = crate::storage::workspace::load_projects()
+        .map(|projs| {
+            projs
+                .into_iter()
+                .map(|p| (crate::storage::workspace::project_hash(&p.path), p.name))
+                .collect()
+        })
+        .unwrap_or_default();
+    // (project_key, task_id) -> task_name
+    let mut task_names: HashMap<(String, String), Option<String>> = HashMap::new();
+    // (project_key, task_id, chat_id) -> (title, agent)
+    let mut chat_info: HashMap<(String, String, String), (String, String)> = HashMap::new();
+    let mut chats_loaded: std::collections::HashSet<(String, String)> =
+        std::collections::HashSet::new();
+
+    let mut out = Vec::new();
+    for handle in handles {
+        let Some(chat_id) = handle.chat_id.clone() else {
+            continue;
+        };
+        let project_key = handle.project_key.clone();
+        let task_id = handle.task_id.clone();
+
+        let task_name = task_names
+            .entry((project_key.clone(), task_id.clone()))
+            .or_insert_with(|| {
+                crate::storage::tasks::load_tasks(&project_key)
+                    .ok()
+                    .and_then(|tasks| tasks.into_iter().find(|t| t.id == task_id).map(|t| t.name))
+            })
+            .clone();
+
+        if chats_loaded.insert((project_key.clone(), task_id.clone())) {
+            if let Ok(chats) = crate::storage::tasks::load_chat_sessions(&project_key, &task_id) {
+                for c in chats {
+                    chat_info.insert(
+                        (project_key.clone(), task_id.clone(), c.id.clone()),
+                        (c.title, c.agent),
+                    );
+                }
+            }
+        }
+        let (chat_title, agent) = chat_info
+            .get(&(project_key.clone(), task_id.clone(), chat_id.clone()))
+            .map(|(t, a)| (Some(t.clone()), Some(a.clone())))
+            .unwrap_or((None, None));
+
+        let status = handle.derive_node_status();
+        let permission = if status == "permission_required" {
+            handle
+                .last_permission_info
+                .lock()
+                .ok()
+                .and_then(|p| p.clone())
+        } else {
+            None
+        };
+        let prompt = if status == "busy" {
+            handle.last_user_prompt.lock().ok().and_then(|p| p.clone())
+        } else {
+            None
+        };
+        let (todo_completed, todo_total) = handle
+            .last_plan
+            .lock()
+            .ok()
+            .and_then(|p| *p)
+            .map(|(c, t)| (Some(c), Some(t)))
+            .unwrap_or((None, None));
+
+        out.push(ChatSnapshot {
+            chat_id,
+            project_id: project_key.clone(),
+            task_id: task_id.clone(),
+            project_name: project_names.get(&project_key).cloned(),
+            task_name,
+            chat_title,
+            agent,
+            status: status.to_string(),
+            permission,
+            prompt,
+            todo_completed,
+            todo_total,
+        });
+    }
+    out
+}
+
 /// Test helper: build an `AcpSessionHandle` wired to a minimal in-process mock
 /// cmd loop so agent_graph integration tests can exercise the real
 /// `send_prompt` / `queue_message` paths without spawning an ACP subprocess.
@@ -4462,6 +4586,7 @@ pub fn new_handle_for_test(
         last_assistant_text: Mutex::new(String::new()),
         last_user_prompt: Mutex::new(None),
         last_plan: Mutex::new(None),
+        last_permission_info: Mutex::new(None),
         auth_methods: Mutex::new(Vec::new()),
         pending_auth_retry: Mutex::new(None),
         pending_auth: Mutex::new(None),

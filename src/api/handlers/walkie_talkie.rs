@@ -193,6 +193,34 @@ pub struct PermissionOptionInfo {
     pub kind: String,
 }
 
+/// One active chat's current state, returned by `GET /api/v1/tray/chats`.
+/// Field set and naming mirror `RadioEvent::ChatStatus` so the tray phone page
+/// can seed its `ChatItem` map identically to how it processes live events.
+#[derive(Debug, Clone, Serialize)]
+pub struct ChatSnapshot {
+    pub chat_id: String,
+    pub project_id: String,
+    pub task_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub project_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub task_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub chat_title: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub agent: Option<String>,
+    /// "idle" | "busy" | "permission_required".
+    pub status: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub permission: Option<PermissionInfo>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub prompt: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub todo_completed: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub todo_total: Option<u32>,
+}
+
 /// Global broadcast channel for radio events.
 /// Desktop Blitz WS clients subscribe to this.
 static RADIO_EVENTS: Lazy<broadcast::Sender<RadioEvent>> = Lazy::new(|| {
@@ -203,6 +231,24 @@ static RADIO_EVENTS: Lazy<broadcast::Sender<RadioEvent>> = Lazy::new(|| {
 /// Broadcast a radio event to all desktop listeners.
 pub fn broadcast_radio_event(event: RadioEvent) {
     let _ = RADIO_EVENTS.send(event);
+}
+
+/// Mirror of the desktop tray's accumulated panel state (Running / NEEDS YOU /
+/// Done with durations + full responses). The desktop tray webview is the only
+/// surface that watches the event stream continuously, so it pushes its state
+/// here; a phone connecting later seeds from this instead of the lossy
+/// ACP-handle snapshot (which has no Done history). `None` until the desktop
+/// pushes (e.g. headless), in which case callers fall back to the snapshot.
+static TRAY_MIRROR: Lazy<std::sync::Mutex<Option<serde_json::Value>>> =
+    Lazy::new(|| std::sync::Mutex::new(None));
+
+/// Drop the mirrored tray state. Called when the radio server stops so the
+/// accumulated panel (which includes full agent responses) doesn't linger in
+/// memory past the phone-sync session.
+pub fn clear_tray_mirror() {
+    if let Ok(mut guard) = TRAY_MIRROR.lock() {
+        *guard = None;
+    }
 }
 
 /// Subscribe to the global radio event stream. The plugin radio bridge uses
@@ -1079,32 +1125,61 @@ fn find_slot_in(
 
 // ─── Radio Server Endpoints ───────────────────────────────────────────────
 
+/// Optional JSON body for `POST /radio/start`. `page` selects which mobile
+/// surface the QR code points at: `"radio"` (default, walkie-talkie) or
+/// `"tray"` (the menubar task panel, served at `/phone-tray`).
+#[derive(Debug, Deserialize, Default)]
+pub struct StartRadioBody {
+    #[serde(default)]
+    pub page: Option<String>,
+}
+
 /// POST /radio/start — Start the independent Radio server, return connection info + QR code
-pub async fn start_radio() -> axum::response::Json<serde_json::Value> {
-    // Check if audio transcription is enabled and configured
-    let audio_settings = crate::storage::ai::load_audio_global();
-    if !audio_settings.enabled {
-        return axum::response::Json(serde_json::json!({
-            "error": "transcribe_not_configured",
-            "message": "Audio transcription is not enabled. Please enable it in Settings → AI → Audio first.",
-        }));
-    }
-    let providers = crate::storage::ai::load_providers();
-    let has_transcribe = providers.providers.iter().any(|p| {
-        p.id == audio_settings.transcribe_provider || p.name == audio_settings.transcribe_provider
-    });
-    if !has_transcribe {
-        return axum::response::Json(serde_json::json!({
-            "error": "transcribe_not_configured",
-            "message": "Audio transcription provider is not configured. Please set up a provider in Settings → AI → Audio first.",
-        }));
+pub async fn start_radio(
+    body: Option<axum::Json<StartRadioBody>>,
+) -> axum::response::Json<serde_json::Value> {
+    let page = body
+        .and_then(|axum::Json(b)| b.page)
+        .unwrap_or_else(|| "radio".to_string());
+    // Audio transcription is only needed by the walkie-talkie surface. The tray
+    // task panel is read + permission-resolve only, so skip the gate for it.
+    if page != "tray" {
+        // Check if audio transcription is enabled and configured
+        let audio_settings = crate::storage::ai::load_audio_global();
+        if !audio_settings.enabled {
+            return axum::response::Json(serde_json::json!({
+                "error": "transcribe_not_configured",
+                "message": "Audio transcription is not enabled. Please enable it in Settings → AI → Audio first.",
+            }));
+        }
+        let providers = crate::storage::ai::load_providers();
+        let has_transcribe = providers.providers.iter().any(|p| {
+            p.id == audio_settings.transcribe_provider
+                || p.name == audio_settings.transcribe_provider
+        });
+        if !has_transcribe {
+            return axum::response::Json(serde_json::json!({
+                "error": "transcribe_not_configured",
+                "message": "Audio transcription provider is not configured. Please set up a provider in Settings → AI → Audio first.",
+            }));
+        }
     }
 
     match crate::api::radio_server::start().await {
         Ok(info) => {
             let lan_ip = crate::api::get_lan_ip();
             let host = lan_ip.unwrap_or_else(|| "localhost".to_string());
-            let url = format!("https://{}:{}/#token={}", host, info.port, info.token);
+            // Path-based surface selection: the tray panel lives at /phone-tray,
+            // the walkie-talkie at the SPA root. Both carry the session token in
+            // the URL hash (kept client-side, never sent to the server).
+            let url = if page == "tray" {
+                format!(
+                    "https://{}:{}/phone-tray#token={}",
+                    host, info.port, info.token
+                )
+            } else {
+                format!("https://{}:{}/#token={}", host, info.port, info.token)
+            };
 
             // Generate QR code as SVG
             let qr_svg = match qrcode::QrCode::new(&url) {
@@ -1159,6 +1234,130 @@ pub async fn radio_status() -> axum::response::Json<serde_json::Value> {
         None => axum::response::Json(serde_json::json!({
             "running": false,
         })),
+    }
+}
+
+// ─── Tray Phone Panel Endpoints (served by radio_server) ───────────────────
+
+/// GET /api/v1/tray/chats — Seed state for a freshly connected phone. Returns
+/// the desktop tray's mirrored panel (full Running / NEEDS YOU / Done with
+/// durations + responses) when available, otherwise falls back to the
+/// ACP-handle snapshot (running / permission only, no Done history).
+pub async fn get_tray_chats() -> axum::response::Json<serde_json::Value> {
+    if let Ok(guard) = TRAY_MIRROR.lock() {
+        if let Some(state) = guard.as_ref() {
+            // Only let the mirror win when it actually has entries — an empty
+            // mirror (desktop just launched / cleared its Done list) must not
+            // shadow live sessions the ACP snapshot can still surface.
+            let non_empty = state
+                .get("chats")
+                .and_then(|c| c.as_array())
+                .map(|a| !a.is_empty())
+                .unwrap_or(false);
+            if non_empty {
+                return axum::response::Json(state.clone());
+            }
+        }
+    }
+    let chats = crate::acp::snapshot_active_chats();
+    axum::response::Json(serde_json::json!({ "chats": chats }))
+}
+
+/// POST /api/v1/tray/state — The desktop tray webview mirrors its accumulated
+/// panel state here (debounced) so a later phone connect can seed from it.
+/// Body is `{ chats: ChatItem[] }`, stored opaquely and returned verbatim by
+/// `get_tray_chats`.
+pub async fn post_tray_state(
+    axum::Json(body): axum::Json<serde_json::Value>,
+) -> axum::http::StatusCode {
+    // Reject anything that isn't a `{ chats: [...] }` envelope so malformed
+    // payloads can't be stored and echoed back to a phone's seed loop.
+    if body.get("chats").and_then(|c| c.as_array()).is_none() {
+        return axum::http::StatusCode::BAD_REQUEST;
+    }
+    if let Ok(mut guard) = TRAY_MIRROR.lock() {
+        *guard = Some(body);
+    }
+    axum::http::StatusCode::NO_CONTENT
+}
+
+/// Body for `POST /api/v1/tray/resolve-permission`.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TrayResolvePermissionBody {
+    pub project_id: String,
+    pub task_id: String,
+    pub chat_id: String,
+    pub option_id: String,
+}
+
+/// POST /api/v1/tray/resolve-permission — Approve/deny a pending permission from
+/// the tray phone page. The desktop tray uses the `tray_resolve_permission`
+/// Tauri command; phones have no Tauri bridge, so they hit this HTTP route.
+/// Mirrors the command's logic: look up the live ACP session by key and call
+/// `respond_permission(option_id)`.
+pub async fn tray_resolve_permission(
+    axum::Json(body): axum::Json<TrayResolvePermissionBody>,
+) -> axum::response::Json<serde_json::Value> {
+    let session_key = format!("{}:{}:{}", body.project_id, body.task_id, body.chat_id);
+    match crate::acp::get_session_handle(&session_key) {
+        Some(handle) => {
+            if handle.respond_permission(body.option_id) {
+                axum::response::Json(serde_json::json!({ "status": "ok" }))
+            } else {
+                axum::response::Json(
+                    serde_json::json!({ "error": "no pending permission to respond to" }),
+                )
+            }
+        }
+        None => axum::response::Json(
+            serde_json::json!({ "error": "session not found or already exited" }),
+        ),
+    }
+}
+
+/// Body for `POST /api/v1/tray/send-prompt`.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TraySendPromptBody {
+    pub project_id: String,
+    pub task_id: String,
+    pub chat_id: String,
+    pub text: String,
+}
+
+/// POST /api/v1/tray/send-prompt — Send a follow-up prompt to a chat from the
+/// tray panel (desktop popover or phone page). Looks up the live ACP session by
+/// key and dispatches the prompt, tagged with sender "tray". Requires the
+/// session to still be alive (an idle "Done" chat keeps its handle); a chat
+/// whose session already exited returns an error.
+pub async fn tray_send_prompt(
+    axum::Json(body): axum::Json<TraySendPromptBody>,
+) -> axum::response::Json<serde_json::Value> {
+    let text = body.text.trim();
+    if text.is_empty() {
+        return axum::response::Json(serde_json::json!({ "error": "empty prompt" }));
+    }
+    let session_key = format!("{}:{}:{}", body.project_id, body.task_id, body.chat_id);
+    match crate::acp::get_session_handle(&session_key) {
+        Some(handle) => {
+            match handle
+                .send_prompt(
+                    text.to_string(),
+                    vec![],
+                    Some("tray".to_string()),
+                    false,
+                    None,
+                )
+                .await
+            {
+                Ok(_) => axum::response::Json(serde_json::json!({ "status": "ok" })),
+                Err(e) => axum::response::Json(serde_json::json!({ "error": e.to_string() })),
+            }
+        }
+        None => axum::response::Json(
+            serde_json::json!({ "error": "session not found or already exited" }),
+        ),
     }
 }
 

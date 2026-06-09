@@ -72,7 +72,7 @@ export function extractRadioTokenFromUrl(): string | null {
   const hash = window.location.hash;
   if (!hash) return null;
   const match = hash.match(/[#&]token=([^&]*)/);
-  return match ? match[1] : null;
+  return match ? decodeURIComponent(match[1]) : null;
 }
 
 export function getRadioToken(): string | null {
@@ -207,6 +207,17 @@ async function getAuthOnlyHeaders(
 
 /** Append HMAC signature as query params to a WebSocket URL (async). */
 export async function appendHmacToUrl(url: string): Promise<string> {
+  // Radio server mode (phone pages): there is no HMAC secret — auth is a
+  // session Bearer token. WebSocket connections can't set headers, so the
+  // token rides as a `?token=` query param (the radio_server auth middleware
+  // accepts either). Only triggers when a radio token is present, so desktop /
+  // web HMAC behavior below is untouched.
+  const radioToken = getRadioToken();
+  if (radioToken) {
+    const sep = url.includes('?') ? '&' : '?';
+    return `${url}${sep}token=${encodeURIComponent(radioToken)}`;
+  }
+
   // Extract pathname + query for signing. The signature must cover existing
   // query params (e.g. `?session_id=…`) so a MITM can't swap them.
   let pathWithQuery: string;

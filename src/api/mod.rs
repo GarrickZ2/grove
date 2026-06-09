@@ -852,6 +852,18 @@ pub fn create_api_router() -> Router {
         .route(
             "/radio/events/ws",
             get(handlers::walkie_talkie::radio_events_ws_handler),
+        )
+        // Tray composer: send a follow-up prompt to a chat. The phone hits the
+        // same path on the radio server; the desktop tray webview hits it here.
+        .route(
+            "/tray/send-prompt",
+            post(handlers::walkie_talkie::tray_send_prompt),
+        )
+        // Desktop tray mirrors its accumulated panel state here so a phone that
+        // connects later seeds the full Running / NEEDS YOU / Done view.
+        .route(
+            "/tray/state",
+            post(handlers::walkie_talkie::post_tray_state),
         );
 
     #[cfg(feature = "perf-monitor")]
