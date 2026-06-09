@@ -474,6 +474,10 @@ interface ChatListResponse {
 interface CreateChatRequest {
   title?: string;
   agent?: string;
+  /** Optional per-chat launch-mode override ("acp" | "terminal"). Omit to use
+   *  the agent's configured default. Validated server-side against the agent's
+   *  supported_launch_modes. */
+  launch_mode?: string;
 }
 
 interface UpdateChatTitleRequest {
@@ -515,10 +519,11 @@ export async function createChat(
   taskId: string,
   title?: string,
   agent?: string,
+  launchMode?: string,
 ): Promise<ChatSessionResponse> {
   return apiClient.post<CreateChatRequest, ChatSessionResponse>(
     `/api/v1/projects/${projectId}/tasks/${taskId}/chats`,
-    { title, agent }
+    { title, agent, launch_mode: launchMode }
   );
 }
 

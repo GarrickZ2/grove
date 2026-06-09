@@ -81,6 +81,15 @@ pub fn unregister_token(token: &str) -> Option<String> {
     map.remove(token)
 }
 
+/// Remove every token bound to a chat. Terminal-mode (tmux-backed) chats
+/// register a session-scoped token with no WebSocket-drop guard to release it,
+/// so teardown happens by chat id when the chat — and its tmux agent session —
+/// is deleted (see `acp::delete_chat`).
+pub fn unregister_chat(chat_id: &str) {
+    let mut map = token_map().write().expect("token map poisoned");
+    map.retain(|_, bound_chat| bound_chat != chat_id);
+}
+
 fn lookup_token(token: &str) -> Option<String> {
     let map = token_map().read().expect("token map poisoned");
     map.get(token).cloned()

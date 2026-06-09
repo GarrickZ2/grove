@@ -921,6 +921,7 @@ async fn handle_acp_ws(socket: WebSocket, session_key: String, config: AcpStartC
 /// Error type for ACP handler
 pub enum AcpError {
     NotFound(String),
+    BadRequest(String),
     Internal(String),
 }
 
@@ -928,6 +929,7 @@ impl IntoResponse for AcpError {
     fn into_response(self) -> Response {
         match self {
             AcpError::NotFound(msg) => (StatusCode::NOT_FOUND, msg).into_response(),
+            AcpError::BadRequest(msg) => (StatusCode::BAD_REQUEST, msg).into_response(),
             AcpError::Internal(msg) => (StatusCode::INTERNAL_SERVER_ERROR, msg).into_response(),
         }
     }
@@ -959,6 +961,11 @@ pub struct ChatListResponse {
 pub struct CreateChatRequest {
     pub title: Option<String>,
     pub agent: Option<String>,
+    /// Optional per-chat launch-mode override from the New-chat picker. When
+    /// absent the agent's configured default is used. Validated against the
+    /// agent's `supported_launch_modes` so we never persist an unlaunchable
+    /// chat (e.g. "terminal" for an ACP-only agent).
+    pub launch_mode: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -1072,11 +1079,29 @@ pub async fn create_chat(
     // rows under canonical ids; `agent` here can still be a legacy id
     // (claude) since the AgentPicker hasn't been migrated.
     let canonical = crate::storage::agent_supplement::resolve_agent_id(&agent);
-    let launch_mode = crate::storage::installed_agents::get(canonical.as_ref())
+    let default_mode = crate::storage::installed_agents::get(canonical.as_ref())
         .ok()
         .flatten()
         .map(|r| r.launch_mode)
         .unwrap_or_else(|| "acp".to_string());
+    // A per-chat override from the New-chat picker wins over the agent's
+    // configured default, but only if the agent actually supports it — every
+    // agent supports "acp", and the supplement gates "terminal".
+    let launch_mode = match body.launch_mode {
+        Some(req) if req != default_mode => {
+            let supported =
+                crate::storage::agent_supplement::supported_launch_modes(canonical.as_ref());
+            if supported.contains(&req.as_str()) {
+                req
+            } else {
+                return Err(AcpError::BadRequest(format!(
+                    "agent {:?} does not support launch_mode {:?} (supported: {:?})",
+                    agent, req, supported
+                )));
+            }
+        }
+        _ => default_mode,
+    };
     let now = chrono::Utc::now();
     let title = body
         .title
@@ -1189,6 +1214,13 @@ pub async fn delete_chat(
 
     // Kill the ACP session for this chat if running
     let _ = acp::kill_session(&session_key);
+
+    // Kill the tmux-backed terminal session if this chat was ever launched in
+    // terminal mode (no-op otherwise), and release its session-scoped
+    // agent_graph token. Terminal-mode agents live in tmux beyond any single
+    // WebSocket, so chat deletion is where they get reaped.
+    let _ = crate::tmux::kill_session(&crate::tmux::agent_session_name(&chat_id));
+    crate::api::handlers::agent_graph_mcp::unregister_chat(&chat_id);
 
     // Remove chat entry from chats.toml
     tasks::delete_chat_session(&project_key, &task_id, &chat_id)
