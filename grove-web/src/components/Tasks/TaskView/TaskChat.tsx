@@ -129,6 +129,7 @@ import {
 import type { ChatSessionResponse, CustomAgentServer } from "../../../api";
 import { listProjects, getProject, listResources, type ProjectListItem } from "../../../api/projects";
 import { openExternalUrl } from "../../../utils/openExternal";
+import { ansiToHtml, stripAnsi } from "../../../utils/ansi";
 import { useCommand, useContextKey } from "../../../keyboard";
 import "./task-chat.css";
 
@@ -8551,7 +8552,7 @@ const MessageItem = memo(function MessageItem({
     case "terminal_output": {
       const hasExited = message.exitCode !== undefined;
       const isError = hasExited && message.exitCode !== 0;
-      const output = message.chunks.join("");
+      const output = ansiToHtml(message.chunks.join(""));
       return (
         <div className="flex justify-start">
           <div className="max-w-[90%] w-full">
@@ -8563,9 +8564,10 @@ const MessageItem = memo(function MessageItem({
               } bg-[var(--color-bg-secondary)]`}
             >
               {output && (
-                <pre className="px-3 py-2 text-[12px] font-mono text-[var(--color-text-secondary)] whitespace-pre-wrap overflow-x-auto max-h-[300px] overflow-y-auto">
-                  {output}
-                </pre>
+                <pre
+                  className="px-3 py-2 text-[12px] font-mono text-[var(--color-text-secondary)] whitespace-pre-wrap overflow-x-auto max-h-[300px] overflow-y-auto"
+                  dangerouslySetInnerHTML={{ __html: output }}
+                />
               )}
               {hasExited && (
                 <div
@@ -9267,7 +9269,7 @@ function summarizeToolSection(tools: ToolSectionItem[], sectionFinished: boolean
     return {
       key: tool.message.id,
       kind,
-      label: truncateChipLabel(derived),
+      label: truncateChipLabel(stripAnsi(derived)),
       rawTitle: tool.message.title,
       content: tool.message.content ?? "",
       locations: tool.message.locations ?? [],
@@ -9561,9 +9563,12 @@ function ActionChipList({
                 className="rounded-lg border border-[color-mix(in_srgb,var(--color-border)_60%,transparent)] bg-[color-mix(in_srgb,var(--color-bg-secondary)_58%,transparent)] px-3 py-2"
               >
                 <div className="flex items-center gap-2 mb-1.5">
-                  <span className="text-[10px] uppercase tracking-[0.08em] text-[var(--color-text-muted)]">
-                    {item.rawTitle || "action"}
-                  </span>
+                  <span
+                    className="text-[10px] uppercase tracking-[0.08em] text-[var(--color-text-muted)]"
+                    dangerouslySetInnerHTML={{
+                      __html: ansiToHtml(item.rawTitle) || "action",
+                    }}
+                  />
                   <button
                     type="button"
                     onClick={(e) => {
@@ -9582,9 +9587,12 @@ function ActionChipList({
                       <MarkdownRenderer content={item.content} />
                     </div>
                   ) : (
-                    <pre className="text-[11px] leading-[1.45] font-mono whitespace-pre-wrap break-all text-[var(--color-text)] m-0">
-                      {item.content || "(no output)"}
-                    </pre>
+                    <pre
+                      className="text-[11px] leading-[1.45] font-mono whitespace-pre-wrap break-all text-[var(--color-text)] m-0"
+                      dangerouslySetInnerHTML={{
+                        __html: ansiToHtml(item.content) || "(no output)",
+                      }}
+                    />
                   );
                   return (
                     <div className="space-y-2">
