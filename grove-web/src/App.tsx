@@ -40,6 +40,7 @@ import { agentOptions } from "./components/ui";
 import { useIsMobile, buildCommands, useAddLibraryHashHandler } from "./hooks";
 import type { UseCommandsOptions } from "./hooks/useCommands";
 import { REPO_NAV_IDS, STUDIO_NAV_IDS } from "./data/nav";
+import { readLastProjectView, writeLastProjectView } from "./utils/lastProjectView";
 import { useCommand, useContextKey, commandRegistry } from "./keyboard";
 import { ActionCommandPalette } from "./components/Palette/ActionCommandPalette";
 
@@ -365,6 +366,33 @@ function AppContent() {
     setNavigationData(null);
   }, []);
 
+  // Restore the last view the user was on for a given project. Falls back to
+  // "dashboard" if nothing is recorded. We don't validate the saved view
+  // against the project's nav set — renderContent handles unknown views by
+  // falling through to its "coming soon" placeholder, but in practice the
+  // sidebar won't navigate to a view that isn't in the current nav set.
+  const navigateToProjectLastView = useCallback(
+    (projectId: string) => {
+      const saved = readLastProjectView(projectId);
+      if (saved) {
+        setActiveItem(saved);
+        setNavigationData(null);
+      } else {
+        navigateToProjectDashboard();
+      }
+    },
+    [navigateToProjectDashboard],
+  );
+
+  // Persist the current top-level view per project. Sub-state (selected
+  // taskId / chatId / sketch tab) is restored by per-(project,task)
+  // mechanisms like readLastActiveTab; this only covers the sidebar-level
+  // page the user is on.
+  useEffect(() => {
+    if (!selectedProject) return;
+    writeLastProjectView(selectedProject.id, activeItem);
+  }, [selectedProject, activeItem]);
+
   // Initialize agent configuration on app startup
   useEffect(() => {
     const initializeAgentConfig = async () => {
@@ -498,9 +526,11 @@ function AppContent() {
     setActiveItem("projects");
   };
 
-  // Auto-navigate to dashboard when a project is auto-selected via currentProjectId.
-  // Uses the documented "Adjusting state on prop change" pattern (compare to a
-  // memoised marker stored in state) so we don't setState inside an effect.
+  // Auto-navigate when a project is auto-selected via currentProjectId.
+  // Restore the user's last view for that project, or fall back to the
+  // dashboard if they've never visited it. Uses the documented
+  // "Adjusting state on prop change" pattern (compare to a memoised marker
+  // stored in state) so we don't setState inside an effect.
   // https://react.dev/reference/react/useState#storing-information-from-previous-renders
   const [autoNavigatedFor, setAutoNavigatedFor] = useState<string | null>(null);
   if (
@@ -511,7 +541,8 @@ function AppContent() {
   ) {
     setAutoNavigatedFor(currentProjectId);
     setHasExitedWelcome(true);
-    setActiveItem("dashboard");
+    const saved = readLastProjectView(currentProjectId);
+    setActiveItem(saved ?? "dashboard");
   }
 
   // Tray popover navigation. Rust emits `tray:navigate` with a route and
@@ -654,10 +685,20 @@ function AppContent() {
     setNavigationData(data ?? null);
   };
 
-  // When project changes via sidebar ProjectSelector, go back to dashboard
-  const handleProjectSwitch = useCallback(() => {
-    navigateToProjectDashboard();
-  }, [navigateToProjectDashboard]);
+  // When project changes via sidebar ProjectSelector, restore the user's
+  // last view for that project (falls back to dashboard if the saved view
+  // isn't valid for the new project type).
+  const handleProjectSwitch = useCallback(
+    (newProjectId?: string) => {
+      const targetId = newProjectId ?? selectedProject?.id ?? null;
+      if (targetId) {
+        navigateToProjectLastView(targetId);
+      } else {
+        navigateToProjectDashboard();
+      }
+    },
+    [navigateToProjectLastView, navigateToProjectDashboard, selectedProject?.id],
+  );
 
   // Task palette: navigate to tasks page and select the task
   const handleTaskSelectFromPalette = useCallback((task: Task) => {

@@ -62,7 +62,7 @@ interface SidebarProps {
   onNavigate?: (page: string, data?: Record<string, unknown>) => void;
   tasksMode: TasksMode;
   onTasksModeChange: (mode: TasksMode) => void;
-  onProjectSwitch?: () => void;
+  onProjectSwitch?: (projectId?: string) => void;
   /** Open command palette (⌘K) */
   onSearch?: () => void;
   /** When true, renders sidebar content without the outer motion.aside wrapper (for use inside MobileDrawer) */

@@ -10,7 +10,7 @@ interface ProjectSelectorProps {
   collapsed: boolean;
   onManageProjects?: (tab?: "coding" | "studio") => void;
   onAddProject?: (studioMode?: "studio") => void;
-  onProjectSwitch?: () => void;
+  onProjectSwitch?: (projectId?: string) => void;
 }
 
 function TypeFilterTabs({ active, onChange }: { active: "coding" | "studio"; onChange: (tab: "coding" | "studio") => void }) {
@@ -148,7 +148,7 @@ export function ProjectSelector({ collapsed, onManageProjects, onAddProject, onP
     const switched = selectedProject?.id !== project.id;
     selectProject(project);
     closeDropdown();
-    if (switched) onProjectSwitch?.();
+    if (switched) onProjectSwitch?.(project.id);
   };
 
   const moveActiveProject = (direction: 1 | -1) => {
