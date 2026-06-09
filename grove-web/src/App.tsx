@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
+import type { ShortcutHandler } from "@tauri-apps/plugin-global-shortcut";
 import { Sidebar } from "./components/Layout/Sidebar";
 import { PluginFrame } from "./components/Plugins/PluginFrame";
 import { listPlugins, type Plugin } from "./api/plugins";
@@ -45,6 +46,71 @@ import { useCommand, useContextKey, commandRegistry } from "./keyboard";
 import { ActionCommandPalette } from "./components/Palette/ActionCommandPalette";
 
 export type TasksMode = "zen" | "blitz";
+
+// Register a process-global hotkey that survives a webview reload (Cmd+R).
+// The native registration lives on the Rust side and lingers after a reload
+// while its JS callback dies, so the next mount's register() throws "already
+// registered" and the fresh callback never binds (the shortcut goes dead). We
+// catch that, clear the stale binding, and retry once. Returns a cleanup that
+// unregisters on unmount; a no-op outside Tauri or when the shortcut is empty.
+function registerGlobalShortcut(
+  displayShortcut: string,
+  handler: ShortcutHandler,
+  label: string,
+): () => void {
+  const isTauri = !!((window as Window & {
+    __TAURI__?: unknown;
+    __TAURI_INTERNALS__?: unknown;
+  }).__TAURI__ || (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__);
+  if (!isTauri || !displayShortcut) return () => {};
+
+  const tauriShortcut = displayShortcut
+    .split("+")
+    .map((part) => part === "Cmd" ? "CommandOrControl" : part === "Ctrl" ? "Control" : part)
+    .join("+");
+  let registered = false;
+  let disposed = false;
+  const unregisterShortcut = () => {
+    import("@tauri-apps/plugin-global-shortcut")
+      .then(({ unregister }) => unregister(tauriShortcut))
+      .catch((err) => console.error(`Failed to unregister ${label} shortcut:`, err));
+  };
+
+  import("@tauri-apps/plugin-global-shortcut")
+    .then(async ({ register, unregister }) => {
+      if (disposed) return false;
+      try {
+        await register(tauriShortcut, handler);
+      } catch {
+        // Stale registration from a prior reload blocks us — drop it and retry
+        // once so the live callback actually binds.
+        try {
+          await unregister(tauriShortcut);
+        } catch {
+          // Nothing stale to clear — fall through to the retry.
+        }
+        await register(tauriShortcut, handler);
+      }
+      return true;
+    })
+    .then((didRegister) => {
+      if (!didRegister) return;
+      if (disposed) {
+        unregisterShortcut();
+        return;
+      }
+      registered = true;
+    })
+    .catch((err) => {
+      if (!disposed) console.error(`Failed to register ${label} shortcut:`, err);
+    });
+
+  return () => {
+    disposed = true;
+    if (!registered) return;
+    unregisterShortcut();
+  };
+}
 
 // Main sidebar nav items for Cmd+1-6 and Option+Cmd+Up/Down cycling.
 // "settings" and "projects" are excluded as they are utility pages, not part of the main nav cycle.
@@ -242,53 +308,17 @@ function AppContent() {
   }, []);
 
   useEffect(() => {
-    const isTauri = !!((window as Window & {
-      __TAURI__?: unknown;
-      __TAURI_INTERNALS__?: unknown;
-    }).__TAURI__ || (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__);
-    const shortcut = globalConfig?.web?.show_hide_window_shortcut || "";
-    if (!isTauri || !shortcut) return;
-
-    const tauriShortcut = shortcut
-      .split("+")
-      .map((part) => part === "Cmd" ? "CommandOrControl" : part === "Ctrl" ? "Control" : part)
-      .join("+");
-    let registered = false;
-    let disposed = false;
-    const unregisterShortcut = () => {
-      import("@tauri-apps/plugin-global-shortcut")
-        .then(({ unregister }) => unregister(tauriShortcut))
-        .catch((err) => console.error("Failed to unregister window shortcut:", err));
-    };
-
-    import("@tauri-apps/plugin-global-shortcut")
-      .then(({ register }) => {
-        if (disposed) return false;
-        return register(tauriShortcut, (event) => {
-          if (event.state === "Pressed") {
-            invoke("toggle_main_window_visibility").catch((err) => {
-              console.error("Failed to toggle Grove window:", err);
-            });
-          }
-        }).then(() => true);
-      })
-      .then((didRegister) => {
-        if (!didRegister) return;
-        if (disposed) {
-          unregisterShortcut();
-          return;
+    return registerGlobalShortcut(
+      globalConfig?.web?.show_hide_window_shortcut || "",
+      (event) => {
+        if (event.state === "Pressed") {
+          invoke("toggle_main_window_visibility").catch((err) => {
+            console.error("Failed to toggle Grove window:", err);
+          });
         }
-        registered = true;
-      })
-      .catch((err) => {
-        if (!disposed) console.error("Failed to register window shortcut:", err);
-      });
-
-    return () => {
-      disposed = true;
-      if (!registered) return;
-      unregisterShortcut();
-    };
+      },
+      "window",
+    );
   }, [globalConfig?.web?.show_hide_window_shortcut]);
 
   // Menubar popover global shortcut — parallel to the main window one.
@@ -296,60 +326,25 @@ function AppContent() {
   // skip registration (Tauri's global-shortcut plugin would error
   // anyway; this just keeps the log noise actionable).
   useEffect(() => {
-    const isTauri = !!((window as Window & {
-      __TAURI__?: unknown;
-      __TAURI_INTERNALS__?: unknown;
-    }).__TAURI__ || (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__);
     const shortcut = globalConfig?.notifications?.menubar_shortcut || "";
     const mainShortcut = globalConfig?.web?.show_hide_window_shortcut || "";
-    if (!isTauri || !shortcut) return;
-    if (shortcut === mainShortcut) {
+    if (shortcut && shortcut === mainShortcut) {
       console.warn(
         "[shortcut] menubar_shortcut conflicts with show_hide_window_shortcut — skipping registration",
       );
       return;
     }
-
-    const tauriShortcut = shortcut
-      .split("+")
-      .map((part) => part === "Cmd" ? "CommandOrControl" : part === "Ctrl" ? "Control" : part)
-      .join("+");
-    let registered = false;
-    let disposed = false;
-    const unregisterShortcut = () => {
-      import("@tauri-apps/plugin-global-shortcut")
-        .then(({ unregister }) => unregister(tauriShortcut))
-        .catch((err) => console.error("Failed to unregister menubar shortcut:", err));
-    };
-
-    import("@tauri-apps/plugin-global-shortcut")
-      .then(({ register }) => {
-        if (disposed) return false;
-        return register(tauriShortcut, (event) => {
-          if (event.state === "Pressed") {
-            invoke("toggle_tray_popover_visibility").catch((err) => {
-              console.error("Failed to toggle Grove menubar:", err);
-            });
-          }
-        }).then(() => true);
-      })
-      .then((didRegister) => {
-        if (!didRegister) return;
-        if (disposed) {
-          unregisterShortcut();
-          return;
+    return registerGlobalShortcut(
+      shortcut,
+      (event) => {
+        if (event.state === "Pressed") {
+          invoke("toggle_tray_popover_visibility").catch((err) => {
+            console.error("Failed to toggle Grove menubar:", err);
+          });
         }
-        registered = true;
-      })
-      .catch((err) => {
-        if (!disposed) console.error("Failed to register menubar shortcut:", err);
-      });
-
-    return () => {
-      disposed = true;
-      if (!registered) return;
-      unregisterShortcut();
-    };
+      },
+      "menubar",
+    );
   }, [
     globalConfig?.notifications?.menubar_shortcut,
     globalConfig?.web?.show_hide_window_shortcut,
