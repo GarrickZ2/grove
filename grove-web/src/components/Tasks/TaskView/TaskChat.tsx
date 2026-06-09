@@ -3890,7 +3890,15 @@ export function TaskChat({
           }
           break;
         case "error": {
-          const isStalePermission = msg.message?.includes("No pending permission");
+          const msgText = msg.message ?? "";
+          // The backend surfaces a stale permission click in two flavors —
+          // `respond_permission` returning false ("No pending permission
+          // request") and the live-id mismatch ("Permission request X is no
+          // longer pending"). Both mean the panel we're rendering is gone
+          // server-side; collapse it locally so the user isn't stuck.
+          const isStalePermission =
+            msgText.includes("No pending permission") ||
+            msgText.includes("is no longer pending");
           if (isStalePermission) {
             // The permission we tried to respond to no longer exists on the backend.
             // Resolve all unresolved permissions as cancelled so the UI unblocks.
