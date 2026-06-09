@@ -7859,9 +7859,7 @@ export function TaskChat({
                     <div
                       ref={editableRef}
                       contentEditable={
-                        isConnected &&
-                        !isRemoteSession &&
-                        !activePermissionMessage
+                        !isRemoteSession && !activePermissionMessage
                       }
                       suppressContentEditableWarning
                       onInput={handleInput}
@@ -7883,7 +7881,7 @@ export function TaskChat({
                         isInputExpanded
                           ? "min-h-[32vh] max-h-[56vh]"
                           : "min-h-[56px] max-h-32"
-                      } ${!isConnected || isRemoteSession || activePermissionMessage ? "opacity-50 cursor-not-allowed" : ""} ${
+                      } ${isRemoteSession || activePermissionMessage ? "opacity-50 cursor-not-allowed" : ""} ${
                         isTerminalMode ? "font-mono" : ""
                       }`}
                       style={{
