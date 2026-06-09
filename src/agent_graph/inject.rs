@@ -133,9 +133,13 @@ pub fn build_injected_prompt(
 ) -> String {
     let system_prompt = match (kind, msg_id) {
         (InjectKind::Send, Some(id)) => format!(
-            "From session \"{name}\" (id={sid}). To reply, call the MCP tool \
-             `grove_agent_graph_reply` with msg_id=\"{id}\". Do not reply by sending a \
-             new message; replies are routed by msg_id.",
+            "From session \"{name}\" (id={sid}). IMPORTANT: your reply is delivered \
+             ONLY by calling the reply tool — a plain-text answer is NOT routed back \
+             to the sender and will be lost. Call the MCP tool `graph_reply` (your \
+             client may expose it namespaced, e.g. `grove_agent_graph_reply` or \
+             `mcp__grove_agent__graph_reply`) with msg_id=\"{id}\" and your answer in \
+             the `message` field. Do not reply by sending a new message; replies are \
+             routed by msg_id.",
             name = sender_name,
             sid = sender_chat_id,
         ),
@@ -151,8 +155,10 @@ pub fn build_injected_prompt(
         ),
         (InjectKind::Remind, Some(id)) => format!(
             "REMINDER (not a new request): the user is asking you to look at the \
-             pending message from session \"{name}\" (id={sid}, msg_id={id}). \
-             Reply via `grove_agent_graph_reply` with that msg_id when ready.",
+             pending message from session \"{name}\" (id={sid}, msg_id={id}). When \
+             ready, reply by calling the MCP tool `graph_reply` (may appear as \
+             `grove_agent_graph_reply` / `mcp__grove_agent__graph_reply`) with \
+             msg_id=\"{id}\" — a plain-text answer is not routed back and will be lost.",
             name = sender_name,
             sid = sender_chat_id,
         ),

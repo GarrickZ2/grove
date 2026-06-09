@@ -79,6 +79,16 @@ pub struct SendInput {
     /// session before delivery. Use `grove_agent_capability` to discover valid values.
     #[serde(default)]
     pub config: Option<SendConfig>,
+    /// Opt-in reply-reminder interval, in seconds. When set (> 0), Grove arms a
+    /// detached watchdog after this send: each interval, if the ticket is still
+    /// pending and the ally has gone idle (turn ended → likely stalled, errored,
+    /// or finished without calling the reply tool), it re-injects a `Remind`
+    /// nudge to the ally to call the reply tool. Capped at 3 reminders. The
+    /// pending ticket is **never** auto-cleared — a stuck delegation stays
+    /// visible for a human to investigate. Leave unset (the default) for no
+    /// reminders; this is the caller's call so skills can shape the workflow.
+    #[serde(default)]
+    pub auto_remind: Option<u64>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -187,6 +197,73 @@ pub async fn grove_agent_send(cx: &ToolContext, input: SendInput) -> AgentGraphR
             body_excerpt: None,
         });
         return Err(e);
+    }
+
+    // Opt-in reply-reminder watchdog (see `SendInput::auto_remind`). Off unless the
+    // caller passes `auto_remind > 0`, so default behaviour is unchanged and each
+    // agent/skill decides whether a stalled ally should be nudged. The orchestrator
+    // ends its turn after sending and waits for the ally to call the reply tool; if
+    // the ally finishes, errors, or dies without replying, the ticket lingers. This
+    // watchdog re-injects a `Remind` nudge (idle-gated, capped) but — by design —
+    // never clears the ticket: a delegation that goes unanswered stays visible for a
+    // human to investigate.
+    if let Some(interval_secs) = input.auto_remind.filter(|s| *s > 0) {
+        const MAX_REMINDERS: u32 = 3;
+        // Bound the task's lifetime if the ally stays busy (mid-task) forever, so a
+        // permanently-working ally doesn't keep a watchdog task alive indefinitely.
+        const MAX_REARMS: u32 = 5;
+        let project = caller_project.clone();
+        let task = caller_task.clone();
+        let ally_chat_id = target_chat.id.clone();
+        let watch_msg_id = msg_id.clone();
+        // A `Remind` envelope carries the original sender identity + msg_id so the
+        // ally knows this nudges an existing pending request, not a new one.
+        let reminder = build_injected_prompt(
+            &caller_chat.id,
+            &caller_chat.title,
+            &caller_chat.agent,
+            InjectKind::Remind,
+            "",
+            Some(&watch_msg_id),
+        );
+        tokio::spawn(async move {
+            let interval = Duration::from_secs(interval_secs);
+            let mut sent = 0u32;
+            let mut rearms = 0u32;
+            loop {
+                tokio::time::sleep(interval).await;
+                // Ticket gone (replied or chat deleted) → nothing left to nudge.
+                let still_pending = {
+                    let conn = database::connection();
+                    graph_db::get_pending_message(&conn, &watch_msg_id)
+                        .map(|o| o.is_some())
+                        .unwrap_or(false)
+                };
+                if !still_pending {
+                    return;
+                }
+                // `deliver_user_remind` only delivers when the ally is idle (CAS on
+                // is_busy) and its handle is alive. A busy ally is mid-task, so we
+                // re-arm a bounded number of times rather than interrupt it; a dead
+                // handle also surfaces as an error and is re-armed then dropped.
+                match deliver_user_remind(&project, &task, &ally_chat_id, reminder.clone()).await {
+                    Ok(()) => {
+                        sent += 1;
+                        if sent >= MAX_REMINDERS {
+                            break;
+                        }
+                    }
+                    Err(_) => {
+                        rearms += 1;
+                        if rearms >= MAX_REARMS {
+                            break;
+                        }
+                    }
+                }
+            }
+            // Intentionally leave the pending ticket in place — see the comment on
+            // the watchdog above.
+        });
     }
 
     Ok(SendOutput {
@@ -1207,6 +1284,7 @@ mod tests {
                 message: "hi".into(),
                 duty: None,
                 config: None,
+                auto_remind: None,
             },
         )
         .await
@@ -1227,6 +1305,7 @@ mod tests {
                 message: "hi".into(),
                 duty: Some("x".into()),
                 config: None,
+                auto_remind: None,
             },
         )
         .await
@@ -1248,6 +1327,7 @@ mod tests {
                 message: "hi".into(),
                 duty: Some("x".into()),
                 config: None,
+                auto_remind: None,
             },
         )
         .await
@@ -1273,6 +1353,7 @@ mod tests {
                 message: "hi".into(),
                 duty: None, // 没传 duty 但 B 也没 duty
                 config: None,
+                auto_remind: None,
             },
         )
         .await
@@ -1298,6 +1379,7 @@ mod tests {
                 message: "hi".into(),
                 duty: Some("override".into()),
                 config: None,
+                auto_remind: None,
             },
         )
         .await
@@ -1320,6 +1402,7 @@ mod tests {
                 message: "hi".into(),
                 duty: None,
                 config: None,
+                auto_remind: None,
             },
         )
         .await
@@ -1349,6 +1432,7 @@ mod tests {
                 message: "second".into(),
                 duty: None,
                 config: None,
+                auto_remind: None,
             },
         )
         .await
@@ -1570,6 +1654,7 @@ mod tests {
                 message: "hello from A".into(),
                 duty: None,
                 config: None,
+                auto_remind: None,
             },
         )
         .await
@@ -1630,6 +1715,7 @@ mod tests {
                 message: "queued msg".into(),
                 duty: None,
                 config: None,
+                auto_remind: None,
             },
         )
         .await
@@ -1686,6 +1772,7 @@ mod tests {
                 message: "delayed msg".into(),
                 duty: None,
                 config: None,
+                auto_remind: None,
             },
         )
         .await
