@@ -2,92 +2,126 @@
 
 use axum::{extract::Query, http::StatusCode, Json};
 use serde::{Deserialize, Serialize};
-use std::process::Command;
+use std::io;
+use std::process::{Command, Output};
 
 use crate::api::error::ApiError;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct BrowseFolderResponse {
     pub path: Option<String>,
+    /// `true` when the user dismissed the native dialog. `false` when the
+    /// picker couldn't be spawned at all (e.g. running on a headless host
+    /// without osascript/zenity/kdialog) — the frontend uses this to decide
+    /// whether to fall back to the in-app web picker.
+    #[serde(default)]
+    pub cancelled: bool,
+}
+
+/// Outcome of trying to invoke a native folder picker. Distinguishes
+/// "user cancelled" (the dialog appeared and was dismissed) from
+/// "unavailable" (the picker binary couldn't be spawned at all) so the
+/// frontend can decide whether to fall back to the web picker.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum PickerOutcome {
+    Picked(String),
+    Cancelled,
+    Unavailable,
+}
+
+/// Interpret a child-process result: `Err` (binary missing / not spawnable)
+/// is `Unavailable`; `Ok` with non-zero exit (or zero exit but empty stdout)
+/// is `Cancelled`; `Ok` with a non-empty path on stdout is `Picked`.
+pub(crate) fn classify_picker(spawn: io::Result<Output>) -> PickerOutcome {
+    let output = match spawn {
+        Err(_) => return PickerOutcome::Unavailable,
+        Ok(o) => o,
+    };
+    if !output.status.success() {
+        return PickerOutcome::Cancelled;
+    }
+    let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if path.is_empty() {
+        PickerOutcome::Cancelled
+    } else {
+        PickerOutcome::Picked(path)
+    }
+}
+
+fn response_for(outcome: PickerOutcome) -> Json<BrowseFolderResponse> {
+    match outcome {
+        PickerOutcome::Picked(path) => Json(BrowseFolderResponse {
+            path: Some(path),
+            cancelled: false,
+        }),
+        PickerOutcome::Cancelled => Json(BrowseFolderResponse {
+            path: None,
+            cancelled: true,
+        }),
+        PickerOutcome::Unavailable => Json(BrowseFolderResponse {
+            path: None,
+            cancelled: false,
+        }),
+    }
 }
 
 pub async fn browse_folder() -> Json<BrowseFolderResponse> {
     #[cfg(target_os = "macos")]
     {
-        let output = Command::new("osascript")
-            .arg("-e")
-            .arg("POSIX path of (choose folder with prompt \"Select Git Repository Folder\")")
-            .output();
-
-        if let Ok(output) = output {
-            if output.status.success() {
-                let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
-                if !path.is_empty() {
-                    return Json(BrowseFolderResponse { path: Some(path) });
-                }
-            }
-        }
+        response_for(classify_picker(
+            Command::new("osascript")
+                .arg("-e")
+                .arg("POSIX path of (choose folder with prompt \"Select Git Repository Folder\")")
+                .output(),
+        ))
     }
 
     #[cfg(target_os = "linux")]
     {
-        let output = Command::new("zenity")
-            .args([
-                "--file-selection",
-                "--directory",
-                "--title=Select Git Repository Folder",
-            ])
-            .output();
-
-        if let Ok(output) = output {
-            if output.status.success() {
-                let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
-                if !path.is_empty() {
-                    return Json(BrowseFolderResponse { path: Some(path) });
-                }
-            }
-        }
-
-        let output = Command::new("kdialog")
-            .args([
-                "--getexistingdirectory",
-                ".",
-                "--title",
-                "Select Git Repository Folder",
-            ])
-            .output();
-
-        if let Ok(output) = output {
-            if output.status.success() {
-                let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
-                if !path.is_empty() {
-                    return Json(BrowseFolderResponse { path: Some(path) });
-                }
-            }
-        }
+        // Try zenity first; if it's installed and the user either picked or
+        // cancelled via zenity, honour that result. If zenity is missing,
+        // fall through to kdialog. kdialog's outcome is final.
+        let zenity = classify_picker(
+            Command::new("zenity")
+                .args([
+                    "--file-selection",
+                    "--directory",
+                    "--title=Select Git Repository Folder",
+                ])
+                .output(),
+        );
+        let outcome = if matches!(zenity, PickerOutcome::Unavailable) {
+            classify_picker(
+                Command::new("kdialog")
+                    .args([
+                        "--getexistingdirectory",
+                        ".",
+                        "--title",
+                        "Select Git Repository Folder",
+                    ])
+                    .output(),
+            )
+        } else {
+            zenity
+        };
+        return response_for(outcome);
     }
 
     #[cfg(target_os = "windows")]
     {
+        // Exit non-zero on cancel so classify_picker reports `Cancelled`
+        // (a zero-exit / empty-stdout case would also report Cancelled, but
+        // making it explicit keeps intent clear and the script future-proof).
         let script = "Add-Type -AssemblyName System.Windows.Forms; \
                       $f = New-Object System.Windows.Forms.FolderBrowserDialog; \
                       $f.Description = 'Select Git Repository Folder'; \
-                      if ($f.ShowDialog() -eq 'OK') { Write-Output $f.SelectedPath }";
-        let output = Command::new("powershell")
-            .args(["-NoProfile", "-NonInteractive", "-Command", script])
-            .output();
-
-        if let Ok(output) = output {
-            if output.status.success() {
-                let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
-                if !path.is_empty() {
-                    return Json(BrowseFolderResponse { path: Some(path) });
-                }
-            }
-        }
+                      if ($f.ShowDialog() -eq 'OK') { Write-Output $f.SelectedPath } else { exit 1 }";
+        return response_for(classify_picker(
+            Command::new("powershell")
+                .args(["-NoProfile", "-NonInteractive", "-Command", script])
+                .output(),
+        ));
     }
-
-    Json(BrowseFolderResponse { path: None })
 }
 
 // ─── Read File Handler ───────────────────────────────────────────────────────
@@ -334,5 +368,43 @@ mod tests {
         };
         let err = list_folder_inner(q).unwrap_err();
         assert!(err.to_string().contains("not a directory"));
+    }
+
+    fn fake_output(success: bool, stdout: &str) -> Output {
+        use std::os::unix::process::ExitStatusExt;
+        Output {
+            status: std::process::ExitStatus::from_raw(if success { 0 } else { 1 }),
+            stdout: stdout.as_bytes().to_vec(),
+            stderr: Vec::new(),
+        }
+    }
+
+    #[cfg(unix)]
+    fn err_output() -> io::Result<Output> {
+        Err(io::Error::new(io::ErrorKind::NotFound, "no such binary"))
+    }
+
+    #[test]
+    fn classify_picker_spawn_failure_is_unavailable() {
+        let r = classify_picker(err_output());
+        assert_eq!(r, PickerOutcome::Unavailable);
+    }
+
+    #[test]
+    fn classify_picker_zero_exit_with_path_is_picked() {
+        let r = classify_picker(Ok(fake_output(true, "/Users/me/code\n")));
+        assert_eq!(r, PickerOutcome::Picked("/Users/me/code".to_string()));
+    }
+
+    #[test]
+    fn classify_picker_nonzero_exit_is_cancelled() {
+        let r = classify_picker(Ok(fake_output(false, "")));
+        assert_eq!(r, PickerOutcome::Cancelled);
+    }
+
+    #[test]
+    fn classify_picker_zero_exit_empty_stdout_is_cancelled() {
+        let r = classify_picker(Ok(fake_output(true, "   \n")));
+        assert_eq!(r, PickerOutcome::Cancelled);
     }
 }

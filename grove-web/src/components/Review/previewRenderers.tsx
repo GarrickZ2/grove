@@ -356,7 +356,7 @@ function HtmlPreviewFrame({
   // markers. Toggling comment mode / editing markers must not remount iframe.
   const srcDoc = previewComment
     ? buildHtmlPreviewSrcdoc(content, previewComment.previewId)
-    : content;
+    : injectPreviewBase(content);
 
   useEffect(() => {
     postPreviewCommentTheme(frameRef.current, previewComment?.previewId);
@@ -371,7 +371,7 @@ function HtmlPreviewFrame({
     <iframe
       ref={frameRef}
       srcDoc={srcDoc}
-      sandbox="allow-scripts"
+      sandbox={PREVIEW_IFRAME_SANDBOX}
       className="w-full h-full border-0 min-h-[200px]"
       title="HTML Preview"
       onLoad={() => syncPreviewCommentState(frameRef.current, previewComment)}
@@ -402,7 +402,7 @@ function JsxPreviewFrame({
     <iframe
       ref={frameRef}
       srcDoc={srcDoc}
-      sandbox="allow-scripts"
+      sandbox={PREVIEW_IFRAME_SANDBOX}
       className="w-full h-full border-0 min-h-[200px]"
       title="JSX Preview"
       onLoad={() => syncPreviewCommentState(frameRef.current, previewComment)}
@@ -467,6 +467,32 @@ function buildPreviewCommentBridge(previewId: string): string {
   ].join('');
 }
 
+// Srcdoc iframes inherit the parent document's origin, so a relative link
+// like `<a href="/protofilo">` resolves to localhost:3001/protofilo. The
+// `sandbox="allow-scripts"` flag does not block top-level navigation under
+// user activation, so clicking the link would navigate the parent Grove
+// page — and any path that isn't a Grove route falls through to the SPA
+// landing. Injecting `<base target="_blank">` forces all links to open in a
+// new tab, keeping the Code Review session intact. The matching `allow-popups`
+// + `allow-popups-to-escape-sandbox` flags (see PREVIEW_IFRAME_SANDBOX) are
+// required so the new tab actually opens and runs at its real origin.
+const PREVIEW_BASE_TAG = '<base target="_blank">';
+const PREVIEW_IFRAME_SANDBOX =
+  'allow-scripts allow-popups allow-popups-to-escape-sandbox';
+
+function injectPreviewBase(html: string): string {
+  if (/<head[^>]*>/i.test(html)) {
+    return html.replace(/<head[^>]*>/i, (m) => `${m}${PREVIEW_BASE_TAG}`);
+  }
+  if (/<html[^>]*>/i.test(html)) {
+    return html.replace(
+      /<html[^>]*>/i,
+      (m) => `${m}<head>${PREVIEW_BASE_TAG}</head>`,
+    );
+  }
+  return `${PREVIEW_BASE_TAG}${html}`;
+}
+
 // Sandboxed iframes (`allow-scripts` only, no `allow-same-origin`) throw a
 // SecurityError on any `localStorage` / `sessionStorage` access. React 19 and
 // many libraries touch storage during render, which crashes the preview. This
@@ -501,11 +527,17 @@ const SANDBOX_STORAGE_SHIM = [
 function buildHtmlPreviewSrcdoc(html: string, previewId: string): string {
   const bridge = buildPreviewCommentBridge(previewId);
   if (/<head[^>]*>/i.test(html)) {
-    html = html.replace(/<head[^>]*>/i, (m) => `${m}${SANDBOX_STORAGE_SHIM}`);
+    html = html.replace(
+      /<head[^>]*>/i,
+      (m) => `${m}${PREVIEW_BASE_TAG}${SANDBOX_STORAGE_SHIM}`,
+    );
   } else if (/<html[^>]*>/i.test(html)) {
-    html = html.replace(/<html[^>]*>/i, (m) => `${m}<head>${SANDBOX_STORAGE_SHIM}</head>`);
+    html = html.replace(
+      /<html[^>]*>/i,
+      (m) => `${m}<head>${PREVIEW_BASE_TAG}${SANDBOX_STORAGE_SHIM}</head>`,
+    );
   } else {
-    html = `${SANDBOX_STORAGE_SHIM}${html}`;
+    html = `${PREVIEW_BASE_TAG}${SANDBOX_STORAGE_SHIM}${html}`;
   }
   if (/<\/body>/i.test(html)) {
     return html.replace(/<\/body>/i, `${bridge}</body>`);
@@ -520,6 +552,7 @@ function buildJsxIframeSrcdoc(code: string, previewId?: string): string {
 
   return [
     '<!DOCTYPE html><html><head><meta charset="utf-8">',
+    PREVIEW_BASE_TAG,
     SANDBOX_STORAGE_SHIM,
     '<script crossorigin src="https://unpkg.com/react@19/umd/react.development.js"><\\/script>',
     '<script crossorigin src="https://unpkg.com/react-dom@19/umd/react-dom.development.js"><\\/script>',

@@ -4,11 +4,18 @@
 //! This module manages a separate Axum server bound to `0.0.0.0` on a random port,
 //! serving the embedded SPA and a walkie-talkie WebSocket endpoint over HTTPS
 //! (required for getUserMedia microphone access on mobile browsers).
-//! Auth is handled via a one-time token passed as a query parameter.
+//!
+//! Auth is a single random **session token** (not one-time): it is generated
+//! once when the server starts and stays valid for unlimited requests until the
+//! server is stopped (`stop()`), which revokes it. Anyone who obtains the token
+//! (from the QR / URL) has full access for the server's lifetime, so this is
+//! intended for a trusted LAN with the user's own device. The token rides in
+//! the URL hash (never sent to the server on navigation) and is sent on data
+//! requests via `Authorization: Bearer` (REST) or a `?token=` query (WebSocket).
 
 use axum::{
     body::Body,
-    extract::{Query, Request, WebSocketUpgrade},
+    extract::{DefaultBodyLimit, Query, Request, WebSocketUpgrade},
     http::{header, Response, StatusCode, Uri},
     middleware::{self, Next},
     response::IntoResponse,
@@ -116,6 +123,9 @@ pub async fn stop() {
     if let Some(handle) = guard.take() {
         let _ = handle.shutdown_tx.send(());
     }
+    // Wipe the mirrored tray state so the accumulated panel (full agent
+    // responses, prompts, project paths) doesn't outlive the sync session.
+    crate::api::handlers::walkie_talkie::clear_tray_mirror();
 }
 
 /// Get info about the currently running Radio server, if any.
@@ -135,8 +145,33 @@ fn create_radio_router(expected_token: Arc<String>) -> Router {
         .route("/api/v1/ai/audio", get(super::handlers::ai::get_audio))
         .route(
             "/api/v1/ai/transcribe",
-            post(super::handlers::ai::transcribe),
+            // Audio uploads exceed axum's 2MB default; the main server allows
+            // 128MB, so match a generous limit here or longer clips 413.
+            post(super::handlers::ai::transcribe).layer(DefaultBodyLimit::max(64 * 1024 * 1024)),
         )
+        // Tray phone panel: live status stream + one-shot snapshot + permission
+        // resolution. The events WS reuses the same global broadcast the desktop
+        // tray subscribes to; the phone authenticates with `?token=` (WS) or a
+        // Bearer header (REST), both handled by `radio_auth_middleware`.
+        .route(
+            "/api/v1/radio/events/ws",
+            get(super::handlers::walkie_talkie::radio_events_ws_handler),
+        )
+        .route(
+            "/api/v1/tray/chats",
+            get(super::handlers::walkie_talkie::get_tray_chats),
+        )
+        .route(
+            "/api/v1/tray/resolve-permission",
+            post(super::handlers::walkie_talkie::tray_resolve_permission),
+        )
+        .route(
+            "/api/v1/tray/send-prompt",
+            post(super::handlers::walkie_talkie::tray_send_prompt),
+        )
+        // Read-only config so the phone page's ThemeProvider picks up the user's
+        // actual Grove theme instead of falling back to the system default.
+        .route("/api/v1/config", get(super::handlers::config::get_config))
         .layer(middleware::from_fn_with_state(
             expected_token,
             radio_auth_middleware,
@@ -190,10 +225,22 @@ async fn radio_ws_handler(ws: WebSocketUpgrade) -> axum::response::Response {
 async fn serve_radio_embedded(uri: Uri) -> impl IntoResponse {
     let path = uri.path().trim_start_matches('/');
 
-    // Radio server serves radio.html as the SPA entry point (independent from main Grove app)
-    let (file, serve_path) = if let Some(content) = FrontendAssets::get(path) {
+    // Radio server serves two SPA entry points: the walkie-talkie (radio.html,
+    // at the root) and the tray task panel (phone-tray.html, at /phone-tray).
+    // Real assets (with extensions) resolve directly; bare navigation paths map
+    // to the matching SPA shell.
+    // Only the radio + tray shells may be served as HTML; the other entry-point
+    // shells (index.html, tray.html) are kept off this LAN-exposed server. A
+    // blocked HTML path falls through to the radio.html SPA (the None branch
+    // below), never returning the requested shell verbatim.
+    let blocked_html = path.ends_with(".html") && path != "radio.html" && path != "phone-tray.html";
+    let (file, serve_path) = if blocked_html {
+        (None, path)
+    } else if let Some(content) = FrontendAssets::get(path) {
         (Some(content), path)
-    } else if path.is_empty() || !path.contains('.') || path.ends_with(".html") {
+    } else if path == "phone-tray" {
+        (FrontendAssets::get("phone-tray.html"), "phone-tray.html")
+    } else if path.is_empty() || !path.contains('.') {
         (FrontendAssets::get("radio.html"), "radio.html")
     } else {
         (None, path)

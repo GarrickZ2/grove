@@ -53,7 +53,7 @@ export interface UseCommandsOptions {
     selectedProject: Project | null;
     onSelectProject: (project: Project) => void;
     onAddProject: () => void;
-    onProjectSwitch?: () => void;
+    onProjectSwitch?: (projectId?: string) => void;
     accentPalette?: string[];
   };
   // Mode (optional)
@@ -155,7 +155,7 @@ export function buildCommands(options: UseCommandsOptions): Command[] {
           handler: () => {
             const switched = selectedProject?.id !== p.id;
             onSelectProject(p);
-            if (switched) onProjectSwitch?.();
+            if (switched) onProjectSwitch?.(p.id);
           },
           keywords: [p.name, "switch", "project"],
         }, { contexts: { default: 18, tasks: 0, workspace: 10 } }));

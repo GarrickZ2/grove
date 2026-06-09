@@ -1,12 +1,17 @@
 import { useEffect, useState, useCallback } from "react";
-import { Radio, X, Copy, Check, Loader2 } from "lucide-react";
+import { Radio, X, Copy, Check, Loader2, Smartphone } from "lucide-react";
 import { DialogShell } from "../ui/DialogShell";
 import { apiClient } from "../../api/client";
+
+/** Which mobile surface the QR points at. `"radio"` = walkie-talkie (default),
+ *  `"tray"` = the menubar task panel (served at /phone-tray). */
+type RadioPage = "radio" | "tray";
 
 interface RadioConnectDialogProps {
   open: boolean;
   onClose: () => void;
   onGoToSettings?: () => void;
+  page?: RadioPage;
 }
 
 interface RadioStartResult {
@@ -21,12 +26,16 @@ interface RadioStartResult {
 
 type ConnectState = "starting" | "ready" | "error";
 
-export function RadioConnectDialog({ open, onClose, onGoToSettings }: RadioConnectDialogProps) {
+export function RadioConnectDialog({ open, onClose, onGoToSettings, page = "radio" }: RadioConnectDialogProps) {
   // Render inner content only when open — unmount resets all state naturally
   return (
-    <DialogShell isOpen={open} onClose={onClose}>
+    <DialogShell
+      isOpen={open}
+      onClose={onClose}
+      variant={page === "tray" ? "centered" : "responsive"}
+    >
       {open && (
-        <RadioConnectDialogContent onClose={onClose} onGoToSettings={onGoToSettings} />
+        <RadioConnectDialogContent onClose={onClose} onGoToSettings={onGoToSettings} page={page} />
       )}
     </DialogShell>
   );
@@ -35,10 +44,13 @@ export function RadioConnectDialog({ open, onClose, onGoToSettings }: RadioConne
 function RadioConnectDialogContent({
   onClose,
   onGoToSettings,
+  page,
 }: {
   onClose: () => void;
   onGoToSettings?: () => void;
+  page: RadioPage;
 }) {
+  const isTray = page === "tray";
   const [connectState, setConnectState] = useState<ConnectState>("starting");
   const [radioInfo, setRadioInfo] = useState<RadioStartResult | null>(null);
   const [copied, setCopied] = useState(false);
@@ -48,7 +60,7 @@ function RadioConnectDialogContent({
   useEffect(() => {
     let cancelled = false;
     apiClient
-      .post<unknown, RadioStartResult>("/api/v1/radio/start")
+      .post<{ page: RadioPage }, RadioStartResult>("/api/v1/radio/start", { page })
       .then((info) => {
         if (cancelled) return;
         if (info.error) {
@@ -66,7 +78,7 @@ function RadioConnectDialogContent({
       });
 
     return () => { cancelled = true; };
-  }, []);
+  }, [page]);
 
   const handleClose = useCallback(() => {
     onClose();
@@ -94,16 +106,24 @@ function RadioConnectDialogContent({
   }, [copied]);
 
   return (
-    <div className="bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-xl shadow-xl overflow-hidden w-[360px]">
+    <div className="bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-xl shadow-xl overflow-hidden w-[360px] mx-auto">
       {/* Header */}
       <div className="flex items-center justify-between px-5 py-4 border-b border-[var(--color-border)]">
         <div className="flex items-center gap-3">
           <div className="w-9 h-9 rounded-lg flex items-center justify-center bg-[var(--color-highlight)]/10">
-            <Radio className="w-5 h-5 text-[var(--color-highlight)]" />
+            {isTray ? (
+              <Smartphone className="w-5 h-5 text-[var(--color-highlight)]" />
+            ) : (
+              <Radio className="w-5 h-5 text-[var(--color-highlight)]" />
+            )}
           </div>
           <div>
-            <h2 className="text-base font-semibold text-[var(--color-text)]">Grove Radio</h2>
-            <p className="text-[10px] text-[var(--color-text-muted)]">Walkie-Talkie Mode</p>
+            <h2 className="text-base font-semibold text-[var(--color-text)]">
+              {isTray ? "Sync to Phone" : "Grove Radio"}
+            </h2>
+            <p className="text-[10px] text-[var(--color-text-muted)]">
+              {isTray ? "Task Panel" : "Walkie-Talkie Mode"}
+            </p>
           </div>
         </div>
         <button
@@ -119,7 +139,9 @@ function RadioConnectDialogContent({
         {connectState === "starting" && (
           <div className="flex flex-col items-center gap-4 py-10">
             <Loader2 className="w-8 h-8 text-[var(--color-highlight)] animate-spin" />
-            <p className="text-sm text-[var(--color-text-muted)]">Starting Radio server...</p>
+            <p className="text-sm text-[var(--color-text-muted)]">
+              {isTray ? "Starting server..." : "Starting Radio server..."}
+            </p>
           </div>
         )}
 
@@ -154,7 +176,7 @@ function RadioConnectDialogContent({
                     setConnectState("starting");
                     setError(null);
                     apiClient
-                      .post<unknown, RadioStartResult>("/api/v1/radio/start")
+                      .post<{ page: RadioPage }, RadioStartResult>("/api/v1/radio/start", { page })
                       .then((info) => {
                         if (info.error) {
                           setError(info.error);

@@ -129,6 +129,7 @@ import {
 import type { ChatSessionResponse, CustomAgentServer } from "../../../api";
 import { listProjects, getProject, listResources, type ProjectListItem } from "../../../api/projects";
 import { openExternalUrl } from "../../../utils/openExternal";
+import { ansiToHtml, stripAnsi } from "../../../utils/ansi";
 import { useCommand, useContextKey } from "../../../keyboard";
 import "./task-chat.css";
 
@@ -3889,7 +3890,15 @@ export function TaskChat({
           }
           break;
         case "error": {
-          const isStalePermission = msg.message?.includes("No pending permission");
+          const msgText = msg.message ?? "";
+          // The backend surfaces a stale permission click in two flavors —
+          // `respond_permission` returning false ("No pending permission
+          // request") and the live-id mismatch ("Permission request X is no
+          // longer pending"). Both mean the panel we're rendering is gone
+          // server-side; collapse it locally so the user isn't stuck.
+          const isStalePermission =
+            msgText.includes("No pending permission") ||
+            msgText.includes("is no longer pending");
           if (isStalePermission) {
             // The permission we tried to respond to no longer exists on the backend.
             // Resolve all unresolved permissions as cancelled so the UI unblocks.
@@ -4923,12 +4932,19 @@ export function TaskChat({
       return;
     }
 
-    if (
-      (!prompt && attachments.length === 0) ||
-      !wsRef.current ||
-      wsRef.current.readyState !== WebSocket.OPEN
-    )
+    if (!prompt && attachments.length === 0) return;
+    if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
+      // Not connected yet — keep the draft, surface a hint so the user
+      // doesn't think their Enter was eaten. appendSystemMessage dedupes
+      // repeated presses of the same message.
+      setMessages((prev) =>
+        appendSystemMessage(
+          prev,
+          "Waiting for the agent to connect. Your message will be sent once the session is ready — try again in a moment.",
+        ),
+      );
       return;
+    }
 
     // Shell mode → send terminal_execute directly (bypasses AI)
     if (isTerminalMode) {
@@ -7858,9 +7874,7 @@ export function TaskChat({
                     <div
                       ref={editableRef}
                       contentEditable={
-                        isConnected &&
-                        !isRemoteSession &&
-                        !activePermissionMessage
+                        !isRemoteSession && !activePermissionMessage
                       }
                       suppressContentEditableWarning
                       onInput={handleInput}
@@ -7882,7 +7896,7 @@ export function TaskChat({
                         isInputExpanded
                           ? "min-h-[32vh] max-h-[56vh]"
                           : "min-h-[56px] max-h-32"
-                      } ${!isConnected || isRemoteSession || activePermissionMessage ? "opacity-50 cursor-not-allowed" : ""} ${
+                      } ${isRemoteSession || activePermissionMessage ? "opacity-50 cursor-not-allowed" : ""} ${
                         isTerminalMode ? "font-mono" : ""
                       }`}
                       style={{
@@ -8551,7 +8565,7 @@ const MessageItem = memo(function MessageItem({
     case "terminal_output": {
       const hasExited = message.exitCode !== undefined;
       const isError = hasExited && message.exitCode !== 0;
-      const output = message.chunks.join("");
+      const output = ansiToHtml(message.chunks.join(""));
       return (
         <div className="flex justify-start">
           <div className="max-w-[90%] w-full">
@@ -8563,9 +8577,10 @@ const MessageItem = memo(function MessageItem({
               } bg-[var(--color-bg-secondary)]`}
             >
               {output && (
-                <pre className="px-3 py-2 text-[12px] font-mono text-[var(--color-text-secondary)] whitespace-pre-wrap overflow-x-auto max-h-[300px] overflow-y-auto">
-                  {output}
-                </pre>
+                <pre
+                  className="px-3 py-2 text-[12px] font-mono text-[var(--color-text-secondary)] whitespace-pre-wrap overflow-x-auto max-h-[300px] overflow-y-auto"
+                  dangerouslySetInnerHTML={{ __html: output }}
+                />
               )}
               {hasExited && (
                 <div
@@ -9267,7 +9282,7 @@ function summarizeToolSection(tools: ToolSectionItem[], sectionFinished: boolean
     return {
       key: tool.message.id,
       kind,
-      label: truncateChipLabel(derived),
+      label: truncateChipLabel(stripAnsi(derived)),
       rawTitle: tool.message.title,
       content: tool.message.content ?? "",
       locations: tool.message.locations ?? [],
@@ -9561,9 +9576,12 @@ function ActionChipList({
                 className="rounded-lg border border-[color-mix(in_srgb,var(--color-border)_60%,transparent)] bg-[color-mix(in_srgb,var(--color-bg-secondary)_58%,transparent)] px-3 py-2"
               >
                 <div className="flex items-center gap-2 mb-1.5">
-                  <span className="text-[10px] uppercase tracking-[0.08em] text-[var(--color-text-muted)]">
-                    {item.rawTitle || "action"}
-                  </span>
+                  <span
+                    className="text-[10px] uppercase tracking-[0.08em] text-[var(--color-text-muted)]"
+                    dangerouslySetInnerHTML={{
+                      __html: ansiToHtml(item.rawTitle) || "action",
+                    }}
+                  />
                   <button
                     type="button"
                     onClick={(e) => {
@@ -9582,9 +9600,12 @@ function ActionChipList({
                       <MarkdownRenderer content={item.content} />
                     </div>
                   ) : (
-                    <pre className="text-[11px] leading-[1.45] font-mono whitespace-pre-wrap break-all text-[var(--color-text)] m-0">
-                      {item.content || "(no output)"}
-                    </pre>
+                    <pre
+                      className="text-[11px] leading-[1.45] font-mono whitespace-pre-wrap break-all text-[var(--color-text)] m-0"
+                      dangerouslySetInnerHTML={{
+                        __html: ansiToHtml(item.content) || "(no output)",
+                      }}
+                    />
                   );
                   return (
                     <div className="space-y-2">

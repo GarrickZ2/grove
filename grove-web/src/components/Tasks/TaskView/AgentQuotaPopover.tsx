@@ -277,8 +277,6 @@ export function AgentQuotaPopover({
                   top: rect.top,
                   left: rect.left,
                   width: rect.width,
-                  maxHeight: rect.maxHeight,
-                  overflowY: "auto",
                   zIndex: 120,
                   borderRadius: 20,
                   boxShadow: "0 22px 60px rgba(0,0,0,0.18)",
@@ -290,6 +288,7 @@ export function AgentQuotaPopover({
                   usage={usage}
                   refreshing={refreshing}
                   onRefresh={onRefresh}
+                  maxBodyHeight={rect.maxHeight}
                 />
               </motion.div>
             )}
@@ -304,192 +303,231 @@ function PopoverCard({
   usage,
   refreshing,
   onRefresh,
+  maxBodyHeight,
 }: {
   usage: AgentUsage;
   refreshing: boolean;
   onRefresh: () => void;
+  /** Max height of the scrollable middle section. Header & footer stay
+   *  pinned and the whole card is bounded by header + middle + footer. */
+  maxBodyHeight: number;
 }) {
   return (
     <div
-      className="rounded-[20px] border px-4 pt-3 pb-2.5 backdrop-blur-md"
+      className="flex flex-col overflow-hidden rounded-[20px] border backdrop-blur-md"
       style={{
-        // Exact same surface treatment as the chatbox container so the
-        // popover reads as an extension of it.
-        backgroundColor:
-          "color-mix(in srgb, var(--color-bg-secondary) 78%, transparent)",
+        // Surface tint + blur live on the section divs (header / body /
+        // footer) so each section is opaque enough to mask scrolling
+        // content underneath. The card itself just owns the border + radius.
         borderColor:
           "color-mix(in srgb, var(--color-border) 62%, transparent)",
+        maxHeight: maxBodyHeight,
       }}
     >
       {/* Header: Plan */}
-      <div className="mb-2 flex items-center justify-between">
-        <span className="text-[10px] font-semibold uppercase tracking-[0.08em] text-[var(--color-text-muted)]">
-          Plan
-        </span>
-        <div className="flex items-center gap-2">
-          {usage.outdated && (
-            <span className="rounded-full border border-[color-mix(in_srgb,var(--color-warning)_40%,transparent)] bg-[color-mix(in_srgb,var(--color-warning)_12%,transparent)] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.06em] text-[var(--color-warning)]">
-              Outdated
-            </span>
-          )}
-          <span className="text-[12px] font-semibold text-[var(--color-text)]">
-            {usage.plan ?? "—"}
+      <div
+        className="shrink-0 px-4 pt-3 pb-2"
+        style={{
+          // Same surface treatment as the original card; the whole popover
+          // sits on backdrop-blur-md, so header / footer get the same frosted
+          // look as the body.
+          backgroundColor:
+            "color-mix(in srgb, var(--color-bg-secondary) 78%, transparent)",
+        }}
+      >
+        <div className="mb-2 flex items-center justify-between">
+          <span className="text-[10px] font-semibold uppercase tracking-[0.08em] text-[var(--color-text-muted)]">
+            Plan
           </span>
+          <div className="flex items-center gap-2">
+            {usage.outdated && (
+              <span className="rounded-full border border-[color-mix(in_srgb,var(--color-warning)_40%,transparent)] bg-[color-mix(in_srgb,var(--color-warning)_12%,transparent)] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.06em] text-[var(--color-warning)]">
+                Outdated
+              </span>
+            )}
+            <span className="text-[12px] font-semibold text-[var(--color-text)]">
+              {usage.plan ?? "—"}
+            </span>
+          </div>
         </div>
+        <div
+          className="h-px"
+          style={{
+            backgroundColor:
+              "color-mix(in srgb, var(--color-border) 50%, transparent)",
+          }}
+        />
       </div>
 
+      {/* Scrollable body: windows + extras. min-h-0 lets flex-1 actually
+          shrink so the body can scroll, not the whole card. */}
       <div
-        className="h-px"
+        className="flex-1 min-h-0 overflow-y-auto px-4"
         style={{
+          // Contain the rounded corners so scrolling content doesn't bleed
+          // past them on overscroll.
+          overscrollBehavior: "contain",
           backgroundColor:
-            "color-mix(in srgb, var(--color-border) 50%, transparent)",
+            "color-mix(in srgb, var(--color-bg-secondary) 78%, transparent)",
         }}
-      />
-
-      {/* Windows */}
-      <div className="mt-2.5 space-y-2.5">
-        {usage.windows.map((w, idx) => {
-          const pct = Math.max(0, Math.min(100, Math.round(w.percentage_remaining)));
-          const color = quotaHealthColor(pct);
-          const safeGuard = computeSafeGuard(w);
-          const isSafe = safeGuard != null && pct >= safeGuard;
-          return (
-            <div key={`${w.label}-${idx}`} className="space-y-1">
-              <div className="flex items-baseline justify-between gap-2">
-                <span className="text-[11px] font-medium text-[var(--color-text)]">
-                  {w.label}
-                </span>
-                <span
-                  className="text-[11px] font-semibold tabular-nums"
-                  style={{ color }}
-                >
-                  {pct}% remaining
-                </span>
-              </div>
-              <div
-                className="relative h-2 w-full"
-                style={{
-                  backgroundColor:
-                    "color-mix(in srgb, var(--color-text-muted) 20%, transparent)",
-                  borderRadius: 4,
-                  overflow: "visible",
-                }}
-                role="progressbar"
-                aria-valuenow={pct}
-                aria-valuemin={0}
-                aria-valuemax={100}
-                aria-label={`${w.label}: ${pct}% remaining`}
-              >
+      >
+        {/* Windows */}
+        <div className="mt-2.5 space-y-2.5">
+          {usage.windows.map((w, idx) => {
+            const pct = Math.max(0, Math.min(100, Math.round(w.percentage_remaining)));
+            const color = quotaHealthColor(pct);
+            const safeGuard = computeSafeGuard(w);
+            const isSafe = safeGuard != null && pct >= safeGuard;
+            return (
+              <div key={`${w.label}-${idx}`} className="space-y-1">
+                <div className="flex items-baseline justify-between gap-2">
+                  <span className="text-[11px] font-medium text-[var(--color-text)]">
+                    {w.label}
+                  </span>
+                  <span
+                    className="text-[11px] font-semibold tabular-nums"
+                    style={{ color }}
+                  >
+                    {pct}% remaining
+                  </span>
+                </div>
                 <div
-                  className="absolute left-0 top-0 h-full transition-[width] duration-300"
+                  className="relative h-2 w-full"
                   style={{
-                    width: `${pct}%`,
-                    backgroundColor: color,
+                    backgroundColor:
+                      "color-mix(in srgb, var(--color-text-muted) 20%, transparent)",
                     borderRadius: 4,
+                    overflow: "visible",
                   }}
-                />
-                {safeGuard != null && (
+                  role="progressbar"
+                  aria-valuenow={pct}
+                  aria-valuemin={0}
+                  aria-valuemax={100}
+                  aria-label={`${w.label}: ${pct}% remaining`}
+                >
                   <div
-                    className="absolute top-[-3px] bottom-[-3px]"
+                    className="absolute left-0 top-0 h-full transition-[width] duration-300"
                     style={{
-                      left: `calc(${safeGuard}% - 1px)`,
-                      width: 2,
-                      backgroundColor: isSafe
-                        ? "var(--color-success)"
-                        : "var(--color-error)",
-                      opacity: 0.9,
-                      borderRadius: 1,
+                      width: `${pct}%`,
+                      backgroundColor: color,
+                      borderRadius: 4,
                     }}
                   />
-                )}
-              </div>
-              <div className="flex items-center justify-between text-[10px] text-[var(--color-text-muted)]">
-                <span>
-                  {safeGuard != null ? (
-                    <span
+                  {safeGuard != null && (
+                    <div
+                      className="absolute top-[-3px] bottom-[-3px]"
                       style={{
-                        color: isSafe
+                        left: `calc(${safeGuard}% - 1px)`,
+                        width: 2,
+                        backgroundColor: isSafe
                           ? "var(--color-success)"
                           : "var(--color-error)",
+                        opacity: 0.9,
+                        borderRadius: 1,
                       }}
-                    >
-                      {isSafe ? "● On pace" : "▲ Above pace"} · {safeGuard}% guard
-                    </span>
-                  ) : null}
-                </span>
-                {(w.resets_in_seconds != null || w.resets_at) && (
-                  <span className="tabular-nums">
-                    Resets in {resolveResetsIn(w)}
+                    />
+                  )}
+                </div>
+                <div className="flex items-center justify-between text-[10px] text-[var(--color-text-muted)]">
+                  <span>
+                    {safeGuard != null ? (
+                      <span
+                        style={{
+                          color: isSafe
+                            ? "var(--color-success)"
+                            : "var(--color-error)",
+                        }}
+                      >
+                        {isSafe ? "● On pace" : "▲ Above pace"} · {safeGuard}% guard
+                      </span>
+                    ) : null}
                   </span>
-                )}
+                  {(w.resets_in_seconds != null || w.resets_at) && (
+                    <span className="tabular-nums">
+                      Resets in {resolveResetsIn(w)}
+                    </span>
+                  )}
+                </div>
               </div>
-            </div>
-          );
-        })}
-      </div>
+            );
+          })}
+        </div>
 
-      {/* Extras */}
-      {usage.extras && usage.extras.length > 0 && (
-        <>
-          <div
-            className="my-2 h-px"
-            style={{
-              backgroundColor:
-                "color-mix(in srgb, var(--color-border) 50%, transparent)",
-            }}
-          />
-          <div className="space-y-1">
-            {usage.extras.map((e, idx) => (
-              <div
-                key={`${e.label}-${idx}`}
-                className="flex items-center justify-between gap-2 text-[10px]"
-              >
-                <span className="text-[var(--color-text-muted)]">{e.label}</span>
-                <span
-                  className="truncate font-medium text-[var(--color-text)]"
-                  title={e.value}
+        {/* Extras */}
+        {usage.extras && usage.extras.length > 0 && (
+          <>
+            <div
+              className="my-2 h-px"
+              style={{
+                backgroundColor:
+                  "color-mix(in srgb, var(--color-border) 50%, transparent)",
+              }}
+            />
+            <div className="space-y-1">
+              {usage.extras.map((e, idx) => (
+                <div
+                  key={`${e.label}-${idx}`}
+                  className="flex items-center justify-between gap-2 text-[10px]"
                 >
-                  {e.value}
-                </span>
-              </div>
-            ))}
-          </div>
-        </>
-      )}
+                  <span className="text-[var(--color-text-muted)]">{e.label}</span>
+                  <span
+                    className="truncate font-medium text-[var(--color-text)]"
+                    title={e.value}
+                  >
+                    {e.value}
+                  </span>
+                </div>
+              ))}
+            </div>
+            {/* Trailing padding so the last row isn't flush against the
+                footer's border. */}
+            <div className="h-1" />
+          </>
+        )}
+      </div>
 
       {/* Footer */}
       <div
-        className="mt-2.5 flex items-center justify-between border-t pt-2"
+        className="shrink-0 px-4 pt-2 pb-2.5"
         style={{
-          borderColor:
-            "color-mix(in srgb, var(--color-border) 50%, transparent)",
+          backgroundColor:
+            "color-mix(in srgb, var(--color-bg-secondary) 78%, transparent)",
         }}
       >
-        <span className="text-[10px] text-[var(--color-text-muted)]">
-          {usage.outdated ? "Refresh failed, showing last successful data" : "Auto-refreshes every minute"}
-        </span>
-        <button
-          type="button"
-          onClick={(e) => {
-            e.stopPropagation();
-            onRefresh();
+        <div
+          className="h-px mb-2"
+          style={{
+            backgroundColor:
+              "color-mix(in srgb, var(--color-border) 50%, transparent)",
           }}
-          disabled={refreshing}
-          className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium text-[var(--color-text-muted)] transition-colors hover:text-[var(--color-highlight)] disabled:opacity-50"
-          aria-label="Refresh agent quota"
-          onMouseEnter={(e) => {
-            e.currentTarget.style.backgroundColor =
-              "color-mix(in srgb, var(--color-highlight) 14%, transparent)";
-          }}
-          onMouseLeave={(e) => {
-            e.currentTarget.style.backgroundColor = "transparent";
-          }}
-        >
-          <RefreshCw
-            className={`h-3 w-3 ${refreshing ? "animate-spin" : ""}`}
-          />
-          Refresh
-        </button>
+        />
+        <div className="flex items-center justify-between">
+          <span className="text-[10px] text-[var(--color-text-muted)]">
+            {usage.outdated ? "Refresh failed, showing last successful data" : "Auto-refreshes every minute"}
+          </span>
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              onRefresh();
+            }}
+            disabled={refreshing}
+            className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium text-[var(--color-text-muted)] transition-colors hover:text-[var(--color-highlight)] disabled:opacity-50"
+            aria-label="Refresh agent quota"
+            onMouseEnter={(e) => {
+              e.currentTarget.style.backgroundColor =
+                "color-mix(in srgb, var(--color-highlight) 14%, transparent)";
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.backgroundColor = "transparent";
+            }}
+          >
+            <RefreshCw
+              className={`h-3 w-3 ${refreshing ? "animate-spin" : ""}`}
+            />
+            Refresh
+          </button>
+        </div>
       </div>
     </div>
   );

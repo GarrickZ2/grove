@@ -574,6 +574,14 @@ pub(crate) fn create_schema(conn: &Connection) -> Result<()> {
     let _ = conn.execute_batch(
         "ALTER TABLE audio_config ADD COLUMN global_mode_enabled INTEGER NOT NULL DEFAULT 0;",
     );
+    // PTT hold-to-talk activation delay (ms). Default matches the new
+    // frontend default (500ms); existing rows fall back to the prior
+    // 300ms behavior? No — we keep 500ms, which is what freshly-installed
+    // users get. The default function in storage::ai ensures newly-created
+    // AudioSettingsGlobal rows also use 500ms.
+    let _ = conn.execute_batch(
+        "ALTER TABLE audio_config ADD COLUMN ptt_activation_delay_ms INTEGER NOT NULL DEFAULT 500;",
+    );
     let _ =
         conn.execute_batch("ALTER TABLE agent_edge ADD COLUMN project TEXT NOT NULL DEFAULT '';");
     let _ = conn.execute_batch(

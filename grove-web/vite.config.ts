@@ -46,6 +46,7 @@ export default defineConfig(({ mode }) => ({
         main: resolve(__dirname, 'index.html'),
         radio: resolve(__dirname, 'radio.html'),
         tray: resolve(__dirname, 'tray.html'),
+        'phone-tray': resolve(__dirname, 'phone-tray.html'),
       },
     },
   },

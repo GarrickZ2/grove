@@ -37,6 +37,14 @@ interface DialogShellProps {
    * Defaults to 50 (Tailwind `z-50`).
    */
   zIndex?: number;
+  /**
+   * Presentation variant. `"responsive"` (default) is a centered modal on
+   * desktop and a bottom sheet on narrow viewports. `"centered"` always renders
+   * the centered modal — use it inside small fixed-size webviews (e.g. the
+   * menubar tray popover) where the width-based mobile breakpoint would wrongly
+   * trigger the bottom sheet and clip against the tiny window.
+   */
+  variant?: "responsive" | "centered";
 }
 
 /**
@@ -49,8 +57,11 @@ export function DialogShell({
   children,
   maxWidth = "max-w-md",
   zIndex = 50,
+  variant = "responsive",
 }: DialogShellProps) {
-  const { isMobile } = useIsMobile();
+  const { isMobile: isNarrow } = useIsMobile();
+  // `centered` callers opt out of the width-based bottom-sheet entirely.
+  const isMobile = variant === "responsive" && isNarrow;
   const vvRect = useVisualViewportRect(isMobile && isOpen);
 
   // iOS-safe body scroll lock for mobile dialogs. The naive

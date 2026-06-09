@@ -223,15 +223,18 @@ export function AddProjectDialog({
       return;
     }
     try {
-      const data = await apiClient.get<{ path: string | null }>("/api/v1/browse-folder");
+      const data = await apiClient.get<{ path: string | null; cancelled?: boolean }>(
+        "/api/v1/browse-folder",
+      );
       if (data.path) {
         setPath(data.path);
         if (!existingNameTouched) setExistingName(deriveNameFromPath(data.path));
         setError("");
-      } else {
+      } else if (!data.cancelled) {
         // Native dialog unavailable (headless host) — open web picker.
         setPickerOpen("existing");
       }
+      // cancelled === true → user dismissed the native dialog; do nothing.
     } catch (err) {
       console.error("Failed to browse folder:", err);
       // Network/API failure — fall back to web picker rather than dead-ending.
@@ -245,13 +248,16 @@ export function AddProjectDialog({
       return;
     }
     try {
-      const data = await apiClient.get<{ path: string | null }>("/api/v1/browse-folder");
+      const data = await apiClient.get<{ path: string | null; cancelled?: boolean }>(
+        "/api/v1/browse-folder",
+      );
       if (data.path) {
         setParentDir(data.path);
         setError("");
-      } else {
+      } else if (!data.cancelled) {
         setPickerOpen("parent");
       }
+      // cancelled === true → user dismissed the native dialog; do nothing.
     } catch (err) {
       console.error("Failed to browse folder:", err);
       setPickerOpen("parent");
@@ -707,11 +713,18 @@ function FormArea({
   const contentRef = useRef<HTMLDivElement>(null);
   const [height, setHeight] = useState<number | "auto">("auto");
 
-  // Measure content height on every mode/tab change
+  // Re-measure whenever content size changes (typing, errors, full-path
+  // reveal, etc.) — not just on mode/tab change. Without this the
+  // overflow-hidden wrapper clips newly-revealed fields like the
+  // "Initialize as Git repository" checkbox.
   useEffect(() => {
-    if (contentRef.current) {
-      setHeight(contentRef.current.scrollHeight);
-    }
+    const el = contentRef.current;
+    if (!el) return;
+    const update = () => setHeight(el.scrollHeight);
+    update();
+    const ro = new ResizeObserver(update);
+    ro.observe(el);
+    return () => ro.disconnect();
   }, [mode, codingTab]);
 
   return (

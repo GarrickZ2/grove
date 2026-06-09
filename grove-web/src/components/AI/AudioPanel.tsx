@@ -44,6 +44,9 @@ export function AudioPanel({
   const [draftPromptProject, setDraftPromptProject] = useState(settings.revisePromptProject);
   const [draftMinDuration, setDraftMinDuration] = useState(String(settings.minDuration));
   const [draftMaxDuration, setDraftMaxDuration] = useState(String(settings.maxDuration));
+  const [draftPttActivationDelayMs, setDraftPttActivationDelayMs] = useState(
+    String(settings.pttActivationDelayMs),
+  );
   const promptEditorRef = useRef<HTMLTextAreaElement>(null);
 
   // Re-sync local edit drafts whenever the upstream `settings` prop changes
@@ -58,6 +61,7 @@ export function AudioPanel({
     setDraftPromptProject(settings.revisePromptProject);
     setDraftMinDuration(String(settings.minDuration));
     setDraftMaxDuration(String(settings.maxDuration));
+    setDraftPttActivationDelayMs(String(settings.pttActivationDelayMs));
   }
 
   const onSettingsSavedRef = useRef(onSettingsSaved);
@@ -118,6 +122,17 @@ export function AudioPanel({
       patchAudio("maxDuration", next);
     }
   }, [audio.maxDuration, draftMaxDuration, patchAudio]);
+
+  const commitPttActivationDelay = useCallback(() => {
+    const parsed = Number(draftPttActivationDelayMs);
+    const next = Number.isFinite(parsed)
+      ? Math.max(100, Math.min(2000, Math.floor(parsed)))
+      : audio.pttActivationDelayMs;
+    setDraftPttActivationDelayMs(String(next));
+    if (next !== audio.pttActivationDelayMs) {
+      patchAudio("pttActivationDelayMs", next);
+    }
+  }, [audio.pttActivationDelayMs, draftPttActivationDelayMs, patchAudio]);
 
   useEffect(() => {
     if (!recordingTarget) return;
@@ -446,8 +461,8 @@ export function AudioPanel({
             </div>
           </FieldGroup>
 
-          <FieldGroup title="Duration limits" hint="Minimum duration filters accidental taps. Maximum prevents runaway recordings.">
-            <div className="grid gap-4 sm:grid-cols-2 max-w-[480px]">
+          <FieldGroup title="Duration limits" hint="Minimum duration filters accidental taps. Maximum prevents runaway recordings. Push-to-talk hold delay is how long the PTT key must be held before recording starts.">
+            <div className="grid gap-4 sm:grid-cols-3 max-w-[720px]">
               <div>
                 <label className="mb-2 flex items-center gap-1.5 text-sm font-medium text-[var(--color-text-muted)]">
                   <Timer className="h-3.5 w-3.5" />
@@ -498,6 +513,33 @@ export function AudioPanel({
                     className="h-10 w-20 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] px-3 text-sm text-[var(--color-text)] focus:outline-none focus:border-[var(--color-highlight)] focus:ring-1 focus:ring-[var(--color-highlight)]"
                   />
                   <span className="text-xs text-[var(--color-text-muted)]">seconds</span>
+                </div>
+              </div>
+              <div>
+                <label className="mb-2 flex items-center gap-1.5 text-sm font-medium text-[var(--color-text-muted)]">
+                  <Mic className="h-3.5 w-3.5" />
+                  PTT hold delay
+                </label>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="number"
+                    min={100}
+                    max={2000}
+                    step={50}
+                    value={draftPttActivationDelayMs}
+                    onChange={(e) => setDraftPttActivationDelayMs(e.target.value)}
+                    onBlur={commitPttActivationDelay}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") e.currentTarget.blur();
+                      if (e.key === "Escape") {
+                        setDraftPttActivationDelayMs(String(audio.pttActivationDelayMs));
+                        e.currentTarget.blur();
+                      }
+                    }}
+                    disabled={!audio.enabled}
+                    className="h-10 w-20 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] px-3 text-sm text-[var(--color-text)] focus:outline-none focus:border-[var(--color-highlight)] focus:ring-1 focus:ring-[var(--color-highlight)]"
+                  />
+                  <span className="text-xs text-[var(--color-text-muted)]">ms</span>
                 </div>
               </div>
             </div>

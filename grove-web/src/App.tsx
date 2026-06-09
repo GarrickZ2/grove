@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
+import type { ShortcutHandler } from "@tauri-apps/plugin-global-shortcut";
 import { Sidebar } from "./components/Layout/Sidebar";
 import { PluginFrame } from "./components/Plugins/PluginFrame";
 import { listPlugins, type Plugin } from "./api/plugins";
@@ -35,15 +36,81 @@ import { AuthGate } from "./components/AuthGate";
 import { OptionalPerfProfiler } from "./perf/profilerShim";
 import type { Task } from "./data/types";
 import { mockConfig } from "./data/mockData";
-import { getConfig, patchConfig, checkCommands, openIDE, openTerminal } from "./api";
+import { getConfig, patchConfig, checkCommands, openIDE, openTerminal, listBaseAgents } from "./api";
 import { agentOptions } from "./components/ui";
 import { useIsMobile, buildCommands, useAddLibraryHashHandler } from "./hooks";
 import type { UseCommandsOptions } from "./hooks/useCommands";
 import { REPO_NAV_IDS, STUDIO_NAV_IDS } from "./data/nav";
+import { readLastProjectView, writeLastProjectView } from "./utils/lastProjectView";
 import { useCommand, useContextKey, commandRegistry } from "./keyboard";
 import { ActionCommandPalette } from "./components/Palette/ActionCommandPalette";
 
 export type TasksMode = "zen" | "blitz";
+
+// Register a process-global hotkey that survives a webview reload (Cmd+R).
+// The native registration lives on the Rust side and lingers after a reload
+// while its JS callback dies, so the next mount's register() throws "already
+// registered" and the fresh callback never binds (the shortcut goes dead). We
+// catch that, clear the stale binding, and retry once. Returns a cleanup that
+// unregisters on unmount; a no-op outside Tauri or when the shortcut is empty.
+function registerGlobalShortcut(
+  displayShortcut: string,
+  handler: ShortcutHandler,
+  label: string,
+): () => void {
+  const isTauri = !!((window as Window & {
+    __TAURI__?: unknown;
+    __TAURI_INTERNALS__?: unknown;
+  }).__TAURI__ || (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__);
+  if (!isTauri || !displayShortcut) return () => {};
+
+  const tauriShortcut = displayShortcut
+    .split("+")
+    .map((part) => part === "Cmd" ? "CommandOrControl" : part === "Ctrl" ? "Control" : part)
+    .join("+");
+  let registered = false;
+  let disposed = false;
+  const unregisterShortcut = () => {
+    import("@tauri-apps/plugin-global-shortcut")
+      .then(({ unregister }) => unregister(tauriShortcut))
+      .catch((err) => console.error(`Failed to unregister ${label} shortcut:`, err));
+  };
+
+  import("@tauri-apps/plugin-global-shortcut")
+    .then(async ({ register, unregister }) => {
+      if (disposed) return false;
+      try {
+        await register(tauriShortcut, handler);
+      } catch {
+        // Stale registration from a prior reload blocks us — drop it and retry
+        // once so the live callback actually binds.
+        try {
+          await unregister(tauriShortcut);
+        } catch {
+          // Nothing stale to clear — fall through to the retry.
+        }
+        await register(tauriShortcut, handler);
+      }
+      return true;
+    })
+    .then((didRegister) => {
+      if (!didRegister) return;
+      if (disposed) {
+        unregisterShortcut();
+        return;
+      }
+      registered = true;
+    })
+    .catch((err) => {
+      if (!disposed) console.error(`Failed to register ${label} shortcut:`, err);
+    });
+
+  return () => {
+    disposed = true;
+    if (!registered) return;
+    unregisterShortcut();
+  };
+}
 
 // Main sidebar nav items for Cmd+1-6 and Option+Cmd+Up/Down cycling.
 // "settings" and "projects" are excluded as they are utility pages, not part of the main nav cycle.
@@ -270,53 +337,17 @@ function AppContent() {
   }, []);
 
   useEffect(() => {
-    const isTauri = !!((window as Window & {
-      __TAURI__?: unknown;
-      __TAURI_INTERNALS__?: unknown;
-    }).__TAURI__ || (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__);
-    const shortcut = globalConfig?.web?.show_hide_window_shortcut || "";
-    if (!isTauri || !shortcut) return;
-
-    const tauriShortcut = shortcut
-      .split("+")
-      .map((part) => part === "Cmd" ? "CommandOrControl" : part === "Ctrl" ? "Control" : part)
-      .join("+");
-    let registered = false;
-    let disposed = false;
-    const unregisterShortcut = () => {
-      import("@tauri-apps/plugin-global-shortcut")
-        .then(({ unregister }) => unregister(tauriShortcut))
-        .catch((err) => console.error("Failed to unregister window shortcut:", err));
-    };
-
-    import("@tauri-apps/plugin-global-shortcut")
-      .then(({ register }) => {
-        if (disposed) return false;
-        return register(tauriShortcut, (event) => {
-          if (event.state === "Pressed") {
-            invoke("toggle_main_window_visibility").catch((err) => {
-              console.error("Failed to toggle Grove window:", err);
-            });
-          }
-        }).then(() => true);
-      })
-      .then((didRegister) => {
-        if (!didRegister) return;
-        if (disposed) {
-          unregisterShortcut();
-          return;
+    return registerGlobalShortcut(
+      globalConfig?.web?.show_hide_window_shortcut || "",
+      (event) => {
+        if (event.state === "Pressed") {
+          invoke("toggle_main_window_visibility").catch((err) => {
+            console.error("Failed to toggle Grove window:", err);
+          });
         }
-        registered = true;
-      })
-      .catch((err) => {
-        if (!disposed) console.error("Failed to register window shortcut:", err);
-      });
-
-    return () => {
-      disposed = true;
-      if (!registered) return;
-      unregisterShortcut();
-    };
+      },
+      "window",
+    );
   }, [globalConfig?.web?.show_hide_window_shortcut]);
 
   // Menubar popover global shortcut — parallel to the main window one.
@@ -324,60 +355,25 @@ function AppContent() {
   // skip registration (Tauri's global-shortcut plugin would error
   // anyway; this just keeps the log noise actionable).
   useEffect(() => {
-    const isTauri = !!((window as Window & {
-      __TAURI__?: unknown;
-      __TAURI_INTERNALS__?: unknown;
-    }).__TAURI__ || (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__);
     const shortcut = globalConfig?.notifications?.menubar_shortcut || "";
     const mainShortcut = globalConfig?.web?.show_hide_window_shortcut || "";
-    if (!isTauri || !shortcut) return;
-    if (shortcut === mainShortcut) {
+    if (shortcut && shortcut === mainShortcut) {
       console.warn(
         "[shortcut] menubar_shortcut conflicts with show_hide_window_shortcut — skipping registration",
       );
       return;
     }
-
-    const tauriShortcut = shortcut
-      .split("+")
-      .map((part) => part === "Cmd" ? "CommandOrControl" : part === "Ctrl" ? "Control" : part)
-      .join("+");
-    let registered = false;
-    let disposed = false;
-    const unregisterShortcut = () => {
-      import("@tauri-apps/plugin-global-shortcut")
-        .then(({ unregister }) => unregister(tauriShortcut))
-        .catch((err) => console.error("Failed to unregister menubar shortcut:", err));
-    };
-
-    import("@tauri-apps/plugin-global-shortcut")
-      .then(({ register }) => {
-        if (disposed) return false;
-        return register(tauriShortcut, (event) => {
-          if (event.state === "Pressed") {
-            invoke("toggle_tray_popover_visibility").catch((err) => {
-              console.error("Failed to toggle Grove menubar:", err);
-            });
-          }
-        }).then(() => true);
-      })
-      .then((didRegister) => {
-        if (!didRegister) return;
-        if (disposed) {
-          unregisterShortcut();
-          return;
+    return registerGlobalShortcut(
+      shortcut,
+      (event) => {
+        if (event.state === "Pressed") {
+          invoke("toggle_tray_popover_visibility").catch((err) => {
+            console.error("Failed to toggle Grove menubar:", err);
+          });
         }
-        registered = true;
-      })
-      .catch((err) => {
-        if (!disposed) console.error("Failed to register menubar shortcut:", err);
-      });
-
-    return () => {
-      disposed = true;
-      if (!registered) return;
-      unregisterShortcut();
-    };
+      },
+      "menubar",
+    );
   }, [
     globalConfig?.notifications?.menubar_shortcut,
     globalConfig?.web?.show_hide_window_shortcut,
@@ -393,6 +389,33 @@ function AppContent() {
     setActiveItem("dashboard");
     setNavigationData(null);
   }, []);
+
+  // Restore the last view the user was on for a given project. Falls back to
+  // "dashboard" if nothing is recorded. We don't validate the saved view
+  // against the project's nav set — renderContent handles unknown views by
+  // falling through to its "coming soon" placeholder, but in practice the
+  // sidebar won't navigate to a view that isn't in the current nav set.
+  const navigateToProjectLastView = useCallback(
+    (projectId: string) => {
+      const saved = readLastProjectView(projectId);
+      if (saved) {
+        setActiveItem(saved);
+        setNavigationData(null);
+      } else {
+        navigateToProjectDashboard();
+      }
+    },
+    [navigateToProjectDashboard],
+  );
+
+  // Persist the current top-level view per project. Sub-state (selected
+  // taskId / chatId / sketch tab) is restored by per-(project,task)
+  // mechanisms like readLastActiveTab; this only covers the sidebar-level
+  // page the user is on.
+  useEffect(() => {
+    if (!selectedProject) return;
+    writeLastProjectView(selectedProject.id, activeItem);
+  }, [selectedProject, activeItem]);
 
   // Initialize agent configuration on app startup
   useEffect(() => {
@@ -429,16 +452,17 @@ function AppContent() {
           }
         }
 
-        // Check Chat Agent
+        // Check Chat Agent — use the backend's authoritative base-agent
+        // availability rather than checkCommands(acpCheck). The ACP bridges for
+        // claude / codex run via npx (claude-agent-acp / codex-acp) and are not
+        // PATH binaries, so the command probe would wrongly mark them
+        // unavailable and clobber the saved choice with the first PATH-installed
+        // agent (Gemini). The base-agents endpoint accounts for the npx bridges.
         if (cfg.acp?.agent_command) {
-          const currentAgent = agentOptions.find(a => a.id === cfg.acp.agent_command);
-          const cmd = currentAgent?.acpCheck;
-          if (cmd && commandAvailability[cmd] === false) {
-            // Find first available chat agent
-            const firstAvailable = agentOptions.find(a => {
-              const check = a.acpCheck;
-              return check && commandAvailability[check] !== false;
-            });
+          const baseAgents = await listBaseAgents();
+          const current = baseAgents.find(b => b.id === cfg.acp.agent_command);
+          if (current && !current.available) {
+            const firstAvailable = baseAgents.find(b => b.available);
             if (firstAvailable) {
               updates.acp = { agent_command: firstAvailable.id };
               needsUpdate = true;
@@ -527,9 +551,11 @@ function AppContent() {
     setActiveItem("projects");
   };
 
-  // Auto-navigate to dashboard when a project is auto-selected via currentProjectId.
-  // Uses the documented "Adjusting state on prop change" pattern (compare to a
-  // memoised marker stored in state) so we don't setState inside an effect.
+  // Auto-navigate when a project is auto-selected via currentProjectId.
+  // Restore the user's last view for that project, or fall back to the
+  // dashboard if they've never visited it. Uses the documented
+  // "Adjusting state on prop change" pattern (compare to a memoised marker
+  // stored in state) so we don't setState inside an effect.
   // https://react.dev/reference/react/useState#storing-information-from-previous-renders
   const [autoNavigatedFor, setAutoNavigatedFor] = useState<string | null>(null);
   if (
@@ -540,7 +566,8 @@ function AppContent() {
   ) {
     setAutoNavigatedFor(currentProjectId);
     setHasExitedWelcome(true);
-    setActiveItem("dashboard");
+    const saved = readLastProjectView(currentProjectId);
+    setActiveItem(saved ?? "dashboard");
   }
 
   // Tray popover navigation. Rust emits `tray:navigate` with a route and
@@ -683,10 +710,20 @@ function AppContent() {
     setNavigationData(data ?? null);
   };
 
-  // When project changes via sidebar ProjectSelector, go back to dashboard
-  const handleProjectSwitch = useCallback(() => {
-    navigateToProjectDashboard();
-  }, [navigateToProjectDashboard]);
+  // When project changes via sidebar ProjectSelector, restore the user's
+  // last view for that project (falls back to dashboard if the saved view
+  // isn't valid for the new project type).
+  const handleProjectSwitch = useCallback(
+    (newProjectId?: string) => {
+      const targetId = newProjectId ?? selectedProject?.id ?? null;
+      if (targetId) {
+        navigateToProjectLastView(targetId);
+      } else {
+        navigateToProjectDashboard();
+      }
+    },
+    [navigateToProjectLastView, navigateToProjectDashboard, selectedProject?.id],
+  );
 
   // Task palette: navigate to tasks page and select the task
   const handleTaskSelectFromPalette = useCallback((task: Task) => {
