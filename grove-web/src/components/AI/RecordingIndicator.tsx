@@ -59,7 +59,11 @@ export function RecordingIndicator({
   const isVisible = status === "warming" || status === "recording" || status === "processing" || status === "error";
   const bars = toBars(frequencyData, 16);
   const transcript = finalizedSentences ?? [];
-  const hasTranscript = status === "recording" && (transcript.length > 0 || !!currentText);
+  // Keep the wide transcript view through `processing` (streaming finalize) too,
+  // so the pill doesn't snap back to a small round shape mid-finalize.
+  const hasTranscript =
+    (status === "recording" || status === "processing") &&
+    (transcript.length > 0 || !!currentText);
 
   return (
     <AnimatePresence>

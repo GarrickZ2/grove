@@ -33,6 +33,9 @@
   background: var(--color-highlight);
 }
 
+/* 1199px == useIsMobile's TABLET_BREAKPOINT (1200) - 1: below it the JS gate
+   `!isMobile` already stops rendering the resizer. Keep these in sync — if the
+   TABLET_BREAKPOINT in hooks/useIsMobile.ts changes, update this value too. */
 @media (max-width: 1199px) {
   .editor-resizer {
     display: none;

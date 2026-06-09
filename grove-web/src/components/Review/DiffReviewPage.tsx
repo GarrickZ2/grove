@@ -278,8 +278,15 @@ export function DiffReviewPage({ projectId, taskId, embedded, navigateToFile, is
     }
   }, [sidebarWidth, convSidebarWidth, sidebarWidthStorageKey]);
 
-  const clampSidebarWidth = (value: number, layoutWidth: number): number => {
-    const max = Math.max(SIDEBAR_MIN_WIDTH, Math.floor(layoutWidth * SIDEBAR_MAX_RATIO));
+  // Min width the diff content keeps when a sidebar is dragged to its max, so
+  // the two sidebars can't jointly squeeze the content to near-zero.
+  const MIN_CONTENT_WIDTH = 320;
+  // `otherWidth` is the currently-visible opposite sidebar's width (0 if hidden);
+  // we reserve it plus MIN_CONTENT_WIDTH so the dragged sidebar can't overlap it.
+  const clampSidebarWidth = (value: number, layoutWidth: number, otherWidth = 0): number => {
+    const ratioMax = Math.floor(layoutWidth * SIDEBAR_MAX_RATIO);
+    const fitMax = layoutWidth - otherWidth - MIN_CONTENT_WIDTH;
+    const max = Math.max(SIDEBAR_MIN_WIDTH, Math.min(ratioMax, fitMax));
     return Math.min(max, Math.max(SIDEBAR_MIN_WIDTH, value));
   };
 
@@ -292,10 +299,12 @@ export function DiffReviewPage({ projectId, taskId, embedded, navigateToFile, is
     const startX = event.clientX;
     const startWidth = sidebarWidth;
 
+    const otherWidth = convSidebarVisible ? convSidebarWidth : 0;
     const handlePointerMove = (moveEvent: PointerEvent) => {
       const next = clampSidebarWidth(
         startWidth + (moveEvent.clientX - startX),
         layoutWidth,
+        otherWidth,
       );
       setSidebarWidth(next);
     };
@@ -309,7 +318,7 @@ export function DiffReviewPage({ projectId, taskId, embedded, navigateToFile, is
     document.body.classList.add('grove-resizing');
     document.addEventListener('pointermove', handlePointerMove);
     document.addEventListener('pointerup', handlePointerUp);
-  }, [sidebarWidth]);
+  }, [sidebarWidth, convSidebarWidth, convSidebarVisible]);
 
   const startConvSidebarResize = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
     event.preventDefault();
@@ -320,11 +329,13 @@ export function DiffReviewPage({ projectId, taskId, embedded, navigateToFile, is
     const startX = event.clientX;
     const startWidth = convSidebarWidth;
 
+    const otherWidth = sidebarVisible ? sidebarWidth : 0;
     const handlePointerMove = (moveEvent: PointerEvent) => {
       // Right-side resizer: dragging left grows the sidebar.
       const next = clampSidebarWidth(
         startWidth + (startX - moveEvent.clientX),
         layoutWidth,
+        otherWidth,
       );
       setConvSidebarWidth(next);
     };
@@ -336,7 +347,7 @@ export function DiffReviewPage({ projectId, taskId, embedded, navigateToFile, is
     document.body.classList.add('grove-resizing');
     document.addEventListener('pointermove', handlePointerMove);
     document.addEventListener('pointerup', handlePointerUp);
-  }, [convSidebarWidth]);
+  }, [convSidebarWidth, sidebarWidth, sidebarVisible]);
   const [focusMode, setFocusMode] = useState<boolean>(() => {
     if (initialCachedOptions && typeof initialCachedOptions.focusMode === 'boolean') {
       return initialCachedOptions.focusMode;

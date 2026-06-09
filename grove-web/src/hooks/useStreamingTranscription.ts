@@ -250,7 +250,9 @@ export function useStreamingTranscription(options: Options = {}): StreamingTrans
         if (doneReceivedRef.current) return;
         setError('Connection error');
         setStatus('error');
+        // Resolve a pending stop; otherwise tear down so the mic isn't left on.
         if (doneResolveRef.current) resolveDone(null);
+        else fullCleanup();
       };
       ws.onclose = () => {
         // If the socket dies mid-recording with a pending stop, don't hang.
@@ -258,6 +260,17 @@ export function useStreamingTranscription(options: Options = {}): StreamingTrans
           const full = [...finalizedRef.current, currentRef.current]
             .filter(Boolean).join(' ').trim();
           resolveDone(full ? { full } : null);
+          return;
+        }
+        // A clean server-side close (code 1000) mid-recording does NOT fire
+        // `onerror`, so without this the UI would sit in `recording` forever
+        // while `onmessage` silently drops audio. `closeWs()` nulls `wsRef`
+        // before closing, so `wsRef.current === ws` means WE didn't initiate
+        // this close — the session died on us. Surface it and tear down.
+        if (wsRef.current === ws && !doneReceivedRef.current) {
+          setError('Connection closed');
+          setStatus('error');
+          fullCleanup();
         }
       };
     } catch (err) {

@@ -9,6 +9,9 @@ use super::super::{AcpQuotaProvider, AgentUsage};
 use super::{classify_model, dispatch_upstream, Upstream};
 
 // OpenCode auth.json key names (flat map in ~/.local/share/opencode/auth.json).
+// NOTE: OpenCode stores MiniMax under "minimax-coding-plan" (verified against a
+// real auth.json), NOT the bare "minimax" used by Hermes/standalone providers.
+// Do NOT "align" this to "minimax" — that would break OpenCode MiniMax quota.
 const KEY_MINIMAX: &str = "minimax-coding-plan";
 const KEY_KIMI: &str = "kimi-for-coding";
 const KEY_SYNTHETIC: &str = "synthetic";
