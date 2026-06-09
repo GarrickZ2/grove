@@ -132,6 +132,23 @@ export function useChatSearch<T>(opts: {
     curRef.current = cur;
   }, [matches, cur]);
 
+  // Track the match key the auto-scroll effects last centered on.
+  // The effects re-run on every messages/renderToken churn while the
+  // search bar is open, but we only want to bring the match into view
+  // when the user *actually* navigated to it (next/prev). Without this
+  // gate, a streaming chunk arriving minutes after the user settled on
+  // a match would yank the viewport back to center on the match.
+  const lastScrolledKeyRef = useRef<string>("");
+  // Reset the gate when the search session changes (new query, toggled
+  // off/on) so the first nav of a fresh session can re-center.
+  useEffect(() => {
+    if (!enabled) {
+      lastScrolledKeyRef.current = "";
+    } else if (navKey !== focusKey.navKey) {
+      lastScrolledKeyRef.current = "";
+    }
+  }, [enabled, navKey, focusKey.navKey]);
+
   // Inject highlight styles once.
   useEffect(() => {
     if (!supportsHighlight) return;
@@ -153,10 +170,17 @@ export function useChatSearch<T>(opts: {
   // When the user navigates to a different match, ask Virtuoso to bring
   // its row into view. Highlight application waits for the next renderToken
   // bump (since Virtuoso may need a frame to mount the row).
+  //
+  // Gated on `lastScrolledKeyRef`: re-fires from streaming/renderToken
+  // churn must NOT re-center — that would fight the user's manual scroll
+  // the moment a WS event arrives minutes later.
   useEffect(() => {
     if (matches.length === 0) return;
     const m = matches[cur];
     if (!m) return;
+    const key = matchKey(m);
+    if (key === lastScrolledKeyRef.current) return;
+    lastScrolledKeyRef.current = key;
     virtuosoRef.current?.scrollToIndex({
       index: m.itemIndex,
       align: "center",
@@ -257,10 +281,20 @@ export function useChatSearch<T>(opts: {
       // Use "auto" so this scroll doesn't fight Virtuoso's own
       // (instant) scrollToIndex above. With both instant the user sees
       // a single jump rather than a two-stage animation.
-      cr.startContainer.parentElement?.scrollIntoView({
-        block: "center",
-        behavior: "auto",
-      });
+      //
+      // Gated on lastScrolledKeyRef: this effect re-runs on every
+      // renderToken bump (Virtuoso rendering a new range), so without
+      // the gate, scrolling away from a match would just yank the
+      // viewport back as soon as Virtuoso decided to mount a new
+      // range above/below the current position.
+      const targetKey = target ? matchKey(target) : "";
+      if (targetKey && targetKey !== lastScrolledKeyRef.current) {
+        lastScrolledKeyRef.current = targetKey;
+        cr.startContainer.parentElement?.scrollIntoView({
+          block: "center",
+          behavior: "auto",
+        });
+      }
     }
   }, [
     matches,
