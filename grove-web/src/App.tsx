@@ -36,7 +36,7 @@ import { AuthGate } from "./components/AuthGate";
 import { OptionalPerfProfiler } from "./perf/profilerShim";
 import type { Task } from "./data/types";
 import { mockConfig } from "./data/mockData";
-import { getConfig, patchConfig, checkCommands, openIDE, openTerminal } from "./api";
+import { getConfig, patchConfig, checkCommands, openIDE, openTerminal, listBaseAgents } from "./api";
 import { agentOptions } from "./components/ui";
 import { useIsMobile, buildCommands, useAddLibraryHashHandler } from "./hooks";
 import type { UseCommandsOptions } from "./hooks/useCommands";
@@ -423,16 +423,17 @@ function AppContent() {
           }
         }
 
-        // Check Chat Agent
+        // Check Chat Agent — use the backend's authoritative base-agent
+        // availability rather than checkCommands(acpCheck). The ACP bridges for
+        // claude / codex run via npx (claude-agent-acp / codex-acp) and are not
+        // PATH binaries, so the command probe would wrongly mark them
+        // unavailable and clobber the saved choice with the first PATH-installed
+        // agent (Gemini). The base-agents endpoint accounts for the npx bridges.
         if (cfg.acp?.agent_command) {
-          const currentAgent = agentOptions.find(a => a.id === cfg.acp.agent_command);
-          const cmd = currentAgent?.acpCheck;
-          if (cmd && commandAvailability[cmd] === false) {
-            // Find first available chat agent
-            const firstAvailable = agentOptions.find(a => {
-              const check = a.acpCheck;
-              return check && commandAvailability[check] !== false;
-            });
+          const baseAgents = await listBaseAgents();
+          const current = baseAgents.find(b => b.id === cfg.acp.agent_command);
+          if (current && !current.available) {
+            const firstAvailable = baseAgents.find(b => b.available);
             if (firstAvailable) {
               updates.acp = { agent_command: firstAvailable.id };
               needsUpdate = true;
