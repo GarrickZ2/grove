@@ -209,6 +209,8 @@ pub struct AudioSettingsResponse {
     pub preferred_languages: Vec<String>,
     pub toggle_shortcut: String,
     pub push_to_talk_key: String,
+    #[serde(default = "default_ptt_activation_delay_ms")]
+    pub ptt_activation_delay_ms: u32,
     pub max_duration: u32,
     pub min_duration: u32,
     pub revise_enabled: bool,
@@ -245,6 +247,8 @@ pub struct SaveAudioGlobalRequest {
     pub preferred_languages: Vec<String>,
     pub toggle_shortcut: String,
     pub push_to_talk_key: String,
+    #[serde(default = "default_ptt_activation_delay_ms")]
+    pub ptt_activation_delay_ms: u32,
     pub max_duration: u32,
     pub min_duration: u32,
     pub revise_enabled: bool,
@@ -261,6 +265,10 @@ pub struct SaveAudioGlobalRequest {
 
 fn default_transcribe_mode() -> String {
     "batch".to_string()
+}
+
+fn default_ptt_activation_delay_ms() -> u32 {
+    500
 }
 
 /// PUT /api/v1/projects/{id}/ai/audio request (project settings)
@@ -298,6 +306,7 @@ pub async fn get_audio(Query(query): Query<AudioQuery>) -> Json<AudioSettingsRes
         preferred_languages: global.preferred_languages,
         toggle_shortcut: global.toggle_shortcut,
         push_to_talk_key: global.push_to_talk_key,
+        ptt_activation_delay_ms: global.ptt_activation_delay_ms,
         max_duration: global.max_duration,
         min_duration: global.min_duration,
         revise_enabled: global.revise_enabled,
@@ -338,6 +347,7 @@ pub async fn save_audio_global(
         preferred_languages: req.preferred_languages,
         toggle_shortcut: req.toggle_shortcut,
         push_to_talk_key: req.push_to_talk_key,
+        ptt_activation_delay_ms: req.ptt_activation_delay_ms,
         max_duration: req.max_duration,
         min_duration: req.min_duration,
         revise_enabled: req.revise_enabled,

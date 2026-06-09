@@ -25,6 +25,7 @@ const defaultAudio: AudioSettings = {
   preferredLanguages: [],
   toggleShortcut: "",
   pushToTalkKey: "",
+  pttActivationDelayMs: 500,
   maxDuration: 60,
   minDuration: 2,
   reviseEnabled: false,

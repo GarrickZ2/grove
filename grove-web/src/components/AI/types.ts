@@ -28,6 +28,8 @@ export type AudioSettings = {
   toggleShortcut: string;
   /** Single key for push-to-talk mode (e.g. "F5") — empty = disabled */
   pushToTalkKey: string;
+  /** How long the PTT key must be held before recording starts (ms, default 500) */
+  pttActivationDelayMs: number;
   /** Max recording duration in seconds (default 60) */
   maxDuration: number;
   /** Min recording duration in seconds; below = discard as accidental (default 2) */

@@ -96,6 +96,9 @@ pub struct AudioSettingsGlobal {
     /// Single key for push-to-talk mode (e.g. "F5")
     #[serde(default)]
     pub push_to_talk_key: String,
+    /// How long the PTT key must be held before recording starts (ms)
+    #[serde(default = "default_ptt_activation_delay_ms")]
+    pub ptt_activation_delay_ms: u32,
     /// Max recording duration in seconds
     #[serde(default = "default_max_duration")]
     pub max_duration: u32,
@@ -130,6 +133,10 @@ fn default_min_duration() -> u32 {
     2
 }
 
+fn default_ptt_activation_delay_ms() -> u32 {
+    500
+}
+
 fn default_transcribe_mode() -> String {
     "batch".to_string()
 }
@@ -142,6 +149,7 @@ impl Default for AudioSettingsGlobal {
             preferred_languages: Vec::new(),
             toggle_shortcut: String::new(),
             push_to_talk_key: String::new(),
+            ptt_activation_delay_ms: default_ptt_activation_delay_ms(),
             max_duration: default_max_duration(),
             min_duration: default_min_duration(),
             revise_enabled: false,
@@ -178,7 +186,8 @@ pub fn load_audio_global() -> AudioSettingsGlobal {
     let config_result = conn.query_row(
         "SELECT enabled, transcribe_provider, toggle_shortcut, push_to_talk_key, \
          max_duration, min_duration, revise_enabled, revise_provider, revise_prompt, \
-         preferred_languages, transcribe_mode, global_mode_enabled FROM audio_config WHERE id = 1",
+         preferred_languages, transcribe_mode, global_mode_enabled, ptt_activation_delay_ms \
+         FROM audio_config WHERE id = 1",
         [],
         |row| {
             let enabled: i32 = row.get(0)?;
@@ -193,6 +202,7 @@ pub fn load_audio_global() -> AudioSettingsGlobal {
             let preferred_languages_json: String = row.get(9)?;
             let transcribe_mode: String = row.get(10)?;
             let global_mode_enabled: i32 = row.get(11)?;
+            let ptt_activation_delay_ms: u32 = row.get(12)?;
             Ok((
                 enabled != 0,
                 transcribe_provider,
@@ -206,6 +216,7 @@ pub fn load_audio_global() -> AudioSettingsGlobal {
                 preferred_languages_json,
                 transcribe_mode,
                 global_mode_enabled != 0,
+                ptt_activation_delay_ms,
             ))
         },
     );
@@ -223,6 +234,7 @@ pub fn load_audio_global() -> AudioSettingsGlobal {
         preferred_languages_json,
         transcribe_mode,
         global_mode_enabled,
+        ptt_activation_delay_ms,
     ) = match config_result {
         Ok(row) => row,
         Err(rusqlite::Error::QueryReturnedNoRows) => return AudioSettingsGlobal::default(),
@@ -266,6 +278,7 @@ pub fn load_audio_global() -> AudioSettingsGlobal {
         preferred_languages,
         toggle_shortcut,
         push_to_talk_key,
+        ptt_activation_delay_ms,
         max_duration,
         min_duration,
         revise_enabled,
@@ -289,8 +302,8 @@ pub fn save_audio_global(data: &AudioSettingsGlobal) -> Result<()> {
         "INSERT OR REPLACE INTO audio_config \
          (id, enabled, transcribe_provider, toggle_shortcut, push_to_talk_key, \
           max_duration, min_duration, revise_enabled, revise_provider, revise_prompt, \
-          preferred_languages, transcribe_mode, global_mode_enabled) \
-         VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+          preferred_languages, transcribe_mode, global_mode_enabled, ptt_activation_delay_ms) \
+         VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
         params![
             data.enabled as i32,
             data.transcribe_provider,
@@ -304,6 +317,7 @@ pub fn save_audio_global(data: &AudioSettingsGlobal) -> Result<()> {
             preferred_languages_json,
             data.transcribe_mode,
             data.global_mode_enabled as i32,
+            data.ptt_activation_delay_ms,
         ],
     )?;
 

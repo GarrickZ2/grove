@@ -123,6 +123,7 @@ export async function saveAudioGlobal(settings: AudioSettings): Promise<void> {
     preferredLanguages: settings.preferredLanguages,
     toggleShortcut: settings.toggleShortcut,
     pushToTalkKey: settings.pushToTalkKey,
+    pttActivationDelayMs: settings.pttActivationDelayMs,
     maxDuration: settings.maxDuration,
     minDuration: settings.minDuration,
     reviseEnabled: settings.reviseEnabled,

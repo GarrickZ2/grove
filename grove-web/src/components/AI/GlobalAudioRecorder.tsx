@@ -4,7 +4,8 @@
  *
  * Supports two modes:
  * - Toggle: combo key (e.g. Cmd+Shift+H) toggles recording on/off
- * - Push-to-talk: hold key for 2s to activate, release to stop
+ * - Push-to-talk: hold key for the configured delay (default 500ms) to
+ *   activate, release to stop
  *
  * On completion the audio blob is available for transcription (TODO).
  */
@@ -56,8 +57,15 @@ function insertTextIntoContentEditable(el: HTMLElement, text: string) {
   selection.addRange(range);
 }
 
-/** How long the PTT key must be held before recording starts (ms) */
-const PTT_ACTIVATION_DELAY_MS = 300;
+/** Hard floor for the PTT hold delay. Settings below this are clamped to
+ *  avoid nonsensical "0ms hold = no debounce at all" behavior; settings
+ *  above are bounded by the AudioPanel input (max 2000ms). */
+const PTT_ACTIVATION_DELAY_MIN_MS = 50;
+
+function pttActivationDelayMs(s: AudioSettings | null): number {
+  const v = s?.pttActivationDelayMs ?? 500;
+  return Math.max(PTT_ACTIVATION_DELAY_MIN_MS, v);
+}
 
 const STATUS_HINTS: Record<number, string> = {
   400: "Bad request — check transcribe provider config",
@@ -103,6 +111,11 @@ export function GlobalAudioRecorder({ projectId }: GlobalAudioRecorderProps) {
   const [pttWarmElapsed, setPttWarmElapsed] = useState(0);
   const pttWarmIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const pttWarmStartRef = useRef(0);
+  /** Delay captured at the moment PTT warming started, so the progress
+   *  indicator and timer use a consistent value even if the user changes
+   *  the setting mid-warming. Held in state (not just a ref) because the
+   *  RecordingIndicator needs it during render. */
+  const [pttWarmDelay, setPttWarmDelay] = useState(0);
 
   const recorder = useAudioRecorder({
     minDuration: settings?.minDuration ?? 2,
@@ -373,6 +386,7 @@ export function GlobalAudioRecorder({ projectId }: GlobalAudioRecorderProps) {
     setPttActive(false);
     setPttWarming(false);
     setPttWarmElapsed(0);
+    setPttWarmDelay(0);
   }, []);
 
   // PTT mode: stop on key release
@@ -389,6 +403,7 @@ export function GlobalAudioRecorder({ projectId }: GlobalAudioRecorderProps) {
     setPttActive(false);
     setPttWarming(false);
     setPttWarmElapsed(0);
+    setPttWarmDelay(0);
     if (pttWarmIntervalRef.current) {
       clearInterval(pttWarmIntervalRef.current);
       pttWarmIntervalRef.current = null;
@@ -448,11 +463,13 @@ export function GlobalAudioRecorder({ projectId }: GlobalAudioRecorderProps) {
           setPttWarming(true);
           setPttWarmElapsed(0);
           pttWarmStartRef.current = Date.now();
+          const warmDelay = pttActivationDelayMs(s);
+          setPttWarmDelay(warmDelay);
 
           // Tick counter for warming progress
           pttWarmIntervalRef.current = setInterval(() => {
             const ms = Date.now() - pttWarmStartRef.current;
-            setPttWarmElapsed(Math.min(ms, PTT_ACTIVATION_DELAY_MS));
+            setPttWarmElapsed(Math.min(ms, warmDelay));
           }, 50);
 
           // After delay, actually start recording
@@ -460,6 +477,7 @@ export function GlobalAudioRecorder({ projectId }: GlobalAudioRecorderProps) {
             pttTimerRef.current = null;
             setPttWarming(false);
             setPttWarmElapsed(0);
+            setPttWarmDelay(0);
             if (pttWarmIntervalRef.current) {
               clearInterval(pttWarmIntervalRef.current);
               pttWarmIntervalRef.current = null;
@@ -467,7 +485,7 @@ export function GlobalAudioRecorder({ projectId }: GlobalAudioRecorderProps) {
             if (pttActiveRef.current) {
               doStart();
             }
-          }, PTT_ACTIVATION_DELAY_MS);
+          }, warmDelay);
         }
       }
     };
@@ -531,7 +549,7 @@ export function GlobalAudioRecorder({ projectId }: GlobalAudioRecorderProps) {
       elapsed={indicatorElapsed}
       maxDuration={settings.maxDuration}
       frequencyData={indicatorFrequency}
-      warmingProgress={pttWarmElapsed / PTT_ACTIVATION_DELAY_MS}
+      warmingProgress={pttWarmDelay > 0 ? pttWarmElapsed / pttWarmDelay : 0}
       errorMessage={indicatorErrorMessage}
       onStop={handleToggleStop}
       onCancel={() => {
