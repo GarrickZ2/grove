@@ -225,7 +225,10 @@ pub fn prompt_and_execute_update(update_info: &UpdateInfo) {
     }
 
     println!("\nA new version is available: {}", latest);
-    println!("It is recommended to update. The update command is:\n  {}", command_str);
+    println!(
+        "It is recommended to update. The update command is:\n  {}",
+        command_str
+    );
     print!("Would you like to auto-update now? [y/N]: ");
     let _ = io::stdout().flush();
 

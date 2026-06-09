@@ -9,7 +9,7 @@
  */
 
 import { motion, AnimatePresence } from "framer-motion";
-import { AlertCircle, Loader2, Square } from "lucide-react";
+import { AlertCircle, Loader2, Square, X } from "lucide-react";
 import type { IndicatorStatus } from "./GlobalAudioRecorder";
 
 interface RecordingIndicatorProps {
@@ -171,6 +171,15 @@ export function RecordingIndicator({
               <span className="text-xs font-medium text-red-400">
                 {errorMessage || "Transcription failed"}
               </span>
+              <button
+                type="button"
+                onClick={onCancel}
+                className="ml-1 inline-flex h-6 w-6 items-center justify-center rounded-full text-red-400/70 transition-colors hover:bg-red-500/15 hover:text-red-300"
+                title="Dismiss"
+                aria-label="Dismiss error"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
             </>
           )}
           </div>

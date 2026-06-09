@@ -228,19 +228,22 @@ export function GlobalAudioRecorder({ projectId }: GlobalAudioRecorderProps) {
     activeElementRef.current = document.activeElement;
   }, []);
 
-  // Auto-clear error after 4 seconds. Tracks BOTH our transcribe-side error
-  // and the recorder's own error (mic permission etc.) — otherwise a denied
-  // mic shows the pill forever because the recorder stays in "error" state
-  // until the next start() call.
+  // Auto-clear error after 4 seconds. Tracks the local transcribe-side
+  // error, the batch recorder's own error (mic permission etc.), AND the
+  // streaming recorder's error — otherwise a denied mic or a WS connection
+  // error keeps the pill forever because the hook stays in "error" state
+  // until the next start()/cancel() call.
   const recorderErrorActive = recorder.status === "error" || !!recorder.error;
+  const streamingErrorActive = streaming.status === "error" || !!streaming.error;
   useEffect(() => {
-    if (!errorMessage && !recorderErrorActive) return;
+    if (!errorMessage && !recorderErrorActive && !streamingErrorActive) return;
     const t = setTimeout(() => {
       setErrorMessage(null);
       if (recorderErrorActive) recorder.cancel();
+      if (streamingErrorActive) streamingRef.current.cancel();
     }, 4000);
     return () => clearTimeout(t);
-  }, [errorMessage, recorderErrorActive, recorder]);
+  }, [errorMessage, recorderErrorActive, streamingErrorActive, recorder]);
 
   const handleRecordingComplete = useCallback(async (blob: Blob) => {
     // #2: Client-side size check (25 MB, matches backend limit)
